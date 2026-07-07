@@ -14,6 +14,13 @@ export const CONFIG = {
   enemyFireInterval: 90, // frames
   enemyHp: 3,
 
+  // ── Run structure (MVP loop) ──
+  pickupRadius: 15, // collect distance padding beyond player radius
+  healChance: 0.34, // fraction of kills that drop a health orb (else a coin)
+  healAmount: 1,
+  waveBreakFrames: 48, // pause between cleared wave and next spawn
+  score: { kill: 5, coin: 10, waveClear: 40, victory: 200 },
+
   colors: {
     ground: 0x161a24,
     gridLine: 0x1f2532,
@@ -30,5 +37,7 @@ export const CONFIG = {
     swordGlow: 0x90cdf4,
     blockArc: 0x63b3ed,
     muzzle: 0xffe08a,
+    pickupHealth: 0x68d391,
+    pickupCoin: 0xf6e05e,
   },
 } as const;

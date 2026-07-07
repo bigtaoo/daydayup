@@ -6,6 +6,9 @@ import { Actor } from './Actor';
 import { Skin } from './Skin';
 import { Bullet } from './Bullet';
 import { Enemy } from './Enemy';
+import { Pickup } from './Pickup';
+import { WaveDirector, type WaveDef } from './WaveDirector';
+import { Screens } from './Screens';
 import type { InputCanvas, InputSource } from '../platform/types';
 import type { WeaponContext } from './weapons/Weapon';
 import { RangedWeapon } from './weapons/RangedWeapon';
@@ -15,6 +18,18 @@ import { MeleeWeapon } from './weapons/MeleeWeapon';
 const WORLD_W = 1600;
 const WORLD_H = 1200;
 
+// Scripted run: three escalating waves. Stand-in for design/08's WaveDirector
+// (numbers move into @dd/engine content with the 06 migration).
+const WAVES: WaveDef[] = [
+  { spawns: [[300, 300], [1300, 300], [800, 200]] },
+  { spawns: [[250, 950], [1350, 950], [1300, 350], [300, 650]] },
+  { spawns: [[200, 300], [1400, 300], [200, 900], [1400, 900], [800, 150]] },
+];
+
+// Render-side run phases (design/10). The would-be engine only knows
+// idle/playing/gameover; menu/result live here in the shell.
+type Phase = 'menu' | 'playing' | 'victory' | 'defeat';
+
 export class Game {
   private app: Application;
   private layers = new Layers();
@@ -23,14 +38,23 @@ export class Game {
   private player!: Actor;
   private enemies: Enemy[] = [];
   private bullets: Bullet[] = [];
+  private pickups: Pickup[] = [];
   private pillars: Entity[] = [];
 
   private hud!: Text;
+  private screens = new Screens();
   private ctx: WeaponContext;
+
+  private phase: Phase = 'menu';
+  private waves = new WaveDirector(WAVES);
+  private waveBreak = 0; // frames until the next wave spawns (0 = idle)
+  private score = 0;
+  private prevFire = false; // for confirm rising-edge detection on menus
 
   constructor(app: Application, input: InputSource) {
     this.app = app;
     this.input = input;
+    app.stage.eventMode = 'static'; // let the overlay receive pointer taps (web)
     app.stage.addChild(this.layers.root);
 
     // Callbacks a weapon uses to produce world effects
@@ -44,13 +68,21 @@ export class Game {
     this.buildGround();
     this.buildPillars();
     this.buildPlayer();
-    this.buildEnemies();
     this.buildHud();
 
-    this.input.attach(this.app.canvas as unknown as InputCanvas);
-    this.input.onSwitchWeapon = (slot) => this.switchWeapon(slot);
-    this.input.onJump = () => this.player.jump();
+    this.layers.ui.addChild(this.screens.view);
+    this.screens.onConfirm = () => this.confirm();
 
+    this.input.attach(this.app.canvas as unknown as InputCanvas);
+    this.input.onSwitchWeapon = (slot) => {
+      if (this.phase === 'playing') this.switchWeapon(slot);
+    };
+    this.input.onJump = () => {
+      if (this.phase === 'playing') this.player.jump();
+      else this.confirm();
+    };
+
+    this.showMenu();
     this.app.ticker.add((t) => this.update(t.deltaTime));
   }
 
@@ -106,8 +138,66 @@ export class Game {
     this.player.sync();
   }
 
-  private buildEnemies() {
-    const spots = [[300, 300], [1250, 350], [1300, 850], [250, 950]];
+  private buildHud() {
+    this.hud = new Text({
+      text: '',
+      style: { fill: 0xe2e8f0, fontSize: 15, fontFamily: 'monospace', lineHeight: 20 },
+    });
+    this.hud.x = 12;
+    this.hud.y = 10;
+    this.layers.ui.addChild(this.hud);
+  }
+
+  // ---- Run lifecycle (the closed loop) ----
+
+  private showMenu() {
+    this.phase = 'menu';
+    this.hud.visible = false;
+    const { w, h } = this.screenSize();
+    this.screens.show(w, h, 'DAYDAYUP',
+      'A twin-stick arena — clear every wave to win.',
+      'Press Fire / Space to start');
+  }
+
+  // Reset all per-run state and drop into wave 1. Called for a fresh start and
+  // for restart (design/10: rebuild from scratch, nothing carried over here).
+  private beginRun() {
+    // Clear transient entities from any prior run
+    for (const e of this.enemies) this.removeActor(e);
+    for (const b of this.bullets) b.destroy();
+    for (const p of this.pickups) p.destroy();
+    this.enemies = [];
+    this.bullets = [];
+    this.pickups = [];
+    for (const child of [...this.layers.fx.children]) child.destroy();
+
+    // Reset the player
+    this.player.hp = this.player.maxHp;
+    this.player.alive = true;
+    this.player.gx = WORLD_W / 2;
+    this.player.gy = WORLD_H / 2;
+    this.player.z = 0;
+    this.player.vz = 0;
+    this.player.equip(new RangedWeapon());
+    this.player.sync();
+
+    this.score = 0;
+    this.waves.reset();
+    this.waveBreak = 0;
+    this.spawnNextWave();
+
+    this.phase = 'playing';
+    this.hud.visible = true;
+    this.screens.hide();
+  }
+
+  // Spawn the next wave, or declare victory when the run is complete.
+  private spawnNextWave() {
+    const spots = this.waves.next();
+    if (!spots) {
+      this.win();
+      return;
+    }
     for (const [gx, gy] of spots) {
       const e = new Enemy(gx, gy);
       this.enemies.push(e);
@@ -117,14 +207,28 @@ export class Game {
     }
   }
 
-  private buildHud() {
-    this.hud = new Text({
-      text: '',
-      style: { fill: 0xe2e8f0, fontSize: 15, fontFamily: 'monospace', lineHeight: 20 },
-    });
-    this.hud.x = 12;
-    this.hud.y = 10;
-    this.layers.ui.addChild(this.hud);
+  private win() {
+    this.phase = 'victory';
+    this.hud.visible = false;
+    this.score += CONFIG.score.victory;
+    const { w, h } = this.screenSize();
+    this.screens.show(w, h, 'VICTORY',
+      `All ${this.waves.total} waves cleared.   Score ${this.score}`,
+      'Press Fire / Space to play again');
+  }
+
+  private lose() {
+    this.phase = 'defeat';
+    this.hud.visible = false;
+    const { w, h } = this.screenSize();
+    this.screens.show(w, h, 'DEFEAT',
+      `You reached wave ${this.waves.current} / ${this.waves.total}.   Score ${this.score}`,
+      'Press Fire / Space to try again');
+  }
+
+  // Menu/result confirm. On a rising fire edge or a tap/jump, (re)start the run.
+  private confirm() {
+    if (this.phase !== 'playing') this.beginRun();
   }
 
   // ---- Weapons ----
@@ -173,16 +277,38 @@ export class Game {
   // ---- Main loop ----
 
   private update(dt: number) {
-    if (this.player.alive) this.updatePlayer(dt);
+    if (this.phase === 'playing') {
+      this.updatePlaying(dt);
+    } else {
+      // Menu / result: keep fx animating, poll for the confirm press.
+      this.updateFx(dt);
+      this.pollConfirm();
+    }
+  }
+
+  private updatePlaying(dt: number) {
+    this.updatePlayer(dt);
     this.updateEnemies(dt);
     this.updateBullets(dt);
+    this.updatePickups(dt);
     this.updateFx(dt);
     this.updateCamera();
+    this.updateWaves(dt);
     this.updateHud();
+
+    if (!this.player.alive) this.lose();
+  }
+
+  // Rising-edge fire → confirm (start/restart) on non-playing screens.
+  private pollConfirm() {
+    const firing = this.input.read().firing;
+    if (firing && !this.prevFire) this.confirm();
+    this.prevFire = firing;
   }
 
   private updatePlayer(dt: number) {
     const inp = this.input.read();
+    this.prevFire = inp.firing; // keep edge state fresh so re-entering a menu doesn't auto-confirm
 
     // Movement
     this.player.gx += inp.moveX * CONFIG.playerSpeed * dt;
@@ -238,6 +364,7 @@ export class Game {
   private updateEnemies(dt: number) {
     for (const e of this.enemies) {
       if (!e.alive) {
+        this.onEnemyKilled(e);
         this.removeActor(e);
         continue;
       }
@@ -251,6 +378,59 @@ export class Game {
       e.sync();
     }
     this.enemies = this.enemies.filter((e) => e.alive);
+  }
+
+  // Death → score + roll a drop (design/08 steps 8-9, slice form).
+  private onEnemyKilled(e: Enemy) {
+    this.score += CONFIG.score.kill;
+    const kind = Math.random() < CONFIG.healChance ? 'health' : 'coin';
+    const p = new Pickup(e.gx, e.gy, kind);
+    this.pickups.push(p);
+    this.layers.entities.addChild(p);
+    this.layers.shadow.addChild(p.shadow!);
+    p.sync();
+  }
+
+  private updatePickups(dt: number) {
+    const p = this.player;
+    const reach = p.radius + CONFIG.pickupRadius;
+    for (const item of this.pickups) {
+      if (!item.alive) continue;
+      item.step(dt);
+      if (Math.hypot(item.gx - p.gx, item.gy - p.gy) <= reach) {
+        if (item.kind === 'health') {
+          p.hp = Math.min(p.maxHp, p.hp + CONFIG.healAmount);
+          this.flash(p.gx, p.gy, CONFIG.colors.pickupHealth, 20);
+        } else {
+          this.score += CONFIG.score.coin;
+          this.flash(p.gx, p.gy, CONFIG.colors.pickupCoin, 16);
+        }
+        item.alive = false;
+        continue;
+      }
+      item.sync();
+    }
+    this.pickups = this.pickups.filter((item) => {
+      if (!item.alive) {
+        item.destroy();
+        return false;
+      }
+      return true;
+    });
+  }
+
+  // Inter-wave pacing: once a wave is cleared, wait a short beat then spawn the next.
+  private updateWaves(dt: number) {
+    if (this.enemies.length > 0) return;
+    if (this.waveBreak <= 0) {
+      this.waveBreak = CONFIG.waveBreakFrames;
+      this.score += CONFIG.score.waveClear;
+    }
+    this.waveBreak -= dt;
+    if (this.waveBreak <= 0) {
+      this.waveBreak = 0;
+      this.spawnNextWave();
+    }
   }
 
   private updateBullets(dt: number) {
@@ -304,7 +484,7 @@ export class Game {
           continue;
         }
       } else if (b.faction === 'player') {
-        // A deflected bullet hitting enemies
+        // A player bullet (fired or deflected) hitting enemies
         const hit = this.nearestEnemyHit(b.gx, b.gy);
         if (hit) {
           hit.takeDamage(2);
@@ -366,6 +546,13 @@ export class Game {
     this.layers.world.y = cy;
   }
 
+  private screenSize() {
+    return {
+      w: this.app.renderer.width / this.app.renderer.resolution,
+      h: this.app.renderer.height / this.app.renderer.resolution,
+    };
+  }
+
   private updateHud() {
     const w = this.player.weapon;
     const wname = w ? `${w.name} (${w.kind})` : 'none';
@@ -373,9 +560,9 @@ export class Game {
     const blocking = w && w.blockArc().active ? '  [blocking]' : '';
     this.hud.text =
       `HP ${hp}${blocking}\n` +
-      `Weapon ${wname}   Enemies ${this.enemies.length}\n` +
-      `[1] gun  [2] sword   LMB = attack   RMB/Shift = block   Space = jump   WASD = move` +
-      (this.player.alive ? '' : '\n\nYou are down — refresh to restart');
+      `Wave ${this.waves.current}/${this.waves.total}   Enemies ${this.enemies.length}   Score ${this.score}\n` +
+      `Weapon ${wname}\n` +
+      `[1] gun  [2] sword   LMB = attack   RMB/Shift = block   Space = jump   WASD = move`;
   }
 }
 
