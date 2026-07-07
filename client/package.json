@@ -1,0 +1,19 @@
+{
+  "name": "daydayup-client",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "DayDayUp client — PixiJS v8 top-down shooter vertical slice",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 4173"
+  },
+  "dependencies": {
+    "pixi.js": "^8.6.6"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
+  }
+}
