@@ -6,7 +6,7 @@ import { Actor } from './Actor';
 import { Skin } from './Skin';
 import { Bullet } from './Bullet';
 import { Enemy } from './Enemy';
-import { WebInput } from './input';
+import type { InputCanvas, InputSource } from '../platform/types';
 import type { WeaponContext } from './weapons/Weapon';
 import { RangedWeapon } from './weapons/RangedWeapon';
 import { MeleeWeapon } from './weapons/MeleeWeapon';
@@ -18,7 +18,7 @@ const WORLD_H = 1200;
 export class Game {
   private app: Application;
   private layers = new Layers();
-  private input = new WebInput();
+  private input: InputSource;
 
   private player!: Actor;
   private enemies: Enemy[] = [];
@@ -28,8 +28,9 @@ export class Game {
   private hud!: Text;
   private ctx: WeaponContext;
 
-  constructor(app: Application) {
+  constructor(app: Application, input: InputSource) {
     this.app = app;
+    this.input = input;
     app.stage.addChild(this.layers.root);
 
     // Callbacks a weapon uses to produce world effects
@@ -46,7 +47,7 @@ export class Game {
     this.buildEnemies();
     this.buildHud();
 
-    this.input.attach(this.app.canvas as HTMLCanvasElement);
+    this.input.attach(this.app.canvas as unknown as InputCanvas);
     this.input.onSwitchWeapon = (slot) => this.switchWeapon(slot);
     this.input.onJump = () => this.player.jump();
 
@@ -189,10 +190,16 @@ export class Game {
     this.player.gx = clamp(this.player.gx, 20, WORLD_W - 20);
     this.player.gy = clamp(this.player.gy, 20, WORLD_H - 20);
 
-    // Facing: mouse screen coords -> world coords
-    const worldAimX = inp.aimX - this.layers.world.x;
-    const worldAimY = inp.aimY - this.layers.world.y;
-    this.player.facing = Math.atan2(worldAimY - this.player.gy, worldAimX - this.player.gx);
+    // Facing. 'point' aim (mouse) is a screen position → convert to world space.
+    // 'dir' aim (virtual joystick) is already a direction; apply it only when active
+    // so an idle stick keeps the last facing instead of snapping.
+    if (inp.aim.mode === 'point') {
+      const worldAimX = inp.aim.x - this.layers.world.x;
+      const worldAimY = inp.aim.y - this.layers.world.y;
+      this.player.facing = Math.atan2(worldAimY - this.player.gy, worldAimX - this.player.gx);
+    } else if (inp.aim.dx !== 0 || inp.aim.dy !== 0) {
+      this.player.facing = Math.atan2(inp.aim.dy, inp.aim.dx);
+    }
 
     this.player.updatePhysics(dt);
 

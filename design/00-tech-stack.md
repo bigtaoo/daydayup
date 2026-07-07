@@ -27,6 +27,11 @@
 
 | Platform | Approach | Status |
 |----------|----------|--------|
-| Web | Pixi v8 directly (WebGL/WebGPU) | verified in demo |
-| PC / Android / iOS | Capacitor shell over the web build | to do |
-| WeChat mini-game | Pixi v8 + weapp-adapter, WebGL fallback | to verify (see 04) |
+| Web | Pixi v8 directly (WebGL/WebGPU) | verified (desktop + touch) |
+| Android / iOS | Capacitor shell over the web build | configured (`capacitor.config.ts` + scripts); native build pending on your SDKs |
+| PC (Windows/macOS) | Desktop browser now; Capacitor+Electron later | web build runs; native shell to do |
+| WeChat mini-game | Pixi v8 + own `DOMAdapter` (no weapp-adapter) + unsafe-eval, WebGL | **boot + render verified in DevTools** (see 04) |
+
+Input is unified across platforms: keyboard/mouse on desktop, a shared virtual
+twin-stick (`client/src/platform/TouchControls.ts`) on all touch targets (mobile web,
+Capacitor, WeChat).

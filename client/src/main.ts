@@ -1,20 +1,14 @@
-import { Application } from 'pixi.js';
 import { Game } from './game/Game';
+import { WebPlatform } from './platform/web/WebPlatform';
 
-// Web entry. The WeChat entry is provided separately under platform/wechat (reusing the Game core).
+// Web entry. The WeChat entry is client/src/main.wechat.ts (loaded by client/wechat/game.js).
+// Both reuse the Game core; only the Platform differs.
 async function boot() {
-  const app = new Application();
-  await app.init({
-    background: '#0b0d12',
-    resizeTo: window,
-    antialias: true,
-    resolution: Math.min(window.devicePixelRatio || 1, 2),
-    autoDensity: true,
-    preference: 'webgl', // WeChat has no WebGPU; use WebGL to match target-platform behavior
-  });
-  document.body.appendChild(app.canvas);
+  const platform = new WebPlatform();
+  const app = await platform.createApp();
+  const input = platform.createInput(app);
 
-  const game = new Game(app);
+  const game = new Game(app, input);
   game.start();
 
   // Expose for debugging

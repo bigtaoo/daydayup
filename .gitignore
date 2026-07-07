@@ -4,6 +4,15 @@ node_modules/
 # Build output
 dist/
 *.tsbuildinfo
+# WeChat mini-game bundle (generated from src/main.wechat.ts by build:wechat)
+client/wechat/js/
+# Capacitor native projects (generated on demand via `cap add`)
+client/android/
+client/ios/
+# Local WeChat DevTools project: build:wechat generates game.js/game.json/js here,
+# and project.config.json carries an account-specific appid. Not source — recreate
+# via a DevTools "new mini-game project" + `npm run build:wechat`. See design/04-wechat.md.
+platforms/
 
 # Logs
 *.log

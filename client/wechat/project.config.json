@@ -1,0 +1,13 @@
+{
+  "appid": "touristappid",
+  "projectname": "daydayup",
+  "compileType": "game",
+  "setting": {
+    "es6": false,
+    "minified": false,
+    "postcss": false,
+    "uploadWithSourceMap": true
+  },
+  "miniprogramRoot": "./",
+  "description": "DayDayUp WeChat mini-game — Pixi v8 + weapp-adapter (see ../../design/04-wechat.md)"
+}
