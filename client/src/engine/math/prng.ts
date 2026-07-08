@@ -18,6 +18,15 @@ export class Prng {
     this.state = (seed >>> 0) || 1;
   }
 
+  /**
+   * Read-only view of the current internal state (uint32). Does NOT advance the
+   * stream — for state hashing / replay verification only (design/08). Two engines
+   * that have drawn the same sequence expose the same value here.
+   */
+  peek(): number {
+    return this.state >>> 0;
+  }
+
   /** Advance state and return next uint32 */
   private next(): number {
     // state = (1664525 × state + 1013904223) mod 2^32

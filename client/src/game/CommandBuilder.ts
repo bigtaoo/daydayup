@@ -1,13 +1,13 @@
 // Render-side input → PlayerCommand. Reads the platform InputSource each sim tick
-// and assembles the engine's frozen twin-stick command: move/aim quantized to brad
-// via radToBrad (the deterministic input edge, design/06), buttons folded into the
-// bitfield. Discrete presses (jump / weapon swap) arrive as callbacks, so they are
-// latched here and flushed as a one-tick button pulse — the engine's own
-// rising-edge detection (prevButtons) then sees a clean press.
+// and assembles the engine's frozen twin-stick command. The float→brad/mag
+// quantization is the engine's input-edge seam (quantizeMove / quantizeAim,
+// design/06/08) — this file only handles the render-specific bits: screen→world
+// aim, idle-stick hold, and latching discrete presses (jump / weapon swap) into a
+// one-tick button pulse so the engine's rising-edge detection sees a clean press.
 //
-// This is the minimal command producer that makes Stage D playable; the full
-// InputSource net/replay seam + golden-replay coverage is Stage E.
-import { Button, radToBrad, type Brad, type PlayerCommand } from '@dd/engine';
+// Because the quantization lives in @dd/engine, the golden-replay tests build
+// commands through the exact same grid this producer uses.
+import { Button, makeCommand, quantizeAim, quantizeMove, type Brad, type PlayerCommand } from '@dd/engine';
 import type { InputSource } from '../platform/types';
 
 export class CommandBuilder {
@@ -38,9 +38,8 @@ export class CommandBuilder {
   ): PlayerCommand {
     const inp = this.input.read();
 
-    // Move: normalized vector → direction brad + 0..255 magnitude.
-    const mag = Math.min(1, Math.hypot(inp.moveX, inp.moveY));
-    const moveBrad = mag > 0 ? radToBrad(Math.atan2(inp.moveY, inp.moveX)) : (0 as Brad);
+    // Move: raw vector → direction brad + 0..255 magnitude (engine input edge).
+    const { moveBrad, moveMag } = quantizeMove(inp.moveX, inp.moveY);
 
     // Aim: 'point' (mouse) → world-space angle to the cursor; 'dir' (stick) → the
     // stick direction, but an idle stick holds the last aim instead of resetting.
@@ -48,9 +47,9 @@ export class CommandBuilder {
     if (inp.aim.mode === 'point') {
       const wx = inp.aim.x - cam.x;
       const wy = inp.aim.y - cam.y;
-      aim = radToBrad(Math.atan2(wy - playerPx.y, wx - playerPx.x));
+      aim = quantizeAim(wx - playerPx.x, wy - playerPx.y);
     } else if (inp.aim.dx !== 0 || inp.aim.dy !== 0) {
-      aim = radToBrad(Math.atan2(inp.aim.dy, inp.aim.dx));
+      aim = quantizeAim(inp.aim.dx, inp.aim.dy);
     }
     this.lastAim = aim;
 
@@ -66,14 +65,6 @@ export class CommandBuilder {
       this.swapLatch = false;
     }
 
-    return {
-      type: 'input',
-      owner,
-      tick,
-      moveBrad,
-      moveMag: Math.round(mag * 255),
-      aimBrad: aim,
-      buttons,
-    };
+    return makeCommand({ owner, tick, moveBrad, moveMag, aimBrad: aim, buttons });
   }
 }

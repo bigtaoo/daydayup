@@ -2,10 +2,12 @@
  * The per-tick twin-stick input snapshot (design/08 "PlayerCommand") and the
  * InputSource seam (design/08 "InputSource, replay, headless").
  *
- * Stage B defines the frozen command shape — it is step()'s input contract — plus
+ * Stage B defined the frozen command shape — it is step()'s input contract — plus
  * a minimal non-stalling LocalInputSource so createGameEngine(config, input?) has
- * an honest default. Stage E adds aim quantization at the input edge, the net /
- * replay InputSource impls, stall handling, and golden-replay tests around it.
+ * an honest default. Stage E formalized the seam: the input-edge quantization
+ * lives in input.ts, LocalInputSource can serialize the frames it saw into a
+ * Replay (replay.ts / ReplayInputSource), and golden-replay tests pin the
+ * seed+config+input → identical终局 guarantee.
  */
 import type { Brad } from '../math/trig';
 
@@ -28,15 +30,23 @@ export interface PlayerCommand {
   buttons: number; // Button bitfield
 }
 
-/** design/08: submit / take(frame). take returns null only when a frame isn't confirmed (net). */
+/**
+ * design/08: submit / take(frame). `take` returns null only when a frame isn't
+ * confirmed yet (net stall); a local/replay source never returns null. The
+ * optional confirmedLead(frame) reports how many frames ahead of `frame` are
+ * already confirmed (net pacing; unbounded for local/replay sources).
+ */
 export interface InputSource {
   submit(cmd: PlayerCommand): void;
   take(frame: number): PlayerCommand[] | null;
+  confirmedLead?(frame: number): number;
 }
 
 /**
  * Single-player / test input source. Never stalls: an unconfirmed frame returns
  * an empty array (idle-hold), not null (design/08 "LocalInputSource never stalls").
+ * It also records every frame it saw, so a finished single-player match can be
+ * serialized into a Replay for headless re-judge (see replay.ts).
  */
 export class LocalInputSource implements InputSource {
   private readonly byFrame = new Map<number, PlayerCommand[]>();
@@ -49,5 +59,16 @@ export class LocalInputSource implements InputSource {
 
   take(frame: number): PlayerCommand[] {
     return this.byFrame.get(frame) ?? [];
+  }
+
+  /**
+   * Every submitted command, flattened in deterministic (tick, then submit) order.
+   * Feeds toReplay() — the recorded stream a ReplayInputSource re-runs verbatim.
+   */
+  recorded(): PlayerCommand[] {
+    const frames = [...this.byFrame.keys()].sort((a, b) => a - b);
+    const out: PlayerCommand[] = [];
+    for (const f of frames) out.push(...this.byFrame.get(f)!);
+    return out;
   }
 }

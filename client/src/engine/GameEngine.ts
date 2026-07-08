@@ -4,11 +4,11 @@
  * determinism contract; reordering it (or changing how a system iterates a
  * collection) bumps ENGINE_VERSION.
  *
- * Stage B exposes step(commands) as the direct entry (headless/tests). The
- * InputSource seam (advance/submit) is wired minimally so createGameEngine's
- * `input?` default is honest; the full replay/net/stall behavior and golden-replay
- * tests are Stage E. The tick(dt) accumulator/interpolation loop is the render
- * layer's job (Stage D).
+ * step(commands) is the direct entry (headless/tests). The InputSource seam
+ * (advance/submit) pulls confirmed frames from the source; runHeadless() (replay.ts)
+ * drives it for re-judge/replay, and the render layer's accumulator drives it live
+ * (Stage D). A net stall (take → null) surfaces as advance() → null; local/replay
+ * sources never stall.
  */
 import { createGameState, type EngineConfig, type GameState } from './state/GameState';
 import { LocalInputSource, type InputSource, type PlayerCommand } from './state/commands';
