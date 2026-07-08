@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { toFp } from '@dd/engine/math/fixed';
+import { addFp } from '@dd/engine/math/fixed';
 import type { Brad } from '@dd/engine/math/trig';
+import { pxToFp } from '@dd/engine/content/convert';
+import { BLASTER_SIM } from '@dd/engine/content/weapons';
 import { createGameEngine } from '@dd/engine/GameEngine';
 import type { GameState } from '@dd/engine/state/GameState';
 import { Button, type PlayerCommand } from '@dd/engine/state/commands';
@@ -63,9 +65,10 @@ describe('GameEngine step order', () => {
     e.step([cmd(1, { aimBrad: 0 as Brad, buttons: Button.FIRE })]); // facing +x
     const b = e.state.projectiles[0]!;
     expect(b.faction).toBe('player');
-    // muzzle 400+30, then advanced one tick by vx 11 within the same step.
-    expect(b.gx).toBe(toFp(400 + 30 + 11));
-    expect(b.gy).toBe(toFp(400));
+    // spawned at player-centre + muzzleOffset, then advanced one tick by bulletSpeed
+    // within the same step (both along +x); all in grid-fp now.
+    expect(b.gx).toBe(addFp(addFp(pxToFp(400), BLASTER_SIM.muzzleOffset), BLASTER_SIM.bulletSpeed));
+    expect(b.gy).toBe(pxToFp(400));
   });
 });
 

@@ -4,9 +4,9 @@
  * state is Fp (fixed-point, design/06) and all angles are Brad (binary-radian).
  * Systems are the only code that mutates these; render/server only read.
  *
- * Stage B note: weapon specs live here as the sim-facing shape; the human-unit
- * WEAPON_SPECS catalog + converter (content/weapons.ts) moves into the engine in
- * Stage C and supersedes the hand-tuned constants in sim.config.ts.
+ * These are the sim-facing (already-converted) weapon shapes. The human-unit
+ * WEAPON_SPECS catalog + converter that produce them live in content/weapons.ts
+ * (Stage C); systems only ever see these fp/brad/tick specs.
  */
 import type { Fp } from '../math/fixed';
 import type { Brad } from '../math/trig';
@@ -26,6 +26,7 @@ export interface RangedSimSpec {
   bulletLifeTicks: number;
   bulletRadius: Fp;
   muzzleOffset: Fp; // spawn distance from actor centre along facing
+  bulletZ: Fp; // muzzle height band (design/07 z-gating; cosmetic until then)
   damage: number; // integer
 }
 

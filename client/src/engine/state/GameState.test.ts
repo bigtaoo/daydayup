@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { createGameState } from '@dd/engine/state/GameState';
-import { toFp } from '@dd/engine/math/fixed';
+import { pxToFp } from '@dd/engine/content/convert';
 
 const CONFIG = {
   seed: 12345,
@@ -15,8 +15,8 @@ describe('GameState (plain data, design/08 schema)', () => {
     expect(s.phase).toBe('idle');
     expect(s.tick).toBe(0);
     expect(s.players).toHaveLength(1);
-    expect(s.players[0]!.gx).toBe(toFp(800));
-    expect(s.players[0]!.gy).toBe(toFp(600));
+    expect(s.players[0]!.gx).toBe(pxToFp(800)); // world centre, px → grid-fp
+    expect(s.players[0]!.gy).toBe(pxToFp(600));
     expect(s.players[0]!.weapon?.spec.kind).toBe('ranged');
     expect(s.enemies).toHaveLength(0);
   });

@@ -17,7 +17,8 @@ import { cosFp, sinFp } from '../math/trig';
 import type { GameState } from '../state/GameState';
 import { Button, type PlayerCommand } from '../state/commands';
 import type { PlayerActor } from '../state/entities';
-import { makeWeapon, PLAYER_BLASTER, PLAYER_SABER, SIM } from '../sim.config';
+import { makeWeapon, BLASTER_SIM, SABER_SIM } from '../content/weapons';
+import { PLAYER } from '../content/players';
 
 export class ApplyInputSystem {
   tick(state: GameState, commands: readonly PlayerCommand[]): void {
@@ -43,7 +44,7 @@ export class ApplyInputSystem {
     // Move: (dir/1000) × speedPerTick × (mag/255), single truncation → deterministic.
     const cos = cosFp(cmd.moveBrad);
     const sin = sinFp(cmd.moveBrad);
-    const speed = SIM.player.speedPerTick;
+    const speed = PLAYER.speedPerTick;
     p.vx = Math.trunc((cos * speed * cmd.moveMag) / (FP_SCALE * 255)) as Fp;
     p.vy = Math.trunc((sin * speed * cmd.moveMag) / (FP_SCALE * 255)) as Fp;
 
@@ -59,7 +60,7 @@ export class ApplyInputSystem {
     p.firing = (held & Button.FIRE) !== 0 && !(w?.blocking ?? false);
 
     if (pressed & Button.SWAP_WEAPON) this.swap(p);
-    if (pressed & Button.JUMP && p.z <= 0) p.vz = SIM.player.jumpV;
+    if (pressed & Button.JUMP && p.z <= 0) p.vz = PLAYER.jumpV;
 
     p.prevButtons = held;
   }
@@ -73,7 +74,7 @@ export class ApplyInputSystem {
   }
 
   private swap(p: PlayerActor): void {
-    const next = p.weapon?.spec.kind === 'ranged' ? PLAYER_SABER : PLAYER_BLASTER;
+    const next = p.weapon?.spec.kind === 'ranged' ? SABER_SIM : BLASTER_SIM;
     p.weapon = makeWeapon(next);
   }
 }

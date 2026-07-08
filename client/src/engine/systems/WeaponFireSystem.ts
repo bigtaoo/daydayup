@@ -6,15 +6,14 @@
  * (design/08) so a bullet spawns at this tick's muzzle, then everything moves.
  *
  * Ports RangedWeapon.use() / MeleeWeapon.use() and the enemy-fire block of
- * Game.ts updateEnemies(): float cos/sin → fp-trig, px → fp. Spread jitter
- * (combatPrng) is deferred to Stage C with the WEAPON_SPECS catalog.
+ * Game.ts updateEnemies(): float cos/sin → fp-trig, px → grid-fp. Multi-pellet
+ * spread jitter (combatPrng; content spreadDeg/bullets) is deferred to a later
+ * stage — the demo weapons are all single pinpoint shots.
  */
-import { addFp, mulFp, toFp } from '../math/fixed';
+import { addFp, mulFp } from '../math/fixed';
 import { cosFp, sinFp } from '../math/trig';
 import type { GameState } from '../state/GameState';
 import type { Actor, RangedSimSpec } from '../state/entities';
-
-const BULLET_Z = toFp(12); // bullets sit slightly above the ground (demo)
 
 export class WeaponFireSystem {
   tick(state: GameState): void {
@@ -48,7 +47,7 @@ export class WeaponFireSystem {
       faction: a.faction,
       gx,
       gy,
-      z: BULLET_Z,
+      z: spec.bulletZ,
       vx: mulFp(cos, spec.bulletSpeed),
       vy: mulFp(sin, spec.bulletSpeed),
       radius: spec.bulletRadius,

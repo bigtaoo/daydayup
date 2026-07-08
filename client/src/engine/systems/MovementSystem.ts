@@ -10,7 +10,7 @@
  */
 import { addFp, subFp } from '../math/fixed';
 import type { Fp } from '../math/fixed';
-import { SIM } from '../sim.config';
+import { PLAYER } from '../content/players';
 import type { GameState } from '../state/GameState';
 import type { Actor } from '../state/entities';
 
@@ -31,7 +31,7 @@ export class MovementSystem {
     a.gx = addFp(a.gx, a.vx);
     a.gy = addFp(a.gy, a.vy);
     if (a.z > 0 || a.vz > 0) {
-      a.vz = subFp(a.vz, SIM.player.gravity);
+      a.vz = subFp(a.vz, PLAYER.gravity);
       a.z = addFp(a.z, a.vz);
       if (a.z < 0) {
         a.z = 0 as Fp;
@@ -41,7 +41,7 @@ export class MovementSystem {
   }
 
   private clampToWorld(state: GameState, a: Actor): void {
-    const m = SIM.player.margin;
+    const m = PLAYER.margin;
     a.gx = Math.max(m, Math.min(state.worldW - m, a.gx)) as Fp;
     a.gy = Math.max(m, Math.min(state.worldH - m, a.gy)) as Fp;
   }

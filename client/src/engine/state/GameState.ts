@@ -8,7 +8,9 @@
 import { Prng } from '../math/prng';
 import { toFp } from '../math/fixed';
 import type { Fp } from '../math/fixed';
-import { makeWeapon, PLAYER_BLASTER, SIM } from '../sim.config';
+import { pxToFp } from '../content/convert';
+import { makeWeapon } from '../content/weapons';
+import { PLAYER } from '../content/players';
 import type {
   EnemyActor,
   PickupItem,
@@ -20,12 +22,12 @@ import type { GameEvent } from './events';
 
 export type Phase = 'idle' | 'playing' | 'gameover';
 
-/** A wave is a list of enemy spawn positions in world px (Stage B unit == px). */
+/** A wave is a list of enemy spawn positions in world px (converted to grid-fp). */
 export type WaveDef = readonly (readonly [number, number])[];
 
 export interface EngineConfig {
   seed: number;
-  worldW: number; // px
+  worldW: number; // px (converted to grid-fp at construction via pxToFp)
   worldH: number; // px
   waves: readonly WaveDef[];
   playerStart?: readonly [number, number]; // px; defaults to world centre
@@ -78,26 +80,26 @@ export class GameState {
     this.aiPrng = new Prng(config.seed ^ SEED_AI);
     this.combatPrng = new Prng(config.seed ^ SEED_COMBAT);
     this.dropPrng = new Prng(config.seed ^ SEED_DROP);
-    this.worldW = toFp(config.worldW);
-    this.worldH = toFp(config.worldH);
+    this.worldW = pxToFp(config.worldW);
+    this.worldH = pxToFp(config.worldH);
     this.waves = config.waves;
 
     const [sx, sy] = config.playerStart ?? [config.worldW / 2, config.worldH / 2];
     this.players.push({
       id: this.nextId(),
       faction: 'player',
-      gx: toFp(sx),
-      gy: toFp(sy),
+      gx: pxToFp(sx),
+      gy: pxToFp(sy),
       z: toFp(0),
       vx: toFp(0),
       vy: toFp(0),
       vz: toFp(0),
       facing: 0 as PlayerActor['facing'],
-      hp: SIM.player.maxHp,
-      maxHp: SIM.player.maxHp,
-      radius: SIM.player.radius,
+      hp: PLAYER.maxHp,
+      maxHp: PLAYER.maxHp,
+      radius: PLAYER.radius,
       alive: true,
-      weapon: makeWeapon(PLAYER_BLASTER),
+      weapon: makeWeapon(PLAYER.startWeapon),
       firing: false,
       prevButtons: 0,
     });
