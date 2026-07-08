@@ -8,7 +8,12 @@
     "noUnusedParameters": true,
     "skipLibCheck": true,
     "lib": ["ES2020", "DOM", "DOM.Iterable"],
-    "types": []
+    "types": [],
+    "baseUrl": ".",
+    "paths": {
+      "@dd/engine": ["src/engine/index.ts"],
+      "@dd/engine/*": ["src/engine/*"]
+    }
   },
   "include": ["src"]
 }

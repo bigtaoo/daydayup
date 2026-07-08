@@ -6,6 +6,9 @@
   "description": "DayDayUp client — PixiJS v8 top-down shooter vertical slice",
   "scripts": {
     "dev": "vite",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "gen:trig": "node tools/gen-trig-tables.mjs",
     "build": "tsc --noEmit && vite build",
     "build:wechat": "tsc --noEmit && vite build --config vite.wechat.config.js",
     "preview": "vite preview --port 4173",
@@ -24,6 +27,7 @@
   "devDependencies": {
     "@capacitor/cli": "^8.4.1",
     "typescript": "^5.7.2",
-    "vite": "^6.0.7"
+    "vite": "^6.0.7",
+    "vitest": "^4.1.10"
   }
 }
