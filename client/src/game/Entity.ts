@@ -1,15 +1,26 @@
 import { Container, Graphics } from 'pixi.js';
 import { CONFIG } from './config';
 
-// Base class for all world objects.
-// Ground coords gx/gy drive sorting, shadows, and collision; z is visual height.
-// See the coordinate & height model in design/01-rendering.md.
+// Base view for all world objects. Stage D: this is a PURE view — it owns no
+// gameplay state and decides no outcomes. The engine is authoritative; the render
+// layer only reads engine state and draws it (design/06/08).
+//
+// Motion is double-buffered for interpolation: the sim advances at a fixed 30 Hz,
+// but the screen redraws at display rate (~60 fps). Each sim tick the Scene pushes
+// a fresh position (cur → prev, then cur = new); each render frame lerps between
+// prev and cur by `alpha` so movement reads smooth despite the slower sim. Ground
+// coords are world px; screen.y = y - z (height); zIndex = y for the Y-sort. Angles
+// are NOT interpolated (design decision: take the current facing, no wrap wobble).
 export class Entity extends Container {
-  gx = 0;
-  gy = 0;
-  z = 0;
+  // Interpolation buffers (world px).
+  prevX = 0;
+  prevY = 0;
+  prevZ = 0;
+  curX = 0;
+  curY = 0;
+  curZ = 0;
+  facingRad = 0;
 
-  alive = true;
   shadow: Graphics | null = null;
 
   // Create an elliptical soft shadow, added to the shadow layer by the caller.
@@ -20,24 +31,66 @@ export class Entity extends Container {
     return s;
   }
 
-  // Sync the screen transform and shadow each frame. screen.y = gy - z; shadow stays on the ground (gy).
-  sync() {
-    this.x = this.gx;
-    this.y = this.gy - this.z;
-    this.zIndex = this.gy; // Y-sort
+  // One-shot static placement (pillars): no interpolation, drawn where it stands.
+  place(x: number, y: number, z = 0): void {
+    this.prevX = this.curX = x;
+    this.prevY = this.curY = y;
+    this.prevZ = this.curZ = z;
+    this.applyTransform(x, y, z);
+  }
+
+  // Ingest one sim-tick position: shift cur → prev, then set the new cur.
+  pushState(x: number, y: number, z: number, facingRad: number): void {
+    this.prevX = this.curX;
+    this.prevY = this.curY;
+    this.prevZ = this.curZ;
+    this.curX = x;
+    this.curY = y;
+    this.curZ = z;
+    this.facingRad = facingRad;
+  }
+
+  // Collapse prev onto cur — call right after a view is created so it appears at
+  // its spawn position instead of lerping in from (0,0).
+  snap(): void {
+    this.prevX = this.curX;
+    this.prevY = this.curY;
+    this.prevZ = this.curZ;
+  }
+
+  // Interpolated ground position (world px), for the camera to follow smoothly.
+  interpGroundX(alpha: number): number {
+    return this.prevX + (this.curX - this.prevX) * alpha;
+  }
+  interpGroundY(alpha: number): number {
+    return this.prevY + (this.curY - this.prevY) * alpha;
+  }
+
+  // Render-frame interpolation. alpha ∈ [0,1) is the fraction into the current tick.
+  interpolate(alpha: number, _frameDt: number): void {
+    this.applyTransform(
+      this.prevX + (this.curX - this.prevX) * alpha,
+      this.prevY + (this.curY - this.prevY) * alpha,
+      this.prevZ + (this.curZ - this.prevZ) * alpha,
+    );
+  }
+
+  // Write the Pixi transform + shadow from an interpolated ground position + height.
+  protected applyTransform(x: number, y: number, z: number): void {
+    this.x = x;
+    this.y = y - z;
+    this.zIndex = y; // Y-sort
 
     if (this.shadow) {
-      this.shadow.x = this.gx;
-      this.shadow.y = this.gy;
-      // Higher lift → smaller, fainter shadow
-      const k = 1 / (1 + this.z * 0.012);
+      this.shadow.x = x;
+      this.shadow.y = y;
+      const k = 1 / (1 + z * 0.012); // higher lift → smaller, fainter shadow
       this.shadow.scale.set(k);
       this.shadow.alpha = 0.35 * k;
     }
   }
 
-  destroy() {
-    this.alive = false;
+  destroy(): void {
     this.shadow?.parent?.removeChild(this.shadow);
     this.shadow?.destroy();
     super.destroy({ children: true });

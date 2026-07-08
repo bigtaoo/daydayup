@@ -9,9 +9,9 @@
  * displacement @30Hz in Stage B (× 60/30 = ×2), so ÷32 alone rescales them.
  */
 import type { Fp } from '../math/fixed';
-import type { RangedSimSpec } from '../state/entities';
+import type { WeaponSimSpec } from '../state/entities';
 import { pxToFp } from './convert';
-import { BLASTER_SIM } from './weapons';
+import { BLASTER_SIM, SABER_SIM } from './weapons';
 
 export interface PlayerBlueprint {
   maxHp: number;
@@ -20,7 +20,7 @@ export interface PlayerBlueprint {
   margin: Fp; // clamp inset from the world edge
   jumpV: Fp; // initial upward z velocity, fp/tick
   gravity: Fp; // z acceleration per tick, fp/tick²
-  startWeapon: RangedSimSpec; // starter loadout
+  startWeapons: WeaponSimSpec[]; // loadout; index 0 active at spawn, SWAP toggles
 }
 
 export const PLAYER: PlayerBlueprint = {
@@ -30,5 +30,5 @@ export const PLAYER: PlayerBlueprint = {
   margin: pxToFp(20),
   jumpV: pxToFp(26), // 13 px/frame × 2
   gravity: pxToFp(3.6), // 0.9 px/frame² × 4 (dt doubled → dt² ×4)
-  startWeapon: BLASTER_SIM,
+  startWeapons: [BLASTER_SIM, SABER_SIM], // gun + saber; a Stage-F build swaps this
 };

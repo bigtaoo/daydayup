@@ -1,65 +1,61 @@
+import { Graphics } from 'pixi.js';
 import { CONFIG } from './config';
 import { Entity } from './Entity';
 import { Skin } from './Skin';
-import type { Weapon } from './weapons/Weapon';
 
 export type Faction = 'player' | 'enemy';
+export type WeaponKind = 'ranged' | 'melee';
 
-// Logical entity. Gameplay stats live here and on Weapon, not on Skin (character = skin, see design/02).
+// Actor view (player / enemy). Pure presentation: body skin, a soft shadow, and a
+// cosmetic weapon graphic that swaps shape by the engine weapon's kind (Stage D:
+// no weapon logic lives here — the engine owns firing, cooldowns, and the loadout).
 export class Actor extends Entity {
-  vz = 0; // jump / gravity velocity
-  facing = 0; // radians
-  hp: number;
-  maxHp: number;
-  faction: Faction;
-  radius: number;
+  private skin: Skin;
+  private weaponGfx = new Graphics();
+  private weaponKind: WeaponKind | null | undefined = undefined;
+  private radiusPx: number;
 
-  skin: Skin;
-  weapon: Weapon | null = null;
-
-  constructor(faction: Faction, skin: Skin, radius: number, maxHp: number) {
+  constructor(faction: Faction, radiusPx: number) {
     super();
-    this.faction = faction;
-    this.skin = skin;
-    this.radius = radius;
-    this.maxHp = maxHp;
-    this.hp = maxHp;
-
-    // The actor container also sorts by zIndex to support the weapon's local front/back switch
+    this.radiusPx = radiusPx;
+    // The actor container sorts children so the weapon can sit in front of / behind.
     this.sortableChildren = true;
-    this.addChild(skin.view);
-    this.makeShadow(radius);
+
+    const [body, front] =
+      faction === 'player'
+        ? [CONFIG.colors.player, CONFIG.colors.playerFront]
+        : [CONFIG.colors.enemy, 0xffd6d6];
+    this.skin = new Skin(body, front, radiusPx);
+    this.addChild(this.skin.view);
+
+    this.weaponGfx.zIndex = 1;
+    this.addChild(this.weaponGfx);
+    this.makeShadow(radiusPx);
   }
 
-  equip(weapon: Weapon) {
-    if (this.weapon) {
-      this.weapon.onUnequip();
-      this.removeChild(this.weapon.view);
+  // Swap the cosmetic weapon shape to match the engine's active weapon kind.
+  setWeaponKind(kind: WeaponKind | null): void {
+    if (kind === this.weaponKind) return;
+    this.weaponKind = kind;
+    this.drawWeapon(kind);
+  }
+
+  private drawWeapon(kind: WeaponKind | null): void {
+    const g = this.weaponGfx;
+    g.clear();
+    const r = this.radiusPx;
+    if (kind === 'ranged') {
+      g.rect(r * 0.5, -2.5, r * 0.8, 5).fill({ color: CONFIG.colors.gun }); // barrel
+    } else if (kind === 'melee') {
+      g.moveTo(r * 0.3, 0)
+        .lineTo(r * 1.5, 0)
+        .stroke({ color: CONFIG.colors.sword, width: 3 }); // blade
     }
-    this.weapon = weapon;
-    weapon.onEquip(this);
-    this.addChild(weapon.view);
   }
 
-  // Jump (demonstrates height/shadow separation)
-  jump() {
-    if (this.z <= 0.01) this.vz = CONFIG.jumpVelocity;
-  }
-
-  updatePhysics(dt: number) {
-    if (this.z > 0 || this.vz > 0) {
-      this.vz -= CONFIG.gravity * dt;
-      this.z += this.vz * dt;
-      if (this.z < 0) {
-        this.z = 0;
-        this.vz = 0;
-      }
-    }
-    this.skin.setFacing(this.facing);
-  }
-
-  takeDamage(n: number) {
-    this.hp = Math.max(0, this.hp - n);
-    if (this.hp <= 0) this.alive = false;
+  override interpolate(alpha: number, frameDt: number): void {
+    super.interpolate(alpha, frameDt);
+    this.skin.setFacing(this.facingRad);
+    this.weaponGfx.rotation = this.facingRad;
   }
 }

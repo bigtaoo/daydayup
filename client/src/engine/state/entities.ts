@@ -75,6 +75,12 @@ export interface Actor {
 export interface PlayerActor extends Actor {
   faction: 'player';
   prevButtons: number; // last tick's button bitfield, for rising-edge detection
+  // Loadout: up to two carried weapons (any mix of ranged/melee). SWAP toggles
+  // the active slot; each slot keeps its own cooldown, so switching does NOT
+  // refresh a weapon that is mid-cooldown. `weapon` (base Actor) mirrors
+  // weapons[activeSlot] — systems only ever read the active pointer.
+  weapons: WeaponState[];
+  activeSlot: number;
 }
 
 export interface EnemyActor extends Actor {

@@ -3,49 +3,26 @@ import { CONFIG } from './config';
 import { Entity } from './Entity';
 import type { Faction } from './Actor';
 
-// Bullet. Can be deflected by melee (faction changes from enemy to player and is redirected).
+// Bullet view. Pure presentation: a coloured dot with a shadow, positioned by the
+// engine each tick. The engine may flip a bullet's faction (melee deflect: enemy →
+// player); the view re-reads faction each reconcile and recolours to match.
 export class Bullet extends Entity {
-  vx: number;
-  vy: number;
-  faction: Faction;
-  life = CONFIG.bulletLifetime;
-  damage = 1;
-  private gfx: Graphics;
+  private gfx = new Graphics();
+  private radiusPx: number;
+  private faction: Faction | null = null;
 
-  constructor(gx: number, gy: number, vx: number, vy: number, faction: Faction) {
+  constructor(radiusPx: number) {
     super();
-    this.gx = gx;
-    this.gy = gy;
-    this.z = 12; // bullets sit slightly above the ground
-    this.vx = vx;
-    this.vy = vy;
-    this.faction = faction;
-
-    this.gfx = new Graphics();
-    this.draw();
+    this.radiusPx = radiusPx;
     this.addChild(this.gfx);
-    this.makeShadow(CONFIG.bulletRadius * 0.8);
+    this.makeShadow(radiusPx * 0.8);
   }
 
-  private draw() {
-    const color = this.faction === 'enemy' ? CONFIG.colors.bulletEnemy : CONFIG.colors.bulletPlayer;
+  setFaction(faction: Faction): void {
+    if (faction === this.faction) return;
+    this.faction = faction;
+    const color = faction === 'enemy' ? CONFIG.colors.bulletEnemy : CONFIG.colors.bulletPlayer;
     this.gfx.clear();
-    this.gfx.circle(0, 0, CONFIG.bulletRadius).fill({ color });
-  }
-
-  // Deflect: switch faction + redirect velocity, and recolor.
-  deflect(vx: number, vy: number) {
-    this.faction = 'player';
-    this.vx = vx;
-    this.vy = vy;
-    this.life = CONFIG.bulletLifetime;
-    this.draw();
-  }
-
-  step(dt: number) {
-    this.gx += this.vx * dt;
-    this.gy += this.vy * dt;
-    this.life -= dt;
-    if (this.life <= 0) this.alive = false;
+    this.gfx.circle(0, 0, this.radiusPx).fill({ color });
   }
 }

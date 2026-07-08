@@ -15,8 +15,12 @@ import { BRAD_FULL } from './math/trig';
  * and weapon/actor numbers moved to the content catalog, so every stored fp
  * position/velocity and weapon value differs from v1 — a v1 input stream would
  * diverge immediately.
+ *
+ * v3 (Stage D): the player carries a two-slot loadout and SWAP_WEAPON toggles the
+ * active slot instead of replacing the weapon with a fresh one — a switch now
+ * preserves each slot's cooldown, so a v2 stream that swaps would diverge.
  */
-export const ENGINE_VERSION = 2;
+export const ENGINE_VERSION = 3;
 
 /**
  * World scale — the anchor for every human-unit → fp/brad conversion (design/09).

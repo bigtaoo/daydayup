@@ -17,7 +17,6 @@ import { cosFp, sinFp } from '../math/trig';
 import type { GameState } from '../state/GameState';
 import { Button, type PlayerCommand } from '../state/commands';
 import type { PlayerActor } from '../state/entities';
-import { makeWeapon, BLASTER_SIM, SABER_SIM } from '../content/weapons';
 import { PLAYER } from '../content/players';
 
 export class ApplyInputSystem {
@@ -73,8 +72,12 @@ export class ApplyInputSystem {
     // prevButtons deliberately unchanged (idle-hold semantics above).
   }
 
+  // Toggle the active loadout slot. Each slot keeps its own runtime (cooldown /
+  // blocking), so switching mid-cooldown does not refresh a weapon. `weapon`
+  // mirrors weapons[activeSlot] for the systems that read the active pointer.
   private swap(p: PlayerActor): void {
-    const next = p.weapon?.spec.kind === 'ranged' ? SABER_SIM : BLASTER_SIM;
-    p.weapon = makeWeapon(next);
+    if (p.weapons.length < 2) return;
+    p.activeSlot = (p.activeSlot + 1) % p.weapons.length;
+    p.weapon = p.weapons[p.activeSlot] ?? null;
   }
 }

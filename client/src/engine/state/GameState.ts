@@ -85,6 +85,7 @@ export class GameState {
     this.waves = config.waves;
 
     const [sx, sy] = config.playerStart ?? [config.worldW / 2, config.worldH / 2];
+    const weapons = PLAYER.startWeapons.map(makeWeapon);
     this.players.push({
       id: this.nextId(),
       faction: 'player',
@@ -99,7 +100,9 @@ export class GameState {
       maxHp: PLAYER.maxHp,
       radius: PLAYER.radius,
       alive: true,
-      weapon: makeWeapon(PLAYER.startWeapon),
+      weapon: weapons[0] ?? null, // active pointer = weapons[activeSlot]
+      weapons,
+      activeSlot: 0,
       firing: false,
       prevButtons: 0,
     });
