@@ -19,7 +19,7 @@ The concrete form of `02`'s `Skin { atlasKey, anim, handAnchor() }`.
 ```
 AnimationRig {                 // authored once, shared across skins of the same body type
   fps                          // authoring frame rate (render interpolates; sim is 30Hz, 08)
-  states: {                    // idle / run / attack / hurt / death / block ...
+  states: {                    // idle / run / attack (melee swing = the parry) / hurt / death ...
     [name]: {
       frames: FrameRef[]       // ordered atlas-region ids
       durations: number[]      // per-frame hold (ms or frame-count)

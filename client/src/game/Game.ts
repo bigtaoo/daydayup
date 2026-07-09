@@ -22,6 +22,16 @@ const WAVES: WaveDef[] = [
   [[200, 300], [1400, 300], [200, 900], [1400, 900], [800, 150]],
 ];
 
+// Pillar layout (world px). Single source of truth for both the render mesh
+// (buildPillars) and the engine's collision solids (EngineConfig.obstacles).
+// Radius is the pillar's *base* footprint — smaller than the drawn body so the
+// player (feet footprint) can stand against it and its body covers the lower
+// column (Y-sort depth). Also the bullet-stop radius.
+const PILLAR_RADIUS = 14;
+const PILLARS: ReadonlyArray<readonly [number, number]> = [
+  [400, 400], [700, 550], [1000, 380], [1150, 720], [520, 780], [880, 900],
+];
+
 const SEED_BASE = 0xda1d; // per-run seed = base + run index (deterministic, no Date)
 const SIM_DT_MS = 1000 / 30; // fixed sim step: the engine runs at 30 Hz (design/06)
 const MAX_STEPS = 5; // catch-up cap per render frame → no spiral of death
@@ -72,10 +82,6 @@ export class Game {
     this.input.onSwitchWeapon = () => {
       if (this.phase === 'playing') this.builder.requestSwap();
     };
-    this.input.onJump = () => {
-      if (this.phase === 'playing') this.builder.requestJump();
-      else this.confirm();
-    };
 
     this.showMenu();
     this.app.ticker.add((t) => this.update(t.deltaMS));
@@ -94,12 +100,10 @@ export class Game {
   }
 
   private buildPillars() {
-    // Tall objects that validate Y-sort occlusion. Purely decorative — no collision
-    // in the engine yet (design/07). Placed once, never interpolated.
-    const spots = [
-      [400, 400], [700, 550], [1000, 380], [1150, 720], [520, 780], [880, 900],
-    ];
-    for (const [gx, gy] of spots) {
+    // Tall objects that validate Y-sort occlusion AND collide — the engine gets
+    // the same PILLARS list as round solids (EngineConfig.obstacles below). Placed
+    // once, never interpolated.
+    for (const [gx, gy] of PILLARS) {
       const p = new Entity();
       const height = 70;
       const body = new Graphics();
@@ -132,7 +136,7 @@ export class Game {
     const { w, h } = this.screenSize();
     this.screens.show(w, h, 'DAYDAYUP',
       'A twin-stick arena — clear every wave to win.',
-      'Press Fire / Space to start');
+      'Press Fire to start');
   }
 
   // Fresh run: reset render state and stand up a new engine (design/10 rebuild).
@@ -147,6 +151,7 @@ export class Game {
       worldW: WORLD_W,
       worldH: WORLD_H,
       waves: WAVES,
+      obstacles: PILLARS.map(([x, y]) => [x, y, PILLAR_RADIUS] as const),
     });
     this.runCount++;
 
@@ -165,7 +170,7 @@ export class Game {
     const { w, h } = this.screenSize();
     this.screens.show(w, h, 'VICTORY',
       `All ${WAVES.length} waves cleared.   Score ${this.score}`,
-      'Press Fire / Space to play again');
+      'Press Fire to play again');
   }
 
   private lose() {
@@ -175,7 +180,7 @@ export class Game {
     const { w, h } = this.screenSize();
     this.screens.show(w, h, 'DEFEAT',
       `You reached wave ${wave} / ${WAVES.length}.   Score ${this.score}`,
-      'Press Fire / Space to try again');
+      'Press Fire to try again');
   }
 
   private confirm() {
@@ -251,17 +256,28 @@ export class Game {
             e.faction === 'enemy' ? CONFIG.colors.enemy : CONFIG.colors.swordGlow, 16);
           break;
         case 'deflect':
-          this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.blockArc, 20);
+          this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.deflect, 20);
+          break;
+        case 'clash':
+          this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.clash, 14);
           break;
         case 'death':
           if (e.faction === 'enemy') this.score += CONFIG.score.kill;
           break;
         case 'pickup':
-          if (e.kind === 'health') {
-            this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupHealth, 20);
-          } else {
-            this.score += CONFIG.score.coin;
-            this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupCoin, 16);
+          switch (e.kind) {
+            case 'health':
+              this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupHealth, 20);
+              break;
+            case 'affix':
+              this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupAffix, 24);
+              break;
+            case 'weapon':
+              this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupWeapon, 24);
+              break;
+            default: // coin
+              this.score += CONFIG.score.coin;
+              this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupCoin, 16);
           }
           break;
         case 'wave_clear':
@@ -326,17 +342,17 @@ export class Game {
     const s = this.engine!.state;
     const p = s.players[0];
     const w = p?.weapon;
-    const wname = w ? `${w.spec.name} (${w.spec.kind})` : 'none';
+    const wname = w ? `${w.spec.name} (${w.spec.kind}) dmg ${w.spec.damage}` : 'none';
     const hp = p ? Math.max(0, p.hp) : 0;
     const maxHp = p ? p.maxHp : 0;
     const bar = '♥'.repeat(hp) + '·'.repeat(Math.max(0, maxHp - hp));
-    const blocking = w?.blocking ? '  [blocking]' : '';
     const wave = Math.max(1, s.waveIndex + 1);
+    const build = p && p.affixes.length ? `Build: ${summarizeAffixes(p.affixes)}` : 'Build: —';
     this.hud.text =
-      `HP ${bar}${blocking}\n` +
+      `HP ${bar}\n` +
       `Wave ${wave}/${WAVES.length}   Enemies ${s.enemies.length}   Score ${this.score}\n` +
-      `Weapon ${wname}\n` +
-      `[1]/[2] swap weapon   LMB = attack   RMB/Shift = block   Space = jump   WASD = move`;
+      `Weapon ${wname}   ${build}\n` +
+      `[1]/[2] swap weapon   LMB = attack (melee swing also parries bullets)   WASD = move`;
   }
 
   // Rising-edge fire → confirm (start/restart) on non-playing screens.
@@ -349,4 +365,12 @@ export class Game {
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
+}
+
+// Compact affix-stack readout for the HUD, e.g. "dmg×2 rof×1" — makes the run's
+// power ramp legible. Purely presentational (the engine owns the real stack).
+function summarizeAffixes(affixes: readonly { id: string }[]): string {
+  const counts = new Map<string, number>();
+  for (const a of affixes) counts.set(a.id, (counts.get(a.id) ?? 0) + 1);
+  return [...counts].map(([id, n]) => `${id}×${n}`).join(' ');
 }

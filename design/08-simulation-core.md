@@ -51,7 +51,7 @@ GameState {
 }
 ```
 
-`Actor` / `Weapon` fields follow `02` but **all positional/velocity state is fp and all angles are brad** (`06`): `gx_fp, gy_fp, z_fp, vx_fp, vy_fp, vz_fp: Fp`, `facing: Brad`, `hp, maxHp: number (integer)`. `PlayerActor extends Actor` with the input-derived intent for the current tick (see commands). The weapon carries `cooldownTicks` counted down in whole ticks, not seconds.
+`Actor` / `Weapon` fields follow `02` but **all positional/velocity state is fp and all angles are brad** (`06`): `gx_fp, gy_fp, vx_fp, vy_fp: Fp`, `facing: Brad`, `hp, maxHp: number (integer)`. Movement is 2D — there is no z/vz on actors (jump was removed; `z` survives only as a render-side, always-0 offset and on bullets as a cosmetic muzzle height). `PlayerActor extends Actor` with the input-derived intent for the current tick (see commands). The weapon carries `cooldownTicks` counted down in whole ticks, not seconds.
 
 ### Why arrays and a state-local id counter
 
@@ -79,15 +79,15 @@ step(tick, commands):
   clearEvents(); tick++
 
   1. Apply input      — for each PlayerActor, fold its confirmed command into intent
-                        (move vector, aim brad, firing/block flags, edge-detected swap)
+                        (move vector, aim brad, firing flag, edge-detected swap)
   2. AI decide        — enemies/boss set their own intent from state + aiPrng   [PvE only]
   3. Weapon fire      — for actors whose fire flag is set & cooldown ready:
                         ranged → spawn Projectile(s) (spread from combatPrng);
-                        melee  → start swing / set isBlocking (03)
-  4. Movement         — integrate vx/vy/vz + gravity on z; resolve actor–wall and
-                        actor–actor collision (07)
-  5. Projectile step  — advance bullets; resolve bullet–wall (expire/stop) (07)
-  6. Block / deflect  — melee blockArc() vs enemy bullets → flip faction + redirect (03, 07)
+                        melee  → start swing (justSwung); the swing IS the parry (03)
+  4. Movement         — integrate vx/vy (2D ground plane; no z/gravity — jump removed);
+                        resolve actor–solid (round pillars) and actor–actor collision (07)
+  5. Projectile step  — advance bullets; resolve bullet–solid (expire/stop) (07)
+  6. Deflect          — a melee swing's arc vs enemy bullets caught in it → flip faction + redirect (03, 07)
   7. Hit resolution   — bullet–actor overlap → damage; melee swing arc → damage+knockback (07)
   8. Death & drops    — hp<=0 → death event; roll dropPrng → spawn Pickup (05)
   9. Pickup           — player–pickup overlap → apply to build, remove pickup (05)
@@ -99,7 +99,7 @@ step(tick, commands):
 Notes on the order:
 
 - **Fire (3) before movement (4)** so a bullet spawns at the muzzle position of *this* tick's aim, then everything moves together — matches the "hand anchor follows the frame" intent (`02`) once render reads it back.
-- **Deflect (6) before hit resolution (7)**: a blocked bullet must change faction *before* the hit pass decides who it damages, or a deflected bullet could still register a hit on the blocker the same tick.
+- **Deflect (6) before hit resolution (7)**: a bullet caught by a swing must change faction *before* the hit pass decides who it damages, or a just-deflected bullet could still register a hit on the swinger the same tick.
 - **Death/drops (8) before pickup (9)**: a kill this tick can drop a pickup, but it is not collectable until the *next* tick's pickup pass — avoids "kill and auto-vacuum in the same frame" order sensitivity.
 - **PvP** skips steps 2 and 10 (no AI, no wave director) — the confirmed command stream is the only input, exactly what keeps two clients byte-identical (funny's `netplay` branch).
 
@@ -118,7 +118,8 @@ PlayerCommand = {
   moveMag: 0..255          // left-stick deflection, 0 = idle (quantized; fp-scaled in engine)
   aimBrad: Brad            // right-stick / mouse aim (integer binary-radian)
   buttons: number          // bitfield, edge-detected in the engine:
-                           //   FIRE | BLOCK | JUMP | SWAP_WEAPON | INTERACT
+                           //   FIRE | SWAP_WEAPON | INTERACT
+                           //   (no BLOCK — parry is the melee swing; no JUMP — removed)
 }
 ```
 
@@ -146,7 +147,7 @@ Mirror funny's mixin chain (`GameEngine.ts`) *only if* the engine grows past one
 
 - **`06` (netcode):** owns fp/brad/PRNG/tick/`InputSource` *principles* and the frame-broadcast model; this doc is their concrete data+order form. Must not contradict it.
 - **`07` (collision & combat):** owns the *bodies* of steps 4–9 (collision shapes, hit tests, damage/knockback/i-frames, deflect redirect math). This doc owns their *order and interfaces*.
-- **`02` / `03`:** `Actor`/`Weapon` fields and fire/block behavior; here they become fp/brad plain-data on `GameState` and steps 3/6/7.
+- **`02` / `03`:** `Actor`/`Weapon` fields and fire/parry behavior; here they become fp/brad plain-data on `GameState` and steps 3/6/7.
 - **`05` (gameplay):** run seeding, drops, wave director, win/lose live as steps 8–11 and the injected PRNGs.
 
 ## To design

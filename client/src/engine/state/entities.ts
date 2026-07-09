@@ -10,6 +10,7 @@
  */
 import type { Fp } from '../math/fixed';
 import type { Brad } from '../math/trig';
+import type { Affix } from '../balance/affixes';
 
 export type Faction = 'player' | 'enemy';
 
@@ -35,21 +36,23 @@ export interface MeleeSimSpec {
   name: string;
   swingCooldownTicks: number; // recovery between swings
   damage: number; // integer, per enemy in arc, once per swing
-  arcHalf: number; // swing sector half-angle, brad
-  range: Fp; // reach from actor centre
-  blockHalf: number; // block arc half-angle, brad
-  blockRange: Fp;
+  arcHalf: number; // swing sector half-angle, brad — used for BOTH damage and deflect
+  range: Fp; // swing sector radius (reach from actor centre)
+  deflect: boolean; // does the swing deflect bullets caught in its arc (design/03/05 parry)
   deflectSpeed: Fp; // fp per tick for a redirected bullet
 }
 
 export type WeaponSimSpec = RangedSimSpec | MeleeSimSpec;
 
-/** Per-actor weapon runtime. cooldown/blocking counted in whole ticks (design/08). */
+/** Per-actor weapon runtime. cooldown counted in whole ticks (design/08). */
 export interface WeaponState {
-  spec: WeaponSimSpec;
+  // The unaffixed authored sim spec. Retained so an in-run affix pickup can
+  // re-resolve `spec` = applyAffixes(base, player.affixes) without re-reading
+  // config (design/09 load-once) — see PickupSystem / balance/build.ts.
+  base: WeaponSimSpec;
+  spec: WeaponSimSpec; // active spec systems read (base + current affix stack)
   cooldownTicks: number; // counts down each tick, 0 = ready
-  blocking: boolean; // melee: block arc up this tick
-  justSwung: boolean; // melee: swing started THIS tick → HitResolve applies arc damage once
+  justSwung: boolean; // melee: swing started THIS tick → HitResolve applies arc damage + DeflectSystem parries bullets in the arc, once
 }
 
 // ── Actors ────────────────────────────────────────────────────────────────────
@@ -59,14 +62,18 @@ export interface Actor {
   faction: Faction;
   gx: Fp;
   gy: Fp;
-  z: Fp;
+  z: Fp; // ground height — always 0 for actors (jump removed); a render offset only
   vx: Fp;
   vy: Fp;
-  vz: Fp;
   facing: Brad;
   hp: number;
   maxHp: number;
-  radius: Fp;
+  radius: Fp; // body circle — bullet/melee hit target and sprite size
+  // Ground-plane collision footprint (feet), used only for actor↔solid push-out
+  // (MovementSystem). Smaller than `radius` so the tall sprite can overlap a solid
+  // it stands against — the fake-3D depth trick (design/01/07). Bullets/melee still
+  // use `radius`, so being shot still targets the whole visible body.
+  footprintRadius: Fp;
   alive: boolean;
   weapon: WeaponState | null;
   firing: boolean; // intent this tick (ApplyInput / AIDecide → WeaponFire)
@@ -81,6 +88,10 @@ export interface PlayerActor extends Actor {
   // weapons[activeSlot] — systems only ever read the active pointer.
   weapons: WeaponState[];
   activeSlot: number;
+  // The run's in-run power stack (design/05). Affix pickups append here; weapon-kind
+  // affixes re-resolve every weapon slot, actor-kind (flat_maxhp) mutate the actor
+  // on pickup. Wiped at run end (a fresh GameState starts empty).
+  affixes: Affix[];
 }
 
 export interface EnemyActor extends Actor {
@@ -103,7 +114,19 @@ export interface Projectile {
   alive: boolean;
 }
 
-export type PickupKind = 'health' | 'coin';
+/**
+ * A static round solid (design/07 "walls are static solids"). Pillars are drawn
+ * round, so the launch collision geometry is a circle rather than an AABB tile —
+ * actors are pushed out along the centre line (MovementSystem step 4). Positions
+ * are grid-fp, converted once at construction from the EngineConfig px layout.
+ */
+export interface Obstacle {
+  gx: Fp;
+  gy: Fp;
+  radius: Fp;
+}
+
+export type PickupKind = 'health' | 'coin' | 'affix' | 'weapon';
 
 export interface PickupItem {
   id: number;
@@ -112,4 +135,7 @@ export interface PickupItem {
   gy: Fp;
   spawnTick: number; // tick it was dropped; not collectable until a later tick (design/08 step 8→9)
   alive: boolean;
+  // Payload for the powered drops (design/05). Set on the matching kind only:
+  weaponId?: string; // kind 'weapon' → id into WEAPON_SPECS
+  affix?: Affix; //     kind 'affix'  → the rolled affix to append to the run stack
 }

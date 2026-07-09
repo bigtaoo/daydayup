@@ -17,8 +17,7 @@ export interface InputState {
   moveX: number; // normalized movement, [-1, 1]
   moveY: number;
   aim: Aim;
-  firing: boolean;
-  blocking: boolean;
+  firing: boolean; // fires ranged / swings melee — a melee swing is also the parry (no block key)
 }
 
 // Minimal structural view of the canvas the input source attaches to.
@@ -34,7 +33,6 @@ export interface InputCanvas {
 // A swappable input device. Web = keyboard + mouse; WeChat = virtual joystick + touch.
 export interface InputSource {
   onSwitchWeapon: ((slot: number) => void) | null;
-  onJump: (() => void) | null;
   attach(canvas: InputCanvas): void;
   read(): InputState;
 }

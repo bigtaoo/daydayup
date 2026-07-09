@@ -1,15 +1,16 @@
 /**
  * Step 1 — Apply input. Fold each player's confirmed command for this tick into
  * per-tick intent: move vector (fp/tick from moveBrad+moveMag), facing (= aimBrad),
- * firing/block flags, and edge-detected discrete actions (swap weapon, jump).
+ * the firing flag, and the edge-detected weapon-swap action.
  *
  * Idle default (design/08 open question, pinned here for Stage B): a player with
- * no command this tick holds idle — zero move, not firing, not blocking — and its
- * prevButtons is left untouched so edge detection stays correct against the next
- * real command. Golden-replay coverage of this default is Stage E.
+ * no command this tick holds idle — zero move, not firing — and its prevButtons is
+ * left untouched so edge detection stays correct against the next real command.
+ * Golden-replay coverage of this default is Stage E.
  *
- * Ports client/src/game/Game.ts updatePlayer() movement + facing + jump + block,
- * and switchWeapon(), from float/radians to fp/brad.
+ * Ports client/src/game/Game.ts updatePlayer() movement + facing, and
+ * switchWeapon(), from float/radians to fp/brad. (Block is not a state — it is the
+ * melee swing arc, see DeflectSystem; jump was removed.)
  */
 import { FP_SCALE } from '../math/fixed';
 import type { Fp } from '../math/fixed';
@@ -52,14 +53,11 @@ export class ApplyInputSystem {
     const held = cmd.buttons;
     const pressed = held & ~p.prevButtons; // rising edges this tick
 
-    const w = p.weapon;
-    const isMelee = w?.spec.kind === 'melee';
-    if (w) w.blocking = isMelee && (held & Button.BLOCK) !== 0;
-    // No firing while actively blocking (matches the demo).
-    p.firing = (held & Button.FIRE) !== 0 && !(w?.blocking ?? false);
+    // Firing drives BOTH ranged shots and melee swings; a melee swing is also what
+    // parries bullets (DeflectSystem) — there is no separate block input.
+    p.firing = (held & Button.FIRE) !== 0;
 
     if (pressed & Button.SWAP_WEAPON) this.swap(p);
-    if (pressed & Button.JUMP && p.z <= 0) p.vz = PLAYER.jumpV;
 
     p.prevButtons = held;
   }
@@ -68,13 +66,12 @@ export class ApplyInputSystem {
     p.vx = 0 as Fp;
     p.vy = 0 as Fp;
     p.firing = false;
-    if (p.weapon) p.weapon.blocking = false;
     // prevButtons deliberately unchanged (idle-hold semantics above).
   }
 
-  // Toggle the active loadout slot. Each slot keeps its own runtime (cooldown /
-  // blocking), so switching mid-cooldown does not refresh a weapon. `weapon`
-  // mirrors weapons[activeSlot] for the systems that read the active pointer.
+  // Toggle the active loadout slot. Each slot keeps its own runtime (cooldown), so
+  // switching mid-cooldown does not refresh a weapon. `weapon` mirrors
+  // weapons[activeSlot] for the systems that read the active pointer.
   private swap(p: PlayerActor): void {
     if (p.weapons.length < 2) return;
     p.activeSlot = (p.activeSlot + 1) % p.weapons.length;

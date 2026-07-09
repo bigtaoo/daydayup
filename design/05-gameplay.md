@@ -7,7 +7,7 @@ What the player actually does. This is the single source of truth for the **core
 - **Two separate modes, not one blended activity.** PvE is a **co-op dungeon run**; PvP is an **independent arena**. They do **not** share a map (no extraction-shooter intrusion).
 - **PvP normalizes gear via unified presets.** The arena offers a **fixed, balanced set of preset loadouts** everyone picks from — players do **not** bring or clamp their own gear. Matches are decided by skill and in-match choices, not by who has ground more. This is the concrete meaning of `06`'s "casual-first."
 - **Meta gear is horizontal / marginal.** Persistent progression grants **build breadth, cosmetics, and small stat deltas** — never a raw power ladder. In-run drops are the real power axis.
-- **Parry is melee-category-limited.** Only melee weapons can block/deflect (`03`). Choosing a ranged loadout means giving up parry — it is a genuine trade-off, not a universal skill everyone owns.
+- **Parry is melee-category-limited.** Only melee weapons can deflect, and deflect is part of the swing itself — not a separate block (`03`). Choosing a ranged loadout means giving up parry — it is a genuine trade-off, not a universal skill everyone owns.
 - **Landscape-primary.** The game ships **landscape only**; portrait is dropped. Twin-stick + corner buttons (`04`) need the horizontal space, and WeChat supports `deviceOrientation: "landscape"` in `game.json`.
 
 ### Why separate modes and not extraction
@@ -63,14 +63,14 @@ Keeping meta **horizontal** is what lets the same gear exist in both modes witho
 
 The pivot mechanic from `03`. Its identity across the game:
 
-- **Melee-only.** A melee weapon holds `isBlocking` and a `blockArc()`; deflect flips a bullet's faction and redirects it (`03`). Ranged loadouts have no parry — this is the core ranged-vs-melee trade-off.
-- **In PvE:** parry is a skill-expression tool against bullet-hell enemies/bosses — position into the arc, deflect the pattern back. High skill ceiling, optional (ranged builds route around it with mobility/DPS).
-- **In PvP:** deflecting an opponent's bullets back at them is powerful, so it must be **tuned as a commitment, not a free toggle** — e.g. a facing/arc constraint, cooldown or stamina cost, and the melee-only restriction already bounds it to players who gave up ranged pressure. Exact costs (perfect-block window, stamina) are engine-config balance, decided against real play.
+- **Melee-only, and it lives inside the swing.** There is no `isBlocking`/`blockArc` and no block button: a melee swing's sector (arc + range) deflects any enemy bullet caught in it — flipping faction and redirecting it (`03`). Ranged loadouts have no parry — the core ranged-vs-melee trade-off.
+- **In PvE:** parry is a skill-expression tool against bullet-hell enemies/bosses — swing through the incoming pattern to bat it back. High skill ceiling, optional (ranged builds route around it with mobility/DPS).
+- **In PvP:** deflecting an opponent's bullets back is powerful, but it is **already a commitment, not a free toggle** — parrying costs you a swing (its arc window, its cooldown, and facing the threat), and the melee-only restriction bounds it to players who gave up ranged pressure. Further costs (perfect-swing window, extra recovery) are engine-config balance, decided against real play.
 
 ## Controls & orientation
 
 - **Landscape only.** Dropped portrait (see locked decisions).
-- **Twin-stick** (`04`): left stick moves, right stick aims + fires; corner buttons for jump / **block** / weapon 1 / weapon 2. Block being a dedicated button is what makes melee parry a deliberate act.
+- **Twin-stick** (`04`): left stick moves, right stick aims + fires; corner buttons for weapon 1 / weapon 2. There is no block or jump button — parry is the melee swing (right stick), so *timing the attack* is the deliberate act. (A future dodge, if added, will be a planar blink, not a jump.)
 - Aim is abstracted as a screen `point` (mouse, web) or a `dir` (joystick, touch) driving the same loop (`04`), and is **quantized to an integer brad angle** on input for determinism (`06`).
 
 ## Relationship to the other docs

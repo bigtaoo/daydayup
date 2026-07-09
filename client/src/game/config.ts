@@ -4,9 +4,6 @@ export const CONFIG = {
   playerRadius: 16,
   playerMaxHp: 6,
 
-  gravity: 0.9, // jump gravity (z axis)
-  jumpVelocity: 13,
-
   bulletSpeed: 5.5,
   bulletRadius: 5,
   bulletLifetime: 180, // frames
@@ -35,9 +32,12 @@ export const CONFIG = {
     gun: 0xcbd5e0,
     sword: 0xe2e8f0,
     swordGlow: 0x90cdf4,
-    blockArc: 0x63b3ed,
+    deflect: 0x63b3ed, // parry/deflect flash (a melee swing batting a bullet back)
+    clash: 0xffd27f, // two opposing bullets meeting and cancelling — a mid-air spark
     muzzle: 0xffe08a,
     pickupHealth: 0x68d391,
     pickupCoin: 0xf6e05e,
+    pickupAffix: 0xb794f4, // purple gem — the run's power drop
+    pickupWeapon: 0xf6ad55, // amber — a new gun to swap in
   },
 } as const;

@@ -58,14 +58,12 @@ export interface RangedSpec extends WeaponBase {
 export interface MeleeSpec extends WeaponBase {
   kind: 'melee';
   damage: number; // integer; per-target once per swing (07)
-  arcDeg: number; // full swing sector; hit test uses half of this each side
-  rangeGrid: number; // reach from actor centre, grid
+  arcDeg: number; // full swing sector; hit test uses half of this each side — deflect uses the SAME arc
+  rangeGrid: number; // reach from actor centre, grid — the swing sector radius (also the deflect radius)
   swingSec: number; // ACTIVE hit-window (subset of cooldownSec), 07 step 7
   knockback: number; // impulse grid/s applied to target vx/vy in swing dir (07)
-  deflect: boolean; // can block/deflect bullets — the ranged-vs-melee trade-off gate (03/05)
+  deflect: boolean; // does the swing deflect enemy bullets caught in its arc — the ranged-vs-melee trade-off (03/05)
   deflectSpeed: number; // grid/s of a redirected bullet (Stage C; demo 5.5px/f·1.4)
-  blockHalfDeg: number; // blockArc() half-angle (07 step 6)
-  blockRangeGrid: number; // blockArc() radius, grid
 }
 
 export type WeaponSpec = RangedSpec | MeleeSpec;
@@ -102,11 +100,11 @@ export const WEAPON_SPECS: Record<string, WeaponSpec> = {
   },
 
   // ── Saber (starter melee) ─────────────────────────────────────────────────────
-  // Demo: swingRate 22f, damage 2, arc 0.9π, range 46px, blockHalf 0.42π, blockRange 54px.
+  // Demo: swingRate 22f, damage 2, arc 0.9π, range 46px.
   //   cooldownSec 0.37 → 11 ticks      damage 2 → 2 swings to drop a 3-HP enemy (hits ALL in arc)
   //   arcDeg 162 → half 81° = 14746 brad   rangeGrid 1.44 (46px)
-  //   deflect true → the whole point; deflectSpeed 14.4 grid/s (demo 5.5px/f·1.4)
-  //   blockHalfDeg 76 → 13836 brad     blockRangeGrid 1.69 (54px)
+  //   deflect true → the whole point; a swing parries any enemy bullet in the SAME arc.
+  //   deflectSpeed 14.4 grid/s (demo 5.5px/f·1.4)
   saber: {
     id: 'saber',
     kind: 'melee',
@@ -114,14 +112,52 @@ export const WEAPON_SPECS: Record<string, WeaponSpec> = {
     skinRef: 'sword_default',
     cooldownSec: 0.37, // recovery between swings
     damage: 2,
-    arcDeg: 162, // 0.9π (demo)
+    arcDeg: 162, // 0.9π (demo) — the swing sector; enemies hit + bullets deflected inside it
     rangeGrid: 1.44, // demo 46px
     swingSec: 0.13, // active hit window ⊂ cooldown
     knockback: 6, // grid/s impulse (applied by HitResolve once z/knockback lands, 07)
     deflect: true, // ranged loadouts have no parry (03/05)
     deflectSpeed: 14.4, // grid/s of a redirected bullet (demo 5.5px/f · 1.4 · 60/32)
-    blockHalfDeg: 76, // 0.42π (demo)
-    blockRangeGrid: 1.69, // demo 54px
+  },
+
+  // ── Repeater (drop-only: fast, weak) ─────────────────────────────────────────
+  // The "spray" gun — a weapon drop that trades punch for uptime. Pairs hard with
+  // rof/vel affixes into a wall of chip damage.
+  repeater: {
+    id: 'repeater',
+    kind: 'ranged',
+    nameKey: 'weapon.repeater.name',
+    skinRef: 'gun_default',
+    cooldownSec: 0.1, // 3 ticks — 10 shots/s
+    bullets: 1,
+    spreadDeg: 0,
+    bulletSpeed: 12, // grid/s
+    damage: 1,
+    ballistic: 'straight',
+    lifespanSec: 2.0,
+    bulletRadius: 0.12,
+    muzzleGrid: 0.9375,
+    bulletZ: 0.5,
+  },
+
+  // ── Cannon (drop-only: slow, heavy) ──────────────────────────────────────────
+  // The opposite pole — big single hits that two-shot a basic enemy raw, one-shot
+  // with a single dmg affix. Slow enough that positioning matters.
+  cannon: {
+    id: 'cannon',
+    kind: 'ranged',
+    nameKey: 'weapon.cannon.name',
+    skinRef: 'gun_default',
+    cooldownSec: 0.6, // 18 ticks
+    bullets: 1,
+    spreadDeg: 0,
+    bulletSpeed: 8, // grid/s
+    damage: 3,
+    ballistic: 'straight',
+    lifespanSec: 3.0,
+    bulletRadius: 0.28,
+    muzzleGrid: 1.0,
+    bulletZ: 0.5,
   },
 
   // ── Enemy gun (basic mob loadout — not player-selectable) ───────────────────
@@ -170,8 +206,7 @@ export function toSimSpec(spec: WeaponSpec): WeaponSimSpec {
     damage: spec.damage,
     arcHalf: degToBrad(spec.arcDeg / 2),
     range: toFpGrid(spec.rangeGrid),
-    blockHalf: degToBrad(spec.blockHalfDeg),
-    blockRange: toFpGrid(spec.blockRangeGrid),
+    deflect: spec.deflect,
     deflectSpeed: toFpPerTick(spec.deflectSpeed),
   };
   return sim;
@@ -181,8 +216,22 @@ export function toSimSpec(spec: WeaponSpec): WeaponSimSpec {
 export const BLASTER_SIM = toSimSpec(WEAPON_SPECS.blaster!) as RangedSimSpec;
 export const SABER_SIM = toSimSpec(WEAPON_SPECS.saber!) as MeleeSimSpec;
 export const ENEMY_GUN_SIM = toSimSpec(WEAPON_SPECS.enemygun!) as RangedSimSpec;
+export const REPEATER_SIM = toSimSpec(WEAPON_SPECS.repeater!) as RangedSimSpec;
+export const CANNON_SIM = toSimSpec(WEAPON_SPECS.cannon!) as RangedSimSpec;
 
-/** Fresh weapon runtime for a spec (design/08: cooldown in whole ticks). */
+/**
+ * Sim-spec lookup by weapon id — the resolution a weapon drop uses (content/drops.ts
+ * WEAPON_DROP_POOL holds ids; PickupSystem resolves through this). Converted once at
+ * module load (design/09 load-once). enemygun is excluded — not player-facing.
+ */
+export const WEAPON_SIM_BY_ID: Record<string, WeaponSimSpec> = {
+  blaster: BLASTER_SIM,
+  saber: SABER_SIM,
+  repeater: REPEATER_SIM,
+  cannon: CANNON_SIM,
+};
+
+/** Fresh weapon runtime for a spec (design/08: cooldown in whole ticks). base = spec. */
 export function makeWeapon(spec: WeaponSimSpec): WeaponState {
-  return { spec, cooldownTicks: 0, blocking: false, justSwung: false };
+  return { base: spec, spec, cooldownTicks: 0, justSwung: false };
 }

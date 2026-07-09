@@ -9,6 +9,8 @@
 // converter — and the grid unit switch (1 grid = 32 px).
 // Stage E: the InputSource seam formalized — input-edge quantization (state/input),
 // ReplayInputSource + runHeadless + state hashing (replay), guarded by ENGINE_VERSION.
+// Stage F: the roguelite loop — content/drops (DROP_TABLE) + balance/ (affixes,
+// the run/arena build wall) grow the in-run power stack on top of the sim.
 
 export * from './config';
 export * from './math/fixed';
@@ -22,6 +24,7 @@ export * from './state/events';
 export * from './state/GameState';
 export * from './sim.config';
 export * from './content';
+export * from './balance';
 export * from './systems';
 export * from './GameEngine';
 export * from './replay';

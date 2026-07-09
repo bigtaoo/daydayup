@@ -9,10 +9,11 @@ import { Prng } from '../math/prng';
 import { toFp } from '../math/fixed';
 import type { Fp } from '../math/fixed';
 import { pxToFp } from '../content/convert';
-import { makeWeapon } from '../content/weapons';
 import { PLAYER } from '../content/players';
+import { buildRunSpecs } from '../balance/build';
 import type {
   EnemyActor,
+  Obstacle,
   PickupItem,
   PlayerActor,
   Projectile,
@@ -31,6 +32,9 @@ export interface EngineConfig {
   worldH: number; // px
   waves: readonly WaveDef[];
   playerStart?: readonly [number, number]; // px; defaults to world centre
+  // Static round solids (pillars), in world px [x, y, radius]. Converted to
+  // grid-fp at construction; MovementSystem pushes actors out of them (design/07).
+  obstacles?: readonly (readonly [number, number, number])[];
 }
 
 // Distinct derived-seed constants so the streams never alias (design/06/08).
@@ -61,6 +65,9 @@ export class GameState {
   readonly projectiles: Projectile[] = [];
   readonly pickups: PickupItem[] = [];
 
+  // Static round solids — set once at construction, never mutated (design/07).
+  readonly obstacles: Obstacle[] = [];
+
   // World bounds (fp).
   readonly worldW: Fp;
   readonly worldH: Fp;
@@ -84,8 +91,14 @@ export class GameState {
     this.worldH = pxToFp(config.worldH);
     this.waves = config.waves;
 
+    for (const [ox, oy, orad] of config.obstacles ?? []) {
+      this.obstacles.push({ gx: pxToFp(ox), gy: pxToFp(oy), radius: pxToFp(orad) });
+    }
+
     const [sx, sy] = config.playerStart ?? [config.worldW / 2, config.worldH / 2];
-    const weapons = PLAYER.startWeapons.map(makeWeapon);
+    // Resolve the loadout through the run builder (design/09 fairness wall): base
+    // meta loadout + the run's affix stack (empty at spawn; in-run pickups grow it).
+    const weapons = buildRunSpecs(PLAYER.startWeapons, []);
     this.players.push({
       id: this.nextId(),
       faction: 'player',
@@ -94,15 +107,16 @@ export class GameState {
       z: toFp(0),
       vx: toFp(0),
       vy: toFp(0),
-      vz: toFp(0),
       facing: 0 as PlayerActor['facing'],
       hp: PLAYER.maxHp,
       maxHp: PLAYER.maxHp,
       radius: PLAYER.radius,
+      footprintRadius: PLAYER.footprintRadius,
       alive: true,
       weapon: weapons[0] ?? null, // active pointer = weapons[activeSlot]
       weapons,
       activeSlot: 0,
+      affixes: [],
       firing: false,
       prevButtons: 0,
     });

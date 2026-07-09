@@ -7,7 +7,7 @@ The player-facing shell around the engine: the **HUD** during play, the **screen
 - **UI is drawn with Pixi, no DOM.** Every screen, HUD element, stick, and button is a Pixi `Container`/`Graphics`/`Text` in the `ui` layer (`00`, `01`). No HTML overlay — it would not exist on WeChat (`04`) and would split the render path. One engine, one renderer, one UI toolkit.
 - **UI reads `state` + `events`, never mutates the engine.** The HUD renders from `GameState` (hp, weapon, enemy count, phase) and the per-frame `events` queue (`08`: `hit`, `deflect`, `death`, `pickup`) for transient feedback. It is downstream of the engine exactly like the render layer (`06`'s day-one split). The **only** channel UI→engine is a `PlayerCommand` submitted through the `InputSource` (`08`).
 - **Input is quantized to a command at the UI edge.** Sticks/mouse/buttons are sampled each frame and converted to `moveBrad/moveMag`, `aimBrad`, and a `buttons` bitfield **before** they reach the engine (`08`'s `PlayerCommand`, `06`'s "quantize at the input edge"). The engine never sees a screen pixel or a float angle. This is what keeps local play and net play on one code path.
-- **Landscape-only, twin-stick + corner buttons.** Left stick moves, right stick aims + fires; corner buttons are jump / block / weapon-1 / weapon-2 (`05`, `04`). The layout assumes horizontal space and `deviceOrientation:"landscape"` (`05`). Portrait is dropped.
+- **Landscape-only, twin-stick + corner buttons.** Left stick moves, right stick aims + fires; corner buttons are weapon-1 / weapon-2 (`05`, `04`). There is no jump or block button — parry is the melee swing (right stick). The layout assumes horizontal space and `deviceOrientation:"landscape"` (`05`). Portrait is dropped.
 - **A screen state machine wraps the engine; the engine only knows `phase`.** `GameState.phase` is just `idle | playing | gameover` (`08`). Everything around a match — main menu, loadout/preset pick (`05`, `09`), pause, result/summary, restart — lives in a **render-side `ScreenManager`**, not in the engine. The engine is a pure match simulator; the shell decides which match to start and what to show before/after.
 
 ## Screen flow (the MVP shell)
@@ -40,7 +40,7 @@ Lives in the `ui` layer (`01`, topmost). Renders each frame from `state` + `even
 | Equipped weapon + slot | `player.weapon` (`02`) | Icon + name; the two slots from `05`'s corner buttons; cooldown sweep from `weapon.cooldownTicks` (`08`) |
 | Ammo / charge (if any) | weapon spec (`03`/`09`) | Only for weapons that have it |
 | Crosshair / aim indicator | current `aimBrad` | On the `ui` layer per `01`; on touch it tracks the right stick, on web the mouse |
-| Block state | `weapon.blockArc().active` | Explicit indicator — block is a deliberate, committed act (`05`) |
+| Swing / parry flash | `deflect` event (`08`) | Transient — a melee swing that deflected a bullet; no persistent "block" state exists (`05`) |
 | Minimap / room progress | `room` + cleared count (`05`/`09`) | PvE run structure; post-MVP polish |
 | Pickup / affix toast | `pickup` event (`08`) | Transient "picked up X"; drives the roguelite build feedback (`05`) |
 | Score / timer / team | `state` (PvP) | Elimination/score win condition (`05` open question) |
@@ -52,7 +52,7 @@ Lives in the `ui` layer (`01`, topmost). Renders each frame from `state` + `even
 
 The concrete shape of `05`/`04`'s twin-stick, and where `08`'s `PlayerCommand` is assembled.
 
-- **Two virtual sticks + four corner buttons** (touch), or **WASD + mouse + keys** (web). Both feed one `readController()` that returns a normalized frame: `{ moveDir, moveMag, aimDir/aimPoint, fire, block, jump, swap, interact }`.
+- **Two virtual sticks + corner buttons** (touch), or **WASD + mouse + keys** (web). Both feed one `readController()` that returns a normalized frame: `{ moveDir, moveMag, aimDir/aimPoint, fire, swap, interact }` (no `block`/`jump` — parry is the melee swing, jump removed).
 - **Quantization happens here, once:** `moveDir → moveBrad`, `moveMag → 0..255`, `aimPoint`(web, screen)→world→`aimBrad` or `aimDir`(stick)→`aimBrad`; buttons packed into the `buttons` bitfield (`08`). The result is a `PlayerCommand` submitted via `input.submit(cmd)` for the current tick. **After this line there are no floats and no pixels.**
 - **Aim modes unified:** mouse gives a screen `point` (convert against camera offset, as `Game.ts:updatePlayer` already does), joystick gives a `dir`; both collapse to a single `aimBrad` so the engine has one aim input (`04`/`05`). An idle right-stick keeps last facing (already the slice's behavior) — encode that as the idle-hold default (`08`).
 - **Discrete actions are edge-detected in the engine**, not fired from the UI: the UI only reports the current button *level* in `buttons`; the engine compares against last tick to detect a tap (`08`). So "tap to swap weapon / interact" needs no special UI event — just set the bit while held.

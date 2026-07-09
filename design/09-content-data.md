@@ -58,7 +58,7 @@ RangedSpec = {
   ballistic: BallisticId   // key into BALLISTIC_SHAPES (straight/arc/homing/boomerang/pattern)
   lifespanSec        // → lifespanTicks
   piercing?: bool
-  bulletZ?           // muzzle height band (07 z-gating)
+  bulletZ?           // cosmetic muzzle height for the fake-3D render (01); NOT a hit gate
 }
 
 MeleeSpec = {
@@ -66,8 +66,9 @@ MeleeSpec = {
   arcDeg, rangeGrid  // swing sector (→ brad half-angle + fp range)
   damage, knockback
   swingSec           // → swingTicks (active-hit window, 07)
-  deflect: bool      // can block/deflect (03) — the ranged-vs-melee trade-off gate
-  blockHalfDeg, blockRangeGrid   // → blockArc() params (07)
+  deflect: bool      // does the swing deflect bullets in its arc (03) — ranged-vs-melee trade-off gate
+  deflectSpeed       // grid/s of a redirected bullet (07). The swing's arcDeg/rangeGrid
+                     //   IS the deflect sector — there is no separate blockArc.
 }
 ```
 
@@ -79,7 +80,6 @@ EnemyBlueprint = {
   hp, armor          // integers; takeDamage = max(1, raw-armor) (07)
   moveSpeed          // grid/s → fp/s
   radius             // grid → radius_fp (07 collision)
-  bodyHeight         // z-band top (07 z-gating)
   weapon?: WeaponId  // enemies fire through the same weapon system (02/03)
   aiProfile: AiId    // behavior selector read by the AI system (08 step 2)
   traits?: Trait[]   // tagged behaviors: aura_heal, enrage, shielder, …  (funny traits)
@@ -152,7 +152,7 @@ A room's static solids and markers, all on the `gx/gy` grid (`01`):
 RoomPiece = {
   id, sizeGrid: { w, h }
   solids: AABB[]              // static collision rects (07 actor–wall / bullet–wall)
-  coverBands?: { rect, zTop }[]   // low cover: blocks bullets below zTop (07 z-gating)
+  pillars?: { center, radius }[]  // round static solids (07 — implemented as circle push-out)
   spawns: { player: Point[]; enemy: SpawnPoint[] }
   exits: { edge, toTag }[]    // connective openings for dungeon assembly
   props?: PropPlacement[]     // decorative + Y-sortable pillars (01)
@@ -222,7 +222,7 @@ Rolled from `dropPrng`; rewards are recomputed/validated server-side, never trus
 - **`03`:** `WEAPON_SPECS`/affixes/ballistics are the concrete form of its `RangedSpec`/`MeleeSpec` "to design" list and its rarity/affix/combo note.
 - **`02`:** `SkinDef` + `AnimData.handAnchors` realize "animation separate from texture" and "hand anchor follows the frame."
 - **`05`:** dungeon assembly, drop tables, arena presets, difficulty curve — the data behind its core loop, economy, and PvP; its open design questions (room count, reward structure, preset set) fill these schemas.
-- **`07`:** `RoomPiece.solids`/`coverBands` are the collision geometry it deferred; `WeaponSpec`/`EnemyBlueprint` feed its damage/ballistic bodies.
+- **`07`:** `RoomPiece.solids`/`pillars` are the collision geometry (round pillars implemented, AABB tiles deferred); `WeaponSpec`/`EnemyBlueprint` feed its damage/ballistic bodies.
 - **`08`:** the build layer resolves specs into `GameState` at match start; `WaveScript`/`WaveDirector` is step 10; all PRNG-seeded content obeys its determinism contract.
 - **`06`:** single-source config, human→fp/brad conversion, injected PRNG, and the fairness wall all originate there.
 

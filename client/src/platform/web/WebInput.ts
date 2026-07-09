@@ -9,12 +9,10 @@ export class WebInput implements InputSource {
   private mouseX = 0;
   private mouseY = 0;
   private leftDown = false;
-  private rightDown = false;
 
   private controls = new TouchControls();
 
   onSwitchWeapon: ((slot: number) => void) | null = null;
-  onJump: (() => void) | null = null;
 
   attach(canvasLike: InputCanvas) {
     const canvas = canvasLike as unknown as HTMLCanvasElement;
@@ -25,7 +23,6 @@ export class WebInput implements InputSource {
       this.keys.add(e.code);
       if (e.code === 'Digit1') this.onSwitchWeapon?.(1);
       if (e.code === 'Digit2') this.onSwitchWeapon?.(2);
-      if (e.code === 'Space') this.onJump?.();
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
 
@@ -36,17 +33,13 @@ export class WebInput implements InputSource {
     });
     canvas.addEventListener('mousedown', (e) => {
       if (e.button === 0) this.leftDown = true;
-      if (e.button === 2) this.rightDown = true;
     });
     window.addEventListener('mouseup', (e) => {
       if (e.button === 0) this.leftDown = false;
-      if (e.button === 2) this.rightDown = false;
     });
-    canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
     // ---- touch (mobile / Capacitor) ----
     this.controls.onSwitchWeapon = (slot) => this.onSwitchWeapon?.(slot);
-    this.controls.onJump = () => this.onJump?.();
 
     const relayout = () => {
       const r = canvas.getBoundingClientRect();
@@ -84,7 +77,6 @@ export class WebInput implements InputSource {
       moveY: my / len,
       aim: { mode: 'point', x: this.mouseX, y: this.mouseY },
       firing: this.leftDown,
-      blocking: this.rightDown || k.has('ShiftLeft') || k.has('ShiftRight'),
     };
   }
 }

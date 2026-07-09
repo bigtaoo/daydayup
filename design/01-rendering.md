@@ -12,7 +12,7 @@ Goal: a fixed tilted view (not pure top-down; slightly forward-leaning, like Sou
 Every entity has two Y values:
 
 - **Ground coordinates `gx, gy`** — used for depth sorting, shadows, and collision.
-- **Height `z`** — visual lift (jumping, flying bullets, elevated platforms).
+- **Height `z`** — visual lift for flying bullets / elevated cosmetics (render only). Actors stay grounded (`z=0`) — there is no jump, and `z` never gates gameplay (`07`).
 
 Render transform: `screen.x = gx`, `screen.y = gy - z`. A large part of the 3D feel comes from objects being able to leave the ground.
 

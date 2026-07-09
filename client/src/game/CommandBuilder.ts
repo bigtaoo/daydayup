@@ -2,7 +2,7 @@
 // and assembles the engine's frozen twin-stick command. The float→brad/mag
 // quantization is the engine's input-edge seam (quantizeMove / quantizeAim,
 // design/06/08) — this file only handles the render-specific bits: screen→world
-// aim, idle-stick hold, and latching discrete presses (jump / weapon swap) into a
+// aim, idle-stick hold, and latching the discrete weapon-swap press into a
 // one-tick button pulse so the engine's rising-edge detection sees a clean press.
 //
 // Because the quantization lives in @dd/engine, the golden-replay tests build
@@ -12,15 +12,11 @@ import type { InputSource } from '../platform/types';
 
 export class CommandBuilder {
   private lastAim = 0 as Brad; // idle stick keeps the last facing (no snap-to-zero)
-  private jumpLatch = false;
   private swapLatch = false;
 
   constructor(private readonly input: InputSource) {}
 
-  /** Discrete-action latches, set from Game's onJump / onSwitchWeapon routing. */
-  requestJump(): void {
-    this.jumpLatch = true;
-  }
+  /** Discrete-action latch, set from Game's onSwitchWeapon routing. */
   requestSwap(): void {
     this.swapLatch = true;
   }
@@ -55,11 +51,6 @@ export class CommandBuilder {
 
     let buttons = 0;
     if (inp.firing) buttons |= Button.FIRE;
-    if (inp.blocking) buttons |= Button.BLOCK;
-    if (this.jumpLatch) {
-      buttons |= Button.JUMP;
-      this.jumpLatch = false;
-    }
     if (this.swapLatch) {
       buttons |= Button.SWAP_WEAPON;
       this.swapLatch = false;

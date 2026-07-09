@@ -10,6 +10,7 @@
  */
 import { addFp } from '../math/fixed';
 import { SIM } from '../sim.config';
+import { circlesOverlap } from './geom';
 import type { GameState } from '../state/GameState';
 
 export class ProjectileStepSystem {
@@ -26,6 +27,16 @@ export class ProjectileStepSystem {
       }
       if (b.gx < -m || b.gx > state.worldW + m || b.gy < -m || b.gy > state.worldH + m) {
         b.alive = false;
+        continue;
+      }
+      // Pillars are solid: a bullet that reaches one is absorbed (design/07 wall
+      // stop). Pillars are tall, so no z-band gating — nothing shoots over them.
+      // Endpoint test, matching the demo's despawn discipline (swept test is 07).
+      for (const o of state.obstacles) {
+        if (circlesOverlap(b.gx, b.gy, b.radius, o.gx, o.gy, o.radius)) {
+          b.alive = false;
+          break;
+        }
       }
     }
   }

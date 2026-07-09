@@ -21,8 +21,8 @@ Core principle: **gameplay logic is not tied to the character**, because "differ
 
 ```
 Actor {
-  gx, gy, z            // position and height
-  vx, vy, vz           // velocity (vz for jump/gravity)
+  gx, gy               // ground position (2D — no height; jump removed, 07)
+  vx, vy               // velocity
   facing: number       // radians
   hp, maxHp
   faction              // 'player' | 'enemy'
@@ -43,9 +43,9 @@ Weapon (abstract) {
   onEquip(actor)
   onUnequip()
   update(dt)           // position to hand anchor, facing, local z
-  use(ctx, firing)     // fire behavior (subclass)
-  // melee extras:
-  setBlocking(on), blockArc()
+  use(ctx, firing)     // fire behavior (subclass); melee 'use' = a swing whose arc
+                       //   both damages enemies AND deflects bullets in it (03/07).
+                       //   No blocking state — parry is the swing, not a held key.
 }
 ```
 

@@ -6,6 +6,10 @@ import { Skin } from './Skin';
 export type Faction = 'player' | 'enemy';
 export type WeaponKind = 'ranged' | 'melee';
 
+// How far (× body radius) to lift the sprite so the ground anchor sits at the feet.
+// Bigger → more of the body rises above the anchor → more it can overlap a pillar.
+const BODY_LIFT_R = 0.7;
+
 // Actor view (player / enemy). Pure presentation: body skin, a soft shadow, and a
 // cosmetic weapon graphic that swaps shape by the engine weapon's kind (Stage D:
 // no weapon logic lives here — the engine owns firing, cooldowns, and the loadout).
@@ -30,7 +34,15 @@ export class Actor extends Entity {
 
     this.weaponGfx.zIndex = 1;
     this.addChild(this.weaponGfx);
-    this.makeShadow(radiusPx);
+    this.makeShadow(radiusPx * 0.7);
+
+    // Lift the body + weapon so the container origin (gx,gy — where the shadow and
+    // the engine's collision footprint sit) lands near the feet rather than the
+    // torso. The sprite then rises above the ground point, so via Y-sort it draws
+    // over a pillar it stands against (design/01 fake-3D depth).
+    const lift = radiusPx * BODY_LIFT_R;
+    this.skin.view.y = -lift;
+    this.weaponGfx.y = -lift;
   }
 
   // Swap the cosmetic weapon shape to match the engine's active weapon kind.

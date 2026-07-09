@@ -8,8 +8,8 @@ import type { InputState } from './types';
 // behave identically everywhere.
 //
 //   left half  → movement joystick (dynamic origin at touch-down)
-//   right half → aim joystick; firing while held (aim reported as a direction)
-//   corner buttons → jump / block (hold) / weapon 1 / weapon 2
+//   right half → aim joystick; firing while held (a melee swing is also the parry)
+//   corner buttons → weapon 1 / weapon 2  (no jump/block — parry is the swing arc)
 interface Stick {
   id: number;
   ox: number;
@@ -26,17 +26,13 @@ interface Button {
 
 export class TouchControls {
   onSwitchWeapon: ((slot: number) => void) | null = null;
-  onJump: (() => void) | null = null;
 
   private w = 0;
   private stickRadius = 1;
 
   private move: Stick | null = null;
   private aim: Stick | null = null;
-  private blockId: number | null = null;
 
-  private jumpBtn: Button = { cx: 0, cy: 0, r: 0 };
-  private blockBtn: Button = { cx: 0, cy: 0, r: 0 };
   private weapon1Btn: Button = { cx: 0, cy: 0, r: 0 };
   private weapon2Btn: Button = { cx: 0, cy: 0, r: 0 };
 
@@ -49,28 +45,18 @@ export class TouchControls {
     const r = unit * 0.08;
     const m = r + unit * 0.04; // margin from the edge to a button centre
     const gap = r * 2.4;
-    this.jumpBtn = { cx: width - m, cy: height - m, r };
-    this.blockBtn = { cx: width - m, cy: height - m - gap, r };
     this.weapon1Btn = { cx: width - m, cy: m, r };
     this.weapon2Btn = { cx: width - m - gap, cy: m, r };
   }
 
   pointerDown(id: number, x: number, y: number) {
     // Buttons take priority over the sticks.
-    if (inCircle(x, y, this.jumpBtn)) {
-      this.onJump?.();
-      return;
-    }
     if (inCircle(x, y, this.weapon1Btn)) {
       this.onSwitchWeapon?.(1);
       return;
     }
     if (inCircle(x, y, this.weapon2Btn)) {
       this.onSwitchWeapon?.(2);
-      return;
-    }
-    if (inCircle(x, y, this.blockBtn)) {
-      this.blockId = id;
       return;
     }
 
@@ -88,13 +74,12 @@ export class TouchControls {
   pointerUp(id: number) {
     if (this.move && id === this.move.id) this.move = null;
     if (this.aim && id === this.aim.id) this.aim = null;
-    if (this.blockId === id) this.blockId = null;
   }
 
   // True while the player is touching any control — lets a platform that also has
   // mouse/keyboard (desktop Web) decide which source is currently driving.
   hasActiveTouch(): boolean {
-    return this.move !== null || this.aim !== null || this.blockId !== null;
+    return this.move !== null || this.aim !== null;
   }
 
   private updateStick(s: Stick, x: number, y: number) {
@@ -130,7 +115,6 @@ export class TouchControls {
       moveY: move.dy,
       aim: { mode: 'dir', dx: adx, dy: ady },
       firing,
-      blocking: this.blockId !== null,
     };
   }
 }

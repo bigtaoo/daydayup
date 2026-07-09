@@ -1,9 +1,10 @@
 /**
  * Step 3 — Weapon fire. For every actor whose fire flag is set and whose weapon
  * cooldown is ready: ranged spawns a Projectile at the muzzle; melee starts a
- * swing (justSwung → HitResolve applies arc damage once, step 7) or is a no-op if
- * blocking. Cooldowns count down here in whole ticks. Runs BEFORE movement
- * (design/08) so a bullet spawns at this tick's muzzle, then everything moves.
+ * swing (justSwung → HitResolve applies arc damage once at step 7, and DeflectSystem
+ * parries bullets in the same arc at step 6). Cooldowns count down here in whole
+ * ticks. Runs BEFORE movement (design/08) so a bullet spawns at this tick's muzzle,
+ * then everything moves.
  *
  * Ports RangedWeapon.use() / MeleeWeapon.use() and the enemy-fire block of
  * Game.ts updateEnemies(): float cos/sin → fp-trig, px → grid-fp. Multi-pellet

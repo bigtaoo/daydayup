@@ -4,7 +4,7 @@ export { AIDecideSystem } from './AIDecideSystem';
 export { WeaponFireSystem } from './WeaponFireSystem';
 export { MovementSystem } from './MovementSystem';
 export { ProjectileStepSystem } from './ProjectileStepSystem';
-export { BlockDeflectSystem } from './BlockDeflectSystem';
+export { DeflectSystem } from './DeflectSystem';
 export { HitResolveSystem } from './HitResolveSystem';
 export { DeathDropsSystem } from './DeathDropsSystem';
 export { PickupSystem } from './PickupSystem';

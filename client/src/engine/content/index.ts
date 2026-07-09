@@ -4,3 +4,4 @@ export * from './convert';
 export * from './weapons';
 export * from './players';
 export * from './enemies';
+export * from './drops';

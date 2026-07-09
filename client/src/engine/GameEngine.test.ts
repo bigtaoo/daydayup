@@ -15,7 +15,7 @@ function snap(s: GameState): string {
     tick: s.tick,
     phase: s.phase,
     winner: s.winner,
-    players: s.players.map((p) => [p.id, p.gx, p.gy, p.z, p.vz, p.hp, p.facing, p.alive]),
+    players: s.players.map((p) => [p.id, p.gx, p.gy, p.z, p.hp, p.facing, p.alive]),
     enemies: s.enemies.map((e) => [e.id, e.gx, e.gy, e.hp, e.facing, e.alive]),
     projectiles: s.projectiles.map((b) => [b.id, b.gx, b.gy, b.vx, b.vy, b.faction, b.lifeTicks]),
     pickups: s.pickups.map((k) => [k.id, k.kind, k.gx, k.gy, k.spawnTick]),

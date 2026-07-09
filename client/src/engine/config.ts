@@ -19,8 +19,31 @@ import { BRAD_FULL } from './math/trig';
  * v3 (Stage D): the player carries a two-slot loadout and SWAP_WEAPON toggles the
  * active slot instead of replacing the weapon with a fresh one — a switch now
  * preserves each slot's cooldown, so a v2 stream that swaps would diverge.
+ *
+ * v4 (Stage F): the roguelite loop. Enemy deaths roll the full DROP_TABLE
+ * (coin/health/affix/weapon) instead of a health-or-coin coin-flip — a different
+ * (and branch-variable) number of dropPrng draws per kill — and pickups now mutate
+ * the loadout (affix stack re-resolves weapon specs; weapon drops swap a slot). Any
+ * v3 stream would diverge at the first kill.
+ *
+ * v5: static round solids (pillars) now collide. MovementSystem pushes actors out
+ * of the EngineConfig obstacle circles (by the actor's feet `footprintRadius`, not
+ * the body radius) each tick, and ProjectileStepSystem expires a bullet that
+ * reaches a solid. Any v4 stream that walked an actor into — or fired a bullet
+ * through — a pillar diverges (both used to pass through).
+ *
+ * v6: block/jump rework. Parry is no longer a held state — a melee swing deflects
+ * enemy bullets caught in its arc (DeflectSystem keys off justSwung + the swing's
+ * arc, not a BLOCK button / blockArc). Jump is removed: no z/gravity integration,
+ * no JUMP button, actors are strictly 2D. The command bitfield and the serialized
+ * state shape both changed, so any v5 stream diverges.
+ *
+ * v7: opposing-faction bullets collide. HitResolveSystem now cancels an overlapping
+ * player/enemy bullet pair (mutual destruction) before the actor-hit loop, so a
+ * v6 stream where two enemy/player bullets crossed paths — previously ghosting
+ * through each other, now both expiring — diverges.
  */
-export const ENGINE_VERSION = 3;
+export const ENGINE_VERSION = 7;
 
 /**
  * World scale — the anchor for every human-unit → fp/brad conversion (design/09).

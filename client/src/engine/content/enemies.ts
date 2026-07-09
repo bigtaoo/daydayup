@@ -15,11 +15,13 @@ import { ENEMY_GUN_SIM } from './weapons';
 export interface EnemyBlueprint {
   maxHp: number;
   radius: Fp;
+  footprintRadius: Fp; // feet circle for solid push-out (< radius); see Actor.footprintRadius
   weapon: RangedSimSpec;
 }
 
 export const BASIC_ENEMY: EnemyBlueprint = {
   maxHp: 3,
   radius: pxToFp(15), // demo 15px
+  footprintRadius: pxToFp(7),
   weapon: ENEMY_GUN_SIM,
 };

@@ -16,8 +16,8 @@ import type { GameEvent } from './state/events';
 import {
   AIDecideSystem,
   ApplyInputSystem,
-  BlockDeflectSystem,
   DeathDropsSystem,
+  DeflectSystem,
   HitResolveSystem,
   MovementSystem,
   PickupSystem,
@@ -36,7 +36,7 @@ export class GameEngine {
   private readonly weaponFire = new WeaponFireSystem();
   private readonly movement = new MovementSystem();
   private readonly projectileStep = new ProjectileStepSystem();
-  private readonly blockDeflect = new BlockDeflectSystem();
+  private readonly deflect = new DeflectSystem();
   private readonly hitResolve = new HitResolveSystem();
   private readonly deathDrops = new DeathDropsSystem();
   private readonly pickup = new PickupSystem();
@@ -65,7 +65,7 @@ export class GameEngine {
     this.weaponFire.tick(s); //           3
     this.movement.tick(s); //             4
     this.projectileStep.tick(s); //       5
-    this.blockDeflect.tick(s); //         6
+    this.deflect.tick(s); //              6  (melee swing parries bullets in its arc)
     this.hitResolve.tick(s); //           7
     this.deathDrops.tick(s); //           8
     this.pickup.tick(s); //               9

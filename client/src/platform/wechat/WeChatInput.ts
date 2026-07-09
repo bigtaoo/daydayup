@@ -14,12 +14,6 @@ export class WeChatInput implements InputSource {
   set onSwitchWeapon(cb: ((slot: number) => void) | null) {
     this.controls.onSwitchWeapon = cb;
   }
-  get onJump() {
-    return this.controls.onJump;
-  }
-  set onJump(cb: (() => void) | null) {
-    this.controls.onJump = cb;
-  }
 
   constructor(app: Application) {
     this.app = app;

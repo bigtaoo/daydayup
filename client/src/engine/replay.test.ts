@@ -32,7 +32,6 @@ function scriptedCommand(tick: number): PlayerCommand {
   const { moveBrad, moveMag } = quantizeMove(Math.sin(tick * 0.07), Math.cos(tick * 0.05));
   let buttons = Button.FIRE;
   if (tick % 37 === 0) buttons |= Button.SWAP_WEAPON;
-  if (tick % 53 === 0) buttons |= Button.JUMP;
   return makeCommand({ owner: 0, tick, moveBrad, moveMag, aimBrad: aim, buttons });
 }
 

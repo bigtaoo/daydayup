@@ -11,13 +11,14 @@
  */
 import type { Brad } from '../math/trig';
 
-/** Button bitfield, edge-detected inside the engine (design/08). */
+/**
+ * Button bitfield, edge-detected inside the engine (design/08). There is no BLOCK
+ * or JUMP: parry is the melee swing arc (DeflectSystem), and jump was removed.
+ */
 export const Button = {
   FIRE: 1 << 0,
-  BLOCK: 1 << 1,
-  JUMP: 1 << 2,
-  SWAP_WEAPON: 1 << 3,
-  INTERACT: 1 << 4,
+  SWAP_WEAPON: 1 << 1,
+  INTERACT: 1 << 2,
 } as const;
 
 export interface PlayerCommand {
