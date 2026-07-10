@@ -49,8 +49,13 @@ import { BRAD_FULL } from './math/trig';
  * StatusEffectSystem ticks the lingering DoT/chill between hit-resolution (7) and
  * death (now 9). The step order gained a system and actors/bullets gained fields, so
  * any v7 stream diverges the first time a hit lands or an element ticks.
+ *
+ * v9: element-adding affixes (`elem_*` → set_element kind, overrides a weapon's
+ * damageType) enlarge the AFFIX_DROP_POOL, shifting every dropPrng affix roll; and
+ * applyResist now ROUNDS a weakness (mult>1000) instead of truncating, so a low-base
+ * hit into a weakness lands harder. Either alone diverges a v8 stream.
  */
-export const ENGINE_VERSION = 8;
+export const ENGINE_VERSION = 9;
 
 /**
  * World scale — the anchor for every human-unit → fp/brad conversion (design/09).

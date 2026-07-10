@@ -183,6 +183,14 @@ describe('Resist / weakness', () => {
     expect(e.hp).toBe(BASIC_ENEMY.maxHp - 4); // 2 × 2 = 4
   });
 
+  it('a weakness rounds a low-base hit up so the bonus is visible (not truncated to 1)', () => {
+    const s = state();
+    const e = addEnemy(s, 400, 400, { fire: 1800 }); // ×1.8
+    addBullet(s, 400, 400, 'fire', 1); // 1 × 1.8 = 1.8 → rounds to 2 (trunc would give 1)
+    new HitResolveSystem().tick(s);
+    expect(e.hp).toBe(BASIC_ENEMY.maxHp - 2);
+  });
+
   it('resist to one type does not affect another', () => {
     const s = state();
     const e = addEnemy(s, 400, 400, { fire: 500 });

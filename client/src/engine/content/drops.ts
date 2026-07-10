@@ -64,6 +64,12 @@ export const AFFIX_DROP_POOL: readonly { id: string; tiers: readonly number[] }[
   { id: 'vel', tiers: [250, 500] }, // +25% / +50% bullet speed
   { id: 'reach', tiers: [200, 400] }, // +20% / +40% melee reach
   { id: 'vit', tiers: [1, 2] }, //     +1 / +2 max hp (heals too)
+  // Element-adding affixes — grant any weapon an on-hit element (value unused, the
+  // element is carried by the id via AFFIX_FIELD_MAP). Single tier keeps the roll shape.
+  { id: 'elem_fire', tiers: [0] }, //      → fire (BURN)
+  { id: 'elem_ice', tiers: [0] }, //       → ice (CHILL)
+  { id: 'elem_lightning', tiers: [0] }, // → lightning (CHAIN)
+  { id: 'elem_poison', tiers: [0] }, //    → poison (POISON stacks)
 ];
 
 /**

@@ -3,6 +3,7 @@ import {
   AFFIX_FIELD_MAP,
   EFFECT_CAPS,
   applyAffixes,
+  resolveElement,
   sumAffixes,
   type Affix,
 } from '@dd/engine/balance/affixes';
@@ -69,8 +70,9 @@ describe('applyAffixes — weapon power stack', () => {
     expect(BLASTER_SIM).toEqual(before);
   });
 
-  it('every AFFIX_FIELD_MAP kind has a cap', () => {
+  it('every numeric AFFIX_FIELD_MAP kind has a cap (set_element is exempt)', () => {
     for (const { kind } of Object.values(AFFIX_FIELD_MAP)) {
+      if (kind === 'set_element') continue; // non-numeric: overrides, never summed
       expect(EFFECT_CAPS[kind]).toBeTypeOf('number');
     }
   });
@@ -82,5 +84,46 @@ describe('applyAffixes — weapon power stack', () => {
     ]);
     expect(sums.get('flat_damage')).toBe(EFFECT_CAPS.flat_damage);
     expect(sums.get('mult_firerate')).toBe(5);
+  });
+});
+
+describe('element-adding affixes (set_element)', () => {
+  it('grants a physical weapon its element and preserves other stats', () => {
+    expect(BLASTER_SIM.damageType).toBe('physical'); // baseline assumption
+    const out = applyAffixes(BLASTER_SIM, [{ id: 'elem_fire', value: 0 }]) as RangedSimSpec;
+    expect(out.damageType).toBe('fire');
+    expect(out.damage).toBe(BLASTER_SIM.damage); // value is unused, no stat change
+    expect(out.fireRateTicks).toBe(BLASTER_SIM.fireRateTicks);
+  });
+
+  it('works on melee weapons too', () => {
+    const out = applyAffixes(SABER_SIM, [{ id: 'elem_poison', value: 0 }]) as MeleeSimSpec;
+    expect(out.damageType).toBe('poison');
+  });
+
+  it('composes with numeric affixes (element + damage in one stack)', () => {
+    const out = applyAffixes(BLASTER_SIM, [
+      { id: 'elem_ice', value: 0 },
+      { id: 'dmg', value: 2 },
+    ]) as RangedSimSpec;
+    expect(out.damageType).toBe('ice');
+    expect(out.damage).toBe(BLASTER_SIM.damage + 2);
+  });
+
+  it('leaves damageType alone when no element affix is present', () => {
+    const out = applyAffixes(BLASTER_SIM, [{ id: 'dmg', value: 1 }]);
+    expect(out.damageType).toBe(BLASTER_SIM.damageType);
+  });
+
+  it('resolveElement picks a fixed winner (order-independent) when several are present', () => {
+    const a: Affix[] = [{ id: 'elem_fire', value: 0 }, { id: 'elem_poison', value: 0 }];
+    const b = [...a].reverse();
+    expect(resolveElement(a)).toBe(resolveElement(b));
+    // poison is last in DAMAGE_TYPES → outranks fire.
+    expect(resolveElement(a)).toBe('poison');
+  });
+
+  it('resolveElement returns undefined with no element affix', () => {
+    expect(resolveElement([{ id: 'dmg', value: 2 }])).toBeUndefined();
   });
 });

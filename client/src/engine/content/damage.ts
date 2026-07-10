@@ -90,9 +90,19 @@ export const CHAIN_DMG_PERMILLE = 500; // chained hit deals 50% of the primary (
 
 export type ResistMap = Partial<Record<DamageType, number>>;
 
-/** Apply a target's resist/weakness to a raw hit. Integer, floors at 1. */
+/**
+ * Apply a target's resist/weakness to a raw hit. Integer, floors at 1.
+ *
+ * Weakness (mult > 1000) rounds so a small hit still SHOWS its bonus — a base-1 hit
+ * ×1.8 rounds to 2 rather than truncating back to 1, which would make weakness
+ * invisible on low-damage elemental weapons. Resistance (mult < 1000) truncates
+ * toward the min-1 floor so it always reduces. Changing this rounding diverges
+ * replays → bump ENGINE_VERSION (design/08).
+ */
 export function applyResist(rawDamage: number, type: DamageType, resist?: ResistMap): number {
   const mult = resist?.[type] ?? 1000;
   if (mult === 1000) return rawDamage;
-  return Math.max(1, Math.trunc((rawDamage * mult) / 1000));
+  const scaled = (rawDamage * mult) / 1000;
+  const out = mult > 1000 ? Math.round(scaled) : Math.trunc(scaled);
+  return Math.max(1, out);
 }

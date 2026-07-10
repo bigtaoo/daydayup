@@ -92,7 +92,7 @@ Crit: at fire/swing time, `if critPct>0 && combatPrng.nextInt(100) < critPct: ra
 
 `resolveHit` (`applyHit`) is the single funnel for every hit — bullet or melee — and now does, in order:
 
-1. **Resist** — `effective = target.resist[type]==1000 ? raw : max(1, ⌊raw·mult/1000⌋)`. Per-type per-mille multiplier on the target; missing type = `1000`. Floors at 1, so resist reduces toward 1 and weakness (>1000) amplifies (`03`/`09`).
+1. **Resist** — per-type per-mille multiplier on the target; missing type = `1000`. Floors at 1. **Resistance** (`mult<1000`) truncates (`max(1, ⌊raw·mult/1000⌋)`) so it always reduces toward 1; **weakness** (`mult>1000`) *rounds* (`max(1, round(raw·mult/1000))`) so the bonus is visible even on a base-1 hit — otherwise `1×1.8` would truncate back to `1` and low-damage elemental weapons never show their weakness bonus (fixed `ENGINE_VERSION` 9). See `03`/`09`.
 2. **Apply** — `target.hp -= effective`; emit `hit{…, damageType}`.
 3. **On-hit status by type** — `fire` starts/refreshes a **burn** (`burnTicks`, `burnDmg = max(1, hit>>1)`); `ice` starts a **chill** (`chillTicks`, `chillSlow` per-mille — `MovementSystem` scales that tick's displacement by `1000−slow`); `poison` pushes an independent **stack** (capped); `lightning` **chains** to the nearest other same-side actor within `CHAIN_RANGE` for `⌊dmg·½⌋` (one hop, no recursion, no further status). Emits a `status` event for fx.
 

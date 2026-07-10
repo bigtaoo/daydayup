@@ -133,6 +133,7 @@ EFFECT_CAPS: Record<kind, cap>    // Σ-then-clamp (e.g. crit ≤ 50), funny §7
 - `applyAffixes(spec, affixes)` clones the spec and mutates the copy: multiplicative and additive stacks summed per kind, then clamped by `EFFECT_CAPS`. Order of application is fixed (mult before add, or documented) so it's deterministic.
 - **Rarity** = how many affix rolls an item gets (common 1 → epic 3+), rolled from `dropPrng` against weighted tables (`content/drops.ts`). Rolls are reproducible from `seed + input stream` (`06`).
 - **Combo effects** (`k_*` procs — on-hit/on-kill triggers) are tagged data the combat system (`07`) checks; **recognized-but-no-op if unimplemented** (funny's proc stub), so content can list them before the hooks exist.
+- **Element-adding affixes** (`elem_fire`/`elem_ice`/`elem_lightning`/`elem_poison`, kind `set_element`) carry a `damageType` in the field map and *override* the weapon's own `damageType` in `applyAffixes` — the drop that turns any gun elemental (`03`/`07`). This kind is a **set, not a sum**: it skips `sumAffixes`/`EFFECT_CAPS` (non-numeric), and `resolveElement` picks a fixed winner by `DAMAGE_TYPES` order when several are stacked, so it stays order-independent like the numeric stack. The roll's `value` is unused. Added `ENGINE_VERSION` 9 (enlarging `AFFIX_DROP_POOL` shifts the `dropPrng` sequence).
 - **Unknown affix id → ignored** (forward-compat).
 
 ## The build layer — the fairness wall
