@@ -88,6 +88,25 @@ if target.hp <= 0: target.dead = true        // sweep removes it in step 8
 
 Crit: at fire/swing time, `if critPct>0 && combatPrng.nextInt(100) < critPct: raw = round(raw*critMult)` (funny). PvP presets with `critPct=0` never advance `combatPrng`, keeping those replays independent — the same "hard wall" funny relies on.
 
+### Damage types & on-hit status (shipped 2026-07-10, `ENGINE_VERSION` 8)
+
+`resolveHit` (`applyHit`) is the single funnel for every hit — bullet or melee — and now does, in order:
+
+1. **Resist** — `effective = target.resist[type]==1000 ? raw : max(1, ⌊raw·mult/1000⌋)`. Per-type per-mille multiplier on the target; missing type = `1000`. Floors at 1, so resist reduces toward 1 and weakness (>1000) amplifies (`03`/`09`).
+2. **Apply** — `target.hp -= effective`; emit `hit{…, damageType}`.
+3. **On-hit status by type** — `fire` starts/refreshes a **burn** (`burnTicks`, `burnDmg = max(1, hit>>1)`); `ice` starts a **chill** (`chillTicks`, `chillSlow` per-mille — `MovementSystem` scales that tick's displacement by `1000−slow`); `poison` pushes an independent **stack** (capped); `lightning` **chains** to the nearest other same-side actor within `CHAIN_RANGE` for `⌊dmg·½⌋` (one hop, no recursion, no further status). Emits a `status` event for fx.
+
+The lingering effects are ticked in the new **Step 8 — status effects** (below), not here — `applyHit` only *starts* them. Determinism: all integer/fp; chain nearest is squared-distance (no trig); no PRNG draw, so damage types add no new random-draw site.
+
+## Step 8 — status effects (elemental DoT / chill)
+
+Runs after hit resolution (7) and **before** death & drops (now 9), so a burn/poison kill is swept and rolls a drop the same tick as a direct-hit kill. For every alive actor:
+
+- On a **DoT-cadence tick** (`state.tick % DOT_INTERVAL == 0`): apply `burnDmg` if burning, and the summed damage of all poison stacks. Burn and poison share the global cadence, so no per-actor clock is stored (deterministic, `06`).
+- **Age** every timer by one tick; burn/chill reset their magnitude at expiry (so a later weaker application can't inherit a stale value — HitResolve keeps the MAX burn tick while active); expired poison stacks are compacted out in push order.
+
+Chill is *read* one step earlier (Movement, step 4) using the value set by a prior tick's hit — the slow applies from the next movement pass, standard for a status.
+
 ## Step 8 — death & drops
 
 Single sweep over each entity array, ascending id:

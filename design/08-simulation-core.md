@@ -14,7 +14,7 @@ It builds on the entity model (`02`), the weapon system (`03`), and the loop (`0
 - **Per-tick continuous input command.** ⟂ diverges. funny commands are discrete verbs (`play_card`). DayDayUp's core input is a **per-player, per-tick snapshot** of a twin-stick controller (move vector, aim, held buttons). Discrete actions (weapon swap, interact) are **edge-detected inside the engine** from the button bitfield, not sent as separate commands — so one command type carries a whole frame of input and the wire stays compact.
 - **Injected PRNG per concern, distinct derived seeds.** `roomgenPrng`, `aiPrng`, `combatPrng`, `dropPrng`, each `new Prng(seed ^ <distinct constant>)`. Never a global `Prng`, never `Math.random` (`06`). Distinct seeds so streams never alias (funny `GameState` constructor seeds four PRNGs this way).
 - **Entity ids from a state-local counter.** ⟂ diverges. funny uses module-global id counters reset per match (`resetUnitIds()` in the `GameState` ctor) — a footgun if two engines ever coexist. DayDayUp puts the counter **on `GameState`** (`state.nextId()`), so ids are reproducible without a global reset and headless re-judge can run alongside a live match.
-- **Events are the only engine→render channel.** Each step appends transient facts (`bullet_fired`, `hit`, `deflect`, `death`, `pickup`) to a per-frame event queue; render/audio consume them once per frame. Engine decides outcomes, never the reverse.
+- **Events are the only engine→render channel.** Each step appends transient facts (`bullet_fired`, `hit`, `deflect`, `status`, `death`, `pickup`) to a per-frame event queue; render/audio consume them once per frame. Engine decides outcomes, never the reverse.
 
 ## `GameState` schema
 
@@ -88,11 +88,13 @@ step(tick, commands):
                         resolve actor–solid (round pillars) and actor–actor collision (07)
   5. Projectile step  — advance bullets; resolve bullet–solid (expire/stop) (07)
   6. Deflect          — a melee swing's arc vs enemy bullets caught in it → flip faction + redirect (03, 07)
-  7. Hit resolution   — bullet–actor overlap → damage; melee swing arc → damage+knockback (07)
-  8. Death & drops    — hp<=0 → death event; roll dropPrng → spawn Pickup (05)
-  9. Pickup           — player–pickup overlap → apply to build, remove pickup (05)
- 10. Spawns           — WaveDirector.tick(tick) spawns scripted waves/boss (05)   [PvE only]
- 11. Win condition    — all enemies dead / boss dead / all players down → set winner, phase
+  7. Hit resolution   — bullet–actor overlap → damage; melee swing arc → damage+knockback;
+                        per-type resist + on-hit elemental status applied here (03, 07)
+  8. Status effects   — tick burn/poison DoT + chill countdown on tick%DOT_INTERVAL (03, 07)
+  9. Death & drops    — hp<=0 → death event; roll dropPrng → spawn Pickup (05)
+ 10. Pickup           — player–pickup overlap → apply to build, remove pickup (05)
+ 11. Spawns           — WaveDirector.tick(tick) spawns scripted waves/boss (05)   [PvE only]
+ 12. Win condition    — all enemies dead / boss dead / all players down → set winner, phase
   return events
 ```
 
@@ -100,7 +102,8 @@ Notes on the order:
 
 - **Fire (3) before movement (4)** so a bullet spawns at the muzzle position of *this* tick's aim, then everything moves together — matches the "hand anchor follows the frame" intent (`02`) once render reads it back.
 - **Deflect (6) before hit resolution (7)**: a bullet caught by a swing must change faction *before* the hit pass decides who it damages, or a just-deflected bullet could still register a hit on the swinger the same tick.
-- **Death/drops (8) before pickup (9)**: a kill this tick can drop a pickup, but it is not collectable until the *next* tick's pickup pass — avoids "kill and auto-vacuum in the same frame" order sensitivity.
+- **Status effects (8) after hit (7), before death (9)**: HitResolve only *starts* an elemental status; the DoT that can KILL is applied in step 8, so a burn/poison kill is swept and rolls a drop the same tick as a direct-hit kill (`07`). Added 2026-07-10 (`ENGINE_VERSION` 8).
+- **Death/drops (9) before pickup (10)**: a kill this tick can drop a pickup, but it is not collectable until the *next* tick's pickup pass — avoids "kill and auto-vacuum in the same frame" order sensitivity.
 - **PvP** skips steps 2 and 10 (no AI, no wave director) — the confirmed command stream is the only input, exactly what keeps two clients byte-identical (funny's `netplay` branch).
 
 Whatever the final order, it is frozen; changing it bumps `ENGINE_VERSION`.

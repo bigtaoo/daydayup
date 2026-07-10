@@ -25,6 +25,7 @@ Mirror funny's `@nw/engine` structure:
   math/{fixed,prng,trig}.ts   // 06 (trig = the new brad/fp-trig module)
   content/
     weapons.ts         // WEAPON_SPECS: Record<WeaponId, WeaponSpec>   (03)
+    damage.ts          // DamageType, StatusState, resist + status tuning (03/07)
     enemies.ts         // ENEMY_BLUEPRINTS: Record<EnemyType, EnemyBlueprint>
     skins.ts           // SKIN_DEFS: Record<SkinId, SkinDef>           (02)
     ballistics.ts      // BALLISTIC_SHAPES: straight/arc/homing/…       (03/07)
@@ -55,6 +56,7 @@ RangedSpec = {
   spreadDeg          // → brad half-angle; jitter drawn from combatPrng (07)
   bulletSpeed        // grid/s → fp/s
   damage             // integer
+  damageType?        // 'physical'|'fire'|'ice'|'lightning'|'poison' (07); omitted = physical
   ballistic: BallisticId   // key into BALLISTIC_SHAPES (straight/arc/homing/boomerang/pattern)
   lifespanSec        // → lifespanTicks
   piercing?: bool
@@ -65,6 +67,7 @@ MeleeSpec = {
   kind: 'melee'
   arcDeg, rangeGrid  // swing sector (→ brad half-angle + fp range)
   damage, knockback
+  damageType?        // 'physical'|'fire'|'ice'|'lightning'|'poison' (07); omitted = physical
   swingSec           // → swingTicks (active-hit window, 07)
   deflect: bool      // does the swing deflect bullets in its arc (03) — ranged-vs-melee trade-off gate
   deflectSpeed       // grid/s of a redirected bullet (07). The swing's arcDeg/rangeGrid
@@ -81,12 +84,16 @@ EnemyBlueprint = {
   moveSpeed          // grid/s → fp/s
   radius             // grid → radius_fp (07 collision)
   weapon?: WeaponId  // enemies fire through the same weapon system (02/03)
+  resist?: Partial<Record<DamageType, number>>  // per-type per-mille mult (07); 1000=normal, missing=neutral
+  tint?              // render-only body colour (01); the sim never reads it
   aiProfile: AiId    // behavior selector read by the AI system (08 step 2)
   traits?: Trait[]   // tagged behaviors: aura_heal, enrage, shielder, …  (funny traits)
   onDeathSpawn?: { type, count }   // boss adds (funny)
   isBoss?: bool
 }
 ```
+
+> **Shipped 2026-07-10 (`ENGINE_VERSION` 8).** `content/enemies.ts` holds `ENEMY_BLUEPRINTS: Record<type, EnemyBlueprint>` (basic + elemental variants emberling/frostling/galvanist/ironclad). A wave spawn entry is `[x, y]` (basic) or `[x, y, type]` (`SpawnSpec`), resolved through the registry by `SpawnSystem`; a bare `[x, y]` and any unknown type fall back to basic — a forward-compatible content add (new ids + optional field), so it did **not** bump the version on its own. The elemental status runtime (`StatusState`: burn/chill/poison fields) lives on every `Actor`, constructed via `freshStatus()`; it is plain data mutated only by `StatusEffectSystem` (`07`/`08`).
 
 `PlayerActor` base stats live similarly (a `PLAYER_BASE` blueprint); persistent-meta and in-run affixes modify a *copy* via the build layer below — never the shared constant.
 
