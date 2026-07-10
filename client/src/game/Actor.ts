@@ -1,4 +1,5 @@
 import { Graphics } from 'pixi.js';
+import type { StatusState } from '@dd/engine';
 import { CONFIG } from './config';
 import { Entity } from './Entity';
 import { Skin } from './Skin';
@@ -10,12 +11,25 @@ export type WeaponKind = 'ranged' | 'melee';
 // Bigger → more of the body rises above the anchor → more it can overlap a pillar.
 const BODY_LIFT_R = 0.7;
 
+// Lingering status auras (design/03/07): a concentric glowing ring per active
+// on-hit effect, so a burning / chilled / poisoned actor reads while the DoT lasts —
+// not just a one-frame flash on the hit. Lightning has no lingering status (the
+// chain is instant), so it deliberately has no aura. Bit index = ring order.
+const AURAS: ReadonlyArray<{ bit: number; color: number; active: (s: StatusState) => boolean }> = [
+  { bit: 1, color: CONFIG.colors.statusBurn, active: (s) => s.burnTicks > 0 },
+  { bit: 2, color: CONFIG.colors.statusChill, active: (s) => s.chillTicks > 0 },
+  { bit: 4, color: CONFIG.colors.statusPoison, active: (s) => s.poison.length > 0 },
+];
+
 // Actor view (player / enemy). Pure presentation: body skin, a soft shadow, and a
 // cosmetic weapon graphic that swaps shape by the engine weapon's kind (Stage D:
 // no weapon logic lives here — the engine owns firing, cooldowns, and the loadout).
 export class Actor extends Entity {
   private skin: Skin;
   private weaponGfx = new Graphics();
+  private statusAura = new Graphics(); // lingering elemental aura, behind the body
+  private auraMask = 0; // bitmask of the effects currently drawn (skip redraw if same)
+  private auraT = 0; // aura pulse clock (render-only, ms)
   private weaponKind: WeaponKind | null | undefined = undefined;
   private radiusPx: number;
 
@@ -24,6 +38,11 @@ export class Actor extends Entity {
     this.radiusPx = radiusPx;
     // The actor container sorts children so the weapon can sit in front of / behind.
     this.sortableChildren = true;
+
+    // Aura sits behind everything (zIndex -1) and glows additively.
+    this.statusAura.zIndex = -1;
+    this.statusAura.blendMode = 'add';
+    this.addChild(this.statusAura);
 
     const [body, front] =
       faction === 'player'
@@ -44,6 +63,7 @@ export class Actor extends Entity {
     const lift = radiusPx * BODY_LIFT_R;
     this.skin.view.y = -lift;
     this.weaponGfx.y = -lift;
+    this.statusAura.y = -lift;
   }
 
   // Swap the cosmetic weapon shape to match the engine's active weapon kind.
@@ -51,6 +71,28 @@ export class Actor extends Entity {
     if (kind === this.weaponKind) return;
     this.weaponKind = kind;
     this.drawWeapon(kind);
+  }
+
+  // Mirror the engine actor's lingering status (design/03/07). Draws one glowing
+  // ring per active effect; redraws only when the active set changes (the pulse is
+  // an alpha animation in interpolate, so a steady burn doesn't rebuild geometry).
+  setStatus(status: StatusState): void {
+    let mask = 0;
+    for (const a of AURAS) if (a.active(status)) mask |= a.bit;
+    if (mask === this.auraMask) return;
+    this.auraMask = mask;
+
+    const g = this.statusAura;
+    g.clear();
+    if (mask === 0) return;
+    const r = this.radiusPx;
+    let ring = 0;
+    for (const a of AURAS) {
+      if (!(mask & a.bit)) continue;
+      const rad = r * (1.15 + ring * 0.22);
+      g.circle(0, 0, rad).stroke({ color: a.color, width: 3, alpha: 0.55 });
+      ring++;
+    }
   }
 
   private drawWeapon(kind: WeaponKind | null): void {
@@ -70,5 +112,10 @@ export class Actor extends Entity {
     super.interpolate(alpha, frameDt);
     this.skin.setFacing(this.facingRad);
     this.weaponGfx.rotation = this.facingRad;
+    // Gentle breathing pulse so an active aura reads as a live effect, not an outline.
+    if (this.auraMask !== 0) {
+      this.auraT += frameDt;
+      this.statusAura.alpha = 0.75 + 0.25 * Math.sin(this.auraT * 0.008);
+    }
   }
 }

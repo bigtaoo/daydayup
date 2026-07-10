@@ -45,6 +45,7 @@ export class Scene {
         v.pushState(fpToPx(p.gx), fpToPx(p.gy), fpToPx(p.z), bradToRad(p.facing));
       }
       v.setWeaponKind(p.weapon?.spec.kind ?? null);
+      v.setStatus(p.status);
       seen.add(p.id);
     }
 
@@ -58,6 +59,7 @@ export class Scene {
         v.pushState(fpToPx(e.gx), fpToPx(e.gy), fpToPx(e.z), bradToRad(e.facing));
       }
       v.setWeaponKind(e.weapon?.spec.kind ?? null);
+      v.setStatus(e.status);
       seen.add(e.id);
     }
 
@@ -71,6 +73,7 @@ export class Scene {
         v.pushState(fpToPx(b.gx), fpToPx(b.gy), fpToPx(b.z), 0);
       }
       v.setFaction(b.faction);
+      v.setElement(b.damageType);
       seen.add(b.id);
     }
 

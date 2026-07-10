@@ -1,6 +1,12 @@
 import { Application, Container, Graphics, Text } from 'pixi.js';
-import { createGameEngine, type GameEngine, type GameEvent, type WaveDef } from '@dd/engine';
-import { CONFIG } from './config';
+import {
+  createGameEngine,
+  type GameEngine,
+  type GameEvent,
+  type GameState,
+  type WaveDef,
+} from '@dd/engine';
+import { CONFIG, ELEMENT_COLORS } from './config';
 import { Layers } from './layers';
 import { Entity } from './Entity';
 import { Scene } from './Scene';
@@ -242,6 +248,7 @@ export class Game {
     const events = engine.advance(frame) ?? [];
 
     this.scene.reconcile(s);
+    this.spawnBulletTrails(s);
     this.consumeEvents(events);
 
     if (s.phase === 'gameover') {
@@ -305,6 +312,31 @@ export class Game {
   }
 
   // ---- fx (world glow, driven by events) ----
+
+  // Per-element bullet trails (design/03/07). Once per sim tick, drop a fading
+  // element-coloured dot at each live elemental bullet's position; the fx fade
+  // (updateFx) turns the string of dots into a comet tail. Physical rounds leave
+  // none — the trail IS the "this shot is elemental" tell, matched to the bullet's
+  // glow and the aura it will leave on a hit. Render-only: reads engine state, never
+  // writes it (design/08).
+  private spawnBulletTrails(s: GameState) {
+    for (const b of s.projectiles) {
+      if (!b.alive) continue;
+      const color = ELEMENT_COLORS[b.damageType];
+      if (color === undefined) continue; // physical → no trail
+      this.trailDot(fpToPx(b.gx), fpToPx(b.gy), color, fpToPx(b.radius) * 0.9);
+    }
+  }
+
+  private trailDot(x: number, y: number, color: number, radius: number) {
+    const dot = new Graphics();
+    dot.circle(0, 0, radius).fill({ color, alpha: 0.5 });
+    dot.blendMode = 'add';
+    dot.x = x;
+    dot.y = y - 12;
+    (dot as unknown as { _life: number })._life = FX_LIFE_MS;
+    this.layers.fx.addChild(dot);
+  }
 
   private flash(x: number, y: number, color: number, radius: number) {
     const glow = new Graphics();

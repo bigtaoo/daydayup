@@ -39,10 +39,21 @@ export const CONFIG = {
     pickupCoin: 0xf6e05e,
     pickupAffix: 0xb794f4, // purple gem — the run's power drop
     pickupWeapon: 0xf6ad55, // amber — a new gun to swap in
-    // Elemental status fx (design/03/07) — flashed on the 'status' event.
+    // Elemental status fx (design/03/07) — flashed on the 'status' event, and now
+    // also the bullet-trail + lingering-aura colours (per-element render polish).
     statusBurn: 0xff7043, // fire — orange flame
     statusChill: 0x81d4fa, // ice — pale blue frost
     statusShock: 0xfff176, // lightning — bright yellow arc
     statusPoison: 0x9ccc65, // poison — sickly green
   },
 } as const;
+
+// Element → fx colour. `physical` is intentionally absent (falls back to the
+// faction colour); the four elements reuse their status-fx hues so a fire bullet,
+// its trail, and the burn aura it leaves all read as the same orange (design/03/07).
+export const ELEMENT_COLORS: Partial<Record<import('@dd/engine').DamageType, number>> = {
+  fire: CONFIG.colors.statusBurn,
+  ice: CONFIG.colors.statusChill,
+  lightning: CONFIG.colors.statusShock,
+  poison: CONFIG.colors.statusPoison,
+};
