@@ -75,6 +75,7 @@ export class SpawnSystem {
         status: freshStatus(),
         resist: bp.resist,
         tint: bp.tint,
+        boss: bp.boss,
       });
     }
   }

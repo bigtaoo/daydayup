@@ -32,6 +32,9 @@ const WAVES: WaveDef[] = [
   [[250, 950, 'emberling'], [1350, 950, 'frostling'], [1300, 350, 'galvanist'], [300, 650]],
   // Wave 3: an armoured ironclad (shrug bullets/fire — shock it) among a mixed pack.
   [[200, 300, 'frostling'], [1400, 300, 'galvanist'], [200, 900], [1400, 900, 'emberling'], [800, 150, 'ironclad']],
+  // Wave 4: the Blightlord finale — a durable boss weak to poison. Bring venom, stack
+  // it, and watch the DoT + poison aura melt it (design/03/07). Two galvanists harass.
+  [[800, 250, 'blightlord'], [300, 900, 'galvanist'], [1300, 900, 'galvanist']],
 ];
 
 // Pillar layout (world px). Single source of truth for both the render mesh

@@ -95,6 +95,8 @@ EnemyBlueprint = {
 
 > **Shipped 2026-07-10 (`ENGINE_VERSION` 8).** `content/enemies.ts` holds `ENEMY_BLUEPRINTS: Record<type, EnemyBlueprint>` (basic + elemental variants emberling/frostling/galvanist/ironclad). A wave spawn entry is `[x, y]` (basic) or `[x, y, type]` (`SpawnSpec`), resolved through the registry by `SpawnSystem`; a bare `[x, y]` and any unknown type fall back to basic — a forward-compatible content add (new ids + optional field), so it did **not** bump the version on its own. The elemental status runtime (`StatusState`: burn/chill/poison fields) lives on every `Actor`, constructed via `freshStatus()`; it is plain data mutated only by `StatusEffectSystem` (`07`/`08`).
 
+> **Boss shipped 2026-07-11 (no version bump).** `blightlord` — a durable finale (`maxHp 40`, 2× radius) that exists to *show* the combat systems: its big HP pool lets poison stacks ramp to full and lingering burn/chill/poison auras persist, while a broad `resist` (physical ×0.4, fire/ice/lightning ×0.8, **poison ×2.0**) forces the right tool — venom melts it. `boss?: bool` is the shipped form of the aspirational `isBoss` but **render-only** (like `tint` — the sim never reads it): the view draws a floating HP bar so the poison melt is legible. `onDeathSpawn`/AI traits remain unbuilt. Added as a `blightlord` finale wave; another new id + optional render field, so still no version bump.
+
 `PlayerActor` base stats live similarly (a `PLAYER_BASE` blueprint); persistent-meta and in-run affixes modify a *copy* via the build layer below — never the shared constant.
 
 ### `SkinDef` (`02`)

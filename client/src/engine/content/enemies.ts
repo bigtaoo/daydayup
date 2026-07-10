@@ -28,6 +28,7 @@ export interface EnemyBlueprint {
   // Missing type = neutral. The knob that makes damage types matter per mob (design/07).
   resist?: ResistMap;
   tint?: number; // render-only body colour (design/01); the sim never reads it
+  boss?: boolean; // render-only (like tint): the view draws a health bar for a boss
 }
 
 // ── Basic (neutral) ─────────────────────────────────────────────────────────────
@@ -90,6 +91,26 @@ export const IRONCLAD: EnemyBlueprint = {
   tint: 0x90a4ae, // steel grey
 };
 
+// ── Boss ────────────────────────────────────────────────────────────────────────
+// The durable finale — a big, tanky mob that survives long enough to *show* the
+// combat systems working (design/03/07): its huge HP pool lets poison stacks ramp
+// to full and lingering burn/chill/poison auras persist visibly, while its broad
+// resist profile forces the player to find the right damage type. It shrugs bullets
+// (physical, floored to min-1) and partially resists fire/ice/lightning, but is
+// doubly WEAK to poison — so the intended kill is to stack venom and let the DoT
+// melt it, the clearest showcase of independent poison stacks on a target that
+// doesn't die first. Neutral-ish elements still land, so their auras read too.
+export const BLIGHTLORD: EnemyBlueprint = {
+  type: 'blightlord',
+  maxHp: 40, // ~a dozen full-poison DoT ticks; bullets alone take forever (min-1)
+  radius: pxToFp(30), // twice a basic mob — reads as a boss; auras/bar scale with it
+  footprintRadius: pxToFp(14),
+  weapon: ENEMY_GUN_SIM,
+  resist: { physical: 400, fire: 800, ice: 800, lightning: 800, poison: 2000 },
+  tint: 0x8e24aa, // toxic purple
+  boss: true,
+};
+
 /** Blueprint registry, keyed by `type` (design/09 "content is plain data keyed by
  *  type"). SpawnSystem resolves a wave entry's type through this; unknown → basic. */
 export const ENEMY_BLUEPRINTS: Record<string, EnemyBlueprint> = {
@@ -98,4 +119,5 @@ export const ENEMY_BLUEPRINTS: Record<string, EnemyBlueprint> = {
   frostling: FROSTLING,
   galvanist: GALVANIST,
   ironclad: IRONCLAD,
+  blightlord: BLIGHTLORD,
 };

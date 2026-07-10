@@ -108,6 +108,9 @@ export interface EnemyActor extends Actor {
   // Render-only body tint from the blueprint (design/01); the sim never reads it,
   // like `z`. Lets the view distinguish elemental variants. Undefined = default palette.
   tint?: number;
+  // Render-only boss marker (design/01); the sim never reads it. The view draws a
+  // health bar so a durable boss's HP ramp-down (poison melt) is legible.
+  boss?: boolean;
 }
 
 // ── Projectiles / pickups ──────────────────────────────────────────────────────

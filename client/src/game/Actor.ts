@@ -30,10 +30,12 @@ export class Actor extends Entity {
   private statusAura = new Graphics(); // lingering elemental aura, behind the body
   private auraMask = 0; // bitmask of the effects currently drawn (skip redraw if same)
   private auraT = 0; // aura pulse clock (render-only, ms)
+  private healthBar: Graphics | null = null; // boss only; null for regular mobs
+  private hpRatio = -1; // last-drawn hp fraction (skip redraw if unchanged)
   private weaponKind: WeaponKind | null | undefined = undefined;
   private radiusPx: number;
 
-  constructor(faction: Faction, radiusPx: number, tint?: number) {
+  constructor(faction: Faction, radiusPx: number, tint?: number, boss = false) {
     super();
     this.radiusPx = radiusPx;
     // The actor container sorts children so the weapon can sit in front of / behind.
@@ -64,6 +66,13 @@ export class Actor extends Entity {
     this.skin.view.y = -lift;
     this.weaponGfx.y = -lift;
     this.statusAura.y = -lift;
+
+    // A boss carries a floating health bar above its head so the poison melt reads.
+    if (boss) {
+      this.healthBar = new Graphics();
+      this.healthBar.y = -lift - radiusPx * 1.7;
+      this.addChild(this.healthBar);
+    }
   }
 
   // Swap the cosmetic weapon shape to match the engine's active weapon kind.
@@ -71,6 +80,27 @@ export class Actor extends Entity {
     if (kind === this.weaponKind) return;
     this.weaponKind = kind;
     this.drawWeapon(kind);
+  }
+
+  // Update the boss health bar from the engine actor's hp (no-op for non-bosses).
+  // Colour ramps green → amber → red as it drains; redraws only when the fraction
+  // changes, so a boss sitting at full hp costs nothing per tick.
+  setHealth(hp: number, maxHp: number): void {
+    if (!this.healthBar || maxHp <= 0) return;
+    const ratio = Math.max(0, Math.min(1, hp / maxHp));
+    if (ratio === this.hpRatio) return;
+    this.hpRatio = ratio;
+
+    const w = this.radiusPx * 2.2;
+    const h = 6;
+    const g = this.healthBar;
+    g.clear();
+    g.roundRect(-w / 2, -h / 2, w, h, 2).fill({ color: 0x1a1d26, alpha: 0.85 });
+    if (ratio > 0) {
+      const color = ratio > 0.5 ? 0x66bb6a : ratio > 0.25 ? 0xffca28 : 0xef5350;
+      g.roundRect(-w / 2, -h / 2, w * ratio, h, 2).fill({ color });
+    }
+    g.roundRect(-w / 2, -h / 2, w, h, 2).stroke({ color: 0x0c0e14, width: 1, alpha: 0.9 });
   }
 
   // Mirror the engine actor's lingering status (design/03/07). Draws one glowing
