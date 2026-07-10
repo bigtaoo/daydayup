@@ -33,7 +33,7 @@ Render transform: `screen.x = gx`, `screen.y = gy - z`. A large part of the 3D f
 | ground | floor, ground decals | fixed |
 | shadow | all cast shadows | fixed (below entities) |
 | entities | characters / enemies / pillars / bullets | **Y-sort (zIndex = gy)** |
-| fx | muzzle flashes, explosions, deflect flashes (additive blend) | overlay |
+| fx | muzzle flashes, explosions, deflect flashes, per-element bullet trails (additive blend) | overlay |
 | ui | HP, weapon, crosshair | topmost |
 
 > The lighting layer (lightmap) is later inserted between entities and fx, composited with multiply blend. See the roadmap.

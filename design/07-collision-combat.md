@@ -98,6 +98,8 @@ Crit: at fire/swing time, `if critPct>0 && combatPrng.nextInt(100) < critPct: ra
 
 The lingering effects are ticked in the new **Step 8 — status effects** (below), not here — `applyHit` only *starts* them. Determinism: all integer/fp; chain nearest is squared-distance (no trig); no PRNG draw, so damage types add no new random-draw site.
 
+**Render treatment (per-element, `01` fx layer — render-only, reads state never writes it).** An elemental bullet draws in its element hue with an additive glow halo, and drops a fading trail dot each sim tick (a comet tail); physical rounds stay a plain faction-coloured dot with no trail. An actor under a lingering status wears a pulsing concentric ring per active effect (burn / chill / poison), mirrored from `actor.status` each reconcile — lightning has none (its chain is instant). All four reuse the same status-fx hues, so a fire shot, its trail, and the burn aura it leaves read as one colour. The transient `status`/`hit` events still drive the on-impact flash.
+
 ## Step 8 — status effects (elemental DoT / chill)
 
 Runs after hit resolution (7) and **before** death & drops (now 9), so a burn/poison kill is swept and rolls a drop the same tick as a direct-hit kill. For every alive actor:
