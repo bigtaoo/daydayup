@@ -39,7 +39,19 @@ export const DROP_TABLE: readonly DropTableEntry[] = [
 ];
 
 /** Weapon ids a drop can roll (must exist in WEAPON_SPECS). Player-facing only. */
-export const WEAPON_DROP_POOL: readonly string[] = ['repeater', 'cannon', 'saber'];
+export const WEAPON_DROP_POOL: readonly string[] = [
+  'repeater',
+  'cannon',
+  'saber',
+  // Elemental drops — the "swap your gun AND your playstyle" moment (design/03/05).
+  'flamer',
+  'cryobolt',
+  'teslagun',
+  'venomspit',
+  'emberblade',
+  'frostbrand',
+  'stormglaive',
+];
 
 /**
  * Affix roll pool: id + its tier values. A roll picks an id uniformly, then a tier

@@ -42,8 +42,15 @@ import { BRAD_FULL } from './math/trig';
  * player/enemy bullet pair (mutual destruction) before the actor-hit loop, so a
  * v6 stream where two enemy/player bullets crossed paths — previously ghosting
  * through each other, now both expiring — diverges.
+ *
+ * v8: elemental damage types + status effects (design/03/07). Weapons/bullets carry
+ * a DamageType; HitResolve applies per-type resist and an on-hit status (fire→burn
+ * DoT, ice→chill slow, poison→stacks, lightning→chain to a neighbour), and a new
+ * StatusEffectSystem ticks the lingering DoT/chill between hit-resolution (7) and
+ * death (now 9). The step order gained a system and actors/bullets gained fields, so
+ * any v7 stream diverges the first time a hit lands or an element ticks.
  */
-export const ENGINE_VERSION = 7;
+export const ENGINE_VERSION = 8;
 
 /**
  * World scale — the anchor for every human-unit → fp/brad conversion (design/09).

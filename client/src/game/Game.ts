@@ -15,11 +15,17 @@ const WORLD_W = 1600;
 const WORLD_H = 1200;
 
 // Scripted run: three escalating waves, in world px. The engine's SpawnSystem owns
-// wave pacing now; this is just the position data handed to EngineConfig.
+// wave pacing now; this is just the position data handed to EngineConfig. A spawn
+// entry is [x, y] (basic mob) or [x, y, type] where type keys ENEMY_BLUEPRINTS —
+// the elemental variants each resist one element and are weak to a counter, so the
+// player is rewarded for swapping to the right damage type (design/07).
 const WAVES: WaveDef[] = [
-  [[300, 300], [1300, 300], [800, 200]],
-  [[250, 950], [1350, 950], [1300, 350], [300, 650]],
-  [[200, 300], [1400, 300], [200, 900], [1400, 900], [800, 150]],
+  // Wave 1: a gentle intro — mostly basic, one fire-resistant emberling to notice.
+  [[300, 300], [1300, 300], [800, 200, 'emberling']],
+  // Wave 2: elemental pairs — bring ice for the emberling, fire for the frostling.
+  [[250, 950, 'emberling'], [1350, 950, 'frostling'], [1300, 350, 'galvanist'], [300, 650]],
+  // Wave 3: an armoured ironclad (shrug bullets/fire — shock it) among a mixed pack.
+  [[200, 300, 'frostling'], [1400, 300, 'galvanist'], [200, 900], [1400, 900, 'emberling'], [800, 150, 'ironclad']],
 ];
 
 // Pillar layout (world px). Single source of truth for both the render mesh
@@ -258,6 +264,16 @@ export class Game {
         case 'deflect':
           this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.deflect, 20);
           break;
+        case 'status': {
+          // Elemental fx — a coloured flash by effect (design/03/07).
+          const c =
+            e.effect === 'burn' ? CONFIG.colors.statusBurn
+            : e.effect === 'chill' ? CONFIG.colors.statusChill
+            : e.effect === 'shock' ? CONFIG.colors.statusShock
+            : CONFIG.colors.statusPoison;
+          this.flash(fpToPx(e.gx), fpToPx(e.gy), c, 12);
+          break;
+        }
         case 'clash':
           this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.clash, 14);
           break;

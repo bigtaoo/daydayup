@@ -39,5 +39,10 @@ export const CONFIG = {
     pickupCoin: 0xf6e05e,
     pickupAffix: 0xb794f4, // purple gem — the run's power drop
     pickupWeapon: 0xf6ad55, // amber — a new gun to swap in
+    // Elemental status fx (design/03/07) — flashed on the 'status' event.
+    statusBurn: 0xff7043, // fire — orange flame
+    statusChill: 0x81d4fa, // ice — pale blue frost
+    statusShock: 0xfff176, // lightning — bright yellow arc
+    statusPoison: 0x9ccc65, // poison — sickly green
   },
 } as const;

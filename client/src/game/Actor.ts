@@ -19,7 +19,7 @@ export class Actor extends Entity {
   private weaponKind: WeaponKind | null | undefined = undefined;
   private radiusPx: number;
 
-  constructor(faction: Faction, radiusPx: number) {
+  constructor(faction: Faction, radiusPx: number, tint?: number) {
     super();
     this.radiusPx = radiusPx;
     // The actor container sorts children so the weapon can sit in front of / behind.
@@ -29,7 +29,8 @@ export class Actor extends Entity {
       faction === 'player'
         ? [CONFIG.colors.player, CONFIG.colors.playerFront]
         : [CONFIG.colors.enemy, 0xffd6d6];
-    this.skin = new Skin(body, front, radiusPx);
+    // An enemy blueprint tint (elemental variant) overrides the default body colour.
+    this.skin = new Skin(tint ?? body, front, radiusPx);
     this.addChild(this.skin.view);
 
     this.weaponGfx.zIndex = 1;

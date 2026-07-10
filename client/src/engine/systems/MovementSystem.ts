@@ -32,8 +32,19 @@ export class MovementSystem {
   }
 
   private integrate(a: Actor): void {
-    a.gx = addFp(a.gx, a.vx);
-    a.gy = addFp(a.gy, a.vy);
+    // Chill (ice status) scales this tick's displacement down; the stored vx/vy are
+    // untouched (players re-derive them each tick from input, enemies are 0), so the
+    // slow is purely a movement-time factor. Integer per-mille scale (design/06).
+    let vx = a.vx;
+    let vy = a.vy;
+    const st = a.status;
+    if (st.chillTicks > 0 && st.chillSlow > 0) {
+      const keep = 1000 - st.chillSlow; // fraction of speed retained, per-mille
+      vx = Math.trunc((vx * keep) / 1000) as Fp;
+      vy = Math.trunc((vy * keep) / 1000) as Fp;
+    }
+    a.gx = addFp(a.gx, vx);
+    a.gy = addFp(a.gy, vy);
   }
 
   /**

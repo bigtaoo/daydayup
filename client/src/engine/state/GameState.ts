@@ -9,6 +9,7 @@ import { Prng } from '../math/prng';
 import { toFp } from '../math/fixed';
 import type { Fp } from '../math/fixed';
 import { pxToFp } from '../content/convert';
+import { freshStatus } from '../content/damage';
 import { PLAYER } from '../content/players';
 import { buildRunSpecs } from '../balance/build';
 import type {
@@ -23,8 +24,14 @@ import type { GameEvent } from './events';
 
 export type Phase = 'idle' | 'playing' | 'gameover';
 
-/** A wave is a list of enemy spawn positions in world px (converted to grid-fp). */
-export type WaveDef = readonly (readonly [number, number])[];
+/**
+ * One enemy spawn in a wave: world-px position, plus an optional enemy `type` that
+ * SpawnSystem resolves through ENEMY_BLUEPRINTS (missing = 'basic'). The `[x, y]`
+ * form stays valid, so old wave data needs no change (design/09 forward-compat).
+ */
+export type SpawnSpec = readonly [number, number, string?];
+/** A wave is a list of enemy spawn entries (positions in world px → grid-fp). */
+export type WaveDef = readonly SpawnSpec[];
 
 export interface EngineConfig {
   seed: number;
@@ -119,6 +126,7 @@ export class GameState {
       affixes: [],
       firing: false,
       prevButtons: 0,
+      status: freshStatus(),
     });
   }
 

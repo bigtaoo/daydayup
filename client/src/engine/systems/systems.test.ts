@@ -6,6 +6,7 @@ import { createGameState } from '@dd/engine/state/GameState';
 import type { GameState } from '@dd/engine/state/GameState';
 import type { EnemyActor, Faction, Projectile } from '@dd/engine/state/entities';
 import { makeWeapon, SABER_SIM } from '@dd/engine/content/weapons';
+import { freshStatus } from '@dd/engine/content/damage';
 import { PLAYER } from '@dd/engine/content/players';
 import { BASIC_ENEMY } from '@dd/engine/content/enemies';
 import { pxToFp } from '@dd/engine/content/convert';
@@ -30,7 +31,7 @@ function addEnemy(s: GameState, xpx: number, ypx: number, hp: number = BASIC_ENE
     gx: pxToFp(xpx), gy: pxToFp(ypx), z: toFp(0), vx: toFp(0), vy: toFp(0),
     facing: 0 as Brad, hp, maxHp: BASIC_ENEMY.maxHp, radius: BASIC_ENEMY.radius,
     footprintRadius: BASIC_ENEMY.footprintRadius,
-    alive: true, weapon: null, firing: false,
+    alive: true, weapon: null, firing: false, status: freshStatus(),
   };
   s.enemies.push(e);
   return e;
@@ -42,7 +43,7 @@ function addBullet(s: GameState, xpx: number, ypx: number, vx: Fp, faction: Fact
   const b: Projectile = {
     id: s.nextId(), faction, gx: pxToFp(xpx), gy: pxToFp(ypx), z: pxToFp(12),
     vx, vy: toFp(0), radius: pxToFp(5), damage: faction === 'player' ? 2 : 1,
-    lifeTicks: 90, alive: true,
+    damageType: 'physical', lifeTicks: 90, alive: true,
   };
   s.projectiles.push(b);
   return b;

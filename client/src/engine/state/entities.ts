@@ -11,6 +11,7 @@
 import type { Fp } from '../math/fixed';
 import type { Brad } from '../math/trig';
 import type { Affix } from '../balance/affixes';
+import type { DamageType, ResistMap, StatusState } from '../content/damage';
 
 export type Faction = 'player' | 'enemy';
 
@@ -29,6 +30,7 @@ export interface RangedSimSpec {
   muzzleOffset: Fp; // spawn distance from actor centre along facing
   bulletZ: Fp; // muzzle height band (design/07 z-gating; cosmetic until then)
   damage: number; // integer
+  damageType: DamageType; // physical or an element (on-hit status, design/03/07)
 }
 
 export interface MeleeSimSpec {
@@ -40,6 +42,7 @@ export interface MeleeSimSpec {
   range: Fp; // swing sector radius (reach from actor centre)
   deflect: boolean; // does the swing deflect bullets caught in its arc (design/03/05 parry)
   deflectSpeed: Fp; // fp per tick for a redirected bullet
+  damageType: DamageType; // physical or an element (on-hit status, design/03/07)
 }
 
 export type WeaponSimSpec = RangedSimSpec | MeleeSimSpec;
@@ -77,6 +80,12 @@ export interface Actor {
   alive: boolean;
   weapon: WeaponState | null;
   firing: boolean; // intent this tick (ApplyInput / AIDecide → WeaponFire)
+  // Elemental status runtime (design/03/07). Burn/poison DoT + chill slow live here;
+  // StatusEffectSystem is the only mutator after HitResolve applies a hit's status.
+  status: StatusState;
+  // Per-type damage multiplier (per-mille; missing type = 1000 = normal). Lets an
+  // enemy be weak/resistant to an element (design/07). Players carry none.
+  resist?: ResistMap;
 }
 
 export interface PlayerActor extends Actor {
@@ -96,6 +105,9 @@ export interface PlayerActor extends Actor {
 
 export interface EnemyActor extends Actor {
   faction: 'enemy';
+  // Render-only body tint from the blueprint (design/01); the sim never reads it,
+  // like `z`. Lets the view distinguish elemental variants. Undefined = default palette.
+  tint?: number;
 }
 
 // ── Projectiles / pickups ──────────────────────────────────────────────────────
@@ -110,6 +122,7 @@ export interface Projectile {
   vy: Fp;
   radius: Fp;
   damage: number;
+  damageType: DamageType; // frozen from the firing weapon's spec (design/07 payload)
   lifeTicks: number;
   alive: boolean;
 }

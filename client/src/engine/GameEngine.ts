@@ -1,5 +1,5 @@
 /**
- * GameEngine — the single orchestrator (design/08). Owns a GameState and the 11
+ * GameEngine — the single orchestrator (design/08). Owns a GameState and the 12
  * systems, instantiated once and run in the frozen step() order. That order IS the
  * determinism contract; reordering it (or changing how a system iterates a
  * collection) bumps ENGINE_VERSION.
@@ -23,6 +23,7 @@ import {
   PickupSystem,
   ProjectileStepSystem,
   SpawnSystem,
+  StatusEffectSystem,
   WeaponFireSystem,
   WinConditionSystem,
 } from './systems';
@@ -38,6 +39,7 @@ export class GameEngine {
   private readonly projectileStep = new ProjectileStepSystem();
   private readonly deflect = new DeflectSystem();
   private readonly hitResolve = new HitResolveSystem();
+  private readonly statusEffect = new StatusEffectSystem();
   private readonly deathDrops = new DeathDropsSystem();
   private readonly pickup = new PickupSystem();
   private readonly spawns = new SpawnSystem();
@@ -67,10 +69,11 @@ export class GameEngine {
     this.projectileStep.tick(s); //       5
     this.deflect.tick(s); //              6  (melee swing parries bullets in its arc)
     this.hitResolve.tick(s); //           7
-    this.deathDrops.tick(s); //           8
-    this.pickup.tick(s); //               9
-    this.spawns.tick(s); //              10  (PvE)
-    this.winCondition.tick(s); //        11
+    this.statusEffect.tick(s); //         8  (burn/poison DoT + chill countdown)
+    this.deathDrops.tick(s); //           9
+    this.pickup.tick(s); //              10
+    this.spawns.tick(s); //              11  (PvE)
+    this.winCondition.tick(s); //        12
 
     return s.events;
   }
