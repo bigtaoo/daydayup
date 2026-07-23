@@ -44,7 +44,7 @@ This **replaces** the old humanoid `gear_hand` + per-weapon `grip` mounting mode
 
 ### Enemies — the corrupted-crystal mirror
 
-Enemies share the hero's DNA — **living crystal, single glowing eye** — but are its **failed opposite**: raw, jagged, wild-grown crystal over a cracked core, where the hero is a polished, contained shell. One base creature is **re-tinted** into the element variants (`09`'s render-only `tint`): a squat single-eyed crystal critter → emberling / frostling / galvanist / poison / physical by colour + icon alone. Roster variety beyond the base body (a heavy brute, a floating ranged form) is a later pass.
+Enemies share the hero's DNA — **living crystal, single glowing eye** — but are its **failed opposite**: raw, jagged, wild-grown crystal over a cracked core, where the hero is a polished, contained shell. One base creature is **re-tinted** into the element variants (`09`'s render-only `tint`): a squat single-eyed crystal critter → **emberling / frostling / galvanist / ironclad** — fire / ice / lightning / **physical** (`ironclad` is the physical-resistant, armour-plated one) — told apart by colour + icon alone. **Poison has no dedicated critter yet** (the poison read currently lives on the `blightlord` boss, which is *weak* to it, `09`); a poison-tinted variant is a later add. Roster variety beyond the base body (a heavy brute, a floating ranged form) is a later pass.
 
 The **boss closes the loop thematically**: it is a **giant failed core** — a huge cracked crystal core with orbiting shard rings — the same kind of thing the player *is*, but corrupted. Hero and final boss are the two poles of one object.
 
@@ -89,5 +89,5 @@ The art-first setting still makes each locked mechanic diegetic:
 - **The 3 launch characters** — each a distinct themed orb-core + its `(maxHp, maxShield)` + break-passive playstyle (`02`/`14`); which one anchors marketing.
 - **Enemy body variety** — beyond the re-tinted base critter: a heavy brute, a floating ranged form, and the boss core.
 - **Outpost / hub + NPCs** — the meta home base's look (forge, character select — `14`), and any NPCs.
-- **Rarity vs element colour namespace** — the five element hues are reserved for combat FX; weapon **rarity** (白→蓝→紫→金, `14`) must read via border + a per-rarity ornament/emissive overlay on the sprite, without colliding with the element language. Concrete overlay spec pairs with the palette pass above.
+- **Rarity vs element colour namespace** — the five element hues are reserved for combat FX; weapon **rarity** (白→蓝→紫→橙→金, `14`) must read via border + a per-rarity ornament/emissive overlay on the sprite, without colliding with the element language. Concrete overlay spec pairs with the palette pass above.
 - **Shipping title** — is "DayDayUp" the final name or a codename? The Blight/crystal-core setting may suggest a title.

@@ -21,7 +21,7 @@ Mirror funny's `@nw/engine` structure:
 
 ```
 @dd/engine/
-  config.ts            // global constants: TICK_RATE, gravity, i-frame defaults, world scale
+  config.ts            // global constants: TICK_RATE, i-frame defaults, world scale (no gravity — z/jump removed, 07/08)
   math/{fixed,prng,trig}.ts   // 06 (trig = the new brad/fp-trig module)
   content/
     weapons.ts         // WEAPON_SPECS: Record<WeaponId, WeaponSpec>   (03)

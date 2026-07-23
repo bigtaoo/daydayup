@@ -35,7 +35,7 @@ The persistent layer **between runs**: what carries across, what materials buy, 
 
 ### Characters (the "skin" layer)
 
-- **A skin *is* a character, with real but balanced stats.** There is **no cosmetic-only reskin layer.** Every skin is a distinct character carrying its own `(maxHp, maxShield)` + shield-break passive (`05`/`09`) — e.g. **3 HP / 19 shield** vs **8 HP / 0 shield**. This overrides `13`'s earlier "skins are cosmetic / power-neutral."
+- **A skin *is* a character, with real but balanced stats.** There is **no cosmetic-only reskin layer.** Every skin is a distinct character carrying its own `(maxHp, maxShield)` + shield-break passive (`05`/`09`) — e.g. **3 HP / 10 shield** vs **8 HP / 0 shield** (matching `05`/`09`'s skirmisher-vs-starter example). This overrides `13`'s earlier "skins are cosmetic / power-neutral."
 - **Characters are side-grades — no all-rounder (万金油).** The roster is balanced as *playstyle trade-offs*, never a power ladder: no character is strictly better than another (a huge regenerating shield buys fragility to burst; high flat HP buys no regen buffer, `05`).
 - **Character sources: free + purchase.** Some characters are free (default / earned); some are bought (RMB) or event-earned.
 
