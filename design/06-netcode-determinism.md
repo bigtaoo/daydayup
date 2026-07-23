@@ -116,7 +116,7 @@ Frame-broadcast lockstep means **every client holds full match state** → mapha
 
 ## Persistent vs in-run state
 
-Follow funny's split (ADR-002): **in-run resources/drops are engine state, wiped each match; persistent gear is server-authoritative meta**, loaded into the engine as initial config at match start. This is exactly the "hybrid gear" the game wants (permanent base loadout + in-run temporary drops). Rewards are recomputed server-side, never trusted from the client (funny ADR-006).
+Follow funny's split (ADR-002): **in-run resources/drops are engine state, wiped each match; persistent progression is server-authoritative meta**, loaded into the engine as initial config at match start. In DayDayUp's concrete form (`05`) the persistent side is **materials** (banked out of a run) plus what forging makes of them; the brought-in loadout weapon is *instantiated* from that meta at match start but, like every weapon, is itself wiped at run end (`05` "weapons are ephemeral; materials are the only carry-out"). The architecture is unchanged — meta in as initial config, in-run state out each match. Rewards are recomputed server-side, never trusted from the client (funny ADR-006).
 
 ## Numbers live in one place
 

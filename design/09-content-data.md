@@ -97,18 +97,25 @@ EnemyBlueprint = {
 
 > **Boss shipped 2026-07-11 (no version bump).** `blightlord` — a durable finale (`maxHp 40`, 2× radius) that exists to *show* the combat systems: its big HP pool lets poison stacks ramp to full and lingering burn/chill/poison auras persist, while a broad `resist` (physical ×0.4, fire/ice/lightning ×0.8, **poison ×2.0**) forces the right tool — venom melts it. `boss?: bool` is the shipped form of the aspirational `isBoss` but **render-only** (like `tint` — the sim never reads it): the view draws a floating HP bar so the poison melt is legible. `onDeathSpawn`/AI traits remain unbuilt. Added as a `blightlord` finale wave; another new id + optional render field, so still no version bump.
 
-`PlayerActor` base stats live similarly (a `PLAYER_BASE` blueprint); persistent-meta and in-run affixes modify a *copy* via the build layer below — never the shared constant.
+`PLAYER_BASE` holds the stats **shared by all characters** (collision radius, move speed, `WEAPON_SLOTS = 2`, the auto-granted starter pistol `WeaponId`, `SHIELD_REGEN_DELAY`/`SHIELD_REGEN_INTERVAL`, revive channel length & restored HP); the **chosen `SkinDef`** supplies the per-character `(maxHp, maxShield)` + `shieldBreak`. At match start the two are merged into the `PlayerActor`; persistent-meta and in-run affixes then modify a *copy* via the build layer below — never the shared constant.
 
 ### `SkinDef` (`02`)
 
-Skins are content too, and `02`'s "animation data separate from texture" is a data-format decision:
+Skins are content too, and `02`'s "animation data separate from texture" is a data-format decision. A skin **is** the character, so it also carries the character's entire gameplay contribution: its `(maxHp, maxShield)` defensive pair and its shield-break passive (`02`/`05`/`07`):
 
 ```
 SkinDef = {
   id, atlasKey            // texture atlas to swap (02)
   animRef: AnimId         // shared animation-data reference (frame timing, events)
-  passive?: MinorPassive  // 02 "may carry a minor passive"
+  maxHp                   // integer hard-floor HP (05); recovered only by heal items
+  maxShield               // integer soft buffer, absorbed before HP; auto-regens (05/07)
+                          //   NOT balanced to equal EHP: 8/0 starter vs 3/10 skirmisher (05)
+  shieldBreak?: ShieldBreakPassive  // fires the instant shield hits 0 (07); the concrete
+                          //   form of 02's "minor passive". Omitted for 0-shield characters.
 }
+ShieldBreakPassive =      // tagged data, interpreted by combat (07) — no inline code
+  | { kind: 'aoe';   radiusGrid; damage; damageType? }   // burst on nearby enemies
+  | { kind: 'knock'; radiusGrid; impulse }               // shove nearby enemies back
 AnimData = {
   clips: Record<ClipName, { frames: Frame[]; fps; loop }>
   handAnchors: Record<frameIndex, { x, y }>   // 02 "hand anchor follows the frame" — weapon mount
@@ -179,15 +186,23 @@ RoomPiece = {
 ```
 DungeonConfig = {
   biomeId, nameKey
-  roomCount: { min, max }     // 05 "run length" (to-tune)
+  floorCount                  // ~5 tentative (05 to-tune)
+  roomsPerFloor: { min, max } // 5–10 (05 to-tune)
   pieceTags: RoomTag[]        // which RoomPiece pools this biome draws from
   layout: 'linear'|'branching'   // 05 reward-choice structure
-  bossPiece: RoomPieceId
-  difficultyCurve: CurveSpec  // scales enemy count/tier by room depth (05 to-tune)
-  dropTableByDepth: DropTableId[]
+  extractionPiece: RoomPieceId   // the per-floor extraction room (descend vs leave, 05)
+  bossPiece: RoomPieceId         // the deepest floor's room; its portal opens post-kill and
+                                 //   doubles as that floor's extraction (05)
+  difficultyCurve: CurveSpec  // scales enemy count/tier by floor depth (05 to-tune)
+  dropTableByDepth: DropTableId[]      // better pools deeper
+  materialTierByDepth: number[]        // material quality shift per floor (05)
 }
+
+RoomPiece.role?: 'normal' | 'extraction' | 'boss'   // extends the RoomPiece schema above;
+                 // exactly one non-normal room per floor carries the extract/descend portal
 ```
 
+- **Floors, not one flat room list.** Each floor is `roomsPerFloor` pieces with exactly one **extraction room** placed among them; its position gates how many rooms are skippable (`05`). The deepest floor's extraction *is* the boss room.
 - Generation is driven by the injected **`roomgenPrng` seeded per run** (`06`/`08`), so a run is reproducible from `seed + input stream` — required for co-op determinism and headless re-judge (`06`). Layout/selection reuses funny's PRNG roomgen approach (`05`).
 - **Encounter quality stays curated**: pieces are hand-authored; only their *arrangement* and *which enemies/tier* are procedural (`05`).
 
@@ -212,13 +227,24 @@ PICKUP_TABLE: on-map power-ups, equal for both teams (05)
 
 Preset count/archetypes, win condition, and the pickup table are `05`'s open design work; this doc fixes their *shape*.
 
-### Drop tables (`05`)
+### Drops, pickups & materials (`05`)
+
+A `Pickup` on the ground is one of three kinds; `DropTable` rolls which drops from a chest or a slain enemy:
 
 ```
-DropTable = { entries: { itemPool; weight; rarityWeights }[] }
+Pickup =
+  | { kind: 'weapon';   spec: WeaponId; affixes: Affix[] }   // in-run, ephemeral (05)
+  | { kind: 'heal' }                                          // flat +1 HP (05/07)
+  | { kind: 'material'; matId: MaterialId; qty }             // the ONLY carry-out (05)
+
+DropTable = { entries: { itemPool; weight; rarityWeights }[] }   // itemPool spans all 3 kinds
+
+MaterialDef = { id: MaterialId; nameKey; tier }   // tier feeds meta forging (meta doc)
 ```
 
-Rolled from `dropPrng`; rewards are recomputed/validated server-side, never trusted from the client (funny ADR-006, `06`).
+- **Materials are the run's only carry-out** and the meta-forge input. They are **banked at extraction rooms** (reaching one = a checkpoint, `05`); a death forfeits only the *current floor's* un-banked materials.
+- **Deeper floors roll better materials** — `dropTableByDepth` / `materialTierByDepth` (below) shift the pools by floor; weapon *finds* stay random at every depth (`05`).
+- Rolled from `dropPrng`; rewards are recomputed/validated server-side, never trusted from the client (funny ADR-006, `06`).
 
 ## Loading, validation, versioning
 
@@ -239,8 +265,10 @@ Rolled from `dropPrng`; rewards are recomputed/validated server-side, never trus
 ## To design
 
 - **Concrete first-pass numbers** for the demo's two weapons (gun/sword, `03`) and a starter enemy set — the actual values in `content/*.ts`.
-- **`RoomPiece` authoring pipeline**: hand-edit JSON, or a small editor? Format must round-trip with whatever tool authors `solids`/`spawns`/`exits`.
-- **Difficulty curve spec** (`05`): how enemy count/tier scales with room depth; boss piece rules.
+- **Character roster** (`02`/`05`): the actual `SkinDef` `(maxHp, maxShield)` pairs and `shieldBreak` passives, plus the `PLAYER_BASE` shared constants (slot count, starter pistol, regen/revive timings).
+- **Material catalog & forging** — `MaterialDef` tiers and what forging turns them into; the whole forging recipe layer is the **meta** doc's scope, this file only fixes the `Pickup`/`MaterialDef` shape.
+- **`RoomPiece` authoring pipeline**: hand-edit JSON, or a small editor? Format must round-trip with whatever tool authors `solids`/`spawns`/`exits`/`role`.
+- **Difficulty & material curve** (`05`): how enemy count/tier and material quality scale with *floor* depth; extraction-room placement rules; boss-piece rules.
 - **Arena preset set** (`05`): count, archetypes/roles, `baseStats`, win condition, pickup table.
 - **Meta "horizontal" numeric cap** (`05`/`06` open question): where a "small stat delta" stops being horizontal — a concrete clamp in `balance/`.
 - **Ballistic-shape catalog** (`03`/`07`): the per-shape velocity-update rules and their config params.
@@ -250,5 +278,5 @@ Rolled from `dropPrng`; rewards are recomputed/validated server-side, never trus
 - **Content format: TS modules or JSON?** TS gives type-checking and lets constants reference each other (funny is all TS); JSON enables a data editor and hot-reload but needs a schema validator. Likely TS for balance, JSON for room pieces (bulky, tool-authored). Decide with the authoring pipeline.
 - **Where do arena maps and dungeon pieces physically live** — in-engine (bundled, versioned with code) or fetched (updatable without a client release)? Fetched content complicates the `ENGINE_VERSION`/replay guarantee.
 - **Affix application order** (mult-then-add vs interleaved) and whether combos can *reference other affixes* — affects both balance and determinism.
-- **Skin passive scope** (`02`): if skins carry a "minor passive," does it touch combat blueprints (and thus the fairness wall in PvP)? Keep passives cosmetic/utility in PvP, or normalize them out like gear.
+- **Shield-break passive scope** (`02`/`05`): the character's break-passive *is* a combat blueprint (it spawns an AoE / applies knockback). If characters appear in PvP, does the passive survive preset normalization or get normalized out like gear? Keep it out of the `buildArenaSpecs` path unless deliberately balanced in.
 - **Per-room vs per-run seed derivation**: one `roomgenPrng` for the whole run, or a child stream per room? Child streams make a single room re-generable in isolation (useful for tooling) but must derive deterministically from the run seed.

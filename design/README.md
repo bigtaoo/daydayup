@@ -9,7 +9,7 @@ This directory records **decisions** and **architecture**. It is the single sour
 | [02-entity-model.md](02-entity-model.md) | Entity model: Actor / Skin / Weapon three-layer split |
 | [03-weapon-system.md](03-weapon-system.md) | Weapon system: ranged, melee, block/deflect, extensibility |
 | [04-wechat.md](04-wechat.md) | WeChat mini-game adaptation, base-library version notes, verification checklist |
-| [05-gameplay.md](05-gameplay.md) | Gameplay: core loop, PvE dungeon / PvP arena (separate modes), hybrid-gear economy, parry positioning, landscape controls |
+| [05-gameplay.md](05-gameplay.md) | Gameplay: core loop, PvE search-fight-extract (floors + extraction checkpoints) / PvPvE arena, HP+shield survivability, material economy, parry positioning, landscape controls |
 | [06-netcode-determinism.md](06-netcode-determinism.md) | Netcode & determinism: server frame-broadcast lockstep + client prediction, deterministic `@dd/engine` core, migration plan (mirrors sibling project `funny`) |
 | [07-collision-combat.md](07-collision-combat.md) | Collision & combat: circle/wall collision, uniform-grid broad phase, swept directional bullets, block/deflect & melee arcs (brad/fp-trig), damage pipeline, death & drops — bodies of `08`'s step 4–9 |
 | [08-simulation-core.md](08-simulation-core.md) | Simulation core: `GameState` schema, fixed `step()` system order, per-tick twin-stick `PlayerCommand`, `InputSource`/replay/headless (concrete form of `06`'s principles) |

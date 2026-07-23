@@ -1,14 +1,14 @@
 # Entity model: Actor / Skin / Weapon
 
-Core principle: **gameplay logic is not tied to the character**, because "different characters are only skins" — the character carries no core stats.
+Core principle: **offensive depth is not tied to the character.** A character contributes *only* its **defensive identity** — a `(maxHp, maxShield)` pair plus one **shield-break passive** — and nothing else; all moment-to-moment power is the weapon. "Different characters" are a skin + those two-ish knobs, not a stat sheet. (`05` locks the two-pool survivability model these knobs feed.)
 
 ## Three-layer responsibilities
 
 | Layer | Responsibility | Carries gameplay? |
 |-------|----------------|-------------------|
-| **Actor** | Logical entity: `gx/gy`, height `z`, `facing`, movement, HP, faction | Yes (core) |
-| **Skin** | Appearance: animation rig / frames + swappable textures. May carry a **minor** passive | Almost none (pure presentation) |
-| **Weapon** | First-class citizen: stats, ballistics, hand anchor, muzzle position, fire/block behavior | **Yes (core system)** |
+| **Actor** | Logical entity: `gx/gy`, `facing`, movement, `hp/maxHp`, **`shield/maxShield` + `ticksSinceHit`**, faction | Yes (core) |
+| **Skin (character)** | Appearance: animation rig / frames + swappable textures. Carries the character's `(maxHp, maxShield)` and its **shield-break passive** (the concrete "minor passive") | Defensive identity only — no offense |
+| **Weapon** | First-class citizen: stats, ballistics, hand anchor, muzzle position, fire/deflect behavior | **Yes (all offensive depth)** |
 
 ## Key constraints
 
@@ -23,17 +23,22 @@ Core principle: **gameplay logic is not tied to the character**, because "differ
 Actor {
   gx, gy               // ground position (2D — no height; jump removed, 07)
   vx, vy               // velocity
-  facing: number       // radians
-  hp, maxHp
+  facing: number       // brad in the engine (06); radians only in this sketch
+  hp, maxHp            // hard floor; 0 = death; recovered ONLY by items (05/07)
+  shield, maxShield    // soft buffer, absorbed before hp (incl. DoT); auto-regens (05/07)
+  ticksSinceHit        // idle timer; any damage → 0; drives shield regen (07/08)
   faction              // 'player' | 'enemy'
   skin: Skin
-  weapon: Weapon       // currently equipped; swapping = replacing this reference
+  slots: [Weapon?, Weapon?]  // two weapon slots; either may be empty
+  activeSlot: 0 | 1    // which slot fires / receives a pickup; SWAP toggles it
 }
 
-Skin {
+Skin {                 // "the character": defensive identity + look
   atlasKey             // texture atlas id (change this to swap skins)
   anim                 // shared animation-data reference
   handAnchor()         // hand anchor for the current frame (for weapon mounting)
+  // maxHp, maxShield, and the shield-break passive are authored on the character
+  //   blueprint (SkinDef / PLAYER_BASE, 09); the Actor is constructed from them.
 }
 
 Weapon (abstract) {
@@ -49,8 +54,10 @@ Weapon (abstract) {
 }
 ```
 
-## Weapon-swap system scope
+## Weapon-slot system (locked, `05`)
 
-- Swapping = replacing `actor.weapon` + calling `onUnequip` / `onEquip`.
-- Weapons can be picked up / switched / dropped; inventory and drops are designed later.
-- The demo starts with key-based switching between two weapons (ranged gun / melee sword) to validate the structure.
+- **Two slots, one active.** `SWAP_WEAPON` (`08`) toggles `activeSlot`; the right stick fires whatever is in the active slot. Firing an **empty** active slot does nothing — "no weapon → can't attack" just means you switched to an empty slot; switch back (or pick one up) to fire.
+- **Pickup replaces the active slot.** Walking onto a map weapon and pressing `INTERACT` puts it into the **active** slot — replacing the weapon there (`onUnequip` old → `onEquip` new) or equipping into it if empty. The switch button is therefore how you choose *which* weapon to overwrite. There is **no manual drop**; replacement is the only way a weapon leaves your hands.
+- **You always have at least one.** Entering a run you may bring 0–2 weapons; bringing none auto-grants a starter **pistol**, so an active slot is essentially never both-empty at spawn. Carried count is thus 1 or 2 in practice.
+- **All weapons are ephemeral.** Nothing in the slots survives run end (`05`); only materials extract. Swapping/holding is purely in-run.
+- The demo starts with two slots pre-filled (ranged gun / melee sword) and the switch button, to validate the structure before pickups exist.
