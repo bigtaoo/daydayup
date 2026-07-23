@@ -47,7 +47,10 @@ Author in human units; the constructor converts (as funny's `Unit` ctor does).
 ### `WeaponSpec` (`03`)
 
 ```
-WeaponSpec = { id, kind, nameKey, skinRef, cooldownSec }  &  (RangedSpec | MeleeSpec)
+WeaponSpec = { id, kind, nameKey, skinRef, cooldownSec, grip? }  &  (RangedSpec | MeleeSpec)
+  // grip: 'ranged1h'|'ranged2h'|'melee1h'|'melee2h' — picks the arm hold pose that aims
+  //   the weapon on the skin's gear_hand attachment point (02/12); render-only, ~4 poses
+  //   shared by all weapons. Omitted = inferred from kind. Never read by the sim (06).
 
 RangedSpec = {
   kind: 'ranged'

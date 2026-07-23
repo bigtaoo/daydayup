@@ -16,7 +16,8 @@ This directory records **decisions** and **architecture**. It is the single sour
 | [09-content-data.md](09-content-data.md) | Content & data model: `@dd/engine` config layout, weapon/enemy/skin/affix schemas, room-piece & seeded-dungeon formats, PvP fairness build-wall, human-units→fp/brad conversion & versioning |
 | [10-ui-hud.md](10-ui-hud.md) | UI, HUD & screen flow: all-Pixi UI, the menu→loadout→match→result state machine, in-match HUD read from `state`/`events`, twin-stick input → `PlayerCommand` quantization boundary, landscape/safe-area layout, WeChat text constraints |
 | _11 — audio (reserved, not yet written)_ | SFX/music: engine `events` → audio channel (`08`), WeChat `Audio` constraints (`04`), determinism/audio decoupling |
-| [12-art-animation.md](12-art-animation.md) | Art & animation pipeline: Skin = shared rig + swappable atlas (`02`), spritesheet/animation-data + event-frame format, Pixi `Assets` loading (web + WeChat adapter), tilted-view authoring rules (`01`), art-is-presentation-only determinism rule |
+| [12-art-animation.md](12-art-animation.md) | Art & animation pipeline: Skin = shared rig + swappable atlas (`02`), reused funny skeletal editor + `.tao` format (local-only), `gear_hand` weapon mounting, twin-stick facing model, Pixi `Assets` loading (web + WeChat adapter), tilted-view authoring rules (`01`), art-is-presentation-only determinism rule |
+| [13-worldview-art-direction.md](13-worldview-art-direction.md) | Worldview & art direction: the Blight setting (contamination → elemental biomes) and how it earns each locked rule, flat-cel style, the element=colour law, desaturated-environment rule, tone |
 
 ## Decision format
 

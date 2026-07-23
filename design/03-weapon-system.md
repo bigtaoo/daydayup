@@ -107,6 +107,8 @@ MeleeSpec  { arc, range, damage, damageType, knockback, deflect: bool, deflectSp
 
 Adding a weapon = adding a config row (+ code only for special behavior), not hard-coding each one.
 
+- **Mounting & grip.** A weapon renders as a sprite on the skin's `gear_hand` attachment point, following the hand bone every frame (`02`/`12`); swapping the active slot swaps that sprite. A per-weapon **`grip`** (single-handed ranged / two-handed ranged / one-handed melee / heavy two-handed melee) selects which arm clip aims it, so dozens of weapons share ~4 hold poses. Mounting/grip is render-only — it never touches the sim (`06`).
+
 ## Verified in the demo
 
 - Ranged gun: click to fire, emits a straight bullet.

@@ -11,39 +11,33 @@ How pixels get onto the screen: **skins** (the `02` appearance layer made concre
 - **Characters carry no gameplay; weapons do (`02`).** So art variety is cheap: new skins are cosmetic (`05`'s horizontal meta), addable without touching combat. A skin's optional "minor passive" (`02`) must stay cosmetic/utility and is **normalized out of PvP** (`05`/`09` fairness wall) — art can never be a power source.
 - **Tilted-view-native art (`01`).** Every actor/prop is drawn with a small front face (not a pure top-down sprite), authored for `screen.y = gy - z` and Y-sort by `gy`. Sprites have a defined **ground anchor** (feet at `gy`) and a **height extent** so shadows and occlusion read correctly (`01`).
 - **Placeholder-first, atlas-later.** Systems consume a `Skin`/texture interface; the *slice* fills it with `Graphics`, real art fills it with atlas frames — same interface. Gameplay is never blocked on art (`02`/`03`'s data-driven intent).
+- **Animation = funny's skeletal editor + `.tao`, copied in and locally maintained.** Reuse `funny/tools/animator` (2D skeletal, PixiJS) and its `.tao` format rather than a new tool or DragonBones/Spine; files save to **local disk only** (no shared workspace). Full rationale + model in the Animation section below.
 
-## Skin & animation-data format
+## Animation: reuse funny's skeletal editor (`.tao`)
 
-The concrete form of `02`'s `Skin { atlasKey, anim, handAnchor() }`.
+**Decision (locked, 2026-07-23):** DayDayUp does **not** build a new animation tool and does **not** adopt DragonBones/Spine. It **reuses funny's home-grown 2D skeletal editor** (`funny/tools/animator`, PixiJS) and its `.tao` runtime format. Rationale: the engine already mirrors funny (`06`), the editor's runtime math is dependency-free and *designed to be copied into the game* (below), it already supports weapon mounting, and it has no third-party runtime or licence. This is the concrete answer to this doc's old "animation-data source of truth" open question, and the implementation of `02`'s `Skin { rig, atlasKey, handAnchor() }`.
 
-```
-AnimationRig {                 // authored once, shared across skins of the same body type
-  fps                          // authoring frame rate (render interpolates; sim is 30Hz, 08)
-  states: {                    // idle / run / attack (melee swing = the parry) / hurt / death ...
-    [name]: {
-      frames: FrameRef[]       // ordered atlas-region ids
-      durations: number[]      // per-frame hold (ms or frame-count)
-      loop: boolean
-      anchors: {               // per-frame, in the atlas frame's local space
-        ground: [x,y]          // feet → maps to gy (01)
-        hand:  [x,y]           // weapon mount → 02's handAnchor(), tracked every frame
-      }
-      events: { frame, tag }[] // "hit-active", "footstep", "muzzle" → fx/audio triggers
-    }
-  }
-}
+- **The rig is a fixed 11-bone humanoid** — `root → spine → head / 2×arm / 2×leg` (funny's `Skeleton`). Rest pose faces **right**; left/right is a flip, not a second rig. Fits the reclaimer diver and humanoid enemies directly; non-biped creatures are the open question below.
+- **Two-layer params = `02`'s "skin = rig + atlas".** **Binding** is the static per-skin rest pose (`anchorX/Y`, `rotation`, `scaleX/Y`, `flipX`, `zOrder`); **Keyframe** is the per-frame delta (`rotation`, `translate`, `scale`, `alpha`). A skin is the same skeleton with its **own part PNGs + Binding** — swapping a skin swaps the parts, never the animation clips.
+- **The runtime is pure and render-only.** `Skeleton.computeFK` (forward kinematics) and `interpolate.sampleClip` (keyframe interpolation) are **no-DOM / no-Pixi / no-dependency** pure functions — ported straight into `@dd/engine`'s **render side**. They read `GameState` + the `events` queue (`08`) and draw; they **never** feed the sim (`06`) — the locked "art never decides an outcome" rule, made literal.
+- **Weapon/gear mounts to a `gear_<slot>` attachment point.** A `.tao` declares attachment points (bone + offset); a weapon renders as a sprite parented to **`gear_hand`**, following the hand bone's FK pose every frame — this *is* `02`'s "hand anchor follows the frame, weapon tracks it." Swapping the active weapon slot (`03`) swaps the sprite at `gear_hand`; front/back z by facing is the attachment draw order (`01`). A per-weapon `grip` (`03`/`09`) picks which arm clip aims it.
+- **No per-frame animation events.** FX (muzzle flash, impact) are triggered by the engine `events` queue (`08`) — "events are the only engine→render channel" — **not** by animation frames, so the visual can never drift out of sync with the sim hit window (this retires the old event-alignment worry). Purely-cosmetic cues (a footstep puff) derive from the run clip's own time, render-side only.
+- **Shadow is program-drawn** (funny's shipped approach): a `shadow` attachment point carries only position + ellipse size — the runtime draws one shared soft ellipse, zero texture, always flat on the ground. No shadow is ever baked into a sprite (`01`).
+- **Formats:** `.tao` (a zip of `animation.json` + packed `spritesheet.png/json`) is the runtime asset; `.tao.editor` (source PNGs + edit state) is the working file. **Files are saved to local disk only — no shared/online workspace** (funny's Supabase/Workers/GitHub-sync bridge is dropped for this project). The editor's IndexedDB autosave is a local convenience; the disk `.tao.editor` is the source of truth, committed to the repo alongside the exported `.tao`.
+- **The tool is copied in and maintained here.** `tools/animator` is lifted into DayDayUp and **owned/maintained per-project** (it will diverge — rig defs, export tiers, etc.) — not a live dependency on funny.
 
-Skin {                         // 02: appearance only
-  atlasKey                     // which packed atlas fills the rig (swap = swap this)
-  rig: AnimationRig            // shared reference
-  handAnchor(): [x,y]          // 02: current-frame hand anchor for weapon mounting
-  facing z-order per 01        // weapon front/back by facing handled by the actor container
-}
-```
+### Facing model (twin-stick 360° aim)
 
-- **`anchors.hand` is the seam to `02`/`01`:** the weapon container tracks the hand anchor of the *current animation frame* every render frame; it is never hard-coded (`02` constraint 3). Front/back z-switch by facing is the actor container's job (`01` "per-weapon local z-order").
-- **`events` frames are advisory to fx/audio only.** An "attack" state's `hit-active` frame tells the *render* when to show a swing trail; the *engine* independently decides the melee hit window in `step()` (`07`/`08`). They are tuned to line up but are separate systems — art drift can never desync a match.
-- **Animation is time-driven on the render clock, not the sim clock.** Sim runs at 30 Hz (`08`); art can play at any authoring fps and interpolate. Animation state is chosen from `GameState` (moving? attacking? `hp<=0`?) each render frame — a pure function of state + events, holding no authoritative data.
+funny is a lane auto-battler (units only face left/right); DayDayUp aims in **360°**, and a 2D bone rig gives L/R flip + limb rotation, **not** a true 3D turn. Chosen model — **two-hemisphere billboard + aim-driven arm**:
+
+- Body plays locomotion (idle/run) authored facing the camera; **L/R mirror** by the horizontal sign of the aim/move vector.
+- A **front and a back body set**: aim toward the bottom of the screen (toward camera) draws the front art, toward the top (away) draws the back (hood/backpack). Picked by the aim vector's **vertical hemisphere**, so all 360° reads correctly.
+- The **weapon arm bone rotates to the exact aim angle**; the `gear_hand` weapon follows, so the muzzle always points at the reticle.
+- **Shippable in stages:** front-only first (arm aims + L/R flip); the back set is a pure content add (extra attachment set + a hemisphere selector), **no engine change**.
+
+### Render clock
+
+Animation is time-driven on the **render clock**, not the sim clock. Sim is 30 Hz (`08`); art plays at any authoring fps and interpolates via `sampleClip`. Which clip plays is a pure function of `GameState` (moving? attacking? `hp<=0`?) each render frame — it holds no authoritative data.
 
 ## Atlas / spritesheet format
 
@@ -83,20 +77,22 @@ Authoring rules so 2D art produces the fake-3D feel and doesn't hit `01`'s known
 - **`08`:** the `events` queue that triggers animation events / fx; the render-vs-sim clock split.
 - **`06`/`09`:** determinism (art never feeds logic) and the PvP fairness wall (skin passives normalized out).
 - **`10`:** UI art (HUD icons, buttons) shares this pipeline but is authored for the `ui` layer and screen space, not world tilt.
+- **`13`:** the worldview + art *direction* (style, the element colour law, biome looks, tone) this pipeline renders; `13` sets *what* the world looks like, this doc sets *how* the assets are built and animated.
 - **`11` (audio, reserved):** animation event frames are the shared trigger vocabulary for sound.
 
 ## To design
 
-- **Concrete atlas tooling** — packer (TexturePacker / free-tex-packer / custom), whether spritesheet JSON is hand-tuned or fully generated; anchor authoring workflow (in-tool vs. a sidecar).
-- **Animation-data source of truth** — hand-written JSON, an editor (Aseprite/Spine export), or code; `09`'s "TS for balance, JSON for bulky tool-authored content" logic applies here (art data is bulky → likely JSON/generated).
 - **Bundle boundaries** — what's in the boot core bundle vs. lazy per-biome/enemy, sized against WeChat download limits (`04`).
-- **Placeholder→final swap process** — keep the `Skin` interface stable so the Graphics slice and atlas art are interchangeable during production.
+- **Placeholder→final swap process** — keep the `Skin` interface stable so the Graphics slice and `.tao`-driven art are interchangeable during production.
 - **Normal-map / lighting authoring** for `01`'s milestone-2 lightmap — flat+normal vs. pre-shaded.
+- **`animator` port scope** — what to lift from `funny/tools/animator` first (editor + FK/`sampleClip` runtime + `.tao` I/O), and what to strip (the Supabase/Workers/GitHub workspace-sync bridge — dropped, local-only).
+
+> Resolved by the Animation decision above: **animation-data source** (funny's editor + `.tao`) and **atlas tooling** (the editor packs the spritesheet via shelf bin-packing; anchors are authored in-tool as Bindings/attachment points) — no longer open.
 
 ## Open questions
 
 - **Texture format & max page size on the lowest base library** — must be measured on a real device (`04` checklist), not chosen from docs; affects atlas packing.
 - **`ImageBitmap` availability in the WeChat loader** — if unreliable, which decode path does `Assets` take, and does it force a specific image format? (`04` flags this as surfacing "once real assets land" — this is that moment.)
 - **Bundled vs. fetched art** — fetched art is determinism-safe (presentation only) but complicates release/versioning; where's the line, and does it share `09`'s content-delivery decision?
-- **Animation-event vs. engine-window alignment** — how tightly must the *visual* hit-active frame match the *engine's* `07` hit window before it feels wrong, given render interpolates and sim is 30 Hz (`08`)? Tune against play.
-- **Rig granularity** — one humanoid rig for all bipeds vs. per-creature rigs; trade-off between animation reuse and silhouette variety (`02`).
+- **Non-biped rigs.** funny's `Skeleton` is a **fixed 11-bone humanoid** (hardcoded bone defs). The diver + humanoid enemies fit directly, but the concepted blight quadruped does not. Options: (a) extend `Skeleton` to hold **multiple rig definitions** (moderate refactor — the recommended lean), (b) author exotic creatures as simple cut-out/frame sprites outside the humanoid rig, (c) keep early monsters humanoid/near-humanoid and defer exotics. Decide when the first non-biped enemy is built.
+- **Rig granularity within humanoids** — do all bipeds share the one rig (max animation reuse) or do some get bespoke bone tweaks (silhouette variety)? (`02`)
