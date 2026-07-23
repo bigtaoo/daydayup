@@ -57,9 +57,15 @@ Adding a weapon = adding a config row (+ code only for special behavior), not ha
 - Melee sword: click to swing; the swing damages enemies in its arc **and** deflects enemy bullets caught in that same arc back at enemies — no separate block input.
 - `[1]`/`[2]` swap the active weapon slot. Weapon positions by facing, with local z-order switching.
 
+## Pickup & switch (locked — see `05`)
+
+Weapons are **not** auto-picked-up (unlike materials/consumables) — swapping your weapon is a choice, so it stays button-driven:
+
+- **Ground compare card (render-only).** Standing next to a floor weapon floats a non-blocking card (name / element / rarity / affixes) beside your active weapon. It is **pure client render — never in the sim**, so it does not touch determinism (`06`) and never pauses the co-op run (no modal — a blocking popup is impossible under lockstep, `06`).
+- **`INTERACT` swaps it into the active slot**, and the **replaced weapon drops back onto the floor** (`02`); the switch button chooses which of the two slots to overwrite. No manual drop button.
+
 ## To design
 
 - Config format and loading (JSON / table).
-- Pickup / switch / inventory / drops.
 - Rarity, affixes, combo effects (roguelite builds).
 - Ballistic-shape library (straight, homing, arcing, bullet-pattern, boomerang).

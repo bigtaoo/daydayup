@@ -62,6 +62,14 @@ Every actor has **two defensive pools**; the character (skin, `02`) contributes 
 - **Breaking a shield can fire a character passive.** The instant a shield is depleted, the character's bound break-passive (e.g. an AoE burst / knockback on nearby enemies) triggers — this is the concrete form of `02`'s "skin may carry a minor passive." A 0-shield character simply never triggers one.
 - **Characters differ only by `(maxHp, maxShield)` + that break-passive.** They are *not* balanced to equal effective HP: a plain starter might be **8 HP / 0 shield** (no regen buffer, no break-passive — pure item-dependence), a skirmisher **3 HP / 10 shield** (huge regenerating buffer, but fragile the instant burst punches through). The engine bodies (absorb order, regen timer, break event) live in `07`/`08`; the numbers live in `@dd/engine` config (`09`).
 
+## Pickup rules
+
+Three pickup classes, split by **whether the player must make a choice**. Materials and consumables are pure upside → automatic; weapons are a trade-off → button-driven. All pickup/effect logic runs **inside the sim tick off deterministic state** (`06`/`08`) — identical on every client; only the weapon compare card is render-only.
+
+- **Materials — auto, into the floor buffer.** Walking within a material's pickup radius auto-collects it into **this floor's un-banked buffer** (a temporary bag). There is no save action to bank it — banking is the **extraction-room checkpoint**: when you **DESCEND or EXTRACT**, the floor buffer merges into the run's carry-out bag (the only thing that leaves a run, above). Die before reaching the room and you lose only that floor's un-banked buffer (matches the softened-extraction model above).
+- **Consumables — auto-apply, but only when useful.** An instant item (healing pickup = flat **+1 HP**, `07`/`09`) is consumed on contact, no inventory. To avoid overheal waste with **no item bag**, the pickup radius only triggers **when the effect would actually do something** — at full HP the health pickup is left on the floor for you to grab later. Same rule generalizes to any future instant item (shield/temp buff): auto-grab only if it changes state.
+- **Weapons — button-driven, drop-on-replace.** Not auto (swapping is a choice). A non-blocking **ground compare card** (render-only, never in sim — no modal, no pause; lockstep can't stop for one player) shows the floor weapon beside your active one; `INTERACT` swaps it into the active slot and **the replaced weapon drops back onto the floor** (`02`/`03`). The switch button picks which of the two slots to overwrite.
+
 ## PvP (PvPvE arena)
 
 - **3v3 / 4v4, casual-first** (`06`). Full frame-broadcast lockstep + local-player prediction.
