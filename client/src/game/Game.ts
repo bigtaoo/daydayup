@@ -13,7 +13,7 @@ import { Scene } from './Scene';
 import { Screens } from './Screens';
 import { CommandBuilder } from './CommandBuilder';
 import { fpToPx } from './coords';
-import type { InputCanvas, InputSource } from '../platform/types';
+import type { AudioBus, AudioCue, InputCanvas, InputSource } from '../platform/types';
 
 // World size (px) — the arena for camera bounds and scene layout. Passed to the
 // engine as px; the engine converts to grid-fp at its boundary (pxToFp).
@@ -60,6 +60,7 @@ export class Game {
   private app: Application;
   private layers = new Layers();
   private input: InputSource;
+  private audio: AudioBus;
 
   private scene = new Scene(this.layers);
   private engine: GameEngine | null = null;
@@ -75,9 +76,10 @@ export class Game {
   private score = 0;
   private prevFire = false; // rising-edge confirm on menus
 
-  constructor(app: Application, input: InputSource) {
+  constructor(app: Application, input: InputSource, audio: AudioBus) {
     this.app = app;
     this.input = input;
+    this.audio = audio;
     this.builder = new CommandBuilder(input);
     app.stage.eventMode = 'static'; // let the overlay receive pointer taps (web)
     app.stage.addChild(this.layers.root);
@@ -199,6 +201,7 @@ export class Game {
   }
 
   private confirm() {
+    this.audio.resume(); // a confirm tap is a user gesture — clears the autoplay gate (design/11)
     if (this.phase !== 'playing') this.beginRun();
   }
 
@@ -260,19 +263,27 @@ export class Game {
     }
   }
 
-  // Events are the only engine→render channel (design/08): fx feedback + score.
+  // Events are the only engine→render channel (design/08): fx feedback + score + audio.
   private consumeEvents(events: readonly GameEvent[]) {
+    // Coalesce audio cues within the frame: a bullet-hell frame can emit dozens of
+    // identical events, so we collect the distinct cues here and play each ONCE after
+    // the loop (design/11 "coalesce identical cues in the same frame"). fx/score still
+    // react per-event below — only sound is deduped.
+    const cues = new Set<AudioCue>();
     for (const e of events) {
       switch (e.type) {
         case 'bullet_fired':
           this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.muzzle, 12);
+          cues.add('muzzle');
           break;
         case 'hit':
           this.flash(fpToPx(e.gx), fpToPx(e.gy),
             e.faction === 'enemy' ? CONFIG.colors.enemy : CONFIG.colors.swordGlow, 16);
+          cues.add('impact');
           break;
         case 'deflect':
           this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.deflect, 20);
+          cues.add('deflect');
           break;
         case 'status': {
           // Elemental fx — a coloured flash by effect (design/03/07).
@@ -282,36 +293,50 @@ export class Game {
             : e.effect === 'shock' ? CONFIG.colors.statusShock
             : CONFIG.colors.statusPoison;
           this.flash(fpToPx(e.gx), fpToPx(e.gy), c, 12);
+          cues.add(`status.${e.effect}` as AudioCue);
           break;
         }
         case 'clash':
           this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.clash, 14);
+          cues.add('clash');
           break;
         case 'death':
-          if (e.faction === 'enemy') this.score += CONFIG.score.kill;
+          if (e.faction === 'enemy') {
+            this.score += CONFIG.score.kill;
+            cues.add('death');
+          }
           break;
         case 'pickup':
           switch (e.kind) {
             case 'health':
               this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupHealth, 20);
+              cues.add('pickup.health');
               break;
             case 'affix':
               this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupAffix, 24);
+              cues.add('pickup.affix');
               break;
             case 'weapon':
               this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupWeapon, 24);
+              cues.add('pickup.weapon');
               break;
             default: // coin
               this.score += CONFIG.score.coin;
               this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupCoin, 16);
+              cues.add('pickup.coin');
           }
           break;
         case 'wave_clear':
           this.score += CONFIG.score.waveClear;
+          cues.add('wave-clear');
           break;
-        // 'win' → handled by the outcome check (score bonus in win()).
+        case 'win':
+          cues.add('win');
+          break;
+        // 'win' score bonus is handled by the outcome check (win()).
       }
     }
+    for (const cue of cues) this.audio.play(cue);
   }
 
   // ---- fx (world glow, driven by events) ----

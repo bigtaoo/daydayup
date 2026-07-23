@@ -7,8 +7,9 @@ async function boot() {
   const platform = new WebPlatform();
   const app = await platform.createApp();
   const input = platform.createInput(app);
+  const audio = platform.createAudio();
 
-  const game = new Game(app, input);
+  const game = new Game(app, input, audio);
   game.start();
 
   // Expose for debugging

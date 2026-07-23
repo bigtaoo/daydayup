@@ -1,7 +1,8 @@
 import { Application, DOMAdapter } from 'pixi.js';
-import type { InputSource, Platform } from '../types';
+import type { AudioBus, InputSource, Platform } from '../types';
 import { WeChatAdapter } from './WeChatAdapter';
 import { WeChatInput } from './WeChatInput';
+import { WeChatAudio } from './WeChatAudio';
 
 // WeChat mini-game platform.
 //
@@ -59,5 +60,9 @@ export class WeChatPlatform implements Platform {
 
   createInput(app: Application): InputSource {
     return new WeChatInput(app);
+  }
+
+  createAudio(): AudioBus {
+    return new WeChatAudio();
   }
 }

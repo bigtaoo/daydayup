@@ -37,8 +37,45 @@ export interface InputSource {
   read(): InputState;
 }
 
-// A platform provides the Pixi Application (bound to its canvas) and the input device.
+// Audio cue vocabulary — a small closed set of ids, shared with fx/animation
+// (design/11, design/12). The render layer maps engine events (design/08) to a cue;
+// the platform's AudioBus decides how to make the sound. Audio is pure presentation:
+// it reads events and plays, and NEVER feeds the sim (design/06/11).
+export type AudioCue =
+  | 'muzzle'
+  | 'impact'
+  | 'deflect'
+  | 'clash'
+  | 'status.burn'
+  | 'status.chill'
+  | 'status.shock'
+  | 'status.poison'
+  | 'death'
+  | 'pickup.health'
+  | 'pickup.weapon'
+  | 'pickup.affix'
+  | 'pickup.coin'
+  | 'wave-clear'
+  | 'win';
+
+// A swappable audio device, symmetric to InputSource. Web synthesises placeholder
+// cues via WebAudio (no asset files); WeChat needs real assets + InnerAudioContext
+// (stubbed until those land — design/11). All calls are render-clock, fire-and-forget.
+export interface AudioBus {
+  // Play a one-shot SFX cue. Cheap and idempotent-per-frame — the caller coalesces
+  // duplicate cues within a frame (design/11 "coalesce identical cues in the same frame").
+  play(cue: AudioCue): void;
+  // 0..1 gain on the SFX / music buses (design/10 settings). Music is reserved.
+  setSfxVolume(v: number): void;
+  setMusicVolume(v: number): void;
+  // Resume after the browser/WeChat autoplay gate; call on a user gesture (design/11).
+  resume(): void;
+}
+
+// A platform provides the Pixi Application (bound to its canvas), the input device,
+// and the audio device.
 export interface Platform {
   createApp(): Promise<Application>;
   createInput(app: Application): InputSource;
+  createAudio(): AudioBus;
 }
