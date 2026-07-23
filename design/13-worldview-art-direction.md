@@ -1,46 +1,93 @@
 # Worldview & art direction
 
-The game's **fiction and its visual identity** — the setting that makes the locked systems (`05` loop, `03` elements, `09` content) feel like one world, and the art rules that keep it readable on WeChat (`04`) and cheap to produce (`14` breadth-not-power meta). Sibling to `12` (which owns the *pipeline* — how pixels load and animate); this doc owns *what the world is and what it looks like*, `12` owns *how the assets are built*.
+The game's **visual identity and the fiction that wraps it** — the setting that makes the locked systems (`05` loop, `03` elements, `09` content) feel like one world, and the art rules that keep it readable on WeChat (`04`) and cheap to produce for a **high-DAU, shallow-monetization** title (`14` breadth-not-power meta). Sibling to `12` (which owns the *pipeline* — how pixels load and animate); this doc owns *what the world is and what it looks like*, `12` owns *how the assets are built*.
 
-## Worldview (locked)
+> **Art-first (locked 2026-07-23).** The visual identity was designed **first**, and the worldview reverse-engineered from it. The earlier "reclaimer-diver humanoid" concept trio (`art/concept/`) is **retired** — it read as generic post-apoc survival, contradicted the plucky tone, and was over-rendered for the flat-cel cut-out pipeline (`12`). The direction below replaces it. The prompts that produced the accepted concepts are archived in `art/concept/prompts.md` for future iteration.
 
-- **Setting — the Blight (枯潮).** A spreading contamination is consuming the world, warping matter along **elemental lines** — fire / ice / lightning / poison. Each expresses as a different contaminated zone, which is why the run's floors are **elemental biomes** (`05`), the enemies are **element-corrupted creatures** (the `09` variants emberling/frostling/galvanist/ironclad), and `blightlord` is an advanced corruption.
-- **Role — a reclaimer diver (回收者).** You descend into contaminated zones to pull out still-refinable **materials** (提纯枯晶) before the Blight claims them, then bank them and get out.
-- **Tone — bright-but-eerie, hopeful not grim.** Post-contamination but stylized and plucky: you are *reclaiming*, diving a little deeper and getting a little stronger each run. This suits the name **DayDayUp (天天向上, "better every day")** and the casual WeChat audience — **not** horror, not grimdark.
+## Visual identity (locked)
+
+### The protagonist — a floating orb-core, not a humanoid
+
+The hero is a **small hovering spherical core**: one rounded shell, **no arms, no legs**, a single large expressive eye, a transparent belly chamber that fills with glowing crystal, and **two weapon modules that orbit it** on glowing energy tethers. It floats (bob + lean into travel; squash-stretch on accel) — there is no walk cycle.
+
+This body plan was chosen because it wins on all four production constraints at once:
+
+| Constraint | Why the orb-core wins |
+|-----------|-----------------------|
+| **Cheap to animate** | No legs → no locomotion cycle; the rig is near-trivial (a root + orbiting mount points), *simpler* than a humanoid, not harder. |
+| **Cheap / consistent to draw** | One bold radially-ish-symmetric shape stays on-model across frames and characters; front/back sets nearly collapse (`12` facing model). |
+| **Distinctive silhouette** | A round core with orbiting weapons + a glowing belly reads as *one game* at app-icon size — the brand hook nothing else in the genre has. |
+| **Fits the weapon system** | The two orbiting modules **are** the two weapon slots (`02`/`03`); the `orbit` ballistic (`03`) already exists in the frame catalog. |
+
+**The brand hook (icon / marketing):** the orbiting weapon modules + the belly that fills with element-colored crystal as you collect. Diegetic (it is your extraction canister), it is the silhouette, and it doubles as a live HUD.
+
+### Characters are a roster, not skins
+
+There is **no base-character-plus-skin hierarchy and no cosmetic-only skin** (`02`/`05`/`14`). Instead the game ships a **flat roster of distinct characters**, each a fully themed orb-core in this art language (e.g. a Sun-Wukong core — golden-fur shell, crown-shaped crystal spikes, a fiery eye). This is the collection/monetization hook for the DAU model: "unlock a new character" carries far more perceived value and social pull than "buy a skin."
+
+Hard boundary that keeps this from fighting the weapon system:
+
+> **A character's theme lives entirely on the orb** — shell, eye, crystal-spike motif, belly — **and never on the weapons.** Weapons are shared in-run loot (`05`) that plug into the same universal socket regardless of who is carrying them. A Wukong core still picks up and mounts the same fire sword any other character would.
+
+Characters are **balanced side-grades**, not power tiers: each carries only a `(maxHp, maxShield)` pair + one shield-break passive (`02`/`05`), tuned as a distinct playstyle of equal worth. In PvP a paying player gets **more selectable characters** (breadth / comfort picks / counter-picks), never more power — the accepted "pay for access, not for power" model, held fair by keeping the **free starter roster playstyle-complete** and by the side-grade balance discipline in `14`. The silhouette should read the character's *archetype* (a fragile skirmisher vs a tanky core), not hide it. Launch scope is **3 characters**, then slow additions (a new one every ~2–6 months), so the balance surface stays small.
+
+### Weapons — a universal mount socket
+
+Every weapon is a **module that plugs into a standard socket** (the orbiting mount). The socket is identical across all weapons; only the **business end** differs — a barrel, a beam emitter, a crystal blade, a hammer head. This is what lets the `03` **Frame × Element × Affix** roster explode from few pieces without the art fighting it:
+
+- **Any frame fits any character** — ranged and melee share one mount, validated by concept (a gun barrel and a crystal blade plugging into the identical socket).
+- **Element = the crystal's colour** — swap the glowing crystal colour to swap element (`03`); the housing is unchanged. A per-weapon **element icon badge** rides on the housing (see the colour law below).
+- **Tether length = melee reach** — a short tether is a dagger's tight sweep, a long one a spear's poke; an emergent, free mapping onto `03`'s `dagger/saber/hammer/spear` reach.
+- **Melee swing = the socket sweeping an arc around the core** — that swept sector *is* the deflect sector (`03`'s "the arc that hits enemies is the arc that bats bullets back").
+
+This **replaces** the old humanoid `gear_hand` + per-weapon `grip` mounting model (`02`/`03`/`12`).
+
+### Enemies — the corrupted-crystal mirror
+
+Enemies share the hero's DNA — **living crystal, single glowing eye** — but are its **failed opposite**: raw, jagged, wild-grown crystal over a cracked core, where the hero is a polished, contained shell. One base creature is **re-tinted** into the element variants (`09`'s render-only `tint`): a squat single-eyed crystal critter → emberling / frostling / galvanist / poison / physical by colour + icon alone. Roster variety beyond the base body (a heavy brute, a floating ranged form) is a later pass.
+
+The **boss closes the loop thematically**: it is a **giant failed core** — a huge cracked crystal core with orbiting shard rings — the same kind of thing the player *is*, but corrupted. Hero and final boss are the two poles of one object.
+
+### Style & the colour law
+
+- **Flat-cel "半平涂".** Bold clean uniform outlines, flat solid colour fills, simple soft cel shadows, minimal internal detail, strong readable silhouette. Deliberately **flatter than rendered concept art** — cut-out parts (`12`) rotate every frame, so baked lighting/texture would break, and a DAU title must produce content (characters, enemies, weapons) **cheaply and on-model**. The accepted weapon/melee concepts are the **flatness benchmark**; the enemy concepts are slightly over-rendered (lava texture, gloss) and must be flattened one notch in production.
+- **Element = colour is a hard gameplay rule, dual-channel.** A **closed five-colour language** drives all combat legibility: **fire = orange-red, ice = cyan, lightning = yellow-violet (yellow-dominant), poison = green-violet (green-dominant), physical = neutral white/grey.** Because lightning and poison can both drift violet, they are pulled apart — lightning toward yellow, poison toward green — **and** every weapon / enemy / status carries a small matching **element icon badge** (flame / snowflake / bolt / skull / gem). Colour sets the mood, the icon is the legibility backstop (small size, colour-blind, dark background). This dual channel is **locked** and governs bullet trails, status auras (`07`), enemy `tint` (`09`), weapon crystal, and biome accents. Concrete per-element hex values are still **to design** (below).
+- **Environment desaturated, hazards saturated.** Base stonework/terrain is low-chroma so the *interactive* bits — element FX, loot crystals, blight glow, the orbiting weapons — pop. The poison biome's ambient green must be dialled down and poison must **not** be the first biome, or green FX/enemies camouflage against a green floor.
+- **Biome identity = element theme + palette shift**, cheap to swap via `12`'s lazy per-biome bundles.
+
+## Worldview (reverse-engineered from the art, locked)
+
+- **Setting — the Blight (枯潮).** A spreading contamination is **crystallising** the world along **elemental lines** — fire / ice / lightning / poison. Each expresses as a different contaminated zone, which is why the run's floors are **elemental biomes** (`05`), the enemies are **wild crystal-blooms** corrupted by each element (the `09` variants emberling/frostling/galvanist/ironclad), and the boss is a **giant failed core**.
+- **Role — a purifier core (提纯核).** You are a **purpose-built reclaimer core** — a small clean floating machine-being — that dives into contaminated zones to **siphon corrupted matter and refine it into pure crystal**, banking it before the Blight claims it (the belly literally fills). You are the **polished, contained** counterpart to the wild crystal creatures.
+- **Tone — bright, luminous, hopeful.** Post-contamination but plucky and beautiful-dangerous, not grim, not horror. The crystal glows; the world is stylised, not gory. You are *reclaiming*, diving a little deeper and getting a little stronger each run — which is exactly the name **DayDayUp (天天向上, "better every day")** and the casual WeChat audience.
 
 ### The fiction earns every locked rule
 
-The setting was chosen because it makes each already-locked mechanic diegetic, not arbitrary:
+The art-first setting still makes each locked mechanic diegetic:
 
 | Locked rule (`05`/`09`) | In-world reason |
 |-------------------------|-----------------|
-| Weapons are ephemeral (wiped at run end) | Weapons found in a zone are **contaminated / unstable** — they work inside but decay the moment they leave |
-| Only materials carry out | Materials = **stabilised, refined** crystal — the one thing safe to extract |
+| Weapons are ephemeral (wiped at run end) | Weapons found/refined in a zone are **contaminated crystal** — stable inside, they decay the moment they leave |
+| Only materials carry out | Materials = **stabilised, purified** crystal — the one thing safe to extract (what your belly banks) |
+| A brought weapon is single-use, costs materials | You **refine one unstable weapon** from materials for the dive; it survives one run, like any in-zone weapon (`05`/`14`) |
 | Deeper floors → better materials | Deeper = **closer to the Blight source** → purer, more valuable crystal (and more dangerous) |
-| Extraction rooms are checkpoints | **Decontamination gates** — passing one locks in what you've pulled out |
-| Meta sells breadth, not power (`14`: blueprints + side-grade characters) | A safe **outpost / workshop** forges materials into loadout gear and takes in new reclaimers (characters) |
-| Elemental enemy variants + boss | Creatures corrupted by each element; the boss is a **Blight core / warden** |
-
-## Visual direction (locked)
-
-- **Style — flat-cel "半平涂".** Bold clean outlines + a limited saturated palette + strong readable silhouette. Deliberately **flatter than fully-rendered concept art**: cut-out skeletal parts (`12`) rotate every frame, so baked-in lighting/texture would break — keep shapes flat with soft cel shadows so limbs animate cleanly.
-- **Concept trio validated the target (2026-07-23).** Three AI concepts — blight beast / reclaimer diver / extraction room — confirmed the worldview reads instantly (sealed extraction gate, loot crystals, blight veins) and the character brief lands (element-neutral hazard-suit salvager, mechanical off-hand claw). They are the **style target**; production assets follow the *flatten* rule above and the tilted-camera authoring rules (`12`/`01`).
-- **Element = colour (hard gameplay rule, not taste).** A **closed five-colour language** drives all combat legibility: fire = orange-red, ice = cyan, lightning = yellow-violet, poison = green-violet, physical = neutral. It governs bullet trails, status auras (`07` render polish), enemy `tint` (`09`, render-only), and biome accents. Concrete hex values are a to-design.
-- **Environment desaturated, hazards saturated.** Base stonework/terrain is low-chroma so the *interactive* bits — element FX, loot crystals, blight glow — pop. The poison biome's all-green ambient (seen in the concept room) must be **dialed down**, and poison should **not be the first biome**, or green poison FX/enemies camouflage against a green floor.
-- **Biome identity = element theme + palette shift**, cheap to swap via `12`'s lazy per-biome bundles.
-- **A skin *is* a character, not a cosmetic reskin.** Every skin carries its own `(maxHp, maxShield)` + shield-break passive (`05`/`09`/`14`) — there is no power-neutral cosmetic-only layer. Characters are **side-grades** (playstyle trade-offs, no all-rounder), some free and some purchased, and character choice is the one meta axis that reaches PvP (kept fair by balance discipline, `14`). Silhouettes should read the character's *archetype* (e.g. a fragile skirmisher vs a tank), not hide it — this replaces the earlier "silhouette-neutral, never a power tell" rule.
+| Extraction rooms are checkpoints | **Decontamination gates** — passing one locks in what you have refined |
+| Meta sells breadth, not power (`14`: blueprints + side-grade characters) | A safe **outpost / workshop** forges materials into loadout gear and takes in new **core models** (characters) |
+| Elemental enemy variants + boss | Wild crystal-blooms corrupted by each element; the boss is a **failed / overgrown core** |
 
 ## Relationship to the other docs
 
-- **`12`:** the pipeline that produces and animates these assets (skeletal editor, `.tao`, atlases, loading); this doc sets *what* it draws, `12` sets *how*.
+- **`12`:** the pipeline that produces and animates these assets. The orb-core drops the humanoid rig — the rig is our own (`12`), and the weapon mount is an orbiting **socket**, not `gear_hand`.
 - **`01`:** the tilted view + colour/glow the element language rides on.
-- **`02`/`05`/`09`:** characters-are-skins, the biome/economy loop the fiction wraps, and the enemy `tint`/variant data the colour law drives.
-- **`03`:** weapon looks inherit the element colour law and the flat-cel style.
+- **`02`/`05`/`14`:** characters-are-a-roster (defensive identity + break passive, side-grade balanced), the biome/economy loop the fiction wraps, and the enemy `tint`/variant data the colour law drives.
+- **`03`:** weapon looks inherit the element colour law and plug into the universal mount; melee sweep = deflect arc.
 
 ## To design
 
-- **Concrete palette:** per-element hex + per-biome background palettes (the five-colour law's actual values).
-- **The other four biomes' looks** — only poison/blight is concepted; fire/ice/lightning + a neutral entry zone still need a visual pass, plus their difficulty/order (`05`), keeping poison off floor 1.
-- **Outpost / hub + NPCs** — the meta home base's look (forge, character select, cosmetics — `14`), and any NPCs.
+- **Concrete palette:** per-element hex + per-biome background palettes (the five-colour law's actual values), with the lightning-yellow / poison-green separation baked in.
+- **The other biomes' looks** — fire / ice / lightning + a neutral entry zone need a visual pass, plus their difficulty/order (`05`), keeping poison off floor 1.
+- **The 3 launch characters** — each a distinct themed orb-core + its `(maxHp, maxShield)` + break-passive playstyle (`02`/`14`); which one anchors marketing.
+- **Enemy body variety** — beyond the re-tinted base critter: a heavy brute, a floating ranged form, and the boss core.
+- **Outpost / hub + NPCs** — the meta home base's look (forge, character select — `14`), and any NPCs.
 - **Rarity vs element colour namespace** — the five element hues are reserved for combat FX; weapon **rarity** (白→蓝→紫→金, `14`) must read via border + a per-rarity ornament/emissive overlay on the sprite, without colliding with the element language. Concrete overlay spec pairs with the palette pass above.
-- **Shipping title** — is "DayDayUp" the final name or a codename? The Blight setting may suggest a title.
+- **Shipping title** — is "DayDayUp" the final name or a codename? The Blight/crystal-core setting may suggest a title.

@@ -40,7 +40,7 @@ Render transform: `screen.x = gx`, `screen.y = gy - z`. A large part of the 3D f
 
 ## Per-weapon local z-order
 
-A weapon is attached to the character's hand anchor and rendered separately, and must switch front/back by facing:
+A weapon is attached to one of the character's orbiting weapon sockets (`02`/`13`) and rendered separately, and must switch front/back by facing:
 
 - Facing up (dy < 0): weapon renders **behind** the body (weapon.zIndex = -1 inside the actor container).
 - Facing down / sideways: weapon renders **in front** (weapon.zIndex = +1).

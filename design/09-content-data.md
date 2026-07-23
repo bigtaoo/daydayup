@@ -48,10 +48,11 @@ Author in human units; the constructor converts (as funny's `Unit` ctor does).
 ### `WeaponSpec` (`03`)
 
 ```
-WeaponSpec = { id, kind, nameKey, skinRef, cooldownSec, grip? }  &  (RangedSpec | MeleeSpec)
-  // grip: 'ranged1h'|'ranged2h'|'melee1h'|'melee2h' — picks the arm hold pose that aims
-  //   the weapon on the skin's gear_hand attachment point (02/12); render-only, ~4 poses
-  //   shared by all weapons. Omitted = inferred from kind. Never read by the sim (06).
+WeaponSpec = { id, kind, nameKey, skinRef, cooldownSec }  &  (RangedSpec | MeleeSpec)
+  // The weapon renders as a module plugged into one of the character's two orbiting
+  //   weapon sockets — a universal, arm-agnostic mount (02/03/12/13). No 'grip'/hold pose:
+  //   the socket aims the weapon; melee's swing is the socket sweeping its arc. Render-only,
+  //   never read by the sim (06).
 
 RangedSpec = {
   kind: 'ranged'
@@ -149,11 +150,12 @@ ShieldBreakPassive =      // tagged data, interpreted by combat (07) — no inli
   | { kind: 'knock'; radiusGrid; impulse }               // shove nearby enemies back
 AnimData = {
   clips: Record<ClipName, { frames: Frame[]; fps; loop }>
-  handAnchors: Record<frameIndex, { x, y }>   // 02 "hand anchor follows the frame" — weapon mount
+  socketAnchors: Record<frameIndex, { x, y }[]>  // 02/13 orbiting weapon-socket poses per
+                                                  //   frame (one entry per mount) — weapon mount
 }
 ```
 
-`handAnchors` is what `02`/`07` mean by "weapon mount tracks the hand anchor every frame": it is *data*, per animation frame, not hard-coded. Animation is render-layer data (no fp needed — it never feeds logic), but it lives in the content catalog so a skin swap is a pure data swap.
+`socketAnchors` is what `02`/`07` mean by "the weapon mount tracks the character's orbiting socket every frame": it is *data*, per animation frame (one entry per socket), not hard-coded. Animation is render-layer data (no fp needed — it never feeds logic), but it lives in the content catalog so a character swap is a pure data swap.
 
 ## Rarity & run buffs (`03`/`14`)
 
@@ -295,7 +297,7 @@ MaterialDef = { id: MaterialId; nameKey; element: DamageType; tier }
 ## Relationship to the other docs
 
 - **`03`:** `WEAPON_SPECS`/rarity/ballistics are the concrete form of its `RangedSpec`/`MeleeSpec` "to design" list and its Frame × Element composition (affixes cut, `14`).
-- **`02`:** `SkinDef` + `AnimData.handAnchors` realize "animation separate from texture" and "hand anchor follows the frame."
+- **`02`:** `SkinDef` + `AnimData.socketAnchors` realize "animation separate from texture" and "the weapon socket follows the frame."
 - **`05`:** dungeon assembly, drop tables, arena presets, difficulty curve — the data behind its core loop, economy, and PvP; its open design questions (room count, reward structure, preset set) fill these schemas.
 - **`07`:** `RoomPiece.solids`/`pillars` are the collision geometry (round pillars implemented, AABB tiles deferred); `WeaponSpec`/`EnemyBlueprint` feed its damage/ballistic bodies.
 - **`08`:** the build layer resolves specs into `GameState` at match start; `WaveScript`/`WaveDirector` is step 10; all PRNG-seeded content obeys its determinism contract.

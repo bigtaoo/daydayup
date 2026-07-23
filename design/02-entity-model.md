@@ -1,20 +1,20 @@
 # Entity model: Actor / Skin / Weapon
 
-Core principle: **offensive depth is not tied to the character.** A character contributes *only* its **defensive identity** — a `(maxHp, maxShield)` pair plus one **shield-break passive** — and nothing else; all moment-to-moment power is the weapon. "Different characters" are a skin + those two-ish knobs, not a stat sheet. (`05` locks the two-pool survivability model these knobs feed.)
+Core principle: **offensive depth is not tied to the character.** A character contributes *only* its **defensive identity** — a `(maxHp, maxShield)` pair plus one **shield-break passive** — and nothing else; all moment-to-moment power is the weapon. There is **no cosmetic skin-swap layer**: the game ships a flat **roster of distinct characters** (themed orb-cores, `13`), each its own look + those two-ish defensive knobs — not a base body with reskins, and not a stat sheet. (`05` locks the two-pool survivability model these knobs feed; `14` the roster + monetization.)
 
 ## Three-layer responsibilities
 
 | Layer | Responsibility | Carries gameplay? |
 |-------|----------------|-------------------|
 | **Actor** | Logical entity: `gx/gy`, `facing`, movement, `hp/maxHp`, **`shield/maxShield` + `ticksSinceHit`**, faction | Yes (core) |
-| **Skin (character)** | Appearance: animation rig / frames + swappable textures. Carries the character's `(maxHp, maxShield)` and its **shield-break passive** (the concrete "minor passive") | Defensive identity only — no offense |
-| **Weapon** | First-class citizen: stats, ballistics, hand anchor, muzzle position, fire/deflect behavior | **Yes (all offensive depth)** |
+| **Skin (character)** | Appearance: the shared orb-core rig + this character's own part atlas (its theme — shell / eye / spikes / belly, `13`). Carries the character's `(maxHp, maxShield)` and its **shield-break passive** | Defensive identity only — no offense |
+| **Weapon** | First-class citizen: stats, ballistics, socket mount, muzzle position, fire/deflect behavior | **Yes (all offensive depth)** |
 
 ## Key constraints
 
 1. **The weapon is a first-class entity**, not a property of the character. Gameplay depth comes from weapons; the system is built around swapping them (see `03-weapon-system.md`).
-2. **Skins decouple animation from texture:** animation data (frame timing, anchors, events) is separate from texture assets. Swapping a skin = swapping the atlas, without touching animation logic. Build it this way from the start, or adding skins later hurts.
-3. **The hand anchor follows the animation frame:** the weapon mount tracks the character's hand anchor + facing every frame; it is never hard-coded.
+2. **Characters decouple animation from texture:** animation data (frame timing, anchors, events) is authored once on the shared orb-core rig, separate from texture assets; each character is that rig + its own part atlas. Adding a character = a new atlas + stat row, no new animation logic. Build it this way from the start, or adding characters later hurts.
+3. **The weapon socket follows the animation frame:** the weapon mount tracks the character's orbiting socket (its aim rotation + facing) every frame (`12`/`13`); it is never hard-coded. There is no hand — the socket is a universal, arm-agnostic mount (`03`).
 4. **Weapon local z switches by facing** (see `01-rendering.md`).
 
 ## Data structure sketch
@@ -33,10 +33,10 @@ Actor {
   activeSlot: 0 | 1    // which slot fires / receives a pickup; SWAP toggles it
 }
 
-Skin {                 // "the character": defensive identity + look
-  atlasKey             // texture atlas id (change this to swap skins)
-  anim                 // shared animation-data reference
-  handAnchor()         // hand anchor for the current frame (for weapon mounting)
+Skin {                 // "the character": defensive identity + look (no cosmetic reskin layer)
+  atlasKey             // this character's part atlas (its theme; shares the orb-core rig)
+  anim                 // shared animation-data reference (the one orb-core rig)
+  socketAnchor(slot)   // orbiting weapon-socket pose for the current frame (weapon mount, 12/13)
   // maxHp, maxShield, and the shield-break passive are authored on the character
   //   blueprint (SkinDef / PLAYER_BASE, 09); the Actor is constructed from them.
 }
@@ -47,7 +47,7 @@ Weapon (abstract) {
   cooldown
   onEquip(actor)
   onUnequip()
-  update(dt)           // position to hand anchor, facing, local z
+  update(dt)           // position to the active weapon socket, facing, local z
   use(ctx, firing)     // fire behavior (subclass); melee 'use' = a swing whose arc
                        //   both damages enemies AND deflects bullets in it (03/07).
                        //   No blocking state — parry is the swing, not a held key.

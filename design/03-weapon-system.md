@@ -108,7 +108,7 @@ MeleeSpec  { arc, range, damage, damageType, knockback, deflect: bool, deflectSp
 
 Adding a weapon = adding a config row (+ code only for special behavior), not hard-coding each one.
 
-- **Mounting & grip.** A weapon renders as a sprite on the skin's `gear_hand` attachment point, following the hand bone every frame (`02`/`12`); swapping the active slot swaps that sprite. A per-weapon **`grip`** (single-handed ranged / two-handed ranged / one-handed melee / heavy two-handed melee) selects which arm clip aims it, so dozens of weapons share ~4 hold poses. Mounting/grip is render-only — it never touches the sim (`06`).
+- **Mounting (universal socket).** A weapon renders as a sprite on one of the character's two **orbiting weapon-socket** attachment points, following that socket's aim rotation every frame (`02`/`12`/`13`); swapping the active slot swaps which socket fires. The socket is a **universal mount** — its base is identical for every weapon, only the business end (barrel / beam emitter / crystal blade / hammer head) differs — so there is **no `grip` and no per-weapon hold pose**: one arm-agnostic mount holds any frame, ranged or melee, and any character holds any weapon (a character's theme lives on the orb, never on the weapon — `13`). A melee frame's swing is the socket **sweeping its `arc`×`range` sector around the core** — that swept sector is the same one that damages enemies and deflects bullets (above) — and the socket's **tether length maps to melee reach** (short = dagger, long = spear). Mounting is render-only — it never touches the sim (`06`).
 
 ## Verified in the demo
 
