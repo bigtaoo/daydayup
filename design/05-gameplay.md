@@ -8,7 +8,7 @@ What the player actually does. This is the single source of truth for the **core
 - **PvE adopts an extraction loot loop — but a softened, PvE-only form.** You search for loot, push deeper for better rewards, and choose when to bank and leave. What makes this *not* the rejected extraction-shooter (below): **weapons never persist regardless** (they vanish at run end no matter what — there is nothing to "lose"), **only materials extract**, the threat is **AI only** (no rival players hunting you), and death costs only **this floor's un-banked materials** (extraction points are checkpoints). It keeps extraction's push-your-luck tension without its casual-hostile "lose your hard-won gear to a stranger" sting.
 - **Weapons are ephemeral; materials are the only carry-out.** Every weapon — brought in or found — is wiped at run end. The single thing that leaves a run is **materials**, the meta-forge currency (`meta` doc, later). This *is* `06`'s "in-run resources are engine state, wiped each match," made literal.
 - **PvP normalizes gear via unified presets.** The arena offers a **fixed, balanced set of preset loadouts** everyone picks from — players do **not** bring or clamp their own gear. Matches are decided by skill and in-match choices, not by who has ground more. This is the concrete meaning of `06`'s "casual-first."
-- **Meta progression is horizontal.** Persistent progression (spent via material forging) grants **build breadth, cosmetics, and small stat deltas** — never a raw power ladder. In-run finds are the real power axis.
+- **Meta sells breadth, not a PvP power ladder.** Persistent progression (spent via material forging + purchase) grants **weapon-blueprint breadth** (PvE-only — crafted weapons never reach PvP) and a **side-grade character roster** (the one meta axis in PvP, no all-rounder). It never grants a raw power ladder that reaches PvP. In-run finds are the real power axis. Full model in `14`.
 - **Parry is melee-category-limited.** Only melee weapons can deflect, and deflect is part of the swing itself — not a separate block (`03`). Choosing a ranged loadout means giving up parry — it is a genuine trade-off, not a universal skill everyone owns.
 - **Landscape-primary.** The game ships **landscape only**; portrait is dropped. Twin-stick + corner buttons (`04`) need the horizontal space, and WeChat supports `deviceOrientation: "landscape"` in `game.json`.
 
@@ -40,7 +40,7 @@ Loadout (bring up to 2 weapons; none → auto pistol)
    → back to loadout
 ```
 
-- **Weapons found this run are the moment-to-moment power fantasy — and all of it is ephemeral.** Weapons, affixes, and combo effects (`03` "rarity, affixes, combo effects") found *this run* build up your kit, then are wiped at run end. This is `06`'s "in-run resources/drops are engine state, wiped each match."
+- **Weapons found this run are the moment-to-moment power fantasy — and all of it is ephemeral.** The kit you build this run — a better weapon (higher rarity, or a frame×element that counters the room, `03`) plus **run-scoped buffs** (the in-run power layer, Soul-Knight style; there are no weapon affixes, `14`) — is wiped at run end. This is `06`'s "in-run resources/drops are engine state, wiped each match."
 - **Materials are the only carry-out**, and the deeper you go the better they get. Weapon *finds* stay random at every depth — depth buys material quality, not guaranteed weapons.
 - **Extraction rooms are checkpoints.** One per floor; reaching it lets you **extract** (end the run, keep everything) or **descend**. Choosing to descend banks your materials so far, so a death on a later floor costs only **that floor's** un-banked materials (weapons are gone either way). This is the softened extraction form (locked decisions above).
 - **You need not clear a floor.** How many rooms you can skip depends on where that floor's extraction room sits — an extraction room mid-floor lets you leave one or two rooms unfought, a natural "greed for the last chest vs. leave safe" micro-decision.
@@ -83,11 +83,12 @@ Three pickup classes, split by **whether the player must make a choice**. Materi
 | Axis | Source | Persists past a run? | Affects PvP? |
 |------|--------|-----------|--------------|
 | **Materials** | banked during a PvE run (deeper floors → better) | **Yes** — the only carry-out; the meta-forge currency | **No** — normalized out |
-| **In-run weapons / affixes** | found this run (chests, drops) | **No** — every weapon is wiped at run end | N/A (PvE only) |
-| **Brought-in weapon(s)** | forged from materials in meta, equipped into the loadout (0–2; none → auto pistol) | **No** *within a run* (wiped like any weapon); how forging/stash works across runs is the meta doc's scope | N/A (PvE only) |
+| **In-run weapons / buffs** | found this run (chests, drops) | **No** — every weapon is wiped at run end | N/A (PvE only) |
+| **Brought-in weapon(s)** | crafted per-run from an unlocked blueprint + materials, equipped into the loadout (0–2; none → auto pistol); the crafted instance = one run (`14`) | **No** *within a run* (wiped like any weapon); the blueprint unlock is permanent/account-level (`14`) | N/A (PvE only) |
+| **Character (skin)** | free roster + purchased; carries `(maxHp,maxShield)` + break-passive (`14`) | **Yes** — account-level | **Yes** — the *one* meta thing in PvP, but side-grades only (no all-rounder), fairness by balance discipline (`14`) |
 | **Arena preset / in-match pickups** | preset chosen at match start / dropped on map | No | Yes — the only PvP power source |
 
-The split that keeps PvP fair: **materials are horizontal** (they buy build breadth / small deltas via forging, never a power ladder), and **PvP is preset-normalized** so no PvE-earned power reaches it at all. All balance numbers live in `@dd/engine` config (`06` "numbers live in one place"); this doc only names the shape. Exact forging/consumption mechanics are deferred to the **meta** discussion.
+The split that keeps PvP fair: **crafted weapons never reach PvP** (the preset wall, structural — `09`), and the **one** meta axis that does reach PvP is *character choice*, held fair by side-grade balance discipline (`14`). All balance numbers live in `@dd/engine` config (`06` "numbers live in one place"); this doc only names the shape. The forging / blueprint / crafting-cost / monetization mechanics are locked in the **meta doc** (`14`).
 
 ## Parry (block/deflect) positioning
 
@@ -106,15 +107,15 @@ The pivot mechanic from `03`. Its identity across the game:
 ## Relationship to the other docs
 
 - **Weapons** (`03`): the loop's moment-to-moment depth is weapon variety + parry; this doc says *when/where* you acquire and swap them (drops in PvE, normalized loadout in PvP).
-- **Entity model** (`02`): a character carries **only** `(maxHp, maxShield)` + a shield-break passive; all offensive depth is the weapon — so a run's power comes from the weapon/affix stack, not the character. Weapon-slot rules (2 slots, pickup-replaces-active-slot, pistol backup) live in `02`.
+- **Entity model** (`02`): a character carries **only** `(maxHp, maxShield)` + a shield-break passive; all offensive depth is the weapon — so a run's power comes from the weapon + run-buffs, not the character. Weapon-slot rules (2 slots, pickup-replaces-active-slot, pistol backup) live in `02`.
 - **Netcode** (`06`): modes, the ephemeral-in-run split, casual-first, and determinism constraints all originate there; this doc must not contradict it. The adopted PvE extraction form is specifically shaped to stay inside `06`'s casual-first and to add no open-world player-state netcode.
 
 ## To design
 
 - **Difficulty / material curve** across the ~5 floors (biomes? how enemy tier and material quality escalate with depth). Floor count and rooms-per-floor (5–10) are tentative and need play-tuning.
 - **Reward-choice structure** within/between floors (branching paths, shop, curse/blessing), and where the extraction room sits per floor (it gates how many rooms are skippable).
-- **Materials → forging**: the material tiers, and what forging produces — deferred to the **meta** discussion.
-- **Character roster & `(maxHp, maxShield)` + break-passive set**: the actual defensive stat pairs and break-passives (`02`/`09`), and cosmetic skins.
+- **Materials → forging**: the material tiers and what forging produces are **locked in the meta doc** (`14`: blueprint unlock + per-run material craft, five elemental material kinds, intrinsic weapon rarity). Remaining there is recipe/blueprint/run-buff content tuning.
+- **Character roster & `(maxHp, maxShield)` + break-passive set**: the actual defensive stat pairs and break-passives (`02`/`09`/`14`), which are free vs paid, and the side-grade balance-test suite (`14`). (Every skin is a character with stats — there is no cosmetic-only skin, `14`.)
 - **Healing-item drop rate / cap** (flat +1 HP): how common, any stack limit.
 - The PvP **preset loadout set** itself (how many presets, their archetypes/roles), the in-match pickup table, the role of arena AI (neutral hazard / objective / farm), and win condition (elimination / score / objective).
 
@@ -125,5 +126,5 @@ The pivot mechanic from `03`. Its identity across the game:
 - **Descend vs extract UI/commitment:** once you descend, is extraction only re-offered at the next floor's room, or can you backtrack? Assume forward-only unless play says otherwise.
 - PvPvE arena AI: neutral hazard, contested objective, or material farm — and symmetric spawns only, or contested map objectives?
 - Parry vs PvP balance: does deflected player-damage get scaled down to avoid one-shot swings? Decide against real matches.
-- Meta "horizontal" boundary: where exactly does a "small stat delta" stop being horizontal and become a ladder? Needs a numeric cap, set in engine config.
-- **Shield-break passive in PvP:** if characters exist in the arena, does the break-passive survive preset normalization, or is it normalized out like gear? (Mirrors `09`'s skin-passive question.)
+- ~~Meta "horizontal" boundary~~ **(resolved, `14`):** meta no longer grants a stat ladder at all. Crafted weapons never reach PvP (structural wall); the only meta axis in PvP is *which character* you picked, and characters are side-grades (no all-rounder), enforced by balance discipline + tests. PvE weapon power comes from intrinsic rarity (a small edge + better handling, never crushing) — not a horizontal-delta cap.
+- ~~**Shield-break passive in PvP**~~ **(resolved, `14`):** characters *do* enter PvP, so the break-passive **survives** — but the whole character (HP/shield + passive) must be balanced as a side-grade. Answered together with `09`'s skin-passive question.

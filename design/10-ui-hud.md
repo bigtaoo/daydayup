@@ -42,7 +42,7 @@ Lives in the `ui` layer (`01`, topmost). Renders each frame from `state` + `even
 | Crosshair / aim indicator | current `aimBrad` | On the `ui` layer per `01`; on touch it tracks the right stick, on web the mouse |
 | Swing / parry flash | `deflect` event (`08`) | Transient — a melee swing that deflected a bullet; no persistent "block" state exists (`05`) |
 | Minimap / room progress | `room` + cleared count (`05`/`09`) | PvE run structure; post-MVP polish |
-| Pickup / affix toast | `pickup` event (`08`) | Transient "picked up X"; drives the roguelite build feedback (`05`) |
+| Pickup / buff toast | `pickup` event (`08`) | Transient "picked up X"; drives the roguelite build feedback — weapons + run buffs, no affixes (`05`/`14`) |
 | Score / timer / team | `state` (PvP) | Elimination/score win condition (`05` open question) |
 
 - **Damage/feedback numbers, hit flashes, deflect sparks** are driven by the `events` queue (`08`), consumed once per render frame — same channel the fx layer uses (`01`). UI feedback and fx read the same events; neither writes back.
@@ -76,13 +76,13 @@ The concrete shape of `05`/`04`'s twin-stick, and where `08`'s `PlayerCommand` i
 - **`04`:** WeChat input (virtual twin-stick) and `Text` constraints; this doc is the cross-platform UI form of it.
 - **`05`:** controls, landscape lock, the run loop the screen flow wraps, preset/loadout pick.
 - **`06`/`08`:** the engine↔render split and `PlayerCommand`; UI is strictly downstream + the one command channel. Pause/stall behavior follows `06`.
-- **`09`:** weapon/preset/affix data the loadout screen and HUD icons read.
+- **`09`:** weapon/preset/rarity data the loadout screen and HUD icons read.
 
 ## To design
 
 - **Widget kit:** a minimal Pixi UI component set (button, stick, bar, toast, panel) — build vs. a tiny in-house layer. Keep it small; no heavy UI framework (bundle + WeChat).
 - **HUD data contract:** the exact read-only view of `GameState` the HUD needs, so it never reaches into engine internals (mirror `08`'s interpolation-snapshot idea for UI).
-- **Loadout/preset screen data** — driven by `09`'s `MetaLoadout` / `ARENA_PRESETS`; how much detail (stats, previews) to show.
+- **Loadout/preset screen data** — the crafted loadout + chosen character (`14`) / `ARENA_PRESETS` (`09`); how much detail (stats, previews) to show.
 - **Settings** (volume once audio lands `11`, control layout/left-handed mirror, quality tier per `01` roadmap).
 - **Result/summary content:** what a run summary shows (drops collected, rooms cleared, time) — ties to `05`'s reward structure.
 

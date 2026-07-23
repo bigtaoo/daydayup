@@ -1,6 +1,6 @@
 # Worldview & art direction
 
-The game's **fiction and its visual identity** — the setting that makes the locked systems (`05` loop, `03` elements, `09` content) feel like one world, and the art rules that keep it readable on WeChat (`04`) and cheap to produce (`05` horizontal meta). Sibling to `12` (which owns the *pipeline* — how pixels load and animate); this doc owns *what the world is and what it looks like*, `12` owns *how the assets are built*.
+The game's **fiction and its visual identity** — the setting that makes the locked systems (`05` loop, `03` elements, `09` content) feel like one world, and the art rules that keep it readable on WeChat (`04`) and cheap to produce (`14` breadth-not-power meta). Sibling to `12` (which owns the *pipeline* — how pixels load and animate); this doc owns *what the world is and what it looks like*, `12` owns *how the assets are built*.
 
 ## Worldview (locked)
 
@@ -18,7 +18,7 @@ The setting was chosen because it makes each already-locked mechanic diegetic, n
 | Only materials carry out | Materials = **stabilised, refined** crystal — the one thing safe to extract |
 | Deeper floors → better materials | Deeper = **closer to the Blight source** → purer, more valuable crystal (and more dangerous) |
 | Extraction rooms are checkpoints | **Decontamination gates** — passing one locks in what you've pulled out |
-| Meta is horizontal (forge + cosmetics) | A safe **outpost / workshop** forges materials into loadout gear and skins |
+| Meta sells breadth, not power (`14`: blueprints + side-grade characters) | A safe **outpost / workshop** forges materials into loadout gear and takes in new reclaimers (characters) |
 | Elemental enemy variants + boss | Creatures corrupted by each element; the boss is a **Blight core / warden** |
 
 ## Visual direction (locked)
@@ -28,7 +28,7 @@ The setting was chosen because it makes each already-locked mechanic diegetic, n
 - **Element = colour (hard gameplay rule, not taste).** A **closed five-colour language** drives all combat legibility: fire = orange-red, ice = cyan, lightning = yellow-violet, poison = green-violet, physical = neutral. It governs bullet trails, status auras (`07` render polish), enemy `tint` (`09`, render-only), and biome accents. Concrete hex values are a to-design.
 - **Environment desaturated, hazards saturated.** Base stonework/terrain is low-chroma so the *interactive* bits — element FX, loot crystals, blight glow — pop. The poison biome's all-green ambient (seen in the concept room) must be **dialed down**, and poison should **not be the first biome**, or green poison FX/enemies camouflage against a green floor.
 - **Biome identity = element theme + palette shift**, cheap to swap via `12`'s lazy per-biome bundles.
-- **Player skins are cosmetic and silhouette-neutral** — characters carry no gameplay (`02`), so skins are pure flair and must never read as a power tell.
+- **A skin *is* a character, not a cosmetic reskin.** Every skin carries its own `(maxHp, maxShield)` + shield-break passive (`05`/`09`/`14`) — there is no power-neutral cosmetic-only layer. Characters are **side-grades** (playstyle trade-offs, no all-rounder), some free and some purchased, and character choice is the one meta axis that reaches PvP (kept fair by balance discipline, `14`). Silhouettes should read the character's *archetype* (e.g. a fragile skirmisher vs a tank), not hide it — this replaces the earlier "silhouette-neutral, never a power tell" rule.
 
 ## Relationship to the other docs
 
@@ -41,5 +41,6 @@ The setting was chosen because it makes each already-locked mechanic diegetic, n
 
 - **Concrete palette:** per-element hex + per-biome background palettes (the five-colour law's actual values).
 - **The other four biomes' looks** — only poison/blight is concepted; fire/ice/lightning + a neutral entry zone still need a visual pass, plus their difficulty/order (`05`), keeping poison off floor 1.
-- **Outpost / hub + NPCs** — the meta home base's look (forge, skins), and any NPCs.
+- **Outpost / hub + NPCs** — the meta home base's look (forge, character select, cosmetics — `14`), and any NPCs.
+- **Rarity vs element colour namespace** — the five element hues are reserved for combat FX; weapon **rarity** (白→蓝→紫→金, `14`) must read via border + a per-rarity ornament/emissive overlay on the sprite, without colliding with the element language. Concrete overlay spec pairs with the palette pass above.
 - **Shipping title** — is "DayDayUp" the final name or a codename? The Blight setting may suggest a title.

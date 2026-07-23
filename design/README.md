@@ -13,11 +13,12 @@ This directory records **decisions** and **architecture**. It is the single sour
 | [06-netcode-determinism.md](06-netcode-determinism.md) | Netcode & determinism: server frame-broadcast lockstep + client prediction, deterministic `@dd/engine` core, migration plan (mirrors sibling project `funny`) |
 | [07-collision-combat.md](07-collision-combat.md) | Collision & combat: circle/wall collision, uniform-grid broad phase, swept directional bullets, block/deflect & melee arcs (brad/fp-trig), damage pipeline, death & drops — bodies of `08`'s step 4–9 |
 | [08-simulation-core.md](08-simulation-core.md) | Simulation core: `GameState` schema, fixed `step()` system order, per-tick twin-stick `PlayerCommand`, `InputSource`/replay/headless (concrete form of `06`'s principles) |
-| [09-content-data.md](09-content-data.md) | Content & data model: `@dd/engine` config layout, weapon/enemy/skin/affix schemas, room-piece & seeded-dungeon formats, PvP fairness build-wall, human-units→fp/brad conversion & versioning |
+| [09-content-data.md](09-content-data.md) | Content & data model: `@dd/engine` config layout, weapon/enemy/skin/rarity/run-buff schemas, room-piece & seeded-dungeon formats, PvP fairness build-wall, human-units→fp/brad conversion & versioning |
 | [10-ui-hud.md](10-ui-hud.md) | UI, HUD & screen flow: all-Pixi UI, the menu→loadout→match→result state machine, in-match HUD read from `state`/`events`, twin-stick input → `PlayerCommand` quantization boundary, landscape/safe-area layout, WeChat text constraints |
 | _11 — audio (reserved, not yet written)_ | SFX/music: engine `events` → audio channel (`08`), WeChat `Audio` constraints (`04`), determinism/audio decoupling |
 | [12-art-animation.md](12-art-animation.md) | Art & animation pipeline: Skin = shared rig + swappable atlas (`02`), reused funny skeletal editor + `.tao` format (local-only), `gear_hand` weapon mounting, twin-stick facing model, Pixi `Assets` loading (web + WeChat adapter), tilted-view authoring rules (`01`), art-is-presentation-only determinism rule |
 | [13-worldview-art-direction.md](13-worldview-art-direction.md) | Worldview & art direction: the Blight setting (contamination → elemental biomes) and how it earns each locked rule, flat-cel style, the element=colour law, desaturated-environment rule, tone |
+| [14-meta-forging.md](14-meta-forging.md) | Meta & forging: blueprint unlock + per-run material crafting (5 elemental materials), intrinsic weapon rarity (no upgrades, no affixes — Soul-Knight route), characters-are-skins side-grade roster, PvP fairness (weapons walled structurally / characters by discipline), bounded no-gacha monetization |
 
 ## Decision format
 

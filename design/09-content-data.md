@@ -1,6 +1,6 @@
 # Content & data model
 
-The data-driven backbone: **where every gameplay number and every piece of content lives, and in what shape.** `06`/`08`/`07` decide *how the engine behaves*; this doc decides *what data it reads to behave that way*. It is the single source of truth for the `@dd/engine` config layout, the weapon/enemy/skin/affix schemas (`02`/`03`), the room & dungeon formats (`05`), and the collision geometry deferred from `07`.
+The data-driven backbone: **where every gameplay number and every piece of content lives, and in what shape.** `06`/`08`/`07` decide *how the engine behaves*; this doc decides *what data it reads to behave that way*. It is the single source of truth for the `@dd/engine` config layout, the weapon/enemy/skin/rarity/run-buff schemas (`02`/`03`/`14`), the room & dungeon formats (`05`), and the collision geometry deferred from `07`.
 
 It exists because `03`, `05`, `07`, and `08` all say "numbers live in one place" and repeatedly defer their concrete formats here.
 
@@ -10,9 +10,9 @@ It exists because `03`, `05`, `07`, and `08` all say "numbers live in one place"
 
 - **All numbers live in `@dd/engine` config; prose only snapshots them with a date.** Client and server read the same module (webpack alias / workspace dep, `06`). No balance constant is ever duplicated into a doc, a UI file, or the render layer — funny's ADR-001 rule, the fix for "same number, four values across four docs."
 - **Author in human units, convert once at construction.** Config is written in seconds, grid-units/second, degrees, and percent — *readable*. The engine converts to ticks/`Fp`/brad exactly once, when a blueprint is instantiated, using a fixed truncation so every client converts identically (funny: `attackInterval_s → round(s·TICK_RATE)`, `speed grid/s → toFp(speed)`). **Raw floats never survive past construction** into stored state (`06`).
-- **Content is plain data keyed by type.** Weapons, enemies, skins, affixes, rooms, drop tables are all serializable records — no code, no Pixi, no closures. Special behavior is a *tagged field* the engine interprets (funny's `traits`/`projectile`/`onDeathSpawn`), never an inline function. This is what lets the same data drive engine, headless re-judge, and (later) a data editor.
-- **The PvP fairness wall is structural, not disciplinary.** ⟂ The builder that produces arena specs takes **no meta/affix parameter at all**, so it is *compile-time impossible* to leak persistent gear into PvP (funny's `buildPvpBlueprints()` signature has no equipment arg, guarded by hard-wall tests). Meta and in-run affixes only reach the *run* builder. This is the concrete enforcement of `05`'s "PvP normalizes gear" / `06`'s casual-first.
-- **Forward-compatible by default.** An unknown affix id / trait / field is **silently ignored**, not a crash (funny). New content can ship to data before the engine understands it, and an old replay won't explode on a field it doesn't know — but any change that alters *outcomes* still bumps `ENGINE_VERSION` (`08`).
+- **Content is plain data keyed by type.** Weapons, enemies, skins, rooms, drop tables are all serializable records — no code, no Pixi, no closures. Special behavior is a *tagged field* the engine interprets (funny's `traits`/`projectile`/`onDeathSpawn`), never an inline function. This is what lets the same data drive engine, headless re-judge, and (later) a data editor.
+- **The PvP *weapon* wall is structural, not disciplinary.** ⟂ The builder that produces arena specs takes **no weapon / material / blueprint parameter at all**, so it is *compile-time impossible* to leak a crafted weapon into PvP (funny's `buildPvpBlueprints()` signature has no equipment arg, guarded by hard-wall tests). Crafted weapons only reach the *run* builder. This is the concrete enforcement of `05`'s "PvP normalizes gear" / `06`'s casual-first. **The one exception is character choice** — `buildArenaSpecs` *does* take a `skinId` (`14`), so the chosen character's `(maxHp,maxShield)`+passive apply in PvP; that axis is held fair by **balance discipline + tests** (every character is a side-grade), not by the type wall.
+- **Forward-compatible by default.** An unknown weapon / skin / trait / field is **silently ignored**, not a crash (funny). New content can ship to data before the engine understands it, and an old replay won't explode on a field it doesn't know — but any change that alters *outcomes* still bumps `ENGINE_VERSION` (`08`).
 - **No display strings in engine data.** Names/descriptions are **i18n string keys** (plain strings in the engine; the client re-narrows to typed keys at the render boundary — funny's koan). Engine data is logic + keys only.
 
 ## Config module layout
@@ -31,7 +31,8 @@ Mirror funny's `@nw/engine` structure:
     ballistics.ts      // BALLISTIC_SHAPES: straight/arc/homing/…       (03/07)
     drops.ts           // DROP_TABLES                                    (05)
   balance/
-    affixes.ts         // AFFIX_FIELD_MAP + caps                         (03)
+    rarity.ts          // RARITY_TIERS: base-quality tiers per weapon    (03/14)
+    runbuffs.ts        // RUN_BUFFS: in-run buff catalogue (replaces affixes) (14)
     presets.ts         // ARENA_PRESETS (PvP loadouts)                   (05)
     build.ts           // buildRunSpecs() / buildArenaSpecs() — the wall
   world/
@@ -127,7 +128,7 @@ EnemyBlueprint = {
 
 > **Boss shipped 2026-07-11 (no version bump).** `blightlord` — a durable finale (`maxHp 40`, 2× radius) that exists to *show* the combat systems: its big HP pool lets poison stacks ramp to full and lingering burn/chill/poison auras persist, while a broad `resist` (physical ×0.4, fire/ice/lightning ×0.8, **poison ×2.0**) forces the right tool — venom melts it. `boss?: bool` is the shipped form of the aspirational `isBoss` but **render-only** (like `tint` — the sim never reads it): the view draws a floating HP bar so the poison melt is legible. `onDeathSpawn`/AI traits remain unbuilt. Added as a `blightlord` finale wave; another new id + optional render field, so still no version bump.
 
-`PLAYER_BASE` holds the stats **shared by all characters** (collision radius, move speed, `WEAPON_SLOTS = 2`, the auto-granted starter pistol `WeaponId`, `SHIELD_REGEN_DELAY`/`SHIELD_REGEN_INTERVAL`, revive channel length & restored HP); the **chosen `SkinDef`** supplies the per-character `(maxHp, maxShield)` + `shieldBreak`. At match start the two are merged into the `PlayerActor`; persistent-meta and in-run affixes then modify a *copy* via the build layer below — never the shared constant.
+`PLAYER_BASE` holds the stats **shared by all characters** (collision radius, move speed, `WEAPON_SLOTS = 2`, the auto-granted starter pistol `WeaponId`, `SHIELD_REGEN_DELAY`/`SHIELD_REGEN_INTERVAL`, revive channel length & restored HP); the **chosen `SkinDef`** supplies the per-character `(maxHp, maxShield)` + `shieldBreak`. At match start the two are merged into the `PlayerActor`; in-run buffs then modify a *copy* via the build layer below — never the shared constant.
 
 ### `SkinDef` (`02`)
 
@@ -154,40 +155,46 @@ AnimData = {
 
 `handAnchors` is what `02`/`07` mean by "weapon mount tracks the hand anchor every frame": it is *data*, per animation frame, not hard-coded. Animation is render-layer data (no fp needed — it never feeds logic), but it lives in the content catalog so a skin swap is a pure data swap.
 
-## Affixes, rarity, combos (`03` roguelite builds)
+## Rarity & run buffs (`03`/`14`)
 
-The in-run power axis (`05`). Adopt funny's `AFFIX_FIELD_MAP` model exactly:
+The in-run power axis (`05`) is **finding a better weapon + run buffs** — *not* weapon affixes. The **affix system is cut** (`14`, Soul-Knight route): no `Affix`/`AffixId`, no `AFFIX_FIELD_MAP`/`EFFECT_CAPS`/`applyAffixes`, no `AFFIX_DROP_POOL`, no `k_*` procs, and no `elem_*` set-element affix. A weapon is fully defined by **frame + baked-in element + a fixed stat row + intrinsic rarity**. Removing the shipped affix code (incl. the `elem_*` affix from `ENGINE_VERSION 9`) is a code change + `ENGINE_VERSION` bump, tracked as a separate task.
+
+**Rarity — intrinsic, fixed per weapon (`14`):**
 
 ```
-Affix = { id: AffixId; value: number }     // id namespace: m_* primary / s_* secondary / k_* proc
+RarityTier = 'common'|'fine'|'epic'|'legend'|'legendary'   // 白 蓝 紫 橙 金
+RARITY_TIERS: Record<RarityTier, { qualityMult; colorKey; … }>   // small base-quality edge
 
-AFFIX_FIELD_MAP: Record<AffixId, {
-  kind: 'mult_damage'|'mult_firerate'|'flat_damage'|'flat_armor'|'crit'|'crit_mult'|'add_bullets'|…
-  target: keyof WeaponSpec | keyof PlayerActor
-}>
-
-EFFECT_CAPS: Record<kind, cap>    // Σ-then-clamp (e.g. crit ≤ 50), funny §7.7
+WeaponSpec = { …frame + element fields…; rarity: RarityTier }    // rarity is a field, not a roll
 ```
 
-- `applyAffixes(spec, affixes)` clones the spec and mutates the copy: multiplicative and additive stacks summed per kind, then clamped by `EFFECT_CAPS`. Order of application is fixed (mult before add, or documented) so it's deterministic.
-- **Rarity** = how many affix rolls an item gets (common 1 → epic 3+), rolled from `dropPrng` against weighted tables (`content/drops.ts`). Rolls are reproducible from `seed + input stream` (`06`).
-- **Combo effects** (`k_*` procs — on-hit/on-kill triggers) are tagged data the combat system (`07`) checks; **recognized-but-no-op if unimplemented** (funny's proc stub), so content can list them before the hooks exist. First-pass proc families (`03`): `k_explode_on_kill` (small AoE on a kill), `k_ricochet` (hit bounces to a nearby target), `k_lifesteal_shield` (a hit trickles shield back — ties into the HP+shield model, `05`/`07`), `k_overload` (every Nth shot enhanced). Concrete numbers/caps are `03`'s remaining content work.
-- **Element-adding affixes** (`elem_fire`/`elem_ice`/`elem_lightning`/`elem_poison`, kind `set_element`) carry a `damageType` in the field map and *override* the weapon's own `damageType` in `applyAffixes` — the drop that turns any gun elemental (`03`/`07`). This kind is a **set, not a sum**: it skips `sumAffixes`/`EFFECT_CAPS` (non-numeric), and `resolveElement` picks a fixed winner by `DAMAGE_TYPES` order when several are stacked, so it stays order-independent like the numeric stack. The roll's `value` is unused. Added `ENGINE_VERSION` 9 (enlarging `AFFIX_DROP_POOL` shifts the `dropPrng` sequence).
-- **Unknown affix id → ignored** (forward-compat).
+- **Rarity is a property of the weapon, not a per-instance roll and not an upgrade.** A weapon *is* a rarity; it never levels. Higher rarity = a **small** numeric edge + mainly better *handling/usability* (tighter spread, smoother fire rate/ballistic, better arc) — never crushing (`14`).
+- **Colour is the primary read** (白→蓝→紫→橙→金); it drives the compare-card border and a per-rarity **ornament/emissive overlay** on the frame sprite (`03`/`12`), while the five element hues stay reserved for combat FX (`13`).
+
+**Run buffs — the in-run layer that replaces affixes:**
+
+```
+RunBuff = { id: RunBuffId; value: number }     // run-scoped, player-level; wiped at run end (05)
+RUN_BUFFS: Record<RunBuffId, { kind: 'mult_damage'|'mult_firerate'|'flat_hp'|'crit'|…; target }>
+BUFF_CAPS: Record<kind, cap>                    // Σ-then-clamp, deterministic apply order
+```
+
+- Buffs are **found in-run** (chests / rooms / shop — `05`/`14` to-design) and apply to the player / all held weapons, summed-then-clamped in a fixed order so it stays deterministic (`06`). They are **not** attached to a weapon and never carry out.
+- **Unknown weapon / skin / buff id → ignored** (forward-compat).
 
 ## The build layer — the fairness wall
 
 Two builders, and the *types themselves* enforce `05`/`06`:
 
 ```
-// PvE run: persistent meta (horizontal) + in-run drops (the real power axis)
-buildRunSpecs(baseLoadout: MetaLoadout, runAffixes: Affix[]): ResolvedSpecs
+// PvE run: chosen character + crafted loadout (from unlocked blueprints, 14) + in-run buffs
+buildRunSpecs(skinId: SkinId, loadout: WeaponId[], runBuffs: RunBuff[]): ResolvedSpecs
 
-// PvP arena: a preset id and NOTHING else — no meta parameter exists
-buildArenaSpecs(presetId: ArenaPresetId): ResolvedSpecs
+// PvP arena: a preset id + the chosen character — and NOTHING weapon-side
+buildArenaSpecs(presetId: ArenaPresetId, skinId: SkinId): ResolvedSpecs
 ```
 
-`buildArenaSpecs` physically cannot receive meta/affixes — there is no parameter for it (funny's compile-time wall, unit-tested). PvP power comes only from `ARENA_PRESETS[presetId]` + on-map pickups (`05`). PvE builds through `buildRunSpecs`, where persistent meta is horizontal (build breadth / small deltas, capped) and in-run affixes are the power fantasy. This is `05`'s hybrid-gear table made executable.
+`buildArenaSpecs` physically cannot receive a weapon / material / blueprint — there is no parameter for it (funny's compile-time wall, unit-tested). PvP weapon power comes only from `ARENA_PRESETS[presetId]` + on-map pickups (`05`). The **only** meta input it accepts is `skinId` — the chosen character's `(maxHp,maxShield)`+passive apply, held fair by side-grade balance discipline + tests (`14`), *not* by the wall. PvE builds through `buildRunSpecs`, where the crafted loadout is a *known opener* (a crafted weapon = a found weapon, `05`/`14`) and in-run buffs are the power fantasy.
 
 ## World data
 
@@ -251,11 +258,11 @@ The `WaveDirector` (funny, ported) pre-expands `count`/`spacing` into a tick-sor
 
 ```
 ArenaMap = RoomPiece-like, but symmetric, hand-designed sightlines/cover (05); no procedural layout.
-ARENA_PRESETS: Record<ArenaPresetId, { nameKey; loadout: WeaponId[]; baseStats }>   // 05 fixed balanced set
+ARENA_PRESETS: Record<ArenaPresetId, { nameKey; loadout: WeaponId[] }>   // 05 fixed balanced weapon set
 PICKUP_TABLE: on-map power-ups, equal for both teams (05)
 ```
 
-Preset count/archetypes, win condition, and the pickup table are `05`'s open design work; this doc fixes their *shape*.
+The preset supplies only the **weapon loadout**; the player's `(maxHp,maxShield)`+passive come from the chosen character (`skinId`, `14`), not from the preset — so paying-for-a-character reads as *breadth of choice*, held fair by side-grade balance. Preset count/archetypes, win condition, and the pickup table are `05`'s open design work; this doc fixes their *shape*.
 
 ### Drops, pickups & materials (`05`)
 
@@ -263,13 +270,15 @@ A `Pickup` on the ground is one of three kinds; `DropTable` rolls which drops fr
 
 ```
 Pickup =
-  | { kind: 'weapon';   spec: WeaponId; affixes: Affix[] }   // in-run, ephemeral (05)
+  | { kind: 'weapon';   spec: WeaponId }                     // in-run, ephemeral; rarity is on the WeaponSpec (05/14)
+  | { kind: 'buff';     buffId: RunBuffId }                  // run-scoped in-run buff (14)
   | { kind: 'heal' }                                          // flat +1 HP (05/07)
   | { kind: 'material'; matId: MaterialId; qty }             // the ONLY carry-out (05)
 
-DropTable = { entries: { itemPool; weight; rarityWeights }[] }   // itemPool spans all 3 kinds
+DropTable = { entries: { itemPool; weight }[] }   // itemPool spans all kinds; weapon rarity is intrinsic to the WeaponId
 
-MaterialDef = { id: MaterialId; nameKey; tier }   // tier feeds meta forging (meta doc)
+MaterialDef = { id: MaterialId; nameKey; element: DamageType; tier }
+              // 5 elemental kinds (03/14) × tier by depth; feeds forge recipes (14)
 ```
 
 - **Materials are the run's only carry-out** and the meta-forge input. They are **banked at extraction rooms** (reaching one = a checkpoint, `05`); a death forfeits only the *current floor's* un-banked materials.
@@ -279,13 +288,13 @@ MaterialDef = { id: MaterialId; nameKey; tier }   // tier feeds meta forging (me
 ## Loading, validation, versioning
 
 - **Load once, convert once.** At match start the engine resolves blueprints (human units → ticks/fp/brad) and freezes them into `GameState` (funny `state.unitBlueprints`). Nothing re-reads config mid-match.
-- **Validate at load, not at use.** Bad data (undefined weapon ref, spawn off-piece, affix targeting a missing field) fails loudly at load / in a content unit test — never mid-tick.
-- **`ENGINE_VERSION` coupling.** A content change that only adds a new id is forward-compatible (ignored by old engines). A change to how existing data is *interpreted* (conversion rule, affix arithmetic, ballistic behavior) can diverge replays → bump `ENGINE_VERSION` (`08`).
+- **Validate at load, not at use.** Bad data (undefined weapon ref, spawn off-piece, a buff targeting a missing field, a recipe naming an unknown material) fails loudly at load / in a content unit test — never mid-tick.
+- **`ENGINE_VERSION` coupling.** A content change that only adds a new id is forward-compatible (ignored by old engines). A change to how existing data is *interpreted* (conversion rule, buff arithmetic, ballistic behavior) can diverge replays → bump `ENGINE_VERSION` (`08`). The affix-system removal (`14`) is exactly such a change — it bumps `ENGINE_VERSION`.
 - **i18n boundary.** Engine data carries only string keys; the client owns the translation tables.
 
 ## Relationship to the other docs
 
-- **`03`:** `WEAPON_SPECS`/affixes/ballistics are the concrete form of its `RangedSpec`/`MeleeSpec` "to design" list and its rarity/affix/combo note.
+- **`03`:** `WEAPON_SPECS`/rarity/ballistics are the concrete form of its `RangedSpec`/`MeleeSpec` "to design" list and its Frame × Element composition (affixes cut, `14`).
 - **`02`:** `SkinDef` + `AnimData.handAnchors` realize "animation separate from texture" and "hand anchor follows the frame."
 - **`05`:** dungeon assembly, drop tables, arena presets, difficulty curve — the data behind its core loop, economy, and PvP; its open design questions (room count, reward structure, preset set) fill these schemas.
 - **`07`:** `RoomPiece.solids`/`pillars` are the collision geometry (round pillars implemented, AABB tiles deferred); `WeaponSpec`/`EnemyBlueprint` feed its damage/ballistic bodies.
@@ -296,17 +305,18 @@ MaterialDef = { id: MaterialId; nameKey; tier }   // tier feeds meta forging (me
 
 - **Concrete first-pass numbers** for the demo's two weapons (gun/sword, `03`) and a starter enemy set — the actual values in `content/*.ts`.
 - **Character roster** (`02`/`05`): the actual `SkinDef` `(maxHp, maxShield)` pairs and `shieldBreak` passives, plus the `PLAYER_BASE` shared constants (slot count, starter pistol, regen/revive timings).
-- **Material catalog & forging** — `MaterialDef` tiers and what forging turns them into; the whole forging recipe layer is the **meta** doc's scope, this file only fixes the `Pickup`/`MaterialDef` shape.
+- **Material catalog & forge recipes** — the `MaterialDef` set (5 elements × tiers) and each weapon's `element × qty × min-tier` recipe; the forging/blueprint/monetization model is locked in `14`, this file fixes the `Pickup`/`MaterialDef` shape and holds the recipe content.
+- **Rarity tiers & run-buff catalogue** (`14`): the five `RARITY_TIERS` base-quality numbers, and the `RUN_BUFFS` families/caps that replace affixes as the in-run layer.
 - **`RoomPiece` authoring pipeline**: hand-edit JSON, or a small editor? Format must round-trip with whatever tool authors `solids`/`spawns`/`exits`/`role`.
 - **Difficulty & material curve** (`05`): how enemy count/tier and material quality scale with *floor* depth; extraction-room placement rules; boss-piece rules.
-- **Arena preset set** (`05`): count, archetypes/roles, `baseStats`, win condition, pickup table.
-- **Meta "horizontal" numeric cap** (`05`/`06` open question): where a "small stat delta" stops being horizontal — a concrete clamp in `balance/`.
-- **Frame content & tuning** (`03`): the `BallisticId` catalog and its config params are now specified (above) with a locked landing order (`03`); what remains is implementing each shape's per-tick rule in `content/ballistics.ts` and tuning the `WeaponSpec` rows per frame × element.
+- **Arena preset set** (`05`): count, archetypes/roles, win condition, pickup table (preset supplies weapon loadout only; character stats come from `skinId`, `14`).
+- **Character balance-test suite** (`14`): the assertions that keep every character (incl. purchased) a side-grade / no all-rounder, since character choice is the one meta axis reaching PvP.
+- **Frame content & tuning** (`03`): the `BallisticId` catalog and its config params are now specified (above) with a locked landing order (`03`); what remains is implementing each shape's per-tick rule in `content/ballistics.ts` and tuning the `WeaponSpec` rows per frame × element × rarity.
 
 ## Open questions
 
 - **Content format: TS modules or JSON?** TS gives type-checking and lets constants reference each other (funny is all TS); JSON enables a data editor and hot-reload but needs a schema validator. Likely TS for balance, JSON for room pieces (bulky, tool-authored). Decide with the authoring pipeline.
 - **Where do arena maps and dungeon pieces physically live** — in-engine (bundled, versioned with code) or fetched (updatable without a client release)? Fetched content complicates the `ENGINE_VERSION`/replay guarantee.
-- **Affix application order** (mult-then-add vs interleaved) and whether combos can *reference other affixes* — affects both balance and determinism.
-- **Shield-break passive scope** (`02`/`05`): the character's break-passive *is* a combat blueprint (it spawns an AoE / applies knockback). If characters appear in PvP, does the passive survive preset normalization or get normalized out like gear? Keep it out of the `buildArenaSpecs` path unless deliberately balanced in.
+- **Run-buff application order** (mult-then-add vs interleaved) and stacking caps — affects both balance and determinism (`14`; the old affix-order question, re-scoped to run buffs).
+- ~~**Shield-break passive scope**~~ **(resolved, `14`):** characters *do* enter PvP via `buildArenaSpecs(presetId, skinId)`, so the break-passive **survives** — the whole character (HP/shield + passive) is kept fair as a side-grade by balance discipline + a test suite, not walled out. This is the disciplinary (not structural) half of the fairness model.
 - **Per-room vs per-run seed derivation**: one `roomgenPrng` for the whole run, or a child stream per room? Child streams make a single room re-generable in isolation (useful for tooling) but must derive deterministically from the run seed.
