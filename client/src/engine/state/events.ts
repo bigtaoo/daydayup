@@ -6,7 +6,6 @@
  */
 import type { Fp } from '../math/fixed';
 import type { Brad } from '../math/trig';
-import type { Affix } from '../balance/affixes';
 import type { DamageType } from '../content/damage';
 import type { Faction, PickupKind, Winner } from './entities';
 
@@ -19,6 +18,6 @@ export type GameEvent =
   // burn flames, chill frost, shock arc, poison bubbles). Transient, fx-only (08).
   | { type: 'status'; effect: 'burn' | 'chill' | 'shock' | 'poison'; target: number; gx: Fp; gy: Fp }
   | { type: 'death'; id: number; faction: Faction; gx: Fp; gy: Fp }
-  | { type: 'pickup'; kind: PickupKind; gx: Fp; gy: Fp; weaponId?: string; affix?: Affix }
+  | { type: 'pickup'; kind: PickupKind; gx: Fp; gy: Fp; weaponId?: string }
   | { type: 'wave_clear'; wave: number }
   | { type: 'win'; winner: Winner };

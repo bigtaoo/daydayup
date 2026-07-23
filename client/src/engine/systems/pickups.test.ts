@@ -29,50 +29,15 @@ describe('PickupSystem — the in-run power ramp (design/05)', () => {
     expect(p.hp).toBe(p.maxHp); // capped
   });
 
-  it('an affix pickup re-resolves every weapon slot from base + stack', () => {
+  it('a weapon drop swaps the active slot for the dropped weapon', () => {
     const s = createGameState(CFG);
     const p = s.players[0]!;
-    const baseDmg = p.weapons.map((w) => w.spec.damage);
-    dropOnPlayer(s, { kind: 'affix', affix: { id: 'dmg', value: 2 } });
-    sys.tick(s);
-    expect(p.affixes).toHaveLength(1);
-    p.weapons.forEach((w, i) => expect(w.spec.damage).toBe(baseDmg[i]! + 2));
-  });
-
-  it('affixes stack across multiple pickups', () => {
-    const s = createGameState(CFG);
-    const p = s.players[0]!;
-    const base = p.weapon!.spec.damage;
-    for (let i = 0; i < 3; i++) {
-      dropOnPlayer(s, { kind: 'affix', affix: { id: 'dmg', value: 1 } });
-      sys.tick(s);
-    }
-    expect(p.weapon!.spec.damage).toBe(base + 3);
-  });
-
-  it('a vit affix grows maxHp and heals', () => {
-    const s = createGameState(CFG);
-    const p = s.players[0]!;
-    p.hp = 1;
-    const maxBefore = p.maxHp;
-    dropOnPlayer(s, { kind: 'affix', affix: { id: 'vit', value: 2 } });
-    sys.tick(s);
-    expect(p.maxHp).toBe(maxBefore + 2);
-    expect(p.hp).toBe(3);
-  });
-
-  it('a weapon drop swaps the active slot but keeps the affix stack', () => {
-    const s = createGameState(CFG);
-    const p = s.players[0]!;
-    // Buff first, then pick up a cannon — the new gun should inherit the +2.
-    dropOnPlayer(s, { kind: 'affix', affix: { id: 'dmg', value: 2 } });
-    sys.tick(s);
     dropOnPlayer(s, { kind: 'weapon', weaponId: 'cannon' });
     sys.tick(s);
     const active = p.weapon!;
-    expect(active.base.name).toBe('cannon');
+    expect(active.spec.name).toBe('cannon');
     expect(p.weapons[p.activeSlot]).toBe(active); // slot pointer updated
-    expect((active.spec as RangedSimSpec).damage).toBe((active.base as RangedSimSpec).damage + 2);
+    expect((active.spec as RangedSimSpec).damage).toBe(3); // cannon's authored damage
   });
 
   it('coins have no sim effect (score is render-side)', () => {

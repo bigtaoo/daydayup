@@ -37,7 +37,6 @@ export const CONFIG = {
     muzzle: 0xffe08a,
     pickupHealth: 0x68d391,
     pickupCoin: 0xf6e05e,
-    pickupAffix: 0xb794f4, // purple gem — the run's power drop
     pickupWeapon: 0xf6ad55, // amber — a new gun to swap in
     // Elemental status fx (design/03/07) — flashed on the 'status' event, and now
     // also the bullet-trail + lingering-aura colours (per-element render polish).

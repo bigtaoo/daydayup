@@ -1,5 +1,5 @@
 // @dd/engine content catalog (design/09) — human-unit game data + its one-time
-// conversion into sim units. Balance/affixes and drops land in later stages.
+// conversion into sim units.
 export * from './convert';
 export * from './damage';
 export * from './weapons';

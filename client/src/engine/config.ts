@@ -54,8 +54,13 @@ import { BRAD_FULL } from './math/trig';
  * damageType) enlarge the AFFIX_DROP_POOL, shifting every dropPrng affix roll; and
  * applyResist now ROUNDS a weakness (mult>1000) instead of truncating, so a low-base
  * hit into a weakness lands harder. Either alone diverges a v8 stream.
+ *
+ * v10: the affix system is removed (design pivot 03/09/14 — Frame × Element, no
+ * affixes). The DROP_TABLE no longer has an `affix` entry, so weightedIndex draws a
+ * different kind per kill, and a weapon drop no longer re-applies an affix stack. Any
+ * v9 stream diverges at the first enemy death.
  */
-export const ENGINE_VERSION = 9;
+export const ENGINE_VERSION = 10;
 
 /**
  * World scale — the anchor for every human-unit → fp/brad conversion (design/09).

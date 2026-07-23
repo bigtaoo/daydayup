@@ -103,9 +103,9 @@ export class GameState {
     }
 
     const [sx, sy] = config.playerStart ?? [config.worldW / 2, config.worldH / 2];
-    // Resolve the loadout through the run builder (design/09 fairness wall): base
-    // meta loadout + the run's affix stack (empty at spawn; in-run pickups grow it).
-    const weapons = buildRunSpecs(PLAYER.startWeapons, []);
+    // Resolve the loadout through the run builder (design/09 fairness wall): the
+    // base meta loadout carried in at match start.
+    const weapons = buildRunSpecs(PLAYER.startWeapons);
     this.players.push({
       id: this.nextId(),
       faction: 'player',
@@ -123,7 +123,6 @@ export class GameState {
       weapon: weapons[0] ?? null, // active pointer = weapons[activeSlot]
       weapons,
       activeSlot: 0,
-      affixes: [],
       firing: false,
       prevButtons: 0,
       status: freshStatus(),

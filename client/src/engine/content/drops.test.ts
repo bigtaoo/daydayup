@@ -1,12 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { Prng } from '@dd/engine/math/prng';
-import {
-  rollDrop,
-  DROP_TABLE,
-  WEAPON_DROP_POOL,
-  AFFIX_DROP_POOL,
-} from '@dd/engine/content/drops';
-import { AFFIX_FIELD_MAP } from '@dd/engine/balance/affixes';
+import { rollDrop, DROP_TABLE, WEAPON_DROP_POOL } from '@dd/engine/content/drops';
 import { WEAPON_SIM_BY_ID } from '@dd/engine/content/weapons';
 
 describe('rollDrop — deterministic drop table', () => {
@@ -41,21 +35,6 @@ describe('rollDrop — deterministic drop table', () => {
         expect(WEAPON_SIM_BY_ID[d.weaponId]).toBeDefined();
       }
     }
-  });
-
-  it('affix drops carry a known id and an in-range tier value', () => {
-    const p = new Prng(42);
-    let seen = 0;
-    for (let i = 0; i < 2000; i++) {
-      const d = rollDrop(p);
-      if (d.kind === 'affix') {
-        seen++;
-        expect(AFFIX_FIELD_MAP[d.affix.id]).toBeDefined();
-        const pool = AFFIX_DROP_POOL.find((e) => e.id === d.affix.id)!;
-        expect(pool.tiers).toContain(d.affix.value);
-      }
-    }
-    expect(seen).toBeGreaterThan(0); // affixes actually drop
   });
 
   it('produces every kind over a large sample (coins the most common)', () => {

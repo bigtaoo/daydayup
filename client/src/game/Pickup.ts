@@ -5,11 +5,11 @@ import type { PickupKind } from '@dd/engine';
 
 export type { PickupKind };
 
-// Pickup view — an in-run drop (health / coin / affix / weapon). Pure presentation:
+// Pickup view — an in-run drop (health / coin / weapon). Pure presentation:
 // the engine owns the drop roll and collection; the hover bob here is render-only
 // eye candy (it is NOT part of the sim, which is why PickupItem has no z). Position
 // lerps like any other view; z is the local bob. Each kind gets a distinct silhouette
-// so a player reads "power drop" (gem) vs "new gun" (chevron) at a glance.
+// so a player reads "new gun" (chevron) vs "heal" (plus) at a glance.
 export class Pickup extends Entity {
   private bob = 0;
 
@@ -21,11 +21,6 @@ export class Pickup extends Entity {
       // A small plus sign reads as "heal" without art.
       gfx.roundRect(-3, -9, 6, 18, 2).fill({ color });
       gfx.roundRect(-9, -3, 18, 6, 2).fill({ color });
-    } else if (kind === 'affix') {
-      // A faceted gem — the run's power drop.
-      const color = CONFIG.colors.pickupAffix;
-      gfx.poly([0, -10, 8, -2, 5, 9, -5, 9, -8, -2]).fill({ color });
-      gfx.poly([0, -10, 5, 9, -5, 9]).fill({ color: 0xfaf5ff, alpha: 0.35 });
     } else if (kind === 'weapon') {
       // A double chevron — "gear / new weapon".
       const color = CONFIG.colors.pickupWeapon;

@@ -15,7 +15,7 @@
  * field); chain uses squared-distance nearest (no trig). Nothing draws a PRNG, so
  * types add no new random-draw site. This module holds ONLY types + constants +
  * pure helpers on primitives — it never imports GameState, so content/state can
- * depend on it without a cycle (mirrors how entities.ts imports Affix).
+ * depend on it without a cycle.
  *
  * Any change to a constant or the arithmetic below alters outcomes → bump
  * ENGINE_VERSION (design/08).

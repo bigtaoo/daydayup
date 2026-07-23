@@ -124,8 +124,7 @@ export const WEAPON_SPECS: Record<string, WeaponSpec> = {
   },
 
   // ── Repeater (drop-only: fast, weak) ─────────────────────────────────────────
-  // The "spray" gun — a weapon drop that trades punch for uptime. Pairs hard with
-  // rof/vel affixes into a wall of chip damage.
+  // The "spray" gun — a weapon drop that trades punch for uptime, a wall of chip damage.
   repeater: {
     id: 'repeater',
     kind: 'ranged',
@@ -144,8 +143,8 @@ export const WEAPON_SPECS: Record<string, WeaponSpec> = {
   },
 
   // ── Cannon (drop-only: slow, heavy) ──────────────────────────────────────────
-  // The opposite pole — big single hits that two-shot a basic enemy raw, one-shot
-  // with a single dmg affix. Slow enough that positioning matters.
+  // The opposite pole — big single hits that two-shot a basic enemy raw. Slow
+  // enough that positioning matters.
   cannon: {
     id: 'cannon',
     kind: 'ranged',
@@ -390,7 +389,7 @@ export const WEAPON_SIM_BY_ID: Record<string, WeaponSimSpec> = {
   stormglaive: STORMGLAIVE_SIM,
 };
 
-/** Fresh weapon runtime for a spec (design/08: cooldown in whole ticks). base = spec. */
+/** Fresh weapon runtime for a spec (design/08: cooldown in whole ticks). */
 export function makeWeapon(spec: WeaponSimSpec): WeaponState {
-  return { base: spec, spec, cooldownTicks: 0, justSwung: false };
+  return { spec, cooldownTicks: 0, justSwung: false };
 }

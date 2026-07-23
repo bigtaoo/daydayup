@@ -109,21 +109,19 @@ export function serializeState(s: GameState): unknown {
     players: s.players.map((p) => [
       p.id, p.gx, p.gy, p.z, p.vx, p.vy, p.facing, p.hp, p.maxHp, p.alive,
       p.activeSlot, p.firing, p.prevButtons,
-      // Resolved spec fields (Stage F): affixes mutate damage/rate/speed/range but
-      // NOT name, so name alone would miss an affix divergence — include the numbers.
+      // Resolved spec fields: a weapon drop swaps the active slot's spec, so include
+      // the numbers (not just name) to catch a loadout divergence.
       p.weapons.map((w) => [
         w.spec.name, w.cooldownTicks, w.justSwung, w.spec.damage,
         w.spec.kind === 'ranged' ? [w.spec.fireRateTicks, w.spec.bulletSpeed] : [w.spec.range],
       ]),
-      p.affixes.map((a) => [a.id, a.value]),
     ]),
     enemies: s.enemies.map((e) => [e.id, e.gx, e.gy, e.z, e.vx, e.vy, e.facing, e.hp, e.alive]),
     projectiles: s.projectiles.map((b) => [
       b.id, b.gx, b.gy, b.z, b.vx, b.vy, b.faction, b.damage, b.lifeTicks, b.alive,
     ]),
     pickups: s.pickups.map((k) => [
-      k.id, k.kind, k.gx, k.gy, k.spawnTick, k.alive,
-      k.weaponId ?? '', k.affix ? [k.affix.id, k.affix.value] : 0,
+      k.id, k.kind, k.gx, k.gy, k.spawnTick, k.alive, k.weaponId ?? '',
     ]),
   };
 }

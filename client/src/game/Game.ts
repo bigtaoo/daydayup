@@ -312,10 +312,6 @@ export class Game {
               this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupHealth, 20);
               cues.add('pickup.health');
               break;
-            case 'affix':
-              this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupAffix, 24);
-              cues.add('pickup.affix');
-              break;
             case 'weapon':
               this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupWeapon, 24);
               cues.add('pickup.weapon');
@@ -423,11 +419,10 @@ export class Game {
     const maxHp = p ? p.maxHp : 0;
     const bar = '♥'.repeat(hp) + '·'.repeat(Math.max(0, maxHp - hp));
     const wave = Math.max(1, s.waveIndex + 1);
-    const build = p && p.affixes.length ? `Build: ${summarizeAffixes(p.affixes)}` : 'Build: —';
     this.hud.text =
       `HP ${bar}\n` +
       `Wave ${wave}/${WAVES.length}   Enemies ${s.enemies.length}   Score ${this.score}\n` +
-      `Weapon ${wname}   ${build}\n` +
+      `Weapon ${wname}\n` +
       `[1]/[2] swap weapon   LMB = attack (melee swing also parries bullets)   WASD = move`;
   }
 
@@ -441,12 +436,4 @@ export class Game {
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
-}
-
-// Compact affix-stack readout for the HUD, e.g. "dmg×2 rof×1" — makes the run's
-// power ramp legible. Purely presentational (the engine owns the real stack).
-function summarizeAffixes(affixes: readonly { id: string }[]): string {
-  const counts = new Map<string, number>();
-  for (const a of affixes) counts.set(a.id, (counts.get(a.id) ?? 0) + 1);
-  return [...counts].map(([id, n]) => `${id}×${n}`).join(' ');
 }

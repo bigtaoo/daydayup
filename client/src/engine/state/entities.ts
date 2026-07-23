@@ -10,7 +10,6 @@
  */
 import type { Fp } from '../math/fixed';
 import type { Brad } from '../math/trig';
-import type { Affix } from '../balance/affixes';
 import type { DamageType, ResistMap, StatusState } from '../content/damage';
 
 export type Faction = 'player' | 'enemy';
@@ -49,11 +48,7 @@ export type WeaponSimSpec = RangedSimSpec | MeleeSimSpec;
 
 /** Per-actor weapon runtime. cooldown counted in whole ticks (design/08). */
 export interface WeaponState {
-  // The unaffixed authored sim spec. Retained so an in-run affix pickup can
-  // re-resolve `spec` = applyAffixes(base, player.affixes) without re-reading
-  // config (design/09 load-once) — see PickupSystem / balance/build.ts.
-  base: WeaponSimSpec;
-  spec: WeaponSimSpec; // active spec systems read (base + current affix stack)
+  spec: WeaponSimSpec; // the sim spec systems read
   cooldownTicks: number; // counts down each tick, 0 = ready
   justSwung: boolean; // melee: swing started THIS tick → HitResolve applies arc damage + DeflectSystem parries bullets in the arc, once
 }
@@ -97,10 +92,6 @@ export interface PlayerActor extends Actor {
   // weapons[activeSlot] — systems only ever read the active pointer.
   weapons: WeaponState[];
   activeSlot: number;
-  // The run's in-run power stack (design/05). Affix pickups append here; weapon-kind
-  // affixes re-resolve every weapon slot, actor-kind (flat_maxhp) mutate the actor
-  // on pickup. Wiped at run end (a fresh GameState starts empty).
-  affixes: Affix[];
 }
 
 export interface EnemyActor extends Actor {
@@ -142,7 +133,7 @@ export interface Obstacle {
   radius: Fp;
 }
 
-export type PickupKind = 'health' | 'coin' | 'affix' | 'weapon';
+export type PickupKind = 'health' | 'coin' | 'weapon';
 
 export interface PickupItem {
   id: number;
@@ -153,5 +144,4 @@ export interface PickupItem {
   alive: boolean;
   // Payload for the powered drops (design/05). Set on the matching kind only:
   weaponId?: string; // kind 'weapon' → id into WEAPON_SPECS
-  affix?: Affix; //     kind 'affix'  → the rolled affix to append to the run stack
 }
