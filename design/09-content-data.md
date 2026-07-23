@@ -52,12 +52,24 @@ WeaponSpec = { id, kind, nameKey, skinRef, cooldownSec }  &  (RangedSpec | Melee
 RangedSpec = {
   kind: 'ranged'
   fireRateSec        // → cooldownTicks
-  bullets            // pellets per shot
-  spreadDeg          // → brad half-angle; jitter drawn from combatPrng (07)
+  // emission — how shots leave per trigger (03 Frame axis); all orthogonal to ballistic
+  bullets            // pellets per shot (spread frame)
+  spreadDeg          // → brad half-angle; jitter drawn from combatPrng (07). ≈360 = radial
+  burstCount?        // shots per trigger for the burst frame (03); omitted = 1
+  burstGapTicks?     // spacing between burst shots
   bulletSpeed        // grid/s → fp/s
   damage             // integer
   damageType?        // 'physical'|'fire'|'ice'|'lightning'|'poison' (07); omitted = physical
-  ballistic: BallisticId   // key into BALLISTIC_SHAPES (straight/arc/homing/boomerang/pattern)
+  ballistic: BallisticId   // per-tick MOTION rule; see BALLISTIC_SHAPES catalog below (03 Frame axis)
+  // ballistic params — each shape reads only its own (unset = shape unused / default):
+  turnRateBrad?      // homing: max turn toward nearest enemy per tick
+  arcHeight?         // lob: peak of the fake-3D arc (bulletZ)
+  blastRadius?       // lob: AoE grid radius on land
+  returnAfterTicks?  // boomerang: tick at which vel reverses
+  beamTicks?         // beam: total damage-window length
+  beamTickInterval?  // beam: ticks between damage applications
+  orbitRadius?       // orbit: grid radius of the circling bodies
+  orbCount?          // orbit: number of orbiting bodies
   lifespanSec        // → lifespanTicks
   piercing?: bool
   bulletZ?           // cosmetic muzzle height for the fake-3D render (01); NOT a hit gate
@@ -74,6 +86,21 @@ MeleeSpec = {
                      //   IS the deflect sector — there is no separate blockArc.
 }
 ```
+
+### `BallisticId` catalog (`03` Frame axis)
+
+`content/ballistics.ts` maps each `BallisticId` to a **per-tick velocity rule** + the params it reads (the params above). All integer/brad — no float survives a tick (`06`); `homing` uses squared-distance nearest + a brad turn cap (no trig beyond the shared `math/trig` table, `06`). **Only `straight` is implemented today; the rest are the build queue in `03`'s landing order.**
+
+| id | per-tick rule | reads |
+|----|---------------|-------|
+| `straight` | `pos += vel` (shipped) | — |
+| `lob` | fake-3D arc via `bulletZ`; on land, AoE hit in `blastRadius` | `arcHeight`, `blastRadius` |
+| `homing` | rotate `vel` toward nearest enemy, ≤ `turnRateBrad`/tick | `turnRateBrad` |
+| `boomerang` | reverse `vel` at `returnAfterTicks`; re-hits on the way back | `returnAfterTicks` |
+| `beam` | hitscan the facing line; apply damage every `beamTickInterval` for `beamTicks` | `beamTicks`, `beamTickInterval` |
+| `orbit` | `orbCount` bodies circling the actor at `orbitRadius` | `orbitRadius`, `orbCount` |
+
+**Emission (single/spread/burst/radial) is not a `BallisticId`** — it is the `bullets`/`spreadDeg`/`burstCount` fields on `RangedSpec`, orthogonal to the motion rule, so any emission composes with any ballistic (spread-of-homing, burst-of-lobs). Melee has no ballistic; its frame is `arcDeg`×`rangeGrid`×`swingSec` (`03`).
 
 ### `EnemyBlueprint` (mirrors funny `UnitBlueprint`)
 
@@ -141,7 +168,7 @@ EFFECT_CAPS: Record<kind, cap>    // Σ-then-clamp (e.g. crit ≤ 50), funny §7
 
 - `applyAffixes(spec, affixes)` clones the spec and mutates the copy: multiplicative and additive stacks summed per kind, then clamped by `EFFECT_CAPS`. Order of application is fixed (mult before add, or documented) so it's deterministic.
 - **Rarity** = how many affix rolls an item gets (common 1 → epic 3+), rolled from `dropPrng` against weighted tables (`content/drops.ts`). Rolls are reproducible from `seed + input stream` (`06`).
-- **Combo effects** (`k_*` procs — on-hit/on-kill triggers) are tagged data the combat system (`07`) checks; **recognized-but-no-op if unimplemented** (funny's proc stub), so content can list them before the hooks exist.
+- **Combo effects** (`k_*` procs — on-hit/on-kill triggers) are tagged data the combat system (`07`) checks; **recognized-but-no-op if unimplemented** (funny's proc stub), so content can list them before the hooks exist. First-pass proc families (`03`): `k_explode_on_kill` (small AoE on a kill), `k_ricochet` (hit bounces to a nearby target), `k_lifesteal_shield` (a hit trickles shield back — ties into the HP+shield model, `05`/`07`), `k_overload` (every Nth shot enhanced). Concrete numbers/caps are `03`'s remaining content work.
 - **Element-adding affixes** (`elem_fire`/`elem_ice`/`elem_lightning`/`elem_poison`, kind `set_element`) carry a `damageType` in the field map and *override* the weapon's own `damageType` in `applyAffixes` — the drop that turns any gun elemental (`03`/`07`). This kind is a **set, not a sum**: it skips `sumAffixes`/`EFFECT_CAPS` (non-numeric), and `resolveElement` picks a fixed winner by `DAMAGE_TYPES` order when several are stacked, so it stays order-independent like the numeric stack. The roll's `value` is unused. Added `ENGINE_VERSION` 9 (enlarging `AFFIX_DROP_POOL` shifts the `dropPrng` sequence).
 - **Unknown affix id → ignored** (forward-compat).
 
@@ -271,7 +298,7 @@ MaterialDef = { id: MaterialId; nameKey; tier }   // tier feeds meta forging (me
 - **Difficulty & material curve** (`05`): how enemy count/tier and material quality scale with *floor* depth; extraction-room placement rules; boss-piece rules.
 - **Arena preset set** (`05`): count, archetypes/roles, `baseStats`, win condition, pickup table.
 - **Meta "horizontal" numeric cap** (`05`/`06` open question): where a "small stat delta" stops being horizontal — a concrete clamp in `balance/`.
-- **Ballistic-shape catalog** (`03`/`07`): the per-shape velocity-update rules and their config params.
+- **Frame content & tuning** (`03`): the `BallisticId` catalog and its config params are now specified (above) with a locked landing order (`03`); what remains is implementing each shape's per-tick rule in `content/ballistics.ts` and tuning the `WeaponSpec` rows per frame × element.
 
 ## Open questions
 
