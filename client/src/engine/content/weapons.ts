@@ -24,7 +24,9 @@ import type {
 import { degToBrad } from '../math/trig';
 import type { DamageType } from './damage';
 import { toTicks, toFpGrid, toFpPerTick } from './convert';
+import { TICK_RATE } from '../math/fixed';
 import { applyQuality, type RarityTier } from '../balance/rarity';
+import type { BallisticId } from './ballistics';
 
 // ── World scale (the anchor for every conversion) ────────────────────────────
 //   1 grid unit = 32 px.  Demo playerRadius 16px = 0.5 grid (diameter 1 grid),
@@ -32,8 +34,6 @@ import { applyQuality, type RarityTier } from '../balance/rarity';
 //   (06 TICK_RATE). So: grid/s = (px/frame · 60) / 32.
 
 // ── Authored schema (subset of 09's WeaponSpec; grows with the ballistic library) ──
-
-export type BallisticId = 'straight'; // 03/07 shape library extends this later
 
 interface WeaponBase {
   id: string;
@@ -60,6 +60,14 @@ export interface RangedSpec extends WeaponBase {
   muzzleGrid: number; // spawn distance from actor centre along facing, grid (Stage C)
   bulletZ: number; // muzzle height band, grid (07 z-gating: shoot over low cover)
   piercing?: boolean;
+  // Ballistic params (design/03/09) — each shape reads only its own; human units,
+  // converted once by toSimSpec. Unset = the shape's param is unused.
+  turnRateDegPerSec?: number; // homing: max turn rate toward the nearest foe
+  blastRadiusGrid?: number; // lob: AoE radius on landing
+  returnAfterSec?: number; // boomerang: time since fire at which velocity reverses
+  beamSec?: number; // beam: total damage-window length
+  beamTickIntervalSec?: number; // beam: time between damage applications
+  beamRangeGrid?: number; // beam: max reach along the frozen facing
 }
 
 export interface MeleeSpec extends WeaponBase {
@@ -350,6 +358,161 @@ export const WEAPON_SPECS: Record<string, WeaponSpec> = {
     deflect: true,
     deflectSpeed: 14.4,
   },
+
+  // ── Frame library (design/03 landing order, ROADMAP 1.1) — one showcase weapon
+  //    per new frame beyond straight/saber. Each is physical so the frame's own
+  //    behavior reads clearly, independent of the element layer above. ──────────
+
+  // Scattergun (spread emission): a cone of pellets — near-free on top of the
+  // existing bullets/spreadDeg fields (03 "near-free, adds a sharp new feel").
+  // Each pellet is weak alone; the cone is the payoff at close range.
+  scattergun: {
+    id: 'scattergun',
+    kind: 'ranged',
+    nameKey: 'weapon.scattergun.name',
+    skinRef: 'gun_default',
+    rarity: 'fine', // 蓝
+
+    cooldownSec: 0.55, // slow recovery — a burst weapon, not a spray
+    bullets: 5,
+    spreadDeg: 28,
+    bulletSpeed: 11,
+    damage: 1, // ×5 pellets at point-blank
+    ballistic: 'straight',
+    lifespanSec: 0.6, // short reach — a shotgun, not a sniper
+    bulletRadius: 0.14,
+    muzzleGrid: 0.9375,
+    bulletZ: 0.5,
+  },
+
+  // Seeker (homing): curves toward the nearest enemy — "the strongest new
+  // behavior" (03). Slow and low-damage so tracking is the payoff, not raw power.
+  seeker: {
+    id: 'seeker',
+    kind: 'ranged',
+    nameKey: 'weapon.seeker.name',
+    skinRef: 'gun_default',
+    rarity: 'epic', // 紫
+
+    cooldownSec: 0.7,
+    bullets: 1,
+    spreadDeg: 0,
+    bulletSpeed: 7, // slow — gives the turn time to matter
+    damage: 2,
+    ballistic: 'homing',
+    turnRateDegPerSec: 260, // brisk but not instant-lock
+    lifespanSec: 2.5,
+    bulletRadius: 0.16,
+    muzzleGrid: 0.9375,
+    bulletZ: 0.5,
+  },
+
+  // Mortar (lob): fake-3D arc that lands as an AoE blast — over-cover reach the
+  // straight ballistics can't offer (03). No direct-hit special-case; it simply
+  // detonates when its flight ends.
+  mortar: {
+    id: 'mortar',
+    kind: 'ranged',
+    nameKey: 'weapon.mortar.name',
+    skinRef: 'gun_default',
+    rarity: 'epic', // 紫
+
+    cooldownSec: 0.9, // slow — the AoE is the payoff, not the direct hit
+    bullets: 1,
+    spreadDeg: 0,
+    bulletSpeed: 8,
+    damage: 2, // AoE blast damage (no separate direct-hit case)
+    ballistic: 'lob',
+    blastRadiusGrid: 1.3,
+    lifespanSec: 1.0, // flight time to landing
+    bulletRadius: 0.2,
+    muzzleGrid: 0.9375,
+    bulletZ: 1.2, // cosmetic arc peak
+  },
+
+  // Lasercutter (beam): hitscan line, damage ticked over a short window — pairs
+  // naturally with fire DoT (03), shipped physical here to isolate the frame.
+  lasercutter: {
+    id: 'lasercutter',
+    kind: 'ranged',
+    nameKey: 'weapon.lasercutter.name',
+    skinRef: 'gun_default',
+    rarity: 'legend', // 橙
+
+    cooldownSec: 0.8, // recovery between beam channels
+    bullets: 1,
+    spreadDeg: 0,
+    bulletSpeed: 0, // beam does not travel (hitscan; frozen origin/direction)
+    damage: 1, // per tick, for beamSec / beamTickIntervalSec ticks
+    ballistic: 'beam',
+    beamSec: 0.4,
+    beamTickIntervalSec: 0.1, // 4 damage ticks per channel
+    beamRangeGrid: 3.5, // max reach along the frozen facing
+    lifespanSec: 0.4, // matches beamSec — the channel's total lifetime
+    bulletRadius: 0.1,
+    muzzleGrid: 0.9375,
+    bulletZ: 0.5,
+  },
+
+  // Tomahawk (boomerang): flies out, reverses, flies back — hits going both ways.
+  // A commitment weapon: miss the return arc and you're unarmed for the cooldown.
+  tomahawk: {
+    id: 'tomahawk',
+    kind: 'ranged',
+    nameKey: 'weapon.tomahawk.name',
+    skinRef: 'gun_default',
+    rarity: 'legend', // 橙
+
+    cooldownSec: 0.6,
+    bullets: 1,
+    spreadDeg: 0,
+    bulletSpeed: 10,
+    damage: 2,
+    ballistic: 'boomerang',
+    returnAfterSec: 0.35, // outbound leg length before it reverses
+    lifespanSec: 1.2, // enough for the full out-and-back
+    bulletRadius: 0.18,
+    muzzleGrid: 0.9375,
+    bulletZ: 0.5,
+  },
+
+  // Hammer (melee frame): wide arc, high knockback, slow — one big deflect
+  // sector, crowd control (03). Parries like every melee weapon.
+  hammer: {
+    id: 'hammer',
+    kind: 'melee',
+    nameKey: 'weapon.hammer.name',
+    skinRef: 'sword_default',
+    rarity: 'fine', // 蓝
+
+    cooldownSec: 0.65, // slow recovery — one big swing, not a flurry
+    damage: 3,
+    arcDeg: 220, // wide sweep
+    rangeGrid: 1.3,
+    swingSec: 0.2,
+    knockback: 12, // heavy shove
+    deflect: true,
+    deflectSpeed: 14.4,
+  },
+
+  // Spear (melee frame): narrow arc, long reach — deflect/poke at distance (03).
+  // The opposite pole from hammer: precision over crowd control.
+  spear: {
+    id: 'spear',
+    kind: 'melee',
+    nameKey: 'weapon.spear.name',
+    skinRef: 'sword_default',
+    rarity: 'fine', // 蓝
+
+    cooldownSec: 0.3, // fast recovery — a poke, not a heavy swing
+    damage: 2,
+    arcDeg: 60, // narrow
+    rangeGrid: 2.1, // longest reach in the roster
+    swingSec: 0.1,
+    knockback: 4,
+    deflect: true,
+    deflectSpeed: 14.4,
+  },
 };
 
 // ── Conversion: authored WeaponSpec → sim-facing WeaponSimSpec (once) ──────────
@@ -368,6 +531,8 @@ export function toSimSpec(spec: WeaponSpec): WeaponSimSpec {
       name: spec.id,
       rarity: spec.rarity,
       fireRateTicks: toTicks(spec.cooldownSec),
+      bullets: spec.bullets,
+      spreadHalf: degToBrad(spec.spreadDeg / 2),
       bulletSpeed: toFpPerTick(spec.bulletSpeed),
       bulletLifeTicks: toTicks(spec.lifespanSec),
       bulletRadius: toFpGrid(spec.bulletRadius),
@@ -375,6 +540,13 @@ export function toSimSpec(spec: WeaponSpec): WeaponSimSpec {
       bulletZ: toFpGrid(spec.bulletZ),
       damage: applyQuality(spec.damage, spec.rarity),
       damageType: spec.damageType ?? 'physical',
+      ballistic: spec.ballistic,
+      turnRateBrad: spec.turnRateDegPerSec !== undefined ? degToBrad(spec.turnRateDegPerSec / TICK_RATE) : undefined,
+      blastRadius: spec.blastRadiusGrid !== undefined ? toFpGrid(spec.blastRadiusGrid) : undefined,
+      returnAfterTicks: spec.returnAfterSec !== undefined ? toTicks(spec.returnAfterSec) : undefined,
+      beamTicks: spec.beamSec !== undefined ? toTicks(spec.beamSec) : undefined,
+      beamTickInterval: spec.beamTickIntervalSec !== undefined ? toTicks(spec.beamTickIntervalSec) : undefined,
+      beamRange: spec.beamRangeGrid !== undefined ? toFpGrid(spec.beamRangeGrid) : undefined,
     };
     return sim;
   }
@@ -406,6 +578,13 @@ export const VENOMSPIT_SIM = toSimSpec(WEAPON_SPECS.venomspit!) as RangedSimSpec
 export const EMBERBLADE_SIM = toSimSpec(WEAPON_SPECS.emberblade!) as MeleeSimSpec;
 export const FROSTBRAND_SIM = toSimSpec(WEAPON_SPECS.frostbrand!) as MeleeSimSpec;
 export const STORMGLAIVE_SIM = toSimSpec(WEAPON_SPECS.stormglaive!) as MeleeSimSpec;
+export const SCATTERGUN_SIM = toSimSpec(WEAPON_SPECS.scattergun!) as RangedSimSpec;
+export const SEEKER_SIM = toSimSpec(WEAPON_SPECS.seeker!) as RangedSimSpec;
+export const MORTAR_SIM = toSimSpec(WEAPON_SPECS.mortar!) as RangedSimSpec;
+export const LASERCUTTER_SIM = toSimSpec(WEAPON_SPECS.lasercutter!) as RangedSimSpec;
+export const TOMAHAWK_SIM = toSimSpec(WEAPON_SPECS.tomahawk!) as RangedSimSpec;
+export const HAMMER_SIM = toSimSpec(WEAPON_SPECS.hammer!) as MeleeSimSpec;
+export const SPEAR_SIM = toSimSpec(WEAPON_SPECS.spear!) as MeleeSimSpec;
 
 /**
  * Sim-spec lookup by weapon id — the resolution a weapon drop uses (content/drops.ts
@@ -424,6 +603,13 @@ export const WEAPON_SIM_BY_ID: Record<string, WeaponSimSpec> = {
   emberblade: EMBERBLADE_SIM,
   frostbrand: FROSTBRAND_SIM,
   stormglaive: STORMGLAIVE_SIM,
+  scattergun: SCATTERGUN_SIM,
+  seeker: SEEKER_SIM,
+  mortar: MORTAR_SIM,
+  lasercutter: LASERCUTTER_SIM,
+  tomahawk: TOMAHAWK_SIM,
+  hammer: HAMMER_SIM,
+  spear: SPEAR_SIM,
 };
 
 /** Fresh weapon runtime for a spec (design/08: cooldown in whole ticks). */

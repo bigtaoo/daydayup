@@ -1,18 +1,24 @@
 /**
  * Step 3 — Weapon fire. For every actor whose fire flag is set and whose weapon
- * cooldown is ready: ranged spawns a Projectile at the muzzle; melee starts a
+ * cooldown is ready: ranged spawns Projectile(s) at the muzzle; melee starts a
  * swing (justSwung → HitResolve applies arc damage once at step 7, and DeflectSystem
  * parries bullets in the same arc at step 6). Cooldowns count down here in whole
  * ticks. Runs BEFORE movement (design/08) so a bullet spawns at this tick's muzzle,
  * then everything moves.
  *
  * Ports RangedWeapon.use() / MeleeWeapon.use() and the enemy-fire block of
- * Game.ts updateEnemies(): float cos/sin → fp-trig, px → grid-fp. Multi-pellet
- * spread jitter (combatPrng; content spreadDeg/bullets) is deferred to a later
- * stage — the demo weapons are all single pinpoint shots.
+ * Game.ts updateEnemies(): float cos/sin → fp-trig, px → grid-fp.
+ *
+ * Emission (design/03 "orthogonal to ballistic", ROADMAP 1.1): `bullets` pellets
+ * fire per trigger; for bullets > 1 each pellet's angle jitters within ±spreadHalf,
+ * drawn from combatPrng (a single-pellet pinpoint shot draws nothing — the baseline
+ * guns advance no new PRNG stream). The ballistic id + its params are frozen onto
+ * each spawned Projectile, exactly like damageType (design/07 payload) — motion
+ * (ProjectileStepSystem) and the beam's damage-over-window (HitResolveSystem) read
+ * them from there, never re-reading the spec.
  */
 import { addFp, mulFp } from '../math/fixed';
-import { cosFp, sinFp } from '../math/trig';
+import { cosFp, sinFp, normBrad, type Brad } from '../math/trig';
 import {
   buffedCooldown,
   buffedDamage,
@@ -49,8 +55,21 @@ export class WeaponFireSystem {
   }
 
   private fireRanged(state: GameState, a: Actor, spec: RangedSimSpec, buffs: BuffSums): void {
-    const cos = cosFp(a.facing);
-    const sin = sinFp(a.facing);
+    const pellets = Math.max(1, spec.bullets);
+    for (let i = 0; i < pellets; i++) {
+      // Single-pellet pinpoint shot: no jitter, no PRNG draw (byte-identical to the
+      // pre-1.1 baseline). A spread weapon jitters each pellet within ±spreadHalf.
+      const dir: Brad =
+        pellets > 1 && spec.spreadHalf > 0
+          ? normBrad(a.facing + (state.combatPrng.nextInt(spec.spreadHalf * 2 + 1) - spec.spreadHalf))
+          : a.facing;
+      this.spawnBullet(state, a, spec, dir, buffs);
+    }
+  }
+
+  private spawnBullet(state: GameState, a: Actor, spec: RangedSimSpec, dir: Brad, buffs: BuffSums): void {
+    const cos = cosFp(dir);
+    const sin = sinFp(dir);
     const gx = addFp(a.gx, mulFp(cos, spec.muzzleOffset));
     const gy = addFp(a.gy, mulFp(sin, spec.muzzleOffset));
     state.projectiles.push({
@@ -66,7 +85,19 @@ export class WeaponFireSystem {
       damageType: spec.damageType, // frozen onto the bullet (design/07 payload)
       lifeTicks: spec.bulletLifeTicks,
       alive: true,
+      // Ballistic runtime (design/03/09, ROADMAP 1.1) — frozen from the spec, like
+      // damageType above. 'straight' reads none of the optional params.
+      ballistic: spec.ballistic,
+      turnRateBrad: spec.turnRateBrad,
+      speed: spec.ballistic === 'homing' ? spec.bulletSpeed : undefined,
+      returnAfterTicks: spec.returnAfterTicks,
+      ticksAlive: spec.ballistic === 'boomerang' ? 0 : undefined,
+      blastRadius: spec.blastRadius,
+      beamTicksLeft: spec.beamTicks,
+      beamTickInterval: spec.beamTickInterval,
+      beamDir: spec.ballistic === 'beam' ? dir : undefined,
+      beamRange: spec.beamRange,
     });
-    state.events.push({ type: 'bullet_fired', faction: a.faction, gx, gy, facing: a.facing });
+    state.events.push({ type: 'bullet_fired', faction: a.faction, gx, gy, facing: dir });
   }
 }

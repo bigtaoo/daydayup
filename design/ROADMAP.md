@@ -2,7 +2,7 @@
 
 Ordered task list to take DayDayUp from the current **combat-sandbox vertical slice** to the **full closed loop** the design docs describe. Work top-to-bottom; within a phase, respect the noted dependencies.
 
-**Current built state (2026-07-24):** single-arena wave-survival — menu/victory/defeat shell, waves, pickups, damage + elemental status + resist, deflect, one boss, `straight` bullets only, plus the placeholder audio seam. Deterministic engine (fp/brad/PRNG/InputSource/replay) is in place. **Phase 0 (design↔code sync) is done through 0.6** — the engine now matches the locked design: no affixes, intrinsic weapon rarity, run-buffs, two-pool shield health + regen + shield-break, characters = SkinDef (side-grade roster), and the design/09 pickup vocabulary (`heal`/`material`/`weapon`/`buff`). **`ENGINE_VERSION` is 14.**
+**Current built state (2026-07-24):** single-arena wave-survival — menu/victory/defeat shell, waves, pickups, damage + elemental status + resist, deflect, one boss, plus the placeholder audio seam. Deterministic engine (fp/brad/PRNG/InputSource/replay) is in place. **Phase 0 (design↔code sync) is done through 0.7** — the engine matches the locked design: no affixes, intrinsic weapon rarity, run-buffs, two-pool shield health + regen + shield-break, characters = SkinDef (side-grade roster), and the design/09 pickup vocabulary (`heal`/`material`/`weapon`/`buff`). **Phase 1.1 (frame library) is also done** — `spread`/`homing`/`lob`/`beam`/`boomerang` ballistics + melee `hammer`/`spear` beyond the original `straight`/`saber`. **`ENGINE_VERSION` is 15.**
 
 **Conventions**
 - 🔴 **bumps `ENGINE_VERSION`** — changes sim outcomes / replay bytes. Reset/regenerate golden replays in the same PR.
@@ -70,7 +70,7 @@ Swept the docs so "shipped" claims match reality (this pass):
 
 The core PvE loop (floors → extraction → bank) is fully designed (05/09) but unbuilt — today it's one arena of waves.
 
-- **1.1 🔴 Frame library** beyond `straight` (design/03 landing order): `spread` → `homing`/`lob` → `beam` → `boomerang`/`orbit`/radial; melee `hammer`/`spear`. Each = a per-tick velocity rule in `content/ballistics.ts` + `ProjectileStepSystem`.
+- **1.1 ✅ 🔴 Frame library** beyond `straight` (design/03 landing order) — DONE (`ENGINE_VERSION` 14→15). Shipped: `spread` emission (WeaponFireSystem, combatPrng jitter), `homing`/`lob`/`beam`/`boomerang` ballistics (`content/ballistics.ts` + `ProjectileStepSystem`/`HitResolveSystem`), melee `hammer`/`spear` frames (pure data — `MeleeSimSpec` was already generic). Seven new showcase weapons (scattergun/seeker/mortar/lasercutter/tomahawk/hammer/spear) in the drop pool. `orbit` + radial `pattern` + `k_*` procs remain the follow-up (design/03 landing-order tier 4).
 - **1.2 🔴 RoomState collision geometry** (07/09): AABB tile/wall solids (round pillars already done) + spawn/exit markers; the `RoomPiece` schema.
 - **1.3 🔴 Seeded dungeon assembly** (05/09): floors × rooms via `roomgenPrng`, hand-authored `RoomPiece` library, `DungeonConfig`. *After 1.2.*
 - **1.4 🔴 Extraction rooms** (05): per-floor checkpoint; `EXTRACT` vs `DESCEND`; floor material buffer → run carry-out; death forfeits current-floor buffer. *After 1.3.*
@@ -112,7 +112,7 @@ Phase 0 (sync)  ─┬─ 0.1 affix removal ──┬─ 0.2 rarity
                  │                       └─ 0.3 run-buffs ── 0.6 pickup names
                  └─ 0.4 shield ── 0.5 characters
                     (0.7 doc pass after all)
-Phase 1 (in-run loop)   1.2 rooms ── 1.3 dungeon ── 1.4 extraction ── 1.5 materials ; 1.1 frames independent
+Phase 1 (in-run loop)   1.2 rooms ── 1.3 dungeon ── 1.4 extraction ── 1.5 materials ; 1.1 frames independent (✅ done)
 Phase 2 (meta)          needs 1.5 (materials) + 0.5 (characters)
 Phase 3 (co-op/net)     needs Phase 1 (a run to co-op through)
 Phase 4 (PvP)           4.1 design decision → 4.2/4.3 ; needs 0.5 (characters) + 0.2 (rarity irrelevant here)

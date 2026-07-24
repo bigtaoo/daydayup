@@ -51,16 +51,18 @@ A ranged frame is **emission** (how shots leave per trigger) × **ballistic** (h
 | burst | N shots over a few ticks per trigger | `burstCount` `burstGapTicks` (new) |
 | radial | ring / spiral emitter (bullet-hell) | `bullets` + `spreadDeg` ≈ 360 |
 
-**Ballistic** (`ballistic: BallisticId`) — a per-tick velocity rule, integer/brad, deterministic (`06`/`07`). Catalog + params live in `09`; **only `straight` is implemented today**:
+**Ballistic** (`ballistic: BallisticId`) — a per-tick velocity rule, integer/brad, deterministic (`06`/`07`). Catalog + params live in `09`. **Shipped 2026-07-24 (ROADMAP 1.1, `ENGINE_VERSION` 15):** `straight`/`homing`/`lob`/`beam`/`boomerang`. `orbit` + radial `pattern` remain the follow-up (tier 4 below):
 
-| ballistic | behavior | new params |
+| ballistic | behavior | params |
 |-----------|----------|-----------|
-| `straight` | line (baseline) — the only one shipped | — |
-| `lob` | parabola to a point, AoE on land; rides `bulletZ` z-gating over low cover (`07`) | `arcHeight` `blastRadius` |
-| `homing` | curves toward the nearest enemy | `turnRateBrad` |
-| `boomerang` | out then back, hits each way | `returnAfterTicks` |
-| `beam` | hitscan line, damage ticked over a window (laser; pairs with fire DoT) | `beamTicks` `beamTickInterval` |
-| `orbit` | orbs circling the actor / deployables | `orbitRadius` `orbCount` |
+| `straight` | line (baseline) — shipped | — |
+| `lob` | flies like `straight`; on natural lifespan end ("landing") detonates an AoE blast through the normal resist/status hit path instead of despawning — shipped (`content/ballistics.ts`) | `blastRadius` |
+| `homing` | turns `vx/vy` toward the nearest opposite-faction actor each tick, ≤`turnRateBrad`, speed preserved — shipped | `turnRateBrad` |
+| `boomerang` | reverses velocity once at `returnAfterTicks`, hitting each way — shipped | `returnAfterTicks` |
+| `beam` | frozen hitscan line at the fire-time origin/facing (does not track the shooter or move); damages every opposite-faction actor on the line on a `state.tick % beamTickInterval` global cadence (same lockstep pattern as DoT, `07`), for `beamTicks` total — shipped | `beamTicks` `beamTickInterval` `beamRange` |
+| `orbit` | orbs circling the actor / deployables — not yet implemented | `orbitRadius` `orbCount` |
+
+Showcase weapons per new frame (`content/weapons.ts`): `scattergun` (spread emission), `seeker` (homing), `mortar` (lob), `lasercutter` (beam), `tomahawk` (boomerang), `hammer`/`spear` (melee frames below) — all physical, so each frame's own behavior reads clearly independent of the element layer.
 
 ### The Frame axis — melee
 
@@ -70,17 +72,17 @@ Melee has no ballistic; its frame is the **swing shape** (`arcDeg` × `rangeGrid
 |-------------|------|-----------------|
 | `dagger` | short arc/range, low cd, low dmg | dense small windows |
 | `saber` | balanced (shipped) | baseline |
-| `hammer` | wide arc, high knockback, slow | one big deflect sector, crowd control |
-| `spear` | narrow arc, long reach | deflect / poke at distance |
+| `hammer` | wide arc, high knockback, slow — shipped (ROADMAP 1.1) | one big deflect sector, crowd control |
+| `spear` | narrow arc, long reach — shipped (ROADMAP 1.1) | deflect / poke at distance |
 
 ### Landing order
 
-Only `straight` exists, so the frame library **is** the build queue (highest differentiation first):
+**Shipped 2026-07-24 (ROADMAP 1.1, `ENGINE_VERSION` 15):**
 
-1. `spread` — near-free (`bullets`/`spreadDeg` already in schema), adds a sharp new feel immediately.
-2. `homing`, `lob` — the strongest new behavior (tracking + over-cover arc).
-3. `beam` — laser; shines with fire/DoT.
-4. `boomerang` / `orbit` / radial `pattern`, plus melee `hammer`/`spear` and a first batch of `k_*` procs (`09`).
+1. ✅ `spread` — emission jitter drawn from `combatPrng`; a single-pellet weapon draws nothing (unchanged baseline).
+2. ✅ `homing`, `lob` — tracking + AoE-on-landing.
+3. ✅ `beam` — frozen hitscan line, damage on a global tick cadence.
+4. ✅ `boomerang`, plus melee `hammer`/`spear` (pure data — `MeleeSimSpec` needed no new mechanic). **Remaining:** `orbit` / radial `pattern` / a first batch of `k_*` procs (`09`).
 
 ## Deflect / parry (core mechanic)
 
@@ -127,6 +129,6 @@ Weapons are **not** auto-picked-up (unlike materials/consumables) — swapping y
 
 The composition model, frame library, and landing order are now locked (above); the affix layer is **removed** (Frame × Element only — ROADMAP 0.1, `ENGINE_VERSION` 9→10) and **intrinsic rarity is shipped** (ROADMAP 0.2 — `RarityTier` white→gold + `RARITY_TIERS` quality mult, applied at weapon convert time; `balance/rarity.ts`). What remains is content + tuning:
 
-- Per-frame numbers and the `WeaponSpec` rows for each frame × element × rarity (values live in `09`'s `content/weapons.ts`). Every weapon already carries a `rarity` (placeholder tiers); the frame library beyond `straight` is Phase 1.1.
+- Per-frame numbers and the `WeaponSpec` rows for each frame × element × rarity (values live in `09`'s `content/weapons.ts`). Every weapon already carries a `rarity` (placeholder tiers); the frame library beyond `straight`/`saber` shipped first-pass physical showcases (ROADMAP 1.1) — elemental variants of each new frame (a fire mortar, a lightning beam, …) are still open content work.
 - The five rarity base-quality tiers' *final* numbers (first-pass shipped) and the ornament/emissive overlay that makes rarity read off the weapon sprite (`14`/`12`, render-side).
 - Config format/loading is `09`'s open question (TS for balance vs JSON for tool-authored data).

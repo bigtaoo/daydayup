@@ -66,15 +66,21 @@ RangedSpec = {
   damage             // integer
   damageType?        // 'physical'|'fire'|'ice'|'lightning'|'poison' (07); omitted = physical
   ballistic: BallisticId   // per-tick MOTION rule; see BALLISTIC_SHAPES catalog below (03 Frame axis)
-  // ballistic params — each shape reads only its own (unset = shape unused / default):
+  // ballistic params — each shape reads only its own (unset = shape unused / default).
+  // Shipped ROADMAP 1.1 (ENGINE_VERSION 15): turnRateBrad, blastRadius, returnAfterTicks,
+  // beamTicks/beamTickInterval/beamRange (beamRange added beyond this original sketch —
+  // a beam is a frozen line, not a traveling bullet, so it needs its own max reach).
+  // arcHeight/orbitRadius/orbCount remain unshipped (orbit is the 1.1 follow-up; the
+  // fake-3D arc peak was simplified away — lob's xy motion is identical to straight).
   turnRateBrad?      // homing: max turn toward nearest enemy per tick
-  arcHeight?         // lob: peak of the fake-3D arc (bulletZ)
   blastRadius?       // lob: AoE grid radius on land
   returnAfterTicks?  // boomerang: tick at which vel reverses
   beamTicks?         // beam: total damage-window length
   beamTickInterval?  // beam: ticks between damage applications
-  orbitRadius?       // orbit: grid radius of the circling bodies
-  orbCount?          // orbit: number of orbiting bodies
+  beamRange?         // beam: max reach along the frozen facing
+  arcHeight?         // lob: peak of the fake-3D arc (bulletZ) — not shipped
+  orbitRadius?       // orbit: grid radius of the circling bodies — not shipped
+  orbCount?          // orbit: number of orbiting bodies — not shipped
   lifespanSec        // → lifespanTicks
   piercing?: bool
   bulletZ?           // cosmetic muzzle height for the fake-3D render (01); NOT a hit gate
@@ -94,7 +100,7 @@ MeleeSpec = {
 
 ### `BallisticId` catalog (`03` Frame axis)
 
-`content/ballistics.ts` maps each `BallisticId` to a **per-tick velocity rule** + the params it reads (the params above). All integer/brad — no float survives a tick (`06`); `homing` uses squared-distance nearest + a brad turn cap (no trig beyond the shared `math/trig` table, `06`). **Only `straight` is implemented today; the rest are the build queue in `03`'s landing order.**
+`content/ballistics.ts` maps each `BallisticId` to a **per-tick velocity rule** + the params it reads (the params above). All integer/brad — no float survives a tick (`06`); `homing` uses squared-distance nearest + a brad turn cap (no trig beyond the shared `math/trig` table, `06`). **Shipped 2026-07-24 (ROADMAP 1.1, `ENGINE_VERSION` 15): `straight`/`homing`/`lob`/`beam`/`boomerang`.** `orbit` + radial `pattern` remain `03`'s landing-order tier-4 follow-up.
 
 | id | per-tick rule | reads |
 |----|---------------|-------|
@@ -315,7 +321,7 @@ MaterialDef = { id: MaterialId; nameKey; element: DamageType; tier }
 - **Difficulty & material curve** (`05`): how enemy count/tier and material quality scale with *floor* depth; extraction-room placement rules; boss-piece rules.
 - **Arena preset set** (`05`): count, archetypes/roles, win condition, pickup table (preset supplies weapon loadout only; character stats come from `skinId`, `14`).
 - **Character balance-test suite** (`14`): a side-grade / no-all-rounder STUB shipped (`skins.test.ts`, no Pareto domination on `(maxHp, maxShield)`, ROADMAP 0.5); the full suite covering every launch + purchased character is 2.3.
-- **Frame content & tuning** (`03`): the `BallisticId` catalog and its config params are now specified (above) with a locked landing order (`03`); what remains is implementing each shape's per-tick rule in `content/ballistics.ts` and tuning the `WeaponSpec` rows per frame × element × rarity.
+- ✅ **Frame content & tuning** (`03`) — shipped 2026-07-24 (ROADMAP 1.1, `ENGINE_VERSION` 15): `content/ballistics.ts` implements `homing`/`lob`/`beam`/`boomerang` (+ spread emission in `WeaponFireSystem`), plus melee `hammer`/`spear`. *Remaining:* `orbit`/radial `pattern`/`k_*` procs (tier 4), and tuning the `WeaponSpec` rows per frame × element × rarity (the new frames shipped physical-only showcases).
 
 ## Open questions
 

@@ -20,9 +20,10 @@
  * are design/07 and land later. (The demo's per-frame multi-hit melee is corrected
  * to once-per-swing, per design/07.)
  */
-import { atan2Brad, bradDiff } from '../math/trig';
+import { atan2Brad, bradDiff, type Brad } from '../math/trig';
+import { inBeamLine } from '../content/ballistics';
 import type { GameState } from '../state/GameState';
-import type { Actor, Faction, MeleeSimSpec } from '../state/entities';
+import type { Actor, Faction, MeleeSimSpec, Projectile } from '../state/entities';
 import type { DamageType } from '../content/damage';
 import {
   BURN_DURATION,
@@ -42,10 +43,16 @@ import { circlesOverlap, retainAlive } from './geom';
 
 export class HitResolveSystem {
   tick(state: GameState): void {
+    // Lob landings + beam channels (design/03/09, ROADMAP 1.1) resolve first: a
+    // landed lob is about to die this tick regardless, and a beam bullet never
+    // moves/clashes/direct-hits like a normal bullet — both are handled entirely
+    // through these dedicated passes, then excluded below.
+    this.resolveLandedLobs(state);
+    this.resolveBeams(state);
     this.resolveBulletClash(state);
 
     for (const b of state.projectiles) {
-      if (!b.alive) continue;
+      if (!b.alive || b.ballistic === 'beam' || b.landed) continue;
       if (b.faction === 'enemy') {
         for (const p of state.players) {
           if (!p.alive) continue;
@@ -72,6 +79,52 @@ export class HitResolveSystem {
     }
 
     retainAlive(state.projectiles);
+  }
+
+  /** Lob landing (design/03/09): a bullet ProjectileStepSystem flagged `landed` this
+   * tick detonates through the normal resist/status hit path against every
+   * opposite-faction actor within `blastRadius`, then dies — no direct-hit special
+   * case (a lob that connects mid-flight already consumed itself as a normal hit,
+   * above, before ever reaching landed). */
+  private resolveLandedLobs(state: GameState): void {
+    for (const b of state.projectiles) {
+      if (!b.alive || !b.landed || b.blastRadius === undefined) continue;
+      const targets: readonly Actor[] = b.faction === 'player' ? state.enemies : state.players;
+      const attacker: Faction = b.faction === 'player' ? 'player' : 'enemy';
+      for (const t of targets) {
+        if (!t.alive) continue;
+        const dx = (t.gx - b.gx) as number;
+        const dy = (t.gy - b.gy) as number;
+        const reach = (b.blastRadius + t.radius) as number;
+        if (dx * dx + dy * dy > reach * reach) continue;
+        this.applyHit(state, t, b.damage, b.damageType, attacker, targets);
+      }
+      b.alive = false;
+    }
+  }
+
+  /**
+   * Beam channels (design/03/09): a beam bullet never moves (frozen at its fire-time
+   * origin/direction); on the global `state.tick % beamTickInterval` cadence — the
+   * same lockstep pattern StatusEffectSystem uses for DoT (design/07: no per-instance
+   * clock) — it damages every opposite-faction actor along its line, once per
+   * cadence tick, for as long as it stays alive (ProjectileStepSystem counts down
+   * `beamTicksLeft` and kills it at 0).
+   */
+  private resolveBeams(state: GameState): void {
+    for (const b of state.projectiles) {
+      if (!b.alive || b.ballistic !== 'beam') continue;
+      if (!b.beamTickInterval || state.tick % b.beamTickInterval !== 0) continue;
+      const targets: readonly Actor[] = b.faction === 'player' ? state.enemies : state.players;
+      const attacker: Faction = b.faction === 'player' ? 'player' : 'enemy';
+      const dir = b.beamDir ?? (0 as Brad);
+      const range = b.beamRange ?? (0 as Projectile['radius']);
+      for (const t of targets) {
+        if (!t.alive) continue;
+        if (!inBeamLine(b.gx, b.gy, dir, range, t.gx, t.gy, t.radius)) continue;
+        this.applyHit(state, t, b.damage, b.damageType, attacker, targets);
+      }
+    }
   }
 
   /**
@@ -174,10 +227,10 @@ export class HitResolveSystem {
     const ps = state.projectiles;
     for (let i = 0; i < ps.length; i++) {
       const a = ps[i]!;
-      if (!a.alive) continue;
+      if (!a.alive || a.ballistic === 'beam' || a.landed) continue;
       for (let j = i + 1; j < ps.length; j++) {
         const b = ps[j]!;
-        if (!b.alive || b.faction === a.faction) continue;
+        if (!b.alive || b.faction === a.faction || b.ballistic === 'beam' || b.landed) continue;
         if (!circlesOverlap(a.gx, a.gy, a.radius, b.gx, b.gy, b.radius)) continue;
         a.alive = false;
         b.alive = false;

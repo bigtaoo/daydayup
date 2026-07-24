@@ -52,6 +52,15 @@ export const WEAPON_DROP_POOL: readonly string[] = [
   'emberblade',
   'frostbrand',
   'stormglaive',
+  // Frame-library drops (design/03 landing order, ROADMAP 1.1) — one per new
+  // ballistic/melee frame, physical so the frame's own behavior reads clearly.
+  'scattergun',
+  'seeker',
+  'mortar',
+  'lasercutter',
+  'tomahawk',
+  'hammer',
+  'spear',
 ];
 
 /** Buff ids a drop can roll (must exist in RUN_BUFFS). Fixed order = deterministic. */

@@ -83,8 +83,20 @@ import { BRAD_FULL } from './math/trig';
  * becomes `material` and now draws an extra dropPrng roll to pick its element from
  * MATERIAL_DROP_POOL (a distinct carry-out currency), so the drop stream diverges from
  * v13 at the first material drop. (`health`→`heal` is a rename with no behaviour change.)
+ *
+ * v15: frame library beyond `straight` (design/03/09 Frame axis, ROADMAP 1.1).
+ * WeaponFireSystem now fires `bullets` pellets per trigger, jittering each within
+ * ±spreadHalf via a NEW combatPrng draw site (a spread weapon's cone is randomized;
+ * single-pellet weapons still draw nothing). Four new ballistics — homing (turns
+ * toward the nearest foe), lob (AoE blast on landing instead of a silent despawn),
+ * beam (hitscan line, damage on a beamTickInterval cadence, doesn't move or clash),
+ * boomerang (velocity reverses mid-flight) — replace `straight`'s `pos += vel` for
+ * any bullet whose spec names them; existing `straight` weapons are byte-identical.
+ * The WEAPON_DROP_POOL grew (scattergun/seeker/mortar/lasercutter/tomahawk/hammer/
+ * spear), shifting every dropPrng weapon-id roll. Any v14 stream diverges the first
+ * time a spread/homing/lob/beam/boomerang shot fires, or at the first weapon drop.
  */
-export const ENGINE_VERSION = 14;
+export const ENGINE_VERSION = 15;
 
 // ── Two-pool health tuning (design/07; final values are 07 "to design") ──────────
 // Whole ticks @30Hz. Shield regen is an idle timer, not a heal: after taking ANY

@@ -13,6 +13,7 @@ import type { Brad } from '../math/trig';
 import type { DamageType, ResistMap, StatusState } from '../content/damage';
 import type { RarityTier } from '../balance/rarity';
 import type { RunBuffId } from '../balance/runbuffs';
+import type { BallisticId } from '../content/ballistics';
 
 export type Faction = 'player' | 'enemy';
 
@@ -26,6 +27,10 @@ export interface RangedSimSpec {
   name: string;
   rarity: RarityTier; // intrinsic tier (design/14); render reads it for the compare-card colour, the sim never does
   fireRateTicks: number; // cooldown between shots, whole ticks
+  // Emission (design/03 "orthogonal to ballistic") — pellets per trigger + the cone
+  // half-angle each pellet jitters within (0 = pinpoint, single bullet, no PRNG draw).
+  bullets: number;
+  spreadHalf: Brad;
   bulletSpeed: Fp; // fp displacement per tick
   bulletLifeTicks: number;
   bulletRadius: Fp;
@@ -33,6 +38,17 @@ export interface RangedSimSpec {
   bulletZ: Fp; // muzzle height band (design/07 z-gating; cosmetic until then)
   damage: number; // integer
   damageType: DamageType; // physical or an element (on-hit status, design/03/07)
+  // Ballistic (design/03/09 Frame axis, ROADMAP 1.1) — the per-tick motion rule;
+  // 'straight' reads none of the params below. Frozen onto the Projectile at fire
+  // time (WeaponFireSystem), read by ProjectileStepSystem (motion) / HitResolveSystem
+  // (beam's damage-over-window).
+  ballistic: BallisticId;
+  turnRateBrad?: number; // homing: max turn toward the nearest foe, per tick
+  blastRadius?: Fp; // lob: AoE radius on landing (lifespan-end detonation)
+  returnAfterTicks?: number; // boomerang: tick (since fire) velocity reverses
+  beamTicks?: number; // beam: total damage-window length, whole ticks
+  beamTickInterval?: number; // beam: ticks between damage applications
+  beamRange?: Fp; // beam: max reach along the frozen facing (does not use bulletSpeed)
 }
 
 export interface MeleeSimSpec {
@@ -149,6 +165,21 @@ export interface Projectile {
   damageType: DamageType; // frozen from the firing weapon's spec (design/07 payload)
   lifeTicks: number;
   alive: boolean;
+  // Ballistic runtime (design/03/09 Frame axis, ROADMAP 1.1). Frozen from the firing
+  // spec at fire time (WeaponFireSystem), like damageType above. Undefined/'straight'
+  // = the original plain `pos += vel` path — every existing bullet is unaffected.
+  ballistic?: BallisticId;
+  turnRateBrad?: number; // homing
+  speed?: Fp; // homing: magnitude to preserve while turning toward a target
+  returnAfterTicks?: number; // boomerang: tick (since fire) velocity reverses
+  ticksAlive?: number; // boomerang: ticks elapsed since fire (this system's own counter)
+  blastRadius?: Fp; // lob: AoE radius applied once, on landing (lifespan end)
+  landed?: boolean; // lob: set by ProjectileStepSystem when lifespan ends; HitResolveSystem
+  // (step 7) resolves the AoE blast through the normal resist/status path, then kills it
+  beamTicksLeft?: number; // beam: remaining duration ticks (independent of lifeTicks)
+  beamTickInterval?: number; // beam: ticks between damage applications
+  beamDir?: Brad; // beam: frozen facing at fire time (beam does not move or track the shooter)
+  beamRange?: Fp; // beam: max reach along beamDir
 }
 
 /**

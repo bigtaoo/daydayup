@@ -125,6 +125,10 @@ export function serializeState(s: GameState): unknown {
     enemies: s.enemies.map((e) => [e.id, e.gx, e.gy, e.z, e.vx, e.vy, e.facing, e.hp, e.shield, e.alive]),
     projectiles: s.projectiles.map((b) => [
       b.id, b.gx, b.gy, b.z, b.vx, b.vy, b.faction, b.damage, b.lifeTicks, b.alive,
+      // Ballistic runtime (design/03/09, ROADMAP 1.1): homing/boomerang/lob/beam carry
+      // extra per-tick state (turn progress, landing flag, beam duration) that can
+      // diverge without necessarily moving gx/gy/vx/vy the very same tick.
+      b.ballistic ?? '', b.ticksAlive ?? 0, b.landed ?? false, b.beamTicksLeft ?? 0,
     ]),
     pickups: s.pickups.map((k) => [
       k.id, k.kind, k.gx, k.gy, k.spawnTick, k.alive,

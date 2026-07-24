@@ -2,6 +2,7 @@
 // conversion into sim units.
 export * from './convert';
 export * from './damage';
+export * from './ballistics';
 export * from './weapons';
 export * from './players';
 export * from './skins';
