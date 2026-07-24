@@ -24,13 +24,12 @@ describe('SKIN_DEFS — characters as balanced defensive identities (design/14)'
     }
   });
 
-  it('ships at least one non-default character (design/14 roster)', () => {
-    expect(ALL.some((s) => s.id !== DEFAULT_SKIN_ID)).toBe(true);
+  it('ships the 3 launch characters (design/13 launch scope)', () => {
+    expect(ALL.length).toBe(3);
   });
 
   // The locked side-grade rule (design/14): no character is strictly better than
   // another. Encoded as: no skin Pareto-dominates another on (maxHp, maxShield).
-  // This is the balance-test STUB the roadmap asks for — the full 2.3 suite widens it.
   it('no character Pareto-dominates another on (maxHp, maxShield) — no all-rounder', () => {
     for (const a of ALL) {
       for (const b of ALL) {
@@ -41,6 +40,34 @@ describe('SKIN_DEFS — characters as balanced defensive identities (design/14)'
           (a.maxHp > b.maxHp || a.maxShield > b.maxShield);
         expect(dominates, `${a.id} strictly dominates ${b.id}`).toBe(false);
       }
+    }
+  });
+
+  // The full 2.3 suite (design/13/14 "playstyle-complete free roster"): the roster must
+  // actually SPAN a range on each defensive axis — one balanced, one shield-heavy, one
+  // HP-heavy — not three near-identical stat lines that happen to dodge Pareto domination.
+  it('spans a real range on each defensive axis (distinct playstyles, not clones)', () => {
+    const hps = ALL.map((s) => s.maxHp);
+    const shields = ALL.map((s) => s.maxShield);
+    expect(new Set(hps).size).toBeGreaterThanOrEqual(3); // every character a distinct body
+    expect(new Set(shields).size).toBeGreaterThanOrEqual(3); // and a distinct shield buffer
+    expect(Math.max(...hps) - Math.min(...hps)).toBeGreaterThanOrEqual(4); // meaningful HP spread
+    expect(Math.max(...shields) - Math.min(...shields)).toBeGreaterThanOrEqual(4); // and shield spread
+  });
+
+  // Side-grades are of EQUAL WORTH (design/14 "never a power ladder"): total defensive
+  // budget (hp + shield) must stay within a tight band, so no character is a global upgrade
+  // in raw survivability even while trading one axis for the other.
+  it('keeps total defensive budget within a tight band (equal worth, no power ladder)', () => {
+    const budgets = ALL.map((s) => s.maxHp + s.maxShield);
+    expect(Math.max(...budgets) - Math.min(...budgets)).toBeLessThanOrEqual(3);
+  });
+
+  // A shield-break passive is only meaningful on a character that HAS a shield to break
+  // (design/14): a zero-shield body must not carry an inert passive.
+  it('only shielded characters carry a shield-break passive', () => {
+    for (const s of ALL) {
+      if (s.maxShield === 0) expect(s.shieldBreak, `${s.id} has an inert passive`).toBeUndefined();
     }
   });
 });

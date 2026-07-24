@@ -64,6 +64,19 @@ export const SKIN_DEFS: Record<string, SkinDef> = {
     maxShield: 8,
     shieldBreak: { kind: 'aoe', radiusGrid: 3.5, damage: 3 },
   },
+  // Juggernaut — the flat-HP tank (design/14's "8 HP / 0 shield" archetype): the biggest
+  // body in the roster and NO shield buffer at all, so it never regenerates between fights
+  // and has no shield-break payload (an empty shield can't break). The polar opposite of
+  // the skirmisher; neither Pareto-dominates the vanguard (guarded by skins.test.ts). This
+  // completes the 3-character launch roster (design/13) with three distinct playstyles.
+  juggernaut: {
+    id: 'juggernaut',
+    atlasKey: 'char_juggernaut',
+    animRef: 'humanoid',
+    maxHp: 9,
+    maxShield: 0,
+    // no shieldBreak: a character with no shield can never trigger one (design/14).
+  },
 };
 
 /** Convert an authored passive into the fp shape the combat layer reads (once). */
