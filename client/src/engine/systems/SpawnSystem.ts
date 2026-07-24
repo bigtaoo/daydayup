@@ -16,6 +16,7 @@ import { pxToFp, toFpGrid } from '../content/convert';
 import { freshStatus } from '../content/damage';
 import { makeWeapon } from '../content/weapons';
 import { BASIC_ENEMY, ENEMY_BLUEPRINTS } from '../content/enemies';
+import { cosFp, BRAD_FULL } from '../math/trig';
 import { roomGeometry, type RoomPiece } from '../content/rooms';
 import { generateFloor } from '../world/dungeon';
 import type { GameState, WaveDef } from '../state/GameState';
@@ -113,16 +114,17 @@ export class SpawnSystem {
    */
   private tickDungeon(state: GameState): void {
     if (state.roomIndex === -1) {
-      // Fresh floor: generate its rooms (the only live roomgenPrng draw site) and load
-      // the first. Runs exactly once per floor — roomIndex is -1 only at run start and
-      // immediately after a DESCEND (ExtractionSystem resets it).
-      state.floorLayout = generateFloor(
+      // Fresh floor: generate its stage plan (the only live roomgenPrng draw site) and
+      // enter stage 0. Runs exactly once per floor — roomIndex is -1 only at run start
+      // and immediately after a DESCEND (ExtractionSystem resets it).
+      state.floorStages = generateFloor(
         state.dungeonConfig!,
         state.floorIndex,
         state.roomgenPrng,
         state.roomLibrary,
-      ).rooms;
-      this.loadRoom(state, 0);
+      ).stages;
+      state.floorLayout = []; // reset the resolved path for the new floor
+      this.enterStage(state, 0);
       return;
     }
 
@@ -135,14 +137,43 @@ export class SpawnSystem {
     if (state.roomSpawnCursor < state.roomSchedule.length) return;
     if (state.enemies.length > 0) return;
 
-    if (state.roomIndex >= state.floorLayout.length - 1) {
+    if (state.roomIndex >= state.floorStages.length - 1) {
       // The floor's capstone room is cleared → checkpoint. ExtractionSystem resolves
       // EXTRACT/DESCEND (or auto-EXTRACT on the last floor). Idempotent while it waits.
       state.wavesExhausted = true;
       return;
     }
 
-    this.loadRoom(state, state.roomIndex + 1); // advance to the next room in this floor
+    this.enterStage(state, state.roomIndex + 1); // advance to the next stage in this floor
+  }
+
+  /**
+   * Resolve which candidate of stage `idx` to enter, append it to the resolved path
+   * (so floorLayout[roomIndex] is always the live room), and load it. A linear stage
+   * has one option; a branching stage's choice comes from chooseBranch.
+   */
+  private enterStage(state: GameState, idx: number): void {
+    const candidates = state.floorStages[idx] ?? [];
+    const room = candidates[this.chooseBranch(state, candidates)] ?? candidates[0];
+    if (!room) return; // empty stage (shouldn't happen — generateFloor never emits one)
+    state.floorLayout = [...state.floorLayout, room];
+    this.loadRoom(state, idx, room);
+  }
+
+  /**
+   * Pick which candidate to enter at a branching stage (design/05 reward-choice). A
+   * single-option (linear) stage returns 0; for two, aiming west takes the first and
+   * east the second; for more, the aim circle splits into equal sectors. Resolved from
+   * player 0's aim — deterministic (facing is in the command stream) and needs no new
+   * input. A door/portal selection UX is a presentation follow-up (design/10).
+   */
+  private chooseBranch(state: GameState, candidates: readonly RoomPiece[]): number {
+    const n = candidates.length;
+    if (n <= 1) return 0;
+    const facing = state.players[0]?.facing ?? 0;
+    if (n === 2) return cosFp(facing) < 0 ? 0 : 1;
+    const frac = (((facing % BRAD_FULL) + BRAD_FULL) % BRAD_FULL) / BRAD_FULL;
+    return Math.min(n - 1, Math.floor(frac * n));
   }
 
   /**
@@ -151,10 +182,9 @@ export class SpawnSystem {
    * enemies. Content-swaps the walls/obstacles arrays (never reassigns the reference,
    * so readers stay valid). Emits `room_enter` for the render layer.
    */
-  private loadRoom(state: GameState, idx: number): void {
+  private loadRoom(state: GameState, idx: number, room: RoomPiece): void {
     state.roomIndex = idx;
     state.roomTick = 0; // restart the room-local clock for the WaveScript schedule
-    const room = state.floorLayout[idx]!;
 
     const { walls, obstacles } = roomGeometry(room);
     state.walls.length = 0;

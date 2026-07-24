@@ -153,12 +153,18 @@ export class GameState {
   readonly dungeonEnabled: boolean;
   readonly dungeonConfig?: DungeonConfig;
   readonly roomLibrary: readonly RoomPiece[];
-  // The CURRENT floor's generated room sequence (world/dungeon.ts generateFloor), in
-  // traversal order; last entry is the capstone (extraction, or boss on the last
-  // floor). Regenerated per floor when SpawnSystem sees a fresh floor (roomIndex -1).
+  // The CURRENT floor's generated STAGE plan (world/dungeon.ts generateFloor): each
+  // stage is the candidate room(s) offered at that step (1 for linear, branchFactor for
+  // branching); the last stage is the single capstone. Regenerated per floor when
+  // SpawnSystem sees a fresh floor (roomIndex -1).
+  floorStages: readonly (readonly RoomPiece[])[] = [];
+  // The RESOLVED path this run has actually taken through the current floor — the room
+  // chosen at each stage entered so far, in order. Grows by one per stage; for a linear
+  // floor this ends up equal to `floorStages` flattened. `floorLayout[roomIndex]` is the
+  // live room (render + HUD read it). Reset to [] when a fresh floor is generated.
   floorLayout: readonly RoomPiece[] = [];
-  // Index into `floorLayout` of the live room; -1 = no room loaded yet (run start, or
-  // just DESCENDed → SpawnSystem (re)generates the floor and loads room 0 next tick).
+  // Index of the live STAGE (into floorStages / the resolved floorLayout); -1 = no room
+  // loaded yet (run start, or just DESCENDed → SpawnSystem regenerates + loads stage 0).
   roomIndex = -1;
   // Ticks since the live room loaded (room-local clock for WaveScript timing). Drives
   // the staggered spawn schedule below; reset to 0 by SpawnSystem.loadRoom.

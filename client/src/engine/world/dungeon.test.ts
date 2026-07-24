@@ -76,6 +76,43 @@ describe('generateFloor', () => {
   });
 });
 
+describe('generateFloor — branching layout (design/05 reward-choice)', () => {
+  const BRANCHING: DungeonConfig = { ...CONFIG, layout: 'branching', branchFactor: 2 };
+
+  it('offers branchFactor DISTINCT candidates per normal stage; the capstone stage is single', () => {
+    const f = generateFloor(BRANCHING, 0, new Prng(42), EMBER_ROOMS);
+    for (const stage of f.stages.slice(0, -1)) {
+      expect(stage.length).toBe(2);
+      expect(stage[0]!.id).not.toBe(stage[1]!.id); // the two options actually differ
+      for (const r of stage) expect(r.role).toBeUndefined();
+    }
+    const cap = f.stages[f.stages.length - 1]!;
+    expect(cap.length).toBe(1);
+    expect(cap[0]!.id).toBe('ember_extraction');
+  });
+
+  it('draws the identical roomgenPrng sequence as linear (same seed → same default path + stage count)', () => {
+    const lin = generateFloor({ ...CONFIG, layout: 'linear' }, 0, new Prng(5), EMBER_ROOMS);
+    const br = generateFloor(BRANCHING, 0, new Prng(5), EMBER_ROOMS);
+    // `rooms` (first candidate of each stage) is branching's default path; for the same
+    // seed it equals linear's full sequence — proving branching costs no extra draws.
+    expect(br.rooms.map((r) => r.id)).toEqual(lin.rooms.map((r) => r.id));
+    expect(br.stages.length).toBe(lin.stages.length);
+  });
+
+  it('clamps branchFactor to the pool size', () => {
+    const poolSize = EMBER_ROOMS.filter((r) => !r.role && r.tags?.includes('ember')).length;
+    const f = generateFloor({ ...CONFIG, layout: 'branching', branchFactor: 99 }, 0, new Prng(1), EMBER_ROOMS);
+    for (const stage of f.stages.slice(0, -1)) expect(stage.length).toBe(poolSize);
+  });
+
+  it('is deterministic for a given seed', () => {
+    const a = generateFloor(BRANCHING, 1, new Prng(7), EMBER_ROOMS);
+    const b = generateFloor(BRANCHING, 1, new Prng(7), EMBER_ROOMS);
+    expect(a.stages.map((st) => st.map((r) => r.id))).toEqual(b.stages.map((st) => st.map((r) => r.id)));
+  });
+});
+
 describe('curveAt (first-pass linear difficulty curve)', () => {
   it('scales linearly by floor index', () => {
     const curve = { base: 2, perFloor: 3 };

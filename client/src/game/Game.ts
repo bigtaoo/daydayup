@@ -492,7 +492,7 @@ export class Game {
     // Dungeon progress (ROADMAP 1.3): floor / room within floor, plus the banked bag.
     const floor = s.floorIndex + 1;
     const room = Math.max(1, s.roomIndex + 1);
-    const rooms = s.floorLayout.length;
+    const rooms = s.floorStages.length; // total stages this floor (linear or branching)
     const banked = this.totalBanked(s);
 
     // Extraction prompt: only at a non-last-floor checkpoint (the last floor auto-

@@ -148,6 +148,10 @@ export function serializeState(s: GameState): unknown {
     // deterministic from roomgenPrng (already hashed above); this catches a progression
     // divergence (advanced to a different room) that hasn't yet moved an entity.
     roomIndex: s.roomIndex,
+    // The resolved live room's id — for a branching floor two runs can share roomIndex
+    // yet be in different rooms (a different branch chosen), so hash the identity too.
+    // '' for a non-dungeon config (stable). '' also before the first room loads.
+    roomId: s.floorLayout[s.roomIndex]?.id ?? '',
     // Room-local WaveScript clock + how many scheduled spawns have fired. Stable 0 for
     // a non-dungeon config; catches a timing divergence (an entry dispatched a tick
     // early/late) before it surfaces in the enemy list.

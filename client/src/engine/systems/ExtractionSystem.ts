@@ -79,10 +79,11 @@ export class ExtractionSystem {
     this.bankFloorMaterials(state);
     state.floorIndex++;
     if (state.dungeonEnabled) {
-      // The next floor's rooms are generated lazily by SpawnSystem when it sees a fresh
+      // The next floor's stages are generated lazily by SpawnSystem when it sees a fresh
       // floor (roomIndex -1) — the single owner of roomgenPrng draws, same as floor 0.
-      // Just reset the room cursor; the current geometry stays until room 0 loads.
+      // Just reset the room cursor; the current geometry stays until stage 0 loads.
       state.roomIndex = -1;
+      state.floorStages = [];
       state.floorLayout = [];
     } else {
       state.waves = state.extraFloors[state.floorIndex - 1]!;

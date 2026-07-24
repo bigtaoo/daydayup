@@ -16,7 +16,7 @@ import { hashState } from '@dd/engine/replay';
 import type { EngineConfig } from '@dd/engine/state/GameState';
 import { Button } from '@dd/engine/state/commands';
 import { makeCommand } from '@dd/engine/state/input';
-import type { Brad } from '@dd/engine/math/trig';
+import { BRAD_FULL, type Brad } from '@dd/engine/math/trig';
 import { toFpGrid } from '@dd/engine/content/convert';
 import type { RoomPiece } from '@dd/engine/content/rooms';
 import type { DungeonConfig } from '@dd/engine/world/dungeon';
@@ -115,7 +115,8 @@ describe('Dungeon mode — floor 0, room 0 loads live geometry', () => {
 
     expect(s.dungeonEnabled).toBe(true);
     expect(s.floorsEnabled).toBe(true); // dungeon enables the extraction loop
-    expect(s.floorLayout.length).toBe(2); // [1 normal, capstone]
+    expect(s.floorStages.length).toBe(2); // [1 normal stage, capstone stage]
+    expect(s.floorLayout.length).toBe(1); // resolved path so far = just the entered room
     expect(s.roomIndex).toBe(0);
 
     const room0 = s.floorLayout[0]!;
@@ -178,8 +179,8 @@ describe('Dungeon mode — DESCEND generates the next floor', () => {
 
     eng.step([idle(6)]); // SpawnSystem generates floor 1 and loads its first room
     expect(s.roomIndex).toBe(0);
-    expect(s.floorLayout.length).toBe(2);
-    expect(s.floorLayout[1]!.role).toBe('boss'); // floor 1 is the last → boss capstone
+    expect(s.floorStages.length).toBe(2);
+    expect(s.floorStages[1]![0]!.role).toBe('boss'); // floor 1 is the last → boss capstone
   });
 });
 
@@ -331,6 +332,43 @@ describe('Dungeon mode — WaveScript timing (atTick / spacingTicks)', () => {
   });
 });
 
+describe('Dungeon mode — branching layout picks the next room by player aim', () => {
+  const BR_LIB: RoomPiece[] = [
+    { id: 'br_a', tags: ['b'], sizeGrid: { w: 20, h: 16 }, solids: [], spawns: { player: [{ x: 2, y: 8 }], enemy: [] }, exits: [] },
+    { id: 'br_b', tags: ['b'], sizeGrid: { w: 22, h: 14 }, solids: [], spawns: { player: [{ x: 2, y: 7 }], enemy: [] }, exits: [] },
+    { id: 'br_boss', role: 'boss', sizeGrid: { w: 20, h: 16 }, solids: [], spawns: { player: [{ x: 2, y: 8 }], enemy: [] }, exits: [] },
+  ];
+  const cfg = (): EngineConfig => ({
+    seed: 5, worldW: 640, worldH: 640, waves: [],
+    dungeon: {
+      config: {
+        biomeId: 'b', nameKey: 'b', floorCount: 1, roomsPerFloor: { min: 2, max: 2 },
+        pieceTags: ['b'], layout: 'branching', branchFactor: 2,
+        extractionPieceId: 'br_boss', bossPieceId: 'br_boss', difficultyCurve: { base: 1, perFloor: 0 },
+      },
+      library: BR_LIB,
+    },
+  });
+  const aimCmd = (tick: number, aimBrad: number) =>
+    makeCommand({ owner: 0, tick, moveBrad: 0 as Brad, moveMag: 0, aimBrad: aimBrad as Brad, buttons: 0 });
+
+  it('aiming west enters the first candidate, east the second — distinct rooms from the same seed', () => {
+    // The normal stage offers two candidates (same pair + order for both engines, one
+    // seed). ApplyInputSystem sets facing from the command before SpawnSystem chooses.
+    const west = createGameEngine(cfg());
+    west.step([aimCmd(1, BRAD_FULL / 2)]); // facing west → cosFp < 0 → candidate 0
+    const east = createGameEngine(cfg());
+    east.step([aimCmd(1, 0)]); // facing east → cosFp > 0 → candidate 1
+
+    expect(west.state.floorStages[0]!.length).toBe(2); // a real two-way branch
+    const wId = west.state.floorLayout[0]!.id;
+    const eId = east.state.floorLayout[0]!.id;
+    expect(wId).toBe(west.state.floorStages[0]![0]!.id);
+    expect(eId).toBe(east.state.floorStages[0]![1]!.id);
+    expect(wId).not.toBe(eId); // the aim genuinely changed which room was entered
+  });
+});
+
 describe('Dungeon mode — the real Ember biome runs end-to-end', () => {
   it('generates + traverses EMBER_DUNGEON floors without throwing, geometry always populated', () => {
     const eng = createGameEngine({
@@ -339,7 +377,7 @@ describe('Dungeon mode — the real Ember biome runs end-to-end', () => {
     });
     const s = eng.state;
     eng.step([idle(1)]); // first Ember room loads
-    expect(s.floorLayout.length).toBeGreaterThanOrEqual(EMBER_DUNGEON.roomsPerFloor.min);
+    expect(s.floorStages.length).toBeGreaterThanOrEqual(EMBER_DUNGEON.roomsPerFloor.min);
     expect(s.roomIndex).toBe(0);
     // The world was resized to an actual Ember room (not the placeholder config bounds).
     expect(s.worldW).toBe(toFpGrid(s.floorLayout[0]!.sizeGrid.w));
