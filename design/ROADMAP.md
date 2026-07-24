@@ -2,7 +2,7 @@
 
 Ordered task list to take DayDayUp from the current **combat-sandbox vertical slice** to the **full closed loop** the design docs describe. Work top-to-bottom; within a phase, respect the noted dependencies.
 
-**Current built state (2026-07-23):** single-arena wave-survival — menu/victory/defeat shell, waves, pickups, damage + elemental status + resist, deflect, one boss, `straight` bullets only, plus the new placeholder audio seam. Deterministic engine (fp/brad/PRNG/InputSource/replay) is in place.
+**Current built state (2026-07-24):** single-arena wave-survival — menu/victory/defeat shell, waves, pickups, damage + elemental status + resist, deflect, one boss, `straight` bullets only, plus the placeholder audio seam. Deterministic engine (fp/brad/PRNG/InputSource/replay) is in place. **Phase 0 (design↔code sync) is done through 0.6** — the engine now matches the locked design: no affixes, intrinsic weapon rarity, run-buffs, two-pool shield health + regen + shield-break, characters = SkinDef (side-grade roster), and the design/09 pickup vocabulary (`heal`/`material`/`weapon`/`buff`). **`ENGINE_VERSION` is 14.**
 
 **Conventions**
 - 🔴 **bumps `ENGINE_VERSION`** — changes sim outcomes / replay bytes. Reset/regenerate golden replays in the same PR.
@@ -14,28 +14,30 @@ Ordered task list to take DayDayUp from the current **combat-sandbox vertical sl
 
 ## Phase 0 — Design ↔ code sync (DO FIRST)
 
-Make the shipped engine match the **locked** design. Today the code still runs the old affix model and is missing the two-pool health that 02/05/07/08 already treat as decided. Each item is a self-contained PR.
+Make the shipped engine match the **locked** design. Each item is a self-contained PR.
 
-### 0.1 🔴 Remove the affix system (locked cut — 03/09/14)
+**Status (2026-07-24): 0.1–0.6 all shipped — `ENGINE_VERSION` now 14.** Only 0.7 (this doc pass) remains. Version history: affix removal v9→10 (0.1); intrinsic rarity additive/no-bump (0.2); run-buffs v10→11 (0.3); two-pool shield v11→12 (0.4); characters=SkinDef v12→13 (0.5); pickup vocabulary v13→14 (0.6).
+
+### 0.1 ✅ 🔴 Remove the affix system (locked cut — 03/09/14) — DONE (v9→10)
 The single biggest divergence: design took the Soul-Knight route (Frame × Element, no affixes) but the code still has the full affix layer (~20 files).
 - **Delete:** `balance/affixes.ts` (+ `affixes.test.ts`); the `elem_*` set-element weapon; `AFFIX_*` / `EFFECT_CAPS` / `applyAffixes` in `balance/build.ts` (+ `build.test.ts`).
 - **Strip:** `PlayerActor.affixes` + `WeaponState.base`/re-resolve (`state/entities.ts`); the `'affix'` `PickupKind` + `PickupItem.affix` + the `pickup` event's `affix?` and `Affix` import (`state/events.ts`); affix branches in `PickupSystem.ts` (+ `pickups.test.ts`), `DeathDropsSystem.ts`, `content/drops.ts` (+ `drops.test.ts`); exports in `content/index.ts` / `balance/index.ts`.
 - **Render/audio:** the `'affix'` case + `CONFIG.colors.pickupAffix` in `game/Game.ts`; the `'pickup.affix'` cue in `platform/types.ts` + `WebAudio.ts` + `Game.consumeEvents`.
 - **Done when:** no `affix`/`Affix` symbol remains, tests green, replay regenerated, version bumped.
 
-### 0.2 🔴 Intrinsic rarity (03/09/14) — *after 0.1*
+### 0.2 ✅ 🔴 Intrinsic rarity (03/09/14) — *after 0.1* — DONE (additive, no bump)
 Rarity becomes a fixed weapon property, not a roll count.
 - Add `balance/rarity.ts`: `RarityTier = 'common'|'fine'|'epic'|'legend'|'legendary'` (白蓝紫橙金) + `RARITY_TIERS` quality multipliers (a *small* edge — design/14).
 - Add `rarity: RarityTier` to `WeaponSpec`/`WeaponSimSpec` (`content/weapons.ts`, `state/entities.ts`); apply the quality mult at build/convert time.
 - **Done when:** every weapon has a rarity, HUD/compare-card can read the tier colour (🟢 render side).
 
-### 0.3 🔴 Run-buffs = the in-run power layer (14/09) — *after 0.1*
+### 0.3 ✅ 🔴 Run-buffs = the in-run power layer (14/09) — *after 0.1* — DONE (v10→11)
 Replaces affixes as the moment-to-moment power fantasy (design/05).
 - Add `balance/runbuffs.ts`: `RUN_BUFFS` families (`mult_damage`/`mult_firerate`/`flat_hp`/`crit`/…) + `BUFF_CAPS` (Σ-then-clamp, fixed order — deterministic).
 - Player-level buff stack (reuses the slot the deleted `affixes: Affix[]` freed); a `'buff'` pickup kind; apply to player/all weapons.
 - **Done when:** a buff pickup measurably changes stats, summed-and-clamped, replay-stable.
 
-### 0.4 🔴 Two-pool health: shield + regen + shield-break (02/05/07/08/09)
+### 0.4 ✅ 🔴 Two-pool health: shield + regen + shield-break (02/05/07/08/09) — DONE (v11→12)
 Designed as decided, but `Actor` today has only `hp/maxHp`.
 - Add `shield`, `maxShield`, `ticksSinceHit` to `Actor` (`state/entities.ts`).
 - `takeDamage`: shield-first absorb (incl. DoT), resets `ticksSinceHit`, emits `shield_break` on depletion (`HitResolveSystem.ts`, `StatusEffectSystem.ts`).
@@ -43,24 +45,24 @@ Designed as decided, but `Actor` today has only `hp/maxHp`.
 - Add `shield_break` (and `shieldRemaining` on `hit`) to `GameEvent` (`state/events.ts`).
 - **Done when:** shield absorbs before HP, regen gated by recent hits, break fires an event; version bumped.
 
-### 0.5 🔴 Character = SkinDef defensive identity (02/09/13/14) — *after 0.4*
+### 0.5 ✅ 🔴 Character = SkinDef defensive identity (02/09/13/14) — *after 0.4* — DONE (v12→13)
 Turn the single `PLAYER` into the roster model.
 - `SkinDef { id, atlasKey, animRef, maxHp, maxShield, shieldBreak? }` + `ShieldBreakPassive` (`{kind:'aoe'|'knock', …}`) as tagged data (`content/skins.ts`).
 - `PLAYER_BASE` shared constants (radius, speed, `WEAPON_SLOTS=2`, starter pistol id, regen/revive timings); merge SkinDef + base into `PlayerActor` at match start.
 - Interpret `shieldBreak` in combat on the `shield_break` event (spawn AoE / knock impulse); guard against recursive break.
 - **Done when:** ≥1 non-default character selectable with distinct (maxHp,maxShield)+passive; side-grade balance test stub exists.
 
-### 0.6 🔴 Pickup taxonomy → design/09 names — *after 0.3*
+### 0.6 ✅ 🔴 Pickup taxonomy → design/09 names — *after 0.3* — DONE (v13→14)
 Code uses `'health'|'coin'|'affix'|'weapon'`; design says `'heal'|'material'|'buff'|'weapon'`.
 - `'coin'` → `'material'` with `MaterialDef { id, element, tier }` + qty; `'health'` → `'heal'` (flat +1 HP); `'affix'` → `'buff'` (from 0.3); keep `'weapon'`.
 - Update `PickupKind`, `DeathDropsSystem`, `PickupSystem`, drop tables, and the render/audio cue names.
 - **Done when:** drops speak the design vocabulary; materials are a distinct (not-yet-banked) currency.
 
-### 0.7 🟢 Doc reconciliation pass
-Once 0.1–0.6 land, sweep the docs so "shipped" claims match reality.
-- Mark shield/two-pool as actually-shipped (07/08 currently read as if already built).
-- Confirm every `ENGINE_VERSION N` reference across 03/07/08/09/14 points at the post-sync number.
-- Note the affix removal as done (03/09/14 currently say "tracked as a separate task").
+### 0.7 ✅ 🟢 Doc reconciliation pass — DONE
+Swept the docs so "shipped" claims match reality (this pass):
+- Marked shield/two-pool as actually-shipped (07/08).
+- Recorded post-sync `ENGINE_VERSION` (14) and per-feature ship versions across 03/07/08/09/14.
+- Noted the affix removal + rarity/run-buffs/characters/pickup-vocab as done (03/09/14).
 
 ---
 

@@ -291,7 +291,7 @@ MaterialDef = { id: MaterialId; nameKey; element: DamageType; tier }
 
 - **Load once, convert once.** At match start the engine resolves blueprints (human units → ticks/fp/brad) and freezes them into `GameState` (funny `state.unitBlueprints`). Nothing re-reads config mid-match.
 - **Validate at load, not at use.** Bad data (undefined weapon ref, spawn off-piece, a buff targeting a missing field, a recipe naming an unknown material) fails loudly at load / in a content unit test — never mid-tick.
-- **`ENGINE_VERSION` coupling.** A content change that only adds a new id is forward-compatible (ignored by old engines). A change to how existing data is *interpreted* (conversion rule, buff arithmetic, ballistic behavior) can diverge replays → bump `ENGINE_VERSION` (`08`). The affix-system removal (`14`) is exactly such a change — it bumps `ENGINE_VERSION`.
+- **`ENGINE_VERSION` coupling.** A content change that only adds a new id is forward-compatible (ignored by old engines). A change to how existing data is *interpreted* (conversion rule, buff arithmetic, ballistic behavior) can diverge replays → bump `ENGINE_VERSION` (`08`). The affix-system removal (`14`) was exactly such a change — it bumped `ENGINE_VERSION` 9→10 (ROADMAP 0.1). The Phase-0 sync that followed took the engine to **`ENGINE_VERSION` 14**: run-buffs (10→11), two-pool shield (11→12), characters=SkinDef (12→13), pickup vocabulary (13→14); intrinsic rarity was additive (no bump).
 - **i18n boundary.** Engine data carries only string keys; the client owns the translation tables.
 
 ## Relationship to the other docs
@@ -305,14 +305,16 @@ MaterialDef = { id: MaterialId; nameKey; element: DamageType; tier }
 
 ## To design
 
-- **Concrete first-pass numbers** for the demo's two weapons (gun/sword, `03`) and a starter enemy set — the actual values in `content/*.ts`.
-- **Character roster** (`02`/`05`): the actual `SkinDef` `(maxHp, maxShield)` pairs and `shieldBreak` passives, plus the `PLAYER_BASE` shared constants (slot count, starter pistol, regen/revive timings).
-- **Material catalog & forge recipes** — the `MaterialDef` set (5 elements × tiers) and each weapon's `element × qty × min-tier` recipe; the forging/blueprint/monetization model is locked in `14`, this file fixes the `Pickup`/`MaterialDef` shape and holds the recipe content.
-- **Rarity tiers & run-buff catalogue** (`14`): the five `RARITY_TIERS` base-quality numbers, and the `RUN_BUFFS` families/caps that replace affixes as the in-run layer.
+*Phase-0 sync (ROADMAP 0.1–0.6) shipped first-pass versions of several items below; each is annotated with what remains.*
+
+- ✅ **Concrete first-pass numbers** for the demo weapons + a starter/elemental enemy set — shipped in `content/*.ts`.
+- **Character roster** (`02`/`05`): `PLAYER_BASE` + two side-grade `SkinDef`s (vanguard, skirmisher) with `(maxHp, maxShield)` + `shieldBreak` shipped (ROADMAP 0.5). *Remaining:* the full launch roster, free-vs-paid, revive timings. (Regen timings currently live in `config.ts` `SHIELD_REGEN_*`, not `PLAYER_BASE` — a shielded-actor constant shared beyond the player.)
+- **Material catalog & forge recipes** — the `MaterialDef` shape + a base tier-0 catalog (5 elemental kinds, `content/materials.ts`) shipped (ROADMAP 0.6). *Remaining:* tier-by-depth rolling, per-weapon `element × qty × min-tier` recipes, and the forge.
+- **Rarity tiers & run-buff catalogue** (`14`): first-pass `RARITY_TIERS` (0.2) and `RUN_BUFFS` families/caps (0.3) shipped. *Remaining:* the final base-quality numbers and richer buff families (`crit`, offering via chest/room/shop).
 - **`RoomPiece` authoring pipeline**: hand-edit JSON, or a small editor? Format must round-trip with whatever tool authors `solids`/`spawns`/`exits`/`role`.
 - **Difficulty & material curve** (`05`): how enemy count/tier and material quality scale with *floor* depth; extraction-room placement rules; boss-piece rules.
 - **Arena preset set** (`05`): count, archetypes/roles, win condition, pickup table (preset supplies weapon loadout only; character stats come from `skinId`, `14`).
-- **Character balance-test suite** (`14`): the assertions that keep every character (incl. purchased) a side-grade / no all-rounder, since character choice is the one meta axis reaching PvP.
+- **Character balance-test suite** (`14`): a side-grade / no-all-rounder STUB shipped (`skins.test.ts`, no Pareto domination on `(maxHp, maxShield)`, ROADMAP 0.5); the full suite covering every launch + purchased character is 2.3.
 - **Frame content & tuning** (`03`): the `BallisticId` catalog and its config params are now specified (above) with a locked landing order (`03`); what remains is implementing each shape's per-tick rule in `content/ballistics.ts` and tuning the `WeaponSpec` rows per frame × element × rarity.
 
 ## Open questions

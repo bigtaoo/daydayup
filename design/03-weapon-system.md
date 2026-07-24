@@ -125,8 +125,8 @@ Weapons are **not** auto-picked-up (unlike materials/consumables) — swapping y
 
 ## To design
 
-The composition model, frame library, and landing order are now locked (above); what remains is content + tuning:
+The composition model, frame library, and landing order are now locked (above); the affix layer is **removed** (Frame × Element only — ROADMAP 0.1, `ENGINE_VERSION` 9→10) and **intrinsic rarity is shipped** (ROADMAP 0.2 — `RarityTier` white→gold + `RARITY_TIERS` quality mult, applied at weapon convert time; `balance/rarity.ts`). What remains is content + tuning:
 
-- Per-frame numbers and the `WeaponSpec` rows for each frame × element × rarity (values live in `09`'s `content/weapons.ts`).
-- The five rarity base-quality tiers (the "small edge + better handling" numbers) and the ornament/emissive overlay that makes rarity read off the weapon sprite (`14`/`12`).
+- Per-frame numbers and the `WeaponSpec` rows for each frame × element × rarity (values live in `09`'s `content/weapons.ts`). Every weapon already carries a `rarity` (placeholder tiers); the frame library beyond `straight` is Phase 1.1.
+- The five rarity base-quality tiers' *final* numbers (first-pass shipped) and the ornament/emissive overlay that makes rarity read off the weapon sprite (`14`/`12`, render-side).
 - Config format/loading is `09`'s open question (TS for balance vs JSON for tool-authored data).
