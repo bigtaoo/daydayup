@@ -12,7 +12,7 @@
  */
 import { addFp, isqrt } from '../math/fixed';
 import type { Fp } from '../math/fixed';
-import { PLAYER } from '../content/players';
+import { PLAYER_BASE } from '../content/players';
 import type { GameState } from '../state/GameState';
 import type { Actor } from '../state/entities';
 
@@ -77,7 +77,7 @@ export class MovementSystem {
   }
 
   private clampToWorld(state: GameState, a: Actor): void {
-    const m = PLAYER.margin;
+    const m = PLAYER_BASE.margin;
     a.gx = Math.max(m, Math.min(state.worldW - m, a.gx)) as Fp;
     a.gy = Math.max(m, Math.min(state.worldH - m, a.gy)) as Fp;
   }

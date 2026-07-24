@@ -72,8 +72,14 @@ import { BRAD_FULL } from './math/trig';
  * and StatusEffectSystem grows an idle shield-regen sub-pass. A shielded actor now
  * soaks damage differently and its ticksSinceHit advances every tick, so any v11
  * stream where the player (maxShield > 0) takes a hit — or simply idles — diverges.
+ *
+ * v13: characters = SkinDef (design/02/09/14). The player's (maxHp, maxShield) now
+ * come from a chosen SkinDef and it carries a shield-break passive: when its shield
+ * empties, takeDamage fires the passive (default 'vanguard' bursts AoE damage to
+ * nearby enemies). The default character's break now damages enemies where v12 did
+ * nothing, so any v12 stream where the player's shield breaks diverges.
  */
-export const ENGINE_VERSION = 12;
+export const ENGINE_VERSION = 13;
 
 // ── Two-pool health tuning (design/07; final values are 07 "to design") ──────────
 // Whole ticks @30Hz. Shield regen is an idle timer, not a heal: after taking ANY

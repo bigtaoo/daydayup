@@ -18,7 +18,7 @@ import { cosFp, sinFp } from '../math/trig';
 import type { GameState } from '../state/GameState';
 import { Button, type PlayerCommand } from '../state/commands';
 import type { PlayerActor } from '../state/entities';
-import { PLAYER } from '../content/players';
+import { PLAYER_BASE } from '../content/players';
 
 export class ApplyInputSystem {
   tick(state: GameState, commands: readonly PlayerCommand[]): void {
@@ -44,7 +44,7 @@ export class ApplyInputSystem {
     // Move: (dir/1000) × speedPerTick × (mag/255), single truncation → deterministic.
     const cos = cosFp(cmd.moveBrad);
     const sin = sinFp(cmd.moveBrad);
-    const speed = PLAYER.speedPerTick;
+    const speed = PLAYER_BASE.speedPerTick;
     p.vx = Math.trunc((cos * speed * cmd.moveMag) / (FP_SCALE * 255)) as Fp;
     p.vy = Math.trunc((sin * speed * cmd.moveMag) / (FP_SCALE * 255)) as Fp;
 

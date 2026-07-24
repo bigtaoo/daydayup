@@ -12,14 +12,20 @@
  * Death is still decided later (step 9), matching the rest of combat — this only
  * lowers pools. All arithmetic is integer (design/06).
  */
+import { addFp, mulFp } from '../math/fixed';
+import { atan2Brad, cosFp, sinFp } from '../math/trig';
 import type { GameState } from '../state/GameState';
-import type { Actor, Faction } from '../state/entities';
+import type { Actor, Faction, ShieldBreakSim } from '../state/entities';
 import type { DamageType } from '../content/damage';
 
 /**
  * Apply `dmg` (already resisted) to `target`, shield-first. `src` is the attacker
  * faction (drives the hit fx colour); the hit event is emitted at the target's
- * position with the remaining shield attached. Emits `shield_break` on depletion.
+ * position with the remaining shield attached. On depletion emits `shield_break`
+ * and — for a character carrying one — fires its shield-break passive.
+ *
+ * `firePassive` guards against recursive break (design/07): the passive's own AoE
+ * damage calls back in with `false`, so a break can never trigger another passive.
  */
 export function takeDamage(
   state: GameState,
@@ -27,6 +33,7 @@ export function takeDamage(
   dmg: number,
   src: Faction,
   type: DamageType,
+  firePassive = true,
 ): void {
   target.ticksSinceHit = 0;
   const hadShield = target.shield > 0;
@@ -48,5 +55,31 @@ export function takeDamage(
   });
   if (hadShield && target.shield === 0) {
     state.events.push({ type: 'shield_break', id: target.id, gx: target.gx, gy: target.gy });
+    if (firePassive && target.shieldBreak) fireShieldBreak(state, target, target.shieldBreak);
+  }
+}
+
+/**
+ * A character's shield shattered → its bound passive resolves in-sim (design/02/07).
+ * `aoe` bursts integer damage to every opposing-faction actor whose body is within
+ * reach (routed through takeDamage with firePassive=false — the recursion guard);
+ * `knock` adds an outward velocity impulse. Foes are iterated in array order (ties by
+ * push order) so it stays deterministic (design/08). Distances are squared integers.
+ */
+function fireShieldBreak(state: GameState, owner: Actor, passive: ShieldBreakSim): void {
+  const foes: readonly Actor[] = owner.faction === 'player' ? state.enemies : state.players;
+  for (const f of foes) {
+    if (!f.alive) continue;
+    const dx = f.gx - owner.gx;
+    const dy = f.gy - owner.gy;
+    const reach = passive.radius + f.radius;
+    if (dx * dx + dy * dy > reach * reach) continue;
+    if (passive.kind === 'aoe') {
+      takeDamage(state, f, passive.damage, owner.faction, 'physical', false); // guard: no re-trigger
+    } else {
+      const ang = atan2Brad(dy, dx); // outward, from owner to foe
+      f.vx = addFp(f.vx, mulFp(cosFp(ang), passive.impulse));
+      f.vy = addFp(f.vy, mulFp(sinFp(ang), passive.impulse));
+    }
   }
 }

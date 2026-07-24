@@ -7,8 +7,12 @@ import type { GameState } from '@dd/engine/state/GameState';
 import type { EnemyActor, Faction, Projectile } from '@dd/engine/state/entities';
 import { makeWeapon, SABER_SIM } from '@dd/engine/content/weapons';
 import { freshStatus } from '@dd/engine/content/damage';
-import { PLAYER } from '@dd/engine/content/players';
+import { PLAYER_BASE } from '@dd/engine/content/players';
+import { resolveSkin } from '@dd/engine/content/skins';
 import { BASIC_ENEMY } from '@dd/engine/content/enemies';
+
+// The default character's defensive stats (systems tests spawn the default player).
+const DEFAULT_SKIN = resolveSkin();
 import { pxToFp } from '@dd/engine/content/convert';
 import {
   DeathDropsSystem,
@@ -55,7 +59,7 @@ describe('MovementSystem (step 4)', () => {
     const s = state();
     s.players[0]!.vx = toFp(10000); // absurd → must clamp, not escape
     new MovementSystem().tick(s);
-    expect(s.players[0]!.gx).toBe((pxToFp(1600) - PLAYER.margin) as Fp); // worldW - margin
+    expect(s.players[0]!.gx).toBe((pxToFp(1600) - PLAYER_BASE.margin) as Fp); // worldW - margin
   });
 
   it('pushes an actor out of a round solid it overlaps', () => {
@@ -173,8 +177,8 @@ describe('HitResolveSystem (step 7)', () => {
     const p = s.players[0]!;
     addBullet(s, 800, 600, toFp(0), 'enemy'); // on top of the player
     new HitResolveSystem().tick(s);
-    expect(p.hp).toBe(PLAYER.maxHp); // hp untouched while shield remains
-    expect(p.shield).toBe(PLAYER.maxShield - 1); // shield soaked the hit
+    expect(p.hp).toBe(DEFAULT_SKIN.maxHp); // hp untouched while shield remains
+    expect(p.shield).toBe(DEFAULT_SKIN.maxShield - 1); // shield soaked the hit
     expect(p.ticksSinceHit).toBe(0); // taking damage reset the regen timer
   });
 
@@ -185,7 +189,7 @@ describe('HitResolveSystem (step 7)', () => {
     addBullet(s, 800, 600, toFp(0), 'enemy'); // dmg 1 → empties the shield exactly
     new HitResolveSystem().tick(s);
     expect(p.shield).toBe(0);
-    expect(p.hp).toBe(PLAYER.maxHp); // exactly absorbed, no overflow
+    expect(p.hp).toBe(DEFAULT_SKIN.maxHp); // exactly absorbed, no overflow
     expect(s.events.some((e) => e.type === 'shield_break' && e.id === p.id)).toBe(true);
   });
 

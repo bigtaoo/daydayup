@@ -2,6 +2,7 @@ import { Application, Container, Graphics, Text } from 'pixi.js';
 import {
   createGameEngine,
   WEAPON_SIM_BY_ID,
+  DEFAULT_SKIN_ID,
   type GameEngine,
   type GameEvent,
   type GameState,
@@ -76,12 +77,19 @@ export class Game {
   private runCount = 0;
   private score = 0;
   private prevFire = false; // rising-edge confirm on menus
+  // Chosen character (design/14). Selection UI is 2.3; for the demo it is config-
+  // driven — a `?skin=` URL param picks one, else the default. Passed to the engine.
+  private skinId: string = DEFAULT_SKIN_ID;
 
   constructor(app: Application, input: InputSource, audio: AudioBus) {
     this.app = app;
     this.input = input;
     this.audio = audio;
     this.builder = new CommandBuilder(input);
+    if (typeof location !== 'undefined') {
+      const q = new URLSearchParams(location.search).get('skin');
+      if (q) this.skinId = q; // unknown ids fall back to the default in-engine (resolveSkin)
+    }
     app.stage.eventMode = 'static'; // let the overlay receive pointer taps (web)
     app.stage.addChild(this.layers.root);
   }
@@ -169,6 +177,7 @@ export class Game {
       worldW: WORLD_W,
       worldH: WORLD_H,
       waves: WAVES,
+      skinId: this.skinId,
       obstacles: PILLARS.map(([x, y]) => [x, y, PILLAR_RADIUS] as const),
     });
     this.runCount++;
@@ -442,7 +451,7 @@ export class Game {
     const wave = Math.max(1, s.waveIndex + 1);
     const buffs = p && p.buffs.length ? `   Buffs ${p.buffs.length}` : '';
     this.hud.text =
-      `HP ${bar}${shieldRow}${buffs}\n` +
+      `${this.skinId}   HP ${bar}${shieldRow}${buffs}\n` +
       `Wave ${wave}/${WAVES.length}   Enemies ${s.enemies.length}   Score ${this.score}\n` +
       `Weapon ${wname}\n` +
       `[1]/[2] swap weapon   LMB = attack (melee swing also parries bullets)   WASD = move`;

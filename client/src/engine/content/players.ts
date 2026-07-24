@@ -13,22 +13,27 @@ import type { WeaponSimSpec } from '../state/entities';
 import { pxToFp } from './convert';
 import { BLASTER_SIM, SABER_SIM } from './weapons';
 
-export interface PlayerBlueprint {
-  maxHp: number;
-  maxShield: number; // two-pool health (design/02/07); a character's SkinDef sets this in 0.5
+/**
+ * PLAYER_BASE — the stats SHARED by every character (design/09). The per-character
+ * defensive identity (maxHp, maxShield, shield-break passive) lives on the SkinDef
+ * (content/skins.ts); at match start GameState merges a chosen SkinDef into these
+ * base constants to build the PlayerActor. Two-pool regen timings are cross-cutting
+ * engine constants (config.ts SHIELD_REGEN_*), shared by any shielded actor.
+ */
+export interface PlayerBase {
   radius: Fp;
   footprintRadius: Fp; // feet circle for solid push-out (< radius); see Actor.footprintRadius
   speedPerTick: Fp; // fp displacement per tick at full move magnitude
   margin: Fp; // clamp inset from the world edge
+  weaponSlots: number; // carried-weapon slots (design/09 WEAPON_SLOTS)
   startWeapons: WeaponSimSpec[]; // loadout; index 0 active at spawn, SWAP toggles
 }
 
-export const PLAYER: PlayerBlueprint = {
-  maxHp: 6,
-  maxShield: 4, // demo shield pool so two-pool health is live now; 0.5 moves this to SkinDef
+export const PLAYER_BASE: PlayerBase = {
   radius: pxToFp(16), // 0.5 grid (demo 16px)
   footprintRadius: pxToFp(7), // small feet circle so the body can overlap a pillar
   speedPerTick: pxToFp(6.4), // 3.2 px/frame × 2 = 6.4 px/tick ≈ 6 grid/s
   margin: pxToFp(20),
+  weaponSlots: 2,
   startWeapons: [BLASTER_SIM, SABER_SIM], // gun + saber; a Stage-F build swaps this
 };

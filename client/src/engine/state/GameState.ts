@@ -10,7 +10,8 @@ import { toFp } from '../math/fixed';
 import type { Fp } from '../math/fixed';
 import { pxToFp } from '../content/convert';
 import { freshStatus } from '../content/damage';
-import { PLAYER } from '../content/players';
+import { PLAYER_BASE } from '../content/players';
+import { resolveSkin, toShieldBreakSim, type SkinId } from '../content/skins';
 import { buildRunSpecs } from '../balance/build';
 import type {
   EnemyActor,
@@ -38,6 +39,7 @@ export interface EngineConfig {
   worldW: number; // px (converted to grid-fp at construction via pxToFp)
   worldH: number; // px
   waves: readonly WaveDef[];
+  skinId?: SkinId; // chosen character (design/14); unknown/absent → default (resolveSkin)
   playerStart?: readonly [number, number]; // px; defaults to world centre
   // Static round solids (pillars), in world px [x, y, radius]. Converted to
   // grid-fp at construction; MovementSystem pushes actors out of them (design/07).
@@ -103,9 +105,12 @@ export class GameState {
     }
 
     const [sx, sy] = config.playerStart ?? [config.worldW / 2, config.worldH / 2];
+    // Merge the chosen character (SkinDef defensive identity) with PLAYER_BASE shared
+    // constants (design/09/14). Unknown/absent skin → the default (forward-compat).
+    const skin = resolveSkin(config.skinId);
     // Resolve the loadout through the run builder (design/09 fairness wall): the
     // base meta loadout carried in at match start.
-    const weapons = buildRunSpecs(PLAYER.startWeapons);
+    const weapons = buildRunSpecs(PLAYER_BASE.startWeapons);
     this.players.push({
       id: this.nextId(),
       faction: 'player',
@@ -115,13 +120,13 @@ export class GameState {
       vx: toFp(0),
       vy: toFp(0),
       facing: 0 as PlayerActor['facing'],
-      hp: PLAYER.maxHp,
-      maxHp: PLAYER.maxHp,
-      shield: PLAYER.maxShield, // spawn with a full shield (design/07)
-      maxShield: PLAYER.maxShield,
+      hp: skin.maxHp,
+      maxHp: skin.maxHp,
+      shield: skin.maxShield, // spawn with a full shield (design/07)
+      maxShield: skin.maxShield,
       ticksSinceHit: 0,
-      radius: PLAYER.radius,
-      footprintRadius: PLAYER.footprintRadius,
+      radius: PLAYER_BASE.radius,
+      footprintRadius: PLAYER_BASE.footprintRadius,
       alive: true,
       weapon: weapons[0] ?? null, // active pointer = weapons[activeSlot]
       weapons,
@@ -130,6 +135,7 @@ export class GameState {
       firing: false,
       prevButtons: 0,
       status: freshStatus(),
+      shieldBreak: skin.shieldBreak ? toShieldBreakSim(skin.shieldBreak) : undefined,
     });
   }
 

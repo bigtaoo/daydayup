@@ -50,6 +50,14 @@ export interface MeleeSimSpec {
 
 export type WeaponSimSpec = RangedSimSpec | MeleeSimSpec;
 
+// ── Shield-break passive (sim-facing, converted; design/02/07/14) ─────────────
+// A character's `shield_break` reaction, fired by combat when its shield empties.
+// Tagged data: 'aoe' bursts damage to foes in radius; 'knock' shoves them out. The
+// authored (human-unit) form lives in content/skins.ts; this is the fp shape.
+export type ShieldBreakSim =
+  | { kind: 'aoe'; radius: Fp; damage: number }
+  | { kind: 'knock'; radius: Fp; impulse: Fp }; // impulse = fp displacement per tick
+
 /** Per-actor weapon runtime. cooldown counted in whole ticks (design/08). */
 export interface WeaponState {
   spec: WeaponSimSpec; // the sim spec systems read
@@ -94,6 +102,10 @@ export interface Actor {
   // Per-type damage multiplier (per-mille; missing type = 1000 = normal). Lets an
   // enemy be weak/resistant to an element (design/07). Players carry none.
   resist?: ResistMap;
+  // Shield-break reaction (design/02/14): fired by takeDamage when a non-empty shield
+  // empties. Set from the character's SkinDef (players); enemies carry none. Kept on
+  // the base Actor so the shared takeDamage can read it without narrowing.
+  shieldBreak?: ShieldBreakSim;
 }
 
 export interface PlayerActor extends Actor {
