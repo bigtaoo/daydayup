@@ -18,12 +18,15 @@
  *     design/08's movement-vs-hit-resolution split)
  *   - beam: does not move at all (bulletSpeed 0); only its own beamTicksLeft
  *     counts down here — HitResolveSystem (step 7) owns its damage-over-window
+ *   - orbit: circles its owner at a fixed radius (position set absolutely from the
+ *     owner's live centre; bulletSpeed 0, so the integrate is a no-op) until it hits
+ *     something (consumed like any bullet), its lifespan ends, or the owner is gone
  *   - straight: unchanged (`ballistic` undefined for pre-1.1 bullets is the same path)
  */
 import { addFp, negFp } from '../math/fixed';
 import { SIM } from '../sim.config';
 import { circleOverlapsAabb, circlesOverlap } from './geom';
-import { turnToward } from '../content/ballistics';
+import { orbitStep, turnToward } from '../content/ballistics';
 import type { GameState } from '../state/GameState';
 import type { Actor, Faction } from '../state/entities';
 
@@ -56,6 +59,22 @@ export class ProjectileStepSystem {
           b.vx = negFp(b.vx);
           b.vy = negFp(b.vy);
         }
+      } else if (
+        b.ballistic === 'orbit' &&
+        b.orbitAngleBrad !== undefined &&
+        b.orbitAngularVelBrad !== undefined &&
+        b.orbitRadius !== undefined
+      ) {
+        // Orbit tracks its (moving) owner: no owner ⇒ nothing to circle, so it dies.
+        const owner = actorById(state, b.ownerId);
+        if (!owner || !owner.alive) {
+          b.alive = false;
+          continue;
+        }
+        const { angle, x, y } = orbitStep(owner.gx, owner.gy, b.orbitAngleBrad, b.orbitAngularVelBrad, b.orbitRadius);
+        b.orbitAngleBrad = angle;
+        b.gx = x; // set absolutely from the owner; vx/vy are 0 so the integrate below is a no-op
+        b.gy = y;
       }
 
       b.gx = addFp(b.gx, b.vx);
@@ -95,6 +114,15 @@ export class ProjectileStepSystem {
       }
     }
   }
+}
+
+/** Find an actor by id across both factions — the orbit owner lookup. Undefined id (any
+ * non-orbit bullet) returns null without scanning. */
+function actorById(state: GameState, id: number | undefined): Actor | null {
+  if (id === undefined) return null;
+  for (const p of state.players) if (p.id === id) return p;
+  for (const e of state.enemies) if (e.id === id) return e;
+  return null;
 }
 
 /** Nearest alive actor of the faction opposite `faction` — the homing target pool. */

@@ -23,7 +23,10 @@ import {
   LASERCUTTER_SIM,
   TOMAHAWK_SIM,
   BLASTER_SIM,
+  NOVABURST_SIM,
+  GYRE_SIM,
 } from '@dd/engine/content/weapons';
+import { addFp } from '@dd/engine/math/fixed';
 import { HitResolveSystem, ProjectileStepSystem, WeaponFireSystem } from '@dd/engine/systems';
 import { createGameEngine } from '@dd/engine/GameEngine';
 import { Button } from '@dd/engine/state/commands';
@@ -100,6 +103,100 @@ describe('Emission — spread (WeaponFireSystem)', () => {
       return s.projectiles.map((b) => [b.vx, b.vy]);
     };
     expect(fire()).toEqual(fire());
+  });
+});
+
+describe('Emission — radial (WeaponFireSystem)', () => {
+  it('fires `bullets` pellets in an even ring, deterministically, drawing NO combat PRNG', () => {
+    const s = state();
+    const p = s.players[0]!;
+    p.weapon = makeWeapon(NOVABURST_SIM);
+    p.firing = true;
+    p.facing = 0 as Brad;
+    const prngBefore = s.combatPrng.peek(); // radial must not advance the combat stream
+    new WeaponFireSystem().tick(s);
+    expect(s.projectiles).toHaveLength(NOVABURST_SIM.bullets);
+    expect(s.combatPrng.peek()).toBe(prngBefore); // no jitter draw at all (unlike spread)
+    // Pellet 0 flies straight along facing; the rest fan around the full circle, so the
+    // set of directions spans well past a single cone — a genuine ring, not a spread.
+    const dirs = s.projectiles.map((b) => Math.atan2(b.vy as number, b.vx as number));
+    expect(Math.max(...dirs) - Math.min(...dirs)).toBeGreaterThan(Math.PI); // > 180° of coverage
+  });
+
+  it('the ring is identical run-to-run (no PRNG → pure function of facing)', () => {
+    const fire = () => {
+      const s = state();
+      const p = s.players[0]!;
+      p.weapon = makeWeapon(NOVABURST_SIM);
+      p.firing = true;
+      p.facing = 4000 as Brad;
+      new WeaponFireSystem().tick(s);
+      return s.projectiles.map((b) => [b.vx, b.vy]);
+    };
+    expect(fire()).toEqual(fire());
+  });
+});
+
+describe('Ballistic — orbit', () => {
+  it('circles the owner at a fixed radius, advancing its angle each tick', () => {
+    const s = state();
+    const owner = s.players[0]!;
+    const r = GYRE_SIM.orbitRadius!;
+    const b = addBullet(s, 0, 0, {
+      vx: toFp(0), vy: toFp(0), lifeTicks: 999,
+      ballistic: 'orbit', ownerId: owner.id, orbitRadius: r,
+      orbitAngleBrad: 0 as Brad, orbitAngularVelBrad: GYRE_SIM.orbitAngularVelBrad,
+    });
+    new ProjectileStepSystem().tick(s);
+    // Sits on the orbit circle around the owner (± fp-trig table rounding).
+    const dx = (b.gx - owner.gx) as number;
+    const dy = (b.gy - owner.gy) as number;
+    const dist = Math.round(Math.sqrt(dx * dx + dy * dy));
+    expect(Math.abs(dist - (r as number))).toBeLessThan(20);
+    expect(b.orbitAngleBrad).not.toBe(0); // the angle advanced
+    expect(b.alive).toBe(true);
+  });
+
+  it('tracks a MOVING owner — re-centres on the owner every tick', () => {
+    const s = state();
+    const owner = s.players[0]!;
+    const b = addBullet(s, 0, 0, {
+      vx: toFp(0), vy: toFp(0), lifeTicks: 999,
+      ballistic: 'orbit', ownerId: owner.id, orbitRadius: GYRE_SIM.orbitRadius!,
+      orbitAngleBrad: 0 as Brad, orbitAngularVelBrad: GYRE_SIM.orbitAngularVelBrad,
+    });
+    new ProjectileStepSystem().tick(s);
+    const off1x = (b.gx - owner.gx) as number;
+    owner.gx = addFp(owner.gx, toFp(200)); // the wielder walks +x
+    new ProjectileStepSystem().tick(s);
+    const off2x = (b.gx - owner.gx) as number;
+    // The bullet stays close to the owner after the move (offset is the orbit radius,
+    // NOT the 200-unit displacement it would show if it flew straight).
+    expect(Math.abs(off2x)).toBeLessThanOrEqual((GYRE_SIM.orbitRadius as number) + 20);
+    expect(off1x).not.toBe(undefined);
+  });
+
+  it('dies when its owner is gone (nothing left to circle)', () => {
+    const s = state();
+    const b = addBullet(s, 0, 0, {
+      vx: toFp(0), vy: toFp(0), lifeTicks: 999,
+      ballistic: 'orbit', ownerId: 99999, orbitRadius: GYRE_SIM.orbitRadius!,
+      orbitAngleBrad: 0 as Brad, orbitAngularVelBrad: GYRE_SIM.orbitAngularVelBrad,
+    });
+    new ProjectileStepSystem().tick(s);
+    expect(b.alive).toBe(false);
+  });
+
+  it('fired via the weapon, a gyre bullet is tagged orbit and owned by the shooter', () => {
+    const s = state();
+    const p = s.players[0]!;
+    p.weapon = makeWeapon(GYRE_SIM);
+    p.firing = true;
+    new WeaponFireSystem().tick(s);
+    const b = s.projectiles[0]!;
+    expect(b.ballistic).toBe('orbit');
+    expect(b.ownerId).toBe(p.id);
+    expect(b.orbitRadius).toBe(GYRE_SIM.orbitRadius);
   });
 });
 
@@ -237,6 +334,8 @@ describe('Integration — each new frame survives the full engine step() pipelin
     ['mortar', MORTAR_SIM],
     ['lasercutter', LASERCUTTER_SIM],
     ['tomahawk', TOMAHAWK_SIM],
+    ['novaburst', NOVABURST_SIM],
+    ['gyre', GYRE_SIM],
   ] as const)('%s equips, fires, and damages an enemy over several ticks without throwing', (_name, sim) => {
     const eng = createGameEngine({ seed: 1, worldW: 1600, worldH: 1200, playerStart: [400, 400], waves: [] });
     const p = eng.state.players[0]!;

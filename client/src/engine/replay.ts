@@ -129,6 +129,9 @@ export function serializeState(s: GameState): unknown {
       // extra per-tick state (turn progress, landing flag, beam duration) that can
       // diverge without necessarily moving gx/gy/vx/vy the very same tick.
       b.ballistic ?? '', b.ticksAlive ?? 0, b.landed ?? false, b.beamTicksLeft ?? 0,
+      // orbit: the live angle + owner catch a circular-motion divergence before it moves
+      // gx/gy (stable 0/-1 for every non-orbit bullet, so byte-identical there).
+      b.orbitAngleBrad ?? 0, b.ownerId ?? -1,
     ]),
     pickups: s.pickups.map((k) => [
       k.id, k.kind, k.gx, k.gy, k.spawnTick, k.alive,

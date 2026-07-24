@@ -26,7 +26,7 @@ import type { DamageType } from './damage';
 import { toTicks, toFpGrid, toFpPerTick } from './convert';
 import { TICK_RATE } from '../math/fixed';
 import { applyQuality, type RarityTier } from '../balance/rarity';
-import type { BallisticId } from './ballistics';
+import type { BallisticId, EmissionPattern } from './ballistics';
 
 // ── World scale (the anchor for every conversion) ────────────────────────────
 //   1 grid unit = 32 px.  Demo playerRadius 16px = 0.5 grid (diameter 1 grid),
@@ -51,6 +51,7 @@ export interface RangedSpec extends WeaponBase {
   kind: 'ranged';
   bullets: number; // pellets per shot
   spreadDeg: number; // total cone; per-pellet jitter drawn from combatPrng (07). 0 = pinpoint
+  pattern?: EmissionPattern; // emission layout (03); omitted = 'spread' (the jittered cone)
   bulletSpeed: number; // grid/s
   damage: number; // integer; flat-armor subtract at hit (07)
   damageType?: DamageType; // element → on-hit status (07); omitted = 'physical'
@@ -68,6 +69,8 @@ export interface RangedSpec extends WeaponBase {
   beamSec?: number; // beam: total damage-window length
   beamTickIntervalSec?: number; // beam: time between damage applications
   beamRangeGrid?: number; // beam: max reach along the frozen facing
+  orbitRadiusGrid?: number; // orbit: circling distance from the owner
+  orbitPeriodSec?: number; // orbit: seconds for one full revolution (→ angular velocity)
 }
 
 export interface MeleeSpec extends WeaponBase {
@@ -513,6 +516,54 @@ export const WEAPON_SPECS: Record<string, WeaponSpec> = {
     deflect: true,
     deflectSpeed: 14.4,
   },
+
+  // Novaburst (radial emission): fires a full even ring of pellets in every direction at
+  // once — orthogonal to ballistic, deterministic (no spread PRNG). A panic-button /
+  // surrounded weapon: no aim needed, but slow and thin in any single direction.
+  novaburst: {
+    id: 'novaburst',
+    kind: 'ranged',
+    nameKey: 'weapon.novaburst.name',
+    skinRef: 'gun_default',
+    rarity: 'epic', // 紫
+
+    cooldownSec: 0.8, // slow — the omnidirectional volley is the payoff
+    bullets: 10, // a ring of ten
+    spreadDeg: 0, // unused by radial (the ring is even, not jittered)
+    pattern: 'radial',
+    bulletSpeed: 9,
+    damage: 1,
+    ballistic: 'straight', // each pellet then flies straight outward
+    lifespanSec: 1.2,
+    bulletRadius: 0.14,
+    muzzleGrid: 0.5,
+    bulletZ: 0.5,
+  },
+
+  // Gyre (orbit ballistic): spins a blade around the wielder at a fixed radius — a
+  // moving melee wall that guards you while you shoot. Each blade is consumed on the
+  // first thing it touches (or when its lifespan ends), so it's contact damage on a
+  // timer, not a permanent shield (per-target hit cooldowns are the design/03 k_* tier).
+  gyre: {
+    id: 'gyre',
+    kind: 'ranged',
+    nameKey: 'weapon.gyre.name',
+    skinRef: 'gun_default',
+    rarity: 'legend', // 橙
+
+    cooldownSec: 0.5, // spawns a fresh blade this often — several can circle at once
+    bullets: 1,
+    spreadDeg: 0,
+    bulletSpeed: 0, // orbit doesn't travel; position is driven from the owner
+    damage: 2,
+    ballistic: 'orbit',
+    orbitRadiusGrid: 1.6, // circling distance — just outside the body
+    orbitPeriodSec: 1.0, // one revolution per second
+    lifespanSec: 2.0, // each blade circles for ~2 revolutions before dissipating
+    bulletRadius: 0.22,
+    muzzleGrid: 1.6, // spawn on the orbit circle (repositioned on the first step anyway)
+    bulletZ: 0.5,
+  },
 };
 
 // ── Conversion: authored WeaponSpec → sim-facing WeaponSimSpec (once) ──────────
@@ -533,6 +584,7 @@ export function toSimSpec(spec: WeaponSpec): WeaponSimSpec {
       fireRateTicks: toTicks(spec.cooldownSec),
       bullets: spec.bullets,
       spreadHalf: degToBrad(spec.spreadDeg / 2),
+      pattern: spec.pattern ?? 'spread',
       bulletSpeed: toFpPerTick(spec.bulletSpeed),
       bulletLifeTicks: toTicks(spec.lifespanSec),
       bulletRadius: toFpGrid(spec.bulletRadius),
@@ -547,6 +599,10 @@ export function toSimSpec(spec: WeaponSpec): WeaponSimSpec {
       beamTicks: spec.beamSec !== undefined ? toTicks(spec.beamSec) : undefined,
       beamTickInterval: spec.beamTickIntervalSec !== undefined ? toTicks(spec.beamTickIntervalSec) : undefined,
       beamRange: spec.beamRangeGrid !== undefined ? toFpGrid(spec.beamRangeGrid) : undefined,
+      orbitRadius: spec.orbitRadiusGrid !== undefined ? toFpGrid(spec.orbitRadiusGrid) : undefined,
+      // A full revolution is 65536 brad over (periodSec · 30) ticks → brad/tick.
+      orbitAngularVelBrad:
+        spec.orbitPeriodSec !== undefined ? Math.round(65536 / (spec.orbitPeriodSec * TICK_RATE)) : undefined,
     };
     return sim;
   }
@@ -585,6 +641,8 @@ export const LASERCUTTER_SIM = toSimSpec(WEAPON_SPECS.lasercutter!) as RangedSim
 export const TOMAHAWK_SIM = toSimSpec(WEAPON_SPECS.tomahawk!) as RangedSimSpec;
 export const HAMMER_SIM = toSimSpec(WEAPON_SPECS.hammer!) as MeleeSimSpec;
 export const SPEAR_SIM = toSimSpec(WEAPON_SPECS.spear!) as MeleeSimSpec;
+export const NOVABURST_SIM = toSimSpec(WEAPON_SPECS.novaburst!) as RangedSimSpec;
+export const GYRE_SIM = toSimSpec(WEAPON_SPECS.gyre!) as RangedSimSpec;
 
 /**
  * Sim-spec lookup by weapon id — the resolution a weapon drop uses (content/drops.ts
@@ -610,6 +668,8 @@ export const WEAPON_SIM_BY_ID: Record<string, WeaponSimSpec> = {
   tomahawk: TOMAHAWK_SIM,
   hammer: HAMMER_SIM,
   spear: SPEAR_SIM,
+  novaburst: NOVABURST_SIM,
+  gyre: GYRE_SIM,
 };
 
 /** Fresh weapon runtime for a spec (design/08: cooldown in whole ticks). */

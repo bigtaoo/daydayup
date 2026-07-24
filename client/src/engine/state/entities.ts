@@ -13,7 +13,7 @@ import type { Brad } from '../math/trig';
 import type { DamageType, ResistMap, StatusState } from '../content/damage';
 import type { RarityTier } from '../balance/rarity';
 import type { RunBuffId } from '../balance/runbuffs';
-import type { BallisticId } from '../content/ballistics';
+import type { BallisticId, EmissionPattern } from '../content/ballistics';
 
 export type Faction = 'player' | 'enemy';
 
@@ -29,8 +29,11 @@ export interface RangedSimSpec {
   fireRateTicks: number; // cooldown between shots, whole ticks
   // Emission (design/03 "orthogonal to ballistic") — pellets per trigger + the cone
   // half-angle each pellet jitters within (0 = pinpoint, single bullet, no PRNG draw).
+  // `pattern` picks the LAYOUT: 'spread' = the jittered cone (default, baseline weapons);
+  // 'radial' = an even PRNG-free ring (WeaponFireSystem). See content/ballistics.ts.
   bullets: number;
   spreadHalf: Brad;
+  pattern: EmissionPattern;
   bulletSpeed: Fp; // fp displacement per tick
   bulletLifeTicks: number;
   bulletRadius: Fp;
@@ -49,6 +52,8 @@ export interface RangedSimSpec {
   beamTicks?: number; // beam: total damage-window length, whole ticks
   beamTickInterval?: number; // beam: ticks between damage applications
   beamRange?: Fp; // beam: max reach along the frozen facing (does not use bulletSpeed)
+  orbitRadius?: Fp; // orbit: circling distance from the owner's centre
+  orbitAngularVelBrad?: number; // orbit: brad the angle advances per tick (revolution speed)
 }
 
 export interface MeleeSimSpec {
@@ -184,6 +189,12 @@ export interface Projectile {
   beamTickInterval?: number; // beam: ticks between damage applications
   beamDir?: Brad; // beam: frozen facing at fire time (beam does not move or track the shooter)
   beamRange?: Fp; // beam: max reach along beamDir
+  // orbit: unlike every ballistic above, this one TRACKS its owner — position is set from
+  // the owner's live centre each tick, so the bullet needs to find that actor by id.
+  ownerId?: number; // orbit: the actor this bullet circles (dies if the owner is gone)
+  orbitRadius?: Fp; // orbit: circling distance from the owner
+  orbitAngleBrad?: Brad; // orbit: current angle around the owner (advances each tick)
+  orbitAngularVelBrad?: number; // orbit: brad the angle advances per tick
 }
 
 /**

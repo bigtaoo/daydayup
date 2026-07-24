@@ -130,8 +130,17 @@ import { BRAD_FULL } from './math/trig';
  * observable outcome for an old config. `rollDrop` gained an optional `tier` param
  * (default 0, identical to the old call) so `DeathDropsSystem` can pass
  * `state.floorIndex` as the material's depth signal.)
+ *
+ * (v15→16 — orbit ballistic + radial emission, ROADMAP 1.1 tier-4 follow-up: the last
+ * two frame-library shapes. `BallisticId` gained 'orbit' (a projectile that circles its
+ * owner — new Projectile `ownerId`/`orbitRadius`/`orbitAngleBrad`/`orbitAngularVelBrad`
+ * fields + an orbit branch in ProjectileStepSystem); `RangedSimSpec` gained a required
+ * `pattern` ('spread' | 'radial') driving WeaponFireSystem's emission layout — 'spread'
+ * is the byte-identical default every prior weapon converts to. Why this bumps: two
+ * showcase weapons (novaburst/gyre) join WEAPON_DROP_POOL, shifting the dropPrng
+ * weapon-id roll — same precedent as the 1.1 frame weapons.)
  */
-export const ENGINE_VERSION = 15;
+export const ENGINE_VERSION = 16;
 
 // ── Two-pool health tuning (design/07; final values are 07 "to design") ──────────
 // Whole ticks @30Hz. Shield regen is an idle timer, not a heal: after taking ANY

@@ -63,6 +63,9 @@ export const WEAPON_DROP_POOL: readonly string[] = [
   'tomahawk',
   'hammer',
   'spear',
+  // Orbit + radial-emission frames (design/03 tier 4, the last frame-library additions).
+  'novaburst',
+  'gyre',
 ];
 
 /** Buff ids a drop can roll (must exist in RUN_BUFFS). Fixed order = deterministic. */

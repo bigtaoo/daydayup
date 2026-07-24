@@ -19,6 +19,7 @@
  */
 import { addFp, mulFp } from '../math/fixed';
 import { cosFp, sinFp, normBrad, type Brad } from '../math/trig';
+import { radialDir } from '../content/ballistics';
 import {
   buffedCooldown,
   buffedDamage,
@@ -57,12 +58,17 @@ export class WeaponFireSystem {
   private fireRanged(state: GameState, a: Actor, spec: RangedSimSpec, buffs: BuffSums): void {
     const pellets = Math.max(1, spec.bullets);
     for (let i = 0; i < pellets; i++) {
-      // Single-pellet pinpoint shot: no jitter, no PRNG draw (byte-identical to the
-      // pre-1.1 baseline). A spread weapon jitters each pellet within ±spreadHalf.
+      // Radial emission (design/03): an even ring around facing, DETERMINISTIC — no PRNG
+      // draw at all. Orthogonal to the ballistic each pellet then flies with.
+      // Spread emission (the default / baseline): a single-pellet pinpoint shot draws
+      // nothing (byte-identical to the pre-1.1 baseline); a >1-pellet spread weapon
+      // jitters each pellet within ±spreadHalf from combatPrng.
       const dir: Brad =
-        pellets > 1 && spec.spreadHalf > 0
-          ? normBrad(a.facing + (state.combatPrng.nextInt(spec.spreadHalf * 2 + 1) - spec.spreadHalf))
-          : a.facing;
+        spec.pattern === 'radial' && pellets > 1
+          ? radialDir(a.facing, i, pellets)
+          : pellets > 1 && spec.spreadHalf > 0
+            ? normBrad(a.facing + (state.combatPrng.nextInt(spec.spreadHalf * 2 + 1) - spec.spreadHalf))
+            : a.facing;
       this.spawnBullet(state, a, spec, dir, buffs);
     }
   }
@@ -97,6 +103,13 @@ export class WeaponFireSystem {
       beamTickInterval: spec.beamTickInterval,
       beamDir: spec.ballistic === 'beam' ? dir : undefined,
       beamRange: spec.beamRange,
+      // orbit: pin to the owner and start the angle at the fire direction. bulletSpeed is
+      // authored 0 (orbit doesn't travel), so vx/vy above are already 0 — the standard
+      // integrate is a no-op and ProjectileStepSystem drives the circular motion instead.
+      ownerId: spec.ballistic === 'orbit' ? a.id : undefined,
+      orbitRadius: spec.orbitRadius,
+      orbitAngleBrad: spec.ballistic === 'orbit' ? dir : undefined,
+      orbitAngularVelBrad: spec.orbitAngularVelBrad,
     });
     state.events.push({ type: 'bullet_fired', faction: a.faction, gx, gy, facing: dir });
   }

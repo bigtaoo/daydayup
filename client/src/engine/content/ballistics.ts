@@ -11,14 +11,53 @@
  *
  * Any change to a formula here alters flight/hit outcomes → bumps ENGINE_VERSION.
  */
-import { mulFp, type Fp } from '../math/fixed';
-import { atan2Brad, bradDiff, cosFp, sinFp, type Brad } from '../math/trig';
+import { addFp, mulFp, type Fp } from '../math/fixed';
+import { atan2Brad, bradDiff, cosFp, sinFp, normBrad, type Brad } from '../math/trig';
 
-export type BallisticId = 'straight' | 'homing' | 'lob' | 'beam' | 'boomerang';
-// 'orbit' + radial `pattern` remain the ROADMAP 1.1 follow-up (design/03 landing
-// order tier 4) — deferred, not yet implemented.
+export type BallisticId = 'straight' | 'homing' | 'lob' | 'beam' | 'boomerang' | 'orbit';
 
-export const BALLISTIC_IDS: readonly BallisticId[] = ['straight', 'homing', 'lob', 'beam', 'boomerang'];
+export const BALLISTIC_IDS: readonly BallisticId[] = ['straight', 'homing', 'lob', 'beam', 'boomerang', 'orbit'];
+
+/**
+ * Emission pattern (design/03 "orthogonal to ballistic", the radial follow-up to 1.1's
+ * spread). How a multi-pellet trigger LAYS OUT its pellets — independent of each pellet's
+ * ballistic motion afterward:
+ *   - 'spread' — the original cone: pellets jitter within ±spreadHalf of facing, each a
+ *     combatPrng draw (a single-pellet weapon is pinpoint and draws nothing).
+ *   - 'radial' — a full even ring: pellets are placed at equal 65536/bullets brad steps
+ *     around facing, DETERMINISTIC (no PRNG draw). The "nova" burst — fire in all
+ *     directions at once. spreadHalf is unused.
+ */
+export type EmissionPattern = 'spread' | 'radial';
+
+/** Radial emission (design/03): the i-th of `count` pellets, placed at an equal brad step
+ * around `facing`. Integer brad only, deterministic (no PRNG) — pellet 0 fires straight
+ * ahead, the rest fan evenly around the full circle. */
+export function radialDir(facing: Brad, i: number, count: number): Brad {
+  return normBrad(facing + Math.floor((65536 * i) / count));
+}
+
+/**
+ * Orbit (design/03/09 Frame axis): a projectile pinned to its owner, circling at a fixed
+ * `radius` while its angle advances `angularVelBrad` per tick — a spinning blade/shield
+ * rather than a travelling shot. Position is set ABSOLUTELY from the (moving) owner each
+ * tick, so it tracks the owner; the standard `pos += vel` integrate is a no-op for it.
+ * Pure: callers pass the owner's current centre and the bullet's prior angle.
+ */
+export function orbitStep(
+  ownerX: Fp,
+  ownerY: Fp,
+  angleBrad: Brad,
+  angularVelBrad: number,
+  radius: Fp,
+): { angle: Brad; x: Fp; y: Fp } {
+  const angle = normBrad(angleBrad + angularVelBrad);
+  return {
+    angle,
+    x: addFp(ownerX, mulFp(cosFp(angle), radius)),
+    y: addFp(ownerY, mulFp(sinFp(angle), radius)),
+  };
+}
 
 /**
  * Homing (design/03/09): rotate the current velocity toward `targetX,targetY` by
