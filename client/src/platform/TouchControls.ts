@@ -115,6 +115,9 @@ export class TouchControls {
       moveY: move.dy,
       aim: { mode: 'dir', dx: adx, dy: ady },
       firing,
+      // No on-screen INTERACT button yet — a touch extraction control is a follow-up
+      // (design/05). Touch players reach a checkpoint but can't resolve it for now.
+      interacting: false,
     };
   }
 }

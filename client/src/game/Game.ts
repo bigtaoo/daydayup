@@ -3,10 +3,11 @@ import {
   createGameEngine,
   WEAPON_SIM_BY_ID,
   DEFAULT_SKIN_ID,
+  EMBER_DUNGEON,
+  EMBER_ROOMS,
   type GameEngine,
   type GameEvent,
   type GameState,
-  type WaveDef,
 } from '@dd/engine';
 import { CONFIG, ELEMENT_COLORS, rarityColor } from './config';
 import { Layers } from './layers';
@@ -17,37 +18,13 @@ import { CommandBuilder } from './CommandBuilder';
 import { fpToPx } from './coords';
 import type { AudioBus, AudioCue, InputCanvas, InputSource } from '../platform/types';
 
-// World size (px) — the arena for camera bounds and scene layout. Passed to the
-// engine as px; the engine converts to grid-fp at its boundary (pxToFp).
-const WORLD_W = 1600;
-const WORLD_H = 1200;
-
-// Scripted run: three escalating waves, in world px. The engine's SpawnSystem owns
-// wave pacing now; this is just the position data handed to EngineConfig. A spawn
-// entry is [x, y] (basic mob) or [x, y, type] where type keys ENEMY_BLUEPRINTS —
-// the elemental variants each resist one element and are weak to a counter, so the
-// player is rewarded for swapping to the right damage type (design/07).
-const WAVES: WaveDef[] = [
-  // Wave 1: a gentle intro — mostly basic, one fire-resistant emberling to notice.
-  [[300, 300], [1300, 300], [800, 200, 'emberling']],
-  // Wave 2: elemental pairs — bring ice for the emberling, fire for the frostling.
-  [[250, 950, 'emberling'], [1350, 950, 'frostling'], [1300, 350, 'galvanist'], [300, 650]],
-  // Wave 3: an armoured ironclad (shrug bullets/fire — shock it) among a mixed pack.
-  [[200, 300, 'frostling'], [1400, 300, 'galvanist'], [200, 900], [1400, 900, 'emberling'], [800, 150, 'ironclad']],
-  // Wave 4: the Blightlord finale — a durable boss weak to poison. Bring venom, stack
-  // it, and watch the DoT + poison aura melt it (design/03/07). Two galvanists harass.
-  [[800, 250, 'blightlord'], [300, 900, 'galvanist'], [1300, 900, 'galvanist']],
-];
-
-// Pillar layout (world px). Single source of truth for both the render mesh
-// (buildPillars) and the engine's collision solids (EngineConfig.obstacles).
-// Radius is the pillar's *base* footprint — smaller than the drawn body so the
-// player (feet footprint) can stand against it and its body covers the lower
-// column (Y-sort depth). Also the bullet-stop radius.
-const PILLAR_RADIUS = 14;
-const PILLARS: ReadonlyArray<readonly [number, number]> = [
-  [400, 400], [700, 550], [1000, 380], [1150, 720], [520, 780], [880, 900],
-];
+// The demo runs the Ember biome as a seeded dungeon (design/05/09, ROADMAP 1.3): each
+// floor is generated from EMBER_ROOMS and traversed room by room. The engine owns the
+// geometry now — the render layer reads state.walls / state.obstacles / worldW/H per
+// room and rebuilds on the `room_enter` event (buildRoom), so there are no fixed WORLD
+// dimensions, wave list, or pillar layout here any more. worldW/H below are placeholder
+// bounds the engine ignores in dungeon mode (each room resizes the world as it loads).
+const PLACEHOLDER_WORLD = 800;
 
 const SEED_BASE = 0xda1d; // per-run seed = base + run index (deterministic, no Date)
 const SIM_DT_MS = 1000 / 30; // fixed sim step: the engine runs at 30 Hz (design/06)
@@ -95,8 +72,8 @@ export class Game {
   }
 
   start() {
-    this.buildGround();
-    this.buildPillars();
+    // Ground / walls / pillars are per-room now (buildRoom, driven by the `room_enter`
+    // event), so nothing static is built here — only the fixed HUD overlay.
     this.buildHud();
 
     this.layers.ui.addChild(this.screens.view);
@@ -115,32 +92,62 @@ export class Game {
 
   // ---- Scene construction (static) ----
 
-  private buildGround() {
+  // Rebuild the ground, AABB walls, and pillars for the CURRENTLY LOADED room. Driven
+  // by the engine's `room_enter` event (and the first room at run start): dungeon
+  // geometry lives in the engine now (state.walls / state.obstacles / worldW/H), and
+  // this is the render mirror of it (design/08 "render only reads"). Grid/walls draw
+  // flat on the ground layer; pillars are Y-sortable entities in the entities layer.
+  private buildRoom(s: GameState) {
+    const w = fpToPx(s.worldW);
+    const h = fpToPx(s.worldH);
+
+    for (const c of [...this.layers.ground.children]) c.destroy();
+
     const g = new Graphics();
-    g.rect(0, 0, WORLD_W, WORLD_H).fill({ color: CONFIG.colors.ground });
+    g.rect(0, 0, w, h).fill({ color: CONFIG.colors.ground });
     const step = 64;
-    for (let x = 0; x <= WORLD_W; x += step) g.moveTo(x, 0).lineTo(x, WORLD_H);
-    for (let y = 0; y <= WORLD_H; y += step) g.moveTo(0, y).lineTo(WORLD_W, y);
+    for (let x = 0; x <= w; x += step) g.moveTo(x, 0).lineTo(x, h);
+    for (let y = 0; y <= h; y += step) g.moveTo(0, y).lineTo(w, y);
     g.stroke({ color: CONFIG.colors.gridLine, width: 1 });
+
+    // AABB walls (ROADMAP 1.2 — finally drawn): filled tiles with an outline so the
+    // solid collision geometry reads at a glance.
+    for (const wall of s.walls) {
+      const wx = fpToPx(wall.x);
+      const wy = fpToPx(wall.y);
+      const ww = fpToPx(wall.w);
+      const wh = fpToPx(wall.h);
+      g.rect(wx, wy, ww, wh).fill({ color: CONFIG.colors.wall }).stroke({ color: CONFIG.colors.wallEdge, width: 2 });
+    }
     this.layers.ground.addChild(g);
+
+    this.buildPillars(s);
   }
 
-  private buildPillars() {
-    // Tall objects that validate Y-sort occlusion AND collide — the engine gets
-    // the same PILLARS list as round solids (EngineConfig.obstacles below). Placed
-    // once, never interpolated.
-    for (const [gx, gy] of PILLARS) {
-      const p = new Entity();
+  // Round pillars for the current room, from the engine's obstacle solids. Tall
+  // Y-sortable objects (occlusion + collision). Rebuilt per room; the drawn body is a
+  // little wider than the collision footprint so the player can stand against it.
+  private buildPillars(s: GameState) {
+    for (const p of this.pillars) {
+      p.shadow?.destroy();
+      p.destroy();
+    }
+    this.pillars.length = 0;
+
+    for (const o of s.obstacles) {
+      const rad = fpToPx(o.radius);
+      const bodyW = rad * 2 + 16; // visual body a touch wider than the footprint
       const height = 70;
+      const p = new Entity();
       const body = new Graphics();
-      body.roundRect(-22, -height, 44, height + 10, 6).fill({ color: CONFIG.colors.pillar });
-      body.ellipse(0, -height, 24, 12).fill({ color: CONFIG.colors.pillarTop });
+      body.roundRect(-bodyW / 2, -height, bodyW, height + 10, 6).fill({ color: CONFIG.colors.pillar });
+      body.ellipse(0, -height, bodyW / 2 + 2, 12).fill({ color: CONFIG.colors.pillarTop });
       p.addChild(body);
-      p.makeShadow(26);
+      p.makeShadow(rad + 12);
       this.layers.entities.addChild(p);
       this.layers.shadow.addChild(p.shadow!);
       this.pillars.push(p);
-      p.place(gx!, gy!);
+      p.place(fpToPx(o.gx), fpToPx(o.gy));
     }
   }
 
@@ -169,45 +176,60 @@ export class Game {
   private beginRun() {
     this.scene.clear();
     for (const child of [...this.layers.fx.children]) child.destroy();
+    for (const child of [...this.layers.ground.children]) child.destroy();
+    for (const p of this.pillars) { p.shadow?.destroy(); p.destroy(); }
+    this.pillars.length = 0;
     this.score = 0;
     this.acc = 0;
 
     this.engine = createGameEngine({
       seed: SEED_BASE + this.runCount,
-      worldW: WORLD_W,
-      worldH: WORLD_H,
-      waves: WAVES,
+      worldW: PLACEHOLDER_WORLD, // ignored in dungeon mode; each room sets its own bounds
+      worldH: PLACEHOLDER_WORLD,
+      waves: [],
       skinId: this.skinId,
-      obstacles: PILLARS.map(([x, y]) => [x, y, PILLAR_RADIUS] as const),
+      dungeon: { config: EMBER_DUNGEON, library: EMBER_ROOMS },
     });
     this.runCount++;
 
-    // Prime the view + camera before the first sim step (player exists at tick 0).
-    this.scene.reconcile(this.engine.state);
-
+    // No view priming here: the first room loads on sim tick 1 (SpawnSystem), which
+    // teleports the player onto its spawn point and emits `room_enter`. The player's
+    // view is first created — and snapped — during that tick's reconcile, at the real
+    // spawn, and buildRoom draws the room then. Priming now would spawn the view at the
+    // placeholder centre and make it visibly slide to the room spawn.
     this.phase = 'playing';
     this.hud.visible = true;
     this.screens.hide();
   }
 
   private win() {
+    const s = this.engine?.state;
+    const floor = s ? s.floorIndex + 1 : 0;
+    const mats = s ? this.totalBanked(s) : 0;
     this.phase = 'victory';
     this.hud.visible = false;
     this.score += CONFIG.score.victory;
     const { w, h } = this.screenSize();
-    this.screens.show(w, h, 'VICTORY',
-      `All ${WAVES.length} waves cleared.   Score ${this.score}`,
-      'Press Fire to play again');
+    this.screens.show(w, h, 'EXTRACTED',
+      `Escaped floor ${floor}/${EMBER_DUNGEON.floorCount}.   Materials ${mats}   Score ${this.score}`,
+      'Press Fire to run again');
   }
 
   private lose() {
-    const wave = this.engine ? this.engine.state.waveIndex + 1 : 0;
+    const floor = this.engine ? this.engine.state.floorIndex + 1 : 0;
     this.phase = 'defeat';
     this.hud.visible = false;
     const { w, h } = this.screenSize();
     this.screens.show(w, h, 'DEFEAT',
-      `You reached wave ${wave} / ${WAVES.length}.   Score ${this.score}`,
+      `You fell on floor ${floor}/${EMBER_DUNGEON.floorCount}.   The floor's materials were lost.   Score ${this.score}`,
       'Press Fire to try again');
+  }
+
+  /** Total materials safely banked so far this run (design/05 carry-out bag). */
+  private totalBanked(s: GameState): number {
+    let n = 0;
+    for (const v of Object.values(s.bankedMaterials)) n += v ?? 0;
+    return n;
   }
 
   private confirm() {
@@ -350,6 +372,19 @@ export class Game {
           this.score += CONFIG.score.waveClear;
           cues.add('wave-clear');
           break;
+        case 'room_enter':
+          // A new dungeon room went live (ROADMAP 1.3) — mirror its geometry: ground,
+          // AABB walls, pillars, and the resized world bounds (design/08 render-only).
+          if (this.engine) this.buildRoom(this.engine.state);
+          break;
+        case 'descend': {
+          // Banked the floor's materials and dropped deeper — a green pulse at the player.
+          const p = this.engine?.state.players[0];
+          if (p) this.flash(fpToPx(p.gx), fpToPx(p.gy), CONFIG.colors.extractGlow, 30);
+          this.score += CONFIG.score.waveClear;
+          cues.add('wave-clear');
+          break;
+        }
         case 'win':
           cues.add('win');
           break;
@@ -419,10 +454,14 @@ export class Game {
     if (!pv) return;
     const vw = this.app.renderer.width / this.app.renderer.resolution;
     const vh = this.app.renderer.height / this.app.renderer.resolution;
-    let cx = vw / 2 - pv.interpGroundX(alpha);
-    let cy = vh / 2 - pv.interpGroundY(alpha);
-    cx = clamp(cx, vw - WORLD_W, 0);
-    cy = clamp(cy, vh - WORLD_H, 0);
+    // World bounds are per-room now (dungeon mode), read live from the engine.
+    const s = this.engine?.state;
+    const worldW = s ? fpToPx(s.worldW) : vw;
+    const worldH = s ? fpToPx(s.worldH) : vh;
+    // Follow the player, but pin the camera inside the room. A room smaller than the
+    // viewport is centred (the follow-clamp would otherwise fight itself, lo > hi).
+    const cx = worldW <= vw ? (vw - worldW) / 2 : clamp(vw / 2 - pv.interpGroundX(alpha), vw - worldW, 0);
+    const cy = worldH <= vh ? (vh - worldH) / 2 : clamp(vh / 2 - pv.interpGroundY(alpha), vh - worldH, 0);
     this.layers.world.x = cx;
     this.layers.world.y = cy;
   }
@@ -448,13 +487,28 @@ export class Game {
     const sh = p ? Math.max(0, p.shield) : 0;
     const maxSh = p ? p.maxShield : 0;
     const shieldRow = maxSh > 0 ? `   SH ${'◆'.repeat(sh)}${'◇'.repeat(Math.max(0, maxSh - sh))}` : '';
-    const wave = Math.max(1, s.waveIndex + 1);
     const buffs = p && p.buffs.length ? `   Buffs ${p.buffs.length}` : '';
+
+    // Dungeon progress (ROADMAP 1.3): floor / room within floor, plus the banked bag.
+    const floor = s.floorIndex + 1;
+    const room = Math.max(1, s.roomIndex + 1);
+    const rooms = s.floorLayout.length;
+    const banked = this.totalBanked(s);
+
+    // Extraction prompt: only at a non-last-floor checkpoint (the last floor auto-
+    // extracts). A room with no enemies left and all waves exhausted IS the checkpoint.
+    const atCheckpoint = s.wavesExhausted && s.enemies.length === 0 && s.phase !== 'gameover';
+    const isLastFloor = floor >= EMBER_DUNGEON.floorCount;
+    const prompt = atCheckpoint && !isLastFloor
+      ? '\n▶ CHECKPOINT — hold [E] to EXTRACT (bank & leave) · tap [E] to DESCEND'
+      : '';
+
     this.hud.text =
       `${this.skinId}   HP ${bar}${shieldRow}${buffs}\n` +
-      `Wave ${wave}/${WAVES.length}   Enemies ${s.enemies.length}   Score ${this.score}\n` +
+      `Floor ${floor}/${EMBER_DUNGEON.floorCount}   Room ${room}/${rooms}   Enemies ${s.enemies.length}   Banked ${banked}   Score ${this.score}\n` +
       `Weapon ${wname}\n` +
-      `[1]/[2] swap weapon   LMB = attack (melee swing also parries bullets)   WASD = move`;
+      `[1]/[2] swap · LMB attack · WASD move · [E] interact` +
+      prompt;
   }
 
   // Rising-edge fire → confirm (start/restart) on non-playing screens.

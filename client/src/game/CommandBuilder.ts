@@ -51,6 +51,7 @@ export class CommandBuilder {
 
     let buttons = 0;
     if (inp.firing) buttons |= Button.FIRE;
+    if (inp.interacting) buttons |= Button.INTERACT; // extraction hold/tap (ROADMAP 1.4)
     if (this.swapLatch) {
       buttons |= Button.SWAP_WEAPON;
       this.swapLatch = false;

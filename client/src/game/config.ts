@@ -28,6 +28,9 @@ export const CONFIG = {
     enemy: 0xf56565,
     pillar: 0x3b4252,
     pillarTop: 0x4c566a,
+    wall: 0x2a3140, // AABB solid tiles (design/07/09 ROADMAP 1.2) — flat room walls
+    wallEdge: 0x4c566a, // wall outline, matches the pillar top for a consistent read
+    extractGlow: 0x68d391, // extraction checkpoint prompt tint (design/05)
     shadow: 0x000000,
     bulletEnemy: 0xf6ad55,
     bulletPlayer: 0x63b3ed,

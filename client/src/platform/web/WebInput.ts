@@ -77,6 +77,8 @@ export class WebInput implements InputSource {
       moveY: my / len,
       aim: { mode: 'point', x: this.mouseX, y: this.mouseY },
       firing: this.leftDown,
+      // E or Space held = INTERACT (extraction checkpoint hold/tap, ROADMAP 1.4).
+      interacting: k.has('KeyE') || k.has('Space'),
     };
   }
 }

@@ -18,6 +18,10 @@ export interface InputState {
   moveY: number;
   aim: Aim;
   firing: boolean; // fires ranged / swings melee — a melee swing is also the parry (no block key)
+  // Held at a dungeon extraction checkpoint (design/05, ROADMAP 1.4): a sustained hold
+  // EXTRACTs (bank + leave), a tap DESCENDs (bank + go deeper). Engine reads it as
+  // Button.INTERACT via CommandBuilder. Ignored away from a checkpoint.
+  interacting: boolean;
 }
 
 // Minimal structural view of the canvas the input source attaches to.
