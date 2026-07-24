@@ -5,12 +5,14 @@
  * an unlocked blueprint by spending banked materials, staging it into the next run's
  * loadout (≤ WEAPON_SLOTS; each crafted weapon lasts exactly one run, design/05).
  *
- * Crafting currency is the five elemental materials (content/materials.ts) keyed
- * `mat_<element>` in the bank. `minTier` in a recipe is authored but NOT yet enforced —
- * the bank aggregates qty per element and does not preserve the rolled tier, so tier-
- * gating waits on the bank tracking per-(element,tier) (a follow-up; see blueprints.ts).
+ * Crafting currency is the five elemental materials (content/materials.ts), banked per
+ * (element, ROLLED tier) via `bankKey` — so a recipe's `minTier` is ENFORCED: a cost of
+ * `fire ×3 minTier 2` is only satisfied by fire materials rolled at tier ≥ 2 (deeper
+ * floors, ROADMAP 1.5). A cost with no `minTier` accepts any tier (≥ 0). Spending draws
+ * from the LOWEST qualifying tier first (deterministic), so a player's scarce high-tier
+ * materials are preserved for the recipes that actually require them.
  */
-import { BLUEPRINT_CATALOG, PLAYER_BASE, type WeaponBlueprint } from '@dd/engine';
+import { BLUEPRINT_CATALOG, PLAYER_BASE, parseBankKey, type MaterialCost, type WeaponBlueprint } from '@dd/engine';
 import type { MetaState } from './MetaState';
 
 /** Fold a finished run's carry-out bag (GameState.bankedMaterials) into the account bank.
@@ -33,9 +35,31 @@ export function unlockBlueprint(m: MetaState, weaponId: string): MetaState {
   return { ...m, unlockedBlueprints: [...m.unlockedBlueprints, weaponId] };
 }
 
-/** Does the bank hold enough of every material a recipe demands? */
+/** Bank keys that satisfy a cost's (element, minTier), lowest tier first — the draw order
+ * craft() spends in. Iterating this keeps the transaction deterministic. */
+function qualifyingKeys(m: MetaState, c: MaterialCost): { key: string; tier: number; qty: number }[] {
+  const id = `mat_${c.element}`;
+  const min = c.minTier ?? 0;
+  return Object.entries(m.materialBank)
+    .map(([key, qty]) => ({ key, ...parseBankKey(key), qty: qty ?? 0 }))
+    .filter((e) => e.materialId === id && e.tier >= min && e.qty > 0)
+    .sort((a, b) => a.tier - b.tier);
+}
+
+/** How much of a cost's element the bank holds at ≥ its minTier. */
+function availableFor(m: MetaState, c: MaterialCost): number {
+  return qualifyingKeys(m, c).reduce((sum, e) => sum + e.qty, 0);
+}
+
+/** Does the bank hold enough of every material a recipe demands, at the required tier? */
 export function canAfford(m: MetaState, bp: WeaponBlueprint): boolean {
-  return bp.cost.every((c) => (m.materialBank[`mat_${c.element}`] ?? 0) >= c.qty);
+  return bp.cost.every((c) => availableFor(m, c) >= c.qty);
+}
+
+/** Total banked qty of an element across all tiers ≥ minTier (default 0 = every tier) —
+ * for the forge/HUD material board, which shows one number per element. */
+export function bankTotal(m: MetaState, element: string, minTier = 0): number {
+  return availableFor(m, { element: element as MaterialCost['element'], qty: 0, minTier });
 }
 
 export type CraftFailure = 'unknown' | 'locked' | 'loadout-full' | 'unaffordable';
@@ -50,8 +74,20 @@ export function craft(m: MetaState, weaponId: string): CraftResult {
   if (m.loadout.length >= PLAYER_BASE.weaponSlots) return { ok: false, reason: 'loadout-full' };
   if (!canAfford(m, bp)) return { ok: false, reason: 'unaffordable' };
 
+  // Spend each cost from its qualifying tiers, lowest first (deterministic); an emptied
+  // key is dropped so the bank doesn't accumulate zero entries.
   const materialBank = { ...m.materialBank };
-  for (const c of bp.cost) materialBank[`mat_${c.element}`] = (materialBank[`mat_${c.element}`] ?? 0) - c.qty;
+  for (const c of bp.cost) {
+    let owed = c.qty;
+    for (const e of qualifyingKeys({ ...m, materialBank }, c)) {
+      if (owed <= 0) break;
+      const spend = Math.min(owed, e.qty);
+      const left = e.qty - spend;
+      if (left > 0) materialBank[e.key] = left;
+      else delete materialBank[e.key];
+      owed -= spend;
+    }
+  }
   return { ok: true, meta: { ...m, materialBank, loadout: [...m.loadout, weaponId] } };
 }
 

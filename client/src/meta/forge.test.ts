@@ -5,11 +5,11 @@
  * beyond that one config field, so these can drive the real createGameEngine.
  */
 import { describe, it, expect } from 'vitest';
-import { createGameEngine, WEAPON_SIM_BY_ID, PLAYER_BASE } from '@dd/engine';
+import { createGameEngine, WEAPON_SIM_BY_ID, PLAYER_BASE, bankKey, parseBankKey } from '@dd/engine';
 import {
   defaultMetaState, bankMaterials, unlockBlueprint, isUnlocked, canAfford, craft,
   clearLoadout, selectCharacter, grantCharacter, acquireBlueprint, purchasableBlueprints,
-  MemoryMetaStore, createWebMetaStore, migrate,
+  bankTotal, MemoryMetaStore, createWebMetaStore, migrate,
 } from './index';
 import { BLUEPRINT_CATALOG } from '@dd/engine';
 
@@ -81,6 +81,52 @@ describe('craft', () => {
       // A third craft has nowhere to go, even with materials.
       const withMore = bankMaterials(b.meta, { mat_physical: 5 });
       expect(craft(withMore, 'repeater')).toEqual({ ok: false, reason: 'loadout-full' });
+    }
+  });
+});
+
+describe('tier-gated recipes (design/14 minTier)', () => {
+  it('bankKey / parseBankKey: tier 0 is the flat key, tier ≥ 1 carries a #tag', () => {
+    expect(bankKey('mat_fire', 0)).toBe('mat_fire'); // byte-identical to the pre-tier key
+    expect(bankKey('mat_fire', 2)).toBe('mat_fire#2');
+    expect(parseBankKey('mat_fire')).toEqual({ materialId: 'mat_fire', tier: 0 });
+    expect(parseBankKey('mat_fire#2')).toEqual({ materialId: 'mat_fire', tier: 2 });
+  });
+
+  it('bankTotal sums an element across every tier', () => {
+    let m = defaultMetaState();
+    m = bankMaterials(m, { [bankKey('mat_fire', 0)]: 2, [bankKey('mat_fire', 3)]: 4, mat_ice: 1 });
+    expect(bankTotal(m, 'fire')).toBe(6); // 2 (t0) + 4 (t3)
+    expect(bankTotal(m, 'fire', 1)).toBe(4); // only tier ≥ 1
+    expect(bankTotal(m, 'ice')).toBe(1);
+  });
+
+  it('a minTier cost rejects below-threshold materials but accepts qualifying ones', () => {
+    // emberblade: fire×2 minTier 1 + physical×2. It is an event blueprint → unlock first.
+    let m = unlockBlueprint(defaultMetaState(), 'emberblade');
+    m = bankMaterials(m, { mat_fire: 5, mat_physical: 5 }); // all tier 0 — fire is too low
+    expect(canAfford(m, BLUEPRINT_CATALOG.emberblade!)).toBe(false);
+    expect(craft(m, 'emberblade')).toEqual({ ok: false, reason: 'unaffordable' });
+
+    m = bankMaterials(m, { [bankKey('mat_fire', 1)]: 2 }); // refined fire from a deeper floor
+    expect(canAfford(m, BLUEPRINT_CATALOG.emberblade!)).toBe(true);
+    const res = craft(m, 'emberblade');
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.meta.materialBank['mat_fire#1']).toBeUndefined(); // the 2 tier-1 fire spent
+      expect(res.meta.materialBank.mat_fire).toBe(5); // the tier-0 fire is untouched (below gate)
+      expect(res.meta.materialBank.mat_physical).toBe(3); // 5 - 2
+    }
+  });
+
+  it('spends the LOWEST qualifying tier first, preserving scarce high-tier materials', () => {
+    let m = defaultMetaState(); // repeater: physical×3, no minTier → any tier qualifies
+    m = bankMaterials(m, { mat_physical: 2, [bankKey('mat_physical', 2)]: 5 });
+    const res = craft(m, 'repeater');
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect(res.meta.materialBank.mat_physical).toBeUndefined(); // tier 0 drained first (2)
+      expect(res.meta.materialBank['mat_physical#2']).toBe(4); // then 1 from tier 2 → 5-1
     }
   });
 });

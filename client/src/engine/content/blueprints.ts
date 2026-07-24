@@ -9,9 +9,10 @@
  *
  * Crafting currency is the five elemental materials (content/materials.ts) — the run's
  * only carry-out (design/05/14), the sole crafting currency (no soft currency). A recipe
- * names element × qty. `minTier` is authored per design/14 but NOT yet enforced: the
- * material bank aggregates qty per element and does not yet preserve the rolled tier, so
- * tier-gating is a follow-up (needs the bank to track per-(element,tier)).
+ * names element × qty, optionally at a minimum rolled tier. `minTier` IS enforced now: the
+ * material bank keys by (element, tier) via `bankKey`, and the meta forge's canAfford/craft
+ * only count materials rolled at ≥ the recipe's minTier (deeper floors roll higher tiers,
+ * ROADMAP 1.5) — so a premium recipe genuinely demands materials from deeper runs.
  */
 import type { DamageType } from './damage';
 import { DAMAGE_TYPES } from './damage';
@@ -46,7 +47,9 @@ export const BLUEPRINT_CATALOG: Record<string, WeaponBlueprint> = {
   teslagun: { weaponId: 'teslagun', nameKey: 'blueprint.teslagun', source: 'purchase', cost: [{ element: 'lightning', qty: 3 }] },
   venomspit: { weaponId: 'venomspit', nameKey: 'blueprint.venomspit', source: 'purchase', cost: [{ element: 'poison', qty: 3 }] },
   cannon: { weaponId: 'cannon', nameKey: 'blueprint.cannon', source: 'purchase', cost: [{ element: 'physical', qty: 5 }] },
-  emberblade: { weaponId: 'emberblade', nameKey: 'blueprint.emberblade', source: 'event', cost: [{ element: 'fire', qty: 2 }, { element: 'physical', qty: 2 }] },
+  // Premium recipes gate on rolled tier (design/14): the emberblade demands REFINED fire
+  // (tier ≥ 1, from deeper floors) plus raw physical — a reason to descend past floor 0.
+  emberblade: { weaponId: 'emberblade', nameKey: 'blueprint.emberblade', source: 'event', cost: [{ element: 'fire', qty: 2, minTier: 1 }, { element: 'physical', qty: 2 }] },
 };
 
 /** Blueprints unlocked from the start (the 'drop' commons, design/14 "2–3 common
@@ -65,6 +68,8 @@ export function validateBlueprints(catalog: Record<string, WeaponBlueprint> = BL
     for (const c of bp.cost) {
       if (!DAMAGE_TYPES.includes(c.element)) throw new Error(`Blueprint '${id}': unknown material element '${c.element}'`);
       if (c.qty <= 0) throw new Error(`Blueprint '${id}': non-positive cost qty for '${c.element}'`);
+      if (c.minTier !== undefined && (c.minTier < 0 || !Number.isInteger(c.minTier)))
+        throw new Error(`Blueprint '${id}': minTier must be a non-negative integer for '${c.element}'`);
     }
   }
 }

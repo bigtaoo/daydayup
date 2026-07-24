@@ -31,3 +31,27 @@ export const MATERIAL_DEFS: Record<string, MaterialDef> = Object.fromEntries(
 
 /** Material ids a drop can roll, fixed order = deterministic (design/06). */
 export const MATERIAL_DROP_POOL: readonly MaterialId[] = DAMAGE_TYPES.map((e) => `mat_${e}`);
+
+/**
+ * Bank/buffer key for a material of a given ROLLED tier (design/14). The run's material
+ * buffers (GameState.floorMaterials / bankedMaterials) and the meta account bank key by
+ * this, so a recipe's `minTier` can be enforced — the qty of a `mat_<element>` is no
+ * longer a single number but is split by the tier it was rolled at (deeper floors roll
+ * higher, ROADMAP 1.5).
+ *
+ * Tier 0 is written WITHOUT a suffix, so it is byte-identical to the pre-tier flat key
+ * `mat_<element>`. Only tier ≥ 1 carries the `#<tier>` tag. This is what keeps the change
+ * ADDITIVE: every run that only rolls tier-0 materials (floorIndex 0 — i.e. every config
+ * before deep floors existed) produces exactly the old keys, so no replay byte moves and
+ * ENGINE_VERSION does not bump (same precedent as the 1.5 material `tier` param itself).
+ */
+export function bankKey(materialId: MaterialId, tier: number): string {
+  return tier > 0 ? `${materialId}#${tier}` : materialId;
+}
+
+/** Inverse of bankKey. A key with no `#` (a legacy / tier-0 key) parses as tier 0. */
+export function parseBankKey(key: string): { materialId: MaterialId; tier: number } {
+  const hash = key.indexOf('#');
+  if (hash < 0) return { materialId: key, tier: 0 };
+  return { materialId: key.slice(0, hash), tier: Number(key.slice(hash + 1)) || 0 };
+}

@@ -4,7 +4,7 @@ import {
   type WeaponBlueprint, type DamageType,
 } from '@dd/engine';
 import type { MetaState } from '../meta';
-import { canAfford, isUnlocked, purchasableBlueprints } from '../meta';
+import { bankTotal, canAfford, isUnlocked, purchasableBlueprints } from '../meta';
 
 /**
  * The forge outpost (design/14, ROADMAP 2.2/2.3) — the between-run hub where the player
@@ -34,15 +34,17 @@ export class Forge {
   }
 
   private costText(cost: readonly WeaponBlueprint['cost'][number][]): string {
-    return cost.map((c) => `${short(c.element)}×${c.qty}`).join(' ');
+    // Show the tier gate when a cost demands it (design/14): FIR×2≥t2 = two fire mats of
+    // tier ≥ 2. Un-gated costs (minTier 0/absent) read as before.
+    return cost.map((c) => `${short(c.element)}×${c.qty}${c.minTier ? `≥t${c.minTier}` : ''}`).join(' ');
   }
 
   render(m: MetaState, w: number, h: number) {
     this.bg.clear();
     this.bg.rect(0, 0, w, h).fill({ color: 0x0b0e14, alpha: 0.82 });
 
-    // Material bank — the five elemental kinds (design/14).
-    const bank = DAMAGE_TYPES.map((e) => `${short(e)} ${m.materialBank[`mat_${e}`] ?? 0}`).join('   ');
+    // Material bank — the five elemental kinds (design/14), summed across every rolled tier.
+    const bank = DAMAGE_TYPES.map((e) => `${short(e)} ${bankTotal(m, e)}`).join('   ');
 
     // Character line.
     const skin = SKIN_DEFS[m.selectedSkin];

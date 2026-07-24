@@ -12,9 +12,10 @@
 import { STARTER_BLUEPRINTS, DEFAULT_SKIN_ID, SKIN_DEFS } from '@dd/engine';
 
 export interface MetaState {
-  /** Banked materials, materialId (`mat_<element>`) → total qty. The run's carry-out bag
-   * (GameState.bankedMaterials) is folded in here on a successful extraction. The sole
-   * crafting currency (design/14). Tier is not yet tracked (see meta/forge). */
+  /** Banked materials, keyed by (element, rolled tier) via `bankKey` → total qty (tier 0
+   * keeps the flat `mat_<element>` key). The run's carry-out bag (GameState.bankedMaterials)
+   * is folded in here on a successful extraction. The sole crafting currency (design/14);
+   * a recipe's minTier is enforced against these tiered keys (see meta/forge). */
   materialBank: Record<string, number>;
   /** Permanently unlocked weapon blueprints (weaponIds into BLUEPRINT_CATALOG). Account-
    * level, never lost — distinct from a crafted instance, which is one run (design/14). */

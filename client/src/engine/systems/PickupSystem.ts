@@ -16,6 +16,7 @@
  */
 import { SIM } from '../sim.config';
 import { HEAL_PICKUP_AMOUNT } from '../content/drops';
+import { bankKey } from '../content/materials';
 import { WEAPON_SIM_BY_ID, makeWeapon } from '../content/weapons';
 import { RUN_BUFFS, sumBuffs } from '../balance/runbuffs';
 import type { GameState } from '../state/GameState';
@@ -55,7 +56,10 @@ export class PickupSystem {
         break;
       case 'material':
         if (item.materialId) {
-          state.floorMaterials[item.materialId] = (state.floorMaterials[item.materialId] ?? 0) + (item.qty ?? 0);
+          // Key by (material, rolled tier) so a recipe's minTier can gate it later
+          // (design/14). Tier 0 keeps the flat key — byte-identical to pre-tier drops.
+          const key = bankKey(item.materialId, item.tier ?? 0);
+          state.floorMaterials[key] = (state.floorMaterials[key] ?? 0) + (item.qty ?? 0);
         }
         break;
       case 'weapon':

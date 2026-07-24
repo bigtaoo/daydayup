@@ -41,4 +41,13 @@ describe('BLUEPRINT_CATALOG', () => {
       validateBlueprints({ bad: { weaponId: 'repeater', nameKey: 'x', source: 'drop', cost: [{ element: 'plasma' as never, qty: 1 }] } }),
     ).toThrow(/element/);
   });
+
+  it('fails loud on a negative / non-integer minTier (design/14 gate)', () => {
+    expect(() =>
+      validateBlueprints({ bad: { weaponId: 'repeater', nameKey: 'x', source: 'drop', cost: [{ element: 'fire', qty: 1, minTier: -1 }] } }),
+    ).toThrow(/minTier/);
+    expect(() =>
+      validateBlueprints({ bad: { weaponId: 'repeater', nameKey: 'x', source: 'drop', cost: [{ element: 'fire', qty: 1, minTier: 1.5 }] } }),
+    ).toThrow(/minTier/);
+  });
 });
