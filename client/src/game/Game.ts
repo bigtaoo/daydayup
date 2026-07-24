@@ -1,12 +1,13 @@
 import { Application, Container, Graphics, Text } from 'pixi.js';
 import {
   createGameEngine,
+  WEAPON_SIM_BY_ID,
   type GameEngine,
   type GameEvent,
   type GameState,
   type WaveDef,
 } from '@dd/engine';
-import { CONFIG, ELEMENT_COLORS } from './config';
+import { CONFIG, ELEMENT_COLORS, rarityColor } from './config';
 import { Layers } from './layers';
 import { Entity } from './Entity';
 import { Scene } from './Scene';
@@ -312,10 +313,15 @@ export class Game {
               this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupHealth, 20);
               cues.add('pickup.health');
               break;
-            case 'weapon':
-              this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupWeapon, 24);
+            case 'weapon': {
+              // Flash in the dropped weapon's rarity colour (design/14) — the tier
+              // reads at a glance. Falls back to the generic amber if unresolved.
+              const spec = e.weaponId ? WEAPON_SIM_BY_ID[e.weaponId] : undefined;
+              const c = spec ? rarityColor(spec) : CONFIG.colors.pickupWeapon;
+              this.flash(fpToPx(e.gx), fpToPx(e.gy), c, 24);
               cues.add('pickup.weapon');
               break;
+            }
             default: // coin
               this.score += CONFIG.score.coin;
               this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupCoin, 16);
@@ -414,7 +420,9 @@ export class Game {
     const s = this.engine!.state;
     const p = s.players[0];
     const w = p?.weapon;
-    const wname = w ? `${w.spec.name} (${w.spec.kind}) dmg ${w.spec.damage}` : 'none';
+    const wname = w
+      ? `${w.spec.name} [${w.spec.rarity}] (${w.spec.kind}) dmg ${w.spec.damage}`
+      : 'none';
     const hp = p ? Math.max(0, p.hp) : 0;
     const maxHp = p ? p.maxHp : 0;
     const bar = '♥'.repeat(hp) + '·'.repeat(Math.max(0, maxHp - hp));

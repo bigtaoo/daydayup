@@ -24,6 +24,7 @@ import type {
 import { degToBrad } from '../math/trig';
 import type { DamageType } from './damage';
 import { toTicks, toFpGrid, toFpPerTick } from './convert';
+import { applyQuality, type RarityTier } from '../balance/rarity';
 
 // ── World scale (the anchor for every conversion) ────────────────────────────
 //   1 grid unit = 32 px.  Demo playerRadius 16px = 0.5 grid (diameter 1 grid),
@@ -38,6 +39,10 @@ interface WeaponBase {
   id: string;
   nameKey: string; // i18n KEY only — never display text (09)
   skinRef: string; // SkinDef id (02) — the view swaps by this, not by weapon logic
+  // Intrinsic rarity (design/03/14) — a fixed property of the weapon, not a roll and
+  // not an upgrade. Grants the small `qualityMult` edge at convert time + drives the
+  // render tier colour. Placeholder assignments below (design/09: final tuning TBD).
+  rarity: RarityTier;
   /** Seconds before the weapon can be used again. For ranged this IS the fire rate. */
   cooldownSec: number;
 }
@@ -90,6 +95,8 @@ export const WEAPON_SPECS: Record<string, WeaponSpec> = {
     kind: 'ranged',
     nameKey: 'weapon.blaster.name',
     skinRef: 'gun_default',
+    rarity: 'common', // 白 — the baseline starter pistol
+
     cooldownSec: 0.2, // = fire rate; 5 shots/s
     bullets: 1,
     spreadDeg: 0,
@@ -113,6 +120,8 @@ export const WEAPON_SPECS: Record<string, WeaponSpec> = {
     kind: 'melee',
     nameKey: 'weapon.saber.name',
     skinRef: 'sword_default',
+    rarity: 'common', // 白 — the baseline starter melee
+
     cooldownSec: 0.37, // recovery between swings
     damage: 2,
     arcDeg: 162, // 0.9π (demo) — the swing sector; enemies hit + bullets deflected inside it
@@ -130,6 +139,8 @@ export const WEAPON_SPECS: Record<string, WeaponSpec> = {
     kind: 'ranged',
     nameKey: 'weapon.repeater.name',
     skinRef: 'gun_default',
+    rarity: 'fine', // 蓝 — a slightly nicer floor drop
+
     cooldownSec: 0.1, // 3 ticks — 10 shots/s
     bullets: 1,
     spreadDeg: 0,
@@ -150,6 +161,8 @@ export const WEAPON_SPECS: Record<string, WeaponSpec> = {
     kind: 'ranged',
     nameKey: 'weapon.cannon.name',
     skinRef: 'gun_default',
+    rarity: 'epic', // 紫 — a standout heavy-hitter drop
+
     cooldownSec: 0.6, // 18 ticks
     bullets: 1,
     spreadDeg: 0,
@@ -170,6 +183,8 @@ export const WEAPON_SPECS: Record<string, WeaponSpec> = {
     kind: 'ranged',
     nameKey: 'weapon.enemygun.name',
     skinRef: 'gun_default',
+    rarity: 'common', // 白 — mob loadout, never player-facing
+
     cooldownSec: 1.5, // 90 frames @60fps
     bullets: 1,
     spreadDeg: 0,
@@ -193,6 +208,8 @@ export const WEAPON_SPECS: Record<string, WeaponSpec> = {
     kind: 'ranged',
     nameKey: 'weapon.flamer.name',
     skinRef: 'gun_default',
+    rarity: 'fine', // 蓝
+
     cooldownSec: 0.1, // 3 ticks — 10 shots/s, keeps burn topped up
     bullets: 1,
     spreadDeg: 0,
@@ -214,6 +231,8 @@ export const WEAPON_SPECS: Record<string, WeaponSpec> = {
     kind: 'ranged',
     nameKey: 'weapon.cryobolt.name',
     skinRef: 'gun_default',
+    rarity: 'epic', // 紫
+
     cooldownSec: 0.5, // 15 ticks
     bullets: 1,
     spreadDeg: 0,
@@ -234,6 +253,8 @@ export const WEAPON_SPECS: Record<string, WeaponSpec> = {
     kind: 'ranged',
     nameKey: 'weapon.teslagun.name',
     skinRef: 'gun_default',
+    rarity: 'epic', // 紫
+
     cooldownSec: 0.35, // ~11 ticks
     bullets: 1,
     spreadDeg: 0,
@@ -255,6 +276,8 @@ export const WEAPON_SPECS: Record<string, WeaponSpec> = {
     kind: 'ranged',
     nameKey: 'weapon.venomspit.name',
     skinRef: 'gun_default',
+    rarity: 'fine', // 蓝
+
     cooldownSec: 0.22, // ~7 ticks — stacks build with uptime
     bullets: 1,
     spreadDeg: 0,
@@ -275,6 +298,8 @@ export const WEAPON_SPECS: Record<string, WeaponSpec> = {
     kind: 'melee',
     nameKey: 'weapon.emberblade.name',
     skinRef: 'sword_default',
+    rarity: 'legend', // 橙
+
     cooldownSec: 0.37,
     damage: 2,
     damageType: 'fire',
@@ -293,6 +318,8 @@ export const WEAPON_SPECS: Record<string, WeaponSpec> = {
     kind: 'melee',
     nameKey: 'weapon.frostbrand.name',
     skinRef: 'sword_default',
+    rarity: 'legend', // 橙
+
     cooldownSec: 0.45, // slower recovery — control weapon
     damage: 2,
     damageType: 'ice',
@@ -311,6 +338,8 @@ export const WEAPON_SPECS: Record<string, WeaponSpec> = {
     kind: 'melee',
     nameKey: 'weapon.stormglaive.name',
     skinRef: 'sword_default',
+    rarity: 'legendary', // 金 — the top-tier showcase drop
+
     cooldownSec: 0.4,
     damage: 2,
     damageType: 'lightning',
@@ -325,19 +354,26 @@ export const WEAPON_SPECS: Record<string, WeaponSpec> = {
 
 // ── Conversion: authored WeaponSpec → sim-facing WeaponSimSpec (once) ──────────
 
-/** Convert one authored weapon into the fp/brad/tick shape systems consume. */
+/**
+ * Convert one authored weapon into the fp/brad/tick shape systems consume. The
+ * intrinsic rarity's quality multiplier is applied HERE, once (design/09 convert-
+ * once): `damage` is scaled by the tier's small per-mille edge (`common` = ×1.0 =
+ * identity, so a baseline weapon is byte-for-byte unchanged). The `rarity` field is
+ * carried through for the render layer; no system reads it.
+ */
 export function toSimSpec(spec: WeaponSpec): WeaponSimSpec {
   if (spec.kind === 'ranged') {
     const sim: RangedSimSpec = {
       kind: 'ranged',
       name: spec.id,
+      rarity: spec.rarity,
       fireRateTicks: toTicks(spec.cooldownSec),
       bulletSpeed: toFpPerTick(spec.bulletSpeed),
       bulletLifeTicks: toTicks(spec.lifespanSec),
       bulletRadius: toFpGrid(spec.bulletRadius),
       muzzleOffset: toFpGrid(spec.muzzleGrid),
       bulletZ: toFpGrid(spec.bulletZ),
-      damage: spec.damage,
+      damage: applyQuality(spec.damage, spec.rarity),
       damageType: spec.damageType ?? 'physical',
     };
     return sim;
@@ -345,8 +381,9 @@ export function toSimSpec(spec: WeaponSpec): WeaponSimSpec {
   const sim: MeleeSimSpec = {
     kind: 'melee',
     name: spec.id,
+    rarity: spec.rarity,
     swingCooldownTicks: toTicks(spec.cooldownSec),
-    damage: spec.damage,
+    damage: applyQuality(spec.damage, spec.rarity),
     arcHalf: degToBrad(spec.arcDeg / 2),
     range: toFpGrid(spec.rangeGrid),
     deflect: spec.deflect,

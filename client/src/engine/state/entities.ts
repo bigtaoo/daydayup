@@ -11,6 +11,7 @@
 import type { Fp } from '../math/fixed';
 import type { Brad } from '../math/trig';
 import type { DamageType, ResistMap, StatusState } from '../content/damage';
+import type { RarityTier } from '../balance/rarity';
 
 export type Faction = 'player' | 'enemy';
 
@@ -22,6 +23,7 @@ export type Winner = number | 'enemies' | null;
 export interface RangedSimSpec {
   kind: 'ranged';
   name: string;
+  rarity: RarityTier; // intrinsic tier (design/14); render reads it for the compare-card colour, the sim never does
   fireRateTicks: number; // cooldown between shots, whole ticks
   bulletSpeed: Fp; // fp displacement per tick
   bulletLifeTicks: number;
@@ -35,6 +37,7 @@ export interface RangedSimSpec {
 export interface MeleeSimSpec {
   kind: 'melee';
   name: string;
+  rarity: RarityTier; // intrinsic tier (design/14); render reads it for the compare-card colour, the sim never does
   swingCooldownTicks: number; // recovery between swings
   damage: number; // integer, per enemy in arc, once per swing
   arcHalf: number; // swing sector half-angle, brad — used for BOTH damage and deflect

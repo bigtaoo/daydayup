@@ -1,3 +1,5 @@
+import { RARITY_TIERS, type WeaponSimSpec } from '@dd/engine';
+
 // Global constants. Tuning values live here.
 export const CONFIG = {
   playerSpeed: 3.2, // px / frame @60fps baseline
@@ -56,3 +58,23 @@ export const ELEMENT_COLORS: Partial<Record<import('@dd/engine').DamageType, num
   lightning: CONFIG.colors.statusShock,
   poison: CONFIG.colors.statusPoison,
 };
+
+// Rarity → border/ornament colour (design/14 白蓝紫橙金). The engine owns only the
+// stable `colorKey` (RARITY_TIERS[tier].colorKey); the render layer maps it to a hue
+// here. Kept a channel apart from ELEMENT_COLORS: rarity lives on the border/sprite
+// ornament, element hues stay reserved for combat FX, so the two never fight (14).
+export const RARITY_COLORS: Record<
+  (typeof RARITY_TIERS)[keyof typeof RARITY_TIERS]['colorKey'],
+  number
+> = {
+  white: 0xe2e8f0, // 普通 common
+  blue: 0x63b3ed, // 精良 fine
+  purple: 0xb794f4, // 史诗 epic
+  orange: 0xf6ad55, // 传说 legend
+  gold: 0xf6e05e, // 传奇 legendary
+};
+
+/** Border/ornament hue for a weapon's intrinsic tier (design/14 compare-card read). */
+export function rarityColor(spec: WeaponSimSpec): number {
+  return RARITY_COLORS[RARITY_TIERS[spec.rarity].colorKey];
+}
