@@ -11,11 +11,12 @@
  */
 import type { Prng } from '../math/prng';
 
-/** What one enemy death yields. weapon carries the picked payload. */
+/** What one enemy death yields. weapon/buff carry the picked payload. */
 export type DropResult =
   | { kind: 'coin' }
   | { kind: 'health' }
-  | { kind: 'weapon'; weaponId: string };
+  | { kind: 'weapon'; weaponId: string }
+  | { kind: 'buff'; buffId: string };
 
 /** How much a health pickup heals (design/05 MVP loop; was SIM.drop.healAmount). */
 export const HEALTH_PICKUP_HEAL = 1;
@@ -31,6 +32,7 @@ export const DROP_TABLE: readonly DropTableEntry[] = [
   { kind: 'coin', weight: 55 },
   { kind: 'health', weight: 18 },
   { kind: 'weapon', weight: 5 },
+  { kind: 'buff', weight: 6 }, // run-scoped power buffs (design/14) — the affix replacement
 ];
 
 /** Weapon ids a drop can roll (must exist in WEAPON_SPECS). Player-facing only. */
@@ -48,15 +50,21 @@ export const WEAPON_DROP_POOL: readonly string[] = [
   'stormglaive',
 ];
 
+/** Buff ids a drop can roll (must exist in RUN_BUFFS). Fixed order = deterministic. */
+export const BUFF_DROP_POOL: readonly string[] = ['dmg_up', 'rof_up', 'vit_up'];
+
 /**
  * Roll one drop from the dropPrng (design/05/09). Draw count varies by branch
- * (table → 1, +1 for weapon) — deterministic given the stream.
+ * (table → 1, +1 for weapon or buff to pick the payload) — deterministic given the
+ * stream.
  */
 export function rollDrop(prng: Prng): DropResult {
   const entry = DROP_TABLE[prng.weightedIndex(DROP_TABLE.map((e) => e.weight))]!;
   switch (entry.kind) {
     case 'weapon':
       return { kind: 'weapon', weaponId: WEAPON_DROP_POOL[prng.nextInt(WEAPON_DROP_POOL.length)]! };
+    case 'buff':
+      return { kind: 'buff', buffId: BUFF_DROP_POOL[prng.nextInt(BUFF_DROP_POOL.length)]! };
     case 'health':
       return { kind: 'health' };
     default:

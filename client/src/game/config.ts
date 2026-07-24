@@ -40,6 +40,7 @@ export const CONFIG = {
     pickupHealth: 0x68d391,
     pickupCoin: 0xf6e05e,
     pickupWeapon: 0xf6ad55, // amber — a new gun to swap in
+    pickupBuff: 0xd6bcfa, // violet — a run buff (design/14 in-run power)
     // Elemental status fx (design/03/07) — flashed on the 'status' event, and now
     // also the bullet-trail + lingering-aura colours (per-element render polish).
     statusBurn: 0xff7043, // fire — orange flame

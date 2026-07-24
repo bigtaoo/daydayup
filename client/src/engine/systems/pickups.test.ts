@@ -49,6 +49,36 @@ describe('PickupSystem — the in-run power ramp (design/05)', () => {
     expect(JSON.stringify([p.hp, p.maxHp, p.weapons.map((w) => w.spec.damage)])).toBe(snapshot);
   });
 
+  it('a buff pickup is added to the player stack; unknown ids are ignored', () => {
+    const s = createGameState(CFG);
+    const p = s.players[0]!;
+    dropOnPlayer(s, { kind: 'buff', buffId: 'dmg_up' });
+    sys.tick(s);
+    expect(p.buffs).toEqual(['dmg_up']);
+
+    dropOnPlayer(s, { kind: 'buff', buffId: 'not_a_real_buff' });
+    sys.tick(s);
+    expect(p.buffs).toEqual(['dmg_up']); // forward-compat: unknown id → no-op
+  });
+
+  it('a flat_hp buff raises maxHp and heals by the same amount, clamped by the cap', () => {
+    const s = createGameState(CFG);
+    const p = s.players[0]!;
+    const baseMax = p.maxHp;
+    p.hp = 1;
+    dropOnPlayer(s, { kind: 'buff', buffId: 'vit_up' }); // +2 maxHp
+    sys.tick(s);
+    expect(p.maxHp).toBe(baseMax + 2);
+    expect(p.hp).toBe(3); // gaining max HP also healed +2
+
+    // Past the +10 cap, extra vit_up buffs add nothing (Σ-then-clamp delta = 0).
+    for (let i = 0; i < 10; i++) {
+      dropOnPlayer(s, { kind: 'buff', buffId: 'vit_up' });
+      sys.tick(s);
+    }
+    expect(p.maxHp).toBe(baseMax + 10);
+  });
+
   it('does not vacuum a pickup dropped this very tick (spawnTick guard)', () => {
     const s = createGameState(CFG);
     const p = s.players[0]!;

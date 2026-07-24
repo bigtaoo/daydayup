@@ -59,8 +59,15 @@ import { BRAD_FULL } from './math/trig';
  * affixes). The DROP_TABLE no longer has an `affix` entry, so weightedIndex draws a
  * different kind per kill, and a weapon drop no longer re-applies an affix stack. Any
  * v9 stream diverges at the first enemy death.
+ *
+ * v11: run buffs — the in-run power layer that replaces affixes (design/05/14). The
+ * DROP_TABLE gains a `buff` entry, so weightedIndex draws a different kind per kill
+ * (diverges a v10 stream at the first drop), and a picked-up buff scales the player's
+ * damage / attack-speed (WeaponFire, HitResolve) and max HP (Σ-then-clamp). Enemies
+ * carry no buffs (identity), so their fire is unchanged. (Intrinsic rarity, ROADMAP
+ * 0.2, shipped between v10 and here WITHOUT a bump — additive, damage byte-identical.)
  */
-export const ENGINE_VERSION = 10;
+export const ENGINE_VERSION = 11;
 
 /**
  * World scale — the anchor for every human-unit → fp/brad conversion (design/09).

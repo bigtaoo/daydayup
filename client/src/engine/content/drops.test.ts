@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { Prng } from '@dd/engine/math/prng';
-import { rollDrop, DROP_TABLE, WEAPON_DROP_POOL } from '@dd/engine/content/drops';
+import { rollDrop, DROP_TABLE, WEAPON_DROP_POOL, BUFF_DROP_POOL } from '@dd/engine/content/drops';
 import { WEAPON_SIM_BY_ID } from '@dd/engine/content/weapons';
+import { RUN_BUFFS } from '@dd/engine/balance/runbuffs';
 
 describe('rollDrop — deterministic drop table', () => {
   it('is reproducible from the same seed', () => {
@@ -35,6 +36,21 @@ describe('rollDrop — deterministic drop table', () => {
         expect(WEAPON_SIM_BY_ID[d.weaponId]).toBeDefined();
       }
     }
+  });
+
+  it('buff drops resolve to a real buff id in the catalogue', () => {
+    const p = new Prng(11);
+    for (let i = 0; i < 2000; i++) {
+      const d = rollDrop(p);
+      if (d.kind === 'buff') {
+        expect(BUFF_DROP_POOL).toContain(d.buffId);
+        expect(RUN_BUFFS[d.buffId]).toBeDefined();
+      }
+    }
+  });
+
+  it('every buff in the drop pool exists in the catalogue', () => {
+    for (const id of BUFF_DROP_POOL) expect(RUN_BUFFS[id]).toBeDefined();
   });
 
   it('produces every kind over a large sample (coins the most common)', () => {

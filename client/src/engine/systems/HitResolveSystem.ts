@@ -36,6 +36,7 @@ import {
   applyResist,
   burnDamageFor,
 } from '../content/damage';
+import { buffedDamage, sumBuffs } from '../balance/runbuffs';
 import { circlesOverlap, retainAlive } from './geom';
 
 export class HitResolveSystem {
@@ -201,6 +202,8 @@ export class HitResolveSystem {
   }
 
   private meleeArc(state: GameState, p: GameState['players'][number], spec: MeleeSimSpec): void {
+    // Player run buffs scale outgoing arc damage (design/14; enemies never swing melee).
+    const damage = buffedDamage(spec.damage, sumBuffs(p.buffs));
     for (const e of state.enemies) {
       if (!e.alive) continue;
       const dx = e.gx - p.gx;
@@ -209,7 +212,7 @@ export class HitResolveSystem {
       if (dx * dx + dy * dy > reach * reach) continue;
       const ang = atan2Brad(dy, dx);
       if (Math.abs(bradDiff(ang, p.facing)) > spec.arcHalf) continue;
-      this.applyHit(state, e, spec.damage, spec.damageType, 'player', state.enemies);
+      this.applyHit(state, e, damage, spec.damageType, 'player', state.enemies);
     }
   }
 }

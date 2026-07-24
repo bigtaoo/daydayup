@@ -13,16 +13,26 @@
  */
 import { addFp, mulFp } from '../math/fixed';
 import { cosFp, sinFp } from '../math/trig';
+import {
+  buffedCooldown,
+  buffedDamage,
+  sumBuffs,
+  NO_BUFFS,
+  type BuffSums,
+} from '../balance/runbuffs';
 import type { GameState } from '../state/GameState';
 import type { Actor, RangedSimSpec } from '../state/entities';
 
 export class WeaponFireSystem {
   tick(state: GameState): void {
-    for (const p of state.players) this.actor(state, p);
-    for (const e of state.enemies) this.actor(state, e);
+    // Run buffs are player-level (design/14): a player's summed-clamped stack scales
+    // its damage + attack speed; enemies carry none (NO_BUFFS = identity), so their
+    // fire is byte-for-byte unchanged.
+    for (const p of state.players) this.actor(state, p, sumBuffs(p.buffs));
+    for (const e of state.enemies) this.actor(state, e, NO_BUFFS);
   }
 
-  private actor(state: GameState, a: Actor): void {
+  private actor(state: GameState, a: Actor, buffs: BuffSums): void {
     const w = a.weapon;
     if (!w) return;
     w.justSwung = false;
@@ -30,15 +40,15 @@ export class WeaponFireSystem {
     if (!a.alive || !a.firing || w.cooldownTicks > 0) return;
 
     if (w.spec.kind === 'ranged') {
-      this.fireRanged(state, a, w.spec);
-      w.cooldownTicks = w.spec.fireRateTicks;
+      this.fireRanged(state, a, w.spec, buffs);
+      w.cooldownTicks = buffedCooldown(w.spec.fireRateTicks, buffs);
     } else {
       w.justSwung = true;
-      w.cooldownTicks = w.spec.swingCooldownTicks;
+      w.cooldownTicks = buffedCooldown(w.spec.swingCooldownTicks, buffs);
     }
   }
 
-  private fireRanged(state: GameState, a: Actor, spec: RangedSimSpec): void {
+  private fireRanged(state: GameState, a: Actor, spec: RangedSimSpec, buffs: BuffSums): void {
     const cos = cosFp(a.facing);
     const sin = sinFp(a.facing);
     const gx = addFp(a.gx, mulFp(cos, spec.muzzleOffset));
@@ -52,7 +62,7 @@ export class WeaponFireSystem {
       vx: mulFp(cos, spec.bulletSpeed),
       vy: mulFp(sin, spec.bulletSpeed),
       radius: spec.bulletRadius,
-      damage: spec.damage,
+      damage: buffedDamage(spec.damage, buffs), // buff frozen onto the bullet at fire time
       damageType: spec.damageType, // frozen onto the bullet (design/07 payload)
       lifeTicks: spec.bulletLifeTicks,
       alive: true,

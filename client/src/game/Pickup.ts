@@ -26,6 +26,11 @@ export class Pickup extends Entity {
       const color = CONFIG.colors.pickupWeapon;
       gfx.poly([-8, -7, 0, -1, -8, 5, -5, -1]).fill({ color });
       gfx.poly([0, -7, 8, -1, 0, 5, 3, -1]).fill({ color });
+    } else if (kind === 'buff') {
+      // An upward chevron in a diamond — "power up / run buff" (design/14).
+      const color = CONFIG.colors.pickupBuff;
+      gfx.poly([0, -9, 9, 0, 0, 9, -9, 0]).fill({ color, alpha: 0.35 });
+      gfx.poly([-6, 3, 0, -6, 6, 3, 0, 0]).fill({ color });
     } else {
       const color = CONFIG.colors.pickupCoin;
       gfx.circle(0, 0, 7).fill({ color });

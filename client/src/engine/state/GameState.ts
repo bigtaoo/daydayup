@@ -123,6 +123,7 @@ export class GameState {
       weapon: weapons[0] ?? null, // active pointer = weapons[activeSlot]
       weapons,
       activeSlot: 0,
+      buffs: [], // run-scoped buff stack (design/14); filled by 'buff' pickups
       firing: false,
       prevButtons: 0,
       status: freshStatus(),

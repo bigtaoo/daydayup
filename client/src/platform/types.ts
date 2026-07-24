@@ -54,6 +54,7 @@ export type AudioCue =
   | 'pickup.health'
   | 'pickup.weapon'
   | 'pickup.coin'
+  | 'pickup.buff'
   | 'wave-clear'
   | 'win';
 

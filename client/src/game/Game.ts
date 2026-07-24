@@ -322,6 +322,10 @@ export class Game {
               cues.add('pickup.weapon');
               break;
             }
+            case 'buff':
+              this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupBuff, 22);
+              cues.add('pickup.buff');
+              break;
             default: // coin
               this.score += CONFIG.score.coin;
               this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupCoin, 16);
@@ -427,8 +431,9 @@ export class Game {
     const maxHp = p ? p.maxHp : 0;
     const bar = '♥'.repeat(hp) + '·'.repeat(Math.max(0, maxHp - hp));
     const wave = Math.max(1, s.waveIndex + 1);
+    const buffs = p && p.buffs.length ? `   Buffs ${p.buffs.length}` : '';
     this.hud.text =
-      `HP ${bar}\n` +
+      `HP ${bar}${buffs}\n` +
       `Wave ${wave}/${WAVES.length}   Enemies ${s.enemies.length}   Score ${this.score}\n` +
       `Weapon ${wname}\n` +
       `[1]/[2] swap weapon   LMB = attack (melee swing also parries bullets)   WASD = move`;

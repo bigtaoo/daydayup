@@ -109,6 +109,9 @@ export function serializeState(s: GameState): unknown {
     players: s.players.map((p) => [
       p.id, p.gx, p.gy, p.z, p.vx, p.vy, p.facing, p.hp, p.maxHp, p.alive,
       p.activeSlot, p.firing, p.prevButtons,
+      // Run-buff stack (design/14): buffs scale damage/firerate at use time, so a buff
+      // divergence would otherwise only surface indirectly — hash the ids directly.
+      p.buffs,
       // Resolved spec fields: a weapon drop swaps the active slot's spec, so include
       // the numbers (not just name) to catch a loadout divergence.
       p.weapons.map((w) => [
@@ -121,7 +124,7 @@ export function serializeState(s: GameState): unknown {
       b.id, b.gx, b.gy, b.z, b.vx, b.vy, b.faction, b.damage, b.lifeTicks, b.alive,
     ]),
     pickups: s.pickups.map((k) => [
-      k.id, k.kind, k.gx, k.gy, k.spawnTick, k.alive, k.weaponId ?? '',
+      k.id, k.kind, k.gx, k.gy, k.spawnTick, k.alive, k.weaponId ?? '', k.buffId ?? '',
     ]),
   };
 }

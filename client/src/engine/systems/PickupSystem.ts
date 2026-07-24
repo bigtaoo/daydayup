@@ -15,6 +15,7 @@
 import { SIM } from '../sim.config';
 import { HEALTH_PICKUP_HEAL } from '../content/drops';
 import { WEAPON_SIM_BY_ID, makeWeapon } from '../content/weapons';
+import { RUN_BUFFS, sumBuffs } from '../balance/runbuffs';
 import type { GameState } from '../state/GameState';
 import type { PickupItem, PlayerActor } from '../state/entities';
 import { circlesOverlap, retainAlive } from './geom';
@@ -34,6 +35,7 @@ export class PickupSystem {
           gx: item.gx,
           gy: item.gy,
           weaponId: item.weaponId,
+          buffId: item.buffId,
         });
         break;
       }
@@ -51,6 +53,27 @@ export class PickupSystem {
       case 'weapon':
         if (item.weaponId) this.applyWeapon(p, item.weaponId);
         break;
+      case 'buff':
+        if (item.buffId) this.applyBuff(p, item.buffId);
+        break;
+    }
+  }
+
+  /**
+   * Add a run buff to the player's stack (design/14). mult_* buffs take effect at use
+   * time (WeaponFire / HitResolve read the summed stack); flat_hp is cumulative actor
+   * state, so it is applied HERE — but Σ-then-clamp still holds: we add only the
+   * *delta* the new buff contributes to the clamped total (0 once the cap is reached),
+   * and grow both maxHp and current hp by it. Unknown id → no-op (forward-compat).
+   */
+  private applyBuff(p: PlayerActor, buffId: string): void {
+    if (!RUN_BUFFS[buffId]) return;
+    const before = sumBuffs(p.buffs).flat_hp;
+    p.buffs.push(buffId);
+    const delta = sumBuffs(p.buffs).flat_hp - before;
+    if (delta > 0) {
+      p.maxHp += delta;
+      p.hp += delta;
     }
   }
 

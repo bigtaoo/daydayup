@@ -30,6 +30,7 @@ export class DeathDropsSystem {
         alive: true,
       };
       if (drop.kind === 'weapon') item.weaponId = drop.weaponId;
+      if (drop.kind === 'buff') item.buffId = drop.buffId;
       state.pickups.push(item);
     }
 

@@ -126,6 +126,7 @@ const VOICES: Record<AudioCue, (a: WebAudio, ctx: AudioContext, bus: GainNode) =
   'pickup.health': (a, c, b) => a.tone(c, b, 660, 'sine', 0.12, 0.13, 990),
   'pickup.weapon': (a, c, b) => a.tone(c, b, 520, 'triangle', 0.14, 0.13, 780),
   'pickup.coin': (a, c, b) => a.tone(c, b, 880, 'square', 0.08, 0.1, 1320),
+  'pickup.buff': (a, c, b) => { a.tone(c, b, 587, 'triangle', 0.12, 0.12); setTone(a, c, b, 880, 0.12, 0.1); },
   'wave-clear': (a, c, b) => { a.tone(c, b, 523, 'triangle', 0.12, 0.14); setTone(a, c, b, 784, 0.12, 0.09); },
   win: (a, c, b) => { a.tone(c, b, 523, 'triangle', 0.16, 0.15); setTone(a, c, b, 659, 0.16, 0.12); setTone(a, c, b, 784, 0.2, 0.12); },
 };

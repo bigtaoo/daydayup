@@ -12,6 +12,7 @@ import type { Fp } from '../math/fixed';
 import type { Brad } from '../math/trig';
 import type { DamageType, ResistMap, StatusState } from '../content/damage';
 import type { RarityTier } from '../balance/rarity';
+import type { RunBuffId } from '../balance/runbuffs';
 
 export type Faction = 'player' | 'enemy';
 
@@ -95,6 +96,11 @@ export interface PlayerActor extends Actor {
   // weapons[activeSlot] — systems only ever read the active pointer.
   weapons: WeaponState[];
   activeSlot: number;
+  // Run-scoped buff stack (design/05/14) — the in-run power layer that replaced the
+  // deleted `affixes` slot. Player-level, applies to the player + all held weapons,
+  // summed-then-clamped (balance/runbuffs.ts), wiped at run end (never carries out).
+  // Stores buff ids; magnitude/kind live in the RUN_BUFFS catalogue.
+  buffs: RunBuffId[];
 }
 
 export interface EnemyActor extends Actor {
@@ -136,7 +142,7 @@ export interface Obstacle {
   radius: Fp;
 }
 
-export type PickupKind = 'health' | 'coin' | 'weapon';
+export type PickupKind = 'health' | 'coin' | 'weapon' | 'buff';
 
 export interface PickupItem {
   id: number;
@@ -147,4 +153,5 @@ export interface PickupItem {
   alive: boolean;
   // Payload for the powered drops (design/05). Set on the matching kind only:
   weaponId?: string; // kind 'weapon' → id into WEAPON_SPECS
+  buffId?: string; // kind 'buff' → id into RUN_BUFFS (design/14)
 }
