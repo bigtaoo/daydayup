@@ -56,6 +56,9 @@ export class ApplyInputSystem {
     // Firing drives BOTH ranged shots and melee swings; a melee swing is also what
     // parries bullets (DeflectSystem) — there is no separate block input.
     p.firing = (held & Button.FIRE) !== 0;
+    // This tick's INTERACT hold state (design/05/08); ExtractionSystem (ROADMAP 1.4)
+    // reads it to resolve the hold-to-extract / tap-to-descend checkpoint gesture.
+    p.interacting = (held & Button.INTERACT) !== 0;
 
     if (pressed & Button.SWAP_WEAPON) this.swap(p);
 
@@ -66,6 +69,7 @@ export class ApplyInputSystem {
     p.vx = 0 as Fp;
     p.vy = 0 as Fp;
     p.firing = false;
+    p.interacting = false;
     // prevButtons deliberately unchanged (idle-hold semantics above).
   }
 

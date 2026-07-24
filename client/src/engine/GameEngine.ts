@@ -1,8 +1,11 @@
 /**
- * GameEngine — the single orchestrator (design/08). Owns a GameState and the 12
+ * GameEngine — the single orchestrator (design/08). Owns a GameState and the 13
  * systems, instantiated once and run in the frozen step() order. That order IS the
  * determinism contract; reordering it (or changing how a system iterates a
- * collection) bumps ENGINE_VERSION.
+ * collection) bumps ENGINE_VERSION. ExtractionSystem (12, ROADMAP 1.4/1.5) is the
+ * one exception to "adding a step bumps the version": it is a strict no-op for any
+ * config that doesn't opt into `floors`, so its presence changes nothing for a
+ * pre-1.4 config or replay.
  *
  * step(commands) is the direct entry (headless/tests). The InputSource seam
  * (advance/submit) pulls confirmed frames from the source; runHeadless() (replay.ts)
@@ -18,6 +21,7 @@ import {
   ApplyInputSystem,
   DeathDropsSystem,
   DeflectSystem,
+  ExtractionSystem,
   HitResolveSystem,
   MovementSystem,
   PickupSystem,
@@ -43,6 +47,7 @@ export class GameEngine {
   private readonly deathDrops = new DeathDropsSystem();
   private readonly pickup = new PickupSystem();
   private readonly spawns = new SpawnSystem();
+  private readonly extraction = new ExtractionSystem();
   private readonly winCondition = new WinConditionSystem();
 
   constructor(config: EngineConfig, input: InputSource) {
@@ -73,7 +78,8 @@ export class GameEngine {
     this.deathDrops.tick(s); //           9
     this.pickup.tick(s); //              10
     this.spawns.tick(s); //              11  (PvE)
-    this.winCondition.tick(s); //        12
+    this.extraction.tick(s); //          12  (PvE, floors-mode only — ROADMAP 1.4/1.5)
+    this.winCondition.tick(s); //        13
 
     return s.events;
   }

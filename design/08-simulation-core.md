@@ -94,9 +94,11 @@ step(tick, commands):
                         then advance ticksSinceHit & regen shield (+1/interval after idle delay) (03, 07)
   9. Death & drops    — hp<=0 → enemy death + roll dropPrng → Pickup (weapon/heal/material);
                         player → downed (revive via INTERACT channel), not removed (05, 07)
- 10. Pickup           — player–pickup overlap → apply (weapon→active slot / heal / bank material) (05)
+ 10. Pickup           — player–pickup overlap → apply (weapon→active slot / heal / floor-buffer material) (05)
  11. Spawns           — WaveDirector.tick(tick) spawns scripted waves/boss (05)   [PvE only]
- 12. Win condition    — all enemies dead / boss dead / all players down → set winner, phase
+ 12. Extraction       — per-floor checkpoint → EXTRACT/DESCEND, banks the floor's
+                        materials (05, ROADMAP 1.4/1.5)   [PvE, floors-mode only]
+ 13. Win condition    — all enemies dead / boss dead / all players down → set winner, phase
   return events
 ```
 
@@ -106,9 +108,10 @@ Notes on the order:
 - **Deflect (6) before hit resolution (7)**: a bullet caught by a swing must change faction *before* the hit pass decides who it damages, or a just-deflected bullet could still register a hit on the swinger the same tick.
 - **Status effects (8) after hit (7), before death (9)**: HitResolve only *starts* an elemental status; the DoT that can KILL is applied in step 8, so a burn/poison kill is swept and rolls a drop the same tick as a direct-hit kill (`07`). Added 2026-07-10 (`ENGINE_VERSION` 8). **Shield regen** rides at the end of the same step: because step 7 and the step-8 DoT sub-pass both zero `ticksSinceHit` on damage, advancing the timer + regen *after* them means any actor hit this tick (direct or DoT) cannot regen this tick — the "clear your status to recover shield" rule (`05`/`07`) needs no extra bookkeeping. ✅ Shipped (ROADMAP 0.4): the two-pool shield + regen bumped `ENGINE_VERSION` 11→12 (it changed hit outcomes; no new PRNG draw). The step-9 drop kinds and step-10 apply now speak the design/09 vocabulary (`heal`/`material`/`weapon`/`buff`, ROADMAP 0.6, `ENGINE_VERSION` 14).
 - **Death/drops (9) before pickup (10)**: a kill this tick can drop a pickup, but it is not collectable until the *next* tick's pickup pass — avoids "kill and auto-vacuum in the same frame" order sensitivity.
-- **PvP** skips steps 2 and 10 (no AI, no wave director) — the confirmed command stream is the only input, exactly what keeps two clients byte-identical (funny's `netplay` branch).
+- **Extraction (12) before win condition (13)**: ✅ Shipped (ROADMAP 1.4/1.5). Reaching a floor's checkpoint used to be win condition's job (waves exhausted + no enemies → immediate win); that transition now belongs to `ExtractionSystem`, which must run first so win condition sees `state.winner` already set on an EXTRACT resolution and no-ops instead of double-deciding. **The one exception to "a new step bumps the version":** this step is a hard no-op unless `EngineConfig.floors` was provided (`state.floorsEnabled`), so its insertion changes nothing for any config that predates the feature — verified by keeping every pre-1.4 replay test green without a bump.
+- **PvP** skips steps 2, 10, and 12 (no AI, no wave director, no PvE floors) — the confirmed command stream is the only input, exactly what keeps two clients byte-identical (funny's `netplay` branch).
 
-Whatever the final order, it is frozen; changing it bumps `ENGINE_VERSION`.
+Whatever the final order, it is frozen; changing it bumps `ENGINE_VERSION` — except step 12, which ships as a standing no-op for any config that doesn't opt in (above).
 
 ## `PlayerCommand` — the twin-stick input snapshot
 

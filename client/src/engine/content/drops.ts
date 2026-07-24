@@ -12,9 +12,11 @@
 import type { Prng } from '../math/prng';
 import { MATERIAL_DROP_POOL } from './materials';
 
-/** What one enemy death yields (design/09 vocabulary). weapon/buff/material carry payload. */
+/** What one enemy death yields (design/09 vocabulary). weapon/buff/material carry payload.
+ * `tier` (material only) is the ROLLED instance quality, distinct from the static
+ * `MaterialDef.tier` catalog base — see rollDrop's `tier` param (ROADMAP 1.5). */
 export type DropResult =
-  | { kind: 'material'; materialId: string; qty: number }
+  | { kind: 'material'; materialId: string; qty: number; tier: number }
   | { kind: 'heal' }
   | { kind: 'weapon'; weaponId: string }
   | { kind: 'buff'; buffId: string };
@@ -69,9 +71,11 @@ export const BUFF_DROP_POOL: readonly string[] = ['dmg_up', 'rof_up', 'vit_up'];
 /**
  * Roll one drop from the dropPrng (design/05/09). Draw count varies by branch
  * (table → 1, +1 for weapon / buff / material to pick the payload) — deterministic
- * given the stream.
+ * given the stream. `tier` (default 0, ROADMAP 1.5 materialTierByDepth) is the
+ * depth signal a material drop rolls at — DeathDropsSystem passes `state.floorIndex`
+ * (0 for every config without floors, so the default keeps old callers identical).
  */
-export function rollDrop(prng: Prng): DropResult {
+export function rollDrop(prng: Prng, tier = 0): DropResult {
   const entry = DROP_TABLE[prng.weightedIndex(DROP_TABLE.map((e) => e.weight))]!;
   switch (entry.kind) {
     case 'weapon':
@@ -83,6 +87,7 @@ export function rollDrop(prng: Prng): DropResult {
         kind: 'material',
         materialId: MATERIAL_DROP_POOL[prng.nextInt(MATERIAL_DROP_POOL.length)]!,
         qty: MATERIAL_DROP_QTY,
+        tier,
       };
     default:
       return { kind: 'heal' };

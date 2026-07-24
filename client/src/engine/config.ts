@@ -101,6 +101,24 @@ import { BRAD_FULL } from './math/trig';
  * is a NEW GameState array, and MovementSystem/ProjectileStepSystem gained a wall-
  * resolution pass, but every existing EngineConfig omits `walls` — so state.walls
  * stays empty and the new code paths are no-ops. No pre-1.2 replay is affected.)
+ *
+ * (Seeded dungeon assembly — GENERATION ONLY, ROADMAP 1.3 — also shipped without a
+ * bump: `state.roomgenPrng` is a new, never-yet-read PRNG stream, and
+ * `world/dungeon.ts generateFloor` is pure and unwired into GameEngine.step().)
+ *
+ * (Extraction rooms + materials carry-out, ROADMAP 1.4/1.5, ALSO shipped without a
+ * bump: EngineConfig gained an optional `floors` field and GameState gained
+ * `floorIndex`/`floorMaterials`/`bankedMaterials`/`extractHoldTicks` +
+ * `floorsEnabled` (= `config.floors !== undefined`) + a 13th step, ExtractionSystem,
+ * inserted between Spawns and WinCondition. ExtractionSystem is a hard no-op unless
+ * `floorsEnabled`; WinConditionSystem's altered branch is gated the same way. Every
+ * config that omits `floors` (every config before this feature existed) is
+ * completely untouched. `PickupSystem` now always tracks a collected material into
+ * `state.floorMaterials` regardless of `floorsEnabled` — this is new bookkeeping,
+ * not new BEHAVIOR: nothing reads that map unless `floorsEnabled`, so it changes no
+ * observable outcome for an old config. `rollDrop` gained an optional `tier` param
+ * (default 0, identical to the old call) so `DeathDropsSystem` can pass
+ * `state.floorIndex` as the material's depth signal.)
  */
 export const ENGINE_VERSION = 15;
 

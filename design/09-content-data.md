@@ -289,8 +289,8 @@ MaterialDef = { id: MaterialId; nameKey; element: DamageType; tier }
               // 5 elemental kinds (03/14) × tier by depth; feeds forge recipes (14)
 ```
 
-- **Materials are the run's only carry-out** and the meta-forge input. They are **banked at extraction rooms** (reaching one = a checkpoint, `05`); a death forfeits only the *current floor's* un-banked materials.
-- **Deeper floors roll better materials** — `dropTableByDepth` / `materialTierByDepth` (below) shift the pools by floor; weapon *finds* stay random at every depth (`05`).
+- **Materials are the run's only carry-out** and the meta-forge input. They are **banked at extraction rooms** (reaching one = a checkpoint, `05`); a death forfeits only the *current floor's* un-banked materials. ✅ **Shipped 2026-07-24 (ROADMAP 1.4/1.5, `ENGINE_VERSION` 15, additive):** `state.floorMaterials` (buffer) → `state.bankedMaterials` (carry-out), merged by the new `ExtractionSystem` on EXTRACT/DESCEND; forfeit-on-death is free (never merged). Gated entirely behind `EngineConfig.floors?` — every config that omits it is untouched.
+- **Deeper floors roll better materials** — `dropTableByDepth` / `materialTierByDepth` (below) shift the pools by floor; weapon *finds* stay random at every depth (`05`). ✅ First-pass shipped: `rollDrop(prng, tier)` tags a material drop with a depth signal (`DeathDropsSystem` passes `state.floorIndex` — a straight identity curve, not yet the configurable `materialTierByDepth` array below, which stays an unwired `DungeonConfig` schema field until 1.2/1.3's `RoomPiece` system is live).
 - Rolled from `dropPrng`; rewards are recomputed/validated server-side, never trusted from the client (funny ADR-006, `06`).
 
 ## Loading, validation, versioning
@@ -315,7 +315,7 @@ MaterialDef = { id: MaterialId; nameKey; element: DamageType; tier }
 
 - ✅ **Concrete first-pass numbers** for the demo weapons + a starter/elemental enemy set — shipped in `content/*.ts`.
 - **Character roster** (`02`/`05`): `PLAYER_BASE` + two side-grade `SkinDef`s (vanguard, skirmisher) with `(maxHp, maxShield)` + `shieldBreak` shipped (ROADMAP 0.5). *Remaining:* the full launch roster, free-vs-paid, revive timings. (Regen timings currently live in `config.ts` `SHIELD_REGEN_*`, not `PLAYER_BASE` — a shielded-actor constant shared beyond the player.)
-- **Material catalog & forge recipes** — the `MaterialDef` shape + a base tier-0 catalog (5 elemental kinds, `content/materials.ts`) shipped (ROADMAP 0.6). *Remaining:* tier-by-depth rolling, per-weapon `element × qty × min-tier` recipes, and the forge.
+- **Material catalog & forge recipes** — the `MaterialDef` shape + a base tier-0 catalog (5 elemental kinds, `content/materials.ts`) shipped (ROADMAP 0.6); first-pass tier-by-depth rolling + the floor-buffer/carry-out bank shipped (ROADMAP 1.4/1.5). *Remaining:* per-weapon `element × qty × min-tier` recipes and the forge itself (Phase 2).
 - **Rarity tiers & run-buff catalogue** (`14`): first-pass `RARITY_TIERS` (0.2) and `RUN_BUFFS` families/caps (0.3) shipped. *Remaining:* the final base-quality numbers and richer buff families (`crit`, offering via chest/room/shop).
 - **`RoomPiece` authoring pipeline**: hand-edit JSON, or a small editor? Format must round-trip with whatever tool authors `solids`/`spawns`/`exits`/`role`.
 - **Difficulty & material curve** (`05`): how enemy count/tier and material quality scale with *floor* depth; extraction-room placement rules; boss-piece rules.

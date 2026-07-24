@@ -50,6 +50,17 @@ export interface EngineConfig {
   // construction; MovementSystem/ProjectileStepSystem resolve against them exactly
   // like `obstacles` above, just with a rect test instead of a circle test.
   walls?: readonly (readonly [number, number, number, number])[];
+  // Floors AFTER the first (design/05/09, ROADMAP 1.4/1.5) — `waves` above is floor
+  // 0; each entry here is one additional floor's wave list. PRESENCE enables the
+  // extraction-checkpoint / materials-banking loop (ExtractionSystem); every config
+  // that omits it (every config before this feature existed) is completely
+  // untouched — additive, no ENGINE_VERSION bump. Reaching the end of a floor's
+  // waves with no enemies left is the per-floor checkpoint: EXTRACT (bank + end
+  // the run) or DESCEND (bank + reload the next entry here) via a held/tapped
+  // INTERACT (see ExtractionSystem). The last floor (index === floors.length) has
+  // no descend option — reaching its checkpoint auto-resolves as EXTRACT, matching
+  // design/05 "the last floor's boss room IS its extraction room."
+  floors?: readonly (readonly WaveDef[])[];
 }
 
 // Distinct derived-seed constants so the streams never alias (design/06/08).
@@ -96,10 +107,26 @@ export class GameState {
   readonly worldH: Fp;
 
   // Wave director state (design/08 steps 10–11).
-  waveIndex = -1; // -1 = run not started; 0-based into config.waves
+  waveIndex = -1; // -1 = run not started; 0-based into the CURRENT floor's waves
   waveBreakTicks = 0; // countdown between a cleared wave and the next spawn
-  wavesExhausted = false; // last wave dispatched → WinCondition can declare victory
-  readonly waves: readonly WaveDef[];
+  wavesExhausted = false; // current floor's last wave dispatched
+  // Mutable (unlike the other static-at-construction arrays above): ExtractionSystem
+  // reassigns this to the next floor's wave list on DESCEND (design/05, ROADMAP 1.4).
+  waves: readonly WaveDef[];
+
+  // Extraction / materials-banking (design/05/09, ROADMAP 1.4/1.5). All no-ops
+  // unless `floorsEnabled` (EngineConfig.floors was provided) — see ExtractionSystem.
+  readonly floorsEnabled: boolean;
+  readonly extraFloors: readonly (readonly WaveDef[])[]; // config.floors ?? []
+  floorIndex = 0; // 0-based; floor 0 is the original `waves`, floor k>=1 is extraFloors[k-1]
+  // This floor's un-banked buffer (materialId → qty) — auto-collected on pickup
+  // (PickupSystem), merged into `bankedMaterials` on EXTRACT/DESCEND, and silently
+  // discarded on a run-ending death (forfeit is just "never merged" — no extra code).
+  floorMaterials: Partial<Record<string, number>> = {};
+  // The run's carry-out bag — the ONLY thing that leaves a run (design/05). Never
+  // wiped by death; only ever grows, at an extraction checkpoint.
+  bankedMaterials: Partial<Record<string, number>> = {};
+  extractHoldTicks = 0; // ticks INTERACT has been held at the checkpoint this attempt
 
   // Outcome + render channel.
   winner: Winner = null;
@@ -114,6 +141,8 @@ export class GameState {
     this.worldW = pxToFp(config.worldW);
     this.worldH = pxToFp(config.worldH);
     this.waves = config.waves;
+    this.floorsEnabled = config.floors !== undefined;
+    this.extraFloors = config.floors ?? [];
 
     for (const [ox, oy, orad] of config.obstacles ?? []) {
       this.obstacles.push({ gx: pxToFp(ox), gy: pxToFp(oy), radius: pxToFp(orad) });
@@ -151,6 +180,7 @@ export class GameState {
       activeSlot: 0,
       buffs: [], // run-scoped buff stack (design/14); filled by 'buff' pickups
       firing: false,
+      interacting: false,
       prevButtons: 0,
       status: freshStatus(),
       shieldBreak: skin.shieldBreak ? toShieldBreakSim(skin.shieldBreak) : undefined,

@@ -5,9 +5,11 @@
  * pickups are compacted out in place.
  *
  * Effects (design/05 the in-run power ramp):
- *   health — heal up to maxHp.
- *   coin   — no sim effect (score is derived render-side from the event).
- *   weapon — replace the active slot with the dropped weapon and reset its cooldown.
+ *   heal     — restore up to maxHp.
+ *   material — added to this floor's un-banked buffer (state.floorMaterials,
+ *              design/05, ROADMAP 1.4/1.5); banked at an extraction checkpoint
+ *              (ExtractionSystem), forfeited on a run-ending death.
+ *   weapon   — replace the active slot with the dropped weapon and reset its cooldown.
  *
  * Ports Game.ts updatePickups(): float px → fp, squared-distance overlap. The
  * render-only hover bob is dropped (visual, not sim).
@@ -27,7 +29,7 @@ export class PickupSystem {
       for (const p of state.players) {
         if (!p.alive) continue;
         if (!circlesOverlap(item.gx, item.gy, SIM.pickupRadius, p.gx, p.gy, p.radius)) continue;
-        this.apply(p, item);
+        this.apply(state, p, item);
         item.alive = false;
         state.events.push({
           type: 'pickup',
@@ -38,6 +40,7 @@ export class PickupSystem {
           buffId: item.buffId,
           materialId: item.materialId,
           qty: item.qty,
+          tier: item.tier,
         });
         break;
       }
@@ -45,13 +48,16 @@ export class PickupSystem {
     retainAlive(state.pickups);
   }
 
-  private apply(p: PlayerActor, item: PickupItem): void {
+  private apply(state: GameState, p: PlayerActor, item: PickupItem): void {
     switch (item.kind) {
       case 'heal':
         p.hp = Math.min(p.maxHp, p.hp + HEAL_PICKUP_AMOUNT);
         break;
       case 'material':
-        break; // no in-sim effect yet — a distinct, not-yet-banked currency (design/05; banking is 1.4/1.5)
+        if (item.materialId) {
+          state.floorMaterials[item.materialId] = (state.floorMaterials[item.materialId] ?? 0) + (item.qty ?? 0);
+        }
+        break;
       case 'weapon':
         if (item.weaponId) this.applyWeapon(p, item.weaponId);
         break;

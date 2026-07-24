@@ -138,6 +138,10 @@ export interface PlayerActor extends Actor {
   // summed-then-clamped (balance/runbuffs.ts), wiped at run end (never carries out).
   // Stores buff ids; magnitude/kind live in the RUN_BUFFS catalogue.
   buffs: RunBuffId[];
+  // This tick's INTERACT hold state (mirrors `firing`'s FIRE mirror), set by
+  // ApplyInputSystem. Read by ExtractionSystem (design/05, ROADMAP 1.4) to resolve
+  // the extraction-checkpoint hold-to-extract / tap-to-descend gesture.
+  interacting: boolean;
 }
 
 export interface EnemyActor extends Actor {
@@ -225,4 +229,10 @@ export interface PickupItem {
   buffId?: string; // kind 'buff' → id into RUN_BUFFS (design/14)
   materialId?: string; // kind 'material' → id into MATERIAL_DEFS (design/09)
   qty?: number; // kind 'material' → amount dropped
+  // kind 'material' → the ROLLED instance tier (design/09 materialTierByDepth,
+  // ROADMAP 1.5), distinct from MaterialDef.tier (the catalog's static base — always
+  // 0, since there's one id per element regardless of depth). Rises with dungeon
+  // depth (DeathDropsSystem passes state.floorIndex as the depth signal); always 0
+  // for a config without floors (identical to no field at all).
+  tier?: number;
 }

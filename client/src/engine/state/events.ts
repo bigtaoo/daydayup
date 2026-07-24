@@ -21,6 +21,10 @@ export type GameEvent =
   // burn flames, chill frost, shock arc, poison bubbles). Transient, fx-only (08).
   | { type: 'status'; effect: 'burn' | 'chill' | 'shock' | 'poison'; target: number; gx: Fp; gy: Fp }
   | { type: 'death'; id: number; faction: Faction; gx: Fp; gy: Fp }
-  | { type: 'pickup'; kind: PickupKind; gx: Fp; gy: Fp; weaponId?: string; buffId?: string; materialId?: string; qty?: number }
+  | { type: 'pickup'; kind: PickupKind; gx: Fp; gy: Fp; weaponId?: string; buffId?: string; materialId?: string; qty?: number; tier?: number }
   | { type: 'wave_clear'; wave: number }
+  // A floor's checkpoint resolved to DESCEND (design/05, ROADMAP 1.4) — the floor
+  // buffer just banked and the next floor's waves are loading. EXTRACT reuses the
+  // existing 'win' event (a successful run end either way).
+  | { type: 'descend'; floorIndex: number }
   | { type: 'win'; winner: Winner };

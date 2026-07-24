@@ -20,7 +20,10 @@ export class DeathDropsSystem {
       if (!e.alive || e.hp > 0) continue;
       e.alive = false;
       state.events.push({ type: 'death', id: e.id, faction: 'enemy', gx: e.gx, gy: e.gy });
-      const drop = rollDrop(state.dropPrng);
+      // Depth signal for material tier (design/09 materialTierByDepth, ROADMAP 1.5):
+      // state.floorIndex is 0 for every config without floors, so this is identical
+      // to the old no-arg call for every existing config.
+      const drop = rollDrop(state.dropPrng, state.floorIndex);
       const item: PickupItem = {
         id: state.nextId(),
         kind: drop.kind,
@@ -34,6 +37,7 @@ export class DeathDropsSystem {
       if (drop.kind === 'material') {
         item.materialId = drop.materialId;
         item.qty = drop.qty;
+        item.tier = drop.tier;
       }
       state.pickups.push(item);
     }
