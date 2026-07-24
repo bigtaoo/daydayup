@@ -30,7 +30,9 @@ export class ApplyInputSystem {
 
     for (let i = 0; i < state.players.length; i++) {
       const p = state.players[i]!;
-      if (!p.alive) {
+      // A dead OR downed player can't act (design/05/07): a downed player is frozen in
+      // place and cannot move, fire, swap, or revive — only a teammate can act on it.
+      if (!p.alive || p.downed) {
         this.idle(p);
         continue;
       }

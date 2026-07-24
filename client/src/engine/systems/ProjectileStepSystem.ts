@@ -29,6 +29,7 @@ import { circleOverlapsAabb, circlesOverlap } from './geom';
 import { orbitStep, turnToward } from '../content/ballistics';
 import type { GameState } from '../state/GameState';
 import type { Actor, Faction } from '../state/entities';
+import { isDowned } from '../state/entities';
 
 export class ProjectileStepSystem {
   tick(state: GameState): void {
@@ -131,7 +132,7 @@ function nearestOpposing(state: GameState, faction: Faction, x: number, y: numbe
   let best: Actor | null = null;
   let bestSq = Infinity;
   for (const a of pool) {
-    if (!a.alive) continue;
+    if (!a.alive || isDowned(a)) continue; // downed players aren't valid homing targets (3.2)
     const dx = (a.gx - x) as number;
     const dy = (a.gy - y) as number;
     const d = dx * dx + dy * dy;

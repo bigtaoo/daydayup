@@ -257,6 +257,9 @@ export class GameState {
       buffs: [], // run-scoped buff stack (design/14); filled by 'buff' pickups
       firing: false,
       interacting: false,
+      downed: false, // co-op downed/revive (design/05/07, ROADMAP 3.2)
+      bleedoutTicks: 0,
+      reviveProgressTicks: 0,
       prevButtons: 0,
       status: freshStatus(),
       shieldBreak: skin.shieldBreak ? toShieldBreakSim(skin.shieldBreak) : undefined,

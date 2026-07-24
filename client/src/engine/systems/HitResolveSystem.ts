@@ -24,6 +24,7 @@ import { atan2Brad, bradDiff, type Brad } from '../math/trig';
 import { inBeamLine } from '../content/ballistics';
 import type { GameState } from '../state/GameState';
 import type { Actor, Faction, MeleeSimSpec, Projectile } from '../state/entities';
+import { isDowned } from '../state/entities';
 import type { DamageType } from '../content/damage';
 import {
   BURN_DURATION,
@@ -55,7 +56,7 @@ export class HitResolveSystem {
       if (!b.alive || b.ballistic === 'beam' || b.landed) continue;
       if (b.faction === 'enemy') {
         for (const p of state.players) {
-          if (!p.alive) continue;
+          if (!p.alive || p.downed) continue; // downed players are invulnerable (design/07, 3.2)
           if (!circlesOverlap(b.gx, b.gy, b.radius, p.gx, p.gy, p.radius)) continue;
           this.applyHit(state, p, b.damage, b.damageType, 'enemy', state.players);
           b.alive = false;
@@ -74,7 +75,7 @@ export class HitResolveSystem {
 
     for (const p of state.players) {
       const w = p.weapon;
-      if (!p.alive || !w || w.spec.kind !== 'melee' || !w.justSwung) continue;
+      if (!p.alive || p.downed || !w || w.spec.kind !== 'melee' || !w.justSwung) continue;
       this.meleeArc(state, p, w.spec);
     }
 
@@ -92,7 +93,7 @@ export class HitResolveSystem {
       const targets: readonly Actor[] = b.faction === 'player' ? state.enemies : state.players;
       const attacker: Faction = b.faction === 'player' ? 'player' : 'enemy';
       for (const t of targets) {
-        if (!t.alive) continue;
+        if (!t.alive || isDowned(t)) continue; // downed players are invulnerable (3.2)
         const dx = (t.gx - b.gx) as number;
         const dy = (t.gy - b.gy) as number;
         const reach = (b.blastRadius + t.radius) as number;
@@ -120,7 +121,7 @@ export class HitResolveSystem {
       const dir = b.beamDir ?? (0 as Brad);
       const range = b.beamRange ?? (0 as Projectile['radius']);
       for (const t of targets) {
-        if (!t.alive) continue;
+        if (!t.alive || isDowned(t)) continue; // downed players are invulnerable (3.2)
         if (!inBeamLine(b.gx, b.gy, dir, range, t.gx, t.gy, t.radius)) continue;
         this.applyHit(state, t, b.damage, b.damageType, attacker, targets);
       }

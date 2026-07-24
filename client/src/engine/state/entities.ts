@@ -147,6 +147,19 @@ export interface PlayerActor extends Actor {
   // ApplyInputSystem. Read by ExtractionSystem (design/05, ROADMAP 1.4) to resolve
   // the extraction-checkpoint hold-to-extract / tap-to-descend gesture.
   interacting: boolean;
+  // Co-op downed/revive (design/05/07, ROADMAP 3.2). A lethal hit sends a player
+  // `downed` (frozen, 0 HP, `alive` stays true) instead of dead; a teammate revives
+  // it via a sustained INTERACT channel. `alive` becomes false only on a permanent
+  // death (bleedout expiry). "Up" = `alive && !downed` (see isDowned / WinCondition).
+  downed: boolean;
+  bleedoutTicks: number; // counts down while downed & not being revived; 0 → dead
+  reviveProgressTicks: number; // channel progress (0..REVIVE_CHANNEL_TICKS); resets if interrupted
+}
+
+/** A player who is downed (incapacitated, revivable) — not a valid target and cannot act.
+ * Safe on any Actor: enemies never carry the field, so it reads false for them. */
+export function isDowned(a: Actor): boolean {
+  return (a as PlayerActor).downed === true;
 }
 
 export interface EnemyActor extends Actor {

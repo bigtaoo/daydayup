@@ -13,7 +13,8 @@ import type { GameState } from '../state/GameState';
 
 export class AIDecideSystem {
   tick(state: GameState): void {
-    const target = state.players.find((p) => p.alive) ?? null;
+    // Enemies ignore downed players (design/07, 3.2) — no camping a body that can't fight back.
+    const target = state.players.find((p) => p.alive && !p.downed) ?? null;
     for (const e of state.enemies) {
       if (!e.alive) continue;
       if (!target) {

@@ -11,4 +11,5 @@ export { DeathDropsSystem } from './DeathDropsSystem';
 export { PickupSystem } from './PickupSystem';
 export { SpawnSystem } from './SpawnSystem';
 export { ExtractionSystem, EXTRACT_HOLD_TICKS } from './ExtractionSystem';
+export { ReviveSystem } from './ReviveSystem';
 export { WinConditionSystem } from './WinConditionSystem';

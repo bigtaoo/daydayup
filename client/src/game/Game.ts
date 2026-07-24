@@ -474,6 +474,17 @@ export class Game {
           cues.add('wave-clear');
           break;
         }
+        case 'downed':
+          // A player was incapacitated (co-op downed/revive, ROADMAP 3.2) — a red pulse.
+          // In the single-player demo this is the moment the run is lost.
+          this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.clash, 28);
+          cues.add('death');
+          break;
+        case 'revived':
+          // A teammate channelled the player back up — a green pulse (co-op only).
+          this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.extractGlow, 28);
+          cues.add('pickup.heal');
+          break;
         case 'win':
           cues.add('win');
           break;

@@ -20,7 +20,7 @@ import type { Actor } from '../state/entities';
 export class StatusEffectSystem {
   tick(state: GameState): void {
     const dotTick = state.tick % DOT_INTERVAL === 0;
-    for (const p of state.players) if (p.alive) this.actor(state, p, dotTick);
+    for (const p of state.players) if (p.alive && !p.downed) this.actor(state, p, dotTick); // downed = invulnerable (3.2)
     for (const e of state.enemies) if (e.alive) this.actor(state, e, dotTick);
   }
 

@@ -10,6 +10,8 @@
  * the death/pickup/wave_clear events (design/08 "events are the only channel").
  */
 import { rollDrop } from '../content/drops';
+import { DOWNED_BLEEDOUT_TICKS } from '../config';
+import { toFp } from '../math/fixed';
 import type { GameState } from '../state/GameState';
 import type { PickupItem } from '../state/entities';
 import { retainAlive } from './geom';
@@ -42,10 +44,20 @@ export class DeathDropsSystem {
       state.pickups.push(item);
     }
 
+    // A player at 0 HP goes DOWNED, not dead (design/05/07, ROADMAP 3.2): frozen and
+    // revivable by a teammate. Permanent death (alive=false) only happens later, in
+    // ReviveSystem, if the bleedout timer expires unrevived. Skip already-downed players
+    // (their hp is already 0) so we don't re-trigger the transition every tick.
     for (const p of state.players) {
-      if (!p.alive || p.hp > 0) continue;
-      p.alive = false;
-      state.events.push({ type: 'death', id: p.id, faction: 'player', gx: p.gx, gy: p.gy });
+      if (!p.alive || p.downed || p.hp > 0) continue;
+      p.downed = true;
+      p.hp = 0; // clamp any overkill to 0
+      p.bleedoutTicks = DOWNED_BLEEDOUT_TICKS;
+      p.reviveProgressTicks = 0;
+      p.vx = toFp(0);
+      p.vy = toFp(0); // frozen in place (design/07)
+      p.firing = false;
+      state.events.push({ type: 'downed', id: p.id, gx: p.gx, gy: p.gy });
     }
 
     retainAlive(state.enemies);

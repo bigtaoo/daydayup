@@ -139,8 +139,18 @@ import { BRAD_FULL } from './math/trig';
  * is the byte-identical default every prior weapon converts to. Why this bumps: two
  * showcase weapons (novaburst/gyre) join WEAPON_DROP_POOL, shifting the dropPrng
  * weapon-id roll — same precedent as the 1.1 frame weapons.)
+ *
+ * (v16→17 — co-op downed/revive, ROADMAP 3.2: a lethal hit now sends a player `downed`
+ * (frozen, 0 HP, `alive` stays true) instead of dead — DeathDropsSystem sets it, a new
+ * ReviveSystem (step 13) runs the bleedout timer + a teammate's sustained-INTERACT revive
+ * channel, and WinConditionSystem ends a run when no player is "up" (`alive && !downed`).
+ * PlayerActor gained `downed`/`bleedoutTicks`/`reviveProgressTicks` (serialized). Why this
+ * bumps even though single-player outcomes are unchanged: the player-death representation
+ * changed (downed vs alive=false, a 'downed' event instead of the immediate 'death'), so
+ * replay bytes move. Downed players are invulnerable and untargetable — HitResolve/AIDecide/
+ * ProjectileStep/StatusEffect skip them via isDowned.)
  */
-export const ENGINE_VERSION = 16;
+export const ENGINE_VERSION = 17;
 
 // ── Two-pool health tuning (design/07; final values are 07 "to design") ──────────
 // Whole ticks @30Hz. Shield regen is an idle timer, not a heal: after taking ANY
@@ -149,6 +159,13 @@ export const ENGINE_VERSION = 16;
 // so clearing a lingering status is a precondition for regen.
 export const SHIELD_REGEN_DELAY = 90; // ~3 s idle before regen starts
 export const SHIELD_REGEN_INTERVAL = 300; // ~10 s per +1 shield thereafter
+
+// ── Co-op downed / revive (design/05/07, ROADMAP 3.2). Whole ticks @30Hz. A lethal
+// hit sends a player `downed`; a teammate revives via a sustained INTERACT channel.
+export const DOWNED_BLEEDOUT_TICKS = 900; // ~30 s downed before permanent death (paused while being revived)
+export const REVIVE_CHANNEL_TICKS = 450; // ~15 s sustained INTERACT to complete a revive (design/05 locked)
+export const REVIVE_HP = 2; // HP a revived player comes back with (a small amount, design/07)
+export const REVIVE_RANGE_GRID = 1.5; // how close the reviver must stand, grid units
 
 /**
  * World scale — the anchor for every human-unit → fp/brad conversion (design/09).

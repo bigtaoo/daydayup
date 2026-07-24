@@ -26,6 +26,7 @@ import {
   MovementSystem,
   PickupSystem,
   ProjectileStepSystem,
+  ReviveSystem,
   SpawnSystem,
   StatusEffectSystem,
   WeaponFireSystem,
@@ -48,6 +49,7 @@ export class GameEngine {
   private readonly pickup = new PickupSystem();
   private readonly spawns = new SpawnSystem();
   private readonly extraction = new ExtractionSystem();
+  private readonly revive = new ReviveSystem();
   private readonly winCondition = new WinConditionSystem();
 
   constructor(config: EngineConfig, input: InputSource) {
@@ -79,7 +81,8 @@ export class GameEngine {
     this.pickup.tick(s); //              10
     this.spawns.tick(s); //              11  (PvE)
     this.extraction.tick(s); //          12  (PvE, floors-mode only — ROADMAP 1.4/1.5)
-    this.winCondition.tick(s); //        13
+    this.revive.tick(s); //              13  (co-op downed/revive — ROADMAP 3.2)
+    this.winCondition.tick(s); //        14
 
     return s.events;
   }

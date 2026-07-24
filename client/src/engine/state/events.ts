@@ -21,6 +21,10 @@ export type GameEvent =
   // burn flames, chill frost, shock arc, poison bubbles). Transient, fx-only (08).
   | { type: 'status'; effect: 'burn' | 'chill' | 'shock' | 'poison'; target: number; gx: Fp; gy: Fp }
   | { type: 'death'; id: number; faction: Faction; gx: Fp; gy: Fp }
+  // Co-op downed/revive (design/05/07/08, ROADMAP 3.2). A player was incapacitated
+  // (revivable, not dead) / brought back up by a teammate's revive channel. fx-only.
+  | { type: 'downed'; id: number; gx: Fp; gy: Fp }
+  | { type: 'revived'; id: number; gx: Fp; gy: Fp }
   | { type: 'pickup'; kind: PickupKind; gx: Fp; gy: Fp; weaponId?: string; buffId?: string; materialId?: string; qty?: number; tier?: number }
   | { type: 'wave_clear'; wave: number }
   // A floor's checkpoint resolved to DESCEND (design/05, ROADMAP 1.4) — the floor

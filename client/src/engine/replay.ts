@@ -112,6 +112,10 @@ export function serializeState(s: GameState): unknown {
       // ticksSinceHit every tick, so both must be hashed to catch a regen divergence.
       p.shield, p.maxShield, p.ticksSinceHit,
       p.activeSlot, p.firing, p.prevButtons,
+      // Co-op downed/revive (design/05/07, ROADMAP 3.2): downed players are frozen with a
+      // running bleedout + revive-channel clock — hash them so a revive/bleedout divergence
+      // is caught directly. Stable (false/0/0) for a still-standing player.
+      p.downed, p.bleedoutTicks, p.reviveProgressTicks,
       // Run-buff stack (design/14): buffs scale damage/firerate at use time, so a buff
       // divergence would otherwise only surface indirectly — hash the ids directly.
       p.buffs,
