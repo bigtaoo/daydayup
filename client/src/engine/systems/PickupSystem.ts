@@ -13,7 +13,7 @@
  * render-only hover bob is dropped (visual, not sim).
  */
 import { SIM } from '../sim.config';
-import { HEALTH_PICKUP_HEAL } from '../content/drops';
+import { HEAL_PICKUP_AMOUNT } from '../content/drops';
 import { WEAPON_SIM_BY_ID, makeWeapon } from '../content/weapons';
 import { RUN_BUFFS, sumBuffs } from '../balance/runbuffs';
 import type { GameState } from '../state/GameState';
@@ -36,6 +36,8 @@ export class PickupSystem {
           gy: item.gy,
           weaponId: item.weaponId,
           buffId: item.buffId,
+          materialId: item.materialId,
+          qty: item.qty,
         });
         break;
       }
@@ -45,11 +47,11 @@ export class PickupSystem {
 
   private apply(p: PlayerActor, item: PickupItem): void {
     switch (item.kind) {
-      case 'health':
-        p.hp = Math.min(p.maxHp, p.hp + HEALTH_PICKUP_HEAL);
+      case 'heal':
+        p.hp = Math.min(p.maxHp, p.hp + HEAL_PICKUP_AMOUNT);
         break;
-      case 'coin':
-        break; // score is render-side
+      case 'material':
+        break; // no in-sim effect yet — a distinct, not-yet-banked currency (design/05; banking is 1.4/1.5)
       case 'weapon':
         if (item.weaponId) this.applyWeapon(p, item.weaponId);
         break;

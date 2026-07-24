@@ -16,8 +16,8 @@ export class Pickup extends Entity {
   constructor(kind: PickupKind) {
     super();
     const gfx = new Graphics();
-    if (kind === 'health') {
-      const color = CONFIG.colors.pickupHealth;
+    if (kind === 'heal') {
+      const color = CONFIG.colors.pickupHeal;
       // A small plus sign reads as "heal" without art.
       gfx.roundRect(-3, -9, 6, 18, 2).fill({ color });
       gfx.roundRect(-9, -3, 18, 6, 2).fill({ color });
@@ -32,7 +32,8 @@ export class Pickup extends Entity {
       gfx.poly([0, -9, 9, 0, 0, 9, -9, 0]).fill({ color, alpha: 0.35 });
       gfx.poly([-6, 3, 0, -6, 6, 3, 0, 0]).fill({ color });
     } else {
-      const color = CONFIG.colors.pickupCoin;
+      // material — a small crystal (the run's carry-out currency, design/14)
+      const color = CONFIG.colors.pickupMaterial;
       gfx.circle(0, 0, 7).fill({ color });
       gfx.circle(0, 0, 3.5).fill({ color: 0xfffbe6, alpha: 0.7 });
     }

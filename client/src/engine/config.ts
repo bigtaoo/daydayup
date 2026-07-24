@@ -78,8 +78,13 @@ import { BRAD_FULL } from './math/trig';
  * empties, takeDamage fires the passive (default 'vanguard' bursts AoE damage to
  * nearby enemies). The default character's break now damages enemies where v12 did
  * nothing, so any v12 stream where the player's shield breaks diverges.
+ *
+ * v14: pickup taxonomy → design/09 names (heal/material/weapon/buff). The old `coin`
+ * becomes `material` and now draws an extra dropPrng roll to pick its element from
+ * MATERIAL_DROP_POOL (a distinct carry-out currency), so the drop stream diverges from
+ * v13 at the first material drop. (`health`→`heal` is a rename with no behaviour change.)
  */
-export const ENGINE_VERSION = 13;
+export const ENGINE_VERSION = 14;
 
 // ── Two-pool health tuning (design/07; final values are 07 "to design") ──────────
 // Whole ticks @30Hz. Shield regen is an idle timer, not a heal: after taking ANY

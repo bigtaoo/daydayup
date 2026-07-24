@@ -267,7 +267,7 @@ describe('PickupSystem (step 9)', () => {
     s.tick = 10;
     const p = s.players[0]!;
     p.hp = 3;
-    s.pickups.push({ id: s.nextId(), kind: 'health', gx: p.gx, gy: p.gy, spawnTick: 0, alive: true });
+    s.pickups.push({ id: s.nextId(), kind: 'heal', gx: p.gx, gy: p.gy, spawnTick: 0, alive: true });
     new PickupSystem().tick(s);
     expect(p.hp).toBe(4);
     expect(s.pickups).toHaveLength(0);
@@ -277,7 +277,7 @@ describe('PickupSystem (step 9)', () => {
     const s = state();
     s.tick = 10;
     const p = s.players[0]!;
-    s.pickups.push({ id: s.nextId(), kind: 'coin', gx: p.gx, gy: p.gy, spawnTick: 10, alive: true });
+    s.pickups.push({ id: s.nextId(), kind: 'material', gx: p.gx, gy: p.gy, spawnTick: 10, alive: true });
     new PickupSystem().tick(s);
     expect(s.pickups).toHaveLength(1); // still there
   });

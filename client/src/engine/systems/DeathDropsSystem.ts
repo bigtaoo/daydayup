@@ -31,6 +31,10 @@ export class DeathDropsSystem {
       };
       if (drop.kind === 'weapon') item.weaponId = drop.weaponId;
       if (drop.kind === 'buff') item.buffId = drop.buffId;
+      if (drop.kind === 'material') {
+        item.materialId = drop.materialId;
+        item.qty = drop.qty;
+      }
       state.pickups.push(item);
     }
 

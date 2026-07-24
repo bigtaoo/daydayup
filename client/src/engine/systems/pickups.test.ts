@@ -15,16 +15,16 @@ function dropOnPlayer(s: GameState, item: Omit<PickupItem, 'id' | 'gx' | 'gy' | 
 describe('PickupSystem — the in-run power ramp (design/05)', () => {
   const sys = new PickupSystem();
 
-  it('health heals up to maxHp, never over', () => {
+  it('heal restores up to maxHp, never over', () => {
     const s = createGameState(CFG);
     const p = s.players[0]!;
     p.hp = 2;
-    dropOnPlayer(s, { kind: 'health' });
+    dropOnPlayer(s, { kind: 'heal' });
     sys.tick(s);
     expect(p.hp).toBe(3);
 
     p.hp = p.maxHp;
-    dropOnPlayer(s, { kind: 'health' });
+    dropOnPlayer(s, { kind: 'heal' });
     sys.tick(s);
     expect(p.hp).toBe(p.maxHp); // capped
   });
@@ -40,11 +40,11 @@ describe('PickupSystem — the in-run power ramp (design/05)', () => {
     expect((active.spec as RangedSimSpec).damage).toBe(3); // cannon's authored damage
   });
 
-  it('coins have no sim effect (score is render-side)', () => {
+  it('materials have no in-sim effect yet (a distinct, not-yet-banked currency)', () => {
     const s = createGameState(CFG);
     const p = s.players[0]!;
     const snapshot = JSON.stringify([p.hp, p.maxHp, p.weapons.map((w) => w.spec.damage)]);
-    dropOnPlayer(s, { kind: 'coin' });
+    dropOnPlayer(s, { kind: 'material', materialId: 'mat_fire', qty: 1 });
     sys.tick(s);
     expect(JSON.stringify([p.hp, p.maxHp, p.weapons.map((w) => w.spec.damage)])).toBe(snapshot);
   });
@@ -83,7 +83,7 @@ describe('PickupSystem — the in-run power ramp (design/05)', () => {
     const s = createGameState(CFG);
     const p = s.players[0]!;
     s.tick = 5;
-    s.pickups.push({ id: s.nextId(), kind: 'coin', gx: p.gx, gy: p.gy, spawnTick: 5, alive: true });
+    s.pickups.push({ id: s.nextId(), kind: 'material', gx: p.gx, gy: p.gy, spawnTick: 5, alive: true });
     sys.tick(s);
     expect(s.pickups).toHaveLength(1); // still there next tick
     expect(s.pickups[0]!.alive).toBe(true);

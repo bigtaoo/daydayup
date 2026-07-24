@@ -18,7 +18,7 @@ export const CONFIG = {
   healChance: 0.34, // fraction of kills that drop a health orb (else a coin)
   healAmount: 1,
   waveBreakFrames: 48, // pause between cleared wave and next spawn
-  score: { kill: 5, coin: 10, waveClear: 40, victory: 200 },
+  score: { kill: 5, material: 10, waveClear: 40, victory: 200 },
 
   colors: {
     ground: 0x161a24,
@@ -38,8 +38,8 @@ export const CONFIG = {
     deflect: 0x63b3ed, // parry/deflect flash (a melee swing batting a bullet back)
     clash: 0xffd27f, // two opposing bullets meeting and cancelling — a mid-air spark
     muzzle: 0xffe08a,
-    pickupHealth: 0x68d391,
-    pickupCoin: 0xf6e05e,
+    pickupHeal: 0x68d391,
+    pickupMaterial: 0xf6e05e, // the run's carry-out currency (design/05/14)
     pickupWeapon: 0xf6ad55, // amber — a new gun to swap in
     pickupBuff: 0xd6bcfa, // violet — a run buff (design/14 in-run power)
     // Elemental status fx (design/03/07) — flashed on the 'status' event, and now

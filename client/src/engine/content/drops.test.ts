@@ -3,6 +3,7 @@ import { Prng } from '@dd/engine/math/prng';
 import { rollDrop, DROP_TABLE, WEAPON_DROP_POOL, BUFF_DROP_POOL } from '@dd/engine/content/drops';
 import { WEAPON_SIM_BY_ID } from '@dd/engine/content/weapons';
 import { RUN_BUFFS } from '@dd/engine/balance/runbuffs';
+import { MATERIAL_DEFS, MATERIAL_DROP_POOL } from '@dd/engine/content/materials';
 
 describe('rollDrop — deterministic drop table', () => {
   it('is reproducible from the same seed', () => {
@@ -53,7 +54,23 @@ describe('rollDrop — deterministic drop table', () => {
     for (const id of BUFF_DROP_POOL) expect(RUN_BUFFS[id]).toBeDefined();
   });
 
-  it('produces every kind over a large sample (coins the most common)', () => {
+  it('material drops resolve to a real material id + positive quantity', () => {
+    const p = new Prng(13);
+    for (let i = 0; i < 2000; i++) {
+      const d = rollDrop(p);
+      if (d.kind === 'material') {
+        expect(MATERIAL_DROP_POOL).toContain(d.materialId);
+        expect(MATERIAL_DEFS[d.materialId]).toBeDefined();
+        expect(d.qty).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('every material in the drop pool exists in the catalogue', () => {
+    for (const id of MATERIAL_DROP_POOL) expect(MATERIAL_DEFS[id]).toBeDefined();
+  });
+
+  it('produces every kind over a large sample (material the most common)', () => {
     const counts: Record<string, number> = {};
     const p = new Prng(2024);
     const N = 5000;
@@ -62,10 +79,10 @@ describe('rollDrop — deterministic drop table', () => {
       counts[k] = (counts[k] ?? 0) + 1;
     }
     for (const e of DROP_TABLE) expect(counts[e.kind] ?? 0).toBeGreaterThan(0);
-    // coin has the highest weight → should be the modal drop.
-    const coin = counts.coin ?? 0;
+    // material has the highest weight → should be the modal drop.
+    const material = counts.material ?? 0;
     for (const e of DROP_TABLE) {
-      if (e.kind !== 'coin') expect(coin).toBeGreaterThan(counts[e.kind] ?? 0);
+      if (e.kind !== 'material') expect(material).toBeGreaterThan(counts[e.kind] ?? 0);
     }
   });
 });

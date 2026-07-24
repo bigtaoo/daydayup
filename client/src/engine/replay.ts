@@ -127,7 +127,8 @@ export function serializeState(s: GameState): unknown {
       b.id, b.gx, b.gy, b.z, b.vx, b.vy, b.faction, b.damage, b.lifeTicks, b.alive,
     ]),
     pickups: s.pickups.map((k) => [
-      k.id, k.kind, k.gx, k.gy, k.spawnTick, k.alive, k.weaponId ?? '', k.buffId ?? '',
+      k.id, k.kind, k.gx, k.gy, k.spawnTick, k.alive,
+      k.weaponId ?? '', k.buffId ?? '', k.materialId ?? '', k.qty ?? 0,
     ]),
   };
 }

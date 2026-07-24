@@ -10,16 +10,20 @@
  * the dropPrng draw sequence → bumps ENGINE_VERSION.
  */
 import type { Prng } from '../math/prng';
+import { MATERIAL_DROP_POOL } from './materials';
 
-/** What one enemy death yields. weapon/buff carry the picked payload. */
+/** What one enemy death yields (design/09 vocabulary). weapon/buff/material carry payload. */
 export type DropResult =
-  | { kind: 'coin' }
-  | { kind: 'health' }
+  | { kind: 'material'; materialId: string; qty: number }
+  | { kind: 'heal' }
   | { kind: 'weapon'; weaponId: string }
   | { kind: 'buff'; buffId: string };
 
-/** How much a health pickup heals (design/05 MVP loop; was SIM.drop.healAmount). */
-export const HEALTH_PICKUP_HEAL = 1;
+/** How much a heal pickup restores (design/05 MVP loop, flat +1 HP). */
+export const HEAL_PICKUP_AMOUNT = 1;
+
+/** Material quantity per drop (design/09; depth-scaled amounts are 1.5 to-come). */
+export const MATERIAL_DROP_QTY = 1;
 
 // ── The table ─────────────────────────────────────────────────────────────────
 // Frequent coins keep the score ticking; weapons are the rare "swap your gun"
@@ -29,8 +33,8 @@ export const HEALTH_PICKUP_HEAL = 1;
 type DropTableEntry = { kind: DropResult['kind']; weight: number };
 
 export const DROP_TABLE: readonly DropTableEntry[] = [
-  { kind: 'coin', weight: 55 },
-  { kind: 'health', weight: 18 },
+  { kind: 'material', weight: 55 }, // the run's carry-out currency (design/05/14)
+  { kind: 'heal', weight: 18 },
   { kind: 'weapon', weight: 5 },
   { kind: 'buff', weight: 6 }, // run-scoped power buffs (design/14) — the affix replacement
 ];
@@ -55,8 +59,8 @@ export const BUFF_DROP_POOL: readonly string[] = ['dmg_up', 'rof_up', 'vit_up'];
 
 /**
  * Roll one drop from the dropPrng (design/05/09). Draw count varies by branch
- * (table → 1, +1 for weapon or buff to pick the payload) — deterministic given the
- * stream.
+ * (table → 1, +1 for weapon / buff / material to pick the payload) — deterministic
+ * given the stream.
  */
 export function rollDrop(prng: Prng): DropResult {
   const entry = DROP_TABLE[prng.weightedIndex(DROP_TABLE.map((e) => e.weight))]!;
@@ -65,9 +69,13 @@ export function rollDrop(prng: Prng): DropResult {
       return { kind: 'weapon', weaponId: WEAPON_DROP_POOL[prng.nextInt(WEAPON_DROP_POOL.length)]! };
     case 'buff':
       return { kind: 'buff', buffId: BUFF_DROP_POOL[prng.nextInt(BUFF_DROP_POOL.length)]! };
-    case 'health':
-      return { kind: 'health' };
+    case 'material':
+      return {
+        kind: 'material',
+        materialId: MATERIAL_DROP_POOL[prng.nextInt(MATERIAL_DROP_POOL.length)]!,
+        qty: MATERIAL_DROP_QTY,
+      };
     default:
-      return { kind: 'coin' };
+      return { kind: 'heal' };
   }
 }

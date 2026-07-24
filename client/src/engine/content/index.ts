@@ -6,4 +6,5 @@ export * from './weapons';
 export * from './players';
 export * from './skins';
 export * from './enemies';
+export * from './materials';
 export * from './drops';

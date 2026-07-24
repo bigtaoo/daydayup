@@ -323,9 +323,9 @@ export class Game {
           break;
         case 'pickup':
           switch (e.kind) {
-            case 'health':
-              this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupHealth, 20);
-              cues.add('pickup.health');
+            case 'heal':
+              this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupHeal, 20);
+              cues.add('pickup.heal');
               break;
             case 'weapon': {
               // Flash in the dropped weapon's rarity colour (design/14) — the tier
@@ -340,10 +340,10 @@ export class Game {
               this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupBuff, 22);
               cues.add('pickup.buff');
               break;
-            default: // coin
-              this.score += CONFIG.score.coin;
-              this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupCoin, 16);
-              cues.add('pickup.coin');
+            default: // material
+              this.score += CONFIG.score.material;
+              this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupMaterial, 16);
+              cues.add('pickup.material');
           }
           break;
         case 'wave_clear':

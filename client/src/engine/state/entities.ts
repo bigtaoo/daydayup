@@ -163,7 +163,9 @@ export interface Obstacle {
   radius: Fp;
 }
 
-export type PickupKind = 'health' | 'coin' | 'weapon' | 'buff';
+// design/09 vocabulary: heal (flat +1 HP) · material (carry-out currency) · weapon ·
+// buff (run-scoped power). Materials are the only carry-out; banking is 1.4/1.5.
+export type PickupKind = 'heal' | 'material' | 'weapon' | 'buff';
 
 export interface PickupItem {
   id: number;
@@ -175,4 +177,6 @@ export interface PickupItem {
   // Payload for the powered drops (design/05). Set on the matching kind only:
   weaponId?: string; // kind 'weapon' → id into WEAPON_SPECS
   buffId?: string; // kind 'buff' → id into RUN_BUFFS (design/14)
+  materialId?: string; // kind 'material' → id into MATERIAL_DEFS (design/09)
+  qty?: number; // kind 'material' → amount dropped
 }

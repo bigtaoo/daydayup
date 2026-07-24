@@ -21,6 +21,6 @@ export type GameEvent =
   // burn flames, chill frost, shock arc, poison bubbles). Transient, fx-only (08).
   | { type: 'status'; effect: 'burn' | 'chill' | 'shock' | 'poison'; target: number; gx: Fp; gy: Fp }
   | { type: 'death'; id: number; faction: Faction; gx: Fp; gy: Fp }
-  | { type: 'pickup'; kind: PickupKind; gx: Fp; gy: Fp; weaponId?: string; buffId?: string }
+  | { type: 'pickup'; kind: PickupKind; gx: Fp; gy: Fp; weaponId?: string; buffId?: string; materialId?: string; qty?: number }
   | { type: 'wave_clear'; wave: number }
   | { type: 'win'; winner: Winner };
