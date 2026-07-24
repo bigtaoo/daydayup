@@ -8,7 +8,8 @@ import { describe, it, expect } from 'vitest';
 import { createGameEngine, WEAPON_SIM_BY_ID, PLAYER_BASE } from '@dd/engine';
 import {
   defaultMetaState, bankMaterials, unlockBlueprint, isUnlocked, canAfford, craft,
-  clearLoadout, selectCharacter, MemoryMetaStore, createWebMetaStore, migrate,
+  clearLoadout, selectCharacter, grantCharacter, acquireBlueprint, purchasableBlueprints,
+  MemoryMetaStore, createWebMetaStore, migrate,
 } from './index';
 import { BLUEPRINT_CATALOG } from '@dd/engine';
 
@@ -95,6 +96,29 @@ describe('loadout & character selection', () => {
     const m = defaultMetaState();
     expect(selectCharacter(m, 'skirmisher').selectedSkin).toBe('skirmisher');
     expect(selectCharacter(m, 'paid_hero_not_owned').selectedSkin).toBe(m.selectedSkin);
+  });
+});
+
+describe('monetization scaffolding (grant APIs, ROADMAP 2.4)', () => {
+  it('grantCharacter adds an unowned character and is idempotent', () => {
+    const m = defaultMetaState();
+    const before = m.ownedCharacters.length;
+    const g = grantCharacter(m, 'paid_hero');
+    expect(g.ownedCharacters).toContain('paid_hero');
+    expect(grantCharacter(g, 'paid_hero').ownedCharacters).toHaveLength(before + 1); // idempotent
+  });
+
+  it('purchasableBlueprints lists locked non-drop blueprints; acquire removes one from the shelf', () => {
+    const m = defaultMetaState();
+    const shelf = purchasableBlueprints(m);
+    expect(shelf.length).toBeGreaterThan(0);
+    for (const id of shelf) {
+      expect(BLUEPRINT_CATALOG[id]!.source).not.toBe('drop');
+      expect(isUnlocked(m, id)).toBe(false);
+    }
+    const bought = acquireBlueprint(m, shelf[0]!);
+    expect(isUnlocked(bought, shelf[0]!)).toBe(true);
+    expect(purchasableBlueprints(bought)).not.toContain(shelf[0]);
   });
 });
 

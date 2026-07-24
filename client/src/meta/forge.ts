@@ -66,3 +66,25 @@ export function selectCharacter(m: MetaState, skinId: string): MetaState {
   if (!m.ownedCharacters.includes(skinId)) return m;
   return { ...m, selectedSkin: skinId };
 }
+
+/** Grant a character to the account (design/14 "free + purchase"). Idempotent. */
+export function grantCharacter(m: MetaState, skinId: string): MetaState {
+  if (m.ownedCharacters.includes(skinId)) return m;
+  return { ...m, ownedCharacters: [...m.ownedCharacters, skinId] };
+}
+
+// ── Monetization scaffolding (design/14, ROADMAP 2.4) ────────────────────────────
+// Direct-purchase, bounded, NO gacha (design/14). Real payment is out of scope (and a
+// prohibited action); these are the pure GRANT half — what a completed purchase does to
+// the account. A store UI + a platform billing adapter (WeChat/web) would call these
+// after their own payment flow. `acquireBlueprint` is just `unlockBlueprint` under a
+// name that reads as a purchase at the call site.
+export const acquireBlueprint = unlockBlueprint;
+
+/** Blueprints that are bought/earned (not drops) and not yet unlocked — the store's
+ * blueprint shelf (design/14). Pure over the catalog + account state. */
+export function purchasableBlueprints(m: MetaState): string[] {
+  return Object.values(BLUEPRINT_CATALOG)
+    .filter((b) => b.source !== 'drop' && !isUnlocked(m, b.weaponId))
+    .map((b) => b.weaponId);
+}

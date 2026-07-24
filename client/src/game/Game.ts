@@ -2,18 +2,25 @@ import { Application, Container, Graphics, Text } from 'pixi.js';
 import {
   createGameEngine,
   WEAPON_SIM_BY_ID,
-  DEFAULT_SKIN_ID,
+  BLUEPRINT_CATALOG,
+  SKIN_DEFS,
   EMBER_DUNGEON,
   EMBER_ROOMS,
   type GameEngine,
   type GameEvent,
   type GameState,
 } from '@dd/engine';
+import {
+  defaultMetaState, bankMaterials, craft, clearLoadout, selectCharacter,
+  unlockBlueprint, acquireBlueprint, purchasableBlueprints,
+  createWebMetaStore, type MetaState, type MetaStore,
+} from '../meta';
 import { CONFIG, ELEMENT_COLORS, rarityColor } from './config';
 import { Layers } from './layers';
 import { Entity } from './Entity';
 import { Scene } from './Scene';
 import { Screens } from './Screens';
+import { Forge } from './Forge';
 import { CommandBuilder } from './CommandBuilder';
 import { fpToPx } from './coords';
 import type { AudioBus, AudioCue, InputCanvas, InputSource } from '../platform/types';
@@ -32,8 +39,9 @@ const MAX_STEPS = 5; // catch-up cap per render frame → no spiral of death
 const FX_LIFE_MS = 170; // flash lifetime
 
 // Render-side run phases (design/10). The engine only knows idle/playing/gameover;
-// menu/result live here in the shell, along with score (derived from events).
-type Phase = 'menu' | 'playing' | 'victory' | 'defeat';
+// the forge outpost (the between-run hub, design/14) and the result screens live here in
+// the shell, along with score (derived from events).
+type Phase = 'forge' | 'playing' | 'victory' | 'defeat';
 
 export class Game {
   private app: Application;
@@ -47,25 +55,35 @@ export class Game {
 
   private hud!: Text;
   private screens = new Screens();
+  private forge = new Forge();
   private pillars: Entity[] = [];
 
-  private phase: Phase = 'menu';
+  // Persistent between-run meta (design/14): loaded at boot, saved on every change. The
+  // forge outpost mutates it (craft / character / acquire); a run reads only its
+  // (skinId, loadout) at start and banks materials back into it on a successful extract.
+  private store: MetaStore = createWebMetaStore();
+  private meta: MetaState = defaultMetaState();
+
+  private phase: Phase = 'forge';
   private acc = 0; // accumulated real time (ms) not yet consumed by a sim step
   private runCount = 0;
   private score = 0;
   private prevFire = false; // rising-edge confirm on menus
-  // Chosen character (design/14). Selection UI is 2.3; for the demo it is config-
-  // driven — a `?skin=` URL param picks one, else the default. Passed to the engine.
-  private skinId: string = DEFAULT_SKIN_ID;
+  // Chosen character (design/14) now lives in `this.meta.selectedSkin` — picked at the
+  // forge outpost and carried into a run via EngineConfig.skinId (see beginRun).
 
   constructor(app: Application, input: InputSource, audio: AudioBus) {
     this.app = app;
     this.input = input;
     this.audio = audio;
     this.builder = new CommandBuilder(input);
+    // Load persistent meta (bank / unlocks / loadout / chosen character, design/14).
+    this.meta = this.store.load();
+    // A `?skin=` URL param still overrides the chosen character (dev convenience), but
+    // only to one the account owns — otherwise the saved choice stands.
     if (typeof location !== 'undefined') {
       const q = new URLSearchParams(location.search).get('skin');
-      if (q) this.skinId = q; // unknown ids fall back to the default in-engine (resolveSkin)
+      if (q) this.meta = selectCharacter(this.meta, q);
     }
     app.stage.eventMode = 'static'; // let the overlay receive pointer taps (web)
     app.stage.addChild(this.layers.root);
@@ -76,7 +94,7 @@ export class Game {
     // event), so nothing static is built here — only the fixed HUD overlay.
     this.buildHud();
 
-    this.layers.ui.addChild(this.screens.view);
+    this.layers.ui.addChild(this.forge.view, this.screens.view);
     this.screens.onConfirm = () => this.confirm();
 
     this.input.attach(this.app.canvas as unknown as InputCanvas);
@@ -85,8 +103,14 @@ export class Game {
     this.input.onSwitchWeapon = () => {
       if (this.phase === 'playing') this.builder.requestSwap();
     };
+    // Forge outpost controls (web keyboard, design/14). A touch forge is a follow-up —
+    // like the touch INTERACT control — so this is guarded to the DOM and only acts in
+    // the forge phase. Digits craft, C cycles character, X clears, B acquires, Enter descends.
+    if (typeof window !== 'undefined') {
+      window.addEventListener('keydown', (e) => this.onForgeKey(e.code));
+    }
 
-    this.showMenu();
+    this.showForge();
     this.app.ticker.add((t) => this.update(t.deltaMS));
   }
 
@@ -163,13 +187,53 @@ export class Game {
 
   // ---- Run lifecycle ----
 
-  private showMenu() {
-    this.phase = 'menu';
+  // The forge outpost — the between-run hub (design/14). Shows the current meta (bank /
+  // blueprints / loadout / character); Fire or Enter descends into a run.
+  private showForge() {
+    this.phase = 'forge';
     this.hud.visible = false;
+    this.screens.hide();
     const { w, h } = this.screenSize();
-    this.screens.show(w, h, 'DAYDAYUP',
-      'A twin-stick arena — clear every wave to win.',
-      'Press Fire to start');
+    this.forge.render(this.meta, w, h);
+  }
+
+  // Apply a forge control (web keyboard). Mutates meta through the pure forge
+  // transactions, persists, and re-renders. No-op outside the forge phase.
+  private onForgeKey(code: string) {
+    if (this.phase !== 'forge') return;
+    const digit = /^Digit([1-9])$/.exec(code);
+    let next = this.meta;
+    if (digit) {
+      const id = this.forge.order[Number(digit[1]) - 1];
+      if (id) {
+        const res = craft(this.meta, id);
+        if (res.ok) next = res.meta; // silently ignores locked/unaffordable/full
+      }
+    } else if (code === 'KeyC') {
+      next = this.cycleCharacter(this.meta);
+    } else if (code === 'KeyX') {
+      next = clearLoadout(this.meta);
+    } else if (code === 'KeyB') {
+      const buyable = purchasableBlueprints(this.meta);
+      if (buyable[0]) next = acquireBlueprint(this.meta, buyable[0]); // demo: free grant (2.4 scaffold)
+    } else if (code === 'Enter' || code === 'NumpadEnter') {
+      this.confirm();
+      return;
+    }
+    if (next !== this.meta) {
+      this.meta = next;
+      this.store.save(this.meta);
+      const { w, h } = this.screenSize();
+      this.forge.render(this.meta, w, h);
+    }
+  }
+
+  /** Advance the chosen character to the next owned one (design/14 roster select). */
+  private cycleCharacter(m: MetaState): MetaState {
+    const owned = m.ownedCharacters.filter((id) => SKIN_DEFS[id]);
+    if (owned.length < 2) return m;
+    const i = owned.indexOf(m.selectedSkin);
+    return selectCharacter(m, owned[(i + 1) % owned.length]!);
   }
 
   // Fresh run: reset render state and stand up a new engine (design/10 rebuild).
@@ -182,15 +246,23 @@ export class Game {
     this.score = 0;
     this.acc = 0;
 
+    // Carry the chosen character + the crafted loadout into the run (design/14).
     this.engine = createGameEngine({
       seed: SEED_BASE + this.runCount,
       worldW: PLACEHOLDER_WORLD, // ignored in dungeon mode; each room sets its own bounds
       worldH: PLACEHOLDER_WORLD,
       waves: [],
-      skinId: this.skinId,
+      skinId: this.meta.selectedSkin,
+      loadout: this.meta.loadout,
       dungeon: { config: EMBER_DUNGEON, library: EMBER_ROOMS },
     });
     this.runCount++;
+
+    // The crafted weapons are spent the moment they enter a run — one run each
+    // (design/05). Consume the staged loadout now so a death doesn't refund it and the
+    // next visit to the forge starts empty. Materials already left the bank at craft time.
+    this.meta = clearLoadout(this.meta);
+    this.store.save(this.meta);
 
     // No view priming here: the first room loads on sim tick 1 (SpawnSystem), which
     // teleports the player onto its spawn point and emits `room_enter`. The player's
@@ -199,20 +271,28 @@ export class Game {
     // placeholder centre and make it visibly slide to the room spawn.
     this.phase = 'playing';
     this.hud.visible = true;
+    this.forge.hide();
     this.screens.hide();
   }
 
   private win() {
     const s = this.engine?.state;
     const floor = s ? s.floorIndex + 1 : 0;
-    const mats = s ? this.totalBanked(s) : 0;
+    const carried = s ? this.totalBanked(s) : 0;
+    // Bank the run's carry-out into the persistent account (design/05/14) — the only
+    // thing that leaves a run. A death (lose) never reaches here, so its floor buffer is
+    // simply forfeited, no extra code.
+    if (s) {
+      this.meta = bankMaterials(this.meta, s.bankedMaterials);
+      this.store.save(this.meta);
+    }
     this.phase = 'victory';
     this.hud.visible = false;
     this.score += CONFIG.score.victory;
     const { w, h } = this.screenSize();
     this.screens.show(w, h, 'EXTRACTED',
-      `Escaped floor ${floor}/${EMBER_DUNGEON.floorCount}.   Materials ${mats}   Score ${this.score}`,
-      'Press Fire to run again');
+      `Escaped floor ${floor}/${EMBER_DUNGEON.floorCount}.   +${carried} materials banked.   Score ${this.score}`,
+      'Press Fire — back to the forge');
   }
 
   private lose() {
@@ -222,7 +302,7 @@ export class Game {
     const { w, h } = this.screenSize();
     this.screens.show(w, h, 'DEFEAT',
       `You fell on floor ${floor}/${EMBER_DUNGEON.floorCount}.   The floor's materials were lost.   Score ${this.score}`,
-      'Press Fire to try again');
+      'Press Fire — back to the forge');
   }
 
   /** Total materials safely banked so far this run (design/05 carry-out bag). */
@@ -234,7 +314,8 @@ export class Game {
 
   private confirm() {
     this.audio.resume(); // a confirm tap is a user gesture — clears the autoplay gate (design/11)
-    if (this.phase !== 'playing') this.beginRun();
+    if (this.phase === 'forge') this.beginRun();
+    else if (this.phase === 'victory' || this.phase === 'defeat') this.showForge();
   }
 
   // ---- Main loop: fixed-step sim + interpolated render ----
@@ -356,6 +437,14 @@ export class Game {
               const c = spec ? rarityColor(spec) : CONFIG.colors.pickupWeapon;
               this.flash(fpToPx(e.gx), fpToPx(e.gy), c, 24);
               cues.add('pickup.weapon');
+              // Finding a catalogued weapon permanently unlocks its forge blueprint
+              // (design/14 "2–3 common blueprints drop from runs") — first-pass: any
+              // catalogued pickup grants it. Meta is separate from the sim, so this
+              // mid-run write can't affect determinism.
+              if (e.weaponId && BLUEPRINT_CATALOG[e.weaponId] && !this.meta.unlockedBlueprints.includes(e.weaponId)) {
+                this.meta = unlockBlueprint(this.meta, e.weaponId);
+                this.store.save(this.meta);
+              }
               break;
             }
             case 'buff':
@@ -504,7 +593,7 @@ export class Game {
       : '';
 
     this.hud.text =
-      `${this.skinId}   HP ${bar}${shieldRow}${buffs}\n` +
+      `${this.meta.selectedSkin}   HP ${bar}${shieldRow}${buffs}\n` +
       `Floor ${floor}/${EMBER_DUNGEON.floorCount}   Room ${room}/${rooms}   Enemies ${s.enemies.length}   Banked ${banked}   Score ${this.score}\n` +
       `Weapon ${wname}\n` +
       `[1]/[2] swap · LMB attack · WASD move · [E] interact` +
