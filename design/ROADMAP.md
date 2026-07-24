@@ -2,7 +2,7 @@
 
 Ordered task list to take DayDayUp from the current **combat-sandbox vertical slice** to the **full closed loop** the design docs describe. Work top-to-bottom; within a phase, respect the noted dependencies.
 
-**Current built state (2026-07-24):** floors → checkpoint → extract-or-descend → bank, on a single-arena/wave geometry — menu/victory/defeat shell, waves, pickups, damage + elemental status + resist, deflect, one boss, plus the placeholder audio seam. Deterministic engine (fp/brad/PRNG/InputSource/replay) is in place. **Phase 0 (design↔code sync) is done through 0.7** — the engine matches the locked design: no affixes, intrinsic weapon rarity, run-buffs, two-pool shield health + regen + shield-break, characters = SkinDef (side-grade roster), and the design/09 pickup vocabulary (`heal`/`material`/`weapon`/`buff`). **Phase 1 (1.1–1.5) is done**: `spread`/`homing`/`lob`/`beam`/`boomerang` ballistics + melee `hammer`/`spear`; AABB tile/wall solids + the `RoomPiece` schema + seeded `generateFloor` (neither yet wired into a live floor transition — see the Phase 1 status note below); and a live, tested `EngineConfig.floors` → `ExtractionSystem` → materials-banking loop using the existing single-arena infrastructure. **`ENGINE_VERSION` is 16** (bumped once for the orbit/radial frame finish; every other Phase 1–2 item shipped additively — see `config.ts`'s version-history comment). **Phase 2 (meta loop) is done through 2.4** — forge, tier-gated crafting, the 3-character roster + balance suite, and monetization grant-scaffolding all ship.
+**Current built state (2026-07-24):** floors → checkpoint → extract-or-descend → bank, on a single-arena/wave geometry — menu/victory/defeat shell, waves, pickups, damage + elemental status + resist, deflect, one boss, plus the placeholder audio seam. Deterministic engine (fp/brad/PRNG/InputSource/replay) is in place. **Phase 0 (design↔code sync) is done through 0.7** — the engine matches the locked design: no affixes, intrinsic weapon rarity, run-buffs, two-pool shield health + regen + shield-break, characters = SkinDef (side-grade roster), and the design/09 pickup vocabulary (`heal`/`material`/`weapon`/`buff`). **Phase 1 (1.1–1.5) is done**: `spread`/`homing`/`lob`/`beam`/`boomerang` ballistics + melee `hammer`/`spear`; AABB tile/wall solids + the `RoomPiece` schema + seeded `generateFloor` (neither yet wired into a live floor transition — see the Phase 1 status note below); and a live, tested `EngineConfig.floors` → `ExtractionSystem` → materials-banking loop using the existing single-arena infrastructure. **`ENGINE_VERSION` is 17** (bumped for the orbit/radial frame finish, then for co-op downed/revive; every other Phase 1–2 item shipped additively — see `config.ts`'s version-history comment). **Phase 2 (meta loop) is done through 2.4** — forge, tier-gated crafting, the 3-character roster + balance suite, and monetization grant-scaffolding all ship. **Phase 3.2 (co-op revive/downed + team-wipe)** is built engine-side and works in single-player; **3.1 (net layer, the 2nd player)** is the remaining co-op piece.
 
 **Conventions**
 - 🔴 **bumps `ENGINE_VERSION`** — changes sim outcomes / replay bytes. Reset/regenerate golden replays in the same PR.
@@ -89,8 +89,8 @@ The core PvE loop (floors → extraction → bank) is fully designed (05/09) but
 
 ## Phase 3 — Co-op & netcode
 
-- **3.1 🔴 Net layer** (06): server frame-broadcast + `NetInputSource` + local-player prediction/reconcile. (Migration steps 5→6 in design/06.)
-- **3.2 🔴 Co-op revive/downed + team-wipe end** (05/07): the ~15 s revive channel is locked; **decide** revive count, downed vulnerability, and what ends a run on total wipe (open Q in 05).
+- **3.1 🔴 Net layer** (06): server frame-broadcast + `NetInputSource` + local-player prediction/reconcile. (Migration steps 5→6 in design/06.) *Also the thing that spawns a SECOND player — the engine builds one player today, so 3.2's revive machinery is fully built and tested (a synthesised 2nd player) but only exercises in single-player until this lands.*
+- **3.2 ✅ 🔴 Co-op revive/downed + team-wipe end** (05/07) — DONE (`ENGINE_VERSION` 16→17). Design decisions resolved + recorded in design/05: **unlimited revives** gated by a per-downed **bleedout timer** (no hard count); **downed players are invulnerable** (only bleedout or a team wipe ends them; the revive channel pauses bleedout so a committed rescue always completes); a **team wipe** (no player "up") ends the run and forfeits the whole un-extracted carry-out. A lethal hit → `downed` (DeathDropsSystem); new `ReviveSystem` (step 13) runs bleedout + the sustained-INTERACT channel; `WinConditionSystem` reads `alive && !downed`. Downed players are skipped by every targeting system (`isDowned`). Single-player is unchanged in outcome (down = instant run-end).
 
 ## Phase 4 — Close PvP (decide design first)
 
@@ -118,7 +118,7 @@ Phase 0 (sync)  ─┬─ 0.1 affix removal ──┬─ 0.2 rarity
                     (0.7 doc pass after all)
 Phase 1 (in-run loop)   ALL DONE (✅). 1.2 rooms/1.3 dungeon shipped as pure schema+generation (not yet wired into a live floor); 1.4 extraction/1.5 materials shipped live, on the existing single-arena geometry instead of waiting on that wiring. 1.1 frames independent (✅ done)
 Phase 2 (meta)          ALL DONE (✅) — forge + tier-gated craft + 3-char roster + monetization scaffolding
-Phase 3 (co-op/net)     needs Phase 1 (a run to co-op through)
+Phase 3 (co-op/net)     3.2 revive/downed DONE (✅, engine-side, works in SP now); 3.1 net layer still open (spawns the 2nd player)
 Phase 4 (PvP)           4.1 design decision → 4.2/4.3 ; needs 0.5 (characters) + 0.2 (rarity irrelevant here)
 Phase 5 (presentation)  parallelizable throughout
 ```
