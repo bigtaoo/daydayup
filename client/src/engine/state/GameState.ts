@@ -11,6 +11,7 @@ import type { Fp } from '../math/fixed';
 import { pxToFp } from '../content/convert';
 import { freshStatus } from '../content/damage';
 import { PLAYER_BASE } from '../content/players';
+import { WEAPON_SIM_BY_ID } from '../content/weapons';
 import { resolveSkin, toShieldBreakSim, type SkinId } from '../content/skins';
 import { buildRunSpecs } from '../balance/build';
 import type {
@@ -20,6 +21,7 @@ import type {
   PickupItem,
   PlayerActor,
   Projectile,
+  WeaponSimSpec,
   Winner,
 } from './entities';
 import type { GameEvent } from './events';
@@ -43,6 +45,13 @@ export interface EngineConfig {
   worldH: number; // px
   waves: readonly WaveDef[];
   skinId?: SkinId; // chosen character (design/14); unknown/absent → default (resolveSkin)
+  // Brought-in loadout (design/05/14, ROADMAP 2.2) — up to WEAPON_SLOTS weapon ids the
+  // player crafted at the forge and carried into this run. Resolved through
+  // WEAPON_SIM_BY_ID (unknown ids dropped, design/09 forward-compat); an empty/all-unknown
+  // list falls back to the auto pistol ("none → auto pistol", design/05). ABSENT (every
+  // config before this feature) → the PLAYER_BASE.startWeapons default, byte-identical —
+  // additive, no ENGINE_VERSION bump.
+  loadout?: readonly string[];
   playerStart?: readonly [number, number]; // px; defaults to world centre
   // Static round solids (pillars), in world px [x, y, radius]. Converted to
   // grid-fp at construction; MovementSystem pushes actors out of them (design/07).
@@ -210,9 +219,21 @@ export class GameState {
     // Merge the chosen character (SkinDef defensive identity) with PLAYER_BASE shared
     // constants (design/09/14). Unknown/absent skin → the default (forward-compat).
     const skin = resolveSkin(config.skinId);
-    // Resolve the loadout through the run builder (design/09 fairness wall): the
-    // base meta loadout carried in at match start.
-    const weapons = buildRunSpecs(PLAYER_BASE.startWeapons);
+    // Resolve the loadout through the run builder (design/09 fairness wall): the base meta
+    // loadout carried in at match start. A `config.loadout` (crafted weapon ids, ROADMAP
+    // 2.2) resolves through WEAPON_SIM_BY_ID — unknown ids dropped (forward-compat), an
+    // empty result falling back to the auto pistol (design/05 "none → auto pistol").
+    // Absent → the shared PLAYER_BASE default (byte-identical to before — additive).
+    let baseLoadout: readonly WeaponSimSpec[];
+    if (config.loadout) {
+      const resolved = config.loadout
+        .map((id) => WEAPON_SIM_BY_ID[id])
+        .filter((s): s is WeaponSimSpec => s !== undefined);
+      baseLoadout = (resolved.length > 0 ? resolved : [WEAPON_SIM_BY_ID['blaster']!]).slice(0, PLAYER_BASE.weaponSlots);
+    } else {
+      baseLoadout = PLAYER_BASE.startWeapons;
+    }
+    const weapons = buildRunSpecs(baseLoadout);
     this.players.push({
       id: this.nextId(),
       faction: 'player',
