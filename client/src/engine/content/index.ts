@@ -3,6 +3,7 @@
 export * from './convert';
 export * from './damage';
 export * from './ballistics';
+export * from './rooms';
 export * from './weapons';
 export * from './players';
 export * from './skins';

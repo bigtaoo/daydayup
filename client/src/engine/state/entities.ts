@@ -194,6 +194,21 @@ export interface Obstacle {
   radius: Fp;
 }
 
+/**
+ * A static rectangular solid — the AABB tile/wall geometry design/07 deferred
+ * (ROADMAP 1.2), complementing the round pillars above. `x,y` is the top-left
+ * corner; `w,h` the extents. All Fp, converted once at construction/room-placement
+ * from human grid units (`content/rooms.ts roomGeometry`). Actor push-out is
+ * circle-vs-AABB (MovementSystem); bullets stop/expire on overlap
+ * (ProjectileStepSystem) — same treatment as a round pillar, different shape test.
+ */
+export interface AABB {
+  x: Fp;
+  y: Fp;
+  w: Fp;
+  h: Fp;
+}
+
 // design/09 vocabulary: heal (flat +1 HP) · material (carry-out currency) · weapon ·
 // buff (run-scoped power). Materials are the only carry-out; banking is 1.4/1.5.
 export type PickupKind = 'heal' | 'material' | 'weapon' | 'buff';

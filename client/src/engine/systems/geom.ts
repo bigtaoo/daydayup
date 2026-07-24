@@ -4,7 +4,7 @@
  * Fp arithmetic on plain `+`/`-`/`*` is fine here: we only compare, never store.
  */
 import type { Fp } from '../math/fixed';
-import type { EnemyActor } from '../state/entities';
+import type { AABB, EnemyActor } from '../state/entities';
 
 /** True if two circles overlap: (ax,ay,ar) vs (bx,by,br). */
 export function circlesOverlap(ax: Fp, ay: Fp, ar: Fp, bx: Fp, by: Fp, br: Fp): boolean {
@@ -12,6 +12,20 @@ export function circlesOverlap(ax: Fp, ay: Fp, ar: Fp, bx: Fp, by: Fp, br: Fp): 
   const dy = ay - by;
   const r = ar + br;
   return dx * dx + dy * dy <= r * r;
+}
+
+/**
+ * True if a circle (cx,cy,cr) overlaps a static AABB (design/07/09, ROADMAP 1.2).
+ * Closest-point test: clamp the circle centre onto the rect, then compare the
+ * squared distance to that point against the radius — the standard circle-vs-rect
+ * overlap check, no isqrt needed (squared compare only, matching circlesOverlap).
+ */
+export function circleOverlapsAabb(cx: Fp, cy: Fp, cr: Fp, rect: AABB): boolean {
+  const closestX = Math.max(rect.x, Math.min(cx, (rect.x + rect.w) as Fp));
+  const closestY = Math.max(rect.y, Math.min(cy, (rect.y + rect.h) as Fp));
+  const dx = cx - closestX;
+  const dy = cy - closestY;
+  return dx * dx + dy * dy <= cr * cr;
 }
 
 /**

@@ -95,6 +95,12 @@ import { BRAD_FULL } from './math/trig';
  * The WEAPON_DROP_POOL grew (scattergun/seeker/mortar/lasercutter/tomahawk/hammer/
  * spear), shifting every dropPrng weapon-id roll. Any v14 stream diverges the first
  * time a spread/homing/lob/beam/boomerang shot fires, or at the first weapon drop.
+ *
+ * (RoomState collision geometry, ROADMAP 1.2, shipped between v15 and here WITHOUT
+ * a bump — additive, like intrinsic rarity in v11's note. `state.walls: AABB[]`
+ * is a NEW GameState array, and MovementSystem/ProjectileStepSystem gained a wall-
+ * resolution pass, but every existing EngineConfig omits `walls` — so state.walls
+ * stays empty and the new code paths are no-ops. No pre-1.2 replay is affected.)
  */
 export const ENGINE_VERSION = 15;
 

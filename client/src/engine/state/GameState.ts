@@ -14,6 +14,7 @@ import { PLAYER_BASE } from '../content/players';
 import { resolveSkin, toShieldBreakSim, type SkinId } from '../content/skins';
 import { buildRunSpecs } from '../balance/build';
 import type {
+  AABB,
   EnemyActor,
   Obstacle,
   PickupItem,
@@ -44,6 +45,11 @@ export interface EngineConfig {
   // Static round solids (pillars), in world px [x, y, radius]. Converted to
   // grid-fp at construction; MovementSystem pushes actors out of them (design/07).
   obstacles?: readonly (readonly [number, number, number])[];
+  // Static rectangular solids (AABB tile/wall geometry, design/07/09 ROADMAP 1.2),
+  // in world px [x, y, w, h] (top-left corner + extents). Converted to grid-fp at
+  // construction; MovementSystem/ProjectileStepSystem resolve against them exactly
+  // like `obstacles` above, just with a rect test instead of a circle test.
+  walls?: readonly (readonly [number, number, number, number])[];
 }
 
 // Distinct derived-seed constants so the streams never alias (design/06/08).
@@ -76,6 +82,8 @@ export class GameState {
 
   // Static round solids — set once at construction, never mutated (design/07).
   readonly obstacles: Obstacle[] = [];
+  // Static rectangular solids (design/07/09 ROADMAP 1.2) — set once, never mutated.
+  readonly walls: AABB[] = [];
 
   // World bounds (fp).
   readonly worldW: Fp;
@@ -102,6 +110,9 @@ export class GameState {
 
     for (const [ox, oy, orad] of config.obstacles ?? []) {
       this.obstacles.push({ gx: pxToFp(ox), gy: pxToFp(oy), radius: pxToFp(orad) });
+    }
+    for (const [wx, wy, ww, wh] of config.walls ?? []) {
+      this.walls.push({ x: pxToFp(wx), y: pxToFp(wy), w: pxToFp(ww), h: pxToFp(wh) });
     }
 
     const [sx, sy] = config.playerStart ?? [config.worldW / 2, config.worldH / 2];

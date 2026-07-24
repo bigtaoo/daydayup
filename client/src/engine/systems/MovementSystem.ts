@@ -1,11 +1,13 @@
 /**
  * Step 4 — Movement. Integrate vx/vy (fp displacement already baked per tick) on
- * the 2D ground plane; push actors out of static round solids (pillars); clamp
+ * the 2D ground plane; push actors out of static round solids (pillars) AND static
+ * rectangular solids (AABB tile/wall geometry, design/07/09 ROADMAP 1.2); clamp
  * players inside the world bounds. Movement is strictly 2D — there is no z axis /
  * gravity (jump was removed; a future dodge is a planar blink, not a hop).
  * Actor–actor collision proper is design/07 (still deferred); this realizes the
- * static-solid half against round pillars. Enemies are stationary (vx/vy = 0) but
- * are integrated + resolved uniformly so future moving mobs need no special-casing.
+ * static-solid half against round pillars + AABB walls. Enemies are stationary
+ * (vx/vy = 0) but are integrated + resolved uniformly so future moving mobs need
+ * no special-casing.
  *
  * Ports Game.ts updatePlayer() move+clamp, float px → fp. Push-out uses isqrt
  * (design/06 banned Math.sqrt).
@@ -22,12 +24,14 @@ export class MovementSystem {
       if (!p.alive) continue;
       this.integrate(p);
       this.resolveObstacles(state, p);
+      this.resolveWalls(state, p);
       this.clampToWorld(state, p);
     }
     for (const e of state.enemies) {
       if (!e.alive) continue;
       this.integrate(e);
       this.resolveObstacles(state, e);
+      this.resolveWalls(state, e);
     }
   }
 
@@ -73,6 +77,48 @@ export class MovementSystem {
       // (dx,dy)/dist is the unit outward normal; × pen gives the fp displacement.
       a.gx = (a.gx + Math.trunc((dx * pen) / dist)) as Fp;
       a.gy = (a.gy + Math.trunc((dy * pen) / dist)) as Fp;
+    }
+  }
+
+  /**
+   * Push the actor's feet footprint out of any overlapping AABB wall (design/07/09,
+   * ROADMAP 1.2 — the "axis-separation push" deferred alongside RoomState). Two
+   * cases, matching standard circle-vs-rect resolution:
+   *   - centre outside the rect: push along the normal to the nearest edge point,
+   *     same style as the round-pillar resolver above (isqrt, no Math.sqrt).
+   *   - centre inside the rect (fully engulfed footprint): axis-separation — push
+   *     out along whichever single axis reaches open air soonest. Ties (equal
+   *     distance to two edges) resolve in a fixed +x/+y-preferring order so every
+   *     client picks the same edge (mirrors the round-pillar concentric-overlap rule).
+   */
+  private resolveWalls(state: GameState, a: Actor): void {
+    for (const w of state.walls) {
+      const r = a.footprintRadius;
+      const right = (w.x + w.w) as Fp;
+      const bottom = (w.y + w.h) as Fp;
+      const closestX = Math.max(w.x, Math.min(a.gx, right)) as Fp;
+      const closestY = Math.max(w.y, Math.min(a.gy, bottom)) as Fp;
+      const dx = a.gx - closestX;
+      const dy = a.gy - closestY;
+      const distSq = dx * dx + dy * dy;
+      if (distSq > 0) {
+        if (distSq >= r * r) continue; // no overlap
+        const dist = isqrt(distSq);
+        const pen = r - dist;
+        a.gx = (a.gx + Math.trunc((dx * pen) / dist)) as Fp;
+        a.gy = (a.gy + Math.trunc((dy * pen) / dist)) as Fp;
+        continue;
+      }
+      // Centre is inside the rect: push out along the nearest single edge.
+      const pushLeft = (a.gx - w.x) as number;
+      const pushRight = (right - a.gx) as number;
+      const pushTop = (a.gy - w.y) as number;
+      const pushBottom = (bottom - a.gy) as number;
+      const min = Math.min(pushLeft, pushRight, pushTop, pushBottom);
+      if (min === pushRight) a.gx = (right + r) as Fp;
+      else if (min === pushLeft) a.gx = (w.x - r) as Fp;
+      else if (min === pushBottom) a.gy = (bottom + r) as Fp;
+      else a.gy = (w.y - r) as Fp;
     }
   }
 

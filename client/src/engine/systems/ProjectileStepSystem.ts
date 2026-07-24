@@ -22,7 +22,7 @@
  */
 import { addFp, negFp } from '../math/fixed';
 import { SIM } from '../sim.config';
-import { circlesOverlap } from './geom';
+import { circleOverlapsAabb, circlesOverlap } from './geom';
 import { turnToward } from '../content/ballistics';
 import type { GameState } from '../state/GameState';
 import type { Actor, Faction } from '../state/entities';
@@ -76,10 +76,21 @@ export class ProjectileStepSystem {
       // Pillars are solid: a bullet that reaches one is absorbed (design/07 wall
       // stop). Pillars are tall, so no z-band gating — nothing shoots over them.
       // Endpoint test, matching the demo's despawn discipline (swept test is 07).
+      let stopped = false;
       for (const o of state.obstacles) {
         if (circlesOverlap(b.gx, b.gy, b.radius, o.gx, o.gy, o.radius)) {
           b.alive = false;
+          stopped = true;
           break;
+        }
+      }
+      // AABB walls (design/07/09, ROADMAP 1.2) get the same stop/expire treatment.
+      if (!stopped) {
+        for (const w of state.walls) {
+          if (circleOverlapsAabb(b.gx, b.gy, b.radius, w)) {
+            b.alive = false;
+            break;
+          }
         }
       }
     }

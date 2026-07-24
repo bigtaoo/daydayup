@@ -206,9 +206,9 @@ buildArenaSpecs(presetId: ArenaPresetId, skinId: SkinId): ResolvedSpecs
 
 ## World data
 
-### Collision geometry — `RoomState` (deferred from `07`)
+### Collision geometry — `RoomState` (deferred from `07`) ✅ schema shipped 2026-07-24 (ROADMAP 1.2)
 
-A room's static solids and markers, all on the `gx/gy` grid (`01`):
+A room's static solids and markers, all on the `gx/gy` grid (`01`). `content/rooms.ts` implements this shape (`RoomPiece`/`Point`/`SpawnPoint`/`AabbGrid`/`PillarGrid`/`ExitDef`/`PropPlacement`/`WaveScript`/`WaveEntry`/`RoomRole`) plus the pure `roomGeometry(piece, offsetXGrid?, offsetYGrid?)` converter to sim `{ walls: AABB[]; obstacles: Obstacle[] }`. `GameState` gained a `walls: AABB[]` array (sourced from `EngineConfig.walls`, parallel to the existing `obstacles`) and `MovementSystem`/`ProjectileStepSystem` resolve against it (`07`) — additive, no `ENGINE_VERSION` bump (every existing config omits `walls`, so it stays empty). **Remaining:** no `RoomPiece` content is authored yet, and nothing places a piece into a live `GameState` — that's 1.3 (hand-authored library + seeded layout), which will call `roomGeometry` when stitching a floor together.
 
 ```
 RoomPiece = {
