@@ -117,6 +117,9 @@ export class GameState {
       facing: 0 as PlayerActor['facing'],
       hp: PLAYER.maxHp,
       maxHp: PLAYER.maxHp,
+      shield: PLAYER.maxShield, // spawn with a full shield (design/07)
+      maxShield: PLAYER.maxShield,
+      ticksSinceHit: 0,
       radius: PLAYER.radius,
       footprintRadius: PLAYER.footprintRadius,
       alive: true,

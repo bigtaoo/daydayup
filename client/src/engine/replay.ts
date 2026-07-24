@@ -108,6 +108,9 @@ export function serializeState(s: GameState): unknown {
     prng: [s.aiPrng.peek(), s.combatPrng.peek(), s.dropPrng.peek()],
     players: s.players.map((p) => [
       p.id, p.gx, p.gy, p.z, p.vx, p.vy, p.facing, p.hp, p.maxHp, p.alive,
+      // Two-pool health (design/07): shield absorbs first and its idle regen advances
+      // ticksSinceHit every tick, so both must be hashed to catch a regen divergence.
+      p.shield, p.maxShield, p.ticksSinceHit,
       p.activeSlot, p.firing, p.prevButtons,
       // Run-buff stack (design/14): buffs scale damage/firerate at use time, so a buff
       // divergence would otherwise only surface indirectly — hash the ids directly.
@@ -119,7 +122,7 @@ export function serializeState(s: GameState): unknown {
         w.spec.kind === 'ranged' ? [w.spec.fireRateTicks, w.spec.bulletSpeed] : [w.spec.range],
       ]),
     ]),
-    enemies: s.enemies.map((e) => [e.id, e.gx, e.gy, e.z, e.vx, e.vy, e.facing, e.hp, e.alive]),
+    enemies: s.enemies.map((e) => [e.id, e.gx, e.gy, e.z, e.vx, e.vy, e.facing, e.hp, e.shield, e.alive]),
     projectiles: s.projectiles.map((b) => [
       b.id, b.gx, b.gy, b.z, b.vx, b.vy, b.faction, b.damage, b.lifeTicks, b.alive,
     ]),

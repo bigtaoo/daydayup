@@ -15,6 +15,7 @@ import { BLASTER_SIM, SABER_SIM } from './weapons';
 
 export interface PlayerBlueprint {
   maxHp: number;
+  maxShield: number; // two-pool health (design/02/07); a character's SkinDef sets this in 0.5
   radius: Fp;
   footprintRadius: Fp; // feet circle for solid push-out (< radius); see Actor.footprintRadius
   speedPerTick: Fp; // fp displacement per tick at full move magnitude
@@ -24,6 +25,7 @@ export interface PlayerBlueprint {
 
 export const PLAYER: PlayerBlueprint = {
   maxHp: 6,
+  maxShield: 4, // demo shield pool so two-pool health is live now; 0.5 moves this to SkinDef
   radius: pxToFp(16), // 0.5 grid (demo 16px)
   footprintRadius: pxToFp(7), // small feet circle so the body can overlap a pillar
   speedPerTick: pxToFp(6.4), // 3.2 px/frame × 2 = 6.4 px/tick ≈ 6 grid/s

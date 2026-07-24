@@ -67,6 +67,9 @@ export class SpawnSystem {
         facing: 0 as GameState['enemies'][number]['facing'],
         hp: bp.maxHp,
         maxHp: bp.maxHp,
+        shield: 0, // enemies have no shield pool (design/07 — shields are a character trait)
+        maxShield: 0,
+        ticksSinceHit: 0,
         radius: bp.radius,
         footprintRadius: bp.footprintRadius,
         alive: true,

@@ -34,6 +34,7 @@ export const CONFIG = {
     gun: 0xcbd5e0,
     sword: 0xe2e8f0,
     swordGlow: 0x90cdf4,
+    shield: 0x76e4f7, // cyan — the shield pool + its shatter burst (design/07 two-pool)
     deflect: 0x63b3ed, // parry/deflect flash (a melee swing batting a bullet back)
     clash: 0xffd27f, // two opposing bullets meeting and cancelling — a mid-air spark
     muzzle: 0xffe08a,

@@ -66,8 +66,22 @@ import { BRAD_FULL } from './math/trig';
  * damage / attack-speed (WeaponFire, HitResolve) and max HP (Σ-then-clamp). Enemies
  * carry no buffs (identity), so their fire is unchanged. (Intrinsic rarity, ROADMAP
  * 0.2, shipped between v10 and here WITHOUT a bump — additive, damage byte-identical.)
+ *
+ * v12: two-pool health (design/02/05/07). Actors gain shield/maxShield/ticksSinceHit;
+ * all damage (direct hit, chain, DoT) routes through a shared shield-first `takeDamage`
+ * and StatusEffectSystem grows an idle shield-regen sub-pass. A shielded actor now
+ * soaks damage differently and its ticksSinceHit advances every tick, so any v11
+ * stream where the player (maxShield > 0) takes a hit — or simply idles — diverges.
  */
-export const ENGINE_VERSION = 11;
+export const ENGINE_VERSION = 12;
+
+// ── Two-pool health tuning (design/07; final values are 07 "to design") ──────────
+// Whole ticks @30Hz. Shield regen is an idle timer, not a heal: after taking ANY
+// damage an actor must stay unhit for DELAY ticks before shield refills +1 per
+// INTERVAL, capped at maxShield. A DoT tick resets the timer (StatusEffectSystem),
+// so clearing a lingering status is a precondition for regen.
+export const SHIELD_REGEN_DELAY = 90; // ~3 s idle before regen starts
+export const SHIELD_REGEN_INTERVAL = 300; // ~10 s per +1 shield thereafter
 
 /**
  * World scale — the anchor for every human-unit → fp/brad conversion (design/09).

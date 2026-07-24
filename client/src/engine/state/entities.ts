@@ -70,6 +70,15 @@ export interface Actor {
   facing: Brad;
   hp: number;
   maxHp: number;
+  // Two-pool health (design/02/05/07). Damage absorbs shield-first, overflow to hp;
+  // an idle shield regens (StatusEffectSystem step 8). maxShield 0 = no shield pool
+  // (the current enemies + the 0-shield starter), so the absorb is a no-op and this
+  // stays additive for shieldless actors. Characters (0.5) set these from a SkinDef.
+  shield: number;
+  maxShield: number;
+  // Ticks since this actor last took ANY damage (direct hit or DoT), reset to 0 by
+  // takeDamage. Gates shield regen: refill only after SHIELD_REGEN_DELAY idle ticks.
+  ticksSinceHit: number;
   radius: Fp; // body circle — bullet/melee hit target and sprite size
   // Ground-plane collision footprint (feet), used only for actor↔solid push-out
   // (MovementSystem). Smaller than `radius` so the tall sprite can overlap a solid

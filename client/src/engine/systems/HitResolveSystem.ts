@@ -37,6 +37,7 @@ import {
   burnDamageFor,
 } from '../content/damage';
 import { buffedDamage, sumBuffs } from '../balance/runbuffs';
+import { takeDamage } from './combat';
 import { circlesOverlap, retainAlive } from './geom';
 
 export class HitResolveSystem {
@@ -88,16 +89,9 @@ export class HitResolveSystem {
     group: readonly Actor[],
   ): void {
     const dmg = applyResist(rawDamage, type, target.resist);
-    target.hp -= dmg;
-    state.events.push({
-      type: 'hit',
-      target: target.id,
-      faction: attacker,
-      gx: target.gx,
-      gy: target.gy,
-      damage: dmg,
-      damageType: type,
-    });
+    // Shield-first absorb + hit event + shield_break (design/07 two-pool takeDamage).
+    takeDamage(state, target, dmg, attacker, type);
+    // Status magnitude keys off the resisted hit, independent of how it split shield/hp.
     this.applyStatus(state, target, dmg, type, group);
   }
 
@@ -164,16 +158,8 @@ export class HitResolveSystem {
     }
     if (!best) return;
     const chainDmg = Math.max(1, Math.trunc((dmg * CHAIN_DMG_PERMILLE) / 1000));
-    best.hp -= chainDmg;
-    state.events.push({
-      type: 'hit',
-      target: best.id,
-      faction: from.faction === 'enemy' ? 'player' : 'enemy',
-      gx: best.gx,
-      gy: best.gy,
-      damage: chainDmg,
-      damageType: 'lightning',
-    });
+    // A chained hit is a hit: shield-first, and it can break a shield too (design/07).
+    takeDamage(state, best, chainDmg, from.faction === 'enemy' ? 'player' : 'enemy', 'lightning');
     state.events.push({ type: 'status', effect: 'shock', target: best.id, gx: best.gx, gy: best.gy });
   }
 

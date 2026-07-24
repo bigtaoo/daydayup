@@ -29,7 +29,8 @@ function addEnemy(s: GameState, xpx: number, ypx: number, hp: number = BASIC_ENE
   const e: EnemyActor = {
     id: s.nextId(), faction: 'enemy',
     gx: pxToFp(xpx), gy: pxToFp(ypx), z: toFp(0), vx: toFp(0), vy: toFp(0),
-    facing: 0 as Brad, hp, maxHp: BASIC_ENEMY.maxHp, radius: BASIC_ENEMY.radius,
+    facing: 0 as Brad, hp, maxHp: BASIC_ENEMY.maxHp, shield: 0, maxShield: 0,
+    ticksSinceHit: 0, radius: BASIC_ENEMY.radius,
     footprintRadius: BASIC_ENEMY.footprintRadius,
     alive: true, weapon: null, firing: false, status: freshStatus(),
   };
@@ -167,12 +168,25 @@ describe('HitResolveSystem (step 7)', () => {
     expect(s.projectiles).toHaveLength(0); // consumed + compacted
   });
 
-  it('an enemy bullet overlapping the player deals damage', () => {
+  it('an enemy bullet overlapping the player is absorbed by the shield first (two-pool)', () => {
     const s = state();
     const p = s.players[0]!;
     addBullet(s, 800, 600, toFp(0), 'enemy'); // on top of the player
     new HitResolveSystem().tick(s);
-    expect(p.hp).toBe(PLAYER.maxHp - 1);
+    expect(p.hp).toBe(PLAYER.maxHp); // hp untouched while shield remains
+    expect(p.shield).toBe(PLAYER.maxShield - 1); // shield soaked the hit
+    expect(p.ticksSinceHit).toBe(0); // taking damage reset the regen timer
+  });
+
+  it('damage overflows to hp once the shield is gone, and fires shield_break on depletion', () => {
+    const s = state();
+    const p = s.players[0]!;
+    p.shield = 1; // one point of shield left
+    addBullet(s, 800, 600, toFp(0), 'enemy'); // dmg 1 → empties the shield exactly
+    new HitResolveSystem().tick(s);
+    expect(p.shield).toBe(0);
+    expect(p.hp).toBe(PLAYER.maxHp); // exactly absorbed, no overflow
+    expect(s.events.some((e) => e.type === 'shield_break' && e.id === p.id)).toBe(true);
   });
 
   it('opposing-faction bullets that overlap cancel each other out', () => {

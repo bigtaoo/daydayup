@@ -282,6 +282,11 @@ export class Game {
             e.faction === 'enemy' ? CONFIG.colors.enemy : CONFIG.colors.swordGlow, 16);
           cues.add('impact');
           break;
+        case 'shield_break':
+          // A shattered shield — a bright cyan burst (design/07 two-pool break).
+          this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.shield, 28);
+          cues.add('shield.break');
+          break;
         case 'deflect':
           this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.deflect, 20);
           cues.add('deflect');
@@ -430,10 +435,14 @@ export class Game {
     const hp = p ? Math.max(0, p.hp) : 0;
     const maxHp = p ? p.maxHp : 0;
     const bar = '♥'.repeat(hp) + '·'.repeat(Math.max(0, maxHp - hp));
+    // Shield pool (design/07 two-pool) — shown as a separate row of diamonds.
+    const sh = p ? Math.max(0, p.shield) : 0;
+    const maxSh = p ? p.maxShield : 0;
+    const shieldRow = maxSh > 0 ? `   SH ${'◆'.repeat(sh)}${'◇'.repeat(Math.max(0, maxSh - sh))}` : '';
     const wave = Math.max(1, s.waveIndex + 1);
     const buffs = p && p.buffs.length ? `   Buffs ${p.buffs.length}` : '';
     this.hud.text =
-      `HP ${bar}${buffs}\n` +
+      `HP ${bar}${shieldRow}${buffs}\n` +
       `Wave ${wave}/${WAVES.length}   Enemies ${s.enemies.length}   Score ${this.score}\n` +
       `Weapon ${wname}\n` +
       `[1]/[2] swap weapon   LMB = attack (melee swing also parries bullets)   WASD = move`;

@@ -46,6 +46,7 @@ export type AudioCue =
   | 'impact'
   | 'deflect'
   | 'clash'
+  | 'shield.break'
   | 'status.burn'
   | 'status.chill'
   | 'status.shock'

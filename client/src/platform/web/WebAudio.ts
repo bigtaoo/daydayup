@@ -118,6 +118,7 @@ const VOICES: Record<AudioCue, (a: WebAudio, ctx: AudioContext, bus: GainNode) =
   impact: (a, c, b) => { a.noise(c, b, 0.07, 0.18, 2600); a.tone(c, b, 160, 'triangle', 0.06, 0.1, 90); },
   deflect: (a, c, b) => a.tone(c, b, 700, 'triangle', 0.14, 0.2, 1400), // signature parry ping (design/03/05)
   clash: (a, c, b) => { a.tone(c, b, 520, 'square', 0.05, 0.1); a.tone(c, b, 780, 'square', 0.05, 0.08); },
+  'shield.break': (a, c, b) => { a.tone(c, b, 420, 'sawtooth', 0.16, 0.16, 180); setTone(a, c, b, 620, 0.1, 0.1); },
   'status.burn': (a, c, b) => a.noise(c, b, 0.12, 0.09, 1800),
   'status.chill': (a, c, b) => a.tone(c, b, 1200, 'sine', 0.12, 0.09, 900),
   'status.shock': (a, c, b) => a.tone(c, b, 300, 'sawtooth', 0.08, 0.1, 600),

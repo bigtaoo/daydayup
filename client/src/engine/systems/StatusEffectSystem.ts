@@ -12,6 +12,8 @@
  * step 9's call, matching HitResolve). Applies to players and enemies uniformly.
  */
 import { DOT_INTERVAL } from '../content/damage';
+import { SHIELD_REGEN_DELAY, SHIELD_REGEN_INTERVAL } from '../config';
+import { takeDamage } from './combat';
 import type { GameState } from '../state/GameState';
 import type { Actor } from '../state/entities';
 
@@ -28,16 +30,17 @@ export class StatusEffectSystem {
     const src = a.faction === 'enemy' ? 'player' : 'enemy';
 
     if (dotTick) {
+      // DoT is shield-first too (design/07): a shield can soak a burn, and a DoT that
+      // empties it breaks like any hit — takeDamage also resets ticksSinceHit, so a
+      // lingering status keeps regen suppressed.
       if (st.burnTicks > 0 && st.burnDmg > 0) {
-        a.hp -= st.burnDmg;
-        state.events.push({ type: 'hit', target: a.id, faction: src, gx: a.gx, gy: a.gy, damage: st.burnDmg, damageType: 'fire' });
+        takeDamage(state, a, st.burnDmg, src, 'fire');
         state.events.push({ type: 'status', effect: 'burn', target: a.id, gx: a.gx, gy: a.gy });
       }
       let poisonDmg = 0;
       for (const s of st.poison) poisonDmg += s.dmg;
       if (poisonDmg > 0) {
-        a.hp -= poisonDmg;
-        state.events.push({ type: 'hit', target: a.id, faction: src, gx: a.gx, gy: a.gy, damage: poisonDmg, damageType: 'poison' });
+        takeDamage(state, a, poisonDmg, src, 'poison');
         state.events.push({ type: 'status', effect: 'poison', target: a.id, gx: a.gx, gy: a.gy });
       }
     }
@@ -56,6 +59,21 @@ export class StatusEffectSystem {
         if (s.ticks > 0) st.poison[w++] = s;
       }
       st.poison.length = w;
+    }
+
+    // Shield regen (idle timer, design/07). Runs AFTER the DoT sub-pass: advance the
+    // idle counter, then — once past the delay — refill +1 on each interval boundary,
+    // capped at maxShield. Because a DoT tick this frame already zeroed ticksSinceHit
+    // (takeDamage), an actor still burning/poisoned can't regen — the "clear your
+    // status to recover" rule falls out for free. maxShield 0 → nothing to regen.
+    a.ticksSinceHit++;
+    if (
+      a.maxShield > 0 &&
+      a.shield < a.maxShield &&
+      a.ticksSinceHit >= SHIELD_REGEN_DELAY &&
+      (a.ticksSinceHit - SHIELD_REGEN_DELAY) % SHIELD_REGEN_INTERVAL === 0
+    ) {
+      a.shield++;
     }
   }
 }

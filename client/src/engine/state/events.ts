@@ -11,7 +11,10 @@ import type { Faction, PickupKind, Winner } from './entities';
 
 export type GameEvent =
   | { type: 'bullet_fired'; faction: Faction; gx: Fp; gy: Fp; facing: Brad }
-  | { type: 'hit'; target: number; faction: Faction; gx: Fp; gy: Fp; damage: number; damageType: DamageType }
+  | { type: 'hit'; target: number; faction: Faction; gx: Fp; gy: Fp; damage: number; damageType: DamageType; shieldRemaining?: number }
+  // A hit (or DoT) that emptied a non-zero shield pool (design/07 two-pool). Render
+  // plays a break fx; the sim uses it to fire a character's shield-break passive (0.5).
+  | { type: 'shield_break'; id: number; gx: Fp; gy: Fp }
   | { type: 'clash'; gx: Fp; gy: Fp } // two opposing-faction bullets met and cancelled
   | { type: 'deflect'; gx: Fp; gy: Fp }
   // An elemental status was applied or ticked on a target (render plays the fx —
