@@ -105,7 +105,7 @@ export function serializeState(s: GameState): unknown {
     waveIndex: s.waveIndex,
     waveBreakTicks: s.waveBreakTicks,
     wavesExhausted: s.wavesExhausted,
-    prng: [s.aiPrng.peek(), s.combatPrng.peek(), s.dropPrng.peek()],
+    prng: [s.aiPrng.peek(), s.combatPrng.peek(), s.dropPrng.peek(), s.roomgenPrng.peek()],
     players: s.players.map((p) => [
       p.id, p.gx, p.gy, p.z, p.vx, p.vy, p.facing, p.hp, p.maxHp, p.alive,
       // Two-pool health (design/07): shield absorbs first and its idle regen advances

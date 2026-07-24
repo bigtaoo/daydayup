@@ -25,6 +25,7 @@ export * from './state/GameState';
 export * from './sim.config';
 export * from './content';
 export * from './balance';
+export * from './world';
 export * from './systems';
 export * from './GameEngine';
 export * from './replay';

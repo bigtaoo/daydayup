@@ -53,10 +53,10 @@ export interface EngineConfig {
 }
 
 // Distinct derived-seed constants so the streams never alias (design/06/08).
-// roomgenPrng is deferred until room generation exists (design/07/09).
 const SEED_AI = 0x1a2b3c4d;
 const SEED_COMBAT = 0x5e6f7a8b;
 const SEED_DROP = 0x9c0d1e2f;
+const SEED_ROOMGEN = 0x3f4a5b6c;
 
 export class GameState {
   readonly seed: number;
@@ -73,6 +73,12 @@ export class GameState {
   readonly aiPrng: Prng;
   readonly combatPrng: Prng;
   readonly dropPrng: Prng;
+  // Dungeon layout/selection (design/05/08/09, ROADMAP 1.3) — the fourth PRNG the
+  // locked GameState schema names. Not yet drawn from by any live system:
+  // GameEngine.step() doesn't call the floor generator (world/dungeon.ts
+  // generateFloor) — that's wiring the demo's single arena into a real multi-floor
+  // run, 1.4/1.5. Reserved now so the schema matches design/08 exactly.
+  readonly roomgenPrng: Prng;
 
   // Entities — ordered arrays; index/id stable within a match.
   readonly players: PlayerActor[] = [];
@@ -104,6 +110,7 @@ export class GameState {
     this.aiPrng = new Prng(config.seed ^ SEED_AI);
     this.combatPrng = new Prng(config.seed ^ SEED_COMBAT);
     this.dropPrng = new Prng(config.seed ^ SEED_DROP);
+    this.roomgenPrng = new Prng(config.seed ^ SEED_ROOMGEN);
     this.worldW = pxToFp(config.worldW);
     this.worldH = pxToFp(config.worldH);
     this.waves = config.waves;

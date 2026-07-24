@@ -96,6 +96,10 @@ export interface RoomPiece {
   props?: PropPlacement[];
   encounter?: WaveScript;
   role?: RoomRole;
+  // Which biome piece-pools (DungeonConfig.pieceTags, world/dungeon.ts, ROADMAP 1.3)
+  // this piece is eligible to be drawn into. Omitted/empty = draws into no pool
+  // (a role piece — extraction/boss — is referenced by id directly, not by tag).
+  tags?: string[];
 }
 
 /**

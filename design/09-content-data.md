@@ -224,9 +224,9 @@ RoomPiece = {
 
 `solids` are integer-grid AABBs → converted to `Fp` bounds on load. This is the schema `07` said it needed and left to `09`.
 
-### Dungeon assembly (`05` hybrid)
+### Dungeon assembly (`05` hybrid) ✅ generation shipped 2026-07-24 (ROADMAP 1.3, additive — no `ENGINE_VERSION` bump)
 
-⟂ The core divergence from funny. Instead of one scripted level, a **seeded layout stitches hand-authored pieces**:
+⟂ The core divergence from funny. Instead of one scripted level, a **seeded layout stitches hand-authored pieces**. `world/dungeon.ts` implements `DungeonConfig` + the pure `generateFloor(config, floorIndex, roomgenPrng, library)`: draws a room count within `roomsPerFloor`, then that many normal pieces from the `pieceTags`-matched pool, appending the floor's capstone (`extractionPieceId`, or `bossPieceId` on the last floor) — same "pure, unwired" shape as `content/rooms.ts roomGeometry` (1.2). `GameState` gained the `roomgenPrng` stream this doc's schema always named (additive — nothing draws from it yet). `world/rooms/ember.ts` is a first hand-authored library (4 normal + 1 extraction + 1 boss piece, tagged `'ember'`). **Only `layout: 'linear'` is implemented; `'branching'` is the follow-up.** **Remaining:** nothing places a generated floor into a live run yet (mutable room geometry, room-to-room transitions, the encounter `WaveScript` actually driving spawns) — that's 1.4/1.5, which need this together with the extraction checkpoint and materials banking to be testable as a real loop.
 
 ```
 DungeonConfig = {

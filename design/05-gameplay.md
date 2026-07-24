@@ -51,6 +51,7 @@ Loadout (bring up to 2 weapons; none → auto pistol)
 
 - **Hybrid: hand-authored room pieces stitched by a seeded procedural layout.** Reuse funny's PRNG roomgen for the layout/selection; keep encounter quality controlled by curating the room pieces. Standard roguelite answer — full-procedural risks uneven quality, fully hand-built kills replayability. The per-floor **extraction room** is one of the placed pieces, and its position within the floor is what gates how many rooms are skippable.
 - Generation is driven by an **injected `Prng` seeded per run** (`06`), so a run is fully reproducible from `seed + input stream` (needed for co-op determinism and headless re-judge).
+- ✅ **Selection shipped 2026-07-24 (ROADMAP 1.3, `09`):** `world/dungeon.ts generateFloor` draws a floor's room count + normal-piece sequence from `roomgenPrng`, always ending in the floor's extraction/boss capstone. Placing a generated floor into a live, traversable run (the room-to-room "which rooms are skippable" experience this bullet describes) is 1.4/1.5.
 
 ## Survivability model (HP + shield)
 
