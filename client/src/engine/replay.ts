@@ -148,6 +148,11 @@ export function serializeState(s: GameState): unknown {
     // deterministic from roomgenPrng (already hashed above); this catches a progression
     // divergence (advanced to a different room) that hasn't yet moved an entity.
     roomIndex: s.roomIndex,
+    // Room-local WaveScript clock + how many scheduled spawns have fired. Stable 0 for
+    // a non-dungeon config; catches a timing divergence (an entry dispatched a tick
+    // early/late) before it surfaces in the enemy list.
+    roomTick: s.roomTick,
+    roomSpawnCursor: s.roomSpawnCursor,
   };
 }
 

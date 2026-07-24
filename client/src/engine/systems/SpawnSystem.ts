@@ -126,7 +126,14 @@ export class SpawnSystem {
       return;
     }
 
-    if (state.enemies.length > 0) return; // current room not yet cleared
+    state.roomTick++;
+    this.dispatchDueSpawns(state); // spawn any WaveScript entries now due (design/09 timing)
+
+    // A room is cleared only once every scheduled spawn has been dispatched AND no
+    // enemy remains — so a staggered encounter can't be skipped by killing its first
+    // wave before the later ones appear.
+    if (state.roomSpawnCursor < state.roomSchedule.length) return;
+    if (state.enemies.length > 0) return;
 
     if (state.roomIndex >= state.floorLayout.length - 1) {
       // The floor's capstone room is cleared → checkpoint. ExtractionSystem resolves
@@ -146,6 +153,7 @@ export class SpawnSystem {
    */
   private loadRoom(state: GameState, idx: number): void {
     state.roomIndex = idx;
+    state.roomTick = 0; // restart the room-local clock for the WaveScript schedule
     const room = state.floorLayout[idx]!;
 
     const { walls, obstacles } = roomGeometry(room);
@@ -167,31 +175,51 @@ export class SpawnSystem {
       }
     });
 
-    this.spawnRoomEnemies(state, room);
+    this.buildSchedule(state, room);
+    this.dispatchDueSpawns(state); // atTick-0 entries appear the tick the room loads
     state.events.push({ type: 'room_enter', floorIndex: state.floorIndex, roomIndex: idx, roomId: room.id });
   }
 
   /**
-   * Spawn a room's enemies. If the piece authored a WaveScript encounter, its entries
-   * drive the spawn (each entry references a `spawns.enemy` index); otherwise every
-   * enemy spawn point spawns one mob of its authored type. The entries' TIMING
-   * (atTick / spacingTicks) is not yet honored — every entry spawns at room-load — so
-   * a scripted room currently behaves like an all-at-once wave (follow-up: a tick-
-   * cursor WaveDirector, the shape design/09 locked WaveEntry for).
+   * Pre-expand a room's enemies into a timed spawn schedule (design/09 WaveScript). A
+   * piece with an `encounter` uses its entries — each becomes `count` timed events
+   * (copy j at `atTick + j*spacingTicks`, so a burst can trickle in). A piece without
+   * one falls back to every enemy spawn point at tick 0 (an all-at-once room — the
+   * common hand-authored case). Sorted by (atTick, authoring order) so dispatch order
+   * — and thus the aiPrng draw order in spawnEnemyAt — is deterministic (design/06).
    */
-  private spawnRoomEnemies(state: GameState, room: RoomPiece): void {
+  private buildSchedule(state: GameState, room: RoomPiece): void {
+    const sched: { atTick: number; spawnPoint: number; enemyType?: string; seq: number }[] = [];
+    let seq = 0;
     if (room.encounter) {
       for (const entry of room.encounter.entries) {
-        const sp = room.spawns.enemy[entry.spawnPoint];
-        if (!sp) continue; // out-of-range index → skip (forward-compat, design/09)
-        for (let i = 0; i < entry.count; i++) {
-          this.spawnEnemyAt(state, toFpGrid(sp.x), toFpGrid(sp.y), entry.enemyType);
+        const spacing = entry.spacingTicks ?? 0;
+        for (let j = 0; j < entry.count; j++) {
+          sched.push({ atTick: entry.atTick + j * spacing, spawnPoint: entry.spawnPoint, enemyType: entry.enemyType, seq: seq++ });
         }
       }
     } else {
-      for (const sp of room.spawns.enemy) {
-        this.spawnEnemyAt(state, toFpGrid(sp.x), toFpGrid(sp.y), sp.type);
+      for (let i = 0; i < room.spawns.enemy.length; i++) {
+        sched.push({ atTick: 0, spawnPoint: i, enemyType: room.spawns.enemy[i]!.type, seq: seq++ });
       }
+    }
+    sched.sort((a, b) => (a.atTick - b.atTick) || (a.seq - b.seq));
+    state.roomSchedule = sched.map(({ atTick, spawnPoint, enemyType }) => ({ atTick, spawnPoint, enemyType }));
+    state.roomSpawnCursor = 0;
+  }
+
+  /** Spawn every scheduled entry whose `atTick` has arrived (relative to room load).
+   * The schedule is sorted, so a single forward cursor suffices. A spawn point index
+   * out of range is skipped (forward-compat, design/09). */
+  private dispatchDueSpawns(state: GameState): void {
+    const room = state.floorLayout[state.roomIndex];
+    if (!room) return;
+    while (state.roomSpawnCursor < state.roomSchedule.length) {
+      const ev = state.roomSchedule[state.roomSpawnCursor]!;
+      if (ev.atTick > state.roomTick) break;
+      const sp = room.spawns.enemy[ev.spawnPoint];
+      if (sp) this.spawnEnemyAt(state, toFpGrid(sp.x), toFpGrid(sp.y), ev.enemyType);
+      state.roomSpawnCursor++;
     }
   }
 }

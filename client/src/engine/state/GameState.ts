@@ -160,6 +160,17 @@ export class GameState {
   // Index into `floorLayout` of the live room; -1 = no room loaded yet (run start, or
   // just DESCENDed → SpawnSystem (re)generates the floor and loads room 0 next tick).
   roomIndex = -1;
+  // Ticks since the live room loaded (room-local clock for WaveScript timing). Drives
+  // the staggered spawn schedule below; reset to 0 by SpawnSystem.loadRoom.
+  roomTick = 0;
+  // The live room's spawn schedule (design/09 WaveScript), pre-expanded at room load:
+  // each WaveEntry becomes `count` timed spawn events (copy j at atTick + j*spacingTicks),
+  // sorted by (atTick, authoring order) so dispatch is deterministic. Empty for a room
+  // with no enemies. `roomSpawnCursor` is how many have been dispatched so far — a room
+  // is not "cleared" (and won't advance) until the cursor reaches the end AND no enemies
+  // remain, so staggered spawns can't be skipped by killing the early ones fast.
+  roomSchedule: { atTick: number; spawnPoint: number; enemyType?: string }[] = [];
+  roomSpawnCursor = 0;
 
   // Outcome + render channel.
   winner: Winner = null;

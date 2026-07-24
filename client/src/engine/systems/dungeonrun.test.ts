@@ -255,6 +255,82 @@ describe('Dungeon mode — determinism', () => {
   });
 });
 
+describe('Dungeon mode — WaveScript timing (atTick / spacingTicks)', () => {
+  // A normal room whose encounter trickles in: 1 mob at room-load, then a pair at
+  // room-tick 5 spaced 3 ticks apart (so at ticks 5 and 8). Capstone is enemy-free.
+  const TIMED_LIB: RoomPiece[] = [
+    {
+      id: 'timed', tags: ['tm'], sizeGrid: { w: 20, h: 16 }, solids: [],
+      spawns: { player: [{ x: 2, y: 8 }], enemy: [{ x: 16, y: 4 }, { x: 16, y: 12 }] },
+      exits: [],
+      encounter: {
+        entries: [
+          { atTick: 0, enemyType: 'basic', spawnPoint: 0, count: 1 },
+          { atTick: 5, enemyType: 'basic', spawnPoint: 1, count: 2, spacingTicks: 3 },
+        ],
+      },
+    },
+    {
+      id: 'tm_boss', role: 'boss', sizeGrid: { w: 20, h: 16 }, solids: [],
+      spawns: { player: [{ x: 2, y: 8 }], enemy: [] }, exits: [],
+    },
+  ];
+  const TIMED_CFG: EngineConfig = {
+    seed: 11, worldW: 640, worldH: 640, waves: [],
+    dungeon: {
+      config: {
+        biomeId: 'tm', nameKey: 'tm', floorCount: 1, roomsPerFloor: { min: 2, max: 2 },
+        pieceTags: ['tm'], layout: 'linear', extractionPieceId: 'tm_boss', bossPieceId: 'tm_boss',
+        difficultyCurve: { base: 1, perFloor: 0 },
+      },
+      library: TIMED_LIB,
+    },
+  };
+
+  it('spawns entries when due and staggers a count over spacingTicks (room tick = global tick - 1)', () => {
+    const eng = createGameEngine(TIMED_CFG);
+    const s = eng.state;
+
+    eng.step([idle(1)]); // room loads: room-tick 0 → the atTick-0 entry fires
+    expect(s.roomTick).toBe(0);
+    expect(s.roomSchedule.length).toBe(3); // 1 + 2 expanded copies
+    expect(s.roomSpawnCursor).toBe(1);
+    expect(s.enemies.length).toBe(1);
+
+    for (let t = 2; t <= 6; t++) eng.step([idle(t)]); // → room-tick 5: first of the pair
+    expect(s.roomTick).toBe(5);
+    expect(s.roomSpawnCursor).toBe(2);
+
+    eng.step([idle(7)]); // room-tick 6 — the spaced copy (atTick 8) is not due yet
+    expect(s.roomSpawnCursor).toBe(2);
+    eng.step([idle(8)]); // room-tick 7 — still not due
+    expect(s.roomSpawnCursor).toBe(2);
+    eng.step([idle(9)]); // room-tick 8 — the last copy fires
+    expect(s.roomSpawnCursor).toBe(3);
+    expect(s.enemies.length).toBe(3); // idle player killed none
+  });
+
+  it('does not advance while scheduled spawns are pending, even if the room is momentarily empty', () => {
+    const eng = createGameEngine(TIMED_CFG);
+    const s = eng.state;
+    eng.step([idle(1)]); // room 0, cursor 1 of 3
+
+    // Kill everything each tick before room-tick 5 — the later spawns are still pending,
+    // so the room must NOT be considered cleared.
+    for (let t = 2; t <= 5; t++) { s.enemies.length = 0; eng.step([idle(t)]); }
+    expect(s.roomTick).toBe(4);
+    expect(s.roomSpawnCursor).toBeLessThan(3);
+    expect(s.roomIndex).toBe(0); // held on the room despite being empty
+
+    // Run the schedule out, still clearing — once every spawn has fired and the room is
+    // empty, it advances to the capstone (roomIndex 1). Reaching it at all proves the
+    // timed room dispatched all 3 spawns first; the cursor has since reset for the new room.
+    for (let t = 6; t <= 11; t++) { s.enemies.length = 0; eng.step([idle(t)]); }
+    expect(s.roomIndex).toBe(1);
+    expect(s.floorLayout[1]!.role).toBe('boss');
+  });
+});
+
 describe('Dungeon mode — the real Ember biome runs end-to-end', () => {
   it('generates + traverses EMBER_DUNGEON floors without throwing, geometry always populated', () => {
     const eng = createGameEngine({
