@@ -27,4 +27,8 @@ export type GameEvent =
   // buffer just banked and the next floor's waves are loading. EXTRACT reuses the
   // existing 'win' event (a successful run end either way).
   | { type: 'descend'; floorIndex: number }
+  // A generated dungeon room just became live (design/05/09, ROADMAP 1.3 wired) — its
+  // collision geometry, world bounds, and enemies were swapped in (SpawnSystem). The
+  // render layer will use this to rebuild the room's ground/walls; fx-only, transient.
+  | { type: 'room_enter'; floorIndex: number; roomIndex: number; roomId: string }
   | { type: 'win'; winner: Winner };

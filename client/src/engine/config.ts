@@ -106,6 +106,17 @@ import { BRAD_FULL } from './math/trig';
  * bump: `state.roomgenPrng` is a new, never-yet-read PRNG stream, and
  * `world/dungeon.ts generateFloor` is pure and unwired into GameEngine.step().)
  *
+ * (Dungeon mode WIRED LIVE, ROADMAP 1.3 — ALSO no bump: EngineConfig gained an optional
+ * `dungeon` field. When present, SpawnSystem drives spawns from a generated room
+ * sequence (drawing roomgenPrng), swaps `state.walls`/`obstacles` + `worldW`/`worldH`
+ * per room via `roomGeometry`, and ExtractionSystem's descend generates the next floor
+ * instead of loading a flat wave list; `floorsEnabled` is now true for a `dungeon`
+ * config too. Every config that omits `dungeon` (every config before this) never draws
+ * roomgenPrng, never mutates walls/obstacles/world bounds, and keeps `roomIndex` at -1 —
+ * byte-identical, no observable change. `worldW`/`worldH` and the walls/obstacles arrays
+ * became mutable-in-dungeon-mode, but a non-dungeon config sets them once and never
+ * again, exactly as when they were `readonly`.)
+ *
  * (Extraction rooms + materials carry-out, ROADMAP 1.4/1.5, ALSO shipped without a
  * bump: EngineConfig gained an optional `floors` field and GameState gained
  * `floorIndex`/`floorMaterials`/`bankedMaterials`/`extractHoldTicks` +

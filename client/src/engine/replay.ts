@@ -142,6 +142,12 @@ export function serializeState(s: GameState): unknown {
     extractHoldTicks: s.extractHoldTicks,
     floorMaterials: sortedEntries(s.floorMaterials),
     bankedMaterials: sortedEntries(s.bankedMaterials),
+    // Dungeon-mode room cursor (ROADMAP 1.3 wired). -1 for a non-dungeon config (never
+    // changes), so this is a stable constant there — the golden-replay test compares two
+    // independent runs, so a new always-equal field is safe (no bump). Room SELECTION is
+    // deterministic from roomgenPrng (already hashed above); this catches a progression
+    // divergence (advanced to a different room) that hasn't yet moved an entity.
+    roomIndex: s.roomIndex,
   };
 }
 

@@ -37,7 +37,12 @@ export class ExtractionSystem {
       return;
     }
 
-    const isLastFloor = state.floorIndex >= state.extraFloors.length;
+    // Last-floor test differs by mode: the flat-`floors` list counts extraFloors; a
+    // generated dungeon counts its configured floorCount (design/05 "the last floor's
+    // boss room IS its extraction room" — reaching it auto-resolves EXTRACT either way).
+    const isLastFloor = state.dungeonEnabled
+      ? state.floorIndex >= state.dungeonConfig!.floorCount - 1
+      : state.floorIndex >= state.extraFloors.length;
     if (isLastFloor) {
       this.resolveExtract(state);
       return;
@@ -73,7 +78,15 @@ export class ExtractionSystem {
   private resolveDescend(state: GameState): void {
     this.bankFloorMaterials(state);
     state.floorIndex++;
-    state.waves = state.extraFloors[state.floorIndex - 1]!;
+    if (state.dungeonEnabled) {
+      // The next floor's rooms are generated lazily by SpawnSystem when it sees a fresh
+      // floor (roomIndex -1) — the single owner of roomgenPrng draws, same as floor 0.
+      // Just reset the room cursor; the current geometry stays until room 0 loads.
+      state.roomIndex = -1;
+      state.floorLayout = [];
+    } else {
+      state.waves = state.extraFloors[state.floorIndex - 1]!;
+    }
     state.waveIndex = -1;
     state.waveBreakTicks = 0;
     state.wavesExhausted = false;

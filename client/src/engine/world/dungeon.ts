@@ -4,9 +4,10 @@
  * level). `generateFloor` is the pure selection function: given a `DungeonConfig`,
  * which floor, the run's `roomgenPrng`, and a `RoomPiece` library, it returns the
  * ordered room sequence for that floor. Pure and side-effect-free — like
- * `content/rooms.ts roomGeometry`, this does not touch GameState; actually placing
- * a generated floor's rooms into a live run (mutable geometry, room-to-room
- * transitions, the extraction/descend choice) is 1.4/1.5.
+ * `content/rooms.ts roomGeometry`, this does not touch GameState. Placing a generated
+ * floor's rooms into a live run (per-room geometry swap, room-to-room advance, the
+ * extraction/descend choice) is now wired: `SpawnSystem` calls this when a config opts
+ * into `EngineConfig.dungeon` and traverses the returned sequence room by room.
  *
  * Only `layout: 'linear'` is implemented — a single ordered room sequence, no
  * branching paths. `'branching'` (design/09's reward-choice structure) is the

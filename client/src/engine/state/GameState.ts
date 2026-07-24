@@ -23,6 +23,8 @@ import type {
   Winner,
 } from './entities';
 import type { GameEvent } from './events';
+import type { DungeonConfig } from '../world/dungeon';
+import type { RoomPiece } from '../content/rooms';
 
 export type Phase = 'idle' | 'playing' | 'gameover';
 
@@ -61,6 +63,17 @@ export interface EngineConfig {
   // no descend option — reaching its checkpoint auto-resolves as EXTRACT, matching
   // design/05 "the last floor's boss room IS its extraction room."
   floors?: readonly (readonly WaveDef[])[];
+  // Seeded dungeon mode (design/05/09, ROADMAP 1.3 wired live). An ALTERNATIVE to the
+  // flat `floors` list above: instead of hand-listing each floor's waves, a floor is
+  // GENERATED from a hand-authored RoomPiece library (`world/dungeon.ts generateFloor`
+  // draws the roomgenPrng) and traversed room-by-room, each room swapping in its own
+  // collision geometry (`content/rooms.ts roomGeometry`) and enemies. PRESENCE enables
+  // the same extraction/materials loop as `floors` (floorsEnabled below). Additive: a
+  // config that omits it (every config before this feature) never draws roomgenPrng,
+  // never mutates walls/obstacles, and is byte-identical — no ENGINE_VERSION bump.
+  // `waves`/`worldW`/`worldH` above are ignored in dungeon mode (each room supplies its
+  // own bounds); pass `waves: []` and any placeholder bounds.
+  dungeon?: { config: DungeonConfig; library: readonly RoomPiece[] };
 }
 
 // Distinct derived-seed constants so the streams never alias (design/06/08).
@@ -97,14 +110,20 @@ export class GameState {
   readonly projectiles: Projectile[] = [];
   readonly pickups: PickupItem[] = [];
 
-  // Static round solids — set once at construction, never mutated (design/07).
+  // Round solids (design/07). Set once at construction and never mutated for a
+  // non-dungeon config; in dungeon mode SpawnSystem.loadRoom repopulates the array
+  // CONTENTS (never the reference) as each room loads. The `readonly` on the field is
+  // the reference, not the contents — the reassignment-free swap keeps every reader valid.
   readonly obstacles: Obstacle[] = [];
-  // Static rectangular solids (design/07/09 ROADMAP 1.2) — set once, never mutated.
+  // Rectangular solids (design/07/09 ROADMAP 1.2) — same lifecycle as `obstacles`:
+  // static for a non-dungeon config, per-room content-swapped in dungeon mode.
   readonly walls: AABB[] = [];
 
-  // World bounds (fp).
-  readonly worldW: Fp;
-  readonly worldH: Fp;
+  // World bounds (fp). Mutable ONLY in dungeon mode (each room resizes them as it
+  // loads — SpawnSystem.loadRoom); a non-dungeon config sets them once at construction
+  // and never touches them again, exactly as before (they were `readonly` pre-1.3).
+  worldW: Fp;
+  worldH: Fp;
 
   // Wave director state (design/08 steps 10–11).
   waveIndex = -1; // -1 = run not started; 0-based into the CURRENT floor's waves
@@ -128,6 +147,20 @@ export class GameState {
   bankedMaterials: Partial<Record<string, number>> = {};
   extractHoldTicks = 0; // ticks INTERACT has been held at the checkpoint this attempt
 
+  // Seeded dungeon mode (design/05/09, ROADMAP 1.3 wired live). All inert unless
+  // `dungeonEnabled` (EngineConfig.dungeon was provided) — see SpawnSystem's dungeon
+  // branch. `dungeonEnabled` also forces `floorsEnabled` on, so ExtractionSystem runs.
+  readonly dungeonEnabled: boolean;
+  readonly dungeonConfig?: DungeonConfig;
+  readonly roomLibrary: readonly RoomPiece[];
+  // The CURRENT floor's generated room sequence (world/dungeon.ts generateFloor), in
+  // traversal order; last entry is the capstone (extraction, or boss on the last
+  // floor). Regenerated per floor when SpawnSystem sees a fresh floor (roomIndex -1).
+  floorLayout: readonly RoomPiece[] = [];
+  // Index into `floorLayout` of the live room; -1 = no room loaded yet (run start, or
+  // just DESCENDed → SpawnSystem (re)generates the floor and loads room 0 next tick).
+  roomIndex = -1;
+
   // Outcome + render channel.
   winner: Winner = null;
   events: GameEvent[] = [];
@@ -141,7 +174,12 @@ export class GameState {
     this.worldW = pxToFp(config.worldW);
     this.worldH = pxToFp(config.worldH);
     this.waves = config.waves;
-    this.floorsEnabled = config.floors !== undefined;
+    // Dungeon mode is a second way to enable the extraction/materials loop (design/05),
+    // so floorsEnabled is true for EITHER opt-in. A config with neither is untouched.
+    this.dungeonEnabled = config.dungeon !== undefined;
+    this.dungeonConfig = config.dungeon?.config;
+    this.roomLibrary = config.dungeon?.library ?? [];
+    this.floorsEnabled = config.floors !== undefined || this.dungeonEnabled;
     this.extraFloors = config.floors ?? [];
 
     for (const [ox, oy, orad] of config.obstacles ?? []) {

@@ -6,10 +6,11 @@
  * `blightlord` finale, content/enemies.ts). Grid units, human-authored
  * (design/09); `content/rooms.ts roomGeometry` converts once at placement.
  *
- * Not yet wired into a live run — `world/dungeon.ts generateFloor` selects from
- * this library, but nothing calls it from GameEngine yet (1.4/1.5).
+ * Wired live (ROADMAP 1.3): pair EMBER_ROOMS with EMBER_DUNGEON (below) as
+ * `EngineConfig.dungeon` and SpawnSystem generates + traverses floors from them.
  */
 import type { RoomPiece } from '../../content/rooms';
+import type { DungeonConfig } from '../dungeon';
 
 export const EMBER_ROOMS: readonly RoomPiece[] = [
   {
@@ -70,3 +71,23 @@ export const EMBER_ROOMS: readonly RoomPiece[] = [
     encounter: { entries: [{ atTick: 0, enemyType: 'blightlord', spawnPoint: 0, count: 1, isBoss: true }] },
   },
 ];
+
+/**
+ * The Ember biome's dungeon descriptor (design/05/09, ROADMAP 1.3) — pair with
+ * EMBER_ROOMS as `EngineConfig.dungeon`. Three floors of 2–3 rooms drawn from the
+ * 'ember'-tagged pool, each capped by `ember_extraction` (the checkpoint) except the
+ * deepest, capped by `ember_boss` (the blightlord finale, which doubles as its own
+ * extraction). The difficulty curve is the first-pass linear ramp (world/dungeon.ts
+ * curveAt) — final tuning is design/05's open work.
+ */
+export const EMBER_DUNGEON: DungeonConfig = {
+  biomeId: 'ember',
+  nameKey: 'biome.ember',
+  floorCount: 3,
+  roomsPerFloor: { min: 2, max: 3 },
+  pieceTags: ['ember'],
+  layout: 'linear',
+  extractionPieceId: 'ember_extraction',
+  bossPieceId: 'ember_boss',
+  difficultyCurve: { base: 1, perFloor: 1 },
+};
