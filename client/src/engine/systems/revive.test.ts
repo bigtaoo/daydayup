@@ -15,7 +15,7 @@ import { PLAYER_BASE } from '@dd/engine/content/players';
 import { makeWeapon, BLASTER_SIM } from '@dd/engine/content/weapons';
 import { createGameState } from '@dd/engine/state/GameState';
 import type { GameState } from '@dd/engine/state/GameState';
-import type { EnemyActor, PlayerActor, Projectile } from '@dd/engine/state/entities';
+import { ENEMY_TEAM_ID, type EnemyActor, type PlayerActor, type Projectile } from '@dd/engine/state/entities';
 import {
   DOWNED_BLEEDOUT_TICKS, REVIVE_CHANNEL_TICKS, REVIVE_HP, REVIVE_RANGE_GRID,
 } from '@dd/engine/config';
@@ -32,7 +32,7 @@ const state = (): GameState => createGameState(CFG);
 function addPlayer(s: GameState, xpx: number, ypx: number): PlayerActor {
   const w = makeWeapon(BLASTER_SIM);
   const p: PlayerActor = {
-    id: s.nextId(), faction: 'player',
+    id: s.nextId(), faction: 'player', teamId: 0, // same team as player 0 — a co-op ally, not a rival
     gx: pxToFp(xpx), gy: pxToFp(ypx), z: toFp(0), vx: toFp(0), vy: toFp(0),
     facing: 0 as Brad, hp: 6, maxHp: 6, shield: 0, maxShield: 0, ticksSinceHit: 0,
     radius: PLAYER_BASE.radius, footprintRadius: PLAYER_BASE.footprintRadius,
@@ -46,7 +46,7 @@ function addPlayer(s: GameState, xpx: number, ypx: number): PlayerActor {
 
 function addEnemy(s: GameState, xpx: number, ypx: number): EnemyActor {
   const e: EnemyActor = {
-    id: s.nextId(), faction: 'enemy',
+    id: s.nextId(), faction: 'enemy', teamId: ENEMY_TEAM_ID,
     gx: pxToFp(xpx), gy: pxToFp(ypx), z: toFp(0), vx: toFp(0), vy: toFp(0),
     facing: 0 as Brad, hp: BASIC_ENEMY.maxHp, maxHp: BASIC_ENEMY.maxHp,
     shield: 0, maxShield: 0, ticksSinceHit: 0,
@@ -183,7 +183,7 @@ describe('downed players are invulnerable (design/07, 3.2)', () => {
     p.downed = true;
     p.hp = 0;
     const b: Projectile = {
-      id: s.nextId(), faction: 'enemy', gx: pxToFp(400), gy: pxToFp(400), z: toFp(0),
+      id: s.nextId(), faction: 'enemy', teamId: ENEMY_TEAM_ID, gx: pxToFp(400), gy: pxToFp(400), z: toFp(0),
       vx: toFp(0), vy: toFp(0), radius: toFpGrid(0.2), damage: 3, damageType: 'physical',
       lifeTicks: 10, alive: true,
     };

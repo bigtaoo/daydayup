@@ -4,7 +4,7 @@ import type { Fp } from '@dd/engine/math/fixed';
 import type { Brad } from '@dd/engine/math/trig';
 import { createGameState } from '@dd/engine/state/GameState';
 import type { GameState } from '@dd/engine/state/GameState';
-import type { EnemyActor, Faction, Projectile } from '@dd/engine/state/entities';
+import { ENEMY_TEAM_ID, type EnemyActor, type Faction, type Projectile } from '@dd/engine/state/entities';
 import { makeWeapon, SABER_SIM } from '@dd/engine/content/weapons';
 import { freshStatus } from '@dd/engine/content/damage';
 import { PLAYER_BASE } from '@dd/engine/content/players';
@@ -31,7 +31,7 @@ function state(): GameState {
 
 function addEnemy(s: GameState, xpx: number, ypx: number, hp: number = BASIC_ENEMY.maxHp): EnemyActor {
   const e: EnemyActor = {
-    id: s.nextId(), faction: 'enemy',
+    id: s.nextId(), faction: 'enemy', teamId: ENEMY_TEAM_ID,
     gx: pxToFp(xpx), gy: pxToFp(ypx), z: toFp(0), vx: toFp(0), vy: toFp(0),
     facing: 0 as Brad, hp, maxHp: BASIC_ENEMY.maxHp, shield: 0, maxShield: 0,
     ticksSinceHit: 0, radius: BASIC_ENEMY.radius,
@@ -46,7 +46,8 @@ function addEnemy(s: GameState, xpx: number, ypx: number, hp: number = BASIC_ENE
 // direction/advance is obvious — realism (≈330 fp/tick) is covered end-to-end.
 function addBullet(s: GameState, xpx: number, ypx: number, vx: Fp, faction: Faction): Projectile {
   const b: Projectile = {
-    id: s.nextId(), faction, gx: pxToFp(xpx), gy: pxToFp(ypx), z: pxToFp(12),
+    id: s.nextId(), faction, teamId: faction === 'enemy' ? ENEMY_TEAM_ID : 0,
+    gx: pxToFp(xpx), gy: pxToFp(ypx), z: pxToFp(12),
     vx, vy: toFp(0), radius: pxToFp(5), damage: faction === 'player' ? 2 : 1,
     damageType: 'physical', lifeTicks: 90, alive: true,
   };

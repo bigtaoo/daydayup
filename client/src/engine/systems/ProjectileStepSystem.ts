@@ -10,7 +10,7 @@
  *
  * Ballistic motion (design/03/09 Frame axis, ROADMAP 1.1) — each shape's per-tick
  * rule, read from the fields WeaponFireSystem froze onto the bullet:
- *   - homing: turn `vx/vy` toward the nearest opposite-faction actor, ≤turnRateBrad
+ *   - homing: turn `vx/vy` toward the nearest HOSTILE actor (design/15), ≤turnRateBrad
  *   - boomerang: reverse `vx/vy` once ticksAlive reaches returnAfterTicks
  *   - lob: moves exactly like straight; on natural lifespan expiry (landing) it is
  *     flagged `landed` instead of killed — HitResolveSystem (step 7) resolves the
@@ -27,9 +27,9 @@ import { addFp, negFp } from '../math/fixed';
 import { SIM } from '../sim.config';
 import { circleOverlapsAabb, circlesOverlap } from './geom';
 import { orbitStep, turnToward } from '../content/ballistics';
+import { nearestHostile } from './targeting';
 import type { GameState } from '../state/GameState';
-import type { Actor, Faction } from '../state/entities';
-import { isDowned } from '../state/entities';
+import type { Actor } from '../state/entities';
 
 export class ProjectileStepSystem {
   tick(state: GameState): void {
@@ -48,7 +48,7 @@ export class ProjectileStepSystem {
       }
 
       if (b.ballistic === 'homing' && b.turnRateBrad !== undefined && b.speed !== undefined) {
-        const target = nearestOpposing(state, b.faction, b.gx, b.gy);
+        const target = nearestHostile(state, b, b.gx, b.gy);
         if (target) {
           const { vx, vy } = turnToward(b.vx, b.vy, b.speed, target.gx, target.gy, b.gx, b.gy, b.turnRateBrad);
           b.vx = vx;
@@ -117,29 +117,11 @@ export class ProjectileStepSystem {
   }
 }
 
-/** Find an actor by id across both factions — the orbit owner lookup. Undefined id (any
+/** Find an actor by id across both arrays — the orbit owner lookup. Undefined id (any
  * non-orbit bullet) returns null without scanning. */
 function actorById(state: GameState, id: number | undefined): Actor | null {
   if (id === undefined) return null;
   for (const p of state.players) if (p.id === id) return p;
   for (const e of state.enemies) if (e.id === id) return e;
   return null;
-}
-
-/** Nearest alive actor of the faction opposite `faction` — the homing target pool. */
-function nearestOpposing(state: GameState, faction: Faction, x: number, y: number): Actor | null {
-  const pool: readonly Actor[] = faction === 'player' ? state.enemies : state.players;
-  let best: Actor | null = null;
-  let bestSq = Infinity;
-  for (const a of pool) {
-    if (!a.alive || isDowned(a)) continue; // downed players aren't valid homing targets (3.2)
-    const dx = (a.gx - x) as number;
-    const dy = (a.gy - y) as number;
-    const d = dx * dx + dy * dy;
-    if (d < bestSq) {
-      bestSq = d;
-      best = a;
-    }
-  }
-  return best;
 }

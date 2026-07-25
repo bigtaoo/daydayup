@@ -149,8 +149,37 @@ import { BRAD_FULL } from './math/trig';
  * changed (downed vs alive=false, a 'downed' event instead of the immediate 'death'), so
  * replay bytes move. Downed players are invulnerable and untargetable — HitResolve/AIDecide/
  * ProjectileStep/StatusEffect skip them via isDowned.)
+ *
+ * v18: team/hostility model (design/15, ROADMAP 4.2a — PvP prerequisite #1). Every
+ * `Actor`/`Projectile` gains a `teamId: number`, independent of `faction` — a NEW axis,
+ * since `faction` only ever answered "player-controlled or AI" and combat code used it
+ * as a stand-in for "who's on my side" by hardcoding a 2-array split. A shared
+ * `isHostile(a,b) = a.teamId !== b.teamId` predicate (state/entities.ts) plus
+ * `hostileTargets`/`nearestHostile` (new systems/targeting.ts) replace every
+ * `faction === 'player' ? state.enemies : state.players`-shaped ternary in
+ * HitResolveSystem, DeflectSystem, ProjectileStepSystem, and combat.ts. Enemies get the
+ * reserved `ENEMY_TEAM_ID` (-1); every player seat defaults to a SHARED team 0
+ * (`PlayerConfig.teamId ?? 0`, `GameState.buildSeat`) unless a config assigns each seat
+ * its own — so every existing single-player and co-op config keeps allies non-hostile,
+ * byte-identical in the SET of (bullet, target) pairs tested. Why this still bumps
+ * despite that: (1) bullets can now hit ANY hostile actor rather than "the other array" —
+ * a rival player's bullet/melee/deflect now reaches another player once a config assigns
+ * distinct teamIds (PvP, not yet built, but the capability itself is new code on the hot
+ * path); (2) two INCIDENTAL corrections ride along, closing latent gaps the old
+ * 2-faction ternaries had: `resolveBulletClash` used to skip same-`faction` bullets
+ * (so two hypothetically-hostile players' bullets, both 'player'-faction, would never have
+ * clashed) — now gated on `isHostile`, matching intent; and the lightning chain's
+ * candidate pool (and the lob/beam blast pool) now flow through the shared
+ * `hostileTargets`, which excludes downed players — previously chain's `group` was a raw
+ * `state.players` array that `chain()` only filtered by `alive`, so a downed teammate
+ * could technically still be chained to, inconsistent with 3.2's "downed = invulnerable."
+ * Both are correctness fixes, not intentional design changes, but either could move an
+ * old replay's bytes at the exact tick it would have mattered. Single-player and existing
+ * co-op are unaffected in every practical scenario; the guard is there because "provably
+ * safe for the default case" is not the same promise as "provably safe for every old
+ * recorded replay," and design/08's rule is to fail loud rather than risk the latter.
  */
-export const ENGINE_VERSION = 17;
+export const ENGINE_VERSION = 18;
 
 // ── Two-pool health tuning (design/07; final values are 07 "to design") ──────────
 // Whole ticks @30Hz. Shield regen is an idle timer, not a heal: after taking ANY

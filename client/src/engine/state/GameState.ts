@@ -54,6 +54,14 @@ export interface PlayerConfig {
   skinId?: SkinId;
   loadout?: readonly string[];
   start?: readonly [number, number]; // px
+  // Team identity for combat targeting (design/15, ROADMAP 4.2a). ABSENT (every
+  // config before this feature, and every co-op config today) → every seat
+  // defaults to the SAME team (0, see buildSeat) — allies never damage each
+  // other, byte-identical to the pre-teamId behavior. A PvP arena build (4.2c,
+  // not yet built) assigns each seat its OWN distinct teamId instead; a future
+  // squad build assigns the same teamId to several seats. Independent of the
+  // seat's `owner`/array index (state/commands.ts) — see entities.ts's note.
+  teamId?: number;
 }
 
 export interface EngineConfig {
@@ -273,6 +281,7 @@ export class GameState {
     return {
       id: this.nextId(),
       faction: 'player',
+      teamId: seat.teamId ?? 0, // shared default team (design/15) — see PlayerConfig.teamId
       gx: pxToFp(sx),
       gy: pxToFp(sy),
       z: toFp(0),

@@ -11,7 +11,7 @@ import { toFp } from '@dd/engine/math/fixed';
 import type { Brad } from '@dd/engine/math/trig';
 import { createGameState } from '@dd/engine/state/GameState';
 import type { GameState } from '@dd/engine/state/GameState';
-import type { EnemyActor, Faction, Projectile } from '@dd/engine/state/entities';
+import { ENEMY_TEAM_ID, type EnemyActor, type Faction, type Projectile } from '@dd/engine/state/entities';
 import { pxToFp } from '@dd/engine/content/convert';
 import { freshStatus } from '@dd/engine/content/damage';
 import { BASIC_ENEMY } from '@dd/engine/content/enemies';
@@ -37,7 +37,7 @@ const state = (): GameState => createGameState(CFG);
 
 function addEnemy(s: GameState, xpx: number, ypx: number): EnemyActor {
   const e: EnemyActor = {
-    id: s.nextId(), faction: 'enemy',
+    id: s.nextId(), faction: 'enemy', teamId: ENEMY_TEAM_ID,
     gx: pxToFp(xpx), gy: pxToFp(ypx), z: toFp(0), vx: toFp(0), vy: toFp(0),
     facing: 0 as Brad, hp: BASIC_ENEMY.maxHp, maxHp: BASIC_ENEMY.maxHp,
     shield: 0, maxShield: 0, ticksSinceHit: 0,
@@ -56,7 +56,8 @@ function addBullet(
   faction: Faction = 'player',
 ): Projectile {
   const b: Projectile = {
-    id: s.nextId(), faction, gx: pxToFp(xpx), gy: pxToFp(ypx), z: toFp(0),
+    id: s.nextId(), faction, teamId: faction === 'enemy' ? ENEMY_TEAM_ID : 0,
+    gx: pxToFp(xpx), gy: pxToFp(ypx), z: toFp(0),
     vx: toFp(0), vy: toFp(0), radius: pxToFp(5), damage: 2,
     damageType: 'physical', lifeTicks: 90, alive: true,
     ...overrides,
@@ -342,7 +343,7 @@ describe('Integration — each new frame survives the full engine step() pipelin
     p.weapon = makeWeapon(sim);
     p.weapons = [p.weapon];
     const e: EnemyActor = {
-      id: eng.state.nextId(), faction: 'enemy',
+      id: eng.state.nextId(), faction: 'enemy', teamId: ENEMY_TEAM_ID,
       gx: pxToFp(450), gy: pxToFp(400), z: toFp(0), vx: toFp(0), vy: toFp(0),
       facing: 0 as Brad, hp: 30, maxHp: 30, shield: 0, maxShield: 0, ticksSinceHit: 0,
       radius: BASIC_ENEMY.radius, footprintRadius: BASIC_ENEMY.footprintRadius,

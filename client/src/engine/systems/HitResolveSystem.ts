@@ -1,12 +1,13 @@
 /**
- * Step 7 — Hit resolution. Opposing-faction bullets that overlap cancel each other
+ * Step 7 — Hit resolution. Hostile bullets that overlap cancel each other
  * (mutual destruction, resolved first so a cancelled bullet can't also hit an actor
- * this tick). Then bullet–actor overlap deals damage (enemy bullets vs players,
- * player/deflected bullets vs enemies) and consumes the bullet; a melee swing that
- * started this tick (justSwung) deals arc damage to every enemy in its sector, once.
- * Damage only lowers hp here — death is decided in step 9, matching design/08's
- * separation. The projectiles array is compacted in place at the end, after
- * clash/step/block/hit have all resolved.
+ * this tick). Then bullet–actor overlap deals damage to any actor hostile to the
+ * bullet (design/15 team model — no longer "the other array": a player's bullet
+ * can hit a rival player, not just enemies) and consumes the bullet; a melee swing
+ * that started this tick (justSwung) deals arc damage to every hostile actor in
+ * its sector, once. Damage only lowers hp here — death is decided in step 9,
+ * matching design/08's separation. The projectiles array is compacted in place at
+ * the end, after clash/step/block/hit have all resolved.
  *
  * Every hit funnels through one resolver, `applyHit` (design/07 "one shared
  * resolver"): apply the target's per-type resist, subtract integer damage, then —
@@ -24,7 +25,8 @@ import { atan2Brad, bradDiff, type Brad } from '../math/trig';
 import { inBeamLine } from '../content/ballistics';
 import type { GameState } from '../state/GameState';
 import type { Actor, Faction, MeleeSimSpec, Projectile } from '../state/entities';
-import { isDowned } from '../state/entities';
+import { isHostile } from '../state/entities';
+import { hostileTargets } from './targeting';
 import type { DamageType } from '../content/damage';
 import {
   BURN_DURATION,
@@ -54,22 +56,15 @@ export class HitResolveSystem {
 
     for (const b of state.projectiles) {
       if (!b.alive || b.ballistic === 'beam' || b.landed) continue;
-      if (b.faction === 'enemy') {
-        for (const p of state.players) {
-          if (!p.alive || p.downed) continue; // downed players are invulnerable (design/07, 3.2)
-          if (!circlesOverlap(b.gx, b.gy, b.radius, p.gx, p.gy, p.radius)) continue;
-          this.applyHit(state, p, b.damage, b.damageType, 'enemy', state.players);
-          b.alive = false;
-          break;
-        }
-      } else {
-        for (const e of state.enemies) {
-          if (!e.alive) continue;
-          if (!circlesOverlap(b.gx, b.gy, b.radius, e.gx, e.gy, e.radius)) continue;
-          this.applyHit(state, e, b.damage, b.damageType, 'player', state.enemies);
-          b.alive = false;
-          break;
-        }
+      // design/15: every actor hostile to this bullet, regardless of which
+      // array it lives in — a player's bullet can now hit a rival player, not
+      // just enemies (hostileTargets already excludes downed players, 3.2).
+      const targets = hostileTargets(state, b);
+      for (const t of targets) {
+        if (!circlesOverlap(b.gx, b.gy, b.radius, t.gx, t.gy, t.radius)) continue;
+        this.applyHit(state, t, b.damage, b.damageType, b.faction, targets);
+        b.alive = false;
+        break;
       }
     }
 
@@ -84,21 +79,19 @@ export class HitResolveSystem {
 
   /** Lob landing (design/03/09): a bullet ProjectileStepSystem flagged `landed` this
    * tick detonates through the normal resist/status hit path against every
-   * opposite-faction actor within `blastRadius`, then dies — no direct-hit special
+   * HOSTILE actor within `blastRadius` (design/15), then dies — no direct-hit special
    * case (a lob that connects mid-flight already consumed itself as a normal hit,
    * above, before ever reaching landed). */
   private resolveLandedLobs(state: GameState): void {
     for (const b of state.projectiles) {
       if (!b.alive || !b.landed || b.blastRadius === undefined) continue;
-      const targets: readonly Actor[] = b.faction === 'player' ? state.enemies : state.players;
-      const attacker: Faction = b.faction === 'player' ? 'player' : 'enemy';
+      const targets = hostileTargets(state, b); // already excludes downed players (3.2)
       for (const t of targets) {
-        if (!t.alive || isDowned(t)) continue; // downed players are invulnerable (3.2)
         const dx = (t.gx - b.gx) as number;
         const dy = (t.gy - b.gy) as number;
         const reach = (b.blastRadius + t.radius) as number;
         if (dx * dx + dy * dy > reach * reach) continue;
-        this.applyHit(state, t, b.damage, b.damageType, attacker, targets);
+        this.applyHit(state, t, b.damage, b.damageType, b.faction, targets);
       }
       b.alive = false;
     }
@@ -108,7 +101,7 @@ export class HitResolveSystem {
    * Beam channels (design/03/09): a beam bullet never moves (frozen at its fire-time
    * origin/direction); on the global `state.tick % beamTickInterval` cadence — the
    * same lockstep pattern StatusEffectSystem uses for DoT (design/07: no per-instance
-   * clock) — it damages every opposite-faction actor along its line, once per
+   * clock) — it damages every hostile actor (design/15) along its line, once per
    * cadence tick, for as long as it stays alive (ProjectileStepSystem counts down
    * `beamTicksLeft` and kills it at 0).
    */
@@ -116,23 +109,23 @@ export class HitResolveSystem {
     for (const b of state.projectiles) {
       if (!b.alive || b.ballistic !== 'beam') continue;
       if (!b.beamTickInterval || state.tick % b.beamTickInterval !== 0) continue;
-      const targets: readonly Actor[] = b.faction === 'player' ? state.enemies : state.players;
-      const attacker: Faction = b.faction === 'player' ? 'player' : 'enemy';
+      const targets = hostileTargets(state, b); // already excludes downed players (3.2)
       const dir = b.beamDir ?? (0 as Brad);
       const range = b.beamRange ?? (0 as Projectile['radius']);
       for (const t of targets) {
-        if (!t.alive || isDowned(t)) continue; // downed players are invulnerable (3.2)
         if (!inBeamLine(b.gx, b.gy, dir, range, t.gx, t.gy, t.radius)) continue;
-        this.applyHit(state, t, b.damage, b.damageType, attacker, targets);
+        this.applyHit(state, t, b.damage, b.damageType, b.faction, targets);
       }
     }
   }
 
   /**
-   * The single shared hit resolver (design/07). `attacker` is the source faction
-   * (drives the 'hit' fx colour); `group` is the array the target belongs to, used
-   * as the lightning chain's candidate pool. Applies resist → integer damage →
-   * on-hit status. Death is NOT decided here (step 9). All arithmetic is integer.
+   * The single shared hit resolver (design/07). `attacker` is the bullet/swinger's
+   * own faction (drives the 'hit' fx colour — not re-derived, since it's already
+   * exactly this); `group` is the hostile-target pool the hit was drawn from
+   * (design/15's `hostileTargets`, not a hardcoded array), used as the lightning
+   * chain's candidate pool. Applies resist → integer damage → on-hit status.
+   * Death is NOT decided here (step 9). All arithmetic is integer.
    */
   private applyHit(
     state: GameState,
@@ -218,11 +211,13 @@ export class HitResolveSystem {
   }
 
   /**
-   * Opposing-faction bullets that overlap annihilate each other. O(n²) over the
-   * live bullets, i<j so each pair is tested once; ties/order are the array's push
-   * order, so the outcome is deterministic (design/08). A bullet cancels at most
-   * one other per tick (marked dead on first clash), which is enough — anything
-   * still alive falls through to the actor-hit loop below.
+   * Hostile bullets that overlap annihilate each other (design/15 — was a
+   * `faction` equality check, so two rival PLAYERS' bullets never used to clash;
+   * two SAME-team bullets, including a squad's own, still pass through). O(n²)
+   * over the live bullets, i<j so each pair is tested once; ties/order are the
+   * array's push order, so the outcome is deterministic (design/08). A bullet
+   * cancels at most one other per tick (marked dead on first clash), which is
+   * enough — anything still alive falls through to the actor-hit loop below.
    */
   private resolveBulletClash(state: GameState): void {
     const ps = state.projectiles;
@@ -231,7 +226,7 @@ export class HitResolveSystem {
       if (!a.alive || a.ballistic === 'beam' || a.landed) continue;
       for (let j = i + 1; j < ps.length; j++) {
         const b = ps[j]!;
-        if (!b.alive || b.faction === a.faction || b.ballistic === 'beam' || b.landed) continue;
+        if (!b.alive || !isHostile(a, b) || b.ballistic === 'beam' || b.landed) continue;
         if (!circlesOverlap(a.gx, a.gy, a.radius, b.gx, b.gy, b.radius)) continue;
         a.alive = false;
         b.alive = false;
@@ -242,17 +237,18 @@ export class HitResolveSystem {
   }
 
   private meleeArc(state: GameState, p: GameState['players'][number], spec: MeleeSimSpec): void {
-    // Player run buffs scale outgoing arc damage (design/14; enemies never swing melee).
+    // Player run buffs scale outgoing arc damage (design/14). Reaches any hostile
+    // actor (design/15) — a rival player included, not just state.enemies.
     const damage = buffedDamage(spec.damage, sumBuffs(p.buffs));
-    for (const e of state.enemies) {
-      if (!e.alive) continue;
-      const dx = e.gx - p.gx;
-      const dy = e.gy - p.gy;
-      const reach = spec.range + e.radius;
+    const targets = hostileTargets(state, p);
+    for (const t of targets) {
+      const dx = t.gx - p.gx;
+      const dy = t.gy - p.gy;
+      const reach = spec.range + t.radius;
       if (dx * dx + dy * dy > reach * reach) continue;
       const ang = atan2Brad(dy, dx);
       if (Math.abs(bradDiff(ang, p.facing)) > spec.arcHalf) continue;
-      this.applyHit(state, e, damage, spec.damageType, 'player', state.enemies);
+      this.applyHit(state, t, damage, spec.damageType, 'player', targets);
     }
   }
 }

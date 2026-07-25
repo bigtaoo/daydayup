@@ -18,7 +18,7 @@ import {
   POISON_STACK_DMG,
   freshStatus,
 } from '@dd/engine/content/damage';
-import type { EnemyActor, Faction, Projectile } from '@dd/engine/state/entities';
+import { ENEMY_TEAM_ID, type EnemyActor, type Faction, type Projectile } from '@dd/engine/state/entities';
 import { BASIC_ENEMY, EMBERLING } from '@dd/engine/content/enemies';
 import { pxToFp } from '@dd/engine/content/convert';
 import { createGameEngine } from '@dd/engine/GameEngine';
@@ -29,7 +29,7 @@ const state = (): GameState => createGameState(CFG);
 
 function addEnemy(s: GameState, xpx: number, ypx: number, resist?: ResistMap): EnemyActor {
   const e: EnemyActor = {
-    id: s.nextId(), faction: 'enemy',
+    id: s.nextId(), faction: 'enemy', teamId: ENEMY_TEAM_ID,
     gx: pxToFp(xpx), gy: pxToFp(ypx), z: toFp(0), vx: toFp(0), vy: toFp(0),
     facing: 0 as Brad, hp: BASIC_ENEMY.maxHp, maxHp: BASIC_ENEMY.maxHp,
     shield: 0, maxShield: 0, ticksSinceHit: 0,
@@ -42,7 +42,8 @@ function addEnemy(s: GameState, xpx: number, ypx: number, resist?: ResistMap): E
 
 function addBullet(s: GameState, xpx: number, ypx: number, type: DamageType, dmg: number, faction: Faction = 'player'): Projectile {
   const b: Projectile = {
-    id: s.nextId(), faction, gx: pxToFp(xpx), gy: pxToFp(ypx), z: toFp(0),
+    id: s.nextId(), faction, teamId: faction === 'enemy' ? ENEMY_TEAM_ID : 0,
+    gx: pxToFp(xpx), gy: pxToFp(ypx), z: toFp(0),
     vx: toFp(0), vy: toFp(0), radius: pxToFp(5), damage: dmg, damageType: type,
     lifeTicks: 90, alive: true,
   };

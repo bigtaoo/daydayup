@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { toFp, type Fp } from '@dd/engine/math/fixed';
 import type { Brad } from '@dd/engine/math/trig';
 import { createGameState, type GameState } from '@dd/engine/state/GameState';
-import type { EnemyActor, ShieldBreakSim } from '@dd/engine/state/entities';
+import { ENEMY_TEAM_ID, type EnemyActor, type ShieldBreakSim } from '@dd/engine/state/entities';
 import { freshStatus } from '@dd/engine/content/damage';
 import { BASIC_ENEMY } from '@dd/engine/content/enemies';
 import { takeDamage } from './combat';
@@ -13,7 +13,7 @@ const CFG = { seed: 1, worldW: 800, worldH: 800, playerStart: [400, 400] as cons
 function enemyOnPlayer(s: GameState, over: Partial<EnemyActor> = {}): EnemyActor {
   const p = s.players[0]!;
   const e: EnemyActor = {
-    id: s.nextId(), faction: 'enemy',
+    id: s.nextId(), faction: 'enemy', teamId: ENEMY_TEAM_ID,
     gx: p.gx, gy: p.gy, z: toFp(0), vx: toFp(0), vy: toFp(0),
     facing: 0 as Brad, hp: BASIC_ENEMY.maxHp, maxHp: BASIC_ENEMY.maxHp,
     shield: 0, maxShield: 0, ticksSinceHit: 0,

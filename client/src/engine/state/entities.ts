@@ -20,6 +20,42 @@ export type Faction = 'player' | 'enemy';
 /** Match outcome (design/08). Player ids are indices into state.players. */
 export type Winner = number | 'enemies' | null;
 
+// ── Team / hostility model (design/15, ROADMAP 4.2a) ───────────────────────────
+// `Faction` says "player-controlled vs AI-controlled" — a rendering/event-label
+// axis that never had more than two members and still doesn't. It is NOT the
+// same question as "who can I damage": PvE never needed a second axis because
+// every player was implicitly one team fighting AI, but PvP needs players
+// hostile to OTHER players while staying allied with squadmates. `teamId` is
+// that second, independent axis.
+//
+// `teamId` is deliberately NOT derived from seat `owner` (state/commands.ts) —
+// existing co-op defaults every seat to a SHARED team (GameState.buildSeat:
+// `seat.teamId ?? 0`), so allies never damage each other, exactly as today. A
+// PvP arena build (ROADMAP 4.2c, not yet built) assigns each seat its own
+// distinct teamId instead; a future squad build assigns the same teamId to
+// several seats. Neither needs another schema change — only what a config
+// passes in.
+
+/** Anything carrying a team identity — every `Actor` and every `Projectile`
+ * (frozen from its owner at fire time, WeaponFireSystem). */
+export type Teamed = { teamId: number };
+
+/** Reserved teamId for every enemy (AI never picks a config-supplied team) —
+ * guaranteed to never equal a player's teamId (always >= 0), so AI is hostile
+ * to every player team by construction and never hostile to other AI. */
+export const ENEMY_TEAM_ID = -1;
+
+/**
+ * The single predicate that replaces every `faction === 'player' ? enemies :
+ * players`-shaped ternary in combat/targeting code (HitResolveSystem,
+ * DeflectSystem, ProjectileStepSystem, combat.ts — design/15 called these out
+ * by name). Two actors/projectiles are hostile iff their teams differ; same
+ * team (squadmates, or two AI) never damage/target each other.
+ */
+export function isHostile(a: Teamed, b: Teamed): boolean {
+  return a.teamId !== b.teamId;
+}
+
 // ── Weapon specs (sim-facing, already converted to ticks / Fp / Brad) ─────────
 
 export interface RangedSimSpec {
@@ -91,6 +127,10 @@ export interface WeaponState {
 export interface Actor {
   id: number;
   faction: Faction;
+  // Team identity for combat targeting (design/15, ROADMAP 4.2a) — see the note
+  // above. Independent of `faction`: two PlayerActors can be mutually hostile
+  // (different teamId) while remaining the same `faction` ('player').
+  teamId: number;
   gx: Fp;
   gy: Fp;
   z: Fp; // ground height — always 0 for actors (jump removed); a render offset only
@@ -177,6 +217,11 @@ export interface EnemyActor extends Actor {
 export interface Projectile {
   id: number;
   faction: Faction;
+  // Frozen from the firing actor at spawn (WeaponFireSystem), like `faction`
+  // above — design/15's targeting predicate reads this, not faction, to decide
+  // what a bullet can hit. Deflect (DeflectSystem) reassigns it to the
+  // deflector's own team, same as it already reassigns `faction`.
+  teamId: number;
   gx: Fp;
   gy: Fp;
   z: Fp;

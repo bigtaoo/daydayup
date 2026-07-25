@@ -17,6 +17,7 @@ import { atan2Brad, cosFp, sinFp } from '../math/trig';
 import type { GameState } from '../state/GameState';
 import type { Actor, Faction, ShieldBreakSim } from '../state/entities';
 import type { DamageType } from '../content/damage';
+import { hostileTargets } from './targeting';
 
 /**
  * Apply `dmg` (already resisted) to `target`, shield-first. `src` is the attacker
@@ -61,15 +62,15 @@ export function takeDamage(
 
 /**
  * A character's shield shattered → its bound passive resolves in-sim (design/02/07).
- * `aoe` bursts integer damage to every opposing-faction actor whose body is within
- * reach (routed through takeDamage with firePassive=false — the recursion guard);
- * `knock` adds an outward velocity impulse. Foes are iterated in array order (ties by
- * push order) so it stays deterministic (design/08). Distances are squared integers.
+ * `aoe` bursts integer damage to every actor HOSTILE to the owner whose body is
+ * within reach (design/15 — routed through takeDamage with firePassive=false, the
+ * recursion guard); `knock` adds an outward velocity impulse. Foes are iterated in
+ * array order (ties by push order) so it stays deterministic (design/08). Distances
+ * are squared integers.
  */
 function fireShieldBreak(state: GameState, owner: Actor, passive: ShieldBreakSim): void {
-  const foes: readonly Actor[] = owner.faction === 'player' ? state.enemies : state.players;
+  const foes = hostileTargets(state, owner);
   for (const f of foes) {
-    if (!f.alive) continue;
     const dx = f.gx - owner.gx;
     const dy = f.gy - owner.gy;
     const reach = passive.radius + f.radius;

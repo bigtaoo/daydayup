@@ -81,6 +81,7 @@ export class WeaponFireSystem {
     state.projectiles.push({
       id: state.nextId(),
       faction: a.faction,
+      teamId: a.teamId, // design/15 — the targeting predicate reads this, not faction
       gx,
       gy,
       z: spec.bulletZ,

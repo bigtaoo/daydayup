@@ -4,7 +4,7 @@
  * Fp arithmetic on plain `+`/`-`/`*` is fine here: we only compare, never store.
  */
 import type { Fp } from '../math/fixed';
-import type { AABB, EnemyActor } from '../state/entities';
+import type { AABB } from '../state/entities';
 
 /** True if two circles overlap: (ax,ay,ar) vs (bx,by,br). */
 export function circlesOverlap(ax: Fp, ay: Fp, ar: Fp, bx: Fp, by: Fp, br: Fp): boolean {
@@ -40,21 +40,4 @@ export function retainAlive<T extends { alive: boolean }>(arr: T[]): void {
     if (item.alive) arr[w++] = item;
   }
   arr.length = w;
-}
-
-/** Nearest alive enemy to a point, or null. Ties broken by array order (deterministic). */
-export function nearestAliveEnemy(enemies: readonly EnemyActor[], x: Fp, y: Fp): EnemyActor | null {
-  let best: EnemyActor | null = null;
-  let bestSq = Infinity;
-  for (const e of enemies) {
-    if (!e.alive) continue;
-    const dx = e.gx - x;
-    const dy = e.gy - y;
-    const d = dx * dx + dy * dy;
-    if (d < bestSq) {
-      bestSq = d;
-      best = e;
-    }
-  }
-  return best;
 }

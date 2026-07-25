@@ -107,7 +107,7 @@ export function serializeState(s: GameState): unknown {
     wavesExhausted: s.wavesExhausted,
     prng: [s.aiPrng.peek(), s.combatPrng.peek(), s.dropPrng.peek(), s.roomgenPrng.peek()],
     players: s.players.map((p) => [
-      p.id, p.gx, p.gy, p.z, p.vx, p.vy, p.facing, p.hp, p.maxHp, p.alive,
+      p.id, p.teamId, p.gx, p.gy, p.z, p.vx, p.vy, p.facing, p.hp, p.maxHp, p.alive,
       // Two-pool health (design/07): shield absorbs first and its idle regen advances
       // ticksSinceHit every tick, so both must be hashed to catch a regen divergence.
       p.shield, p.maxShield, p.ticksSinceHit,
@@ -126,9 +126,9 @@ export function serializeState(s: GameState): unknown {
         w.spec.kind === 'ranged' ? [w.spec.fireRateTicks, w.spec.bulletSpeed] : [w.spec.range],
       ]),
     ]),
-    enemies: s.enemies.map((e) => [e.id, e.gx, e.gy, e.z, e.vx, e.vy, e.facing, e.hp, e.shield, e.alive]),
+    enemies: s.enemies.map((e) => [e.id, e.teamId, e.gx, e.gy, e.z, e.vx, e.vy, e.facing, e.hp, e.shield, e.alive]),
     projectiles: s.projectiles.map((b) => [
-      b.id, b.gx, b.gy, b.z, b.vx, b.vy, b.faction, b.damage, b.lifeTicks, b.alive,
+      b.id, b.teamId, b.gx, b.gy, b.z, b.vx, b.vy, b.faction, b.damage, b.lifeTicks, b.alive,
       // Ballistic runtime (design/03/09, ROADMAP 1.1): homing/boomerang/lob/beam carry
       // extra per-tick state (turn progress, landing flag, beam duration) that can
       // diverge without necessarily moving gx/gy/vx/vy the very same tick.

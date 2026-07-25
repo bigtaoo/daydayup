@@ -13,7 +13,7 @@ import { pxToFp } from '@dd/engine/content/convert';
 import { circleOverlapsAabb } from '@dd/engine/systems/geom';
 import { roomGeometry, type RoomPiece } from '@dd/engine/content/rooms';
 import { MovementSystem, ProjectileStepSystem } from '@dd/engine/systems';
-import type { Faction, Projectile } from '@dd/engine/state/entities';
+import { ENEMY_TEAM_ID, type Faction, type Projectile } from '@dd/engine/state/entities';
 
 const CFG = { seed: 1, worldW: 1600, worldH: 1200, waves: [] as const };
 
@@ -70,7 +70,8 @@ describe('MovementSystem — AABB wall push-out', () => {
 describe('ProjectileStepSystem — AABB wall stop/expire', () => {
   function addBullet(s: GameState, xpx: number, ypx: number, vx: Fp, faction: Faction = 'enemy'): Projectile {
     const b: Projectile = {
-      id: s.nextId(), faction, gx: pxToFp(xpx), gy: pxToFp(ypx), z: toFp(0),
+      id: s.nextId(), faction, teamId: faction === 'enemy' ? ENEMY_TEAM_ID : 0,
+      gx: pxToFp(xpx), gy: pxToFp(ypx), z: toFp(0),
       vx, vy: toFp(0), radius: pxToFp(5), damage: 1, damageType: 'physical',
       lifeTicks: 90, alive: true,
     };

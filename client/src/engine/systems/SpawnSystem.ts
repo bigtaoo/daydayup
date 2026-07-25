@@ -19,6 +19,7 @@ import { BASIC_ENEMY, ENEMY_BLUEPRINTS } from '../content/enemies';
 import { cosFp, BRAD_FULL } from '../math/trig';
 import { roomGeometry, type RoomPiece } from '../content/rooms';
 import { generateFloor } from '../world/dungeon';
+import { ENEMY_TEAM_ID } from '../state/entities';
 import type { GameState, WaveDef } from '../state/GameState';
 
 export class SpawnSystem {
@@ -77,6 +78,7 @@ export class SpawnSystem {
     state.enemies.push({
       id: state.nextId(),
       faction: 'enemy',
+      teamId: ENEMY_TEAM_ID, // hostile to every player team (design/15), never to other AI
       gx,
       gy,
       z: toFp(0),

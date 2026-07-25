@@ -16,12 +16,12 @@ import { freshStatus } from '@dd/engine/content/damage';
 import { BASIC_ENEMY } from '@dd/engine/content/enemies';
 import { toFp } from '@dd/engine/math/fixed';
 import { BRAD_FULL, type Brad } from '@dd/engine/math/trig';
-import type { EnemyActor } from '@dd/engine/state/entities';
+import { ENEMY_TEAM_ID, type EnemyActor } from '@dd/engine/state/entities';
 import { AllyController } from './AllyController';
 
 function addEnemy(s: GameState, xpx: number, ypx: number): EnemyActor {
   const e: EnemyActor = {
-    id: s.nextId(), faction: 'enemy',
+    id: s.nextId(), faction: 'enemy', teamId: ENEMY_TEAM_ID,
     gx: pxToFp(xpx), gy: pxToFp(ypx), z: toFp(0), vx: toFp(0), vy: toFp(0),
     facing: 0 as Brad, hp: BASIC_ENEMY.maxHp, maxHp: BASIC_ENEMY.maxHp,
     shield: 0, maxShield: 0, ticksSinceHit: 0,
