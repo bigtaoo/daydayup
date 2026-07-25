@@ -19,7 +19,7 @@ export class Scene {
 
   constructor(private readonly layers: Layers) {}
 
-  /** The player's view, for the camera to follow (null before spawn / after death). */
+  /** The LOCAL player's view, for the camera to follow (null before spawn / after death). */
   get player(): Actor | null {
     return this.playerView;
   }
@@ -31,7 +31,11 @@ export class Scene {
     this.playerView = null;
   }
 
-  reconcile(state: GameState): void {
+  // `localPlayerId` is the id of the seat this client controls (co-op, ROADMAP 3.1); the
+  // camera follows ITS view, not "whichever player is last in the array". Default -1 (the
+  // single-player caller passes the sole player's id, or omits it → the first player wins,
+  // matching the old behaviour exactly).
+  reconcile(state: GameState, localPlayerId = -1): void {
     const seen = new Set<number>();
 
     for (const p of state.players) {
@@ -40,9 +44,13 @@ export class Scene {
       if (!v) {
         v = new Actor('player', fpToPx(p.radius));
         this.spawn(p.id, v, fpToPx(p.gx), fpToPx(p.gy), fpToPx(p.z), bradToRad(p.facing));
-        this.playerView = v;
       } else {
         v.pushState(fpToPx(p.gx), fpToPx(p.gy), fpToPx(p.z), bradToRad(p.facing));
+      }
+      // The camera-follow target: the local seat if named, else the first player (the
+      // single-player default — playerView is only unset, so the first alive player wins).
+      if (p.id === localPlayerId || (localPlayerId === -1 && this.playerView === null)) {
+        this.playerView = v;
       }
       v.setWeaponKind(p.weapon?.spec.kind ?? null);
       v.setStatus(p.status);

@@ -39,7 +39,10 @@ export interface PlayerCommand {
  */
 export interface InputSource {
   submit(cmd: PlayerCommand): void;
-  take(frame: number): PlayerCommand[] | null;
+  // `readonly` so a source may hand back an internal buffer without copying (design/06,
+  // ROADMAP 3.1 NetInputSource caches per-frame command arrays). The engine only reads
+  // the result (step()'s parameter is already `readonly`), so no consumer is affected.
+  take(frame: number): readonly PlayerCommand[] | null;
   confirmedLead?(frame: number): number;
 }
 

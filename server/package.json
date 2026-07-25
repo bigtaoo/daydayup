@@ -1,0 +1,24 @@
+{
+  "name": "daydayup-server",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "DayDayUp co-op frame-broadcast gameserver (design/06, ROADMAP 3.1)",
+  "scripts": {
+    "dev": "node --import tsx/esm src/index.ts",
+    "start": "node --import tsx/esm src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/ws": "^8.5.13",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.10"
+  }
+}

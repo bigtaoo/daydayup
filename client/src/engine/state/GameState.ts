@@ -39,11 +39,35 @@ export type SpawnSpec = readonly [number, number, string?];
 /** A wave is a list of enemy spawn entries (positions in world px → grid-fp). */
 export type WaveDef = readonly SpawnSpec[];
 
+/**
+ * One co-op seat (design/05/06, ROADMAP 3.1 — "the thing that spawns a SECOND
+ * player"). Each entry becomes one PlayerActor whose `owner` == its index here, so a
+ * command's `owner` routes to the right seat (ApplyInputSystem). Every field mirrors
+ * the single-player top-level config so a seat is self-describing:
+ *   - `skinId`   chosen character (unknown/absent → default, resolveSkin)
+ *   - `loadout`  crafted weapon ids (unknown dropped; empty → auto pistol)
+ *   - `start`    spawn px (absent → world centre; dungeon mode overrides on room load)
+ * The engine has always iterated `state.players` by owner, so N seats need no system
+ * change — only this construction path. See `EngineConfig.players`.
+ */
+export interface PlayerConfig {
+  skinId?: SkinId;
+  loadout?: readonly string[];
+  start?: readonly [number, number]; // px
+}
+
 export interface EngineConfig {
   seed: number;
   worldW: number; // px (converted to grid-fp at construction via pxToFp)
   worldH: number; // px
   waves: readonly WaveDef[];
+  // Co-op seats (design/05/06, ROADMAP 3.1). PRESENT → one PlayerActor per entry, in
+  // order (owner index = array index). ABSENT (every config before this feature) → the
+  // single-player path below (the top-level skinId/loadout/playerStart build exactly one
+  // seat), byte-identical — additive, no ENGINE_VERSION bump. When `players` is given the
+  // top-level skinId/loadout/playerStart are ignored (each seat is self-describing); a
+  // one-entry `players` list is exactly equivalent to the single-player top-level form.
+  players?: readonly PlayerConfig[];
   skinId?: SkinId; // chosen character (design/14); unknown/absent → default (resolveSkin)
   // Brought-in loadout (design/05/14, ROADMAP 2.2) — up to WEAPON_SLOTS weapon ids the
   // player crafted at the forge and carried into this run. Resolved through
@@ -215,18 +239,30 @@ export class GameState {
       this.walls.push({ x: pxToFp(wx), y: pxToFp(wy), w: pxToFp(ww), h: pxToFp(wh) });
     }
 
-    const [sx, sy] = config.playerStart ?? [config.worldW / 2, config.worldH / 2];
+    // One PlayerActor per co-op seat (design/05/06, ROADMAP 3.1). ABSENT `players` →
+    // exactly one seat built from the single-player top-level fields, byte-identical to
+    // before (the seat list is `[{ skinId, loadout, start }]`, so the same buildSeat call
+    // with the same nextId()==1 runs — additive, no ENGINE_VERSION bump). PRESENT → one
+    // seat per entry, in order, so owner index == array index (ApplyInputSystem routing).
+    const seats: readonly PlayerConfig[] =
+      config.players ?? [{ skinId: config.skinId, loadout: config.loadout, start: config.playerStart }];
+    for (const seat of seats) this.players.push(this.buildSeat(config, seat));
+  }
+
+  /** Build one co-op seat's PlayerActor (design/05/06, ROADMAP 3.1). */
+  private buildSeat(config: EngineConfig, seat: PlayerConfig): PlayerActor {
+    const [sx, sy] = seat.start ?? [config.worldW / 2, config.worldH / 2];
     // Merge the chosen character (SkinDef defensive identity) with PLAYER_BASE shared
     // constants (design/09/14). Unknown/absent skin → the default (forward-compat).
-    const skin = resolveSkin(config.skinId);
+    const skin = resolveSkin(seat.skinId);
     // Resolve the loadout through the run builder (design/09 fairness wall): the base meta
-    // loadout carried in at match start. A `config.loadout` (crafted weapon ids, ROADMAP
+    // loadout carried in at match start. A `seat.loadout` (crafted weapon ids, ROADMAP
     // 2.2) resolves through WEAPON_SIM_BY_ID — unknown ids dropped (forward-compat), an
     // empty result falling back to the auto pistol (design/05 "none → auto pistol").
     // Absent → the shared PLAYER_BASE default (byte-identical to before — additive).
     let baseLoadout: readonly WeaponSimSpec[];
-    if (config.loadout) {
-      const resolved = config.loadout
+    if (seat.loadout) {
+      const resolved = seat.loadout
         .map((id) => WEAPON_SIM_BY_ID[id])
         .filter((s): s is WeaponSimSpec => s !== undefined);
       baseLoadout = (resolved.length > 0 ? resolved : [WEAPON_SIM_BY_ID['blaster']!]).slice(0, PLAYER_BASE.weaponSlots);
@@ -234,7 +270,7 @@ export class GameState {
       baseLoadout = PLAYER_BASE.startWeapons;
     }
     const weapons = buildRunSpecs(baseLoadout);
-    this.players.push({
+    return {
       id: this.nextId(),
       faction: 'player',
       gx: pxToFp(sx),
@@ -263,7 +299,7 @@ export class GameState {
       prevButtons: 0,
       status: freshStatus(),
       shieldBreak: skin.shieldBreak ? toShieldBreakSim(skin.shieldBreak) : undefined,
-    });
+    };
   }
 
   clearEvents(): void {

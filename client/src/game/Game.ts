@@ -22,6 +22,7 @@ import { Scene } from './Scene';
 import { Screens } from './Screens';
 import { Forge } from './Forge';
 import { CommandBuilder } from './CommandBuilder';
+import { AllyController } from './AllyController';
 import { fpToPx } from './coords';
 import type { AudioBus, AudioCue, InputCanvas, InputSource } from '../platform/types';
 
@@ -72,6 +73,14 @@ export class Game {
   // Chosen character (design/14) now lives in `this.meta.selectedSkin` — picked at the
   // forge outpost and carried into a run via EngineConfig.skinId (see beginRun).
 
+  // Local co-op (ROADMAP 3.1): the seat THIS client drives, and an optional second seat
+  // driven locally by a bot ally so the SECOND player is live + visible (the engine now
+  // builds N seats via EngineConfig.players). `?coop=1` opts a run in (a dev toggle, like
+  // `?skin=`); default single-player builds one seat and is byte-identical.
+  private readonly localOwner = 0;
+  private coop = false;
+  private readonly ally = new AllyController();
+
   constructor(app: Application, input: InputSource, audio: AudioBus) {
     this.app = app;
     this.input = input;
@@ -82,8 +91,10 @@ export class Game {
     // A `?skin=` URL param still overrides the chosen character (dev convenience), but
     // only to one the account owns — otherwise the saved choice stands.
     if (typeof location !== 'undefined') {
-      const q = new URLSearchParams(location.search).get('skin');
+      const params = new URLSearchParams(location.search);
+      const q = params.get('skin');
       if (q) this.meta = selectCharacter(this.meta, q);
+      this.coop = params.get('coop') === '1'; // dev toggle: bring a local bot ally
     }
     app.stage.eventMode = 'static'; // let the overlay receive pointer taps (web)
     app.stage.addChild(this.layers.root);
@@ -246,14 +257,19 @@ export class Game {
     this.score = 0;
     this.acc = 0;
 
-    // Carry the chosen character + the crafted loadout into the run (design/14).
+    // Carry the chosen character + the crafted loadout into the run (design/14). Local
+    // co-op (ROADMAP 3.1) opts in a second seat — the bot ally, a distinct free character
+    // — via EngineConfig.players; single-player passes the top-level skin/loadout and is
+    // byte-identical (an absent `players` list → the same one-seat construction).
+    const localSeat = { skinId: this.meta.selectedSkin, loadout: this.meta.loadout };
     this.engine = createGameEngine({
       seed: SEED_BASE + this.runCount,
       worldW: PLACEHOLDER_WORLD, // ignored in dungeon mode; each room sets its own bounds
       worldH: PLACEHOLDER_WORLD,
       waves: [],
-      skinId: this.meta.selectedSkin,
-      loadout: this.meta.loadout,
+      ...(this.coop
+        ? { players: [localSeat, { skinId: this.allySkinId() }] }
+        : { skinId: this.meta.selectedSkin, loadout: this.meta.loadout }),
       dungeon: { config: EMBER_DUNGEON, library: EMBER_ROOMS },
     });
     this.runCount++;
@@ -303,6 +319,11 @@ export class Game {
     this.screens.show(w, h, 'DEFEAT',
       `You fell on floor ${floor}/${EMBER_DUNGEON.floorCount}.   The floor's materials were lost.   Score ${this.score}`,
       'Press Fire — back to the forge');
+  }
+
+  /** A free character distinct from the local pick, for the co-op bot ally (ROADMAP 3.1). */
+  private allySkinId(): string {
+    return Object.keys(SKIN_DEFS).find((id) => id !== this.meta.selectedSkin) ?? this.meta.selectedSkin;
   }
 
   /** Total materials safely banked so far this run (design/05 carry-out bag). */
@@ -358,15 +379,23 @@ export class Game {
   private stepSim() {
     const engine = this.engine!;
     const s = engine.state;
-    const p = s.players[0];
+    const p = s.players[this.localOwner];
     const playerPx = p ? { x: fpToPx(p.gx), y: fpToPx(p.gy) } : { x: 0, y: 0 };
     const cam = { x: this.layers.world.x, y: this.layers.world.y };
 
     const frame = s.tick + 1;
-    engine.submit(this.builder.build(frame, 0, playerPx, cam));
+    engine.submit(this.builder.build(frame, this.localOwner, playerPx, cam));
+    // Local co-op (ROADMAP 3.1): every non-local seat is driven by the bot ally, whose
+    // command goes through the exact same submit path a networked teammate's would — the
+    // engine can't tell a local bot from a remote player.
+    if (this.coop) {
+      for (let owner = 0; owner < s.players.length; owner++) {
+        if (owner !== this.localOwner) engine.submit(this.ally.build(s, owner, this.localOwner, frame));
+      }
+    }
     const events = engine.advance(frame) ?? [];
 
-    this.scene.reconcile(s);
+    this.scene.reconcile(s, p?.id ?? -1); // camera follows the LOCAL seat
     this.spawnBulletTrails(s);
     this.consumeEvents(events);
 
@@ -468,7 +497,7 @@ export class Game {
           break;
         case 'descend': {
           // Banked the floor's materials and dropped deeper — a green pulse at the player.
-          const p = this.engine?.state.players[0];
+          const p = this.engine?.state.players[this.localOwner];
           if (p) this.flash(fpToPx(p.gx), fpToPx(p.gy), CONFIG.colors.extractGlow, 30);
           this.score += CONFIG.score.waveClear;
           cues.add('wave-clear');
@@ -575,7 +604,7 @@ export class Game {
 
   private updateHud() {
     const s = this.engine!.state;
-    const p = s.players[0];
+    const p = s.players[this.localOwner];
     const w = p?.weapon;
     const wname = w
       ? `${w.spec.name} [${w.spec.rarity}] (${w.spec.kind}) dmg ${w.spec.damage}`
@@ -603,8 +632,21 @@ export class Game {
       ? '\n▶ CHECKPOINT — hold [E] to EXTRACT (bank & leave) · tap [E] to DESCEND'
       : '';
 
+    // Co-op teammate line (ROADMAP 3.1): the ally seat's health + downed/revive state, so
+    // the second player is legible and its bleedout is visible. Single-player omits it.
+    let coopRow = '';
+    if (this.coop) {
+      const ally = s.players.find((_, i) => i !== this.localOwner);
+      if (ally) {
+        const st = ally.downed
+          ? `DOWNED — bleedout ${Math.ceil(ally.bleedoutTicks / 30)}s`
+          : `HP ${'♥'.repeat(Math.max(0, ally.hp))}`;
+        coopRow = `\nAlly (${this.allySkinId()})   ${st}`;
+      }
+    }
+
     this.hud.text =
-      `${this.meta.selectedSkin}   HP ${bar}${shieldRow}${buffs}\n` +
+      `${this.meta.selectedSkin}   HP ${bar}${shieldRow}${buffs}${coopRow}\n` +
       `Floor ${floor}/${EMBER_DUNGEON.floorCount}   Room ${room}/${rooms}   Enemies ${s.enemies.length}   Banked ${banked}   Score ${this.score}\n` +
       `Weapon ${wname}\n` +
       `[1]/[2] swap · LMB attack · WASD move · [E] interact` +
