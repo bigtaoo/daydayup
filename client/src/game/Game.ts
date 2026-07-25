@@ -9,7 +9,12 @@ import {
   type GameEngine,
   type GameEvent,
   type GameState,
+  type EngineConfig,
+  type MatchStart,
 } from '@dd/engine';
+import { CoopSession } from '../net/CoopSession';
+import { WebSocketTransport } from '../net/transport';
+import { findMatch } from '../net/matchmaking';
 import {
   defaultMetaState, bankMaterials, craft, clearLoadout, selectCharacter,
   unlockBlueprint, acquireBlueprint, purchasableBlueprints,
@@ -77,8 +82,15 @@ export class Game {
   // driven locally by a bot ally so the SECOND player is live + visible (the engine now
   // builds N seats via EngineConfig.players). `?coop=1` opts a run in (a dev toggle, like
   // `?skin=`); default single-player builds one seat and is byte-identical.
-  private readonly localOwner = 0;
+  // Online co-op (ROADMAP 3.3): `?online=1` runs the run off a REAL matchmade socket
+  // instead — matchmaking → signed ticket → CoopSession drives the engine off the
+  // server's confirmed frame stream. `localOwner` is then the ticket-assigned seat (set
+  // from match_start), not a fixed 0, so each client's camera follows its own player.
+  private localOwner = 0;
   private coop = false;
+  private online = false;
+  private matchBaseUrl = 'http://localhost:8788';
+  private session: CoopSession | null = null;
   private readonly ally = new AllyController();
 
   constructor(app: Application, input: InputSource, audio: AudioBus) {
@@ -95,6 +107,9 @@ export class Game {
       const q = params.get('skin');
       if (q) this.meta = selectCharacter(this.meta, q);
       this.coop = params.get('coop') === '1'; // dev toggle: bring a local bot ally
+      this.online = params.get('online') === '1'; // ROADMAP 3.3: real matchmade co-op
+      const mm = params.get('mm'); // override the matchsvc origin (default localhost:8788)
+      if (mm) this.matchBaseUrl = mm;
     }
     app.stage.eventMode = 'static'; // let the overlay receive pointer taps (web)
     app.stage.addChild(this.layers.root);
@@ -257,6 +272,14 @@ export class Game {
     this.score = 0;
     this.acc = 0;
 
+    // Online co-op (ROADMAP 3.3): the run is driven off a real matchmade socket, not a
+    // locally-owned engine. Hand off to the async connect path and enter `playing` — the
+    // render loop idles (advanceOnline) until the server's match_start builds the engine.
+    if (this.online) {
+      this.beginOnlineRun();
+      return;
+    }
+
     // Carry the chosen character + the crafted loadout into the run (design/14). Local
     // co-op (ROADMAP 3.1) opts in a second seat — the bot ally, a distinct free character
     // — via EngineConfig.players; single-player passes the top-level skin/loadout and is
@@ -292,7 +315,7 @@ export class Game {
   }
 
   private win() {
-    const s = this.engine?.state;
+    const s = this.activeState();
     const floor = s ? s.floorIndex + 1 : 0;
     const carried = s ? this.totalBanked(s) : 0;
     // Bank the run's carry-out into the persistent account (design/05/14) — the only
@@ -312,7 +335,8 @@ export class Game {
   }
 
   private lose() {
-    const floor = this.engine ? this.engine.state.floorIndex + 1 : 0;
+    const s = this.activeState();
+    const floor = s ? s.floorIndex + 1 : 0;
     this.phase = 'defeat';
     this.hud.visible = false;
     const { w, h } = this.screenSize();
@@ -333,6 +357,16 @@ export class Game {
     return n;
   }
 
+  /**
+   * The live sim state driving the render this frame — the locally-owned engine offline,
+   * or the co-op session's engine online (ROADMAP 3.3). All shared render/event/HUD code
+   * reads through this so it works identically on both paths (null before a run starts, or
+   * online while still connecting/awaiting match_start).
+   */
+  private activeState(): GameState | null {
+    return this.online ? this.session?.state ?? null : this.engine?.state ?? null;
+  }
+
   private confirm() {
     this.audio.resume(); // a confirm tap is a user gesture — clears the autoplay gate (design/11)
     if (this.phase === 'forge') this.beginRun();
@@ -343,7 +377,8 @@ export class Game {
 
   private update(dt: number) {
     if (this.phase === 'playing') {
-      this.advanceSim(dt);
+      if (this.online) this.advanceOnline(dt);
+      else this.advanceSim(dt);
     } else {
       // Menu / result: freeze the last frame, keep fx fading, poll for confirm.
       this.updateFx(dt);
@@ -398,6 +433,103 @@ export class Game {
     this.scene.reconcile(s, p?.id ?? -1); // camera follows the LOCAL seat
     this.spawnBulletTrails(s);
     this.consumeEvents(events);
+
+    if (s.phase === 'gameover') {
+      if (s.winner === 'enemies') this.lose();
+      else this.win();
+    }
+  }
+
+  // ---- Online co-op (ROADMAP 3.3): matchmaking → socket → CoopSession ----
+
+  /**
+   * Enter a matchmade run. Async: ask the control plane for a match, redeem the signed
+   * ticket on the gameserver socket, and let CoopSession drive the engine off the
+   * confirmed frame stream. We enter `playing` immediately — advanceOnline idles until
+   * `match_start` builds the engine — so the shell shows the run frame, not the forge.
+   */
+  private async beginOnlineRun() {
+    this.phase = 'playing';
+    this.hud.visible = true;
+    this.forge.hide();
+    this.screens.hide();
+    this.session?.close();
+    this.session = null;
+    try {
+      const info = await findMatch(this.matchBaseUrl, { playerCount: 2 });
+      const url = `${info.wsUrl}?ticket=${encodeURIComponent(info.token)}`;
+      this.session = new CoopSession({
+        transport: new WebSocketTransport(url),
+        roomId: info.roomId,
+        owner: info.owner,
+        seed: info.seed,
+        playerCount: info.playerCount,
+        buildConfig: (m) => this.buildOnlineConfig(m),
+        // The ticket assigns THIS client's seat — the camera/HUD follow it, not a fixed 0.
+        onMatchStart: (m) => {
+          this.localOwner = m.localOwner;
+        },
+      });
+    } catch (e) {
+      // Matchmaking or the socket failed — return to the forge (a real UI would toast this).
+      console.error('[online] failed to start match', e);
+      this.online = false; // fall back to offline for the next run attempt
+      this.showForge();
+      this.online = true;
+    }
+  }
+
+  /**
+   * Build the run config from `match_start`. It MUST be byte-identical on every client
+   * (determinism, design/06), so it derives ONLY from the shared seed + playerCount:
+   * seats are skinned by index (distinct, agreed characters), and neither the local
+   * chosen character nor the crafted loadout enters — carrying those into online play
+   * needs them to travel through matchmaking first (a later step).
+   */
+  private buildOnlineConfig(m: MatchStart): EngineConfig {
+    const ids = Object.keys(SKIN_DEFS);
+    return {
+      seed: m.seed,
+      worldW: PLACEHOLDER_WORLD,
+      worldH: PLACEHOLDER_WORLD,
+      waves: [],
+      players: Array.from({ length: m.playerCount }, (_, i) => ({ skinId: ids[i % ids.length]! })),
+      dungeon: { config: EMBER_DUNGEON, library: EMBER_ROOMS },
+    };
+  }
+
+  /**
+   * The online counterpart to advanceSim. The SERVER is the clock: each render frame we
+   * relay the local seat's latest command and drain every frame the server has confirmed
+   * (CoopSession.drive self-paces the catch-up), then mirror the resulting state. No local
+   * prediction — co-op is latency-tolerant (design/06); prediction is the deferred fork.
+   */
+  private advanceOnline(dt: number) {
+    const session = this.session;
+    if (!session || !session.started) {
+      // Connecting / awaiting match_start — hold the scene, keep fx fading.
+      this.scene.interpolate(1, dt);
+      this.updateFx(dt);
+      return;
+    }
+    const s = session.state!;
+    const p = s.players[this.localOwner];
+    const playerPx = p ? { x: fpToPx(p.gx), y: fpToPx(p.gy) } : { x: 0, y: 0 };
+    const cam = { x: this.layers.world.x, y: this.layers.world.y };
+
+    // Relay this render tick's local command (server stamps the authoritative seat/frame),
+    // then advance through every confirmed frame.
+    session.submit(this.builder.build(session.frame, this.localOwner, playerPx, cam));
+    const events = session.drive();
+
+    this.scene.reconcile(s, p?.id ?? -1); // camera follows the LOCAL (ticket-assigned) seat
+    this.spawnBulletTrails(s);
+    this.consumeEvents(events);
+    this.scene.interpolate(1, dt); // snap to confirmed (no prediction/interp yet — deferred)
+    this.updateFx(dt);
+    this.updateCamera(1);
+    this.updateHud();
+    this.prevFire = this.input.read().firing;
 
     if (s.phase === 'gameover') {
       if (s.winner === 'enemies') this.lose();
@@ -490,14 +622,16 @@ export class Game {
           this.score += CONFIG.score.waveClear;
           cues.add('wave-clear');
           break;
-        case 'room_enter':
+        case 'room_enter': {
           // A new dungeon room went live (ROADMAP 1.3) — mirror its geometry: ground,
           // AABB walls, pillars, and the resized world bounds (design/08 render-only).
-          if (this.engine) this.buildRoom(this.engine.state);
+          const s = this.activeState();
+          if (s) this.buildRoom(s);
           break;
+        }
         case 'descend': {
           // Banked the floor's materials and dropped deeper — a green pulse at the player.
-          const p = this.engine?.state.players[this.localOwner];
+          const p = this.activeState()?.players[this.localOwner];
           if (p) this.flash(fpToPx(p.gx), fpToPx(p.gy), CONFIG.colors.extractGlow, 30);
           this.score += CONFIG.score.waveClear;
           cues.add('wave-clear');
@@ -584,7 +718,7 @@ export class Game {
     const vw = this.app.renderer.width / this.app.renderer.resolution;
     const vh = this.app.renderer.height / this.app.renderer.resolution;
     // World bounds are per-room now (dungeon mode), read live from the engine.
-    const s = this.engine?.state;
+    const s = this.activeState();
     const worldW = s ? fpToPx(s.worldW) : vw;
     const worldH = s ? fpToPx(s.worldH) : vh;
     // Follow the player, but pin the camera inside the room. A room smaller than the
@@ -603,7 +737,8 @@ export class Game {
   }
 
   private updateHud() {
-    const s = this.engine!.state;
+    const s = this.activeState();
+    if (!s) return;
     const p = s.players[this.localOwner];
     const w = p?.weapon;
     const wname = w

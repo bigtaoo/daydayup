@@ -12,11 +12,25 @@ anti-drift rule ("one definition, same bytes on both sides"). This package only 
 
 ## Layout
 
+This package hosts **both planes** (design/06), each with its own entrypoint but a shared
+pure core + the shared ticket module:
+
+**Data plane** — the WebSocket frame relay (ROADMAP 3.1):
+
 | File | Role | `ws`? | Tested |
 |------|------|-------|--------|
 | `src/MatchRoom.ts`   | One match's lifecycle: fill seats → start → relay → settle. Wraps `FrameBroadcast`. | no | ✅ `test/MatchRoom.test.ts` |
 | `src/RoomManager.ts` | `roomId → MatchRoom`; routes `ClientMsg`; first joiner defines the match. | no | ✅ |
-| `src/index.ts`       | WebSocket bootstrap — the ONLY file that imports `ws`; wraps sockets as `RoomConnection`s and provides the real-timer `Scheduler`. | yes | typecheck only |
+| `src/index.ts`       | WebSocket bootstrap — the ONLY file that imports `ws`; wraps sockets as `RoomConnection`s, provides the real-timer `Scheduler`, and **verifies the `/ws?ticket=` handshake**. | yes | typecheck only |
+
+**Control plane** — matchmaking + tickets (ROADMAP 3.3):
+
+| File | Role | I/O? | Tested |
+|------|------|------|--------|
+| `src/ticket.ts`      | Stateless HMAC-SHA256 sign/verify over `{roomId,owner,seed,playerCount,exp}`. Shared by both planes. | no | ✅ `test/ticket.test.ts` |
+| `src/Matchmaker.ts`  | Pure queue: `enqueue`→group-when-full→signed tickets, `poll`. Injected clock/seed/roomId/signer. | no | ✅ `test/Matchmaker.test.ts` |
+| `src/matchsvc.ts`    | HTTP bootstrap — the ONLY control-plane file that imports `node:http`; wires the real clock/seed/signer around `Matchmaker`. | yes | typecheck only |
+| `src/config.ts`      | The one place that reads `DDU_TICKET_SECRET` (env), so both planes agree on the secret. | env | — |
 
 `MatchRoom`/`RoomManager` take an injected `Scheduler` (the metronome clock) and
 `RoomConnection`s (per-seat senders), so the whole lifecycle is unit-tested with a fake
@@ -52,22 +66,33 @@ CPU measurement.)
 ```bash
 cd server
 npm install
-npm test           # MatchRoom / RoomManager lifecycle
-npm run typecheck  # incl. the ws entrypoint
-npm run dev        # ws://0.0.0.0:8787/ws  (PORT/HOST env override)
+npm test           # ticket / Matchmaker / MatchRoom / RoomManager
+npm run typecheck  # incl. both entrypoints
+npm run dev        # data plane: ws://0.0.0.0:8787/ws  (PORT/HOST env override)
+npm run matchsvc   # control plane: http://0.0.0.0:8788  (MATCH_PORT env override)
 ```
 
-Launch handshake (MVP): `ws://host:8787/ws?roomId=..&owner=..&seed=..&count=..`. A real
-deployment fronts this with a matchmaking/ticket service that signs the params (funny's
-`matchsvc`); that control plane — and where the relay ultimately lives (raw WS vs a
-room/relay service) — is design/06's remaining open question, out of scope for the net
-layer itself.
+**Handshake (ROADMAP 3.3):** the client calls the control plane to matchmake —
+`POST /find {playerCount}` then poll `GET /find/:queueId` — and receives a **signed
+ticket**. It then opens the data-plane socket with it: `ws://host:8787/ws?ticket=<token>`.
+The gameserver verifies the ticket and derives the trusted `{roomId, owner, seed,
+playerCount}` from it, so a client can no longer claim another seat or a different seed.
+
+**Ticket secret:** set `DDU_TICKET_SECRET` to the SAME value on both processes for any real
+deployment — then a valid ticket is mandatory (invalid/absent → close `4401`). Unset, both
+default to a shared insecure DEV secret (with a warning) and the gameserver *also* still
+accepts the legacy raw-param handshake (`/ws?roomId=..&owner=..&seed=..&count=..`) for local
+manual testing. Set `DDU_GAMESERVER_URL` on matchsvc so its issued tickets carry the right
+`wsUrl` (default `ws://localhost:8787/ws`). Where the two services physically deploy is an
+ops call; the architecture split (design/06) is settled.
 
 ## Not in scope (by design)
 
 Anti-cheat beyond the post-match `runHeadless` re-judge (design/06: full state is
-client-held; casual-first PvP accepts maphack at launch), accounts/persistence, and PvP
-settlement/ELO (Phase 4). Co-op is cooperative and latency-tolerant, so it is playable on
-the confirmed stream + catch-up alone; **local prediction** (rendering your own input ahead
-of the confirmed frame) is a client-side render-loop concern layered on top — see the
-client net module.
+client-held; casual-first PvP accepts maphack at launch), and PvP settlement/ELO (Phase 4).
+The matchmaking here is deliberately minimal — a first-come queue keyed by seat count, no
+**accounts/auth** (a ticket identifies a seat, not a user) and no **skill matching/MMR**.
+Co-op is cooperative and latency-tolerant, so it is playable on the confirmed stream +
+catch-up alone; **local prediction** (rendering your own input ahead of the confirmed frame)
+is a client-side render-loop concern layered on top — see the client net module — and its
+tuning is what the real-network RTT this control plane now enables is for.
