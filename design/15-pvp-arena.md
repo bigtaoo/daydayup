@@ -18,8 +18,10 @@ Structurally closer to `09`'s hand-authored `RoomPiece` library than to the seed
 
 ```
 ArenaMap {
-  id, sizeGrid                 // total map extent — the WHOLE map is one live world (unlike a
-                                //   PvE floor, where "the room" IS the world, 05/09); rooms co-exist
+  id, sizeGrid                 // total map extent — the WHOLE map is one SIMULTANEOUSLY co-resident
+                                //   live world (unlike a PvE floor's 5-10 rooms, 05, which are real
+                                //   but visited SEQUENTIALLY — one room live at a time, 09); here
+                                //   every room co-exists at once
   rooms: ArenaRoom[]           // ~60 at launch
   doors: Door[]                // EXPLICIT adjacency — never inferred from rect adjacency (below)
   spawns: Point[]              // >= seat count; system-assigned per match, no player choice
