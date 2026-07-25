@@ -101,6 +101,12 @@ Frame-broadcast alone leaves **local input delay ≈ one RTT** (your press must 
 - **Scope is the local player only.** Other players and enemies are shown from confirmed frames (with short interpolation). This is "rollback scoped to your own input" — an order of magnitude cheaper than peer rollback, and enough for casual 3v3/4v4.
 - Remote bullets/enemies may pop slightly on correction; acceptable at this positioning.
 
+### Sparse input transmission (held-until-changed)
+
+A transport-layer change alongside the BR arena work (`15`), applying to both PvE and PvP: a `PlayerCommand`'s fields are sent only when they change, not resent every tick. The receiving side holds **the last received command per owner** and reuses it for every tick until superseded — matching sibling project funny's model, and matching how a twin-stick player actually behaves (holding a direction steady has nothing new to transmit). Aim's "changed" test reuses the existing brad quantization (an update is worth sending only when the *quantized* value moves, which already absorbs sub-quantization stick jitter); buttons are already edge-shaped. This is purely a wire-format change — the engine still receives a command for every simulated tick internally (gaps filled by holding the last one), so it touches none of `@dd/engine`'s determinism or `ENGINE_VERSION`.
+
+The reason to build this now, even though frame-broadcast lockstep would work without it: the client-side consumption pattern it needs — extrapolate/hold between sparse updates, then reconcile (snap or lerp) when a new one lands — is **exactly** what `LocalPredictor` (below) already does for the local player. Building sparse/held-update discipline into the input channel now means that if this project ever affords the server-authoritative escalation named in the anti-cheat section, the only thing that changes is *what* arrives sparsely (an authoritative state delta instead of an input), not how the client consumes it.
+
 ### PvE vs PvP
 
 - **PvP (3v3/4v4):** the full model above.
@@ -110,9 +116,9 @@ Frame-broadcast alone leaves **local input delay ≈ one RTT** (your press must 
 
 Frame-broadcast lockstep means **every client holds full match state** → maphack/wallhack is inherently possible. Given casual-first PvP:
 
-1. **Launch:** accept it. No ranked integrity promised.
-2. **Backstop:** `runHeadless` (funny's headless driver) can **re-simulate a finished match from `seed + recorded input`** server-side and compare the reported outcome — post-match validation / ban tooling, no realtime cost. (funny uses this exact path for authoritative siege, ADR-007.)
-3. **Escalation (only if competitive PvP is ever added):** move to server-authoritative state sync with fog-of-war culling. The deterministic engine is reusable there too — the engine investment is never wasted.
+1. **Launch:** accept it for information-only cheats (ESP/wallhack/aim-assist). No ranked integrity promised against those specifically — see the honest limit below.
+2. **Backstop, now periodic rather than end-of-match only:** `runHeadless` (funny's headless driver) can **re-simulate a finished match from `seed + recorded input`** server-side and compare the reported outcome. The BR arena (`15-pvp-arena.md`) extends this from a single post-match check into a **periodic, tick-indexed checkpoint** — clients report their `stateHash` (already computed for the existing end-of-match `ClientMsg.result`) every `checkpointTicks`, and a **cross-client majority vote** flags whichever seat disagrees (v1 — needs no new server-side simulation, since the server today only relays frames). This only activates above a **quorum (>3 real seats)**, and only kicks on a divergence **confirmed at the same historical tick across ≥2 consecutive checkpoints** — never on a single stray mismatch, which is more likely a client still catching up under the backlog multiplier above than an actual fork. Full mechanism, the `integrityPrng` padding-stream trick, and the escalation to a server-run shadow simulation (any seat count, heavier cost) are in `15`.
+3. **Escalation (only if competitive PvP is ever added):** move to server-authoritative state sync with fog-of-war culling. The deterministic engine is reusable there too — the engine investment is never wasted. This is the *only* thing that would meaningfully address the information-cheat class (2 above doesn't and structurally can't — a client that never diverges state, just reads more than it should, passes every hash check by construction).
 
 ## Persistent vs in-run state
 

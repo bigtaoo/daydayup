@@ -19,6 +19,7 @@ This directory records **decisions** and **architecture**. It is the single sour
 | [12-art-animation.md](12-art-animation.md) | Art & animation pipeline: character = shared orb-core rig + own atlas (`02`), own rig defs (editor rewritten, not funny's humanoid), orbiting-socket weapon mounting, twin-stick facing model, Pixi `Assets` loading (web + WeChat adapter), tilted-view authoring rules (`01`), art-is-presentation-only determinism rule |
 | [13-worldview-art-direction.md](13-worldview-art-direction.md) | Worldview & art direction (art-first): floating orb-core hero + universal-mount weapons + crystal-mirror enemies, the Blight setting reverse-engineered from the art, flat-cel style, the element=colour dual-channel (colour + icon) law, desaturated-environment rule, tone |
 | [14-meta-forging.md](14-meta-forging.md) | Meta & forging: blueprint unlock + per-run material crafting (5 elemental materials), intrinsic weapon rarity (no upgrades, no affixes — Soul-Knight route), characters-are-skins side-grade roster, PvP fairness (weapons walled structurally / characters by discipline), bounded no-gacha monetization |
+| [15-pvp-arena.md](15-pvp-arena.md) | PvP arena: 8-player solo battle royale, room-graph shrinking zone, `ArenaMap`/`CellTrait` map-editor schema, team/hostility model, PvP HP/weapon scaling, periodic cross-client anti-cheat checkpoints, sparse held-input net sync |
 
 ## Decision format
 
