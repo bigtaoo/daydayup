@@ -110,6 +110,19 @@ export class Scene {
     for (const v of this.views.values()) v.interpolate(alpha, frameDt);
   }
 
+  /**
+   * Override the LOCAL player's view with a predicted pose (ROADMAP 3.3 follow-up, online
+   * prediction). Call AFTER reconcile() and BEFORE interpolate(): it snaps the local view
+   * onto the predicted (px, radians) position so the sprite — and the camera that follows
+   * it — show the render-ahead prediction, while every remote view keeps its confirmed
+   * reconcile+interpolate. No-op before the local view exists. Never touches the sim.
+   */
+  positionLocal(x: number, y: number, z: number, facingRad: number): void {
+    if (!this.playerView) return;
+    this.playerView.pushState(x, y, z, facingRad);
+    this.playerView.snap(); // prev == cur → no lerp; interpolate() draws it exactly here
+  }
+
   private spawn(id: number, v: Entity, x: number, y: number, z: number, facingRad: number): void {
     this.views.set(id, v);
     this.layers.entities.addChild(v);

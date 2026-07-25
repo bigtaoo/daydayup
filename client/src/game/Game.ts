@@ -6,6 +6,7 @@ import {
   SKIN_DEFS,
   EMBER_DUNGEON,
   EMBER_ROOMS,
+  PLAYER_BASE,
   type GameEngine,
   type GameEvent,
   type GameState,
@@ -13,8 +14,9 @@ import {
   type MatchStart,
 } from '@dd/engine';
 import { CoopSession } from '../net/CoopSession';
-import { WebSocketTransport } from '../net/transport';
+import { WebSocketTransport, LaggyTransport, type Transport } from '../net/transport';
 import { findMatch } from '../net/matchmaking';
+import { LocalPredictor, DEFAULT_PREDICTOR } from './LocalPredictor';
 import {
   defaultMetaState, bankMaterials, craft, clearLoadout, selectCharacter,
   unlockBlueprint, acquireBlueprint, purchasableBlueprints,
@@ -28,7 +30,7 @@ import { Screens } from './Screens';
 import { Forge } from './Forge';
 import { CommandBuilder } from './CommandBuilder';
 import { AllyController } from './AllyController';
-import { fpToPx } from './coords';
+import { fpToPx, bradToRad } from './coords';
 import type { AudioBus, AudioCue, InputCanvas, InputSource } from '../platform/types';
 
 // The demo runs the Ember biome as a seeded dungeon (design/05/09, ROADMAP 1.3): each
@@ -93,6 +95,19 @@ export class Game {
   private session: CoopSession | null = null;
   private readonly ally = new AllyController();
 
+  // Online local-player prediction (design/06): the render layer draws the local seat's own
+  // movement/aim ahead of the confirmed frame stream to hide RTT, then eases to the
+  // authoritative position. Render-only — the sim is untouched. `lagMs` is a `?lag=` DEV
+  // harness (LaggyTransport) to feel/tune the smoothing without real devices.
+  private readonly predictor = new LocalPredictor({
+    // Match the sim's own speed so predicted ≈ confirmed at zero latency: player moves
+    // PLAYER_BASE.speedPerTick per 30 Hz tick (players.ts) → px/sec.
+    speedPxPerSec: fpToPx(PLAYER_BASE.speedPerTick) * (1000 / SIM_DT_MS),
+    ...DEFAULT_PREDICTOR,
+  });
+  private predLastTick = -1;
+  private lagMs = 0;
+
   constructor(app: Application, input: InputSource, audio: AudioBus) {
     this.app = app;
     this.input = input;
@@ -110,6 +125,8 @@ export class Game {
       this.online = params.get('online') === '1'; // ROADMAP 3.3: real matchmade co-op
       const mm = params.get('mm'); // override the matchsvc origin (default localhost:8788)
       if (mm) this.matchBaseUrl = mm;
+      const lag = Number(params.get('lag')); // dev: inject synthetic one-way latency (ms)
+      if (Number.isFinite(lag) && lag > 0) this.lagMs = lag;
     }
     app.stage.eventMode = 'static'; // let the overlay receive pointer taps (web)
     app.stage.addChild(this.layers.root);
@@ -455,11 +472,16 @@ export class Game {
     this.screens.hide();
     this.session?.close();
     this.session = null;
+    this.predictor.deactivate(); // re-anchors on the first confirmed frame of the new run
+    this.predLastTick = -1;
     try {
       const info = await findMatch(this.matchBaseUrl, { playerCount: 2 });
       const url = `${info.wsUrl}?ticket=${encodeURIComponent(info.token)}`;
+      // A `?lag=` dev toggle wraps the socket to inject synthetic RTT (feel/tune prediction).
+      let transport: Transport = new WebSocketTransport(url);
+      if (this.lagMs > 0) transport = new LaggyTransport(transport, this.lagMs);
       this.session = new CoopSession({
-        transport: new WebSocketTransport(url),
+        transport,
         roomId: info.roomId,
         owner: info.owner,
         seed: info.seed,
@@ -501,8 +523,10 @@ export class Game {
   /**
    * The online counterpart to advanceSim. The SERVER is the clock: each render frame we
    * relay the local seat's latest command and drain every frame the server has confirmed
-   * (CoopSession.drive self-paces the catch-up), then mirror the resulting state. No local
-   * prediction — co-op is latency-tolerant (design/06); prediction is the deferred fork.
+   * (CoopSession.drive self-paces the catch-up), then mirror the resulting state. The LOCAL
+   * seat's movement/aim is drawn from a render-layer predictor ahead of the confirmed frame
+   * (design/06 latency-hiding) and eased back on each confirmed frame; remote seats/enemies/
+   * bullets stay confirmed. The sim is never touched — determinism is preserved.
    */
   private advanceOnline(dt: number) {
     const session = this.session;
@@ -517,15 +541,39 @@ export class Game {
     const playerPx = p ? { x: fpToPx(p.gx), y: fpToPx(p.gy) } : { x: 0, y: 0 };
     const cam = { x: this.layers.world.x, y: this.layers.world.y };
 
-    // Relay this render tick's local command (server stamps the authoritative seat/frame),
-    // then advance through every confirmed frame.
-    session.submit(this.builder.build(session.frame, this.localOwner, playerPx, cam));
+    // Relay this render tick's local command (server stamps the authoritative seat/frame).
+    const cmd = this.builder.build(session.frame, this.localOwner, playerPx, cam);
+    session.submit(cmd);
+
+    // Predict the local seat's own motion for THIS render frame (before draining confirmed
+    // frames) so movement/aim respond instantly under latency. Suspended when downed/dead.
+    const predicting = !!p && p.alive && !p.downed;
+    if (predicting) this.predictor.predict(cmd.moveBrad, cmd.moveMag, cmd.aimBrad, dt);
+
     const events = session.drive();
 
+    // Reconcile toward the confirmed local position — but ONLY when a new confirmed frame
+    // landed (a stall must not drag the prediction back); first activation snaps to spawn.
+    if (predicting && p) {
+      if (!this.predictor.isActive) {
+        this.predictor.reset(fpToPx(p.gx), fpToPx(p.gy), bradToRad(p.facing));
+      } else if (s.tick > this.predLastTick) {
+        this.predictor.reconcile(fpToPx(p.gx), fpToPx(p.gy));
+      }
+      this.predLastTick = s.tick;
+    } else {
+      this.predictor.deactivate();
+    }
+
     this.scene.reconcile(s, p?.id ?? -1); // camera follows the LOCAL (ticket-assigned) seat
+    // Draw the local seat from the predictor (camera follows it too); remote seats confirmed.
+    if (predicting && p && this.predictor.isActive) {
+      const pose = this.predictor.pose;
+      this.scene.positionLocal(pose.x, pose.y, fpToPx(p.z), pose.facing);
+    }
     this.spawnBulletTrails(s);
     this.consumeEvents(events);
-    this.scene.interpolate(1, dt); // snap to confirmed (no prediction/interp yet — deferred)
+    this.scene.interpolate(1, dt);
     this.updateFx(dt);
     this.updateCamera(1);
     this.updateHud();

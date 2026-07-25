@@ -50,3 +50,26 @@ export class WebSocketTransport implements Transport {
     this.ws.close();
   }
 }
+
+/**
+ * A latency-injecting Transport decorator (ROADMAP 3.3 follow-up) — delays every outbound
+ * send AND every inbound message by `lagMs`, so a one-way `lagMs` becomes a ~2×lagMs RTT.
+ * A DEV harness (the `?lag=` toggle in Game.ts) to see + tune local-player prediction on one
+ * machine without real devices; design/06 leaves the prediction smoothing constants to tune
+ * against real RTT, and this is the practical stand-in. Not used in production paths.
+ */
+export class LaggyTransport implements Transport {
+  constructor(
+    private readonly inner: Transport,
+    private readonly lagMs: number,
+  ) {}
+  send(msg: ClientMsg): void {
+    setTimeout(() => this.inner.send(msg), this.lagMs);
+  }
+  onMessage(handler: (msg: ServerMsg) => void): void {
+    this.inner.onMessage((msg) => setTimeout(() => handler(msg), this.lagMs));
+  }
+  close(): void {
+    this.inner.close();
+  }
+}

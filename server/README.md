@@ -93,6 +93,6 @@ client-held; casual-first PvP accepts maphack at launch), and PvP settlement/ELO
 The matchmaking here is deliberately minimal — a first-come queue keyed by seat count, no
 **accounts/auth** (a ticket identifies a seat, not a user) and no **skill matching/MMR**.
 Co-op is cooperative and latency-tolerant, so it is playable on the confirmed stream +
-catch-up alone; **local prediction** (rendering your own input ahead of the confirmed frame)
-is a client-side render-loop concern layered on top — see the client net module — and its
-tuning is what the real-network RTT this control plane now enables is for.
+catch-up alone; **local prediction** (rendering your own movement/aim ahead of the confirmed
+frame) shipped as a client-side render-layer concern on top (`client/src/game/LocalPredictor.ts`)
+and never touches this data plane — the server stays the pure confirmed-frame relay.

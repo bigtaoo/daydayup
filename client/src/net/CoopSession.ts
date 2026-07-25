@@ -18,11 +18,11 @@
  * ROADMAP 3.1 part A). Because the engine is fed by the NetInputSource, every client
  * simulates the identical confirmed stream and stays in lock-step (design/06).
  *
- * NOT here: local prediction (rendering the local seat ahead of the confirmed frame to
- * hide RTT). Co-op PvE is latency-tolerant (design/06), so it is fully playable on this
- * confirmed-stream + catch-up path; prediction is a render-loop latency-hiding layer whose
- * reconciliation smoothing (snap vs lerp) design/06 leaves open to tune against real
- * mobile RTT. It slots on top of this session without changing the confirmed path.
+ * NOT here: local prediction. That is a RENDER-layer concern that sits on top of this
+ * session WITHOUT changing the confirmed path — `client/src/game/LocalPredictor.ts` draws
+ * the local seat's movement/aim ahead of the confirmed frame and eases back (snap-vs-lerp)
+ * on each confirmed frame, wired in `Game.advanceOnline`. This session stays purely the
+ * confirmed-stream driver; the sim it runs is never touched by prediction (design/06).
  */
 import { NetInputSource, createGameEngine, type EngineConfig, type GameEngine, type GameEvent, type MatchOver, type MatchStart, type PlayerCommand } from '@dd/engine';
 import type { Transport } from './transport';
