@@ -6,12 +6,14 @@
  * injects the Scheduler and wraps sockets as RoomConnections.
  */
 import type { ClientMsg } from '@dd/engine';
-import { MatchRoom, type RoomConnection, type Scheduler } from './MatchRoom';
+import { MatchRoom, type RoomConnection, type Scheduler, type SettledMatch } from './MatchRoom';
 
 export interface RoomManagerDeps {
   scheduler: Scheduler;
   batchMs?: number;
   framesPerBatch?: number;
+  /** Forwarded to every room's `MatchRoomDeps.onSettled` (design/15, ROADMAP 4.6). */
+  onSettled?: (match: SettledMatch) => void;
 }
 
 export class RoomManager {
@@ -38,6 +40,7 @@ export class RoomManager {
       room = new MatchRoom(roomId, seed, playerCount, {
         scheduler: this.deps.scheduler,
         onDestroy: (id) => this.rooms.delete(id),
+        onSettled: this.deps.onSettled,
         batchMs: this.deps.batchMs,
         framesPerBatch: this.deps.framesPerBatch,
       });
@@ -60,7 +63,10 @@ export class RoomManager {
         room.resume(conn, msg.lastFrame);
         return;
       case 'result':
-        room.reportResult(conn.owner, msg.stateHash, msg.winner);
+        room.reportResult(conn.owner, msg.stateHash, msg.winner, msg.placements);
+        return;
+      case 'checkpoint':
+        room.reportCheckpoint(conn.owner, msg.tick, msg.stateHash);
         return;
       // 'join' is handled by join() at connection time, not here.
       default:

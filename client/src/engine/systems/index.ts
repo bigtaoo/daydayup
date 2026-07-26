@@ -13,3 +13,5 @@ export { SpawnSystem } from './SpawnSystem';
 export { ExtractionSystem, EXTRACT_HOLD_TICKS } from './ExtractionSystem';
 export { ReviveSystem } from './ReviveSystem';
 export { WinConditionSystem } from './WinConditionSystem';
+export { ZoneSystem } from './ZoneSystem';
+export { EnvironmentSystem } from './EnvironmentSystem';

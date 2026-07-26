@@ -3,13 +3,20 @@
  * The ONLY control-plane file that touches node:http, exactly as index.ts is the only
  * data-plane file that touches `ws`: it wraps the pure Matchmaker with a real clock, a
  * seed/roomId source, and the shared ticket signer, and exposes the poll-based find API.
+ * It also owns the PvP ladder rating store (design/15, ROADMAP 4.6) — matchsvc-side
+ * account bookkeeping, entirely separate from `@dd/engine`'s replicated/replay state.
  *
  * A separate process from the WS gameserver (own port, MATCH_PORT default 8788) — the
  * clean control/data split funny uses. The client calls this to get a signed seat ticket,
- * then opens the gameserver socket with it (`/ws?ticket=`).
+ * then opens the gameserver socket with it (`/ws?ticket=`). The gameserver calls back
+ * into `/rating/report` once a PvP match settles with a checkpoint/hash-verified
+ * placement result (design/15's "computed from checkpoint-verified match placements
+ * only") — see `MatchRoomDeps.onSettled` (MatchRoom.ts) and its wiring in index.ts.
  *
- *   POST /find      { playerCount }         → { queueId, match? }
- *   GET  /find/:id                          → { status: 'queued'|'matched'|'expired', match? }
+ *   POST /find             { playerCount }              → { queueId, match? }
+ *   GET  /find/:id                                       → { status: 'queued'|'matched'|'expired', match? }
+ *   POST /rating/report     { accountIds, places }       → { changes: [{accountId,before,after}] }
+ *   GET  /rating/:accountId                               → { accountId, rating }
  *   GET  /health
  *
  * `match` = { wsUrl, roomId, owner, seed, playerCount, token } — everything the client
@@ -18,6 +25,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { Matchmaker, type MatchTicket } from './Matchmaker';
+import { RatingStore } from './rating';
 import { signTicket } from './ticket';
 import { ticketSecret } from './config';
 
@@ -45,6 +53,7 @@ function main(): void {
   });
 
   const withUrl = (t: MatchTicket) => ({ ...t, wsUrl: GAMESERVER_URL });
+  const ratings = new RatingStore();
 
   const server = createServer((req, res) => {
     if (req.method === 'OPTIONS') return send(res, 204, {});
@@ -67,10 +76,30 @@ function main(): void {
     }
 
     // GET /find/:queueId
-    const m = url.pathname.match(/^\/find\/([^/]+)$/);
-    if (req.method === 'GET' && m) {
-      const result = matchmaker.poll(decodeURIComponent(m[1]!));
+    const findMatch = url.pathname.match(/^\/find\/([^/]+)$/);
+    if (req.method === 'GET' && findMatch) {
+      const result = matchmaker.poll(decodeURIComponent(findMatch[1]!));
       return send(res, 200, result.status === 'matched' ? { status: 'matched', match: withUrl(result.ticket) } : result);
+    }
+
+    // Ladder rating (design/15, ROADMAP 4.6) — called by the gameserver once a PvP
+    // match settles with a checkpoint/hash-verified placement result (never by the
+    // client directly; the gameserver is the one that knows `hashOk`).
+    if (req.method === 'POST' && url.pathname === '/rating/report') {
+      return readJson(req, (body) => {
+        const { accountIds, places } = (body as { accountIds?: unknown; places?: unknown }) ?? {};
+        if (!Array.isArray(accountIds) || !Array.isArray(places) || accountIds.length !== places.length) {
+          return send(res, 400, { error: 'accountIds and places must be equal-length arrays' });
+        }
+        const changes = ratings.applyMatch(accountIds as string[], places as number[]);
+        send(res, 200, { changes });
+      });
+    }
+
+    const ratingLookup = url.pathname.match(/^\/rating\/([^/]+)$/);
+    if (req.method === 'GET' && ratingLookup) {
+      const accountId = decodeURIComponent(ratingLookup[1]!);
+      return send(res, 200, { accountId, rating: ratings.get(accountId) });
     }
 
     send(res, 404, { error: 'not found' });

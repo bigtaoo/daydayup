@@ -113,4 +113,42 @@ describe('CoopSession — full client↔server loop reproduces a replay', () => 
     expect(session.state!.tick).toBe(12); // caught up to the watermark in one drive
     expect(session.backlog()).toBe(0);
   });
+
+  it('sends a periodic anti-cheat checkpoint every CHECKPOINT_TICKS, hash-equal to a reference replay at that tick (design/15, ROADMAP 4.4)', () => {
+    const framesPerBatch = 3;
+    const N = 180; // one checkpoint boundary (150) inside this range, none at 0 or 300
+    const transport = new FakeTransport();
+    const session = new CoopSession({
+      transport, roomId: 'r', owner: 0, seed: SEED, playerCount: 1,
+      buildConfig: () => CONFIG, bufferFrames: 0,
+    });
+    transport.deliver({ type: 'match_start', seed: SEED, startFrame: 0, localOwner: 0, playerCount: 1 });
+
+    const server = new FrameBroadcast({ framesPerBatch, startFrame: 0 });
+    for (let f = 1; f <= N; f++) {
+      const cmd = makeCommand({
+        owner: 0, tick: f,
+        moveBrad: ((f * 337) & 0xffff) as Brad, moveMag: (f * 7) % 256,
+        aimBrad: ((f * 911) & 0xffff) as Brad, buttons: Button.FIRE,
+      });
+      session.submit(cmd);
+      server.submit(transport.lastCmd());
+      if (f % framesPerBatch === 0) {
+        transport.deliver({ type: 'frame_batch', ...server.tick() });
+        session.drive();
+      }
+    }
+    session.drive();
+
+    const checkpoints = transport.sent.filter((m): m is Extract<ClientMsg, { type: 'checkpoint' }> => m.type === 'checkpoint');
+    expect(checkpoints).toHaveLength(1); // only tick 150 falls in (0, 180]
+    expect(checkpoints[0]!.tick).toBe(150);
+
+    // Reference: replay the confirmed stream only up to tick 150 and hash there —
+    // must match exactly what the session reported mid-match at that same tick.
+    const confirmed: PlayerCommand[] = server.log.flatMap((fc) => fc.cmds.map((c) => ({ ...c, tick: fc.frame })));
+    const referenceAt150 = runReplay(toReplay(CONFIG, confirmed), 150);
+    expect(referenceAt150.state.tick).toBe(150);
+    expect(checkpoints[0]!.stateHash).toBe(hashState(referenceAt150.state));
+  });
 });

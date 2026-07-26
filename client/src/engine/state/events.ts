@@ -7,11 +7,13 @@
 import type { Fp } from '../math/fixed';
 import type { Brad } from '../math/trig';
 import type { DamageType } from '../content/damage';
-import type { Faction, PickupKind, Winner } from './entities';
+import type { DamageSrc, Faction, PickupKind, Winner } from './entities';
 
 export type GameEvent =
   | { type: 'bullet_fired'; faction: Faction; gx: Fp; gy: Fp; facing: Brad }
-  | { type: 'hit'; target: number; faction: Faction; gx: Fp; gy: Fp; damage: number; damageType: DamageType; shieldRemaining?: number }
+  // `faction` is a DamageSrc, not just Faction — zone/hazard-tile damage (design/15,
+  // ROADMAP 4.2d) reports 'environment' here, since there is no attacker on the other side.
+  | { type: 'hit'; target: number; faction: DamageSrc; gx: Fp; gy: Fp; damage: number; damageType: DamageType; shieldRemaining?: number }
   // A hit (or DoT) that emptied a non-zero shield pool (design/07 two-pool). Render
   // plays a break fx; the sim uses it to fire a character's shield-break passive (0.5).
   | { type: 'shield_break'; id: number; gx: Fp; gy: Fp }
@@ -35,4 +37,11 @@ export type GameEvent =
   // collision geometry, world bounds, and enemies were swapped in (SpawnSystem). The
   // render layer will use this to rebuild the room's ground/walls; fx-only, transient.
   | { type: 'room_enter'; floorIndex: number; roomIndex: number; roomId: string }
+  // PvP zone (design/15, ROADMAP 4.2d) — render/HUD/minimap-only, never fed back into
+  // sim decisions (the `06` render/logic split, unchanged). `zone_warn` telegraphs the
+  // NEXT stage's soon-to-close rooms; `zone_close` fires the instant they go live;
+  // `zone_damage` mirrors 'hit' for environmental/hazard-tile ticks with no attacker.
+  | { type: 'zone_warn'; stage: number; closing: readonly string[] }
+  | { type: 'zone_close'; stage: number }
+  | { type: 'zone_damage'; target: number; dmg: number }
   | { type: 'win'; winner: Winner };

@@ -17,6 +17,12 @@ import type { BallisticId, EmissionPattern } from '../content/ballistics';
 
 export type Faction = 'player' | 'enemy';
 
+/** `takeDamage`'s attacker-identity parameter (design/07) is normally a `Faction` —
+ * but zone/hazard-tile damage (design/15, ROADMAP 4.2d) has no attacker on the other
+ * side at all (unlike a DoT, whose `src` is always "the opposite faction", 07's
+ * existing precedent), so it needs its own literal instead of a fake team. */
+export type DamageSrc = Faction | 'environment';
+
 /** Match outcome (design/08). Player ids are indices into state.players. */
 export type Winner = number | 'enemies' | null;
 
@@ -167,6 +173,13 @@ export interface Actor {
   // empties. Set from the character's SkinDef (players); enemies carry none. Kept on
   // the base Actor so the shared takeDamage can read it without narrowing.
   shieldBreak?: ShieldBreakSim;
+  // Arena room-membership cache (design/15, ROADMAP 4.2d) — which ArenaRoom (by id)
+  // this actor's position currently falls inside; maintained by EnvironmentSystem,
+  // which re-checks it only when the actor leaves its cached room's rect (amortized
+  // O(1), not a full room scan every tick). Always undefined outside arena mode.
+  // Also undefined while standing in a doorway gap no room's rect covers — treated
+  // as "not confirmed safe" by the zone check, never as automatically safe.
+  roomId?: string;
 }
 
 export interface PlayerActor extends Actor {

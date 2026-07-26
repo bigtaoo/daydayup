@@ -105,7 +105,15 @@ export function serializeState(s: GameState): unknown {
     waveIndex: s.waveIndex,
     waveBreakTicks: s.waveBreakTicks,
     wavesExhausted: s.wavesExhausted,
-    prng: [s.aiPrng.peek(), s.combatPrng.peek(), s.dropPrng.peek(), s.roomgenPrng.peek()],
+    prng: [
+      s.aiPrng.peek(), s.combatPrng.peek(), s.dropPrng.peek(), s.roomgenPrng.peek(),
+      // ringPrng/integrityPrng (design/15, ROADMAP 4.2d/4.4) — included for the same
+      // reason as the four above: a divergence that hasn't yet surfaced in an entity
+      // still shows up here. integrityPrng especially: it's drawn every tick
+      // unconditionally (GameEngine.step), so it's the fastest-moving signal in the
+      // whole hash — exactly its purpose (design/15's "make divergence show up fast").
+      s.ringPrng.peek(), s.integrityPrng.peek(),
+    ],
     players: s.players.map((p) => [
       p.id, p.teamId, p.gx, p.gy, p.z, p.vx, p.vy, p.facing, p.hp, p.maxHp, p.alive,
       // Two-pool health (design/07): shield absorbs first and its idle regen advances
@@ -164,6 +172,15 @@ export function serializeState(s: GameState): unknown {
     // early/late) before it surfaces in the enemy list.
     roomTick: s.roomTick,
     roomSpawnCursor: s.roomSpawnCursor,
+    // PvP zone + placement (design/15, ROADMAP 4.2d/4.2e/4.4). undefined/empty for
+    // every non-arena config (stable, safe to add without touching other modes).
+    // Hashing the zone directly catches a stage/safe-set divergence before it would
+    // otherwise surface indirectly (as a zone-damage difference a tick or more later)
+    // — the same "don't wait for it to show up in an entity" reasoning as the PRNGs.
+    zone: s.zone
+      ? [s.zone.eye, s.zone.stage, s.zone.phase, s.zone.ticksToPhaseEnd, s.zone.safe, s.zone.closing, s.zone.escalation]
+      : null,
+    placements: s.placements,
   };
 }
 

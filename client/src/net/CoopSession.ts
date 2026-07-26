@@ -24,7 +24,18 @@
  * on each confirmed frame, wired in `Game.advanceOnline`. This session stays purely the
  * confirmed-stream driver; the sim it runs is never touched by prediction (design/06).
  */
-import { NetInputSource, createGameEngine, type EngineConfig, type GameEngine, type GameEvent, type MatchOver, type MatchStart, type PlayerCommand } from '@dd/engine';
+import {
+  NetInputSource,
+  createGameEngine,
+  hashState,
+  CHECKPOINT_TICKS,
+  type EngineConfig,
+  type GameEngine,
+  type GameEvent,
+  type MatchOver,
+  type MatchStart,
+  type PlayerCommand,
+} from '@dd/engine';
 import type { Transport } from './transport';
 
 /** Spiral-of-death guard: never step more than this many sim frames in one drive(). */
@@ -105,6 +116,13 @@ export class CoopSession {
       this.nextFrame++;
       stepped++;
       last = events;
+      // Periodic anti-cheat checkpoint (design/15, ROADMAP 4.4) — every
+      // CHECKPOINT_TICKS, at the CONFIRMED tick just stepped (never a stall-in-
+      // progress tick), so every honest client reports at the identical logical
+      // instant regardless of its own wall-clock pacing.
+      if (engine.state.tick % CHECKPOINT_TICKS === 0) {
+        this.opts.transport.send({ type: 'checkpoint', tick: engine.state.tick, stateHash: hashState(engine.state) });
+      }
       if (engine.state.phase === 'gameover') break;
     }
     return last;
@@ -115,11 +133,14 @@ export class CoopSession {
     return this.net.confirmedLead?.(this.nextFrame) ?? 0;
   }
 
-  /** Report the local end-of-match hash for the server's re-judge backstop (design/06). */
+  /** Report the local end-of-match hash for the server's re-judge backstop (design/06).
+   * `placements` (design/15, ROADMAP 4.2e) rides along whenever this was an arena
+   * match — undefined for every PvE session, exactly as MatchRoom expects. */
   reportResult(stateHash: number): void {
     const s = this.engine?.state;
     if (!s) return;
-    this.opts.transport.send({ type: 'result', stateHash, winner: s.winner });
+    const placements = s.zoneEnabled ? s.placements : undefined;
+    this.opts.transport.send({ type: 'result', stateHash, winner: s.winner, placements });
   }
 
   close(): void {

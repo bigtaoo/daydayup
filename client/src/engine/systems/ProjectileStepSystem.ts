@@ -97,7 +97,8 @@ export class ProjectileStepSystem {
       // stop). Pillars are tall, so no z-band gating — nothing shoots over them.
       // Endpoint test, matching the demo's despawn discipline (swept test is 07).
       let stopped = false;
-      for (const o of state.obstacles) {
+      for (const idx of state.spatialIndex.queryObstacles(b.gx, b.gy, b.radius)) {
+        const o = state.obstacles[idx]!;
         if (circlesOverlap(b.gx, b.gy, b.radius, o.gx, o.gy, o.radius)) {
           b.alive = false;
           stopped = true;
@@ -106,7 +107,8 @@ export class ProjectileStepSystem {
       }
       // AABB walls (design/07/09, ROADMAP 1.2) get the same stop/expire treatment.
       if (!stopped) {
-        for (const w of state.walls) {
+        for (const idx of state.spatialIndex.queryWalls(b.gx, b.gy, b.radius)) {
+          const w = state.walls[idx]!;
           if (circleOverlapsAabb(b.gx, b.gy, b.radius, w)) {
             b.alive = false;
             break;

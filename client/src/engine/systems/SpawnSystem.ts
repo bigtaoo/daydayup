@@ -16,11 +16,50 @@ import { pxToFp, toFpGrid } from '../content/convert';
 import { freshStatus } from '../content/damage';
 import { makeWeapon } from '../content/weapons';
 import { BASIC_ENEMY, ENEMY_BLUEPRINTS } from '../content/enemies';
+import { rollArenaDrop } from '../content/drops';
 import { cosFp, BRAD_FULL } from '../math/trig';
-import { roomGeometry, type RoomPiece } from '../content/rooms';
+import { roomGeometry, type RoomPiece, type WaveScript } from '../content/rooms';
+import type { ArenaRoom } from '../content/arenas';
 import { generateFloor } from '../world/dungeon';
 import { ENEMY_TEAM_ID } from '../state/entities';
-import type { GameState, WaveDef } from '../state/GameState';
+import type { PickupItem } from '../state/entities';
+import type { ArenaRoomRuntime, GameState, WaveDef } from '../state/GameState';
+
+/** One expanded, timed spawn entry — shared shape between dungeon's single global
+ * schedule and the arena's per-room schedules (ArenaRoomRuntime.schedule). */
+type ScheduleEntry = { atTick: number; spawnPoint: number; enemyType?: string };
+
+/**
+ * Expand a room's `encounter` (design/09 WaveScript) into a timed spawn schedule —
+ * each entry becomes `count` copies (atTick + j*spacingTicks, so a burst can
+ * trickle in), sorted by (atTick, authoring order) for deterministic dispatch
+ * (and thus deterministic aiPrng draw order in spawnEnemyAt). A room with no
+ * `encounter` falls back to every spawn point at tick 0 (an all-at-once room —
+ * the common hand-authored case). Shared by both PvE dungeon rooms and PvP arena
+ * rooms — same WaveScript vocabulary, different spawn-point source.
+ */
+function expandEncounter(
+  encounter: WaveScript | undefined,
+  spawnCount: number,
+  typeAt: (i: number) => string | undefined,
+): ScheduleEntry[] {
+  const sched: (ScheduleEntry & { seq: number })[] = [];
+  let seq = 0;
+  if (encounter) {
+    for (const entry of encounter.entries) {
+      const spacing = entry.spacingTicks ?? 0;
+      for (let j = 0; j < entry.count; j++) {
+        sched.push({ atTick: entry.atTick + j * spacing, spawnPoint: entry.spawnPoint, enemyType: entry.enemyType, seq: seq++ });
+      }
+    }
+  } else {
+    for (let i = 0; i < spawnCount; i++) {
+      sched.push({ atTick: 0, spawnPoint: i, enemyType: typeAt(i), seq: seq++ });
+    }
+  }
+  sched.sort((a, b) => a.atTick - b.atTick || a.seq - b.seq);
+  return sched.map(({ atTick, spawnPoint, enemyType }) => ({ atTick, spawnPoint, enemyType }));
+}
 
 export class SpawnSystem {
   tick(state: GameState): void {
@@ -28,6 +67,12 @@ export class SpawnSystem {
     // instead of the flat wave list — a completely separate path, so every non-dungeon
     // config takes the byte-identical original code below (no ENGINE_VERSION bump).
     if (state.dungeonEnabled) return this.tickDungeon(state);
+
+    // PvP arena mode (design/15, ROADMAP 4.3) — every room is already co-resident
+    // (4.2b); this only lazily activates each room's encounter/loot the tick a
+    // player first enters it (perf-only, NOT information-hiding — see content/arenas.ts
+    // LootMarker's doc comment and design/15's honest anti-cheat-limit note).
+    if (state.zoneEnabled) return this.tickArena(state);
 
     if (state.enemies.length > 0 || state.wavesExhausted) return;
 
@@ -193,6 +238,7 @@ export class SpawnSystem {
     state.walls.push(...walls);
     state.obstacles.length = 0;
     state.obstacles.push(...obstacles);
+    state.rebuildSpatialIndex();
 
     state.worldW = toFpGrid(room.sizeGrid.w);
     state.worldH = toFpGrid(room.sizeGrid.h);
@@ -212,31 +258,12 @@ export class SpawnSystem {
     state.events.push({ type: 'room_enter', floorIndex: state.floorIndex, roomIndex: idx, roomId: room.id });
   }
 
-  /**
-   * Pre-expand a room's enemies into a timed spawn schedule (design/09 WaveScript). A
-   * piece with an `encounter` uses its entries — each becomes `count` timed events
-   * (copy j at `atTick + j*spacingTicks`, so a burst can trickle in). A piece without
-   * one falls back to every enemy spawn point at tick 0 (an all-at-once room — the
-   * common hand-authored case). Sorted by (atTick, authoring order) so dispatch order
-   * — and thus the aiPrng draw order in spawnEnemyAt — is deterministic (design/06).
-   */
+  /** Pre-expand a room's enemies into a timed spawn schedule — `expandEncounter`
+   * above does the actual work; this just points it at a dungeon RoomPiece's
+   * spawn-point source and stashes the result in the (single, global — one room
+   * live at a time) dungeon schedule fields. */
   private buildSchedule(state: GameState, room: RoomPiece): void {
-    const sched: { atTick: number; spawnPoint: number; enemyType?: string; seq: number }[] = [];
-    let seq = 0;
-    if (room.encounter) {
-      for (const entry of room.encounter.entries) {
-        const spacing = entry.spacingTicks ?? 0;
-        for (let j = 0; j < entry.count; j++) {
-          sched.push({ atTick: entry.atTick + j * spacing, spawnPoint: entry.spawnPoint, enemyType: entry.enemyType, seq: seq++ });
-        }
-      }
-    } else {
-      for (let i = 0; i < room.spawns.enemy.length; i++) {
-        sched.push({ atTick: 0, spawnPoint: i, enemyType: room.spawns.enemy[i]!.type, seq: seq++ });
-      }
-    }
-    sched.sort((a, b) => (a.atTick - b.atTick) || (a.seq - b.seq));
-    state.roomSchedule = sched.map(({ atTick, spawnPoint, enemyType }) => ({ atTick, spawnPoint, enemyType }));
+    state.roomSchedule = expandEncounter(room.encounter, room.spawns.enemy.length, (i) => room.spawns.enemy[i]?.type);
     state.roomSpawnCursor = 0;
   }
 
@@ -252,6 +279,77 @@ export class SpawnSystem {
       const sp = room.spawns.enemy[ev.spawnPoint];
       if (sp) this.spawnEnemyAt(state, toFpGrid(sp.x), toFpGrid(sp.y), ev.enemyType);
       state.roomSpawnCursor++;
+    }
+  }
+
+  // ── PvP arena mode (design/15, ROADMAP 4.3) ─────────────────────────────────────
+
+  /**
+   * Every arena room is already co-resident (4.2b) — this just lazily activates
+   * each room's encounter + loot the tick a player's cached `roomId`
+   * (EnvironmentSystem, step 8b — already fresh this tick, since it runs before
+   * this step) first matches it, then dispatches whatever of its schedule is due.
+   * An already-activated room only needs its own local clock ticked forward.
+   */
+  private tickArena(state: GameState): void {
+    const map = state.arenaMap;
+    if (!map) return;
+    map.rooms.forEach((room, i) => {
+      const rt = state.arenaRoomRuntime[i];
+      if (!rt) return;
+      if (!rt.activated) {
+        const entered = state.players.some((p) => p.alive && p.roomId === room.id);
+        if (!entered) return;
+        rt.activated = true;
+        rt.roomTick = 0;
+        rt.schedule = expandEncounter(room.encounter, room.spawns?.length ?? 0, (idx) => room.spawns?.[idx]?.type);
+        rt.cursor = 0;
+        if (!rt.lootSpawned) {
+          this.spawnArenaLoot(state, room);
+          rt.lootSpawned = true;
+        }
+      } else {
+        rt.roomTick++;
+      }
+      this.dispatchArenaSpawns(state, room, rt);
+    });
+  }
+
+  /** Same dispatch shape as the dungeon's `dispatchDueSpawns`, just reading one
+   * room's own runtime instead of the single global schedule — every arena room
+   * runs its own independent clock/cursor since they're all co-resident at once. */
+  private dispatchArenaSpawns(state: GameState, room: ArenaRoom, rt: ArenaRoomRuntime): void {
+    const spawns = room.spawns ?? [];
+    while (rt.cursor < rt.schedule.length) {
+      const ev = rt.schedule[rt.cursor]!;
+      if (ev.atTick > rt.roomTick) break;
+      const sp = spawns[ev.spawnPoint];
+      if (sp) this.spawnEnemyAt(state, toFpGrid(sp.x + room.rectGrid.x), toFpGrid(sp.y + room.rectGrid.y), ev.enemyType);
+      rt.cursor++;
+    }
+  }
+
+  /**
+   * Spawn one pickup per `lootMarker`, once, the tick its room activates — the
+   * arena's own drop table (design/15, ROADMAP 4.3: "same drop model as PvE, zero
+   * account connection" — never a `material`). `tableId` isn't differentiated yet
+   * (content/arenas.ts `LootMarker`'s doc comment: the real per-table catalog is
+   * still "to design").
+   */
+  private spawnArenaLoot(state: GameState, room: ArenaRoom): void {
+    for (const marker of room.lootMarkers ?? []) {
+      const drop = rollArenaDrop(state.dropPrng);
+      const item: PickupItem = {
+        id: state.nextId(),
+        kind: drop.kind,
+        gx: toFpGrid(marker.point.x + room.rectGrid.x),
+        gy: toFpGrid(marker.point.y + room.rectGrid.y),
+        spawnTick: state.tick,
+        alive: true,
+      };
+      if (drop.kind === 'weapon') item.weaponId = drop.weaponId;
+      if (drop.kind === 'buff') item.buffId = drop.buffId;
+      state.pickups.push(item);
     }
   }
 }

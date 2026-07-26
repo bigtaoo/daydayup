@@ -20,12 +20,38 @@ import { createServer } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { ClientMsg, ServerMsg } from '@dd/engine';
 import { RoomManager } from './RoomManager';
-import type { RoomConnection } from './MatchRoom';
+import type { RoomConnection, SettledMatch } from './MatchRoom';
+import { buildRatingReportBody } from './ladderReport';
 import { verifyTicket } from './ticket';
 import { ticketSecret } from './config';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HOST = process.env.HOST ?? '0.0.0.0';
+// matchsvc's control-plane URL (design/15, ROADMAP 4.6) — where a settled PvP match's
+// checkpoint-verified placements get reported for ladder rating. Unset in dev = the
+// callback is skipped entirely (see `reportSettledMatch` below), not a hard failure.
+const MATCHSVC_URL = process.env.DDU_MATCHSVC_URL;
+
+/**
+ * Report a settled match's placements to matchsvc's ladder (design/15, ROADMAP 4.6) —
+ * ONLY when the result was checkpoint/hash-verified (`hashOk`) and it was actually a
+ * PvP match (`placements` present, `winner` a real seat index); every PvE/co-op
+ * settlement is silently skipped, same as it always was before 4.6 existed. The
+ * placement→rank conversion lives in `ladderReport.ts` (pure, unit-tested); this is
+ * just the fetch call, best-effort — a dropped report never blocks or retries
+ * settlement.
+ */
+function reportSettledMatch(match: SettledMatch): void {
+  if (!MATCHSVC_URL || !match.hashOk || !match.placements || typeof match.winner !== 'number') return;
+  const body = buildRatingReportBody(match.roomId, match.winner, match.placements);
+  fetch(`${MATCHSVC_URL}/rating/report`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  }).catch(() => {
+    /* best-effort — a dropped rating report never blocks or retries match settlement */
+  });
+}
 
 /** A live socket presented to the room layer as a seat sink. */
 class SocketConnection implements RoomConnection {
@@ -79,6 +105,7 @@ function main(): void {
       setInterval: (fn, ms) => setInterval(fn, ms),
       clearInterval: (h) => clearInterval(h as ReturnType<typeof setInterval>),
     },
+    onSettled: reportSettledMatch, // design/15, ROADMAP 4.6 — ladder rating report
   });
 
   const http = createServer((req, res) => {

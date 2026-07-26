@@ -46,15 +46,17 @@ describe('NetInputSource — stall / watermark / cushion contract', () => {
     expect(net.take(7)).toBeNull();
   });
 
-  it('returns a confirmed frame\'s commands, and EMPTY for a confirmed idle frame', () => {
+  it('returns a confirmed frame\'s commands, EMPTY before anyone has ever sent one, and HELD after (design/15, ROADMAP 4.5)', () => {
     const net = new NetInputSource(collectingSink(), { bufferFrames: 0 });
     net.handleServerMsg(START);
     const c0 = cmd(0, 2, Button.FIRE);
     const c1 = cmd(1, 2);
     net.handleServerMsg({ type: 'frame_batch', toFrame: 3, frames: [{ frame: 2, cmds: [c0, c1] }] });
-    expect(net.take(1)).toEqual([]); // confirmed but no commands → idle-hold
-    expect(net.take(2)).toEqual([c0, c1]); // the frame with commands
-    expect(net.take(3)).toEqual([]); // confirmed idle
+    expect(net.take(1)).toEqual([]); // confirmed, but nobody has sent anything yet → idle
+    expect(net.take(2)).toEqual([c0, c1]); // the frame with fresh commands
+    // Frame 3 got no FRESH commands, but both owners already sent one — held, not idle
+    // (4.5's whole point: an unchanged input isn't resent, so this must NOT go idle).
+    expect(net.take(3)).toEqual([c0, c1]);
   });
 
   it('the watermark never retracts (a stale/re-ordered batch cannot un-confirm)', () => {
@@ -73,14 +75,75 @@ describe('NetInputSource — stall / watermark / cushion contract', () => {
     expect(sink.sent).toEqual([c]);
   });
 
-  it('conn_resync merges the replayed log and jumps the watermark (reconnect)', () => {
+  it('conn_resync merges the replayed log, jumps the watermark, and holds past the log\'s last entry', () => {
     const net = new NetInputSource(collectingSink(), { bufferFrames: 0 });
     net.handleServerMsg(START);
     const c = cmd(1, 7, Button.INTERACT);
     net.handleServerMsg({ type: 'conn_resync', startFrame: 0, curFrame: 9, log: [{ frame: 7, cmds: [c] }] });
     expect(net.take(7)).toEqual([c]);
-    expect(net.take(9)).toEqual([]);
+    // curFrame (9) is past the log's last explicit entry (7) — held, same reasoning
+    // as a pure metronome pulse (design/15, ROADMAP 4.5), not idle.
+    expect(net.take(9)).toEqual([c]);
     expect(net.resumeFrame()).toBe(9);
+  });
+});
+
+describe('NetInputSource — sparse held-input sync (design/15, ROADMAP 4.5)', () => {
+  it('submit() skips resending a command whose meaningful fields are unchanged', () => {
+    const sink = collectingSink();
+    const net = new NetInputSource(sink);
+    const held = cmd(0, 1, Button.FIRE);
+    net.submit(held);
+    net.submit({ ...held, tick: 2 }); // identical fields, only `tick` differs — must be skipped
+    net.submit({ ...held, tick: 3 });
+    expect(sink.sent).toHaveLength(1);
+    expect(sink.sent[0]).toEqual(held);
+  });
+
+  it('submit() DOES resend when any meaningful field changes (moveBrad/moveMag/aimBrad/buttons)', () => {
+    const sink = collectingSink();
+    const net = new NetInputSource(sink);
+    const base = cmd(0, 1, Button.FIRE);
+    net.submit(base);
+    net.submit({ ...base, tick: 2, buttons: Button.FIRE | Button.SWAP_WEAPON }); // buttons changed
+    net.submit({ ...base, tick: 3, moveBrad: 100 as Brad }); // moveBrad changed
+    expect(sink.sent).toHaveLength(3);
+  });
+
+  it('a pure metronome pulse (frames: []) holds every known owner\'s last command instead of going idle', () => {
+    const net = new NetInputSource(collectingSink(), { bufferFrames: 0 });
+    net.handleServerMsg(START);
+    const c0 = cmd(0, 2, Button.FIRE);
+    net.handleServerMsg({ type: 'frame_batch', toFrame: 2, frames: [{ frame: 2, cmds: [c0] }] });
+    expect(net.take(2)).toEqual([c0]);
+    // A later pulse confirms frame 5 with NO fresh input from anyone at all.
+    net.handleServerMsg({ type: 'frame_batch', toFrame: 5, frames: [] });
+    expect(net.take(5)).toEqual([c0]); // still held, not idle
+  });
+
+  it('a later fresh command for one owner supersedes their held value, leaving other owners\' held state untouched', () => {
+    const net = new NetInputSource(collectingSink(), { bufferFrames: 0 });
+    net.handleServerMsg(START);
+    const c0a = cmd(0, 2, Button.FIRE);
+    const c1 = cmd(1, 2, Button.INTERACT);
+    net.handleServerMsg({ type: 'frame_batch', toFrame: 2, frames: [{ frame: 2, cmds: [c0a, c1] }] });
+    const c0b = cmd(0, 4, Button.SWAP_WEAPON); // owner 0 changes; owner 1 stays silent
+    net.handleServerMsg({ type: 'frame_batch', toFrame: 4, frames: [{ frame: 4, cmds: [c0b] }] });
+    const at4 = net.take(4)!;
+    expect(at4).toContainEqual(c0b); // owner 0's fresh command
+    expect(at4).toContainEqual(c1); // owner 1's held command, unchanged
+    expect(at4).toHaveLength(2);
+  });
+
+  it('a fresh match_start clears held state from a prior match', () => {
+    const net = new NetInputSource(collectingSink(), { bufferFrames: 0 });
+    net.handleServerMsg(START);
+    net.handleServerMsg({ type: 'frame_batch', toFrame: 2, frames: [{ frame: 2, cmds: [cmd(0, 2, Button.FIRE)] }] });
+    expect(net.take(2)).toEqual([cmd(0, 2, Button.FIRE)]);
+
+    net.handleServerMsg({ type: 'match_start', seed: 2, startFrame: 0, localOwner: 0, playerCount: 1 });
+    net.handleServerMsg({ type: 'frame_batch', toFrame: 3, frames: [] });
+    expect(net.take(3)).toEqual([]); // no stale held command bled into the new match
   });
 });
 

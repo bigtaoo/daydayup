@@ -59,7 +59,8 @@ export class MovementSystem {
    * Iterated in fixed array order — deterministic when solids overlap.
    */
   private resolveObstacles(state: GameState, a: Actor): void {
-    for (const o of state.obstacles) {
+    for (const idx of state.spatialIndex.queryObstacles(a.gx, a.gy, a.footprintRadius)) {
+      const o = state.obstacles[idx]!;
       const dx = a.gx - o.gx;
       const dy = a.gy - o.gy;
       // Feet footprint, not the full body — lets the tall sprite overlap the solid.
@@ -92,7 +93,8 @@ export class MovementSystem {
    *     client picks the same edge (mirrors the round-pillar concentric-overlap rule).
    */
   private resolveWalls(state: GameState, a: Actor): void {
-    for (const w of state.walls) {
+    for (const idx of state.spatialIndex.queryWalls(a.gx, a.gy, a.footprintRadius)) {
+      const w = state.walls[idx]!;
       const r = a.footprintRadius;
       const right = (w.x + w.w) as Fp;
       const bottom = (w.y + w.h) as Fp;

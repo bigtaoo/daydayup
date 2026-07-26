@@ -54,10 +54,14 @@ export interface ConnResync {
   log: readonly FrameCmds[]; // the non-empty frames the client is missing (> lastFrame)
 }
 
-/** End of match — the server's authoritative outcome (clients also re-judge via runHeadless). */
+/** End of match — the server's authoritative outcome (clients also re-judge via runHeadless).
+ * `placements` (design/15, ROADMAP 4.2e) is the PvP finish order — seat indices, worst
+ * to best, the winner's index implicitly 1st and not repeated in this list — present
+ * only for a `'placement'`-reason match; absent for every PvE `extract`/`wipe`/`disconnect`. */
 export interface MatchOver {
   winner: Winner;
-  reason: 'extract' | 'wipe' | 'disconnect';
+  reason: 'extract' | 'wipe' | 'disconnect' | 'placement';
+  placements?: readonly number[];
 }
 
 /** Server → client. Discriminated on `type` (a tagged union — no protobuf codegen). */
@@ -78,5 +82,13 @@ export type ClientMsg =
   | { type: 'cmd'; cmd: PlayerCommand }
   // Reconnect into an in-progress match, asking for the frame log past `lastFrame`.
   | { type: 'resume'; roomId: string; owner: number; lastFrame: number }
-  // Report the client-computed end state for the server's re-judge/audit backstop (design/06).
-  | { type: 'result'; stateHash: number; winner: Winner };
+  // Report the client-computed end state for the server's re-judge/audit backstop
+  // (design/06). `placements` (design/15, ROADMAP 4.2e) is present only for a PvP
+  // match — GameState.placements, the finish order WinConditionSystem recorded.
+  | { type: 'result'; stateHash: number; winner: Winner; placements?: readonly number[] }
+  // Periodic anti-cheat checkpoint (design/15, ROADMAP 4.4) — generalizes `result`
+  // above from "once, at gameover" to "every CHECKPOINT_TICKS, during the match."
+  // `tick` is the CONFIRMED historical tick this hash was computed at (never "whatever
+  // tick the client currently claims"), so the server can compare same-tick reports
+  // across seats without trusting client clocks.
+  | { type: 'checkpoint'; tick: number; stateHash: number };

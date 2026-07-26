@@ -1,11 +1,12 @@
 /**
- * GameEngine — the single orchestrator (design/08). Owns a GameState and the 13
+ * GameEngine — the single orchestrator (design/08). Owns a GameState and the 16
  * systems, instantiated once and run in the frozen step() order. That order IS the
  * determinism contract; reordering it (or changing how a system iterates a
- * collection) bumps ENGINE_VERSION. ExtractionSystem (12, ROADMAP 1.4/1.5) is the
- * one exception to "adding a step bumps the version": it is a strict no-op for any
- * config that doesn't opt into `floors`, so its presence changes nothing for a
- * pre-1.4 config or replay.
+ * collection) bumps ENGINE_VERSION. ExtractionSystem (12, ROADMAP 1.4/1.5) and
+ * ZoneSystem/EnvironmentSystem (8a/8b, ROADMAP 4.2d) are the exceptions to "adding a
+ * step bumps the version": each is a strict no-op for any config that doesn't opt
+ * into `floors`/`arena` respectively, so their presence changes nothing for an
+ * older config or replay.
  *
  * step(commands) is the direct entry (headless/tests). The InputSource seam
  * (advance/submit) pulls confirmed frames from the source; runHeadless() (replay.ts)
@@ -21,6 +22,7 @@ import {
   ApplyInputSystem,
   DeathDropsSystem,
   DeflectSystem,
+  EnvironmentSystem,
   ExtractionSystem,
   HitResolveSystem,
   MovementSystem,
@@ -31,6 +33,7 @@ import {
   StatusEffectSystem,
   WeaponFireSystem,
   WinConditionSystem,
+  ZoneSystem,
 } from './systems';
 
 export class GameEngine {
@@ -45,6 +48,8 @@ export class GameEngine {
   private readonly deflect = new DeflectSystem();
   private readonly hitResolve = new HitResolveSystem();
   private readonly statusEffect = new StatusEffectSystem();
+  private readonly zone = new ZoneSystem();
+  private readonly environment = new EnvironmentSystem();
   private readonly deathDrops = new DeathDropsSystem();
   private readonly pickup = new PickupSystem();
   private readonly spawns = new SpawnSystem();
@@ -68,6 +73,11 @@ export class GameEngine {
     if (s.phase === 'idle') s.phase = 'playing';
     s.clearEvents();
     s.tick++;
+    // Anti-cheat padding draw (design/15, ROADMAP 4.4) — advances every tick,
+    // unconditionally, regardless of mode; never read by any system (see
+    // GameState.integrityPrng's doc comment). The discarded value IS the point —
+    // only its cursor position (hashed in replay.ts serializeState) matters.
+    s.integrityPrng.nextInt(0x7fffffff);
 
     this.applyInput.tick(s, commands); // 1
     this.aiDecide.tick(s); //             2  (PvE)
@@ -77,6 +87,8 @@ export class GameEngine {
     this.deflect.tick(s); //              6  (melee swing parries bullets in its arc)
     this.hitResolve.tick(s); //           7
     this.statusEffect.tick(s); //         8  (burn/poison DoT + chill countdown)
+    this.zone.tick(s); //                 8a (PvP, arena-mode only — ROADMAP 4.2d)
+    this.environment.tick(s); //          8b (PvP, arena-mode only — ROADMAP 4.2d)
     this.deathDrops.tick(s); //           9
     this.pickup.tick(s); //              10
     this.spawns.tick(s); //              11  (PvE)

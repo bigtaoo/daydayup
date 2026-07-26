@@ -15,7 +15,7 @@
 import { addFp, mulFp } from '../math/fixed';
 import { atan2Brad, cosFp, sinFp } from '../math/trig';
 import type { GameState } from '../state/GameState';
-import type { Actor, Faction, ShieldBreakSim } from '../state/entities';
+import type { Actor, DamageSrc, ShieldBreakSim } from '../state/entities';
 import type { DamageType } from '../content/damage';
 import { hostileTargets } from './targeting';
 
@@ -32,7 +32,7 @@ export function takeDamage(
   state: GameState,
   target: Actor,
   dmg: number,
-  src: Faction,
+  src: DamageSrc,
   type: DamageType,
   firePassive = true,
 ): void {

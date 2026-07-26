@@ -14,6 +14,15 @@ import { PLAYER_BASE } from '../content/players';
 import { WEAPON_SIM_BY_ID } from '../content/weapons';
 import { resolveSkin, toShieldBreakSim, type SkinId } from '../content/skins';
 import { buildRunSpecs } from '../balance/build';
+import { UniformGrid } from '../systems/spatialGrid';
+import {
+  buildArenaGeometry,
+  buildArenaCellTraits,
+  buildArenaRoomRects,
+  type ArenaMap,
+  type CellTrait,
+  type RoomId,
+} from '../content/arenas';
 import type {
   AABB,
   EnemyActor,
@@ -115,6 +124,15 @@ export interface EngineConfig {
   // `waves`/`worldW`/`worldH` above are ignored in dungeon mode (each room supplies its
   // own bounds); pass `waves: []` and any placeholder bounds.
   dungeon?: { config: DungeonConfig; library: readonly RoomPiece[] };
+  // PvP arena mode (design/15, ROADMAP 4.2b/c) — an ALTERNATIVE to the flat
+  // `walls`/`obstacles`/`worldW`/`worldH` above: every `ArenaRoom` in the map is
+  // stitched into ONE co-resident world at construction (`content/arenas.ts
+  // buildArenaGeometry`), unlike dungeon mode's one-room-live-at-a-time swap.
+  // PRESENCE overrides `walls`/`obstacles`/`worldW`/`worldH` entirely (pass
+  // placeholders, same convention as dungeon mode's `waves: []` note above).
+  // Additive: a config that omits it (every config before this feature) never
+  // touches this path — byte-identical, no ENGINE_VERSION bump.
+  arena?: ArenaMap;
 }
 
 // Distinct derived-seed constants so the streams never alias (design/06/08).
@@ -122,6 +140,41 @@ const SEED_AI = 0x1a2b3c4d;
 const SEED_COMBAT = 0x5e6f7a8b;
 const SEED_DROP = 0x9c0d1e2f;
 const SEED_ROOMGEN = 0x3f4a5b6c;
+const SEED_RING = 0x7d8e9f0a;
+const SEED_INTEGRITY = 0x2c3d4e5f;
+
+/**
+ * The zone's live state (design/15, ROADMAP 4.2d) — a room-graph BFS shrink, not a
+ * geometric circle. `dist`/`maxDist` are deliberately NOT stored here: they're a pure
+ * deterministic function of `eye` + the static `arenaMap` (rooms/doors never change
+ * mid-match), so ZoneSystem recomputes them at each (infrequent) stage transition
+ * instead of duplicating derived data into replicated state.
+ */
+export interface ZoneState {
+  eye: RoomId;
+  stage: number; // 0 = every reachable room still safe
+  phase: 'warn' | 'hold';
+  ticksToPhaseEnd: number;
+  safe: RoomId[]; // rooms safe AT the current stage
+  closing: RoomId[]; // only meaningful during 'warn': rooms about to drop at stage+1
+  escalation: number; // extra damagePerTick increments once the final stage is reached
+}
+
+/**
+ * One `ArenaRoom`'s lazy-activation + WaveScript runtime (design/15, ROADMAP 4.3).
+ * `activated` flips true the tick a player's cached `roomId` first matches this
+ * room — perf-only lazy activation (design/15: the map ships bundled, so this is
+ * NOT an information-hiding measure). `schedule`/`cursor` mirror the dungeon
+ * mode's `roomSchedule`/`roomSpawnCursor` shape exactly, just per-room instead of
+ * globally-one-room-at-a-time (arena rooms are all co-resident, ROADMAP 4.2b).
+ */
+export interface ArenaRoomRuntime {
+  activated: boolean;
+  roomTick: number; // ticks since activation (room-local clock, mirrors dungeon's roomTick)
+  schedule: { atTick: number; spawnPoint: number; enemyType?: string }[];
+  cursor: number;
+  lootSpawned: boolean;
+}
 
 export class GameState {
   readonly seed: number;
@@ -144,6 +197,16 @@ export class GameState {
   // generateFloor) — that's wiring the demo's single arena into a real multi-floor
   // run, 1.4/1.5. Reserved now so the schema matches design/08 exactly.
   readonly roomgenPrng: Prng;
+  // PvP zone eye draw + future per-seat spawn assignment (design/15, ROADMAP 4.2d) —
+  // a distinct stream so tuning/observing the zone never shifts any gameplay-affecting
+  // draw sequence (aiPrng/combatPrng/dropPrng), same reasoning as every other stream.
+  readonly ringPrng: Prng;
+  // Anti-cheat "padding" stream (design/15, ROADMAP 4.4) — drawn once per tick
+  // (GameEngine.step) purely to raise how much the periodic-checkpoint state hash
+  // moves tick-to-tick, so a diverged client surfaces sooner. NEVER read by any
+  // gameplay system — mixing it into aiPrng/combatPrng/dropPrng would shift real
+  // draw sequences whenever this tuning changes, for no anti-cheat benefit.
+  readonly integrityPrng: Prng;
 
   // Entities — ordered arrays; index/id stable within a match.
   readonly players: PlayerActor[] = [];
@@ -159,6 +222,10 @@ export class GameState {
   // Rectangular solids (design/07/09 ROADMAP 1.2) — same lifecycle as `obstacles`:
   // static for a non-dungeon config, per-room content-swapped in dungeon mode.
   readonly walls: AABB[] = [];
+  // Broadphase index over the two arrays above (ROADMAP 4.2b) — a derived cache, not
+  // gameplay state, rebuilt every time `walls`/`obstacles` are repopulated (here, and
+  // by SpawnSystem.loadRoom via rebuildSpatialIndex()).
+  spatialIndex!: UniformGrid;
 
   // World bounds (fp). Mutable ONLY in dungeon mode (each room resizes them as it
   // loads — SpawnSystem.loadRoom); a non-dungeon config sets them once at construction
@@ -219,6 +286,34 @@ export class GameState {
   roomSchedule: { atTick: number; spawnPoint: number; enemyType?: string }[] = [];
   roomSpawnCursor = 0;
 
+  // PvP arena mode (design/15, ROADMAP 4.2b/c/d). All inert unless `zoneEnabled`
+  // (EngineConfig.arena was provided) — ZoneSystem/EnvironmentSystem are strict
+  // no-ops otherwise (ExtractionSystem's precedent, GameEngine.ts).
+  readonly zoneEnabled: boolean;
+  readonly arenaMap?: ArenaMap;
+  // Every cellTrait, pre-converted to an absolute-Fp rect ONCE at construction (same
+  // "convert once, never inside a system" rule as walls/obstacles) — see
+  // `content/arenas.ts buildArenaCellTraits`. Empty when `arenaMap` is absent.
+  readonly cellTraits: { trait: CellTrait; rect: AABB }[] = [];
+  // Every room's rect, pre-converted to Fp ONCE (same rule) — the room-membership
+  // point-in-rect test (`EnvironmentSystem`) reads this, never `arenaMap` directly.
+  readonly arenaRoomRects: { id: RoomId; rect: AABB }[] = [];
+  // The zone's per-match-drawn eye + current stage (design/15) — undefined until
+  // ZoneSystem's first tick draws it (PRNG draws happen inside systems, not the
+  // constructor, matching `roomgenPrng`'s existing precedent above).
+  zone?: ZoneState;
+  // PvP finish order (design/15, ROADMAP 4.2e) — seat INDICES (into `players`, same
+  // convention as `Winner`'s doc comment), in ELIMINATION order (worst place first);
+  // the winner (`state.winner`) is implicitly 1st and never pushed here. Populated by
+  // WinConditionSystem's arena-mode branch only; empty for every PvE config.
+  readonly placements: number[] = [];
+  // Per-room lazy-activation + encounter runtime (design/15, ROADMAP 4.3) — parallel
+  // array to `arenaMap.rooms` (index-aligned, never a Map: same array-order
+  // determinism convention as everywhere else). Initialized eagerly at construction
+  // (plain state, no PRNG draw, so — unlike `zone` — there's no reason to defer this
+  // to a system's first tick); `SpawnSystem` is the only mutator.
+  readonly arenaRoomRuntime: ArenaRoomRuntime[] = [];
+
   // Outcome + render channel.
   winner: Winner = null;
   events: GameEvent[] = [];
@@ -229,6 +324,8 @@ export class GameState {
     this.combatPrng = new Prng(config.seed ^ SEED_COMBAT);
     this.dropPrng = new Prng(config.seed ^ SEED_DROP);
     this.roomgenPrng = new Prng(config.seed ^ SEED_ROOMGEN);
+    this.ringPrng = new Prng(config.seed ^ SEED_RING);
+    this.integrityPrng = new Prng(config.seed ^ SEED_INTEGRITY);
     this.worldW = pxToFp(config.worldW);
     this.worldH = pxToFp(config.worldH);
     this.waves = config.waves;
@@ -240,12 +337,32 @@ export class GameState {
     this.floorsEnabled = config.floors !== undefined || this.dungeonEnabled;
     this.extraFloors = config.floors ?? [];
 
-    for (const [ox, oy, orad] of config.obstacles ?? []) {
-      this.obstacles.push({ gx: pxToFp(ox), gy: pxToFp(oy), radius: pxToFp(orad) });
+    this.zoneEnabled = config.arena !== undefined;
+    this.arenaMap = config.arena;
+
+    if (config.arena) {
+      // Arena mode overrides the flat obstacles/walls/worldW/worldH above entirely —
+      // every room's geometry, stitched at its own offset, replaces the demo's single
+      // flat layout (see EngineConfig.arena).
+      const geo = buildArenaGeometry(config.arena);
+      this.worldW = geo.worldW;
+      this.worldH = geo.worldH;
+      this.obstacles.push(...geo.obstacles);
+      this.walls.push(...geo.walls);
+      this.cellTraits.push(...buildArenaCellTraits(config.arena));
+      this.arenaRoomRects.push(...buildArenaRoomRects(config.arena));
+      for (const _room of config.arena.rooms) {
+        this.arenaRoomRuntime.push({ activated: false, roomTick: 0, schedule: [], cursor: 0, lootSpawned: false });
+      }
+    } else {
+      for (const [ox, oy, orad] of config.obstacles ?? []) {
+        this.obstacles.push({ gx: pxToFp(ox), gy: pxToFp(oy), radius: pxToFp(orad) });
+      }
+      for (const [wx, wy, ww, wh] of config.walls ?? []) {
+        this.walls.push({ x: pxToFp(wx), y: pxToFp(wy), w: pxToFp(ww), h: pxToFp(wh) });
+      }
     }
-    for (const [wx, wy, ww, wh] of config.walls ?? []) {
-      this.walls.push({ x: pxToFp(wx), y: pxToFp(wy), w: pxToFp(ww), h: pxToFp(wh) });
-    }
+    this.rebuildSpatialIndex();
 
     // One PlayerActor per co-op seat (design/05/06, ROADMAP 3.1). ABSENT `players` →
     // exactly one seat built from the single-player top-level fields, byte-identical to
@@ -313,6 +430,13 @@ export class GameState {
 
   clearEvents(): void {
     this.events.length = 0;
+  }
+
+  /** Rebuild the broadphase index from the current walls/obstacles contents (ROADMAP
+   * 4.2b). Call after repopulating either array — the constructor does this once;
+   * SpawnSystem.loadRoom does it again on every room swap. */
+  rebuildSpatialIndex(): void {
+    this.spatialIndex = new UniformGrid(this.walls, this.obstacles);
   }
 }
 

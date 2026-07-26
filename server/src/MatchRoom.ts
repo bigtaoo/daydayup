@@ -13,7 +13,14 @@
  * a fake clock and fake connections (see test/MatchRoom.test.ts). The determinism-
  * critical relay logic it wraps is already proven in @dd/engine's own tests.
  */
-import { FrameBroadcast, type PlayerCommand, type ServerMsg, type Winner } from '@dd/engine';
+import {
+  FrameBroadcast,
+  CHECKPOINT_QUORUM,
+  INTEGRITY_KICK_STREAK,
+  type PlayerCommand,
+  type ServerMsg,
+  type Winner,
+} from '@dd/engine';
 
 /** A per-seat sink — one connected client. The transport wraps a socket as this. */
 export interface RoomConnection {
@@ -29,9 +36,26 @@ export interface Scheduler {
 }
 export type IntervalHandle = unknown;
 
+/** A settled match's outcome, handed to `MatchRoomDeps.onSettled` (design/15,
+ * ROADMAP 4.6) — everything the ladder-rating caller needs, and nothing MatchRoom
+ * doesn't already legitimately know. `hashOk`/`placements` together are the
+ * "checkpoint/hash-verified PvP result" gate design/15 requires before a placement
+ * can affect the ladder; a caller should ignore this callback unless BOTH hold. */
+export interface SettledMatch {
+  roomId: string;
+  winner: Winner;
+  placements?: readonly number[];
+  hashOk: boolean;
+}
+
 export interface MatchRoomDeps {
   scheduler: Scheduler;
   onDestroy: (roomId: string) => void;
+  /** Fired once, right before destroy(), with the settled outcome (design/15, ROADMAP
+   * 4.6) — e.g. wired to matchsvc's ladder-rating report in index.ts. Optional: every
+   * pre-4.6 caller (every existing test, every PvE/co-op deployment) omits it and
+   * nothing changes — MatchRoom stays generic infra, never importing matchsvc itself. */
+  onSettled?: (match: SettledMatch) => void;
   /** Broadcast pulse period (ms). Default 100 (10 Hz, funny). */
   batchMs?: number;
   /** Sim frames per pulse. Default 3 (30 Hz sim ÷ 10 Hz net). Must match the client. */
@@ -56,8 +80,14 @@ export class MatchRoom {
   private readonly broadcast: FrameBroadcast;
   private readonly batchMs: number;
   private metronome: IntervalHandle | null = null;
-  private readonly results = new Map<number, { hash: number; winner: Winner }>();
+  private readonly results = new Map<number, { hash: number; winner: Winner; placements?: readonly number[] }>();
   private settled = false;
+  // Anti-cheat periodic checkpoints (design/15, ROADMAP 4.4): tick -> (owner -> hash),
+  // evaluated (and discarded) the instant every seat has reported for that tick — the
+  // server never needs to remember a tick again once it's been compared. Per-seat
+  // consecutive-mismatch streak drives the kick rule (a clean report resets it).
+  private readonly checkpoints = new Map<number, Map<number, number>>();
+  private readonly integrityStrikes = new Map<number, number>();
 
   constructor(
     readonly roomId: string,
@@ -188,6 +218,84 @@ export class MatchRoom {
     if (this.seats.every((s) => s.conn === null)) this.destroy();
   }
 
+  // ───────────────────────── anti-cheat checkpoints (design/15, ROADMAP 4.4) ─────────────────────────
+
+  /**
+   * A client's periodic mid-match state hash (design/15) — v1 mechanism: the server
+   * just collects each seat's report and flags whichever value disagrees with the
+   * majority, needing zero new server-side simulation. Evaluated only once every
+   * seat has reported for that SAME historical tick (never "whatever tick a client
+   * currently claims"), so a seat merely catching up under lag never looks divergent
+   * — it simply hasn't reported that tick yet.
+   *
+   * Below `CHECKPOINT_QUORUM` real (connected) seats, this is a no-op: an early
+   * low-population match is expected to be internally inconsistent, and "not enough
+   * honest signal to trust a majority" applies at any seat count this low.
+   */
+  reportCheckpoint(owner: number, tick: number, stateHash: number): void {
+    if (this.phase !== Phase.IN_MATCH) return;
+    if (!this.seats[owner]) return;
+    if (this.playerCount <= CHECKPOINT_QUORUM) return;
+
+    let byOwner = this.checkpoints.get(tick);
+    if (!byOwner) {
+      byOwner = new Map();
+      this.checkpoints.set(tick, byOwner);
+    }
+    byOwner.set(owner, stateHash);
+    if (byOwner.size < this.playerCount) return; // wait for every seat's report at this tick
+
+    // Majority vote (v1, design/15): the most-agreed-on hash wins; whichever seats
+    // disagree get a strike. A clean report resets a seat's streak — only a
+    // CONSECUTIVE run of INTEGRITY_KICK_STREAK mismatches (never a single stray
+    // one, more likely a benign catch-up race) actually severs the seat.
+    const counts = new Map<number, number>();
+    for (const hash of byOwner.values()) counts.set(hash, (counts.get(hash) ?? 0) + 1);
+    let majorityHash = 0;
+    let majorityCount = -1;
+    for (const [hash, count] of counts) {
+      if (count > majorityCount) {
+        majorityHash = hash;
+        majorityCount = count;
+      }
+    }
+
+    for (const [seatOwner, hash] of byOwner) {
+      if (hash === majorityHash) {
+        this.integrityStrikes.delete(seatOwner);
+        continue;
+      }
+      const strikes = (this.integrityStrikes.get(seatOwner) ?? 0) + 1;
+      if (strikes >= INTEGRITY_KICK_STREAK) {
+        this.kickSeat(seatOwner);
+      } else {
+        this.integrityStrikes.set(seatOwner, strikes);
+      }
+    }
+    this.checkpoints.delete(tick); // evaluated — never needed again, bounds memory
+  }
+
+  /**
+   * Sever a seat for a confirmed integrity divergence. Reconnecting uses the
+   * existing `resume`/`conn_resync` path (design/15) — no new plumbing needed, only
+   * this new trigger that decides to disconnect it in the first place. Otherwise
+   * identical to a voluntary `onDisconnect`: free the seat, pause the metronome
+   * (co-op/PvP alike are latency-tolerant), destroy if the room is now empty.
+   */
+  private kickSeat(owner: number): void {
+    const seat = this.seats[owner];
+    if (!seat || !seat.conn) return;
+    seat.conn.send({
+      type: 'error',
+      code: 'integrity_mismatch',
+      message: 'State diverged from the match majority at a confirmed checkpoint.',
+    });
+    seat.conn = null;
+    this.integrityStrikes.delete(owner);
+    if (this.phase === Phase.IN_MATCH) this.stopMetronome();
+    if (this.seats.every((s) => s.conn === null)) this.destroy();
+  }
+
   // ───────────────────────── settlement ─────────────────────────
 
   /**
@@ -195,24 +303,32 @@ export class MatchRoom {
    * Once every seat has reported, the room settles: it broadcasts `match_over` and
    * destroys itself. Divergent hashes are flagged (design/06: the authoritative
    * backstop is a server-side runHeadless re-judge, not realtime trust).
+   *
+   * `placements` (design/15, ROADMAP 4.2e) is present only for a PvP match (a config
+   * with `arena` set — GameState.placements); its presence, not the room's own
+   * knowledge of match type, is what selects the `'placement'` reason — MatchRoom
+   * stays generic infrastructure, same as it already is for co-op vs. solo.
    */
-  reportResult(owner: number, stateHash: number, winner: Winner): void {
+  reportResult(owner: number, stateHash: number, winner: Winner, placements?: readonly number[]): void {
     if (this.phase !== Phase.IN_MATCH || this.settled) return;
     if (!this.seats[owner]) return;
-    this.results.set(owner, { hash: stateHash, winner });
+    this.results.set(owner, { hash: stateHash, winner, placements });
     if (this.results.size < this.playerCount) return;
 
     const reports = [...this.results.values()];
     const hashOk = reports.every((r) => r.hash === reports[0]!.hash);
     const agreedWinner = reports[0]!.winner;
+    const agreedPlacements = reports[0]!.placements;
     this.settled = true;
     this.stopMetronome();
     this.phase = Phase.OVER;
     this.sendAll({
       type: 'match_over',
       winner: agreedWinner,
-      reason: hashOk ? (agreedWinner === 'enemies' ? 'wipe' : 'extract') : 'disconnect',
+      reason: hashOk ? (agreedPlacements ? 'placement' : agreedWinner === 'enemies' ? 'wipe' : 'extract') : 'disconnect',
+      placements: agreedPlacements,
     });
+    this.deps.onSettled?.({ roomId: this.roomId, winner: agreedWinner, placements: agreedPlacements, hashOk });
     this.destroy();
   }
 

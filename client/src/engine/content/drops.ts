@@ -96,3 +96,37 @@ export function rollDrop(prng: Prng, tier = 0): DropResult {
       return { kind: 'heal' };
   }
 }
+
+// ── PvP arena drop table (design/15, ROADMAP 4.3) ──────────────────────────────
+//
+// "Same drop MODEL as PvE — weapon/buff/heal — but the arena's own table, zero
+// connection to a player's account/materials" (design/15). `material` is
+// STRUCTURALLY absent, not just zero-weighted — an arena death can never bank
+// toward `state.bankedMaterials` (PvP's fairness wall, same spirit as
+// `buildArenaSpecs` taking no meta param). Weights are a first-pass placeholder
+// (design/15's loot-marker/DropTable weighting is explicitly still "to design") —
+// re-weight freely; this only needs to exercise the mechanism honestly today.
+
+type ArenaDropTableEntry = { kind: Exclude<DropResult['kind'], 'material'>; weight: number };
+
+export const ARENA_DROP_TABLE: readonly ArenaDropTableEntry[] = [
+  { kind: 'heal', weight: 40 },
+  { kind: 'weapon', weight: 40 },
+  { kind: 'buff', weight: 20 },
+];
+
+/** Roll one drop from the arena's own table (never a `material`) — same dropPrng
+ * stream as PvE `rollDrop` (mode-exclusive: a match is never both dungeon and
+ * arena, so there's no aliasing to guard against, same reasoning as `roomgenPrng`
+ * being reused rather than duplicated per mode). */
+export function rollArenaDrop(prng: Prng): DropResult {
+  const entry = ARENA_DROP_TABLE[prng.weightedIndex(ARENA_DROP_TABLE.map((e) => e.weight))]!;
+  switch (entry.kind) {
+    case 'weapon':
+      return { kind: 'weapon', weaponId: WEAPON_DROP_POOL[prng.nextInt(WEAPON_DROP_POOL.length)]! };
+    case 'buff':
+      return { kind: 'buff', buffId: BUFF_DROP_POOL[prng.nextInt(BUFF_DROP_POOL.length)]! };
+    default:
+      return { kind: 'heal' };
+  }
+}

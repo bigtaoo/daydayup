@@ -108,9 +108,14 @@ export interface RoomPiece {
  * floor; a piece authored at its own local origin doesn't need to know its final
  * position). Pure and side-effect-free: does not touch GameState, just produces
  * the arrays `state.walls`/`state.obstacles` are built from.
+ *
+ * Only reads `solids`/`pillars`, so the param type is the minimal shape rather than
+ * the full `RoomPiece` — `content/arenas.ts`'s `ArenaRoom` (ROADMAP 4.2b/c) has its
+ * own id/rectGrid/doors/etc. but the same solids/pillars vocabulary, and reuses this
+ * converter directly instead of duplicating the AABB/pillar conversion math.
  */
 export function roomGeometry(
-  piece: RoomPiece,
+  piece: Pick<RoomPiece, 'solids' | 'pillars'>,
   offsetXGrid = 0,
   offsetYGrid = 0,
 ): { walls: AABB[]; obstacles: Obstacle[] } {

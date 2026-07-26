@@ -178,8 +178,21 @@ import { BRAD_FULL } from './math/trig';
  * co-op are unaffected in every practical scenario; the guard is there because "provably
  * safe for the default case" is not the same promise as "provably safe for every old
  * recorded replay," and design/08's rule is to fail loud rather than risk the latter.
+ *
+ * v19: anti-cheat `integrityPrng` (design/15, ROADMAP 4.4) + closing a hash-coverage
+ * gap left by v18's zone/placement work (4.2d/4.2e). `GameState` gains a new seeded
+ * stream drawn once per tick, unconditionally, in `GameEngine.step` — NEVER read by
+ * any gameplay system (see its doc comment), so no outcome for any config/mode
+ * changes. `serializeState` (replay.ts) now also hashes `ringPrng`/`integrityPrng`'s
+ * cursors and `state.zone`/`state.placements` directly (previously a zone-state
+ * divergence would only surface indirectly, once it produced different damage) —
+ * both null/empty and stable for every non-arena config. Bumps because
+ * `hashState()`'s output value moves for every tick of every replay — the "state
+ * shape gained a field, so replay bytes move" precedent v17 (downed/revive) already
+ * established as sufficient on its own, even with zero gameplay effect for existing
+ * modes.
  */
-export const ENGINE_VERSION = 18;
+export const ENGINE_VERSION = 19;
 
 // ── Two-pool health tuning (design/07; final values are 07 "to design") ──────────
 // Whole ticks @30Hz. Shield regen is an idle timer, not a heal: after taking ANY
@@ -195,6 +208,22 @@ export const DOWNED_BLEEDOUT_TICKS = 900; // ~30 s downed before permanent death
 export const REVIVE_CHANNEL_TICKS = 450; // ~15 s sustained INTERACT to complete a revive (design/05 locked)
 export const REVIVE_HP = 2; // HP a revived player comes back with (a small amount, design/07)
 export const REVIVE_RANGE_GRID = 1.5; // how close the reviver must stand, grid units
+
+// ── PvP anti-cheat periodic checkpoints (design/15, ROADMAP 4.4) ──────────────────
+// Generalizes the existing end-of-match `ClientMsg.result.stateHash` (replay.ts
+// hashState) into a tick-indexed check DURING a match. Design/15 is explicit these
+// numbers are a first-pass proposal, not tuned ("real play required").
+export const CHECKPOINT_TICKS = 150; // ~5s @ 30Hz cadence between periodic reports
+// Below this many REAL (connected) seats, run no consensus check at all — an early
+// bot-padded low-population match is expected to be internally inconsistent
+// (design/15), and "not enough honest signal to trust a majority" applies at any
+// seat count this low regardless of population stage.
+export const CHECKPOINT_QUORUM = 3;
+// A seat is only kicked once it disagrees with the majority at the SAME historical
+// tick across this many CONSECUTIVE checkpoints — never a single stray mismatch
+// (which is more likely a client still catching up under the lag/backlog
+// multiplier than an actual state fork, design/15).
+export const INTEGRITY_KICK_STREAK = 2;
 
 /**
  * World scale — the anchor for every human-unit → fp/brad conversion (design/09).

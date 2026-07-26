@@ -9,7 +9,7 @@
  * fix), float px → fp. Score is not tracked in the engine; render derives it from
  * the death/pickup/wave_clear events (design/08 "events are the only channel").
  */
-import { rollDrop } from '../content/drops';
+import { rollDrop, rollArenaDrop } from '../content/drops';
 import { DOWNED_BLEEDOUT_TICKS } from '../config';
 import { toFp } from '../math/fixed';
 import type { GameState } from '../state/GameState';
@@ -22,10 +22,12 @@ export class DeathDropsSystem {
       if (!e.alive || e.hp > 0) continue;
       e.alive = false;
       state.events.push({ type: 'death', id: e.id, faction: 'enemy', gx: e.gx, gy: e.gy });
-      // Depth signal for material tier (design/09 materialTierByDepth, ROADMAP 1.5):
-      // state.floorIndex is 0 for every config without floors, so this is identical
-      // to the old no-arg call for every existing config.
-      const drop = rollDrop(state.dropPrng, state.floorIndex);
+      // Arena mode rolls its own table (design/15, ROADMAP 4.3) — never `material`,
+      // zero connection to the PvE account/materials economy. Depth signal for the
+      // PvE material tier (design/09 materialTierByDepth, ROADMAP 1.5): state.floorIndex
+      // is 0 for every config without floors, so this is identical to the old no-arg
+      // call for every existing config.
+      const drop = state.zoneEnabled ? rollArenaDrop(state.dropPrng) : rollDrop(state.dropPrng, state.floorIndex);
       const item: PickupItem = {
         id: state.nextId(),
         kind: drop.kind,

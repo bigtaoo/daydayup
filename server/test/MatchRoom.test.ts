@@ -167,6 +167,136 @@ describe('MatchRoom — settlement', () => {
     r.reportResult(1, 0x222, 0); // divergent hash
     expect(a.ofType('match_over')[0]!.reason).toBe('disconnect'); // mismatch marker
   });
+
+  it('fires onSettled with the checkpoint-verified outcome (design/15, ROADMAP 4.6), for the ladder-rating caller', () => {
+    const scheduler = new FakeScheduler();
+    const settled: unknown[] = [];
+    const r = new MatchRoom('r1', 99, 2, {
+      scheduler,
+      onDestroy: () => {},
+      onSettled: (m) => settled.push(m),
+    });
+    const a = new FakeConn(0);
+    const b = new FakeConn(1);
+    r.join(a); r.join(b);
+    r.reportResult(0, 0xabc, 1, [0]);
+    r.reportResult(1, 0xabc, 1, [0]); // matching hash
+    expect(settled).toEqual([{ roomId: 'r1', winner: 1, placements: [0], hashOk: true }]);
+  });
+
+  it('onSettled reports hashOk: false on a divergent-hash settlement, never crashing the caller', () => {
+    const scheduler = new FakeScheduler();
+    const settled: unknown[] = [];
+    const r = new MatchRoom('r1', 99, 2, {
+      scheduler,
+      onDestroy: () => {},
+      onSettled: (m) => settled.push(m),
+    });
+    const a = new FakeConn(0);
+    const b = new FakeConn(1);
+    r.join(a); r.join(b);
+    r.reportResult(0, 0x111, 0);
+    r.reportResult(1, 0x222, 0); // divergent hash
+    expect(settled).toEqual([{ roomId: 'r1', winner: 0, placements: undefined, hashOk: false }]);
+  });
+
+  it('reports \'placement\' (design/15, ROADMAP 4.2e) when the reported result carries a placements array', () => {
+    const { r } = room(2);
+    const a = new FakeConn(0);
+    const b = new FakeConn(1);
+    r.join(a); r.join(b);
+    r.reportResult(0, 0xabc, 1, [0]); // seat 1 won; seat 0 placed 2nd
+    r.reportResult(1, 0xabc, 1, [0]); // matching hash + placements
+    const over = a.ofType('match_over')[0]!;
+    expect(over.reason).toBe('placement');
+    expect(over.winner).toBe(1);
+    expect(over.placements).toEqual([0]);
+  });
+
+  it('never reports \'placement\' for a PvE result with no placements array', () => {
+    const { r } = room(2);
+    const a = new FakeConn(0);
+    const b = new FakeConn(1);
+    r.join(a); r.join(b);
+    r.reportResult(0, 0xabc, 0);
+    r.reportResult(1, 0xabc, 0);
+    expect(a.ofType('match_over')[0]!.reason).toBe('extract');
+  });
+});
+
+describe('MatchRoom — anti-cheat checkpoints (design/15, ROADMAP 4.4)', () => {
+  it('runs no consensus check at all below the quorum (playerCount <= 3)', () => {
+    const { r } = room(2); // below CHECKPOINT_QUORUM (3)
+    const a = new FakeConn(0);
+    const b = new FakeConn(1);
+    r.join(a); r.join(b);
+    // Seat 1 disagrees with seat 0 for many consecutive checkpoints — with only 2
+    // real seats this must never kick anyone (design/15: no signal to trust below quorum).
+    for (let tick = 150; tick <= 750; tick += 150) {
+      r.reportCheckpoint(0, tick, 0xaaa);
+      r.reportCheckpoint(1, tick, 0xbbb);
+    }
+    expect(a.ofType('error')).toHaveLength(0);
+    expect(b.ofType('error')).toHaveLength(0);
+  });
+
+  it('kicks the minority seat after INTEGRITY_KICK_STREAK consecutive same-tick mismatches', () => {
+    const { r } = room(4); // above quorum
+    const conns = [new FakeConn(0), new FakeConn(1), new FakeConn(2), new FakeConn(3)];
+    for (const c of conns) r.join(c);
+
+    // Tick 150: seat 3 disagrees (strike 1) — not kicked yet.
+    r.reportCheckpoint(0, 150, 0xaaa);
+    r.reportCheckpoint(1, 150, 0xaaa);
+    r.reportCheckpoint(2, 150, 0xaaa);
+    r.reportCheckpoint(3, 150, 0xbad);
+    expect(conns[3]!.ofType('error')).toHaveLength(0);
+
+    // Tick 300: seat 3 disagrees AGAIN, consecutively — strike 2, kicked.
+    r.reportCheckpoint(0, 300, 0xaaa);
+    r.reportCheckpoint(1, 300, 0xaaa);
+    r.reportCheckpoint(2, 300, 0xaaa);
+    r.reportCheckpoint(3, 300, 0xbad);
+
+    expect(conns[3]!.ofType('error')).toHaveLength(1);
+    expect(conns[3]!.ofType('error')[0]!.code).toBe('integrity_mismatch');
+    // Every other seat is untouched.
+    for (const c of [conns[0]!, conns[1]!, conns[2]!]) expect(c.ofType('error')).toHaveLength(0);
+  });
+
+  it('a clean report in between resets the streak — no kick from two NON-consecutive mismatches', () => {
+    const { r } = room(4);
+    const conns = [new FakeConn(0), new FakeConn(1), new FakeConn(2), new FakeConn(3)];
+    for (const c of conns) r.join(c);
+
+    r.reportCheckpoint(0, 150, 0xaaa);
+    r.reportCheckpoint(1, 150, 0xaaa);
+    r.reportCheckpoint(2, 150, 0xaaa);
+    r.reportCheckpoint(3, 150, 0xbad); // strike 1
+
+    r.reportCheckpoint(0, 300, 0xaaa);
+    r.reportCheckpoint(1, 300, 0xaaa);
+    r.reportCheckpoint(2, 300, 0xaaa);
+    r.reportCheckpoint(3, 300, 0xaaa); // agrees this time — streak resets
+
+    r.reportCheckpoint(0, 450, 0xaaa);
+    r.reportCheckpoint(1, 450, 0xaaa);
+    r.reportCheckpoint(2, 450, 0xaaa);
+    r.reportCheckpoint(3, 450, 0xbad); // strike 1 again, not 2 — never kicked
+
+    expect(conns[3]!.ofType('error')).toHaveLength(0);
+  });
+
+  it('waits for every seat to report before evaluating a tick (a partial report never triggers a kick)', () => {
+    const { r } = room(4);
+    const conns = [new FakeConn(0), new FakeConn(1), new FakeConn(2), new FakeConn(3)];
+    for (const c of conns) r.join(c);
+    r.reportCheckpoint(0, 150, 0xaaa);
+    r.reportCheckpoint(1, 150, 0xaaa);
+    r.reportCheckpoint(2, 150, 0xaaa);
+    // Seat 3 never reports this tick — nothing should be decided.
+    expect(conns.every((c) => c.ofType('error').length === 0)).toBe(true);
+  });
 });
 
 describe('RoomManager — routing + room parameter cross-check', () => {
@@ -199,5 +329,17 @@ describe('RoomManager — routing + room parameter cross-check', () => {
     mgr.onClose(a, 'room');
     mgr.onClose(b, 'room');
     expect(mgr.size).toBe(0); // room destroyed when empty
+  });
+
+  it('routes checkpoint messages through to the room (design/15, ROADMAP 4.4)', () => {
+    const scheduler = new FakeScheduler();
+    const mgr = new RoomManager({ scheduler });
+    const a = new FakeConn(0);
+    const b = new FakeConn(1);
+    mgr.join(a, 'room', 7, 2);
+    mgr.join(b, 'room', 7, 2);
+    // Below quorum (2 seats) — this only proves the message reaches reportCheckpoint
+    // without throwing; the quorum-gated consensus behavior itself is covered above.
+    expect(() => mgr.handle(a, 'room', { type: 'checkpoint', tick: 150, stateHash: 0xabc })).not.toThrow();
   });
 });
