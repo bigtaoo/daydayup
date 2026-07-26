@@ -1,0 +1,2501 @@
+{
+  "id": "arena_prototype_60",
+  "sizeGrid": {
+    "w": 134,
+    "h": 86
+  },
+  "rooms": [
+    {
+      "id": "room_0_0",
+      "rectGrid": {
+        "x": 8,
+        "y": 8,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 16,
+            "y": 16
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 13,
+            "y": 13
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_0_1",
+      "rectGrid": {
+        "x": 20,
+        "y": 8,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 28,
+            "y": 16
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 25,
+            "y": 13
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_0_2",
+      "rectGrid": {
+        "x": 32,
+        "y": 8,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 40,
+            "y": 16
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 37,
+            "y": 13
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_0_3",
+      "rectGrid": {
+        "x": 44,
+        "y": 8,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 52,
+            "y": 16
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 49,
+            "y": 13
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_0_4",
+      "rectGrid": {
+        "x": 56,
+        "y": 8,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 64,
+            "y": 16
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 61,
+            "y": 13
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_0_5",
+      "rectGrid": {
+        "x": 68,
+        "y": 8,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 76,
+            "y": 16
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 73,
+            "y": 13
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_0_6",
+      "rectGrid": {
+        "x": 80,
+        "y": 8,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 88,
+            "y": 16
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 85,
+            "y": 13
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_0_7",
+      "rectGrid": {
+        "x": 92,
+        "y": 8,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 100,
+            "y": 16
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 97,
+            "y": 13
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_0_8",
+      "rectGrid": {
+        "x": 104,
+        "y": 8,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 112,
+            "y": 16
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 109,
+            "y": 13
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_0_9",
+      "rectGrid": {
+        "x": 116,
+        "y": 8,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 124,
+            "y": 16
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 121,
+            "y": 13
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_1_0",
+      "rectGrid": {
+        "x": 8,
+        "y": 20,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 16,
+            "y": 28
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 13,
+            "y": 25
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_1_1",
+      "rectGrid": {
+        "x": 20,
+        "y": 20,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 28,
+            "y": 28
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 25,
+            "y": 25
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_1_2",
+      "rectGrid": {
+        "x": 32,
+        "y": 20,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 40,
+            "y": 28
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 37,
+            "y": 25
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_1_3",
+      "rectGrid": {
+        "x": 44,
+        "y": 20,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 52,
+            "y": 28
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 49,
+            "y": 25
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_1_4",
+      "rectGrid": {
+        "x": 56,
+        "y": 20,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 64,
+            "y": 28
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 61,
+            "y": 25
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_1_5",
+      "rectGrid": {
+        "x": 68,
+        "y": 20,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 76,
+            "y": 28
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 73,
+            "y": 25
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_1_6",
+      "rectGrid": {
+        "x": 80,
+        "y": 20,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 88,
+            "y": 28
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 85,
+            "y": 25
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_1_7",
+      "rectGrid": {
+        "x": 92,
+        "y": 20,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 100,
+            "y": 28
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 97,
+            "y": 25
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_1_8",
+      "rectGrid": {
+        "x": 104,
+        "y": 20,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 112,
+            "y": 28
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 109,
+            "y": 25
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_1_9",
+      "rectGrid": {
+        "x": 116,
+        "y": 20,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 124,
+            "y": 28
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 121,
+            "y": 25
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_2_0",
+      "rectGrid": {
+        "x": 8,
+        "y": 32,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 16,
+            "y": 40
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 13,
+            "y": 37
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_2_1",
+      "rectGrid": {
+        "x": 20,
+        "y": 32,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 28,
+            "y": 40
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 25,
+            "y": 37
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_2_2",
+      "rectGrid": {
+        "x": 32,
+        "y": 32,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 40,
+            "y": 40
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 37,
+            "y": 37
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_2_3",
+      "rectGrid": {
+        "x": 44,
+        "y": 32,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 52,
+            "y": 40
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 49,
+            "y": 37
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_2_4",
+      "rectGrid": {
+        "x": 56,
+        "y": 32,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 64,
+            "y": 40
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 61,
+            "y": 37
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_2_5",
+      "rectGrid": {
+        "x": 68,
+        "y": 32,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 76,
+            "y": 40
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 73,
+            "y": 37
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_2_6",
+      "rectGrid": {
+        "x": 80,
+        "y": 32,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 88,
+            "y": 40
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 85,
+            "y": 37
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_2_7",
+      "rectGrid": {
+        "x": 92,
+        "y": 32,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 100,
+            "y": 40
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 97,
+            "y": 37
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_2_8",
+      "rectGrid": {
+        "x": 104,
+        "y": 32,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 112,
+            "y": 40
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 109,
+            "y": 37
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_2_9",
+      "rectGrid": {
+        "x": 116,
+        "y": 32,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 124,
+            "y": 40
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 121,
+            "y": 37
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_3_0",
+      "rectGrid": {
+        "x": 8,
+        "y": 44,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 16,
+            "y": 52
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 13,
+            "y": 49
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_3_1",
+      "rectGrid": {
+        "x": 20,
+        "y": 44,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 28,
+            "y": 52
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 25,
+            "y": 49
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_3_2",
+      "rectGrid": {
+        "x": 32,
+        "y": 44,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 40,
+            "y": 52
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 37,
+            "y": 49
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_3_3",
+      "rectGrid": {
+        "x": 44,
+        "y": 44,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 52,
+            "y": 52
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 49,
+            "y": 49
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_3_4",
+      "rectGrid": {
+        "x": 56,
+        "y": 44,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 64,
+            "y": 52
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 61,
+            "y": 49
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_3_5",
+      "rectGrid": {
+        "x": 68,
+        "y": 44,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 76,
+            "y": 52
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 73,
+            "y": 49
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_3_6",
+      "rectGrid": {
+        "x": 80,
+        "y": 44,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 88,
+            "y": 52
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 85,
+            "y": 49
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_3_7",
+      "rectGrid": {
+        "x": 92,
+        "y": 44,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 100,
+            "y": 52
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 97,
+            "y": 49
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_3_8",
+      "rectGrid": {
+        "x": 104,
+        "y": 44,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 112,
+            "y": 52
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 109,
+            "y": 49
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_3_9",
+      "rectGrid": {
+        "x": 116,
+        "y": 44,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 124,
+            "y": 52
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 121,
+            "y": 49
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_4_0",
+      "rectGrid": {
+        "x": 8,
+        "y": 56,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 16,
+            "y": 64
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 13,
+            "y": 61
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_4_1",
+      "rectGrid": {
+        "x": 20,
+        "y": 56,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 28,
+            "y": 64
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 25,
+            "y": 61
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_4_2",
+      "rectGrid": {
+        "x": 32,
+        "y": 56,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 40,
+            "y": 64
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 37,
+            "y": 61
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_4_3",
+      "rectGrid": {
+        "x": 44,
+        "y": 56,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 52,
+            "y": 64
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 49,
+            "y": 61
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_4_4",
+      "rectGrid": {
+        "x": 56,
+        "y": 56,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 64,
+            "y": 64
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 61,
+            "y": 61
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_4_5",
+      "rectGrid": {
+        "x": 68,
+        "y": 56,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 76,
+            "y": 64
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 73,
+            "y": 61
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_4_6",
+      "rectGrid": {
+        "x": 80,
+        "y": 56,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 88,
+            "y": 64
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 85,
+            "y": 61
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_4_7",
+      "rectGrid": {
+        "x": 92,
+        "y": 56,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 100,
+            "y": 64
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 97,
+            "y": 61
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_4_8",
+      "rectGrid": {
+        "x": 104,
+        "y": 56,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 112,
+            "y": 64
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 109,
+            "y": 61
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_4_9",
+      "rectGrid": {
+        "x": 116,
+        "y": 56,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 124,
+            "y": 64
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 121,
+            "y": 61
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_5_0",
+      "rectGrid": {
+        "x": 8,
+        "y": 68,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 16,
+            "y": 76
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 13,
+            "y": 73
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_5_1",
+      "rectGrid": {
+        "x": 20,
+        "y": 68,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 28,
+            "y": 76
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 25,
+            "y": 73
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_5_2",
+      "rectGrid": {
+        "x": 32,
+        "y": 68,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 40,
+            "y": 76
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 37,
+            "y": 73
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_5_3",
+      "rectGrid": {
+        "x": 44,
+        "y": 68,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 52,
+            "y": 76
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 49,
+            "y": 73
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_5_4",
+      "rectGrid": {
+        "x": 56,
+        "y": 68,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 64,
+            "y": 76
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 61,
+            "y": 73
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_5_5",
+      "rectGrid": {
+        "x": 68,
+        "y": 68,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 76,
+            "y": 76
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 73,
+            "y": 73
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_5_6",
+      "rectGrid": {
+        "x": 80,
+        "y": 68,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 88,
+            "y": 76
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 85,
+            "y": 73
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_5_7",
+      "rectGrid": {
+        "x": 92,
+        "y": 68,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 100,
+            "y": 76
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 97,
+            "y": 73
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_5_8",
+      "rectGrid": {
+        "x": 104,
+        "y": 68,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 112,
+            "y": 76
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 109,
+            "y": 73
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    },
+    {
+      "id": "room_5_9",
+      "rectGrid": {
+        "x": 116,
+        "y": 68,
+        "w": 10,
+        "h": 10
+      },
+      "solids": [],
+      "pillars": [
+        {
+          "center": {
+            "x": 124,
+            "y": 76
+          },
+          "radius": 1
+        }
+      ],
+      "lootMarkers": [
+        {
+          "point": {
+            "x": 121,
+            "y": 73
+          },
+          "tableId": "arena_common"
+        }
+      ]
+    }
+  ],
+  "doors": [
+    {
+      "roomA": "room_0_0",
+      "roomB": "room_1_0",
+      "passageGrid": {
+        "x": 12,
+        "y": 18,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_0_1",
+      "roomB": "room_0_2",
+      "passageGrid": {
+        "x": 30,
+        "y": 12,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_0_1",
+      "roomB": "room_1_1",
+      "passageGrid": {
+        "x": 24,
+        "y": 18,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_0_2",
+      "roomB": "room_0_3",
+      "passageGrid": {
+        "x": 42,
+        "y": 12,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_0_3",
+      "roomB": "room_1_3",
+      "passageGrid": {
+        "x": 48,
+        "y": 18,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_0_4",
+      "roomB": "room_0_5",
+      "passageGrid": {
+        "x": 66,
+        "y": 12,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_0_4",
+      "roomB": "room_1_4",
+      "passageGrid": {
+        "x": 60,
+        "y": 18,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_0_5",
+      "roomB": "room_1_5",
+      "passageGrid": {
+        "x": 72,
+        "y": 18,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_0_6",
+      "roomB": "room_0_7",
+      "passageGrid": {
+        "x": 90,
+        "y": 12,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_0_7",
+      "roomB": "room_1_7",
+      "passageGrid": {
+        "x": 96,
+        "y": 18,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_0_8",
+      "roomB": "room_0_9",
+      "passageGrid": {
+        "x": 114,
+        "y": 12,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_0_8",
+      "roomB": "room_1_8",
+      "passageGrid": {
+        "x": 108,
+        "y": 18,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_1_0",
+      "roomB": "room_1_1",
+      "passageGrid": {
+        "x": 18,
+        "y": 24,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_1_0",
+      "roomB": "room_2_0",
+      "passageGrid": {
+        "x": 12,
+        "y": 30,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_1_1",
+      "roomB": "room_2_1",
+      "passageGrid": {
+        "x": 24,
+        "y": 30,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_1_2",
+      "roomB": "room_1_3",
+      "passageGrid": {
+        "x": 42,
+        "y": 24,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_1_2",
+      "roomB": "room_2_2",
+      "passageGrid": {
+        "x": 36,
+        "y": 30,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_1_3",
+      "roomB": "room_1_4",
+      "passageGrid": {
+        "x": 54,
+        "y": 24,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_1_5",
+      "roomB": "room_2_5",
+      "passageGrid": {
+        "x": 72,
+        "y": 30,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_1_6",
+      "roomB": "room_1_7",
+      "passageGrid": {
+        "x": 90,
+        "y": 24,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_1_6",
+      "roomB": "room_2_6",
+      "passageGrid": {
+        "x": 84,
+        "y": 30,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_1_7",
+      "roomB": "room_2_7",
+      "passageGrid": {
+        "x": 96,
+        "y": 30,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_1_8",
+      "roomB": "room_1_9",
+      "passageGrid": {
+        "x": 114,
+        "y": 24,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_1_8",
+      "roomB": "room_2_8",
+      "passageGrid": {
+        "x": 108,
+        "y": 30,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_1_9",
+      "roomB": "room_2_9",
+      "passageGrid": {
+        "x": 120,
+        "y": 30,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_2_0",
+      "roomB": "room_2_1",
+      "passageGrid": {
+        "x": 18,
+        "y": 36,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_2_0",
+      "roomB": "room_3_0",
+      "passageGrid": {
+        "x": 12,
+        "y": 42,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_2_1",
+      "roomB": "room_2_2",
+      "passageGrid": {
+        "x": 30,
+        "y": 36,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_2_2",
+      "roomB": "room_2_3",
+      "passageGrid": {
+        "x": 42,
+        "y": 36,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_2_3",
+      "roomB": "room_2_4",
+      "passageGrid": {
+        "x": 54,
+        "y": 36,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_2_4",
+      "roomB": "room_3_4",
+      "passageGrid": {
+        "x": 60,
+        "y": 42,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_2_5",
+      "roomB": "room_2_6",
+      "passageGrid": {
+        "x": 78,
+        "y": 36,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_2_6",
+      "roomB": "room_3_6",
+      "passageGrid": {
+        "x": 84,
+        "y": 42,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_2_7",
+      "roomB": "room_2_8",
+      "passageGrid": {
+        "x": 102,
+        "y": 36,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_2_7",
+      "roomB": "room_3_7",
+      "passageGrid": {
+        "x": 96,
+        "y": 42,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_2_8",
+      "roomB": "room_3_8",
+      "passageGrid": {
+        "x": 108,
+        "y": 42,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_2_9",
+      "roomB": "room_3_9",
+      "passageGrid": {
+        "x": 120,
+        "y": 42,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_3_0",
+      "roomB": "room_3_1",
+      "passageGrid": {
+        "x": 18,
+        "y": 48,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_3_0",
+      "roomB": "room_4_0",
+      "passageGrid": {
+        "x": 12,
+        "y": 54,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_3_2",
+      "roomB": "room_3_3",
+      "passageGrid": {
+        "x": 42,
+        "y": 48,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_3_3",
+      "roomB": "room_3_4",
+      "passageGrid": {
+        "x": 54,
+        "y": 48,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_3_4",
+      "roomB": "room_3_5",
+      "passageGrid": {
+        "x": 66,
+        "y": 48,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_3_4",
+      "roomB": "room_4_4",
+      "passageGrid": {
+        "x": 60,
+        "y": 54,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_3_5",
+      "roomB": "room_4_5",
+      "passageGrid": {
+        "x": 72,
+        "y": 54,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_3_6",
+      "roomB": "room_3_7",
+      "passageGrid": {
+        "x": 90,
+        "y": 48,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_3_6",
+      "roomB": "room_4_6",
+      "passageGrid": {
+        "x": 84,
+        "y": 54,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_3_7",
+      "roomB": "room_4_7",
+      "passageGrid": {
+        "x": 96,
+        "y": 54,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_3_8",
+      "roomB": "room_3_9",
+      "passageGrid": {
+        "x": 114,
+        "y": 48,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_3_8",
+      "roomB": "room_4_8",
+      "passageGrid": {
+        "x": 108,
+        "y": 54,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_4_0",
+      "roomB": "room_5_0",
+      "passageGrid": {
+        "x": 12,
+        "y": 66,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_4_1",
+      "roomB": "room_4_2",
+      "passageGrid": {
+        "x": 30,
+        "y": 60,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_4_1",
+      "roomB": "room_5_1",
+      "passageGrid": {
+        "x": 24,
+        "y": 66,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_4_2",
+      "roomB": "room_5_2",
+      "passageGrid": {
+        "x": 36,
+        "y": 66,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_4_3",
+      "roomB": "room_4_4",
+      "passageGrid": {
+        "x": 54,
+        "y": 60,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_4_3",
+      "roomB": "room_5_3",
+      "passageGrid": {
+        "x": 48,
+        "y": 66,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_4_4",
+      "roomB": "room_4_5",
+      "passageGrid": {
+        "x": 66,
+        "y": 60,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_4_4",
+      "roomB": "room_5_4",
+      "passageGrid": {
+        "x": 60,
+        "y": 66,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_4_5",
+      "roomB": "room_4_6",
+      "passageGrid": {
+        "x": 78,
+        "y": 60,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_4_5",
+      "roomB": "room_5_5",
+      "passageGrid": {
+        "x": 72,
+        "y": 66,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_4_6",
+      "roomB": "room_4_7",
+      "passageGrid": {
+        "x": 90,
+        "y": 60,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_4_7",
+      "roomB": "room_5_7",
+      "passageGrid": {
+        "x": 96,
+        "y": 66,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_4_8",
+      "roomB": "room_5_8",
+      "passageGrid": {
+        "x": 108,
+        "y": 66,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_4_9",
+      "roomB": "room_5_9",
+      "passageGrid": {
+        "x": 120,
+        "y": 66,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_5_1",
+      "roomB": "room_5_2",
+      "passageGrid": {
+        "x": 30,
+        "y": 72,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_5_2",
+      "roomB": "room_5_3",
+      "passageGrid": {
+        "x": 42,
+        "y": 72,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_5_3",
+      "roomB": "room_5_4",
+      "passageGrid": {
+        "x": 54,
+        "y": 72,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_5_4",
+      "roomB": "room_5_5",
+      "passageGrid": {
+        "x": 66,
+        "y": 72,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_5_5",
+      "roomB": "room_5_6",
+      "passageGrid": {
+        "x": 78,
+        "y": 72,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_5_6",
+      "roomB": "room_5_7",
+      "passageGrid": {
+        "x": 90,
+        "y": 72,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_5_7",
+      "roomB": "room_5_8",
+      "passageGrid": {
+        "x": 102,
+        "y": 72,
+        "w": 2,
+        "h": 2
+      }
+    },
+    {
+      "roomA": "room_5_8",
+      "roomB": "room_5_9",
+      "passageGrid": {
+        "x": 114,
+        "y": 72,
+        "w": 2,
+        "h": 2
+      }
+    }
+  ],
+  "spawns": [
+    {
+      "x": 11,
+      "y": 11
+    },
+    {
+      "x": 47,
+      "y": 11
+    },
+    {
+      "x": 83,
+      "y": 11
+    },
+    {
+      "x": 119,
+      "y": 11
+    },
+    {
+      "x": 11,
+      "y": 71
+    },
+    {
+      "x": 47,
+      "y": 71
+    },
+    {
+      "x": 83,
+      "y": 71
+    },
+    {
+      "x": 119,
+      "y": 71
+    }
+  ],
+  "eyeCandidates": [
+    {
+      "roomId": "room_1_3",
+      "weight": 1
+    },
+    {
+      "roomId": "room_1_4",
+      "weight": 1
+    },
+    {
+      "roomId": "room_1_5",
+      "weight": 1
+    },
+    {
+      "roomId": "room_1_6",
+      "weight": 1
+    },
+    {
+      "roomId": "room_2_3",
+      "weight": 1
+    },
+    {
+      "roomId": "room_2_4",
+      "weight": 3
+    },
+    {
+      "roomId": "room_2_5",
+      "weight": 3
+    },
+    {
+      "roomId": "room_2_6",
+      "weight": 1
+    },
+    {
+      "roomId": "room_3_3",
+      "weight": 1
+    },
+    {
+      "roomId": "room_3_4",
+      "weight": 3
+    },
+    {
+      "roomId": "room_3_5",
+      "weight": 3
+    },
+    {
+      "roomId": "room_3_6",
+      "weight": 1
+    },
+    {
+      "roomId": "room_4_3",
+      "weight": 1
+    },
+    {
+      "roomId": "room_4_4",
+      "weight": 1
+    },
+    {
+      "roomId": "room_4_5",
+      "weight": 1
+    },
+    {
+      "roomId": "room_4_6",
+      "weight": 1
+    }
+  ]
+}

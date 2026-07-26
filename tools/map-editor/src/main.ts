@@ -27,7 +27,7 @@ let roomDocs: RoomDocument[] = [new RoomDocument(RoomDocument.blank('room_1'), S
 let activeRoomDocIndex = 0;
 let roomTool: ToolKind = 'select';
 
-let arenaDoc = new ArenaDocument(ArenaDocument.blank('arena_1'));
+let arenaDoc = new ArenaDocument(ArenaDocument.loadAutosave() ?? ArenaDocument.blank('arena_1'));
 let arenaView: ArenaView = { kind: 'map' };
 let arenaTool: ArenaTool = 'select';
 
@@ -250,6 +250,7 @@ function renderTopbar(): void {
         syncArenaView();
       }),
     );
+    ioRow.appendChild(button('Fit View', () => arenaCanvas.fitView()));
     ioRow.appendChild(
       button('Save', async () => {
         const issues = validateArenaMap(arenaDoc.map);

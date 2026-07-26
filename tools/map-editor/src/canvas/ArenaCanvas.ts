@@ -25,8 +25,15 @@ function rectsOverlap(a: { x: number; y: number; w: number; h: number }, b: { x:
  * overlap), author explicit Doors between adjacent rooms, toggle EyeCandidates,
  * and place map-level player spawns. Double-click a room to drill into it (the
  * caller wires that into a shared RoomCanvas via ArenaRoomTarget). */
+// A 60-room map (design/15) is far larger on screen than this tool was built
+// against (its only prior fixtures were 2-3-room tests) — zoomed to 1:1 it
+// overflows any reasonable window, so panning/zoom is required, not cosmetic.
+const MIN_ZOOM = 0.15;
+const MAX_ZOOM = 6;
+
 export class ArenaCanvas {
   readonly app = new Application();
+  private camera = new Container(); // pan (position) + zoom (scale); world sits inside it at a fixed PAD_PX offset
   private world = new Container();
   private shapes = new Graphics();
   private labels = new Container();
@@ -36,6 +43,7 @@ export class ArenaCanvas {
   private tool: ArenaTool = 'select';
   private selection: ArenaSelection = null;
   private drag: DragMode = null;
+  private panDrag: { lastX: number; lastY: number } | null = null;
   private pendingDoorRoomId: string | null = null;
   private lastClick: { id: string; at: number } | null = null;
   private onSelectionChangeCb: ((sel: ArenaSelection) => void) | null = null;
@@ -46,21 +54,26 @@ export class ArenaCanvas {
   async mount(): Promise<void> {
     await this.app.init({ background: COLORS.ground, resizeTo: this.host, antialias: true });
     this.host.appendChild(this.app.canvas);
-    this.app.stage.addChild(this.world);
+    this.app.stage.addChild(this.camera);
+    this.camera.addChild(this.world);
     this.world.position.set(PAD_PX, PAD_PX);
     this.world.addChild(this.shapes, this.labels, this.preview);
 
     this.app.stage.eventMode = 'static';
     this.app.stage.hitArea = new Rectangle(0, 0, 4000, 4000);
-    this.app.stage.on('pointerdown', (e) => this.onPointerDown(e.global.x, e.global.y));
+    this.app.stage.on('pointerdown', (e) => this.onPointerDown(e.global.x, e.global.y, e.button));
     this.app.stage.on('globalpointermove', (e) => this.onPointerMove(e.global.x, e.global.y));
     this.app.stage.on('pointerup', () => this.onPointerUp());
     this.app.stage.on('pointerupoutside', () => this.onPointerUp());
+    this.app.canvas.addEventListener('wheel', this.onWheel, { passive: false });
+    this.app.canvas.addEventListener('contextmenu', this.onContextMenu);
     window.addEventListener('keydown', this.onKeyDown);
   }
 
   destroy(): void {
     window.removeEventListener('keydown', this.onKeyDown);
+    this.app.canvas.removeEventListener('wheel', this.onWheel);
+    this.app.canvas.removeEventListener('contextmenu', this.onContextMenu);
     this.unsubscribe?.();
   }
 
@@ -71,7 +84,43 @@ export class ArenaCanvas {
     this.pendingDoorRoomId = null;
     this.unsubscribe = doc?.on(() => this.redraw()) ?? null;
     this.redraw();
+    this.fitView();
   }
+
+  /** Reset pan/zoom so the whole map (sizeGrid, plus a little padding) fits the
+   * host's current size — the starting view for a freshly loaded/opened map, and
+   * a manual reset the user can reach for after scrolling/zooming around. */
+  fitView(): void {
+    if (!this.doc) return;
+    const map = this.doc.map;
+    const contentW = map.sizeGrid.w * GRID_PX + PAD_PX * 2;
+    const contentH = map.sizeGrid.h * GRID_PX + PAD_PX * 2;
+    const hostW = this.host.clientWidth || contentW;
+    const hostH = this.host.clientHeight || contentH;
+    const scale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.min(hostW / contentW, hostH / contentH)));
+    this.camera.scale.set(scale);
+    this.camera.position.set((hostW - contentW * scale) / 2, (hostH - contentH * scale) / 2);
+  }
+
+  private zoomAt(gx: number, gy: number, factor: number): void {
+    const oldScale = this.camera.scale.x;
+    const newScale = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, oldScale * factor));
+    if (newScale === oldScale) return;
+    const local = this.camera.toLocal({ x: gx, y: gy });
+    this.camera.scale.set(newScale);
+    this.camera.position.set(gx - local.x * newScale, gy - local.y * newScale);
+  }
+
+  private onWheel = (e: WheelEvent): void => {
+    e.preventDefault();
+    const rect = this.app.canvas.getBoundingClientRect();
+    const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+    this.zoomAt(e.clientX - rect.left, e.clientY - rect.top, factor);
+  };
+
+  private onContextMenu = (e: MouseEvent): void => {
+    e.preventDefault(); // right-drag is pan (below), not a browser context menu
+  };
 
   setTool(tool: ArenaTool): void {
     this.tool = tool;
@@ -169,7 +218,11 @@ export class ArenaCanvas {
     });
   }
 
-  private onPointerDown(px: number, py: number): void {
+  private onPointerDown(px: number, py: number, button: number): void {
+    if (button === 2) {
+      this.panDrag = { lastX: px, lastY: py };
+      return;
+    }
     if (!this.doc) return;
     const g = this.toGrid(px, py);
     const gx = Math.round(g.x);
@@ -244,6 +297,12 @@ export class ArenaCanvas {
   }
 
   private onPointerMove(px: number, py: number): void {
+    if (this.panDrag) {
+      this.camera.position.x += px - this.panDrag.lastX;
+      this.camera.position.y += py - this.panDrag.lastY;
+      this.panDrag = { lastX: px, lastY: py };
+      return;
+    }
     if (!this.drag || !this.doc) return;
     const g = this.toGrid(px, py);
 
@@ -312,6 +371,10 @@ export class ArenaCanvas {
   }
 
   private onPointerUp(): void {
+    if (this.panDrag) {
+      this.panDrag = null;
+      return;
+    }
     if (!this.drag || !this.doc) {
       this.drag = null;
       return;

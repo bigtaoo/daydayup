@@ -229,6 +229,9 @@ function renderArenaMapMetadata(container: HTMLElement, doc: ArenaDocument): voi
   const hint = el('div', 'hint');
   hint.textContent = `${doc.map.rooms.length} rooms · ${doc.map.doors.length} doors · ${doc.map.eyeCandidates.length} eye candidates · ${doc.map.spawns.length} player spawns.`;
   sec.appendChild(hint);
+  const camHint = el('div', 'hint');
+  camHint.textContent = 'Scroll to zoom, right-drag to pan, "Fit View" to reset.';
+  sec.appendChild(camHint);
   container.appendChild(sec);
 }
 
