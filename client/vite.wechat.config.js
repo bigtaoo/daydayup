@@ -64,7 +64,21 @@ const copyToPlatform = {
 //  - minify stays off for DevTools bring-up (readable stack traces); flip on for release.
 //  - target es2020 matches the Web build; verify against the lowest WeChat base
 //    library and lower this if needed (checklist item 2 in design/04-wechat.md).
+const engineDir = fileURLToPath(new URL('./src/engine', import.meta.url));
+
 export default defineConfig({
+  // @dd/engine alias (mirrors vite.config.js's web build) — WITHOUT this, Rollup
+  // can't resolve the bare specifier at all, which Vite's lib+iife build reports as
+  // an unresolved-import build-ending error (not a warning) BEFORE any output hook
+  // runs — the real cause behind what surfaced downstream as copy-to-platform's
+  // ENOENT (there was never a bundle written for it to copy). Discovered chasing
+  // ROADMAP 5.5's WeChat build being broken end-to-end in this checkout.
+  resolve: {
+    alias: [
+      { find: /^@dd\/engine$/, replacement: `${engineDir}/index.ts` },
+      { find: /^@dd\/engine\//, replacement: `${engineDir}/` },
+    ],
+  },
   plugins: [stripWebGPU, copyToPlatform],
   build: {
     target: 'es2020',
