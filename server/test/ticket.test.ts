@@ -19,6 +19,13 @@ describe('ticket — round-trip', () => {
     const p: TicketPayload = { roomId: 'room-xyz', owner: 3, seed: -2_000_000_000, playerCount: 4, exp: 1 };
     expect(verifyTicket(signTicket(p, SECRET), SECRET, 0)).toEqual(p);
   });
+
+  it('round-trips an explicit mode (design/15) and stays valid with mode omitted entirely', () => {
+    const pvp: TicketPayload = { ...payload, mode: 'pvp' };
+    expect(verifyTicket(signTicket(pvp, SECRET), SECRET, 0)).toEqual(pvp);
+    // `payload` itself (no `mode` field) is the pre-PvP shape — still verifies clean.
+    expect(verifyTicket(signTicket(payload, SECRET), SECRET, 0)).toEqual(payload);
+  });
 });
 
 describe('ticket — rejection surface', () => {
@@ -50,5 +57,12 @@ describe('ticket — rejection surface', () => {
     const token = signTicket(payload, SECRET);
     const body = token.split('.')[0];
     expect(verifyTicket(`${body}.short`, SECRET, 0)).toBeNull();
+  });
+
+  it('rejects a forged mode value that is neither coop nor pvp', () => {
+    const token = signTicket(payload, SECRET);
+    const sig = token.split('.')[1];
+    const forged = Buffer.from(JSON.stringify({ ...payload, mode: 'admin' }), 'utf8').toString('base64url');
+    expect(verifyTicket(`${forged}.${sig}`, SECRET, 0)).toBeNull();
   });
 });

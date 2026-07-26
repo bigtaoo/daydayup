@@ -88,6 +88,36 @@ describe('Matchmaker — grouping', () => {
     expect(mm.waiting(2)).toBe(1);
     expect(mm.waiting(3)).toBe(1);
   });
+
+  it('does not cross game modes — a coop 2-seat and a pvp 2-seat waiter never group (design/15)', () => {
+    const { mm } = make();
+    const coop = mm.enqueue(2); // default mode
+    const pvp = mm.enqueue(2, 'pvp');
+    expect(coop.ticket).toBeUndefined();
+    expect(pvp.ticket).toBeUndefined();
+    expect(mm.waiting(2)).toBe(1); // coop queue
+    expect(mm.waiting(2, 'pvp')).toBe(1); // separate pvp queue
+
+    const coop2 = mm.enqueue(2);
+    expect(coop2.ticket).toBeDefined(); // pairs with the coop waiter, not the pvp one
+    expect(mm.waiting(2, 'pvp')).toBe(1); // pvp waiter untouched
+  });
+
+  it('tags every ticket in a group with the requested mode, defaulting to coop', () => {
+    const { mm } = make();
+    const a = mm.enqueue(2); // no mode → coop
+    const b = mm.enqueue(2);
+    const ticketA = a.ticket ?? (mm.poll(a.queueId) as { ticket: any }).ticket;
+    expect(ticketA.mode).toBe('coop');
+    expect(b.ticket!.mode).toBe('coop');
+
+    const c = mm.enqueue(3, 'pvp');
+    mm.enqueue(3, 'pvp');
+    const e = mm.enqueue(3, 'pvp');
+    expect(e.ticket!.mode).toBe('pvp');
+    const ticketC = c.ticket ?? (mm.poll(c.queueId) as { ticket: any }).ticket;
+    expect(ticketC.mode).toBe('pvp');
+  });
 });
 
 describe('Matchmaker — expiry & validation', () => {

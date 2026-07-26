@@ -22,6 +22,9 @@ export interface MatchInfo {
 
 export interface FindMatchOptions {
   playerCount: number;
+  /** PvE co-op vs. PvP arena (design/15). Default 'coop' — the field predates PvP, so
+   * every existing caller (and the matchsvc side) is unaffected by its absence. */
+  mode?: 'coop' | 'pvp';
   /** Injected for tests; defaults to the global fetch. */
   fetch?: typeof fetch;
   /** Injected for tests; defaults to a real timer sleep. */
@@ -50,7 +53,7 @@ export async function findMatch(baseUrl: string, opts: FindMatchOptions): Promis
   const findRes = await doFetch(`${baseUrl}/find`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ playerCount: opts.playerCount }),
+    body: JSON.stringify({ playerCount: opts.playerCount, mode: opts.mode ?? 'coop' }),
   });
   const found = (await findRes.json()) as { queueId?: string; match?: MatchInfo; error?: string };
   if (!findRes.ok || found.error) throw new Error(found.error ?? `matchmaking failed (${findRes.status})`);

@@ -14,6 +14,9 @@
  * without configuration and either side (svc/server) wires its own secret.
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import type { MatchMode } from '@dd/engine';
+
+export type { MatchMode };
 
 /** The signed seat grant. `exp` is an absolute epoch-ms deadline (verify rejects past it). */
 export interface TicketPayload {
@@ -22,6 +25,7 @@ export interface TicketPayload {
   seed: number;
   playerCount: number;
   exp: number;
+  mode?: MatchMode;
 }
 
 const b64urlEncode = (s: string): string =>
@@ -68,7 +72,8 @@ export function verifyTicket(token: string, secret: string, nowMs: number): Tick
     !Number.isInteger(payload.owner) ||
     !Number.isInteger(payload.seed) ||
     !Number.isInteger(payload.playerCount) ||
-    typeof payload.exp !== 'number'
+    typeof payload.exp !== 'number' ||
+    (payload.mode !== undefined && payload.mode !== 'coop' && payload.mode !== 'pvp')
   ) {
     return null;
   }

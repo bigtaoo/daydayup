@@ -26,7 +26,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { randomUUID } from 'node:crypto';
 import { Matchmaker, type MatchTicket } from './Matchmaker';
 import { RatingStore } from './rating';
-import { signTicket } from './ticket';
+import { signTicket, type MatchMode } from './ticket';
 import { ticketSecret } from './config';
 
 const PORT = Number(process.env.MATCH_PORT ?? 8788);
@@ -66,8 +66,13 @@ function main(): void {
     if (req.method === 'POST' && url.pathname === '/find') {
       return readJson(req, (body) => {
         const playerCount = Number((body as { playerCount?: unknown })?.playerCount);
+        // 'pvp' opts into the battle-royale queue (design/15); anything else (absent,
+        // 'coop', a typo) is the pre-existing co-op shape — never silently 400s a client
+        // that predates this field.
+        const rawMode = (body as { mode?: unknown })?.mode;
+        const mode: MatchMode = rawMode === 'pvp' ? 'pvp' : 'coop';
         try {
-          const { queueId, ticket } = matchmaker.enqueue(playerCount);
+          const { queueId, ticket } = matchmaker.enqueue(playerCount, mode);
           send(res, 200, { queueId, match: ticket ? withUrl(ticket) : undefined });
         } catch (e) {
           send(res, 400, { error: (e as Error).message });

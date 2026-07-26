@@ -21,6 +21,7 @@ import {
   type ServerMsg,
   type Winner,
 } from '@dd/engine';
+import type { MatchMode } from './ticket';
 
 /** A per-seat sink — one connected client. The transport wraps a socket as this. */
 export interface RoomConnection {
@@ -50,6 +51,9 @@ export interface SettledMatch {
 
 export interface MatchRoomDeps {
   scheduler: Scheduler;
+  /** PvE co-op vs. PvP arena (design/15) — rides along in `match_start` so the client
+   * knows which EngineConfig shape to build. Absent (every pre-PvP caller/test) → 'coop'. */
+  mode?: MatchMode;
   onDestroy: (roomId: string) => void;
   /** Fired once, right before destroy(), with the settled outcome (design/15, ROADMAP
    * 4.6) — e.g. wired to matchsvc's ladder-rating report in index.ts. Optional: every
@@ -89,12 +93,15 @@ export class MatchRoom {
   private readonly checkpoints = new Map<number, Map<number, number>>();
   private readonly integrityStrikes = new Map<number, number>();
 
+  private readonly mode: MatchMode;
+
   constructor(
     readonly roomId: string,
     private readonly seed: number,
     private readonly playerCount: number,
     private readonly deps: MatchRoomDeps,
   ) {
+    this.mode = deps.mode ?? 'coop';
     this.batchMs = deps.batchMs ?? DEFAULT_BATCH_MS;
     this.broadcast = new FrameBroadcast({
       framesPerBatch: deps.framesPerBatch ?? DEFAULT_FRAMES_PER_BATCH,
@@ -108,6 +115,9 @@ export class MatchRoom {
   }
   get playerCountValue(): number {
     return this.playerCount;
+  }
+  get modeValue(): MatchMode {
+    return this.mode;
   }
   get frame(): number {
     return this.broadcast.frame;
@@ -142,6 +152,7 @@ export class MatchRoom {
         startFrame: START_FRAME,
         localOwner: seat.owner,
         playerCount: this.playerCount,
+        mode: this.mode,
       });
     }
     this.startMetronome();

@@ -22,7 +22,7 @@ import type { ClientMsg, ServerMsg } from '@dd/engine';
 import { RoomManager } from './RoomManager';
 import type { RoomConnection, SettledMatch } from './MatchRoom';
 import { buildRatingReportBody } from './ladderReport';
-import { verifyTicket } from './ticket';
+import { verifyTicket, type MatchMode } from './ticket';
 import { ticketSecret } from './config';
 
 const PORT = Number(process.env.PORT ?? 8787);
@@ -70,6 +70,7 @@ interface Seat {
   owner: number;
   seed: number;
   count: number;
+  mode: MatchMode;
 }
 
 /**
@@ -83,7 +84,13 @@ function resolveSeat(url: URL, secret: string, isDev: boolean): Seat | null {
   if (token) {
     const payload = verifyTicket(token, secret, Date.now());
     if (!payload) return null;
-    return { roomId: payload.roomId, owner: payload.owner, seed: payload.seed, count: payload.playerCount };
+    return {
+      roomId: payload.roomId,
+      owner: payload.owner,
+      seed: payload.seed,
+      count: payload.playerCount,
+      mode: payload.mode ?? 'coop',
+    };
   }
   if (!isDev) return null; // a configured secret ⇒ ticket mandatory
 
@@ -95,7 +102,8 @@ function resolveSeat(url: URL, secret: string, isDev: boolean): Seat | null {
   if (!roomId || !Number.isInteger(owner) || !Number.isInteger(seed) || !Number.isInteger(count) || count < 1) {
     return null;
   }
-  return { roomId, owner, seed, count };
+  const mode: MatchMode = url.searchParams.get('mode') === 'pvp' ? 'pvp' : 'coop';
+  return { roomId, owner, seed, count, mode };
 }
 
 function main(): void {
@@ -129,10 +137,10 @@ function main(): void {
       ws.close(4401, 'invalid or missing ticket');
       return;
     }
-    const { roomId, owner, seed, count } = seat;
+    const { roomId, owner, seed, count, mode } = seat;
 
     const conn = new SocketConnection(owner, roomId, ws);
-    const seated = manager.join(conn, roomId, seed, count);
+    const seated = manager.join(conn, roomId, seed, count, mode);
     if (!seated) {
       ws.close(4403, 'seat unavailable / room mismatch');
       return;

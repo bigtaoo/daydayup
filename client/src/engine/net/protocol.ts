@@ -39,12 +39,18 @@ export interface FrameBatch {
   frames: readonly FrameCmds[];
 }
 
+/** PvE co-op vs. PvP arena (design/15) — tells the client which EngineConfig shape to
+ * build (dungeon vs. arena). Optional/absent → 'coop', so every pre-4.x match_start
+ * (every existing loopback/test fixture) is unaffected — additive. */
+export type MatchMode = 'coop' | 'pvp';
+
 /** Sent once when the room fills and the match begins — the engine's build config. */
 export interface MatchStart {
   seed: number;
   startFrame: number; // first playable frame's predecessor (0)
   localOwner: number; // which seat index this client drives (owner in its PlayerCommands)
   playerCount: number; // total seats — the client builds EngineConfig.players of this length
+  mode?: MatchMode;
 }
 
 /** Reconnect catch-up (design/06 mirror of funny's conn_resync): replay the frame log past `lastFrame`. */

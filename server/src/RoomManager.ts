@@ -7,6 +7,7 @@
  */
 import type { ClientMsg } from '@dd/engine';
 import { MatchRoom, type RoomConnection, type Scheduler, type SettledMatch } from './MatchRoom';
+import type { MatchMode } from './ticket';
 
 export interface RoomManagerDeps {
   scheduler: Scheduler;
@@ -34,18 +35,19 @@ export class RoomManager {
    * Returns false if the room parameters mismatch or the seat is taken/out of range —
    * the caller closes the socket.
    */
-  join(conn: RoomConnection, roomId: string, seed: number, playerCount: number): boolean {
+  join(conn: RoomConnection, roomId: string, seed: number, playerCount: number, mode: MatchMode = 'coop'): boolean {
     let room = this.rooms.get(roomId);
     if (!room) {
       room = new MatchRoom(roomId, seed, playerCount, {
         scheduler: this.deps.scheduler,
+        mode,
         onDestroy: (id) => this.rooms.delete(id),
         onSettled: this.deps.onSettled,
         batchMs: this.deps.batchMs,
         framesPerBatch: this.deps.framesPerBatch,
       });
       this.rooms.set(roomId, room);
-    } else if (room.seedValue !== seed || room.playerCountValue !== playerCount) {
+    } else if (room.seedValue !== seed || room.playerCountValue !== playerCount || room.modeValue !== mode) {
       return false; // a joiner disagreeing about the match cannot share the room
     }
     return room.join(conn);

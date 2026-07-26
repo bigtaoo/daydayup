@@ -13,7 +13,7 @@
  * `find` enqueues and returns a `queueId`; the client polls until its seat is `matched`.
  * The player whose arrival completes a group gets its ticket back inline from `enqueue`.
  */
-import type { TicketPayload } from './ticket';
+import type { MatchMode, TicketPayload } from './ticket';
 
 export interface MatchmakerDeps {
   /** Epoch ms — for ticket `exp` and queued-waiter TTL. Injected (real: Date.now). */
@@ -36,6 +36,7 @@ export interface MatchTicket {
   owner: number;
   seed: number;
   playerCount: number;
+  mode: MatchMode;
   token: string;
 }
 
@@ -53,14 +54,19 @@ const DEFAULT_QUEUE_TTL_MS = 30_000;
 interface Waiter {
   queueId: string;
   playerCount: number;
+  mode: MatchMode;
   enqueuedAt: number;
   ticket: MatchTicket | null; // filled the instant its group forms
 }
 
+/** A coop 2-seat waiter and a pvp 2-seat waiter must never group together — key the
+ * queue by BOTH, not playerCount alone. */
+const queueKey = (playerCount: number, mode: MatchMode): string => `${mode}:${playerCount}`;
+
 export class Matchmaker {
   private readonly waiters = new Map<string, Waiter>();
-  /** FIFO of still-waiting queueIds per requested playerCount. */
-  private readonly queues = new Map<number, string[]>();
+  /** FIFO of still-waiting queueIds per requested (mode, playerCount) shape. */
+  private readonly queues = new Map<string, string[]>();
   private counter = 0;
   private readonly ticketTtlMs: number;
   private readonly queueTtlMs: number;
@@ -74,26 +80,27 @@ export class Matchmaker {
     this.sign = deps.sign ?? (() => '');
   }
 
-  /** Live waiter count for a mode (test/observability). Reaps expired entries first. */
-  waiting(playerCount: number): number {
-    return this.liveQueue(playerCount).length;
+  /** Live waiter count for a (playerCount, mode) shape (test/observability). Reaps expired entries first. */
+  waiting(playerCount: number, mode: MatchMode = 'coop'): number {
+    return this.liveQueue(playerCount, mode).length;
   }
 
   /**
-   * Enqueue a request for a `playerCount`-seat match. Returns a `queueId` to poll with;
+   * Enqueue a request for a `playerCount`-seat match of the given `mode` (default
+   * 'coop', so every pre-PvP caller is unaffected). Returns a `queueId` to poll with;
    * if this arrival completes a group, its own `ticket` is returned inline too. Throws a
    * RangeError for an out-of-bounds playerCount (the shell maps it to HTTP 400).
    */
-  enqueue(playerCount: number): EnqueueResult {
+  enqueue(playerCount: number, mode: MatchMode = 'coop'): EnqueueResult {
     if (!Number.isInteger(playerCount) || playerCount < 1 || playerCount > MAX_PLAYERS) {
       throw new RangeError(`playerCount must be an integer in [1, ${MAX_PLAYERS}]`);
     }
     const queueId = `q${++this.counter}`;
-    const waiter: Waiter = { queueId, playerCount, enqueuedAt: this.deps.nowMs(), ticket: null };
+    const waiter: Waiter = { queueId, playerCount, mode, enqueuedAt: this.deps.nowMs(), ticket: null };
     this.waiters.set(queueId, waiter);
-    this.liveQueue(playerCount).push(queueId);
+    this.liveQueue(playerCount, mode).push(queueId);
 
-    this.formIfReady(playerCount);
+    this.formIfReady(playerCount, mode);
     return waiter.ticket ? { queueId, ticket: waiter.ticket } : { queueId };
   }
 
@@ -114,12 +121,13 @@ export class Matchmaker {
 
   // ───────────────────────── internals ─────────────────────────
 
-  /** The mode's queue with expired still-waiting entries reaped out. */
-  private liveQueue(playerCount: number): string[] {
-    let q = this.queues.get(playerCount);
+  /** The (playerCount, mode) shape's queue with expired still-waiting entries reaped out. */
+  private liveQueue(playerCount: number, mode: MatchMode): string[] {
+    const key = queueKey(playerCount, mode);
+    let q = this.queues.get(key);
     if (!q) {
       q = [];
-      this.queues.set(playerCount, q);
+      this.queues.set(key, q);
     }
     const now = this.deps.nowMs();
     const live: string[] = [];
@@ -137,9 +145,9 @@ export class Matchmaker {
     return q;
   }
 
-  /** Form a match while the mode has a full group of live waiters. */
-  private formIfReady(playerCount: number): void {
-    const q = this.liveQueue(playerCount);
+  /** Form a match while the (playerCount, mode) shape has a full group of live waiters. */
+  private formIfReady(playerCount: number, mode: MatchMode): void {
+    const q = this.liveQueue(playerCount, mode);
     while (q.length >= playerCount) {
       const group = q.splice(0, playerCount);
       const roomId = this.deps.newRoomId();
@@ -148,15 +156,15 @@ export class Matchmaker {
       group.forEach((id, owner) => {
         const w = this.waiters.get(id);
         if (!w) return;
-        const grant: TicketPayload = { roomId, owner, seed, playerCount, exp };
-        w.ticket = { roomId, owner, seed, playerCount, token: this.sign(grant) };
+        const grant: TicketPayload = { roomId, owner, seed, playerCount, exp, mode };
+        w.ticket = { roomId, owner, seed, playerCount, mode, token: this.sign(grant) };
       });
     }
   }
 
   private dropWaiting(waiter: Waiter): void {
     this.waiters.delete(waiter.queueId);
-    const q = this.queues.get(waiter.playerCount);
+    const q = this.queues.get(queueKey(waiter.playerCount, waiter.mode));
     if (q) {
       const i = q.indexOf(waiter.queueId);
       if (i >= 0) q.splice(i, 1);

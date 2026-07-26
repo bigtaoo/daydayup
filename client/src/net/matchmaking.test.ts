@@ -70,4 +70,16 @@ describe('findMatch', () => {
       findMatch('http://mm', { playerCount: 2, fetch, sleep: noSleep, signal }),
     ).rejects.toThrow(/cancelled/);
   });
+
+  it('sends mode in the /find body — defaulting to coop, and passing pvp through explicitly (design/15)', async () => {
+    const fetch = fakeFetch([{ queueId: 'q1', match: MATCH }]);
+    await findMatch('http://mm', { playerCount: 2, fetch, sleep: noSleep });
+    const [, initDefault] = fetch.mock.calls[0]!;
+    expect(JSON.parse((initDefault as RequestInit).body as string)).toMatchObject({ mode: 'coop' });
+
+    const fetch2 = fakeFetch([{ queueId: 'q2', match: MATCH }]);
+    await findMatch('http://mm', { playerCount: 8, mode: 'pvp', fetch: fetch2, sleep: noSleep });
+    const [, initPvp] = fetch2.mock.calls[0]!;
+    expect(JSON.parse((initPvp as RequestInit).body as string)).toMatchObject({ playerCount: 8, mode: 'pvp' });
+  });
 });

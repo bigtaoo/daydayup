@@ -73,6 +73,24 @@ describe('MatchRoom — start / relay / broadcast', () => {
     expect(scheduler.running).toBe(true); // metronome started
   });
 
+  it('defaults match_start.mode to coop, and carries an explicit pvp mode through (design/15)', () => {
+    const scheduler = new FakeScheduler();
+    const destroyed: string[] = [];
+    const rCoop = new MatchRoom('rc', 1, 2, { scheduler, onDestroy: (id) => destroyed.push(id) });
+    const a = new FakeConn(0);
+    const b = new FakeConn(1);
+    rCoop.join(a); rCoop.join(b);
+    expect(a.ofType('match_start')[0]!.mode).toBe('coop');
+    expect(rCoop.modeValue).toBe('coop');
+
+    const rPvp = new MatchRoom('rp', 1, 2, { scheduler, mode: 'pvp', onDestroy: (id) => destroyed.push(id) });
+    const c = new FakeConn(0);
+    const d = new FakeConn(1);
+    rPvp.join(c); rPvp.join(d);
+    expect(c.ofType('match_start')[0]!.mode).toBe('pvp');
+    expect(rPvp.modeValue).toBe('pvp');
+  });
+
   it('a metronome pulse broadcasts a frame_batch to every seat; the watermark advances', () => {
     const { r, scheduler } = room(2, 3);
     const a = new FakeConn(0);
@@ -312,6 +330,17 @@ describe('RoomManager — routing + room parameter cross-check', () => {
     expect(mgr.join(b, 'room', 7, 3)).toBe(false); // playerCount disagreement → rejected
     expect(mgr.join(b, 'room', 7, 2)).toBe(true); // agrees → seated, match starts
     expect(scheduler.running).toBe(true);
+  });
+
+  it('rejects a joiner that disagrees on mode (design/15) — a coop room is not a pvp room', () => {
+    const scheduler = new FakeScheduler();
+    const mgr = new RoomManager({ scheduler });
+    const a = new FakeConn(0);
+    const b = new FakeConn(1);
+
+    expect(mgr.join(a, 'room', 7, 2, 'pvp')).toBe(true);
+    expect(mgr.join(b, 'room', 7, 2)).toBe(false); // implicit 'coop' disagrees with the room's 'pvp'
+    expect(mgr.join(b, 'room', 7, 2, 'pvp')).toBe(true); // agrees → seated
   });
 
   it('routes cmd/resume/result by roomId and cleans up on the last disconnect', () => {

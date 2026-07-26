@@ -1,6 +1,7 @@
 import { Application, BlurFilter, Container, Graphics, Text } from 'pixi.js';
 import {
   createGameEngine,
+  hashState,
   WEAPON_SIM_BY_ID,
   BLUEPRINT_CATALOG,
   SKIN_DEFS,
@@ -14,7 +15,7 @@ import {
   type MatchStart,
 } from '@dd/engine';
 import { toFpGrid } from '@dd/engine/content/convert';
-import type { ArenaMap } from '@dd/engine/content/arenas';
+import { ARENA_CATALOG } from './arenaCatalog';
 import { CoopSession } from '../net/CoopSession';
 import { WebSocketTransport, LaggyTransport, type Transport } from '../net/transport';
 import { findMatch } from '../net/matchmaking';
@@ -130,6 +131,14 @@ export class Game {
   // point yet) can otherwise reach this code path in the browser. Reuses the coop bot-
   // ally submit path to drive the second seat locally (see stepSim).
   private arenaDemo = false;
+  // `?pvp=1` (design/15, ROADMAP Phase 4 closeout) — a REAL matchmade PvP arena run:
+  // requests an 8-seat (default; `?seats=` overrides for local two-tab testing) 'pvp'-
+  // mode match instead of 2-seat 'coop', builds an arena EngineConfig (ARENA_CATALOG +
+  // one distinct teamId per seat) from `match_start`, and reports win/lose by placement
+  // instead of the PvE extract/wipe outcome. Reuses the entire online/CoopSession path
+  // `?online=1` already proved out — only `mode` and the config it builds differ.
+  private pvp = false;
+  private pvpSeats = 2;
   private matchBaseUrl = 'http://localhost:8788';
   private session: CoopSession | null = null;
   private readonly ally = new AllyController();
@@ -175,6 +184,10 @@ export class Game {
       this.coop = params.get('coop') === '1'; // dev toggle: bring a local bot ally
       this.online = params.get('online') === '1'; // ROADMAP 3.3: real matchmade co-op
       this.arenaDemo = params.get('arenaDemo') === '1'; // dev toggle: synthetic local PvP arena
+      this.pvp = params.get('pvp') === '1'; // real matchmade PvP arena (design/15)
+      if (this.pvp) this.online = true; // a PvP run always rides the online/CoopSession path
+      const seats = Number(params.get('seats'));
+      if (Number.isInteger(seats) && seats >= 2 && seats <= 8) this.pvpSeats = seats;
       const mm = params.get('mm'); // override the matchsvc origin (default localhost:8788)
       if (mm) this.matchBaseUrl = mm;
       const lag = Number(params.get('lag')); // dev: inject synthetic one-way latency (ms)
@@ -491,7 +504,7 @@ export class Game {
    * the view, so `buildRoom` is called once here directly. The second seat is driven by
    * the existing coop bot-ally submit path (stepSim), not a real opponent. */
   private beginArenaDemoRun() {
-    const map = buildArenaDemoMap();
+    const map = ARENA_CATALOG.landing_basic;
     const px = (grid: number) => fpToPx(toFpGrid(grid));
     this.engine = createGameEngine({
       seed: SEED_BASE + this.runCount,
@@ -510,6 +523,20 @@ export class Game {
     this.hudView.visible = true;
     this.forge.hide();
     this.screens.hide();
+  }
+
+  /** Decide + show the run's outcome from the sim's own gameover state (design/15's
+   * placement model for an arena run, the PvE extract/wipe model otherwise). Shared by
+   * the offline sim (stepSim) and the online/matchmade path (advanceOnline) — both just
+   * detect `s.phase === 'gameover'` and hand the state here. */
+  private handleGameOver(s: GameState) {
+    if (s.zoneEnabled) {
+      if (s.winner === this.localOwner) this.winArena(s);
+      else this.loseArena(s);
+    } else {
+      if (s.winner === 'enemies') this.lose();
+      else this.win();
+    }
   }
 
   private win() {
@@ -540,6 +567,30 @@ export class Game {
     const { w, h } = this.screenSize();
     this.screens.show(w, h, 'DEFEAT',
       `You fell on floor ${floor}/${EMBER_DUNGEON.floorCount}.   The floor's materials were lost.   Score ${this.score}`,
+      'Press Fire — back to the forge');
+  }
+
+  /** PvP arena victory (design/15) — last seat standing. No materials/floor concept. */
+  private winArena(s: GameState) {
+    this.phase = 'victory';
+    this.hudView.visible = false;
+    this.score += CONFIG.score.victory;
+    const { w, h } = this.screenSize();
+    this.screens.show(w, h, 'VICTORY ROYALE',
+      `1st place of ${s.players.length}.   Score ${this.score}`,
+      'Press Fire — back to the forge');
+  }
+
+  /** PvP arena elimination (design/15) — `state.placements` is worst-to-best, the
+   * winner never in it, so this seat's rank from the top is (total - its index). */
+  private loseArena(s: GameState) {
+    this.phase = 'defeat';
+    this.hudView.visible = false;
+    const idx = s.placements.indexOf(this.localOwner);
+    const place = idx === -1 ? s.players.length : s.players.length - idx;
+    const { w, h } = this.screenSize();
+    this.screens.show(w, h, 'ELIMINATED',
+      `Placed ${place}/${s.players.length}.   Score ${this.score}`,
       'Press Fire — back to the forge');
   }
 
@@ -642,10 +693,7 @@ export class Game {
     this.spawnBulletTrails(s);
     this.consumeEvents(events);
 
-    if (s.phase === 'gameover') {
-      if (s.winner === 'enemies') this.lose();
-      else this.win();
-    }
+    if (s.phase === 'gameover') this.handleGameOver(s);
   }
 
   // ---- Online co-op (ROADMAP 3.3): matchmaking → socket → CoopSession ----
@@ -667,7 +715,10 @@ export class Game {
     this.predictor.deactivate(); // re-anchors on the first confirmed frame of the new run
     this.predLastTick = -1;
     try {
-      const info = await findMatch(this.matchBaseUrl, { playerCount: 2 });
+      const info = await findMatch(this.matchBaseUrl, {
+        playerCount: this.pvp ? this.pvpSeats : 2,
+        mode: this.pvp ? 'pvp' : 'coop',
+      });
       const url = `${info.wsUrl}?ticket=${encodeURIComponent(info.token)}`;
       // A `?lag=` dev toggle wraps the socket to inject synthetic RTT (feel/tune prediction).
       let transport: Transport = new WebSocketTransport(url);
@@ -699,9 +750,31 @@ export class Game {
    * seats are skinned by index (distinct, agreed characters), and neither the local
    * chosen character nor the crafted loadout enters — carrying those into online play
    * needs them to travel through matchmaking first (a later step).
+   *
+   * `m.mode === 'pvp'` (design/15, ROADMAP Phase 4 closeout) branches to the arena
+   * shape instead: every seat gets its OWN teamId (solo battle royale, ROADMAP 4.2a)
+   * and `arena` is set (ARENA_CATALOG — the placeholder 3-room map standing in for the
+   * real ~60-room one; see arenaCatalog.ts), which is what flips `state.zoneEnabled`
+   * and turns on ZoneSystem/EnvironmentSystem/the placement win condition. Deliberately
+   * NOT wired here yet: `buildArenaSpecs`' HP-scale/loadout preset (ROADMAP 4.2c) — its
+   * `ArenaBuildResult` doesn't map onto `PlayerConfig.loadout` (weapon ids) without a
+   * PlayerConfig extension, a separate follow-up.
    */
   private buildOnlineConfig(m: MatchStart): EngineConfig {
     const ids = Object.keys(SKIN_DEFS);
+    if (m.mode === 'pvp') {
+      return {
+        seed: m.seed,
+        worldW: PLACEHOLDER_WORLD,
+        worldH: PLACEHOLDER_WORLD,
+        waves: [],
+        players: Array.from({ length: m.playerCount }, (_, i) => ({
+          skinId: ids[i % ids.length]!,
+          teamId: i,
+        })),
+        arena: ARENA_CATALOG.landing_basic,
+      };
+    }
     return {
       seed: m.seed,
       worldW: PLACEHOLDER_WORLD,
@@ -772,8 +845,13 @@ export class Game {
     this.prevFire = this.input.read().firing;
 
     if (s.phase === 'gameover') {
-      if (s.winner === 'enemies') this.lose();
-      else this.win();
+      // Report the local end-of-match hash (+ placements, for a PvP result) so the
+      // server's checkpoint/hash-verified settlement — and, for PvP, the matchsvc
+      // ladder-rating report (design/15, ROADMAP 4.4/4.6) — actually fires for a REAL
+      // match. Exactly once: this branch only runs while `this.phase === 'playing'`,
+      // and handleGameOver always moves it to 'victory'/'defeat' before returning.
+      this.session?.reportResult(hashState(s));
+      this.handleGameOver(s);
     }
   }
 
@@ -1143,27 +1221,4 @@ export class Game {
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
-}
-
-// Dev-only synthetic ArenaMap for `?arenaDemo=1` (see the field's doc comment on
-// `Game`). Three rooms (an L-shape, mirrors the engine's own
-// content/arenas.test.ts fixture shape) connected by doors, no encounter/loot markers
-// — this exists to give the zone HUD row + Minimap real data, not to be a playable
-// PvP map. All three rooms are eye-candidates so ZoneSystem's shrink is visible.
-function buildArenaDemoMap(): ArenaMap {
-  return {
-    id: 'dev_arena_demo',
-    sizeGrid: { w: 50, h: 50 },
-    rooms: [
-      { id: 'A', rectGrid: { x: 0, y: 0, w: 10, h: 10 }, solids: [] },
-      { id: 'B', rectGrid: { x: 30, y: 0, w: 10, h: 10 }, solids: [] },
-      { id: 'C', rectGrid: { x: 0, y: 30, w: 10, h: 10 }, solids: [] },
-    ],
-    doors: [
-      { roomA: 'A', roomB: 'B', passageGrid: { x: 10, y: 4, w: 20, h: 2 } },
-      { roomA: 'A', roomB: 'C', passageGrid: { x: 4, y: 10, w: 2, h: 20 } },
-    ],
-    spawns: [],
-    eyeCandidates: [{ roomId: 'A' }, { roomId: 'B' }, { roomId: 'C' }],
-  };
 }
