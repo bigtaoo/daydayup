@@ -1,15 +1,18 @@
 /**
  * Client-side arena catalog (design/15, ROADMAP Phase 4 closeout) — the id → ArenaMap
- * lookup a real PvP match start resolves against. Today it holds exactly one entry: a
- * small synthetic 3-room map (the same fixture shape as the engine's own
- * content/arenas.test.ts), standing in for the real ~60-room hand-authored map that the
- * map editor (tools/map-editor) is used to build separately. Swapping in the real map is
- * meant to be a one-line addition here (load its JSON, add a catalog entry) — no change
- * to the matchmaking/assembly wiring that reads this catalog.
+ * lookup a real PvP match start resolves against.
+ *
+ * `arena_prototype_60` is the real hand-authored (well, map-editor-authored:
+ * procedurally generated + validated in the editor, tools/map-editor) 60-room launch
+ * map — `world/arenas/arena_prototype_60.json`, produced and validated separately from
+ * this client. `landing_basic` is a small synthetic 3-room fixture (same shape as the
+ * engine's own content/arenas.test.ts) kept ONLY for the lightweight `?arenaDemo=1` dev
+ * harness (Game.beginArenaDemoRun) — a real PvP match always resolves to the real map.
  */
 import type { ArenaMap } from '@dd/engine/content/arenas';
+import arenaPrototype60 from '../../../world/arenas/arena_prototype_60.json';
 
-export type ArenaId = 'landing_basic';
+export type ArenaId = 'landing_basic' | 'arena_prototype_60';
 
 /** An L-shaped 3-room layout connected by doors, no encounter/loot markers — enough for
  * ZoneSystem's shrink and the placement win condition to run for real, not enough to be
@@ -34,4 +37,5 @@ function buildLandingBasic(): ArenaMap {
 
 export const ARENA_CATALOG: Record<ArenaId, ArenaMap> = {
   landing_basic: buildLandingBasic(),
+  arena_prototype_60: arenaPrototype60 as ArenaMap,
 };

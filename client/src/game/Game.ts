@@ -753,10 +753,10 @@ export class Game {
    *
    * `m.mode === 'pvp'` (design/15, ROADMAP Phase 4 closeout) branches to the arena
    * shape instead: every seat gets its OWN teamId (solo battle royale, ROADMAP 4.2a)
-   * and `arena` is set (ARENA_CATALOG — the placeholder 3-room map standing in for the
-   * real ~60-room one; see arenaCatalog.ts), which is what flips `state.zoneEnabled`
-   * and turns on ZoneSystem/EnvironmentSystem/the placement win condition. Deliberately
-   * NOT wired here yet: `buildArenaSpecs`' HP-scale/loadout preset (ROADMAP 4.2c) — its
+   * and `arena` is the real ~60-room launch map (`ARENA_CATALOG.arena_prototype_60`,
+   * see arenaCatalog.ts) — setting `arena` is what flips `state.zoneEnabled` and turns
+   * on ZoneSystem/EnvironmentSystem/the placement win condition. Deliberately NOT wired
+   * here yet: `buildArenaSpecs`' HP-scale/loadout preset (ROADMAP 4.2c) — its
    * `ArenaBuildResult` doesn't map onto `PlayerConfig.loadout` (weapon ids) without a
    * PlayerConfig extension, a separate follow-up.
    */
@@ -772,7 +772,7 @@ export class Game {
           skinId: ids[i % ids.length]!,
           teamId: i,
         })),
-        arena: ARENA_CATALOG.landing_basic,
+        arena: ARENA_CATALOG.arena_prototype_60,
       };
     }
     return {
