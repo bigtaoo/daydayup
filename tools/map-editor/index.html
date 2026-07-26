@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DayDayUp — Map Editor</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #0b0d12; color: #d8dee9; font: 13px/1.4 -apple-system, Segoe UI, sans-serif; overflow: hidden; }
+      #app { display: flex; flex-direction: row; width: 100vw; height: 100vh; }
+      #canvasHost { flex: 1 1 auto; position: relative; min-width: 0; }
+      #canvasHost canvas { display: block; }
+      #roomCanvasHost, #arenaCanvasHost { position: absolute; inset: 0; overflow: hidden; }
+      #sidebar { flex: 0 0 340px; display: flex; flex-direction: column; background: #11141c; border-left: 1px solid #232838; overflow-y: auto; }
+      #topbar { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 8px; background: #161a24; border-bottom: 1px solid #232838; }
+      button { background: #232838; color: #d8dee9; border: 1px solid #3a4152; border-radius: 4px; padding: 4px 10px; cursor: pointer; font: inherit; }
+      button:hover { background: #2d3446; }
+      button.active { background: #4c566a; }
+      select, input[type=text], input[type=number] { background: #1b2029; color: #d8dee9; border: 1px solid #3a4152; border-radius: 4px; padding: 3px 6px; font: inherit; }
+      label { display: block; margin: 4px 0 2px; color: #8a93a6; font-size: 11px; text-transform: uppercase; letter-spacing: .03em; }
+      table { width: 100%; border-collapse: collapse; font-size: 12px; }
+      th, td { border: 1px solid #232838; padding: 3px 4px; }
+      .section { padding: 10px; border-bottom: 1px solid #1c212c; }
+      .section h3 { margin: 0 0 6px; font-size: 12px; color: #8a93a6; text-transform: uppercase; letter-spacing: .04em; }
+      .hint { color: #6b7385; font-size: 11px; margin-top: 4px; }
+      .doclist { list-style: none; margin: 0; padding: 0; }
+      .doclist li { padding: 4px 6px; border-radius: 4px; cursor: pointer; }
+      .doclist li:hover { background: #1b2029; }
+      .doclist li.selected { background: #2d3446; }
+      .error { color: #e06c75; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="canvasHost">
+        <div id="roomCanvasHost"></div>
+        <div id="arenaCanvasHost"></div>
+      </div>
+      <div id="sidebar">
+        <div id="topbar"></div>
+        <div id="inspector"></div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
