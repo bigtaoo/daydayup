@@ -61,7 +61,7 @@ For this game's scale (rooms, pillars, crates, enemies) these are largely avoida
 ## Fidelity roadmap (by priority)
 
 1. **[verified in demo]** Tilted view + Y-sort + height/shadow + additive-blend FX.
-2. Dynamic lighting: normal maps + point lights + lightmap (multiply composite). **Next WeChat performance milestone.**
-3. Post-processing: bloom, chromatic aberration, vignette, hit-stop + screen shake.
-4. Particle system: muzzle flames, shell casings, explosion debris, drifting dust.
-5. Custom shaders: dissolve on death, outline, energy shield, heat-haze distortion.
+2. Dynamic lighting: normal maps + point lights + lightmap (multiply composite). **Blocked on real art** — normal maps need authored assets (`12`), which don't exist yet; do not start until `13`'s art pipeline lands real character/enemy atlases.
+3. **[shipped 2026-07-26]** Post-processing: bloom-lite (`BlurFilter` on the additive `fx` layer — a cheap approximation, not real multi-pass bloom), custom `VignetteFilter`/`ChromaticAberrationFilter` (`game/fx/filters.ts`, hand-written GLSL, no third-party filter package), hit-stop (brief sim-tick freeze, offline-only) + screen-shake (decaying trauma, `game/Game.ts`).
+4. **[shipped 2026-07-26]** Particle system: `game/fx/Particles.ts` — muzzle flames + shell casings (on `bullet_fired`), explosion debris (on enemy `death`), ambient drifting dust. Graphics-only (no textures), same events-queue-driven render-only discipline as the rest of this doc.
+5. Custom shaders: dissolve on death, outline, energy shield, heat-haze distortion. **Not started** — dissolve/outline read best against a real sprite silhouette (`12`), so this likely wants to follow milestone 2, not jump ahead of it.
