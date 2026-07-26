@@ -191,8 +191,20 @@ import { BRAD_FULL } from './math/trig';
  * shape gained a field, so replay bytes move" precedent v17 (downed/revive) already
  * established as sufficient on its own, even with zero gameplay effect for existing
  * modes.
+ *
+ * v20: `buildArenaSpecs` wired into `GameState.buildSeat` (design/15, ROADMAP 4.2c —
+ * the last unwired PvP-prerequisite piece). When `config.arena` is set, a seat's
+ * weapons/`maxHp`/`maxShield` now come from `buildArenaSpecs(config.arenaPreset ??
+ * 'landing_basic', seat.skinId)` — the landing-kit loadout + `PVP_SCALE_FACTOR`-scaled
+ * body stats — instead of the PvE run-builder path (`seat.loadout` via
+ * `WEAPON_SIM_BY_ID` + the character's plain `SkinDef` numbers). `seat.loadout` is now
+ * structurally never read for an arena seat (the fairness wall enforced at
+ * construction, not just by convention). Bumps because this is a REAL, intentional
+ * gameplay-affecting change to every arena-mode config's player numbers (HP/damage,
+ * not just hash bookkeeping) — every config that omits `arena` (every PvE/co-op config)
+ * is completely untouched, byte-identical.
  */
-export const ENGINE_VERSION = 19;
+export const ENGINE_VERSION = 20;
 
 // ── Two-pool health tuning (design/07; final values are 07 "to design") ──────────
 // Whole ticks @30Hz. Shield regen is an idle timer, not a heal: after taking ANY

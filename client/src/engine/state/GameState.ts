@@ -13,7 +13,7 @@ import { freshStatus } from '../content/damage';
 import { PLAYER_BASE } from '../content/players';
 import { WEAPON_SIM_BY_ID } from '../content/weapons';
 import { resolveSkin, toShieldBreakSim, type SkinId } from '../content/skins';
-import { buildRunSpecs } from '../balance/build';
+import { buildRunSpecs, buildArenaSpecs, type ArenaPresetId } from '../balance/build';
 import { UniformGrid } from '../systems/spatialGrid';
 import {
   buildArenaGeometry,
@@ -31,6 +31,7 @@ import type {
   PlayerActor,
   Projectile,
   WeaponSimSpec,
+  WeaponState,
   Winner,
 } from './entities';
 import type { GameEvent } from './events';
@@ -133,6 +134,11 @@ export interface EngineConfig {
   // Additive: a config that omits it (every config before this feature) never
   // touches this path — byte-identical, no ENGINE_VERSION bump.
   arena?: ArenaMap;
+  // Which `ARENA_PRESETS` entry (balance/build.ts) every seat's landing-kit weapons +
+  // HP/shield scale come from when `arena` is set (ROADMAP 4.2c). One preset for the
+  // whole match, not per-seat — `skinId` (per seat) is still what buildArenaSpecs scales
+  // the RIGHT character's stats by. Absent → 'landing_basic' (today's only preset).
+  arenaPreset?: ArenaPresetId;
 }
 
 // Distinct derived-seed constants so the streams never alias (design/06/08).
@@ -374,27 +380,52 @@ export class GameState {
     for (const seat of seats) this.players.push(this.buildSeat(config, seat));
   }
 
-  /** Build one co-op seat's PlayerActor (design/05/06, ROADMAP 3.1). */
+  /**
+   * Build one co-op seat's PlayerActor (design/05/06, ROADMAP 3.1). PvP arena mode
+   * (`config.arena` set, ROADMAP 4.2c) branches to `buildArenaSpecs` for the body/
+   * weapon stats instead of the PvE run-builder path below: the fairness wall
+   * (design/05/06/09) means `seat.loadout` (persistent meta gear) must never reach a
+   * PvP seat — `buildArenaSpecs` structurally cannot take it (no such parameter), so
+   * branching here enforces that at the one place seats are actually built, not just
+   * by convention at the call site.
+   */
   private buildSeat(config: EngineConfig, seat: PlayerConfig): PlayerActor {
     const [sx, sy] = seat.start ?? [config.worldW / 2, config.worldH / 2];
     // Merge the chosen character (SkinDef defensive identity) with PLAYER_BASE shared
     // constants (design/09/14). Unknown/absent skin → the default (forward-compat).
     const skin = resolveSkin(seat.skinId);
-    // Resolve the loadout through the run builder (design/09 fairness wall): the base meta
-    // loadout carried in at match start. A `seat.loadout` (crafted weapon ids, ROADMAP
-    // 2.2) resolves through WEAPON_SIM_BY_ID — unknown ids dropped (forward-compat), an
-    // empty result falling back to the auto pistol (design/05 "none → auto pistol").
-    // Absent → the shared PLAYER_BASE default (byte-identical to before — additive).
-    let baseLoadout: readonly WeaponSimSpec[];
-    if (seat.loadout) {
-      const resolved = seat.loadout
-        .map((id) => WEAPON_SIM_BY_ID[id])
-        .filter((s): s is WeaponSimSpec => s !== undefined);
-      baseLoadout = (resolved.length > 0 ? resolved : [WEAPON_SIM_BY_ID['blaster']!]).slice(0, PLAYER_BASE.weaponSlots);
+
+    let weapons: WeaponState[];
+    let maxHp: number;
+    let maxShield: number;
+    if (config.arena) {
+      // PvP (design/15): the landing-kit preset's weapons + this character's HP/shield,
+      // both scaled by PVP_SCALE_FACTOR — `seat.loadout` is deliberately never read here.
+      const built = buildArenaSpecs(config.arenaPreset ?? 'landing_basic', seat.skinId);
+      weapons = built.weapons;
+      maxHp = built.maxHp;
+      maxShield = built.maxShield;
     } else {
-      baseLoadout = PLAYER_BASE.startWeapons;
+      // PvE: resolve the loadout through the run builder (design/09 fairness wall) — the
+      // base meta loadout carried in at match start. A `seat.loadout` (crafted weapon
+      // ids, ROADMAP 2.2) resolves through WEAPON_SIM_BY_ID — unknown ids dropped
+      // (forward-compat), an empty result falling back to the auto pistol (design/05
+      // "none → auto pistol"). Absent → the shared PLAYER_BASE default (byte-identical
+      // to before — additive).
+      let baseLoadout: readonly WeaponSimSpec[];
+      if (seat.loadout) {
+        const resolved = seat.loadout
+          .map((id) => WEAPON_SIM_BY_ID[id])
+          .filter((s): s is WeaponSimSpec => s !== undefined);
+        baseLoadout = (resolved.length > 0 ? resolved : [WEAPON_SIM_BY_ID['blaster']!]).slice(0, PLAYER_BASE.weaponSlots);
+      } else {
+        baseLoadout = PLAYER_BASE.startWeapons;
+      }
+      weapons = buildRunSpecs(baseLoadout);
+      maxHp = skin.maxHp;
+      maxShield = skin.maxShield;
     }
-    const weapons = buildRunSpecs(baseLoadout);
+
     return {
       id: this.nextId(),
       faction: 'player',
@@ -405,10 +436,10 @@ export class GameState {
       vx: toFp(0),
       vy: toFp(0),
       facing: 0 as PlayerActor['facing'],
-      hp: skin.maxHp,
-      maxHp: skin.maxHp,
-      shield: skin.maxShield, // spawn with a full shield (design/07)
-      maxShield: skin.maxShield,
+      hp: maxHp,
+      maxHp,
+      shield: maxShield, // spawn with a full shield (design/07)
+      maxShield,
       ticksSinceHit: 0,
       radius: PLAYER_BASE.radius,
       footprintRadius: PLAYER_BASE.footprintRadius,

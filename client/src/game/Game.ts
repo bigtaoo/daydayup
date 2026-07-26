@@ -755,10 +755,11 @@ export class Game {
    * shape instead: every seat gets its OWN teamId (solo battle royale, ROADMAP 4.2a)
    * and `arena` is the real ~60-room launch map (`ARENA_CATALOG.arena_prototype_60`,
    * see arenaCatalog.ts) — setting `arena` is what flips `state.zoneEnabled` and turns
-   * on ZoneSystem/EnvironmentSystem/the placement win condition. Deliberately NOT wired
-   * here yet: `buildArenaSpecs`' HP-scale/loadout preset (ROADMAP 4.2c) — its
-   * `ArenaBuildResult` doesn't map onto `PlayerConfig.loadout` (weapon ids) without a
-   * PlayerConfig extension, a separate follow-up.
+   * on ZoneSystem/EnvironmentSystem/the placement win condition, AND (ENGINE_VERSION
+   * 20, ROADMAP 4.2c) what makes `GameState.buildSeat` resolve each seat's weapons/HP
+   * through `buildArenaSpecs` (the landing-kit loadout + `PVP_SCALE_FACTOR`-scaled body
+   * stats) instead of the PvE run-builder path — no `loadout` needs setting here at all,
+   * since an arena seat never reads it.
    */
   private buildOnlineConfig(m: MatchStart): EngineConfig {
     const ids = Object.keys(SKIN_DEFS);
