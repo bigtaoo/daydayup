@@ -200,6 +200,12 @@ export interface PlayerActor extends Actor {
   // ApplyInputSystem. Read by ExtractionSystem (design/05, ROADMAP 1.4) to resolve
   // the extraction-checkpoint hold-to-extract / tap-to-descend gesture.
   interacting: boolean;
+  // Last tick's `interacting`, owned solely by PickupSystem (design/03 weapon-swap
+  // "tap INTERACT"). NOT `prevButtons`-derived: ApplyInputSystem overwrites
+  // `prevButtons` with THIS tick's bitfield before PickupSystem (step 10) runs, so
+  // that field can no longer answer "was INTERACT freshly pressed this tick" by the
+  // time a later step reads it — this field is the cross-tick memory that can.
+  wasInteracting: boolean;
   // Co-op downed/revive (design/05/07, ROADMAP 3.2). A lethal hit sends a player
   // `downed` (frozen, 0 HP, `alive` stays true) instead of dead; a teammate revives
   // it via a sustained INTERACT channel. `alive` becomes false only on a permanent

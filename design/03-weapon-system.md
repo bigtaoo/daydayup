@@ -122,8 +122,8 @@ Adding a weapon = adding a config row (+ code only for special behavior), not ha
 
 Weapons are **not** auto-picked-up (unlike materials/consumables) — swapping your weapon is a choice, so it stays button-driven:
 
-- **Ground compare card (render-only).** Standing next to a floor weapon floats a non-blocking card (name / element / rarity) beside your active weapon. It is **pure client render — never in the sim**, so it does not touch determinism (`06`) and never pauses the co-op run (no modal — a blocking popup is impossible under lockstep, `06`).
-- **`INTERACT` swaps it into the active slot**, and the **replaced weapon drops back onto the floor** (`02`); the switch button chooses which of the two slots to overwrite. No manual drop button.
+- **Ground compare card (render-only) — shipped (5.2).** Standing next to a floor weapon floats a non-blocking card (name / element / rarity) beside your active weapon. It is **pure client render — never in the sim**, so it does not touch determinism (`06`) and never pauses the co-op run (no modal — a blocking popup is impossible under lockstep, `06`). Implementation: `Game.ts`'s `updateHud` + `ui/pickupProximity.ts` (a proximity ring wider than `PickupSystem`'s own collect radius) + `ui/compareCard.ts`.
+- **`INTERACT` swaps it into the active slot — shipped (ENGINE_VERSION 21).** and the **replaced weapon drops back onto the floor** (`02`); the switch button chooses which of the two slots to overwrite. No manual drop button. Was previously unimplemented (auto-swapped on mere overlap, contradicting this doc); fixed in `PickupSystem.ts` — a rising-edge INTERACT check (`PlayerActor.wasInteracting`, since `prevButtons` is already stale by the time `PickupSystem` runs) gates the weapon-kind branch only, and `applyWeapon` pushes the outgoing weapon as a fresh floor `PickupItem` before overwriting the slot.
 
 ## To design
 

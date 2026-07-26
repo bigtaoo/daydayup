@@ -203,8 +203,19 @@ import { BRAD_FULL } from './math/trig';
  * gameplay-affecting change to every arena-mode config's player numbers (HP/damage,
  * not just hash bookkeeping) — every config that omits `arena` (every PvE/co-op config)
  * is completely untouched, byte-identical.
+ *
+ * v21: `PickupSystem`'s weapon-kind branch now matches design/03:121-126 ("weapons
+ * are NOT auto-picked-up... button-driven") instead of auto-swapping on mere overlap
+ * like every other pickup kind — it now requires a freshly-pressed INTERACT (rising
+ * edge) while overlapping, and drops the outgoing weapon back onto the floor as a
+ * new pickup. `PlayerActor` gained `wasInteracting` (PickupSystem's own cross-tick
+ * edge memory — `prevButtons` can't serve this: ApplyInputSystem already overwrites
+ * it with the CURRENT tick's bitfield before PickupSystem's step runs). Bumps because
+ * a replay recorded under v20 that picked up a weapon via overlap alone, with no
+ * INTERACT held, replays differently under this rule — a real outcome change for
+ * identical commands, not additive.
  */
-export const ENGINE_VERSION = 20;
+export const ENGINE_VERSION = 21;
 
 // ── Two-pool health tuning (design/07; final values are 07 "to design") ──────────
 // Whole ticks @30Hz. Shield regen is an idle timer, not a heal: after taking ANY

@@ -5,11 +5,22 @@
  * pickups are compacted out in place.
  *
  * Effects (design/05 the in-run power ramp):
- *   heal     — restore up to maxHp.
+ *   heal     — restore up to maxHp. Auto, on overlap.
  *   material — added to this floor's un-banked buffer (state.floorMaterials,
  *              design/05, ROADMAP 1.4/1.5); banked at an extraction checkpoint
- *              (ExtractionSystem), forfeited on a run-ending death.
- *   weapon   — replace the active slot with the dropped weapon and reset its cooldown.
+ *              (ExtractionSystem), forfeited on a run-ending death. Auto, on overlap.
+ *   weapon   — design/03:121-126 "NOT auto-picked-up... button-driven": overlap alone
+ *              does nothing; a freshly-pressed INTERACT (rising edge, mirrors
+ *              ApplyInputSystem's own SWAP_WEAPON edge check) swaps it into the
+ *              active slot AND drops the outgoing weapon back onto the floor as a
+ *              new pickup at the player's position (`dropReplacedWeapon`) — "no
+ *              manual drop button," the drop is only ever a side effect of a swap.
+ *   buff     — added to the run-scoped stack. Auto, on overlap.
+ *
+ * The rising edge can't reuse `prevButtons` (`ApplyInputSystem`, step 1, already
+ * overwrote it with THIS tick's bitfield before this step runs) — `wasInteracting`
+ * is this system's own cross-tick memory instead, updated once per player per tick
+ * regardless of whether a pickup was nearby.
  *
  * Ports Game.ts updatePickups(): float px → fp, squared-distance overlap. The
  * render-only hover bob is dropped (visual, not sim).
@@ -25,11 +36,20 @@ import { circlesOverlap, retainAlive } from './geom';
 
 export class PickupSystem {
   tick(state: GameState): void {
+    // Snapshot each player's INTERACT rising edge ONCE up front, before any swap in
+    // this same tick can push a fresh pickup back onto `state.pickups` — that new
+    // item must never itself read as "just pressed" (it wasn't the input, the swap
+    // was), and every player's `wasInteracting` memory must advance exactly once per
+    // tick even if they're nowhere near a pickup.
+    const interactPressed = state.players.map((p) => p.alive && p.interacting && !p.wasInteracting);
+
     for (const item of state.pickups) {
       if (!item.alive || item.spawnTick === state.tick) continue;
-      for (const p of state.players) {
+      for (let i = 0; i < state.players.length; i++) {
+        const p = state.players[i]!;
         if (!p.alive) continue;
         if (!circlesOverlap(item.gx, item.gy, SIM.pickupRadius, p.gx, p.gy, p.radius)) continue;
+        if (item.kind === 'weapon' && !interactPressed[i]) continue; // button-driven, not auto (design/03)
         this.apply(state, p, item);
         item.alive = false;
         state.events.push({
@@ -47,6 +67,8 @@ export class PickupSystem {
       }
     }
     retainAlive(state.pickups);
+
+    for (const p of state.players) p.wasInteracting = p.interacting;
   }
 
   private apply(state: GameState, p: PlayerActor, item: PickupItem): void {
@@ -63,7 +85,7 @@ export class PickupSystem {
         }
         break;
       case 'weapon':
-        if (item.weaponId) this.applyWeapon(p, item.weaponId);
+        if (item.weaponId) this.applyWeapon(state, p, item.weaponId);
         break;
       case 'buff':
         if (item.buffId) this.applyBuff(p, item.buffId);
@@ -89,10 +111,26 @@ export class PickupSystem {
     }
   }
 
-  private applyWeapon(p: PlayerActor, weaponId: string): void {
+  private applyWeapon(state: GameState, p: PlayerActor, weaponId: string): void {
     const spec = WEAPON_SIM_BY_ID[weaponId];
     if (!spec) return; // forward-compat: unknown weapon id → no-op (design/09)
-    // Swap the active slot for a fresh runtime of the dropped weapon.
+    // The outgoing weapon drops back to the floor (design/03:126) BEFORE the slot is
+    // overwritten — a fresh PickupItem at the player's own position, same spawn-tick
+    // convention as DeathDropsSystem so the just-created item isn't immediately
+    // re-collected this same tick.
+    const outgoing = p.weapons[p.activeSlot];
+    if (outgoing) {
+      state.pickups.push({
+        id: state.nextId(),
+        kind: 'weapon',
+        gx: p.gx,
+        gy: p.gy,
+        spawnTick: state.tick,
+        alive: true,
+        weaponId: outgoing.spec.name,
+      });
+    }
+    // Swap the active slot for a fresh runtime of the picked-up weapon.
     const w = makeWeapon(spec);
     p.weapons[p.activeSlot] = w;
     p.weapon = w;

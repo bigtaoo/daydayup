@@ -29,15 +29,51 @@ describe('PickupSystem — the in-run power ramp (design/05)', () => {
     expect(p.hp).toBe(p.maxHp); // capped
   });
 
-  it('a weapon drop swaps the active slot for the dropped weapon', () => {
+  it('a weapon drop is NOT collected on overlap alone (design/03: button-driven, not auto)', () => {
     const s = createGameState(CFG);
     const p = s.players[0]!;
+    const before = p.weapon!.spec.name;
     dropOnPlayer(s, { kind: 'weapon', weaponId: 'cannon' });
+    sys.tick(s); // no INTERACT held
+    expect(p.weapon!.spec.name).toBe(before); // untouched
+    expect(s.pickups).toHaveLength(1); // still sitting on the floor
+    expect(s.pickups[0]!.alive).toBe(true);
+  });
+
+  it('a freshly-pressed INTERACT while overlapping swaps the active slot and drops the outgoing weapon', () => {
+    const s = createGameState(CFG);
+    const p = s.players[0]!;
+    const outgoingId = p.weapon!.spec.name;
+    dropOnPlayer(s, { kind: 'weapon', weaponId: 'cannon' });
+    p.interacting = true; // rising edge: wasInteracting defaults false
     sys.tick(s);
+
     const active = p.weapon!;
     expect(active.spec.name).toBe('cannon');
     expect(p.weapons[p.activeSlot]).toBe(active); // slot pointer updated
     expect((active.spec as RangedSimSpec).damage).toBe(3); // cannon's authored damage
+
+    // The outgoing weapon lands back on the floor as a fresh pickup at the player.
+    const dropped = s.pickups.find((x) => x.weaponId === outgoingId);
+    expect(dropped).toBeDefined();
+    expect(dropped!.alive).toBe(true);
+    expect(dropped!.spawnTick).toBe(s.tick);
+  });
+
+  it('holding INTERACT does not re-swap on a later tick (no ping-pong while stationary)', () => {
+    const s = createGameState(CFG);
+    const p = s.players[0]!;
+    dropOnPlayer(s, { kind: 'weapon', weaponId: 'cannon' });
+    p.interacting = true;
+    sys.tick(s); // swaps in cannon, drops the starter weapon at the same spot
+    expect(p.weapon!.spec.name).toBe('cannon');
+
+    // Advance past the dropped item's spawnTick guard so this exercises the
+    // wasInteracting edge check itself, not just the "same-tick drop" guard.
+    s.tick += 1;
+    p.interacting = true; // still held — no NEW rising edge (wasInteracting is now true)
+    sys.tick(s);
+    expect(p.weapon!.spec.name).toBe('cannon'); // unchanged, did not swap back
   });
 
   it('materials have no in-sim effect yet (a distinct, not-yet-banked currency)', () => {
