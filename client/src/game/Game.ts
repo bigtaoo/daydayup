@@ -38,6 +38,8 @@ import { Screens } from './Screens';
 import { Forge } from './Forge';
 import { Settings } from './Settings';
 import { Bar, ToastQueue, Button } from './ui/widgets';
+import { CompareCard } from './ui/compareCard';
+import { nearestWeaponPickup } from './ui/pickupProximity';
 import { Minimap, type MinimapPlayer } from './ui/Minimap';
 import { VignetteFilter, ChromaticAberrationFilter } from './fx/filters';
 import { ParticleSystem } from './fx/Particles';
@@ -58,6 +60,9 @@ const SEED_BASE = 0xda1d; // per-run seed = base + run index (deterministic, no 
 const SIM_DT_MS = 1000 / 30; // fixed sim step: the engine runs at 30 Hz (design/06)
 const MAX_STEPS = 5; // catch-up cap per render frame → no spiral of death
 const FX_LIFE_MS = 170; // flash lifetime
+// Ground compare card proximity ring (design/03:125) — wider than PickupSystem's own
+// collect radius (SIM.pickupRadius) so the card has a beat to show before auto-collect.
+const GROUND_CARD_RADIUS_FP = toFpGrid(2.5);
 const MAX_SHAKE_PX = 14; // camera-shake offset at full trauma (design/01 milestone 3)
 
 // Render-side run phases (design/10). The engine only knows idle/playing/gameover;
@@ -87,6 +92,12 @@ export class Game {
   private allyText!: Text;
   private toasts!: ToastQueue;
   private minimap!: Minimap;
+  // Ground compare card (design/03:125, locked spec: name/element/rarity, non-blocking,
+  // render-only). Shown while standing near an uncollected floor weapon pickup.
+  private groundCard = new CompareCard();
+  // Weapon pickup is button-driven (design/03:121-126, ENGINE_VERSION 21) — unlike
+  // every other pickup kind, standing on it does nothing without this prompt's cue.
+  private groundHint!: Text;
   private settingsBtn!: Button;
 
   private screens = new Screens();
@@ -326,6 +337,10 @@ export class Game {
       style: { fill: 0x68d391, fontSize: 15, fontFamily: 'monospace', fontWeight: 'bold' },
     });
     this.toasts = new ToastQueue({ w: 220 });
+    this.groundHint = new Text({
+      text: '[E] swap',
+      style: { fill: 0x90cdf4, fontSize: 13, fontFamily: 'monospace', fontWeight: 'bold' },
+    });
 
     this.hpBar.view.position.set(12, 10);
     this.shieldBar.view.position.set(12, 28);
@@ -337,7 +352,7 @@ export class Game {
 
     this.hudView.addChild(
       this.hpBar.view, this.shieldBar.view, this.weaponText, this.cdBar.view,
-      this.infoText, this.allyText, this.promptText, this.toasts.view,
+      this.infoText, this.allyText, this.promptText, this.toasts.view, this.groundCard.view, this.groundHint,
     );
     this.layers.ui.addChild(this.hudView);
 
@@ -357,6 +372,8 @@ export class Game {
     this.toasts.view.position.set(w / 2 - 110, h * 0.22);
     this.minimap.view.position.set(w - 140 - 20, 60);
     this.settingsBtn.view.position.set(w - 130, h - 50);
+    // Beside the weapon HUD row (design/03:125 "beside your active weapon").
+    this.groundCard.view.position.set(220, 40);
   }
 
   private openSettings() {
@@ -411,6 +428,13 @@ export class Game {
       return;
     } else if (code === 'Enter' || code === 'NumpadEnter') {
       this.confirm();
+      return;
+    } else if (code === 'ArrowUp' || code === 'ArrowDown') {
+      // Browse cursor only (design/10 compare card) — never crafts, so it can't be
+      // confused with the digit keys' immediate craft.
+      this.forge.moveSelection(code === 'ArrowUp' ? -1 : 1);
+      const { w, h } = this.screenSize();
+      this.forge.render(this.meta, w, h);
       return;
     }
     if (next !== this.meta) {
@@ -1186,6 +1210,27 @@ export class Game {
         : '';
     } else {
       this.allyText.text = '';
+    }
+
+    // Ground compare card (design/03:125) — floats while standing near an uncollected
+    // floor weapon, name/element/rarity only (no stat table; that's the forge's job,
+    // and a mid-run comparison needs to read at a glance, not be studied).
+    const nearby = p ? nearestWeaponPickup(s.pickups, p.gx, p.gy, GROUND_CARD_RADIUS_FP) : undefined;
+    const groundSpec = nearby?.weaponId ? WEAPON_SIM_BY_ID[nearby.weaponId] : undefined;
+    if (p?.weapon && groundSpec) {
+      this.groundCard.set({
+        w: 220,
+        leftName: p.weapon.spec.name,
+        leftColor: rarityColor(p.weapon.spec),
+        rightName: groundSpec.name,
+        rightColor: rarityColor(groundSpec),
+        rows: [{ label: 'Type', left: p.weapon.spec.damageType, right: groundSpec.damageType }],
+      });
+      this.groundHint.position.set(220, this.groundCard.view.y + this.groundCard.view.height + 4);
+      this.groundHint.visible = true;
+    } else {
+      this.groundCard.hide();
+      this.groundHint.visible = false;
     }
 
     this.toasts.update(dt);

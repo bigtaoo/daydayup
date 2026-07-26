@@ -1,0 +1,125 @@
+import { Container, Graphics, Text } from 'pixi.js';
+import type { WeaponSpec } from '@dd/engine';
+import { applyQuality, WEAPON_SPECS } from '@dd/engine';
+import { Panel } from './widgets';
+
+// The compare card (design/03 "ground compare card" + design/10's open loadout-detail
+// question). One widget, two call sites: the forge loadout screen passes a full stat
+// table; the in-run ground card (design/03:125, locked) passes zero rows — name +
+// rarity is the whole spec there. Pure presentation like every widget in this kit: it
+// never reads MetaState/GameState, only the plain WeaponSpec values Forge.ts/Game.ts
+// resolve for it.
+
+export interface CompareRow {
+  label: string;
+  left: string;
+  right: string;
+}
+
+/**
+ * Kind-specific stat rows for two weapons of the SAME kind (design/03/14: rarity's
+ * edge is mostly handling, not raw damage, so spread/arc/cooldown are shown alongside
+ * damage rather than a bare DPS number — no such formula exists in the design docs).
+ * Damage is shown POST-quality (`applyQuality`) — the real in-sim number, matching
+ * what `toSimSpec` bakes in, not the raw authored constant. Returns `null` if the two
+ * specs aren't the same kind (ranged vs melee has no shared stat to line up).
+ */
+export function buildCompareRows(a: WeaponSpec, b: WeaponSpec): CompareRow[] | null {
+  if (a.kind !== b.kind) return null;
+  const dmg = (s: WeaponSpec) => String(applyQuality(s.damage, s.rarity));
+  const type = (s: WeaponSpec) => s.damageType ?? 'physical';
+  const rows: CompareRow[] = [
+    { label: 'Damage', left: dmg(a), right: dmg(b) },
+    { label: 'Type', left: type(a), right: type(b) },
+  ];
+  if (a.kind === 'ranged' && b.kind === 'ranged') {
+    rows.push(
+      { label: 'Fire rate', left: `${a.cooldownSec.toFixed(2)}s`, right: `${b.cooldownSec.toFixed(2)}s` },
+      { label: 'Spread', left: `${a.spreadDeg}°`, right: `${b.spreadDeg}°` },
+      { label: 'Speed', left: `${a.bulletSpeed}g/s`, right: `${b.bulletSpeed}g/s` },
+    );
+  } else if (a.kind === 'melee' && b.kind === 'melee') {
+    rows.push(
+      { label: 'Swing', left: `${a.cooldownSec.toFixed(2)}s`, right: `${b.cooldownSec.toFixed(2)}s` },
+      { label: 'Arc', left: `${a.arcDeg}°`, right: `${b.arcDeg}°` },
+      { label: 'Reach', left: `${a.rangeGrid}g`, right: `${b.rangeGrid}g` },
+      { label: 'Deflect', left: a.deflect ? 'yes' : 'no', right: b.deflect ? 'yes' : 'no' },
+    );
+  }
+  return rows;
+}
+
+/**
+ * Which loadout entry, if any, is the "currently equipped" comparator for a candidate
+ * of the given kind (Forge.ts: a loadout can hold one ranged + one melee, so a ranged
+ * candidate compares only against the loadout's ranged slot). `ids` should already be
+ * the *effective* loadout — Forge.ts falls back to `PLAYER_BASE.startWeapons`' ids when
+ * the staged loadout is empty (the same fallback the board text already shows).
+ */
+export function equippedSpecOfKind(ids: readonly string[], kind: WeaponSpec['kind']): WeaponSpec | undefined {
+  for (const id of ids) {
+    const spec = WEAPON_SPECS[id];
+    if (spec && spec.kind === kind) return spec;
+  }
+  return undefined;
+}
+
+/** A rarity-bordered two-column card: headline name/colour each side + optional stat
+ * rows as one aligned monospace block (matches Forge.ts/HUD's existing text-board
+ * convention — no per-cell Graphics/Text grid, keeping this a "tiny in-house layer"
+ * per widgets.ts's own header comment). Empty `rows` is the minimal design/03 ground
+ * card (name + rarity colour only); a populated `rows` is the forge loadout compare. */
+export class CompareCard {
+  readonly view = new Container();
+  private panel = new Panel({ radius: 10, color: 0x0b0e14, alpha: 0.9 });
+  private leftBorder = new Graphics();
+  private rightBorder = new Graphics();
+  private leftName: Text;
+  private rightName: Text;
+  private body: Text;
+
+  constructor() {
+    this.leftName = new Text({ text: '', style: { fill: 0xe2e8f0, fontSize: 15, fontWeight: 'bold', fontFamily: 'monospace' } });
+    this.rightName = new Text({ text: '', style: { fill: 0xe2e8f0, fontSize: 15, fontWeight: 'bold', fontFamily: 'monospace' } });
+    this.rightName.anchor.set(1, 0);
+    this.body = new Text({ text: '', style: { fill: 0xcbd5e0, fontSize: 14, fontFamily: 'monospace', lineHeight: 19 } });
+    this.view.addChild(this.panel.view, this.leftBorder, this.rightBorder, this.leftName, this.rightName, this.body);
+    this.view.visible = false;
+  }
+
+  set(opts: {
+    w: number;
+    leftName: string;
+    leftColor: number;
+    rightName: string;
+    rightColor: number;
+    rows: readonly CompareRow[];
+  }) {
+    const headerH = 30;
+    const h = headerH + (opts.rows.length ? opts.rows.length * 19 + 10 : 6);
+    this.panel.layout(opts.w, h);
+
+    this.leftBorder.clear().roundRect(0, 0, 4, h, 2).fill({ color: opts.leftColor });
+    this.rightBorder.clear().roundRect(opts.w - 4, 0, 4, h, 2).fill({ color: opts.rightColor });
+
+    this.leftName.text = opts.leftName;
+    this.leftName.style.fill = opts.leftColor;
+    this.leftName.position.set(12, 8);
+    this.rightName.text = opts.rightName;
+    this.rightName.style.fill = opts.rightColor;
+    this.rightName.position.set(opts.w - 12, 8);
+
+    const labelW = Math.max(6, ...opts.rows.map((r) => r.label.length));
+    const valW = Math.max(4, ...opts.rows.map((r) => Math.max(r.left.length, r.right.length)));
+    this.body.text = opts.rows
+      .map((r) => `${r.label.padEnd(labelW)} ${r.left.padStart(valW)}  vs  ${r.right.padStart(valW)}`)
+      .join('\n');
+    this.body.position.set(12, headerH);
+
+    this.view.visible = true;
+  }
+
+  hide() {
+    this.view.visible = false;
+  }
+}

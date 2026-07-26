@@ -82,7 +82,14 @@ The concrete shape of `05`/`04`'s twin-stick, and where `08`'s `PlayerCommand` i
 
 - **Widget kit:** a minimal Pixi UI component set (button, stick, bar, toast, panel) — build vs. a tiny in-house layer. Keep it small; no heavy UI framework (bundle + WeChat).
 - **HUD data contract:** the exact read-only view of `GameState` the HUD needs, so it never reaches into engine internals (mirror `08`'s interpolation-snapshot idea for UI).
-- **Loadout/preset screen data** — the crafted loadout + chosen character (`14`) / `ARENA_PRESETS` (`09`); how much detail (stats, previews) to show.
+- ~~Loadout/preset screen data — how much detail (stats, previews) to show.~~ **Resolved
+  (5.2):** a forge compare card (`client/src/game/ui/compareCard.ts`) diffs the browse
+  cursor's blueprint against whichever loadout slot shares its weapon kind (empty
+  loadout falls back to the auto-equip pair) — damage (post-rarity-quality), damage
+  type, and kind-specific handling stats (fire-rate/spread/speed for ranged;
+  swing/arc/reach/deflect for melee), leaning on handling over raw damage per `03`/`14`'s
+  "rarity edge is mostly handling, never crushing." `ARENA_PRESETS` previews remain
+  undesigned — PvP preset-pick has no UI yet (`15`).
 - **Settings** (volume once audio lands `11`, control layout/left-handed mirror, quality tier per `01` roadmap).
 - **Result/summary content:** what a run summary shows (drops collected, rooms cleared, time) — ties to `05`'s reward structure.
 

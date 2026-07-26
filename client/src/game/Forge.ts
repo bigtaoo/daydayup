@@ -1,11 +1,13 @@
 import { Container, Text } from 'pixi.js';
 import {
-  BLUEPRINT_CATALOG, SKIN_DEFS, DAMAGE_TYPES, PLAYER_BASE,
+  BLUEPRINT_CATALOG, SKIN_DEFS, DAMAGE_TYPES, PLAYER_BASE, WEAPON_SPECS, RARITY_TIERS,
   type WeaponBlueprint, type DamageType,
 } from '@dd/engine';
 import type { MetaState } from '../meta';
 import { bankTotal, canAfford, isUnlocked, purchasableBlueprints } from '../meta';
 import { Panel } from './ui/widgets';
+import { CompareCard, buildCompareRows, equippedSpecOfKind } from './ui/compareCard';
+import { RARITY_COLORS } from './config';
 
 /**
  * The forge outpost (design/14, ROADMAP 2.2/2.3) — the between-run hub where the player
@@ -21,17 +23,30 @@ export class Forge {
   private title: Text;
   private body: Text;
   private hint: Text;
+  private compareCard = new CompareCard();
 
   /** Stable blueprint order = display order = the number key that crafts each. */
   readonly order: string[] = Object.keys(BLUEPRINT_CATALOG);
+
+  /** Cursor over `order` (design/10's open "how much detail to show" question — an
+   * arrow-key browse cursor, independent of the digit keys that craft directly, so a
+   * player can preview a blueprint's stats without committing materials to it). */
+  selectedIndex = 0;
 
   constructor() {
     this.title = new Text({ text: 'FORGE OUTPOST', style: { fill: 0xf7fafc, fontSize: 34, fontWeight: 'bold', fontFamily: 'sans-serif' } });
     this.body = new Text({ text: '', style: { fill: 0xcbd5e0, fontSize: 16, fontFamily: 'monospace', lineHeight: 22 } });
     this.hint = new Text({ text: '', style: { fill: 0x90cdf4, fontSize: 15, fontFamily: 'monospace', lineHeight: 20 } });
-    this.view.addChild(this.panel.view, this.title, this.body, this.hint);
+    this.view.addChild(this.panel.view, this.title, this.body, this.hint, this.compareCard.view);
     this.view.eventMode = 'static';
     this.view.visible = false;
+  }
+
+  /** Move the browse cursor, wrapping at both ends. Re-render to refresh the compare card. */
+  moveSelection(delta: number) {
+    const len = this.order.length;
+    if (len === 0) return;
+    this.selectedIndex = ((this.selectedIndex + delta) % len + len) % len;
   }
 
   private costText(cost: readonly WeaponBlueprint['cost'][number][]): string {
@@ -52,7 +67,8 @@ export class Forge {
       ? `${m.selectedSkin}  (${skin.maxHp}HP / ${skin.maxShield}SH)   owned: ${m.ownedCharacters.length}`
       : m.selectedSkin;
 
-    // Blueprint board — [n] id  cost  status.
+    // Blueprint board — [n] id  cost  status. A leading '»' marks the browse cursor
+    // (moveSelection, arrow keys) — independent of '▸staged', which marks a crafted slot.
     const lines = this.order.map((id, i) => {
       const bp = BLUEPRINT_CATALOG[id]!;
       const unlocked = isUnlocked(m, id);
@@ -62,7 +78,8 @@ export class Forge {
         ? (bp.source === 'drop' ? 'locked (find it)' : `locked (${bp.source})`)
         : affordable ? 'craftable' : 'need materials';
       const stagedTag = staged > 0 ? `  ▸staged×${staged}` : '';
-      return `[${i + 1}] ${id.padEnd(11)} ${this.costText(bp.cost).padEnd(14)} ${status}${stagedTag}`;
+      const cursor = i === this.selectedIndex ? '»' : ' ';
+      return `${cursor}[${i + 1}] ${id.padEnd(11)} ${this.costText(bp.cost).padEnd(14)} ${status}${stagedTag}`;
     });
 
     const loadout = m.loadout.length ? m.loadout.join(', ') : '(none → auto pistol)';
@@ -76,7 +93,7 @@ export class Forge {
       (buyable.length ? `\n\nStore (demo: free): ${buyable.join(', ')}  — [B] acquire next` : '');
 
     this.hint.text =
-      '[1-9] craft blueprint into loadout   [C] change character   [X] clear loadout\n' +
+      '[↑↓] browse   [1-9] craft blueprint into loadout   [C] change character   [X] clear loadout\n' +
       '[Enter] / Fire  →  DESCEND';
 
     // Layout: title top, board left-aligned centre, hint bottom.
@@ -87,7 +104,36 @@ export class Forge {
     this.hint.anchor.set(0.5, 1);
     this.hint.position.set(w / 2, h - 24);
 
+    this.renderCompareCard(m, w);
+
     this.view.visible = true;
+  }
+
+  /** design/10's loadout-detail decision: the browse cursor's blueprint vs whichever
+   * loadout entry shares its weapon kind (empty loadout falls back to the auto-equip
+   * pair, mirroring the board's own "(none → auto pistol)" text). Hidden when there's
+   * no same-kind comparator (e.g. loadout already has 2 of the other kind) — nothing
+   * useful to diff against. */
+  private renderCompareCard(m: MetaState, w: number) {
+    const candidateId = this.order[this.selectedIndex];
+    const candidate = candidateId ? WEAPON_SPECS[BLUEPRINT_CATALOG[candidateId]!.weaponId] : undefined;
+    const effectiveLoadout = m.loadout.length ? m.loadout : PLAYER_BASE.startWeapons.map((s) => s.name);
+    const equipped = candidate ? equippedSpecOfKind(effectiveLoadout, candidate.kind) : undefined;
+    const rows = candidate && equipped ? buildCompareRows(equipped, candidate) : null;
+
+    if (!candidate || !equipped || !rows) {
+      this.compareCard.hide();
+      return;
+    }
+    this.compareCard.set({
+      w: Math.min(420, w - 48),
+      leftName: `Equipped: ${equipped.id}`,
+      leftColor: RARITY_COLORS[RARITY_TIERS[equipped.rarity].colorKey],
+      rightName: `Candidate: ${candidate.id}`,
+      rightColor: RARITY_COLORS[RARITY_TIERS[candidate.rarity].colorKey],
+      rows,
+    });
+    this.compareCard.view.position.set(w / 2 - this.compareCard.view.width / 2, this.hint.y - 140);
   }
 
   hide() {
