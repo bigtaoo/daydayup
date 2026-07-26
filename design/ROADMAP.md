@@ -124,7 +124,7 @@ Still not done, on purpose (scoped out of this pass, not forgotten): (1) the rea
 
 - **5.1 Audio finish** (11): WeChat `InnerAudioContext` backend + real/authored SFX (license-checked) + music/ambience. (Web placeholder seam already ships.)
 - **5.2 UI/HUD** (10): real Pixi widget kit (bars, toasts, compare card, minimap), settings incl. SFX/music volume.
-- **5.3 Art pipeline** (12/13): port funny's `.tao` editor, author the orb-core rig + character atlases, replace the Graphics placeholders; concrete element/biome palette.
+- **5.3 Art pipeline** (12/13): ✅ `.tao` editor ported (`tools/animator`, 2026-07-26) — instantiable multi-rig `Rig` class (was funny's static 11-bone humanoid), the orb-core's own 6-bone `RigDef` (root/shell/eye/belly/2 weapon sockets, no arms/legs/walk-cycle), and orb-core preset clips (hover-bob/lean/squash-stretch) replacing the humanoid idle/walk/attack/hurt/death/spawn. Still open: author the orb-core + character atlases with real art, replace the Graphics placeholders, concrete element/biome palette — all blocked on real art assets, not tooling.
 - **5.4 Fidelity roadmap** (01): normal-map lighting → post-processing → particles → shaders.
 - **5.5 WeChat device verification** (04): lowest base library, low-end frame rate, real-device touch, WebGL2 fallback.
 

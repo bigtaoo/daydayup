@@ -1,0 +1,23 @@
+{
+  "name": "daydayup-animator",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "DayDayUp orb-core skeletal animator — authors .tao rig/animation content (design/12, ported from funny/tools/animator)",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "jszip": "^3.10.1",
+    "pixi.js": "^7.4.2"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7",
+    "vitest": "^4.1.10"
+  }
+}

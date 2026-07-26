@@ -12,6 +12,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--prefix", "tools/map-editor"],
       "port": 5175
+    },
+    {
+      "name": "animator-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "tools/animator"],
+      "port": 5176
     }
   ]
 }

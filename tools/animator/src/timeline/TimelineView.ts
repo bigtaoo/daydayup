@@ -1,0 +1,458 @@
+import type { EventBus, AppEvents } from '../core/EventBus';
+import type { AppState } from '../core/AppState';
+import type { AnimationController } from '../animation/AnimationController';
+import type { CommandManager, Command } from '../core/CommandManager';
+import type { AnimationClip, BoneKeyframe, EasingType, Keyframe } from '../core/types';
+import type { Rig } from '../skeleton/Rig';
+import { ContextMenu } from './ContextMenu';
+
+const ROW_H   = 26;
+const RULER_H = 20;
+
+// ── Commands ──────────────────────────────────────────────────────────────────
+
+class SetEasingCommand implements Command {
+  readonly label: string;
+  private old: EasingType | undefined;
+  constructor(
+    private readonly animCtrl: AnimationController,
+    private readonly time: number,
+    private readonly boneId: string,
+    private readonly easing: EasingType,
+  ) {
+    this.label = `Set easing ${boneId} @ ${time.toFixed(3)}s`;
+  }
+  execute(): void {
+    const kf = this.animCtrl.currentClip?.keyframes.find(k => Math.abs(k.time - this.time) < 0.001);
+    this.old = kf?.bones.get(this.boneId)?.easing;
+    this.animCtrl.updateKeyframeProp(this.time, this.boneId, { easing: this.easing });
+  }
+  undo(): void {
+    this.animCtrl.updateKeyframeProp(this.time, this.boneId, { easing: this.old });
+  }
+}
+
+class DeleteKeyframeCommand implements Command {
+  readonly label: string;
+  private deleted: Map<string, BoneKeyframe> | null = null;
+  constructor(
+    private readonly animCtrl: AnimationController,
+    private readonly time: number,
+  ) {
+    this.label = `Delete Keyframe @ ${time.toFixed(3)}s`;
+  }
+  execute(): void {
+    const kf = this.animCtrl.currentClip?.keyframes.find(k => Math.abs(k.time - this.time) < 0.001);
+    if (kf) this.deleted = new Map(Array.from(kf.bones.entries()).map(([id, b]) => [id, { ...b }]));
+    this.animCtrl.deleteKeyframeAt(this.time);
+  }
+  undo(): void {
+    if (this.deleted) this.animCtrl.addKeyframeAt(this.time, this.deleted);
+  }
+}
+
+// ── TimelineView ──────────────────────────────────────────────────────────────
+
+export class TimelineView {
+  private readonly ctx: CanvasRenderingContext2D;
+  private readonly contextMenu: ContextMenu;
+
+  private isScrubbing  = false;
+  private isDraggingKf = false;
+  private dragKfTime   = 0;
+
+  private scrollY      = 0;
+  private isDraggingScroll = false;
+  private scrollDragStartY = 0;
+  private scrollDragStartScrollY = 0;
+
+  /** Set to true by events that require a canvas redraw; cleared after draw. */
+  private dirty = true;
+  /** Set to true by events that require label DOM rebuild. */
+  private labelsDirty = true;
+
+  private readonly vscrollEl: HTMLElement;
+  private readonly vscrollThumb: HTMLElement;
+
+  constructor(
+    private readonly canvasEl: HTMLCanvasElement,
+    private readonly labelContainer: HTMLElement,
+    bus: EventBus<AppEvents>,
+    private readonly state: AppState,
+    private readonly animCtrl: AnimationController,
+    private readonly cmdManager: CommandManager,
+    private readonly rig: Rig,
+  ) {
+    this.ctx = canvasEl.getContext('2d')!;
+    this.contextMenu = new ContextMenu();
+
+    this.vscrollEl    = document.getElementById('tl-vscroll')!;
+    this.vscrollThumb = document.getElementById('tl-vscroll-thumb')!;
+
+    canvasEl.addEventListener('mousedown',   e => this.onMouseDown(e));
+    canvasEl.addEventListener('mousemove',   e => this.onMouseMove(e));
+    canvasEl.addEventListener('mouseup',     e => this.onMouseUp(e));
+    canvasEl.addEventListener('mouseleave',  () => { this.isScrubbing = false; this.isDraggingKf = false; });
+    canvasEl.addEventListener('contextmenu', e => this.onContextMenu(e));
+    canvasEl.addEventListener('wheel',       e => this.onWheel(e), { passive: false });
+
+    this.vscrollThumb.addEventListener('mousedown', e => this.onScrollThumbDown(e));
+    this.vscrollEl.addEventListener('mousedown',    e => this.onScrollTrackClick(e));
+
+    bus.on('kf:change',   () => { this.dirty = true; this.labelsDirty = true; });
+    bus.on('time:change', () => { this.dirty = true; });
+    bus.on('anim:select', () => { this.dirty = true; this.labelsDirty = true; });
+    bus.on('bone:select', () => { this.dirty = true; this.labelsDirty = true; });
+  }
+
+  private get rowsContentH(): number {
+    return this.rig.timelineBones.length * ROW_H;
+  }
+
+  private get maxScrollY(): number {
+    const visibleRowsH = this.canvasEl.height - RULER_H;
+    return Math.max(0, this.rowsContentH - visibleRowsH);
+  }
+
+  private clampScroll(y: number): number {
+    return Math.max(0, Math.min(this.maxScrollY, y));
+  }
+
+  private applyScroll(y: number): void {
+    this.scrollY = this.clampScroll(y);
+    this.labelContainer.scrollTop = this.scrollY;
+    this.dirty = true;
+    this.updateScrollbar();
+  }
+
+  private updateScrollbar(): void {
+    const trackH = this.vscrollEl.clientHeight - RULER_H;
+    const total  = this.rowsContentH;
+    const visible = this.canvasEl.height - RULER_H;
+    if (total <= visible) {
+      this.vscrollThumb.style.display = 'none';
+      return;
+    }
+    this.vscrollThumb.style.display = '';
+    const ratio     = visible / total;
+    const thumbH    = Math.max(20, trackH * ratio);
+    const thumbTop  = RULER_H + (this.scrollY / this.maxScrollY) * (trackH - thumbH);
+    this.vscrollThumb.style.top    = `${thumbTop}px`;
+    this.vscrollThumb.style.height = `${thumbH}px`;
+  }
+
+  render(): void {
+    if (!this.dirty) return;
+    this.dirty = false;
+
+    const W = this.canvasEl.parentElement!.clientWidth;
+    const H = this.canvasEl.parentElement!.clientHeight;
+    if (this.canvasEl.width !== W || this.canvasEl.height !== H) {
+      this.canvasEl.width  = W;
+      this.canvasEl.height = H;
+      // Re-clamp after resize
+      this.scrollY = this.clampScroll(this.scrollY);
+    }
+
+    const clip = this.animCtrl.currentClip;
+    const dur  = clip?.duration ?? 0.5;
+
+    this.ctx.clearRect(0, 0, W, H);
+    this.ctx.fillStyle = '#1a1a2e';
+    this.ctx.fillRect(0, 0, W, H);
+
+    this.drawRuler(W, dur);
+    this.drawRows(W, clip, dur);
+    this.drawPlayhead(W, dur);
+    this.updateScrollbar();
+
+    if (this.labelsDirty) {
+      this.labelsDirty = false;
+      this.renderLabels(clip);
+    }
+  }
+
+  destroy(): void {
+    this.contextMenu.destroy();
+  }
+
+  // ── Drawing ────────────────────────────────────────────────────────────────
+
+  private drawRuler(W: number, dur: number): void {
+    this.ctx.fillStyle = '#2e2e46';
+    this.ctx.fillRect(0, 0, W, RULER_H);
+    this.ctx.strokeStyle = '#3a3a58';
+    this.ctx.lineWidth = 1;
+    this.ctx.beginPath(); this.ctx.moveTo(0, RULER_H); this.ctx.lineTo(W, RULER_H); this.ctx.stroke();
+
+    for (let i = 0; i <= 10; i++) {
+      const x = (i / 10) * W;
+      const t = (i / 10) * dur;
+      this.ctx.strokeStyle = '#6e6e8a';
+      this.ctx.beginPath(); this.ctx.moveTo(x, RULER_H - 8); this.ctx.lineTo(x, RULER_H); this.ctx.stroke();
+      this.ctx.fillStyle = '#89899a';
+      this.ctx.font = '9px monospace';
+      this.ctx.fillText(t.toFixed(2), x + 2, 13);
+    }
+  }
+
+  private drawRows(W: number, clip: AnimationClip | null, dur: number): void {
+    const H = this.canvasEl.height;
+    this.ctx.save();
+    this.ctx.beginPath();
+    this.ctx.rect(0, RULER_H, W, H - RULER_H);
+    this.ctx.clip();
+
+    this.rig.timelineBones.forEach((boneId, ri) => {
+      const y = RULER_H + ri * ROW_H - this.scrollY;
+      if (y + ROW_H < RULER_H || y > H) return;
+
+      this.ctx.fillStyle = ri % 2 === 0 ? '#1e1e30' : '#1a1a2e';
+      this.ctx.fillRect(0, y, W, ROW_H);
+      this.ctx.strokeStyle = '#2a2a40';
+      this.ctx.lineWidth = 1;
+      this.ctx.beginPath(); this.ctx.moveTo(0, y + ROW_H); this.ctx.lineTo(W, y + ROW_H); this.ctx.stroke();
+
+      if (!clip) return;
+
+      clip.keyframes.forEach(kf => {
+        const bkf = kf.bones.get(boneId);
+        if (!bkf) return;
+        const kx = (kf.time / Math.max(dur, 0.001)) * W;
+        const ky = y + ROW_H / 2;
+        const isSelected = this.state.selectedKfTime != null &&
+          Math.abs(kf.time - this.state.selectedKfTime) < 0.001;
+
+        const colors = getKfColors(bkf);
+        const mainColor = isSelected ? '#74c7ec' : colors[0];
+
+        // Diamond
+        this.ctx.fillStyle   = mainColor;
+        this.ctx.strokeStyle = '#000';
+        this.ctx.lineWidth   = 1;
+        this.ctx.beginPath();
+        this.ctx.moveTo(kx, ky - 6); this.ctx.lineTo(kx + 5, ky);
+        this.ctx.lineTo(kx, ky + 6); this.ctx.lineTo(kx - 5, ky);
+        this.ctx.closePath();
+        this.ctx.fill(); this.ctx.stroke();
+
+        // Multi-property indicator: small dots below the diamond when >1 type
+        if (!isSelected && colors.length > 1) {
+          const dotR = 2;
+          const startX = kx - (colors.length - 1) * (dotR * 2 + 1) / 2;
+          colors.slice(1).forEach((col, ci) => {
+            this.ctx.beginPath();
+            this.ctx.fillStyle = col;
+            this.ctx.arc(startX + ci * (dotR * 2 + 1), ky + 8, dotR, 0, Math.PI * 2);
+            this.ctx.fill();
+          });
+        }
+      });
+    });
+
+    this.ctx.restore();
+  }
+
+  private drawPlayhead(W: number, dur: number): void {
+    const px = (this.state.currentTime / Math.max(dur, 0.001)) * W;
+    const H  = this.canvasEl.height;
+    // Ruler marker (always visible)
+    this.ctx.fillStyle = '#f38ba8';
+    this.ctx.fillRect(px - 4, 0, 8, RULER_H);
+    // Line through scrollable rows area
+    this.ctx.save();
+    this.ctx.beginPath();
+    this.ctx.rect(0, RULER_H, W, H - RULER_H);
+    this.ctx.clip();
+    this.ctx.strokeStyle = '#f38ba8';
+    this.ctx.lineWidth   = 2;
+    this.ctx.beginPath(); this.ctx.moveTo(px, RULER_H); this.ctx.lineTo(px, H); this.ctx.stroke();
+    this.ctx.restore();
+  }
+
+  private renderLabels(clip: AnimationClip | null): void {
+    this.labelContainer.innerHTML = '<div class="tl-label-spacer"></div>';
+
+    this.rig.timelineBones.forEach(boneId => {
+      const bone  = this.rig.boneMap.get(boneId);
+      const hasKf = clip?.keyframes.some(kf => kf.bones.has(boneId)) ?? false;
+
+      const row = document.createElement('div');
+      row.className = 'tl-label-row' + (boneId === this.state.selectedBone ? ' active' : '');
+      row.innerHTML = `<div class="tl-label-dot" style="opacity:${hasKf ? 1 : 0.3}"></div>${bone?.label ?? boneId}`;
+      row.addEventListener('click', () => this.state.setSelectedBone(boneId));
+      this.labelContainer.appendChild(row);
+    });
+  }
+
+  // ── Mouse ──────────────────────────────────────────────────────────────────
+
+  private getTimeFromX(clientX: number): number {
+    const rect = this.canvasEl.getBoundingClientRect();
+    const x    = clientX - rect.left;
+    const dur  = this.animCtrl.currentClip?.duration ?? 0.5;
+    return Math.max(0, Math.min(dur, (x / this.canvasEl.width) * dur));
+  }
+
+  private getRowFromY(clientY: number): { ri: number; boneId: string } | null {
+    const rect = this.canvasEl.getBoundingClientRect();
+    const y    = clientY - rect.top;
+    const ri   = Math.floor((y - RULER_H + this.scrollY) / ROW_H);
+    if (ri < 0 || ri >= this.rig.timelineBones.length) return null;
+    return { ri, boneId: this.rig.timelineBones[ri] };
+  }
+
+  private onWheel(e: WheelEvent): void {
+    e.preventDefault();
+    this.applyScroll(this.scrollY + e.deltaY);
+  }
+
+  private onScrollThumbDown(e: MouseEvent): void {
+    if (e.button !== 0) return;
+    e.stopPropagation();
+    e.preventDefault();
+    this.isDraggingScroll    = true;
+    this.scrollDragStartY    = e.clientY;
+    this.scrollDragStartScrollY = this.scrollY;
+    this.vscrollThumb.classList.add('dragging');
+
+    const onMove = (ev: MouseEvent) => {
+      if (!this.isDraggingScroll) return;
+      const trackH  = this.vscrollEl.clientHeight - RULER_H;
+      const visible = this.canvasEl.height - RULER_H;
+      const total   = this.rowsContentH;
+      const thumbH  = Math.max(20, trackH * (visible / total));
+      const dy      = ev.clientY - this.scrollDragStartY;
+      const ratio   = dy / (trackH - thumbH);
+      this.applyScroll(this.scrollDragStartScrollY + ratio * this.maxScrollY);
+    };
+    const onUp = () => {
+      this.isDraggingScroll = false;
+      this.vscrollThumb.classList.remove('dragging');
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup',   onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup',   onUp);
+  }
+
+  private onScrollTrackClick(e: MouseEvent): void {
+    if (e.target === this.vscrollThumb) return;
+    const rect    = this.vscrollEl.getBoundingClientRect();
+    const y       = e.clientY - rect.top - RULER_H;
+    const trackH  = this.vscrollEl.clientHeight - RULER_H;
+    const ratio   = Math.max(0, Math.min(1, y / trackH));
+    this.applyScroll(ratio * this.maxScrollY);
+  }
+
+  private findKfAt(clientX: number, clientY: number): { kf: Keyframe; boneId: string } | null {
+    const rect = this.canvasEl.getBoundingClientRect();
+    // Ignore clicks in the ruler area
+    if (clientY - rect.top < RULER_H) return null;
+
+    const row = this.getRowFromY(clientY);
+    if (!row) return null;
+    const clip = this.animCtrl.currentClip;
+    if (!clip) return null;
+
+    const x   = clientX - rect.left;
+    const dur = clip.duration;
+    const { boneId } = row;
+
+    for (const kf of clip.keyframes) {
+      if (!kf.bones.has(boneId)) continue;
+      const kx = (kf.time / Math.max(dur, 0.001)) * this.canvasEl.width;
+      if (Math.abs(kx - x) < 8) return { kf, boneId };
+    }
+    return null;
+  }
+
+  private onMouseDown(e: MouseEvent): void {
+    if (e.button !== 0) return;
+
+    const hit = this.findKfAt(e.clientX, e.clientY);
+    if (hit) {
+      this.isDraggingKf = true;
+      this.dragKfTime   = hit.kf.time;
+      this.state.setSelectedKfTime(hit.kf.time);
+      this.state.setCurrentTime(hit.kf.time);
+      this.state.setSelectedBone(hit.boneId);
+    } else {
+      this.isScrubbing = true;
+      const row = this.getRowFromY(e.clientY);
+      if (row) this.state.setSelectedBone(row.boneId);
+      const t = this.getTimeFromX(e.clientX);
+      this.state.setCurrentTime(t);
+      this.state.setSelectedKfTime(null);
+    }
+  }
+
+  private onMouseMove(e: MouseEvent): void {
+    if (this.isDraggingKf && !this.state.isPlaying) {
+      const newT = this.getTimeFromX(e.clientX);
+      this.animCtrl.moveKeyframe(this.dragKfTime, newT);
+      this.dragKfTime = newT;
+      this.state.setCurrentTime(newT);
+      // kf:change sets labelsDirty=true, but during drag labels don't change
+      this.labelsDirty = false;
+    } else if (this.isScrubbing && !this.state.isPlaying) {
+      const t = this.getTimeFromX(e.clientX);
+      this.state.setCurrentTime(t);
+      this.state.setSelectedKfTime(null);
+    }
+  }
+
+  private onMouseUp(_e: MouseEvent): void {
+    if (this.isDraggingKf) {
+      // Already mutated via moveKeyframe; commit as Command if time actually changed
+      this.isDraggingKf = false;
+    }
+    this.isScrubbing = false;
+  }
+
+  private onContextMenu(e: MouseEvent): void {
+    e.preventDefault();
+    const hit = this.findKfAt(e.clientX, e.clientY);
+    if (!hit) return;
+
+    const { kf, boneId } = hit;
+    const easings: EasingType[] = ['linear', 'ease-in', 'ease-out', 'ease-in-out', 'step'];
+    const current = kf.bones.get(boneId)?.easing ?? 'linear';
+
+    this.contextMenu.show(e.clientX, e.clientY, [
+      { label: '─── Easing ───', disabled: true, action: () => {} },
+      ...easings.map(eas => ({
+        label:  (eas === current ? '✓ ' : '  ') + eas,
+        action: () => this.cmdManager.execute(new SetEasingCommand(this.animCtrl, kf.time, boneId, eas)),
+      })),
+      { label: '─────────────', disabled: true, action: () => {} },
+      { label: 'Copy keyframe',  action: () => this.animCtrl.copyKeyframe(kf.time) },
+      { label: 'Paste keyframe', action: () => this.animCtrl.pasteKeyframe(this.state.currentTime) },
+      { label: 'Delete keyframe', action: () => this.cmdManager.execute(new DeleteKeyframeCommand(this.animCtrl, kf.time)) },
+    ]);
+  }
+}
+
+// ── Keyframe colour helpers ───────────────────────────────────────────────────
+
+/**
+ * Returns an ordered list of hex colours for the property types present in a
+ * BoneKeyframe.  The first element drives the diamond fill; extra elements are
+ * rendered as small indicator dots below the diamond.
+ *
+ * Colour legend:
+ *   #f9e2af (orange) – translate offset
+ *   #89b4fa (blue)   – scale
+ *   #89899a (gray)   – rotation only / default
+ */
+function getKfColors(bkf: BoneKeyframe): string[] {
+  const out: string[] = [];
+
+  if ((bkf.translateX ?? 0) !== 0 || (bkf.translateY ?? 0) !== 0)       out.push('#f9e2af');
+  if ((bkf.scaleX    ?? 1) !== 1  || (bkf.scaleY    ?? 1) !== 1)        out.push('#89b4fa');
+
+  // Rotation-only (or completely empty) → grey
+  if (out.length === 0) out.push('#89899a');
+
+  return out;
+}
