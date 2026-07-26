@@ -1,10 +1,11 @@
-import { Container, Graphics, Text } from 'pixi.js';
+import { Container, Text } from 'pixi.js';
 import {
   BLUEPRINT_CATALOG, SKIN_DEFS, DAMAGE_TYPES, PLAYER_BASE,
   type WeaponBlueprint, type DamageType,
 } from '@dd/engine';
 import type { MetaState } from '../meta';
 import { bankTotal, canAfford, isUnlocked, purchasableBlueprints } from '../meta';
+import { Panel } from './ui/widgets';
 
 /**
  * The forge outpost (design/14, ROADMAP 2.2/2.3) — the between-run hub where the player
@@ -16,7 +17,7 @@ import { bankTotal, canAfford, isUnlocked, purchasableBlueprints } from '../meta
  */
 export class Forge {
   readonly view = new Container();
-  private bg = new Graphics();
+  private panel = new Panel({ alpha: 0.82 });
   private title: Text;
   private body: Text;
   private hint: Text;
@@ -28,7 +29,7 @@ export class Forge {
     this.title = new Text({ text: 'FORGE OUTPOST', style: { fill: 0xf7fafc, fontSize: 34, fontWeight: 'bold', fontFamily: 'sans-serif' } });
     this.body = new Text({ text: '', style: { fill: 0xcbd5e0, fontSize: 16, fontFamily: 'monospace', lineHeight: 22 } });
     this.hint = new Text({ text: '', style: { fill: 0x90cdf4, fontSize: 15, fontFamily: 'monospace', lineHeight: 20 } });
-    this.view.addChild(this.bg, this.title, this.body, this.hint);
+    this.view.addChild(this.panel.view, this.title, this.body, this.hint);
     this.view.eventMode = 'static';
     this.view.visible = false;
   }
@@ -40,8 +41,7 @@ export class Forge {
   }
 
   render(m: MetaState, w: number, h: number) {
-    this.bg.clear();
-    this.bg.rect(0, 0, w, h).fill({ color: 0x0b0e14, alpha: 0.82 });
+    this.panel.layout(w, h);
 
     // Material bank — the five elemental kinds (design/14), summed across every rolled tier.
     const bank = DAMAGE_TYPES.map((e) => `${short(e)} ${bankTotal(m, e)}`).join('   ');

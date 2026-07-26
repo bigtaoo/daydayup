@@ -1,4 +1,5 @@
-import { Container, Graphics, Text } from 'pixi.js';
+import { Container, Text } from 'pixi.js';
+import { Panel } from './ui/widgets';
 
 // Render-side screen overlay: the menu / victory / defeat panels that wrap a run
 // (design/10 screen flow). It is pure presentation — it reads nothing from the
@@ -6,7 +7,7 @@ import { Container, Graphics, Text } from 'pixi.js';
 // `ui` layer, on top of the HUD.
 export class Screens {
   readonly view = new Container();
-  private bg = new Graphics();
+  private panel = new Panel({ alpha: 0.72 });
   private title: Text;
   private sub: Text;
   private hint: Text;
@@ -29,7 +30,7 @@ export class Screens {
     });
     for (const t of [this.title, this.sub, this.hint]) t.anchor.set(0.5);
 
-    this.view.addChild(this.bg, this.title, this.sub, this.hint);
+    this.view.addChild(this.panel.view, this.title, this.sub, this.hint);
     // Full-panel is clickable/tappable on web; the fire/jump fallback covers WeChat.
     this.view.eventMode = 'static';
     this.view.on('pointerdown', () => this.onConfirm?.());
@@ -37,8 +38,7 @@ export class Screens {
   }
 
   private layout(w: number, h: number) {
-    this.bg.clear();
-    this.bg.rect(0, 0, w, h).fill({ color: 0x0b0e14, alpha: 0.72 });
+    this.panel.layout(w, h);
     const cx = w / 2;
     const cy = h / 2;
     this.title.position.set(cx, cy - 60);

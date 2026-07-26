@@ -13,6 +13,8 @@ import {
   type EngineConfig,
   type MatchStart,
 } from '@dd/engine';
+import { toFpGrid } from '@dd/engine/content/convert';
+import type { ArenaMap } from '@dd/engine/content/arenas';
 import { CoopSession } from '../net/CoopSession';
 import { WebSocketTransport, LaggyTransport, type Transport } from '../net/transport';
 import { findMatch } from '../net/matchmaking';
@@ -22,12 +24,19 @@ import {
   unlockBlueprint, acquireBlueprint, purchasableBlueprints,
   createWebMetaStore, type MetaState, type MetaStore,
 } from '../meta';
+import {
+  defaultSettingsState, createWebSettingsStore, effectiveVolume,
+  type SettingsState, type SettingsStore,
+} from '../settings';
 import { CONFIG, ELEMENT_COLORS, rarityColor } from './config';
 import { Layers } from './layers';
 import { Entity } from './Entity';
 import { Scene } from './Scene';
 import { Screens } from './Screens';
 import { Forge } from './Forge';
+import { Settings } from './Settings';
+import { Bar, ToastQueue, Button } from './ui/widgets';
+import { Minimap, type MinimapPlayer } from './ui/Minimap';
 import { CommandBuilder } from './CommandBuilder';
 import { AllyController } from './AllyController';
 import { fpToPx, bradToRad } from './coords';
@@ -49,7 +58,7 @@ const FX_LIFE_MS = 170; // flash lifetime
 // Render-side run phases (design/10). The engine only knows idle/playing/gameover;
 // the forge outpost (the between-run hub, design/14) and the result screens live here in
 // the shell, along with score (derived from events).
-type Phase = 'forge' | 'playing' | 'victory' | 'defeat';
+type Phase = 'forge' | 'playing' | 'victory' | 'defeat' | 'settings';
 
 export class Game {
   private app: Application;
@@ -61,9 +70,23 @@ export class Game {
   private engine: GameEngine | null = null;
   private builder: CommandBuilder;
 
-  private hud!: Text;
+  // In-match HUD (design/10 widget kit): composed bars/text/toast instead of one debug
+  // Text blob. `hudView` is the visibility root every phase transition toggles.
+  private hudView = new Container();
+  private hpBar!: Bar;
+  private shieldBar!: Bar;
+  private cdBar!: Bar;
+  private weaponText!: Text;
+  private infoText!: Text;
+  private promptText!: Text;
+  private allyText!: Text;
+  private toasts!: ToastQueue;
+  private minimap!: Minimap;
+  private settingsBtn!: Button;
+
   private screens = new Screens();
   private forge = new Forge();
+  private settingsScreen = new Settings();
   private pillars: Entity[] = [];
 
   // Persistent between-run meta (design/14): loaded at boot, saved on every change. The
@@ -71,6 +94,11 @@ export class Game {
   // (skinId, loadout) at start and banks materials back into it on a successful extract.
   private store: MetaStore = createWebMetaStore();
   private meta: MetaState = defaultMetaState();
+
+  // Persistent client-side settings (design/10/11: master/SFX/music volume + mute).
+  // Reached from the forge outpost only — see openSettings/closeSettings.
+  private settingsStore: SettingsStore = createWebSettingsStore();
+  private settings: SettingsState = defaultSettingsState();
 
   private phase: Phase = 'forge';
   private acc = 0; // accumulated real time (ms) not yet consumed by a sim step
@@ -91,6 +119,14 @@ export class Game {
   private localOwner = 0;
   private coop = false;
   private online = false;
+  // `?arenaDemo=1` — a DEV-ONLY harness (not a real PvP entry point; matchmaking/
+  // buildArenaSpecs/anti-cheat are unwired end-to-end still, ROADMAP Phase 4 closeout
+  // note) that boots a tiny local synthetic ArenaMap so the PvP zone HUD row + Minimap
+  // (design/10) have real `state.zoneEnabled`/`arenaMap`/`zone` data to draw, since
+  // neither PvE (no multi-room floors yet) nor a real PvP match (no assembly entry
+  // point yet) can otherwise reach this code path in the browser. Reuses the coop bot-
+  // ally submit path to drive the second seat locally (see stepSim).
+  private arenaDemo = false;
   private matchBaseUrl = 'http://localhost:8788';
   private session: CoopSession | null = null;
   private readonly ally = new AllyController();
@@ -123,6 +159,7 @@ export class Game {
       if (q) this.meta = selectCharacter(this.meta, q);
       this.coop = params.get('coop') === '1'; // dev toggle: bring a local bot ally
       this.online = params.get('online') === '1'; // ROADMAP 3.3: real matchmade co-op
+      this.arenaDemo = params.get('arenaDemo') === '1'; // dev toggle: synthetic local PvP arena
       const mm = params.get('mm'); // override the matchsvc origin (default localhost:8788)
       if (mm) this.matchBaseUrl = mm;
       const lag = Number(params.get('lag')); // dev: inject synthetic one-way latency (ms)
@@ -130,6 +167,21 @@ export class Game {
     }
     app.stage.eventMode = 'static'; // let the overlay receive pointer taps (web)
     app.stage.addChild(this.layers.root);
+
+    // Persisted volume takes effect immediately, not just after the first settings edit.
+    this.settings = this.settingsStore.load();
+    this.applyAudioSettings();
+    this.settingsScreen.onChange = (s) => {
+      this.settings = s;
+      this.settingsStore.save(s);
+      this.applyAudioSettings();
+    };
+    this.settingsScreen.onBack = () => this.closeSettings();
+  }
+
+  private applyAudioSettings() {
+    this.audio.setSfxVolume(effectiveVolume(this.settings, 'sfx'));
+    this.audio.setMusicVolume(effectiveVolume(this.settings, 'music'));
   }
 
   start() {
@@ -137,7 +189,7 @@ export class Game {
     // event), so nothing static is built here — only the fixed HUD overlay.
     this.buildHud();
 
-    this.layers.ui.addChild(this.forge.view, this.screens.view);
+    this.layers.ui.addChild(this.forge.view, this.screens.view, this.settingsScreen.view);
     this.screens.onConfirm = () => this.confirm();
 
     this.input.attach(this.app.canvas as unknown as InputCanvas);
@@ -148,9 +200,14 @@ export class Game {
     };
     // Forge outpost controls (web keyboard, design/14). A touch forge is a follow-up —
     // like the touch INTERACT control — so this is guarded to the DOM and only acts in
-    // the forge phase. Digits craft, C cycles character, X clears, B acquires, Enter descends.
+    // the forge phase. Digits craft, C cycles character, X clears, B acquires, Enter descends,
+    // O opens settings. Escape/O closes settings again (a touch settings entry is the
+    // SETTINGS button built in buildHud, reachable on WeChat too).
     if (typeof window !== 'undefined') {
-      window.addEventListener('keydown', (e) => this.onForgeKey(e.code));
+      window.addEventListener('keydown', (e) => {
+        this.onForgeKey(e.code);
+        if (this.phase === 'settings' && (e.code === 'Escape' || e.code === 'KeyO')) this.closeSettings();
+      });
     }
 
     this.showForge();
@@ -219,13 +276,62 @@ export class Game {
   }
 
   private buildHud() {
-    this.hud = new Text({
+    this.hpBar = new Bar({ w: 160, h: 14, fillColor: 0xf56565, trackColor: 0x2a1620, label: true });
+    this.shieldBar = new Bar({ w: 160, h: 9, fillColor: CONFIG.colors.shield, label: false });
+    this.cdBar = new Bar({ w: 90, h: 7, fillColor: 0x63b3ed, label: false });
+    const smallStyle = { fill: 0xcbd5e0, fontSize: 13, fontFamily: 'monospace' as const };
+    this.weaponText = new Text({ text: '', style: { fill: 0xe2e8f0, fontSize: 14, fontFamily: 'monospace' } });
+    this.infoText = new Text({ text: '', style: smallStyle });
+    this.allyText = new Text({ text: '', style: smallStyle });
+    this.promptText = new Text({
       text: '',
-      style: { fill: 0xe2e8f0, fontSize: 15, fontFamily: 'monospace', lineHeight: 20 },
+      style: { fill: 0x68d391, fontSize: 15, fontFamily: 'monospace', fontWeight: 'bold' },
     });
-    this.hud.x = 12;
-    this.hud.y = 10;
-    this.layers.ui.addChild(this.hud);
+    this.toasts = new ToastQueue({ w: 220 });
+
+    this.hpBar.view.position.set(12, 10);
+    this.shieldBar.view.position.set(12, 28);
+    this.weaponText.position.set(12, 44);
+    this.cdBar.view.position.set(12, 64);
+    this.infoText.position.set(12, 78);
+    this.allyText.position.set(12, 96);
+    this.promptText.position.set(12, 114);
+
+    this.hudView.addChild(
+      this.hpBar.view, this.shieldBar.view, this.weaponText, this.cdBar.view,
+      this.infoText, this.allyText, this.promptText, this.toasts.view,
+    );
+    this.layers.ui.addChild(this.hudView);
+
+    // PvP minimap (design/10 "room progress") — hidden unless state.zoneEnabled
+    // (updateHud). Top-right, inset enough to keep the WeChat capsule corner clear
+    // (design/10 layout note).
+    this.minimap = new Minimap({ w: 140, h: 140 });
+    this.layers.ui.addChild(this.minimap.view);
+
+    // Settings entry (design/10) — only shown in the forge phase (showForge/beginRun).
+    this.settingsBtn = new Button('SETTINGS', { w: 110, h: 30, fontSize: 12 });
+    this.settingsBtn.onTap = () => this.openSettings();
+    this.settingsBtn.view.visible = false;
+    this.layers.ui.addChild(this.settingsBtn.view);
+
+    const { w, h } = this.screenSize();
+    this.toasts.view.position.set(w / 2 - 110, h * 0.22);
+    this.minimap.view.position.set(w - 140 - 20, 60);
+    this.settingsBtn.view.position.set(w - 130, h - 50);
+  }
+
+  private openSettings() {
+    if (this.phase !== 'forge') return;
+    this.phase = 'settings';
+    this.forge.hide();
+    this.settingsBtn.view.visible = false;
+    const { w, h } = this.screenSize();
+    this.settingsScreen.show(w, h, this.settings);
+  }
+
+  private closeSettings() {
+    this.showForge();
   }
 
   // ---- Run lifecycle ----
@@ -234,10 +340,13 @@ export class Game {
   // blueprints / loadout / character); Fire or Enter descends into a run.
   private showForge() {
     this.phase = 'forge';
-    this.hud.visible = false;
+    this.hudView.visible = false;
     this.screens.hide();
+    this.settingsScreen.hide();
     const { w, h } = this.screenSize();
     this.forge.render(this.meta, w, h);
+    this.settingsBtn.view.position.set(w - 130, h - 50);
+    this.settingsBtn.view.visible = true;
   }
 
   // Apply a forge control (web keyboard). Mutates meta through the pure forge
@@ -259,6 +368,9 @@ export class Game {
     } else if (code === 'KeyB') {
       const buyable = purchasableBlueprints(this.meta);
       if (buyable[0]) next = acquireBlueprint(this.meta, buyable[0]); // demo: free grant (2.4 scaffold)
+    } else if (code === 'KeyO') {
+      this.openSettings();
+      return;
     } else if (code === 'Enter' || code === 'NumpadEnter') {
       this.confirm();
       return;
@@ -288,12 +400,21 @@ export class Game {
     this.pillars.length = 0;
     this.score = 0;
     this.acc = 0;
+    this.settingsBtn.view.visible = false;
 
     // Online co-op (ROADMAP 3.3): the run is driven off a real matchmade socket, not a
     // locally-owned engine. Hand off to the async connect path and enter `playing` — the
     // render loop idles (advanceOnline) until the server's match_start builds the engine.
     if (this.online) {
       this.beginOnlineRun();
+      return;
+    }
+
+    // `?arenaDemo=1` (dev-only, see the field's doc comment) — a synthetic local PvP
+    // arena instead of the PvE dungeon, purely so the zone HUD row + Minimap have real
+    // data to draw and can be eyeballed in a browser.
+    if (this.arenaDemo) {
+      this.beginArenaDemoRun();
       return;
     }
 
@@ -326,7 +447,34 @@ export class Game {
     // spawn, and buildRoom draws the room then. Priming now would spawn the view at the
     // placeholder centre and make it visibly slide to the room spawn.
     this.phase = 'playing';
-    this.hud.visible = true;
+    this.hudView.visible = true;
+    this.forge.hide();
+    this.screens.hide();
+  }
+
+  /** Dev-only (see `arenaDemo` field doc comment): a tiny synthetic 3-room ArenaMap +
+   * two local seats on distinct teams. Unlike dungeon mode, arena rooms are all
+   * co-resident from tick 0 (ROADMAP 4.2b) — no `room_enter` event ever fires to prime
+   * the view, so `buildRoom` is called once here directly. The second seat is driven by
+   * the existing coop bot-ally submit path (stepSim), not a real opponent. */
+  private beginArenaDemoRun() {
+    const map = buildArenaDemoMap();
+    const px = (grid: number) => fpToPx(toFpGrid(grid));
+    this.engine = createGameEngine({
+      seed: SEED_BASE + this.runCount,
+      worldW: PLACEHOLDER_WORLD,
+      worldH: PLACEHOLDER_WORLD,
+      waves: [],
+      players: [
+        { skinId: this.meta.selectedSkin, teamId: 0, start: [px(5), px(5)] }, // room A centre
+        { skinId: this.allySkinId(), teamId: 1, start: [px(5), px(35)] }, // room C centre
+      ],
+      arena: map,
+    });
+    this.runCount++;
+    this.buildRoom(this.engine.state);
+    this.phase = 'playing';
+    this.hudView.visible = true;
     this.forge.hide();
     this.screens.hide();
   }
@@ -343,7 +491,7 @@ export class Game {
       this.store.save(this.meta);
     }
     this.phase = 'victory';
-    this.hud.visible = false;
+    this.hudView.visible = false;
     this.score += CONFIG.score.victory;
     const { w, h } = this.screenSize();
     this.screens.show(w, h, 'EXTRACTED',
@@ -355,7 +503,7 @@ export class Game {
     const s = this.activeState();
     const floor = s ? s.floorIndex + 1 : 0;
     this.phase = 'defeat';
-    this.hud.visible = false;
+    this.hudView.visible = false;
     const { w, h } = this.screenSize();
     this.screens.show(w, h, 'DEFEAT',
       `You fell on floor ${floor}/${EMBER_DUNGEON.floorCount}.   The floor's materials were lost.   Score ${this.score}`,
@@ -419,7 +567,7 @@ export class Game {
     this.updateFx(dt);
     this.updateCamera(alpha);
     if (this.phase === 'playing') {
-      this.updateHud();
+      this.updateHud(dt);
       // Keep the confirm edge fresh so arriving on a result screen with fire still
       // held doesn't instantly restart (the press must be released and re-issued).
       this.prevFire = this.input.read().firing;
@@ -437,10 +585,11 @@ export class Game {
 
     const frame = s.tick + 1;
     engine.submit(this.builder.build(frame, this.localOwner, playerPx, cam));
-    // Local co-op (ROADMAP 3.1): every non-local seat is driven by the bot ally, whose
-    // command goes through the exact same submit path a networked teammate's would — the
-    // engine can't tell a local bot from a remote player.
-    if (this.coop) {
+    // Local co-op (ROADMAP 3.1) — and the `?arenaDemo=1` dev harness, which reuses this
+    // exact path: every non-local seat is driven by the bot ally, whose command goes
+    // through the exact same submit path a networked teammate's would — the engine
+    // can't tell a local bot from a remote player.
+    if (this.coop || this.arenaDemo) {
       for (let owner = 0; owner < s.players.length; owner++) {
         if (owner !== this.localOwner) engine.submit(this.ally.build(s, owner, this.localOwner, frame));
       }
@@ -467,7 +616,8 @@ export class Game {
    */
   private async beginOnlineRun() {
     this.phase = 'playing';
-    this.hud.visible = true;
+    this.hudView.visible = true;
+    this.settingsBtn.view.visible = false;
     this.forge.hide();
     this.screens.hide();
     this.session?.close();
@@ -576,7 +726,7 @@ export class Game {
     this.scene.interpolate(1, dt);
     this.updateFx(dt);
     this.updateCamera(1);
-    this.updateHud();
+    this.updateHud(dt);
     this.prevFire = this.input.read().firing;
 
     if (s.phase === 'gameover') {
@@ -638,6 +788,7 @@ export class Game {
             case 'heal':
               this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupHeal, 20);
               cues.add('pickup.heal');
+              this.toasts.push('+1 HP', CONFIG.colors.pickupHeal);
               break;
             case 'weapon': {
               // Flash in the dropped weapon's rarity colour (design/14) — the tier
@@ -646,6 +797,7 @@ export class Game {
               const c = spec ? rarityColor(spec) : CONFIG.colors.pickupWeapon;
               this.flash(fpToPx(e.gx), fpToPx(e.gy), c, 24);
               cues.add('pickup.weapon');
+              this.toasts.push(spec ? spec.name : 'New weapon', c);
               // Finding a catalogued weapon permanently unlocks its forge blueprint
               // (design/14 "2–3 common blueprints drop from runs") — first-pass: any
               // catalogued pickup grants it. Meta is separate from the sim, so this
@@ -659,11 +811,13 @@ export class Game {
             case 'buff':
               this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupBuff, 22);
               cues.add('pickup.buff');
+              this.toasts.push(e.buffId ? `Buff: ${e.buffId}` : 'Buff', CONFIG.colors.pickupBuff);
               break;
             default: // material
               this.score += CONFIG.score.material;
               this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupMaterial, 16);
               cues.add('pickup.material');
+              this.toasts.push(`+${e.qty ?? 1} ${e.materialId ?? 'material'}`, CONFIG.colors.pickupMaterial);
           }
           break;
         case 'wave_clear':
@@ -784,56 +938,95 @@ export class Game {
     };
   }
 
-  private updateHud() {
+  private updateHud(dt: number) {
     const s = this.activeState();
     if (!s) return;
     const p = s.players[this.localOwner];
-    const w = p?.weapon;
-    const wname = w
-      ? `${w.spec.name} [${w.spec.rarity}] (${w.spec.kind}) dmg ${w.spec.damage}`
-      : 'none';
+
     const hp = p ? Math.max(0, p.hp) : 0;
     const maxHp = p ? p.maxHp : 0;
-    const bar = '♥'.repeat(hp) + '·'.repeat(Math.max(0, maxHp - hp));
-    // Shield pool (design/07 two-pool) — shown as a separate row of diamonds.
-    const sh = p ? Math.max(0, p.shield) : 0;
+    this.hpBar.set(hp, maxHp);
+    this.hpBar.update(dt);
+
+    // Shield pool (design/07 two-pool) — a separate bar, hidden for a zero-shield body.
     const maxSh = p ? p.maxShield : 0;
-    const shieldRow = maxSh > 0 ? `   SH ${'◆'.repeat(sh)}${'◇'.repeat(Math.max(0, maxSh - sh))}` : '';
-    const buffs = p && p.buffs.length ? `   Buffs ${p.buffs.length}` : '';
+    this.shieldBar.view.visible = maxSh > 0;
+    if (maxSh > 0) {
+      this.shieldBar.set(p ? Math.max(0, p.shield) : 0, maxSh);
+      this.shieldBar.update(dt);
+    }
 
-    // Dungeon progress (ROADMAP 1.3): floor / room within floor, plus the banked bag.
-    const floor = s.floorIndex + 1;
-    const room = Math.max(1, s.roomIndex + 1);
-    const rooms = s.floorStages.length; // total stages this floor (linear or branching)
-    const banked = this.totalBanked(s);
+    const weapon = p?.weapon;
+    this.weaponText.text = weapon
+      ? `${weapon.spec.name} [${weapon.spec.rarity}] (${weapon.spec.kind}) dmg ${weapon.spec.damage}`
+      : 'Weapon: none';
+    // Cooldown sweep (design/10): weapon.cooldownTicks counts DOWN from the spec's fixed
+    // cooldown (already whole ticks, sim-facing) to 0=ready — the bar fills as it recovers.
+    const maxCdTicks = weapon
+      ? Math.max(1, weapon.spec.kind === 'ranged' ? weapon.spec.fireRateTicks : weapon.spec.swingCooldownTicks)
+      : 1;
+    const readyTicks = weapon ? maxCdTicks - weapon.cooldownTicks : maxCdTicks;
+    this.cdBar.set(readyTicks, maxCdTicks);
+    this.cdBar.update(dt);
 
-    // Extraction prompt: only at a non-last-floor checkpoint (the last floor auto-
-    // extracts). A room with no enemies left and all waves exhausted IS the checkpoint.
-    const atCheckpoint = s.wavesExhausted && s.enemies.length === 0 && s.phase !== 'gameover';
-    const isLastFloor = floor >= EMBER_DUNGEON.floorCount;
-    const prompt = atCheckpoint && !isLastFloor
-      ? '\n▶ CHECKPOINT — hold [E] to EXTRACT (bank & leave) · tap [E] to DESCEND'
-      : '';
+    const buffs = p && p.buffs.length ? `  Buffs ${p.buffs.length}` : '';
+    if (s.zoneEnabled) {
+      // PvP arena (design/15) — a score/timer/team HUD row (design/10) instead of the
+      // dungeon floor/room line, which has no meaning here.
+      const zone = s.zone;
+      const alive = s.players.filter((pl) => pl.alive).length;
+      const escalation = zone?.escalation ? ` (+${zone.escalation}/tick)` : '';
+      this.infoText.text =
+        `${this.meta.selectedSkin}   PvP Arena   Zone stage ${zone?.stage ?? 0}${escalation}   ` +
+        `Alive ${alive}/${s.players.length}   Score ${this.score}${buffs}`;
+      this.promptText.text = '';
+    } else {
+      // Dungeon progress (ROADMAP 1.3): floor / room within floor, plus the banked bag.
+      const floor = s.floorIndex + 1;
+      const room = Math.max(1, s.roomIndex + 1);
+      const rooms = s.floorStages.length; // total stages this floor (linear or branching)
+      const banked = this.totalBanked(s);
+      this.infoText.text =
+        `${this.meta.selectedSkin}   Floor ${floor}/${EMBER_DUNGEON.floorCount}   Room ${room}/${rooms}   ` +
+        `Enemies ${s.enemies.length}   Banked ${banked}   Score ${this.score}${buffs}`;
+
+      // Extraction prompt: only at a non-last-floor checkpoint (the last floor auto-
+      // extracts). A room with no enemies left and all waves exhausted IS the checkpoint.
+      const atCheckpoint = s.wavesExhausted && s.enemies.length === 0 && s.phase !== 'gameover';
+      const isLastFloor = floor >= EMBER_DUNGEON.floorCount;
+      this.promptText.text = atCheckpoint && !isLastFloor
+        ? '▶ CHECKPOINT — hold [E] EXTRACT (bank & leave) · tap [E] DESCEND'
+        : '';
+    }
 
     // Co-op teammate line (ROADMAP 3.1): the ally seat's health + downed/revive state, so
     // the second player is legible and its bleedout is visible. Single-player omits it.
-    let coopRow = '';
-    if (this.coop) {
+    if (this.coop || this.arenaDemo) {
       const ally = s.players.find((_, i) => i !== this.localOwner);
-      if (ally) {
-        const st = ally.downed
-          ? `DOWNED — bleedout ${Math.ceil(ally.bleedoutTicks / 30)}s`
-          : `HP ${'♥'.repeat(Math.max(0, ally.hp))}`;
-        coopRow = `\nAlly (${this.allySkinId()})   ${st}`;
-      }
+      this.allyText.text = ally
+        ? `Ally (${this.allySkinId()})   ${ally.downed
+            ? `DOWNED — bleedout ${Math.ceil(ally.bleedoutTicks / 30)}s`
+            : `HP ${Math.max(0, ally.hp)}/${ally.maxHp}`}`
+        : '';
+    } else {
+      this.allyText.text = '';
     }
 
-    this.hud.text =
-      `${this.meta.selectedSkin}   HP ${bar}${shieldRow}${buffs}${coopRow}\n` +
-      `Floor ${floor}/${EMBER_DUNGEON.floorCount}   Room ${room}/${rooms}   Enemies ${s.enemies.length}   Banked ${banked}   Score ${this.score}\n` +
-      `Weapon ${wname}\n` +
-      `[1]/[2] swap · LMB attack · WASD move · [E] interact` +
-      prompt;
+    this.toasts.update(dt);
+
+    // PvP room-graph minimap (design/10) — no-op/hidden for PvE, same convention as the
+    // engine-side ZoneSystem/EnvironmentSystem (ROADMAP 4.2d).
+    if (s.zoneEnabled && s.arenaMap) {
+      this.minimap.view.visible = true;
+      const players: MinimapPlayer[] = s.players.map((pl, i) => ({
+        roomId: pl.roomId,
+        alive: pl.alive,
+        isLocal: i === this.localOwner,
+      }));
+      this.minimap.update(s.arenaMap, s.zone, players);
+    } else {
+      this.minimap.view.visible = false;
+    }
   }
 
   // Rising-edge fire → confirm (start/restart) on non-playing screens.
@@ -846,4 +1039,27 @@ export class Game {
 
 function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
+}
+
+// Dev-only synthetic ArenaMap for `?arenaDemo=1` (see the field's doc comment on
+// `Game`). Three rooms (an L-shape, mirrors the engine's own
+// content/arenas.test.ts fixture shape) connected by doors, no encounter/loot markers
+// — this exists to give the zone HUD row + Minimap real data, not to be a playable
+// PvP map. All three rooms are eye-candidates so ZoneSystem's shrink is visible.
+function buildArenaDemoMap(): ArenaMap {
+  return {
+    id: 'dev_arena_demo',
+    sizeGrid: { w: 50, h: 50 },
+    rooms: [
+      { id: 'A', rectGrid: { x: 0, y: 0, w: 10, h: 10 }, solids: [] },
+      { id: 'B', rectGrid: { x: 30, y: 0, w: 10, h: 10 }, solids: [] },
+      { id: 'C', rectGrid: { x: 0, y: 30, w: 10, h: 10 }, solids: [] },
+    ],
+    doors: [
+      { roomA: 'A', roomB: 'B', passageGrid: { x: 10, y: 4, w: 20, h: 2 } },
+      { roomA: 'A', roomB: 'C', passageGrid: { x: 4, y: 10, w: 2, h: 20 } },
+    ],
+    spawns: [],
+    eyeCandidates: [{ roomId: 'A' }, { roomId: 'B' }, { roomId: 'C' }],
+  };
 }
