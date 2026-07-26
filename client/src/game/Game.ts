@@ -1,4 +1,4 @@
-import { Application, Container, Graphics, Text } from 'pixi.js';
+import { Application, BlurFilter, Container, Graphics, Text } from 'pixi.js';
 import {
   createGameEngine,
   WEAPON_SIM_BY_ID,
@@ -37,6 +37,8 @@ import { Forge } from './Forge';
 import { Settings } from './Settings';
 import { Bar, ToastQueue, Button } from './ui/widgets';
 import { Minimap, type MinimapPlayer } from './ui/Minimap';
+import { VignetteFilter, ChromaticAberrationFilter } from './fx/filters';
+import { ParticleSystem } from './fx/Particles';
 import { CommandBuilder } from './CommandBuilder';
 import { AllyController } from './AllyController';
 import { fpToPx, bradToRad } from './coords';
@@ -54,6 +56,7 @@ const SEED_BASE = 0xda1d; // per-run seed = base + run index (deterministic, no 
 const SIM_DT_MS = 1000 / 30; // fixed sim step: the engine runs at 30 Hz (design/06)
 const MAX_STEPS = 5; // catch-up cap per render frame → no spiral of death
 const FX_LIFE_MS = 170; // flash lifetime
+const MAX_SHAKE_PX = 14; // camera-shake offset at full trauma (design/01 milestone 3)
 
 // Render-side run phases (design/10). The engine only knows idle/playing/gameover;
 // the forge outpost (the between-run hub, design/14) and the result screens live here in
@@ -144,6 +147,18 @@ export class Game {
   private predLastTick = -1;
   private lagMs = 0;
 
+  // ---- Post-processing / game-feel (design/01 fidelity roadmap milestone 3) ----
+  // Render-only, offline-only (never touches advanceOnline — see hitStopMs's use in
+  // advanceSim): a strong hit-stop pause would have to be reconciled against the
+  // server's confirmed frame stream online, which isn't worth the complexity for a
+  // pure juice effect. `shakeTrauma` decays each frame; the actual camera offset is
+  // `maxShakePx * trauma^2` jittered, recomputed in updateCamera.
+  private readonly particles = new ParticleSystem();
+  private readonly vignette = new VignetteFilter();
+  private readonly chromatic = new ChromaticAberrationFilter(0);
+  private shakeTrauma = 0;
+  private hitStopMs = 0;
+
   constructor(app: Application, input: InputSource, audio: AudioBus) {
     this.app = app;
     this.input = input;
@@ -188,6 +203,15 @@ export class Game {
     // Ground / walls / pillars are per-room now (buildRoom, driven by the `room_enter`
     // event), so nothing static is built here — only the fixed HUD overlay.
     this.buildHud();
+
+    // Post-processing (design/01 milestone 3): vignette + chromatic-aberration live on
+    // `world` only — the `ui` layer (HUD/menus) must stay crisp and undistorted.
+    // Bloom-lite: a modest blur directly on the ADDITIVE-blended `fx` layer (muzzle
+    // flashes/trails/particles) gives a cheap glow halo without a real multi-pass
+    // bright-pass bloom (first-pass approximation, design/01's own "milestone" framing).
+    this.layers.world.filters = [this.vignette, this.chromatic];
+    this.layers.fx.filters = [new BlurFilter({ strength: 3, quality: 2 })];
+    this.layers.fx.addChild(this.particles.view);
 
     this.layers.ui.addChild(this.forge.view, this.screens.view, this.settingsScreen.view);
     this.screens.onConfirm = () => this.confirm();
@@ -394,12 +418,21 @@ export class Game {
   // Fresh run: reset render state and stand up a new engine (design/10 rebuild).
   private beginRun() {
     this.scene.clear();
-    for (const child of [...this.layers.fx.children]) child.destroy();
+    // `particles.view` is a PERSISTENT child of `layers.fx` (added once in start()),
+    // not a transient `_life`-tagged flash/trail — skip it here or a restart would
+    // destroy the particle system itself, not just clear stale particles.
+    for (const child of [...this.layers.fx.children]) {
+      if (child !== this.particles.view) child.destroy();
+    }
+    this.particles.clear();
     for (const child of [...this.layers.ground.children]) child.destroy();
     for (const p of this.pillars) { p.shadow?.destroy(); p.destroy(); }
     this.pillars.length = 0;
     this.score = 0;
     this.acc = 0;
+    this.shakeTrauma = 0;
+    this.hitStopMs = 0;
+    this.chromatic.amount = 0;
     this.settingsBtn.view.visible = false;
 
     // Online co-op (ROADMAP 3.3): the run is driven off a real matchmade socket, not a
@@ -553,14 +586,23 @@ export class Game {
   }
 
   private advanceSim(dt: number) {
-    this.acc += dt;
-    let steps = 0;
-    while (this.phase === 'playing' && this.acc >= SIM_DT_MS && steps < MAX_STEPS) {
-      this.stepSim();
-      this.acc -= SIM_DT_MS;
-      steps++;
+    // Hit-stop (design/01 milestone 3): a brief FULL freeze of sim ticks on a strong
+    // hit — offline/local only (see the `hitStopMs` field doc). Render (fx/particles/
+    // camera shake) keeps animating through the freeze; only `stepSim` is skipped, and
+    // `acc` deliberately does NOT accumulate `dt` while frozen, so the sim resumes at a
+    // clean single-tick cadence afterward instead of bursting through a catch-up.
+    if (this.hitStopMs > 0) {
+      this.hitStopMs = Math.max(0, this.hitStopMs - dt);
+    } else {
+      this.acc += dt;
+      let steps = 0;
+      while (this.phase === 'playing' && this.acc >= SIM_DT_MS && steps < MAX_STEPS) {
+        this.stepSim();
+        this.acc -= SIM_DT_MS;
+        steps++;
+      }
+      if (steps >= MAX_STEPS) this.acc = 0; // drop the backlog after a long stall
     }
-    if (steps >= MAX_STEPS) this.acc = 0; // drop the backlog after a long stall
 
     const alpha = this.phase === 'playing' ? Math.min(1, this.acc / SIM_DT_MS) : 1;
     this.scene.interpolate(alpha, dt);
@@ -744,22 +786,38 @@ export class Game {
     const cues = new Set<AudioCue>();
     for (const e of events) {
       switch (e.type) {
-        case 'bullet_fired':
-          this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.muzzle, 12);
+        case 'bullet_fired': {
+          const fx = fpToPx(e.gx);
+          const fy = fpToPx(e.gy);
+          this.flash(fx, fy, CONFIG.colors.muzzle, 12);
+          const facingRad = bradToRad(e.facing);
+          this.particles.muzzleFlame(fx, fy - 12, facingRad, CONFIG.colors.muzzle);
+          this.particles.shellCasing(fx, fy - 12, facingRad);
           cues.add('muzzle');
           break;
+        }
         case 'hit':
           this.flash(fpToPx(e.gx), fpToPx(e.gy),
             e.faction === 'enemy' ? CONFIG.colors.enemy : CONFIG.colors.swordGlow, 16);
+          if (e.faction === 'enemy') {
+            // The (any) player took the hit — a small punch of feedback.
+            this.addShake(0.18);
+            this.pulseChromatic(0.006);
+          }
           cues.add('impact');
           break;
         case 'shield_break':
           // A shattered shield — a bright cyan burst (design/07 two-pool break).
           this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.shield, 28);
+          this.addShake(0.4);
+          this.addHitStop(50);
+          this.pulseChromatic(0.014);
           cues.add('shield.break');
           break;
         case 'deflect':
           this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.deflect, 20);
+          this.addShake(0.22);
+          this.pulseChromatic(0.008);
           cues.add('deflect');
           break;
         case 'status': {
@@ -780,6 +838,8 @@ export class Game {
         case 'death':
           if (e.faction === 'enemy') {
             this.score += CONFIG.score.kill;
+            this.particles.explosionDebris(fpToPx(e.gx), fpToPx(e.gy) - 12, CONFIG.colors.enemy);
+            this.addShake(0.15);
             cues.add('death');
           }
           break;
@@ -843,6 +903,9 @@ export class Game {
           // A player was incapacitated (co-op downed/revive, ROADMAP 3.2) — a red pulse.
           // In the single-player demo this is the moment the run is lost.
           this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.clash, 28);
+          this.addShake(0.55);
+          this.addHitStop(80);
+          this.pulseChromatic(0.02);
           cues.add('death');
           break;
         case 'revived':
@@ -901,7 +964,8 @@ export class Game {
 
   private updateFx(dt: number) {
     for (const child of [...this.layers.fx.children] as Container[]) {
-      const holder = child as unknown as { _life: number };
+      const holder = child as unknown as { _life?: number };
+      if (typeof holder._life !== 'number') continue; // e.g. `particles.view` — not a _life-tagged glow
       holder._life -= dt;
       child.alpha = Math.max(0, holder._life / FX_LIFE_MS);
       child.scale.set(1 + (1 - child.alpha) * 0.6);
@@ -910,6 +974,19 @@ export class Game {
         child.destroy();
       }
     }
+
+    // Ambient dust (design/01 milestone 4) only while actually in a room; bounds come
+    // from the live world size (dungeon mode resizes per room, ROADMAP 1.3).
+    const s = this.activeState();
+    const dustBounds = s ? { x: 0, y: 0, w: fpToPx(s.worldW), h: fpToPx(s.worldH) } : undefined;
+    this.particles.update(dt, this.phase === 'playing' ? 700 : 0, dustBounds);
+
+    // Chromatic-aberration pulse (design/01 milestone 3) decays back to 0 — a hit
+    // reaction, never a permanent look.
+    this.chromatic.amount = Math.max(0, this.chromatic.amount - dt * 0.006);
+    // Screen-shake trauma also decays here (updateCamera only gets `alpha`, not `dt`;
+    // it just reads the current value to compute this frame's offset).
+    this.shakeTrauma = Math.max(0, this.shakeTrauma - dt * 0.0025);
   }
 
   // ---- Camera / HUD ----
@@ -927,8 +1004,35 @@ export class Game {
     // viewport is centred (the follow-clamp would otherwise fight itself, lo > hi).
     const cx = worldW <= vw ? (vw - worldW) / 2 : clamp(vw / 2 - pv.interpGroundX(alpha), vw - worldW, 0);
     const cy = worldH <= vh ? (vh - worldH) / 2 : clamp(vh / 2 - pv.interpGroundY(alpha), vh - worldH, 0);
-    this.layers.world.x = cx;
-    this.layers.world.y = cy;
+
+    // Screen shake (design/01 milestone 3): trauma decays every frame in updateFx
+    // (which has `dt`); offset here scales with trauma² (a standard "shake feels
+    // punchy near 1, gentle near 0" curve) and is ADDED after the follow-clamp above
+    // so it never fights the room-pin math.
+    const shakeMag = this.shakeTrauma * this.shakeTrauma * MAX_SHAKE_PX;
+    const shakeX = shakeMag > 0.05 ? (Math.random() * 2 - 1) * shakeMag : 0;
+    const shakeY = shakeMag > 0.05 ? (Math.random() * 2 - 1) * shakeMag : 0;
+
+    this.layers.world.x = cx + shakeX;
+    this.layers.world.y = cy + shakeY;
+  }
+
+  /** Bump camera-shake trauma (clamped to 1) — call from consumeEvents on an impactful
+   * moment. Trauma decays every render frame in updateFx. */
+  private addShake(amount: number) {
+    this.shakeTrauma = Math.min(1, this.shakeTrauma + amount);
+  }
+
+  /** Freeze sim ticks for `ms` (offline-only, see the `hitStopMs` field doc) — a
+   * bigger pause always wins over a smaller one still counting down, never additive
+   * (stacking several quick hits shouldn't compound into a multi-second freeze). */
+  private addHitStop(ms: number) {
+    this.hitStopMs = Math.max(this.hitStopMs, ms);
+  }
+
+  /** Bump the chromatic-aberration pulse (clamped to a sane max) — decays in updateFx. */
+  private pulseChromatic(amount: number) {
+    this.chromatic.amount = Math.min(0.03, this.chromatic.amount + amount);
   }
 
   private screenSize() {
