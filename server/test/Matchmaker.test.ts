@@ -158,3 +158,71 @@ describe('Matchmaker — expiry & validation', () => {
     expect(() => mm.enqueue(1.5)).toThrow(RangeError);
   });
 });
+
+describe('Matchmaker — PvP practice-bot backfill (design/15 follow-up)', () => {
+  it('forms the group with bots after pvpBotFillMs, leaving coop unaffected at the same wait', () => {
+    const botFills: { roomId: string; botOwners: readonly number[] }[] = [];
+    const { mm, advance } = make({ onBotFill: (info) => botFills.push(info) });
+
+    const a = mm.enqueue(4, 'pvp'); // wants a 4-seat PvP match, alone
+    const coop = mm.enqueue(4); // a coop 4-seat waiter, same wait, must NOT bot-fill
+
+    advance(30_000); // exactly at the default pvpBotFillMs/queueTtlMs boundary
+    const polledPvp = mm.poll(a.queueId);
+    expect(polledPvp.status).toBe('matched');
+    expect(polledPvp).toHaveProperty('ticket.owner', 0);
+    expect(botFills).toEqual([{ roomId: (polledPvp as { ticket: { roomId: string } }).ticket.roomId, seed: expect.any(Number), playerCount: 4, mode: 'pvp', botOwners: [1, 2, 3] }]);
+
+    // Coop still just sits queued at the identical wait — no bot-fill concept for it.
+    expect(mm.poll(coop.queueId)).toEqual({ status: 'queued' });
+  });
+
+  it('includes every real waiter still queued for the shape, bot-filling only the remainder', () => {
+    const botFills: { botOwners: readonly number[] }[] = [];
+    const { mm, advance } = make({ onBotFill: (info) => botFills.push(info) });
+
+    const a = mm.enqueue(4, 'pvp');
+    advance(10_000);
+    const b = mm.enqueue(4, 'pvp'); // joins the same shape partway through a's wait
+    advance(20_001); // a is now past 30s; b has only waited ~20s
+
+    const polledA = mm.poll(a.queueId);
+    expect(polledA.status).toBe('matched');
+    expect((polledA as { ticket: { owner: number } }).ticket.owner).toBe(0);
+    // b was swept into the SAME group instead of bot-filled — it gets a real seat too.
+    const polledB = mm.poll(b.queueId);
+    expect(polledB.status).toBe('matched');
+    expect((polledB as { ticket: { owner: number } }).ticket.owner).toBe(1);
+    expect(botFills).toEqual([expect.objectContaining({ botOwners: [2, 3] })]);
+  });
+
+  it('never bot-fills once the shape is already full (formIfReady wins first)', () => {
+    const botFills: unknown[] = [];
+    const { mm, advance } = make({ onBotFill: (info) => botFills.push(info) });
+    const seats = [mm.enqueue(2, 'pvp'), mm.enqueue(2, 'pvp')];
+    expect(seats.some((r) => r.ticket)).toBe(true); // already matched instantly, full group
+    advance(30_001);
+    for (const r of seats) {
+      if (!r.ticket) mm.poll(r.queueId);
+    }
+    expect(botFills).toEqual([]); // nothing left waiting to ever trigger it
+  });
+
+  it('a lone PvP waiter still bot-fills all the way down to a 1-real-seat match', () => {
+    const botFills: { botOwners: readonly number[] }[] = [];
+    const { mm, advance } = make({ onBotFill: (info) => botFills.push(info) });
+    const a = mm.enqueue(8, 'pvp');
+    advance(30_000);
+    const polled = mm.poll(a.queueId);
+    expect(polled.status).toBe('matched');
+    expect((polled as { ticket: { owner: number; playerCount: number } }).ticket).toMatchObject({ owner: 0, playerCount: 8 });
+    expect(botFills).toEqual([expect.objectContaining({ botOwners: [1, 2, 3, 4, 5, 6, 7] })]);
+  });
+
+  it('is a no-op without onBotFill wired — PvP still forms the smaller room, just silently', () => {
+    const { mm, advance } = make(); // no onBotFill dep at all
+    const a = mm.enqueue(3, 'pvp');
+    advance(30_000);
+    expect(mm.poll(a.queueId).status).toBe('matched');
+  });
+});

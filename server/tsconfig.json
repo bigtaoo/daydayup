@@ -12,7 +12,9 @@
     "baseUrl": ".",
     "paths": {
       "@dd/engine": ["../client/src/engine/index.ts"],
-      "@dd/engine/*": ["../client/src/engine/*"]
+      "@dd/engine/*": ["../client/src/engine/*"],
+      "@dd/net/*": ["../client/src/net/*"],
+      "@dd/game/*": ["../client/src/game/*"]
     }
   },
   "include": ["src", "test"]

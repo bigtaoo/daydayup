@@ -16,6 +16,7 @@ import {
 } from '@dd/engine';
 import { toFpGrid } from '@dd/engine/content/convert';
 import { ARENA_CATALOG } from './arenaCatalog';
+import { buildPvpEngineConfig } from './pvpConfig';
 import { CoopSession } from '../net/CoopSession';
 import { WebSocketTransport, LaggyTransport, type Transport } from '../net/transport';
 import { findMatch } from '../net/matchmaking';
@@ -764,17 +765,9 @@ export class Game {
   private buildOnlineConfig(m: MatchStart): EngineConfig {
     const ids = Object.keys(SKIN_DEFS);
     if (m.mode === 'pvp') {
-      return {
-        seed: m.seed,
-        worldW: PLACEHOLDER_WORLD,
-        worldH: PLACEHOLDER_WORLD,
-        waves: [],
-        players: Array.from({ length: m.playerCount }, (_, i) => ({
-          skinId: ids[i % ids.length]!,
-          teamId: i,
-        })),
-        arena: ARENA_CATALOG.arena_prototype_60,
-      };
+      // Extracted to pvpConfig.ts (design/06 anti-drift) — server/src/BotClient.ts builds
+      // the identical config for a bot-filled seat from the same function.
+      return buildPvpEngineConfig(m.seed, m.playerCount);
     }
     return {
       seed: m.seed,

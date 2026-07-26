@@ -26,8 +26,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { randomUUID } from 'node:crypto';
 import { Matchmaker, type MatchTicket } from './Matchmaker';
 import { RatingStore } from './rating';
-import { signTicket, type MatchMode } from './ticket';
+import { signTicket, type MatchMode, type TicketPayload } from './ticket';
 import { ticketSecret } from './config';
+import { spawnBotClient } from './BotClient';
 
 const PORT = Number(process.env.MATCH_PORT ?? 8788);
 const HOST = process.env.HOST ?? '0.0.0.0';
@@ -50,6 +51,25 @@ function main(): void {
     nextSeed: () => (seedCounter = (seedCounter + 1) & 0x7fffffff),
     newRoomId: () => randomUUID(),
     sign: (payload) => signTicket(payload, secret),
+    // PvP practice-bot backfill (design/15 follow-up): a queue that's sat too long forms
+    // anyway with bots filling the empty seats. A bot redeems its own freshly-signed
+    // ticket and opens the SAME ticket-authenticated gameserver socket a real player
+    // would (BotClient.ts) — matchsvc is the trusted issuer, so it can mint one directly
+    // without a round trip through its own /find queue.
+    onBotFill: ({ roomId, seed, playerCount, mode, botOwners }) => {
+      for (const owner of botOwners) {
+        const exp = Date.now() + 30_000; // ample time for the bot to open the socket
+        const grant: TicketPayload = { roomId, owner, seed, playerCount, exp, mode };
+        spawnBotClient({
+          wsUrl: GAMESERVER_URL,
+          token: signTicket(grant, secret),
+          roomId,
+          owner,
+          seed,
+          playerCount,
+        });
+      }
+    },
   });
 
   const withUrl = (t: MatchTicket) => ({ ...t, wsUrl: GAMESERVER_URL });
