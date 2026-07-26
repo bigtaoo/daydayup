@@ -44,6 +44,13 @@ interface Wx {
   onTouchMove(cb: (e: WxTouchEvent) => void): void;
   onTouchEnd(cb: (e: WxTouchEvent) => void): void;
   onTouchCancel(cb: (e: WxTouchEvent) => void): void;
+  // Audio (design/04/11). Documented by WeChat to implement the same Web Audio API
+  // surface as the browser's `AudioContext` — reused as-is (dom lib already provides
+  // that type; this project's tsconfig includes it, per WebAudio.ts's existing use).
+  // NOT guaranteed present on every base library (design/11 open question — "verify
+  // availability on the lowest base library"); callers MUST feature-detect
+  // (`typeof wx.createWebAudioContext === 'function'`) rather than assume it exists.
+  createWebAudioContext?: () => AudioContext;
 }
 
 declare const wx: Wx;
