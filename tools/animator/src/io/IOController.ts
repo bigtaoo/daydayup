@@ -24,6 +24,11 @@ interface EditorProject {
   animations:       Record<string, SerializedClip>;
   attachmentPoints: AttachmentPoint[];
   boneLengthScales?: Record<string, number>;   // per-bone length multipliers; absent = all 1.0
+  /** Which variant id each slot's `images/<slotId>.png` file represents (e.g.
+   *  eye's `front`/`back` facing swap, design/12) — absent or missing entry
+   *  defaults to 'default'. Extra (non-active) variants ride in the same
+   *  images/ folder as `images/<slotId>__<variantId>.png`. */
+  activeVariantIds?: Record<string, string>;
 }
 
 // ── Serialization format (version 2) ─────────────────────────────────────────
@@ -113,7 +118,7 @@ export class IOController {
 
   // ── Editor save / load ────────────────────────────────────────────────────
 
-  /** Build the `.tao.editor` archive (editor.json + per-slot PNGs) as a Blob.
+  /** Build the `.editortao` archive (editor.json + per-slot PNGs) as a Blob.
    *  Shared by the manual "Save .editor" button and the IndexedDB auto-save. */
   async buildEditorBlob(): Promise<Blob> {
     const zip = new JSZip();
@@ -133,6 +138,22 @@ export class IOController {
     const boneLengthScales: Record<string, number> = {};
     this.state.boneLengthScales.forEach((v, k) => { boneLengthScales[k] = v; });
 
+    // images/ — one PNG per loaded slot variant (lossless, no spritesheet
+    // packing): the active variant as `<slotId>.png` (unchanged shape for a
+    // single-variant slot — a project with no variants round-trips byte-for-byte
+    // like before), any stashed alternates as `<slotId>__<variantId>.png`.
+    const activeVariantIds: Record<string, string> = {};
+    const imgFolder = zip.folder('images')!;
+    for (const slotId of this.state.boneBindings.keys()) {
+      const entries = this.imageCtrl.getAllVariantEntries(slotId);
+      if (entries.length === 0) continue;
+      activeVariantIds[slotId] = this.imageCtrl.getActiveVariantId(slotId);
+      for (const { variantId, blob } of entries) {
+        const filename = variantId === activeVariantIds[slotId] ? `${slotId}.png` : `${slotId}__${variantId}.png`;
+        imgFolder.file(filename, blob);
+      }
+    }
+
     const editorJson: EditorProject = {
       version:          1,
       selectedClip:     this.animCtrl.currentName,
@@ -141,25 +162,19 @@ export class IOController {
       animations,
       attachmentPoints,
       ...(Object.keys(boneLengthScales).length > 0 && { boneLengthScales }),
+      ...(Object.keys(activeVariantIds).length > 0 && { activeVariantIds }),
     };
     zip.file('editor.json', JSON.stringify(editorJson, null, 2));
-
-    // images/ — one PNG per loaded slot (lossless, no spritesheet packing)
-    const imgFolder = zip.folder('images')!;
-    for (const slotId of this.state.boneBindings.keys()) {
-      const blob = this.imageCtrl.getBlob(slotId);
-      if (blob) imgFolder.file(`${slotId}.png`, blob);
-    }
 
     return zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
   }
 
   async saveEditorProject(): Promise<void> {
-    this.bus.emit('status', 'Saving .tao.editor…');
+    this.bus.emit('status', 'Saving .editortao…');
     try {
       const blob = await this.buildEditorBlob();
       await saveWithPicker(blob, 'project', [
-        { description: 'Tao Editor Project', accept: { 'application/octet-stream': ['.tao.editor'] } },
+        { description: 'Tao Editor Project', accept: { 'application/octet-stream': ['.editortao'] } },
       ]);
       this.bus.emit('status', 'Project saved');
     } catch (err) {
@@ -171,7 +186,7 @@ export class IOController {
     return this.loadEditorBlob(file, file.name);
   }
 
-  /** Restore editor state from a `.tao.editor` archive (File or Blob).
+  /** Restore editor state from a `.editortao` archive (File or Blob).
    *  Used by both the manual "Load .editor" button and project switching. */
   async loadEditorBlob(data: Blob, label: string): Promise<void> {
     this.bus.emit('status', `Loading ${label}…`);
@@ -187,9 +202,15 @@ export class IOController {
         return;
       }
 
-      // Clear existing state
+      // Clear existing state. imageCtrl.clearAll() matters even though every
+      // image gets overwritten below by slotId — a slot the NEW project never
+      // binds (or a variant it never mentions) would otherwise leak forward
+      // from whatever project was loaded before this one (pre-existing gap,
+      // surfaced by variant bookkeeping which has no per-slot "this project
+      // doesn't use this slot" signal otherwise).
       this.animCtrl.clearAll();
       [...this.state.boneBindings.keys()].forEach(id => this.state.removeBinding(id));
+      this.imageCtrl.clearAll();
 
       // Restore animations + bindings + attachments + rig
       for (const [boneId, binding] of Object.entries(project.bindings)) {
@@ -203,18 +224,36 @@ export class IOController {
         this.animCtrl.loadClip(name, this.deserializeClip(clip));
       }
 
-      // Restore individual images
+      // Restore individual images — `<slotId>.png` is the active variant,
+      // `<slotId>__<variantId>.png` is a stashed alternate (see EditorProject
+      // doc comment). "::" is ImageController's internal key delimiter; "__"
+      // (double underscore) is this on-disk filename's delimiter — kept
+      // distinct so a bug in one representation can't silently corrupt the
+      // other. Variants must be loaded via setVariantBlob (not setBlob), and
+      // the active-variant labels applied AFTER every image loads, so load
+      // order can never clobber which one is "the" live texture.
       const imgFolder = zip.folder('images');
       if (imgFolder) {
         const imagePromises: Promise<void>[] = [];
         imgFolder.forEach((relativePath, zipEntry) => {
           if (zipEntry.dir) return;
-          const slotId = relativePath.replace(/\.png$/i, '');
-          imagePromises.push(
-            zipEntry.async('blob').then(blob => this.imageCtrl.setBlob(slotId, blob, `${slotId}.png`)),
-          );
+          const variantMatch = relativePath.match(/^(.+)__(.+)\.png$/i);
+          if (variantMatch) {
+            const [, slotId, variantId] = variantMatch;
+            imagePromises.push(
+              zipEntry.async('blob').then(blob => this.imageCtrl.setVariantBlob(slotId!, variantId!, blob, relativePath)),
+            );
+          } else {
+            const slotId = relativePath.replace(/\.png$/i, '');
+            imagePromises.push(
+              zipEntry.async('blob').then(blob => this.imageCtrl.setBlob(slotId, blob, `${slotId}.png`)),
+            );
+          }
         });
         await Promise.all(imagePromises);
+        for (const [slotId, variantId] of Object.entries(project.activeVariantIds ?? {})) {
+          this.imageCtrl.setActiveVariantLabel(slotId, variantId);
+        }
       }
 
       // Restore editor state
@@ -378,14 +417,23 @@ export class IOController {
   ): Promise<void> {
     const img = await loadImageFromBlob(ssBlob);
 
-    for (const [slotId, entry] of Object.entries(ssJson.frames)) {
+    // Frame ids follow buildExportImages' naming: bare slotId = the active
+    // variant, `${slotId}__${variantId}` = a stashed alternate.
+    for (const [frameId, entry] of Object.entries(ssJson.frames)) {
       const { x, y, w, h } = entry.frame;
       const canvas = document.createElement('canvas');
       canvas.width  = w;
       canvas.height = h;
       canvas.getContext('2d')!.drawImage(img, x, y, w, h, 0, 0, w, h);
       const blob = await canvasToBlob(canvas);
-      await this.imageCtrl.setBlob(slotId, blob, slotId);
+
+      const variantMatch = frameId.match(/^(.+)__(.+)$/);
+      if (variantMatch) {
+        const [, slotId, variantId] = variantMatch;
+        this.imageCtrl.setVariantBlob(slotId!, variantId!, blob, frameId);
+      } else {
+        await this.imageCtrl.setBlob(frameId, blob, frameId);
+      }
     }
   }
 
@@ -437,16 +485,22 @@ export class IOController {
 
     // Shadow is no longer packed: it's a unified soft ellipse the runtime draws
     // procedurally from the shadow attachment point's shadowW/H.
+    //
+    // A slot's binding (anchor/scale/rotation) is shared across ALL of its
+    // variants (design/12: a facing swap keeps "the same size and silhouette
+    // footprint" specifically so it drops into the identical socket/binding) —
+    // so bakeX/Y and the binding.scaleX/Y compensation are computed ONCE per
+    // slot, then applied to every variant's own pixel dimensions. The active
+    // variant's frame keeps the bare slot id (byte-identical to the pre-variant
+    // behaviour when a slot has only ever had one image); a stashed variant's
+    // frame is `${slotId}__${variantId}`, for the runtime to pick between at
+    // render time (not built yet — see design/12's "deliberately out of this
+    // pass" note on the eye front/back swap).
     for (const slotId of this.state.boneBindings.keys()) {
-      const blob = this.imageCtrl.getBlob(slotId);
-      if (!blob) continue;
-
-      const img = await loadImageFromBlob(blob);
-      const sw  = img.naturalWidth;
-      const sh  = img.naturalHeight;
+      const entries = this.imageCtrl.getAllVariantEntries(slotId);
+      if (entries.length === 0) continue;
 
       let bakeX = 1, bakeY = 1;
-
       const binding = animJson.bindings[slotId];
       if (binding) {
         const kf = maxKf.get(slotId) ?? { x: 1, y: 1 };
@@ -457,19 +511,27 @@ export class IOController {
         binding.scaleY /= bakeY;
       }
 
-      if (bakeX > 0.999 && bakeY > 0.999) {
-        out.push({ id: slotId, src: img, w: sw, h: sh });
-      } else {
-        const dw     = Math.max(1, Math.round(sw * bakeX));
-        const dh     = Math.max(1, Math.round(sh * bakeY));
-        const canvas = document.createElement('canvas');
-        canvas.width  = dw;
-        canvas.height = dh;
-        const ctx = canvas.getContext('2d')!;
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(img, 0, 0, dw, dh);
-        out.push({ id: slotId, src: canvas, w: dw, h: dh });
+      const activeVariantId = this.imageCtrl.getActiveVariantId(slotId);
+      for (const { variantId, blob } of entries) {
+        const img = await loadImageFromBlob(blob);
+        const sw  = img.naturalWidth;
+        const sh  = img.naturalHeight;
+        const frameId = variantId === activeVariantId ? slotId : `${slotId}__${variantId}`;
+
+        if (bakeX > 0.999 && bakeY > 0.999) {
+          out.push({ id: frameId, src: img, w: sw, h: sh });
+        } else {
+          const dw     = Math.max(1, Math.round(sw * bakeX));
+          const dh     = Math.max(1, Math.round(sh * bakeY));
+          const canvas = document.createElement('canvas');
+          canvas.width  = dw;
+          canvas.height = dh;
+          const ctx = canvas.getContext('2d')!;
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = 'high';
+          ctx.drawImage(img, 0, 0, dw, dh);
+          out.push({ id: frameId, src: canvas, w: dw, h: dh });
+        }
       }
     }
 
@@ -608,7 +670,7 @@ function triggerDownload(blob: Blob, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
-/** First accepted extension declared in `types` (e.g. ".tao.editor"), or '' if none. */
+/** First accepted extension declared in `types` (e.g. ".editortao"), or '' if none. */
 function primaryExt(types: Array<{ accept: Record<string, string[]> }>): string {
   for (const t of types) {
     for (const exts of Object.values(t.accept)) {
@@ -619,11 +681,15 @@ function primaryExt(types: Array<{ accept: Record<string, string[]> }>): string 
 }
 
 /** Guarantee `name` ends with exactly one `ext`. Collapses an accidentally
- *  doubled compound extension (e.g. "x.tao.editor.tao.editor" → "x.tao.editor")
- *  and appends `ext` when missing. This is what prevents the File System Access
- *  picker from re-appending a compound extension (Chrome appends the accepted
- *  extension when the chosen name doesn't already end with it, and historically
- *  double-appends multi-dot extensions like ".tao.editor"). */
+ *  doubled extension (e.g. "x.editortao.editortao" → "x.editortao") and appends
+ *  `ext` when missing. `.editortao` is deliberately a single dot-segment, not
+ *  the old compound `.tao.editor` — Windows/macOS both treat a multi-dot
+ *  extension as "unrecognized" (double-clicking it, or some save dialogs,
+ *  wouldn't reliably round-trip both segments), and Chrome's File System
+ *  Access picker used to re-append the whole compound extension when the
+ *  chosen name didn't already end with it, producing a doubled
+ *  ".tao.editor.tao.editor". This guard still matters for the single-segment
+ *  form (a user retyping ".editortao" by hand), just for a narrower reason. */
 function ensureSingleExt(name: string, ext: string): string {
   if (!ext) return name;
   const lower = ext.toLowerCase();
@@ -641,7 +707,7 @@ async function saveWithPicker(
   types: Array<{ description?: string; accept: Record<string, string[]> }>,
 ): Promise<void> {
   // Pass a name that already carries exactly one canonical extension so neither
-  // the native picker nor the user prompt can produce a doubled ".tao.editor".
+  // the native picker nor the user prompt can produce a doubled ".editortao".
   const ext       = primaryExt(types);
   const suggested = ensureSingleExt(suggestedName, ext);
 

@@ -137,6 +137,76 @@ export class ImagePanel {
 
       row.append(info, controls);
       listEl.appendChild(row);
+
+      // Variant sub-row: alternate named images for this bone (e.g. eye's
+      // front/back facing swap, design/12) — only meaningful once a slot has
+      // a live image at all. The active chip is highlighted; clicking any
+      // other chip promotes it (demoting the current one into a variant, so
+      // nothing is lost); "+ variant" adds a new named alternate.
+      if (hasImage) {
+        listEl.appendChild(this.buildVariantRow(slotId));
+      }
     }
+  }
+
+  private buildVariantRow(slotId: string): HTMLElement {
+    const variantIds      = this.imageCtrl.getVariantIds(slotId);
+    const activeVariantId = this.imageCtrl.getActiveVariantId(slotId);
+
+    const variantRow = document.createElement('div');
+    variantRow.style.cssText = 'padding:2px 8px 6px;border-bottom:1px solid var(--border);display:flex;flex-wrap:wrap;gap:4px;align-items:center';
+
+    for (const vid of variantIds) {
+      const isActive = vid === activeVariantId;
+
+      const chip = document.createElement('button');
+      chip.className   = 'sm';
+      chip.style.cssText = 'font-size:10px;padding:1px 6px;' + (isActive ? 'background:var(--selected);color:#fff' : '');
+      chip.textContent = vid;
+      chip.title       = isActive ? `Active variant: ${vid}` : `Switch to variant: ${vid}`;
+      if (!isActive) {
+        chip.addEventListener('click', () => { void this.imageCtrl.setActiveVariant(slotId, vid); });
+      }
+      variantRow.appendChild(chip);
+
+      if (!isActive) {
+        const rmBtn = document.createElement('button');
+        rmBtn.className   = 'sm';
+        rmBtn.style.cssText = 'font-size:9px;padding:1px 4px';
+        rmBtn.textContent = '✕';
+        rmBtn.title       = `Remove variant "${vid}"`;
+        rmBtn.addEventListener('click', () => this.imageCtrl.removeVariant(slotId, vid));
+        variantRow.appendChild(rmBtn);
+      }
+    }
+
+    const variantFileInput = document.createElement('input');
+    variantFileInput.type    = 'file';
+    variantFileInput.accept  = 'image/png,image/jpeg,image/webp';
+    variantFileInput.style.display = 'none';
+
+    const addVariantBtn = document.createElement('button');
+    addVariantBtn.className   = 'sm';
+    addVariantBtn.style.cssText = 'font-size:10px;padding:1px 6px';
+    addVariantBtn.textContent = '+ variant';
+    addVariantBtn.title       = 'Add a named alternate image for this bone (e.g. a back/vent facing)';
+
+    addVariantBtn.addEventListener('click', () => {
+      const name = window.prompt('Variant name (e.g. "back"):', '')?.trim();
+      if (!name) return;
+      variantFileInput.dataset.variantName = name;
+      variantFileInput.click();
+    });
+    variantFileInput.addEventListener('change', () => {
+      const file  = variantFileInput.files?.[0];
+      const vname = variantFileInput.dataset.variantName;
+      if (file && vname) {
+        this.imageCtrl.setVariantBlob(slotId, vname, file, file.name);
+      }
+      variantFileInput.value = '';
+    });
+
+    variantRow.append(addVariantBtn, variantFileInput);
+    return variantRow;
   }
 }
