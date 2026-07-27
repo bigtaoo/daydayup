@@ -1,6 +1,7 @@
 import { Game } from './game/Game';
 import { WebPlatform } from './platform/web/WebPlatform';
 import { preloadRigSkin } from './render/skinRegistry';
+import { preloadWeaponSkins } from './render/weaponSkins';
 
 // Web entry. The WeChat entry is client/src/main.wechat.ts (loaded by client/wechat/game.js).
 // Both reuse the Game core; only the Platform differs. The real `.tao` rig skin
@@ -13,13 +14,27 @@ async function boot() {
   const input = platform.createInput(app);
   const audio = platform.createAudio();
 
-  // Best-effort: a failed/slow preload just leaves the orb-core skin on its
-  // Graphics placeholder (design/02/12 — art never blocks gameplay).
-  try {
-    await preloadRigSkin('orb-core', '/skins/orb-core');
-  } catch (err) {
-    console.warn('orb-core skin preload failed, falling back to placeholder', err);
-  }
+  // Best-effort: a failed/slow preload just leaves that character's skin on its
+  // Graphics placeholder (design/02/12 — art never blocks gameplay). Registry keys
+  // are SkinDef.atlasKey values (content/skins.ts) — the three launch characters
+  // (design/13), all on the shared orb-core rig.
+  const CHAR_BUNDLES: ReadonlyArray<[string, string]> = [
+    ['char_vanguard', '/skins/orb-core'],
+    ['char_skirmisher', '/skins/skirmisher-core'],
+    ['char_juggernaut', '/skins/juggernaut-core'],
+  ];
+  await Promise.all([
+    ...CHAR_BUNDLES.map(async ([name, baseUrl]) => {
+      try {
+        await preloadRigSkin(name, baseUrl);
+      } catch (err) {
+        console.warn(`${name} skin preload failed, falling back to placeholder`, err);
+      }
+    }),
+    preloadWeaponSkins().catch((err) => {
+      console.warn('weapon skins preload failed, socket stays unarmed-looking', err);
+    }),
+  ]);
 
   const game = new Game(app, input, audio);
   game.start();

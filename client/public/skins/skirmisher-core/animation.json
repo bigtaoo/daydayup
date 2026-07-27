@@ -1,0 +1,455 @@
+{
+  "version": 2,
+  "bindings": {
+    "shell": {
+      "anchorX": 0.5,
+      "anchorY": 0.5,
+      "flipX": false,
+      "zOrder": 0,
+      "rotation": 0,
+      "scaleX": 1.224609375,
+      "scaleY": 1.224609375
+    },
+    "belly": {
+      "anchorX": 0.5,
+      "anchorY": 0.5,
+      "flipX": false,
+      "zOrder": 1,
+      "rotation": 0,
+      "scaleX": 1.224609375,
+      "scaleY": 1.224609375
+    },
+    "eye": {
+      "anchorX": 0.5,
+      "anchorY": 0.5,
+      "flipX": false,
+      "zOrder": 2,
+      "rotation": 0,
+      "scaleX": 1.224609375,
+      "scaleY": 1.224609375
+    },
+    "socket_l": {
+      "anchorX": 0.5,
+      "anchorY": 0.5,
+      "flipX": false,
+      "zOrder": 3,
+      "rotation": 0,
+      "scaleX": 1,
+      "scaleY": 1
+    },
+    "socket_r": {
+      "anchorX": 0.5,
+      "anchorY": 0.5,
+      "flipX": false,
+      "zOrder": 4,
+      "rotation": 0,
+      "scaleX": 1,
+      "scaleY": 1
+    }
+  },
+  "animations": {
+    "idle": {
+      "duration": 2,
+      "loop": true,
+      "keyframes": [
+        {
+          "time": 0,
+          "bones": {
+            "shell": {
+              "translateY": 0
+            },
+            "eye": {
+              "translateY": 0
+            },
+            "belly": {
+              "translateY": 0
+            },
+            "socket_l": {
+              "translateY": 0
+            },
+            "socket_r": {
+              "translateY": 0
+            }
+          }
+        },
+        {
+          "time": 1,
+          "bones": {
+            "shell": {
+              "translateY": -6
+            },
+            "eye": {
+              "translateY": -6
+            },
+            "belly": {
+              "translateY": -6
+            },
+            "socket_l": {
+              "translateY": -4,
+              "rotation": 4
+            },
+            "socket_r": {
+              "translateY": -4,
+              "rotation": -4
+            }
+          }
+        },
+        {
+          "time": 2,
+          "bones": {
+            "shell": {
+              "translateY": 0
+            },
+            "eye": {
+              "translateY": 0
+            },
+            "belly": {
+              "translateY": 0
+            },
+            "socket_l": {
+              "translateY": 0
+            },
+            "socket_r": {
+              "translateY": 0
+            }
+          }
+        }
+      ]
+    },
+    "move": {
+      "duration": 0.6,
+      "loop": true,
+      "keyframes": [
+        {
+          "time": 0,
+          "bones": {
+            "shell": {
+              "rotation": 10,
+              "translateY": 0
+            },
+            "eye": {
+              "translateY": 0
+            },
+            "belly": {
+              "translateY": 0
+            },
+            "socket_l": {
+              "translateY": 0
+            },
+            "socket_r": {
+              "translateY": 0
+            }
+          }
+        },
+        {
+          "time": 0.15,
+          "bones": {
+            "shell": {
+              "rotation": 10,
+              "translateY": -5
+            },
+            "eye": {
+              "translateY": -5
+            },
+            "belly": {
+              "translateY": -5
+            },
+            "socket_l": {
+              "translateY": -3
+            },
+            "socket_r": {
+              "translateY": -3
+            }
+          }
+        },
+        {
+          "time": 0.3,
+          "bones": {
+            "shell": {
+              "rotation": 10,
+              "translateY": 0
+            },
+            "eye": {
+              "translateY": 0
+            },
+            "belly": {
+              "translateY": 0
+            },
+            "socket_l": {
+              "translateY": 0
+            },
+            "socket_r": {
+              "translateY": 0
+            }
+          }
+        },
+        {
+          "time": 0.45,
+          "bones": {
+            "shell": {
+              "rotation": 10,
+              "translateY": -5
+            },
+            "eye": {
+              "translateY": -5
+            },
+            "belly": {
+              "translateY": -5
+            },
+            "socket_l": {
+              "translateY": -3
+            },
+            "socket_r": {
+              "translateY": -3
+            }
+          }
+        },
+        {
+          "time": 0.6,
+          "bones": {
+            "shell": {
+              "rotation": 10,
+              "translateY": 0
+            },
+            "eye": {
+              "translateY": 0
+            },
+            "belly": {
+              "translateY": 0
+            },
+            "socket_l": {
+              "translateY": 0
+            },
+            "socket_r": {
+              "translateY": 0
+            }
+          }
+        }
+      ]
+    },
+    "attack": {
+      "duration": 0.35,
+      "loop": false,
+      "keyframes": [
+        {
+          "time": 0,
+          "bones": {
+            "socket_r": {
+              "translateX": 0,
+              "scaleX": 1
+            }
+          }
+        },
+        {
+          "time": 0.08,
+          "bones": {
+            "socket_r": {
+              "translateX": -10,
+              "scaleX": 0.85
+            }
+          }
+        },
+        {
+          "time": 0.2,
+          "bones": {
+            "socket_r": {
+              "translateX": 4,
+              "scaleX": 1.05
+            }
+          }
+        },
+        {
+          "time": 0.35,
+          "bones": {
+            "socket_r": {
+              "translateX": 0,
+              "scaleX": 1
+            }
+          }
+        }
+      ]
+    },
+    "hurt": {
+      "duration": 0.3,
+      "loop": false,
+      "keyframes": [
+        {
+          "time": 0,
+          "bones": {
+            "shell": {
+              "scaleX": 1,
+              "scaleY": 1,
+              "alpha": 1
+            }
+          }
+        },
+        {
+          "time": 0.06,
+          "bones": {
+            "shell": {
+              "scaleX": 1.15,
+              "scaleY": 0.8,
+              "alpha": 0.6
+            }
+          }
+        },
+        {
+          "time": 0.18,
+          "bones": {
+            "shell": {
+              "scaleX": 0.95,
+              "scaleY": 1.05,
+              "alpha": 1
+            }
+          }
+        },
+        {
+          "time": 0.3,
+          "bones": {
+            "shell": {
+              "scaleX": 1,
+              "scaleY": 1,
+              "alpha": 1
+            }
+          }
+        }
+      ]
+    },
+    "death": {
+      "duration": 0.9,
+      "loop": false,
+      "keyframes": [
+        {
+          "time": 0,
+          "bones": {
+            "shell": {
+              "scaleX": 1,
+              "scaleY": 1,
+              "translateY": 0
+            },
+            "eye": {
+              "alpha": 1
+            }
+          }
+        },
+        {
+          "time": 0.3,
+          "bones": {
+            "shell": {
+              "scaleX": 1.1,
+              "scaleY": 0.85,
+              "translateY": 6
+            },
+            "eye": {
+              "alpha": 0.5
+            }
+          }
+        },
+        {
+          "time": 0.6,
+          "bones": {
+            "shell": {
+              "scaleX": 0.7,
+              "scaleY": 0.5,
+              "translateY": 14
+            },
+            "eye": {
+              "alpha": 0.15
+            }
+          }
+        },
+        {
+          "time": 0.9,
+          "bones": {
+            "shell": {
+              "scaleX": 0.4,
+              "scaleY": 0.3,
+              "translateY": 18,
+              "alpha": 0
+            },
+            "eye": {
+              "alpha": 0
+            },
+            "belly": {
+              "alpha": 0
+            },
+            "socket_l": {
+              "alpha": 0
+            },
+            "socket_r": {
+              "alpha": 0
+            }
+          }
+        }
+      ]
+    },
+    "spawn": {
+      "duration": 0.35,
+      "loop": false,
+      "keyframes": [
+        {
+          "time": 0,
+          "bones": {
+            "shell": {
+              "scaleX": 0.2,
+              "scaleY": 0.2,
+              "alpha": 0
+            },
+            "eye": {
+              "alpha": 0
+            },
+            "belly": {
+              "alpha": 0
+            },
+            "socket_l": {
+              "alpha": 0
+            },
+            "socket_r": {
+              "alpha": 0
+            }
+          }
+        },
+        {
+          "time": 0.15,
+          "bones": {
+            "shell": {
+              "scaleX": 1.15,
+              "scaleY": 0.85,
+              "alpha": 1
+            },
+            "eye": {
+              "alpha": 1
+            },
+            "belly": {
+              "alpha": 1
+            },
+            "socket_l": {
+              "alpha": 1
+            },
+            "socket_r": {
+              "alpha": 1
+            }
+          }
+        },
+        {
+          "time": 0.25,
+          "bones": {
+            "shell": {
+              "scaleX": 0.95,
+              "scaleY": 1.05
+            }
+          }
+        },
+        {
+          "time": 0.35,
+          "bones": {
+            "shell": {
+              "scaleX": 1,
+              "scaleY": 1
+            }
+          }
+        }
+      ]
+    }
+  }
+}

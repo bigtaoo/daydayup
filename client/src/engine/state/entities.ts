@@ -184,6 +184,11 @@ export interface Actor {
 
 export interface PlayerActor extends Actor {
   faction: 'player';
+  // Render-only character atlas ref (design/02/12/13), set once at spawn from the
+  // resolved SkinDef.atlasKey (content/skins.ts) — the sim never reads it, like
+  // EnemyActor's `tint`. Lets the view pick which of the 3-character roster's rig
+  // skins to draw. Undefined = the Graphics placeholder (or resolveSkin's default).
+  atlasKey?: string;
   prevButtons: number; // last tick's button bitfield, for rising-edge detection
   // Loadout: up to two carried weapons (any mix of ranged/melee). SWAP toggles
   // the active slot; each slot keeps its own cooldown, so switching does NOT

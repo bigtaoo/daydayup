@@ -457,6 +457,7 @@ export class GameState {
       prevButtons: 0,
       status: freshStatus(),
       shieldBreak: skin.shieldBreak ? toShieldBreakSim(skin.shieldBreak) : undefined,
+      atlasKey: skin.atlasKey,
     };
   }
 

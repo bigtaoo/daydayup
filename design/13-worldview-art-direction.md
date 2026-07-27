@@ -51,9 +51,23 @@ The **boss closes the loop thematically**: it is a **giant failed core** — a h
 ### Style & the colour law
 
 - **Flat-cel "半平涂".** Bold clean uniform outlines, flat solid colour fills, simple soft cel shadows, minimal internal detail, strong readable silhouette. Deliberately **flatter than rendered concept art** — cut-out parts (`12`) rotate every frame, so baked lighting/texture would break, and a DAU title must produce content (characters, enemies, weapons) **cheaply and on-model**. The accepted weapon/melee concepts are the **flatness benchmark**; the enemy concepts are slightly over-rendered (lava texture, gloss) and must be flattened one notch in production.
-- **Element = colour is a hard gameplay rule, dual-channel.** A **closed five-colour language** drives all combat legibility: **fire = orange-red, ice = cyan, lightning = yellow-violet (yellow-dominant), poison = green-violet (green-dominant), physical = neutral white/grey.** Because lightning and poison can both drift violet, they are pulled apart — lightning toward yellow, poison toward green — **and** every weapon / enemy / status carries a small matching **element icon badge** (flame / snowflake / bolt / skull / gem). Colour sets the mood, the icon is the legibility backstop (small size, colour-blind, dark background). This dual channel is **locked** and governs bullet trails, status auras (`07`), enemy `tint` (`09`), weapon crystal, and biome accents. Concrete per-element hex values are still **to design** (below).
+- **Element = colour is a hard gameplay rule, dual-channel.** A **closed five-colour language** drives all combat legibility: **fire = orange-red, ice = pale blue, lightning = bright yellow, poison = sickly green, physical = neutral white/grey.** Lightning and poison were pulled fully off the shared violet they could each drift toward — pure yellow vs. pure green, no violet left in either — for a cleaner split than a violet-tinted version of each would read. Every weapon / enemy / status also carries a small matching **element icon badge** (flame / snowflake / bolt / skull / gem). Colour sets the mood, the icon is the legibility backstop (small size, colour-blind, dark background). This dual channel is **locked** and governs bullet trails, status auras (`07`), enemy `tint` (`09`), weapon crystal, and biome accents.
 - **Environment desaturated, hazards saturated.** Base stonework/terrain is low-chroma so the *interactive* bits — element FX, loot crystals, blight glow, the orbiting weapons — pop. The poison biome's ambient green must be dialled down and poison must **not** be the first biome, or green FX/enemies camouflage against a green floor.
 - **Biome identity = element theme + palette shift**, cheap to swap via `12`'s lazy per-biome bundles.
+
+### Element palette (locked 2026-07-27)
+
+The hex values already driving combat FX (`client/src/game/config.ts`'s `CONFIG.colors`/`ELEMENT_COLORS`) — this is that "concrete per-element hex" the list below used to call out as undecided; it's just the shipped values confirmed and written down, not a new choice:
+
+| Element | Hex | Used as |
+|---|---|---|
+| Fire | `#FF7043` | `statusBurn` — bullet trail, burn aura, `emberling` tint |
+| Ice | `#81D4FA` | `statusChill` — bullet trail, chill aura |
+| Lightning | `#FFF176` | `statusShock` — bullet trail, chain-hit flash |
+| Poison | `#9CCC65` | `statusPoison` — bullet trail, poison-stack aura |
+| Physical | `#E2E8F0` | no dedicated status FX (physical has no on-hit status) — the same neutral already used for the `gun`/`sword`/rarity-white palette entries |
+
+> **Known drift, not fixed in this pass:** the enemy `tint` values (`content/enemies.ts`) were authored independently of the FX table above and don't all match it 1:1 — `emberling` (`0xff7043`) happens to match fire exactly, but `frostling` (`0x4fc3f7`) and `galvanist` (`0xffd54f`) are close-but-different shades of the ice/lightning FX hues, and `ironclad`'s `0x90a4ae` steel-grey is its own physical-flavoured tint rather than reusing `#E2E8F0`. `blightlord`'s `0x8e24aa` toxic purple is not a poison-element tint at all (poison has no dedicated critter yet, `13` above) — it's the boss's own flavour colour, unrelated to this law. Unifying enemy tints onto the FX table is a small follow-up in `content/enemies.ts`, not a doc change.
 
 ## Worldview (reverse-engineered from the art, locked)
 
@@ -84,10 +98,10 @@ The art-first setting still makes each locked mechanic diegetic:
 
 ## To design
 
-- **Concrete palette:** per-element hex + per-biome background palettes (the five-colour law's actual values), with the lightning-yellow / poison-green separation baked in.
+- **Per-biome background palettes** — the element hex table is locked (above); the four biomes' actual background/accent palettes built from it are still unpicked.
 - **The other biomes' looks** — fire / ice / lightning + a neutral entry zone need a visual pass, plus their difficulty/order (`05`), keeping poison off floor 1.
-- **The 3 launch characters** — each a distinct themed orb-core + its `(maxHp, maxShield)` + break-passive playstyle (`02`/`14`); which one anchors marketing.
+- ~~**The 3 launch characters**~~ — **shipped 2026-07-27**: `vanguard` (the balanced default, cream/gold orb, already bound `12`), `skirmisher` (a Sun-Wukong-themed core — golden fur shell, crystal crown, fire-orange belly/eye — the fragile-high-shield agile pick) and `juggernaut` (a frost-guardian core — pale-blue armoured shell, ice-cyan belly/eye — the flat-HP tank pick) round out the roster, each a distinct themed orb-core on the shared rig (`content/skins.ts`'s `atlasKey`s `char_vanguard`/`char_skirmisher`/`char_juggernaut`). Which one anchors marketing is still open.
 - **Enemy body variety** — beyond the re-tinted base critter: a heavy brute, a floating ranged form, and the boss core.
 - **Outpost / hub + NPCs** — the meta home base's look (forge, character select — `14`), and any NPCs.
-- **Rarity vs element colour namespace** — the five element hues are reserved for combat FX; weapon **rarity** (白→蓝→紫→橙→金, `14`) must read via border + a per-rarity ornament/emissive overlay on the sprite, without colliding with the element language. Concrete overlay spec pairs with the palette pass above.
+- **Rarity vs element colour namespace** — the five element hues are reserved for combat FX; weapon **rarity** (白→蓝→紫→橙→金, `14`) must read via border + a per-rarity ornament/emissive overlay on the sprite, without colliding with the element language. Concrete overlay spec is still open.
 - **Shipping title** — is "DayDayUp" the final name or a codename? The Blight/crystal-core setting may suggest a title.

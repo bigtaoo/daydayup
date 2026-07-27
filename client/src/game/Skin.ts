@@ -2,6 +2,7 @@ import { Container, Graphics } from 'pixi.js';
 import { RigSkin } from '../render/RigSkin';
 import { getRigSkin } from '../render/skinRegistry';
 import { ORB_CORE_REFERENCE_RADIUS } from '../render/orbCoreRig';
+import type { WeaponVisualKind } from '../render/weaponSkins';
 
 // Appearance layer (see design/02-entity-model.md).
 // A skin is either the Graphics placeholder (default — no real art preloaded
@@ -66,5 +67,17 @@ export class Skin {
   // Hand anchor (in actor-local coords). Fixed in the demo; later driven by animation frames.
   handAnchor(): { x: number; y: number } {
     return { x: 0, y: 2 };
+  }
+
+  /** Whether a real `.tao` rig is active (vs. the Graphics placeholder) — lets Actor
+   *  decide whether its own cosmetic weapon Graphics is still needed. */
+  get hasRig(): boolean {
+    return !!this.rig;
+  }
+
+  /** Forward the equipped weapon's kind to the rig's socket mount (design/03/12/13).
+   *  No-op on the Graphics placeholder (no socket to mount onto). */
+  setWeaponKind(kind: WeaponVisualKind | null): void {
+    this.rig?.setWeaponKind(kind);
   }
 }

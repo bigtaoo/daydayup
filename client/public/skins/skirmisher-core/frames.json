@@ -1,0 +1,18 @@
+{
+  "shell": [
+    "default"
+  ],
+  "belly": [
+    "default"
+  ],
+  "eye": [
+    "default",
+    "back"
+  ],
+  "socket_l": [
+    "default"
+  ],
+  "socket_r": [
+    "default"
+  ]
+}

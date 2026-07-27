@@ -42,7 +42,7 @@ export class Scene {
       if (!p.alive) continue;
       let v = this.views.get(p.id) as Actor | undefined;
       if (!v) {
-        v = new Actor('player', fpToPx(p.radius));
+        v = new Actor('player', fpToPx(p.radius), undefined, false, p.atlasKey);
         this.spawn(p.id, v, fpToPx(p.gx), fpToPx(p.gy), fpToPx(p.z), bradToRad(p.facing));
       } else {
         v.pushState(fpToPx(p.gx), fpToPx(p.gy), fpToPx(p.z), bradToRad(p.facing));

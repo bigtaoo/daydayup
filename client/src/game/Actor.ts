@@ -35,7 +35,7 @@ export class Actor extends Entity {
   private weaponKind: WeaponKind | null | undefined = undefined;
   private radiusPx: number;
 
-  constructor(faction: Faction, radiusPx: number, tint?: number, boss = false) {
+  constructor(faction: Faction, radiusPx: number, tint?: number, boss = false, atlasKey?: string) {
     super();
     this.radiusPx = radiusPx;
     // The actor container sorts children so the weapon can sit in front of / behind.
@@ -51,11 +51,13 @@ export class Actor extends Entity {
         ? [CONFIG.colors.player, CONFIG.colors.playerFront]
         : [CONFIG.colors.enemy, 0xffd6d6];
     // An enemy blueprint tint (elemental variant) overrides the default body colour.
-    // Only the player has a real preloaded rig skin today (art/units' orb-core,
-    // design/12); enemies fall back to the Graphics placeholder until a rigged
-    // critter skin exists (still-open item, see design/12's "further boss atlas
-    // art remain real-art-production work").
-    this.skin = new Skin(tint ?? body, front, radiusPx, faction === 'player' ? 'orb-core' : undefined);
+    // Only players have a real preloaded rig skin today (art/units', design/12);
+    // enemies fall back to the Graphics placeholder until a rigged critter skin
+    // exists (still-open item, see design/12's "further boss atlas art remain real-
+    // art-production work"). `atlasKey` is the entity's resolved SkinDef.atlasKey
+    // (design/13's 3-character roster) — falls back to the default character's
+    // skin if a player entity somehow carries none (forward-compat, like resolveSkin).
+    this.skin = new Skin(tint ?? body, front, radiusPx, faction === 'player' ? (atlasKey ?? 'char_vanguard') : undefined);
     this.addChild(this.skin.view);
 
     this.weaponGfx.zIndex = 1;
@@ -79,11 +81,15 @@ export class Actor extends Entity {
     }
   }
 
-  // Swap the cosmetic weapon shape to match the engine's active weapon kind.
+  // Swap the cosmetic weapon shape to match the engine's active weapon kind. A real
+  // rig mounts its own weapon sprite on the socket (design/03/12/13's universal
+  // mount); the Graphics placeholder is only drawn when no rig is loaded, so the
+  // two never render on top of each other.
   setWeaponKind(kind: WeaponKind | null): void {
     if (kind === this.weaponKind) return;
     this.weaponKind = kind;
-    this.drawWeapon(kind);
+    this.skin.setWeaponKind(kind);
+    this.drawWeapon(this.skin.hasRig ? null : kind);
   }
 
   // Update the boss health bar from the engine actor's hp (no-op for non-bosses).

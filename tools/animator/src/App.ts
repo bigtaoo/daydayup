@@ -4,6 +4,7 @@ import { CommandManager }        from './core/CommandManager';
 import { Rig, type RigDef }      from './skeleton/Rig';
 import { ORB_CORE_RIG }          from './skeleton/rigs/orbCore';
 import { BOSS_CORE_RIG }         from './skeleton/rigs/bossCore';
+import { CRITTER_CORE_RIG }      from './skeleton/rigs/critterCore';
 import { ImageController }       from './images/ImageController';
 import { AnimationController }   from './animation/AnimationController';
 import { Renderer }              from './rendering/Renderer';
@@ -38,7 +39,11 @@ export class App {
     // other opt-in query-param toggles (design/12's "a new rig is new data, not
     // new code" — this is that claim exercised for a second body archetype, not
     // a real multi-project rig-switcher UI). Defaults to the orb-core hero.
-    const RIGS: Record<string, RigDef> = { 'orb-core': ORB_CORE_RIG, 'boss-core': BOSS_CORE_RIG };
+    const RIGS: Record<string, RigDef> = {
+      'orb-core':    ORB_CORE_RIG,
+      'boss-core':   BOSS_CORE_RIG,
+      'critter-core': CRITTER_CORE_RIG,
+    };
     const rigParam = new URLSearchParams(location.search).get('rig');
     const rigDef   = (rigParam && RIGS[rigParam]) || ORB_CORE_RIG;
     const rig      = new Rig(rigDef);

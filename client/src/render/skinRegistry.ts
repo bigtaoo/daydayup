@@ -13,8 +13,14 @@ export interface LoadedRigSkin {
   bundle: RigSkinBundle;
 }
 
+// Three characters (design/13's launch roster, content/skins.ts's SkinDef.atlasKey
+// values), one shared rig — Rig is stateless FK math over a RigDef, so all three
+// skins reuse a single instance (design/12: "one rig per body archetype, many skins").
+const orbCoreRig = new Rig(ORB_CORE_RIG);
 const RIG_DEFS: Record<string, Rig> = {
-  'orb-core': new Rig(ORB_CORE_RIG),
+  char_vanguard: orbCoreRig,
+  char_skirmisher: orbCoreRig,
+  char_juggernaut: orbCoreRig,
 };
 
 const registry = new Map<string, LoadedRigSkin>();
