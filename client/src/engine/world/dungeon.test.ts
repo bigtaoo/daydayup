@@ -1,8 +1,9 @@
 /**
  * Seeded dungeon assembly (design/05/09, ROADMAP 1.3). `generateFloor` is a pure
- * function — not yet wired into GameEngine — so these tests drive it directly
- * with a real `Prng` (matching GameState's own construction pattern) rather than
- * a live GameState.
+ * function, so these tests drive it directly with a real `Prng` (matching
+ * GameState's own construction pattern) rather than a live GameState. The live
+ * GameEngine integration (SpawnSystem.tickDungeon/ExtractionSystem.resolveDescend)
+ * is covered separately in dungeonrun.test.ts.
  */
 import { describe, it, expect } from 'vitest';
 import { Prng } from '@dd/engine/math/prng';
