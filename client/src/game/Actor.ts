@@ -51,7 +51,11 @@ export class Actor extends Entity {
         ? [CONFIG.colors.player, CONFIG.colors.playerFront]
         : [CONFIG.colors.enemy, 0xffd6d6];
     // An enemy blueprint tint (elemental variant) overrides the default body colour.
-    this.skin = new Skin(tint ?? body, front, radiusPx);
+    // Only the player has a real preloaded rig skin today (art/units' orb-core,
+    // design/12); enemies fall back to the Graphics placeholder until a rigged
+    // critter skin exists (still-open item, see design/12's "further boss atlas
+    // art remain real-art-production work").
+    this.skin = new Skin(tint ?? body, front, radiusPx, faction === 'player' ? 'orb-core' : undefined);
     this.addChild(this.skin.view);
 
     this.weaponGfx.zIndex = 1;
@@ -140,7 +144,10 @@ export class Actor extends Entity {
 
   override interpolate(alpha: number, frameDt: number): void {
     super.interpolate(alpha, frameDt);
-    this.skin.setFacing(this.facingRad);
+    // Cheap idle/move clip pick straight from Entity's own interpolation buffers —
+    // attack/hurt/death need real GameState signals Actor doesn't receive yet.
+    const moving = Math.hypot(this.curX - this.prevX, this.curY - this.prevY) > 0.01;
+    this.skin.setFacing(this.facingRad, frameDt, moving ? 'move' : 'idle');
     this.weaponGfx.rotation = this.facingRad;
     // Gentle breathing pulse so an active aura reads as a live effect, not an outline.
     if (this.auraMask !== 0) {

@@ -88,6 +88,10 @@ export class App {
     );
     const ioCtrl = new IOController(state, animCtrl, imageCtrl, cmdManager, bus, rig);
     new ResizablePanels(rootEl);
+    // Debug hook (same convention as client/src/main.ts's `__game`) — lets a
+    // headless driver call buildTaoBlob()/buildEditorBlob() directly instead of
+    // fighting the native save-file picker's user-activation requirement.
+    (window as unknown as { __io?: IOController }).__io = ioCtrl;
 
     // ── 6. Auto-binding when images are loaded ───────────────────────────────
     // When an image is loaded for a bone slot, create a default binding if
