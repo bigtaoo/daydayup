@@ -23,7 +23,7 @@ Enemies carry a per-type **resist/weakness** multiplier (per-mille; `1000` norma
 
 The lingering DoT/chill is ticked by a dedicated `StatusEffectSystem` (tick step 8, `08`), on a global `tick % DOT_INTERVAL` cadence so every affected actor ticks in lockstep — no per-actor clock, fully deterministic (`06`). All status math is integer/fp; the chain uses squared-distance nearest (no trig). A deflected bullet keeps its element, so a parried fire bolt burns enemies.
 
-> **Known caveat:** a `×weakness` multiplier on a base-1 hit truncates back to 1, so low-damage elemental weapons don't visibly benefit from a weakness — the effect only reads on damage ≥ 2. Fix candidates: round instead of truncate in `applyResist`, or give elemental weapons a small flat-damage floor.
+> **Fixed:** `applyResist` (`content/damage.ts`) rounds instead of truncating specifically on the weakness (`mult > 1000`) branch, so a base-1 hit ×1.8 shows as 2, not silently floored back to 1 — resistance (`mult < 1000`) still truncates toward the min-1 floor so it always reduces. Asymmetric on purpose (see the function's own doc comment) — a replay-affecting rounding rule, guarded by an `ENGINE_VERSION` note there.
 
 ## Weapon composition: Frame × Element
 
@@ -51,7 +51,7 @@ A ranged frame is **emission** (how shots leave per trigger) × **ballistic** (h
 | burst | N shots over a few ticks per trigger | `burstCount` `burstGapTicks` (new) |
 | radial | ring / spiral emitter (bullet-hell) | `bullets` + `spreadDeg` ≈ 360 |
 
-**Ballistic** (`ballistic: BallisticId`) — a per-tick velocity rule, integer/brad, deterministic (`06`/`07`). Catalog + params live in `09`. **Shipped 2026-07-24 (ROADMAP 1.1, `ENGINE_VERSION` 15):** `straight`/`homing`/`lob`/`beam`/`boomerang`. `orbit` + radial `pattern` remain the follow-up (tier 4 below):
+**Ballistic** (`ballistic: BallisticId`) — a per-tick velocity rule, integer/brad, deterministic (`06`/`07`). Catalog + params live in `09`. **Shipped 2026-07-24 (ROADMAP 1.1, `ENGINE_VERSION` 15/16):** `straight`/`homing`/`lob`/`beam`/`boomerang`, plus `orbit` + the radial `pattern` (tier 4 below) — the whole Frame axis (tiers 1-4) is closed, no ballistic/pattern remains unshipped:
 
 | ballistic | behavior | params |
 |-----------|----------|-----------|
@@ -60,7 +60,7 @@ A ranged frame is **emission** (how shots leave per trigger) × **ballistic** (h
 | `homing` | turns `vx/vy` toward the nearest opposite-faction actor each tick, ≤`turnRateBrad`, speed preserved — shipped | `turnRateBrad` |
 | `boomerang` | reverses velocity once at `returnAfterTicks`, hitting each way — shipped | `returnAfterTicks` |
 | `beam` | frozen hitscan line at the fire-time origin/facing (does not track the shooter or move); damages every opposite-faction actor on the line on a `state.tick % beamTickInterval` global cadence (same lockstep pattern as DoT, `07`), for `beamTicks` total — shipped | `beamTicks` `beamTickInterval` `beamRange` |
-| `orbit` | orbs circling the actor / deployables — not yet implemented | `orbitRadius` `orbCount` |
+| `orbit` | orbs circling the actor / deployables — shipped (`content/ballistics.ts`'s `orbitStep`) | `orbitRadius` `orbitAngularVelBrad` |
 
 Showcase weapons per new frame (`content/weapons.ts`): `scattergun` (spread emission), `seeker` (homing), `mortar` (lob), `lasercutter` (beam), `tomahawk` (boomerang), `hammer`/`spear` (melee frames below) — all physical, so each frame's own behavior reads clearly independent of the element layer.
 
@@ -82,7 +82,8 @@ Melee has no ballistic; its frame is the **swing shape** (`arcDeg` × `rangeGrid
 1. ✅ `spread` — emission jitter drawn from `combatPrng`; a single-pellet weapon draws nothing (unchanged baseline).
 2. ✅ `homing`, `lob` — tracking + AoE-on-landing.
 3. ✅ `beam` — frozen hitscan line, damage on a global tick cadence.
-4. ✅ `boomerang`, plus melee `hammer`/`spear` (pure data — `MeleeSimSpec` needed no new mechanic). **Remaining:** `orbit` / radial `pattern` / a first batch of `k_*` procs (`09`).
+4. ✅ `boomerang`, plus melee `hammer`/`spear` (pure data — `MeleeSimSpec` needed no new mechanic).
+5. ✅ `orbit` + radial `pattern` (ROADMAP 1.1 closeout, `ENGINE_VERSION` 16) — the Frame axis itself has nothing left unshipped. **Remaining, and still undecided, not just unbuilt:** a first concrete batch of `k_*` on-hit procs (`09`) — never specified beyond a placeholder id prefix, needs a design decision on what procs actually exist before it's codeable.
 
 ## Deflect / parry (core mechanic)
 

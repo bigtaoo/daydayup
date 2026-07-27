@@ -135,13 +135,13 @@ export class Game {
   private localOwner = 0;
   private coop = false;
   private online = false;
-  // `?arenaDemo=1` — a DEV-ONLY harness (not a real PvP entry point; matchmaking/
-  // buildArenaSpecs/anti-cheat are unwired end-to-end still, ROADMAP Phase 4 closeout
-  // note) that boots a tiny local synthetic ArenaMap so the PvP zone HUD row + Minimap
-  // (design/10) have real `state.zoneEnabled`/`arenaMap`/`zone` data to draw, since
-  // neither PvE (no multi-room floors yet) nor a real PvP match (no assembly entry
-  // point yet) can otherwise reach this code path in the browser. Reuses the coop bot-
-  // ally submit path to drive the second seat locally (see stepSim).
+  // `?arenaDemo=1` — a DEV-ONLY harness, kept even after `?pvp=1` (below) became a
+  // real matchmade entry point: it boots a tiny local synthetic 3-room ArenaMap with
+  // zero network/matchmaking round-trip, so the PvP zone HUD row + Minimap (design/10)
+  // have real `state.zoneEnabled`/`arenaMap`/`zone` data to iterate against without a
+  // second tab or a running matchsvc. Not a substitute for `?pvp=1` — no real map, no
+  // matchmaking, no HP/weapon scaling. Reuses the coop bot-ally submit path to drive
+  // the second seat locally (see stepSim).
   private arenaDemo = false;
   // `?pvp=1` (design/15, ROADMAP Phase 4 closeout) — a REAL matchmade PvP arena run:
   // requests an 8-seat (default; `?seats=` overrides for local two-tab testing) 'pvp'-

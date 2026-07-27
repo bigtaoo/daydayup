@@ -16,9 +16,9 @@
  * (design/05). This is design/05's hybrid-gear table made executable.
  *
  * buildRunSpecs is wired into GameState construction and (via makeWeapon) the
- * in-run weapon drops. buildArenaSpecs (ROADMAP 4.2c) is not yet wired into
- * GameState construction — PvP mode itself isn't assembled end-to-end yet (that's
- * 4.2d/e) — but the wall and the scale-factor math are real and load-bearing now.
+ * in-run weapon drops. buildArenaSpecs (ROADMAP 4.2c) is ALSO wired into GameState
+ * construction (buildSeat branches on config.arena, ENGINE_VERSION 19->20) — PvP
+ * mode is assembled end-to-end (Phase 4 closeout, ROADMAP.md).
  */
 import type { WeaponSimSpec, WeaponState } from '../state/entities';
 import { makeWeapon, BLASTER_SIM } from '../content/weapons';
