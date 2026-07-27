@@ -1,0 +1,116 @@
+/**
+ * Boss AI depth (design/09's own aspirational `EnemyBlueprint.onDeathSpawn`/`traits`,
+ * ENGINE_VERSION 27). Exercises the Blightlord's two shipped traits end-to-end through
+ * the real systems (DeathDropsSystem's onDeathSpawn adds, WeaponFireSystem's enrage
+ * latch) — not just the pure `buildEnemyActor` factory in isolation.
+ */
+import { describe, it, expect } from 'vitest';
+import { createGameState } from '@dd/engine/state/GameState';
+import type { GameState } from '@dd/engine/state/GameState';
+import { buildEnemyActor, BLIGHTLORD } from '@dd/engine/content/enemies';
+import { pxToFp } from '@dd/engine/content/convert';
+import { DeathDropsSystem, WeaponFireSystem } from '@dd/engine/systems';
+
+const CFG = { seed: 13, worldW: 1600, worldH: 1200, waves: [] as const };
+const state = (): GameState => createGameState(CFG);
+
+describe('buildEnemyActor — the shared factory (design/09)', () => {
+  it('a plain basic mob carries no boss traits', () => {
+    const s = state();
+    const e = buildEnemyActor(s, pxToFp(400), pxToFp(400), 'basic');
+    expect(e.enrage).toBeUndefined();
+    expect(e.enraged).toBe(false);
+    expect(e.onDeathSpawn).toBeUndefined();
+  });
+
+  it('a blightlord carries both traits from its blueprint, unenraged at full HP', () => {
+    const s = state();
+    const e = buildEnemyActor(s, pxToFp(400), pxToFp(400), 'blightlord');
+    expect(e.enrage).toEqual(BLIGHTLORD.enrage);
+    expect(e.onDeathSpawn).toEqual(BLIGHTLORD.onDeathSpawn);
+    expect(e.enraged).toBe(false);
+    expect(e.hp).toBe(BLIGHTLORD.maxHp);
+  });
+});
+
+describe('enrage (WeaponFireSystem, design/09 traits)', () => {
+  it('latches ONCE the tick hp first crosses the threshold, boosting damage + fire rate', () => {
+    const s = state();
+    const e = buildEnemyActor(s, pxToFp(400), pxToFp(400), 'blightlord');
+    s.enemies.push(e);
+    e.firing = true;
+    const fire = new WeaponFireSystem();
+
+    // Above the 30% threshold: fires unenraged (plain ENEMY_GUN_SIM damage). Events
+    // are cleared before each tick, matching what GameEngine.step() does for real —
+    // calling the system directly here skips that, so it must be done by hand.
+    e.hp = Math.ceil(e.maxHp * 0.4);
+    e.weapon!.cooldownTicks = 0;
+    s.clearEvents();
+    fire.tick(s);
+    expect(e.enraged).toBe(false);
+    expect(s.events.some((ev) => ev.type === 'enrage')).toBe(false);
+    const baseDamage = s.projectiles[s.projectiles.length - 1]!.damage;
+
+    // Drop below the threshold: the VERY NEXT fire latches enraged + fires the event,
+    // and this shot's damage is measurably higher than the pre-enrage shot.
+    e.hp = Math.floor((e.maxHp * BLIGHTLORD.enrage!.hpThresholdPermille) / 1000); // exactly at/under 30%
+    e.weapon!.cooldownTicks = 0;
+    s.clearEvents();
+    fire.tick(s);
+    expect(e.enraged).toBe(true);
+    expect(s.events.some((ev) => ev.type === 'enrage' && ev.id === e.id)).toBe(true);
+    const enragedDamage = s.projectiles[s.projectiles.length - 1]!.damage;
+    expect(enragedDamage).toBeGreaterThan(baseDamage);
+
+    // One-way latch: firing again does NOT re-emit the event (enemies never self-heal
+    // back above the threshold today, so re-checking every tick would be pure waste).
+    e.weapon!.cooldownTicks = 0;
+    s.clearEvents();
+    fire.tick(s);
+    expect(s.events.some((ev) => ev.type === 'enrage')).toBe(false);
+  });
+
+  it('a mob with no enrage trait never latches, regardless of hp', () => {
+    const s = state();
+    const e = buildEnemyActor(s, pxToFp(400), pxToFp(400), 'basic');
+    s.enemies.push(e);
+    e.firing = true;
+    e.hp = 1; // as close to dead as possible
+    new WeaponFireSystem().tick(s);
+    expect(e.enraged).toBe(false);
+    expect(s.events.some((ev) => ev.type === 'enrage')).toBe(false);
+  });
+});
+
+describe('onDeathSpawn (DeathDropsSystem, design/09 traits)', () => {
+  it("a dying blightlord spawns its configured adds, alive, around its death position", () => {
+    const s = state();
+    const boss = buildEnemyActor(s, pxToFp(400), pxToFp(400), 'blightlord');
+    boss.hp = 0; // lethal this tick
+    s.enemies.push(boss);
+    new DeathDropsSystem().tick(s);
+
+    // The boss itself is compacted out (dead); exactly `count` adds remain, alive.
+    expect(s.enemies).toHaveLength(BLIGHTLORD.onDeathSpawn!.count);
+    for (const minion of s.enemies) {
+      expect(minion.alive).toBe(true);
+      expect(minion.hp).toBeGreaterThan(0);
+      expect(minion.onDeathSpawn).toBeUndefined(); // no infinite chain — basic adds carry none
+      // Spawned near the boss's death position (within its own body radius + a
+      // reasonable slack for the walkable clamp), not at the origin or off-map.
+      expect(Math.abs(minion.gx - boss.gx)).toBeLessThan(boss.radius * 2);
+      expect(Math.abs(minion.gy - boss.gy)).toBeLessThan(boss.radius * 2);
+    }
+    expect(s.events.some((ev) => ev.type === 'death' && ev.id === boss.id)).toBe(true);
+  });
+
+  it('a plain basic mob dying spawns no adds', () => {
+    const s = state();
+    const e = buildEnemyActor(s, pxToFp(400), pxToFp(400), 'basic');
+    e.hp = 0;
+    s.enemies.push(e);
+    new DeathDropsSystem().tick(s);
+    expect(s.enemies).toHaveLength(0);
+  });
+});

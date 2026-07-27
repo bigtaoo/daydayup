@@ -14,6 +14,7 @@
 import { addFp, isqrt } from '../math/fixed';
 import type { Fp } from '../math/fixed';
 import { PLAYER_BASE } from '../content/players';
+import { KNOCKBACK_FRICTION_PERMILLE, KNOCKBACK_SNAP_FP } from '../config';
 import type { GameState } from '../state/GameState';
 import type { Actor } from '../state/entities';
 
@@ -47,8 +48,24 @@ export class MovementSystem {
       vx = Math.trunc((vx * keep) / 1000) as Fp;
       vy = Math.trunc((vy * keep) / 1000) as Fp;
     }
-    a.gx = addFp(a.gx, vx);
-    a.gy = addFp(a.gy, vy);
+    // Knockback (design/07, v25) is an independent external-force channel, added on
+    // top of movement — NOT chill-scaled (a shove isn't the actor's own movement
+    // speed) and NOT re-derived from input/AI each tick like vx/vy is, so it's the
+    // only way an impulse actually survives long enough for Movement to apply it.
+    a.gx = addFp(addFp(a.gx, vx), a.knockVx);
+    a.gy = addFp(addFp(a.gy, vy), a.knockVy);
+    this.decayKnockback(a);
+  }
+
+  /** Friction: knockVx/knockVy shrink by a fixed per-mille factor every tick, snapping
+   * to exactly 0 below a small threshold so a shove fades out instead of leaving a
+   * sub-pixel residual drifting forever (integer arithmetic never reaches 0 on its
+   * own from a multiply-by-fraction alone once it's below the per-tick truncation). */
+  private decayKnockback(a: Actor): void {
+    a.knockVx = Math.trunc((a.knockVx * KNOCKBACK_FRICTION_PERMILLE) / 1000) as Fp;
+    a.knockVy = Math.trunc((a.knockVy * KNOCKBACK_FRICTION_PERMILLE) / 1000) as Fp;
+    if (Math.abs(a.knockVx) < KNOCKBACK_SNAP_FP) a.knockVx = 0 as Fp;
+    if (Math.abs(a.knockVy) < KNOCKBACK_SNAP_FP) a.knockVy = 0 as Fp;
   }
 
   /**

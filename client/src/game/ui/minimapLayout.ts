@@ -3,11 +3,14 @@ import type { ZoneState } from '@dd/engine';
 
 // Pure minimap math (design/10 "room progress"), decoupled from Pixi so it's unit-
 // testable the same way the engine's own content converters are (content/arenas.ts
-// buildArenaGeometry). PvP-only: PvE has no multi-room geometry to draw yet (each
-// floor still reuses one arena, ROADMAP 1.2/1.3 status note) — a real minimap needs
-// EITHER that wiring or a live PvP match assembly (neither exists yet), so this is
-// built and tested against ArenaMap data now and wired into the HUD once one of those
-// lands (Game.ts's `?arenaDemo=1` dev toggle exercises it locally in the meantime).
+// buildArenaGeometry). PvP-only, and PERMANENTLY so — not a staging gap. PvE's
+// ROADMAP 1.3 dungeon wiring has been live since 2026-07-24 (an earlier version of
+// this comment was stale on that point), but PvE loads exactly ONE room live at a
+// time, hot-swapping its geometry on every transition — there is no co-resident
+// multi-room `ArenaMap`-shaped layout for PvE to ever feed into `computeMinimapLayout`
+// (PvP's map is co-resident by design, ROADMAP 4.2b). PvE's own "real minimap" is a
+// different, honest shape for its actual data — a progress TRACK, not a spatial map
+// — see `client/src/game/ui/floorProgressMath.ts`/`FloorProgress.ts`.
 
 export interface MinimapRoomLayout {
   id: RoomId;

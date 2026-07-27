@@ -83,7 +83,21 @@ Melee has no ballistic; its frame is the **swing shape** (`arcDeg` × `rangeGrid
 2. ✅ `homing`, `lob` — tracking + AoE-on-landing.
 3. ✅ `beam` — frozen hitscan line, damage on a global tick cadence.
 4. ✅ `boomerang`, plus melee `hammer`/`spear` (pure data — `MeleeSimSpec` needed no new mechanic).
-5. ✅ `orbit` + radial `pattern` (ROADMAP 1.1 closeout, `ENGINE_VERSION` 16) — the Frame axis itself has nothing left unshipped. **Remaining, and still undecided, not just unbuilt:** a first concrete batch of `k_*` on-hit procs (`09`) — never specified beyond a placeholder id prefix, needs a design decision on what procs actually exist before it's codeable.
+5. ✅ `orbit` + radial `pattern` (ROADMAP 1.1 closeout, `ENGINE_VERSION` 16) — the Frame axis itself has nothing left unshipped.
+
+**✅ `k_*` on-hit procs — first concrete batch shipped (`ENGINE_VERSION` 28).** The
+placeholder id prefix now has real content, a first-pass design decision (revise
+freely — nothing here is locked the way Frame×Element is): `k_lifesteal` (heal the
+firing player by a ‰ of damage dealt, works for both ranged and melee since `applyHit`
+is the one shared funnel both go through) and `k_ricochet` (a bullet retargets to the
+nearest OTHER hostile within range instead of expiring, up to N times, preserving its
+speed). Two showcase weapons carry them: `leech` (melee, lifesteal) and `carom`
+(ranged, ricochet). Found and fixed a real, adjacent bug while wiring ricochet's
+"what happens to a bullet after a hit" branch point: `RangedSpec.piercing` had been
+authored since Stage C but never converted or read anywhere — a "piercing" weapon
+behaved identically to a non-piercing one this whole time. All three now share one
+decision in `HitResolveSystem`: ricochet first, else pierce (remembering hit ids so a
+still-overlapping body isn't hit twice), else expire (the original default).
 
 ## Deflect / parry (core mechanic)
 

@@ -28,7 +28,7 @@ The minimal loop a player can complete start-to-finish. This is the part the cur
 
 - **`ScreenManager`** is a small render-side state machine (`enum Screen`, one active `Container` per screen, swap on transition). It owns the `GameEngine` lifecycle: constructs it with `(config, seed, input)` on match start, tears it down on result. It is *not* deterministic and carries no gameplay — safe to hold Pixi objects, timers, wall-clock.
 - **Result → restart** is just "build a fresh `GameState` from a new seed and re-enter `playing`." Because a run is `seed + config + input stream` (`08`), restart needs nothing persisted from the old match except meta progression (server-authoritative, `05`/`09`).
-- **Pause** (single-player only) stops calling `engine.tick()`; the last state stays on screen. In co-op/PvP there is no true pause — the frame stream keeps coming (`06`); the shell shows a non-blocking overlay instead.
+- **Pause** (single-player only) stops calling `engine.tick()`; the last state stays on screen. In co-op/PvP there is no true pause — the frame stream keeps coming (`06`); the shell shows a non-blocking overlay instead. ✅ **Shipped exactly as specified** (`client/src/game/PauseMenu.ts`, Escape/P) — offline/local play genuinely freezes (mirrors the hit-stop `acc`-doesn't-accumulate trick, no catch-up burst on resume); online is a documented no-op for now (the overlay itself isn't built for that path, matching "no true pause" above).
 
 ## HUD (in-match)
 
@@ -41,7 +41,7 @@ Lives in the `ui` layer (`01`, topmost). Renders each frame from `state` + `even
 | Ammo / charge (if any) | weapon spec (`03`/`09`) | Only for weapons that have it |
 | Crosshair / aim indicator | current `aimBrad` | On the `ui` layer per `01`; on touch it tracks the right stick, on web the mouse |
 | Swing / parry flash | `deflect` event (`08`) | Transient — a melee swing that deflected a bullet; no persistent "block" state exists (`05`) |
-| Minimap / room progress | `room` + cleared count (`05`/`09`) | PvE run structure; post-MVP polish |
+| Minimap / room progress | `room` + cleared count (`05`/`09`) | ✅ **PvE shipped**: `FloorProgress` (`client/src/game/ui/FloorProgress.ts`, `state.floorStages.length`/`roomIndex`) — a progress TRACK (done/current/upcoming nodes, capstone marked), NOT the same widget as the PvP room-graph `Minimap` below it. PvE loads one room live at a time (ROADMAP 1.3), so there's no co-resident spatial layout to fit into a box like PvP's `ArenaMap` gives — the track is the honest shape for PvE's actual data. PvP's own spatial `Minimap` (design/10 elsewhere, ROADMAP 4.x) is unaffected, still the room-graph widget. |
 | Pickup / buff toast | `pickup` event (`08`) | Transient "picked up X"; drives the roguelite build feedback — weapons + run buffs, no affixes (`05`/`14`) |
 | Score / timer / team | `state` (PvP) | Elimination/score win condition (`05` open question) |
 

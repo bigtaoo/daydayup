@@ -9,19 +9,15 @@
  * Wave positions still arrive via EngineConfig (px, converted with pxToFp); the
  * enemy blueprint (HP / footprint / loadout) now lives in content/enemies.ts (09).
  */
-import { toFp } from '../math/fixed';
 import type { Fp } from '../math/fixed';
 import { SIM } from '../sim.config';
 import { pxToFp, toFpGrid } from '../content/convert';
-import { freshStatus } from '../content/damage';
-import { makeWeapon } from '../content/weapons';
-import { BASIC_ENEMY, ENEMY_BLUEPRINTS } from '../content/enemies';
+import { buildEnemyActor } from '../content/enemies';
 import { rollArenaDrop } from '../content/drops';
 import { cosFp, BRAD_FULL } from '../math/trig';
 import { roomGeometry, type RoomPiece, type WaveScript } from '../content/rooms';
 import type { ArenaRoom } from '../content/arenas';
 import { generateFloor } from '../world/dungeon';
-import { ENEMY_TEAM_ID } from '../state/entities';
 import type { PickupItem } from '../state/entities';
 import type { ArenaRoomRuntime, GameState, WaveDef } from '../state/GameState';
 import { clampToWalkable } from './geom';
@@ -118,34 +114,7 @@ export class SpawnSystem {
    * variant, so fire-phase jitter is unaffected by which mobs a wave/room contains.
    */
   private spawnEnemyAt(state: GameState, gx: Fp, gy: Fp, type?: string): void {
-    const bp = ENEMY_BLUEPRINTS[type ?? 'basic'] ?? BASIC_ENEMY;
-    const weapon = makeWeapon(bp.weapon);
-    weapon.cooldownTicks = state.aiPrng.nextInt(bp.weapon.fireRateTicks); // fire-phase jitter
-    state.enemies.push({
-      id: state.nextId(),
-      faction: 'enemy',
-      teamId: ENEMY_TEAM_ID, // hostile to every player team (design/15), never to other AI
-      gx,
-      gy,
-      z: toFp(0),
-      vx: toFp(0),
-      vy: toFp(0),
-      facing: 0 as GameState['enemies'][number]['facing'],
-      hp: bp.maxHp,
-      maxHp: bp.maxHp,
-      shield: 0, // enemies have no shield pool (design/07 — shields are a character trait)
-      maxShield: 0,
-      ticksSinceHit: 0,
-      radius: bp.radius,
-      footprintRadius: bp.footprintRadius,
-      alive: true,
-      weapon,
-      firing: false,
-      status: freshStatus(),
-      resist: bp.resist,
-      tint: bp.tint,
-      boss: bp.boss,
-    });
+    state.enemies.push(buildEnemyActor(state, gx, gy, type));
   }
 
   // ── Dungeon mode (design/05/09, ROADMAP 1.3 wired live) ─────────────────────────

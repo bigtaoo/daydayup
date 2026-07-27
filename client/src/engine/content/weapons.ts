@@ -45,6 +45,10 @@ interface WeaponBase {
   rarity: RarityTier;
   /** Seconds before the weapon can be used again. For ranged this IS the fire rate. */
   cooldownSec: number;
+  // k_* on-hit proc (design/03/09, ENGINE_VERSION 28 — the first concrete batch):
+  // heals the firing player by this ‰ of the damage a hit deals. Shared by both kinds
+  // since applyHit is the one funnel both go through. Omitted = 0, no healing.
+  lifestealPermille?: number;
 }
 
 export interface RangedSpec extends WeaponBase {
@@ -71,6 +75,10 @@ export interface RangedSpec extends WeaponBase {
   beamRangeGrid?: number; // beam: max reach along the frozen facing
   orbitRadiusGrid?: number; // orbit: circling distance from the owner
   orbitPeriodSec?: number; // orbit: seconds for one full revolution (→ angular velocity)
+  // k_* on-hit proc (design/03/09, ENGINE_VERSION 28): on a hit, retarget to the
+  // nearest OTHER hostile actor instead of expiring, up to this many times. Omitted/0
+  // = every existing weapon's behavior, unchanged. Melee has no equivalent (it doesn't travel).
+  ricochetCount?: number;
 }
 
 export interface MeleeSpec extends WeaponBase {
@@ -564,6 +572,51 @@ export const WEAPON_SPECS: Record<string, WeaponSpec> = {
     muzzleGrid: 1.6, // spawn on the orbit circle (repositioned on the first step anyway)
     bulletZ: 0.5,
   },
+
+  // Carom (k_ricochet, design/03/09 ENGINE_VERSION 28): a single pellet that bounces to
+  // the nearest OTHER hostile actor instead of expiring on its first hit — reach around
+  // corners/crowds rather than through them (the opposite trade-off from `piercing`'s
+  // straight-line punch-through, so this weapon leaves piercing off).
+  carom: {
+    id: 'carom',
+    kind: 'ranged',
+    nameKey: 'weapon.carom.name',
+    skinRef: 'gun_default',
+    rarity: 'epic', // 紫
+
+    cooldownSec: 0.45,
+    bullets: 1,
+    spreadDeg: 0,
+    bulletSpeed: 11,
+    damage: 2,
+    ballistic: 'straight',
+    ricochetCount: 2, // up to 2 bounces after the first hit (3 targets total, at most)
+    lifespanSec: 2.5,
+    bulletRadius: 0.15,
+    muzzleGrid: 0.9375,
+    bulletZ: 0.5,
+  },
+
+  // Leech (k_lifesteal, design/03/09 ENGINE_VERSION 28): a melee weapon that heals the
+  // wielder on every connecting hit — the sustain pick for a build that wants to stand
+  // and trade rather than kite (05's "finding a better weapon" power axis, not a buff).
+  leech: {
+    id: 'leech',
+    kind: 'melee',
+    nameKey: 'weapon.leech.name',
+    skinRef: 'sword_default',
+    rarity: 'epic', // 紫
+
+    cooldownSec: 0.4,
+    damage: 2,
+    arcDeg: 140,
+    rangeGrid: 1.3,
+    swingSec: 0.14,
+    knockback: 3,
+    deflect: true,
+    deflectSpeed: 14.4,
+    lifestealPermille: 300, // heal 30% of the damage dealt, per target hit, min 1
+  },
 };
 
 // ── Conversion: authored WeaponSpec → sim-facing WeaponSimSpec (once) ──────────
@@ -603,6 +656,12 @@ export function toSimSpec(spec: WeaponSpec): WeaponSimSpec {
       // A full revolution is 65536 brad over (periodSec · 30) ticks → brad/tick.
       orbitAngularVelBrad:
         spec.orbitPeriodSec !== undefined ? Math.round(65536 / (spec.orbitPeriodSec * TICK_RATE)) : undefined,
+      // Authored since Stage C but never wired until ENGINE_VERSION 28 (found while
+      // wiring ricochet below — see RangedSimSpec's doc comment).
+      piercing: spec.piercing ?? false,
+      // k_* on-hit procs (ENGINE_VERSION 28).
+      lifestealPermille: spec.lifestealPermille,
+      ricochetCount: spec.ricochetCount,
     };
     return sim;
   }
@@ -617,6 +676,8 @@ export function toSimSpec(spec: WeaponSpec): WeaponSimSpec {
     deflect: spec.deflect,
     deflectSpeed: toFpPerTick(spec.deflectSpeed),
     damageType: spec.damageType ?? 'physical',
+    knockback: toFpPerTick(spec.knockback),
+    lifestealPermille: spec.lifestealPermille, // k_* on-hit proc (ENGINE_VERSION 28)
   };
   return sim;
 }
@@ -643,6 +704,8 @@ export const HAMMER_SIM = toSimSpec(WEAPON_SPECS.hammer!) as MeleeSimSpec;
 export const SPEAR_SIM = toSimSpec(WEAPON_SPECS.spear!) as MeleeSimSpec;
 export const NOVABURST_SIM = toSimSpec(WEAPON_SPECS.novaburst!) as RangedSimSpec;
 export const GYRE_SIM = toSimSpec(WEAPON_SPECS.gyre!) as RangedSimSpec;
+export const CAROM_SIM = toSimSpec(WEAPON_SPECS.carom!) as RangedSimSpec;
+export const LEECH_SIM = toSimSpec(WEAPON_SPECS.leech!) as MeleeSimSpec;
 
 /**
  * Sim-spec lookup by weapon id — the resolution a weapon drop uses (content/drops.ts
@@ -670,6 +733,8 @@ export const WEAPON_SIM_BY_ID: Record<string, WeaponSimSpec> = {
   spear: SPEAR_SIM,
   novaburst: NOVABURST_SIM,
   gyre: GYRE_SIM,
+  carom: CAROM_SIM,
+  leech: LEECH_SIM,
 };
 
 /** Fresh weapon runtime for a spec (design/08: cooldown in whole ticks). */

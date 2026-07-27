@@ -3,9 +3,12 @@ import {
   RUN_BUFFS,
   BUFF_CAPS,
   NO_BUFFS,
+  CRIT_DAMAGE_MULT_PERMILLE,
   sumBuffs,
   buffedDamage,
   buffedCooldown,
+  rollCrit,
+  critDamage,
 } from './runbuffs';
 import { createGameState } from '../state/GameState';
 import { WeaponFireSystem } from '../systems';
@@ -48,6 +51,55 @@ describe('sumBuffs — Σ-then-clamp, deterministic', () => {
   it('flat_hp clamps independently of the mult kinds', () => {
     const stack = Array.from({ length: 9 }, () => 'vit_up'); // 9×2 = 18 → cap 10
     expect(sumBuffs(stack).flat_hp).toBe(BUFF_CAPS.flat_hp);
+  });
+
+  it('crit_chance sums like the other Σ-clamp kinds and clamps at its own cap', () => {
+    // 2× crit_up = 300, under the 500 cap → exact sum.
+    expect(sumBuffs(['crit_up', 'crit_up']).crit_chance).toBe(300);
+    // 4× crit_up = 600 → clamps to 500 (50%), never a coinflip-or-better guarantee.
+    const many = Array.from({ length: 4 }, () => 'crit_up');
+    expect(sumBuffs(many).crit_chance).toBe(BUFF_CAPS.crit_chance);
+  });
+});
+
+describe('crit (design/07 "one frozen payload", ENGINE_VERSION 26)', () => {
+  it('rollCrit never draws the PRNG when crit_chance is 0 (design/07 hard wall)', () => {
+    const neverCalled = { nextInt: () => { throw new Error('must not draw when crit_chance is 0'); } };
+    expect(rollCrit(NO_BUFFS, neverCalled)).toBe(false);
+  });
+
+  it('rollCrit compares the draw against crit_chance out of 1000 (per-mille, not percent)', () => {
+    const sums = { ...NO_BUFFS, crit_chance: 300 };
+    expect(rollCrit(sums, { nextInt: () => 299 })).toBe(true); // 299 < 300
+    expect(rollCrit(sums, { nextInt: () => 300 })).toBe(false); // 300 is not < 300
+  });
+
+  it('critDamage is identity when not a crit, applies the fixed multiplier when it is', () => {
+    expect(critDamage(5, false)).toBe(5);
+    expect(critDamage(5, true)).toBe(Math.round((5 * CRIT_DAMAGE_MULT_PERMILLE) / 1000));
+  });
+
+  it('a crit-stacked build produces a REAL distribution over many fires, not one frozen draw', () => {
+    // Regression guard for a subtle mistake: re-creating GameState(seed) per shot would
+    // replay the exact same first PRNG draw every time (same seed, same cursor position)
+    // and this test would spuriously pass or fail on a single coin flip. Firing many
+    // times from ONE state instead advances combatPrng's cursor for real, so both a crit
+    // and a non-crit damage value MUST appear across enough draws.
+    const s = createGameState(CFG);
+    const p = s.players[0]!;
+    p.buffs = ['crit_up', 'crit_up', 'crit_up']; // 450‰, under the 500 cap
+    p.firing = true;
+    const fire = new WeaponFireSystem();
+    const damages: number[] = [];
+    for (let i = 0; i < 100; i++) {
+      p.weapon!.cooldownTicks = 0; // force ready every tick — isolates the crit roll, not fire rate
+      fire.tick(s);
+      damages.push(s.projectiles[s.projectiles.length - 1]!.damage);
+    }
+    const base = buffedDamage(1, sumBuffs(p.buffs)); // blaster dmg 1, no crit
+    const crit = critDamage(base, true);
+    expect(damages).toContain(base);
+    expect(damages).toContain(crit);
   });
 });
 

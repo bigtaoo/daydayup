@@ -21,8 +21,10 @@
  * are design/07 and land later. (The demo's per-frame multi-hit melee is corrected
  * to once-per-swing, per design/07.)
  */
-import { atan2Brad, bradDiff, type Brad } from '../math/trig';
+import { addFp, isqrt, mulFp, type Fp } from '../math/fixed';
+import { atan2Brad, bradDiff, cosFp, sinFp, type Brad } from '../math/trig';
 import { inBeamLine } from '../content/ballistics';
+import { RICOCHET_RANGE_FP } from '../config';
 import type { GameState } from '../state/GameState';
 import type { Actor, Faction, MeleeSimSpec, Projectile } from '../state/entities';
 import { isHostile } from '../state/entities';
@@ -40,7 +42,7 @@ import {
   applyResist,
   burnDamageFor,
 } from '../content/damage';
-import { buffedDamage, sumBuffs } from '../balance/runbuffs';
+import { buffedDamage, critDamage, rollCrit, sumBuffs } from '../balance/runbuffs';
 import { takeDamage } from './combat';
 import { circlesOverlap, retainAlive } from './geom';
 
@@ -61,9 +63,28 @@ export class HitResolveSystem {
       // just enemies (hostileTargets already excludes downed players, 3.2).
       const targets = hostileTargets(state, b);
       for (const t of targets) {
+        // Never re-hit a body this bullet already connected with — needed for BOTH
+        // piercing (the original reason) AND ricochet: a retarget only changes
+        // VELOCITY, and a large-radius target can stay inside the bullet's overlap
+        // circle for a tick or two after the bounce, which would otherwise re-trigger
+        // a hit against the very body it just bounced off (caught live: a browser
+        // test showed a ricochet burning both its bounces on the SAME enemy instead
+        // of ever reaching the second one 20px away — this guard is why it doesn't).
+        if (b.hitIds?.includes(t.id)) continue;
         if (!circlesOverlap(b.gx, b.gy, b.radius, t.gx, t.gy, t.radius)) continue;
-        this.applyHit(state, t, b.damage, b.damageType, b.faction, targets);
-        b.alive = false;
+        this.applyHit(state, t, b.damage, b.damageType, b.faction, targets, b.ownerId, b.lifestealPermille);
+        // Bullet fate after a connecting hit (design/07): ricochet retargets first if
+        // it has bounces left (ENGINE_VERSION 28) and another target is in range; else
+        // piercing keeps it flying past this body; else it expires — the original,
+        // still-default behavior. Both surviving cases remember `t.id`.
+        if (b.ricochetsLeft !== undefined && b.ricochetsLeft > 0 && this.retarget(b, t, targets)) {
+          b.ricochetsLeft--;
+          (b.hitIds ??= []).push(t.id);
+        } else if (b.piercing) {
+          (b.hitIds ??= []).push(t.id);
+        } else {
+          b.alive = false;
+        }
         break;
       }
     }
@@ -91,7 +112,7 @@ export class HitResolveSystem {
         const dy = (t.gy - b.gy) as number;
         const reach = (b.blastRadius + t.radius) as number;
         if (dx * dx + dy * dy > reach * reach) continue;
-        this.applyHit(state, t, b.damage, b.damageType, b.faction, targets);
+        this.applyHit(state, t, b.damage, b.damageType, b.faction, targets, b.ownerId, b.lifestealPermille);
       }
       b.alive = false;
     }
@@ -114,7 +135,7 @@ export class HitResolveSystem {
       const range = b.beamRange ?? (0 as Projectile['radius']);
       for (const t of targets) {
         if (!inBeamLine(b.gx, b.gy, dir, range, t.gx, t.gy, t.radius)) continue;
-        this.applyHit(state, t, b.damage, b.damageType, b.faction, targets);
+        this.applyHit(state, t, b.damage, b.damageType, b.faction, targets, b.ownerId, b.lifestealPermille);
       }
     }
   }
@@ -124,7 +145,9 @@ export class HitResolveSystem {
    * own faction (drives the 'hit' fx colour — not re-derived, since it's already
    * exactly this); `group` is the hostile-target pool the hit was drawn from
    * (design/15's `hostileTargets`, not a hardcoded array), used as the lightning
-   * chain's candidate pool. Applies resist → integer damage → on-hit status.
+   * chain's candidate pool. Applies resist → integer damage → on-hit status, then
+   * k_lifesteal (ENGINE_VERSION 28) if `sourceOwnerId` names a real player and
+   * `lifestealPermille` is set — both optional so every non-procced hit is unaffected.
    * Death is NOT decided here (step 9). All arithmetic is integer.
    */
   private applyHit(
@@ -134,12 +157,55 @@ export class HitResolveSystem {
     type: DamageType,
     attacker: Faction,
     group: readonly Actor[],
+    sourceOwnerId?: number,
+    lifestealPermille?: number,
   ): void {
     const dmg = applyResist(rawDamage, type, target.resist);
     // Shield-first absorb + hit event + shield_break (design/07 two-pool takeDamage).
     takeDamage(state, target, dmg, attacker, type);
+    if (lifestealPermille) this.applyLifesteal(state, sourceOwnerId, dmg, lifestealPermille);
     // Status magnitude keys off the resisted hit, independent of how it split shield/hp.
     this.applyStatus(state, target, dmg, type, group);
+  }
+
+  /** k_lifesteal (design/03/09, ENGINE_VERSION 28): heal `sourceOwnerId`'s player by a
+   * ‰ of the damage just dealt, clamped to maxHp. A no-op if `sourceOwnerId` doesn't
+   * name a live player (an enemy weapon with lifesteal, or a bullet whose owner died
+   * mid-flight) — enemies aren't in `state.players`, so this can never accidentally
+   * heal one. Min 1 so a low-damage lifesteal weapon still visibly ticks HP up. */
+  private applyLifesteal(state: GameState, sourceOwnerId: number | undefined, dmg: number, permille: number): void {
+    if (sourceOwnerId === undefined) return;
+    const owner = state.players.find((p) => p.id === sourceOwnerId);
+    if (!owner || !owner.alive) return;
+    const heal = Math.max(1, Math.trunc((dmg * permille) / 1000));
+    owner.hp = Math.min(owner.maxHp, owner.hp + heal);
+  }
+
+  /** k_ricochet (design/03/09, ENGINE_VERSION 28): redirect `b` toward the nearest
+   * OTHER alive hostile in `group` within RICOCHET_RANGE_FP, preserving its current
+   * speed magnitude (never accelerates/decelerates a bounce). Nearest by squared
+   * distance, ties by array order (design/08) — same shape as the lightning chain's
+   * own nearest-search. Returns false (bullet should just expire) if no target
+   * qualifies, so the caller doesn't have to duplicate the "no bounce possible" case. */
+  private retarget(b: Projectile, hit: Actor, group: readonly Actor[]): boolean {
+    let best: Actor | null = null;
+    let bestSq = Infinity;
+    const reachSq = (RICOCHET_RANGE_FP * RICOCHET_RANGE_FP) as number;
+    for (const a of group) {
+      if (!a.alive || a === hit) continue;
+      const dx = a.gx - b.gx;
+      const dy = a.gy - b.gy;
+      const d = dx * dx + dy * dy;
+      if (d > reachSq || d >= bestSq) continue;
+      bestSq = d;
+      best = a;
+    }
+    if (!best) return false;
+    const ang = atan2Brad(best.gy - b.gy, best.gx - b.gx);
+    const speed = isqrt(((b.vx * b.vx + b.vy * b.vy) as number)) as Fp;
+    b.vx = mulFp(cosFp(ang), speed);
+    b.vy = mulFp(sinFp(ang), speed);
+    return true;
   }
 
   /** Layer the element's on-hit effect. `dmg` is the post-resist damage just dealt. */
@@ -239,7 +305,12 @@ export class HitResolveSystem {
   private meleeArc(state: GameState, p: GameState['players'][number], spec: MeleeSimSpec): void {
     // Player run buffs scale outgoing arc damage (design/14). Reaches any hostile
     // actor (design/15) — a rival player included, not just state.enemies.
-    const damage = buffedDamage(spec.damage, sumBuffs(p.buffs));
+    const buffs = sumBuffs(p.buffs);
+    // Crit (design/07 "one frozen payload"): rolled ONCE per swing, at swing time —
+    // not re-rolled per target — so every enemy caught in one arc either all crit or
+    // none do, matching "one swing, one attack" rather than a lottery per body hit.
+    const isCrit = rollCrit(buffs, state.combatPrng);
+    const damage = critDamage(buffedDamage(spec.damage, buffs), isCrit);
     const targets = hostileTargets(state, p);
     for (const t of targets) {
       const dx = t.gx - p.gx;
@@ -248,7 +319,15 @@ export class HitResolveSystem {
       if (dx * dx + dy * dy > reach * reach) continue;
       const ang = atan2Brad(dy, dx);
       if (Math.abs(bradDiff(ang, p.facing)) > spec.arcHalf) continue;
-      this.applyHit(state, t, damage, spec.damageType, 'player', targets);
+      this.applyHit(state, t, damage, spec.damageType, 'player', targets, p.id, spec.lifestealPermille);
+      // Melee knockback (design/07 v25): shove the target outward along the same
+      // attacker→target direction already computed for the arc test, into its
+      // knockVx/knockVy (MovementSystem integrates + decays it; never vx/vy directly —
+      // see that field's doc comment for why). 0 for any weapon with knockback: 0.
+      if (spec.knockback > 0) {
+        t.knockVx = addFp(t.knockVx, mulFp(cosFp(ang), spec.knockback));
+        t.knockVy = addFp(t.knockVy, mulFp(sinFp(ang), spec.knockback));
+      }
     }
   }
 }

@@ -12,11 +12,13 @@
  * reads it, like Actor.z). Adding a new variant here + a new `type` id in a wave is
  * a forward-compatible content add (design/09) — no ENGINE_VERSION bump.
  */
-import type { Fp } from '../math/fixed';
-import type { RangedSimSpec } from '../state/entities';
+import { toFp, type Fp } from '../math/fixed';
+import { ENEMY_TEAM_ID, type EnemyActor, type EnrageSim, type RangedSimSpec } from '../state/entities';
+import type { GameState } from '../state/GameState';
 import type { ResistMap } from './damage';
+import { freshStatus } from './damage';
 import { pxToFp } from './convert';
-import { ENEMY_GUN_SIM } from './weapons';
+import { ENEMY_GUN_SIM, makeWeapon } from './weapons';
 
 export interface EnemyBlueprint {
   type: string; // registry key + the id a wave spawn entry references
@@ -29,6 +31,10 @@ export interface EnemyBlueprint {
   resist?: ResistMap;
   tint?: number; // render-only body colour (design/01); the sim never reads it
   boss?: boolean; // render-only (like tint): the view draws a health bar for a boss
+  // Boss AI depth (design/09 aspirational `traits`/`onDeathSpawn`, ENGINE_VERSION 27).
+  // See EnemyActor's matching fields for the full account; undefined = neither trait.
+  enrage?: EnrageSim;
+  onDeathSpawn?: { type: string; count: number };
 }
 
 // ── Basic (neutral) ─────────────────────────────────────────────────────────────
@@ -109,6 +115,14 @@ export const BLIGHTLORD: EnemyBlueprint = {
   resist: { physical: 400, fire: 800, ice: 800, lightning: 800, poison: 2000 },
   tint: 0x8e24aa, // toxic purple
   boss: true,
+  // Boss AI depth (design/09 aspirational `traits`/`onDeathSpawn`, ENGINE_VERSION 27,
+  // first-pass numbers — tune against real play like every other constant here).
+  // Below 30% HP (the "poison is really biting now" moment): +50% damage, +50% fire
+  // rate — a real, felt escalation rather than a slow HP-bar melt with no counterplay
+  // change. On death, two basic adds spawn around its body — the fight doesn't just
+  // end the instant the bar hits 0.
+  enrage: { hpThresholdPermille: 300, bonusDamagePermille: 500, bonusFireratePermille: 500 },
+  onDeathSpawn: { type: 'basic', count: 2 },
 };
 
 /** Blueprint registry, keyed by `type` (design/09 "content is plain data keyed by
@@ -121,3 +135,50 @@ export const ENEMY_BLUEPRINTS: Record<string, EnemyBlueprint> = {
   ironclad: IRONCLAD,
   blightlord: BLIGHTLORD,
 };
+
+/**
+ * The single EnemyActor factory (design/09 "content is plain data"; ENGINE_VERSION
+ * 27's own reason to exist — a spawned onDeathSpawn minion needs EXACTLY the same
+ * construction as a wave spawn, and hand-duplicating the full Actor field list a
+ * second time is exactly how knockVx/knockVy got missed from a couple of test
+ * fixtures earlier in this same version's own work). Shared by SpawnSystem (wave/
+ * dungeon/arena spawns) and DeathDropsSystem (a dying boss's onDeathSpawn adds).
+ * Resolves the blueprint by `type` (missing/unknown → basic, forward-compat); the
+ * aiPrng draw stays one-per-spawn regardless of variant or caller, so fire-phase
+ * jitter is unaffected by which system spawned the mob.
+ */
+export function buildEnemyActor(state: GameState, gx: Fp, gy: Fp, type?: string): EnemyActor {
+  const bp = ENEMY_BLUEPRINTS[type ?? 'basic'] ?? BASIC_ENEMY;
+  const weapon = makeWeapon(bp.weapon);
+  weapon.cooldownTicks = state.aiPrng.nextInt(bp.weapon.fireRateTicks); // fire-phase jitter
+  return {
+    id: state.nextId(),
+    faction: 'enemy',
+    teamId: ENEMY_TEAM_ID, // hostile to every player team (design/15), never to other AI
+    gx,
+    gy,
+    z: toFp(0),
+    vx: toFp(0),
+    vy: toFp(0),
+    knockVx: toFp(0),
+    knockVy: toFp(0),
+    facing: 0 as EnemyActor['facing'],
+    hp: bp.maxHp,
+    maxHp: bp.maxHp,
+    shield: 0, // enemies have no shield pool (design/07 — shields are a character trait)
+    maxShield: 0,
+    ticksSinceHit: 0,
+    radius: bp.radius,
+    footprintRadius: bp.footprintRadius,
+    alive: true,
+    weapon,
+    firing: false,
+    status: freshStatus(),
+    resist: bp.resist,
+    tint: bp.tint,
+    boss: bp.boss,
+    enrage: bp.enrage,
+    enraged: false,
+    onDeathSpawn: bp.onDeathSpawn,
+  };
+}

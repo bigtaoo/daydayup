@@ -115,7 +115,7 @@ export function serializeState(s: GameState): unknown {
       s.ringPrng.peek(), s.integrityPrng.peek(),
     ],
     players: s.players.map((p) => [
-      p.id, p.teamId, p.gx, p.gy, p.z, p.vx, p.vy, p.facing, p.hp, p.maxHp, p.alive,
+      p.id, p.teamId, p.gx, p.gy, p.z, p.vx, p.vy, p.knockVx, p.knockVy, p.facing, p.hp, p.maxHp, p.alive,
       // Two-pool health (design/07): shield absorbs first and its idle regen advances
       // ticksSinceHit every tick, so both must be hashed to catch a regen divergence.
       p.shield, p.maxShield, p.ticksSinceHit,
@@ -134,7 +134,12 @@ export function serializeState(s: GameState): unknown {
         w.spec.kind === 'ranged' ? [w.spec.fireRateTicks, w.spec.bulletSpeed] : [w.spec.range],
       ]),
     ]),
-    enemies: s.enemies.map((e) => [e.id, e.teamId, e.gx, e.gy, e.z, e.vx, e.vy, e.facing, e.hp, e.shield, e.alive]),
+    enemies: s.enemies.map((e) => [
+      e.id, e.teamId, e.gx, e.gy, e.z, e.vx, e.vy, e.knockVx, e.knockVy, e.facing, e.hp, e.shield, e.alive,
+      // Boss AI depth (design/09, ENGINE_VERSION 27): enraged is a one-way latch that
+      // changes damage/fire-rate without necessarily moving hp/gx/gy the same tick.
+      e.enraged,
+    ]),
     projectiles: s.projectiles.map((b) => [
       b.id, b.teamId, b.gx, b.gy, b.z, b.vx, b.vy, b.faction, b.damage, b.lifeTicks, b.alive,
       // Ballistic runtime (design/03/09, ROADMAP 1.1): homing/boomerang/lob/beam carry
@@ -144,6 +149,11 @@ export function serializeState(s: GameState): unknown {
       // orbit: the live angle + owner catch a circular-motion divergence before it moves
       // gx/gy (stable 0/-1 for every non-orbit bullet, so byte-identical there).
       b.orbitAngleBrad ?? 0, b.ownerId ?? -1,
+      // k_* on-hit procs (design/03/09, ENGINE_VERSION 28): ricochetsLeft counts down
+      // independent of gx/gy the tick it bounces; hitIds (piercing) grows without
+      // necessarily moving anything either. Stable -1/'' for every weapon without
+      // either proc, so byte-identical there.
+      b.ricochetsLeft ?? -1, b.hitIds?.join(',') ?? '',
     ]),
     pickups: s.pickups.map((k) => [
       k.id, k.kind, k.gx, k.gy, k.spawnTick, k.alive,

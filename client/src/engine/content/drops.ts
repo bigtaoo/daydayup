@@ -66,10 +66,13 @@ export const WEAPON_DROP_POOL: readonly string[] = [
   // Orbit + radial-emission frames (design/03 tier 4, the last frame-library additions).
   'novaburst',
   'gyre',
+  // k_* on-hit procs (design/03/09, ENGINE_VERSION 28 — the first concrete batch).
+  'carom',
+  'leech',
 ];
 
 /** Buff ids a drop can roll (must exist in RUN_BUFFS). Fixed order = deterministic. */
-export const BUFF_DROP_POOL: readonly string[] = ['dmg_up', 'rof_up', 'vit_up'];
+export const BUFF_DROP_POOL: readonly string[] = ['dmg_up', 'rof_up', 'vit_up', 'crit_up'];
 
 /**
  * Roll one drop from the dropPrng (design/05/09). Draw count varies by branch

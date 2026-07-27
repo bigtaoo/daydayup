@@ -39,10 +39,11 @@ function addEnemy(s: GameState, xpx: number, ypx: number): EnemyActor {
   const e: EnemyActor = {
     id: s.nextId(), faction: 'enemy', teamId: ENEMY_TEAM_ID,
     gx: pxToFp(xpx), gy: pxToFp(ypx), z: toFp(0), vx: toFp(0), vy: toFp(0),
+    knockVx: toFp(0), knockVy: toFp(0),
     facing: 0 as Brad, hp: BASIC_ENEMY.maxHp, maxHp: BASIC_ENEMY.maxHp,
     shield: 0, maxShield: 0, ticksSinceHit: 0,
     radius: BASIC_ENEMY.radius, footprintRadius: BASIC_ENEMY.footprintRadius,
-    alive: true, weapon: null, firing: false, status: freshStatus(),
+    alive: true, weapon: null, firing: false, status: freshStatus(), enraged: false,
   };
   s.enemies.push(e);
   return e;
@@ -345,9 +346,10 @@ describe('Integration — each new frame survives the full engine step() pipelin
     const e: EnemyActor = {
       id: eng.state.nextId(), faction: 'enemy', teamId: ENEMY_TEAM_ID,
       gx: pxToFp(450), gy: pxToFp(400), z: toFp(0), vx: toFp(0), vy: toFp(0),
+      knockVx: toFp(0), knockVy: toFp(0),
       facing: 0 as Brad, hp: 30, maxHp: 30, shield: 0, maxShield: 0, ticksSinceHit: 0,
       radius: BASIC_ENEMY.radius, footprintRadius: BASIC_ENEMY.footprintRadius,
-      alive: true, weapon: null, firing: false, status: freshStatus(),
+      alive: true, weapon: null, firing: false, status: freshStatus(), enraged: false,
     };
     eng.state.enemies.push(e);
     for (let t = 1; t <= 90; t++) {

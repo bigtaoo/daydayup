@@ -34,6 +34,7 @@ function addPlayer(s: GameState, xpx: number, ypx: number): PlayerActor {
   const p: PlayerActor = {
     id: s.nextId(), faction: 'player', teamId: 0, // same team as player 0 — a co-op ally, not a rival
     gx: pxToFp(xpx), gy: pxToFp(ypx), z: toFp(0), vx: toFp(0), vy: toFp(0),
+    knockVx: toFp(0), knockVy: toFp(0),
     facing: 0 as Brad, hp: 6, maxHp: 6, shield: 0, maxShield: 0, ticksSinceHit: 0,
     radius: PLAYER_BASE.radius, footprintRadius: PLAYER_BASE.footprintRadius,
     alive: true, weapon: w, weapons: [w], activeSlot: 0, buffs: [],
@@ -48,10 +49,11 @@ function addEnemy(s: GameState, xpx: number, ypx: number): EnemyActor {
   const e: EnemyActor = {
     id: s.nextId(), faction: 'enemy', teamId: ENEMY_TEAM_ID,
     gx: pxToFp(xpx), gy: pxToFp(ypx), z: toFp(0), vx: toFp(0), vy: toFp(0),
+    knockVx: toFp(0), knockVy: toFp(0),
     facing: 0 as Brad, hp: BASIC_ENEMY.maxHp, maxHp: BASIC_ENEMY.maxHp,
     shield: 0, maxShield: 0, ticksSinceHit: 0,
     radius: BASIC_ENEMY.radius, footprintRadius: BASIC_ENEMY.footprintRadius,
-    alive: true, weapon: null, firing: false, status: freshStatus(),
+    alive: true, weapon: null, firing: false, status: freshStatus(), enraged: false,
   };
   s.enemies.push(e);
   return e;

@@ -15,10 +15,11 @@ function enemyOnPlayer(s: GameState, over: Partial<EnemyActor> = {}): EnemyActor
   const e: EnemyActor = {
     id: s.nextId(), faction: 'enemy', teamId: ENEMY_TEAM_ID,
     gx: p.gx, gy: p.gy, z: toFp(0), vx: toFp(0), vy: toFp(0),
+    knockVx: toFp(0), knockVy: toFp(0),
     facing: 0 as Brad, hp: BASIC_ENEMY.maxHp, maxHp: BASIC_ENEMY.maxHp,
     shield: 0, maxShield: 0, ticksSinceHit: 0,
     radius: BASIC_ENEMY.radius, footprintRadius: BASIC_ENEMY.footprintRadius,
-    alive: true, weapon: null, firing: false, status: freshStatus(),
+    alive: true, weapon: null, firing: false, status: freshStatus(), enraged: false,
     ...over,
   };
   s.enemies.push(e);
@@ -74,6 +75,7 @@ describe('shield-break passive (design/02/07 — fired by takeDamage)', () => {
     p.shield = 1;
     takeDamage(s, p, 1, 'enemy', 'physical');
     expect(near.hp).toBe(hp0); // knock deals no damage
-    expect(near.vx).toBeGreaterThan(0); // shoved outward (+x)
+    expect(near.knockVx).toBeGreaterThan(0); // shoved outward (+x)
+    expect(near.vx).toBe(toFp(0)); // NOT written into vx (design/07 v25 — see the field's doc comment)
   });
 });

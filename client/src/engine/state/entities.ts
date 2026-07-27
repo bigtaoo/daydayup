@@ -96,6 +96,17 @@ export interface RangedSimSpec {
   beamRange?: Fp; // beam: max reach along the frozen facing (does not use bulletSpeed)
   orbitRadius?: Fp; // orbit: circling distance from the owner's centre
   orbitAngularVelBrad?: number; // orbit: brad the angle advances per tick (revolution speed)
+  // Authored on WeaponSpec since Stage C but never converted/read until now (ENGINE_VERSION
+  // 28 — found while wiring ricochet, the exact same "bullet fate after a hit" branch
+  // point): design/07 "continues and may hit further actors" instead of expiring on
+  // its first hit. Omitted/false = every existing weapon's behavior, unchanged.
+  piercing?: boolean;
+  // k_* on-hit procs (design/03/09, ENGINE_VERSION 28 — the first concrete batch;
+  // "never specified beyond a placeholder id prefix" until now). Both omitted =
+  // every existing weapon, byte-identical. Frozen onto the Projectile at fire time,
+  // like damageType above — HitResolveSystem reads them from there, never the spec.
+  lifestealPermille?: number; // heal the FIRING player by this ‰ of damage dealt on hit
+  ricochetCount?: number; // bullet retargets to the nearest OTHER hostile instead of expiring, this many times
 }
 
 export interface MeleeSimSpec {
@@ -109,6 +120,13 @@ export interface MeleeSimSpec {
   deflect: boolean; // does the swing deflect bullets caught in its arc (design/03/05 parry)
   deflectSpeed: Fp; // fp per tick for a redirected bullet
   damageType: DamageType; // physical or an element (on-hit status, design/03/07)
+  // Impulse magnitude (fp/tick, converted from the authored grid/s — design/07 "lands
+  // once z/knockback lands"): HitResolveSystem's meleeArc adds this outward, along the
+  // attacker→target direction, into the target's knockVx/knockVy on every connecting hit.
+  knockback: Fp;
+  // k_* on-hit proc (design/03/09, ENGINE_VERSION 28) — see RangedSimSpec's matching
+  // field. Melee has no ricochet (it doesn't travel), only lifesteal.
+  lifestealPermille?: number;
 }
 
 export type WeaponSimSpec = RangedSimSpec | MeleeSimSpec;
@@ -142,6 +160,17 @@ export interface Actor {
   z: Fp; // ground height — always 0 for actors (jump removed); a render offset only
   vx: Fp;
   vy: Fp;
+  // Knockback velocity (design/07 "persistent-knockback friction"), kept SEPARATE from
+  // vx/vy: a player's vx/vy is fully overwritten every tick from input (ApplyInputSystem)
+  // and an enemy's is never set by AI at all, so a shove written into vx/vy would either
+  // be erased before Movement ever integrates it (player) or drift forever with no decay
+  // (enemy, nothing else touches its vx/vy). knockVx/knockVy is an independent external-
+  // force channel: MovementSystem adds it into this tick's displacement alongside vx/vy,
+  // then decays it by a fixed friction factor every tick (never touched by chill slow —
+  // that's a movement-speed modifier, not a force). Zero for an actor that has never been
+  // knocked; starts and ends every knock at (0,0).
+  knockVx: Fp;
+  knockVy: Fp;
   facing: Brad;
   hp: number;
   maxHp: number;
@@ -234,6 +263,28 @@ export interface EnemyActor extends Actor {
   // Render-only boss marker (design/01); the sim never reads it. The view draws a
   // health bar so a durable boss's HP ramp-down (poison melt) is legible.
   boss?: boolean;
+  // Boss AI depth (design/09 aspirational `traits`, ENGINE_VERSION 27). Config, copied
+  // from the blueprint at spawn (SpawnSystem/DeathDropsSystem, same convention as
+  // tint/boss/resist above); undefined = no enrage trait. `enraged` is the RUNTIME
+  // flag WeaponFireSystem sets the tick hp first crosses the threshold — one-way,
+  // never clears (enemies have no self-heal today), required (not optional) on every
+  // enemy so the field always has a stable false default.
+  enrage?: EnrageSim;
+  enraged: boolean;
+  // Boss AI depth (design/09 aspirational `onDeathSpawn`). Config, copied from the
+  // blueprint at spawn; DeathDropsSystem reads it the tick this enemy dies to spawn
+  // `count` minions of `type` around its death position. undefined = no adds.
+  onDeathSpawn?: { type: string; count: number };
+}
+
+/** A boss's enrage trait (design/09 `traits`, ENGINE_VERSION 27): below `hpThresholdPermille`
+ * of maxHp (‰, e.g. 300 = 30%), the bonuses below apply — same per-mille "bonus amount"
+ * shape as a RunBuffDef's `value` (composed through the identical BuffSums/buffedDamage/
+ * buffedCooldown machinery in WeaponFireSystem, not a separate damage-scaling path). */
+export interface EnrageSim {
+  hpThresholdPermille: number;
+  bonusDamagePermille: number;
+  bonusFireratePermille: number;
 }
 
 // ── Projectiles / pickups ──────────────────────────────────────────────────────
@@ -273,10 +324,27 @@ export interface Projectile {
   beamRange?: Fp; // beam: max reach along beamDir
   // orbit: unlike every ballistic above, this one TRACKS its owner — position is set from
   // the owner's live centre each tick, so the bullet needs to find that actor by id.
+  // ALSO used by k_lifesteal below (ENGINE_VERSION 28) — WeaponFireSystem now sets this
+  // on EVERY bullet, not just orbit's, so HitResolveSystem can find who to heal; every
+  // other read site still only branches on `ballistic === 'orbit'`, never on ownerId's
+  // mere presence, so this is additive (no behavior change for any non-orbit ballistic).
   ownerId?: number; // orbit: the actor this bullet circles (dies if the owner is gone)
   orbitRadius?: Fp; // orbit: circling distance from the owner
   orbitAngleBrad?: Brad; // orbit: current angle around the owner (advances each tick)
   orbitAngularVelBrad?: number; // orbit: brad the angle advances per tick
+  // Frozen from RangedSimSpec.piercing (ENGINE_VERSION 28) — see that field's doc
+  // comment. Undefined/false = every existing bullet's behavior, unchanged.
+  piercing?: boolean;
+  // k_* on-hit procs (design/03/09, ENGINE_VERSION 28), frozen from the firing spec at
+  // fire time like damageType. lifestealPermille heals `ownerId`'s player on this
+  // bullet's next hit; ricochetsLeft counts down each successful retarget (HitResolveSystem).
+  lifestealPermille?: number;
+  ricochetsLeft?: number;
+  // A piercing bullet stays alive after a hit (design/07) instead of expiring — this
+  // is its own cross-tick memory of who it's already hit, so a slow pierce shot that's
+  // still overlapping a body it just hit doesn't hit it again every subsequent tick
+  // (mirrors why a melee swing tracks "hit ids on the swing", same root cause).
+  hitIds?: number[];
 }
 
 /**

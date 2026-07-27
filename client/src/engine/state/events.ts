@@ -23,6 +23,10 @@ export type GameEvent =
   // burn flames, chill frost, shock arc, poison bubbles). Transient, fx-only (08).
   | { type: 'status'; effect: 'burn' | 'chill' | 'shock' | 'poison'; target: number; gx: Fp; gy: Fp }
   | { type: 'death'; id: number; faction: Faction; gx: Fp; gy: Fp }
+  // A boss-tier enemy dropped below its enrage HP threshold (design/09 aspirational
+  // `traits`, now real). Fires ONCE, the tick it first triggers — fx/audio only,
+  // never read back into sim decisions (the enraged bonus itself lives on the actor).
+  | { type: 'enrage'; id: number; gx: Fp; gy: Fp }
   // Co-op downed/revive (design/05/07/08, ROADMAP 3.2). A player was incapacitated
   // (revivable, not dead) / brought back up by a teammate's revive channel. fx-only.
   | { type: 'downed'; id: number; gx: Fp; gy: Fp }

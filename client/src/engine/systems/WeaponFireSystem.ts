@@ -23,20 +23,39 @@ import { radialDir } from '../content/ballistics';
 import {
   buffedCooldown,
   buffedDamage,
+  critDamage,
+  rollCrit,
   sumBuffs,
   NO_BUFFS,
   type BuffSums,
 } from '../balance/runbuffs';
 import type { GameState } from '../state/GameState';
-import type { Actor, RangedSimSpec } from '../state/entities';
+import type { Actor, EnemyActor, RangedSimSpec } from '../state/entities';
 
 export class WeaponFireSystem {
   tick(state: GameState): void {
     // Run buffs are player-level (design/14): a player's summed-clamped stack scales
-    // its damage + attack speed; enemies carry none (NO_BUFFS = identity), so their
-    // fire is byte-for-byte unchanged.
+    // its damage + attack speed; enemies carry none (NO_BUFFS = identity) UNLESS
+    // enraged (design/09 `traits`, ENGINE_VERSION 27) — see enrageBuffs below.
     for (const p of state.players) this.actor(state, p, sumBuffs(p.buffs));
-    for (const e of state.enemies) this.actor(state, e, NO_BUFFS);
+    for (const e of state.enemies) this.actor(state, e, this.enrageBuffs(state, e));
+  }
+
+  /**
+   * Boss enrage (design/09 aspirational `traits`, ENGINE_VERSION 27): the instant hp
+   * first crosses the blueprint's threshold, latch `enraged` (one-way — enemies never
+   * self-heal today, so re-checking every tick would be pure waste) and emit a fx-only
+   * event. Reuses the EXACT SAME BuffSums/buffedDamage/buffedCooldown composition a
+   * player's run buffs go through — no separate damage-scaling code path for enemies.
+   */
+  private enrageBuffs(state: GameState, e: EnemyActor): BuffSums {
+    if (!e.enrage) return NO_BUFFS;
+    if (!e.enraged && e.hp * 1000 <= e.maxHp * e.enrage.hpThresholdPermille) {
+      e.enraged = true;
+      state.events.push({ type: 'enrage', id: e.id, gx: e.gx, gy: e.gy });
+    }
+    if (!e.enraged) return NO_BUFFS;
+    return { ...NO_BUFFS, mult_damage: e.enrage.bonusDamagePermille, mult_firerate: e.enrage.bonusFireratePermille };
   }
 
   private actor(state: GameState, a: Actor, buffs: BuffSums): void {
@@ -78,6 +97,9 @@ export class WeaponFireSystem {
     const sin = sinFp(dir);
     const gx = addFp(a.gx, mulFp(cos, spec.muzzleOffset));
     const gy = addFp(a.gy, mulFp(sin, spec.muzzleOffset));
+    // Crit (design/07 "one frozen payload"): rolled once per pellet, at fire time,
+    // frozen straight into the bullet's damage — never re-rolled on impact.
+    const isCrit = rollCrit(buffs, state.combatPrng);
     state.projectiles.push({
       id: state.nextId(),
       faction: a.faction,
@@ -88,7 +110,7 @@ export class WeaponFireSystem {
       vx: mulFp(cos, spec.bulletSpeed),
       vy: mulFp(sin, spec.bulletSpeed),
       radius: spec.bulletRadius,
-      damage: buffedDamage(spec.damage, buffs), // buff frozen onto the bullet at fire time
+      damage: critDamage(buffedDamage(spec.damage, buffs), isCrit), // buffs + crit frozen at fire time
       damageType: spec.damageType, // frozen onto the bullet (design/07 payload)
       lifeTicks: spec.bulletLifeTicks,
       alive: true,
@@ -104,13 +126,19 @@ export class WeaponFireSystem {
       beamTickInterval: spec.beamTickInterval,
       beamDir: spec.ballistic === 'beam' ? dir : undefined,
       beamRange: spec.beamRange,
-      // orbit: pin to the owner and start the angle at the fire direction. bulletSpeed is
-      // authored 0 (orbit doesn't travel), so vx/vy above are already 0 — the standard
-      // integrate is a no-op and ProjectileStepSystem drives the circular motion instead.
-      ownerId: spec.ballistic === 'orbit' ? a.id : undefined,
+      // Set on EVERY bullet now (ENGINE_VERSION 28), not just orbit's — k_lifesteal
+      // (HitResolveSystem) needs to know who fired a bullet to heal them; every other
+      // read site still gates on `ballistic === 'orbit'`, never on mere presence, so
+      // this is additive for every non-orbit ballistic (see the field's doc comment).
+      ownerId: a.id,
       orbitRadius: spec.orbitRadius,
       orbitAngleBrad: spec.ballistic === 'orbit' ? dir : undefined,
       orbitAngularVelBrad: spec.orbitAngularVelBrad,
+      // Piercing (ENGINE_VERSION 28 — authored since Stage C, wired now).
+      piercing: spec.piercing,
+      // k_* on-hit procs (ENGINE_VERSION 28) — frozen from the spec like damageType.
+      lifestealPermille: spec.lifestealPermille,
+      ricochetsLeft: spec.ricochetCount,
     });
     state.events.push({ type: 'bullet_fired', faction: a.faction, gx, gy, facing: dir });
   }

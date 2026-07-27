@@ -33,10 +33,11 @@ function addEnemy(s: GameState, xpx: number, ypx: number, hp: number = BASIC_ENE
   const e: EnemyActor = {
     id: s.nextId(), faction: 'enemy', teamId: ENEMY_TEAM_ID,
     gx: pxToFp(xpx), gy: pxToFp(ypx), z: toFp(0), vx: toFp(0), vy: toFp(0),
+    knockVx: toFp(0), knockVy: toFp(0),
     facing: 0 as Brad, hp, maxHp: BASIC_ENEMY.maxHp, shield: 0, maxShield: 0,
     ticksSinceHit: 0, radius: BASIC_ENEMY.radius,
     footprintRadius: BASIC_ENEMY.footprintRadius,
-    alive: true, weapon: null, firing: false, status: freshStatus(),
+    alive: true, weapon: null, firing: false, status: freshStatus(), enraged: false,
   };
   s.enemies.push(e);
   return e;
@@ -149,6 +150,45 @@ describe('MovementSystem (step 4)', () => {
     expect(a.gy).toBe(pxToFp(100));
     expect(b.gx).toBe(pxToFp(500));
     expect(b.gy).toBe(pxToFp(500));
+  });
+
+  it('knockback (design/07 v25): displaces the actor, decays by friction, and snaps to exactly 0', () => {
+    const s = state();
+    const e = addEnemy(s, 100, 100); // far from any solid/other actor — isolates the decay
+    e.knockVx = toFp(1); // 1000 fp/tick, well above KNOCKBACK_SNAP_FP
+    const mv = new MovementSystem();
+    const gx0 = e.gx;
+    mv.tick(s);
+    expect(e.gx).toBeGreaterThan(gx0); // the impulse actually moved it this tick
+    expect(e.knockVx).toBeGreaterThan(0);
+    expect(e.knockVx).toBeLessThan(toFp(1)); // decayed, not held or amplified
+    const v1 = e.knockVx;
+    mv.tick(s);
+    expect(e.knockVx).toBeLessThan(v1); // keeps decaying tick over tick
+    for (let i = 0; i < 50; i++) mv.tick(s); // run it out
+    expect(e.knockVx).toBe(toFp(0)); // snapped to EXACTLY 0, not a tiny residual forever
+  });
+
+  it("knockback on an ENEMY doesn't drift forever (the exact gap design/07 flagged: AI never resets an enemy's vx/vy)", () => {
+    const s = state();
+    const e = addEnemy(s, 100, 100);
+    e.knockVx = toFp(2);
+    const mv = new MovementSystem();
+    for (let i = 0; i < 200; i++) mv.tick(s); // far more ticks than the decay needs
+    expect(e.knockVx).toBe(toFp(0));
+    const gxAfterStop = e.gx;
+    mv.tick(s); // one more tick once already at rest
+    expect(e.gx).toBe(gxAfterStop); // stayed put — no permanent residual velocity
+  });
+
+  it("knockback on a PLAYER isn't erased by the next tick's input-driven vx/vy", () => {
+    const s = state();
+    const p = s.players[0]!;
+    p.knockVx = toFp(1);
+    p.vx = toFp(0); // idle — ApplyInputSystem would zero this every tick, but Movement runs standalone here
+    const gx0 = p.gx;
+    new MovementSystem().tick(s);
+    expect(p.gx).toBeGreaterThan(gx0); // knockback alone displaced the player
   });
 });
 
@@ -302,6 +342,13 @@ describe('HitResolveSystem (step 7)', () => {
     new HitResolveSystem().tick(s);
     expect(inArc.hp).toBe(1); // 3 - 2
     expect(behind.hp).toBe(BASIC_ENEMY.maxHp); // untouched
+    // Melee knockback (design/07 v25): the saber's knockback shoves a connected
+    // target outward (+x here, since the enemy is directly ahead) into knockVx —
+    // never vx/vy directly (that channel gets overwritten/never-decays, see the
+    // field's doc comment) — and leaves an untouched target's knockback at 0.
+    expect(inArc.knockVx).toBeGreaterThan(0);
+    expect(inArc.vx).toBe(toFp(0));
+    expect(behind.knockVx).toBe(toFp(0));
   });
 });
 

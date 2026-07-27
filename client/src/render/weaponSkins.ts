@@ -18,6 +18,18 @@ const TEXTURE_PATHS: Record<WeaponVisualKind, string> = {
 // matching the rig's canonical facing-right convention, design/12) — approximated
 // from each texture's alpha bounding box, not hand-tuned in the editor like character
 // bindings are, so treat as a first pass.
+//
+// Re-measured precisely (a prior session's eyeballed "a few px above the ring" note,
+// judged from a magnified DOM-overlay screenshot, turned out to overstate it):
+// `weaponSprite.getGlobalPosition()` vs `socket_r`'s own rendered-bounds centre are
+// ~0.56 world-px apart at aim=0° — sub-pixel at real gameplay scale (the character
+// renders ~50-60px), confirmed by a crosshair-marked 30×-zoomed extract-canvas crop
+// showing the gun's rear cap sitting inside the ring decal with no visible seam. Also
+// worth remembering for next time: this gap is NOT something these ANCHOR fractions
+// control at all — they only decide which part of the GUN texture aligns with the
+// fixed socket pivot (`socketPose`), not whether that pivot coincides with where the
+// ring decal itself renders (a separate, tiny offset in the ring's own SpriteBinding).
+// No fix applied — there's nothing left to correct at this precision.
 const ANCHORS: Record<WeaponVisualKind, { x: number; y: number }> = {
   ranged: { x: 0.25, y: 0.44 },
   melee: { x: 0.2, y: 0.455 },

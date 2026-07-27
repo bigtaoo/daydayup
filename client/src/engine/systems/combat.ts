@@ -64,9 +64,10 @@ export function takeDamage(
  * A character's shield shattered → its bound passive resolves in-sim (design/02/07).
  * `aoe` bursts integer damage to every actor HOSTILE to the owner whose body is
  * within reach (design/15 — routed through takeDamage with firePassive=false, the
- * recursion guard); `knock` adds an outward velocity impulse. Foes are iterated in
- * array order (ties by push order) so it stays deterministic (design/08). Distances
- * are squared integers.
+ * recursion guard); `knock` adds an outward impulse into the target's knockVx/knockVy
+ * (design/07 v25 — a channel MovementSystem decays with friction, independent of the
+ * target's own vx/vy). Foes are iterated in array order (ties by push order) so it
+ * stays deterministic (design/08). Distances are squared integers.
  */
 function fireShieldBreak(state: GameState, owner: Actor, passive: ShieldBreakSim): void {
   const foes = hostileTargets(state, owner);
@@ -79,8 +80,8 @@ function fireShieldBreak(state: GameState, owner: Actor, passive: ShieldBreakSim
       takeDamage(state, f, passive.damage, owner.faction, 'physical', false); // guard: no re-trigger
     } else {
       const ang = atan2Brad(dy, dx); // outward, from owner to foe
-      f.vx = addFp(f.vx, mulFp(cosFp(ang), passive.impulse));
-      f.vy = addFp(f.vy, mulFp(sinFp(ang), passive.impulse));
+      f.knockVx = addFp(f.knockVx, mulFp(cosFp(ang), passive.impulse));
+      f.knockVy = addFp(f.knockVy, mulFp(sinFp(ang), passive.impulse));
     }
   }
 }

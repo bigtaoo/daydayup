@@ -37,10 +37,12 @@ import { Scene } from './Scene';
 import { Screens } from './Screens';
 import { Forge } from './Forge';
 import { Settings } from './Settings';
+import { PauseMenu } from './PauseMenu';
 import { Bar, ToastQueue, Button } from './ui/widgets';
 import { CompareCard } from './ui/compareCard';
 import { nearestWeaponPickup } from './ui/pickupProximity';
 import { Minimap, type MinimapPlayer } from './ui/Minimap';
+import { FloorProgress } from './ui/FloorProgress';
 import { VignetteFilter, ChromaticAberrationFilter } from './fx/filters';
 import { ParticleSystem } from './fx/Particles';
 import { CommandBuilder } from './CommandBuilder';
@@ -67,8 +69,10 @@ const MAX_SHAKE_PX = 14; // camera-shake offset at full trauma (design/01 milest
 
 // Render-side run phases (design/10). The engine only knows idle/playing/gameover;
 // the forge outpost (the between-run hub, design/14) and the result screens live here in
-// the shell, along with score (derived from events).
-type Phase = 'forge' | 'playing' | 'victory' | 'defeat' | 'settings';
+// the shell, along with score (derived from events). 'paused' is the in-run pause menu
+// (design/10's own open question, resolved) — 'settings' also serves as the pause
+// menu's settings sub-screen (Game tracks which phase to return to via pausedFromSettings).
+type Phase = 'forge' | 'playing' | 'paused' | 'victory' | 'defeat' | 'settings';
 
 export class Game {
   private app: Application;
@@ -92,6 +96,7 @@ export class Game {
   private allyText!: Text;
   private toasts!: ToastQueue;
   private minimap!: Minimap;
+  private floorProgress!: FloorProgress;
   // Ground compare card (design/03:125, locked spec: name/element/rarity, non-blocking,
   // render-only). Shown while standing near an uncollected floor weapon pickup.
   private groundCard = new CompareCard();
@@ -103,6 +108,11 @@ export class Game {
   private screens = new Screens();
   private forge = new Forge();
   private settingsScreen = new Settings();
+  private pauseMenu = new PauseMenu();
+  // Settings can be opened from either the forge OR the in-run pause menu (design/10);
+  // this is which phase the settings screen's BACK button returns to. Set right before
+  // each openSettings()/openSettingsFromPause() call, never read otherwise.
+  private settingsReturnPhase: 'forge' | 'paused' = 'forge';
   private pillars: Entity[] = [];
 
   // Persistent between-run meta (design/14): loaded at boot, saved on every change. The
@@ -216,7 +226,8 @@ export class Game {
       this.settingsStore.save(s);
       this.applyAudioSettings();
     };
-    this.settingsScreen.onBack = () => this.closeSettings();
+    this.settingsScreen.onBack = () =>
+      this.settingsReturnPhase === 'paused' ? this.openPauseFromSettings() : this.closeSettings();
   }
 
   private applyAudioSettings() {
@@ -238,8 +249,11 @@ export class Game {
     this.layers.fx.filters = [new BlurFilter({ strength: 3, quality: 2 })];
     this.layers.fx.addChild(this.particles.view);
 
-    this.layers.ui.addChild(this.forge.view, this.screens.view, this.settingsScreen.view);
+    this.layers.ui.addChild(this.forge.view, this.screens.view, this.settingsScreen.view, this.pauseMenu.view);
     this.screens.onConfirm = () => this.confirm();
+    this.pauseMenu.onResume = () => this.resume();
+    this.pauseMenu.onSettings = () => this.openSettingsFromPause();
+    this.pauseMenu.onQuit = () => this.quitRun();
 
     this.input.attach(this.app.canvas as unknown as InputCanvas);
     // Discrete actions route through the shell: during a run they latch a one-tick
@@ -256,6 +270,13 @@ export class Game {
       window.addEventListener('keydown', (e) => {
         this.onForgeKey(e.code);
         if (this.phase === 'settings' && (e.code === 'Escape' || e.code === 'KeyO')) this.closeSettings();
+        // In-run pause (design/10, now resolved) — Escape/P toggles. Offline/local play
+        // ONLY (see pause()'s doc comment): a shared online match can't be frozen from
+        // one client, so the hotkey is a deliberate no-op there for now.
+        if (!this.online) {
+          if (this.phase === 'playing' && (e.code === 'Escape' || e.code === 'KeyP')) this.pause();
+          else if (this.phase === 'paused' && (e.code === 'Escape' || e.code === 'KeyP')) this.resume();
+        }
       });
     }
 
@@ -347,12 +368,15 @@ export class Game {
     this.weaponText.position.set(12, 44);
     this.cdBar.view.position.set(12, 64);
     this.infoText.position.set(12, 78);
-    this.allyText.position.set(12, 96);
-    this.promptText.position.set(12, 114);
+    this.floorProgress = new FloorProgress();
+    this.floorProgress.view.position.set(12, 96);
+    this.allyText.position.set(12, 112);
+    this.promptText.position.set(12, 130);
 
     this.hudView.addChild(
       this.hpBar.view, this.shieldBar.view, this.weaponText, this.cdBar.view,
-      this.infoText, this.allyText, this.promptText, this.toasts.view, this.groundCard.view, this.groundHint,
+      this.infoText, this.floorProgress.view, this.allyText, this.promptText,
+      this.toasts.view, this.groundCard.view, this.groundHint,
     );
     this.layers.ui.addChild(this.hudView);
 
@@ -378,6 +402,7 @@ export class Game {
 
   private openSettings() {
     if (this.phase !== 'forge') return;
+    this.settingsReturnPhase = 'forge';
     this.phase = 'settings';
     this.forge.hide();
     this.settingsBtn.view.visible = false;
@@ -386,6 +411,57 @@ export class Game {
   }
 
   private closeSettings() {
+    this.showForge();
+  }
+
+  // ---- In-run pause menu (design/10, now resolved) ----
+  //
+  // Offline/local play ONLY (single-player + local `?coop=1` bot ally): the sim
+  // genuinely freezes (update() skips advanceSim while phase is 'paused', mirroring
+  // hitStopMs's own "acc doesn't accumulate while frozen" trick — no catch-up burst on
+  // resume). A shared online/PvP match can't be frozen from one client without server
+  // reconciliation (the same reasoning `hitStopMs` itself is offline-only for), so the
+  // pause hotkey is a deliberate no-op there (see the keydown handler in start()) —
+  // a documented scope decision, not an oversight.
+
+  private pause() {
+    this.phase = 'paused';
+    const { w, h } = this.screenSize();
+    this.pauseMenu.show(w, h);
+  }
+
+  private resume() {
+    this.pauseMenu.hide();
+    this.phase = 'playing';
+  }
+
+  private openSettingsFromPause() {
+    this.settingsReturnPhase = 'paused';
+    this.pauseMenu.hide();
+    this.phase = 'settings';
+    const { w, h } = this.screenSize();
+    this.settingsScreen.show(w, h, this.settings);
+  }
+
+  private openPauseFromSettings() {
+    this.settingsScreen.hide();
+    this.phase = 'paused';
+    const { w, h } = this.screenSize();
+    this.pauseMenu.show(w, h);
+  }
+
+  // Voluntary quit (design/10) — behaves like a death for the run's own bookkeeping:
+  // the floor's un-banked materials are simply forfeited, same as `lose()` never
+  // calling bankMaterials (design/05 "death forfeits the floor buffer for free"). No
+  // defeat screen/score penalty though — this was a choice, not a loss.
+  private quitRun() {
+    this.pauseMenu.hide();
+    if (this.online) {
+      this.session?.close();
+      this.session = null;
+    } else {
+      this.engine = null;
+    }
     this.showForge();
   }
 
@@ -653,6 +729,13 @@ export class Game {
     if (this.phase === 'playing') {
       if (this.online) this.advanceOnline(dt);
       else this.advanceSim(dt);
+    } else if (this.phase === 'paused') {
+      // Genuinely frozen (offline-only, see pause()'s doc comment): advanceSim/
+      // advanceOnline are never called, so `acc` simply doesn't move — the same
+      // no-catch-up-burst property hitStopMs already relies on. fx keeps fading so
+      // the frozen frame doesn't look inert.
+      this.updateFx(dt);
+      this.scene.interpolate(1, dt);
     } else {
       // Menu / result: freeze the last frame, keep fx fading, poll for confirm.
       this.updateFx(dt);
@@ -931,6 +1014,14 @@ export class Game {
           this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.clash, 14);
           cues.add('clash');
           break;
+        case 'enrage':
+          // A boss crossed its enrage threshold (design/09 traits) — a hard red pulse,
+          // distinct from a normal hit flash, so it reads as a real escalation moment.
+          this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.enemy, 40);
+          this.addShake(0.35);
+          this.pulseChromatic(0.012);
+          cues.add('shield.break'); // reuse the existing sting; no dedicated cue authored yet
+          break;
         case 'death':
           if (e.faction === 'enemy') {
             this.score += CONFIG.score.kill;
@@ -1180,6 +1271,7 @@ export class Game {
         `${this.meta.selectedSkin}   PvP Arena   Zone stage ${zone?.stage ?? 0}${escalation}   ` +
         `Alive ${alive}/${s.players.length}   Score ${this.score}${buffs}`;
       this.promptText.text = '';
+      this.floorProgress.update(0, -1); // hides — this is the PvP arena's own Minimap's job
     } else {
       // Dungeon progress (ROADMAP 1.3): floor / room within floor, plus the banked bag.
       const floor = s.floorIndex + 1;
@@ -1189,6 +1281,11 @@ export class Game {
       this.infoText.text =
         `${this.meta.selectedSkin}   Floor ${floor}/${EMBER_DUNGEON.floorCount}   Room ${room}/${rooms}   ` +
         `Enemies ${s.enemies.length}   Banked ${banked}   Score ${this.score}${buffs}`;
+      // A real PvE minimap (design/10) — a progress TRACK, not a spatial map (see
+      // FloorProgress's own doc comment for why PvE's data shape doesn't support the
+      // PvP room-graph Minimap's kind of widget). 0 stages (flat EngineConfig.floors
+      // mode) hides it, same as the PvP branch above.
+      this.floorProgress.update(s.floorStages.length, s.roomIndex);
 
       // Extraction prompt: only at a non-last-floor checkpoint (the last floor auto-
       // extracts). A room with no enemies left and all waves exhausted IS the checkpoint.

@@ -10,8 +10,10 @@
  * the death/pickup/wave_clear events (design/08 "events are the only channel").
  */
 import { rollDrop, rollArenaDrop } from '../content/drops';
+import { buildEnemyActor } from '../content/enemies';
 import { DOWNED_BLEEDOUT_TICKS } from '../config';
-import { toFp } from '../math/fixed';
+import { toFp, addFp, mulFp } from '../math/fixed';
+import { cosFp, sinFp, BRAD_FULL } from '../math/trig';
 import { SIM } from '../sim.config';
 import type { GameState } from '../state/GameState';
 import type { PickupItem } from '../state/entities';
@@ -23,6 +25,28 @@ export class DeathDropsSystem {
       if (!e.alive || e.hp > 0) continue;
       e.alive = false;
       state.events.push({ type: 'death', id: e.id, faction: 'enemy', gx: e.gx, gy: e.gy });
+      // Boss adds (design/09 aspirational `onDeathSpawn`, ENGINE_VERSION 27, funny's
+      // own onDeathSpawn design/07 already named as the intended home for this).
+      // Ringed evenly around the dying boss's own body radius — PRNG-free, same even-
+      // ring convention as `radialDir`'s emission pattern — then clamped into walkable
+      // space (a boss can die flush against a wall, same reasoning as v24's pickup
+      // clamp). Pushing into state.enemies mid-loop is safe: a freshly spawned minion
+      // has hp>0, so this SAME loop's own guard skips it as a no-op on the iteration
+      // it's visited (never double-processed, never contributes a second death/drop).
+      if (e.onDeathSpawn) {
+        for (let i = 0; i < e.onDeathSpawn.count; i++) {
+          const ang = Math.round((i * BRAD_FULL) / e.onDeathSpawn.count);
+          const rawGx = addFp(e.gx, mulFp(cosFp(ang), e.radius));
+          const rawGy = addFp(e.gy, mulFp(sinFp(ang), e.radius));
+          const minion = buildEnemyActor(state, rawGx, rawGy, e.onDeathSpawn.type);
+          // Clamp by the MINION's own footprint (not the constant SIM.pickupRadius
+          // used for pickups above — a spawned actor needs its own solid clearance).
+          const pos = clampToWalkable(rawGx, rawGy, minion.footprintRadius, state);
+          minion.gx = pos.gx;
+          minion.gy = pos.gy;
+          state.enemies.push(minion);
+        }
+      }
       // Arena mode rolls its own table (design/15, ROADMAP 4.3) — never `material`,
       // zero connection to the PvE account/materials economy. Depth signal for the
       // PvE material tier (design/09 materialTierByDepth, ROADMAP 1.5): state.floorIndex

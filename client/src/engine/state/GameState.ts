@@ -435,6 +435,8 @@ export class GameState {
       z: toFp(0),
       vx: toFp(0),
       vy: toFp(0),
+      knockVx: toFp(0),
+      knockVy: toFp(0),
       facing: 0 as PlayerActor['facing'],
       hp: maxHp,
       maxHp,

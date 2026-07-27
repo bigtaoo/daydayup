@@ -3,7 +3,7 @@
  * Balance/content numbers (weapons, enemies, drops) live under content/ and
  * balance/; this file holds only cross-cutting constants and the version guard.
  */
-import { TICK_RATE, FP_SCALE } from './math/fixed';
+import { TICK_RATE, FP_SCALE, type Fp } from './math/fixed';
 import { BRAD_FULL } from './math/trig';
 
 /**
@@ -246,8 +246,75 @@ import { BRAD_FULL } from './math/trig';
  * overlapping wall/obstacle and clamp it inside the world bounds before creating
  * the `PickupItem`. Any replay where a drop's pre-clamp point was already outside
  * that margin diverges (the pickup now sits at a different, walkable position).
+ *
+ * v25: knockback is real (design/07 "persistent-knockback friction", the one
+ * remaining gap the doc's own "to design" list named). Two independent gaps closed
+ * together since both live in the same knockVx/knockVy channel: (1) melee
+ * `knockback` (grid/s, authored on every `MeleeSpec` since Stage C) was authored but
+ * never converted by `toSimSpec` NOR applied by `HitResolveSystem` — a swing's shove
+ * was pure flavour text until now; (2) the shield-break `knock` passive wrote its
+ * impulse directly into `vx`/`vy`, which is broken for BOTH factions: a player's
+ * vx/vy is fully overwritten every tick by `ApplyInputSystem` from input (the impulse
+ * would be erased before `MovementSystem` ever integrated it), and an enemy's vx/vy
+ * is never touched by AI at all (so once knocked it would drift at that exact velocity
+ * forever, with no decay — the literal missing "friction" design/07 flagged). Actor
+ * gained `knockVx`/`knockVy`, a channel independent of vx/vy: `MovementSystem.integrate`
+ * adds it into this tick's displacement alongside vx/vy (unaffected by chill slow — a
+ * shove is an external force, not the actor's own movement speed), then decays it by
+ * `KNOCKBACK_FRICTION_PERMILLE` every tick, snapping to exactly 0 below
+ * `KNOCKBACK_SNAP_FP` so it doesn't drift as a sub-pixel residual forever. Any replay
+ * that ever triggers a `knock` shield-break passive or connects a melee swing with
+ * nonzero `knockback` (saber/hammer/emberblade/frostbrand/stormglaive/spear all carry
+ * one) diverges from its old (no-op) outcome — a real gameplay change, not additive.
+ *
+ * v26: the `crit` run-buff family is real (`balance/runbuffs.ts` — the roadmap's own
+ * "needs a hit-time PRNG draw" deferral for this one family, now built). `RunBuffKind`
+ * gains `crit_chance` (Σ-clamp, same shape as the other three) + a new `crit_up`
+ * pickup; the multiplier itself (`CRIT_DAMAGE_MULT_PERMILLE`) is a fixed constant, not
+ * stacked. `rollCrit` draws `combatPrng` once per fire (`WeaponFireSystem.spawnBullet`,
+ * per pellet) or once per swing (`HitResolveSystem.meleeArc`, ONE roll covers every
+ * target in that swing's arc) — but ONLY when `crit_chance > 0`, so a build/enemy that
+ * can never crit never advances the stream (design/07's hard wall). Two independent
+ * outcome changes: (1) `BUFF_DROP_POOL` grew from 3 to 4 entries, so `nextInt(4)`
+ * instead of `nextInt(3)` at every buff-drop roll — any replay that ever rolled a buff
+ * pickup diverges from that roll onward, even before any crit ever triggers; (2) any
+ * build that actually holds `crit_up` now draws `combatPrng` on every fire/swing and
+ * may deal bonus damage, diverging from the old (crit-less) outcome.
+ *
+ * v27: boss AI depth — `onDeathSpawn` and `enrage` (design/09's own aspirational
+ * `EnemyBlueprint` fields, never built until now). `EnemyActor` gains `enrage?`/
+ * `enraged`/`onDeathSpawn?`; `content/enemies.ts` gained the shared `buildEnemyActor`
+ * factory (SpawnSystem and DeathDropsSystem now both call it, instead of each
+ * hand-duplicating the full Actor field list — the exact bug class that dropped
+ * `knockVx`/`knockVy` from a few test fixtures earlier in v25). The Blightlord boss
+ * is the first (and so far only) blueprint to carry either trait: below 30% HP it
+ * enrages (+50% damage, +50% fire rate, latched one-way, fx-only `enrage` event);
+ * on death it spawns 2 `basic` adds ringed around its body, clamped into walkable
+ * space. Both are strict no-ops for every OTHER enemy (neither field set) and for
+ * any replay that never brings the Blightlord below that threshold — but any replay
+ * that DOES diverges the instant enrage first latches or the boss dies, a real
+ * gameplay change.
+ *
+ * v28: the first concrete batch of `k_*` on-hit procs (design/03/09 — "never
+ * specified beyond a placeholder id prefix" until now) plus a real, adjacent bug
+ * found while wiring them: `RangedSpec.piercing` had been authored since Stage C but
+ * `toSimSpec` never converted it and `HitResolveSystem` never read it — a "piercing"
+ * bullet behaved identically to a non-piercing one the whole time. All three (k_
+ * lifesteal, k_ricochet, and piercing) now land, sharing one "what happens to a
+ * bullet after it connects" decision point in `HitResolveSystem`'s main hit loop:
+ * ricochet retargets first if it has bounces left (`retarget`, nearest OTHER hostile
+ * within `RICOCHET_RANGE_FP`, preserving speed), else piercing keeps it flying
+ * (remembering the hit id in the new `Projectile.hitIds` so a still-overlapping body
+ * isn't hit twice), else it expires — the original default. `WeaponFireSystem` now
+ * sets `ownerId` on EVERY bullet (previously orbit-only) so k_lifesteal can find who
+ * to heal. Two new showcase weapons, `carom` (ricochet) and `leech` (lifesteal),
+ * added to `WEAPON_DROP_POOL` (3rd outcome change: the pool's length changed, so
+ * `nextInt(N)` at every weapon-drop roll shifts, independent of whether either new
+ * weapon or proc ever actually triggers). Any replay that ever rolls a weapon drop,
+ * or fires a `piercing`/`ricochetCount`/`lifestealPermille` weapon, diverges from its
+ * old outcome.
  */
-export const ENGINE_VERSION = 24;
+export const ENGINE_VERSION = 28;
 
 // ── Two-pool health tuning (design/07; final values are 07 "to design") ──────────
 // Whole ticks @30Hz. Shield regen is an idle timer, not a heal: after taking ANY
@@ -256,6 +323,23 @@ export const ENGINE_VERSION = 24;
 // so clearing a lingering status is a precondition for regen.
 export const SHIELD_REGEN_DELAY = 90; // ~3 s idle before regen starts
 export const SHIELD_REGEN_INTERVAL = 300; // ~10 s per +1 shield thereafter
+
+// ── Knockback friction (design/07, v25) ───────────────────────────────────────────
+// knockVx/knockVy decay by this per-mille factor every tick (MovementSystem), so a
+// shove fades out instead of persisting or drifting forever. 800 = keep 80%/tick —
+// a saber swing's 198 fp/tick impulse falls under KNOCKBACK_SNAP_FP within ~20 ticks
+// (~0.7s), covering roughly 1 grid unit of total slide. First-pass, tune against real
+// play like every other number in this section.
+export const KNOCKBACK_FRICTION_PERMILLE = 800;
+export const KNOCKBACK_SNAP_FP = 5; // below this magnitude (either axis), snap to exactly 0
+
+// ── k_* on-hit procs (design/03/09, v28) ──────────────────────────────────────────
+// How far a ricochet may retarget from its current position — same "reasonable
+// nearby range" idea as content/damage.ts's CHAIN_RANGE, kept separate since the two
+// are semantically distinct knobs (a lightning chain's hop vs a ricochet's bounce).
+// Computed inline (not via content/convert.ts's toFpGrid) to avoid a circular import
+// — convert.ts itself imports WORLD from this file.
+export const RICOCHET_RANGE_FP = Math.round(6 * FP_SCALE) as Fp;
 
 // ── Co-op downed / revive (design/05/07, ROADMAP 3.2). Whole ticks @30Hz. A lethal
 // hit sends a player `downed`; a teammate revives via a sustained INTERACT channel.
