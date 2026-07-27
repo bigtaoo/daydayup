@@ -57,5 +57,6 @@ function migrate(parsed: unknown): SettingsState {
     sfx: num(p.sfx, d.sfx),
     music: num(p.music, d.music),
     muted: typeof p.muted === 'boolean' ? p.muted : d.muted,
+    autoAim: typeof p.autoAim === 'boolean' ? p.autoAim : d.autoAim,
   };
 }

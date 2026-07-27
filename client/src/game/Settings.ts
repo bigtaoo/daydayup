@@ -19,12 +19,13 @@ export class Settings {
   private sfxSlider: Slider;
   private musicSlider: Slider;
   private muteBtn: Button;
+  private autoAimBtn: Button;
   private backBtn: Button;
 
   onChange: ((s: SettingsState) => void) | null = null;
   onBack: (() => void) | null = null;
 
-  private state: SettingsState = { master: 1, sfx: 0.5, music: 0.5, muted: false };
+  private state: SettingsState = { master: 1, sfx: 0.5, music: 0.5, muted: false, autoAim: true };
 
   constructor() {
     this.title = new Text({ text: 'SETTINGS', style: { fill: 0xf7fafc, fontSize: 30, fontWeight: 'bold', fontFamily: 'sans-serif' } });
@@ -47,6 +48,11 @@ export class Settings {
     this.muteBtn = new Button('', { w: 120, h: 34 });
     this.muteBtn.onTap = () => this.update({ ...this.state, muted: !this.state.muted });
 
+    // Auto-aim toggle (default on) — nearest enemy within ~one screen, else hold
+    // facing. Same tappable-toggle pattern as muteBtn (design/10 "no DOM widgets").
+    this.autoAimBtn = new Button('', { w: 160, h: 34 });
+    this.autoAimBtn.onTap = () => this.update({ ...this.state, autoAim: !this.state.autoAim });
+
     this.backBtn = new Button('BACK', { w: 120, h: 34 });
     this.backBtn.onTap = () => this.onBack?.();
 
@@ -55,7 +61,7 @@ export class Settings {
       this.masterLabel, this.masterSlider.view,
       this.sfxLabel, this.sfxSlider.view,
       this.musicLabel, this.musicSlider.view,
-      this.muteBtn.view, this.backBtn.view,
+      this.muteBtn.view, this.autoAimBtn.view, this.backBtn.view,
     );
     this.view.eventMode = 'static';
     this.view.visible = false;
@@ -75,6 +81,7 @@ export class Settings {
     this.sfxLabel.text = `SFX      ${pct(this.state.sfx)}`;
     this.musicLabel.text = `Music    ${pct(this.state.music)}`;
     this.muteBtn.setText(this.state.muted ? 'UNMUTE' : 'MUTE');
+    this.autoAimBtn.setText(this.state.autoAim ? 'AUTO-AIM: ON' : 'AUTO-AIM: OFF');
   }
 
   show(w: number, h: number, s: SettingsState) {
@@ -94,6 +101,8 @@ export class Settings {
       slider.view.position.set(rowX, y + 30);
       y += 70;
     }
+    this.autoAimBtn.view.position.set(cx - 80, y + 10);
+    y += 44;
     this.muteBtn.view.position.set(cx - 130, y + 10);
     this.backBtn.view.position.set(cx + 10, y + 10);
     this.syncWidgets();

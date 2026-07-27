@@ -702,7 +702,7 @@ export class Game {
     const cam = { x: this.layers.world.x, y: this.layers.world.y };
 
     const frame = s.tick + 1;
-    engine.submit(this.builder.build(frame, this.localOwner, playerPx, cam));
+    engine.submit(this.builder.build(frame, this.localOwner, playerPx, cam, s, { enabled: this.settings.autoAim, screenPx: this.screenSize() }));
     // Local co-op (ROADMAP 3.1) — and the `?arenaDemo=1` dev harness, which reuses this
     // exact path: every non-local seat is driven by the bot ally, whose command goes
     // through the exact same submit path a networked teammate's would — the engine
@@ -825,7 +825,7 @@ export class Game {
     const cam = { x: this.layers.world.x, y: this.layers.world.y };
 
     // Relay this render tick's local command (server stamps the authoritative seat/frame).
-    const cmd = this.builder.build(session.frame, this.localOwner, playerPx, cam);
+    const cmd = this.builder.build(session.frame, this.localOwner, playerPx, cam, s, { enabled: this.settings.autoAim, screenPx: this.screenSize() });
     session.submit(cmd);
 
     // Predict the local seat's own motion for THIS render frame (before draining confirmed

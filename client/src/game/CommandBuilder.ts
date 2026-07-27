@@ -7,8 +7,16 @@
 //
 // Because the quantization lives in @dd/engine, the golden-replay tests build
 // commands through the exact same grid this producer uses.
-import { Button, makeCommand, quantizeAim, quantizeMove, type Brad, type PlayerCommand } from '@dd/engine';
+import { Button, makeCommand, pxToFp, quantizeAim, quantizeMove, type Brad, type GameState, type PlayerCommand } from '@dd/engine';
 import type { InputSource } from '../platform/types';
+
+/** Auto-aim settings consulted live each tick (Settings screen, default on). */
+export interface AutoAimOptions {
+  enabled: boolean;
+  /** Current viewport size in px — the aim range is "roughly one screen" (half the
+   * viewport's diagonal), so a target anywhere on screen is reachable. */
+  screenPx: { w: number; h: number };
+}
 
 export class CommandBuilder {
   private lastAim = 0 as Brad; // idle stick keeps the last facing (no snap-to-zero)
@@ -24,23 +32,33 @@ export class CommandBuilder {
   /**
    * Build this tick's command. `playerPx` is the engine player's world-px position
    * and `cam` the world-layer offset, so a screen-space mouse point maps to a world
-   * aim direction.
+   * aim direction. `state` + `autoAim` let auto-aim (when enabled) override the raw
+   * mouse/stick aim with the direction to the nearest in-range living enemy — this
+   * MUST happen here, before quantization, since the engine only ever sees the
+   * already-quantized `aimBrad` (design/06 input edge) and fires along it verbatim.
    */
   build(
     tick: number,
     owner: number,
     playerPx: { x: number; y: number },
     cam: { x: number; y: number },
+    state: GameState,
+    autoAim: AutoAimOptions,
   ): PlayerCommand {
     const inp = this.input.read();
 
     // Move: raw vector → direction brad + 0..255 magnitude (engine input edge).
     const { moveBrad, moveMag } = quantizeMove(inp.moveX, inp.moveY);
 
-    // Aim: 'point' (mouse) → world-space angle to the cursor; 'dir' (stick) → the
-    // stick direction, but an idle stick holds the last aim instead of resetting.
+    // Aim: when auto-aim is on it fully replaces manual aim — nearest in-range
+    // enemy, or (nothing in range) hold the current facing, same fallback the
+    // AllyController bot uses. Manual aim only runs when auto-aim is off: 'point'
+    // (mouse) → world-space angle to the cursor, 'dir' (stick) → the stick
+    // direction, with an idle stick holding the last aim instead of resetting.
     let aim = this.lastAim;
-    if (inp.aim.mode === 'point') {
+    if (autoAim.enabled) {
+      aim = nearestEnemyAim(state, owner, autoAim.screenPx) ?? this.lastAim;
+    } else if (inp.aim.mode === 'point') {
       const wx = inp.aim.x - cam.x;
       const wy = inp.aim.y - cam.y;
       aim = quantizeAim(wx - playerPx.x, wy - playerPx.y);
@@ -59,4 +77,28 @@ export class CommandBuilder {
 
     return makeCommand({ owner, tick, moveBrad, moveMag, aimBrad: aim, buttons });
   }
+}
+
+/**
+ * Nearest living enemy within ~one screen of the local player, quantized to an aim
+ * brad — or null if none is in range (caller falls back to holding facing). Squared
+ * fp distance, same pattern as AllyController's targeting; the range itself is
+ * screen-size-derived so it is inherently render-side, never fed back into the sim.
+ */
+function nearestEnemyAim(state: GameState, owner: number, screenPx: { w: number; h: number }): Brad | null {
+  const me = state.players[owner];
+  if (!me) return null;
+  const rangeFp = pxToFp(Math.hypot(screenPx.w, screenPx.h) / 2);
+  let best = rangeFp * rangeFp;
+  let dx = 0;
+  let dy = 0;
+  let found = false;
+  for (const e of state.enemies) {
+    if (!e.alive) continue;
+    const ex = e.gx - me.gx;
+    const ey = e.gy - me.gy;
+    const d2 = ex * ex + ey * ey;
+    if (d2 <= best) { best = d2; dx = ex; dy = ey; found = true; }
+  }
+  return found ? quantizeAim(dx, dy) : null;
 }

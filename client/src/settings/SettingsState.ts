@@ -9,10 +9,13 @@ export interface SettingsState {
   sfx: number; // 0..1
   music: number; // 0..1
   muted: boolean;
+  // Aim at the nearest living enemy within ~one screen automatically, falling back
+  // to the character's current facing when nothing is in range. On by default.
+  autoAim: boolean;
 }
 
 export function defaultSettingsState(): SettingsState {
-  return { master: 1, sfx: 0.5, music: 0.5, muted: false };
+  return { master: 1, sfx: 0.5, music: 0.5, muted: false, autoAim: true };
 }
 
 /** The effective 0..1 gain to hand the AudioBus for a given slider — `muted` zeroes
