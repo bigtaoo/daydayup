@@ -226,8 +226,16 @@ import { BRAD_FULL } from './math/trig';
  * through a mob) now physically separate every tick they're close enough to
  * overlap — any replay where any two actors ever got that close diverges the first
  * tick it happens, even though no new PRNG draw or state field is involved.
+ *
+ * v23: enemy-enemy collision exception (design/07 "Open questions" — enemies lean
+ * overlap rather than block, per the doc's own recommendation). `resolveActorPairs`
+ * now skips a pair where BOTH actors are `faction === 'enemy'` before the push-apart
+ * math runs; player-vs-player and player-vs-enemy pairs are unchanged, still pushed
+ * apart unconditionally. Any replay where two enemies got close enough to overlap
+ * under v22 diverges under v23 (they no longer separate) — a real outcome change,
+ * even though no new PRNG draw or state field is involved.
  */
-export const ENGINE_VERSION = 22;
+export const ENGINE_VERSION = 23;
 
 // ── Two-pool health tuning (design/07; final values are 07 "to design") ──────────
 // Whole ticks @30Hz. Shield regen is an idle timer, not a heal: after taking ANY

@@ -85,21 +85,23 @@ describe('MovementSystem (step 4)', () => {
     expect(p.gy).toBe(pxToFp(600));
   });
 
-  it('pushes two overlapping enemies apart, splitting the penetration between them', () => {
+  it('pushes an overlapping player and enemy apart, splitting the penetration between them', () => {
     const s = state();
-    const a = addEnemy(s, 100, 100);
-    const b = addEnemy(s, 110, 100); // 10px apart; combined footprint (7+7=14px) overlaps
-    const startMid = (a.gx + b.gx) / 2;
+    const p = s.players[0]!;
+    p.gx = pxToFp(100);
+    p.gy = pxToFp(100);
+    const e = addEnemy(s, 110, 100); // 10px apart; combined footprint overlaps
+    const startMid = (p.gx + e.gx) / 2;
     new MovementSystem().tick(s);
-    const dx = b.gx - a.gx;
-    const minDist = (a.footprintRadius + b.footprintRadius) as number;
+    const dx = e.gx - p.gx;
+    const minDist = (p.footprintRadius + e.footprintRadius) as number;
     // Separated to just-touching along the original axis, and symmetric about the
     // original midpoint (equal footprint radii → equal split either side).
-    expect(dx).toBeGreaterThan(0); // b stays to the right of a (sign preserved)
+    expect(dx).toBeGreaterThan(0); // e stays to the right of p (sign preserved)
     expect(Math.abs(dx - minDist)).toBeLessThanOrEqual(2);
-    expect(Math.abs((a.gx + b.gx) / 2 - startMid)).toBeLessThanOrEqual(2);
-    expect(a.gy).toBe(pxToFp(100));
-    expect(b.gy).toBe(pxToFp(100));
+    expect(Math.abs((p.gx + e.gx) / 2 - startMid)).toBeLessThanOrEqual(2);
+    expect(p.gy).toBe(pxToFp(100));
+    expect(e.gy).toBe(pxToFp(100));
   });
 
   it('pushes an overlapping player and enemy apart (not gated by faction)', () => {
@@ -112,17 +114,30 @@ describe('MovementSystem (step 4)', () => {
     expect(Math.abs(dist - minDist)).toBeLessThanOrEqual(2);
   });
 
-  it('resolves a concentric actor–actor overlap deterministically (+x split)', () => {
+  it('does NOT push two overlapping enemies apart (enemy-enemy leans overlap, design/07)', () => {
     const s = state();
     const a = addEnemy(s, 100, 100);
-    const b = addEnemy(s, 100, 100); // exactly on top of each other
+    const b = addEnemy(s, 105, 100); // well inside their combined footprint
     new MovementSystem().tick(s);
-    const minDist = (a.footprintRadius + b.footprintRadius) as number;
-    const half = Math.trunc(minDist / 2);
-    expect(a.gx).toBe(addFp(pxToFp(100), half as Fp));
-    expect(b.gx).toBe(addFp(pxToFp(100), -(minDist - half) as Fp));
+    expect(a.gx).toBe(pxToFp(100));
     expect(a.gy).toBe(pxToFp(100));
+    expect(b.gx).toBe(pxToFp(105));
     expect(b.gy).toBe(pxToFp(100));
+  });
+
+  it('resolves a concentric actor–actor overlap deterministically (+x split)', () => {
+    const s = state();
+    const p = s.players[0]!;
+    p.gx = pxToFp(100);
+    p.gy = pxToFp(100);
+    const e = addEnemy(s, 100, 100); // exactly on top of each other
+    new MovementSystem().tick(s);
+    const minDist = (p.footprintRadius + e.footprintRadius) as number;
+    const half = Math.trunc(minDist / 2);
+    expect(p.gx).toBe(addFp(pxToFp(100), half as Fp));
+    expect(e.gx).toBe(addFp(pxToFp(100), -(minDist - half) as Fp));
+    expect(p.gy).toBe(pxToFp(100));
+    expect(e.gy).toBe(pxToFp(100));
   });
 
   it('leaves non-overlapping actors untouched', () => {

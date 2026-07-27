@@ -130,8 +130,11 @@ export class MovementSystem {
    * (`footprintRadius`, feet — same convention as actor↔solid, not the body
    * `radius`) vs circle, half the penetration to each side (funny's `subFp(subFp(
    * other − rOther), (self + rSelf))` mapped onto two movers instead of one mover
-   * + a static solid). Not gated by faction — "same-plane pair" in the design doc
-   * is any two actors sharing the 2D ground plane, players and enemies alike.
+   * + a static solid). Player-vs-player and player-vs-enemy pairs still push apart
+   * unconditionally ("same-plane pair" in the design doc). Enemy-vs-enemy pairs are
+   * SKIPPED (design/07's own "Open questions" recommendation — packed rooms read
+   * better with enemies leaning overlap rather than jostling each other) — this is
+   * the one documented faction exception, not a general faction gate.
    *
    * All-pairs over every alive actor: a room/arena today holds a handful of
    * players + enemies (the existing obstacle/wall resolvers' own "costs nothing at
@@ -154,6 +157,8 @@ export class MovementSystem {
       const a = actors[i]!;
       for (let j = i + 1; j < actors.length; j++) {
         const b = actors[j]!;
+        if (a.faction === 'enemy' && b.faction === 'enemy') continue; // see class doc
+
         const dx = a.gx - b.gx;
         const dy = a.gy - b.gy;
         const minDist = a.footprintRadius + b.footprintRadius;
