@@ -10,6 +10,13 @@ export interface ProjectMeta {
   id:        string;
   name:      string;
   updatedAt: number;   // epoch ms — used to sort most-recent-first
+  // Which RigDef (App.ts's `?rig=` picker) this project's bindings/animations were
+  // authored against — bone ids are only meaningful under their own rig (orb-core's
+  // `shell`/`socket_r`/… vs critter-core's single `body`). Optional for records
+  // written before this field existed; AutoSaveController treats a missing value as
+  // 'orb-core' (the only rig any project predates this field could have been saved
+  // under — see its own comment).
+  rigId?: string;
 }
 
 interface BlobRecord {

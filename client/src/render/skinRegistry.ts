@@ -1,5 +1,6 @@
 import { Rig } from './Rig';
-import { ORB_CORE_RIG } from './orbCoreRig';
+import { ORB_CORE_RIG, ORB_CORE_REFERENCE_RADIUS } from './orbCoreRig';
+import { CRITTER_CORE_RIG, CRITTER_CORE_REFERENCE_RADIUS } from './critterCoreRig';
 import { loadRigSkinBundle, type RigSkinBundle } from './taoBundle';
 
 // Preload real art at boot (design/12: "load a core bundle at boot"), then hand
@@ -11,25 +12,32 @@ import { loadRigSkinBundle, type RigSkinBundle } from './taoBundle';
 export interface LoadedRigSkin {
   rig: Rig;
   bundle: RigSkinBundle;
+  /** authoring-px radius this bundle's art was bound against — Skin.ts scales the
+   *  rendered rig to an actor's gameplay `radiusPx` against THIS, not a single
+   *  hardcoded constant, since different rigs (orb-core vs critter-core) have
+   *  different authoring-px conventions. */
+  referenceRadius: number;
 }
 
 // Three characters (design/13's launch roster, content/skins.ts's SkinDef.atlasKey
 // values), one shared rig — Rig is stateless FK math over a RigDef, so all three
 // skins reuse a single instance (design/12: "one rig per body archetype, many skins").
 const orbCoreRig = new Rig(ORB_CORE_RIG);
-const RIG_DEFS: Record<string, Rig> = {
-  char_vanguard: orbCoreRig,
-  char_skirmisher: orbCoreRig,
-  char_juggernaut: orbCoreRig,
+const critterCoreRig = new Rig(CRITTER_CORE_RIG);
+const RIG_DEFS: Record<string, { rig: Rig; referenceRadius: number }> = {
+  char_vanguard: { rig: orbCoreRig, referenceRadius: ORB_CORE_REFERENCE_RADIUS },
+  char_skirmisher: { rig: orbCoreRig, referenceRadius: ORB_CORE_REFERENCE_RADIUS },
+  char_juggernaut: { rig: orbCoreRig, referenceRadius: ORB_CORE_REFERENCE_RADIUS },
+  'critter-core': { rig: critterCoreRig, referenceRadius: CRITTER_CORE_REFERENCE_RADIUS },
 };
 
 const registry = new Map<string, LoadedRigSkin>();
 
 export async function preloadRigSkin(name: string, baseUrl: string): Promise<void> {
-  const rig = RIG_DEFS[name];
-  if (!rig) throw new Error(`No RigDef registered for skin '${name}'`);
+  const entry = RIG_DEFS[name];
+  if (!entry) throw new Error(`No RigDef registered for skin '${name}'`);
   const bundle = await loadRigSkinBundle(baseUrl);
-  registry.set(name, { rig, bundle });
+  registry.set(name, { rig: entry.rig, bundle, referenceRadius: entry.referenceRadius });
 }
 
 export function getRigSkin(name: string): LoadedRigSkin | undefined {

@@ -23,6 +23,17 @@ const ANCHORS: Record<WeaponVisualKind, { x: number; y: number }> = {
   melee: { x: 0.2, y: 0.455 },
 };
 
+// Static scale offset (same idea as a rig bone's SpriteBinding.scaleX/scaleY, design/12) —
+// normalizes each texture's authored native px down to the rig's authoring-px convention
+// (RigSkin.view is later scaled again by Skin's radius/ORB_CORE_REFERENCE_RADIUS wrapper,
+// same as every bone sprite). Both business-ends are 1536×1024 native; target the mounted
+// weapon's long axis at ~2× socket_r's authoring length (52px, orbCoreRig.ts) — comparable
+// reach to a held gun/sword, not hand-tuned in the editor yet (first pass, like ANCHORS).
+const SCALES: Record<WeaponVisualKind, number> = {
+  ranged: 104 / 1536,
+  melee: 104 / 1536,
+};
+
 const textures = new Map<WeaponVisualKind, Texture>();
 
 export async function preloadWeaponSkins(): Promise<void> {
@@ -39,4 +50,8 @@ export function getWeaponTexture(kind: WeaponVisualKind): Texture | undefined {
 
 export function getWeaponAnchor(kind: WeaponVisualKind): { x: number; y: number } {
   return ANCHORS[kind];
+}
+
+export function getWeaponScale(kind: WeaponVisualKind): number {
+  return SCALES[kind];
 }

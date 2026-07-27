@@ -52,7 +52,7 @@ export class Scene {
       if (p.id === localPlayerId || (localPlayerId === -1 && this.playerView === null)) {
         this.playerView = v;
       }
-      v.setWeaponKind(p.weapon?.spec.kind ?? null);
+      v.setWeaponKind(p.weapon?.spec.kind ?? null, p.weapon?.spec.damageType);
       v.setStatus(p.status);
       seen.add(p.id);
     }
@@ -66,7 +66,7 @@ export class Scene {
       } else {
         v.pushState(fpToPx(e.gx), fpToPx(e.gy), fpToPx(e.z), bradToRad(e.facing));
       }
-      v.setWeaponKind(e.weapon?.spec.kind ?? null);
+      v.setWeaponKind(e.weapon?.spec.kind ?? null, e.weapon?.spec.damageType);
       v.setStatus(e.status);
       v.setHealth(e.hp, e.maxHp);
       seen.add(e.id);

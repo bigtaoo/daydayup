@@ -1,7 +1,6 @@
 import { Container, Graphics } from 'pixi.js';
 import { RigSkin } from '../render/RigSkin';
 import { getRigSkin } from '../render/skinRegistry';
-import { ORB_CORE_REFERENCE_RADIUS } from '../render/orbCoreRig';
 import type { WeaponVisualKind } from '../render/weaponSkins';
 
 // Appearance layer (see design/02-entity-model.md).
@@ -17,17 +16,21 @@ export class Skin {
   private rig?: RigSkin;
   private clock = 0;
 
-  constructor(bodyColor: number, frontColor: number, radius: number, skinName?: string) {
+  // `rigTint` is a Pixi multiply-tint applied to the rig's sprites (design/13's
+  // "one neutral-grey critter body, re-tinted per elemental variant at RUNTIME" —
+  // never used for a character skin, which already carries its own real colours).
+  constructor(bodyColor: number, frontColor: number, radius: number, skinName?: string, rigTint?: number) {
     const loaded = skinName ? getRigSkin(skinName) : undefined;
 
     if (loaded) {
       this.rig = new RigSkin(loaded.rig, loaded.bundle);
+      if (rigTint !== undefined) this.rig.setTint(rigTint);
       // Normalize the rig's authoring-px footprint to this actor's gameplay radius
       // on a separate wrapper — RigSkin.view's own scale.x is its L/R flip toggle
       // (facingFromAim), so scaling that same node here would get overwritten
       // (sign-only) every time setAim() runs, silently un-sizing the sprite.
       const wrapper = new Container();
-      wrapper.scale.set(radius / ORB_CORE_REFERENCE_RADIUS);
+      wrapper.scale.set(radius / loaded.referenceRadius);
       wrapper.addChild(this.rig.view);
       this.view.addChild(wrapper);
     } else {
@@ -79,5 +82,11 @@ export class Skin {
    *  No-op on the Graphics placeholder (no socket to mount onto). */
   setWeaponKind(kind: WeaponVisualKind | null): void {
     this.rig?.setWeaponKind(kind);
+  }
+
+  /** Re-tint the mounted weapon sprite to its element hue (design/03/13 "element =
+   *  colour"). No-op on the Graphics placeholder. */
+  setWeaponTint(color: number): void {
+    this.rig?.setWeaponTint(color);
   }
 }

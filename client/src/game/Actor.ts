@@ -1,6 +1,6 @@
 import { Graphics } from 'pixi.js';
-import type { StatusState } from '@dd/engine';
-import { CONFIG } from './config';
+import type { DamageType, StatusState } from '@dd/engine';
+import { CONFIG, ELEMENT_COLORS } from './config';
 import { Entity } from './Entity';
 import { Skin } from './Skin';
 
@@ -33,10 +33,13 @@ export class Actor extends Entity {
   private healthBar: Graphics | null = null; // boss only; null for regular mobs
   private hpRatio = -1; // last-drawn hp fraction (skip redraw if unchanged)
   private weaponKind: WeaponKind | null | undefined = undefined;
+  private weaponElement: DamageType | undefined = undefined;
   private radiusPx: number;
+  private readonly faction: Faction;
 
   constructor(faction: Faction, radiusPx: number, tint?: number, boss = false, atlasKey?: string) {
     super();
+    this.faction = faction;
     this.radiusPx = radiusPx;
     // The actor container sorts children so the weapon can sit in front of / behind.
     this.sortableChildren = true;
@@ -51,13 +54,21 @@ export class Actor extends Entity {
         ? [CONFIG.colors.player, CONFIG.colors.playerFront]
         : [CONFIG.colors.enemy, 0xffd6d6];
     // An enemy blueprint tint (elemental variant) overrides the default body colour.
-    // Only players have a real preloaded rig skin today (art/units', design/12);
-    // enemies fall back to the Graphics placeholder until a rigged critter skin
-    // exists (still-open item, see design/12's "further boss atlas art remain real-
-    // art-production work"). `atlasKey` is the entity's resolved SkinDef.atlasKey
-    // (design/13's 3-character roster) — falls back to the default character's
-    // skin if a player entity somehow carries none (forward-compat, like resolveSkin).
-    this.skin = new Skin(tint ?? body, front, radiusPx, faction === 'player' ? (atlasKey ?? 'char_vanguard') : undefined);
+    // `atlasKey` is the entity's resolved SkinDef.atlasKey (design/13's 3-character
+    // roster) — falls back to the default character's skin if a player entity somehow
+    // carries none (forward-compat, like resolveSkin). Enemies use the shared
+    // critter-core rig (design/13: "one neutral-grey body, re-tinted per variant"),
+    // re-tinted at runtime via `rigTint` rather than needing a separate atlas per
+    // variant — falls back to the Graphics placeholder like any skin that hasn't
+    // (or never will) preload.
+    const resolvedTint = tint ?? body;
+    this.skin = new Skin(
+      resolvedTint,
+      front,
+      radiusPx,
+      faction === 'player' ? (atlasKey ?? 'char_vanguard') : 'critter-core',
+      faction === 'enemy' ? resolvedTint : undefined,
+    );
     this.addChild(this.skin.view);
 
     this.weaponGfx.zIndex = 1;
@@ -84,12 +95,21 @@ export class Actor extends Entity {
   // Swap the cosmetic weapon shape to match the engine's active weapon kind. A real
   // rig mounts its own weapon sprite on the socket (design/03/12/13's universal
   // mount); the Graphics placeholder is only drawn when no rig is loaded, so the
-  // two never render on top of each other.
-  setWeaponKind(kind: WeaponKind | null): void {
-    if (kind === this.weaponKind) return;
+  // two never render on top of each other. Enemies are the exception: critter-core
+  // (design/13) is deliberately socket-less (one bone, no arms yet), so its rig can
+  // never mount a weapon sprite — enemies always keep the Graphics placeholder,
+  // regardless of `hasRig`. `damageType` re-tints the mounted weapon sprite to its
+  // element hue (`ELEMENT_COLORS`, same law as a bullet's own colour) — physical
+  // stays the weapon's neutral authored colour, matching `Bullet.color`'s own
+  // `ELEMENT_COLORS[type] ?? fallback` convention.
+  setWeaponKind(kind: WeaponKind | null, damageType?: DamageType): void {
+    if (kind === this.weaponKind && damageType === this.weaponElement) return;
     this.weaponKind = kind;
+    this.weaponElement = damageType;
     this.skin.setWeaponKind(kind);
-    this.drawWeapon(this.skin.hasRig ? null : kind);
+    this.skin.setWeaponTint(damageType !== undefined ? (ELEMENT_COLORS[damageType] ?? 0xffffff) : 0xffffff);
+    const rigCanMountWeapon = this.skin.hasRig && this.faction === 'player';
+    this.drawWeapon(rigCanMountWeapon ? null : kind);
   }
 
   // Update the boss health bar from the engine actor's hp (no-op for non-bosses).

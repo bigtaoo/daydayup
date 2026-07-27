@@ -205,10 +205,10 @@ export class App {
 
     // ── 11. Project library + auto-save ───────────────────────────────────────
     const projectStore = new ProjectStore();
-    const autoSave = new AutoSaveController(projectStore, ioCtrl, bus, resetToDefaults);
+    const autoSave = new AutoSaveController(projectStore, ioCtrl, bus, resetToDefaults, rig.id);
     new ProjectPanel(
       rootEl.querySelector<HTMLElement>('.bottom-bar')!,
-      bus, autoSave, projectStore,
+      bus, autoSave,
     );
     void autoSave.bootstrap();
 

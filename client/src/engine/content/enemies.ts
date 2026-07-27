@@ -65,7 +65,7 @@ export const FROSTLING: EnemyBlueprint = {
   footprintRadius: pxToFp(7),
   weapon: ENEMY_GUN_SIM,
   resist: { ice: 400, fire: 1800 },
-  tint: 0x4fc3f7, // frost blue
+  tint: 0x81d4fa, // frost blue — matches design/13's locked ice element hue (ELEMENT_COLORS.ice)
 };
 
 /** Charged mob: shrugs off lightning, rots to poison. */
@@ -76,7 +76,7 @@ export const GALVANIST: EnemyBlueprint = {
   footprintRadius: pxToFp(7),
   weapon: ENEMY_GUN_SIM,
   resist: { lightning: 400, poison: 1800 },
-  tint: 0xffd54f, // charged yellow
+  tint: 0xfff176, // charged yellow — matches design/13's locked lightning element hue (ELEMENT_COLORS.lightning)
 };
 
 /** Armoured mob: shrugs off bullets (physical) and fire, but conducts lightning.

@@ -4,7 +4,7 @@ import type { RigSkinBundle } from './taoBundle';
 import type { AnimationClip, ResolvedBoneTransform, WorldPose } from './types';
 import { sampleClip } from './interpolate';
 import { facingFromAim } from './facing';
-import { getWeaponAnchor, getWeaponTexture, type WeaponVisualKind } from './weaponSkins';
+import { getWeaponAnchor, getWeaponScale, getWeaponTexture, type WeaponVisualKind } from './weaponSkins';
 
 // The socket that visibly carries the mounted weapon sprite (design/03 "swapping the
 // active slot swaps which socket fires" — the demo's `attack` clip already privileges
@@ -43,6 +43,7 @@ export class RigSkin {
   private aimRad = 0;
   private weaponKind: WeaponVisualKind | null = null;
   private weaponSprite: Sprite | null = null;
+  private weaponTint = 0xffffff;
 
   constructor(
     private readonly rig: Rig,
@@ -80,11 +81,30 @@ export class RigSkin {
     this.aimRad = rad;
   }
 
+  /** Multiply-tint every bone sprite (design/13: a neutral-grey body re-tinted per
+   *  elemental variant at runtime, e.g. critter-core — never called for a character
+   *  skin, which already carries its own real colours). The weapon sprite (mounted
+   *  separately, not a bone) is deliberately left untinted. */
+  setTint(color: number): void {
+    this.sprites.forEach(sprite => {
+      sprite.tint = color;
+    });
+  }
+
   /** Which weapon module (if any) the active socket (`ACTIVE_WEAPON_SOCKET`) mounts —
    *  null hides it (unarmed / no rig / texture not preloaded yet). design/13's
    *  universal mount: one neutral sprite per KIND, not per weapon frame. */
   setWeaponKind(kind: WeaponVisualKind | null): void {
     this.weaponKind = kind;
+  }
+
+  /** Re-tint the mounted weapon sprite (design/03/13 "element = colour" — a fire/ice/
+   *  lightning/poison weapon reads in its element hue, physical stays neutral). Applied
+   *  immediately if the sprite already exists; otherwise picked up the next time
+   *  `updateWeaponSprite` (re)creates it. */
+  setWeaponTint(color: number): void {
+    this.weaponTint = color;
+    if (this.weaponSprite) this.weaponSprite.tint = color;
   }
 
   /** The canonical (pre-mirror) local rotation, in RADIANS, that renders as the true
@@ -140,12 +160,15 @@ export class RigSkin {
     if (!this.weaponSprite) {
       this.weaponSprite = new Sprite(texture);
       this.weaponSprite.zIndex = (this.bundle.bindings.get(ACTIVE_WEAPON_SOCKET)?.zOrder ?? 0) + 1;
+      this.weaponSprite.tint = this.weaponTint;
       this.view.addChild(this.weaponSprite);
       this.view.sortableChildren = true;
     }
     const anchor = getWeaponAnchor(this.weaponKind);
+    const scale = getWeaponScale(this.weaponKind);
     this.weaponSprite.texture = texture;
     this.weaponSprite.anchor.set(anchor.x, anchor.y);
+    this.weaponSprite.scale.set(scale);
     this.weaponSprite.visible = true;
     this.weaponSprite.x = socketPose.sx;
     this.weaponSprite.y = socketPose.sy;

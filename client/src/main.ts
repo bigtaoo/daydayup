@@ -17,11 +17,13 @@ async function boot() {
   // Best-effort: a failed/slow preload just leaves that character's skin on its
   // Graphics placeholder (design/02/12 — art never blocks gameplay). Registry keys
   // are SkinDef.atlasKey values (content/skins.ts) — the three launch characters
-  // (design/13), all on the shared orb-core rig.
+  // (design/13), all on the shared orb-core rig — plus 'critter-core', the shared
+  // enemy body (design/13's "one neutral-grey critter, re-tinted per variant").
   const CHAR_BUNDLES: ReadonlyArray<[string, string]> = [
     ['char_vanguard', '/skins/orb-core'],
     ['char_skirmisher', '/skins/skirmisher-core'],
     ['char_juggernaut', '/skins/juggernaut-core'],
+    ['critter-core', '/skins/critter-core'],
   ];
   await Promise.all([
     ...CHAR_BUNDLES.map(async ([name, baseUrl]) => {

@@ -6,7 +6,7 @@
 // (design/12, 2026-07-27).
 //
 // Run from tools/animator: node scripts/build-critter-project.mjs
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import JSZip from 'jszip';
@@ -15,6 +15,13 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '../../..');
 const projectsDir = path.resolve(here, '../projects');
 const unitsDir = path.join(root, 'art/units');
+const skinsDir = path.join(root, 'client/public/skins');
+
+// body's bodyR=50 (authoring px, skeleton/rigs/critterCore.ts) vs enemy_critter.png's
+// actual 1254px native resolution — same "Static scale offset" correction every other
+// real-art binding needed (client/src/render/critterCoreRig.ts's
+// CRITTER_CORE_REFERENCE_RADIUS convention): scale = (2*bodyR)/nativePx.
+const BODY_SCALE = 100 / 1254;
 
 async function main() {
   const editorJson = {
@@ -22,7 +29,15 @@ async function main() {
     selectedClip: 'idle',
     previewMode: 'sprite',
     bindings: {
-      body: { anchorX: 0.5, anchorY: 0.5, flipX: false, zOrder: 0, rotation: 0, scaleX: 1, scaleY: 1 },
+      body: {
+        anchorX: 0.5,
+        anchorY: 0.5,
+        flipX: false,
+        zOrder: 0,
+        rotation: 0,
+        scaleX: BODY_SCALE,
+        scaleY: BODY_SCALE,
+      },
     },
     animations: {
       idle: {
@@ -76,6 +91,21 @@ async function main() {
   const outPath = path.join(projectsDir, 'critter-core.editortao');
   writeFileSync(outPath, outBuf);
   console.log(`wrote ${outPath} (${outBuf.length} bytes)`);
+
+  // client/public/skins/critter-core/ — the loose-file bundle client/src/render/
+  // taoBundle.ts actually loads at runtime (same shape as the character bundles,
+  // design/12's real packed .tao is still pending).
+  const skinOutDir = path.join(skinsDir, 'critter-core');
+  mkdirSync(skinOutDir, { recursive: true });
+  const animationJson = {
+    version: 2,
+    bindings: editorJson.bindings,
+    animations: editorJson.animations,
+  };
+  writeFileSync(path.join(skinOutDir, 'animation.json'), JSON.stringify(animationJson, null, 2));
+  writeFileSync(path.join(skinOutDir, 'frames.json'), JSON.stringify({ body: ['default'] }, null, 2));
+  writeFileSync(path.join(skinOutDir, 'body.png'), readFileSync(path.join(unitsDir, 'enemy_critter.png')));
+  console.log(`wrote ${skinOutDir}/`);
 }
 
 main().catch(err => {

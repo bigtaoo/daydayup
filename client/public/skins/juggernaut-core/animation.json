@@ -7,8 +7,8 @@
       "flipX": false,
       "zOrder": 0,
       "rotation": 0,
-      "scaleX": 1.224609375,
-      "scaleY": 1.224609375
+      "scaleX": 0.078125,
+      "scaleY": 0.078125
     },
     "belly": {
       "anchorX": 0.5,
@@ -16,8 +16,8 @@
       "flipX": false,
       "zOrder": 1,
       "rotation": 0,
-      "scaleX": 1.224609375,
-      "scaleY": 1.224609375
+      "scaleX": 0.039063,
+      "scaleY": 0.039063
     },
     "eye": {
       "anchorX": 0.5,
@@ -25,8 +25,8 @@
       "flipX": false,
       "zOrder": 2,
       "rotation": 0,
-      "scaleX": 1.224609375,
-      "scaleY": 1.224609375
+      "scaleX": 0.03125,
+      "scaleY": 0.03125
     },
     "socket_l": {
       "anchorX": 0.5,
@@ -34,8 +34,8 @@
       "flipX": false,
       "zOrder": 3,
       "rotation": 0,
-      "scaleX": 1,
-      "scaleY": 1
+      "scaleX": 0.020734,
+      "scaleY": 0.020734
     },
     "socket_r": {
       "anchorX": 0.5,
@@ -43,8 +43,8 @@
       "flipX": false,
       "zOrder": 4,
       "rotation": 0,
-      "scaleX": 1,
-      "scaleY": 1
+      "scaleX": 0.020734,
+      "scaleY": 0.020734
     }
   },
   "animations": {

@@ -1,6 +1,5 @@
 import type { EventBus, AppEvents } from '../core/EventBus';
 import type { AutoSaveController } from '../io/AutoSaveController';
-import type { ProjectStore } from '../io/ProjectStore';
 
 // ── ProjectPanel ──────────────────────────────────────────────────────────────
 // The project selection dropdown + New/Rename/Duplicate/Delete buttons and the
@@ -24,7 +23,6 @@ export class ProjectPanel {
     root: HTMLElement,
     private readonly bus:      EventBus<AppEvents>,
     private readonly autoSave: AutoSaveController,
-    private readonly store:    ProjectStore,
   ) {
     this.select    = root.querySelector<HTMLSelectElement>('#project-select')!;
     this.indicator = root.querySelector<HTMLElement>('#autosave-indicator')!;
@@ -56,7 +54,9 @@ export class ProjectPanel {
   }
 
   private async refresh(): Promise<void> {
-    const metas = await this.store.listMeta();
+    // Only ever list projects saved for THIS session's rig (AutoSaveController) — a
+    // different-rig project isn't safe to open here, so it's never even shown.
+    const metas = await this.autoSave.listMetaForCurrentRig();
     this.select.innerHTML = '';
     for (const m of metas) {
       const opt = document.createElement('option');
