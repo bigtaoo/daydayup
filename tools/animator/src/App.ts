@@ -1,8 +1,9 @@
 import { EventBus }              from './core/EventBus';
 import { AppState }              from './core/AppState';
 import { CommandManager }        from './core/CommandManager';
-import { Rig }                   from './skeleton/Rig';
+import { Rig, type RigDef }      from './skeleton/Rig';
 import { ORB_CORE_RIG }          from './skeleton/rigs/orbCore';
+import { BOSS_CORE_RIG }         from './skeleton/rigs/bossCore';
 import { ImageController }       from './images/ImageController';
 import { AnimationController }   from './animation/AnimationController';
 import { Renderer }              from './rendering/Renderer';
@@ -33,7 +34,14 @@ export class App {
     const bus        = new EventBus<AppEvents>();
     const state      = new AppState(bus);
     const cmdManager = new CommandManager(bus);
-    const rig        = new Rig(ORB_CORE_RIG);
+    // Dev-only rig picker (`?rig=boss-core`), same convention as this project's
+    // other opt-in query-param toggles (design/12's "a new rig is new data, not
+    // new code" — this is that claim exercised for a second body archetype, not
+    // a real multi-project rig-switcher UI). Defaults to the orb-core hero.
+    const RIGS: Record<string, RigDef> = { 'orb-core': ORB_CORE_RIG, 'boss-core': BOSS_CORE_RIG };
+    const rigParam = new URLSearchParams(location.search).get('rig');
+    const rigDef   = (rigParam && RIGS[rigParam]) || ORB_CORE_RIG;
+    const rig      = new Rig(rigDef);
 
     // ── 2. Renderer ─────────────────────────────────────────────────────────
     const canvasWrap = rootEl.querySelector<HTMLElement>('#canvas-wrap')!;
@@ -172,10 +180,16 @@ export class App {
       state.setAllLengthScales({});
       state.setAllAttachmentPoints(DEFAULT_ATTACHMENTS.map(pt => ({ ...pt })));
       state.setPreviewMode('skeleton');
-      for (const name of PRESET_NAMES) {
-        animCtrl.loadPreset(name);
+      // PRESET_NAMES are orb-core-specific clips (hover-bob, socket recoil, …) —
+      // meaningless bone ids under a different rig, so a non-orb-core rig starts
+      // with zero clips instead of silently authoring keyframes for bones that
+      // don't exist.
+      if (rig.id === 'orb-core') {
+        for (const name of PRESET_NAMES) {
+          animCtrl.loadPreset(name);
+        }
+        animCtrl.selectClip('idle');
       }
-      animCtrl.selectClip('idle');
       cmdManager.clear();
     };
     resetToDefaults();
