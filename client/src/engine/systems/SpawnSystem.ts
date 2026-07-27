@@ -24,6 +24,7 @@ import { generateFloor } from '../world/dungeon';
 import { ENEMY_TEAM_ID } from '../state/entities';
 import type { PickupItem } from '../state/entities';
 import type { ArenaRoomRuntime, GameState, WaveDef } from '../state/GameState';
+import { clampToWalkable } from './geom';
 
 /** One expanded, timed spawn entry — shared shape between dungeon's single global
  * schedule and the arena's per-room schedules (ArenaRoomRuntime.schedule). */
@@ -339,11 +340,19 @@ export class SpawnSystem {
   private spawnArenaLoot(state: GameState, room: ArenaRoom): void {
     for (const marker of room.lootMarkers ?? []) {
       const drop = rollArenaDrop(state.dropPrng);
+      // Clamp the authored marker point too — a defensive backstop against a
+      // map-editor marker that ends up on/behind a wall (design/07 pickups).
+      const pos = clampToWalkable(
+        toFpGrid(marker.point.x + room.rectGrid.x),
+        toFpGrid(marker.point.y + room.rectGrid.y),
+        SIM.pickupRadius,
+        state,
+      );
       const item: PickupItem = {
         id: state.nextId(),
         kind: drop.kind,
-        gx: toFpGrid(marker.point.x + room.rectGrid.x),
-        gy: toFpGrid(marker.point.y + room.rectGrid.y),
+        gx: pos.gx,
+        gy: pos.gy,
         spawnTick: state.tick,
         alive: true,
       };

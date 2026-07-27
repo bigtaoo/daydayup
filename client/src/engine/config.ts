@@ -234,8 +234,20 @@ import { BRAD_FULL } from './math/trig';
  * apart unconditionally. Any replay where two enemies got close enough to overlap
  * under v22 diverges under v23 (they no longer separate) — a real outcome change,
  * even though no new PRNG draw or state field is involved.
+ *
+ * v24: drop/pickup spawn points are clamped into walkable space (`geom.ts`
+ * `clampToWalkable`, no new PRNG draw — pure geometry against the existing
+ * `state.walls`/`obstacles`/world bounds). A dead enemy's own position could be
+ * on/behind a wall (a knockback shove, or a big footprint dying flush against
+ * geometry), and arena loot markers / a swapped-out weapon's drop-back point were
+ * never checked at all — any of those could previously spawn a pickup somewhere
+ * the player couldn't reach. `DeathDropsSystem`, `PickupSystem.applyWeapon`, and
+ * `SpawnSystem.spawnArenaLoot` now all push the computed point out of any
+ * overlapping wall/obstacle and clamp it inside the world bounds before creating
+ * the `PickupItem`. Any replay where a drop's pre-clamp point was already outside
+ * that margin diverges (the pickup now sits at a different, walkable position).
  */
-export const ENGINE_VERSION = 23;
+export const ENGINE_VERSION = 24;
 
 // ── Two-pool health tuning (design/07; final values are 07 "to design") ──────────
 // Whole ticks @30Hz. Shield regen is an idle timer, not a heal: after taking ANY

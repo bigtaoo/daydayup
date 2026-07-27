@@ -12,9 +12,10 @@
 import { rollDrop, rollArenaDrop } from '../content/drops';
 import { DOWNED_BLEEDOUT_TICKS } from '../config';
 import { toFp } from '../math/fixed';
+import { SIM } from '../sim.config';
 import type { GameState } from '../state/GameState';
 import type { PickupItem } from '../state/entities';
-import { retainAlive } from './geom';
+import { clampToWalkable, retainAlive } from './geom';
 
 export class DeathDropsSystem {
   tick(state: GameState): void {
@@ -28,11 +29,15 @@ export class DeathDropsSystem {
       // is 0 for every config without floors, so this is identical to the old no-arg
       // call for every existing config.
       const drop = state.zoneEnabled ? rollArenaDrop(state.dropPrng) : rollDrop(state.dropPrng, state.floorIndex);
+      // Clamp off the dying enemy's own position — a knockback or a large
+      // footprint can leave that position on/behind a wall, which would otherwise
+      // drop the pickup somewhere the player can't reach (design/07 pickups).
+      const pos = clampToWalkable(e.gx, e.gy, SIM.pickupRadius, state);
       const item: PickupItem = {
         id: state.nextId(),
         kind: drop.kind,
-        gx: e.gx,
-        gy: e.gy,
+        gx: pos.gx,
+        gy: pos.gy,
         spawnTick: state.tick,
         alive: true,
       };

@@ -326,6 +326,25 @@ describe('DeathDropsSystem (step 8)', () => {
     };
     expect(kindFor()).toBe(kindFor());
   });
+
+  it('clamps a drop out of a wall the dying enemy died inside/behind (v24)', () => {
+    // A wall spanning 700..850 x, 550..650 y — the enemy dies dead-centre inside it
+    // (e.g. a knockback shove, or a big footprint flush against geometry), which
+    // pre-v24 would drop the pickup right there, unreachable behind the wall. The
+    // clamp pushes the point OUT to the nearest edge (may end up exactly touching
+    // it, same as MovementSystem's own wall push-out — that's still collectable,
+    // just no longer embedded), so assert the centre point itself cleared the
+    // rect rather than re-running the padded overlap test the push target ties.
+    const s = createGameState({ ...CFG, walls: [[700, 550, 150, 100]] as const });
+    addEnemy(s, 775, 600, 0);
+    new DeathDropsSystem().tick(s);
+    expect(s.pickups).toHaveLength(1);
+    const item = s.pickups[0]!;
+    const wall = s.walls[0]!;
+    const outsideRect =
+      item.gx < wall.x || item.gx > ((wall.x + wall.w) as number) || item.gy < wall.y || item.gy > ((wall.y + wall.h) as number);
+    expect(outsideRect).toBe(true);
+  });
 });
 
 describe('PickupSystem (step 9)', () => {

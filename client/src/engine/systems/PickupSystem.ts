@@ -32,7 +32,7 @@ import { WEAPON_SIM_BY_ID, makeWeapon } from '../content/weapons';
 import { RUN_BUFFS, sumBuffs } from '../balance/runbuffs';
 import type { GameState } from '../state/GameState';
 import type { PickupItem, PlayerActor } from '../state/entities';
-import { circlesOverlap, retainAlive } from './geom';
+import { circlesOverlap, clampToWalkable, retainAlive } from './geom';
 
 export class PickupSystem {
   tick(state: GameState): void {
@@ -120,11 +120,12 @@ export class PickupSystem {
     // re-collected this same tick.
     const outgoing = p.weapons[p.activeSlot];
     if (outgoing) {
+      const pos = clampToWalkable(p.gx, p.gy, SIM.pickupRadius, state);
       state.pickups.push({
         id: state.nextId(),
         kind: 'weapon',
-        gx: p.gx,
-        gy: p.gy,
+        gx: pos.gx,
+        gy: pos.gy,
         spawnTick: state.tick,
         alive: true,
         weaponId: outgoing.spec.name,
