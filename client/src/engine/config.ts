@@ -214,8 +214,20 @@ import { BRAD_FULL } from './math/trig';
  * a replay recorded under v20 that picked up a weapon via overlap alone, with no
  * INTERACT held, replays differently under this rule — a real outcome change for
  * identical commands, not additive.
+ *
+ * v22: actor–actor collision (design/07 step 4.3 — the one "still deferred" half of
+ * movement/collision; every actor↔solid case had already shipped). `MovementSystem`
+ * gains `resolveActorPairs`: every overlapping pair among ALL alive actors (players
+ * AND enemies, not gated by faction — "same-plane pair" in the design doc), resolved
+ * in a fixed ascending-id-ordered sequence, gets pushed apart along their centre
+ * line by half the penetration each (footprint circles, same radius convention as
+ * the existing solid-push code). Actors that used to freely overlap (two players
+ * standing on each other, an enemy walking into another enemy, a player pushing
+ * through a mob) now physically separate every tick they're close enough to
+ * overlap — any replay where any two actors ever got that close diverges the first
+ * tick it happens, even though no new PRNG draw or state field is involved.
  */
-export const ENGINE_VERSION = 21;
+export const ENGINE_VERSION = 22;
 
 // ── Two-pool health tuning (design/07; final values are 07 "to design") ──────────
 // Whole ticks @30Hz. Shield regen is an idle timer, not a heal: after taking ANY

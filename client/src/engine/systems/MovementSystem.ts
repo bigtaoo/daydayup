@@ -1,13 +1,12 @@
 /**
  * Step 4 — Movement. Integrate vx/vy (fp displacement already baked per tick) on
  * the 2D ground plane; push actors out of static round solids (pillars) AND static
- * rectangular solids (AABB tile/wall geometry, design/07/09 ROADMAP 1.2); clamp
+ * rectangular solids (AABB tile/wall geometry, design/07/09 ROADMAP 1.2); push
+ * overlapping actors apart from EACH OTHER (design/07's actor–actor half); clamp
  * players inside the world bounds. Movement is strictly 2D — there is no z axis /
- * gravity (jump was removed; a future dodge is a planar blink, not a hop).
- * Actor–actor collision proper is design/07 (still deferred); this realizes the
- * static-solid half against round pillars + AABB walls. Enemies are stationary
- * (vx/vy = 0) but are integrated + resolved uniformly so future moving mobs need
- * no special-casing.
+ * gravity (jump was removed; a future dodge is a planar blink, not a hop). Enemies
+ * are stationary (vx/vy = 0) but are integrated + resolved uniformly so future
+ * moving mobs need no special-casing.
  *
  * Ports Game.ts updatePlayer() move+clamp, float px → fp. Push-out uses isqrt
  * (design/06 banned Math.sqrt).
@@ -33,6 +32,7 @@ export class MovementSystem {
       this.resolveObstacles(state, e);
       this.resolveWalls(state, e);
     }
+    this.resolveActorPairs(state);
   }
 
   private integrate(a: Actor): void {
@@ -121,6 +121,72 @@ export class MovementSystem {
       else if (min === pushLeft) a.gx = (w.x - r) as Fp;
       else if (min === pushBottom) a.gy = (bottom + r) as Fp;
       else a.gy = (w.y - r) as Fp;
+    }
+  }
+
+  /**
+   * Push overlapping actors apart from EACH OTHER (design/07 step 4.3, the
+   * "still deferred" half — every actor↔solid case above shipped earlier). Circle
+   * (`footprintRadius`, feet — same convention as actor↔solid, not the body
+   * `radius`) vs circle, half the penetration to each side (funny's `subFp(subFp(
+   * other − rOther), (self + rSelf))` mapped onto two movers instead of one mover
+   * + a static solid). Not gated by faction — "same-plane pair" in the design doc
+   * is any two actors sharing the 2D ground plane, players and enemies alike.
+   *
+   * All-pairs over every alive actor: a room/arena today holds a handful of
+   * players + enemies (the existing obstacle/wall resolvers' own "costs nothing at
+   * this scale" precedent), so no spatial-grid broadphase is needed — unlike
+   * UniformGrid over state.walls/obstacles, actors move every tick and rebuilding
+   * a grid for a few dozen entities isn't worth the complexity yet. Revisit if a
+   * PvP arena's live actor count ever gets large.
+   *
+   * Resolved in a FIXED ascending-id-ordered sequence (never state.players/
+   * enemies array-concatenation order, which co-op seat count for example could
+   * reshuffle) so the result is deterministic across clients (design/06).
+   */
+  private resolveActorPairs(state: GameState): void {
+    const actors: Actor[] = [];
+    for (const p of state.players) if (p.alive) actors.push(p);
+    for (const e of state.enemies) if (e.alive) actors.push(e);
+    actors.sort((x, y) => x.id - y.id);
+
+    for (let i = 0; i < actors.length; i++) {
+      const a = actors[i]!;
+      for (let j = i + 1; j < actors.length; j++) {
+        const b = actors[j]!;
+        const dx = a.gx - b.gx;
+        const dy = a.gy - b.gy;
+        const minDist = a.footprintRadius + b.footprintRadius;
+        const distSq = dx * dx + dy * dy;
+        if (distSq >= minDist * minDist) continue; // no overlap
+
+        const dist = isqrt(distSq);
+        if (dist === 0) {
+          // Exactly concentric — no defined push direction; split the full
+          // clearance along +x (a gets the floor half, b the remainder) so every
+          // client resolves the same deterministic tie, mirroring the
+          // obstacle-resolver's own concentric-overlap convention.
+          const half = Math.trunc((minDist as number) / 2);
+          const other = (minDist as number) - half;
+          a.gx = addFp(a.gx, half as Fp);
+          b.gx = addFp(b.gx, -other as Fp);
+          continue;
+        }
+
+        const pen = minDist - dist; // fp penetration depth
+        // Full outward-normal displacement (same shape as resolveObstacles), then
+        // split in half between the two movers — a gets the floor half, b the
+        // exact remainder, so the two halves always sum back to the full push
+        // (no residual overlap left standing from a rounding remainder).
+        const nx = Math.trunc((dx * pen) / dist);
+        const ny = Math.trunc((dy * pen) / dist);
+        const nxHalf = Math.trunc(nx / 2);
+        const nyHalf = Math.trunc(ny / 2);
+        a.gx = (a.gx + nxHalf) as Fp;
+        a.gy = (a.gy + nyHalf) as Fp;
+        b.gx = (b.gx - (nx - nxHalf)) as Fp;
+        b.gy = (b.gy - (ny - nyHalf)) as Fp;
+      }
     }
   }
 
