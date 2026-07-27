@@ -59,7 +59,35 @@
           },
           "tableId": "arena_common"
         }
-      ]
+      ],
+      "spawns": [
+        {
+          "x": 2,
+          "y": 2,
+          "type": "basic"
+        },
+        {
+          "x": 2,
+          "y": 8,
+          "type": "basic"
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "basic",
+            "spawnPoint": 0,
+            "count": 1
+          },
+          {
+            "atTick": 60,
+            "enemyType": "basic",
+            "spawnPoint": 1,
+            "count": 1
+          }
+        ]
+      }
     },
     {
       "id": "room_0_2",
@@ -339,6 +367,49 @@
           },
           "tableId": "arena_common"
         }
+      ],
+      "spawns": [
+        {
+          "x": 2,
+          "y": 2,
+          "type": "ironclad"
+        },
+        {
+          "x": 2,
+          "y": 8,
+          "type": "ironclad"
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "ironclad",
+            "spawnPoint": 0,
+            "count": 1
+          },
+          {
+            "atTick": 60,
+            "enemyType": "ironclad",
+            "spawnPoint": 1,
+            "count": 1
+          }
+        ]
+      },
+      "cellTraits": [
+        {
+          "id": "room_1_1_spike",
+          "rectGrid": {
+            "x": 8,
+            "y": 2,
+            "w": 1,
+            "h": 1
+          },
+          "kind": "spike",
+          "timed": false,
+          "damage": 2,
+          "damageType": "physical"
+        }
       ]
     },
     {
@@ -367,7 +438,35 @@
           },
           "tableId": "arena_common"
         }
-      ]
+      ],
+      "spawns": [
+        {
+          "x": 2,
+          "y": 2,
+          "type": "basic"
+        },
+        {
+          "x": 2,
+          "y": 8,
+          "type": "basic"
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "basic",
+            "spawnPoint": 0,
+            "count": 1
+          },
+          {
+            "atTick": 60,
+            "enemyType": "basic",
+            "spawnPoint": 1,
+            "count": 1
+          }
+        ]
+      }
     },
     {
       "id": "room_1_3",
@@ -507,7 +606,35 @@
           },
           "tableId": "arena_common"
         }
-      ]
+      ],
+      "spawns": [
+        {
+          "x": 2,
+          "y": 2,
+          "type": "basic"
+        },
+        {
+          "x": 2,
+          "y": 8,
+          "type": "basic"
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "basic",
+            "spawnPoint": 0,
+            "count": 1
+          },
+          {
+            "atTick": 60,
+            "enemyType": "basic",
+            "spawnPoint": 1,
+            "count": 1
+          }
+        ]
+      }
     },
     {
       "id": "room_1_8",
@@ -535,7 +662,35 @@
           },
           "tableId": "arena_common"
         }
-      ]
+      ],
+      "spawns": [
+        {
+          "x": 2,
+          "y": 2,
+          "type": "emberling"
+        },
+        {
+          "x": 2,
+          "y": 8,
+          "type": "emberling"
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "emberling",
+            "spawnPoint": 0,
+            "count": 1
+          },
+          {
+            "atTick": 60,
+            "enemyType": "emberling",
+            "spawnPoint": 1,
+            "count": 1
+          }
+        ]
+      }
     },
     {
       "id": "room_1_9",
@@ -563,7 +718,35 @@
           },
           "tableId": "arena_common"
         }
-      ]
+      ],
+      "spawns": [
+        {
+          "x": 2,
+          "y": 2,
+          "type": "frostling"
+        },
+        {
+          "x": 2,
+          "y": 8,
+          "type": "frostling"
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "frostling",
+            "spawnPoint": 0,
+            "count": 1
+          },
+          {
+            "atTick": 60,
+            "enemyType": "frostling",
+            "spawnPoint": 1,
+            "count": 1
+          }
+        ]
+      }
     },
     {
       "id": "room_2_0",
@@ -590,6 +773,49 @@
             "y": 37
           },
           "tableId": "arena_common"
+        }
+      ],
+      "spawns": [
+        {
+          "x": 2,
+          "y": 2,
+          "type": "frostling"
+        },
+        {
+          "x": 2,
+          "y": 8,
+          "type": "frostling"
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "frostling",
+            "spawnPoint": 0,
+            "count": 1
+          },
+          {
+            "atTick": 60,
+            "enemyType": "frostling",
+            "spawnPoint": 1,
+            "count": 1
+          }
+        ]
+      },
+      "cellTraits": [
+        {
+          "id": "room_2_0_spike",
+          "rectGrid": {
+            "x": 8,
+            "y": 2,
+            "w": 1,
+            "h": 1
+          },
+          "kind": "spike",
+          "timed": false,
+          "damage": 2,
+          "damageType": "physical"
         }
       ]
     },
@@ -619,7 +845,35 @@
           },
           "tableId": "arena_common"
         }
-      ]
+      ],
+      "spawns": [
+        {
+          "x": 2,
+          "y": 2,
+          "type": "galvanist"
+        },
+        {
+          "x": 2,
+          "y": 8,
+          "type": "galvanist"
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "galvanist",
+            "spawnPoint": 0,
+            "count": 1
+          },
+          {
+            "atTick": 60,
+            "enemyType": "galvanist",
+            "spawnPoint": 1,
+            "count": 1
+          }
+        ]
+      }
     },
     {
       "id": "room_2_2",
@@ -647,7 +901,35 @@
           },
           "tableId": "arena_common"
         }
-      ]
+      ],
+      "spawns": [
+        {
+          "x": 2,
+          "y": 2,
+          "type": "ironclad"
+        },
+        {
+          "x": 2,
+          "y": 8,
+          "type": "ironclad"
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "ironclad",
+            "spawnPoint": 0,
+            "count": 1
+          },
+          {
+            "atTick": 60,
+            "enemyType": "ironclad",
+            "spawnPoint": 1,
+            "count": 1
+          }
+        ]
+      }
     },
     {
       "id": "room_2_3",
@@ -675,7 +957,35 @@
           },
           "tableId": "arena_common"
         }
-      ]
+      ],
+      "spawns": [
+        {
+          "x": 2,
+          "y": 2,
+          "type": "basic"
+        },
+        {
+          "x": 2,
+          "y": 8,
+          "type": "basic"
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "basic",
+            "spawnPoint": 0,
+            "count": 1
+          },
+          {
+            "atTick": 60,
+            "enemyType": "basic",
+            "spawnPoint": 1,
+            "count": 1
+          }
+        ]
+      }
     },
     {
       "id": "room_2_4",
@@ -703,7 +1013,24 @@
           },
           "tableId": "arena_common"
         }
-      ]
+      ],
+      "spawns": [
+        {
+          "x": 3,
+          "y": 5
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "blightlord",
+            "spawnPoint": 0,
+            "count": 1,
+            "isBoss": true
+          }
+        ]
+      }
     },
     {
       "id": "room_2_5",
@@ -787,6 +1114,21 @@
           },
           "tableId": "arena_common"
         }
+      ],
+      "cellTraits": [
+        {
+          "id": "room_2_7_spike",
+          "rectGrid": {
+            "x": 8,
+            "y": 2,
+            "w": 1,
+            "h": 1
+          },
+          "kind": "spike",
+          "timed": false,
+          "damage": 2,
+          "damageType": "physical"
+        }
       ]
     },
     {
@@ -815,7 +1157,35 @@
           },
           "tableId": "arena_common"
         }
-      ]
+      ],
+      "spawns": [
+        {
+          "x": 2,
+          "y": 2,
+          "type": "basic"
+        },
+        {
+          "x": 2,
+          "y": 8,
+          "type": "basic"
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "basic",
+            "spawnPoint": 0,
+            "count": 1
+          },
+          {
+            "atTick": 60,
+            "enemyType": "basic",
+            "spawnPoint": 1,
+            "count": 1
+          }
+        ]
+      }
     },
     {
       "id": "room_2_9",
@@ -842,6 +1212,49 @@
             "y": 37
           },
           "tableId": "arena_common"
+        }
+      ],
+      "spawns": [
+        {
+          "x": 2,
+          "y": 2,
+          "type": "emberling"
+        },
+        {
+          "x": 2,
+          "y": 8,
+          "type": "emberling"
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "emberling",
+            "spawnPoint": 0,
+            "count": 1
+          },
+          {
+            "atTick": 60,
+            "enemyType": "emberling",
+            "spawnPoint": 1,
+            "count": 1
+          }
+        ]
+      },
+      "cellTraits": [
+        {
+          "id": "room_2_9_spike",
+          "rectGrid": {
+            "x": 8,
+            "y": 2,
+            "w": 1,
+            "h": 1
+          },
+          "kind": "spike",
+          "timed": false,
+          "damage": 2,
+          "damageType": "physical"
         }
       ]
     },
@@ -871,7 +1284,35 @@
           },
           "tableId": "arena_common"
         }
-      ]
+      ],
+      "spawns": [
+        {
+          "x": 2,
+          "y": 2,
+          "type": "emberling"
+        },
+        {
+          "x": 2,
+          "y": 8,
+          "type": "emberling"
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "emberling",
+            "spawnPoint": 0,
+            "count": 1
+          },
+          {
+            "atTick": 60,
+            "enemyType": "emberling",
+            "spawnPoint": 1,
+            "count": 1
+          }
+        ]
+      }
     },
     {
       "id": "room_3_1",
@@ -899,7 +1340,35 @@
           },
           "tableId": "arena_common"
         }
-      ]
+      ],
+      "spawns": [
+        {
+          "x": 2,
+          "y": 2,
+          "type": "frostling"
+        },
+        {
+          "x": 2,
+          "y": 8,
+          "type": "frostling"
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "frostling",
+            "spawnPoint": 0,
+            "count": 1
+          },
+          {
+            "atTick": 60,
+            "enemyType": "frostling",
+            "spawnPoint": 1,
+            "count": 1
+          }
+        ]
+      }
     },
     {
       "id": "room_3_2",
@@ -927,7 +1396,35 @@
           },
           "tableId": "arena_common"
         }
-      ]
+      ],
+      "spawns": [
+        {
+          "x": 2,
+          "y": 2,
+          "type": "galvanist"
+        },
+        {
+          "x": 2,
+          "y": 8,
+          "type": "galvanist"
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "galvanist",
+            "spawnPoint": 0,
+            "count": 1
+          },
+          {
+            "atTick": 60,
+            "enemyType": "galvanist",
+            "spawnPoint": 1,
+            "count": 1
+          }
+        ]
+      }
     },
     {
       "id": "room_3_3",
@@ -955,7 +1452,35 @@
           },
           "tableId": "arena_common"
         }
-      ]
+      ],
+      "spawns": [
+        {
+          "x": 2,
+          "y": 2,
+          "type": "ironclad"
+        },
+        {
+          "x": 2,
+          "y": 8,
+          "type": "ironclad"
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "ironclad",
+            "spawnPoint": 0,
+            "count": 1
+          },
+          {
+            "atTick": 60,
+            "enemyType": "ironclad",
+            "spawnPoint": 1,
+            "count": 1
+          }
+        ]
+      }
     },
     {
       "id": "room_3_4",
@@ -983,7 +1508,35 @@
           },
           "tableId": "arena_common"
         }
-      ]
+      ],
+      "spawns": [
+        {
+          "x": 2,
+          "y": 2,
+          "type": "basic"
+        },
+        {
+          "x": 2,
+          "y": 8,
+          "type": "basic"
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "basic",
+            "spawnPoint": 0,
+            "count": 1
+          },
+          {
+            "atTick": 60,
+            "enemyType": "basic",
+            "spawnPoint": 1,
+            "count": 1
+          }
+        ]
+      }
     },
     {
       "id": "room_3_5",
@@ -1038,6 +1591,21 @@
             "y": 49
           },
           "tableId": "arena_common"
+        }
+      ],
+      "cellTraits": [
+        {
+          "id": "room_3_6_spike",
+          "rectGrid": {
+            "x": 8,
+            "y": 2,
+            "w": 1,
+            "h": 1
+          },
+          "kind": "spike",
+          "timed": false,
+          "damage": 2,
+          "damageType": "physical"
         }
       ]
     },
@@ -1095,6 +1663,21 @@
           },
           "tableId": "arena_common"
         }
+      ],
+      "cellTraits": [
+        {
+          "id": "room_3_8_spike",
+          "rectGrid": {
+            "x": 8,
+            "y": 2,
+            "w": 1,
+            "h": 1
+          },
+          "kind": "spike",
+          "timed": false,
+          "damage": 2,
+          "damageType": "physical"
+        }
       ]
     },
     {
@@ -1123,7 +1706,35 @@
           },
           "tableId": "arena_common"
         }
-      ]
+      ],
+      "spawns": [
+        {
+          "x": 2,
+          "y": 2,
+          "type": "basic"
+        },
+        {
+          "x": 2,
+          "y": 8,
+          "type": "basic"
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "basic",
+            "spawnPoint": 0,
+            "count": 1
+          },
+          {
+            "atTick": 60,
+            "enemyType": "basic",
+            "spawnPoint": 1,
+            "count": 1
+          }
+        ]
+      }
     },
     {
       "id": "room_4_0",
@@ -1179,7 +1790,35 @@
           },
           "tableId": "arena_common"
         }
-      ]
+      ],
+      "spawns": [
+        {
+          "x": 2,
+          "y": 2,
+          "type": "emberling"
+        },
+        {
+          "x": 2,
+          "y": 8,
+          "type": "emberling"
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "emberling",
+            "spawnPoint": 0,
+            "count": 1
+          },
+          {
+            "atTick": 60,
+            "enemyType": "emberling",
+            "spawnPoint": 1,
+            "count": 1
+          }
+        ]
+      }
     },
     {
       "id": "room_4_2",
@@ -1207,7 +1846,35 @@
           },
           "tableId": "arena_common"
         }
-      ]
+      ],
+      "spawns": [
+        {
+          "x": 2,
+          "y": 2,
+          "type": "frostling"
+        },
+        {
+          "x": 2,
+          "y": 8,
+          "type": "frostling"
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "frostling",
+            "spawnPoint": 0,
+            "count": 1
+          },
+          {
+            "atTick": 60,
+            "enemyType": "frostling",
+            "spawnPoint": 1,
+            "count": 1
+          }
+        ]
+      }
     },
     {
       "id": "room_4_3",
@@ -1263,7 +1930,35 @@
           },
           "tableId": "arena_common"
         }
-      ]
+      ],
+      "spawns": [
+        {
+          "x": 2,
+          "y": 2,
+          "type": "ironclad"
+        },
+        {
+          "x": 2,
+          "y": 8,
+          "type": "ironclad"
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "ironclad",
+            "spawnPoint": 0,
+            "count": 1
+          },
+          {
+            "atTick": 60,
+            "enemyType": "ironclad",
+            "spawnPoint": 1,
+            "count": 1
+          }
+        ]
+      }
     },
     {
       "id": "room_4_5",
@@ -1290,6 +1985,49 @@
             "y": 61
           },
           "tableId": "arena_common"
+        }
+      ],
+      "spawns": [
+        {
+          "x": 2,
+          "y": 2,
+          "type": "basic"
+        },
+        {
+          "x": 2,
+          "y": 8,
+          "type": "basic"
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "basic",
+            "spawnPoint": 0,
+            "count": 1
+          },
+          {
+            "atTick": 60,
+            "enemyType": "basic",
+            "spawnPoint": 1,
+            "count": 1
+          }
+        ]
+      },
+      "cellTraits": [
+        {
+          "id": "room_4_5_spike",
+          "rectGrid": {
+            "x": 8,
+            "y": 2,
+            "w": 1,
+            "h": 1
+          },
+          "kind": "spike",
+          "timed": false,
+          "damage": 2,
+          "damageType": "physical"
         }
       ]
     },
@@ -1459,7 +2197,35 @@
           },
           "tableId": "arena_common"
         }
-      ]
+      ],
+      "spawns": [
+        {
+          "x": 2,
+          "y": 2,
+          "type": "basic"
+        },
+        {
+          "x": 2,
+          "y": 8,
+          "type": "basic"
+        }
+      ],
+      "encounter": {
+        "entries": [
+          {
+            "atTick": 0,
+            "enemyType": "basic",
+            "spawnPoint": 0,
+            "count": 1
+          },
+          {
+            "atTick": 60,
+            "enemyType": "basic",
+            "spawnPoint": 1,
+            "count": 1
+          }
+        ]
+      }
     },
     {
       "id": "room_5_2",
