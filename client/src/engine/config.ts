@@ -313,8 +313,40 @@ import { BRAD_FULL } from './math/trig';
  * weapon or proc ever actually triggers). Any replay that ever rolls a weapon drop,
  * or fires a `piercing`/`ricochetCount`/`lifestealPermille` weapon, diverges from its
  * old outcome.
+ *
+ * v29: a gameplay-design audit's fix batch (design/15 fairness wall + design/05's
+ * open floor-scaling item). Three independent outcome changes:
+ * (1) PvP arena floor pickups/drops now scale by `PVP_SCALE_FACTOR` on equip
+ * (`PickupSystem.applyWeapon`), same as the landing kit (`balance/build.ts`) — before
+ * this, picking up almost any arena floor weapon REPLACED a scaled kit weapon with an
+ * unscaled one, inverting design/15's "the map's own loot is the real power curve."
+ * Any zoneEnabled match where a player ever equips a floor weapon diverges from its
+ * old (weaker) outcome.
+ * (2) Arena `lootMarker`s no longer roll their contents at room-activation time —
+ * `SpawnSystem.spawnArenaLoot` now spawns an unresolved `'crate'` pickup kind instead,
+ * and `PickupSystem` rolls it (still off the same `dropPrng` stream) the first tick any
+ * player comes within the new `SIM.lootRevealRadius`, instead of the tick its room
+ * activates. Closes design/15's own "honest anti-cheat-limit" note: eager resolution
+ * put every floor's exact loot identity in shared GameState (readable by a map-wide
+ * state/free-camera cheat) long before a legitimate player could be near it. Any PvP
+ * replay that ever activates a room with a `lootMarker` diverges — the roll still
+ * happens, but on a different (later, player-gated) tick, and never at all if no
+ * player ever comes within range.
+ * (3) `WEAPON_DROP_POOL` gained two elemental frame-library siblings (`cinderscatter`,
+ * `frostseeker`) — the pool's length changed, so `nextInt(N)` shifts at every
+ * weapon-drop roll, same divergence shape as v28's own pool growth.
+ * (4) `buildEnemyActor` now scales a dungeon enemy's `maxHp` by
+ * `DungeonConfig.difficultyCurve` (`curveAt`, `world/dungeon.ts`) — authored on
+ * `EMBER_DUNGEON` since ROADMAP 1.3 but never actually read until now (design/05's
+ * "how enemy tier... escalate with depth" was still open). floorIndex 0 always
+ * resolves to `curve.base` and every non-dungeon config has no `dungeonConfig` at all,
+ * so this is byte-identical for floor 0 and every PvE/PvP config without floors — but
+ * any dungeon replay that ever reaches floor 1+ diverges (tougher enemies, weapon
+ * damage untouched). `BLUEPRINT_CATALOG` also grew substantially (design/14 follow-up)
+ * but that catalog is meta-layer-only (client/src/meta, not the deterministic sim), so
+ * it carries no replay/outcome divergence on its own.
  */
-export const ENGINE_VERSION = 28;
+export const ENGINE_VERSION = 29;
 
 // ── Two-pool health tuning (design/07; final values are 07 "to design") ──────────
 // Whole ticks @30Hz. Shield regen is an idle timer, not a heal: after taking ANY

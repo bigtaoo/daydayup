@@ -50,6 +50,29 @@ export const BLUEPRINT_CATALOG: Record<string, WeaponBlueprint> = {
   // Premium recipes gate on rolled tier (design/14): the emberblade demands REFINED fire
   // (tier ≥ 1, from deeper floors) plus raw physical — a reason to descend past floor 0.
   emberblade: { weaponId: 'emberblade', nameKey: 'blueprint.emberblade', source: 'event', cost: [{ element: 'fire', qty: 2, minTier: 1 }, { element: 'physical', qty: 2 }] },
+
+  // ── Frame-library recipes (design/03/14 follow-up) — the Phase 1.1 showcase weapons
+  // had zero blueprints, so deep-floor material tiers had almost nothing to gate besides
+  // emberblade. Sourced/tiered by the same rarity → source ladder the original catalog
+  // already used (common/fine → drop, epic → purchase, legend/legendary → event + minTier).
+  scattergun: { weaponId: 'scattergun', nameKey: 'blueprint.scattergun', source: 'drop', cost: [{ element: 'physical', qty: 3 }] },
+  hammer: { weaponId: 'hammer', nameKey: 'blueprint.hammer', source: 'drop', cost: [{ element: 'physical', qty: 3 }] },
+  spear: { weaponId: 'spear', nameKey: 'blueprint.spear', source: 'drop', cost: [{ element: 'physical', qty: 3 }] },
+  seeker: { weaponId: 'seeker', nameKey: 'blueprint.seeker', source: 'purchase', cost: [{ element: 'physical', qty: 4 }] },
+  mortar: { weaponId: 'mortar', nameKey: 'blueprint.mortar', source: 'purchase', cost: [{ element: 'physical', qty: 4 }] },
+  novaburst: { weaponId: 'novaburst', nameKey: 'blueprint.novaburst', source: 'purchase', cost: [{ element: 'physical', qty: 4 }] },
+  carom: { weaponId: 'carom', nameKey: 'blueprint.carom', source: 'purchase', cost: [{ element: 'physical', qty: 4 }] },
+  leech: { weaponId: 'leech', nameKey: 'blueprint.leech', source: 'purchase', cost: [{ element: 'physical', qty: 4 }] },
+  lasercutter: { weaponId: 'lasercutter', nameKey: 'blueprint.lasercutter', source: 'event', cost: [{ element: 'physical', qty: 3, minTier: 1 }] },
+  tomahawk: { weaponId: 'tomahawk', nameKey: 'blueprint.tomahawk', source: 'event', cost: [{ element: 'physical', qty: 3, minTier: 1 }] },
+  gyre: { weaponId: 'gyre', nameKey: 'blueprint.gyre', source: 'event', cost: [{ element: 'physical', qty: 3, minTier: 1 }] },
+
+  // ── Remaining elemental melee + the new elemental frame siblings — same
+  // REFINED-material gate as emberblade, one tier deeper for the legendary showcase.
+  frostbrand: { weaponId: 'frostbrand', nameKey: 'blueprint.frostbrand', source: 'event', cost: [{ element: 'ice', qty: 2, minTier: 1 }, { element: 'physical', qty: 2 }] },
+  stormglaive: { weaponId: 'stormglaive', nameKey: 'blueprint.stormglaive', source: 'event', cost: [{ element: 'lightning', qty: 2, minTier: 2 }, { element: 'physical', qty: 2 }] },
+  cinderscatter: { weaponId: 'cinderscatter', nameKey: 'blueprint.cinderscatter', source: 'purchase', cost: [{ element: 'fire', qty: 3 }] },
+  frostseeker: { weaponId: 'frostseeker', nameKey: 'blueprint.frostseeker', source: 'event', cost: [{ element: 'ice', qty: 2, minTier: 1 }, { element: 'physical', qty: 2 }] },
 };
 
 /** Blueprints unlocked from the start (the 'drop' commons, design/14 "2–3 common

@@ -45,6 +45,7 @@ export const CONFIG = {
     pickupMaterial: 0xf6e05e, // the run's carry-out currency (design/05/14)
     pickupWeapon: 0xf6ad55, // amber — a new gun to swap in
     pickupBuff: 0xd6bcfa, // violet — a run buff (design/14 in-run power)
+    pickupCrate: 0xa0aec0, // slate — an unresolved arena crate (design/15), contents unknown until revealed
     // Elemental status fx (design/03/07) — flashed on the 'status' event, and now
     // also the bullet-trail + lingering-aura colours (per-element render polish).
     statusBurn: 0xff7043, // fire — orange flame

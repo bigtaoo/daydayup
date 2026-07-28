@@ -12,9 +12,11 @@ export type { PickupKind };
 // so a player reads "new gun" (chevron) vs "heal" (plus) at a glance.
 export class Pickup extends Entity {
   private bob = 0;
+  readonly kind: PickupKind;
 
   constructor(kind: PickupKind) {
     super();
+    this.kind = kind;
     const gfx = new Graphics();
     if (kind === 'heal') {
       const color = CONFIG.colors.pickupHeal;
@@ -31,6 +33,11 @@ export class Pickup extends Entity {
       const color = CONFIG.colors.pickupBuff;
       gfx.poly([0, -9, 9, 0, 0, 9, -9, 0]).fill({ color, alpha: 0.35 });
       gfx.poly([-6, 3, 0, -6, 6, 3, 0, 0]).fill({ color });
+    } else if (kind === 'crate') {
+      // A plain square outline — "unknown," contents unresolved (design/15 anti-cheat
+      // loot reveal). Flips to one of the shapes above the instant it resolves.
+      const color = CONFIG.colors.pickupCrate;
+      gfx.rect(-7, -7, 14, 14).stroke({ color, width: 2 });
     } else {
       // material — a small crystal (the run's carry-out currency, design/14)
       const color = CONFIG.colors.pickupMaterial;

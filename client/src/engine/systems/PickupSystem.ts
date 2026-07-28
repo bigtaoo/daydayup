@@ -26,16 +26,23 @@
  * render-only hover bob is dropped (visual, not sim).
  */
 import { SIM } from '../sim.config';
-import { HEAL_PICKUP_AMOUNT } from '../content/drops';
+import { HEAL_PICKUP_AMOUNT, rollArenaDrop } from '../content/drops';
 import { bankKey } from '../content/materials';
 import { WEAPON_SIM_BY_ID, makeWeapon } from '../content/weapons';
+import { PVP_SCALE_FACTOR, scaleWeaponDamage } from '../balance/build';
 import { RUN_BUFFS, sumBuffs } from '../balance/runbuffs';
+import { toFp } from '../math/fixed';
 import type { GameState } from '../state/GameState';
 import type { PickupItem, PlayerActor } from '../state/entities';
 import { circlesOverlap, clampToWalkable, retainAlive } from './geom';
 
 export class PickupSystem {
   tick(state: GameState): void {
+    // Reveal pass FIRST, same tick, so a crate a player is already standing inside
+    // (e.g. right as its room activates) can resolve AND be collected below without
+    // waiting an extra tick.
+    this.resolveCrates(state);
+
     // Snapshot each player's INTERACT rising edge ONCE up front, before any swap in
     // this same tick can push a fresh pickup back onto `state.pickups` — that new
     // item must never itself read as "just pressed" (it wasn't the input, the swap
@@ -45,6 +52,10 @@ export class PickupSystem {
 
     for (const item of state.pickups) {
       if (!item.alive || item.spawnTick === state.tick) continue;
+      // Never directly collectible — resolveCrates above always turns a crate into a
+      // real kind before a player gets this close (lootRevealRadius > pickupRadius),
+      // but guard explicitly rather than relying on that margin implicitly.
+      if (item.kind === 'crate') continue;
       for (let i = 0; i < state.players.length; i++) {
         const p = state.players[i]!;
         if (!p.alive) continue;
@@ -69,6 +80,30 @@ export class PickupSystem {
     retainAlive(state.pickups);
 
     for (const p of state.players) p.wasInteracting = p.interacting;
+  }
+
+  /**
+   * Roll an unresolved arena 'crate' (design/15) into a real weapon/buff/heal pickup
+   * the first tick any player comes within `SIM.lootRevealRadius` — deferred from
+   * spawn time (SpawnSystem.spawnArenaLoot) specifically so the value doesn't sit in
+   * shared GameState, readable by a map-wide state/camera cheat, before a legitimate
+   * player could plausibly have seen it. Iterates pickups then players in their
+   * existing array order so the dropPrng draw sequence stays deterministic across
+   * clients regardless of which player's loop iteration happens to trigger it.
+   */
+  private resolveCrates(state: GameState): void {
+    for (const item of state.pickups) {
+      if (!item.alive || item.kind !== 'crate') continue;
+      for (const p of state.players) {
+        if (!p.alive) continue;
+        if (!circlesOverlap(item.gx, item.gy, SIM.lootRevealRadius, p.gx, p.gy, toFp(0))) continue;
+        const drop = rollArenaDrop(state.dropPrng);
+        item.kind = drop.kind;
+        if (drop.kind === 'weapon') item.weaponId = drop.weaponId;
+        if (drop.kind === 'buff') item.buffId = drop.buffId;
+        break;
+      }
+    }
   }
 
   private apply(state: GameState, p: PlayerActor, item: PickupItem): void {
@@ -112,8 +147,13 @@ export class PickupSystem {
   }
 
   private applyWeapon(state: GameState, p: PlayerActor, weaponId: string): void {
-    const spec = WEAPON_SIM_BY_ID[weaponId];
-    if (!spec) return; // forward-compat: unknown weapon id → no-op (design/09)
+    const base = WEAPON_SIM_BY_ID[weaponId];
+    if (!base) return; // forward-compat: unknown weapon id → no-op (design/09)
+    // PvP arena floor pickups are "the real power curve" (design/15) and must scale
+    // exactly like the landing kit (balance/build.ts buildArenaSpecs) — re-deriving
+    // from the canonical unscaled spec every equip (never compounding) so drop→re-pickup
+    // cycles stay byte-identical regardless of how many hands a weapon passes through.
+    const spec = state.zoneEnabled ? scaleWeaponDamage(base, PVP_SCALE_FACTOR) : base;
     // The outgoing weapon drops back to the floor (design/03:126) BEFORE the slot is
     // overwritten — a fresh PickupItem at the player's own position, same spawn-tick
     // convention as DeathDropsSystem so the just-created item isn't immediately

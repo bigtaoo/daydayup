@@ -93,6 +93,14 @@ export class Scene {
     for (const it of state.pickups) {
       if (!it.alive) continue;
       let v = this.views.get(it.id) as Pickup | undefined;
+      // A crate's kind changes in place once PickupSystem resolves it (design/15) —
+      // same id, so the default "reuse by id" path below would otherwise leave it
+      // drawn as an unresolved crate forever. Rebuild the view when kind flips.
+      if (v && v.kind !== it.kind) {
+        v.destroy();
+        this.views.delete(it.id);
+        v = undefined;
+      }
       if (!v) {
         v = new Pickup(it.kind);
         this.spawn(it.id, v, fpToPx(it.gx), fpToPx(it.gy), 0, 0);

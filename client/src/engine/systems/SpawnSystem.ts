@@ -13,7 +13,6 @@ import type { Fp } from '../math/fixed';
 import { SIM } from '../sim.config';
 import { pxToFp, toFpGrid } from '../content/convert';
 import { buildEnemyActor } from '../content/enemies';
-import { rollArenaDrop } from '../content/drops';
 import { cosFp, BRAD_FULL } from '../math/trig';
 import { roomGeometry, type RoomPiece, type WaveScript } from '../content/rooms';
 import type { ArenaRoom } from '../content/arenas';
@@ -300,15 +299,20 @@ export class SpawnSystem {
   }
 
   /**
-   * Spawn one pickup per `lootMarker`, once, the tick its room activates — the
-   * arena's own drop table (design/15, ROADMAP 4.3: "same drop model as PvE, zero
-   * account connection" — never a `material`). `tableId` isn't differentiated yet
+   * Spawn one UNRESOLVED 'crate' pickup per `lootMarker`, once, the tick its room
+   * activates. Deliberately does NOT roll `rollArenaDrop` here (design/15's own
+   * "honest anti-cheat-limit" note on this being perf-only, not information-hiding,
+   * is now actually closed): every room is co-resident in shared GameState from
+   * match start, so an eager roll would put every floor's exact loot identity within
+   * reach of a map-wide state-reading/free-camera cheat long before any legitimate
+   * player is near it. `PickupSystem` rolls the real kind/weaponId/buffId once a
+   * player is within `SIM.lootRevealRadius` of the crate — same dropPrng stream,
+   * just a later, player-gated draw. `tableId` isn't differentiated yet
    * (content/arenas.ts `LootMarker`'s doc comment: the real per-table catalog is
    * still "to design").
    */
   private spawnArenaLoot(state: GameState, room: ArenaRoom): void {
     for (const marker of room.lootMarkers ?? []) {
-      const drop = rollArenaDrop(state.dropPrng);
       // Clamp the authored marker point too — a defensive backstop against a
       // map-editor marker that ends up on/behind a wall (design/07 pickups).
       const pos = clampToWalkable(
@@ -319,14 +323,12 @@ export class SpawnSystem {
       );
       const item: PickupItem = {
         id: state.nextId(),
-        kind: drop.kind,
+        kind: 'crate',
         gx: pos.gx,
         gy: pos.gy,
         spawnTick: state.tick,
         alive: true,
       };
-      if (drop.kind === 'weapon') item.weaponId = drop.weaponId;
-      if (drop.kind === 'buff') item.buffId = drop.buffId;
       state.pickups.push(item);
     }
   }

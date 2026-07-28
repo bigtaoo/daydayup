@@ -380,7 +380,12 @@ export interface AABB {
 
 // design/09 vocabulary: heal (flat +1 HP) · material (carry-out currency) · weapon ·
 // buff (run-scoped power). Materials are the only carry-out; banking is 1.4/1.5.
-export type PickupKind = 'heal' | 'material' | 'weapon' | 'buff';
+// 'crate' is arena-only (design/15): an unresolved lootMarker spawn — no payload
+// fields set — that PickupSystem rolls into a real kind once a player is within
+// SIM.lootRevealRadius. Keeps the roll (and its weaponId) out of shared GameState
+// until a player could plausibly see it, so a map-wide state-reading/free-camera
+// cheat can't read every floor's loot identity from across the whole arena.
+export type PickupKind = 'heal' | 'material' | 'weapon' | 'buff' | 'crate';
 
 export interface PickupItem {
   id: number;

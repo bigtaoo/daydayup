@@ -19,6 +19,7 @@ import type { ResistMap } from './damage';
 import { freshStatus } from './damage';
 import { pxToFp } from './convert';
 import { ENEMY_GUN_SIM, makeWeapon } from './weapons';
+import { curveAt } from '../world/dungeon';
 
 export interface EnemyBlueprint {
   type: string; // registry key + the id a wave spawn entry references
@@ -191,6 +192,15 @@ export function buildEnemyActor(state: GameState, gx: Fp, gy: Fp, type?: string)
   const bp = ENEMY_BLUEPRINTS[type ?? 'basic'] ?? BASIC_ENEMY;
   const weapon = makeWeapon(bp.weapon);
   weapon.cooldownTicks = state.aiPrng.nextInt(bp.weapon.fireRateTicks); // fire-phase jitter
+  // Floor-to-floor difficulty escalation (design/05's own "to design" item — how enemy
+  // tier scales with depth). `DungeonConfig.difficultyCurve` was authored on EMBER_DUNGEON
+  // back at ROADMAP 1.3 but nothing ever read it — this is that wiring. Only maxHp scales
+  // (weapon damage stays flat): deeper floors read as tougher, not as sudden one-shots.
+  // floorIndex 0 always resolves to `curve.base` (EMBER_DUNGEON: 1) and every non-dungeon
+  // config has no `dungeonConfig` at all (scale 1), so this is byte-identical to before
+  // for a fresh dungeon's floor 0 and for every PvE/PvP config without floors.
+  const scale = state.dungeonConfig ? curveAt(state.dungeonConfig.difficultyCurve, state.floorIndex) : 1;
+  const maxHp = Math.max(1, Math.round(bp.maxHp * scale));
   return {
     id: state.nextId(),
     faction: 'enemy',
@@ -203,8 +213,8 @@ export function buildEnemyActor(state: GameState, gx: Fp, gy: Fp, type?: string)
     knockVx: toFp(0),
     knockVy: toFp(0),
     facing: 0 as EnemyActor['facing'],
-    hp: bp.maxHp,
-    maxHp: bp.maxHp,
+    hp: maxHp,
+    maxHp,
     shield: 0, // enemies have no shield pool (design/07 — shields are a character trait)
     maxShield: 0,
     ticksSinceHit: 0,

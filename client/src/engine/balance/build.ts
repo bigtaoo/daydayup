@@ -59,8 +59,10 @@ export const PVP_SCALE_FACTOR = 5;
 /** A weapon's PvP-scaled copy — only `damage` moves; the authored WEAPON_SIM_BY_ID
  * constants are never mutated (PvE reads the same objects). Fire rate/handling are
  * untouched: matching PvE's time-to-kill FEEL only requires damage-vs-HP to scale
- * together (design/15), not weapon pacing. */
-function scaleWeaponDamage(spec: WeaponSimSpec, factor: number): WeaponSimSpec {
+ * together (design/15), not weapon pacing. Exported so PickupSystem can re-derive the
+ * SAME scaled number for an arena floor pickup/drop (design/15's loot IS the power
+ * curve — it must scale exactly like the landing kit, not read the raw PvE spec). */
+export function scaleWeaponDamage(spec: WeaponSimSpec, factor: number): WeaponSimSpec {
   return { ...spec, damage: Math.round(spec.damage * factor) };
 }
 

@@ -6,12 +6,14 @@ import { CompareCard } from './ui/compareCard';
 import { nearestWeaponPickup } from './ui/pickupProximity';
 import { Minimap, type MinimapPlayer } from './ui/Minimap';
 import { FloorProgress } from './ui/FloorProgress';
-import { WEAPON_SIM_BY_ID, EMBER_DUNGEON, type GameState } from '@dd/engine';
-import { toFpGrid } from '@dd/engine/content/convert';
+import { WEAPON_SIM_BY_ID, EMBER_DUNGEON, SIM, type GameState } from '@dd/engine';
 
 // Ground compare card proximity ring (design/03:125) — wider than PickupSystem's own
 // collect radius (SIM.pickupRadius) so the card has a beat to show before auto-collect.
-const GROUND_CARD_RADIUS_FP = toFpGrid(2.5);
+// Same constant PickupSystem uses to resolve an arena crate (SIM.lootRevealRadius) —
+// sharing it means a resolved weapon pickup is always already known by the time this
+// card's ring would want to show it, never one tick behind.
+const GROUND_CARD_RADIUS_FP = SIM.lootRevealRadius;
 
 /** The bits of Game's own state updateHud needs that aren't already on GameState. */
 export interface HudContext {

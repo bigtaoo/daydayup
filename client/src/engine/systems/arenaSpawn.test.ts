@@ -8,10 +8,13 @@ import { describe, it, expect } from 'vitest';
 import { toFpGrid } from '@dd/engine/content/convert';
 import { createGameState } from '@dd/engine/state/GameState';
 import type { GameState } from '@dd/engine/state/GameState';
-import { ZoneSystem, EnvironmentSystem, SpawnSystem, DeathDropsSystem } from '@dd/engine/systems';
+import { ZoneSystem, EnvironmentSystem, SpawnSystem, DeathDropsSystem, PickupSystem } from '@dd/engine/systems';
 import { ARENA_DROP_TABLE, rollArenaDrop } from '@dd/engine/content/drops';
 import { Prng } from '@dd/engine/math/prng';
 import type { ArenaMap } from '@dd/engine/content/arenas';
+import { SIM } from '@dd/engine/sim.config';
+import { PVP_SCALE_FACTOR } from '@dd/engine/balance/build';
+import { WEAPON_SIM_BY_ID } from '@dd/engine/content/weapons';
 
 const TWO_ROOM_MAP: ArenaMap = {
   id: 'spawn_test',
@@ -141,5 +144,94 @@ describe('rollArenaDrop — never rolls material (design/15 fairness wall)', () 
     for (let i = 0; i < 200; i++) kinds.add(rollArenaDrop(prng).kind);
     expect(kinds.has('material')).toBe(false);
     expect(ARENA_DROP_TABLE.some((e) => (e.kind as string) === 'material')).toBe(false);
+  });
+});
+
+describe('PickupSystem — arena crate reveal (design/15 anti-cheat: no eager map-wide roll)', () => {
+  it('a loot marker spawns as an unresolved crate, not an already-known kind', () => {
+    const s = arenaState();
+    const p = s.players[0]!;
+    p.gx = toFpGrid(5); // inside room A, but far from its loot marker at (2,2)
+    p.gy = toFpGrid(5);
+    tickPipeline(s);
+    expect(s.pickups).toHaveLength(1);
+    expect(s.pickups[0]!.kind).toBe('crate');
+    expect(s.pickups[0]!.weaponId).toBeUndefined();
+    expect(s.pickups[0]!.buffId).toBeUndefined();
+  });
+
+  it('stays unresolved while every player is outside SIM.lootRevealRadius, even after many ticks', () => {
+    const s = arenaState();
+    const p = s.players[0]!;
+    p.gx = toFpGrid(5);
+    p.gy = toFpGrid(5);
+    tickPipeline(s); // room A activates; player stays ~4.2 grid from the (2,2) marker
+    for (let i = 0; i < 10; i++) new PickupSystem().tick(s);
+    expect(s.pickups[0]!.kind).toBe('crate');
+  });
+
+  it('resolves into a real kind the tick a player comes within SIM.lootRevealRadius', () => {
+    const s = arenaState();
+    const p = s.players[0]!;
+    p.gx = toFpGrid(5);
+    p.gy = toFpGrid(5);
+    tickPipeline(s); // room A activates, spawns the crate at (2,2)
+    expect(s.pickups[0]!.kind).toBe('crate');
+
+    p.gx = toFpGrid(2); // now standing on the loot marker — well within reveal radius
+    p.gy = toFpGrid(2);
+    new PickupSystem().tick(s);
+
+    const resolved = s.pickups[0]!;
+    expect(resolved.kind).not.toBe('crate');
+    expect(['weapon', 'buff', 'heal']).toContain(resolved.kind);
+    if (resolved.kind === 'weapon') expect(resolved.weaponId).toBeDefined();
+    if (resolved.kind === 'buff') expect(resolved.buffId).toBeDefined();
+  });
+
+  it('SIM.lootRevealRadius is wider than the collect radius, so a crate can never be vacuumed unresolved', () => {
+    expect(SIM.lootRevealRadius).toBeGreaterThan(SIM.pickupRadius);
+  });
+});
+
+describe('PickupSystem — PvP arena weapon pickups scale like the landing kit (design/15)', () => {
+  it('scales an equipped arena-floor weapon by PVP_SCALE_FACTOR, matching buildArenaSpecs', () => {
+    const s = arenaState();
+    const p = s.players[0]!;
+    const base = WEAPON_SIM_BY_ID.cannon!;
+    const untouchedDamage = base.damage;
+    s.pickups.push({
+      id: s.nextId(),
+      kind: 'weapon',
+      weaponId: 'cannon',
+      gx: p.gx,
+      gy: p.gy,
+      spawnTick: -1,
+      alive: true,
+    });
+    p.interacting = true;
+    new PickupSystem().tick(s);
+
+    expect(p.weapon!.spec.name).toBe('cannon');
+    expect(p.weapon!.spec.damage).toBe(Math.round(untouchedDamage * PVP_SCALE_FACTOR));
+    expect(WEAPON_SIM_BY_ID.cannon!.damage).toBe(untouchedDamage); // shared PvE constant untouched
+  });
+
+  it('does NOT scale the same pickup outside the arena (PvE keeps raw damage)', () => {
+    const s = createGameState({ seed: 1, worldW: 1600, worldH: 1200, waves: [] });
+    const p = s.players[0]!;
+    const base = WEAPON_SIM_BY_ID.cannon!;
+    s.pickups.push({
+      id: s.nextId(),
+      kind: 'weapon',
+      weaponId: 'cannon',
+      gx: p.gx,
+      gy: p.gy,
+      spawnTick: -1,
+      alive: true,
+    });
+    p.interacting = true;
+    new PickupSystem().tick(s);
+    expect(p.weapon!.spec.damage).toBe(base.damage);
   });
 });

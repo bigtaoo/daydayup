@@ -9,7 +9,7 @@
  * Stage-B px paddings cross via pxToFp (÷32). Any change here that alters outcomes
  * bumps ENGINE_VERSION.
  */
-import { pxToFp } from './content/convert';
+import { pxToFp, toFpGrid } from './content/convert';
 
 export const SIM = {
   bullet: {
@@ -17,4 +17,9 @@ export const SIM = {
   },
   waveBreakTicks: 24, // 48 frames pause between cleared wave and next spawn
   pickupRadius: pxToFp(15), // collect padding beyond player radius
+  // Arena 'crate' reveal ring (design/15) — PickupSystem rolls an unresolved crate's
+  // contents the tick any player first comes within this range, same distance as the
+  // client's own ground-compare-card ring (game/HudView.ts reads this same constant)
+  // so the card never lags a step behind an already-resolved pickup.
+  lootRevealRadius: toFpGrid(2.5),
 } as const;

@@ -70,6 +70,13 @@ describe('rollDrop — deterministic drop table', () => {
     for (const id of MATERIAL_DROP_POOL) expect(MATERIAL_DEFS[id]).toBeDefined();
   });
 
+  it('cinderscatter/frostseeker carry their frame + element (design/03 elemental-variant follow-up)', () => {
+    expect(WEAPON_SIM_BY_ID.cinderscatter?.damageType).toBe('fire');
+    expect(WEAPON_SIM_BY_ID.frostseeker?.damageType).toBe('ice');
+    expect(WEAPON_DROP_POOL).toContain('cinderscatter');
+    expect(WEAPON_DROP_POOL).toContain('frostseeker');
+  });
+
   it('produces every kind over a large sample (material the most common)', () => {
     const counts: Record<string, number> = {};
     const p = new Prng(2024);

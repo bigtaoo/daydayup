@@ -69,6 +69,11 @@ export const WEAPON_DROP_POOL: readonly string[] = [
   // k_* on-hit procs (design/03/09, ENGINE_VERSION 28 — the first concrete batch).
   'carom',
   'leech',
+  // First frame-library elemental siblings (design/03 follow-up) — fire/ice variants
+  // of the scattergun/seeker frames, closing a chunk of the "N frames × 5 elements"
+  // combinatorial gap that Phase 1.1's physical-only showcase left open.
+  'cinderscatter',
+  'frostseeker',
 ];
 
 /** Buff ids a drop can roll (must exist in RUN_BUFFS). Fixed order = deterministic. */
