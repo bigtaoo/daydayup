@@ -29,6 +29,7 @@ import type { GameState } from '../state/GameState';
 import type { Actor, Faction, MeleeSimSpec, Projectile } from '../state/entities';
 import { isHostile } from '../state/entities';
 import { hostileTargets } from './targeting';
+import { nearestByPosition } from './nearest';
 import type { DamageType } from '../content/damage';
 import {
   BURN_DURATION,
@@ -45,6 +46,13 @@ import {
 import { buffedDamage, critDamage, rollCrit, sumBuffs } from '../balance/runbuffs';
 import { takeDamage } from './combat';
 import { circlesOverlap, retainAlive } from './geom';
+
+/** Alive members of `group` other than `exclude`, in original array order — the
+ *  shared candidate filter `retarget` (ricochet) and `chain` (lightning) both need
+ *  before handing off to `nearestByPosition`. */
+function* aliveExcluding(group: readonly Actor[], exclude: Actor): Generator<Actor> {
+  for (const a of group) if (a.alive && a !== exclude) yield a;
+}
 
 export class HitResolveSystem {
   tick(state: GameState): void {
@@ -188,18 +196,8 @@ export class HitResolveSystem {
    * own nearest-search. Returns false (bullet should just expire) if no target
    * qualifies, so the caller doesn't have to duplicate the "no bounce possible" case. */
   private retarget(b: Projectile, hit: Actor, group: readonly Actor[]): boolean {
-    let best: Actor | null = null;
-    let bestSq = Infinity;
     const reachSq = (RICOCHET_RANGE_FP * RICOCHET_RANGE_FP) as number;
-    for (const a of group) {
-      if (!a.alive || a === hit) continue;
-      const dx = a.gx - b.gx;
-      const dy = a.gy - b.gy;
-      const d = dx * dx + dy * dy;
-      if (d > reachSq || d >= bestSq) continue;
-      bestSq = d;
-      best = a;
-    }
+    const best = nearestByPosition(b.gx, b.gy, aliveExcluding(group, hit), { reachSq });
     if (!best) return false;
     const ang = atan2Brad(best.gy - b.gy, best.gx - b.gx);
     const speed = isqrt(((b.vx * b.vx + b.vy * b.vy) as number)) as Fp;
@@ -257,18 +255,8 @@ export class HitResolveSystem {
 
   /** Lightning arc: deal a fraction of `dmg` to the nearest other in-group actor in range. */
   private chain(state: GameState, from: Actor, dmg: number, group: readonly Actor[]): void {
-    let best: Actor | null = null;
-    let bestSq = Infinity;
     const reachSq = CHAIN_RANGE * CHAIN_RANGE;
-    for (const a of group) {
-      if (!a.alive || a === from) continue;
-      const dx = a.gx - from.gx;
-      const dy = a.gy - from.gy;
-      const d = dx * dx + dy * dy;
-      if (d > reachSq || d >= bestSq) continue;
-      bestSq = d;
-      best = a;
-    }
+    const best = nearestByPosition(from.gx, from.gy, aliveExcluding(group, from), { reachSq });
     if (!best) return;
     const chainDmg = Math.max(1, Math.trunc((dmg * CHAIN_DMG_PERMILLE) / 1000));
     // A chained hit is a hit: shield-first, and it can break a shield too (design/07).

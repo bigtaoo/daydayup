@@ -8,6 +8,7 @@
 // Because the quantization lives in @dd/engine, the golden-replay tests build
 // commands through the exact same grid this producer uses.
 import { Button, makeCommand, pxToFp, quantizeAim, quantizeMove, type Brad, type GameState, type PlayerCommand } from '@dd/engine';
+import { nearestByPosition } from '@dd/engine/systems/nearest';
 import type { InputSource } from '../platform/types';
 
 /** Auto-aim settings consulted live each tick (Settings screen, default on). */
@@ -89,16 +90,10 @@ function nearestEnemyAim(state: GameState, owner: number, screenPx: { w: number;
   const me = state.players[owner];
   if (!me) return null;
   const rangeFp = pxToFp(Math.hypot(screenPx.w, screenPx.h) / 2);
-  let best = rangeFp * rangeFp;
-  let dx = 0;
-  let dy = 0;
-  let found = false;
-  for (const e of state.enemies) {
-    if (!e.alive) continue;
-    const ex = e.gx - me.gx;
-    const ey = e.gy - me.gy;
-    const d2 = ex * ex + ey * ey;
-    if (d2 <= best) { best = d2; dx = ex; dy = ey; found = true; }
-  }
-  return found ? quantizeAim(dx, dy) : null;
+  const aliveEnemies = (function* () { for (const e of state.enemies) if (e.alive) yield e; })();
+  // preferEarlier:false — this call site's original `d <= best` kept the LAST
+  // candidate found on an exact tie, unlike every other nearest-search in the
+  // engine; preserved deliberately rather than normalized away (see nearest.ts).
+  const target = nearestByPosition(me.gx, me.gy, aliveEnemies, { reachSq: rangeFp * rangeFp, preferEarlier: false });
+  return target ? quantizeAim(target.gx - me.gx, target.gy - me.gy) : null;
 }

@@ -46,40 +46,50 @@ function resolveOne(kf: BoneKeyframe): ResolvedBoneTransform {
   };
 }
 
-/** Sample an AnimationClip at time t, returning every bone's resolved transform. */
+/**
+ * Sample an AnimationClip at time t, returning every bone's resolved transform.
+ *
+ * Perf (2026-07-28): real clips are tiny (3-5 keyframes, 1-5 bones each — checked
+ * against orb-core's own shipped clips), so the two linear scans below cost
+ * nothing; the actual per-frame cost this rewrite removes is the previous
+ * version's 4 `Map`/`Set` ALLOCATIONS (kf1Map/kf2Map/boneIds/result) plus two
+ * `.forEach` closures, at ~60fps × every rigged actor on screen. Same two-pass,
+ * overwrite-in-scan-order algorithm as before (forward pass keeps the LATEST
+ * at-or-before-t keyframe per bone by letting later writes win; backward pass
+ * keeps the EARLIEST after-t keyframe per bone the same way) — just backed by
+ * plain objects instead of Map/Set, since bone ids are always plain strings.
+ * `interpolate.test.ts`'s sparse-per-bone-keyframe case guards this stayed
+ * behavior-identical.
+ */
 export function sampleClip(clip: AnimationClip, t: number): Map<string, ResolvedBoneTransform> {
   const result = new Map<string, ResolvedBoneTransform>();
   const kfs = clip.keyframes;
   if (kfs.length === 0) return result;
 
-  const kf1Map = new Map<string, { kf: typeof kfs[number]; idx: number }>();
+  const kf1ByBone: Record<string, { kf: typeof kfs[number]; idx: number }> = Object.create(null);
   for (let i = 0; i < kfs.length; i++) {
     if (kfs[i].time > t) break;
-    kfs[i].bones.forEach((_, id) => { kf1Map.set(id, { kf: kfs[i], idx: i }); });
+    for (const id of kfs[i].bones.keys()) kf1ByBone[id] = { kf: kfs[i], idx: i };
   }
 
-  const kf2Map = new Map<string, typeof kfs[number]>();
+  const kf2ByBone: Record<string, typeof kfs[number]> = Object.create(null);
   for (let i = kfs.length - 1; i >= 0; i--) {
     if (kfs[i].time <= t) break;
-    kfs[i].bones.forEach((_, id) => { kf2Map.set(id, kfs[i]); });
+    for (const id of kfs[i].bones.keys()) kf2ByBone[id] = kfs[i];
   }
 
-  const boneIds = new Set<string>();
-  kf1Map.forEach((_, id) => boneIds.add(id));
-  kf2Map.forEach((_, id) => boneIds.add(id));
-
-  for (const boneId of boneIds) {
-    const entry1 = kf1Map.get(boneId);
-    const kf2 = kf2Map.get(boneId);
-    if (!entry1 && !kf2) continue;
-
-    if (!entry1) { result.set(boneId, resolveOne(kf2!.bones.get(boneId)!)); continue; }
+  for (const boneId in kf1ByBone) {
+    const entry1 = kf1ByBone[boneId]!;
+    const kf2 = kf2ByBone[boneId];
     if (!kf2) { result.set(boneId, resolveOne(entry1.kf.bones.get(boneId)!)); continue; }
-
     const kf1 = entry1.kf;
     const span = kf2.time - kf1.time;
     const f = span > 0 ? (t - kf1.time) / span : 0;
     result.set(boneId, interpolateBone(kf1.bones.get(boneId)!, kf2.bones.get(boneId)!, f));
+    delete kf2ByBone[boneId]; // processed via the kf1+kf2 pair path — don't re-visit below
+  }
+  for (const boneId in kf2ByBone) {
+    result.set(boneId, resolveOne(kf2ByBone[boneId]!.bones.get(boneId)!));
   }
 
   return result;

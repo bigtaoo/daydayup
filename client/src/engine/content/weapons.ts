@@ -682,60 +682,37 @@ export function toSimSpec(spec: WeaponSpec): WeaponSimSpec {
   return sim;
 }
 
-// Pre-converted sim specs — the constants systems / blueprints reference.
-export const BLASTER_SIM = toSimSpec(WEAPON_SPECS.blaster!) as RangedSimSpec;
-export const SABER_SIM = toSimSpec(WEAPON_SPECS.saber!) as MeleeSimSpec;
-export const ENEMY_GUN_SIM = toSimSpec(WEAPON_SPECS.enemygun!) as RangedSimSpec;
-export const REPEATER_SIM = toSimSpec(WEAPON_SPECS.repeater!) as RangedSimSpec;
-export const CANNON_SIM = toSimSpec(WEAPON_SPECS.cannon!) as RangedSimSpec;
-export const FLAMER_SIM = toSimSpec(WEAPON_SPECS.flamer!) as RangedSimSpec;
-export const CRYOBOLT_SIM = toSimSpec(WEAPON_SPECS.cryobolt!) as RangedSimSpec;
-export const TESLAGUN_SIM = toSimSpec(WEAPON_SPECS.teslagun!) as RangedSimSpec;
-export const VENOMSPIT_SIM = toSimSpec(WEAPON_SPECS.venomspit!) as RangedSimSpec;
-export const EMBERBLADE_SIM = toSimSpec(WEAPON_SPECS.emberblade!) as MeleeSimSpec;
-export const FROSTBRAND_SIM = toSimSpec(WEAPON_SPECS.frostbrand!) as MeleeSimSpec;
-export const STORMGLAIVE_SIM = toSimSpec(WEAPON_SPECS.stormglaive!) as MeleeSimSpec;
-export const SCATTERGUN_SIM = toSimSpec(WEAPON_SPECS.scattergun!) as RangedSimSpec;
-export const SEEKER_SIM = toSimSpec(WEAPON_SPECS.seeker!) as RangedSimSpec;
-export const MORTAR_SIM = toSimSpec(WEAPON_SPECS.mortar!) as RangedSimSpec;
-export const LASERCUTTER_SIM = toSimSpec(WEAPON_SPECS.lasercutter!) as RangedSimSpec;
-export const TOMAHAWK_SIM = toSimSpec(WEAPON_SPECS.tomahawk!) as RangedSimSpec;
-export const HAMMER_SIM = toSimSpec(WEAPON_SPECS.hammer!) as MeleeSimSpec;
-export const SPEAR_SIM = toSimSpec(WEAPON_SPECS.spear!) as MeleeSimSpec;
-export const NOVABURST_SIM = toSimSpec(WEAPON_SPECS.novaburst!) as RangedSimSpec;
-export const GYRE_SIM = toSimSpec(WEAPON_SPECS.gyre!) as RangedSimSpec;
-export const CAROM_SIM = toSimSpec(WEAPON_SPECS.carom!) as RangedSimSpec;
-export const LEECH_SIM = toSimSpec(WEAPON_SPECS.leech!) as MeleeSimSpec;
-
 /**
  * Sim-spec lookup by weapon id — the resolution a weapon drop uses (content/drops.ts
  * WEAPON_DROP_POOL holds ids; PickupSystem resolves through this). Converted once at
- * module load (design/09 load-once). enemygun is excluded — not player-facing.
+ * module load (design/09 load-once), directly off WEAPON_SPECS's own keys — adding a
+ * weapon only means adding a WEAPON_SPECS entry, not also a named const AND a map
+ * entry (2026-07-28: the previous version kept 23 individually-named `*_SIM` consts
+ * purely to relist them here one by one; 11 of them (repeater/cannon/flamer/
+ * cryobolt/teslagun/venomspit/emberblade/frostbrand/stormglaive/hammer/spear) had no
+ * other reference anywhere in the codebase). enemygun is excluded — not player-facing.
  */
-export const WEAPON_SIM_BY_ID: Record<string, WeaponSimSpec> = {
-  blaster: BLASTER_SIM,
-  saber: SABER_SIM,
-  repeater: REPEATER_SIM,
-  cannon: CANNON_SIM,
-  flamer: FLAMER_SIM,
-  cryobolt: CRYOBOLT_SIM,
-  teslagun: TESLAGUN_SIM,
-  venomspit: VENOMSPIT_SIM,
-  emberblade: EMBERBLADE_SIM,
-  frostbrand: FROSTBRAND_SIM,
-  stormglaive: STORMGLAIVE_SIM,
-  scattergun: SCATTERGUN_SIM,
-  seeker: SEEKER_SIM,
-  mortar: MORTAR_SIM,
-  lasercutter: LASERCUTTER_SIM,
-  tomahawk: TOMAHAWK_SIM,
-  hammer: HAMMER_SIM,
-  spear: SPEAR_SIM,
-  novaburst: NOVABURST_SIM,
-  gyre: GYRE_SIM,
-  carom: CAROM_SIM,
-  leech: LEECH_SIM,
-};
+export const WEAPON_SIM_BY_ID: Record<string, WeaponSimSpec> = Object.fromEntries(
+  Object.entries(WEAPON_SPECS)
+    .filter(([id]) => id !== 'enemygun')
+    .map(([id, spec]) => [id, toSimSpec(spec)]),
+);
+
+// Named exports kept only for the ones actually referenced elsewhere (blueprints,
+// enemy loadouts, tests) — pulled from the map above so there's exactly one
+// conversion per weapon, not a second parallel one.
+export const BLASTER_SIM = WEAPON_SIM_BY_ID.blaster as RangedSimSpec;
+export const SABER_SIM = WEAPON_SIM_BY_ID.saber as MeleeSimSpec;
+export const ENEMY_GUN_SIM = toSimSpec(WEAPON_SPECS.enemygun!) as RangedSimSpec;
+export const SCATTERGUN_SIM = WEAPON_SIM_BY_ID.scattergun as RangedSimSpec;
+export const SEEKER_SIM = WEAPON_SIM_BY_ID.seeker as RangedSimSpec;
+export const MORTAR_SIM = WEAPON_SIM_BY_ID.mortar as RangedSimSpec;
+export const LASERCUTTER_SIM = WEAPON_SIM_BY_ID.lasercutter as RangedSimSpec;
+export const TOMAHAWK_SIM = WEAPON_SIM_BY_ID.tomahawk as RangedSimSpec;
+export const NOVABURST_SIM = WEAPON_SIM_BY_ID.novaburst as RangedSimSpec;
+export const GYRE_SIM = WEAPON_SIM_BY_ID.gyre as RangedSimSpec;
+export const CAROM_SIM = WEAPON_SIM_BY_ID.carom as RangedSimSpec;
+export const LEECH_SIM = WEAPON_SIM_BY_ID.leech as MeleeSimSpec;
 
 /** Fresh weapon runtime for a spec (design/08: cooldown in whole ticks). */
 export function makeWeapon(spec: WeaponSimSpec): WeaponState {

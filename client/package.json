@@ -12,6 +12,7 @@
     "gen:trig": "node tools/gen-trig-tables.mjs",
     "build": "tsc --noEmit && vite build",
     "build:wechat": "tsc --noEmit && vite build --config vite.wechat.config.js",
+    "build:wechat:debug": "tsc --noEmit && vite build --config vite.wechat.config.js --mode development",
     "preview": "vite preview --port 4173",
     "cap:sync": "npm run build && cap sync",
     "cap:add:android": "cap add android",

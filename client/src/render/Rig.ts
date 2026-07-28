@@ -38,6 +38,13 @@ export class Rig {
     rootY: number,
     transforms: Map<string, ResolvedBoneTransform>,
   ): WorldPositions {
+    // NOTE: deliberately a fresh Map per call, not a reused scratch buffer — a Rig
+    // instance is shared across every actor on this body archetype AND a single
+    // caller may legitimately hold two results at once to compare them (e.g.
+    // Rig.test.ts computes a rest pose and a transformed pose back to back and
+    // diffs both) — a shared buffer would silently corrupt the earlier result the
+    // moment a second call runs. Bone counts are tiny (5-6 for orb-core, 1 for
+    // critter-core), so this allocation was never the real cost here anyway.
     const result = new Map<string, WorldPose>();
     result.set('root', { sx: rootX, sy: rootY, ex: rootX, ey: rootY, wa: 0 });
 

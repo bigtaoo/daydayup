@@ -16,6 +16,9 @@ import { fpToPx, bradToRad } from './coords';
 export class Scene {
   private views = new Map<number, Entity>();
   private playerView: Actor | null = null;
+  // Reused every reconcile() instead of a fresh Set per tick — cleared and refilled
+  // each call, never read across ticks.
+  private readonly seenScratch = new Set<number>();
 
   constructor(private readonly layers: Layers) {}
 
@@ -36,7 +39,8 @@ export class Scene {
   // single-player caller passes the sole player's id, or omits it → the first player wins,
   // matching the old behaviour exactly).
   reconcile(state: GameState, localPlayerId = -1): void {
-    const seen = new Set<number>();
+    const seen = this.seenScratch;
+    seen.clear();
 
     for (const p of state.players) {
       if (!p.alive) continue;

@@ -1,4 +1,4 @@
-import { Application, BlurFilter, Container, Graphics, Text } from 'pixi.js';
+import { Application, Container, Graphics } from 'pixi.js';
 import {
   createGameEngine,
   hashState,
@@ -38,13 +38,9 @@ import { Screens } from './Screens';
 import { Forge } from './Forge';
 import { Settings } from './Settings';
 import { PauseMenu } from './PauseMenu';
-import { Bar, ToastQueue, Button } from './ui/widgets';
-import { CompareCard } from './ui/compareCard';
-import { nearestWeaponPickup } from './ui/pickupProximity';
-import { Minimap, type MinimapPlayer } from './ui/Minimap';
-import { FloorProgress } from './ui/FloorProgress';
-import { VignetteFilter, ChromaticAberrationFilter } from './fx/filters';
-import { ParticleSystem } from './fx/Particles';
+import { Button } from './ui/widgets';
+import { FxController } from './FxController';
+import { HudView } from './HudView';
 import { CommandBuilder } from './CommandBuilder';
 import { AllyController } from './AllyController';
 import { fpToPx, bradToRad } from './coords';
@@ -61,11 +57,6 @@ const PLACEHOLDER_WORLD = 800;
 const SEED_BASE = 0xda1d; // per-run seed = base + run index (deterministic, no Date)
 const SIM_DT_MS = 1000 / 30; // fixed sim step: the engine runs at 30 Hz (design/06)
 const MAX_STEPS = 5; // catch-up cap per render frame → no spiral of death
-const FX_LIFE_MS = 170; // flash lifetime
-// Ground compare card proximity ring (design/03:125) — wider than PickupSystem's own
-// collect radius (SIM.pickupRadius) so the card has a beat to show before auto-collect.
-const GROUND_CARD_RADIUS_FP = toFpGrid(2.5);
-const MAX_SHAKE_PX = 14; // camera-shake offset at full trauma (design/01 milestone 3)
 
 // Render-side run phases (design/10). The engine only knows idle/playing/gameover;
 // the forge outpost (the between-run hub, design/14) and the result screens live here in
@@ -84,25 +75,11 @@ export class Game {
   private engine: GameEngine | null = null;
   private builder: CommandBuilder;
 
-  // In-match HUD (design/10 widget kit): composed bars/text/toast instead of one debug
-  // Text blob. `hudView` is the visibility root every phase transition toggles.
+  // In-match HUD (design/10 widget kit, extracted into HudView 2026-07-28): composed
+  // bars/text/toast instead of one debug Text blob. `hudView` is the visibility root
+  // every phase transition toggles; `hud` owns the actual widgets (see HudView.ts).
   private hudView = new Container();
-  private hpBar!: Bar;
-  private shieldBar!: Bar;
-  private cdBar!: Bar;
-  private weaponText!: Text;
-  private infoText!: Text;
-  private promptText!: Text;
-  private allyText!: Text;
-  private toasts!: ToastQueue;
-  private minimap!: Minimap;
-  private floorProgress!: FloorProgress;
-  // Ground compare card (design/03:125, locked spec: name/element/rarity, non-blocking,
-  // render-only). Shown while standing near an uncollected floor weapon pickup.
-  private groundCard = new CompareCard();
-  // Weapon pickup is button-driven (design/03:121-126, ENGINE_VERSION 21) — unlike
-  // every other pickup kind, standing on it does nothing without this prompt's cue.
-  private groundHint!: Text;
+  private readonly hud = new HudView();
   private settingsBtn!: Button;
 
   private screens = new Screens();
@@ -178,17 +155,12 @@ export class Game {
   private predLastTick = -1;
   private lagMs = 0;
 
-  // ---- Post-processing / game-feel (design/01 fidelity roadmap milestone 3) ----
-  // Render-only, offline-only (never touches advanceOnline — see hitStopMs's use in
-  // advanceSim): a strong hit-stop pause would have to be reconciled against the
-  // server's confirmed frame stream online, which isn't worth the complexity for a
-  // pure juice effect. `shakeTrauma` decays each frame; the actual camera offset is
-  // `maxShakePx * trauma^2` jittered, recomputed in updateCamera.
-  private readonly particles = new ParticleSystem();
-  private readonly vignette = new VignetteFilter();
-  private readonly chromatic = new ChromaticAberrationFilter(0);
-  private shakeTrauma = 0;
-  private hitStopMs = 0;
+  // Post-processing / game-feel (design/01 fidelity roadmap milestone 3), extracted
+  // into FxController 2026-07-28. Offline-only (never touches advanceOnline — see
+  // FxController.addHitStop's doc): a strong hit-stop pause would have to be
+  // reconciled against the server's confirmed frame stream online, which isn't worth
+  // the complexity for a pure juice effect.
+  private readonly fx = new FxController(this.layers);
 
   constructor(app: Application, input: InputSource, audio: AudioBus) {
     this.app = app;
@@ -244,12 +216,7 @@ export class Game {
 
     // Post-processing (design/01 milestone 3): vignette + chromatic-aberration live on
     // `world` only — the `ui` layer (HUD/menus) must stay crisp and undistorted.
-    // Bloom-lite: a modest blur directly on the ADDITIVE-blended `fx` layer (muzzle
-    // flashes/trails/particles) gives a cheap glow halo without a real multi-pass
-    // bright-pass bloom (first-pass approximation, design/01's own "milestone" framing).
-    this.layers.world.filters = [this.vignette, this.chromatic];
-    this.layers.fx.filters = [new BlurFilter({ strength: 3, quality: 2 })];
-    this.layers.fx.addChild(this.particles.view);
+    this.fx.attach();
 
     this.layers.ui.addChild(this.forge.view, this.screens.view, this.settingsScreen.view, this.pauseMenu.view);
     this.screens.onConfirm = () => this.confirm();
@@ -353,58 +320,16 @@ export class Game {
   }
 
   private buildHud() {
-    this.hpBar = new Bar({ w: 160, h: 14, fillColor: 0xf56565, trackColor: 0x2a1620, label: true });
-    this.shieldBar = new Bar({ w: 160, h: 9, fillColor: CONFIG.colors.shield, label: false });
-    this.cdBar = new Bar({ w: 90, h: 7, fillColor: 0x63b3ed, label: false });
-    const smallStyle = { fill: 0xcbd5e0, fontSize: 13, fontFamily: 'monospace' as const };
-    this.weaponText = new Text({ text: '', style: { fill: 0xe2e8f0, fontSize: 14, fontFamily: 'monospace' } });
-    this.infoText = new Text({ text: '', style: smallStyle });
-    this.allyText = new Text({ text: '', style: smallStyle });
-    this.promptText = new Text({
-      text: '',
-      style: { fill: 0x68d391, fontSize: 15, fontFamily: 'monospace', fontWeight: 'bold' },
-    });
-    this.toasts = new ToastQueue({ w: 220 });
-    this.groundHint = new Text({
-      text: '[E] swap',
-      style: { fill: 0x90cdf4, fontSize: 13, fontFamily: 'monospace', fontWeight: 'bold' },
-    });
-
-    this.hpBar.view.position.set(12, 10);
-    this.shieldBar.view.position.set(12, 28);
-    this.weaponText.position.set(12, 44);
-    this.cdBar.view.position.set(12, 64);
-    this.infoText.position.set(12, 78);
-    this.floorProgress = new FloorProgress();
-    this.floorProgress.view.position.set(12, 96);
-    this.allyText.position.set(12, 112);
-    this.promptText.position.set(12, 130);
-
-    this.hudView.addChild(
-      this.hpBar.view, this.shieldBar.view, this.weaponText, this.cdBar.view,
-      this.infoText, this.floorProgress.view, this.allyText, this.promptText,
-      this.toasts.view, this.groundCard.view, this.groundHint,
-    );
+    this.hud.build(this.layers, this.screenSize());
+    this.hudView.addChild(this.hud.view);
     this.layers.ui.addChild(this.hudView);
-
-    // PvP minimap (design/10 "room progress") — hidden unless state.zoneEnabled
-    // (updateHud). Top-right, inset enough to keep the WeChat capsule corner clear
-    // (design/10 layout note).
-    this.minimap = new Minimap({ w: 140, h: 140 });
-    this.layers.ui.addChild(this.minimap.view);
 
     // Settings entry (design/10) — only shown in the forge phase (showForge/beginRun).
     this.settingsBtn = new Button('SETTINGS', { w: 110, h: 30, fontSize: 12 });
     this.settingsBtn.onTap = () => this.openSettings();
     this.settingsBtn.view.visible = false;
     this.layers.ui.addChild(this.settingsBtn.view);
-
-    const { w, h } = this.screenSize();
-    this.toasts.view.position.set(w / 2 - 110, h * 0.22);
-    this.minimap.view.position.set(w - 140 - 20, 60);
-    this.settingsBtn.view.position.set(w - 130, h - 50);
-    // Beside the weapon HUD row (design/03:125 "beside your active weapon").
-    this.groundCard.view.position.set(220, 40);
+    this.settingsBtn.view.position.set(this.screenSize().w - 130, this.screenSize().h - 50);
   }
 
   private openSettings() {
@@ -543,17 +468,14 @@ export class Game {
     // not a transient `_life`-tagged flash/trail — skip it here or a restart would
     // destroy the particle system itself, not just clear stale particles.
     for (const child of [...this.layers.fx.children]) {
-      if (child !== this.particles.view) child.destroy();
+      if (child !== this.fx.particles.view) child.destroy();
     }
-    this.particles.clear();
+    this.fx.resetForNewRun();
     for (const child of [...this.layers.ground.children]) child.destroy();
     for (const p of this.pillars) { p.shadow?.destroy(); p.destroy(); }
     this.pillars.length = 0;
     this.score = 0;
     this.acc = 0;
-    this.shakeTrauma = 0;
-    this.hitStopMs = 0;
-    this.chromatic.amount = 0;
     this.settingsBtn.view.visible = false;
 
     // Online co-op (ROADMAP 3.3): the run is driven off a real matchmade socket, not a
@@ -757,8 +679,8 @@ export class Game {
     // camera shake) keeps animating through the freeze; only `stepSim` is skipped, and
     // `acc` deliberately does NOT accumulate `dt` while frozen, so the sim resumes at a
     // clean single-tick cadence afterward instead of bursting through a catch-up.
-    if (this.hitStopMs > 0) {
-      this.hitStopMs = Math.max(0, this.hitStopMs - dt);
+    if (this.fx.consumeHitStop(dt)) {
+      // frozen this frame — sim skipped, render still animates below
     } else {
       this.acc += dt;
       let steps = 0;
@@ -975,35 +897,35 @@ export class Game {
         case 'bullet_fired': {
           const fx = fpToPx(e.gx);
           const fy = fpToPx(e.gy);
-          this.flash(fx, fy, CONFIG.colors.muzzle, 12);
+          this.fx.flash(fx, fy, CONFIG.colors.muzzle, 12);
           const facingRad = bradToRad(e.facing);
-          this.particles.muzzleFlame(fx, fy - 12, facingRad, CONFIG.colors.muzzle);
-          this.particles.shellCasing(fx, fy - 12, facingRad);
+          this.fx.particles.muzzleFlame(fx, fy - 12, facingRad, CONFIG.colors.muzzle);
+          this.fx.particles.shellCasing(fx, fy - 12, facingRad);
           cues.add('muzzle');
           break;
         }
         case 'hit':
-          this.flash(fpToPx(e.gx), fpToPx(e.gy),
+          this.fx.flash(fpToPx(e.gx), fpToPx(e.gy),
             e.faction === 'enemy' ? CONFIG.colors.enemy : CONFIG.colors.swordGlow, 16);
           if (e.faction === 'enemy') {
             // The (any) player took the hit — a small punch of feedback.
-            this.addShake(0.18);
-            this.pulseChromatic(0.006);
+            this.fx.addShake(0.18);
+            this.fx.pulseChromatic(0.006);
           }
           cues.add('impact');
           break;
         case 'shield_break':
           // A shattered shield — a bright cyan burst (design/07 two-pool break).
-          this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.shield, 28);
-          this.addShake(0.4);
-          this.addHitStop(50);
-          this.pulseChromatic(0.014);
+          this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.shield, 28);
+          this.fx.addShake(0.4);
+          this.fx.addHitStop(50);
+          this.fx.pulseChromatic(0.014);
           cues.add('shield.break');
           break;
         case 'deflect':
-          this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.deflect, 20);
-          this.addShake(0.22);
-          this.pulseChromatic(0.008);
+          this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.deflect, 20);
+          this.fx.addShake(0.22);
+          this.fx.pulseChromatic(0.008);
           cues.add('deflect');
           break;
         case 'status': {
@@ -1013,45 +935,45 @@ export class Game {
             : e.effect === 'chill' ? CONFIG.colors.statusChill
             : e.effect === 'shock' ? CONFIG.colors.statusShock
             : CONFIG.colors.statusPoison;
-          this.flash(fpToPx(e.gx), fpToPx(e.gy), c, 12);
+          this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), c, 12);
           cues.add(`status.${e.effect}` as AudioCue);
           break;
         }
         case 'clash':
-          this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.clash, 14);
+          this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.clash, 14);
           cues.add('clash');
           break;
         case 'enrage':
           // A boss crossed its enrage threshold (design/09 traits) — a hard red pulse,
           // distinct from a normal hit flash, so it reads as a real escalation moment.
-          this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.enemy, 40);
-          this.addShake(0.35);
-          this.pulseChromatic(0.012);
+          this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.enemy, 40);
+          this.fx.addShake(0.35);
+          this.fx.pulseChromatic(0.012);
           cues.add('shield.break'); // reuse the existing sting; no dedicated cue authored yet
           break;
         case 'death':
           if (e.faction === 'enemy') {
             this.score += CONFIG.score.kill;
-            this.particles.explosionDebris(fpToPx(e.gx), fpToPx(e.gy) - 12, CONFIG.colors.enemy);
-            this.addShake(0.15);
+            this.fx.particles.explosionDebris(fpToPx(e.gx), fpToPx(e.gy) - 12, CONFIG.colors.enemy);
+            this.fx.addShake(0.15);
             cues.add('death');
           }
           break;
         case 'pickup':
           switch (e.kind) {
             case 'heal':
-              this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupHeal, 20);
+              this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupHeal, 20);
               cues.add('pickup.heal');
-              this.toasts.push('+1 HP', CONFIG.colors.pickupHeal);
+              this.hud.toast('+1 HP', CONFIG.colors.pickupHeal);
               break;
             case 'weapon': {
               // Flash in the dropped weapon's rarity colour (design/14) — the tier
               // reads at a glance. Falls back to the generic amber if unresolved.
               const spec = e.weaponId ? WEAPON_SIM_BY_ID[e.weaponId] : undefined;
               const c = spec ? rarityColor(spec) : CONFIG.colors.pickupWeapon;
-              this.flash(fpToPx(e.gx), fpToPx(e.gy), c, 24);
+              this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), c, 24);
               cues.add('pickup.weapon');
-              this.toasts.push(spec ? spec.name : 'New weapon', c);
+              this.hud.toast(spec ? spec.name : 'New weapon', c);
               // Finding a catalogued weapon permanently unlocks its forge blueprint
               // (design/14 "2–3 common blueprints drop from runs") — first-pass: any
               // catalogued pickup grants it. Meta is separate from the sim, so this
@@ -1063,15 +985,15 @@ export class Game {
               break;
             }
             case 'buff':
-              this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupBuff, 22);
+              this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupBuff, 22);
               cues.add('pickup.buff');
-              this.toasts.push(e.buffId ? `Buff: ${e.buffId}` : 'Buff', CONFIG.colors.pickupBuff);
+              this.hud.toast(e.buffId ? `Buff: ${e.buffId}` : 'Buff', CONFIG.colors.pickupBuff);
               break;
             default: // material
               this.score += CONFIG.score.material;
-              this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupMaterial, 16);
+              this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupMaterial, 16);
               cues.add('pickup.material');
-              this.toasts.push(`+${e.qty ?? 1} ${e.materialId ?? 'material'}`, CONFIG.colors.pickupMaterial);
+              this.hud.toast(`+${e.qty ?? 1} ${e.materialId ?? 'material'}`, CONFIG.colors.pickupMaterial);
           }
           break;
         case 'wave_clear':
@@ -1088,7 +1010,7 @@ export class Game {
         case 'descend': {
           // Banked the floor's materials and dropped deeper — a green pulse at the player.
           const p = this.activeState()?.players[this.localOwner];
-          if (p) this.flash(fpToPx(p.gx), fpToPx(p.gy), CONFIG.colors.extractGlow, 30);
+          if (p) this.fx.flash(fpToPx(p.gx), fpToPx(p.gy), CONFIG.colors.extractGlow, 30);
           this.score += CONFIG.score.waveClear;
           cues.add('wave-clear');
           break;
@@ -1096,15 +1018,15 @@ export class Game {
         case 'downed':
           // A player was incapacitated (co-op downed/revive, ROADMAP 3.2) — a red pulse.
           // In the single-player demo this is the moment the run is lost.
-          this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.clash, 28);
-          this.addShake(0.55);
-          this.addHitStop(80);
-          this.pulseChromatic(0.02);
+          this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.clash, 28);
+          this.fx.addShake(0.55);
+          this.fx.addHitStop(80);
+          this.fx.pulseChromatic(0.02);
           cues.add('death');
           break;
         case 'revived':
           // A teammate channelled the player back up — a green pulse (co-op only).
-          this.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.extractGlow, 28);
+          this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.extractGlow, 28);
           cues.add('pickup.heal');
           break;
         case 'win':
@@ -1116,117 +1038,38 @@ export class Game {
     for (const cue of cues) this.audio.play(cue);
   }
 
-  // ---- fx (world glow, driven by events) ----
+  // ---- fx / camera (FxController does the actual work — see that file) ----
 
   // Per-element bullet trails (design/03/07). Once per sim tick, drop a fading
   // element-coloured dot at each live elemental bullet's position; the fx fade
-  // (updateFx) turns the string of dots into a comet tail. Physical rounds leave
-  // none — the trail IS the "this shot is elemental" tell, matched to the bullet's
-  // glow and the aura it will leave on a hit. Render-only: reads engine state, never
-  // writes it (design/08).
+  // (FxController.updateFx) turns the string of dots into a comet tail. Physical
+  // rounds leave none — the trail IS the "this shot is elemental" tell, matched to
+  // the bullet's glow and the aura it will leave on a hit. Render-only: reads
+  // engine state, never writes it (design/08).
   private spawnBulletTrails(s: GameState) {
     for (const b of s.projectiles) {
       if (!b.alive) continue;
       const color = ELEMENT_COLORS[b.damageType];
       if (color === undefined) continue; // physical → no trail
-      this.trailDot(fpToPx(b.gx), fpToPx(b.gy), color, fpToPx(b.radius) * 0.9);
+      this.fx.trailDot(fpToPx(b.gx), fpToPx(b.gy), color, fpToPx(b.radius) * 0.9);
     }
   }
 
-  private trailDot(x: number, y: number, color: number, radius: number) {
-    const dot = new Graphics();
-    dot.circle(0, 0, radius).fill({ color, alpha: 0.5 });
-    dot.blendMode = 'add';
-    dot.x = x;
-    dot.y = y - 12;
-    (dot as unknown as { _life: number })._life = FX_LIFE_MS;
-    this.layers.fx.addChild(dot);
-  }
-
-  private flash(x: number, y: number, color: number, radius: number) {
-    const glow = new Graphics();
-    const steps = 5;
-    for (let i = steps; i >= 1; i--) {
-      glow.circle(0, 0, radius * (i / steps)).fill({ color, alpha: 0.16 });
-    }
-    glow.blendMode = 'add';
-    glow.x = x;
-    glow.y = y - 12;
-    (glow as unknown as { _life: number })._life = FX_LIFE_MS;
-    this.layers.fx.addChild(glow);
-  }
-
+  // Thin adapters: FxController itself is decoupled from GameState/phase/screen size,
+  // so these gather this frame's derived values (dust bounds, viewport, camera target)
+  // and hand them down — the only reason these still live on Game rather than being
+  // inlined at every call site.
   private updateFx(dt: number) {
-    for (const child of [...this.layers.fx.children] as Container[]) {
-      const holder = child as unknown as { _life?: number };
-      if (typeof holder._life !== 'number') continue; // e.g. `particles.view` — not a _life-tagged glow
-      holder._life -= dt;
-      child.alpha = Math.max(0, holder._life / FX_LIFE_MS);
-      child.scale.set(1 + (1 - child.alpha) * 0.6);
-      if (holder._life <= 0) {
-        this.layers.fx.removeChild(child);
-        child.destroy();
-      }
-    }
-
-    // Ambient dust (design/01 milestone 4) only while actually in a room; bounds come
-    // from the live world size (dungeon mode resizes per room, ROADMAP 1.3).
     const s = this.activeState();
     const dustBounds = s ? { x: 0, y: 0, w: fpToPx(s.worldW), h: fpToPx(s.worldH) } : undefined;
-    this.particles.update(dt, this.phase === 'playing' ? 700 : 0, dustBounds);
-
-    // Chromatic-aberration pulse (design/01 milestone 3) decays back to 0 — a hit
-    // reaction, never a permanent look.
-    this.chromatic.amount = Math.max(0, this.chromatic.amount - dt * 0.006);
-    // Screen-shake trauma also decays here (updateCamera only gets `alpha`, not `dt`;
-    // it just reads the current value to compute this frame's offset).
-    this.shakeTrauma = Math.max(0, this.shakeTrauma - dt * 0.0025);
+    this.fx.updateFx(dt, this.phase === 'playing' ? 700 : 0, dustBounds);
   }
-
-  // ---- Camera / HUD ----
 
   private updateCamera(alpha: number) {
-    const pv = this.scene.player;
-    if (!pv) return;
-    const vw = this.app.renderer.width / this.app.renderer.resolution;
-    const vh = this.app.renderer.height / this.app.renderer.resolution;
-    // World bounds are per-room now (dungeon mode), read live from the engine.
     const s = this.activeState();
-    const worldW = s ? fpToPx(s.worldW) : vw;
-    const worldH = s ? fpToPx(s.worldH) : vh;
-    // Follow the player, but pin the camera inside the room. A room smaller than the
-    // viewport is centred (the follow-clamp would otherwise fight itself, lo > hi).
-    const cx = worldW <= vw ? (vw - worldW) / 2 : clamp(vw / 2 - pv.interpGroundX(alpha), vw - worldW, 0);
-    const cy = worldH <= vh ? (vh - worldH) / 2 : clamp(vh / 2 - pv.interpGroundY(alpha), vh - worldH, 0);
-
-    // Screen shake (design/01 milestone 3): trauma decays every frame in updateFx
-    // (which has `dt`); offset here scales with trauma² (a standard "shake feels
-    // punchy near 1, gentle near 0" curve) and is ADDED after the follow-clamp above
-    // so it never fights the room-pin math.
-    const shakeMag = this.shakeTrauma * this.shakeTrauma * MAX_SHAKE_PX;
-    const shakeX = shakeMag > 0.05 ? (Math.random() * 2 - 1) * shakeMag : 0;
-    const shakeY = shakeMag > 0.05 ? (Math.random() * 2 - 1) * shakeMag : 0;
-
-    this.layers.world.x = cx + shakeX;
-    this.layers.world.y = cy + shakeY;
-  }
-
-  /** Bump camera-shake trauma (clamped to 1) — call from consumeEvents on an impactful
-   * moment. Trauma decays every render frame in updateFx. */
-  private addShake(amount: number) {
-    this.shakeTrauma = Math.min(1, this.shakeTrauma + amount);
-  }
-
-  /** Freeze sim ticks for `ms` (offline-only, see the `hitStopMs` field doc) — a
-   * bigger pause always wins over a smaller one still counting down, never additive
-   * (stacking several quick hits shouldn't compound into a multi-second freeze). */
-  private addHitStop(ms: number) {
-    this.hitStopMs = Math.max(this.hitStopMs, ms);
-  }
-
-  /** Bump the chromatic-aberration pulse (clamped to a sane max) — decays in updateFx. */
-  private pulseChromatic(amount: number) {
-    this.chromatic.amount = Math.min(0.03, this.chromatic.amount + amount);
+    const worldSize = s ? { w: fpToPx(s.worldW), h: fpToPx(s.worldH) } : null;
+    const { w: vw, h: vh } = this.screenSize();
+    this.fx.updateCamera(alpha, { vw, vh }, worldSize, this.scene.player);
   }
 
   private screenSize() {
@@ -1239,119 +1082,13 @@ export class Game {
   private updateHud(dt: number) {
     const s = this.activeState();
     if (!s) return;
-    const p = s.players[this.localOwner];
-
-    const hp = p ? Math.max(0, p.hp) : 0;
-    const maxHp = p ? p.maxHp : 0;
-    this.hpBar.set(hp, maxHp);
-    this.hpBar.update(dt);
-
-    // Shield pool (design/07 two-pool) — a separate bar, hidden for a zero-shield body.
-    const maxSh = p ? p.maxShield : 0;
-    this.shieldBar.view.visible = maxSh > 0;
-    if (maxSh > 0) {
-      this.shieldBar.set(p ? Math.max(0, p.shield) : 0, maxSh);
-      this.shieldBar.update(dt);
-    }
-
-    const weapon = p?.weapon;
-    this.weaponText.text = weapon
-      ? `${weapon.spec.name} [${weapon.spec.rarity}] (${weapon.spec.kind}) dmg ${weapon.spec.damage}`
-      : 'Weapon: none';
-    // Cooldown sweep (design/10): weapon.cooldownTicks counts DOWN from the spec's fixed
-    // cooldown (already whole ticks, sim-facing) to 0=ready — the bar fills as it recovers.
-    const maxCdTicks = weapon
-      ? Math.max(1, weapon.spec.kind === 'ranged' ? weapon.spec.fireRateTicks : weapon.spec.swingCooldownTicks)
-      : 1;
-    const readyTicks = weapon ? maxCdTicks - weapon.cooldownTicks : maxCdTicks;
-    this.cdBar.set(readyTicks, maxCdTicks);
-    this.cdBar.update(dt);
-
-    const buffs = p && p.buffs.length ? `  Buffs ${p.buffs.length}` : '';
-    if (s.zoneEnabled) {
-      // PvP arena (design/15) — a score/timer/team HUD row (design/10) instead of the
-      // dungeon floor/room line, which has no meaning here.
-      const zone = s.zone;
-      const alive = s.players.filter((pl) => pl.alive).length;
-      const escalation = zone?.escalation ? ` (+${zone.escalation}/tick)` : '';
-      this.infoText.text =
-        `${this.meta.selectedSkin}   PvP Arena   Zone stage ${zone?.stage ?? 0}${escalation}   ` +
-        `Alive ${alive}/${s.players.length}   Score ${this.score}${buffs}`;
-      this.promptText.text = '';
-      this.floorProgress.update(0, -1); // hides — this is the PvP arena's own Minimap's job
-    } else {
-      // Dungeon progress (ROADMAP 1.3): floor / room within floor, plus the banked bag.
-      const floor = s.floorIndex + 1;
-      const room = Math.max(1, s.roomIndex + 1);
-      const rooms = s.floorStages.length; // total stages this floor (linear or branching)
-      const banked = this.totalBanked(s);
-      this.infoText.text =
-        `${this.meta.selectedSkin}   Floor ${floor}/${EMBER_DUNGEON.floorCount}   Room ${room}/${rooms}   ` +
-        `Enemies ${s.enemies.length}   Banked ${banked}   Score ${this.score}${buffs}`;
-      // A real PvE minimap (design/10) — a progress TRACK, not a spatial map (see
-      // FloorProgress's own doc comment for why PvE's data shape doesn't support the
-      // PvP room-graph Minimap's kind of widget). 0 stages (flat EngineConfig.floors
-      // mode) hides it, same as the PvP branch above.
-      this.floorProgress.update(s.floorStages.length, s.roomIndex);
-
-      // Extraction prompt: only at a non-last-floor checkpoint (the last floor auto-
-      // extracts). A room with no enemies left and all waves exhausted IS the checkpoint.
-      const atCheckpoint = s.wavesExhausted && s.enemies.length === 0 && s.phase !== 'gameover';
-      const isLastFloor = floor >= EMBER_DUNGEON.floorCount;
-      this.promptText.text = atCheckpoint && !isLastFloor
-        ? '▶ CHECKPOINT — hold [E] EXTRACT (bank & leave) · tap [E] DESCEND'
-        : '';
-    }
-
-    // Co-op teammate line (ROADMAP 3.1): the ally seat's health + downed/revive state, so
-    // the second player is legible and its bleedout is visible. Single-player omits it.
-    if (this.coop || this.arenaDemo) {
-      const ally = s.players.find((_, i) => i !== this.localOwner);
-      this.allyText.text = ally
-        ? `Ally (${this.allySkinId()})   ${ally.downed
-            ? `DOWNED — bleedout ${Math.ceil(ally.bleedoutTicks / 30)}s`
-            : `HP ${Math.max(0, ally.hp)}/${ally.maxHp}`}`
-        : '';
-    } else {
-      this.allyText.text = '';
-    }
-
-    // Ground compare card (design/03:125) — floats while standing near an uncollected
-    // floor weapon, name/element/rarity only (no stat table; that's the forge's job,
-    // and a mid-run comparison needs to read at a glance, not be studied).
-    const nearby = p ? nearestWeaponPickup(s.pickups, p.gx, p.gy, GROUND_CARD_RADIUS_FP) : undefined;
-    const groundSpec = nearby?.weaponId ? WEAPON_SIM_BY_ID[nearby.weaponId] : undefined;
-    if (p?.weapon && groundSpec) {
-      this.groundCard.set({
-        w: 220,
-        leftName: p.weapon.spec.name,
-        leftColor: rarityColor(p.weapon.spec),
-        rightName: groundSpec.name,
-        rightColor: rarityColor(groundSpec),
-        rows: [{ label: 'Type', left: p.weapon.spec.damageType, right: groundSpec.damageType }],
-      });
-      this.groundHint.position.set(220, this.groundCard.view.y + this.groundCard.view.height + 4);
-      this.groundHint.visible = true;
-    } else {
-      this.groundCard.hide();
-      this.groundHint.visible = false;
-    }
-
-    this.toasts.update(dt);
-
-    // PvP room-graph minimap (design/10) — no-op/hidden for PvE, same convention as the
-    // engine-side ZoneSystem/EnvironmentSystem (ROADMAP 4.2d).
-    if (s.zoneEnabled && s.arenaMap) {
-      this.minimap.view.visible = true;
-      const players: MinimapPlayer[] = s.players.map((pl, i) => ({
-        roomId: pl.roomId,
-        alive: pl.alive,
-        isLocal: i === this.localOwner,
-      }));
-      this.minimap.update(s.arenaMap, s.zone, players);
-    } else {
-      this.minimap.view.visible = false;
-    }
+    this.hud.update(s, dt, {
+      localOwner: this.localOwner,
+      score: this.score,
+      selectedSkin: this.meta.selectedSkin,
+      showAlly: this.coop || this.arenaDemo,
+      allySkinId: this.allySkinId(),
+    });
   }
 
   // Rising-edge fire → confirm (start/restart) on non-playing screens.
@@ -1360,8 +1097,4 @@ export class Game {
     if (firing && !this.prevFire) this.confirm();
     this.prevFire = firing;
   }
-}
-
-function clamp(v: number, lo: number, hi: number): number {
-  return Math.max(lo, Math.min(hi, v));
 }

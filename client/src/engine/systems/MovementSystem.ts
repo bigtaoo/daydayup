@@ -19,6 +19,11 @@ import type { GameState } from '../state/GameState';
 import type { Actor } from '../state/entities';
 
 export class MovementSystem {
+  // Reused every tick instead of allocating fresh in resolveActorPairs below —
+  // cleared and refilled each call, never read across ticks, so this is a pure
+  // perf win with no effect on the fixed ascending-id sort order it holds.
+  private readonly actorPairScratch: Actor[] = [];
+
   tick(state: GameState): void {
     for (const p of state.players) {
       if (!p.alive) continue;
@@ -165,7 +170,8 @@ export class MovementSystem {
    * reshuffle) so the result is deterministic across clients (design/06).
    */
   private resolveActorPairs(state: GameState): void {
-    const actors: Actor[] = [];
+    const actors = this.actorPairScratch;
+    actors.length = 0;
     for (const p of state.players) if (p.alive) actors.push(p);
     for (const e of state.enemies) if (e.alive) actors.push(e);
     actors.sort((x, y) => x.id - y.id);

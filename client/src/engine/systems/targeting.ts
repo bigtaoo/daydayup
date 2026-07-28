@@ -16,6 +16,46 @@
 import type { Fp } from '../math/fixed';
 import type { GameState } from '../state/GameState';
 import { isDowned, isHostile, type Actor, type Teamed } from '../state/entities';
+import { nearestByPosition } from './nearest';
+
+/**
+ * Per-tick cache of "which players/enemies are on a team hostile to teamId T"
+ * (perf: `hostileTargets` used to be called once per LIVE PROJECTILE — 50-150+
+ * times/tick in a busy PvP arena — each rescanning every player+enemy through
+ * `isHostile`, almost always recomputing the identical set). Team membership
+ * (`teamId`) never changes mid-match, so this is safe to cache per team, but
+ * ALIVE STATE does change mid-tick (an earlier bullet this same tick can kill an
+ * actor a later bullet would otherwise still try to hit) — so only the team-
+ * hostility partition is cached; `.alive`/`isDowned` are re-checked fresh on
+ * every call below, exactly as before caching. Keyed by the GameState object
+ * itself (WeakMap, not a module-level singleton) so multiple concurrent engine
+ * instances (e.g. the PvP balance sim's bot-vs-bot loop) never cross-contaminate.
+ */
+interface TeamPoolCache {
+  tick: number;
+  hostilePlayersByTeam: Map<number, Actor[]>;
+  hostileEnemiesByTeam: Map<number, Actor[]>;
+}
+const teamPoolCache = new WeakMap<GameState, TeamPoolCache>();
+
+function getTeamPools(state: GameState, teamId: number): { players: Actor[]; enemies: Actor[] } {
+  let cache = teamPoolCache.get(state);
+  if (!cache || cache.tick !== state.tick) {
+    cache = { tick: state.tick, hostilePlayersByTeam: new Map(), hostileEnemiesByTeam: new Map() };
+    teamPoolCache.set(state, cache);
+  }
+  let players = cache.hostilePlayersByTeam.get(teamId);
+  let enemies = cache.hostileEnemiesByTeam.get(teamId);
+  if (!players || !enemies) {
+    players = [];
+    for (const p of state.players) if (isHostile({ teamId }, p)) players.push(p);
+    enemies = [];
+    for (const e of state.enemies) if (isHostile({ teamId }, e)) enemies.push(e);
+    cache.hostilePlayersByTeam.set(teamId, players);
+    cache.hostileEnemiesByTeam.set(teamId, enemies);
+  }
+  return { players, enemies };
+}
 
 /**
  * Every alive actor hostile to `self` that a hit/target query is allowed to
@@ -24,12 +64,13 @@ import { isDowned, isHostile, type Actor, type Teamed } from '../state/entities'
  * every caller gets that guarantee for free instead of repeating the check.
  */
 export function hostileTargets(state: GameState, self: Teamed): Actor[] {
+  const { players, enemies } = getTeamPools(state, self.teamId);
   const out: Actor[] = [];
-  for (const p of state.players) {
-    if (p.alive && !isDowned(p) && isHostile(self, p)) out.push(p);
+  for (const p of players) {
+    if (p.alive && !isDowned(p)) out.push(p);
   }
-  for (const e of state.enemies) {
-    if (e.alive && isHostile(self, e)) out.push(e);
+  for (const e of enemies) {
+    if (e.alive) out.push(e);
   }
   return out;
 }
@@ -38,16 +79,5 @@ export function hostileTargets(state: GameState, self: Teamed): Actor[] {
  * (players before enemies, then push order within each) — deterministic
  * (design/06). Used for a deflected bullet's new target and homing's turn. */
 export function nearestHostile(state: GameState, self: Teamed, x: Fp, y: Fp): Actor | null {
-  let best: Actor | null = null;
-  let bestSq = Infinity;
-  for (const t of hostileTargets(state, self)) {
-    const dx = (t.gx - x) as number;
-    const dy = (t.gy - y) as number;
-    const d = dx * dx + dy * dy;
-    if (d < bestSq) {
-      bestSq = d;
-      best = t;
-    }
-  }
-  return best;
+  return nearestByPosition(x, y, hostileTargets(state, self));
 }
