@@ -37,7 +37,7 @@ The persistent layer **between runs**: what carries across, what materials buy, 
 
 ### Characters (the "skin" layer)
 
-*Shipped: ROADMAP 0.4–0.5. Two-pool health (shield + idle regen + `shield_break`) is `ENGINE_VERSION` 11→12 (`07`/`08`); `content/skins.ts` `SkinDef` + `ShieldBreakPassive` (aoe/knock) + `PLAYER_BASE`, merged into the PlayerActor at match start, is `ENGINE_VERSION` 12→13. Two side-grade characters ship (vanguard 6HP/4shield, skirmisher 3HP/8shield); the break-passive fires in-combat on `shield_break`. A side-grade balance-test stub (`skins.test.ts`) asserts no Pareto domination; the full suite + roster are 2.3.*
+*Shipped: ROADMAP 0.4–0.5, then 2.3. Two-pool health (shield + idle regen + `shield_break`) is `ENGINE_VERSION` 11→12 (`07`/`08`); `content/skins.ts` `SkinDef` + `ShieldBreakPassive` (aoe/knock) + `PLAYER_BASE`, merged into the PlayerActor at match start, is `ENGINE_VERSION` 12→13. **The full 3-character launch roster ships** (ROADMAP 2.3): vanguard (6HP/4shield), skirmisher (3HP/8shield), juggernaut (9HP/0shield, the flat-HP tank); the break-passive fires in-combat on `shield_break`. The full side-grade balance suite (`skins.test.ts`) covers all three: Pareto-non-domination, per-axis spread, equal-worth budget band, no inert passive on a zero-shield body.*
 
 - **A skin *is* a character, with real but balanced stats.** There is **no cosmetic-only reskin layer.** Every skin is a distinct character carrying its own `(maxHp, maxShield)` + shield-break passive (`05`/`09`) — e.g. **3 HP / 10 shield** vs **8 HP / 0 shield** (matching `05`/`09`'s skirmisher-vs-starter example). This overrides `13`'s earlier "skins are cosmetic / power-neutral."
 - **Characters are side-grades — no all-rounder (万金油).** The roster is balanced as *playstyle trade-offs*, never a power ladder: no character is strictly better than another (a huge regenerating shield buys fragility to burst; high flat HP buys no regen buffer, `05`).
@@ -55,6 +55,7 @@ The persistent layer **between runs**: what carries across, what materials buy, 
 - **Sell breadth, not power.** RMB buys **weapon blueprints** (PvE-only impact — weapons never touch PvP) and **characters** (PvP-relevant but side-grades only). It never buys raw stats, boosts, or any edge that breaks PvP fairness.
 - **Bounded, direct-purchase, no gacha.** All purchasable content is **directly buyable and finite** — no loot boxes, no random blueprint pulls, no energy/stamina gates, no pay-per-craft. A committed player tops out around **a few thousand RMB** and then there is nothing left to buy.
 - **Mass-DAU / word-of-mouth model.** Revenue leans on a broad, casual player base rather than whales. This deliberately caps ARPU in exchange for a fair, casual-friendly game (`06`) — and it is precisely that bounded, fair shape that *lets* PvP stay clean. Reputation first; a player who spends thousands is a happy bonus, not the plan.
+- ✅ **Shipped: grant-scaffolding (ROADMAP 2.4).** `meta/forge.ts`'s `acquireBlueprint`/`grantCharacter`/`purchasableBlueprints` are the direct-purchase/grant APIs a platform's real billing flow would call after its own payment step — no gacha, no in-engine pricing logic. Real billing integration is deliberately out of scope; these are the seam a payment adapter plugs into, not a payment implementation.
 
 ## The forge outpost (to design — `13`)
 
@@ -71,10 +72,10 @@ The persistent layer **between runs**: what carries across, what materials buy, 
 
 ## To design
 
-- **Material recipes:** exact kind × qty × min-tier per weapon; how many distinct materials exist per element and per tier.
+- ~~**Material recipes:** exact kind × qty × min-tier per weapon.~~ **Resolved, shipped (ROADMAP 2.1):** each blueprint names its element(s)/qty/min-tier; `content/materials.ts`'s `bankKey(materialId, tier)` keys the bank by `(element, rolled tier)` so `minTier` is actually enforced, and `meta/forge.ts` spends lowest-qualifying-tier-first. *Remaining:* how many distinct materials exist per element/tier is still a content-tuning question, not a schema one.
 - **Blueprint catalogue:** which 2–3 are common drops, which are sold, which are event-only; pricing.
 - **Run-buff catalogue** (the affix replacement as the in-run power layer): families, how offered (chest / room / shop), stacking caps. (`05`/`09`)
-- **Character roster:** the actual `(maxHp, maxShield)` + break-passive set, which are free vs paid, and the **balance-test suite** that enforces side-grade / no-all-rounder.
+- ~~**Character roster:** the actual `(maxHp, maxShield)` + break-passive set, which are free vs paid, and the **balance-test suite** that enforces side-grade / no-all-rounder.~~ **Resolved, shipped (ROADMAP 2.3):** the 3-character launch roster (vanguard/skirmisher/juggernaut) + the full `skins.test.ts` side-grade suite — see the Characters section above. *Remaining:* free-vs-paid split is the store's job, not decided here.
 - **Rarity numbers:** the five base-quality stat multipliers (the "small edge"), and the ornament / emissive overlay spec (`12`).
 - **Outpost / hub UX + NPCs** (`13`).
 - **Event structure:** how time-limited blueprint / character acquisition works, staying inside the no-gacha rule.

@@ -13,11 +13,11 @@ How DayDayUp goes online. This is the single source of truth for the simulation-
 | Model | Verdict for DayDayUp |
 |-------|----------------------|
 | Peer lockstep (wait for slowest) | ✗ Packet loss freezes the whole match; unacceptable for action. |
-| **Server frame-broadcast lockstep** | ✓ Server is the clock, **never waits for a client**; a lagging player falls behind and catches up alone. Scales to 5v5+ (王者荣耀 proves it), so 3v3/4v4 is comfortable. |
-| Full peer rollback | ✗ Built for 2-player fighting games. In a bullet-hell with 6–8 players, re-simulating N frames × many entities blows the frame budget on low-end phones / WeChat. |
+| **Server frame-broadcast lockstep** | ✓ Server is the clock, **never waits for a client**; a lagging player falls behind and catches up alone. Scales to 5v5+ (王者荣耀 proves it), so an 8-seat lobby is comfortable. |
+| Full peer rollback | ✗ Built for 2-player fighting games. In a bullet-hell with up to 8 players, re-simulating N frames × many entities blows the frame budget on low-end phones / WeChat. |
 | Server-authoritative + state sync | Best anti-cheat & scaling, but heaviest to build and wastes the deterministic-engine investment. Kept as a **later escalation path** if competitive PvP demands it. |
 
-Match scope driving this: **PvP is 3v3 / 4v4, positioned casual-first.** Casual tolerance means the inherent maphack weakness of client-held full state is acceptable for launch (mitigation below).
+Match scope driving this: **PvP is an 8-player solo battle royale, positioned casual-first** (this revises the original "3v3/4v4" framing this section carried before `15` locked the mode — see `05`'s PvP section and `15-pvp-arena.md` for the current shape). Casual tolerance means the inherent maphack weakness of client-held full state is acceptable for launch (mitigation below).
 
 ## Two layers, kept strictly separate
 
@@ -98,7 +98,7 @@ Frame-broadcast alone leaves **local input delay ≈ one RTT** (your press must 
 
 - The client **predicts its own actor immediately** — local movement, aim, and firing apply the instant the input is read, running the shared engine ahead of the confirmed frame with the local input filled in.
 - When the authoritative frame arrives, the client **reconciles**: if the confirmed input matches what it predicted (the common case, since it's your own input), nothing visible happens; on mismatch it rolls its *own* actor back to the confirmed state and replays.
-- **Scope is the local player only.** Other players and enemies are shown from confirmed frames (with short interpolation). This is "rollback scoped to your own input" — an order of magnitude cheaper than peer rollback, and enough for casual 3v3/4v4.
+- **Scope is the local player only.** Other players and enemies are shown from confirmed frames (with short interpolation). This is "rollback scoped to your own input" — an order of magnitude cheaper than peer rollback, and enough for a casual 8-player BR lobby.
 - Remote bullets/enemies may pop slightly on correction; acceptable at this positioning.
 
 ### Sparse input transmission (held-until-changed)
@@ -109,7 +109,7 @@ The reason to build this now, even though frame-broadcast lockstep would work wi
 
 ### PvE vs PvP
 
-- **PvP (3v3/4v4):** the full model above.
+- **PvP (8-player solo BR, `15`):** the full model above.
 - **PvE (co-op boss):** same transport, but cooperative and latency-tolerant. Can start as `LocalInputSource` single-player (validate feel first), then the same `NetInputSource` broadcast for co-op. Enemy/boss AI runs *inside* the deterministic engine off injected PRNG (like funny's `AISystem` / `WaveDirector`), so it stays identical on every client.
 
 ## Anti-cheat posture

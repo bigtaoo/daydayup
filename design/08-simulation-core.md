@@ -12,7 +12,7 @@ It builds on the entity model (`02`), the weapon system (`03`), and the loop (`0
 - **`GameState` is plain data, no Pixi, no methods that decide outcomes.** All entities are plain objects/arrays. Systems are the only code that mutates state. The render layer and server only *read* it. (funny `GameState.ts`; the strict split is `06`'s day-one rule.)
 - **Ordered collections only.** Entities live in **arrays whose push order = spawn order = iteration order**. No iterating a `Set`/`Map`/`Object.keys` in a way that leaks insertion or hash order into state (`06` banned list). funny's `projectiles: Projectile[]` — "push order = fire order = deterministic iteration" — is the pattern.
 - **Per-tick continuous input command.** ⟂ diverges. funny commands are discrete verbs (`play_card`). DayDayUp's core input is a **per-player, per-tick snapshot** of a twin-stick controller (move vector, aim, held buttons). Discrete actions (weapon swap, interact) are **edge-detected inside the engine** from the button bitfield, not sent as separate commands — so one command type carries a whole frame of input and the wire stays compact.
-- **Injected PRNG per concern, distinct derived seeds.** `roomgenPrng`, `aiPrng`, `combatPrng`, `dropPrng`, each `new Prng(seed ^ <distinct constant>)`. Never a global `Prng`, never `Math.random` (`06`). Distinct seeds so streams never alias (funny `GameState` constructor seeds four PRNGs this way).
+- **Injected PRNG per concern, distinct derived seeds.** `roomgenPrng`, `aiPrng`, `combatPrng`, `dropPrng`, plus two added for the PvP arena (`15`) — `ringPrng` (eye selection, per-seat spawn assignment) and `integrityPrng` (anti-cheat padding draws, ROADMAP 4.4, never read by any gameplay system) — each `new Prng(seed ^ <distinct constant>)`. Never a global `Prng`, never `Math.random` (`06`). Distinct seeds so streams never alias (funny `GameState` constructor seeds four PRNGs this way; DayDayUp now carries six).
 - **Entity ids from a state-local counter.** ⟂ diverges. funny uses module-global id counters reset per match (`resetUnitIds()` in the `GameState` ctor) — a footgun if two engines ever coexist. DayDayUp puts the counter **on `GameState`** (`state.nextId()`), so ids are reproducible without a global reset and headless re-judge can run alongside a live match.
 - **Events are the only engine→render channel.** Each step appends transient facts (`bullet_fired`, `hit`, `deflect`, `status`, `shield_break`, `death`, `downed`, `revived`, `pickup`) to a per-frame event queue; render/audio consume them once per frame. Engine decides outcomes, never the reverse. (`shield_break` also triggers a character break-passive, but that resolves *inside* the sim — `07`.)
 
@@ -33,6 +33,8 @@ GameState {
   aiPrng: Prng                 // enemy/boss decisions
   combatPrng: Prng             // spread jitter, crit rolls (03)
   dropPrng: Prng               // in-run drop tables (05)
+  ringPrng: Prng               // PvP arena eye selection + per-seat spawn assignment (15)
+  integrityPrng: Prng          // anti-cheat padding draw, never read by gameplay (15, ROADMAP 4.4)
 
   // ── entities (ordered arrays; index/id stable within a match) ──
   players: PlayerActor[]       // one per human; index = PlayerId (== OwnerId)
@@ -92,13 +94,19 @@ step(tick, commands):
                         per-type resist + on-hit elemental status applied here (03, 07)
   8. Status effects   — tick burn/poison DoT (shield-first) + chill countdown on tick%DOT_INTERVAL;
                         then advance ticksSinceHit & regen shield (+1/interval after idle delay) (03, 07)
+ 8a. Zone             — room-graph shrink stage machine → zone damage on actors outside the
+                        safe set (15)   [PvP, arena-mode only — ROADMAP 4.2d]
+ 8b. Environment      — CellTrait hazard damage (always-on or phased) (15)   [PvP, arena-mode only]
   9. Death & drops    — hp<=0 → enemy death + roll dropPrng → Pickup (weapon/heal/material);
                         player → downed (revive via INTERACT channel), not removed (05, 07)
  10. Pickup           — player–pickup overlap → apply (weapon→active slot / heal / floor-buffer material) (05)
  11. Spawns           — WaveDirector.tick(tick) spawns scripted waves/boss (05)   [PvE only]
  12. Extraction       — per-floor checkpoint → EXTRACT/DESCEND, banks the floor's
                         materials (05, ROADMAP 1.4/1.5)   [PvE, floors-mode only]
- 13. Win condition    — all enemies dead / boss dead / all players down → set winner, phase
+ 13. Revive           — bleedout timer + sustained-INTERACT revive channel for downed
+                        players (05, ROADMAP 3.2)   [co-op]
+ 14. Win condition    — all enemies dead / boss dead / all players down / one PvP seat
+                        standing → set winner (or placements, 15), phase
   return events
 ```
 
@@ -107,11 +115,12 @@ Notes on the order:
 - **Fire (3) before movement (4)** so a bullet spawns at the muzzle position of *this* tick's aim, then everything moves together — matches the "weapon socket follows the frame" intent (`02`) once render reads it back.
 - **Deflect (6) before hit resolution (7)**: a bullet caught by a swing must change faction *before* the hit pass decides who it damages, or a just-deflected bullet could still register a hit on the swinger the same tick.
 - **Status effects (8) after hit (7), before death (9)**: HitResolve only *starts* an elemental status; the DoT that can KILL is applied in step 8, so a burn/poison kill is swept and rolls a drop the same tick as a direct-hit kill (`07`). Added 2026-07-10 (`ENGINE_VERSION` 8). **Shield regen** rides at the end of the same step: because step 7 and the step-8 DoT sub-pass both zero `ticksSinceHit` on damage, advancing the timer + regen *after* them means any actor hit this tick (direct or DoT) cannot regen this tick — the "clear your status to recover shield" rule (`05`/`07`) needs no extra bookkeeping. ✅ Shipped (ROADMAP 0.4): the two-pool shield + regen bumped `ENGINE_VERSION` 11→12 (it changed hit outcomes; no new PRNG draw). The step-9 drop kinds and step-10 apply now speak the design/09 vocabulary (`heal`/`material`/`weapon`/`buff`, ROADMAP 0.6, `ENGINE_VERSION` 14).
+- **Zone/Environment (8a/8b) after status (8), before death (9)**: ✅ Shipped (ROADMAP 4.2d). Both are PvP arena-mode-only hazard passes (room-graph shrink damage, then `CellTrait` tile damage) that reuse `takeDamage`'s existing shield-first path, so a zone/trap kill rolls a drop through the same step-9 pass as any other kill. **Exception to "a new step bumps the version":** both are hard no-ops unless `state.zoneEnabled`/`config.arena` was provided, so insertion changed nothing for any pre-existing config.
 - **Death/drops (9) before pickup (10)**: a kill this tick can drop a pickup, but it is not collectable until the *next* tick's pickup pass — avoids "kill and auto-vacuum in the same frame" order sensitivity.
-- **Extraction (12) before win condition (13)**: ✅ Shipped (ROADMAP 1.4/1.5). Reaching a floor's checkpoint used to be win condition's job (waves exhausted + no enemies → immediate win); that transition now belongs to `ExtractionSystem`, which must run first so win condition sees `state.winner` already set on an EXTRACT resolution and no-ops instead of double-deciding. **The one exception to "a new step bumps the version":** this step is a hard no-op unless `EngineConfig.floors` was provided (`state.floorsEnabled`), so its insertion changes nothing for any config that predates the feature — verified by keeping every pre-1.4 replay test green without a bump.
-- **PvP** skips steps 2, 10, and 12 (no AI, no wave director, no PvE floors) — the confirmed command stream is the only input, exactly what keeps two clients byte-identical (funny's `netplay` branch).
+- **Extraction (12) before revive (13) before win condition (14)**: ✅ Shipped (ROADMAP 1.4/1.5, then 3.2). Reaching a floor's checkpoint used to be win condition's job (waves exhausted + no enemies → immediate win); that transition now belongs to `ExtractionSystem`, which must run first so win condition sees `state.winner` already set on an EXTRACT resolution and no-ops instead of double-deciding. `ReviveSystem` (13) runs the bleedout timer + revive channel before win condition checks whether every player is down (a team wipe). **The exception to "a new step bumps the version":** step 12 is a hard no-op unless `EngineConfig.floors` was provided (`state.floorsEnabled`), so its insertion changed nothing for any config that predates the feature — verified by keeping every pre-1.4 replay test green without a bump.
+- **PvP** skips steps 2, 10, 11, and 12 (no AI-directed wave spawning or PvE floors — arena encounters are editor-authored per room via the shared `WaveScript` path, `15`) — the confirmed command stream is the only input, exactly what keeps two clients byte-identical (funny's `netplay` branch).
 
-Whatever the final order, it is frozen; changing it bumps `ENGINE_VERSION` — except step 12, which ships as a standing no-op for any config that doesn't opt in (above).
+Whatever the final order, it is frozen; changing it bumps `ENGINE_VERSION` — except steps 8a/8b and 12, which ship as standing no-ops for any config that doesn't opt in (above).
 
 ## `PlayerCommand` — the twin-stick input snapshot
 
@@ -170,5 +179,5 @@ Mirror funny's mixin chain (`GameEngine.ts`) *only if* the engine grows past one
 
 - **Move quantization:** `moveBrad + moveMag`, or a quantized `(dx,dy)` fp pair? Brad+mag composes with the fp-trig tables already needed for aim (`06`); a raw vector avoids a second table lookup but needs its own quantization grid. Decide with the fp-trig module.
 - **Command coalescing:** if the render/input rate (60 Hz) produces more than one input per 30 Hz sim tick, which sample wins — last-before-tick, or a merged hold? Affects feel and must be deterministic.
-- **Per-tick command size** for full-lobby PvP (4v4 = 8 commands/frame) vs the WeChat packet budget (`06`).
+- **Per-tick command size** for a full 8-player PvP lobby (`15`, 8 commands/frame) vs the WeChat packet budget (`06`).
 - **AI determinism boundary:** does boss/enemy AI read *only* `state + aiPrng`, or may it read `tick`? Reading `tick` is fine (deterministic) but tempting to smuggle wall-clock in — enforce via the `06` banned-list lint.

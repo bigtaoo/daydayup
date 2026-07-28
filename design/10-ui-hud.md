@@ -41,7 +41,8 @@ Lives in the `ui` layer (`01`, topmost). Renders each frame from `state` + `even
 | Ammo / charge (if any) | weapon spec (`03`/`09`) | Only for weapons that have it |
 | Crosshair / aim indicator | current `aimBrad` | On the `ui` layer per `01`; on touch it tracks the right stick, on web the mouse |
 | Swing / parry flash | `deflect` event (`08`) | Transient — a melee swing that deflected a bullet; no persistent "block" state exists (`05`) |
-| Minimap / room progress | `room` + cleared count (`05`/`09`) | ✅ **PvE shipped**: `FloorProgress` (`client/src/game/ui/FloorProgress.ts`, `state.floorStages.length`/`roomIndex`) — a progress TRACK (done/current/upcoming nodes, capstone marked), NOT the same widget as the PvP room-graph `Minimap` below it. PvE loads one room live at a time (ROADMAP 1.3), so there's no co-resident spatial layout to fit into a box like PvP's `ArenaMap` gives — the track is the honest shape for PvE's actual data. PvP's own spatial `Minimap` (design/10 elsewhere, ROADMAP 4.x) is unaffected, still the room-graph widget. |
+| Minimap / room progress | `room` + cleared count (`05`/`09`) | ✅ **PvE shipped**: `FloorProgress` (`client/src/game/ui/FloorProgress.ts`, `state.floorStages.length`/`roomIndex`) — a progress TRACK (done/current/upcoming nodes, capstone marked), NOT the same widget as the PvP room-graph `Minimap` below it. PvE loads one room live at a time (ROADMAP 1.3), so there's no co-resident spatial layout to fit into a box like PvP's `ArenaMap` gives — the track is the honest shape for PvE's actual data. ✅ **PvP shipped**: a separate room-graph `Minimap` widget (ROADMAP 4.x) reading `content/arenas.ts`'s room/door graph + `state.zone`, unaffected by the PvE track above. |
+| Pause menu | `phase` (single-player only) | ✅ **Shipped** (`client/src/game/PauseMenu.ts`) — Escape/settings-button entry point; see Screen flow above. |
 | Pickup / buff toast | `pickup` event (`08`) | Transient "picked up X"; drives the roguelite build feedback — weapons + run buffs, no affixes (`05`/`14`) |
 | Score / timer / team | `state` (PvP) | Elimination/score win condition (`05` open question) |
 
@@ -80,7 +81,7 @@ The concrete shape of `05`/`04`'s twin-stick, and where `08`'s `PlayerCommand` i
 
 ## To design
 
-- **Widget kit:** a minimal Pixi UI component set (button, stick, bar, toast, panel) — build vs. a tiny in-house layer. Keep it small; no heavy UI framework (bundle + WeChat).
+- ~~**Widget kit:** a minimal Pixi UI component set (button, stick, bar, toast, panel) — build vs. a tiny in-house layer.~~ **Resolved (5.2, shipped):** a small in-house kit, not a framework — `client/src/game/ui/widgets.ts`'s `Panel`/`Bar`/`ToastQueue`/`Button`/`Slider`, used throughout the HUD, `Settings.ts`, and `PauseMenu.ts`.
 - **HUD data contract:** the exact read-only view of `GameState` the HUD needs, so it never reaches into engine internals (mirror `08`'s interpolation-snapshot idea for UI).
 - ~~Loadout/preset screen data — how much detail (stats, previews) to show.~~ **Resolved
   (5.2):** a forge compare card (`client/src/game/ui/compareCard.ts`) diffs the browse
@@ -90,13 +91,13 @@ The concrete shape of `05`/`04`'s twin-stick, and where `08`'s `PlayerCommand` i
   swing/arc/reach/deflect for melee), leaning on handling over raw damage per `03`/`14`'s
   "rarity edge is mostly handling, never crushing." `ARENA_PRESETS` previews remain
   undesigned — PvP preset-pick has no UI yet (`15`).
-- **Settings** (volume once audio lands `11`, control layout/left-handed mirror, quality tier per `01` roadmap).
+- ~~**Settings** (volume once audio lands `11`, control layout/left-handed mirror, quality tier per `01` roadmap).~~ **Resolved (5.2, shipped):** `client/src/game/Settings.ts` — master/SFX/music sliders + mute, built on the widget kit above, wired to `SettingsState`/`AudioBus`. Control layout/left-handed mirror and a quality tier remain undesigned.
 - **Result/summary content:** what a run summary shows (drops collected, rooms cleared, time) — ties to `05`'s reward structure.
 
 ## Open questions
 
 - **Damage/feedback numbers as `Text` vs sprite atlas** on WeChat — measure re-rasterization cost on the lowest base library (`04`) before choosing.
 - **On-screen aim on touch:** free right-stick aim vs. aim-assist/snap to nearest (casual-first, `05`/`06`) — decide against real thumbs on a device (`04` checklist item 5).
-- **Pause semantics in co-op:** is there any local "menu" that must not stall the frame stream, or is everything a non-blocking overlay (`06`)? Confirm when the net path lands.
+- ~~**Pause semantics in co-op:** is there any local "menu" that must not stall the frame stream, or is everything a non-blocking overlay (`06`)?~~ **Resolved, see Screen flow above:** online is a documented no-op for now (`PauseMenu.ts` isn't built for that path) — everything online stays a non-blocking overlay, matching "no true pause" (`06`).
 - **Button count vs. clutter:** four corner buttons + two sticks is already busy in landscape; does weapon-swap need two dedicated slots or one toggle? Affects `05`'s control scheme and the `buttons` bitfield (`08`).
 - **HUD for spectators / downed co-op players** (revive UI) — tied to `05`'s open death/penalty question.

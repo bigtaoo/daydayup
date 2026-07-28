@@ -34,6 +34,6 @@ npm run dev        # open http://localhost:5173
 - [x] Client vertical slice (tilted view / Y-sort / height & shadow / weapon swap / melee block & deflect) — runs in the browser
 - [x] Deterministic engine + full PvE loop (floors → extraction → bank), meta/forge, 3-character roster (Phases 0–2)
 - [x] Online co-op (Phase 3): frame-broadcast netcode, downed/revive, matchmaking + signed tickets, local-player prediction — two-tab byte-identical lockstep
-- [ ] PvP (Phase 4 — design decisions first: win condition / arena-AI role / preset set)
+- [x] PvP (Phase 4): 8-player solo battle royale, team/hostility model, real 60-room arena map, shrinking zone, placement win condition, anti-cheat checkpoints, matchsvc Elo ladder — see `design/15-pvp-arena.md`
+- [x] Art pipeline (Phase 5): `.tao` rig runtime, full 3-character + boss/critter/brute/floater roster art, per-weapon art (9/11 ids), UI widget kit, post-processing/particles — real (non-placeholder) atlas art and WeChat device verification are the remaining work
 - [ ] WeChat mini-game adaptation (run in WeChat DevTools, see `design/04-wechat.md`)
-- [ ] Art pipeline (Phase 5)

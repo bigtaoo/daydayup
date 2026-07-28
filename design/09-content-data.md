@@ -267,15 +267,19 @@ WaveEntry  = { atTick; enemyType; spawnPoint; count; spacingTicks?; isBoss? }
 
 The `WaveDirector` (funny, ported) pre-expands `count`/`spacing` into a tick-sorted list and emits due spawns per tick via a monotonic cursor (`08` step 10). It reads only `tick` + its static script; its injected `Prng` is reserved for randomized spawn variety so those stay reproducible.
 
-### Arenas & presets (`05` PvP)
+### Arenas & presets (`15` PvP) ✅ shipped — see `15` for the full schema
+
+**Superseded the original symmetric-team-arena sketch below** once `15` locked PvP as an **8-player solo battle royale**: `ArenaMap` is *not* RoomPiece-like/symmetric — it is a **~60-room, simultaneously co-resident map** (unlike a PvE floor's rooms, which are real but visited *sequentially*, one live at a time). `content/arenas.ts` implements the real shape:
 
 ```
-ArenaMap = RoomPiece-like, but symmetric, hand-designed sightlines/cover (05); no procedural layout.
-ARENA_PRESETS: Record<ArenaPresetId, { nameKey; loadout: WeaponId[] }>   // 05 fixed balanced weapon set
-PICKUP_TABLE: on-map power-ups, equal for both teams (05)
+ArenaMap = { id, sizeGrid, rooms: ArenaRoom[], doors: Door[], spawns: Point[], eyeCandidates: EyeCandidate[] }
+ArenaRoom = { id, rectGrid, solids, pillars?, cellTraits?: CellTrait[], encounter?: WaveScript, lootMarkers?: LootMarker[], props? }
+Door = { roomA, roomB, passageGrid }        // explicit adjacency — never inferred from rect proximity
+CellTrait = { id, rectGrid, kind: 'spike'|'freeze'|…, timed, phase? }   // authored hazard tiles (15)
+ARENA_PRESETS: Record<ArenaPresetId, { nameKey; loadout: WeaponId[] }>   // landing_basic ships
 ```
 
-The preset supplies only the **weapon loadout**; the player's `(maxHp,maxShield)`+passive come from the chosen character (`skinId`, `14`), not from the preset — so paying-for-a-character reads as *breadth of choice*, held fair by side-grade balance. Preset count/archetypes, win condition, and the pickup table are `05`'s open design work; this doc fixes their *shape*.
+There is no separate `PICKUP_TABLE` — loot is per-room `LootMarker`s resolved through the same arena-scoped `DropTable` model as PvE (`content/drops.ts`'s `ARENA_DROP_TABLE`/`rollArenaDrop`, `material` structurally absent). The preset supplies only the **weapon loadout**; the player's `(maxHp,maxShield)`+passive+weapon damage come from `buildArenaSpecs(presetId, skinId)` scaled by `PVP_SCALE_FACTOR` (`14`), and that scaled kit is what `GameState.buildSeat` actually assigns to a PvP seat (`ENGINE_VERSION` 19→20) — the seat's persistent PvE `loadout` is structurally never read for it. The real launch map (`world/arenas/arena_prototype_60.json`, a validated 60-room `ArenaMap`) is wired into `arenaCatalog.ts`'s `ARENA_CATALOG`; `landing_basic` remains a small synthetic fixture for the `?arenaDemo=1` dev harness. See `15-pvp-arena.md` for the room-graph shrinking zone, `EnvironmentSystem`, team/hostility model, placement win condition, and anti-cheat checkpoints built on top of this schema.
 
 ### Drops, pickups & materials (`05`)
 
@@ -319,13 +323,13 @@ MaterialDef = { id: MaterialId; nameKey; element: DamageType; tier }
 *Phase-0 sync (ROADMAP 0.1–0.6) shipped first-pass versions of several items below; each is annotated with what remains.*
 
 - ✅ **Concrete first-pass numbers** for the demo weapons + a starter/elemental enemy set — shipped in `content/*.ts`.
-- **Character roster** (`02`/`05`): `PLAYER_BASE` + two side-grade `SkinDef`s (vanguard, skirmisher) with `(maxHp, maxShield)` + `shieldBreak` shipped (ROADMAP 0.5). *Remaining:* the full launch roster, free-vs-paid, revive timings. (Regen timings currently live in `config.ts` `SHIELD_REGEN_*`, not `PLAYER_BASE` — a shielded-actor constant shared beyond the player.)
-- **Material catalog & forge recipes** — the `MaterialDef` shape + a base tier-0 catalog (5 elemental kinds, `content/materials.ts`) shipped (ROADMAP 0.6); first-pass tier-by-depth rolling + the floor-buffer/carry-out bank shipped (ROADMAP 1.4/1.5). *Remaining:* per-weapon `element × qty × min-tier` recipes and the forge itself (Phase 2).
+- **Character roster** (`02`/`05`): ✅ done (ROADMAP 2.3). `PLAYER_BASE` + two side-grade `SkinDef`s (vanguard, skirmisher) with `(maxHp, maxShield)` + `shieldBreak` shipped first (ROADMAP 0.5); the full 3-character launch roster — vanguard/skirmisher/**juggernaut** (9HP/0shield, the flat-HP tank) — shipped in Phase 2.3. *Remaining:* free-vs-paid split, revive timings. (Regen timings currently live in `config.ts` `SHIELD_REGEN_*`, not `PLAYER_BASE` — a shielded-actor constant shared beyond the player.)
+- **Material catalog & forge recipes** — ✅ done (ROADMAP 2.1). The `MaterialDef` shape + a base tier-0 catalog (5 elemental kinds, `content/materials.ts`) shipped (ROADMAP 0.6); first-pass tier-by-depth rolling + the floor-buffer/carry-out bank shipped (ROADMAP 1.4/1.5); the forge outpost, per-weapon `element × qty × min-tier` recipes, and `minTier` enforcement all shipped in Phase 2 — the material bank keys by `(element, rolled tier)` via `content/materials.ts`'s `bankKey`/`parseBankKey` (additive, tier 0 keeps the flat legacy key), so a recipe genuinely demands materials from deep-enough floors; spending is lowest-qualifying-tier-first (`meta/forge.ts`).
 - **Rarity tiers & run-buff catalogue** (`14`): first-pass `RARITY_TIERS` (0.2) and `RUN_BUFFS` families/caps (0.3) shipped — all four families now real, including `crit_chance` (`ENGINE_VERSION` 26, `07`'s crit sketch). *Remaining:* the final base-quality numbers and an actual chest/room/shop offering flow (buffs still only drop off the flat `DROP_TABLE`).
 - ~~**`RoomPiece` authoring pipeline**: hand-edit JSON, or a small editor?~~ **(decided, 2026-07-25):** a dedicated map editor, not hand-edited JSON. The same editor also authors PvP's `ArenaMap`/`ArenaRoom`/`CellTrait` (`15`) — one tool, two output schemas (`RoomPiece` for PvE floors, `ArenaMap` for the PvP arena). Format/round-trip tooling details remain open.
 - **Difficulty & material curve** (`05`): how enemy count/tier and material quality scale with *floor* depth; extraction-room placement rules; boss-piece rules.
-- **Arena preset set** (`05`): count, archetypes/roles, win condition, pickup table (preset supplies weapon loadout only; character stats come from `skinId`, `14`).
-- **Character balance-test suite** (`14`): a side-grade / no-all-rounder STUB shipped (`skins.test.ts`, no Pareto domination on `(maxHp, maxShield)`, ROADMAP 0.5); the full suite covering every launch + purchased character is 2.3.
+- **Arena preset set** (`15`): win condition (placement, `WinConditionSystem`'s `tickPlacement` path) and per-room loot (`LootMarker`+arena `DropTable`) are shipped and schema-fixed — see the Arenas & presets section above. *Remaining, content-tuning only:* preset count/archetypes beyond the single shipped `landing_basic` (preset supplies weapon loadout only; character stats come from `skinId`, `14`).
+- **Character balance-test suite** (`14`): ✅ done (ROADMAP 2.3). A side-grade / no-all-rounder STUB shipped first (`skins.test.ts`, no Pareto domination on `(maxHp, maxShield)`, ROADMAP 0.5); the full suite covering all 3 launch characters — Pareto-non-domination, per-axis spread, equal-worth budget band, no inert passive on a zero-shield body — shipped in Phase 2.3. *Remaining:* extending it to future purchased characters as they're added.
 - ✅ **Frame content & tuning** (`03`) — shipped 2026-07-24 (ROADMAP 1.1, `ENGINE_VERSION` 15): `content/ballistics.ts` implements `homing`/`lob`/`beam`/`boomerang` (+ spread emission in `WeaponFireSystem`), plus melee `hammer`/`spear`. `orbit`/radial `pattern` shipped `ENGINE_VERSION` 16; `k_*` procs (`k_lifesteal`/`k_ricochet`) shipped `ENGINE_VERSION` 28 (see `03`). *Remaining:* tuning the `WeaponSpec` rows per frame × element × rarity (the new frames shipped physical-only showcases).
 
 ## Open questions

@@ -27,7 +27,13 @@ Actor {
   hp, maxHp            // hard floor; 0 = death; recovered ONLY by items (05/07)
   shield, maxShield    // soft buffer, absorbed before hp (incl. DoT); auto-regens (05/07)
   ticksSinceHit        // idle timer; any damage → 0; drives shield regen (07/08)
-  faction              // 'player' | 'enemy'
+  faction              // 'player' | 'enemy' — WHICH SIDE this actor is on
+  teamId: number       // WHO on that side this actor allies with (15) — independent of
+                       //   faction; PvE never needed it (faction alone was a sufficient
+                       //   2-faction model), PvP does: every seat gets its own teamId
+                       //   (isHostile(a,b) = a.teamId !== b.teamId), enemies share a
+                       //   reserved ENEMY_TEAM_ID hostile to every player. A future squad
+                       //   build assigns the same teamId to multiple seats — no schema change.
   skin: Skin
   slots: [Weapon?, Weapon?]  // two weapon slots; either may be empty
   activeSlot: 0 | 1    // which slot fires / receives a pickup; SWAP toggles it

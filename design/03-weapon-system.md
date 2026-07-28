@@ -36,7 +36,7 @@ The concrete answer to this doc's opening goal ("a very large variety of weapons
 
 **The bet: variety is combinatorial, not authored per weapon.** `N` ranged frames × 5 elements yields `N×5` distinct-feeling guns from `N+5` pieces. One weapon = one frame id + one **baked-in** element tag + a fixed stat row — nothing hard-coded per weapon. Element is a fixed property of the weapon (a "fire rifle" and an "ice rifle" are different weapons), not swapped by a drop.
 
-> **No affix axis (`14`).** An earlier plan had a third **Affix** axis (roguelite per-instance rolls; rarity = roll count). It is cut — the game takes the Soul-Knight route: weapons are fixed, the in-run power layer is *better weapons + run-scoped buffs*, not weapon modifiers. **Rarity is now an intrinsic, fixed property of each weapon** (a small numeric edge + mainly better "handling/usability", never crushing — `14`), *not* a roll count. Removing the shipped affix layer (incl. the `elem_*` set-element affix from `ENGINE_VERSION 9`) is a code change + `ENGINE_VERSION` bump, tracked separately.
+> **No affix axis (`14`).** An earlier plan had a third **Affix** axis (roguelite per-instance rolls; rarity = roll count). It is cut — the game takes the Soul-Knight route: weapons are fixed, the in-run power layer is *better weapons + run-scoped buffs*, not weapon modifiers. **Rarity is now an intrinsic, fixed property of each weapon** (a small numeric edge + mainly better "handling/usability", never crushing — `14`), *not* a roll count. **Removed** (ROADMAP 0.1, `ENGINE_VERSION` 9→10) — the shipped affix layer (incl. the `elem_*` set-element affix from `ENGINE_VERSION 9`) is fully deleted; no `affix`/`Affix` symbol remains.
 
 ### The Frame axis — ranged
 
