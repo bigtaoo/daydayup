@@ -1,0 +1,90 @@
+import { Graphics } from 'pixi.js';
+import type { GameState } from '@dd/engine';
+import type { Layers } from './layers';
+import { Entity } from './Entity';
+import { biomePalette, type BiomePalette } from './config';
+import { fpToPx } from './coords';
+
+/**
+ * Render-side mirror of the engine's dungeon/arena room geometry (design/08 "render
+ * only reads") — ground/grid, AABB walls, and the round Y-sortable pillars. Extracted
+ * out of Game.ts 2026-07-28 alongside EventReactor: owns the pillar Entity list itself
+ * so Game only calls `build()` (on `room_enter`, or once for the `?arenaDemo=1` harness)
+ * and `clear()` (on a fresh run).
+ */
+export class RoomBuilder {
+  private readonly pillars: Entity[] = [];
+
+  constructor(private readonly layers: Layers) {}
+
+  /** Rebuild the ground, AABB walls, and pillars for the CURRENTLY LOADED room. */
+  build(s: GameState): void {
+    const w = fpToPx(s.worldW);
+    const h = fpToPx(s.worldH);
+
+    for (const c of [...this.layers.ground.children]) c.destroy();
+
+    // design/13 "per-biome background palette" — derived from the run's dungeon
+    // biomeId (undefined outside dungeon mode, e.g. flat EngineConfig.floors/PvP
+    // arena, which fall back to today's neutral palette unchanged).
+    const palette = biomePalette(s.dungeonConfig?.biomeId);
+
+    const g = new Graphics();
+    g.rect(0, 0, w, h).fill({ color: palette.ground });
+    const step = 64;
+    for (let x = 0; x <= w; x += step) g.moveTo(x, 0).lineTo(x, h);
+    for (let y = 0; y <= h; y += step) g.moveTo(0, y).lineTo(w, y);
+    g.stroke({ color: palette.gridLine, width: 1 });
+
+    // AABB walls (ROADMAP 1.2 — finally drawn): filled tiles with an outline so the
+    // solid collision geometry reads at a glance.
+    for (const wall of s.walls) {
+      const wx = fpToPx(wall.x);
+      const wy = fpToPx(wall.y);
+      const ww = fpToPx(wall.w);
+      const wh = fpToPx(wall.h);
+      g.rect(wx, wy, ww, wh).fill({ color: palette.wall }).stroke({ color: palette.wallEdge, width: 2 });
+    }
+    this.layers.ground.addChild(g);
+
+    this.buildPillars(s, palette);
+  }
+
+  /** Round pillars for the current room, from the engine's obstacle solids. Tall
+   *  Y-sortable objects (occlusion + collision). Rebuilt per room; the drawn body is a
+   *  little wider than the collision footprint so the player can stand against it. */
+  private buildPillars(s: GameState, palette: BiomePalette): void {
+    for (const p of this.pillars) {
+      p.shadow?.destroy();
+      p.destroy();
+    }
+    this.pillars.length = 0;
+
+    for (const o of s.obstacles) {
+      const rad = fpToPx(o.radius);
+      const bodyW = rad * 2 + 16; // visual body a touch wider than the footprint
+      const height = 70;
+      const p = new Entity();
+      const body = new Graphics();
+      body.roundRect(-bodyW / 2, -height, bodyW, height + 10, 6).fill({ color: palette.pillar });
+      body.ellipse(0, -height, bodyW / 2 + 2, 12).fill({ color: palette.pillarTop });
+      p.addChild(body);
+      p.makeShadow(rad + 12);
+      this.layers.entities.addChild(p);
+      this.layers.shadow.addChild(p.shadow!);
+      this.pillars.push(p);
+      p.place(fpToPx(o.gx), fpToPx(o.gy));
+    }
+  }
+
+  /** Tear down the current room's ground + pillars (beginRun) so a restart doesn't
+   *  leak the previous run's geometry. */
+  clear(): void {
+    for (const c of [...this.layers.ground.children]) c.destroy();
+    for (const p of this.pillars) {
+      p.shadow?.destroy();
+      p.destroy();
+    }
+    this.pillars.length = 0;
+  }
+}
