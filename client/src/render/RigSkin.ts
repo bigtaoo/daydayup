@@ -4,7 +4,7 @@ import type { RigSkinBundle } from './taoBundle';
 import type { AnimationClip, ResolvedBoneTransform, WorldPose } from './types';
 import { sampleClip } from './interpolate';
 import { facingFromAim } from './facing';
-import { getWeaponAnchor, getWeaponScale, getWeaponTexture, type WeaponVisualKind } from './weaponSkins';
+import { getWeaponAnchor, getWeaponRotationOffset, getWeaponScale, getWeaponTexture, type WeaponVisualKind } from './weaponSkins';
 
 // The socket that visibly carries the mounted weapon sprite (design/03 "swapping the
 // active slot swaps which socket fires" — the demo's `attack` clip already privileges
@@ -42,6 +42,7 @@ export class RigSkin {
   private flipX: 1 | -1 = 1;
   private aimRad = 0;
   private weaponKind: WeaponVisualKind | null = null;
+  private weaponName: string | undefined = undefined;
   private weaponSprite: Sprite | null = null;
   private weaponTint = 0xffffff;
 
@@ -94,8 +95,9 @@ export class RigSkin {
   /** Which weapon module (if any) the active socket (`ACTIVE_WEAPON_SOCKET`) mounts —
    *  null hides it (unarmed / no rig / texture not preloaded yet). design/13's
    *  universal mount: one neutral sprite per KIND, not per weapon frame. */
-  setWeaponKind(kind: WeaponVisualKind | null): void {
+  setWeaponKind(kind: WeaponVisualKind | null, name?: string): void {
     this.weaponKind = kind;
+    this.weaponName = name;
   }
 
   /** Re-tint the mounted weapon sprite (design/03/13 "element = colour" — a fire/ice/
@@ -151,7 +153,7 @@ export class RigSkin {
       if (this.weaponSprite) this.weaponSprite.visible = false;
       return;
     }
-    const texture = getWeaponTexture(this.weaponKind);
+    const texture = getWeaponTexture(this.weaponName, this.weaponKind);
     if (!texture) {
       if (this.weaponSprite) this.weaponSprite.visible = false;
       return;
@@ -164,14 +166,15 @@ export class RigSkin {
       this.view.addChild(this.weaponSprite);
       this.view.sortableChildren = true;
     }
-    const anchor = getWeaponAnchor(this.weaponKind);
-    const scale = getWeaponScale(this.weaponKind);
+    const anchor = getWeaponAnchor(this.weaponName, this.weaponKind);
+    const scale = getWeaponScale(this.weaponName, this.weaponKind);
+    const rotationOffset = getWeaponRotationOffset(this.weaponName, this.weaponKind);
     this.weaponSprite.texture = texture;
     this.weaponSprite.anchor.set(anchor.x, anchor.y);
     this.weaponSprite.scale.set(scale);
     this.weaponSprite.visible = true;
     this.weaponSprite.x = socketPose.sx;
     this.weaponSprite.y = socketPose.sy;
-    this.weaponSprite.rotation = this.canonicalSocketAngleRad();
+    this.weaponSprite.rotation = this.canonicalSocketAngleRad() + rotationOffset;
   }
 }

@@ -24,11 +24,18 @@ export interface LoadedRigSkin {
 // skins reuse a single instance (design/12: "one rig per body archetype, many skins").
 const orbCoreRig = new Rig(ORB_CORE_RIG);
 const critterCoreRig = new Rig(CRITTER_CORE_RIG);
+// Two more enemy body forms (design/13 "roster variety beyond the base body: a heavy
+// brute, a floating ranged form") share the SAME one-bone critter-core Rig/reference
+// radius — only the bound art + each skin's own binding.scaleX/Y (client/public/skins/
+// <name>/animation.json) differ, exactly like the 3 orb-core characters above share
+// one Rig. `content/enemies.ts`'s BRUTE/FLOATER blueprints pick these via `bodyRig`.
 const RIG_DEFS: Record<string, { rig: Rig; referenceRadius: number }> = {
   char_vanguard: { rig: orbCoreRig, referenceRadius: ORB_CORE_REFERENCE_RADIUS },
   char_skirmisher: { rig: orbCoreRig, referenceRadius: ORB_CORE_REFERENCE_RADIUS },
   char_juggernaut: { rig: orbCoreRig, referenceRadius: ORB_CORE_REFERENCE_RADIUS },
   'critter-core': { rig: critterCoreRig, referenceRadius: CRITTER_CORE_REFERENCE_RADIUS },
+  'brute-core': { rig: critterCoreRig, referenceRadius: CRITTER_CORE_REFERENCE_RADIUS },
+  'floater-core': { rig: critterCoreRig, referenceRadius: CRITTER_CORE_REFERENCE_RADIUS },
 };
 
 const registry = new Map<string, LoadedRigSkin>();

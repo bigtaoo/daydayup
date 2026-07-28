@@ -8,6 +8,7 @@
     "dev": "vite",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:pvp-sim": "vitest run --config vitest.pvp-sim.config.ts --reporter=verbose",
     "gen:trig": "node tools/gen-trig-tables.mjs",
     "build": "tsc --noEmit && vite build",
     "build:wechat": "tsc --noEmit && vite build --config vite.wechat.config.js",

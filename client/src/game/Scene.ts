@@ -52,7 +52,7 @@ export class Scene {
       if (p.id === localPlayerId || (localPlayerId === -1 && this.playerView === null)) {
         this.playerView = v;
       }
-      v.setWeaponKind(p.weapon?.spec.kind ?? null, p.weapon?.spec.damageType);
+      v.setWeaponKind(p.weapon?.spec.kind ?? null, p.weapon?.spec.damageType, p.weapon?.spec.name);
       v.setStatus(p.status);
       seen.add(p.id);
     }
@@ -61,12 +61,12 @@ export class Scene {
       if (!e.alive) continue;
       let v = this.views.get(e.id) as Enemy | undefined;
       if (!v) {
-        v = new Enemy(fpToPx(e.radius), e.tint, e.boss);
+        v = new Enemy(fpToPx(e.radius), e.tint, e.boss, e.bodyRig);
         this.spawn(e.id, v, fpToPx(e.gx), fpToPx(e.gy), fpToPx(e.z), bradToRad(e.facing));
       } else {
         v.pushState(fpToPx(e.gx), fpToPx(e.gy), fpToPx(e.z), bradToRad(e.facing));
       }
-      v.setWeaponKind(e.weapon?.spec.kind ?? null, e.weapon?.spec.damageType);
+      v.setWeaponKind(e.weapon?.spec.kind ?? null, e.weapon?.spec.damageType, e.weapon?.spec.name);
       v.setStatus(e.status);
       v.setHealth(e.hp, e.maxHp);
       seen.add(e.id);

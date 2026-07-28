@@ -18,7 +18,7 @@ export const EMBER_ROOMS: readonly RoomPiece[] = [
     tags: ['ember'],
     sizeGrid: { w: 20, h: 14 },
     solids: [{ x: 8, y: 0, w: 4, h: 3 }], // a stub wall jutting from the north edge
-    spawns: { player: [{ x: 2, y: 7 }], enemy: [{ x: 14, y: 4 }, { x: 14, y: 10 }] },
+    spawns: { player: [{ x: 2, y: 7 }], enemy: [{ x: 14, y: 4, type: 'floater' }, { x: 14, y: 10 }] },
     exits: [{ edge: 'west' }, { edge: 'east' }],
   },
   {
@@ -41,7 +41,7 @@ export const EMBER_ROOMS: readonly RoomPiece[] = [
       { x: 0, y: 7, w: 5, h: 2 },
       { x: 11, y: 7, w: 5, h: 2 },
     ],
-    spawns: { player: [{ x: 8, y: 2 }], enemy: [{ x: 4, y: 12 }, { x: 12, y: 12 }] },
+    spawns: { player: [{ x: 8, y: 2 }], enemy: [{ x: 4, y: 12, type: 'brute' }, { x: 12, y: 12 }] },
     exits: [{ edge: 'north' }, { edge: 'south' }, { edge: 'east' }, { edge: 'west' }],
   },
   {

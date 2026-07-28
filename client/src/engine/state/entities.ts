@@ -260,6 +260,10 @@ export interface EnemyActor extends Actor {
   // Render-only body tint from the blueprint (design/01); the sim never reads it,
   // like `z`. Lets the view distinguish elemental variants. Undefined = default palette.
   tint?: number;
+  // Render-only body rig atlas key (design/13 "roster variety beyond the base body"),
+  // copied from the blueprint like `tint`/`boss`; the sim never reads it. Undefined =
+  // the shared 'critter-core' body (Actor.ts's existing fallback).
+  bodyRig?: string;
   // Render-only boss marker (design/01); the sim never reads it. The view draws a
   // health bar so a durable boss's HP ramp-down (poison melt) is legible.
   boss?: boolean;

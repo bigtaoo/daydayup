@@ -33,6 +33,7 @@ export class Actor extends Entity {
   private healthBar: Graphics | null = null; // boss only; null for regular mobs
   private hpRatio = -1; // last-drawn hp fraction (skip redraw if unchanged)
   private weaponKind: WeaponKind | null | undefined = undefined;
+  private weaponName: string | undefined = undefined;
   private weaponElement: DamageType | undefined = undefined;
   private radiusPx: number;
   private readonly faction: Faction;
@@ -54,19 +55,21 @@ export class Actor extends Entity {
         ? [CONFIG.colors.player, CONFIG.colors.playerFront]
         : [CONFIG.colors.enemy, 0xffd6d6];
     // An enemy blueprint tint (elemental variant) overrides the default body colour.
-    // `atlasKey` is the entity's resolved SkinDef.atlasKey (design/13's 3-character
-    // roster) — falls back to the default character's skin if a player entity somehow
-    // carries none (forward-compat, like resolveSkin). Enemies use the shared
-    // critter-core rig (design/13: "one neutral-grey body, re-tinted per variant"),
-    // re-tinted at runtime via `rigTint` rather than needing a separate atlas per
-    // variant — falls back to the Graphics placeholder like any skin that hasn't
-    // (or never will) preload.
+    // `atlasKey` is the entity's resolved skin/body-rig name — for players, the
+    // SkinDef.atlasKey (design/13's 3-character roster), falling back to the default
+    // character's skin if a player entity somehow carries none (forward-compat, like
+    // resolveSkin). For enemies, the blueprint's `bodyRig` (design/13 "roster variety
+    // beyond the base body") — most variants are still re-tints of the shared
+    // critter-core body ("one neutral-grey body, re-tinted per variant"), re-tinted at
+    // runtime via `rigTint`; brute/floater instead point at their own distinct rig
+    // registry entry while reusing the same tint mechanism. Falls back to the Graphics
+    // placeholder like any skin that hasn't (or never will) preload.
     const resolvedTint = tint ?? body;
     this.skin = new Skin(
       resolvedTint,
       front,
       radiusPx,
-      faction === 'player' ? (atlasKey ?? 'char_vanguard') : 'critter-core',
+      faction === 'player' ? (atlasKey ?? 'char_vanguard') : (atlasKey ?? 'critter-core'),
       faction === 'enemy' ? resolvedTint : undefined,
     );
     this.addChild(this.skin.view);
@@ -102,11 +105,12 @@ export class Actor extends Entity {
   // element hue (`ELEMENT_COLORS`, same law as a bullet's own colour) — physical
   // stays the weapon's neutral authored colour, matching `Bullet.color`'s own
   // `ELEMENT_COLORS[type] ?? fallback` convention.
-  setWeaponKind(kind: WeaponKind | null, damageType?: DamageType): void {
-    if (kind === this.weaponKind && damageType === this.weaponElement) return;
+  setWeaponKind(kind: WeaponKind | null, damageType?: DamageType, name?: string): void {
+    if (kind === this.weaponKind && damageType === this.weaponElement && name === this.weaponName) return;
     this.weaponKind = kind;
     this.weaponElement = damageType;
-    this.skin.setWeaponKind(kind);
+    this.weaponName = name;
+    this.skin.setWeaponKind(kind, name);
     this.skin.setWeaponTint(damageType !== undefined ? (ELEMENT_COLORS[damageType] ?? 0xffffff) : 0xffffff);
     const rigCanMountWeapon = this.skin.hasRig && this.faction === 'player';
     this.drawWeapon(rigCanMountWeapon ? null : kind);

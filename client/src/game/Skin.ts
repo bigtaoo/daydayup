@@ -80,8 +80,8 @@ export class Skin {
 
   /** Forward the equipped weapon's kind to the rig's socket mount (design/03/12/13).
    *  No-op on the Graphics placeholder (no socket to mount onto). */
-  setWeaponKind(kind: WeaponVisualKind | null): void {
-    this.rig?.setWeaponKind(kind);
+  setWeaponKind(kind: WeaponVisualKind | null, name?: string): void {
+    this.rig?.setWeaponKind(kind, name);
   }
 
   /** Re-tint the mounted weapon sprite to its element hue (design/03/13 "element =

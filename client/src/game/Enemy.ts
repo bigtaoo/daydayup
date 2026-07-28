@@ -5,7 +5,7 @@ import { Actor } from './Actor';
 // optional `tint` overrides the body colour so elemental variants read at a glance
 // (design/07/09) — the tint comes from the engine blueprint, render-only.
 export class Enemy extends Actor {
-  constructor(radiusPx: number, tint?: number, boss = false) {
-    super('enemy', radiusPx, tint, boss);
+  constructor(radiusPx: number, tint?: number, boss = false, bodyRig?: string) {
+    super('enemy', radiusPx, tint, boss, bodyRig);
   }
 }

@@ -64,6 +64,82 @@ export const ELEMENT_COLORS: Partial<Record<import('@dd/engine').DamageType, num
   poison: CONFIG.colors.statusPoison,
 };
 
+// Per-biome ground/wall palette (design/13 "per-biome background palettes" — the
+// element hex table is locked, so these are DERIVED from it, not hand-picked hexes).
+// Rule (design/13 "environment desaturated, hazards saturated"): the room itself stays
+// close to the existing neutral dark palette, with only a SMALL mix of the biome's
+// element hue — the raw saturated hex is reserved for bullets/status FX/loot, so a
+// wall painted full ember-orange would fight bullets/auras for attention instead of
+// making them pop. `BIOME_ID_TO_ELEMENT` maps a `DungeonConfig.biomeId` (today only
+// 'ember' exists, content/world/rooms/ember.ts) to the stable element vocabulary
+// ELEMENT_COLORS already uses, so a future biome only needs one new entry there, not a
+// parallel colour table. No new art — this is what "per-biome palette" asks for.
+function mixHex(base: number, tint: number, amount: number): number {
+  const br = (base >> 16) & 0xff, bg = (base >> 8) & 0xff, bb = base & 0xff;
+  const tr = (tint >> 16) & 0xff, tg = (tint >> 8) & 0xff, tb = tint & 0xff;
+  const mix = (b: number, t: number) => Math.round(b + (t - b) * amount);
+  return (mix(br, tr) << 16) | (mix(bg, tg) << 8) | mix(bb, tb);
+}
+
+type BiomeElement = 'fire' | 'ice' | 'lightning' | 'poison' | 'neutral';
+
+// 'neutral' has no element hue to hint at — it's not in this table, so it stays
+// EXACTLY today's existing palette (below), byte-identical, never run through
+// mixHex (mixing toward the bright #E2E8F0 neutral hex would visibly LIGHTEN it —
+// that hex is meant for FX/icons, not as a wall tint amount).
+const BIOME_ELEMENT_HEX: Record<Exclude<BiomeElement, 'neutral'>, number> = {
+  fire: CONFIG.colors.statusBurn,
+  ice: CONFIG.colors.statusChill,
+  lightning: CONFIG.colors.statusShock,
+  poison: CONFIG.colors.statusPoison,
+};
+
+export interface BiomePalette {
+  ground: number;
+  gridLine: number;
+  pillar: number;
+  pillarTop: number;
+  wall: number;
+  wallEdge: number;
+}
+
+const NEUTRAL_PALETTE: BiomePalette = {
+  ground: CONFIG.colors.ground,
+  gridLine: CONFIG.colors.gridLine,
+  pillar: CONFIG.colors.pillar,
+  pillarTop: CONFIG.colors.pillarTop,
+  wall: CONFIG.colors.wall,
+  wallEdge: CONFIG.colors.wallEdge,
+};
+
+const BIOME_PALETTES: Record<BiomeElement, BiomePalette> = {
+  neutral: NEUTRAL_PALETTE,
+  ...(Object.fromEntries(
+    (Object.entries(BIOME_ELEMENT_HEX) as Array<[Exclude<BiomeElement, 'neutral'>, number]>).map(([element, hex]) => [
+      element,
+      {
+        ground: mixHex(NEUTRAL_PALETTE.ground, hex, 0.1),
+        gridLine: mixHex(NEUTRAL_PALETTE.gridLine, hex, 0.14),
+        pillar: mixHex(NEUTRAL_PALETTE.pillar, hex, 0.14),
+        pillarTop: mixHex(NEUTRAL_PALETTE.pillarTop, hex, 0.18),
+        wall: mixHex(NEUTRAL_PALETTE.wall, hex, 0.14),
+        wallEdge: mixHex(NEUTRAL_PALETTE.wallEdge, hex, 0.22),
+      },
+    ]),
+  ) as Record<Exclude<BiomeElement, 'neutral'>, BiomePalette>),
+};
+
+// `biomeId` = `GameState.dungeonConfig?.biomeId` (undefined outside dungeon mode, e.g.
+// the flat EngineConfig.floors path or a PvP arena — both fall back to 'neutral',
+// i.e. today's existing palette unchanged).
+const BIOME_ID_TO_ELEMENT: Record<string, BiomeElement> = {
+  ember: 'fire',
+};
+
+export function biomePalette(biomeId: string | undefined): BiomePalette {
+  return BIOME_PALETTES[biomeId ? (BIOME_ID_TO_ELEMENT[biomeId] ?? 'neutral') : 'neutral'];
+}
+
 // Rarity → border/ornament colour (design/14 白蓝紫橙金). The engine owns only the
 // stable `colorKey` (RARITY_TIERS[tier].colorKey); the render layer maps it to a hue
 // here. Kept a channel apart from ELEMENT_COLORS: rarity lives on the border/sprite

@@ -30,6 +30,10 @@ export interface EnemyBlueprint {
   // Missing type = neutral. The knob that makes damage types matter per mob (design/07).
   resist?: ResistMap;
   tint?: number; // render-only body colour (design/01); the sim never reads it
+  // Render-only body rig atlas key (design/13 "roster variety beyond the base body: a
+  // heavy brute, a floating ranged form") — like `tint`, the sim never reads it.
+  // Undefined = the shared 'critter-core' body (Actor.ts's existing default).
+  bodyRig?: string;
   boss?: boolean; // render-only (like tint): the view draws a health bar for a boss
   // Boss AI depth (design/09 aspirational `traits`/`onDeathSpawn`, ENGINE_VERSION 27).
   // See EnemyActor's matching fields for the full account; undefined = neither trait.
@@ -97,6 +101,40 @@ export const IRONCLAD: EnemyBlueprint = {
   tint: 0x90a4ae, // steel grey
 };
 
+// ── Body-form variety (design/13 "roster variety beyond the base body") ──────────
+// Both reuse the generic enemy AI/gun (no ranged/melee AI split exists yet, same as
+// every variant above) — the differentiation here is silhouette + stats, not
+// behavior, exactly like the elemental re-tints. `bodyRig` picks the distinct art
+// (render/skinRegistry.ts's 'brute-core'/'floater-core', sharing critter-core's rig);
+// `tint` is design/13's locked neutral/physical hex so it doesn't get discoloured by
+// the enemy body's own default red tint (Actor.ts's `resolvedTint = tint ?? body`).
+
+/** Heavy bruiser: armoured, tankier than ironclad's wall-of-bullets read but no
+ *  elemental weakness/resist pair — a flat physical damage reduction instead. */
+export const BRUTE: EnemyBlueprint = {
+  type: 'brute',
+  maxHp: 7,
+  radius: pxToFp(20),
+  footprintRadius: pxToFp(9),
+  weapon: ENEMY_GUN_SIM,
+  resist: { physical: 700 }, // ×0.7 bullets — armoured, not immune
+  tint: 0xe2e8f0, // design/13's locked neutral/physical hex
+  bodyRig: 'brute-core',
+};
+
+/** Fragile floating form: lower HP than basic, no resist — the "glass" read to pair
+ *  with the brute's "tank" read. Movement/targeting AI is the same shared chase-and-
+ *  shoot as every other mob (no distinct kiting behavior exists yet). */
+export const FLOATER: EnemyBlueprint = {
+  type: 'floater',
+  maxHp: 2,
+  radius: pxToFp(13),
+  footprintRadius: pxToFp(6),
+  weapon: ENEMY_GUN_SIM,
+  tint: 0xe2e8f0,
+  bodyRig: 'floater-core',
+};
+
 // ── Boss ────────────────────────────────────────────────────────────────────────
 // The durable finale — a big, tanky mob that survives long enough to *show* the
 // combat systems working (design/03/07): its huge HP pool lets poison stacks ramp
@@ -133,6 +171,8 @@ export const ENEMY_BLUEPRINTS: Record<string, EnemyBlueprint> = {
   frostling: FROSTLING,
   galvanist: GALVANIST,
   ironclad: IRONCLAD,
+  brute: BRUTE,
+  floater: FLOATER,
   blightlord: BLIGHTLORD,
 };
 
@@ -176,6 +216,7 @@ export function buildEnemyActor(state: GameState, gx: Fp, gy: Fp, type?: string)
     status: freshStatus(),
     resist: bp.resist,
     tint: bp.tint,
+    bodyRig: bp.bodyRig,
     boss: bp.boss,
     enrage: bp.enrage,
     enraged: false,
