@@ -15,9 +15,30 @@
  * anti-drift — no hand-mirrored second copy of the config logic).
  */
 import { describe, expect, it } from 'vitest';
-import { createGameEngine } from '@dd/engine';
+import { createGameEngine, Prng, type EngineConfig } from '@dd/engine';
 import { buildPvpEngineConfig } from './pvpConfig';
 import { PvpBotController } from './PvpBotController';
+
+// SIM-ONLY deconfounding: `buildPvpEngineConfig` skins seats BY INDEX (seat i -> the
+// i-th SKIN_DEFS entry) — a real, load-bearing property of the real match config
+// (design/15: spawns are system-assigned, no player choice), so this must NOT change
+// `pvpConfig.ts` itself. But that seat-index-is-character correlation means any
+// seat/spawn-position advantage silently reads as a character-balance signal in this
+// sim's win-rate report. Reusing `buildPvpEngineConfig` for the byte-identical base
+// config, then shuffling ONLY here which skinId lands on which seat (a distinct Prng
+// stream, seeded off the match seed but never touching a gameplay stream — same
+// isolation rule design/15's `integrityPrng` uses) breaks that correlation: over many
+// seeds, every character lands on every seat/spawn roughly equally, so a persistent
+// win-rate skew can no longer be explained by spawn position alone.
+function deconfoundSkinSeating(config: EngineConfig, seed: number): EngineConfig {
+  const players = config.players!;
+  const skinIds = players.map((p) => p.skinId);
+  new Prng(seed ^ 0x5eed0001).shuffle(skinIds);
+  return {
+    ...config,
+    players: players.map((p, i) => ({ ...p, skinId: skinIds[i]! })),
+  };
+}
 
 // Matches Matchmaker.MAX_PLAYERS' 8-seat ceiling (design/15); 7 skipped, no special
 // meaning at odd counts a run of 6 doesn't already cover.
@@ -39,7 +60,7 @@ interface MatchResult {
 }
 
 function runMatch(seed: number, playerCount: number): MatchResult {
-  const config = buildPvpEngineConfig(seed, playerCount);
+  const config = deconfoundSkinSeating(buildPvpEngineConfig(seed, playerCount), seed);
   const engine = createGameEngine(config);
   const bots = Array.from({ length: playerCount }, () => new PvpBotController());
 
@@ -93,13 +114,12 @@ describe('PvP balance sim (bot vs bot — first-signal data for PVP_SCALE_FACTOR
     }
     expect(ties.length).toBeLessThan(results.length * 0.05); // <5% ties — a spike would flag a real placement/elimination bug
 
-    // Win rate per character. CAVEAT, not hidden: `buildPvpEngineConfig` skins seats
-    // BY INDEX (seat i -> the i-th SKIN_DEFS entry), not by seed, so a seat/spawn-
-    // position advantage at any single playerCount would confound this reading —
-    // sweeping playerCount 2..8 rotates which character lands on which seat index
-    // (since `i % skinCount` shifts with playerCount), diluting but not eliminating
-    // that confound. Treat this as a first signal to sanity-check against real
-    // playtesting, not a verdict.
+    // Win rate per character. `deconfoundSkinSeating` (above) shuffles which skinId
+    // lands on which seat per seed, independent of `buildPvpEngineConfig`'s own
+    // seat-index assignment — so a seat/spawn-position advantage is no longer
+    // entangled with a specific character across this seed sweep. Still first-signal
+    // data to sanity-check against real playtesting, not a verdict (e.g. bot AI
+    // quality/aggression isn't necessarily representative of human play).
     const bySkin = new Map<string, number>();
     for (const r of results) bySkin.set(r.winnerSkin, (bySkin.get(r.winnerSkin) ?? 0) + 1);
 

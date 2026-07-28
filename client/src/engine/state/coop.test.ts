@@ -52,16 +52,16 @@ describe('EngineConfig.players — N seats built at construction', () => {
     const s = createGameState({
       seed: 1, worldW: 1600, worldH: 1200, waves: [],
       players: [
-        { skinId: 'juggernaut', start: [100, 200] }, // 9 HP / 0 shield
-        { skinId: 'skirmisher', start: [300, 400] }, // 3 HP / 8 shield
+        { skinId: 'juggernaut', start: [100, 200] }, // 11 HP / 0 shield
+        { skinId: 'skirmisher', start: [300, 400] }, // 3 HP / 6 shield
       ],
     });
     expect(s.players).toHaveLength(2);
     // Ids allocated in seat order → owner 0 is players[0] (id 1), owner 1 is players[1] (id 2).
     expect([s.players[0]!.id, s.players[1]!.id]).toEqual([1, 2]);
     // Each seat carries its own SkinDef defensive identity + its own spawn.
-    expect([s.players[0]!.maxHp, s.players[0]!.maxShield]).toEqual([9, 0]);
-    expect([s.players[1]!.maxHp, s.players[1]!.maxShield]).toEqual([3, 8]);
+    expect([s.players[0]!.maxHp, s.players[0]!.maxShield]).toEqual([11, 0]);
+    expect([s.players[1]!.maxHp, s.players[1]!.maxShield]).toEqual([3, 6]);
     expect(s.players[0]!.gx).toBe(pxToFp(100));
     expect(s.players[1]!.gx).toBe(pxToFp(300));
   });

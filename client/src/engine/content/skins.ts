@@ -54,26 +54,41 @@ export const SKIN_DEFS: Record<string, SkinDef> = {
     shieldBreak: { kind: 'aoe', radiusGrid: 2.5, damage: 2 },
   },
   // Skirmisher — the fragile-but-shielded side-grade (design/05/14 example): low HP,
-  // a big regenerating shield, and a wider break burst. Trades body for shield —
-  // neither Pareto-dominates the vanguard (guarded by skins.test.ts).
+  // a regenerating shield, and a break burst. Trades body for shield — neither
+  // Pareto-dominates the vanguard (guarded by skins.test.ts).
+  //
+  // Tuned down 2026-07-28 (client/src/game/pvpBalanceSim.sim.ts, seat-index confound
+  // fixed first): a shield that fully regenerates between fights is worth more than
+  // its raw number in a multi-fight battle royale, since it resets while a flat-HP
+  // body's damage compounds — bot-vs-bot data showed a 66% win rate at 8 total budget
+  // vs. juggernaut's 8%. maxShield 8->6 and the break burst 3.5/3->3.0/2 trim that
+  // sustain edge without changing the character's identity (still the biggest shield
+  // in the roster). Re-tune again once real playtesting data exists (design/15).
   skirmisher: {
     id: 'skirmisher',
     atlasKey: 'char_skirmisher',
     animRef: 'humanoid',
     maxHp: 3,
-    maxShield: 8,
-    shieldBreak: { kind: 'aoe', radiusGrid: 3.5, damage: 3 },
+    maxShield: 6,
+    shieldBreak: { kind: 'aoe', radiusGrid: 3.0, damage: 2 },
   },
-  // Juggernaut — the flat-HP tank (design/14's "8 HP / 0 shield" archetype): the biggest
-  // body in the roster and NO shield buffer at all, so it never regenerates between fights
-  // and has no shield-break payload (an empty shield can't break). The polar opposite of
-  // the skirmisher; neither Pareto-dominates the vanguard (guarded by skins.test.ts). This
-  // completes the 3-character launch roster (design/13) with three distinct playstyles.
+  // Juggernaut — the flat-HP tank (design/14's "0 shield" archetype): the biggest
+  // body in the roster and NO shield buffer at all, so it never regenerates between
+  // fights and has no shield-break payload (an empty shield can't break). The polar
+  // opposite of the skirmisher; neither Pareto-dominates the vanguard (guarded by
+  // skins.test.ts). This completes the 3-character launch roster (design/13) with
+  // three distinct playstyles.
+  //
+  // Tuned up 2026-07-28 (same pass as skirmisher above): maxHp 9->11 compensates for
+  // having zero regen across a multi-fight match, where the no-comeback downside hurt
+  // more than the flat-HP number alone suggested (8% bot-vs-bot win rate). Shield
+  // stays 0 — the point of this character is no regen, not a smaller version of the
+  // other two.
   juggernaut: {
     id: 'juggernaut',
     atlasKey: 'char_juggernaut',
     animRef: 'humanoid',
-    maxHp: 9,
+    maxHp: 11,
     maxShield: 0,
     // no shieldBreak: a character with no shield can never trigger one (design/14).
   },

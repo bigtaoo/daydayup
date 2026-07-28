@@ -114,7 +114,7 @@ describe('character selection wires into the PlayerActor (design/14)', () => {
   it('selecting a non-default character changes (maxHp, maxShield) + passive', () => {
     const p = createGameState({ ...CFG, skinId: 'skirmisher' }).players[0]!;
     expect(p.maxHp).toBe(3);
-    expect(p.maxShield).toBe(8);
-    expect(p.shieldBreak).toEqual({ kind: 'aoe', radius: 3500, damage: 3 });
+    expect(p.maxShield).toBe(6);
+    expect(p.shieldBreak).toEqual({ kind: 'aoe', radius: 3000, damage: 2 });
   });
 });
