@@ -45,12 +45,27 @@ export const DEFAULT_SKIN_ID: SkinId = 'vanguard';
 export const SKIN_DEFS: Record<string, SkinDef> = {
   // Vanguard — the balanced default: a solid HP body with a moderate shield and a
   // short defensive burst when that shield shatters.
+  //
+  // Tuned down 2026-07-28 (pvpBalanceSim.sim.ts, after ENGINE_VERSION 29's arena
+  // weapon-scaling fix surfaced vanguard as the new dominant seat — was ~45-61% bot-
+  // vs-bot win rate across seed sweeps, vs. an ~33% fair share): the HP+shield hybrid
+  // out-earns either pure-HP (juggernaut) or mostly-shield (skirmisher) build at the
+  // same total budget, since it gets both a persistent body AND a shield that resets
+  // (fuelling repeat shieldBreak bursts) between fights. maxShield 4->3.2 trims that
+  // edge (verified: shifts win rate toward fair share without moving HP, the weaker
+  // lever here — shield does double duty for vanguard so it's the one that matters).
+  // Deliberately NOT an integer: every whole-number total between 8 and 11 either
+  // exactly matches another character's (hp+shield) budget — which empirically spikes
+  // simultaneous-elimination ties (near-symmetric fights double-KO far more often,
+  // confirmed across 3 different splits at total=9) — or overcorrects hard (total=8
+  // crashed vanguard's win rate regardless of split). Safe only because shield regen
+  // (StatusEffectSystem.ts) now clamps to maxShield instead of always `+1`-ing past it.
   vanguard: {
     id: 'vanguard',
     atlasKey: 'char_vanguard',
     animRef: 'humanoid',
     maxHp: 6,
-    maxShield: 4,
+    maxShield: 3.2,
     shieldBreak: { kind: 'aoe', radiusGrid: 2.5, damage: 2 },
   },
   // Skirmisher — the fragile-but-shielded side-grade (design/05/14 example): low HP,

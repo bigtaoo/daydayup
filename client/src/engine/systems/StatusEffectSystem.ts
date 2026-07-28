@@ -73,7 +73,7 @@ export class StatusEffectSystem {
       a.ticksSinceHit >= SHIELD_REGEN_DELAY &&
       (a.ticksSinceHit - SHIELD_REGEN_DELAY) % SHIELD_REGEN_INTERVAL === 0
     ) {
-      a.shield++;
+      a.shield = Math.min(a.maxShield, a.shield + 1);
     }
   }
 }
