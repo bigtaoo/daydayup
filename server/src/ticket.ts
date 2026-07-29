@@ -22,7 +22,11 @@ export type { MatchMode };
  * `teamId` (design/05/15's PvP squad follow-up) groups seats into a squad — every
  * seat gets one, always: a solo/FFA seat is simply the sole member of its own team
  * (`Matchmaker`'s `teamIdForOwner` collapses to `owner` whenever squads don't apply),
- * so this is never optional the way `mode` is. */
+ * so this is never optional the way `mode` is. `accountId` (design/16-accounts.md) is
+ * the logged-in player's real account id, threaded from `POST /find` through to the
+ * gameserver so a settled PvP match's ladder report can credit the real account instead
+ * of `ladderReport.ts`'s `seat:{roomId}:{seatIdx}` scaffold. Absent for guests/bots —
+ * every pre-account caller is unaffected. */
 export interface TicketPayload {
   roomId: string;
   owner: number;
@@ -31,6 +35,7 @@ export interface TicketPayload {
   teamId: number;
   exp: number;
   mode?: MatchMode;
+  accountId?: string;
 }
 
 const b64urlEncode = (s: string): string =>
@@ -79,7 +84,8 @@ export function verifyTicket(token: string, secret: string, nowMs: number): Tick
     !Number.isInteger(payload.playerCount) ||
     !Number.isInteger(payload.teamId) ||
     typeof payload.exp !== 'number' ||
-    (payload.mode !== undefined && payload.mode !== 'coop' && payload.mode !== 'pvp')
+    (payload.mode !== undefined && payload.mode !== 'coop' && payload.mode !== 'pvp') ||
+    (payload.accountId !== undefined && typeof payload.accountId !== 'string')
   ) {
     return null;
   }

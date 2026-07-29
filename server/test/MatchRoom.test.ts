@@ -31,7 +31,10 @@ class FakeScheduler implements Scheduler {
 
 class FakeConn implements RoomConnection {
   readonly msgs: ServerMsg[] = [];
-  constructor(readonly owner: number) {}
+  constructor(
+    readonly owner: number,
+    readonly accountId?: string,
+  ) {}
   send(m: ServerMsg): void {
     this.msgs.push(m);
   }
@@ -216,6 +219,38 @@ describe('MatchRoom — settlement', () => {
     r.reportResult(0, 0x111, 0);
     r.reportResult(1, 0x222, 0); // divergent hash
     expect(settled).toEqual([{ roomId: 'r1', winner: 0, placements: undefined, hashOk: false }]);
+  });
+
+  it('onSettled includes seatAccounts (design/16-accounts.md) for whichever seats were logged in', () => {
+    const scheduler = new FakeScheduler();
+    const settled: unknown[] = [];
+    const r = new MatchRoom('r1', 99, 2, {
+      scheduler,
+      onDestroy: () => {},
+      onSettled: (m) => settled.push(m),
+    });
+    const a = new FakeConn(0, 'acct-alice'); // logged in
+    const b = new FakeConn(1); // guest — no accountId
+    r.join(a); r.join(b);
+    r.reportResult(0, 0xabc, 0, [1]);
+    r.reportResult(1, 0xabc, 0, [1]);
+    expect(settled).toEqual([{ roomId: 'r1', winner: 0, placements: [1], hashOk: true, seatAccounts: { 0: 'acct-alice' } }]);
+  });
+
+  it('onSettled omits seatAccounts entirely when no seat was logged in (byte-identical to pre-account behavior)', () => {
+    const scheduler = new FakeScheduler();
+    const settled: unknown[] = [];
+    const r = new MatchRoom('r1', 99, 2, {
+      scheduler,
+      onDestroy: () => {},
+      onSettled: (m) => settled.push(m),
+    });
+    const a = new FakeConn(0);
+    const b = new FakeConn(1);
+    r.join(a); r.join(b);
+    r.reportResult(0, 0xabc, 0, [1]);
+    r.reportResult(1, 0xabc, 0, [1]);
+    expect(settled).toEqual([{ roomId: 'r1', winner: 0, placements: [1], hashOk: true }]);
   });
 
   it('reports \'placement\' (design/15, ROADMAP 4.2e) when the reported result carries a placements array', () => {

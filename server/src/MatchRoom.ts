@@ -27,6 +27,9 @@ import type { MatchMode } from './ticket';
 export interface RoomConnection {
   /** Which co-op seat this connection drives (its `owner` in every PlayerCommand). */
   readonly owner: number;
+  /** The logged-in account behind this seat (design/16-accounts.md), if any — carried
+   * from the verified ticket. `undefined` for guests/bots. */
+  readonly accountId?: string;
   send(msg: ServerMsg): void;
 }
 
@@ -47,6 +50,10 @@ export interface SettledMatch {
   winner: Winner;
   placements?: readonly number[];
   hashOk: boolean;
+  /** seat owner index → accountId (design/16-accounts.md), for whichever seats were
+   * logged in. Omits guest/bot seats entirely — `ladderReport.ts` falls back to its
+   * scaffold accountId for any seat missing here. */
+  seatAccounts?: Readonly<Record<number, string>>;
 }
 
 export interface MatchRoomDeps {
@@ -76,6 +83,9 @@ const START_FRAME = 0;
 interface Seat {
   owner: number;
   conn: RoomConnection | null;
+  /** Set from `conn.accountId` on join/resume (design/16-accounts.md) and kept across a
+   * disconnect so a settled match can still credit a briefly-dropped player's account. */
+  accountId?: string;
 }
 
 export class MatchRoom {
@@ -139,6 +149,7 @@ export class MatchRoom {
     const seat = this.seats[conn.owner];
     if (!seat || seat.conn !== null) return false;
     seat.conn = conn;
+    if (conn.accountId !== undefined) seat.accountId = conn.accountId;
     if (this.connected) this.launch();
     return true;
   }
@@ -206,6 +217,7 @@ export class MatchRoom {
     const seat = this.seats[conn.owner];
     if (!seat || this.phase !== Phase.IN_MATCH || this.settled) return false;
     seat.conn = conn;
+    if (conn.accountId !== undefined) seat.accountId = conn.accountId;
     conn.send({
       type: 'conn_resync',
       startFrame: START_FRAME,
@@ -339,7 +351,17 @@ export class MatchRoom {
       reason: hashOk ? (agreedPlacements ? 'placement' : agreedWinner === 'enemies' ? 'wipe' : 'extract') : 'disconnect',
       placements: agreedPlacements,
     });
-    this.deps.onSettled?.({ roomId: this.roomId, winner: agreedWinner, placements: agreedPlacements, hashOk });
+    const seatAccounts: Record<number, string> = {};
+    for (const seat of this.seats) if (seat.accountId) seatAccounts[seat.owner] = seat.accountId;
+    this.deps.onSettled?.({
+      roomId: this.roomId,
+      winner: agreedWinner,
+      placements: agreedPlacements,
+      hashOk,
+      // Omitted entirely when no seat was logged in — keeps the pre-account SettledMatch
+      // shape byte-identical for every guest-only match (and every existing test).
+      ...(Object.keys(seatAccounts).length > 0 ? { seatAccounts } : {}),
+    });
     this.destroy();
   }
 

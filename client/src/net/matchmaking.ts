@@ -9,6 +9,7 @@
  * `fetch`/`sleep` are injected so the whole flow is unit-testable with a fake — the ONLY
  * real-network dependency, mirroring how transport.ts isolates the WebSocket.
  */
+import { getPlayerId } from './identity';
 
 /** Everything needed to open the gameserver socket for the assigned seat. */
 export interface MatchInfo {
@@ -34,6 +35,10 @@ export interface FindMatchOptions {
    * client sends this once their leader starts matching, so the control plane groups
    * them into one squad chunk. Omitted (every pre-party caller) → plain solo queue. */
   partyId?: string;
+  /** The account to attribute PvP ladder rating to (design/16-accounts.md). Default:
+   * `net/identity.ts`'s `getPlayerId()` — the real accountId once logged in, otherwise
+   * the local guest id (in which case the server just uses its usual seat scaffold). */
+  accountId?: string;
   /** Injected for tests; defaults to the global fetch. */
   fetch?: typeof fetch;
   /** Injected for tests; defaults to a real timer sleep. */
@@ -62,7 +67,12 @@ export async function findMatch(baseUrl: string, opts: FindMatchOptions): Promis
   const findRes = await doFetch(`${baseUrl}/find`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ playerCount: opts.playerCount, mode: opts.mode ?? 'coop', partyId: opts.partyId }),
+    body: JSON.stringify({
+      playerCount: opts.playerCount,
+      mode: opts.mode ?? 'coop',
+      partyId: opts.partyId,
+      accountId: opts.accountId ?? getPlayerId(),
+    }),
   });
   const found = (await findRes.json()) as { queueId?: string; match?: MatchInfo; error?: string };
   if (!findRes.ok || found.error) throw new Error(found.error ?? `matchmaking failed (${findRes.status})`);

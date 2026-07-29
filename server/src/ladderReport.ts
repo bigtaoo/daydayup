@@ -20,12 +20,19 @@ export interface RatingReportBody {
  * (`placements.length + 1`) — the FIRST-eliminated seat is the WORST place (N), the
  * last-eliminated is place 2.
  *
- * `accountId` is a SCAFFOLD (`seat:{roomId}:{seatIdx}`), not a real account system —
- * this project has no account/auth layer anywhere yet (matchmaking seats are bare
- * numeric `owner` indices, design/06). Swapping in real account ids later is a
- * caller-side change only, not a rating-math or protocol change.
+ * `accountId` falls back to a SCAFFOLD (`seat:{roomId}:{seatIdx}`) for any seat with no
+ * real account behind it — a guest, a bot, or (pre design/16-accounts.md) every seat,
+ * since this project had no account/auth layer anywhere before that. `seatAccounts`
+ * (optional 4th param) is `MatchRoom`'s per-seat real accountId map, threaded from the
+ * signed ticket a logged-in player redeemed; omitting it (every pre-account caller)
+ * reproduces the exact old scaffold-only behavior.
  */
-export function buildRatingReportBody(roomId: string, winner: number, placements: readonly number[]): RatingReportBody {
+export function buildRatingReportBody(
+  roomId: string,
+  winner: number,
+  placements: readonly number[],
+  seatAccounts?: Readonly<Record<number, string>>,
+): RatingReportBody {
   const n = placements.length + 1;
   const bySeat = new Map<number, number>([[winner, 1]]);
   placements.forEach((seatIdx, j) => bySeat.set(seatIdx, n - j));
@@ -33,7 +40,7 @@ export function buildRatingReportBody(roomId: string, winner: number, placements
   const accountIds: string[] = [];
   const places: number[] = [];
   for (const [seatIdx, place] of bySeat) {
-    accountIds.push(`seat:${roomId}:${seatIdx}`);
+    accountIds.push(seatAccounts?.[seatIdx] ?? `seat:${roomId}:${seatIdx}`);
     places.push(place);
   }
   return { accountIds, places };

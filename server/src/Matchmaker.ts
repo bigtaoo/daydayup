@@ -91,6 +91,10 @@ interface Waiter {
    * sits in the queue. `undefined` (every pre-party caller) behaves exactly as before:
    * plain FIFO, each waiter its own one-person "group". */
   groupId?: string;
+  /** The logged-in account this seat belongs to (design/16-accounts.md), carried into
+   * the signed ticket so a settled PvP match can credit real ladder rating. `undefined`
+   * for guests/bots — falls back to `ladderReport.ts`'s scaffold accountId. */
+  accountId?: string;
 }
 
 /** A coop 2-seat waiter and a pvp 2-seat waiter must never group together — key the
@@ -129,14 +133,15 @@ export class Matchmaker {
    * squad chunk together rather than paired with strangers. Returns a `queueId` to
    * poll with; if this arrival completes a group, its own `ticket` is returned inline
    * too. Throws a RangeError for an out-of-bounds playerCount (the shell maps it to
-   * HTTP 400).
+   * HTTP 400). `accountId` (design/16-accounts.md) is the logged-in caller's real
+   * account id, if any — carried into the signed ticket for ladder-rating attribution.
    */
-  enqueue(playerCount: number, mode: MatchMode = 'coop', groupId?: string): EnqueueResult {
+  enqueue(playerCount: number, mode: MatchMode = 'coop', groupId?: string, accountId?: string): EnqueueResult {
     if (!Number.isInteger(playerCount) || playerCount < 1 || playerCount > MAX_PLAYERS) {
       throw new RangeError(`playerCount must be an integer in [1, ${MAX_PLAYERS}]`);
     }
     const queueId = `q${++this.counter}`;
-    const waiter: Waiter = { queueId, playerCount, mode, enqueuedAt: this.deps.nowMs(), ticket: null, groupId };
+    const waiter: Waiter = { queueId, playerCount, mode, enqueuedAt: this.deps.nowMs(), ticket: null, groupId, accountId };
     this.waiters.set(queueId, waiter);
     this.liveQueue(playerCount, mode).push(queueId);
 
@@ -283,7 +288,7 @@ export class Matchmaker {
       const w = this.waiters.get(id);
       if (!w) return;
       const teamId = teamIdForOwner(owner, playerCount);
-      const grant: TicketPayload = { roomId, owner, seed, playerCount, teamId, exp, mode };
+      const grant: TicketPayload = { roomId, owner, seed, playerCount, teamId, exp, mode, accountId: w.accountId };
       w.ticket = { roomId, owner, seed, playerCount, teamId, mode, token: this.sign(grant) };
     });
     return { roomId, seed };

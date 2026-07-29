@@ -65,6 +65,22 @@ describe('Matchmaker — grouping', () => {
     expect(payload).toMatchObject({ roomId: b.ticket!.roomId, owner: b.ticket!.owner, seed: b.ticket!.seed, playerCount: 2 });
   });
 
+  it('carries a logged-in accountId into the signed ticket (design/16-accounts.md)', () => {
+    const { mm, at } = make();
+    mm.enqueue(2, 'coop', undefined, 'acct-alice');
+    const b = mm.enqueue(2, 'coop', undefined, 'acct-bob');
+    const payload = verifyTicket(b.ticket!.token, SECRET, at());
+    expect(payload?.accountId).toBe('acct-bob');
+  });
+
+  it('omits accountId from the ticket for a guest caller (no behavior change for existing callers)', () => {
+    const { mm, at } = make();
+    mm.enqueue(2);
+    const b = mm.enqueue(2);
+    const payload = verifyTicket(b.ticket!.token, SECRET, at());
+    expect(payload?.accountId).toBeUndefined();
+  });
+
   it('forms back-to-back groups from a burst (4 → two 2-seat rooms)', () => {
     const { mm } = make();
     const r = [mm.enqueue(2), mm.enqueue(2), mm.enqueue(2), mm.enqueue(2)];

@@ -40,3 +40,24 @@ describe('buildRatingReportBody', () => {
     expect(b.accountIds[0]).toBe('seat:roomB:0');
   });
 });
+
+describe('buildRatingReportBody — seatAccounts (design/16-accounts.md)', () => {
+  it('uses the real accountId for a seat present in seatAccounts', () => {
+    const body = buildRatingReportBody('room1', 0, [1], { 0: 'acct-alice' });
+    const byAccount = new Map(body.accountIds.map((id, i) => [id, body.places[i]]));
+    expect(byAccount.get('acct-alice')).toBe(1); // winner, real account
+    expect([...byAccount.keys()]).toContain('seat:room1:1'); // the other seat: still scaffold
+  });
+
+  it('falls back to the scaffold id for any seat missing from seatAccounts', () => {
+    const body = buildRatingReportBody('room1', 0, [1], {});
+    expect(body.accountIds).toContain('seat:room1:0');
+    expect(body.accountIds).toContain('seat:room1:1');
+  });
+
+  it('omitting seatAccounts entirely reproduces the exact pre-account scaffold behavior', () => {
+    const withMap = buildRatingReportBody('room1', 0, [1], undefined);
+    const without = buildRatingReportBody('room1', 0, [1]);
+    expect(withMap).toEqual(without);
+  });
+});

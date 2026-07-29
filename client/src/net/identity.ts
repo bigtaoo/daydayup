@@ -1,10 +1,12 @@
 /**
- * Local player identity (design/05/15's PvP squad follow-up). No account/login system
- * exists anywhere in this project (see server/src/rating.ts's own note) — this is
- * deliberately just a random id generated once and persisted locally, exactly the
- * level of trust `POST /find`'s client-declared `playerCount`/`mode` already gets.
- * Never sent anywhere except party/matchmaking calls; not a real identity system.
+ * Local player identity (design/05/15's PvP squad follow-up; design/16-accounts.md).
+ * `getPlayerId()` prefers a logged-in account's real `accountId` (`net/session.ts`)
+ * once one exists; the random id below is only the guest/anonymous fallback, kept for
+ * players who never log in. This is the seam `server/src/ladderReport.ts`'s own note
+ * anticipated: "swapping in real account ids later is a caller-side change only."
  */
+import { getSession } from './session';
+
 const STORAGE_KEY = 'daydayup.playerId.v1';
 
 function randomId(): string {
@@ -39,8 +41,11 @@ export function createWebIdentityStore(key: string = STORAGE_KEY): IdentityStore
 
 let cached: string | null = null;
 
-/** The local player's persistent id, generating and saving one on first call. */
+/** The local player's persistent id: the real accountId once logged in, otherwise a
+ * generated-and-saved guest id. */
 export function getPlayerId(store: IdentityStore = createWebIdentityStore()): string {
+  const session = getSession();
+  if (session) return session.accountId;
   if (cached) return cached;
   const existing = store.load();
   if (existing) {

@@ -1,0 +1,88 @@
+/**
+ * Client auth calls (design/16-accounts.md). Fake-fetch driven, mirrors
+ * party.test.ts's style — the server's own AuthService.test.ts owns the real
+ * register/login/session behavior; this just pins the client's request/response shapes.
+ */
+import { describe, it, expect, vi } from 'vitest';
+import { register, login, logout, changePassword, fetchMe, fetchAccountMeta, saveAccountMeta } from './auth';
+
+const RESULT = { accountId: 'acct-1', username: 'alice', token: 'tok-1' };
+
+function fakeFetch(status: number, body: unknown) {
+  return vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({ ok: status < 400, status, json: async () => body }) as Response);
+}
+
+describe('auth client calls', () => {
+  it('register posts username+password and returns the session', async () => {
+    const fetch = fakeFetch(200, RESULT);
+    const result = await register('http://mm', 'alice', 'hunter22', { fetch });
+    expect(result).toEqual(RESULT);
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(url).toBe('http://mm/auth/register');
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ username: 'alice', password: 'hunter22' });
+  });
+
+  it('register rejects with the server error message', async () => {
+    const fetch = fakeFetch(400, { error: 'username already taken' });
+    await expect(register('http://mm', 'alice', 'hunter22', { fetch })).rejects.toThrow(/already taken/);
+  });
+
+  it('login posts username+password and returns the session', async () => {
+    const fetch = fakeFetch(200, RESULT);
+    const result = await login('http://mm', 'alice', 'hunter22', { fetch });
+    expect(result).toEqual(RESULT);
+  });
+
+  it('login rejects on wrong credentials', async () => {
+    const fetch = fakeFetch(401, { error: 'invalid username or password' });
+    await expect(login('http://mm', 'alice', 'wrong', { fetch })).rejects.toThrow(/invalid/);
+  });
+
+  it('logout posts the token', async () => {
+    const fetch = fakeFetch(200, { ok: true });
+    await logout('http://mm', 'tok-1', { fetch });
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(url).toBe('http://mm/auth/logout');
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ token: 'tok-1' });
+  });
+
+  it('changePassword posts token+old+new', async () => {
+    const fetch = fakeFetch(200, { ok: true });
+    await changePassword('http://mm', 'tok-1', 'old', 'newpassword1', { fetch });
+    const [, init] = fetch.mock.calls[0]!;
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ token: 'tok-1', oldPassword: 'old', newPassword: 'newpassword1' });
+  });
+
+  it('fetchMe sends a bearer token and returns the account', async () => {
+    const fetch = fakeFetch(200, { accountId: 'acct-1', username: 'alice' });
+    const me = await fetchMe('http://mm', 'tok-1', { fetch });
+    expect(me).toEqual({ accountId: 'acct-1', username: 'alice' });
+    const [, init] = fetch.mock.calls[0]!;
+    expect((init as RequestInit).headers).toMatchObject({ authorization: 'Bearer tok-1' });
+  });
+
+  it('fetchMe returns null on a 401', async () => {
+    const fetch = fakeFetch(401, { error: 'invalid or expired session' });
+    expect(await fetchMe('http://mm', 'bogus', { fetch })).toBeNull();
+  });
+
+  it('fetchAccountMeta returns the stored data', async () => {
+    const fetch = fakeFetch(200, { data: { unlockedBlueprints: ['a'] } });
+    const data = await fetchAccountMeta('http://mm', 'tok-1', { fetch });
+    expect(data).toEqual({ unlockedBlueprints: ['a'] });
+  });
+
+  it('fetchAccountMeta returns null for a brand-new account', async () => {
+    const fetch = fakeFetch(200, { data: null });
+    expect(await fetchAccountMeta('http://mm', 'tok-1', { fetch })).toBeNull();
+  });
+
+  it('saveAccountMeta posts the data with a bearer token', async () => {
+    const fetch = fakeFetch(200, { ok: true });
+    await saveAccountMeta('http://mm', 'tok-1', { unlockedBlueprints: ['a'] }, { fetch });
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(url).toBe('http://mm/account/meta');
+    expect((init as RequestInit).headers).toMatchObject({ authorization: 'Bearer tok-1' });
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ data: { unlockedBlueprints: ['a'] } });
+  });
+});

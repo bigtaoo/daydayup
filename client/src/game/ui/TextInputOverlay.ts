@@ -16,6 +16,8 @@ export interface TextInputOverlayOptions {
   maxLength?: number;
   /** Upper-cased as typed (join codes are alphabetic, case shouldn't matter to the player). */
   uppercase?: boolean;
+  /** Masks input as `••••` (design/16-accounts.md's password field) — otherwise plain text. */
+  password?: boolean;
   onSubmit: (value: string) => void;
   onCancel?: () => void;
 }
@@ -30,11 +32,11 @@ export class TextInputOverlay {
   open(opts: TextInputOverlayOptions): void {
     this.close(); // never stack two
     const input = document.createElement('input');
-    input.type = 'text';
+    input.type = opts.password ? 'password' : 'text';
     input.placeholder = opts.placeholder ?? '';
     input.maxLength = opts.maxLength ?? 32;
-    input.autocapitalize = 'characters';
-    input.autocomplete = 'off';
+    input.autocapitalize = opts.password ? 'off' : 'characters';
+    input.autocomplete = opts.password ? 'current-password' : 'off';
     input.spellcheck = false;
     Object.assign(input.style, {
       position: 'fixed',

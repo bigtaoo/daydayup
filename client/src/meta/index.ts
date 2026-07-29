@@ -4,3 +4,4 @@
 export * from './MetaState';
 export * from './forge';
 export * from './store';
+export * from './accountSync';

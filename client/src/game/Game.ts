@@ -15,8 +15,9 @@ import { LocalPredictor, DEFAULT_PREDICTOR } from './LocalPredictor';
 import {
   defaultMetaState, bankMaterials, craft, clearLoadout, selectCharacter,
   unlockBlueprint, acquireBlueprint, purchasableBlueprints,
-  createWebMetaStore, type MetaState, type MetaStore,
+  createAccountSyncMetaStore, pullAccountMeta, type MetaState, type MetaStore,
 } from '../meta';
+import { getSession } from '../net/session';
 import {
   defaultSettingsState, createWebSettingsStore, effectiveVolume,
   type SettingsState, type SettingsStore,
@@ -28,6 +29,7 @@ import { Screens } from './Screens';
 import { Forge } from './Forge';
 import { MainMenu } from './MainMenu';
 import { PartyScreen } from './PartyScreen';
+import { LoginScreen } from './LoginScreen';
 import { Settings } from './Settings';
 import { PauseMenu } from './PauseMenu';
 import { Button } from './ui/widgets';
@@ -62,7 +64,7 @@ const MAX_STEPS = 5; // catch-up cap per render frame → no spiral of death
 // tracks which phase to return to via settingsReturnPhase). 'squad' is the PvP
 // pre-formed-party lobby (design/05/15's squad follow-up) — the first runtime (not
 // boot-flag) entry point into PvP.
-type Phase = 'menu' | 'forge' | 'playing' | 'paused' | 'victory' | 'defeat' | 'settings' | 'squad';
+type Phase = 'menu' | 'forge' | 'playing' | 'paused' | 'victory' | 'defeat' | 'settings' | 'squad' | 'account';
 
 export class Game {
   private app: Application;
@@ -92,6 +94,9 @@ export class Game {
   // AFTER the constructor's `?matchBaseUrl=` query-param override has applied, which a
   // field initializer would run before (design/05/15's PvP squad follow-up).
   private partyScreen!: PartyScreen;
+  // Same constructed-in-start() reason as partyScreen — needs the post-override
+  // `this.matchBaseUrl` (design/16-accounts.md).
+  private loginScreen!: LoginScreen;
   private settingsScreen = new Settings();
   private pauseMenu = new PauseMenu();
   // Settings can be opened from the main menu, the forge, OR the in-run pause menu
@@ -106,7 +111,11 @@ export class Game {
   // Persistent between-run meta (design/14): loaded at boot, saved on every change. The
   // forge outpost mutates it (craft / character / acquire); a run reads only its
   // (skinId, loadout) at start and banks materials back into it on a successful extract.
-  private store: MetaStore = createWebMetaStore();
+  // Account-sync-aware (design/16-accounts.md): every save best-effort mirrors to
+  // `/account/meta` once logged in; a guest's behavior is unchanged. The `() =>
+  // this.matchBaseUrl` thunk is why this can stay a field initializer despite needing
+  // the post-query-param-override URL — see accountSync.ts's own comment.
+  private store: MetaStore = createAccountSyncMetaStore(() => this.matchBaseUrl);
   private meta: MetaState = defaultMetaState();
 
   // Persistent client-side settings (design/10/11: master/SFX/music volume + mute).
@@ -241,15 +250,24 @@ export class Game {
     // Constructed here, not as a field initializer — see the field's own doc comment
     // (needs `this.matchBaseUrl` after the constructor's query-param override).
     this.partyScreen = new PartyScreen({ matchBaseUrl: this.matchBaseUrl });
+    this.loginScreen = new LoginScreen({ matchBaseUrl: this.matchBaseUrl });
     this.layers.ui.addChild(
       this.mainMenu.view, this.forge.view, this.screens.view, this.settingsScreen.view, this.pauseMenu.view,
-      this.partyScreen.view,
+      this.partyScreen.view, this.loginScreen.view,
     );
     this.mainMenu.onPlay = () => this.showForge();
     this.mainMenu.onSquad = () => this.showSquad();
+    this.mainMenu.onAccount = () => this.showAccount();
     this.mainMenu.onSettings = () => this.openSettings();
     this.partyScreen.onBack = () => this.showMenu();
     this.partyScreen.onStartMatch = (partyId) => this.beginSquadMatch(partyId);
+    this.loginScreen.onBack = () => this.showMenu();
+    // A login/register/logout can change which MetaStore backs the forge (design/16
+    // -accounts.md's account-bound blueprints) and the main menu's own "Hi, X" label.
+    this.loginScreen.onSessionChange = () => {
+      this.mainMenu.refreshAccountLabel();
+      void this.syncMetaStoreWithSession();
+    };
     this.forge.onBack = () => this.showMenu();
     this.forge.onCycleCharacter = () => this.forgeCycleCharacter();
     this.forge.onClear = () => this.forgeClear();
@@ -387,6 +405,7 @@ export class Game {
     this.screens.hide();
     this.settingsScreen.hide();
     this.partyScreen.hide();
+    this.loginScreen.hide();
     this.settingsBtn.view.visible = false;
     const { w, h } = this.screenSize();
     this.mainMenu.show(w, h);
@@ -401,8 +420,23 @@ export class Game {
     this.forge.hide();
     this.screens.hide();
     this.settingsScreen.hide();
+    this.loginScreen.hide();
     const { w, h } = this.screenSize();
     this.partyScreen.show(w, h);
+  }
+
+  // Login/register/logout (design/16-accounts.md — the never-built account front
+  // door). BACK returns to the main menu, same shape as showSquad.
+  private showAccount() {
+    this.phase = 'account';
+    this.hudView.visible = false;
+    this.mainMenu.hide();
+    this.forge.hide();
+    this.screens.hide();
+    this.settingsScreen.hide();
+    this.partyScreen.hide();
+    const { w, h } = this.screenSize();
+    this.loginScreen.show(w, h);
   }
 
   /**
@@ -430,10 +464,34 @@ export class Game {
     this.screens.hide();
     this.settingsScreen.hide();
     this.partyScreen.hide();
+    this.loginScreen.hide();
     const { w, h } = this.screenSize();
     this.forge.render(this.meta, w, h);
     this.settingsBtn.view.position.set(w - 130, h - 50);
     this.settingsBtn.view.visible = true;
+  }
+
+  /**
+   * Re-syncs `this.meta` with the server right after a login/register
+   * (design/16-accounts.md). A brand-new account has no server state yet — that case
+   * pushes the current (possibly guest-accumulated) local state up instead of
+   * overwriting it with nothing. Best-effort: any network failure just keeps using
+   * local state, same as every other account-sync call in this project.
+   */
+  private async syncMetaStoreWithSession(): Promise<void> {
+    const session = getSession();
+    if (!session) return; // logged out — local state keeps being used as-is
+    try {
+      const remote = await pullAccountMeta(this.matchBaseUrl, session.token);
+      this.meta = remote ?? this.meta;
+      this.store.save(this.meta); // mirrors into localStorage and (if remote was null) pushes local state up
+      if (this.phase === 'forge') {
+        const { w, h } = this.screenSize();
+        this.forge.render(this.meta, w, h);
+      }
+    } catch {
+      /* offline/best-effort — keep using local state */
+    }
   }
 
   // Apply a forge control (web keyboard). Mutates meta through the pure forge

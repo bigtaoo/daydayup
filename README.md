@@ -37,4 +37,5 @@ npm run dev        # open http://localhost:5173
 - [x] PvP (Phase 4): 8-player solo-or-squad battle royale, team/hostility model, real 60-room arena map, shrinking zone, placement win condition, anti-cheat checkpoints, matchsvc Elo ladder — see `design/15-pvp-arena.md`
 - [x] PvP squads (design/05/15 follow-up): pre-formed party invite codes, squad-chunked matchmaking/teamId, gated bandage revive, party lobby UI
 - [x] Art pipeline (Phase 5): `.tao` rig runtime, full 3-character + boss/critter/brute/floater roster art, per-weapon art (9/11 ids), UI widget kit, post-processing/particles — real (non-placeholder) atlas art and WeChat device verification are the remaining work
+- [x] Accounts (Phase 6, `design/16-accounts.md`): real username/password login (SQLite via `node:sqlite`), never required to play — bound to PvP ladder rating and Forge blueprints/materials/loadout; third-party OAuth reserved, not built
 - [ ] WeChat mini-game adaptation (run in WeChat DevTools, see `design/04-wechat.md`)

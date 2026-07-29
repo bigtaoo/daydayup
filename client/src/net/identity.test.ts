@@ -5,6 +5,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { getPlayerId, resetIdentityCacheForTests, type IdentityStore } from './identity';
+import { setSession, resetSessionCacheForTests } from './session';
 
 function fakeStore(initial: string | null = null): IdentityStore {
   let value = initial;
@@ -16,7 +17,10 @@ function fakeStore(initial: string | null = null): IdentityStore {
   };
 }
 
-beforeEach(() => resetIdentityCacheForTests());
+beforeEach(() => {
+  resetIdentityCacheForTests();
+  resetSessionCacheForTests();
+});
 
 describe('getPlayerId', () => {
   it('generates and persists a new id when the store is empty', () => {
@@ -43,5 +47,12 @@ describe('getPlayerId', () => {
     resetIdentityCacheForTests();
     const b = getPlayerId(fakeStore());
     expect(a).not.toBe(b);
+  });
+
+  it('prefers the logged-in account id over the local guest id (design/16-accounts.md)', () => {
+    const store = fakeStore('local-guest-id');
+    expect(getPlayerId(store)).toBe('local-guest-id');
+    setSession({ accountId: 'acct-1', username: 'alice', token: 'tok-1' });
+    expect(getPlayerId(store)).toBe('acct-1');
   });
 });

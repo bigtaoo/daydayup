@@ -22,24 +22,40 @@
  *   POST /party/leave       { partyId, playerId }        → PartyInfo | null
  *   POST /party/start       { partyId, playerId }        → PartyInfo | 404 (leader only)
  *   GET  /party/:id                                       → PartyInfo | 404
+ *   POST /auth/register     { username, password }        → { accountId, username, token } | 400
+ *   POST /auth/login        { username, password }        → { accountId, username, token } | 401
+ *   POST /auth/logout       { token }                      → { ok: true }
+ *   GET  /auth/me           (Bearer token)                 → { accountId, username } | 401
+ *   POST /auth/change-password { token, oldPassword, newPassword } → { ok: true } | 400/401
+ *   GET  /account/meta      (Bearer token)                 → { data: MetaState | null } | 401
+ *   POST /account/meta      (Bearer token) { data }        → { ok: true } | 400/401
  *   GET  /health
  *
  * Party endpoints (design/05/15's PvP squad follow-up) back `PartyService` — pure
- * pre-match grouping with no account system underneath (none exists anywhere in this
- * project, see `rating.ts`'s own note). A `playerId` is whatever opaque string the
- * client generates and persists locally; nothing here verifies it.
+ * pre-match grouping. A `playerId` is whatever opaque string the client sends; once a
+ * player is logged in (design/16-accounts.md) the client sends its real `accountId` as
+ * `playerId` here, but this file still doesn't verify it — the account layer only
+ * gates the `/auth/*` and `/account/*` routes themselves.
+ *
+ * `/auth/*` and `/account/*` (design/16-accounts.md) are this project's first real
+ * account system — `AuthService` owns a SQLite-backed (`node:sqlite`) accounts/sessions
+ * store; every `/account/*` route requires a live session via `Authorization: Bearer
+ * <token>`, checked by the local `requireAuth` helper below.
  *
  * `match` = { wsUrl, roomId, owner, seed, playerCount, token } — everything the client
  * needs to open `${wsUrl}?ticket=${token}` (see client/src/net/matchmaking.ts).
  */
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
 import { randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { Matchmaker, type MatchTicket } from './Matchmaker';
 import { RatingStore } from './rating';
 import { PartyService } from './PartyService';
 import { signTicket, type MatchMode, type TicketPayload } from './ticket';
 import { ticketSecret, teamIdForOwner } from './config';
 import { spawnBotClient } from './BotClient';
+import { openDb } from './db';
+import { AuthService } from './AuthService';
 
 // A short, human-typeable join code — unambiguous alphabet (no 0/O/1/I) since a
 // player reads/types this to a friend, not a machine.
@@ -58,11 +74,32 @@ const GAMESERVER_URL = process.env.DDU_GAMESERVER_URL ?? 'ws://localhost:8787/ws
 const CORS = {
   'access-control-allow-origin': '*',
   'access-control-allow-methods': 'GET,POST,OPTIONS',
-  'access-control-allow-headers': 'content-type',
+  // 'authorization' (design/16-accounts.md) — every /auth/me and /account/* call sends
+  // a bearer token; omitting it here makes the browser's CORS preflight reject the
+  // real request before it's even sent (fails as a bare "Failed to fetch", no server
+  // log at all — caught live via claude-in-chrome, not by any unit test, since node's
+  // fetch/undici and curl don't enforce browser CORS preflight rules).
+  'access-control-allow-headers': 'content-type, authorization',
 };
 
-function main(): void {
-  const { secret } = ticketSecret();
+export interface MatchsvcServerOptions {
+  /** DB path override (design/16-accounts.md) — tests pass `':memory:'` for isolation;
+   * defaults to `openDb`'s own real-file default. */
+  dbPath?: string;
+  /** Ticket-signing secret override — tests can pin a fixed value; defaults to `ticketSecret()`. */
+  secret?: string;
+}
+
+/**
+ * Builds the matchsvc HTTP server WITHOUT starting it (`server.listen()` is the
+ * caller's job) — the seam that makes this file testable. `main()` below is the real
+ * CLI entrypoint; `server/test/matchsvc.http.test.ts` calls this directly and binds an
+ * ephemeral port instead, so real HTTP requests (including a real CORS preflight) can
+ * be asserted without a network stub — the exact layer that let design/16-accounts.md's
+ * missing-`authorization`-header CORS bug slip past every other test.
+ */
+export function createMatchsvcServer(opts: MatchsvcServerOptions = {}): Server {
+  const secret = opts.secret ?? ticketSecret().secret;
   // Seeds only need to differ per room (the engine derives all determinism from seed +
   // inputs); a counter off the start time avoids Math.random and cross-restart collision.
   let seedCounter = Date.now() & 0x7fffffff;
@@ -103,6 +140,8 @@ function main(): void {
     newPartyId: () => randomUUID(),
     newCode: randomCode,
   });
+  const db = openDb(opts.dbPath);
+  const auth = new AuthService(db);
 
   const server = createServer((req, res) => {
     if (req.method === 'OPTIONS') return send(res, 204, {});
@@ -125,8 +164,15 @@ function main(): void {
         // one squad chunk. Absent (every pre-party caller) → plain FIFO, unaffected.
         const rawGroupId = (body as { partyId?: unknown })?.partyId;
         const groupId = typeof rawGroupId === 'string' && rawGroupId ? rawGroupId : undefined;
+        // The logged-in caller's real account id (design/16-accounts.md), if any —
+        // absent for guests/bots, in which case ladderReport.ts falls back to its
+        // seat:{roomId}:{seatIdx} scaffold. Never verified against a live session here
+        // (matchsvc trusts it exactly as much as playerCount/mode already were); the
+        // account layer's trust boundary is `/auth/*`/`/account/*`, not `/find`.
+        const rawAccountId = (body as { accountId?: unknown })?.accountId;
+        const accountId = typeof rawAccountId === 'string' && rawAccountId ? rawAccountId : undefined;
         try {
-          const { queueId, ticket } = matchmaker.enqueue(playerCount, mode, groupId);
+          const { queueId, ticket } = matchmaker.enqueue(playerCount, mode, groupId, accountId);
           send(res, 200, { queueId, match: ticket ? withUrl(ticket) : undefined });
         } catch (e) {
           send(res, 400, { error: (e as Error).message });
@@ -210,12 +256,91 @@ function main(): void {
       return send(res, 200, info);
     }
 
+    // Accounts (design/16-accounts.md) — this project's first real login system.
+    if (req.method === 'POST' && url.pathname === '/auth/register') {
+      return readJson(req, (body) => {
+        const { username, password } = (body as { username?: unknown; password?: unknown }) ?? {};
+        const result = auth.register(username, password);
+        send(res, 'error' in result ? 400 : 200, result);
+      });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/auth/login') {
+      return readJson(req, (body) => {
+        const { username, password } = (body as { username?: unknown; password?: unknown }) ?? {};
+        const result = auth.login(username, password);
+        send(res, 'error' in result ? 401 : 200, result);
+      });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/auth/logout') {
+      return readJson(req, (body) => {
+        const token = (body as { token?: unknown })?.token;
+        if (typeof token === 'string') auth.logout(token);
+        send(res, 200, { ok: true });
+      });
+    }
+
+    if (req.method === 'GET' && url.pathname === '/auth/me') {
+      const session = requireAuth(req, auth);
+      if (!session) return send(res, 401, { error: 'invalid or expired session' });
+      return send(res, 200, session);
+    }
+
+    if (req.method === 'POST' && url.pathname === '/auth/change-password') {
+      return readJson(req, (body) => {
+        const { token, oldPassword, newPassword } =
+          (body as { token?: unknown; oldPassword?: unknown; newPassword?: unknown }) ?? {};
+        const session = auth.verifySession(token);
+        if (!session) return send(res, 401, { error: 'invalid or expired session' });
+        const result = auth.changePassword(session.accountId, oldPassword, newPassword);
+        send(res, 'error' in result ? 400 : 200, result);
+      });
+    }
+
+    // Account-bound meta state (design/16-accounts.md, ROADMAP 2.x's blueprint/loadout
+    // persistence) — the client's `MetaState` (blueprints/materials/loadout), previously
+    // localStorage-only, mirrored here once a player is logged in.
+    if (req.method === 'GET' && url.pathname === '/account/meta') {
+      const session = requireAuth(req, auth);
+      if (!session) return send(res, 401, { error: 'invalid or expired session' });
+      const row = db.prepare('SELECT data FROM meta_state WHERE account_id = ?').get(session.accountId) as
+        | { data: string }
+        | undefined;
+      return send(res, 200, { data: row ? (JSON.parse(row.data) as unknown) : null });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/account/meta') {
+      const session = requireAuth(req, auth);
+      if (!session) return send(res, 401, { error: 'invalid or expired session' });
+      return readJson(req, (body) => {
+        const data = (body as { data?: unknown })?.data;
+        if (data === undefined) return send(res, 400, { error: 'data required' });
+        db.prepare(
+          'INSERT INTO meta_state (account_id, data) VALUES (?, ?) ON CONFLICT(account_id) DO UPDATE SET data = excluded.data',
+        ).run(session.accountId, JSON.stringify(data));
+        send(res, 200, { ok: true });
+      });
+    }
+
     send(res, 404, { error: 'not found' });
   });
 
+  return server;
+}
+
+function main(): void {
+  const server = createMatchsvcServer();
   server.listen(PORT, HOST, () => {
     console.log(`daydayup matchsvc (control plane) on http://${HOST}:${PORT}  → ${GAMESERVER_URL}`);
   });
+}
+
+/** Parses `Authorization: Bearer <token>` and resolves it to a live session, or `null`. */
+function requireAuth(req: IncomingMessage, auth: AuthService): { accountId: string; username: string } | null {
+  const header = req.headers.authorization;
+  if (!header || !header.startsWith('Bearer ')) return null;
+  return auth.verifySession(header.slice('Bearer '.length));
 }
 
 function send(res: ServerResponse, status: number, body: unknown): void {
@@ -243,4 +368,9 @@ function readJson(req: IncomingMessage, done: (body: unknown) => void): void {
   req.on('error', () => done({}));
 }
 
-main();
+// Only auto-start when run directly (`node --import tsx/esm src/matchsvc.ts`), not when
+// imported by a test — the ESM equivalent of `require.main === module`, needed now that
+// `createMatchsvcServer` is a real importable export (design/16-accounts.md).
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main();
+}

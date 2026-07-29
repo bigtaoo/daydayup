@@ -43,7 +43,7 @@ const MATCHSVC_URL = process.env.DDU_MATCHSVC_URL;
  */
 function reportSettledMatch(match: SettledMatch): void {
   if (!MATCHSVC_URL || !match.hashOk || !match.placements || typeof match.winner !== 'number') return;
-  const body = buildRatingReportBody(match.roomId, match.winner, match.placements);
+  const body = buildRatingReportBody(match.roomId, match.winner, match.placements, match.seatAccounts);
   fetch(`${MATCHSVC_URL}/rating/report`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -59,6 +59,7 @@ class SocketConnection implements RoomConnection {
     readonly owner: number,
     readonly roomId: string,
     private readonly ws: WebSocket,
+    readonly accountId?: string,
   ) {}
   send(msg: ServerMsg): void {
     if (this.ws.readyState === this.ws.OPEN) this.ws.send(JSON.stringify(msg));
@@ -71,6 +72,9 @@ interface Seat {
   seed: number;
   count: number;
   mode: MatchMode;
+  /** The logged-in account behind this seat (design/16-accounts.md), from the verified
+   * ticket. `undefined` for guests/bots or the legacy dev raw-param handshake. */
+  accountId?: string;
 }
 
 /**
@@ -90,6 +94,7 @@ function resolveSeat(url: URL, secret: string, isDev: boolean): Seat | null {
       seed: payload.seed,
       count: payload.playerCount,
       mode: payload.mode ?? 'coop',
+      accountId: payload.accountId,
     };
   }
   if (!isDev) return null; // a configured secret ⇒ ticket mandatory
@@ -137,9 +142,9 @@ function main(): void {
       ws.close(4401, 'invalid or missing ticket');
       return;
     }
-    const { roomId, owner, seed, count, mode } = seat;
+    const { roomId, owner, seed, count, mode, accountId } = seat;
 
-    const conn = new SocketConnection(owner, roomId, ws);
+    const conn = new SocketConnection(owner, roomId, ws, accountId);
     const seated = manager.join(conn, roomId, seed, count, mode);
     if (!seated) {
       ws.close(4403, 'seat unavailable / room mismatch');

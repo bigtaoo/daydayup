@@ -18,6 +18,9 @@ platforms/
 *.log
 npm-debug.log*
 
+# Local SQLite account DB (design/16-accounts.md) — dev/runtime state, not source
+server/data/
+
 # Editor / OS
 .DS_Store
 Thumbs.db
