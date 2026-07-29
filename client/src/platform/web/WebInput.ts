@@ -1,4 +1,4 @@
-import type { InputCanvas, InputSource, InputState } from '../types';
+import type { InputCanvas, InputSource, InputState, TouchVisual } from '../types';
 import { TouchControls } from '../TouchControls';
 
 // Web input. Desktop uses keyboard + mouse; touch devices (mobile browser, Capacitor
@@ -59,6 +59,10 @@ export class WebInput implements InputSource {
     const end = (e: TouchEvent) => { e.preventDefault(); for (const t of Array.from(e.changedTouches)) this.controls.pointerUp(t.identifier); };
     canvas.addEventListener('touchend', end, { passive: false });
     canvas.addEventListener('touchcancel', end, { passive: false });
+  }
+
+  getTouchVisual(): TouchVisual {
+    return this.controls.getVisual();
   }
 
   read(): InputState {

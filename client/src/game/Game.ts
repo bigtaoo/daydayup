@@ -32,6 +32,7 @@ import { PauseMenu } from './PauseMenu';
 import { Button } from './ui/widgets';
 import { FxController } from './FxController';
 import { HudView } from './HudView';
+import { TouchControlsView } from './ui/TouchControlsView';
 import { CommandBuilder } from './CommandBuilder';
 import { AllyController } from './AllyController';
 import { EventReactor } from './EventReactor';
@@ -75,6 +76,10 @@ export class Game {
   // every phase transition toggles; `hud` owns the actual widgets (see HudView.ts).
   private hudView = new Container();
   private readonly hud = new HudView();
+  // On-screen sticks/buttons for touch play (design/10 open question) — pure
+  // presentation over TouchControls' own hit-test geometry, mounted in `hudView` so it
+  // shares the exact same phase-driven visibility as the rest of the in-run HUD.
+  private readonly touchControlsView = new TouchControlsView();
   private settingsBtn!: Button;
 
   private screens = new Screens();
@@ -273,7 +278,7 @@ export class Game {
 
   private buildHud() {
     this.hud.build(this.layers, this.screenSize());
-    this.hudView.addChild(this.hud.view);
+    this.hudView.addChild(this.hud.view, this.touchControlsView.view);
     this.layers.ui.addChild(this.hudView);
 
     // Settings entry (design/10) — only shown in the forge phase (showForge/beginRun).
@@ -648,6 +653,7 @@ export class Game {
     this.updateCamera(alpha);
     if (this.phase === 'playing') {
       this.updateHud(dt);
+      this.touchControlsView.update(this.input.getTouchVisual());
       // Keep the confirm edge fresh so arriving on a result screen with fire still
       // held doesn't instantly restart (the press must be released and re-issued).
       this.prevFire = this.input.read().firing;
@@ -779,6 +785,7 @@ export class Game {
     this.updateFx(dt);
     this.updateCamera(1);
     this.updateHud(dt);
+    this.touchControlsView.update(this.input.getTouchVisual());
     this.prevFire = this.input.read().firing;
 
     if (s.phase === 'gameover') {

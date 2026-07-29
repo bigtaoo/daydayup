@@ -34,11 +34,34 @@ export interface InputCanvas {
   getBoundingClientRect?: () => { left: number; top: number };
 }
 
+// Render-facing geometry snapshot of the on-screen touch controls (TouchControls.ts) —
+// exactly the values a render layer needs to draw sticks/buttons in the same place
+// TouchControls hit-tests them, so the visual never drifts from the real hit zones.
+// `active` is true once the player has touched the screen at least once this session
+// (not just "a stick is currently held") — a render layer gates all drawing on it so a
+// desktop/mouse session never shows the overlay.
+export interface TouchVisual {
+  active: boolean;
+  // Shared hit-zone radius (CSS px, from TouchControls.layout()) for both sticks' base circles.
+  stickRadius: number;
+  // Null when that stick isn't currently held. ox/oy is the touch-down origin (dynamic,
+  // set fresh each press); dx/dy is the current pixel offset from it, already clamped
+  // to stickRadius — same units as ox/oy, so a render layer can draw the knob at
+  // (ox + dx, oy + dy) with no further math.
+  move: { ox: number; oy: number; dx: number; dy: number } | null;
+  aim: { ox: number; oy: number; dx: number; dy: number } | null;
+  weapon1: { cx: number; cy: number; r: number };
+  weapon2: { cx: number; cy: number; r: number };
+}
+
 // A swappable input device. Web = keyboard + mouse; WeChat = virtual joystick + touch.
 export interface InputSource {
   onSwitchWeapon: ((slot: number) => void) | null;
   attach(canvas: InputCanvas): void;
   read(): InputState;
+  // Both Web and WeChat proxy this straight from their shared TouchControls instance
+  // (platform/TouchControls.ts) — see TouchVisual's own doc comment.
+  getTouchVisual(): TouchVisual;
 }
 
 // Audio cue vocabulary — a small closed set of ids, shared with fx/animation

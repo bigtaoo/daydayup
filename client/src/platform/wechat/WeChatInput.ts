@@ -1,5 +1,5 @@
 import type { Application } from 'pixi.js';
-import type { InputSource, InputState } from '../types';
+import type { InputSource, InputState, TouchVisual } from '../types';
 import { TouchControls } from '../TouchControls';
 
 // WeChat touch input: feeds wx global touch events into the shared TouchControls.
@@ -38,5 +38,9 @@ export class WeChatInput implements InputSource {
 
   read(): InputState {
     return this.controls.read();
+  }
+
+  getTouchVisual(): TouchVisual {
+    return this.controls.getVisual();
   }
 }

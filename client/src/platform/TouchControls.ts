@@ -1,4 +1,4 @@
-import type { InputState } from './types';
+import type { InputState, TouchVisual } from './types';
 
 // Platform-agnostic virtual twin-stick controls.
 //
@@ -33,6 +33,11 @@ export class TouchControls {
   private move: Stick | null = null;
   private aim: Stick | null = null;
 
+  // Set on the first pointerDown ever and never cleared — this is "is this session a
+  // touch session" (drives TouchVisual.active), distinct from hasActiveTouch() below,
+  // which is momentary and drives which input source read() prefers right now.
+  private everTouched = false;
+
   private weapon1Btn: Button = { cx: 0, cy: 0, r: 0 };
   private weapon2Btn: Button = { cx: 0, cy: 0, r: 0 };
 
@@ -50,6 +55,8 @@ export class TouchControls {
   }
 
   pointerDown(id: number, x: number, y: number) {
+    this.everTouched = true;
+
     // Buttons take priority over the sticks.
     if (inCircle(x, y, this.weapon1Btn)) {
       this.onSwitchWeapon?.(1);
@@ -80,6 +87,24 @@ export class TouchControls {
   // mouse/keyboard (desktop Web) decide which source is currently driving.
   hasActiveTouch(): boolean {
     return this.move !== null || this.aim !== null;
+  }
+
+  // Render-facing snapshot for the on-screen overlay (TouchControlsView) — see
+  // TouchVisual's doc comment (platform/types.ts). dx/dy are converted back from the
+  // normalized [-1,1] `read()` uses into the raw pixel offset a render layer wants.
+  getVisual(): TouchVisual {
+    return {
+      active: this.everTouched,
+      stickRadius: this.stickRadius,
+      move: this.move
+        ? { ox: this.move.ox, oy: this.move.oy, dx: this.move.dx * this.stickRadius, dy: this.move.dy * this.stickRadius }
+        : null,
+      aim: this.aim
+        ? { ox: this.aim.ox, oy: this.aim.oy, dx: this.aim.dx * this.stickRadius, dy: this.aim.dy * this.stickRadius }
+        : null,
+      weapon1: { ...this.weapon1Btn },
+      weapon2: { ...this.weapon2Btn },
+    };
   }
 
   private updateStick(s: Stick, x: number, y: number) {
