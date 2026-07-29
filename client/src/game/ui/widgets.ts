@@ -144,13 +144,22 @@ export class Button {
   constructor(text: string, opts: { w: number; h: number; color?: number; textColor?: number; fontSize?: number }) {
     const { w, h, color = 0x2a3140, textColor = 0xe2e8f0, fontSize = 15 } = opts;
     this.bg.roundRect(0, 0, w, h, Math.min(8, h / 2)).fill({ color, alpha: 0.9 });
-    this.label = new Text({ text, style: { fill: textColor, fontSize, fontFamily: 'monospace', fontWeight: 'bold' } });
+    // `padding` works around a real font-metrics mismatch observed in headless/sandboxed
+    // Chromium: Pixi's own text measurement can come in narrower than the canvas's actual
+    // paint-time glyph width for bold text, clipping the last character(s) — Pixi's own
+    // documented mitigation ("occasionally some fonts are cropped").
+    this.label = new Text({ text, style: { fill: textColor, fontSize, fontFamily: 'monospace', fontWeight: 'bold', padding: 14 } });
     this.label.anchor.set(0.5);
     this.label.position.set(w / 2, h / 2);
     this.view.addChild(this.bg, this.label);
     this.view.eventMode = 'static';
     this.view.cursor = 'pointer';
     this.view.on('pointertap', () => this.onTap?.());
+    // A button nested inside a screen that ALSO has its own full-panel `pointerdown`
+    // handler (e.g. Screens.ts's tap-anywhere-to-confirm) would otherwise double-fire —
+    // pointerdown bubbles to ancestors regardless of what consumes the later tap. Stop
+    // it here once so every button is safe to drop onto such a screen.
+    this.view.on('pointerdown', (e) => e.stopPropagation());
   }
 
   setText(text: string) {

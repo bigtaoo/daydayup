@@ -79,10 +79,13 @@ export class CompareCard {
   private body: Text;
 
   constructor() {
-    this.leftName = new Text({ text: '', style: { fill: 0xe2e8f0, fontSize: 15, fontWeight: 'bold', fontFamily: 'monospace' } });
-    this.rightName = new Text({ text: '', style: { fill: 0xe2e8f0, fontSize: 15, fontWeight: 'bold', fontFamily: 'monospace' } });
+    // `padding` guards against a real observed font-metrics clipping bug (widgets.ts's
+    // Button doc comment has the full explanation) — this card's own name/body Text
+    // showed the same cropped-last-character symptom before this fix.
+    this.leftName = new Text({ text: '', style: { fill: 0xe2e8f0, fontSize: 15, fontWeight: 'bold', fontFamily: 'monospace', padding: 16 } });
+    this.rightName = new Text({ text: '', style: { fill: 0xe2e8f0, fontSize: 15, fontWeight: 'bold', fontFamily: 'monospace', padding: 16 } });
     this.rightName.anchor.set(1, 0);
-    this.body = new Text({ text: '', style: { fill: 0xcbd5e0, fontSize: 14, fontFamily: 'monospace', lineHeight: 19 } });
+    this.body = new Text({ text: '', style: { fill: 0xcbd5e0, fontSize: 14, fontFamily: 'monospace', lineHeight: 19, padding: 16 } });
     this.view.addChild(this.panel.view, this.leftBorder, this.rightBorder, this.leftName, this.rightName, this.body);
     this.view.visible = false;
   }

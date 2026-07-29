@@ -26,6 +26,7 @@ import { Layers } from './layers';
 import { Scene } from './Scene';
 import { Screens } from './Screens';
 import { Forge } from './Forge';
+import { MainMenu } from './MainMenu';
 import { Settings } from './Settings';
 import { PauseMenu } from './PauseMenu';
 import { Button } from './ui/widgets';
@@ -52,11 +53,12 @@ const SIM_DT_MS = 1000 / 30; // fixed sim step: the engine runs at 30 Hz (design
 const MAX_STEPS = 5; // catch-up cap per render frame → no spiral of death
 
 // Render-side run phases (design/10). The engine only knows idle/playing/gameover;
-// the forge outpost (the between-run hub, design/14) and the result screens live here in
-// the shell, along with score (derived from events). 'paused' is the in-run pause menu
-// (design/10's own open question, resolved) — 'settings' also serves as the pause
-// menu's settings sub-screen (Game tracks which phase to return to via pausedFromSettings).
-type Phase = 'forge' | 'playing' | 'paused' | 'victory' | 'defeat' | 'settings';
+// the main menu (the boot front door), the forge/loadout outpost (the between-run hub,
+// design/14), and the result screens live here in the shell, along with score (derived
+// from events). 'paused' is the in-run pause menu (design/10's own open question,
+// resolved) — 'settings' also serves as the pause menu's settings sub-screen (Game
+// tracks which phase to return to via settingsReturnPhase).
+type Phase = 'menu' | 'forge' | 'playing' | 'paused' | 'victory' | 'defeat' | 'settings';
 
 export class Game {
   private app: Application;
@@ -77,12 +79,13 @@ export class Game {
 
   private screens = new Screens();
   private forge = new Forge();
+  private mainMenu = new MainMenu();
   private settingsScreen = new Settings();
   private pauseMenu = new PauseMenu();
-  // Settings can be opened from either the forge OR the in-run pause menu (design/10);
-  // this is which phase the settings screen's BACK button returns to. Set right before
-  // each openSettings()/openSettingsFromPause() call, never read otherwise.
-  private settingsReturnPhase: 'forge' | 'paused' = 'forge';
+  // Settings can be opened from the main menu, the forge, OR the in-run pause menu
+  // (design/10); this is which phase the settings screen's BACK button returns to. Set
+  // right before each openSettings()/openSettingsFromPause() call, never read otherwise.
+  private settingsReturnPhase: 'menu' | 'forge' | 'paused' = 'menu';
   private readonly roomBuilder = new RoomBuilder(this.layers);
   // Win/lose/placement screens (design/15), extracted into RunOutcome 2026-07-28 — `this`
   // is its host for the score/meta/phase/screen reactions (see that file's doc comment).
@@ -99,7 +102,7 @@ export class Game {
   private settingsStore: SettingsStore = createWebSettingsStore();
   private settings: SettingsState = defaultSettingsState();
 
-  private phase: Phase = 'forge';
+  private phase: Phase = 'menu';
   private acc = 0; // accumulated real time (ms) not yet consumed by a sim step
   private runCount = 0;
   private score = 0;
@@ -218,8 +221,18 @@ export class Game {
     // `world` only — the `ui` layer (HUD/menus) must stay crisp and undistorted.
     this.fx.attach();
 
-    this.layers.ui.addChild(this.forge.view, this.screens.view, this.settingsScreen.view, this.pauseMenu.view);
+    this.layers.ui.addChild(
+      this.mainMenu.view, this.forge.view, this.screens.view, this.settingsScreen.view, this.pauseMenu.view,
+    );
+    this.mainMenu.onPlay = () => this.showForge();
+    this.mainMenu.onSettings = () => this.openSettings();
+    this.forge.onBack = () => this.showMenu();
+    this.forge.onCycleCharacter = () => this.forgeCycleCharacter();
+    this.forge.onClear = () => this.forgeClear();
+    this.forge.onCraftAt = (i) => this.forgeCraftAt(i);
+    this.forge.onStart = () => this.confirm();
     this.screens.onConfirm = () => this.confirm();
+    this.screens.onMenu = () => this.showMenu();
     this.pauseMenu.onResume = () => this.resume();
     this.pauseMenu.onSettings = () => this.openSettingsFromPause();
     this.pauseMenu.onQuit = () => this.quitRun();
@@ -249,7 +262,7 @@ export class Game {
       });
     }
 
-    this.showForge();
+    this.showMenu();
     this.app.ticker.add((t) => this.update(t.deltaMS));
   }
 
@@ -272,17 +285,19 @@ export class Game {
   }
 
   private openSettings() {
-    if (this.phase !== 'forge') return;
-    this.settingsReturnPhase = 'forge';
+    if (this.phase !== 'forge' && this.phase !== 'menu') return;
+    this.settingsReturnPhase = this.phase;
     this.phase = 'settings';
     this.forge.hide();
+    this.mainMenu.hide();
     this.settingsBtn.view.visible = false;
     const { w, h } = this.screenSize();
     this.settingsScreen.show(w, h, this.settings);
   }
 
   private closeSettings() {
-    this.showForge();
+    if (this.settingsReturnPhase === 'menu') this.showMenu();
+    else this.showForge();
   }
 
   // ---- In-run pause menu (design/10, now resolved) ----
@@ -338,11 +353,26 @@ export class Game {
 
   // ---- Run lifecycle ----
 
-  // The forge outpost — the between-run hub (design/14). Shows the current meta (bank /
-  // blueprints / loadout / character); Fire or Enter descends into a run.
+  // The main menu — the boot front door (design/10 screen flow). PLAY drops into the
+  // forge/loadout screen below; SETTINGS reuses the same settings overlay the forge uses.
+  private showMenu() {
+    this.phase = 'menu';
+    this.hudView.visible = false;
+    this.forge.hide();
+    this.screens.hide();
+    this.settingsScreen.hide();
+    this.settingsBtn.view.visible = false;
+    const { w, h } = this.screenSize();
+    this.mainMenu.show(w, h);
+  }
+
+  // The forge outpost / loadout screen — the between-run hub (design/14). Shows the
+  // current meta (bank / blueprints / loadout / character); Fire, Enter, or the START
+  // RUN button descends into a run.
   private showForge() {
     this.phase = 'forge';
     this.hudView.visible = false;
+    this.mainMenu.hide();
     this.screens.hide();
     this.settingsScreen.hide();
     const { w, h } = this.screenSize();
@@ -352,44 +382,73 @@ export class Game {
   }
 
   // Apply a forge control (web keyboard). Mutates meta through the pure forge
-  // transactions, persists, and re-renders. No-op outside the forge phase.
+  // transactions, persists, and re-renders. No-op outside the forge phase. Digits/C/X
+  // route through the SAME private methods the Loadout screen's buttons call
+  // (forgeCraftAt/forgeCycleCharacter/forgeClear) — one source of truth for both input
+  // paths, not duplicated logic.
   private onForgeKey(code: string) {
     if (this.phase !== 'forge') return;
     const digit = /^Digit([1-9])$/.exec(code);
-    let next = this.meta;
     if (digit) {
-      const id = this.forge.order[Number(digit[1]) - 1];
-      if (id) {
-        const res = craft(this.meta, id);
-        if (res.ok) next = res.meta; // silently ignores locked/unaffordable/full
-      }
+      const i = Number(digit[1]) - 1;
+      if (this.forge.order[i]) this.forgeCraftAt(i);
     } else if (code === 'KeyC') {
-      next = this.cycleCharacter(this.meta);
+      this.forgeCycleCharacter();
     } else if (code === 'KeyX') {
-      next = clearLoadout(this.meta);
+      this.forgeClear();
     } else if (code === 'KeyB') {
       const buyable = purchasableBlueprints(this.meta);
-      if (buyable[0]) next = acquireBlueprint(this.meta, buyable[0]); // demo: free grant (2.4 scaffold)
+      if (buyable[0]) {
+        this.meta = acquireBlueprint(this.meta, buyable[0]); // demo: free grant (2.4 scaffold)
+        this.store.save(this.meta);
+        const { w, h } = this.screenSize();
+        this.forge.render(this.meta, w, h);
+      }
     } else if (code === 'KeyO') {
       this.openSettings();
-      return;
     } else if (code === 'Enter' || code === 'NumpadEnter') {
       this.confirm();
-      return;
     } else if (code === 'ArrowUp' || code === 'ArrowDown') {
       // Browse cursor only (design/10 compare card) — never crafts, so it can't be
-      // confused with the digit keys' immediate craft.
+      // confused with the digit keys'/row taps' immediate craft.
       this.forge.moveSelection(code === 'ArrowUp' ? -1 : 1);
       const { w, h } = this.screenSize();
       this.forge.render(this.meta, w, h);
-      return;
     }
+  }
+
+  /** Craft blueprint `i` into the loadout (digit key or a Loadout-screen row tap) —
+   * also moves the browse cursor onto it, so the compare card previews what was just
+   * crafted. Silently ignores locked/unaffordable/full, same as before. */
+  private forgeCraftAt(i: number) {
+    this.forge.selectedIndex = i;
+    const id = this.forge.order[i];
+    if (id) {
+      const res = craft(this.meta, id);
+      if (res.ok) {
+        this.meta = res.meta;
+        this.store.save(this.meta);
+      }
+    }
+    const { w, h } = this.screenSize();
+    this.forge.render(this.meta, w, h);
+  }
+
+  private forgeCycleCharacter() {
+    const next = this.cycleCharacter(this.meta);
     if (next !== this.meta) {
       this.meta = next;
       this.store.save(this.meta);
       const { w, h } = this.screenSize();
       this.forge.render(this.meta, w, h);
     }
+  }
+
+  private forgeClear() {
+    this.meta = clearLoadout(this.meta);
+    this.store.save(this.meta);
+    const { w, h } = this.screenSize();
+    this.forge.render(this.meta, w, h);
   }
 
   /** Advance the chosen character to the next owned one (design/14 roster select). */
@@ -501,9 +560,9 @@ export class Game {
     this.store.save(this.meta);
   }
 
-  showOutcomeScreen(title: string, body: string): void {
+  showOutcomeScreen(title: string, lines: readonly string[]): void {
     const { w, h } = this.screenSize();
-    this.screens.show(w, h, title, body, 'Press Fire — back to the forge');
+    this.screens.show(w, h, title, lines, 'Press Fire — back to the loadout');
   }
 
   /**
@@ -538,7 +597,8 @@ export class Game {
 
   private confirm() {
     this.audio.resume(); // a confirm tap is a user gesture — clears the autoplay gate (design/11)
-    if (this.phase === 'forge') this.beginRun();
+    if (this.phase === 'menu') this.showForge();
+    else if (this.phase === 'forge') this.beginRun();
     else if (this.phase === 'victory' || this.phase === 'defeat') this.showForge();
   }
 

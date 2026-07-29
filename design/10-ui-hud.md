@@ -12,19 +12,23 @@ The player-facing shell around the engine: the **HUD** during play, the **screen
 
 ## Screen flow (the MVP shell)
 
-The minimal loop a player can complete start-to-finish. This is the part the current vertical slice (`Game.ts`) is missing — it drops you straight into a scene with no way to win or restart except refresh.
+The minimal loop a player can complete start-to-finish.
 
 ```
  Boot / splash
-   → Main menu            (Play PvE · [later] Arena · settings)
-   → Loadout / preset     PvE: pick persistent base loadout (05/09)
-                          PvP: pick a balanced arena preset (05)
+   → Main menu            (Play PvE · [later] Arena · settings) ✅ shipped
+   → Loadout / preset     PvE: pick persistent base loadout (05/09) ✅ shipped
+                          PvP: pick a balanced arena preset (05) — still undesigned
    → In-match             HUD + controls; engine phase = playing
         ├─ Pause          overlay; engine keeps last state, no ticks advance
         └─ (net) waiting   "waiting for players / reconnecting" (06 stall)
-   → Result               clear / death / (PvP) win-loss  → summary
-   → back to menu or "run again" (re-seed, rebuild state)
+   → Result               clear / death / (PvP) win-loss  → summary ✅ shipped
+   → back to menu or "run again" (re-seed, rebuild state) ✅ shipped
 ```
+
+- ✅ **Main menu shipped** (`client/src/game/MainMenu.ts`) — the boot front door design/10 had never actually gotten (the vertical slice used to drop straight into the forge/loadout screen with no way back out to a title screen). Deliberately minimal: PLAY + SETTINGS, no PvP/Arena entry yet — PvP mode is still a boot-time URL flag (`?pvp=1`/`?online=1`), not a runtime menu choice; wiring that in is a separate, scoped follow-up, not forgotten.
+- ✅ **Loadout screen shipped** (`client/src/game/Forge.ts`) — the old keyboard-only monospace text board is now real clickable `Button` rows (one per blueprint, paged 8-at-a-time — `BLUEPRINT_CATALOG` has more entries than the digit-key shortcuts ever reached), character-cycle arrows, a Clear Loadout button, and a Start Run button. Keyboard shortcuts (digits/arrows/C/X/Enter) still work unchanged as a second input path — both drive the exact same underlying Game methods, not duplicated logic.
+- ✅ **Result screen content decided and shipped** (`client/src/game/RunOutcome.ts` + `Screens.ts`) — was previously a single squashed sub-line; now shows floor reached, materials banked/lost, `Time M:SS` (free from the sim's own `s.tick`/`TICK_RATE`, no new state), and score, plus a secondary "Main Menu" link (the primary confirm/tap still re-enters the loadout screen to gear up for the next run).
 
 - **`ScreenManager`** is a small render-side state machine (`enum Screen`, one active `Container` per screen, swap on transition). It owns the `GameEngine` lifecycle: constructs it with `(config, seed, input)` on match start, tears it down on result. It is *not* deterministic and carries no gameplay — safe to hold Pixi objects, timers, wall-clock.
 - **Result → restart** is just "build a fresh `GameState` from a new seed and re-enter `playing`." Because a run is `seed + config + input stream` (`08`), restart needs nothing persisted from the old match except meta progression (server-authoritative, `05`/`09`).
@@ -92,12 +96,12 @@ The concrete shape of `05`/`04`'s twin-stick, and where `08`'s `PlayerCommand` i
   "rarity edge is mostly handling, never crushing." `ARENA_PRESETS` previews remain
   undesigned — PvP preset-pick has no UI yet (`15`).
 - ~~**Settings** (volume once audio lands `11`, control layout/left-handed mirror, quality tier per `01` roadmap).~~ **Resolved (5.2, shipped):** `client/src/game/Settings.ts` — master/SFX/music sliders + mute, built on the widget kit above, wired to `SettingsState`/`AudioBus`. Control layout/left-handed mirror and a quality tier remain undesigned.
-- **Result/summary content:** what a run summary shows (drops collected, rooms cleared, time) — ties to `05`'s reward structure.
+- ~~**Result/summary content:** what a run summary shows (drops collected, rooms cleared, time) — ties to `05`'s reward structure.~~ **Resolved, shipped** — see the Screen flow section above.
 
 ## Open questions
 
 - **Damage/feedback numbers as `Text` vs sprite atlas** on WeChat — measure re-rasterization cost on the lowest base library (`04`) before choosing.
-- **On-screen aim on touch:** free right-stick aim vs. aim-assist/snap to nearest (casual-first, `05`/`06`) — decide against real thumbs on a device (`04` checklist item 5).
+- ~~**On-screen aim on touch:** free right-stick aim vs. aim-assist/snap to nearest (casual-first, `05`/`06`) — decide against real thumbs on a device (`04` checklist item 5).~~ **Resolved:** auto-aim-to-nearest-enemy (`CommandBuilder.ts`, already shipped, default on) is the **canonical** control scheme — the player only controls movement; manual aim (mouse point / stick dir) remains only as a `Settings.ts` fallback toggle, not the primary design. Still open: the touch stick/button hit-zones themselves have **zero rendered visuals** today (`platform/TouchControls.ts` is invisible hit-testing geometry only) — a real, separate gap affecting WeChat/mobile players, bigger than a menu-focused pass, flagged as its own follow-up rather than bundled here.
 - ~~**Pause semantics in co-op:** is there any local "menu" that must not stall the frame stream, or is everything a non-blocking overlay (`06`)?~~ **Resolved, see Screen flow above:** online is a documented no-op for now (`PauseMenu.ts` isn't built for that path) — everything online stays a non-blocking overlay, matching "no true pause" (`06`).
-- **Button count vs. clutter:** four corner buttons + two sticks is already busy in landscape; does weapon-swap need two dedicated slots or one toggle? Affects `05`'s control scheme and the `buttons` bitfield (`08`).
+- ~~**Button count vs. clutter:** four corner buttons + two sticks is already busy in landscape; does weapon-swap need two dedicated slots or one toggle? Affects `05`'s control scheme and the `buttons` bitfield (`08`).~~ **Resolved:** favor a few large, clearly-labeled clickable elements over dense text/many small controls — the Main Menu (2 buttons), the Loadout screen (row buttons + one primary Start action), and the result screen (one primary confirm + one secondary link) all follow this. Weapon-swap itself is unchanged (two corner buttons, `05`).
 - **HUD for spectators / downed co-op players** (revive UI) — tied to `05`'s open death/penalty question.
