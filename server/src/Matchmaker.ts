@@ -14,6 +14,7 @@
  * The player whose arrival completes a group gets its ticket back inline from `enqueue`.
  */
 import type { MatchMode, TicketPayload } from './ticket';
+import { squadSizeForPlayerCount, teamIdForOwner } from './config';
 
 export interface MatchmakerDeps {
   /** Epoch ms — for ticket `exp` and queued-waiter TTL. Injected (real: Date.now). */
@@ -62,6 +63,8 @@ export interface MatchTicket {
   owner: number;
   seed: number;
   playerCount: number;
+  /** Squad this seat belongs to (design/05/15) — see `teamIdForOwner`. */
+  teamId: number;
   mode: MatchMode;
   token: string;
 }
@@ -83,6 +86,11 @@ interface Waiter {
   mode: MatchMode;
   enqueuedAt: number;
   ticket: MatchTicket | null; // filled the instant its group forms
+  /** A pre-formed party's id (design/05/15's PvP squad follow-up) — every waiter
+   * sharing one `groupId` is pulled into the same squad chunk wherever each of them
+   * sits in the queue. `undefined` (every pre-party caller) behaves exactly as before:
+   * plain FIFO, each waiter its own one-person "group". */
+  groupId?: string;
 }
 
 /** A coop 2-seat waiter and a pvp 2-seat waiter must never group together — key the
@@ -115,16 +123,20 @@ export class Matchmaker {
 
   /**
    * Enqueue a request for a `playerCount`-seat match of the given `mode` (default
-   * 'coop', so every pre-PvP caller is unaffected). Returns a `queueId` to poll with;
-   * if this arrival completes a group, its own `ticket` is returned inline too. Throws a
-   * RangeError for an out-of-bounds playerCount (the shell maps it to HTTP 400).
+   * 'coop', so every pre-PvP caller is unaffected). `groupId` (design/05/15) is a
+   * pre-formed party id — every party member calls `enqueue` independently with the
+   * same `groupId` once their leader starts matching, and they're grouped into one
+   * squad chunk together rather than paired with strangers. Returns a `queueId` to
+   * poll with; if this arrival completes a group, its own `ticket` is returned inline
+   * too. Throws a RangeError for an out-of-bounds playerCount (the shell maps it to
+   * HTTP 400).
    */
-  enqueue(playerCount: number, mode: MatchMode = 'coop'): EnqueueResult {
+  enqueue(playerCount: number, mode: MatchMode = 'coop', groupId?: string): EnqueueResult {
     if (!Number.isInteger(playerCount) || playerCount < 1 || playerCount > MAX_PLAYERS) {
       throw new RangeError(`playerCount must be an integer in [1, ${MAX_PLAYERS}]`);
     }
     const queueId = `q${++this.counter}`;
-    const waiter: Waiter = { queueId, playerCount, mode, enqueuedAt: this.deps.nowMs(), ticket: null };
+    const waiter: Waiter = { queueId, playerCount, mode, enqueuedAt: this.deps.nowMs(), ticket: null, groupId };
     this.waiters.set(queueId, waiter);
     this.liveQueue(playerCount, mode).push(queueId);
 
@@ -189,20 +201,15 @@ export class Matchmaker {
     return q;
   }
 
-  /** Form a match while the (playerCount, mode) shape has a full group of live waiters. */
+  /** Form a match while the (playerCount, mode) shape has a full group of live waiters.
+   * Fills seats in squad-sized chunks (design/05/15) — see `pullChunk`. */
   private formIfReady(playerCount: number, mode: MatchMode): void {
     const q = this.liveQueue(playerCount, mode);
+    const squadSize = squadSizeForPlayerCount(playerCount);
     while (q.length >= playerCount) {
-      const group = q.splice(0, playerCount);
-      const roomId = this.deps.newRoomId();
-      const seed = this.deps.nextSeed();
-      const exp = this.deps.nowMs() + this.ticketTtlMs;
-      group.forEach((id, owner) => {
-        const w = this.waiters.get(id);
-        if (!w) return;
-        const grant: TicketPayload = { roomId, owner, seed, playerCount, exp, mode };
-        w.ticket = { roomId, owner, seed, playerCount, mode, token: this.sign(grant) };
-      });
+      const group: string[] = [];
+      while (group.length < playerCount) group.push(...this.pullChunk(q, squadSize));
+      this.grantGroup(group, playerCount, mode);
     }
   }
 
@@ -211,26 +218,75 @@ export class Matchmaker {
    * shape — however many that is (at least 1; `poll` never calls this on an empty
    * queue) — and report the leftover seats as `botOwners` via `onBotFill`. A no-op if
    * the shape somehow already has a full group (that's `formIfReady`'s job, and it
-   * already ran synchronously on the most recent `enqueue`).
+   * already ran synchronously on the most recent `enqueue`). Real waiters still fill
+   * squad chunks together first (a party gets bots only to top up ITS OWN squad, not
+   * scattered across others) via the same `pullChunk` grouping `formIfReady` uses.
    */
   private formWithBots(playerCount: number, mode: MatchMode): void {
     const q = this.liveQueue(playerCount, mode);
     if (q.length === 0 || q.length >= playerCount) return;
-    const group = q.splice(0, q.length);
+    const squadSize = squadSizeForPlayerCount(playerCount);
+    const group: string[] = [];
+    while (q.length > 0) group.push(...this.pullChunk(q, squadSize));
+    const { roomId, seed } = this.grantGroup(group, playerCount, mode);
+    const botOwners: number[] = [];
+    for (let owner = group.length; owner < playerCount; owner++) botOwners.push(owner);
+    if (botOwners.length > 0) {
+      this.deps.onBotFill?.({ roomId, seed, playerCount, mode, botOwners });
+    }
+  }
+
+  /**
+   * Pull one squad-chunk's worth (up to `size`) of queueIds out of `q` IN PLACE and
+   * return them, in queue order. Finds whichever `groupId` appears EARLIEST in `q`
+   * (first-arrived party goes first) and pulls every waiter sharing it — wherever each
+   * one sits in the queue, not just a contiguous prefix — before backfilling any
+   * remaining chunk slots with plain FIFO waiters (solo, or a different/smaller group,
+   * only if there aren't enough solo waiters to avoid leaving a seat empty). A queue
+   * with no grouped waiters at all behaves exactly like the old plain `splice(0, size)`.
+   */
+  private pullChunk(q: string[], size: number): string[] {
+    if (q.length === 0) return [];
+    let gid: string | undefined;
+    for (const id of q) {
+      const g = this.waiters.get(id)?.groupId;
+      if (g) {
+        gid = g;
+        break;
+      }
+    }
+    const chunk: string[] = [];
+    const rest: string[] = [];
+    if (gid) {
+      for (const id of q) {
+        if (chunk.length < size && this.waiters.get(id)?.groupId === gid) chunk.push(id);
+        else rest.push(id);
+      }
+    } else {
+      rest.push(...q);
+    }
+    q.length = 0;
+    q.push(...rest);
+    while (chunk.length < size && q.length > 0) chunk.push(q.shift()!);
+    return chunk;
+  }
+
+  /** Sign tickets for a fully-decided seat order (`group[i]` → seat `i`), `teamId`
+   * derived purely from seat index via `teamIdForOwner` — the single source of truth
+   * shared with `matchsvc`'s bot-ticket minting, so real and bot seats can never
+   * disagree about which squad a seat belongs to. */
+  private grantGroup(group: readonly string[], playerCount: number, mode: MatchMode): { roomId: string; seed: number } {
     const roomId = this.deps.newRoomId();
     const seed = this.deps.nextSeed();
     const exp = this.deps.nowMs() + this.ticketTtlMs;
     group.forEach((id, owner) => {
       const w = this.waiters.get(id);
       if (!w) return;
-      const grant: TicketPayload = { roomId, owner, seed, playerCount, exp, mode };
-      w.ticket = { roomId, owner, seed, playerCount, mode, token: this.sign(grant) };
+      const teamId = teamIdForOwner(owner, playerCount);
+      const grant: TicketPayload = { roomId, owner, seed, playerCount, teamId, exp, mode };
+      w.ticket = { roomId, owner, seed, playerCount, teamId, mode, token: this.sign(grant) };
     });
-    const botOwners: number[] = [];
-    for (let owner = group.length; owner < playerCount; owner++) botOwners.push(owner);
-    if (botOwners.length > 0) {
-      this.deps.onBotFill?.({ roomId, seed, playerCount, mode, botOwners });
-    }
+    return { roomId, seed };
   }
 
   private dropWaiting(waiter: Waiter): void {

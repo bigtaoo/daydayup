@@ -16,6 +16,8 @@
  *              new pickup at the player's position (`dropReplacedWeapon`) — "no
  *              manual drop button," the drop is only ever a side effect of a swap.
  *   buff     — added to the run-scoped stack. Auto, on overlap.
+ *   bandage  — PvP-arena-only (design/05/15's squad follow-up): +1 to the player's
+ *              squad-revive currency, spent by ReviveSystem. Auto, on overlap.
  *
  * The rising edge can't reuse `prevButtons` (`ApplyInputSystem`, step 1, already
  * overwrote it with THIS tick's bitfield before this step runs) — `wasInteracting`
@@ -124,6 +126,11 @@ export class PickupSystem {
         break;
       case 'buff':
         if (item.buffId) this.applyBuff(p, item.buffId);
+        break;
+      case 'bandage':
+        // PvP squad revive currency (design/05/15) — no cap; ReviveSystem is the only
+        // spender, one per completed revive.
+        p.bandages = (p.bandages ?? 0) + 1;
         break;
     }
   }

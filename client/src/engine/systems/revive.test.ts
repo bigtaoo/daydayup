@@ -39,7 +39,7 @@ function addPlayer(s: GameState, xpx: number, ypx: number): PlayerActor {
     radius: PLAYER_BASE.radius, footprintRadius: PLAYER_BASE.footprintRadius,
     alive: true, weapon: w, weapons: [w], activeSlot: 0, buffs: [],
     firing: false, interacting: false, wasInteracting: false, downed: false, bleedoutTicks: 0, reviveProgressTicks: 0,
-    prevButtons: 0, status: freshStatus(),
+    bandages: 0, prevButtons: 0, status: freshStatus(),
   };
   s.players.push(p);
   return p;
@@ -173,6 +173,84 @@ describe('ReviveSystem — the revive channel', () => {
     expect(a.downed).toBe(false);
     expect(a.alive).toBe(false); // dead for good
     expect(s.events.some((e) => e.type === 'death' && e.id === a.id)).toBe(true);
+  });
+});
+
+describe('ReviveSystem — PvP squad + bandage gating (design/05/15)', () => {
+  /** A zoneEnabled (PvP) state needs a real arena — `createGameState` only sets
+   * `zoneEnabled` when `EngineConfig.arena` is provided. */
+  const MINI_ARENA = {
+    id: 'mini', sizeGrid: { w: 10, h: 10 },
+    rooms: [{ id: 'A', rectGrid: { x: 0, y: 0, w: 10, h: 10 }, solids: [] }],
+    doors: [], spawns: [{ x: 5, y: 5 }], eyeCandidates: [{ roomId: 'A' }],
+  };
+
+  function pvpDownedWithReviverInRange(sameTeam: boolean, reviverBandages: number) {
+    const s = createGameState({ ...CFG, arena: MINI_ARENA, players: [{ teamId: 0 }] });
+    expect(s.zoneEnabled).toBe(true);
+    const a = s.players[0]!;
+    a.downed = true;
+    a.bleedoutTicks = DOWNED_BLEEDOUT_TICKS;
+    a.gx = pxToFp(400);
+    a.gy = pxToFp(400);
+    const b = addPlayer(s, 400, 400); // on top of A, well within revive range
+    b.teamId = sameTeam ? 0 : 1;
+    b.bandages = reviverBandages;
+    b.interacting = true;
+    return { s, a, b };
+  }
+
+  it('a same-squad reviver WITH a bandage completes the revive and spends exactly one bandage', () => {
+    const { s, a, b } = pvpDownedWithReviverInRange(true, 1);
+    const sys = new ReviveSystem();
+    for (let t = 0; t < REVIVE_CHANNEL_TICKS; t++) sys.tick(s);
+    expect(a.downed).toBe(false);
+    expect(b.bandages).toBe(0); // spent
+  });
+
+  it('a same-squad reviver with NO bandage cannot even start the channel', () => {
+    const { s, a, b } = pvpDownedWithReviverInRange(true, 0);
+    const sys = new ReviveSystem();
+    sys.tick(s);
+    expect(a.reviveProgressTicks).toBe(0); // never advances
+    expect(a.bleedoutTicks).toBe(DOWNED_BLEEDOUT_TICKS - 1); // bleedout runs as if no reviver at all
+    expect(b.bandages).toBe(0); // nothing spent on a non-starting attempt
+  });
+
+  it('a RIVAL squad member never revives, even carrying a bandage', () => {
+    const { s, a, b } = pvpDownedWithReviverInRange(false, 1);
+    const sys = new ReviveSystem();
+    for (let t = 0; t < 10; t++) sys.tick(s);
+    expect(a.reviveProgressTicks).toBe(0);
+    expect(a.bleedoutTicks).toBe(DOWNED_BLEEDOUT_TICKS - 10);
+    expect(b.bandages).toBe(1); // the rival's bandage is untouched
+  });
+
+  it('an INTERRUPTED PvP revive does not spend the bandage', () => {
+    const { s, a, b } = pvpDownedWithReviverInRange(true, 1);
+    const sys = new ReviveSystem();
+    for (let t = 0; t < REVIVE_CHANNEL_TICKS - 1; t++) sys.tick(s); // one short of completion
+    expect(a.downed).toBe(true);
+    b.interacting = false; // interrupt right before completion
+    sys.tick(s);
+    expect(a.reviveProgressTicks).toBe(0);
+    expect(b.bandages).toBe(1); // untouched — only a COMPLETED revive spends it
+  });
+
+  it('PvE (no zoneEnabled) is completely unaffected by the bandage requirement, even at 0 bandages', () => {
+    const s = state(); // plain PvE state — no arena, zoneEnabled false
+    expect(s.zoneEnabled).toBe(false);
+    const a = s.players[0]!;
+    a.downed = true;
+    a.bleedoutTicks = DOWNED_BLEEDOUT_TICKS;
+    a.gx = pxToFp(400);
+    a.gy = pxToFp(400);
+    const b = addPlayer(s, 400, 400);
+    b.interacting = true;
+    expect(b.bandages).toBe(0); // default — PvE never grants any
+    const sys = new ReviveSystem();
+    for (let t = 0; t < REVIVE_CHANNEL_TICKS; t++) sys.tick(s);
+    expect(a.downed).toBe(false); // still completes for free, exactly as before
   });
 });
 

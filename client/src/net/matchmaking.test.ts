@@ -8,7 +8,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { findMatch, type MatchInfo } from './matchmaking';
 
 const MATCH: MatchInfo = {
-  wsUrl: 'ws://localhost:8787/ws', roomId: 'room-1', owner: 1, seed: 42, playerCount: 2, token: 'tok',
+  wsUrl: 'ws://localhost:8787/ws', roomId: 'room-1', owner: 1, seed: 42, playerCount: 2, teamId: 1, token: 'tok',
 };
 
 /** A fetch stub that returns the queued JSON bodies in sequence. */
@@ -81,5 +81,19 @@ describe('findMatch', () => {
     await findMatch('http://mm', { playerCount: 8, mode: 'pvp', fetch: fetch2, sleep: noSleep });
     const [, initPvp] = fetch2.mock.calls[0]!;
     expect(JSON.parse((initPvp as RequestInit).body as string)).toMatchObject({ playerCount: 8, mode: 'pvp' });
+  });
+
+  it('sends partyId in the /find body when queueing with a pre-formed party (design/05/15)', async () => {
+    const fetch = fakeFetch([{ queueId: 'q1', match: MATCH }]);
+    await findMatch('http://mm', { playerCount: 8, mode: 'pvp', partyId: 'party-123', fetch, sleep: noSleep });
+    const [, init] = fetch.mock.calls[0]!;
+    expect(JSON.parse((init as RequestInit).body as string)).toMatchObject({ partyId: 'party-123' });
+  });
+
+  it('omits partyId entirely for a plain solo queue (no behavior change for existing callers)', async () => {
+    const fetch = fakeFetch([{ queueId: 'q1', match: MATCH }]);
+    await findMatch('http://mm', { playerCount: 2, fetch, sleep: noSleep });
+    const [, init] = fetch.mock.calls[0]!;
+    expect(JSON.parse((init as RequestInit).body as string)).not.toHaveProperty('partyId');
   });
 });

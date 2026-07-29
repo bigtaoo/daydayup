@@ -226,3 +226,100 @@ describe('Matchmaker — PvP practice-bot backfill (design/15 follow-up)', () =>
     expect(mm.poll(a.queueId).status).toBe('matched');
   });
 });
+
+describe('Matchmaker — squads (design/05/15 PvP squad follow-up)', () => {
+  function ticketOf(mm: Matchmaker, r: { queueId: string; ticket?: any }) {
+    return r.ticket ?? (mm.poll(r.queueId) as { ticket: any }).ticket;
+  }
+
+  it('an 8-seat match with no parties splits into two 4-seat squads by pure seat order', () => {
+    const { mm } = make();
+    const rs = Array.from({ length: 8 }, () => mm.enqueue(8, 'pvp'));
+    const tickets = rs.map((r) => ticketOf(mm, r));
+    const teamIds = tickets.map((t) => t.teamId).sort((a, b) => a - b);
+    expect(teamIds).toEqual([0, 0, 0, 0, 1, 1, 1, 1]);
+    // owners 0-3 share team 0, owners 4-7 share team 1.
+    for (const t of tickets) expect(t.teamId).toBe(Math.floor(t.owner / 4));
+  });
+
+  it('a playerCount not divisible by SQUAD_SIZE falls back to one-seat squads (today\'s exact FFA)', () => {
+    const { mm } = make();
+    const rs = [mm.enqueue(3, 'pvp'), mm.enqueue(3, 'pvp'), mm.enqueue(3, 'pvp')];
+    const tickets = rs.map((r) => ticketOf(mm, r));
+    expect(tickets.map((t) => t.teamId).sort()).toEqual([0, 1, 2]); // every seat its own squad
+  });
+
+  it('a pre-formed party lands in one squad chunk regardless of queue interleaving', () => {
+    const { mm } = make();
+    // Interleave: solo, party-member, solo, party-member (party = groupId 'g1').
+    const solo1 = mm.enqueue(8, 'pvp');
+    const party1 = mm.enqueue(8, 'pvp', 'g1');
+    const solo2 = mm.enqueue(8, 'pvp');
+    const party2 = mm.enqueue(8, 'pvp', 'g1');
+    const solo3 = mm.enqueue(8, 'pvp');
+    const solo4 = mm.enqueue(8, 'pvp');
+    const solo5 = mm.enqueue(8, 'pvp');
+    const solo6 = mm.enqueue(8, 'pvp');
+
+    // Collect every ticket exactly once — poll() is one-shot, a second poll of an
+    // already-collected queueId returns `expired`, not the ticket again.
+    const tickets = [solo1, party1, solo2, party2, solo3, solo4, solo5, solo6].map((r) => ticketOf(mm, r));
+    const [, tp1, , tp2] = tickets;
+    expect(tp1.teamId).toBe(tp2.teamId); // both party members share one squad
+    expect(Math.floor(tp1.owner / 4)).toBe(tp1.teamId);
+
+    // Every solo waiter still got a real seat somewhere.
+    const allOwners = tickets.map((t) => t.owner).sort((a, b) => a - b);
+    expect(allOwners).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+  });
+
+  it('an undersized party (2 of 4) gets padded by solo waiters into the same squad', () => {
+    const { mm } = make();
+    const p1 = mm.enqueue(8, 'pvp', 'party');
+    const p2 = mm.enqueue(8, 'pvp', 'party');
+    const solos = Array.from({ length: 6 }, () => mm.enqueue(8, 'pvp'));
+
+    const t1 = ticketOf(mm, p1);
+    const t2 = ticketOf(mm, p2);
+    expect(t1.teamId).toBe(t2.teamId);
+    // Exactly 2 solo waiters share that same squad (padding it to 4), the rest land elsewhere.
+    const sharedTeam = t1.teamId;
+    const soloTeams = solos.map((r) => ticketOf(mm, r).teamId);
+    expect(soloTeams.filter((tid) => tid === sharedTeam)).toHaveLength(2);
+  });
+
+  it('a party larger than SQUAD_SIZE is not silently accepted as one seat — PartyService already caps it, but Matchmaker itself truncates a chunk at squadSize and carries the rest into the next chunk', () => {
+    const { mm } = make();
+    // 5 waiters sharing one groupId in an 8-seat/4-squad match — the 5th cannot fit
+    // its party's own chunk and must start a new one instead of being dropped.
+    const rs = Array.from({ length: 5 }, () => mm.enqueue(8, 'pvp', 'oversized'));
+    const solos = Array.from({ length: 3 }, () => mm.enqueue(8, 'pvp'));
+    const tickets = [...rs, ...solos].map((r) => ticketOf(mm, r));
+    expect(tickets).toHaveLength(8);
+    const owners = tickets.map((t) => t.owner).sort((a, b) => a - b);
+    expect(owners).toEqual([0, 1, 2, 3, 4, 5, 6, 7]); // every seat filled, nobody dropped
+  });
+
+  it('PvP bot-fill assigns bots the teamId of the squad chunk their seat falls into', () => {
+    const botFills: { botOwners: readonly number[] }[] = [];
+    const { mm, advance } = make({ onBotFill: (info) => botFills.push(info) });
+    // A 2-person party queues for an 8-seat match, alone — bots must fill the other 6
+    // seats, completing this party's own squad (owners 2,3) before opening fresh ones.
+    mm.enqueue(8, 'pvp', 'party');
+    const p2 = mm.enqueue(8, 'pvp', 'party');
+    advance(30_000);
+    const t2 = (mm.poll(p2.queueId) as { ticket: any }).ticket;
+    expect(t2.owner).toBeLessThan(4); // still seated in squad 0
+    expect(botFills).toEqual([expect.objectContaining({ botOwners: [2, 3, 4, 5, 6, 7] })]);
+  });
+
+  it('coop (no mode/squad concept exercised) still gets a teamId per seat — solo FFA-shaped by default', () => {
+    const { mm } = make();
+    const a = mm.enqueue(2);
+    const b = mm.enqueue(2);
+    const ta = ticketOf(mm, a);
+    const tb = ticketOf(mm, b);
+    expect(ta.teamId).toBe(0);
+    expect(tb.teamId).toBe(1); // playerCount=2 doesn't divide by SQUAD_SIZE=4 → 1-seat squads
+  });
+});

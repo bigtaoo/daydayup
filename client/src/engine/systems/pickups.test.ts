@@ -115,6 +115,18 @@ describe('PickupSystem — the in-run power ramp (design/05)', () => {
     expect(p.maxHp).toBe(baseMax + 10);
   });
 
+  it('a bandage pickup adds to the squad-revive currency, uncapped (design/05/15)', () => {
+    const s = createGameState(CFG);
+    const p = s.players[0]!;
+    expect(p.bandages).toBe(0);
+    dropOnPlayer(s, { kind: 'bandage' });
+    sys.tick(s);
+    expect(p.bandages).toBe(1);
+    dropOnPlayer(s, { kind: 'bandage' });
+    sys.tick(s);
+    expect(p.bandages).toBe(2); // no cap
+  });
+
   it('does not vacuum a pickup dropped this very tick (spawnTick guard)', () => {
     const s = createGameState(CFG);
     const p = s.players[0]!;

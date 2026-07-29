@@ -68,7 +68,8 @@ export class HitResolveSystem {
       if (!b.alive || b.ballistic === 'beam' || b.landed) continue;
       // design/15: every actor hostile to this bullet, regardless of which
       // array it lives in — a player's bullet can now hit a rival player, not
-      // just enemies (hostileTargets already excludes downed players, 3.2).
+      // just enemies (hostileTargets excludes downed players in PvE, 3.2; PvP
+      // targets them too, design/05/15).
       const targets = hostileTargets(state, b);
       for (const t of targets) {
         // Never re-hit a body this bullet already connected with — needed for BOTH
@@ -114,7 +115,7 @@ export class HitResolveSystem {
   private resolveLandedLobs(state: GameState): void {
     for (const b of state.projectiles) {
       if (!b.alive || !b.landed || b.blastRadius === undefined) continue;
-      const targets = hostileTargets(state, b); // already excludes downed players (3.2)
+      const targets = hostileTargets(state, b); // excludes downed players in PvE (3.2); PvP targets them too (05/15)
       for (const t of targets) {
         const dx = (t.gx - b.gx) as number;
         const dy = (t.gy - b.gy) as number;
@@ -138,7 +139,7 @@ export class HitResolveSystem {
     for (const b of state.projectiles) {
       if (!b.alive || b.ballistic !== 'beam') continue;
       if (!b.beamTickInterval || state.tick % b.beamTickInterval !== 0) continue;
-      const targets = hostileTargets(state, b); // already excludes downed players (3.2)
+      const targets = hostileTargets(state, b); // excludes downed players in PvE (3.2); PvP targets them too (05/15)
       const dir = b.beamDir ?? (0 as Brad);
       const range = b.beamRange ?? (0 as Projectile['radius']);
       for (const t of targets) {

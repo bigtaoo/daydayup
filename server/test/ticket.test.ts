@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { signTicket, verifyTicket, type TicketPayload } from '../src/ticket';
 
 const SECRET = 'test-secret';
-const payload: TicketPayload = { roomId: 'r1', owner: 1, seed: 42, playerCount: 2, exp: 10_000 };
+const payload: TicketPayload = { roomId: 'r1', owner: 1, seed: 42, playerCount: 2, teamId: 1, exp: 10_000 };
 
 describe('ticket — round-trip', () => {
   it('verifies a freshly-signed ticket before expiry and returns the exact payload', () => {
@@ -16,7 +16,7 @@ describe('ticket — round-trip', () => {
   });
 
   it('round-trips every field including negative/large seeds', () => {
-    const p: TicketPayload = { roomId: 'room-xyz', owner: 3, seed: -2_000_000_000, playerCount: 4, exp: 1 };
+    const p: TicketPayload = { roomId: 'room-xyz', owner: 3, seed: -2_000_000_000, playerCount: 4, teamId: 0, exp: 1 };
     expect(verifyTicket(signTicket(p, SECRET), SECRET, 0)).toEqual(p);
   });
 
@@ -64,5 +64,16 @@ describe('ticket — rejection surface', () => {
     const sig = token.split('.')[1];
     const forged = Buffer.from(JSON.stringify({ ...payload, mode: 'admin' }), 'utf8').toString('base64url');
     expect(verifyTicket(`${forged}.${sig}`, SECRET, 0)).toBeNull();
+  });
+
+  it('rejects a missing or non-integer teamId (design/05/15 — unlike mode, never optional)', () => {
+    const sig = signTicket(payload, SECRET).split('.')[1];
+    const withoutTeamId = { ...payload } as Partial<TicketPayload>;
+    delete withoutTeamId.teamId;
+    const forgedMissing = Buffer.from(JSON.stringify(withoutTeamId), 'utf8').toString('base64url');
+    expect(verifyTicket(`${forgedMissing}.${sig}`, SECRET, 0)).toBeNull();
+
+    const forgedFloat = Buffer.from(JSON.stringify({ ...payload, teamId: 1.5 }), 'utf8').toString('base64url');
+    expect(verifyTicket(`${forgedFloat}.${sig}`, SECRET, 0)).toBeNull();
   });
 });

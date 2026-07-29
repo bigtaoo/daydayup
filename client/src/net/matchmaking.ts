@@ -17,6 +17,11 @@ export interface MatchInfo {
   owner: number;
   seed: number;
   playerCount: number;
+  /** The squad this seat belongs to (design/05/15) — see `@dd/game/pvpConfig`'s
+   * `teamIdForOwner`. Included for completeness/diagnostics; gameplay never needs to
+   * read it off the ticket since `buildPvpEngineConfig` derives it independently from
+   * `(owner, playerCount)` alone. */
+  teamId: number;
   token: string;
 }
 
@@ -25,6 +30,10 @@ export interface FindMatchOptions {
   /** PvE co-op vs. PvP arena (design/15). Default 'coop' — the field predates PvP, so
    * every existing caller (and the matchsvc side) is unaffected by its absence. */
   mode?: 'coop' | 'pvp';
+  /** A pre-formed party's id (design/05/15's PvP squad follow-up) — every member's
+   * client sends this once their leader starts matching, so the control plane groups
+   * them into one squad chunk. Omitted (every pre-party caller) → plain solo queue. */
+  partyId?: string;
   /** Injected for tests; defaults to the global fetch. */
   fetch?: typeof fetch;
   /** Injected for tests; defaults to a real timer sleep. */
@@ -53,7 +62,7 @@ export async function findMatch(baseUrl: string, opts: FindMatchOptions): Promis
   const findRes = await doFetch(`${baseUrl}/find`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ playerCount: opts.playerCount, mode: opts.mode ?? 'coop' }),
+    body: JSON.stringify({ playerCount: opts.playerCount, mode: opts.mode ?? 'coop', partyId: opts.partyId }),
   });
   const found = (await findRes.json()) as { queueId?: string; match?: MatchInfo; error?: string };
   if (!findRes.ok || found.error) throw new Error(found.error ?? `matchmaking failed (${findRes.status})`);

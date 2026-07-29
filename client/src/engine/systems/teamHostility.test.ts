@@ -146,6 +146,31 @@ describe('PvP: seats on different teamIds can damage each other', () => {
     expect(allyB.alive).toBe(true);
   });
 
+  it('a downed RIVAL is a valid target in PvP (design/05/15) — unlike PvE\'s standing invulnerability', () => {
+    const arena = {
+      id: 'mini', sizeGrid: { w: 10, h: 10 },
+      rooms: [{ id: 'A', rectGrid: { x: 0, y: 0, w: 10, h: 10 }, solids: [] }],
+      doors: [], spawns: [{ x: 5, y: 5 }], eyeCandidates: [{ roomId: 'A' }],
+    };
+    const s = createGameState({
+      ...CFG,
+      arena,
+      players: [
+        { start: [400, 400], teamId: 0 },
+        { start: [420, 400], teamId: 1 },
+      ],
+    });
+    expect(s.zoneEnabled).toBe(true);
+    const rival = s.players[1]!;
+    rival.downed = true;
+    const before = rival.shield > 0 ? rival.shield : rival.hp;
+    const b = bulletOn(s, rival, 0);
+    new HitResolveSystem().tick(s);
+    const after = rival.shield > 0 ? rival.shield : rival.hp;
+    expect(after).toBeLessThan(before); // hit lands — downed does NOT protect in PvP
+    expect(b.alive).toBe(false);
+  });
+
   it('homing turns toward a hostile seat, not an ally seat at the mirrored position', () => {
     const s = createGameState({
       ...CFG,

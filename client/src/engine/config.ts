@@ -345,8 +345,33 @@ import { BRAD_FULL } from './math/trig';
  * damage untouched). `BLUEPRINT_CATALOG` also grew substantially (design/14 follow-up)
  * but that catalog is meta-layer-only (client/src/meta, not the deterministic sim), so
  * it carries no replay/outcome divergence on its own.
+ *
+ * v30: PvP squads + gated revive (design/05/15's long-deferred squad follow-up,
+ * finally scheduled). Four independent outcome changes:
+ * (1) `buildPvpEngineConfig`/`Matchmaker` now assign `teamId` in squad-sized chunks
+ * (`teamIdForOwner`, `@dd/game/pvpConfig`) instead of one distinct team per seat —
+ * any zoneEnabled match whose `playerCount` divides evenly by `SQUAD_SIZE` (4) now
+ * groups seats into shared-team squads; anything else (any seat count that doesn't
+ * divide evenly, and all of PvE/co-op) is byte-identical to before.
+ * (2) `WinConditionSystem.tickPlacement` computes elimination/placement per SQUAD
+ * (every member `!alive`) instead of per player — diverges from v29 only where (1)
+ * above actually changes teamId assignment.
+ * (3) `ReviveSystem.hasReviver` now requires `reviver.teamId === downed.teamId` AND
+ * `reviver.bandages > 0`, consuming one bandage on a successfully COMPLETED revive
+ * (not on channel start). PvE co-op has no distinct teamIds (all players share the
+ * implicit single team) so the teamId check is a no-op there — but the bandage check
+ * is NOT: a PvE revive with `bandages` still at its default 0 would now be rejected
+ * outright. Guarded off by `state.zoneEnabled` (see (4)) so PvE stays exactly the
+ * free channel it always was; only a zoneEnabled (PvP) match enforces bandages.
+ * (4) Downed players are no longer excluded from `hostileTargets` when
+ * `state.zoneEnabled` (PvP) — they can be shot/meleed/AoE'd while down, unlike PvE's
+ * standing invulnerability. Any PvP replay with a downed player now diverges the
+ * instant an attack would have passed through them.
+ * A new `{kind:'bandage'}` arena-only drop (`content/drops.ts`) also shifts
+ * `ARENA_DROP_TABLE`'s roll weights — same divergence shape as any past drop-pool
+ * growth (v28/v29's own weapon-pool entries).
  */
-export const ENGINE_VERSION = 29;
+export const ENGINE_VERSION = 30;
 
 // ── Two-pool health tuning (design/07; final values are 07 "to design") ──────────
 // Whole ticks @30Hz. Shield regen is an idle timer, not a heal: after taking ANY

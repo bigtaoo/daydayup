@@ -19,7 +19,10 @@ export type DropResult =
   | { kind: 'material'; materialId: string; qty: number; tier: number }
   | { kind: 'heal' }
   | { kind: 'weapon'; weaponId: string }
-  | { kind: 'buff'; buffId: string };
+  | { kind: 'buff'; buffId: string }
+  // PvP-only (design/05/15's squad follow-up) — spent by ReviveSystem to revive a
+  // downed squadmate. Never rolled by PvE's `rollDrop`/`DROP_TABLE`.
+  | { kind: 'bandage' };
 
 /** How much a heal pickup restores (design/05 MVP loop, flat +1 HP). */
 export const HEAL_PICKUP_AMOUNT = 1;
@@ -118,9 +121,13 @@ export function rollDrop(prng: Prng, tier = 0): DropResult {
 type ArenaDropTableEntry = { kind: Exclude<DropResult['kind'], 'material'>; weight: number };
 
 export const ARENA_DROP_TABLE: readonly ArenaDropTableEntry[] = [
-  { kind: 'heal', weight: 40 },
+  { kind: 'heal', weight: 35 },
   { kind: 'weapon', weight: 40 },
   { kind: 'buff', weight: 20 },
+  // Squad revive currency (design/05/15) — a first-pass weight, same "needs real
+  // playtesting" caveat as every other number on this table; not so common a downed
+  // teammate is trivially free, not so rare a squad realistically never revives.
+  { kind: 'bandage', weight: 5 },
 ];
 
 /** Roll one drop from the arena's own table (never a `material`) — same dropPrng
@@ -134,6 +141,8 @@ export function rollArenaDrop(prng: Prng): DropResult {
       return { kind: 'weapon', weaponId: WEAPON_DROP_POOL[prng.nextInt(WEAPON_DROP_POOL.length)]! };
     case 'buff':
       return { kind: 'buff', buffId: BUFF_DROP_POOL[prng.nextInt(BUFF_DROP_POOL.length)]! };
+    case 'bandage':
+      return { kind: 'bandage' };
     default:
       return { kind: 'heal' };
   }

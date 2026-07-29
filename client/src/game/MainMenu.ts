@@ -5,8 +5,10 @@ import { Panel, Button } from './ui/widgets';
  * The boot/main-menu screen (design/10 screen flow — the front door that never got
  * built). Pure presentation, same shape as PauseMenu.ts/Settings.ts: Game owns what
  * each button actually does. Deliberately minimal (design/10's "clutter" decision) —
- * two buttons, no PvP/Arena entry yet (that's still a URL-flag boot-time choice, not a
- * runtime one — see Game.ts's `online`/`pvp`/`arenaDemo` fields).
+ * PvP arena entry is still a URL-flag boot-time choice (see Game.ts's `online`/`pvp`/
+ * `arenaDemo` fields); SQUAD is the one runtime entry point added so far (design/05/15's
+ * PvP squad follow-up) — a pre-formed party still needs somewhere to be created/joined
+ * before a run starts, which a boot-time flag alone can't offer.
  */
 export class MainMenu {
   readonly view = new Container();
@@ -14,9 +16,11 @@ export class MainMenu {
   private title: Text;
   private subtitle: Text;
   private playBtn: Button;
+  private squadBtn: Button;
   private settingsBtn: Button;
 
   onPlay: (() => void) | null = null;
+  onSquad: (() => void) | null = null;
   onSettings: (() => void) | null = null;
 
   constructor() {
@@ -29,10 +33,12 @@ export class MainMenu {
 
     this.playBtn = new Button('PLAY', { w: 220, h: 56, fontSize: 22 });
     this.playBtn.onTap = () => this.onPlay?.();
+    this.squadBtn = new Button('SQUAD', { w: 220, h: 40, fontSize: 16 });
+    this.squadBtn.onTap = () => this.onSquad?.();
     this.settingsBtn = new Button('SETTINGS', { w: 160, h: 36, fontSize: 14 });
     this.settingsBtn.onTap = () => this.onSettings?.();
 
-    this.view.addChild(this.panel.view, this.title, this.subtitle, this.playBtn.view, this.settingsBtn.view);
+    this.view.addChild(this.panel.view, this.title, this.subtitle, this.playBtn.view, this.squadBtn.view, this.settingsBtn.view);
     this.view.eventMode = 'static';
     this.view.visible = false;
   }
@@ -44,7 +50,8 @@ export class MainMenu {
     this.title.position.set(cx, cy - 150);
     this.subtitle.position.set(cx, cy - 96);
     this.playBtn.view.position.set(cx - 110, cy - 20);
-    this.settingsBtn.view.position.set(cx - 80, cy + 50);
+    this.squadBtn.view.position.set(cx - 110, cy + 42);
+    this.settingsBtn.view.position.set(cx - 80, cy + 96);
     this.view.visible = true;
   }
 

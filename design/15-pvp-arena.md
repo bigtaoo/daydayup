@@ -4,7 +4,7 @@ The concrete design behind `05`'s PvP section (ROADMAP Phase 4.1, decided). This
 
 ## The decisions (locked)
 
-- **Battle royale: 8-player solo, elimination + shrinking zone.** Not a symmetric team arena. Every seat is its own `teamId`; squads are a reserved data shape, not a built feature (below).
+- **Battle royale: 8-player, squad or solo, elimination + shrinking zone.** Not a symmetric team arena. ✅ **Shipped (`ENGINE_VERSION` 30):** squads are chunks of `SQUAD_SIZE` (4) seats sharing one `teamId`, formed via a pre-formed party invite code (`server/src/PartyService.ts`) or filled with solo queuers/bots when a party is smaller than a squad; any seat count squads don't cleanly divide into (including exactly `SQUAD_SIZE` itself — one squad covering the whole match would leave nobody able to fight) stays the original one-`teamId`-per-seat free-for-all.
 - **The zone is a room graph shrinking toward an eye, not a geometric circle.** Rooms are the unit of "safe" — this avoids carving a circle through walls a player physically cannot reach, which a raw-radius zone would do on an indoor map.
 - **AI is hazard *and* farm, hostile to every seat.** Reuses PvE's `ENEMY_BLUEPRINTS` (`09`) verbatim — no separate PvP roster.
 - **Loot is arena-scoped, same drop *model* as PvE, zero connection to a player's account.** Landing kit is a small opener; the arena's own loot table is the real power curve (`05`).
@@ -130,7 +130,7 @@ Both checks are "position vs. a triggering region," which is why one system hand
 
 PvE's two-member `Faction = 'player' | 'enemy'` union (`entities.ts:18`) and its ~14 `faction === 'player' ? enemies : players`-shaped ternaries are structurally a **2-faction assumption**, and today **player-vs-player damage does not exist** (same-faction bullets pass through each other; melee only iterates the enemy array; `DeflectSystem` only deflects enemy-faction bullets). PvP requires:
 
-- **`teamId: number` on `Actor` and `Projectile`**, separate from seat `owner` (`state/commands.ts`) — solo BR sets `teamId = owner` (one seat, one team), but the field's existence, not its value, is what "leaves the squad interface open" (`05`) — squads will simply assign the same `teamId` to multiple `owner`s, no schema change needed when that day comes.
+- **`teamId: number` on `Actor` and `Projectile`**, separate from seat `owner` (`state/commands.ts`). ✅ **The squad extension shipped (`ENGINE_VERSION` 30) on this exact schema, no change needed to it**: `teamIdForOwner(owner, playerCount)` (`client/src/game/pvpConfig.ts`) assigns the same `teamId` to a contiguous chunk of `owner`s whenever squads apply, and `owner` alone (one seat, one team) otherwise — confirming the field's existence, not its value, was what actually "left the squad interface open."
 - **A single `isHostile(a, b)` predicate** replacing the ~14 faction ternaries (`combat.ts`, `StatusEffectSystem.ts`, `HitResolveSystem.ts`, `ProjectileStepSystem.ts`, `DeflectSystem.ts`, `AIDecideSystem.ts`, `WinConditionSystem.ts`) — AI keeps a reserved `teamId` (e.g. `-1`) hostile to every player `teamId`; two players are hostile iff their `teamId`s differ. This is a `ENGINE_VERSION`-bumping change (it changes what a bullet can hit) and is a prerequisite for arena work, not a part of it — flagged as its own ROADMAP line, not folded into "`buildArenaSpecs`" the way the original ROADMAP draft implied.
 - **Melee and deflect need to stop being enemy-array-only.** Once `isHostile` exists, the melee arc and `DeflectSystem` iterate all hostile actors' projectiles/bodies, not hardcoded `state.enemies` — this is what makes player-vs-player melee and parry-stealing-a-rival's-bullet actually possible, which today they structurally are not.
 
@@ -149,7 +149,7 @@ PvE's two-member `Faction = 'player' | 'enemy'` union (`entities.ts:18`) and its
 
 ## Placement, elimination, win condition
 
-- `WinConditionSystem`'s `Winner = number | 'enemies' | null` (`entities.ts:21`) needs a **placement vocabulary**, not a single winner id: as each seat is eliminated (zone/AI/player damage takes them below the floor with no revive to catch them, since squads/revive are not live at launch — see `05`), record its finish order. The last seat standing is 1st.
+- `WinConditionSystem`'s `Winner = number | 'enemies' | null` (`entities.ts:21`) needs a **placement vocabulary**, not a single winner id: as each SQUAD is eliminated (zone/AI/player damage takes down every one of its members, with no reviver left holding a bandage to catch them — see `05`), record its finish order in one batch (`tickPlacement`, `ENGINE_VERSION` 30 — a solo/FFA match is just every squad being a singleton, byte-identical to the pre-squad per-seat behavior). The last surviving squad is 1st; `state.winner`/the `'win'` event still name one representative seat from it. Squad-mates eliminated together land at adjacent, not tied, numeric placements — full tied-rank rating math would need `ladderReport.ts` to become squad-aware too, deliberately not done.
 - **Same-tick double-elimination tiebreak: deterministic, not a coin flip.** If two seats hit zero on the identical tick, break the tie by ascending `teamId` (lower `teamId` places higher) — arbitrary but fixed and replay-stable, so no new PRNG draw is needed for something this rare.
 - `MatchRoom.reportResult`'s `reason: 'extract' | 'wipe' | 'disconnect'` (`server/src/MatchRoom.ts`) needs a PvP branch (e.g. `'placement'`) carrying the finish-order array, since neither existing reason describes "ranked 1st through 8th."
 
@@ -215,7 +215,7 @@ A parallel change to the transport, chosen so a future move to full state-sync o
 - Exact zone stage count / per-stage room-count targets / `warnTicks`/`holdTicks` / zone damage curve, tuned against the PvP HP scale factor (real play required).
 - ~~The PvP HP/weapon scale factor's actual value.~~ **First-pass value shipped:** `PVP_SCALE_FACTOR = 5`. The character-side skew it surfaced (skirmisher/juggernaut win rates) was already rebalanced off the `pvpBalanceSim` harness above (commit `61ccfd8`); the scale factor itself and the zone damage curve remain real-play-tuning work.
 - The arena's own `DropTable`/loot-marker weighting (analogous to PvE's `DropTable`, `09`, but a separate arena-scoped table).
-- Squad revive numbers, once squads are actually scheduled: bandage cost, channel time, whether downed is invulnerable in PvP (leaning "no," per `05`).
+- ~~Squad revive numbers~~ **Shipped, `ENGINE_VERSION` 30:** bandage cost is a flat 1 per completed revive (spent on completion, never on interruption), channel time is the same `REVIVE_CHANNEL_TICKS` PvE uses, and downed is confirmed **not** invulnerable in PvP (the "leaning no" above is now the shipped rule). The bandage drop table weight (5/100 on the arena table) is the one number still first-pass, same as every other arena drop weight.
 - `checkpointTicks` cadence and the exact "confirmed divergence" persistence window (">=2 consecutive checkpoints" above is a first-pass proposal, not tuned).
 - Map-editor file format / round-trip tooling for `ArenaMap` (mirrors `09`'s open "TS modules or JSON" question for `RoomPiece`).
 

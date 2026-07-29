@@ -89,3 +89,49 @@ describe('WinConditionSystem — PvP placement', () => {
     expect(s.placements.sort()).toEqual([1, 2, 3]);
   });
 });
+
+describe('WinConditionSystem — squads (design/05/15 PvP squad follow-up)', () => {
+  /** 8 seats, 2 squads of 4 (teamId 0 = seats 0-3, teamId 1 = seats 4-7) — the exact
+   * shape `buildPvpEngineConfig`/`Matchmaker` produce for an 8-seat match. */
+  function squadState(): GameState {
+    const players = Array.from({ length: 8 }, (_, i) => ({ teamId: Math.floor(i / 4) }));
+    return createGameState({ seed: 1, worldW: 0, worldH: 0, waves: [], arena: MINI_MAP, players });
+  }
+
+  it('a squad with a living member is NOT eliminated even if some of its seats have died', () => {
+    const s = squadState();
+    const sys = new WinConditionSystem();
+    s.players[0]!.alive = false; // one of squad 0's four members dies
+    sys.tick(s);
+    expect(s.placements).toEqual([]); // squad 0 still has 3 living members — not eliminated
+    expect(s.winner).toBeNull();
+  });
+
+  it('records every seat of a squad the moment its LAST member dies, in one batch', () => {
+    const s = squadState();
+    const sys = new WinConditionSystem();
+    s.players[0]!.alive = false;
+    s.players[1]!.alive = false;
+    s.players[2]!.alive = false;
+    sys.tick(s);
+    expect(s.placements).toEqual([]); // seat 3 still alive — squad 0 not yet wiped
+    s.players[3]!.alive = false; // squad 0 fully wiped now
+    sys.tick(s);
+    expect(s.placements.sort((a, b) => a - b)).toEqual([0, 1, 2, 3]); // whole squad recorded at once
+    expect(s.winner).toBe(4); // squad 1 (seats 4-7) wins — representative is its lowest seat
+    expect(s.phase).toBe('gameover');
+  });
+
+  it('a solo/FFA match (every squad a singleton) is byte-identical to the pre-squad behavior', () => {
+    // playerCount not divisible by SQUAD_SIZE (or any config with all-distinct
+    // teamIds, e.g. a 4-seat match with one squad per seat) must produce the exact
+    // same per-seat placement as the original FFA-only tests above.
+    const players = [{ teamId: 0 }, { teamId: 1 }, { teamId: 2 }];
+    const s = createGameState({ seed: 1, worldW: 0, worldH: 0, waves: [], arena: MINI_MAP, players });
+    const sys = new WinConditionSystem();
+    s.players[1]!.alive = false;
+    sys.tick(s);
+    expect(s.placements).toEqual([1]);
+    expect(s.winner).toBeNull();
+  });
+});

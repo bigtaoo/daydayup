@@ -9,6 +9,9 @@ export interface OnlineConnectOptions {
   pvpSeats: number;
   /** `?lag=` dev toggle — wraps the socket to inject synthetic one-way latency (ms). */
   lagMs: number;
+  /** A pre-formed party's id (design/05/15's PvP squad follow-up) — see
+   * `findMatch`'s `FindMatchOptions.partyId`. Omitted → plain solo queue. */
+  partyId?: string;
   /** The ticket assigns THIS client's seat — the caller's camera/HUD should follow it. */
   onMatchStart: (localOwner: number) => void;
 }
@@ -23,6 +26,7 @@ export async function connectOnlineSession(opts: OnlineConnectOptions): Promise<
   const info = await findMatch(opts.matchBaseUrl, {
     playerCount: opts.pvp ? opts.pvpSeats : 2,
     mode: opts.pvp ? 'pvp' : 'coop',
+    partyId: opts.partyId,
   });
   const url = `${info.wsUrl}?ticket=${encodeURIComponent(info.token)}`;
   let transport: Transport = new WebSocketTransport(url);

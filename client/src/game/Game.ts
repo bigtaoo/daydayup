@@ -27,6 +27,7 @@ import { Scene } from './Scene';
 import { Screens } from './Screens';
 import { Forge } from './Forge';
 import { MainMenu } from './MainMenu';
+import { PartyScreen } from './PartyScreen';
 import { Settings } from './Settings';
 import { PauseMenu } from './PauseMenu';
 import { Button } from './ui/widgets';
@@ -58,8 +59,10 @@ const MAX_STEPS = 5; // catch-up cap per render frame → no spiral of death
 // design/14), and the result screens live here in the shell, along with score (derived
 // from events). 'paused' is the in-run pause menu (design/10's own open question,
 // resolved) — 'settings' also serves as the pause menu's settings sub-screen (Game
-// tracks which phase to return to via settingsReturnPhase).
-type Phase = 'menu' | 'forge' | 'playing' | 'paused' | 'victory' | 'defeat' | 'settings';
+// tracks which phase to return to via settingsReturnPhase). 'squad' is the PvP
+// pre-formed-party lobby (design/05/15's squad follow-up) — the first runtime (not
+// boot-flag) entry point into PvP.
+type Phase = 'menu' | 'forge' | 'playing' | 'paused' | 'victory' | 'defeat' | 'settings' | 'squad';
 
 export class Game {
   private app: Application;
@@ -85,6 +88,10 @@ export class Game {
   private screens = new Screens();
   private forge = new Forge();
   private mainMenu = new MainMenu();
+  // Constructed in start(), not as a field initializer — it needs `this.matchBaseUrl`
+  // AFTER the constructor's `?matchBaseUrl=` query-param override has applied, which a
+  // field initializer would run before (design/05/15's PvP squad follow-up).
+  private partyScreen!: PartyScreen;
   private settingsScreen = new Settings();
   private pauseMenu = new PauseMenu();
   // Settings can be opened from the main menu, the forge, OR the in-run pause menu
@@ -138,11 +145,16 @@ export class Game {
   // `?pvp=1` (design/15, ROADMAP Phase 4 closeout) — a REAL matchmade PvP arena run:
   // requests an 8-seat (default; `?seats=` overrides for local two-tab testing) 'pvp'-
   // mode match instead of 2-seat 'coop', builds an arena EngineConfig (ARENA_CATALOG +
-  // one distinct teamId per seat) from `match_start`, and reports win/lose by placement
-  // instead of the PvE extract/wipe outcome. Reuses the entire online/CoopSession path
-  // `?online=1` already proved out — only `mode` and the config it builds differ.
+  // squad-chunked teamIds, design/05/15) from `match_start`, and reports win/lose by
+  // placement instead of the PvE extract/wipe outcome. Reuses the entire online/
+  // CoopSession path `?online=1` already proved out — only `mode` and the config it
+  // builds differ.
   private pvp = false;
   private pvpSeats = 2;
+  // A pre-formed party's id (design/05/15's squad follow-up, SQUAD screen) — set by
+  // beginSquadMatch, threaded into connectOnlineSession so every member's `POST /find`
+  // groups into one squad chunk. Undefined for a plain `?pvp=1` boot-flag solo queue.
+  private partyId?: string;
   private matchBaseUrl = 'http://localhost:8788';
   private session: CoopSession | null = null;
   private readonly ally = new AllyController();
@@ -226,11 +238,18 @@ export class Game {
     // `world` only — the `ui` layer (HUD/menus) must stay crisp and undistorted.
     this.fx.attach();
 
+    // Constructed here, not as a field initializer — see the field's own doc comment
+    // (needs `this.matchBaseUrl` after the constructor's query-param override).
+    this.partyScreen = new PartyScreen({ matchBaseUrl: this.matchBaseUrl });
     this.layers.ui.addChild(
       this.mainMenu.view, this.forge.view, this.screens.view, this.settingsScreen.view, this.pauseMenu.view,
+      this.partyScreen.view,
     );
     this.mainMenu.onPlay = () => this.showForge();
+    this.mainMenu.onSquad = () => this.showSquad();
     this.mainMenu.onSettings = () => this.openSettings();
+    this.partyScreen.onBack = () => this.showMenu();
+    this.partyScreen.onStartMatch = (partyId) => this.beginSquadMatch(partyId);
     this.forge.onBack = () => this.showMenu();
     this.forge.onCycleCharacter = () => this.forgeCycleCharacter();
     this.forge.onClear = () => this.forgeClear();
@@ -359,16 +378,46 @@ export class Game {
   // ---- Run lifecycle ----
 
   // The main menu — the boot front door (design/10 screen flow). PLAY drops into the
-  // forge/loadout screen below; SETTINGS reuses the same settings overlay the forge uses.
+  // forge/loadout screen below; SQUAD opens the PvP party lobby (design/05/15);
+  // SETTINGS reuses the same settings overlay the forge uses.
   private showMenu() {
     this.phase = 'menu';
     this.hudView.visible = false;
     this.forge.hide();
     this.screens.hide();
     this.settingsScreen.hide();
+    this.partyScreen.hide();
     this.settingsBtn.view.visible = false;
     const { w, h } = this.screenSize();
     this.mainMenu.show(w, h);
+  }
+
+  // The PvP pre-formed-party lobby (design/05/15's squad follow-up). BACK returns to
+  // the main menu; a successful `onStartMatch` hands off to beginSquadMatch below.
+  private showSquad() {
+    this.phase = 'squad';
+    this.hudView.visible = false;
+    this.mainMenu.hide();
+    this.forge.hide();
+    this.screens.hide();
+    this.settingsScreen.hide();
+    const { w, h } = this.screenSize();
+    this.partyScreen.show(w, h);
+  }
+
+  /**
+   * The party leader tapped START (or a member's poll saw the leader already had) —
+   * hand off to the SAME online/PvP connect path `?pvp=1` uses, with this run's
+   * squad size forced to 8 seats (2 squads of `SQUAD_SIZE`, the shape `teamIdForOwner`
+   * actually chunks — design/05/15) and `partyId` attached so every member's
+   * `POST /find` groups into one squad instead of a stranger's.
+   */
+  private beginSquadMatch(partyId: string) {
+    this.online = true;
+    this.pvp = true;
+    this.pvpSeats = 8;
+    this.partyId = partyId;
+    this.beginRun();
   }
 
   // The forge outpost / loadout screen — the between-run hub (design/14). Shows the
@@ -380,6 +429,7 @@ export class Game {
     this.mainMenu.hide();
     this.screens.hide();
     this.settingsScreen.hide();
+    this.partyScreen.hide();
     const { w, h } = this.screenSize();
     this.forge.render(this.meta, w, h);
     this.settingsBtn.view.position.set(w - 130, h - 50);
@@ -621,10 +671,13 @@ export class Game {
       this.updateFx(dt);
       this.scene.interpolate(1, dt);
     } else {
-      // Menu / result: freeze the last frame, keep fx fading, poll for confirm.
+      // Menu / result / squad lobby: freeze the last frame, keep fx fading, poll for
+      // confirm. `partyScreen.update` no-ops when hidden, so it's safe to call
+      // unconditionally rather than gating on `this.phase === 'squad'` here too.
       this.updateFx(dt);
       this.scene.interpolate(1, dt);
       this.pollConfirm();
+      this.partyScreen.update(dt);
     }
   }
 
@@ -707,6 +760,7 @@ export class Game {
     this.settingsBtn.view.visible = false;
     this.forge.hide();
     this.screens.hide();
+    this.partyScreen.hide();
     this.session?.close();
     this.session = null;
     this.predictor.deactivate(); // re-anchors on the first confirmed frame of the new run
@@ -717,12 +771,14 @@ export class Game {
         pvp: this.pvp,
         pvpSeats: this.pvpSeats,
         lagMs: this.lagMs,
+        partyId: this.partyId,
         onMatchStart: (localOwner) => { this.localOwner = localOwner; },
       });
     } catch (e) {
       // Matchmaking or the socket failed — return to the forge (a real UI would toast this).
       console.error('[online] failed to start match', e);
       this.online = false; // fall back to offline for the next run attempt
+      this.partyId = undefined; // don't silently retry a failed squad match with a stale party
       this.showForge();
       this.online = true;
     }

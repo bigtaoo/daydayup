@@ -11,6 +11,15 @@
  */
 const DEV_SECRET = 'dev-insecure-secret-do-not-use-in-prod';
 
+// PvP squad size (design/05/15's long-deferred "squads" reserved interface) and its
+// derived helpers live in `client/src/game/pvpConfig.ts`, NOT here — `buildPvpEngineConfig`
+// must independently derive the exact same per-seat `teamId` from nothing but
+// `(owner, playerCount)` (no ticket to read: `BotClient.ts` calls it with only
+// `seed`/`playerCount`), so this server and that client function share one formula via
+// the `@dd/game/pvpConfig` alias (already used by `BotClient.ts`/`Matchmaker.ts`)
+// instead of two hand-mirrored copies that could drift (design/06's own stated lesson).
+export { SQUAD_SIZE, squadSizeForPlayerCount, teamIdForOwner } from '@dd/game/pvpConfig';
+
 let warned = false;
 
 export function ticketSecret(): { secret: string; isDev: boolean } {

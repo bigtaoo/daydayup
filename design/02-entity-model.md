@@ -30,10 +30,12 @@ Actor {
   faction              // 'player' | 'enemy' — WHICH SIDE this actor is on
   teamId: number       // WHO on that side this actor allies with (15) — independent of
                        //   faction; PvE never needed it (faction alone was a sufficient
-                       //   2-faction model), PvP does: every seat gets its own teamId
-                       //   (isHostile(a,b) = a.teamId !== b.teamId), enemies share a
-                       //   reserved ENEMY_TEAM_ID hostile to every player. A future squad
-                       //   build assigns the same teamId to multiple seats — no schema change.
+                       //   2-faction model), PvP does: a solo seat gets its own teamId,
+                       //   a SQUAD shares one across its seats (shipped, ENGINE_VERSION 30 —
+                       //   teamIdForOwner in pvpConfig.ts is the single source of truth both
+                       //   Matchmaker and the engine config derive it from), enemies share a
+                       //   reserved ENEMY_TEAM_ID hostile to every player. Confirmed: no
+                       //   schema change was needed when squads actually shipped.
   skin: Skin
   slots: [Weapon?, Weapon?]  // two weapon slots; either may be empty
   activeSlot: 0 | 1    // which slot fires / receives a pickup; SWAP toggles it

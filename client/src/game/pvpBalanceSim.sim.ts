@@ -16,7 +16,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { createGameEngine, Prng, type EngineConfig } from '@dd/engine';
-import { buildPvpEngineConfig } from './pvpConfig';
+import { buildPvpEngineConfig, squadSizeForPlayerCount } from './pvpConfig';
 import { PvpBotController } from './PvpBotController';
 
 // SIM-ONLY deconfounding: `buildPvpEngineConfig` skins seats BY INDEX (seat i -> the
@@ -105,12 +105,19 @@ describe('PvP balance sim (bot vs bot — first-signal data for PVP_SCALE_FACTOR
     const timedOut = results.filter((r) => r.timedOut);
     expect(timedOut).toEqual([]);
 
-    // Every match should resolve with exactly one non-eliminated seat (winner absent
-    // from `placements`), i.e. `placements.length === playerCount - 1` — the 'tie'
-    // simultaneous-elimination edge case is allowed but should stay rare.
+    // Every match should resolve with exactly one non-eliminated SQUAD (design/05/15):
+    // `placements.length === playerCount - <the winning squad's size>`. For any seat
+    // count squads don't apply to (`squadSizeForPlayerCount` collapses to 1 — every
+    // count in this sweep except 8), that's the original `playerCount - 1` invariant,
+    // byte-identical to before squads existed. For 8 (2 squads of 4), an entire
+    // LOSING squad's worth of seats lands in `placements` at once and the WINNING
+    // squad's other 3 seats never appear there at all, alongside the 1 seat this sim
+    // reports as `winnerSkin`. The 'tie' simultaneous-elimination edge case is
+    // allowed but should stay rare.
     const ties = results.filter((r) => r.winnerSkin === 'tie');
     for (const r of results) {
-      if (r.winnerSkin !== 'tie') expect(r.placementsCount).toBe(r.playerCount - 1);
+      if (r.winnerSkin === 'tie') continue;
+      expect(r.placementsCount).toBe(r.playerCount - squadSizeForPlayerCount(r.playerCount));
     }
     expect(ties.length).toBeLessThan(results.length * 0.05); // <5% ties — a spike would flag a real placement/elimination bug
 
@@ -120,6 +127,15 @@ describe('PvP balance sim (bot vs bot — first-signal data for PVP_SCALE_FACTOR
     // entangled with a specific character across this seed sweep. Still first-signal
     // data to sanity-check against real playtesting, not a verdict (e.g. bot AI
     // quality/aggression isn't necessarily representative of human play).
+    //
+    // Squad follow-up caveat (design/05/15), not fixed here: for playerCount=8 (2
+    // squads of 4), `winnerSkin` is just WHICHEVER surviving member of the winning
+    // squad `runMatch` happens to find first — not necessarily the strongest
+    // performer, since a squad's fate is shared regardless of which individual
+    // member lands the last kill. This makes the win-rate-by-character read noisier
+    // for 8-seat rows specifically (every other row in PLAYER_COUNTS is unaffected,
+    // squadSizeForPlayerCount collapsing to 1 there) — a real win-rate-by-SQUAD
+    // report would need its own aggregation, deliberately not built here.
     const bySkin = new Map<string, number>();
     for (const r of results) bySkin.set(r.winnerSkin, (bySkin.get(r.winnerSkin) ?? 0) + 1);
 

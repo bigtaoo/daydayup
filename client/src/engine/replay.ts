@@ -124,6 +124,11 @@ export function serializeState(s: GameState): unknown {
       // running bleedout + revive-channel clock — hash them so a revive/bleedout divergence
       // is caught directly. Stable (false/0/0) for a still-standing player.
       p.downed, p.bleedoutTicks, p.reviveProgressTicks,
+      // PvP squad revive (design/05/15): a bandage is consumed on a successful revive
+      // completion — hash it so a desync there (e.g. one client double-spending a
+      // bandage) surfaces immediately instead of only showing up later as a revive
+      // that should have failed but didn't. Always 0 in PvE.
+      p.bandages,
       // Run-buff stack (design/14): buffs scale damage/firerate at use time, so a buff
       // divergence would otherwise only surface indirectly — hash the ids directly.
       p.buffs,

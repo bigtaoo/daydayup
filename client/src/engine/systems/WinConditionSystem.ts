@@ -1,10 +1,11 @@
 /**
  * Step 14 — Win condition. PvE: no player "up" (all downed-or-dead) → enemies win;
  * last wave cleared with no enemies left → the (single) player wins. PvP (arena
- * mode, design/15 ROADMAP 4.2e): last seat standing wins, with a per-seat finish
- * order recorded as each seat is eliminated. Sets state.winner + phase='gameover'
- * once and emits a win event. After gameover the orchestrator returns early and
- * never re-enters here.
+ * mode, design/15 ROADMAP 4.2e): last SQUAD standing wins (design/05/15's squad
+ * follow-up groups seats by `teamId`; a solo/FFA match is just every squad being a
+ * singleton), with a finish order recorded as each squad is eliminated. Sets
+ * state.winner + phase='gameover' once and emits a win event. After gameover the
+ * orchestrator returns early and never re-enters here.
  *
  * Runs AFTER ReviveSystem (step 13, ROADMAP 3.2) so a completed revive / bleedout death
  * has already resolved this tick, and AFTER ExtractionSystem (step 12, ROADMAP 1.4/1.5): when `floorsEnabled`,
@@ -53,35 +54,62 @@ export class WinConditionSystem {
   }
 
   /**
-   * Battle-royale placement (design/15). Record every newly-eliminated seat (worst
-   * place first); when exactly one seat remains, it's the winner. The zero-survivors
-   * case (two-or-more seats died on the identical tick) is design/15's explicit
-   * same-tick tiebreak — deterministic, never a coin flip: ascending `teamId` places
-   * higher, so the lowest-teamId dead seat is pulled out as the winner instead of
-   * being left in `placements`.
+   * Battle-royale placement (design/15), squad-aware (design/05/15's PvP squad
+   * follow-up). Players are grouped by `teamId` into squads (a solo/FFA match is just
+   * every squad being a singleton — the exact pre-squad behavior, unchanged). A squad
+   * is eliminated once EVERY member is `!alive`; record every one of its seats (worst
+   * place first) the tick that happens. When exactly one squad still has a living
+   * member, that squad wins. The zero-surviving-squads case (two-or-more squads wiped
+   * on the identical tick) is design/15's explicit same-tick tiebreak — deterministic,
+   * never a coin flip: ascending `teamId` places higher.
+   *
+   * `state.winner`/the `'win'` event still carry a single representative SEAT index
+   * (the winning squad's lowest seat index) — every consumer (`RunOutcome.ts`,
+   * `replay.ts`, the HUD) already expects one seat number, and squad-mates share the
+   * same outcome regardless of which one is named.
+   *
+   * NOTE: squad-mates eliminated together land at ADJACENT, not identical, numeric
+   * placements (whichever order they're pushed within the batch) — full squad-tied
+   * ranking would need `ladderReport.ts`'s per-seat rating math to become squad-aware
+   * too, which is a deliberate follow-up, not done here (every other `placements`
+   * consumer only cares about seat-index order, which this preserves exactly).
    */
   private tickPlacement(state: GameState): void {
+    const seatsByTeam = new Map<number, number[]>();
     state.players.forEach((p, i) => {
-      if (!p.alive && !state.placements.includes(i)) state.placements.push(i);
-    });
-
-    const survivors: number[] = [];
-    state.players.forEach((p, i) => {
-      if (p.alive) survivors.push(i);
-    });
-    if (survivors.length > 1) return; // match continues
-
-    let winnerIdx: number;
-    if (survivors.length === 1) {
-      winnerIdx = survivors[0]!;
-    } else {
-      winnerIdx = 0;
-      for (let i = 1; i < state.players.length; i++) {
-        if (state.players[i]!.teamId < state.players[winnerIdx]!.teamId) winnerIdx = i;
+      let seats = seatsByTeam.get(p.teamId);
+      if (!seats) {
+        seats = [];
+        seatsByTeam.set(p.teamId, seats);
       }
-      const pos = state.placements.indexOf(winnerIdx);
-      if (pos !== -1) state.placements.splice(pos, 1); // the winner is 1st, not a loser
+      seats.push(i);
+    });
+
+    for (const seats of seatsByTeam.values()) {
+      if (!seats.every((i) => !state.players[i]!.alive)) continue; // squad still has a survivor
+      for (const i of seats) {
+        if (!state.placements.includes(i)) state.placements.push(i);
+      }
     }
+
+    const aliveTeams = new Set<number>();
+    state.players.forEach((p) => {
+      if (p.alive) aliveTeams.add(p.teamId);
+    });
+    if (aliveTeams.size > 1) return; // match continues
+
+    let winnerTeam: number;
+    if (aliveTeams.size === 1) {
+      winnerTeam = [...aliveTeams][0]!;
+    } else {
+      winnerTeam = Math.min(...seatsByTeam.keys()); // simultaneous wipe — lowest teamId wins
+    }
+    const winnerSeats = seatsByTeam.get(winnerTeam)!;
+    for (const i of winnerSeats) {
+      const pos = state.placements.indexOf(i);
+      if (pos !== -1) state.placements.splice(pos, 1); // the winning squad is 1st, not losers
+    }
+    const winnerIdx = Math.min(...winnerSeats);
 
     state.winner = winnerIdx;
     state.phase = 'gameover';

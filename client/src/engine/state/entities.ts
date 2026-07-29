@@ -247,6 +247,11 @@ export interface PlayerActor extends Actor {
   downed: boolean;
   bleedoutTicks: number; // counts down while downed & not being revived; 0 → dead
   reviveProgressTicks: number; // channel progress (0..REVIVE_CHANNEL_TICKS); resets if interrupted
+  // PvP squad revive (design/05/15's squad follow-up) — reviving a downed SQUADMATE
+  // (never a rival, see ReviveSystem's teamId check) consumes one of these, unlike
+  // PvE's free channel. Picked up from the arena's `{kind:'bandage'}` drop (PvP-only,
+  // content/drops.ts). Always 0 in PvE — nothing grants or reads it there.
+  bandages: number;
 }
 
 /** A player who is downed (incapacitated, revivable) — not a valid target and cannot act.
@@ -385,7 +390,7 @@ export interface AABB {
 // SIM.lootRevealRadius. Keeps the roll (and its weaponId) out of shared GameState
 // until a player could plausibly see it, so a map-wide state-reading/free-camera
 // cheat can't read every floor's loot identity from across the whole arena.
-export type PickupKind = 'heal' | 'material' | 'weapon' | 'buff' | 'crate';
+export type PickupKind = 'heal' | 'material' | 'weapon' | 'buff' | 'crate' | 'bandage';
 
 export interface PickupItem {
   id: number;

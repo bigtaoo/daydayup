@@ -13,11 +13,21 @@
  * placement result (design/15's "computed from checkpoint-verified match placements
  * only") — see `MatchRoomDeps.onSettled` (MatchRoom.ts) and its wiring in index.ts.
  *
- *   POST /find             { playerCount }              → { queueId, match? }
+ *   POST /find             { playerCount, mode?, partyId? } → { queueId, match? }
  *   GET  /find/:id                                       → { status: 'queued'|'matched'|'expired', match? }
  *   POST /rating/report     { accountIds, places }       → { changes: [{accountId,before,after}] }
  *   GET  /rating/:accountId                               → { accountId, rating }
+ *   POST /party/create      { playerId }                 → PartyInfo
+ *   POST /party/join        { playerId, code }           → PartyInfo | 404
+ *   POST /party/leave       { partyId, playerId }        → PartyInfo | null
+ *   POST /party/start       { partyId, playerId }        → PartyInfo | 404 (leader only)
+ *   GET  /party/:id                                       → PartyInfo | 404
  *   GET  /health
+ *
+ * Party endpoints (design/05/15's PvP squad follow-up) back `PartyService` — pure
+ * pre-match grouping with no account system underneath (none exists anywhere in this
+ * project, see `rating.ts`'s own note). A `playerId` is whatever opaque string the
+ * client generates and persists locally; nothing here verifies it.
  *
  * `match` = { wsUrl, roomId, owner, seed, playerCount, token } — everything the client
  * needs to open `${wsUrl}?ticket=${token}` (see client/src/net/matchmaking.ts).
@@ -26,9 +36,19 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { randomUUID } from 'node:crypto';
 import { Matchmaker, type MatchTicket } from './Matchmaker';
 import { RatingStore } from './rating';
+import { PartyService } from './PartyService';
 import { signTicket, type MatchMode, type TicketPayload } from './ticket';
-import { ticketSecret } from './config';
+import { ticketSecret, teamIdForOwner } from './config';
 import { spawnBotClient } from './BotClient';
+
+// A short, human-typeable join code — unambiguous alphabet (no 0/O/1/I) since a
+// player reads/types this to a friend, not a machine.
+const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+function randomCode(): string {
+  let s = '';
+  for (let i = 0; i < 5; i++) s += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
+  return s;
+}
 
 const PORT = Number(process.env.MATCH_PORT ?? 8788);
 const HOST = process.env.HOST ?? '0.0.0.0';
@@ -59,7 +79,11 @@ function main(): void {
     onBotFill: ({ roomId, seed, playerCount, mode, botOwners }) => {
       for (const owner of botOwners) {
         const exp = Date.now() + 30_000; // ample time for the bot to open the socket
-        const grant: TicketPayload = { roomId, owner, seed, playerCount, exp, mode };
+        // teamIdForOwner is the SAME pure function Matchmaker.grantGroup used for the
+        // real seats in this room — a bot always joins the squad chunk its seat index
+        // falls into, topping up a real party's understaffed squad first.
+        const teamId = teamIdForOwner(owner, playerCount);
+        const grant: TicketPayload = { roomId, owner, seed, playerCount, teamId, exp, mode };
         spawnBotClient({
           wsUrl: GAMESERVER_URL,
           token: signTicket(grant, secret),
@@ -74,6 +98,11 @@ function main(): void {
 
   const withUrl = (t: MatchTicket) => ({ ...t, wsUrl: GAMESERVER_URL });
   const ratings = new RatingStore();
+  const parties = new PartyService({
+    nowMs: () => Date.now(),
+    newPartyId: () => randomUUID(),
+    newCode: randomCode,
+  });
 
   const server = createServer((req, res) => {
     if (req.method === 'OPTIONS') return send(res, 204, {});
@@ -91,8 +120,13 @@ function main(): void {
         // that predates this field.
         const rawMode = (body as { mode?: unknown })?.mode;
         const mode: MatchMode = rawMode === 'pvp' ? 'pvp' : 'coop';
+        // A pre-formed party (design/05/15) — every member's client sends the SAME
+        // partyId once their leader starts matching, so Matchmaker groups them into
+        // one squad chunk. Absent (every pre-party caller) → plain FIFO, unaffected.
+        const rawGroupId = (body as { partyId?: unknown })?.partyId;
+        const groupId = typeof rawGroupId === 'string' && rawGroupId ? rawGroupId : undefined;
         try {
-          const { queueId, ticket } = matchmaker.enqueue(playerCount, mode);
+          const { queueId, ticket } = matchmaker.enqueue(playerCount, mode, groupId);
           send(res, 200, { queueId, match: ticket ? withUrl(ticket) : undefined });
         } catch (e) {
           send(res, 400, { error: (e as Error).message });
@@ -125,6 +159,55 @@ function main(): void {
     if (req.method === 'GET' && ratingLookup) {
       const accountId = decodeURIComponent(ratingLookup[1]!);
       return send(res, 200, { accountId, rating: ratings.get(accountId) });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/party/create') {
+      return readJson(req, (body) => {
+        const playerId = (body as { playerId?: unknown })?.playerId;
+        if (typeof playerId !== 'string' || !playerId) return send(res, 400, { error: 'playerId required' });
+        send(res, 200, parties.create(playerId));
+      });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/party/join') {
+      return readJson(req, (body) => {
+        const { playerId, code } = (body as { playerId?: unknown; code?: unknown }) ?? {};
+        if (typeof playerId !== 'string' || !playerId || typeof code !== 'string' || !code) {
+          return send(res, 400, { error: 'playerId and code required' });
+        }
+        const info = parties.join(code, playerId);
+        if (!info) return send(res, 404, { error: 'party not found or full' });
+        send(res, 200, info);
+      });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/party/leave') {
+      return readJson(req, (body) => {
+        const { partyId, playerId } = (body as { partyId?: unknown; playerId?: unknown }) ?? {};
+        if (typeof partyId !== 'string' || typeof playerId !== 'string') {
+          return send(res, 400, { error: 'partyId and playerId required' });
+        }
+        send(res, 200, parties.leave(partyId, playerId));
+      });
+    }
+
+    if (req.method === 'POST' && url.pathname === '/party/start') {
+      return readJson(req, (body) => {
+        const { partyId, playerId } = (body as { partyId?: unknown; playerId?: unknown }) ?? {};
+        if (typeof partyId !== 'string' || typeof playerId !== 'string') {
+          return send(res, 400, { error: 'partyId and playerId required' });
+        }
+        const info = parties.startMatching(partyId, playerId);
+        if (!info) return send(res, 404, { error: 'party not found or not leader' });
+        send(res, 200, info);
+      });
+    }
+
+    const partyLookup = url.pathname.match(/^\/party\/([^/]+)$/);
+    if (req.method === 'GET' && partyLookup) {
+      const info = parties.get(decodeURIComponent(partyLookup[1]!));
+      if (!info) return send(res, 404, { error: 'party not found' });
+      return send(res, 200, info);
     }
 
     send(res, 404, { error: 'not found' });

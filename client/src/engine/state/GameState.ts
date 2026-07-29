@@ -456,6 +456,7 @@ export class GameState {
       downed: false, // co-op downed/revive (design/05/07, ROADMAP 3.2)
       bleedoutTicks: 0,
       reviveProgressTicks: 0,
+      bandages: 0, // PvP squad revive (design/05/15) — starts empty, picked up in-arena
       prevButtons: 0,
       status: freshStatus(),
       shieldBreak: skin.shieldBreak ? toShieldBreakSim(skin.shieldBreak) : undefined,

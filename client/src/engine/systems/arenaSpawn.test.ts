@@ -145,6 +145,13 @@ describe('rollArenaDrop — never rolls material (design/15 fairness wall)', () 
     expect(kinds.has('material')).toBe(false);
     expect(ARENA_DROP_TABLE.some((e) => (e.kind as string) === 'material')).toBe(false);
   });
+
+  it('can roll a bandage — the PvP squad-revive currency (design/05/15)', () => {
+    const prng = new Prng(42);
+    const kinds = new Set<string>();
+    for (let i = 0; i < 500; i++) kinds.add(rollArenaDrop(prng).kind);
+    expect(kinds.has('bandage')).toBe(true);
+  });
 });
 
 describe('PickupSystem — arena crate reveal (design/15 anti-cheat: no eager map-wide roll)', () => {

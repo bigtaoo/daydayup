@@ -59,15 +59,18 @@ function getTeamPools(state: GameState, teamId: number): { players: Actor[]; ene
 
 /**
  * Every alive actor hostile to `self` that a hit/target query is allowed to
- * reach. Downed players are excluded unconditionally — they are invulnerable
- * and untargetable regardless of who's asking (design/07, ROADMAP 3.2) — so
- * every caller gets that guarantee for free instead of repeating the check.
+ * reach. In PvE co-op, downed players are excluded unconditionally — they are
+ * invulnerable and untargetable regardless of who's asking (design/07, ROADMAP
+ * 3.2) — so every caller gets that guarantee for free instead of repeating the
+ * check. In PvP (`state.zoneEnabled`), design/05/15 leans the other way: a
+ * downed player IS a valid target, same as anyone standing — the exclusion
+ * only ever applied here in the first place.
  */
 export function hostileTargets(state: GameState, self: Teamed): Actor[] {
   const { players, enemies } = getTeamPools(state, self.teamId);
   const out: Actor[] = [];
   for (const p of players) {
-    if (p.alive && !isDowned(p)) out.push(p);
+    if (p.alive && (state.zoneEnabled || !isDowned(p))) out.push(p);
   }
   for (const e of enemies) {
     if (e.alive) out.push(e);
