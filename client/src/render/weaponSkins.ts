@@ -4,12 +4,11 @@
 // neutral gun_default art (element is a crystal-colour tint, applied separately).
 //
 // ROADMAP 5.3 follow-up: per-FRAME business-end art. `scattergun`/`seeker`/`mortar`/
-// `lasercutter`/`tomahawk`/`novaburst`/`gyre`/`hammer`/`spear` each get a distinct
-// silhouette (a shotgun muzzle reads differently from a beam emitter); weapons with no
-// dedicated entry (blaster/repeater/cannon/enemygun/saber/emberblade/frostbrand/
-// stormglaive/carom/leech) still fall back to the generic gun_default/sword_default —
-// no readable shape difference would justify unique art for those yet. Looked up by
-// `WeaponSimSpec.name` (the weapon id), falling back to the KIND default.
+// `lasercutter`/`tomahawk`/`novaburst`/`gyre`/`hammer`/`spear`/`blaster`/`repeater`/
+// `cannon`/`carom`/`enemygun`/`saber`/`emberblade`/`frostbrand`/`stormglaive`/`leech`
+// each get a distinct silhouette (a shotgun muzzle reads differently from a beam
+// emitter). Looked up by `WeaponSimSpec.name` (the weapon id), falling back to the
+// KIND default for anything else.
 //
 // Preloaded like skinRegistry's character bundles: best-effort, never blocks gameplay
 // if a fetch fails.
@@ -64,6 +63,22 @@ const WEAPON_DEFS: Partial<Record<string, WeaponVisualDef>> = {
   gyre: { path: '/weapons/gun_gyre.png', anchor: { x: 0.219, y: 0.448 }, scale: 85 / 320, rotationOffsetRad: deg(-7.8) },
   hammer: { path: '/weapons/sword_hammer.png', anchor: { x: 0.906, y: 0.508 }, scale: 75 / 320, rotationOffsetRad: deg(173.7) },
   spear: { path: '/weapons/sword_spear.png', anchor: { x: 0.906, y: 0.346 }, scale: 100 / 320, rotationOffsetRad: deg(-161.1) },
+  // 2026-07-29 batch: prompted this time for the gun_default/sword_default convention
+  // directly (socket upper-left, tip lower-right) instead of leaving it to chance — it
+  // worked, all 10 landed within ~25 deg of their KIND_DEFAULTS reference, so offsets
+  // are small this time instead of the near-180 deg flips the previous batch needed.
+  // Anchors are first-pass eyeball (per the note above); rotationOffsetRad IS measured
+  // by the same farthest-alpha-pixel-from-anchor method as the batch above.
+  blaster: { path: '/weapons/gun_blaster.png', anchor: { x: 0.22, y: 0.42 }, scale: 80 / 320, rotationOffsetRad: deg(-1.2) },
+  repeater: { path: '/weapons/gun_repeater.png', anchor: { x: 0.2, y: 0.44 }, scale: 90 / 320, rotationOffsetRad: deg(-0.1) },
+  cannon: { path: '/weapons/gun_cannon.png', anchor: { x: 0.22, y: 0.35 }, scale: 90 / 320, rotationOffsetRad: deg(-5.7) },
+  carom: { path: '/weapons/gun_carom.png', anchor: { x: 0.28, y: 0.35 }, scale: 85 / 320, rotationOffsetRad: deg(-13.5) },
+  enemygun: { path: '/weapons/gun_enemygun.png', anchor: { x: 0.35, y: 0.35 }, scale: 80 / 320, rotationOffsetRad: deg(-14.4) },
+  saber: { path: '/weapons/sword_saber.png', anchor: { x: 0.22, y: 0.42 }, scale: 100 / 320, rotationOffsetRad: deg(-12.1) },
+  emberblade: { path: '/weapons/sword_emberblade.png', anchor: { x: 0.22, y: 0.4 }, scale: 100 / 320, rotationOffsetRad: deg(-9.8) },
+  frostbrand: { path: '/weapons/sword_frostbrand.png', anchor: { x: 0.22, y: 0.32 }, scale: 100 / 320, rotationOffsetRad: deg(-15.1) },
+  stormglaive: { path: '/weapons/sword_stormglaive.png', anchor: { x: 0.14, y: 0.32 }, scale: 100 / 320, rotationOffsetRad: deg(-5.8) },
+  leech: { path: '/weapons/sword_leech.png', anchor: { x: 0.28, y: 0.35 }, scale: 90 / 320, rotationOffsetRad: deg(-12.9) },
 };
 
 const textures = new Map<string, Texture>();
