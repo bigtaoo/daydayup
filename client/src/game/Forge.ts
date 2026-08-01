@@ -1,4 +1,4 @@
-import { Container, Text } from 'pixi.js';
+import { Container, Sprite, Text } from 'pixi.js';
 import {
   BLUEPRINT_CATALOG, SKIN_DEFS, DAMAGE_TYPES, PLAYER_BASE, WEAPON_SPECS, RARITY_TIERS,
   type WeaponBlueprint, type DamageType,
@@ -10,6 +10,7 @@ import { CompareCard, buildCompareRows, equippedSpecOfKind } from './ui/compareC
 import { pageCount, pageStartForIndex, clampPageStart, wrapIndex } from './ui/paging';
 import { RARITY_COLORS } from './config';
 import { getWeaponTexture } from '../render/weaponSkins';
+import { getUiTexture } from '../render/uiSkins';
 
 /** Rows shown at once (`BLUEPRINT_CATALOG` has more entries than fit above the fixed
  * bottom action bar — a real overflow found while wiring up real Buttons, since the old
@@ -49,6 +50,11 @@ export class Forge {
    * bounded regardless of how many blueprints exist. */
   private rowBtns: Button[];
   private compareCard = new CompareCard();
+  /** The forger NPC (design/13's "Outpost/hub" NPC gap) — decorative, corner-anchored
+   * art, hidden until its texture is generated (uiSkins.ts's non-blocking preload) and
+   * hidden again on any viewport too narrow to fit it beside the centered row column
+   * without overlapping (mirrors renderCompareCard's own no-room-hide check below). */
+  private npcSprite = new Sprite();
 
   // Cached from the last render() call so the page-nav buttons (pure browse, no meta
   // mutation) can re-render themselves without needing a Game-level round-trip.
@@ -83,9 +89,12 @@ export class Forge {
     // widgets.ts's Button doc comment for the full explanation).
     this.title = new Text({ text: 'FORGE OUTPOST', style: { fill: 0xf7fafc, fontSize: 30, fontWeight: 'bold', fontFamily: 'sans-serif', padding: 16 } });
     this.title.anchor.set(0.5, 0);
-    this.infoText = new Text({ text: '', style: { fill: 0xcbd5e0, fontSize: 14, fontFamily: 'monospace', lineHeight: 20, align: 'center', padding: 24 } });
+    // wordWrap: the buyable-blueprint list appended below (`Store (demo: free): ...`)
+    // has no fixed length — without wrapping it was a real bug, running off both
+    // edges of the screen as one unbroken line instead of staying inside the panel.
+    this.infoText = new Text({ text: '', style: { fill: 0xcbd5e0, fontSize: 14, fontFamily: 'monospace', lineHeight: 20, align: 'center', padding: 24, wordWrap: true, wordWrapWidth: 760 } });
     this.infoText.anchor.set(0.5, 0);
-    this.hint = new Text({ text: '[↑↓]/[1-9]/[C]/[X]/[Enter] keyboard shortcuts still work', style: { fill: 0x90cdf4, fontSize: 12, fontFamily: 'monospace', padding: 34 } });
+    this.hint = new Text({ text: '[↑↓]/[1-9]/[C]/[X]/[Enter] keyboard shortcuts still work', style: { fill: 0x90cdf4, fontSize: 12, fontFamily: 'monospace', padding: 10 } });
     this.hint.anchor.set(0.5, 1);
     this.pageLabel = new Text({ text: '', style: { fill: 0x90cdf4, fontSize: 12, fontFamily: 'monospace', padding: 14 } });
     this.pageLabel.anchor.set(0.5);
@@ -116,11 +125,16 @@ export class Forge {
 
     this.clearBtn = new Button('CLEAR LOADOUT', { w: 160, h: 30, fontSize: 12 });
     this.clearBtn.onTap = () => this.onClear?.();
+    this.clearBtn.setIcon(getUiTexture('icon_clear'));
     this.startBtn = new Button('START RUN ▸', { w: 220, h: 44, fontSize: 17 });
     this.startBtn.onTap = () => this.onStart?.();
+    this.startBtn.setIcon(getUiTexture('icon_play'));
+
+    this.npcSprite.anchor.set(0.5, 1);
+    this.npcSprite.visible = false;
 
     this.view.addChild(
-      this.panel.view, this.title, this.backBtn.view,
+      this.panel.view, this.npcSprite, this.title, this.backBtn.view,
       this.prevCharBtn.view, this.charText, this.nextCharBtn.view,
       this.infoText,
       ...this.rowBtns.map((b) => b.view),
@@ -162,10 +176,20 @@ export class Forge {
 
     const loadout = m.loadout.length ? m.loadout.join(', ') : '(none → auto pistol)';
     const buyable = purchasableBlueprints(m);
+    // Named only when short; past 3 it collapses to a bare count instead of trying to
+    // fit a variable-length name list — `buyable` can list every unlocked-but-uncrafted
+    // blueprint at once (a real bug: unbounded, it used to run off both edges of the
+    // screen as one line). A length cap alone isn't enough of a guarantee here: this
+    // codebase has already hit a real Pixi word-wrap measurement quirk in this exact
+    // sandboxed environment (see widgets.ts's Button `padding` comment) where Pixi's
+    // own width numbers under-report what the glyphs actually render at, so a fixed,
+    // content-independent worst-case length is safer than trusting wordWrap to clip a
+    // longer line to its declared width.
+    const buyableText = buyable.length <= 3 ? buyable.join(', ') : `${buyable.length} more available`;
     this.infoText.text =
       `Materials   ${bank}   |   owned chars: ${m.ownedCharacters.length}\n` +
       `Loadout     ${loadout}   (${m.loadout.length}/${PLAYER_BASE.weaponSlots})` +
-      (buyable.length ? `\nStore (demo: free): ${buyable.join(', ')}  — [B] acquire next` : '');
+      (buyable.length ? `\nStore (demo: free): ${buyableText}  — [B] acquire next` : '');
 
     // Blueprint rows — [n] id  cost  status. A leading '»' marks the browse
     // cursor (moveSelection / a row tap) — independent of '▸staged', which marks a
@@ -196,7 +220,14 @@ export class Forge {
     this.pageLabel.text = `Page ${Math.floor(this.pageStart / PAGE_SIZE) + 1}/${pageCount(this.order.length, PAGE_SIZE)}`;
 
     // Layout: title top, back button top-left corner, character row, info block,
-    // paged blueprint rows, clear/compare/start stacked bottom-up.
+    // paged blueprint rows filling the middle. clear/start/hint are a FIXED bottom
+    // action bar anchored to `h`, not flowed down from the row/compare-card stack
+    // above — they used to be, with the flowed position merely clamped to fit once
+    // it overflowed the screen. That clamp never moved the rows/compare-card out of
+    // the way, so on any viewport short enough to overflow, START RUN ended up
+    // floating on top of the still-there weapon list instead of below it (the real
+    // bug behind the "screen is a mess" report). The compare card now hides itself
+    // if there's no longer room for it above the fixed bar, rather than overlapping it.
     const cx = w / 2;
     let y = Math.max(20, h * 0.05);
     this.title.position.set(cx, y);
@@ -206,6 +237,7 @@ export class Forge {
     this.charText.position.set(cx, y + 15);
     this.nextCharBtn.view.position.set(cx + 118, y);
     y += 44;
+    this.infoText.style.wordWrapWidth = Math.min(760, w - 80);
     this.infoText.position.set(cx, y);
     y += this.infoText.height + 14;
     for (const b of this.rowBtns) {
@@ -216,12 +248,29 @@ export class Forge {
     this.pageLabel.position.set(cx, y + 13);
     this.nextPageBtn.view.position.set(cx + 200, y);
     y += 40;
-    this.clearBtn.view.position.set(cx - 280, y);
-    y += 40;
+
+    const footerY = h - 60;
+    this.clearBtn.view.position.set(cx - 280, footerY + 7);
+    this.startBtn.view.position.set(cx - 110, footerY);
+    this.hint.position.set(cx, h - 6);
+
+    // Forger NPC — corner decoration, right of the centered cx±280 row column. Only
+    // shown once its art exists AND the viewport is wide enough to fit it without
+    // overlapping the row column (same "hide if no room" shape as the compare card).
+    const npcTex = getUiTexture('npc_forger');
+    const npcRightMargin = w - (cx + 300);
+    if (npcTex && npcRightMargin > 130) {
+      this.npcSprite.texture = npcTex;
+      const targetH = Math.min(220, h * 0.32);
+      this.npcSprite.scale.set(targetH / npcTex.height);
+      this.npcSprite.position.set(w - 24 - (npcTex.width * this.npcSprite.scale.x) / 2, footerY + 40);
+      this.npcSprite.visible = true;
+    } else {
+      this.npcSprite.visible = false;
+    }
+
     const cardShown = this.renderCompareCard(m, cx, y);
-    y += (cardShown ? this.compareCard.view.height + 24 : 0);
-    this.startBtn.view.position.set(cx - 110, Math.min(y, h - 70));
-    this.hint.position.set(cx, h - 8);
+    if (cardShown && y + this.compareCard.view.height + 16 > footerY) this.compareCard.hide();
 
     this.view.visible = true;
   }
