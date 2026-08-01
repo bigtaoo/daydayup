@@ -1,5 +1,6 @@
-import { Container, Graphics } from 'pixi.js';
+import { Container, Graphics, Text } from 'pixi.js';
 import { computeFloorProgress, type StageStatus } from './floorProgressMath';
+import { estimateMonoWidth } from './textWidth';
 
 const STATUS_COLOR: Record<StageStatus, number> = {
   done: 0x68d391, // matches the extract/heal green used elsewhere in the HUD
@@ -14,11 +15,21 @@ const STATUS_COLOR: Record<StageStatus, number> = {
 export class FloorProgress {
   readonly view = new Container();
   private g = new Graphics();
+  // A one-line key beside the dots (design/10 legibility fix, 2026-08-01): a bare row of
+  // colored circles/a diamond has no self-evident meaning on first sight — this spells it
+  // out in the same small text style every other HUD stat line already uses, so it costs
+  // no extra visual weight while making "green = done" / "diamond = checkpoint" legible.
+  private legend: Text;
+  private lastStepCount = 0;
   private static readonly NODE_R = 6;
   private static readonly SPACING = 20;
 
   constructor() {
-    this.view.addChild(this.g);
+    this.legend = new Text({
+      text: '',
+      style: { fill: 0xa0aec0, fontSize: 12, fontFamily: 'monospace', padding: 6 },
+    });
+    this.view.addChild(this.g, this.legend);
   }
 
   update(stageCount: number, roomIndex: number) {
@@ -39,5 +50,16 @@ export class FloorProgress {
         this.g.circle(cx, r, r).fill({ color });
       }
     }
+    this.legend.text = steps.length ? 'green=done  amber=now  diamond=checkpoint' : '';
+    this.legend.position.set(steps.length * FloorProgress.SPACING + 8, 0);
+    this.lastStepCount = steps.length;
+  }
+
+  /** Cheap, canvas-free width estimate for HudView's backing-panel sizing — see
+   * `textWidth.ts` for why this avoids `view.width`/`getBounds()`. */
+  estimatedWidth(): number {
+    if (this.lastStepCount === 0) return 0;
+    const dotsW = this.lastStepCount * FloorProgress.SPACING + 8;
+    return dotsW + estimateMonoWidth(this.legend.text, 12);
   }
 }

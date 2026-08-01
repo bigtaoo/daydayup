@@ -87,7 +87,7 @@ export class Bar {
     this.track.roundRect(0, 0, this.w, this.h, this.h / 2).fill({ color: opts.trackColor ?? 0x1f2532 });
     this.view.addChild(this.track, this.fill, this.flashOverlay);
     if (opts.label) {
-      this.label = new Text({ text: '', style: { fill: 0xe2e8f0, fontSize: 11, fontFamily: 'monospace' } });
+      this.label = new Text({ text: '', style: { fill: 0xe2e8f0, fontSize: 11, fontFamily: 'monospace', padding: 6 } });
       this.label.anchor.set(0.5);
       this.label.position.set(this.w / 2, this.h / 2);
       this.view.addChild(this.label);
@@ -136,7 +136,7 @@ export class ToastQueue {
   }
 
   push(text: string, color = 0xe2e8f0) {
-    const t = new Text({ text, style: { fill: color, fontSize: 15, fontFamily: 'monospace', fontWeight: 'bold' } });
+    const t = new Text({ text, style: { fill: color, fontSize: 15, fontFamily: 'monospace', fontWeight: 'bold', padding: 6 } });
     t.anchor.set(0.5, 0);
     t.position.x = this.w / 2;
     this.view.addChild(t);

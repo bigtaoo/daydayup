@@ -1,7 +1,8 @@
 import { Container, Text } from 'pixi.js';
 import { CONFIG, rarityColor } from './config';
 import type { Layers } from './layers';
-import { Bar, ToastQueue } from './ui/widgets';
+import { Bar, Panel, ToastQueue } from './ui/widgets';
+import { estimateMonoWidth } from './ui/textWidth';
 import { CompareCard } from './ui/compareCard';
 import { nearestWeaponPickup } from './ui/pickupProximity';
 import { Minimap, type MinimapPlayer } from './ui/Minimap';
@@ -31,6 +32,14 @@ function totalBanked(s: GameState): number {
   return n;
 }
 
+/** This floor's not-yet-banked buffer (design/05) — shown on the checkpoint banner so
+ * "bank & leave" isn't an abstract word without a number attached to it. */
+function totalPending(s: GameState): number {
+  let n = 0;
+  for (const v of Object.values(s.floorMaterials)) n += v ?? 0;
+  return n;
+}
+
 /**
  * In-match HUD (design/10 widget kit), extracted out of Game.ts 2026-07-28 (that file
  * had accreted 6+ unrelated jobs — this is the "composed bars/text/toast" slice: HP/
@@ -42,16 +51,27 @@ function totalBanked(s: GameState): number {
  */
 export class HudView {
   readonly view = new Container();
+  // Backing panel for the stat cluster (design/10 legibility fix, 2026-08-01: a raw
+  // stack of Text over the game world read as visual noise, especially wherever the
+  // world's own dark room background happened not to sit behind it) — purely
+  // decorative, sized to the cluster's own fixed layout below.
+  private statsPanel!: Panel;
   private hpBar!: Bar;
   private shieldBar!: Bar;
   private cdBar!: Bar;
   private weaponText!: Text;
   private infoText!: Text;
-  private promptText!: Text;
   private allyText!: Text;
   private toasts!: ToastQueue;
   private minimap!: Minimap;
   private floorProgress!: FloorProgress;
+  // Checkpoint banner (design/10 legibility fix, 2026-08-01): a first-time player had
+  // no way to tell what the tiny corner prompt meant, or what the floor-progress dots'
+  // colors/diamond stood for — this replaces both with one plain-language, hard-to-miss
+  // panel, centered so it can't be mistaken for in-world geometry. Built once, toggled.
+  private checkpointPanel!: Panel;
+  private checkpointText!: Text;
+  private checkpointW = 0;
   // Ground compare card (design/03:125, locked spec: name/element/rarity, non-blocking,
   // render-only). Shown while standing near an uncollected floor weapon pickup.
   private readonly groundCard = new CompareCard();
@@ -60,23 +80,26 @@ export class HudView {
   private groundHint!: Text;
 
   build(layers: Layers, screenPx: { w: number; h: number }): void {
+    this.statsPanel = new Panel({ radius: 8, color: 0x0b0e14, alpha: 0.55 });
     this.hpBar = new Bar({ w: 160, h: 14, fillColor: 0xf56565, trackColor: 0x2a1620, label: true });
     this.shieldBar = new Bar({ w: 160, h: 9, fillColor: CONFIG.colors.shield, label: false });
     this.cdBar = new Bar({ w: 90, h: 7, fillColor: 0x63b3ed, label: false });
-    const smallStyle = { fill: 0xcbd5e0, fontSize: 13, fontFamily: 'monospace' as const };
-    this.weaponText = new Text({ text: '', style: { fill: 0xe2e8f0, fontSize: 14, fontFamily: 'monospace' } });
+    // `padding` on every style below works around a real Pixi font-metrics mismatch
+    // (see Button's own comment in ui/widgets.ts): its text measurement can come in
+    // narrower than the canvas's actual paint-time glyph width, clipping the last
+    // character(s) — this is what made "blaster [common] (ranged) dmg 12" render as
+    // "...dm" (design/10 legibility fix, 2026-08-01).
+    const smallStyle = { fill: 0xcbd5e0, fontSize: 13, fontFamily: 'monospace' as const, padding: 6 };
+    this.weaponText = new Text({ text: '', style: { fill: 0xe2e8f0, fontSize: 14, fontFamily: 'monospace', padding: 6 } });
     this.infoText = new Text({ text: '', style: smallStyle });
     this.allyText = new Text({ text: '', style: smallStyle });
-    this.promptText = new Text({
-      text: '',
-      style: { fill: 0x68d391, fontSize: 15, fontFamily: 'monospace', fontWeight: 'bold' },
-    });
     this.toasts = new ToastQueue({ w: 220 });
     this.groundHint = new Text({
       text: '[E] swap',
-      style: { fill: 0x90cdf4, fontSize: 13, fontFamily: 'monospace', fontWeight: 'bold' },
+      style: { fill: 0x90cdf4, fontSize: 13, fontFamily: 'monospace', fontWeight: 'bold', padding: 6 },
     });
 
+    this.statsPanel.view.position.set(4, 4);
     this.hpBar.view.position.set(12, 10);
     this.shieldBar.view.position.set(12, 28);
     this.weaponText.position.set(12, 44);
@@ -85,12 +108,32 @@ export class HudView {
     this.floorProgress = new FloorProgress();
     this.floorProgress.view.position.set(12, 96);
     this.allyText.position.set(12, 112);
-    this.promptText.position.set(12, 130);
+    // Placeholder size for the first frame before `update()` ever runs; `update()`
+    // re-measures against the live text every tick (see the width comment there).
+    this.statsPanel.layout(220, 128);
+
+    // Checkpoint banner (design/10 legibility fix): deliberately NOT part of the corner
+    // stat cluster above — it needs to read as "the game is pausing to ask you something"
+    // rather than "one more stat line", so it gets its own centered panel, built once and
+    // repositioned in `reposition()`, content + visibility driven in `update()`.
+    this.checkpointPanel = new Panel({ radius: 10, color: 0x0b1a10, alpha: 0.88 });
+    this.checkpointText = new Text({
+      text: '',
+      style: {
+        fill: 0x9ae6b4, fontSize: 15, fontFamily: 'monospace', fontWeight: 'bold',
+        align: 'center', lineHeight: 22, padding: 6,
+      },
+    });
+    this.checkpointText.anchor.set(0.5, 0);
+    this.checkpointPanel.view.visible = false;
+    this.checkpointText.visible = false;
 
     this.view.addChild(
+      this.statsPanel.view,
       this.hpBar.view, this.shieldBar.view, this.weaponText, this.cdBar.view,
-      this.infoText, this.floorProgress.view, this.allyText, this.promptText,
+      this.infoText, this.floorProgress.view, this.allyText,
       this.toasts.view, this.groundCard.view, this.groundHint,
+      this.checkpointPanel.view, this.checkpointText,
     );
     // NOTE: `view` itself is NOT added to `layers.ui` here — the caller (Game) mounts
     // it inside its own visibility-toggled `hudView` container, exactly like before
@@ -114,6 +157,20 @@ export class HudView {
     this.minimap.view.position.set(screenPx.w - 140 - 20, 60);
     // Beside the weapon HUD row (design/03:125 "beside your active weapon").
     this.groundCard.view.position.set(220, 40);
+
+    // Checkpoint banner: centered, clamped to the viewport so a narrow (mobile-width)
+    // screen doesn't clip it. Sits BELOW the corner stat cluster (whose panel is 128px
+    // tall, y=4..132) rather than beside it — a fixed top-of-screen y collided with the
+    // cluster's own infoText line horizontally on a wide window (found live, 2026-08-01:
+    // the banner's panel painted over "Score N", since both are visible at once and
+    // draw order put the banner on top).
+    const checkpointY = 140;
+    this.checkpointW = Math.min(440, screenPx.w - 24);
+    this.checkpointPanel.layout(this.checkpointW, 88);
+    this.checkpointPanel.view.position.set(screenPx.w / 2 - this.checkpointW / 2, checkpointY);
+    this.checkpointText.style.wordWrap = true;
+    this.checkpointText.style.wordWrapWidth = this.checkpointW - 32;
+    this.checkpointText.position.set(screenPx.w / 2, checkpointY + 14);
   }
 
   update(s: GameState, dt: number, ctx: HudContext): void {
@@ -155,7 +212,7 @@ export class HudView {
       this.infoText.text =
         `${ctx.selectedSkin}   PvP Arena   Zone stage ${zone?.stage ?? 0}${escalation}   ` +
         `Alive ${alive}/${s.players.length}   Score ${ctx.score}${buffs}`;
-      this.promptText.text = '';
+      this.setCheckpointBanner(null);
       this.floorProgress.update(0, -1); // hides — this is the PvP arena's own Minimap's job
     } else {
       // Dungeon progress (ROADMAP 1.3): floor / room within floor, plus the banked bag.
@@ -176,10 +233,23 @@ export class HudView {
       // extracts). A room with no enemies left and all waves exhausted IS the checkpoint.
       const atCheckpoint = s.wavesExhausted && s.enemies.length === 0 && s.phase !== 'gameover';
       const isLastFloor = floor >= EMBER_DUNGEON.floorCount;
-      this.promptText.text = atCheckpoint && !isLastFloor
-        ? '▶ CHECKPOINT — hold [E] EXTRACT (bank & leave) · tap [E] DESCEND'
-        : '';
+      this.setCheckpointBanner(
+        atCheckpoint && !isLastFloor ? { pending: totalPending(s), nextFloor: floor + 1 } : null,
+      );
     }
+
+    // Backing panel width tracks the widest live line (skin name / score digits vary
+    // the dungeon and PvP info rows) instead of a fixed guess — a fixed width either
+    // clips a long line or wastes space behind a short one every other frame. Uses
+    // `estimateMonoWidth` (not `Text.width`/`getBounds()`, both canvas-measurement calls)
+    // — see textWidth.ts for why: cheaper every frame, and testable without a live canvas.
+    const contentW = Math.max(
+      160, // hpBar/shieldBar's own fixed width
+      estimateMonoWidth(this.weaponText.text, 14),
+      estimateMonoWidth(this.infoText.text, 13),
+      this.floorProgress.estimatedWidth(),
+    );
+    this.statsPanel.layout(Math.max(220, Math.ceil(contentW) + 24), 128);
 
     // Co-op teammate line (ROADMAP 3.1): the ally seat's health + downed/revive state, so
     // the second player is legible and its bleedout is visible. Single-player omits it.
@@ -235,5 +305,18 @@ export class HudView {
   /** Push a toast — the only HUD widget consumeEvents reaches into directly (pickup fx). */
   toast(text: string, color: number): void {
     this.toasts.push(text, color);
+  }
+
+  /** `null` hides the banner; otherwise shows the plain-language checkpoint choice.
+   * Kept in HudView (not inlined in `update()`) so both branches — PvP's always-hidden
+   * case and PvE's real content — go through one place that owns the copy. */
+  private setCheckpointBanner(info: { pending: number; nextFloor: number } | null): void {
+    this.checkpointPanel.view.visible = info !== null;
+    this.checkpointText.visible = info !== null;
+    if (!info) return;
+    this.checkpointText.text =
+      `FLOOR CLEARED — CHECKPOINT\n` +
+      `HOLD [E] to EXTRACT: bank ${info.pending} materials now & end the run safely\n` +
+      `TAP [E] to DESCEND to Floor ${info.nextFloor}: riskier, but keeps you playing`;
   }
 }
