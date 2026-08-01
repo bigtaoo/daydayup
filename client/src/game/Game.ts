@@ -304,6 +304,15 @@ export class Game {
       });
     }
 
+    // Registered after WebPlatform's own `resizeTo: window` listener (added during
+    // `app.init()`, well before this `start()` runs), so the browser's guaranteed
+    // same-event listener ordering means Pixi's renderer.resize() has already run by
+    // the time our own 'resize' fires — screenSize() below reads the already-updated
+    // renderer dimensions, not last frame's.
+    if (typeof window !== 'undefined') {
+      window.addEventListener('resize', () => requestAnimationFrame(() => this.relayoutViewport()));
+    }
+
     this.showMenu();
     this.app.ticker.add((t) => this.update(t.deltaMS));
   }
@@ -391,6 +400,34 @@ export class Game {
       this.engine = null;
     }
     this.showForge();
+  }
+
+  // Re-run whichever screen's own layout math is currently on-screen against a fresh
+  // screenSize() (window resize / orientation change / F11 fullscreen toggle). The
+  // canvas itself already tracks the viewport (WebPlatform's `resizeTo: window`) —
+  // this is the missing half: each screen's Panel/button positions were only ever
+  // computed once, at the moment it was shown, so without this they stayed pinned to
+  // whatever size was current back then (funny reference: relayout on resize, not just
+  // on first show). HudView.reposition already existed for exactly this but was never
+  // wired to anything.
+  private relayoutViewport() {
+    const { w, h } = this.screenSize();
+    this.hud.reposition({ w, h });
+    if (this.phase === 'forge') this.settingsBtn.view.position.set(w - 130, h - 50);
+    switch (this.phase) {
+      case 'menu': this.mainMenu.show(w, h); break;
+      case 'forge': this.forge.render(this.meta, w, h); break;
+      case 'squad': this.partyScreen.show(w, h); break;
+      case 'account': this.loginScreen.show(w, h); break;
+      case 'paused': this.pauseMenu.show(w, h); break;
+      case 'settings': this.settingsScreen.show(w, h, this.settings); break;
+      case 'victory':
+      case 'defeat':
+        this.screens.resize(w, h);
+        break;
+      case 'playing':
+        break; // in-run HUD only needs the reposition() above — no static panel layout
+    }
   }
 
   // ---- Run lifecycle ----

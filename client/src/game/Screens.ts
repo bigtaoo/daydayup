@@ -91,4 +91,10 @@ export class Screens {
   hide() {
     this.view.visible = false;
   }
+
+  /** Re-run the pure layout math against a new viewport size — call whenever the
+   * caller's own screenSize() changes while this screen is up (window resize). */
+  resize(w: number, h: number) {
+    if (this.view.visible) this.layout(w, h);
+  }
 }
