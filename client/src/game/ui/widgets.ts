@@ -1,4 +1,5 @@
-import { Container, Graphics, Text, Rectangle } from 'pixi.js';
+import { Container, Graphics, Text, Rectangle, Sprite, type Texture } from 'pixi.js';
+import { getUiTexture } from '../../render/uiSkins';
 
 // A minimal Pixi widget kit (design/10 "build vs. a tiny in-house layer" — kept small,
 // no framework). Every widget is pure presentation: it takes plain values in `set()`/
@@ -9,26 +10,56 @@ import { Container, Graphics, Text, Rectangle } from 'pixi.js';
  * groupings) — one look, one place to retune, instead of each screen hand-rolling its
  * own `Graphics().rect().fill()`. */
 export class Panel {
-  readonly view = new Graphics();
+  readonly view = new Container();
+  private readonly scrim = new Graphics();
+  private bgSprite: Sprite | null = null;
   private w = 0;
   private h = 0;
   private radius: number;
   private color: number;
   private alpha: number;
+  /** `uiSkins.ts` texture key for a full-bleed background image behind the flat
+   * scrim (e.g. `'hub'`, design/13's outpost look) — omitted keeps the plain flat
+   * fill this widget always had. Opt-in per screen: the small CompareCard uses a bare
+   * Panel with no `background`, so it never picks up the big hub art meant for
+   * full-screen menus. */
+  private readonly backgroundKey?: string;
 
-  constructor(opts: { radius?: number; color?: number; alpha?: number } = {}) {
+  constructor(opts: { radius?: number; color?: number; alpha?: number; background?: string } = {}) {
     this.radius = opts.radius ?? 0;
     this.color = opts.color ?? 0x0b0e14;
     this.alpha = opts.alpha ?? 0.82;
+    this.backgroundKey = opts.background;
+    this.view.addChild(this.scrim);
   }
 
   layout(w: number, h: number) {
     if (w === this.w && h === this.h) return;
     this.w = w;
     this.h = h;
-    this.view.clear();
-    if (this.radius > 0) this.view.roundRect(0, 0, w, h, this.radius).fill({ color: this.color, alpha: this.alpha });
-    else this.view.rect(0, 0, w, h).fill({ color: this.color, alpha: this.alpha });
+
+    // Preloaded (or not) before any screen ever calls layout() — main.ts awaits
+    // preloadUiArt() before constructing Game — so a texture that exists is already
+    // ready the first time this runs; a missing one just leaves bgSprite null forever.
+    const bgTexture = this.backgroundKey ? getUiTexture(this.backgroundKey) : undefined;
+    if (bgTexture) {
+      if (!this.bgSprite) {
+        this.bgSprite = new Sprite();
+        this.view.addChildAt(this.bgSprite, 0); // behind the scrim
+      }
+      this.bgSprite.texture = bgTexture;
+      // Stretch-to-fill, not crop — simplest given the wide range of screen sizes
+      // this runs at; acceptable for a soft background behind foreground UI.
+      this.bgSprite.width = w;
+      this.bgSprite.height = h;
+    }
+
+    this.scrim.clear();
+    // A real background image needs a lighter scrim so the art actually shows
+    // through; the no-art fallback keeps today's fully-opaque-ish flat fill.
+    const scrimAlpha = bgTexture ? Math.min(this.alpha, 0.55) : this.alpha;
+    if (this.radius > 0) this.scrim.roundRect(0, 0, w, h, this.radius).fill({ color: this.color, alpha: scrimAlpha });
+    else this.scrim.rect(0, 0, w, h).fill({ color: this.color, alpha: scrimAlpha });
   }
 }
 
@@ -139,10 +170,16 @@ export class Button {
   readonly view = new Container();
   private bg = new Graphics();
   private label: Text;
+  private iconChip: Graphics | null = null;
+  private iconSprite: Sprite | null = null;
+  private readonly w: number;
+  private readonly h: number;
   onTap: (() => void) | null = null;
 
   constructor(text: string, opts: { w: number; h: number; color?: number; textColor?: number; fontSize?: number }) {
     const { w, h, color = 0x2a3140, textColor = 0xe2e8f0, fontSize = 15 } = opts;
+    this.w = w;
+    this.h = h;
     this.bg.roundRect(0, 0, w, h, Math.min(8, h / 2)).fill({ color, alpha: 0.9 });
     // `padding` works around a real font-metrics mismatch observed in headless/sandboxed
     // Chromium: Pixi's own text measurement can come in narrower than the canvas's actual
@@ -164,6 +201,45 @@ export class Button {
 
   setText(text: string) {
     this.label.text = text;
+  }
+
+  /** Optional leading icon (Forge row real weapon art — reuses the same textures the
+   * in-run renderer mounts, `render/weaponSkins.ts`, so no separate icon art is needed)
+   * with a rarity-coloured backing chip (design/14 border-not-hue convention, matches
+   * CompareCard). Pass `undefined` to clear. Shifts the label to sit right of the icon
+   * instead of centering — the only layout change, so buttons without an icon are
+   * unaffected. */
+  setIcon(texture: Texture | undefined, chipColor?: number): void {
+    if (!texture) {
+      this.iconSprite?.destroy();
+      this.iconSprite = null;
+      this.iconChip?.destroy();
+      this.iconChip = null;
+      this.label.anchor.set(0.5);
+      this.label.position.set(this.w / 2, this.h / 2);
+      return;
+    }
+    const box = this.h - 8;
+    const cx = 4 + box / 2;
+    const cy = this.h / 2;
+    if (!this.iconChip) {
+      this.iconChip = new Graphics();
+      this.view.addChildAt(this.iconChip, 1);
+    }
+    this.iconChip.clear().roundRect(4, 4, box, box, 4).fill({ color: chipColor ?? 0x1f2532, alpha: 0.9 });
+    if (!this.iconSprite) {
+      this.iconSprite = new Sprite();
+      this.iconSprite.anchor.set(0.5);
+      this.view.addChildAt(this.iconSprite, 2);
+    }
+    this.iconSprite.texture = texture;
+    // Contain (preserve aspect ratio) — most weapon art is a wide "socket-to-tip"
+    // silhouette, not square, so a naive width/height stretch would squash it.
+    const fit = Math.min((box - 4) / texture.width, (box - 4) / texture.height);
+    this.iconSprite.scale.set(fit);
+    this.iconSprite.position.set(cx, cy);
+    this.label.anchor.set(0, 0.5);
+    this.label.position.set(8 + box + 8, this.h / 2);
   }
 }
 

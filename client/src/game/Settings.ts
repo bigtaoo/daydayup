@@ -10,7 +10,7 @@ import { Panel, Slider, Button } from './ui/widgets';
  */
 export class Settings {
   readonly view = new Container();
-  private panel = new Panel({ alpha: 0.88 });
+  private panel = new Panel({ alpha: 0.88, background: 'hub' });
   private title: Text;
   private masterLabel: Text;
   private sfxLabel: Text;

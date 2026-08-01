@@ -9,6 +9,7 @@ import { Panel, Button } from './ui/widgets';
 import { CompareCard, buildCompareRows, equippedSpecOfKind } from './ui/compareCard';
 import { pageCount, pageStartForIndex, clampPageStart, wrapIndex } from './ui/paging';
 import { RARITY_COLORS } from './config';
+import { getWeaponTexture } from '../render/weaponSkins';
 
 /** Rows shown at once (`BLUEPRINT_CATALOG` has more entries than fit above the fixed
  * bottom action bar — a real overflow found while wiring up real Buttons, since the old
@@ -30,7 +31,7 @@ const PAGE_SIZE = 8;
  */
 export class Forge {
   readonly view = new Container();
-  private panel = new Panel({ alpha: 0.82 });
+  private panel = new Panel({ alpha: 0.82, background: 'hub' });
   private title: Text;
   private infoText: Text;
   private hint: Text;
@@ -189,6 +190,8 @@ export class Forge {
       const cursor = i === this.selectedIndex ? '»' : ' ';
       const key = i < 9 ? `${i + 1}` : '·'; // only the first 9 have a digit-key shortcut
       btn.setText(`${cursor}[${key}] ${id.padEnd(11)} ${this.costText(bp.cost).padEnd(14)} ${status}${stagedTag}`);
+      const spec = WEAPON_SPECS[bp.weaponId];
+      btn.setIcon(spec && getWeaponTexture(spec.id, spec.kind), spec && RARITY_COLORS[RARITY_TIERS[spec.rarity].colorKey]);
     });
     this.pageLabel.text = `Page ${Math.floor(this.pageStart / PAGE_SIZE) + 1}/${pageCount(this.order.length, PAGE_SIZE)}`;
 

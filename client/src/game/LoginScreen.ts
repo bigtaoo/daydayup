@@ -26,7 +26,7 @@ export interface AuthApi {
  */
 export class LoginScreen {
   readonly view = new Container();
-  private panel = new Panel({ alpha: 0.85 });
+  private panel = new Panel({ alpha: 0.85, background: 'hub' });
   private title: Text;
   private statusText: Text;
   private whoText: Text;

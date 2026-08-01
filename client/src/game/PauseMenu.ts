@@ -9,7 +9,7 @@ import { Panel, Button } from './ui/widgets';
  */
 export class PauseMenu {
   readonly view = new Container();
-  private panel = new Panel({ alpha: 0.82 });
+  private panel = new Panel({ alpha: 0.82, background: 'hub' });
   private title: Text;
   private resumeBtn: Button;
   private settingsBtn: Button;

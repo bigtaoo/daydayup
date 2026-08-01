@@ -2,6 +2,7 @@ import { Game } from './game/Game';
 import { WebPlatform } from './platform/web/WebPlatform';
 import { preloadRigSkin } from './render/skinRegistry';
 import { preloadWeaponSkins } from './render/weaponSkins';
+import { preloadUiArt } from './render/uiSkins';
 
 // Web entry. The WeChat entry is client/src/main.wechat.ts (loaded by client/wechat/game.js).
 // Both reuse the Game core; only the Platform differs. The real `.tao` rig skin
@@ -38,6 +39,7 @@ async function boot() {
     preloadWeaponSkins().catch((err) => {
       console.warn('weapon skins preload failed, socket stays unarmed-looking', err);
     }),
+    preloadUiArt(),
   ]);
 
   const game = new Game(app, input, audio);

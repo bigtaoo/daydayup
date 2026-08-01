@@ -1,6 +1,7 @@
 import { Container, Text } from 'pixi.js';
 import { Panel, Button } from './ui/widgets';
 import { getSession } from '../net/session';
+import { getUiTexture } from '../render/uiSkins';
 
 /**
  * The boot/main-menu screen (design/10 screen flow — the front door that never got
@@ -15,7 +16,7 @@ import { getSession } from '../net/session';
  */
 export class MainMenu {
   readonly view = new Container();
-  private panel = new Panel({ alpha: 0.82 });
+  private panel = new Panel({ alpha: 0.82, background: 'hub' });
   private title: Text;
   private subtitle: Text;
   private playBtn: Button;
@@ -38,12 +39,16 @@ export class MainMenu {
 
     this.playBtn = new Button('PLAY', { w: 220, h: 56, fontSize: 22 });
     this.playBtn.onTap = () => this.onPlay?.();
+    this.playBtn.setIcon(getUiTexture('icon_play'));
     this.squadBtn = new Button('SQUAD', { w: 220, h: 40, fontSize: 16 });
     this.squadBtn.onTap = () => this.onSquad?.();
+    this.squadBtn.setIcon(getUiTexture('icon_squad'));
     this.accountBtn = new Button('LOGIN', { w: 220, h: 36, fontSize: 14 });
     this.accountBtn.onTap = () => this.onAccount?.();
+    this.accountBtn.setIcon(getUiTexture('icon_account'));
     this.settingsBtn = new Button('SETTINGS', { w: 160, h: 36, fontSize: 14 });
     this.settingsBtn.onTap = () => this.onSettings?.();
+    this.settingsBtn.setIcon(getUiTexture('icon_settings'));
 
     this.view.addChild(
       this.panel.view, this.title, this.subtitle,

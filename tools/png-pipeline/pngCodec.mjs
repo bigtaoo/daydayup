@@ -49,7 +49,11 @@ function paeth(a, b, c) {
   return c;
 }
 
-/** Decode an 8-bit RGBA non-interlaced PNG buffer into { width, height, data: Uint8Array } (RGBA8). */
+/** Decode an 8-bit non-interlaced PNG buffer (RGBA or RGB — a flat background image
+ * with no transparency, e.g. a hub/menu backdrop, commonly exports as colorType 2)
+ * into { width, height, data: Uint8Array } — always normalized to RGBA8 (opaque
+ * alpha=255 synthesized for colorType 2) so every other function in this module only
+ * ever deals with one pixel shape. */
 export function decodePNG(buf) {
   const chunks = readChunks(buf);
   const ihdr = chunks.find((c) => c.type === 'IHDR');
@@ -59,15 +63,15 @@ export function decodePNG(buf) {
   const bitDepth = ihdr.data[8];
   const colorType = ihdr.data[9];
   const interlace = ihdr.data[12];
-  if (bitDepth !== 8 || colorType !== 6 || interlace !== 0) {
-    throw new Error(`Unsupported PNG shape (bitDepth=${bitDepth}, colorType=${colorType}, interlace=${interlace}) — this codec only handles 8-bit RGBA non-interlaced`);
+  if (bitDepth !== 8 || (colorType !== 6 && colorType !== 2) || interlace !== 0) {
+    throw new Error(`Unsupported PNG shape (bitDepth=${bitDepth}, colorType=${colorType}, interlace=${interlace}) — this codec only handles 8-bit RGB/RGBA non-interlaced`);
   }
   const idat = Buffer.concat(chunks.filter((c) => c.type === 'IDAT').map((c) => c.data));
   const raw = zlib.inflateSync(idat);
 
-  const bpp = 4; // bytes per pixel, RGBA8
+  const bpp = colorType === 6 ? 4 : 3; // RGBA8 or RGB8
   const stride = width * bpp;
-  const out = new Uint8Array(width * height * bpp);
+  const unfiltered = new Uint8Array(width * height * bpp);
   let rawOff = 0;
   for (let y = 0; y < height; y++) {
     const filterType = raw[rawOff]; rawOff += 1;
@@ -75,9 +79,9 @@ export function decodePNG(buf) {
     const prevRowOff = (y - 1) * stride;
     for (let x = 0; x < stride; x++) {
       const raw_x = raw[rawOff + x];
-      const a = x >= bpp ? out[rowOff + x - bpp] : 0;
-      const b = y > 0 ? out[prevRowOff + x] : 0;
-      const c = y > 0 && x >= bpp ? out[prevRowOff + x - bpp] : 0;
+      const a = x >= bpp ? unfiltered[rowOff + x - bpp] : 0;
+      const b = y > 0 ? unfiltered[prevRowOff + x] : 0;
+      const c = y > 0 && x >= bpp ? unfiltered[prevRowOff + x - bpp] : 0;
       let value;
       switch (filterType) {
         case 0: value = raw_x; break;
@@ -87,9 +91,18 @@ export function decodePNG(buf) {
         case 4: value = raw_x + paeth(a, b, c); break;
         default: throw new Error(`Unknown filter type ${filterType}`);
       }
-      out[rowOff + x] = value & 0xff;
+      unfiltered[rowOff + x] = value & 0xff;
     }
     rawOff += stride;
+  }
+  if (bpp === 4) return { width, height, data: unfiltered };
+
+  const out = new Uint8Array(width * height * 4);
+  for (let i = 0, j = 0; i < unfiltered.length; i += 3, j += 4) {
+    out[j] = unfiltered[i];
+    out[j + 1] = unfiltered[i + 1];
+    out[j + 2] = unfiltered[i + 2];
+    out[j + 3] = 255;
   }
   return { width, height, data: out };
 }
