@@ -1,6 +1,7 @@
 import { defineConfig } from 'vite';
 import { fileURLToPath } from 'node:url';
 import { copyFileSync, mkdirSync } from 'node:fs';
+import { engineAlias } from '../build/ddAlias.mjs';
 
 // Strip Pixi's WebGPU renderer from the WeChat bundle.
 //
@@ -72,8 +73,6 @@ const copyToPlatform = {
 //    unminified output with readable stack traces for DevTools bring-up.
 //  - target es2020 matches the Web build; verify against the lowest WeChat base
 //    library and lower this if needed (checklist item 2 in design/04-wechat.md).
-const engineDir = fileURLToPath(new URL('./src/engine', import.meta.url));
-
 export default defineConfig(({ mode }) => ({
   // @dd/engine alias (mirrors vite.config.js's web build) — WITHOUT this, Rollup
   // can't resolve the bare specifier at all, which Vite's lib+iife build reports as
@@ -81,12 +80,7 @@ export default defineConfig(({ mode }) => ({
   // runs — the real cause behind what surfaced downstream as copy-to-platform's
   // ENOENT (there was never a bundle written for it to copy). Discovered chasing
   // ROADMAP 5.5's WeChat build being broken end-to-end in this checkout.
-  resolve: {
-    alias: [
-      { find: /^@dd\/engine$/, replacement: `${engineDir}/index.ts` },
-      { find: /^@dd\/engine\//, replacement: `${engineDir}/` },
-    ],
-  },
+  resolve: { alias: engineAlias },
   plugins: [stripWebGPU, copyToPlatform],
   build: {
     target: 'es2020',

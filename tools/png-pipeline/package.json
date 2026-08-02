@@ -1,0 +1,11 @@
+{
+  "name": "daydayup-png-pipeline",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "description": "Hand-rolled PNG encode/decode + recompression used by the asset pipeline (see the 2026-07-28 asset audit). Zero dependencies on purpose — it exists so shipped art can be re-encoded without pulling in a native image toolchain.",
+  "main": "pngCodec.mjs",
+  "scripts": {
+    "compress": "node compress.mjs"
+  }
+}

@@ -57,7 +57,7 @@ The **boss closes the loop thematically**: it is a **giant failed core** — a h
 
 ### Element palette (locked 2026-07-27)
 
-The hex values already driving combat FX (`client/src/game/config.ts`'s `CONFIG.colors`/`ELEMENT_COLORS`) — this is that "concrete per-element hex" the list below used to call out as undecided; it's just the shipped values confirmed and written down, not a new choice:
+The hex values already driving combat FX (`client/src/game/theme.ts`'s `THEME.colors`/`ELEMENT_COLORS`) — this is that "concrete per-element hex" the list below used to call out as undecided; it's just the shipped values confirmed and written down, not a new choice:
 
 | Element | Hex | Used as |
 |---|---|---|
@@ -98,7 +98,7 @@ The art-first setting still makes each locked mechanic diegetic:
 
 ## To design
 
-- ~~**Per-biome background palettes**~~ — **shipped 2026-07-28, as a code palette, not new art**: `game/config.ts biomePalette()` derives ground/grid/pillar/wall colours per biome from this doc's already-locked element hex table (a small blend toward each hue, kept subtle per this doc's own "environment desaturated, hazards saturated" rule) — `DungeonConfig.biomeId` → `ELEMENT_COLORS` vocabulary, one new map entry per future biome.
+- ~~**Per-biome background palettes**~~ — **shipped 2026-07-28, as a code palette, not new art**: `game/theme.ts biomePalette()` derives ground/grid/pillar/wall colours per biome from this doc's already-locked element hex table (a small blend toward each hue, kept subtle per this doc's own "environment desaturated, hazards saturated" rule) — `DungeonConfig.biomeId` → `ELEMENT_COLORS` vocabulary, one new map entry per future biome.
 - ~~**The other biomes' looks**~~ — **shipped 2026-08-02**: real tileable floor/wall swatches for fire/ice/lightning/neutral (`client/public/biome/{floor,wall}_{fire,ice,lightning,neutral}.png`), generated after two prior attempts came back in the wrong style/shape (painterly isometric illustrated rooms, not flat-cel orthographic swatches — see `art/biome/prompts.md`'s explicit "NOT a scene/room" language, which is what finally fixed it). `render/biomeTiles.ts` preloads them (same non-blocking pattern as `uiSkins.ts`) and `RoomBuilder.ts` renders via `TilingSprite` when a swatch exists, falling back to the pre-existing flat palette fill otherwise (`RoomBuilder.test.ts` now covers both paths). Poison deliberately still has no swatch — it isn't floor 1 and has no dedicated critter either, per this doc's own note; `RoomBuilder`'s flat-fill fallback covers it until a poison biome is actually scheduled.
 - ~~**The 3 launch characters**~~ — **shipped 2026-07-27**: `vanguard` (the balanced default, cream/gold orb, already bound `12`), `skirmisher` (a Sun-Wukong-themed core — golden fur shell, crystal crown, fire-orange belly/eye — the fragile-high-shield agile pick) and `juggernaut` (a frost-guardian core — pale-blue armoured shell, ice-cyan belly/eye — the flat-HP tank pick) round out the roster, each a distinct themed orb-core on the shared rig (`content/skins.ts`'s `atlasKey`s `char_vanguard`/`char_skirmisher`/`char_juggernaut`). Which one anchors marketing is still open.
 - ~~**Enemy body variety**~~ — beyond the re-tinted base critter: the boss core shipped 2026-07-27; **the brute + floating ranged form shipped 2026-07-28** (`content/enemies.ts`'s `brute`/`floater` blueprints, `09`'s new `bodyRig` field, reusing critter-core's rig). Nothing left open here.

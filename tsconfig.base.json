@@ -1,0 +1,29 @@
+{
+  // Shared compiler settings for every workspace. Each package's tsconfig.json
+  // extends this and declares only what genuinely differs (its DOM/node lib, its
+  // include globs). Before this file the same block — including the @dd/* path map —
+  // was copy-pasted into four tsconfigs, so moving a directory silently broke the
+  // three nobody remembered to update.
+  //
+  // `baseUrl` is resolved relative to THIS file, so the paths below stay correct no
+  // matter how deep the inheriting package sits.
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "lib": ["ES2020"],
+    "types": [],
+    "baseUrl": ".",
+    "paths": {
+      "@dd/engine": ["engine/index.ts"],
+      "@dd/engine/*": ["engine/*"],
+      "@dd/net/*": ["client/src/net/*"],
+      "@dd/game/*": ["client/src/game/*"]
+    }
+  }
+}

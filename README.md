@@ -4,12 +4,21 @@ A 2D top-down (3/4 view) free-shooter roguelite, inspired by Soul Knight. The co
 
 ## Structure
 
+An npm workspace. Every package is consumed as TypeScript **source** — there is no
+build step between them, so a shared type can never go stale against a built artifact.
+
 | Directory | Contents |
 |-----------|----------|
 | `design/` | Design and technical decisions (architecture, data models, rationale) |
 | `art/` | Art assets and asset conventions |
+| `engine/` | `@dd/engine` — the deterministic simulation core (`design/06`, `design/08`). Renderer- and host-free: it compiles without the DOM lib and may not import any other package. Consumed by client, server and both tools. |
 | `client/` | Game client. Single-engine PixiJS v8. Targets: Web / PC / Android / iOS / WeChat mini-game |
 | `server/` | Co-op backend: the frame-broadcast **gameserver** (WebSocket data plane) + the **matchsvc** matchmaking/ticket control plane. See `server/README.md`. |
+| `tools/` | `animator` (`.tao` rig editor), `map-editor` (arena/room authoring), `png-pipeline` (dependency-free PNG codec used by the asset pipeline) |
+| `world/` | Authored world data the tools produce and the engine consumes (arena maps) |
+
+`tsconfig.base.json` and `build/ddAlias.mjs` are the type-side and bundler-side halves
+of one `@dd/*` path map — kept as a single file each so they cannot drift apart.
 
 ## Tech stack (summary)
 
@@ -21,11 +30,24 @@ See [design/](design/) for the full record.
 
 ## Getting started
 
+Install once at the repo root — it is a workspace, so this covers every package.
+
 ```bash
-cd client
 npm install
-npm run dev        # open http://localhost:5173
 ```
+
+```bash
+npm run dev        # client dev server, http://localhost:5173
+```
+
+| Command | What it does |
+|---------|--------------|
+| `npm run check` | Typecheck **and** test every package — the one command to run before committing |
+| `npm test` | Test every package |
+| `npm run typecheck` | `tsc --noEmit` in every package |
+| `npm run dev:server` / `npm run dev:matchsvc` | Co-op gameserver / matchmaking service |
+| `npm run dev:animator` / `npm run dev:map-editor` | The two authoring tools |
+| `npm run test:pvp-sim` | The offline PvP balance harness (`client/sim/`, kept out of the default test glob — ~6s) |
 
 ## Status
 

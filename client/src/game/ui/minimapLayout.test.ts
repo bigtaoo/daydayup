@@ -3,7 +3,7 @@ import type { ArenaMap } from '@dd/engine/content/arenas';
 import type { ZoneState } from '@dd/engine';
 import { computeMinimapLayout, roomStatus } from './minimapLayout';
 
-// Mirrors client/src/engine/content/arenas.test.ts's fixture shape (three rooms far
+// Mirrors engine/content/arenas.test.ts's fixture shape (three rooms far
 // apart) so this pure layout math is exercised against the same kind of ArenaMap the
 // engine-side tests already trust.
 const ARENA: ArenaMap = {

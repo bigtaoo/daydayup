@@ -2,7 +2,7 @@
  * Chinese translation (design/17-i18n.md). Must mirror `en.ts`'s exact key shape —
  * `Translations<typeof en>` (../index.ts) makes a missing/extra key a compile error.
  */
-import type { Translations } from '../index';
+import type { Translations } from '..';
 import type { en } from './en';
 
 export const zh: Translations<typeof en> = {

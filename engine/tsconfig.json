@@ -1,0 +1,22 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    // Deliberately NARROWER than the shared path map: the sim core may resolve only
+    // itself. Without this override it would inherit @dd/net and @dd/game and an
+    // accidental import into the client's render layer would typecheck cleanly —
+    // exactly the dependency this package's determinism guarantee rules out.
+    // The base config's lib (ES2020, no DOM) enforces the other half of that rule.
+    //
+    // `baseUrl` must be restated: `paths` resolve against baseUrl, and inheriting the
+    // base config's would point these entries at the repo root instead of here.
+    "baseUrl": ".",
+    "paths": {
+      "@dd/engine": ["index.ts"],
+      "@dd/engine/*": ["*"]
+    }
+  },
+  // vitest.config.ts is build tooling, not engine source — it needs node types the
+  // sim core deliberately does without, so it is checked by nothing and excluded here.
+  "include": ["."],
+  "exclude": ["node_modules", "vitest.config.ts"]
+}

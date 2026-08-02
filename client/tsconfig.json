@@ -1,20 +1,9 @@
 {
+  "extends": "../tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2020",
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "strict": true,
-    "noUnusedLocals": true,
-    "noUnusedParameters": true,
-    "skipLibCheck": true,
-    "resolveJsonModule": true,
-    "lib": ["ES2020", "DOM", "DOM.Iterable"],
-    "types": [],
-    "baseUrl": ".",
-    "paths": {
-      "@dd/engine": ["src/engine/index.ts"],
-      "@dd/engine/*": ["src/engine/*"]
-    }
+    "lib": ["ES2020", "DOM", "DOM.Iterable"]
   },
-  "include": ["src"]
+  // `sim` holds offline harnesses (the PvP balance sim) — typechecked with the app,
+  // but deliberately outside src/ so nothing shipped can import them.
+  "include": ["src", "sim"]
 }

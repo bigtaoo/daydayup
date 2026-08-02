@@ -4,10 +4,11 @@ Single-engine PixiJS v8 client. Currently a **vertical slice** that validates th
 
 ## Run (Web)
 
+This is one package of a root npm workspace — install at the repo root, not here.
+
 ```bash
-cd client
-npm install
-npm run dev        # open http://localhost:5173
+npm install        # from the repo root
+npm run dev -w client        # open http://localhost:5173
 ```
 
 ## Controls
@@ -39,28 +40,46 @@ logic in `src/platform/TouchControls.ts`, so all touch targets behave identicall
 
 ## Layout
 
+Gameplay outcomes are decided by `@dd/engine` (the repo-root `engine/` package), never
+here. Everything below is the **render/host** half: it reads authoritative engine state
+and produces input, and nothing else (`design/06`/`design/08`).
+
 ```
 src/
 ├─ main.ts            Web entry (WebPlatform → Game)
 ├─ main.wechat.ts     WeChat entry (WeChatPlatform → Game); loaded by ../wechat/game.js
-├─ game/              platform-agnostic core (no DOM, no device APIs)
-│  ├─ Game.ts         assembly, main loop, layers, gameplay orchestration
-│  ├─ config.ts       constants
-│  ├─ layers.ts       render layers (ground/shadow/entities/fx/ui)
-│  ├─ Entity.ts       base: gx/gy/z, sync transform, shadow
-│  ├─ Actor.ts        logical entity (HP/facing/movement/faction)
-│  ├─ Skin.ts         appearance (placeholder Graphics, the decoupling point)
-│  ├─ Bullet.ts       bullet
-│  ├─ Enemy.ts        simple shooter enemy
-│  └─ weapons/
-│     ├─ Weapon.ts    abstract weapon base
-│     ├─ RangedWeapon.ts
-│     └─ MeleeWeapon.ts   with block/deflect
+├─ game/
+│  ├─ Game.ts         assembly, main loop, phase orchestration
+│  ├─ phase.ts        the Phase union — shared vocabulary of Game and the screens
+│  ├─ theme.ts        render palette (NOT gameplay tuning — that's the engine)
+│  ├─ score.ts        the run's score table (host-side, never simulated)
+│  ├─ coords.ts       the one place engine fp/brad becomes screen px/radians
+│  ├─ scene/          world views mirroring engine state (Scene, Entity, Actor, Enemy,
+│  │                  Bullet, Pickup, Portal, Backdrop, Skin, RoomBuilder, layers)
+│  ├─ screens/        full-screen flow (MainMenu, Forge, Login, Party, Pause, Settings,
+│  │                  Screens, confirmEdge)
+│  ├─ controllers/    input → PlayerCommand and engine events → host callbacks
+│  │                  (CommandBuilder, Ally/PvpBot controllers, LocalPredictor,
+│  │                  EventReactor, RunOutcome)
+│  ├─ match/          how a run is configured and connected (arenaCatalog, matchConfig,
+│  │                  offlineConfig, pvpConfig, onlineConnect, gameQueryParams)
+│  ├─ ui/             HUD + widget kit (HudView, widgets, Minimap, FloorProgress, …)
+│  │                  — pure-math modules sit beside their views so they stay testable
+│  │                  without a canvas
+│  └─ fx/             FxController, particles, filters
+├─ render/            skin/rig/atlas infrastructure (.tao runtime, weapon + UI skins)
+├─ net/               transport, CoopSession, matchmaking, party, auth, session
+├─ meta/              persistent forge/blueprint state
+├─ settings/          persisted user settings
+├─ i18n/              English-canonical t() + locales
 └─ platform/          platform isolation: canvas, Pixi Application, input, lifecycle
    ├─ types.ts        Platform / InputSource / InputState interfaces
    ├─ TouchControls.ts  shared virtual twin-stick (used by both web and wechat)
    ├─ web/            WebPlatform + WebInput (keyboard + mouse, and touch)
    └─ wechat/         WeChatPlatform + WeChatAdapter + WeChatInput (wx canvas + touch)
+
+sim/                  offline harnesses (PvP balance sim). Outside src/ on purpose:
+                      nothing shipped can import them.
 ```
 
 `Game` takes a `Platform`-provided `InputSource`; it never references `window`,

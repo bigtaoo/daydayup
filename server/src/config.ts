@@ -16,9 +16,9 @@ const DEV_SECRET = 'dev-insecure-secret-do-not-use-in-prod';
 // must independently derive the exact same per-seat `teamId` from nothing but
 // `(owner, playerCount)` (no ticket to read: `BotClient.ts` calls it with only
 // `seed`/`playerCount`), so this server and that client function share one formula via
-// the `@dd/game/pvpConfig` alias (already used by `BotClient.ts`/`Matchmaker.ts`)
+// the `@dd/game/match/pvpConfig` alias (already used by `BotClient.ts`/`Matchmaker.ts`)
 // instead of two hand-mirrored copies that could drift (design/06's own stated lesson).
-export { SQUAD_SIZE, squadSizeForPlayerCount, teamIdForOwner } from '@dd/game/pvpConfig';
+export { SQUAD_SIZE, squadSizeForPlayerCount, teamIdForOwner } from '@dd/game/match/pvpConfig';
 
 let warned = false;
 

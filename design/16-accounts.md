@@ -18,7 +18,7 @@ The project's whole server side is zero-ops (two bare `node:http` processes, in-
 - `client/src/net/session.ts` — `{accountId, username, token}` in `localStorage['daydayup.session.v1']`, same storage-port/cache convention as `net/identity.ts`'s `IdentityStore`.
 - `client/src/net/auth.ts` — thin `fetch` wrapper over the routes above, same injected-fetch DI convention as `net/party.ts`/`net/matchmaking.ts`.
 - `client/src/net/identity.ts`'s `getPlayerId()` now prefers the logged-in `accountId` over the local guest UUID — the single seam every downstream caller (party, matchmaking, ladder rating) already read through, so nothing else needed to change to pick up a real identity once logged in.
-- `client/src/game/LoginScreen.ts` — login/register/logout/change-password UI, same `Panel`/`Button`/`TextInputOverlay` pattern as `PartyScreen.ts` (`TextInputOverlay` gained a `password?: boolean` masking option). Reached from a new MainMenu "LOGIN"/"Hi, {username}" button. **Never required to play** — BACK without an account is the unchanged guest path.
+- `client/src/game/screens/LoginScreen.ts` — login/register/logout/change-password UI, same `Panel`/`Button`/`TextInputOverlay` pattern as `PartyScreen.ts` (`TextInputOverlay` gained a `password?: boolean` masking option). Reached from a new MainMenu "LOGIN"/"Hi, {username}" button. **Never required to play** — BACK without an account is the unchanged guest path.
 
 ## What's bound to an account (vs. what isn't, yet)
 

@@ -10,7 +10,7 @@ export default mergeConfig(
   viteConfig,
   defineConfig({
     test: {
-      include: ['src/game/pvpBalanceSim.sim.ts'],
+      include: ['sim/pvpBalanceSim.sim.ts'],
       testTimeout: 30_000,
     },
   }),

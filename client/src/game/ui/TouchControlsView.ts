@@ -1,6 +1,6 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import type { TouchVisual } from '../../platform/types';
-import { CONFIG } from '../config';
+import { THEME } from '../theme';
 
 // Visual layer for the touch controls TouchControls.ts hit-tests (design/10 open
 // question: touch players had no on-screen indication of the sticks/buttons). Pure
@@ -43,12 +43,12 @@ export class TouchControlsView {
 
     // Movement stick — base+knob only exist once the origin is known (dynamic origin
     // on touch-down; there is nothing meaningful to draw at rest).
-    drawStick(this.moveBase, this.moveKnob, visual.move, visual.stickRadius, CONFIG.colors.player);
+    drawStick(this.moveBase, this.moveKnob, visual.move, visual.stickRadius, THEME.colors.player);
     // Right-side zone: with auto-aim on (the default) this only ever needs to say
     // "hold here to fire" — direction is decorative there, but still the real aim
     // input when auto-aim is off — so one stick visual serves both, distinguished by
     // colour (warm = fire) and a brighter knob once the drag is far enough to fire.
-    drawStick(this.fireBase, this.fireKnob, visual.aim, visual.stickRadius, CONFIG.colors.muzzle);
+    drawStick(this.fireBase, this.fireKnob, visual.aim, visual.stickRadius, THEME.colors.muzzle);
 
     drawButton(this.weapon1, this.weapon1Label, visual.weapon1);
     drawButton(this.weapon2, this.weapon2Label, visual.weapon2);

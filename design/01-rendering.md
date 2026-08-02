@@ -9,7 +9,7 @@ Goal: a fixed tilted view (not pure top-down; slightly forward-leaning, like Sou
 - **Small-room zoom-to-fit** (legibility fix, 2026-08-02): a room smaller than the
   viewport is scaled up (contain-fit against the tighter axis, capped at 1.8x so a
   tiny/degenerate room doesn't blow sprites into blocks) instead of sitting centred in
-  a sea of black canvas backdrop — `FxController.updateCamera` (`client/src/game/FxController.ts`).
+  a sea of black canvas backdrop — `FxController.updateCamera` (`client/src/game/fx/FxController.ts`).
   A room/arena that already covers the viewport at 1x is untouched (zoom floors at 1,
   never shrinks). `CommandBuilder` divides the screen-space mouse aim point by this
   same zoom before converting it to world space, or a zoomed room would aim wrong.

@@ -10,7 +10,7 @@
 // poison isn't floor 1 and has no dedicated critter either) — RoomBuilder's fallback
 // covers it until one is generated.
 import { Assets, Texture } from 'pixi.js';
-import type { BiomeElement } from '../game/config';
+import type { BiomeElement } from '../game/theme';
 
 const BIOME_TILE_ASSETS: Readonly<Record<string, string>> = {
   floor_fire: '/biome/floor_fire.png',

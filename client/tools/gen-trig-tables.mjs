@@ -5,7 +5,7 @@
 //   vs V8 vs desktop browsers). Computing the table at runtime with Math.sin and
 //   rounding to integer fp would occasionally differ by 1 ULP across engines →
 //   desync. So the table is generated OFFLINE here and committed as integer
-//   literal data (src/engine/math/trig.table.ts). Runtime code only does integer
+//   literal data (engine/math/trig.table.ts). Runtime code only does integer
 //   arithmetic (table lookup + linear interpolation), which IS deterministic.
 //
 // Re-run after changing FP_SCALE / BRAD_FULL / sample counts, then commit the
@@ -70,6 +70,6 @@ ${fmt(atan)}
 `;
 
 const dir = dirname(fileURLToPath(import.meta.url));
-const dest = join(dir, '..', 'src', 'engine', 'math', 'trig.table.ts');
+const dest = join(dir, '..', '..', 'engine', 'math', 'trig.table.ts');
 writeFileSync(dest, out);
 console.log(`wrote ${dest}\n  SIN_QUARTER: ${sin.length} samples\n  ATAN_QUARTER: ${atan.length} samples`);

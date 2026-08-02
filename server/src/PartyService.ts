@@ -35,7 +35,7 @@ export interface PartyInfo {
 }
 
 /** The squad-size ceiling (design/05/15) — re-exported from the same `SQUAD_SIZE`
- * `Matchmaker`'s per-squad chunking uses (via `@dd/game/pvpConfig`), so a party can
+ * `Matchmaker`'s per-squad chunking uses (via `@dd/game/match/pvpConfig`), so a party can
  * never grow larger than the squad it's meant to fill. */
 export const MAX_PARTY_SIZE = SQUAD_SIZE;
 

@@ -1,7 +1,7 @@
 # Biome floor/wall swatch prompts (archive)
 
 `design/13`'s still-open "other biomes' looks" — the room ground/walls were a code-only
-palette tint (`game/config.ts`'s `biomePalette()`) until now. This batch is the first real
+palette tint (`game/theme.ts`'s `biomePalette()`) until now. This batch is the first real
 ART pass: **tileable swatches**, not illustrated rooms — `RoomBuilder.ts` now lays these
 down as a `TilingSprite` covering the whole room/wall rect (see `render/biomeTiles.ts`).
 

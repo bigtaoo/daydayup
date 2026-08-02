@@ -10,9 +10,9 @@ import {
   type GameState,
 } from '@dd/engine';
 import { CoopSession } from '../net/CoopSession';
-import { connectOnlineSession } from './onlineConnect';
-import { buildDungeonRunConfig, buildArenaDemoConfig } from './offlineConfig';
-import { LocalPredictor, DEFAULT_PREDICTOR } from './LocalPredictor';
+import { connectOnlineSession } from './match/onlineConnect';
+import { buildDungeonRunConfig, buildArenaDemoConfig } from './match/offlineConfig';
+import { LocalPredictor, DEFAULT_PREDICTOR } from './controllers/LocalPredictor';
 import {
   defaultMetaState, bankMaterials, craft, clearLoadout, selectCharacter,
   unlockBlueprint, acquireBlueprint, purchasableBlueprints,
@@ -24,29 +24,30 @@ import {
   type SettingsState, type SettingsStore,
 } from '../settings';
 import { t, setLocale } from '../i18n';
-import { ELEMENT_COLORS } from './config';
-import { Layers } from './layers';
-import { Scene } from './Scene';
-import { Screens } from './Screens';
-import { Forge } from './Forge';
-import { MainMenu } from './MainMenu';
-import { PartyScreen } from './PartyScreen';
-import { LoginScreen } from './LoginScreen';
-import { Settings } from './Settings';
-import { PauseMenu } from './PauseMenu';
+import { ELEMENT_COLORS } from './theme';
+import { Layers } from './scene/layers';
+import { Scene } from './scene/Scene';
+import { Screens } from './screens/Screens';
+import { Forge } from './screens/Forge';
+import { MainMenu } from './screens/MainMenu';
+import { PartyScreen } from './screens/PartyScreen';
+import { LoginScreen } from './screens/LoginScreen';
+import { Settings } from './screens/Settings';
+import { PauseMenu } from './screens/PauseMenu';
 import { Button } from './ui/widgets';
-import { FxController } from './FxController';
-import { HudView } from './HudView';
+import { FxController } from './fx/FxController';
+import { HudView } from './ui/HudView';
 import { TouchControlsView } from './ui/TouchControlsView';
-import { CommandBuilder } from './CommandBuilder';
-import { AllyController } from './AllyController';
-import { EventReactor } from './EventReactor';
-import { RoomBuilder } from './RoomBuilder';
-import { Backdrop } from './Backdrop';
-import { PortalPrompt } from './PortalPrompt';
-import { RunOutcome } from './RunOutcome';
-import { parseGameQueryParams } from './gameQueryParams';
-import { shouldConfirmOnFireEdge, type Phase } from './confirmEdge';
+import { CommandBuilder } from './controllers/CommandBuilder';
+import { AllyController } from './controllers/AllyController';
+import { EventReactor } from './controllers/EventReactor';
+import { RoomBuilder } from './scene/RoomBuilder';
+import { Backdrop } from './scene/Backdrop';
+import { PortalPrompt } from './ui/PortalPrompt';
+import { RunOutcome } from './controllers/RunOutcome';
+import { parseGameQueryParams } from './match/gameQueryParams';
+import { shouldConfirmOnFireEdge } from './screens/confirmEdge';
+import type { Phase } from './phase';
 import { fpToPx, bradToRad } from './coords';
 import type { AudioBus, InputCanvas, InputSource } from '../platform/types';
 
@@ -73,8 +74,8 @@ const PORTAL_PROMPT_RADIUS_PX = 90;
 // resolved) — 'settings' also serves as the pause menu's settings sub-screen (Game
 // tracks which phase to return to via settingsReturnPhase). 'squad' is the PvP
 // pre-formed-party lobby (design/05/15's squad follow-up) — the first runtime (not
-// boot-flag) entry point into PvP. Declared in confirmEdge.ts, which needs it for the
-// fire-edge gate below and is unit-testable without standing up a Pixi Application.
+// boot-flag) entry point into PvP. Declared in phase.ts — shared vocabulary between
+// Game and the screen layer, unit-testable without standing up a Pixi Application.
 
 export class Game {
   private app: Application;

@@ -24,8 +24,8 @@ import { WebSocket } from 'ws';
 import { CoopSession } from '@dd/net/CoopSession';
 import type { Transport } from '@dd/net/transport';
 import { hashState, type ClientMsg, type ServerMsg } from '@dd/engine';
-import { buildPvpEngineConfig } from '@dd/game/pvpConfig';
-import { PvpBotController } from '@dd/game/PvpBotController';
+import { buildPvpEngineConfig } from '@dd/game/match/pvpConfig';
+import { PvpBotController } from '@dd/game/controllers/PvpBotController';
 
 export interface BotClientOptions {
   wsUrl: string; // the gameserver's ws:// origin (matchsvc's GAMESERVER_URL)

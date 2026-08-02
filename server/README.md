@@ -63,14 +63,15 @@ CPU measurement.)
 
 ## Run
 
+One package of a root npm workspace — `npm install` once at the repo root covers it.
+
 ```bash
-cd server
-npm install
-npm test           # ticket / Matchmaker / MatchRoom / RoomManager
-npm run typecheck  # incl. both entrypoints
-npm run dev        # data plane: ws://0.0.0.0:8787/ws  (PORT/HOST env override)
-npm run matchsvc   # control plane: http://0.0.0.0:8788  (MATCH_PORT env override)
+npm run dev:server    # data plane: ws://0.0.0.0:8787/ws  (PORT/HOST env override)
+npm run dev:matchsvc  # control plane: http://0.0.0.0:8788  (MATCH_PORT env override)
 ```
+
+Or from inside `server/`: `npm test` (ticket / Matchmaker / MatchRoom / RoomManager),
+`npm run typecheck` (incl. both entrypoints), `npm run dev`, `npm run matchsvc`.
 
 **Handshake (ROADMAP 3.3):** the client calls the control plane to matchmake —
 `POST /find {playerCount}` then poll `GET /find/:queueId` — and receives a **signed
@@ -94,5 +95,5 @@ The matchmaking here is deliberately minimal — a first-come queue keyed by sea
 **accounts/auth** (a ticket identifies a seat, not a user) and no **skill matching/MMR**.
 Co-op is cooperative and latency-tolerant, so it is playable on the confirmed stream +
 catch-up alone; **local prediction** (rendering your own movement/aim ahead of the confirmed
-frame) shipped as a client-side render-layer concern on top (`client/src/game/LocalPredictor.ts`)
+frame) shipped as a client-side render-layer concern on top (`client/src/game/controllers/LocalPredictor.ts`)
 and never touches this data plane — the server stays the pure confirmed-frame relay.
