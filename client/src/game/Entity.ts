@@ -19,7 +19,8 @@ export class Entity extends Container {
   curX = 0;
   curY = 0;
   curZ = 0;
-  facingRad = 0;
+  facingRad = 0; // aim/shot direction (weapon)
+  bodyFacingRad = 0; // movement direction (body/legs) — see Actor's upper/lower split
 
   shadow: Graphics | null = null;
 
@@ -39,8 +40,10 @@ export class Entity extends Container {
     this.applyTransform(x, y, z);
   }
 
-  // Ingest one sim-tick position: shift cur → prev, then set the new cur.
-  pushState(x: number, y: number, z: number, facingRad: number): void {
+  // Ingest one sim-tick position: shift cur → prev, then set the new cur. `bodyFacingRad`
+  // defaults to `facingRad` for entities with no separate body orientation (enemies,
+  // bullets, pickups) — only the player view (Scene.ts) ever passes a distinct one.
+  pushState(x: number, y: number, z: number, facingRad: number, bodyFacingRad: number = facingRad): void {
     this.prevX = this.curX;
     this.prevY = this.curY;
     this.prevZ = this.curZ;
@@ -48,6 +51,7 @@ export class Entity extends Container {
     this.curY = y;
     this.curZ = z;
     this.facingRad = facingRad;
+    this.bodyFacingRad = bodyFacingRad;
   }
 
   // Collapse prev onto cur — call right after a view is created so it appears at

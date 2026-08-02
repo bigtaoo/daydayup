@@ -22,6 +22,7 @@ import {
   defaultSettingsState, createWebSettingsStore, effectiveVolume,
   type SettingsState, type SettingsStore,
 } from '../settings';
+import { t, setLocale } from '../i18n';
 import { ELEMENT_COLORS } from './config';
 import { Layers } from './layers';
 import { Scene } from './Scene';
@@ -221,9 +222,12 @@ export class Game {
     app.stage.eventMode = 'static'; // let the overlay receive pointer taps (web)
     app.stage.addChild(this.layers.root);
 
-    // Persisted volume takes effect immediately, not just after the first settings edit.
+    // Persisted volume + language take effect immediately, not just after the first
+    // settings edit (design/17-i18n.md: `setLocale` is the live mirror every `t()` call
+    // reads, `this.settings.locale` is only the persisted copy).
     this.settings = this.settingsStore.load();
     this.applyAudioSettings();
+    setLocale(this.settings.locale);
     this.settingsScreen.onChange = (s) => {
       this.settings = s;
       this.settingsStore.save(s);
@@ -328,7 +332,7 @@ export class Game {
     this.layers.ui.addChild(this.hudView);
 
     // Settings entry (design/10) — only shown in the forge phase (showForge/beginRun).
-    this.settingsBtn = new Button('SETTINGS', { w: 110, h: 30, fontSize: 12 });
+    this.settingsBtn = new Button(t('settings.title'), { w: 110, h: 30, fontSize: 12 });
     this.settingsBtn.onTap = () => this.openSettings();
     this.settingsBtn.view.visible = false;
     this.layers.ui.addChild(this.settingsBtn.view);
@@ -710,9 +714,9 @@ export class Game {
     this.store.save(this.meta);
   }
 
-  showOutcomeScreen(title: string, lines: readonly string[]): void {
+  showOutcomeScreen(won: boolean, title: string, lines: readonly string[]): void {
     const { w, h } = this.screenSize();
-    this.screens.show(w, h, title, lines, 'Press Fire — back to the loadout');
+    this.screens.show(w, h, won, title, lines, t('results.confirmHint'));
   }
 
   /**
@@ -815,10 +819,10 @@ export class Game {
     const s = engine.state;
     const p = s.players[this.localOwner];
     const playerPx = p ? { x: fpToPx(p.gx), y: fpToPx(p.gy) } : { x: 0, y: 0 };
-    const cam = { x: this.layers.world.x, y: this.layers.world.y };
+    const cam = { x: this.layers.world.x, y: this.layers.world.y, zoom: this.fx.zoom };
 
     const frame = s.tick + 1;
-    engine.submit(this.builder.build(frame, this.localOwner, playerPx, cam, s, { enabled: this.settings.autoAim, screenPx: this.screenSize() }));
+    engine.submit(this.builder.build(frame, this.localOwner, playerPx, cam));
     // Local co-op (ROADMAP 3.1) — and the `?arenaDemo=1` dev harness, which reuses this
     // exact path: every non-local seat is driven by the bot ally, whose command goes
     // through the exact same submit path a networked teammate's would — the engine
@@ -898,10 +902,10 @@ export class Game {
     const s = session.state!;
     const p = s.players[this.localOwner];
     const playerPx = p ? { x: fpToPx(p.gx), y: fpToPx(p.gy) } : { x: 0, y: 0 };
-    const cam = { x: this.layers.world.x, y: this.layers.world.y };
+    const cam = { x: this.layers.world.x, y: this.layers.world.y, zoom: this.fx.zoom };
 
     // Relay this render tick's local command (server stamps the authoritative seat/frame).
-    const cmd = this.builder.build(session.frame, this.localOwner, playerPx, cam, s, { enabled: this.settings.autoAim, screenPx: this.screenSize() });
+    const cmd = this.builder.build(session.frame, this.localOwner, playerPx, cam);
     session.submit(cmd);
 
     // Predict the local seat's own motion for THIS render frame (before draining confirmed
@@ -928,7 +932,7 @@ export class Game {
     // Draw the local seat from the predictor (camera follows it too); remote seats confirmed.
     if (predicting && p && this.predictor.isActive) {
       const pose = this.predictor.pose;
-      this.scene.positionLocal(pose.x, pose.y, fpToPx(p.z), pose.facing);
+      this.scene.positionLocal(pose.x, pose.y, fpToPx(p.z), pose.facing, pose.bodyFacing);
     }
     this.spawnBulletTrails(s);
     this.consumeEvents(events);

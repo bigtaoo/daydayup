@@ -1,5 +1,6 @@
 import { EMBER_DUNGEON, TICK_RATE, type GameState } from '@dd/engine';
 import { CONFIG } from './config';
+import { t } from '../i18n';
 
 /** The bits of Game a run-outcome reaction needs — score/meta/phase/screen are all
  *  Game-owned state, so this stays a callback interface (same EventReactor-style
@@ -12,7 +13,10 @@ export interface RunOutcomeHost {
   hideHud(): void;
   /** Bank the run's carry-out into the persistent account (design/05/14). */
   bankRunMaterials(s: GameState): void;
-  showOutcomeScreen(title: string, lines: readonly string[]): void;
+  /** `won` drives the result icon (Screens.ts) — kept as an explicit flag rather than
+   * inferred from `title` text now that `title` is a translated, locale-dependent
+   * string (design/17-i18n.md) instead of a fixed English literal. */
+  showOutcomeScreen(won: boolean, title: string, lines: readonly string[]): void;
 }
 
 /** Total materials safely banked so far this run (design/05 carry-out bag). */
@@ -29,7 +33,7 @@ function timeText(s: GameState): string {
   const totalSec = Math.floor(s.tick / TICK_RATE);
   const m = Math.floor(totalSec / 60);
   const sec = totalSec % 60;
-  return `Time ${m}:${String(sec).padStart(2, '0')}`;
+  return t('results.timeLine', { m, ss: String(sec).padStart(2, '0') });
 }
 
 /**
@@ -61,11 +65,11 @@ export class RunOutcome {
     this.host.setPhase('victory');
     this.host.hideHud();
     this.host.addScore(CONFIG.score.victory);
-    this.host.showOutcomeScreen('EXTRACTED', [
-      `Floor ${floor}/${EMBER_DUNGEON.floorCount}`,
-      `+${carried} materials banked`,
+    this.host.showOutcomeScreen(true, t('results.extractedTitle'), [
+      t('results.floorLine', { floor, floorCount: EMBER_DUNGEON.floorCount }),
+      t('results.materialsBanked', { count: carried }),
       timeText(s),
-      `Score ${this.host.currentScore()}`,
+      t('results.scoreLine', { score: this.host.currentScore() }),
     ]);
   }
 
@@ -73,11 +77,11 @@ export class RunOutcome {
     const floor = s.floorIndex + 1;
     this.host.setPhase('defeat');
     this.host.hideHud();
-    this.host.showOutcomeScreen('DEFEAT', [
-      `Fell on floor ${floor}/${EMBER_DUNGEON.floorCount}`,
-      `The floor's materials were lost`,
+    this.host.showOutcomeScreen(false, t('results.defeatTitle'), [
+      t('results.fellOnFloor', { floor, floorCount: EMBER_DUNGEON.floorCount }),
+      t('results.materialsLost'),
       timeText(s),
-      `Score ${this.host.currentScore()}`,
+      t('results.scoreLine', { score: this.host.currentScore() }),
     ]);
   }
 
@@ -86,10 +90,10 @@ export class RunOutcome {
     this.host.setPhase('victory');
     this.host.hideHud();
     this.host.addScore(CONFIG.score.victory);
-    this.host.showOutcomeScreen('VICTORY ROYALE', [
-      `1st place of ${s.players.length}`,
+    this.host.showOutcomeScreen(true, t('results.victoryTitle'), [
+      t('results.placeOf', { total: s.players.length }),
       timeText(s),
-      `Score ${this.host.currentScore()}`,
+      t('results.scoreLine', { score: this.host.currentScore() }),
     ]);
   }
 
@@ -100,10 +104,10 @@ export class RunOutcome {
     this.host.hideHud();
     const idx = s.placements.indexOf(this.host.localOwner);
     const place = idx === -1 ? s.players.length : s.players.length - idx;
-    this.host.showOutcomeScreen('ELIMINATED', [
-      `Placed ${place}/${s.players.length}`,
+    this.host.showOutcomeScreen(false, t('results.eliminatedTitle'), [
+      t('results.placedOfTotal', { place, total: s.players.length }),
       timeText(s),
-      `Score ${this.host.currentScore()}`,
+      t('results.scoreLine', { score: this.host.currentScore() }),
     ]);
   }
 }

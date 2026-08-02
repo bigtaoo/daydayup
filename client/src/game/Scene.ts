@@ -45,11 +45,18 @@ export class Scene {
     for (const p of state.players) {
       if (!p.alive) continue;
       let v = this.views.get(p.id) as Actor | undefined;
+      const aimRad = bradToRad(p.facing);
+      // Body/legs face the movement direction, not the aim (upper/lower body split) —
+      // held at its last value while idle, same "no snap-to-zero" convention as the
+      // aim stick (CommandBuilder.lastAim). A fresh spawn has no last value yet, so it
+      // starts facing its aim direction.
+      const moving = p.vx !== 0 || p.vy !== 0;
+      const bodyFacingRad = moving ? Math.atan2(p.vy, p.vx) : (v?.bodyFacingRad ?? aimRad);
       if (!v) {
         v = new Actor('player', fpToPx(p.radius), undefined, false, p.atlasKey);
-        this.spawn(p.id, v, fpToPx(p.gx), fpToPx(p.gy), fpToPx(p.z), bradToRad(p.facing));
+        this.spawn(p.id, v, fpToPx(p.gx), fpToPx(p.gy), fpToPx(p.z), aimRad, bodyFacingRad);
       } else {
-        v.pushState(fpToPx(p.gx), fpToPx(p.gy), fpToPx(p.z), bradToRad(p.facing));
+        v.pushState(fpToPx(p.gx), fpToPx(p.gy), fpToPx(p.z), aimRad, bodyFacingRad);
       }
       // The camera-follow target: the local seat if named, else the first player (the
       // single-player default — playerView is only unset, so the first alive player wins).
@@ -129,17 +136,17 @@ export class Scene {
    * it — show the render-ahead prediction, while every remote view keeps its confirmed
    * reconcile+interpolate. No-op before the local view exists. Never touches the sim.
    */
-  positionLocal(x: number, y: number, z: number, facingRad: number): void {
+  positionLocal(x: number, y: number, z: number, facingRad: number, bodyFacingRad: number = facingRad): void {
     if (!this.playerView) return;
-    this.playerView.pushState(x, y, z, facingRad);
+    this.playerView.pushState(x, y, z, facingRad, bodyFacingRad);
     this.playerView.snap(); // prev == cur → no lerp; interpolate() draws it exactly here
   }
 
-  private spawn(id: number, v: Entity, x: number, y: number, z: number, facingRad: number): void {
+  private spawn(id: number, v: Entity, x: number, y: number, z: number, facingRad: number, bodyFacingRad: number = facingRad): void {
     this.views.set(id, v);
     this.layers.entities.addChild(v);
     if (v.shadow) this.layers.shadow.addChild(v.shadow);
-    v.pushState(x, y, z, facingRad);
+    v.pushState(x, y, z, facingRad, bodyFacingRad);
     v.snap(); // appear at spawn, don't lerp in from (0,0)
   }
 }

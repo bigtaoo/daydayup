@@ -2,6 +2,7 @@ import { Container, Text } from 'pixi.js';
 import { Panel, Button } from './ui/widgets';
 import { getSession } from '../net/session';
 import { getUiTexture } from '../render/uiSkins';
+import { t } from '../i18n';
 
 /**
  * The boot/main-menu screen (design/10 screen flow — the front door that never got
@@ -32,21 +33,21 @@ export class MainMenu {
   constructor() {
     // `padding` guards against a real observed font-metrics clipping bug (see
     // widgets.ts's Button — same mitigation, needed here too since these aren't Buttons).
-    this.title = new Text({ text: 'DAYDAYUP', style: { fill: 0xf7fafc, fontSize: 46, fontWeight: 'bold', fontFamily: 'sans-serif', padding: 16 } });
+    this.title = new Text({ text: t('mainMenu.title'), style: { fill: 0xf7fafc, fontSize: 46, fontWeight: 'bold', fontFamily: 'sans-serif', padding: 16 } });
     this.title.anchor.set(0.5, 0);
-    this.subtitle = new Text({ text: 'descend, extract, survive', style: { fill: 0x90cdf4, fontSize: 16, fontFamily: 'monospace', padding: 26 } });
+    this.subtitle = new Text({ text: t('mainMenu.subtitle'), style: { fill: 0x90cdf4, fontSize: 16, fontFamily: 'monospace', padding: 26 } });
     this.subtitle.anchor.set(0.5, 0);
 
-    this.playBtn = new Button('PLAY', { w: 220, h: 56, fontSize: 22 });
+    this.playBtn = new Button(t('mainMenu.play'), { w: 220, h: 56, fontSize: 22 });
     this.playBtn.onTap = () => this.onPlay?.();
     this.playBtn.setIcon(getUiTexture('icon_play'));
-    this.squadBtn = new Button('SQUAD', { w: 220, h: 40, fontSize: 16 });
+    this.squadBtn = new Button(t('mainMenu.squad'), { w: 220, h: 40, fontSize: 16 });
     this.squadBtn.onTap = () => this.onSquad?.();
     this.squadBtn.setIcon(getUiTexture('icon_squad'));
-    this.accountBtn = new Button('LOGIN', { w: 220, h: 36, fontSize: 14 });
+    this.accountBtn = new Button(t('mainMenu.account'), { w: 220, h: 36, fontSize: 14 });
     this.accountBtn.onTap = () => this.onAccount?.();
     this.accountBtn.setIcon(getUiTexture('icon_account'));
-    this.settingsBtn = new Button('SETTINGS', { w: 160, h: 36, fontSize: 14 });
+    this.settingsBtn = new Button(t('mainMenu.settings'), { w: 160, h: 36, fontSize: 14 });
     this.settingsBtn.onTap = () => this.onSettings?.();
     this.settingsBtn.setIcon(getUiTexture('icon_settings'));
 
@@ -59,6 +60,7 @@ export class MainMenu {
   }
 
   show(w: number, h: number) {
+    this.retext();
     this.panel.layout(w, h);
     const cx = w / 2;
     const cy = h / 2;
@@ -80,6 +82,18 @@ export class MainMenu {
    * without needing to re-`show()` the whole menu. */
   refreshAccountLabel() {
     const session = getSession();
-    this.accountBtn.setText(session ? `Hi, ${session.username}` : 'LOGIN');
+    this.accountBtn.setText(session ? t('mainMenu.greeting', { username: session.username }) : t('mainMenu.account'));
+  }
+
+  /** Re-apply every static label from the active locale — called on `show()` so a
+   * language change made in Settings (design/17-i18n.md) takes effect the next time
+   * this screen is opened, without needing a global re-render hook. */
+  private retext() {
+    this.title.text = t('mainMenu.title');
+    this.subtitle.text = t('mainMenu.subtitle');
+    this.playBtn.setText(t('mainMenu.play'));
+    this.squadBtn.setText(t('mainMenu.squad'));
+    this.settingsBtn.setText(t('mainMenu.settings'));
+    this.refreshAccountLabel();
   }
 }

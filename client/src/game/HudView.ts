@@ -8,6 +8,7 @@ import { nearestWeaponPickup } from './ui/pickupProximity';
 import { Minimap, type MinimapPlayer } from './ui/Minimap';
 import { FloorProgress } from './ui/FloorProgress';
 import { WEAPON_SIM_BY_ID, EMBER_DUNGEON, SIM, type GameState } from '@dd/engine';
+import { t } from '../i18n';
 
 // Ground compare card proximity ring (design/03:125) — wider than PickupSystem's own
 // collect radius (SIM.pickupRadius) so the card has a beat to show before auto-collect.
@@ -80,7 +81,7 @@ export class HudView {
   private groundHint!: Text;
 
   build(layers: Layers, screenPx: { w: number; h: number }): void {
-    this.statsPanel = new Panel({ radius: 8, color: 0x0b0e14, alpha: 0.55 });
+    this.statsPanel = new Panel({ radius: 8, color: 0x0b0e14, alpha: 0.55, borderColor: 0x4c566a, borderAlpha: 0.5 });
     this.hpBar = new Bar({ w: 160, h: 14, fillColor: 0xf56565, trackColor: 0x2a1620, label: true });
     this.shieldBar = new Bar({ w: 160, h: 9, fillColor: CONFIG.colors.shield, label: false });
     this.cdBar = new Bar({ w: 90, h: 7, fillColor: 0x63b3ed, label: false });
@@ -95,7 +96,7 @@ export class HudView {
     this.allyText = new Text({ text: '', style: smallStyle });
     this.toasts = new ToastQueue({ w: 220 });
     this.groundHint = new Text({
-      text: '[E] swap',
+      text: t('hud.swapHint'),
       style: { fill: 0x90cdf4, fontSize: 13, fontFamily: 'monospace', fontWeight: 'bold', padding: 6 },
     });
 
@@ -116,7 +117,7 @@ export class HudView {
     // stat cluster above — it needs to read as "the game is pausing to ask you something"
     // rather than "one more stat line", so it gets its own centered panel, built once and
     // repositioned in `reposition()`, content + visibility driven in `update()`.
-    this.checkpointPanel = new Panel({ radius: 10, color: 0x0b1a10, alpha: 0.88 });
+    this.checkpointPanel = new Panel({ radius: 10, color: 0x0b1a10, alpha: 0.88, borderColor: 0x68d391, borderAlpha: 0.6 });
     this.checkpointText = new Text({
       text: '',
       style: {
@@ -191,8 +192,8 @@ export class HudView {
 
     const weapon = p?.weapon;
     this.weaponText.text = weapon
-      ? `${weapon.spec.name} [${weapon.spec.rarity}] (${weapon.spec.kind}) dmg ${weapon.spec.damage}`
-      : 'Weapon: none';
+      ? t('hud.weaponLine', { name: weapon.spec.name, rarity: weapon.spec.rarity, kind: weapon.spec.kind, damage: weapon.spec.damage })
+      : t('hud.weaponNone');
     // Cooldown sweep (design/10): weapon.cooldownTicks counts DOWN from the spec's fixed
     // cooldown (already whole ticks, sim-facing) to 0=ready — the bar fills as it recovers.
     const maxCdTicks = weapon
@@ -202,16 +203,17 @@ export class HudView {
     this.cdBar.set(readyTicks, maxCdTicks);
     this.cdBar.update(dt);
 
-    const buffs = p && p.buffs.length ? `  Buffs ${p.buffs.length}` : '';
+    const buffs = p && p.buffs.length ? t('hud.buffsSuffix', { count: p.buffs.length }) : '';
     if (s.zoneEnabled) {
       // PvP arena (design/15) — a score/timer/team HUD row (design/10) instead of the
       // dungeon floor/room line, which has no meaning here.
       const zone = s.zone;
       const alive = s.players.filter((pl) => pl.alive).length;
-      const escalation = zone?.escalation ? ` (+${zone.escalation}/tick)` : '';
-      this.infoText.text =
-        `${ctx.selectedSkin}   PvP Arena   Zone stage ${zone?.stage ?? 0}${escalation}   ` +
-        `Alive ${alive}/${s.players.length}   Score ${ctx.score}${buffs}`;
+      const escalation = zone?.escalation ? t('hud.escalationSuffix', { n: zone.escalation }) : '';
+      this.infoText.text = t('hud.pvpLine', {
+        skin: ctx.selectedSkin, stage: zone?.stage ?? 0, escalation, alive, total: s.players.length,
+        score: ctx.score, buffs,
+      });
       this.setCheckpointBanner(null);
       this.floorProgress.update(0, -1); // hides — this is the PvP arena's own Minimap's job
     } else {
@@ -220,9 +222,10 @@ export class HudView {
       const room = Math.max(1, s.roomIndex + 1);
       const rooms = s.floorStages.length; // total stages this floor (linear or branching)
       const banked = totalBanked(s);
-      this.infoText.text =
-        `${ctx.selectedSkin}   Floor ${floor}/${EMBER_DUNGEON.floorCount}   Room ${room}/${rooms}   ` +
-        `Enemies ${s.enemies.length}   Banked ${banked}   Score ${ctx.score}${buffs}`;
+      this.infoText.text = t('hud.pveLine', {
+        skin: ctx.selectedSkin, floor, floorCount: EMBER_DUNGEON.floorCount, room, rooms,
+        enemies: s.enemies.length, banked, score: ctx.score, buffs,
+      });
       // A real PvE minimap (design/10) — a progress TRACK, not a spatial map (see
       // FloorProgress's own doc comment for why PvE's data shape doesn't support the
       // PvP room-graph Minimap's kind of widget). 0 stages (flat EngineConfig.floors
@@ -255,11 +258,12 @@ export class HudView {
     // the second player is legible and its bleedout is visible. Single-player omits it.
     if (ctx.showAlly) {
       const ally = s.players.find((_, i) => i !== ctx.localOwner);
-      this.allyText.text = ally
-        ? `Ally (${ctx.allySkinId})   ${ally.downed
-            ? `DOWNED — bleedout ${Math.ceil(ally.bleedoutTicks / 30)}s`
-            : `HP ${Math.max(0, ally.hp)}/${ally.maxHp}`}`
+      const status = ally
+        ? (ally.downed
+            ? t('hud.allyDowned', { seconds: Math.ceil(ally.bleedoutTicks / 30) })
+            : t('hud.allyHp', { hp: Math.max(0, ally.hp), maxHp: ally.maxHp }))
         : '';
+      this.allyText.text = ally ? t('hud.allyLine', { skin: ctx.allySkinId, status }) : '';
     } else {
       this.allyText.text = '';
     }
@@ -276,8 +280,9 @@ export class HudView {
         leftColor: rarityColor(p.weapon.spec),
         rightName: groundSpec.name,
         rightColor: rarityColor(groundSpec),
-        rows: [{ label: 'Type', left: p.weapon.spec.damageType, right: groundSpec.damageType }],
+        rows: [{ label: t('compareCard.type'), left: p.weapon.spec.damageType, right: groundSpec.damageType }],
       });
+      this.groundHint.text = t('hud.swapHint');
       this.groundHint.position.set(220, this.groundCard.view.y + this.groundCard.view.height + 4);
       this.groundHint.visible = true;
     } else {
@@ -315,8 +320,8 @@ export class HudView {
     this.checkpointText.visible = info !== null;
     if (!info) return;
     this.checkpointText.text =
-      `FLOOR CLEARED — CHECKPOINT\n` +
-      `HOLD [E] to EXTRACT: bank ${info.pending} materials now & end the run safely\n` +
-      `TAP [E] to DESCEND to Floor ${info.nextFloor}: riskier, but keeps you playing`;
+      t('hud.checkpointTitle') + '\n' +
+      t('hud.checkpointExtract', { pending: info.pending }) + '\n' +
+      t('hud.checkpointDescend', { floor: info.nextFloor });
   }
 }

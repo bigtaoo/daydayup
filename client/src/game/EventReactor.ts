@@ -4,6 +4,7 @@ import { fpToPx, bradToRad } from './coords';
 import type { FxController } from './FxController';
 import type { HudView } from './HudView';
 import type { AudioBus, AudioCue } from '../platform/types';
+import { t } from '../i18n';
 
 /** The bits of Game an EventReactor reaction needs to reach back into — score/meta/
  *  room-rebuild are Game-owned state, so this stays a callback interface rather than
@@ -112,7 +113,7 @@ export class EventReactor {
             case 'heal':
               this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupHeal, 20);
               cues.add('pickup.heal');
-              this.hud.toast('+1 HP', CONFIG.colors.pickupHeal);
+              this.hud.toast(t('toast.heal'), CONFIG.colors.pickupHeal);
               break;
             case 'weapon': {
               // Flash in the dropped weapon's rarity colour (design/14) — the tier
@@ -121,7 +122,7 @@ export class EventReactor {
               const c = spec ? rarityColor(spec) : CONFIG.colors.pickupWeapon;
               this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), c, 24);
               cues.add('pickup.weapon');
-              this.hud.toast(spec ? spec.name : 'New weapon', c);
+              this.hud.toast(spec ? spec.name : t('toast.newWeapon'), c);
               // Finding a catalogued weapon permanently unlocks its forge blueprint
               // (design/14 "2–3 common blueprints drop from runs") — first-pass: any
               // catalogued pickup grants it. Meta is separate from the sim, so this
@@ -132,13 +133,13 @@ export class EventReactor {
             case 'buff':
               this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupBuff, 22);
               cues.add('pickup.buff');
-              this.hud.toast(e.buffId ? `Buff: ${e.buffId}` : 'Buff', CONFIG.colors.pickupBuff);
+              this.hud.toast(e.buffId ? t('toast.buffNamed', { id: e.buffId }) : t('toast.buffGeneric'), CONFIG.colors.pickupBuff);
               break;
             default: // material
               this.host.addScore(CONFIG.score.material);
               this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), CONFIG.colors.pickupMaterial, 16);
               cues.add('pickup.material');
-              this.hud.toast(`+${e.qty ?? 1} ${e.materialId ?? 'material'}`, CONFIG.colors.pickupMaterial);
+              this.hud.toast(t('toast.materialQty', { qty: e.qty ?? 1, material: e.materialId ?? t('toast.materialFallback') }), CONFIG.colors.pickupMaterial);
           }
           break;
         case 'wave_clear':

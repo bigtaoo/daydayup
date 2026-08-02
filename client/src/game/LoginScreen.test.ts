@@ -3,10 +3,11 @@
  * mirrors PartyScreen.test.ts's style, reaching private do-action state via the same
  * escape hatch. Session state is global (net/session.ts), so each test resets it.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { LoginScreen, type AuthApi } from './LoginScreen';
 import { resetSessionCacheForTests, getSession } from '../net/session';
 import type { AuthResult } from '../net/auth';
+import { setLocale, resetLocaleForTests } from '../i18n';
 
 function fakeApi(overrides: Partial<AuthApi> = {}): AuthApi {
   return {
@@ -37,10 +38,11 @@ function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void } {
 
 function privateOf(s: LoginScreen) {
   return s as unknown as {
-    loginBtn: { view: { visible: boolean } };
-    registerBtn: { view: { visible: boolean } };
-    logoutBtn: { view: { visible: boolean } };
-    changePasswordBtn: { view: { visible: boolean } };
+    title: { text: string };
+    loginBtn: { view: { visible: boolean }; label: { text: string } };
+    registerBtn: { view: { visible: boolean }; label: { text: string } };
+    logoutBtn: { view: { visible: boolean }; label: { text: string } };
+    changePasswordBtn: { view: { visible: boolean }; label: { text: string } };
     whoText: { text: string };
     statusText: { text: string };
     doLogin(username: string, password: string): Promise<void>;
@@ -51,6 +53,7 @@ function privateOf(s: LoginScreen) {
 }
 
 beforeEach(() => resetSessionCacheForTests());
+afterEach(() => resetLocaleForTests());
 
 describe('LoginScreen — guest (no session)', () => {
   it('shows login/register, hides logout/change-password', () => {
@@ -204,5 +207,35 @@ describe('LoginScreen — hide()', () => {
   it('hides the view without throwing even with no open input overlay', () => {
     const s = makeScreen(fakeApi());
     expect(() => s.hide()).not.toThrow();
+  });
+});
+
+describe('LoginScreen — i18n (design/17-i18n.md)', () => {
+  it('retexts on show() under zh, guest and logged-in copy alike', () => {
+    const s = makeScreen(fakeApi());
+    setLocale('zh');
+    s.show(800, 600);
+    const p = privateOf(s);
+    expect(p.title.text).toBe('账户');
+    expect(p.loginBtn.label.text).toBe('登录');
+    expect(p.registerBtn.label.text).toBe('注册');
+    expect(p.whoText.text).toBe('以访客身份游玩');
+  });
+
+  it('a failed login under zh falls back to the translated error when the server sends none', async () => {
+    const api = fakeApi({ login: vi.fn().mockRejectedValue(new Error()) });
+    setLocale('zh');
+    const s = makeScreen(api);
+    await privateOf(s).doLogin('alice', 'wrong');
+    expect(privateOf(s).statusText.text).toBe('登录失败，请重试。');
+  });
+
+  it('switching back to English on a later show() fully reverts', () => {
+    const s = makeScreen(fakeApi());
+    setLocale('zh');
+    s.show(800, 600);
+    setLocale('en');
+    s.show(800, 600);
+    expect(privateOf(s).title.text).toBe('ACCOUNT');
   });
 });

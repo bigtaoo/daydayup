@@ -1,6 +1,7 @@
 import { Container, Text } from 'pixi.js';
 import { Panel, Button } from './ui/widgets';
 import { getUiTexture } from '../render/uiSkins';
+import { t } from '../i18n';
 
 /**
  * The in-run pause menu (design/10 open question, now resolved) — resume / open
@@ -21,16 +22,16 @@ export class PauseMenu {
   onQuit: (() => void) | null = null;
 
   constructor() {
-    this.title = new Text({ text: 'PAUSED', style: { fill: 0xf7fafc, fontSize: 34, fontWeight: 'bold', fontFamily: 'sans-serif' } });
+    this.title = new Text({ text: t('pauseMenu.title'), style: { fill: 0xf7fafc, fontSize: 34, fontWeight: 'bold', fontFamily: 'sans-serif' } });
     this.title.anchor.set(0.5, 0);
 
-    this.resumeBtn = new Button('RESUME', { w: 200, h: 40 });
+    this.resumeBtn = new Button(t('pauseMenu.resume'), { w: 200, h: 40 });
     this.resumeBtn.onTap = () => this.onResume?.();
     this.resumeBtn.setIcon(getUiTexture('icon_play'));
-    this.settingsBtn = new Button('SETTINGS', { w: 200, h: 40 });
+    this.settingsBtn = new Button(t('pauseMenu.settings'), { w: 200, h: 40 });
     this.settingsBtn.onTap = () => this.onSettings?.();
     this.settingsBtn.setIcon(getUiTexture('icon_settings'));
-    this.quitBtn = new Button('QUIT TO FORGE', { w: 200, h: 40 });
+    this.quitBtn = new Button(t('pauseMenu.quit'), { w: 200, h: 40 });
     this.quitBtn.onTap = () => this.onQuit?.();
     this.quitBtn.setIcon(getUiTexture('icon_quit'));
 
@@ -40,6 +41,12 @@ export class PauseMenu {
   }
 
   show(w: number, h: number) {
+    // Re-apply static labels so a language change (design/17-i18n.md) takes effect the
+    // next time this screen opens, same convention as MainMenu.ts's `retext()`.
+    this.title.text = t('pauseMenu.title');
+    this.resumeBtn.setText(t('pauseMenu.resume'));
+    this.settingsBtn.setText(t('pauseMenu.settings'));
+    this.quitBtn.setText(t('pauseMenu.quit'));
     this.panel.layout(w, h);
     const cx = w / 2;
     const cy = h / 2;

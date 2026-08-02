@@ -1,6 +1,7 @@
 import { Container, Sprite, Text } from 'pixi.js';
 import { Panel, Button } from './ui/widgets';
 import { getUiTexture } from '../render/uiSkins';
+import { t } from '../i18n';
 
 // Render-side screen overlay: the menu / victory / defeat panels that wrap a run
 // (design/10 screen flow). It is pure presentation — it reads nothing from the
@@ -44,7 +45,7 @@ export class Screens {
     });
     for (const t of [this.title, this.sub, this.hint]) t.anchor.set(0.5);
 
-    this.menuBtn = new Button('MAIN MENU', { w: 150, h: 32, fontSize: 13 });
+    this.menuBtn = new Button(t('results.mainMenuButton'), { w: 150, h: 32, fontSize: 13 });
     this.menuBtn.onTap = () => this.onMenu?.();
 
     this.resultIcon.anchor.set(0.5);
@@ -70,11 +71,11 @@ export class Screens {
     this.menuBtn.view.position.set(cx - 75, cy + 128);
   }
 
-  show(w: number, h: number, title: string, lines: readonly string[], hint: string) {
+  show(w: number, h: number, won: boolean, title: string, lines: readonly string[], hint: string) {
+    this.menuBtn.setText(t('results.mainMenuButton')); // retext on show (design/17-i18n.md)
     this.title.text = title;
     this.sub.text = lines.join('\n');
     this.hint.text = hint;
-    const won = title === 'EXTRACTED' || title === 'VICTORY ROYALE';
     const tex = getUiTexture(won ? 'icon_result_extract' : 'icon_result_wiped');
     if (tex) {
       this.resultIcon.texture = tex;

@@ -5,6 +5,7 @@ import * as partyApi from '../net/party';
 import type { PartyInfo } from '../net/party';
 import { getPlayerId } from '../net/identity';
 import { getUiTexture } from '../render/uiSkins';
+import { t } from '../i18n';
 
 /** The party network calls this screen needs — injected (default: the real
  * `net/party.ts` functions) so tests can drive it with a fake, same DI convention as
@@ -61,7 +62,7 @@ export class PartyScreen {
     this.playerId = opts.playerId ?? getPlayerId();
     this.api = opts.api ?? partyApi;
 
-    this.title = new Text({ text: 'SQUAD', style: { fill: 0xf7fafc, fontSize: 32, fontWeight: 'bold', fontFamily: 'sans-serif', padding: 16 } });
+    this.title = new Text({ text: t('party.title'), style: { fill: 0xf7fafc, fontSize: 32, fontWeight: 'bold', fontFamily: 'sans-serif', padding: 16 } });
     this.title.anchor.set(0.5, 0);
     this.codeText = new Text({ text: '', style: { fill: 0x90cdf4, fontSize: 22, fontFamily: 'monospace', letterSpacing: 4, padding: 16 } });
     this.codeText.anchor.set(0.5, 0);
@@ -70,19 +71,19 @@ export class PartyScreen {
     this.statusText = new Text({ text: '', style: { fill: 0xf56565, fontSize: 13, fontFamily: 'monospace', padding: 12 } });
     this.statusText.anchor.set(0.5, 0);
 
-    this.createBtn = new Button('CREATE PARTY', { w: 200, h: 44, fontSize: 15 });
+    this.createBtn = new Button(t('party.create'), { w: 200, h: 44, fontSize: 15 });
     this.createBtn.onTap = () => void this.doCreate();
     this.createBtn.setIcon(getUiTexture('icon_party_create'));
-    this.joinBtn = new Button('JOIN WITH CODE', { w: 200, h: 44, fontSize: 15 });
+    this.joinBtn = new Button(t('party.join'), { w: 200, h: 44, fontSize: 15 });
     this.joinBtn.onTap = () => this.openJoinInput();
     this.joinBtn.setIcon(getUiTexture('icon_party_join'));
-    this.startBtn = new Button('START MATCHING', { w: 200, h: 44, fontSize: 15, color: 0x2f855a });
+    this.startBtn = new Button(t('party.startMatching'), { w: 200, h: 44, fontSize: 15, color: 0x2f855a });
     this.startBtn.onTap = () => void this.doStart();
     this.startBtn.setIcon(getUiTexture('icon_play'));
-    this.leaveBtn = new Button('LEAVE PARTY', { w: 160, h: 36, fontSize: 13, color: 0x742a2a });
+    this.leaveBtn = new Button(t('party.leave'), { w: 160, h: 36, fontSize: 13, color: 0x742a2a });
     this.leaveBtn.onTap = () => void this.doLeave();
     this.leaveBtn.setIcon(getUiTexture('icon_party_leave'));
-    this.backBtn = new Button('BACK', { w: 120, h: 32, fontSize: 13 });
+    this.backBtn = new Button(t('party.back'), { w: 120, h: 32, fontSize: 13 });
     this.backBtn.onTap = () => this.onBack?.();
     this.backBtn.setIcon(getUiTexture('icon_back'));
 
@@ -96,9 +97,21 @@ export class PartyScreen {
   }
 
   show(w: number, h: number): void {
+    this.retext();
     this.layout(w, h);
     this.view.visible = true;
     this.refresh();
+  }
+
+  /** Re-apply every static label from the active locale — same convention as
+   * MainMenu.ts's `retext()` (design/17-i18n.md). */
+  private retext(): void {
+    this.title.text = t('party.title');
+    this.createBtn.setText(t('party.create'));
+    this.joinBtn.setText(t('party.join'));
+    this.startBtn.setText(t('party.startMatching'));
+    this.leaveBtn.setText(t('party.leave'));
+    this.backBtn.setText(t('party.back'));
   }
 
   hide(): void {
@@ -138,7 +151,7 @@ export class PartyScreen {
       const info = await this.api.getParty(this.matchBaseUrl, this.party.partyId);
       if (!info) {
         this.party = null;
-        this.statusText.text = 'Party closed.';
+        this.statusText.text = t('party.partyClosed');
         this.refresh();
         return;
       }
@@ -162,7 +175,7 @@ export class PartyScreen {
     try {
       this.party = await this.api.createParty(this.matchBaseUrl, this.playerId);
     } catch {
-      this.statusText.text = 'Could not create a party — try again.';
+      this.statusText.text = t('party.createFailed');
     } finally {
       this.busy = false;
       this.refresh();
@@ -171,7 +184,7 @@ export class PartyScreen {
 
   private openJoinInput(): void {
     this.inputOverlay.open({
-      placeholder: 'CODE',
+      placeholder: t('party.codePlaceholder'),
       maxLength: 6,
       uppercase: true,
       onSubmit: (code) => void this.doJoin(code.trim()),
@@ -185,7 +198,7 @@ export class PartyScreen {
     try {
       this.party = await this.api.joinParty(this.matchBaseUrl, this.playerId, code);
     } catch {
-      this.statusText.text = 'Invalid or full code.';
+      this.statusText.text = t('party.invalidCode');
     } finally {
       this.busy = false;
       this.refresh();
@@ -201,7 +214,7 @@ export class PartyScreen {
       this.party = info;
       this.onStartMatch?.(info.partyId);
     } catch {
-      this.statusText.text = 'Could not start matching — try again.';
+      this.statusText.text = t('party.startFailed');
     } finally {
       this.busy = false;
       this.refresh();
@@ -225,9 +238,9 @@ export class PartyScreen {
       this.codeText.text = '';
       this.membersText.text = '';
     } else {
-      this.codeText.text = `CODE: ${this.party.code}`;
+      this.codeText.text = t('party.codeLine', { code: this.party.code });
       this.membersText.text = this.party.members
-        .map((m) => `${m === this.party!.leaderId ? '★' : ' '} ${m === this.playerId ? 'you' : m.slice(0, 8)}`)
+        .map((m) => `${m === this.party!.leaderId ? '★' : ' '} ${m === this.playerId ? t('party.you') : m.slice(0, 8)}`)
         .join('\n');
     }
     this.refreshButtons();

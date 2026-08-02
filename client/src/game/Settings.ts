@@ -1,6 +1,12 @@
 import { Container, Text } from 'pixi.js';
 import type { SettingsState } from '../settings';
 import { Panel, Slider, Button } from './ui/widgets';
+import { t, setLocale, type Locale } from '../i18n';
+
+/** Display name for the LANGUAGE toggle — always shown in that language's own name
+ * (not translated), same convention most apps use for a language picker. */
+const LOCALE_NAMES: Record<Locale, string> = { en: 'English', zh: '中文' };
+const OTHER_LOCALE: Record<Locale, Locale> = { en: 'zh', zh: 'en' };
 
 /**
  * The settings screen (design/10 "Settings incl. SFX/music volume"). Pure
@@ -19,16 +25,16 @@ export class Settings {
   private sfxSlider: Slider;
   private musicSlider: Slider;
   private muteBtn: Button;
-  private autoAimBtn: Button;
+  private languageBtn: Button;
   private backBtn: Button;
 
   onChange: ((s: SettingsState) => void) | null = null;
   onBack: (() => void) | null = null;
 
-  private state: SettingsState = { master: 1, sfx: 0.5, music: 0.5, muted: false, autoAim: true };
+  private state: SettingsState = { master: 1, sfx: 0.5, music: 0.5, muted: false, locale: 'en' };
 
   constructor() {
-    this.title = new Text({ text: 'SETTINGS', style: { fill: 0xf7fafc, fontSize: 30, fontWeight: 'bold', fontFamily: 'sans-serif' } });
+    this.title = new Text({ text: t('settings.title'), style: { fill: 0xf7fafc, fontSize: 30, fontWeight: 'bold', fontFamily: 'sans-serif' } });
     this.title.anchor.set(0.5, 0);
 
     const labelStyle = { fill: 0xcbd5e0, fontSize: 16, fontFamily: 'monospace' as const };
@@ -48,12 +54,18 @@ export class Settings {
     this.muteBtn = new Button('', { w: 120, h: 34 });
     this.muteBtn.onTap = () => this.update({ ...this.state, muted: !this.state.muted });
 
-    // Auto-aim toggle (default on) — nearest enemy within ~one screen, else hold
-    // facing. Same tappable-toggle pattern as muteBtn (design/10 "no DOM widgets").
-    this.autoAimBtn = new Button('', { w: 160, h: 34 });
-    this.autoAimBtn.onTap = () => this.update({ ...this.state, autoAim: !this.state.autoAim });
+    // Language toggle (design/17-i18n.md) — same tappable-toggle pattern as muteBtn
+    // (design/10 "no DOM widgets"). Only two locales exist today, so a toggle rather
+    // than a picker; `setLocale` takes effect immediately so this button's own next
+    // `syncWidgets()` already reads in the new language.
+    this.languageBtn = new Button('', { w: 160, h: 34 });
+    this.languageBtn.onTap = () => {
+      const next = OTHER_LOCALE[this.state.locale];
+      setLocale(next);
+      this.update({ ...this.state, locale: next });
+    };
 
-    this.backBtn = new Button('BACK', { w: 120, h: 34 });
+    this.backBtn = new Button(t('settings.back'), { w: 120, h: 34 });
     this.backBtn.onTap = () => this.onBack?.();
 
     this.view.addChild(
@@ -61,7 +73,7 @@ export class Settings {
       this.masterLabel, this.masterSlider.view,
       this.sfxLabel, this.sfxSlider.view,
       this.musicLabel, this.musicSlider.view,
-      this.muteBtn.view, this.autoAimBtn.view, this.backBtn.view,
+      this.muteBtn.view, this.languageBtn.view, this.backBtn.view,
     );
     this.view.eventMode = 'static';
     this.view.visible = false;
@@ -74,14 +86,21 @@ export class Settings {
   }
 
   private syncWidgets() {
+    // Re-applies static labels too (not just the ones that vary with `state`) — same
+    // "resync on every call" convention as the rest of this method, so a language
+    // change (design/17-i18n.md) takes effect the next time this screen is shown.
+    this.title.text = t('settings.title');
+    this.backBtn.setText(t('settings.back'));
     this.masterSlider.set(this.state.master);
     this.sfxSlider.set(this.state.sfx);
     this.musicSlider.set(this.state.music);
-    this.masterLabel.text = `Master   ${pct(this.state.master)}`;
-    this.sfxLabel.text = `SFX      ${pct(this.state.sfx)}`;
-    this.musicLabel.text = `Music    ${pct(this.state.music)}`;
-    this.muteBtn.setText(this.state.muted ? 'UNMUTE' : 'MUTE');
-    this.autoAimBtn.setText(this.state.autoAim ? 'AUTO-AIM: ON' : 'AUTO-AIM: OFF');
+    // `padEnd` (not a literal-spaces template) so the value column still lines up
+    // regardless of how long the translated label word is.
+    this.masterLabel.text = `${t('settings.master').padEnd(9)}${pct(this.state.master)}`;
+    this.sfxLabel.text = `${t('settings.sfx').padEnd(9)}${pct(this.state.sfx)}`;
+    this.musicLabel.text = `${t('settings.music').padEnd(9)}${pct(this.state.music)}`;
+    this.muteBtn.setText(this.state.muted ? t('settings.unmute') : t('settings.mute'));
+    this.languageBtn.setText(t('settings.language', { name: LOCALE_NAMES[this.state.locale] }));
   }
 
   show(w: number, h: number, s: SettingsState) {
@@ -101,7 +120,7 @@ export class Settings {
       slider.view.position.set(rowX, y + 30);
       y += 70;
     }
-    this.autoAimBtn.view.position.set(cx - 80, y + 10);
+    this.languageBtn.view.position.set(cx - 80, y + 10);
     y += 44;
     this.muteBtn.view.position.set(cx - 130, y + 10);
     this.backBtn.view.position.set(cx + 10, y + 10);

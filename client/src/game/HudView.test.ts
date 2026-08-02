@@ -1,23 +1,35 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import type { Container, Text } from 'pixi.js';
 import { createGameState } from '@dd/engine/state/GameState';
 import type { GameState, EngineConfig } from '@dd/engine/state/GameState';
 import type { ArenaMap } from '@dd/engine/content/arenas';
 import { Layers } from './layers';
 import { HudView, type HudContext } from './HudView';
+import { setLocale, resetLocaleForTests } from '../i18n';
 
 // Children are appended in this fixed order in build() — indexing into `view.children`
 // is the only way in from the outside (same convention as TouchControlsView.test.ts):
 // statsPanel, hpBar, shieldBar, weaponText, cdBar, infoText, floorProgress, allyText,
 // toasts, groundCard, groundHint, checkpointPanel, checkpointText.
-const enum Child { CheckpointPanel = 11, CheckpointText = 12 }
+const enum Child { WeaponText = 3, InfoText = 5, AllyText = 7, CheckpointPanel = 11, CheckpointText = 12 }
 
+function weaponTextOf(hud: HudView): Text {
+  return hud.view.children[Child.WeaponText] as Text;
+}
+function infoTextOf(hud: HudView): Text {
+  return hud.view.children[Child.InfoText] as Text;
+}
+function allyTextOf(hud: HudView): Text {
+  return hud.view.children[Child.AllyText] as Text;
+}
 function checkpointPanelOf(hud: HudView): Container {
   return hud.view.children[Child.CheckpointPanel] as Container;
 }
 function checkpointTextOf(hud: HudView): Text {
   return hud.view.children[Child.CheckpointText] as Text;
 }
+
+afterEach(() => resetLocaleForTests());
 
 function newHud(): HudView {
   const hud = new HudView();
@@ -147,5 +159,65 @@ describe('HudView — stat cluster backing panel', () => {
     const widerWidth = statsPanel.width;
 
     expect(widerWidth).toBeGreaterThan(narrowWidth);
+  });
+});
+
+describe('HudView — i18n (design/17-i18n.md)', () => {
+  it('translates the checkpoint banner under zh, interpolated values intact', () => {
+    setLocale('zh');
+    const hud = newHud();
+    const s = pveState();
+    s.floorIndex = 0;
+    s.wavesExhausted = true;
+    s.enemies.length = 0;
+    s.floorMaterials = { mat_fire: 5, mat_ice: 2 }; // pending = 7
+
+    hud.update(s, 16, CTX);
+
+    const text = checkpointTextOf(hud).text;
+    expect(text).toContain('楼层已清空');
+    expect(text).toContain('7');
+    expect(text).toContain('长按 [E]');
+    expect(text).toContain('第 2 层');
+  });
+
+  it('translates the weapon and PvE info lines under zh', () => {
+    setLocale('zh');
+    const hud = newHud();
+    const s = pveState();
+    hud.update(s, 16, CTX);
+    expect(weaponTextOf(hud).text).toContain('伤害'); // the starter weapon's own translated dmg label
+    expect(infoTextOf(hud).text).toContain('楼层');
+    expect(infoTextOf(hud).text).toContain('敌人');
+  });
+
+  it('translates the no-weapon fallback line under zh', () => {
+    setLocale('zh');
+    const hud = newHud();
+    const s = pveState();
+    s.players[0]!.weapon = null;
+    hud.update(s, 16, CTX);
+    expect(weaponTextOf(hud).text).toBe('武器：无');
+  });
+
+  it('translates the ally line under zh, including the downed/HP branch', () => {
+    setLocale('zh');
+    const hud = newHud();
+    const s = createGameState({ ...PVE_CFG, players: [{}, {}] }); // a 2nd seat, ROADMAP 3.1
+    hud.update(s, 16, { ...CTX, showAlly: true, allySkinId: 'juggernaut' });
+    expect(allyTextOf(hud).text).toContain('队友（juggernaut）');
+    expect(allyTextOf(hud).text).toMatch(/生命 \d+\/\d+/);
+  });
+
+  it('switching back to English on a later update() fully reverts', () => {
+    const hud = newHud();
+    const s = pveState();
+    s.players[0]!.weapon = null;
+    setLocale('zh');
+    hud.update(s, 16, CTX);
+    expect(weaponTextOf(hud).text).toBe('武器：无');
+    setLocale('en');
+    hud.update(s, 16, CTX);
+    expect(weaponTextOf(hud).text).toBe('Weapon: none');
   });
 });

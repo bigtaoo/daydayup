@@ -3,7 +3,7 @@ import type { Rig } from './Rig';
 import type { RigSkinBundle } from './taoBundle';
 import type { AnimationClip, ResolvedBoneTransform, WorldPose } from './types';
 import { sampleClip } from './interpolate';
-import { facingFromAim } from './facing';
+import { facingFromAngle } from './facing';
 import { getWeaponAnchor, getWeaponRotationOffset, getWeaponScale, getWeaponTexture, type WeaponVisualKind } from './weaponSkins';
 
 // The socket that visibly carries the mounted weapon sprite (design/03 "swapping the
@@ -17,20 +17,22 @@ const SOCKET_IDS = new Set(['socket_l', 'socket_r']);
 // animation playback, ported from tools/animator/src/rendering/Renderer.ts's
 // `updateSprites` (rewritten for Pixi v8's API — the editor is still on v7).
 //
-// Facing model (design/12 "Facing model (twin-stick 360° aim)"): a 2D bone rig
-// gives L/R flip + part rotation, not a true 3D turn.
-//   - L/R mirror: the WHOLE rig flips by the horizontal sign of the aim vector
-//     (`view.scale.x`) — cheap and correct for a radially-ish symmetric orb.
-//   - Front/back hemisphere: aim toward the bottom of the screen (dy >= 0, toward
-//     the camera) shows each slot's default frame; aim toward the top (dy < 0,
-//     away) swaps in that slot's 'back' variant where one exists (today: only
-//     `eye` has one — the concept turnaround's eye/vent swap).
-//   - Aim-tracking socket rotation: socket_l/socket_r's WORLD rotation is
-//     overridden every frame to the live aim angle (design/03/12/13 "following
-//     that socket's aim rotation every frame") instead of playing only their
-//     authored clip. The rig is authored assuming it faces right (rest pose
-//     `wa`/binding.rotation are canonical, unflipped); when `view.scale.x` mirrors
-//     the whole rig for a leftward aim, a socket's LOCAL rotation must be the
+// Facing model (design/12 "Facing model (twin-stick 360° aim)"), extended with an
+// upper/lower body split: a 2D bone rig gives L/R flip + part rotation, not a true
+// 3D turn.
+//   - L/R mirror + front/back hemisphere are driven by the BODY facing (movement
+//     direction for a player, same as its aim for anything stationary like an
+//     enemy) via `setBodyFacing` — the whole rig flips by that direction's
+//     horizontal sign (`view.scale.x`), and aiming toward the top of the screen
+//     (dy < 0, away from the camera) swaps in each slot's 'back' variant where one
+//     exists (today: only `eye` has one — the concept turnaround's eye/vent swap).
+//   - Aim-tracking socket rotation: socket_l/socket_r's WORLD rotation is overridden
+//     every frame to the live AIM angle (`setAim`, design/03/12/13 "following that
+//     socket's aim rotation every frame") instead of playing only their authored
+//     clip — independently of the body flip above, so the gun can point at the
+//     shot direction while the legs face movement. The rig is authored assuming it
+//     faces right (rest pose `wa`/binding.rotation are canonical, unflipped); when
+//     `view.scale.x` mirrors the whole rig, a socket's LOCAL rotation must be the
 //     mirror image of the true aim angle so the flip renders it pointing at the
 //     real reticle — see `canonicalSocketAngleRad` below.
 export class RigSkin {
@@ -72,13 +74,19 @@ export class RigSkin {
     this.clipT = this.clip?.loop && this.clip.duration > 0 ? tSec % this.clip.duration : tSec;
   }
 
-  /** Aim direction (radians, standard math convention, y-down screen space) — drives
-   *  L/R flip + front/back hemisphere + socket aim-tracking. */
-  setAim(rad: number): void {
-    const { flipX, showBack } = facingFromAim(rad);
+  /** Body/legs facing (radians, standard math convention, y-down screen space) —
+   *  drives the whole-rig L/R flip + front/back hemisphere. Independent of `setAim`
+   *  below: this is movement direction for a player, not the aim/shot direction. */
+  setBodyFacing(rad: number): void {
+    const { flipX, showBack } = facingFromAngle(rad);
     this.view.scale.x = flipX;
     this.showBack = showBack;
     this.flipX = flipX;
+  }
+
+  /** Aim/shot direction (radians) — drives ONLY the weapon-socket aim-tracking
+   *  rotation, independently of the body flip set by `setBodyFacing`. */
+  setAim(rad: number): void {
     this.aimRad = rad;
   }
 

@@ -51,19 +51,23 @@ export class Skin {
     this.view.zIndex = 0;
   }
 
-  // `rad` is world-space aim angle (radians); `frameDt`/`clipName` drive a real
-  // rig's animation clock + which clip plays (design/12's "render clock" —
-  // idle/move only for now; attack/hurt/death need GameState signals Actor
-  // doesn't carry yet, deliberately left for later). Both are ignored by the
-  // Graphics placeholder.
-  setFacing(rad: number, frameDt = 0, clipName = 'idle') {
+  // `bodyRad` is the body/legs orientation (world-space radians, movement direction
+  // for a player — see Actor's upper/lower body split); `aimRad` is the weapon's own
+  // aim/shot direction, tracked independently of the body. `frameDt`/`clipName` drive
+  // a real rig's animation clock + which clip plays (design/12's "render clock" —
+  // idle/move only for now; attack/hurt/death need GameState signals Actor doesn't
+  // carry yet, deliberately left for later). The Graphics placeholder only has a body
+  // front-indicator (its cosmetic weapon Graphics is rotated separately by Actor), so
+  // it ignores `aimRad`/`frameDt`/`clipName`.
+  setFacing(bodyRad: number, aimRad: number, frameDt = 0, clipName = 'idle') {
     if (this.rig) {
       this.clock += frameDt;
       this.rig.playClip(clipName, this.clock);
-      this.rig.setAim(rad);
+      this.rig.setBodyFacing(bodyRad);
+      this.rig.setAim(aimRad);
       this.rig.update();
     } else {
-      this.front!.rotation = rad;
+      this.front!.rotation = bodyRad;
     }
   }
 

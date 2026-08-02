@@ -24,7 +24,7 @@ describe('LocalPredictor — prediction', () => {
     expect(p.isActive).toBe(false);
     p.predict(EAST, 255, EAST, DT);
     p.reconcile(500, 500);
-    expect(p.pose).toEqual({ x: 0, y: 0, facing: 0 });
+    expect(p.pose).toEqual({ x: 0, y: 0, facing: 0, bodyFacing: 0 });
   });
 
   it('dead-reckons at the sim speed and takes facing straight from aim', () => {
@@ -109,7 +109,28 @@ describe('LocalPredictor — reconciliation', () => {
     p.deactivate();
     p.predict(EAST, 255, EAST, DT);
     p.reconcile(999, 999);
-    expect(p.pose).toEqual({ x: 5, y: 5, facing: 0 });
+    expect(p.pose).toEqual({ x: 5, y: 5, facing: 0, bodyFacing: 0 });
     expect(p.isActive).toBe(false);
+  });
+});
+
+describe('LocalPredictor — body facing (upper/lower body split)', () => {
+  it('body facing tracks the move direction while moving, independently of aim', () => {
+    const p = make();
+    p.reset(0, 0, 0);
+    const NORTH = 16384; // brad quarter-turn away from EAST's aim
+    p.predict(NORTH, 255, EAST, DT);
+    expect(p.pose.bodyFacing).toBeCloseTo(bradToRad(NORTH), 5);
+    expect(p.pose.facing).toBeCloseTo(bradToRad(EAST), 5);
+  });
+
+  it('holds the last body facing when the stick goes idle (no snap-to-zero)', () => {
+    const p = make();
+    const NORTH = 16384;
+    p.reset(0, 0, 0);
+    p.predict(NORTH, 255, EAST, DT);
+    expect(p.pose.bodyFacing).toBeCloseTo(bradToRad(NORTH), 5);
+    p.predict(EAST, 0, EAST, DT); // moveMag 0 — idle stick, moveBrad snapped back to EAST
+    expect(p.pose.bodyFacing).toBeCloseTo(bradToRad(NORTH), 5); // held, not reset to EAST
   });
 });

@@ -30,7 +30,8 @@ export class Actor extends Entity {
   private statusAura = new Graphics(); // lingering elemental aura, behind the body
   private auraMask = 0; // bitmask of the effects currently drawn (skip redraw if same)
   private auraT = 0; // aura pulse clock (render-only, ms)
-  private healthBar: Graphics | null = null; // boss only; null for regular mobs
+  private healthBar: Graphics | null = null; // enemies only; null for player actors (their HP is already the HUD's own bar)
+  private readonly isBoss: boolean;
   private hpRatio = -1; // last-drawn hp fraction (skip redraw if unchanged)
   private weaponKind: WeaponKind | null | undefined = undefined;
   private weaponName: string | undefined = undefined;
@@ -42,6 +43,7 @@ export class Actor extends Entity {
     super();
     this.faction = faction;
     this.radiusPx = radiusPx;
+    this.isBoss = boss;
     // The actor container sorts children so the weapon can sit in front of / behind.
     this.sortableChildren = true;
 
@@ -87,10 +89,13 @@ export class Actor extends Entity {
     this.weaponGfx.y = -lift;
     this.statusAura.y = -lift;
 
-    // A boss carries a floating health bar above its head so the poison melt reads.
-    if (boss) {
+    // Every enemy carries a floating health bar above its head (design/10 legibility
+    // fix, 2026-08-02: previously boss-only, so a regular mob's damage state — and a
+    // poison/burn melt — was invisible without reading the HUD). A boss's is drawn
+    // bigger/further out (setHealth) so it still reads as the more prominent threat.
+    if (faction === 'enemy') {
       this.healthBar = new Graphics();
-      this.healthBar.y = -lift - radiusPx * 1.7;
+      this.healthBar.y = -lift - radiusPx * (boss ? 1.7 : 1.3);
       this.addChild(this.healthBar);
     }
   }
@@ -125,8 +130,8 @@ export class Actor extends Entity {
     if (ratio === this.hpRatio) return;
     this.hpRatio = ratio;
 
-    const w = this.radiusPx * 2.2;
-    const h = 6;
+    const w = this.radiusPx * (this.isBoss ? 2.2 : 1.7);
+    const h = this.isBoss ? 6 : 4;
     const g = this.healthBar;
     g.clear();
     g.roundRect(-w / 2, -h / 2, w, h, 2).fill({ color: 0x1a1d26, alpha: 0.85 });
@@ -177,7 +182,10 @@ export class Actor extends Entity {
     // Cheap idle/move clip pick straight from Entity's own interpolation buffers —
     // attack/hurt/death need real GameState signals Actor doesn't receive yet.
     const moving = Math.hypot(this.curX - this.prevX, this.curY - this.prevY) > 0.01;
-    this.skin.setFacing(this.facingRad, frameDt, moving ? 'move' : 'idle');
+    // Upper/lower body split: the body (legs/torso) faces movement (`bodyFacingRad`,
+    // == facingRad for anything that doesn't move independently of its aim, like an
+    // enemy), while the weapon always points at the aim/shot direction (`facingRad`).
+    this.skin.setFacing(this.bodyFacingRad, this.facingRad, frameDt, moving ? 'move' : 'idle');
     this.weaponGfx.rotation = this.facingRad;
     // Gentle breathing pulse so an active aura reads as a live effect, not an outline.
     if (this.auraMask !== 0) {

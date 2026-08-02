@@ -4,6 +4,7 @@ import { TextInputOverlay } from './ui/TextInputOverlay';
 import * as authApi from '../net/auth';
 import { getSession, setSession, type Session } from '../net/session';
 import { getUiTexture } from '../render/uiSkins';
+import { t } from '../i18n';
 
 /** The auth network calls this screen needs — injected (default: the real
  * `net/auth.ts` functions), same DI convention as PartyScreen's `PartyApi`. */
@@ -53,26 +54,26 @@ export class LoginScreen {
     this.api = opts.api ?? authApi;
     this.session = getSession();
 
-    this.title = new Text({ text: 'ACCOUNT', style: { fill: 0xf7fafc, fontSize: 32, fontWeight: 'bold', fontFamily: 'sans-serif', padding: 16 } });
+    this.title = new Text({ text: t('auth.title'), style: { fill: 0xf7fafc, fontSize: 32, fontWeight: 'bold', fontFamily: 'sans-serif', padding: 16 } });
     this.title.anchor.set(0.5, 0);
     this.whoText = new Text({ text: '', style: { fill: 0x90cdf4, fontSize: 18, fontFamily: 'monospace', padding: 16 } });
     this.whoText.anchor.set(0.5, 0);
     this.statusText = new Text({ text: '', style: { fill: 0xf56565, fontSize: 13, fontFamily: 'monospace', padding: 12 } });
     this.statusText.anchor.set(0.5, 0);
 
-    this.loginBtn = new Button('LOGIN', { w: 200, h: 44, fontSize: 15 });
+    this.loginBtn = new Button(t('auth.login'), { w: 200, h: 44, fontSize: 15 });
     this.loginBtn.onTap = () => this.beginLogin();
     this.loginBtn.setIcon(getUiTexture('icon_account'));
-    this.registerBtn = new Button('REGISTER', { w: 200, h: 44, fontSize: 15, color: 0x2f855a });
+    this.registerBtn = new Button(t('auth.register'), { w: 200, h: 44, fontSize: 15, color: 0x2f855a });
     this.registerBtn.onTap = () => this.beginRegister();
     this.registerBtn.setIcon(getUiTexture('icon_register'));
-    this.changePasswordBtn = new Button('CHANGE PASSWORD', { w: 200, h: 40, fontSize: 13 });
+    this.changePasswordBtn = new Button(t('auth.changePassword'), { w: 200, h: 40, fontSize: 13 });
     this.changePasswordBtn.onTap = () => this.beginChangePassword();
     this.changePasswordBtn.setIcon(getUiTexture('icon_password'));
-    this.logoutBtn = new Button('LOG OUT', { w: 160, h: 36, fontSize: 13, color: 0x742a2a });
+    this.logoutBtn = new Button(t('auth.logout'), { w: 160, h: 36, fontSize: 13, color: 0x742a2a });
     this.logoutBtn.onTap = () => void this.doLogout();
     this.logoutBtn.setIcon(getUiTexture('icon_logout'));
-    this.backBtn = new Button('BACK', { w: 120, h: 32, fontSize: 13 });
+    this.backBtn = new Button(t('auth.back'), { w: 120, h: 32, fontSize: 13 });
     this.backBtn.onTap = () => this.onBack?.();
     this.backBtn.setIcon(getUiTexture('icon_back'));
 
@@ -86,10 +87,22 @@ export class LoginScreen {
   }
 
   show(w: number, h: number): void {
+    this.retext();
     this.layout(w, h);
     this.session = getSession();
     this.view.visible = true;
     this.refresh();
+  }
+
+  /** Re-apply every static label from the active locale — same convention as
+   * MainMenu.ts's `retext()` (design/17-i18n.md). */
+  private retext(): void {
+    this.title.text = t('auth.title');
+    this.loginBtn.setText(t('auth.login'));
+    this.registerBtn.setText(t('auth.register'));
+    this.changePasswordBtn.setText(t('auth.changePassword'));
+    this.logoutBtn.setText(t('auth.logout'));
+    this.backBtn.setText(t('auth.back'));
   }
 
   hide(): void {
@@ -124,16 +137,16 @@ export class LoginScreen {
   private promptCredentials(onDone: (username: string, password: string) => void): void {
     this.statusText.text = '';
     this.inputOverlay.open({
-      placeholder: 'USERNAME',
+      placeholder: t('auth.usernamePlaceholder'),
       maxLength: 20,
       onSubmit: (username) => {
         const name = username.trim();
         if (!name) {
-          this.statusText.text = 'Username required.';
+          this.statusText.text = t('auth.usernameRequired');
           return;
         }
         this.inputOverlay.open({
-          placeholder: 'PASSWORD',
+          placeholder: t('auth.passwordPlaceholder'),
           maxLength: 64,
           password: true,
           onSubmit: (password) => onDone(name, password),
@@ -146,12 +159,12 @@ export class LoginScreen {
     if (this.busy || !this.session) return;
     this.statusText.text = '';
     this.inputOverlay.open({
-      placeholder: 'CURRENT PASSWORD',
+      placeholder: t('auth.currentPasswordPlaceholder'),
       maxLength: 64,
       password: true,
       onSubmit: (oldPassword) => {
         this.inputOverlay.open({
-          placeholder: 'NEW PASSWORD',
+          placeholder: t('auth.newPasswordPlaceholder'),
           maxLength: 64,
           password: true,
           onSubmit: (newPassword) => void this.doChangePassword(oldPassword, newPassword),
@@ -169,7 +182,7 @@ export class LoginScreen {
       this.session = result;
       this.onSessionChange?.();
     } catch (e) {
-      this.statusText.text = (e as Error).message || 'Login failed — try again.';
+      this.statusText.text = (e as Error).message || t('auth.loginFailed');
     } finally {
       this.busy = false;
       this.refresh();
@@ -185,7 +198,7 @@ export class LoginScreen {
       this.session = result;
       this.onSessionChange?.();
     } catch (e) {
-      this.statusText.text = (e as Error).message || 'Registration failed — try again.';
+      this.statusText.text = (e as Error).message || t('auth.registerFailed');
     } finally {
       this.busy = false;
       this.refresh();
@@ -197,9 +210,9 @@ export class LoginScreen {
     this.busy = true;
     try {
       await this.api.changePassword(this.matchBaseUrl, this.session.token, oldPassword, newPassword);
-      this.statusText.text = 'Password changed.';
+      this.statusText.text = t('auth.passwordChanged');
     } catch (e) {
-      this.statusText.text = (e as Error).message || 'Could not change password.';
+      this.statusText.text = (e as Error).message || t('auth.passwordChangeFailed');
     } finally {
       this.busy = false;
       this.refresh();
@@ -229,7 +242,7 @@ export class LoginScreen {
 
   private refresh(): void {
     const loggedIn = this.session !== null;
-    this.whoText.text = loggedIn ? `Logged in as ${this.session!.username}` : 'Playing as guest';
+    this.whoText.text = loggedIn ? t('auth.loggedInAs', { username: this.session!.username }) : t('auth.playingAsGuest');
     this.loginBtn.view.visible = !loggedIn;
     this.registerBtn.view.visible = !loggedIn;
     this.changePasswordBtn.view.visible = loggedIn;

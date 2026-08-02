@@ -11,6 +11,7 @@ import { pageCount, pageStartForIndex, clampPageStart, wrapIndex } from './ui/pa
 import { RARITY_COLORS } from './config';
 import { getWeaponTexture } from '../render/weaponSkins';
 import { getUiTexture } from '../render/uiSkins';
+import { t } from '../i18n';
 
 /** Rows shown at once (`BLUEPRINT_CATALOG` has more entries than fit above the fixed
  * bottom action bar — a real overflow found while wiring up real Buttons, since the old
@@ -87,19 +88,19 @@ export class Forge {
   constructor() {
     // `padding` guards against a real observed font-metrics clipping bug (see
     // widgets.ts's Button doc comment for the full explanation).
-    this.title = new Text({ text: 'FORGE OUTPOST', style: { fill: 0xf7fafc, fontSize: 30, fontWeight: 'bold', fontFamily: 'sans-serif', padding: 16 } });
+    this.title = new Text({ text: t('forge.title'), style: { fill: 0xf7fafc, fontSize: 30, fontWeight: 'bold', fontFamily: 'sans-serif', padding: 16 } });
     this.title.anchor.set(0.5, 0);
     // wordWrap: the buyable-blueprint list appended below (`Store (demo: free): ...`)
     // has no fixed length — without wrapping it was a real bug, running off both
     // edges of the screen as one unbroken line instead of staying inside the panel.
     this.infoText = new Text({ text: '', style: { fill: 0xcbd5e0, fontSize: 14, fontFamily: 'monospace', lineHeight: 20, align: 'center', padding: 24, wordWrap: true, wordWrapWidth: 760 } });
     this.infoText.anchor.set(0.5, 0);
-    this.hint = new Text({ text: '[↑↓]/[1-9]/[C]/[X]/[Enter] keyboard shortcuts still work', style: { fill: 0x90cdf4, fontSize: 12, fontFamily: 'monospace', padding: 10 } });
+    this.hint = new Text({ text: t('forge.hint'), style: { fill: 0x90cdf4, fontSize: 12, fontFamily: 'monospace', padding: 10 } });
     this.hint.anchor.set(0.5, 1);
     this.pageLabel = new Text({ text: '', style: { fill: 0x90cdf4, fontSize: 12, fontFamily: 'monospace', padding: 14 } });
     this.pageLabel.anchor.set(0.5);
 
-    this.backBtn = new Button('← MENU', { w: 90, h: 30, fontSize: 12 });
+    this.backBtn = new Button(t('forge.backButton'), { w: 90, h: 30, fontSize: 12 });
     this.backBtn.onTap = () => this.onBack?.();
 
     this.charText = new Text({ text: '', style: { fill: 0xf7fafc, fontSize: 17, fontFamily: 'monospace', fontWeight: 'bold', padding: 18 } });
@@ -118,15 +119,15 @@ export class Forge {
       return b;
     });
 
-    this.prevPageBtn = new Button('‹ PAGE', { w: 80, h: 26, fontSize: 11 });
+    this.prevPageBtn = new Button(t('forge.pagePrevButton'), { w: 80, h: 26, fontSize: 11 });
     this.prevPageBtn.onTap = () => this.turnPage(-1);
-    this.nextPageBtn = new Button('PAGE ›', { w: 80, h: 26, fontSize: 11 });
+    this.nextPageBtn = new Button(t('forge.pageNextButton'), { w: 80, h: 26, fontSize: 11 });
     this.nextPageBtn.onTap = () => this.turnPage(1);
 
-    this.clearBtn = new Button('CLEAR LOADOUT', { w: 160, h: 30, fontSize: 12 });
+    this.clearBtn = new Button(t('forge.clearLoadout'), { w: 160, h: 30, fontSize: 12 });
     this.clearBtn.onTap = () => this.onClear?.();
     this.clearBtn.setIcon(getUiTexture('icon_clear'));
-    this.startBtn = new Button('START RUN ▸', { w: 220, h: 44, fontSize: 17 });
+    this.startBtn = new Button(t('forge.startRun'), { w: 220, h: 44, fontSize: 17 });
     this.startBtn.onTap = () => this.onStart?.();
     this.startBtn.setIcon(getUiTexture('icon_play'));
 
@@ -168,13 +169,23 @@ export class Forge {
     this.lastH = h;
     this.panel.layout(w, h);
 
+    // Re-apply every label that isn't already rebuilt below on each call, so a
+    // language change (design/17-i18n.md) takes effect next time the forge re-renders.
+    this.title.text = t('forge.title');
+    this.hint.text = t('forge.hint');
+    this.backBtn.setText(t('forge.backButton'));
+    this.prevPageBtn.setText(t('forge.pagePrevButton'));
+    this.nextPageBtn.setText(t('forge.pageNextButton'));
+    this.clearBtn.setText(t('forge.clearLoadout'));
+    this.startBtn.setText(t('forge.startRun'));
+
     // Material bank — the five elemental kinds (design/14), summed across every rolled tier.
     const bank = DAMAGE_TYPES.map((e) => `${short(e)} ${bankTotal(m, e)}`).join('   ');
 
     const skin = SKIN_DEFS[m.selectedSkin];
-    this.charText.text = skin ? `${m.selectedSkin}  (${skin.maxHp}HP / ${skin.maxShield}SH)` : m.selectedSkin;
+    this.charText.text = skin ? t('forge.charStats', { skin: m.selectedSkin, hp: skin.maxHp, sh: skin.maxShield }) : m.selectedSkin;
 
-    const loadout = m.loadout.length ? m.loadout.join(', ') : '(none → auto pistol)';
+    const loadout = m.loadout.length ? m.loadout.join(', ') : t('forge.noneAutoPistol');
     const buyable = purchasableBlueprints(m);
     // Named only when short; past 3 it collapses to a bare count instead of trying to
     // fit a variable-length name list — `buyable` can list every unlocked-but-uncrafted
@@ -185,11 +196,11 @@ export class Forge {
     // own width numbers under-report what the glyphs actually render at, so a fixed,
     // content-independent worst-case length is safer than trusting wordWrap to clip a
     // longer line to its declared width.
-    const buyableText = buyable.length <= 3 ? buyable.join(', ') : `${buyable.length} more available`;
+    const buyableText = buyable.length <= 3 ? buyable.join(', ') : t('forge.moreAvailable', { count: buyable.length });
     this.infoText.text =
-      `Materials   ${bank}   |   owned chars: ${m.ownedCharacters.length}\n` +
-      `Loadout     ${loadout}   (${m.loadout.length}/${PLAYER_BASE.weaponSlots})` +
-      (buyable.length ? `\nStore (demo: free): ${buyableText}  — [B] acquire next` : '');
+      t('forge.materialsLine', { bank, ownedChars: m.ownedCharacters.length }) + '\n' +
+      t('forge.loadoutLine', { loadout, count: m.loadout.length, max: PLAYER_BASE.weaponSlots }) +
+      (buyable.length ? '\n' + t('forge.storeLine', { items: buyableText }) : '');
 
     // Blueprint rows — [n] id  cost  status. A leading '»' marks the browse
     // cursor (moveSelection / a row tap) — independent of '▸staged', which marks a
@@ -208,16 +219,16 @@ export class Forge {
       const staged = m.loadout.filter((x) => x === id).length;
       const affordable = canAfford(m, bp);
       const status = !unlocked
-        ? (bp.source === 'drop' ? 'locked (find it)' : `locked (${bp.source})`)
-        : affordable ? 'craftable' : 'need materials';
-      const stagedTag = staged > 0 ? `  ▸staged×${staged}` : '';
+        ? (bp.source === 'drop' ? t('forge.lockedFind') : t('forge.lockedSource', { source: bp.source }))
+        : affordable ? t('forge.craftable') : t('forge.needMaterials');
+      const stagedTag = staged > 0 ? t('forge.stagedTag', { count: staged }) : '';
       const cursor = i === this.selectedIndex ? '»' : ' ';
       const key = i < 9 ? `${i + 1}` : '·'; // only the first 9 have a digit-key shortcut
       btn.setText(`${cursor}[${key}] ${id.padEnd(11)} ${this.costText(bp.cost).padEnd(14)} ${status}${stagedTag}`);
       const spec = WEAPON_SPECS[bp.weaponId];
       btn.setIcon(spec && getWeaponTexture(spec.id, spec.kind), spec && RARITY_COLORS[RARITY_TIERS[spec.rarity].colorKey]);
     });
-    this.pageLabel.text = `Page ${Math.floor(this.pageStart / PAGE_SIZE) + 1}/${pageCount(this.order.length, PAGE_SIZE)}`;
+    this.pageLabel.text = t('forge.pageLabel', { current: Math.floor(this.pageStart / PAGE_SIZE) + 1, total: pageCount(this.order.length, PAGE_SIZE) });
 
     // Layout: title top, back button top-left corner, character row, info block,
     // paged blueprint rows filling the middle. clear/start/hint are a FIXED bottom
@@ -293,9 +304,9 @@ export class Forge {
     }
     this.compareCard.set({
       w: Math.min(420, cx * 2 - 48),
-      leftName: `Equipped: ${equipped.id}`,
+      leftName: t('forge.equippedHeader', { id: equipped.id }),
       leftColor: RARITY_COLORS[RARITY_TIERS[equipped.rarity].colorKey],
-      rightName: `Candidate: ${candidate.id}`,
+      rightName: t('forge.candidateHeader', { id: candidate.id }),
       rightColor: RARITY_COLORS[RARITY_TIERS[candidate.rarity].colorKey],
       rows,
     });

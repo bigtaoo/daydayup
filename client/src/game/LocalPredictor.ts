@@ -31,7 +31,8 @@ export interface PredictorConfig {
 export interface Pose {
   x: number;
   y: number;
-  facing: number; // radians
+  facing: number; // radians — aim/shot direction (weapon)
+  bodyFacing: number; // radians — movement direction (body/legs), held while idle
 }
 
 export const DEFAULT_PREDICTOR: Omit<PredictorConfig, 'speedPxPerSec'> = {
@@ -45,6 +46,7 @@ export class LocalPredictor {
   private x = 0;
   private y = 0;
   private facing = 0;
+  private bodyFacing = 0;
   private active = false;
 
   constructor(private readonly cfg: PredictorConfig) {}
@@ -53,15 +55,17 @@ export class LocalPredictor {
     return this.active;
   }
   get pose(): Pose {
-    return { x: this.x, y: this.y, facing: this.facing };
+    return { x: this.x, y: this.y, facing: this.facing, bodyFacing: this.bodyFacing };
   }
 
   /** Anchor prediction to a known confirmed pose (px/radians): match start, first frame,
-   *  or any deliberate snap. Activates prediction. */
-  reset(x: number, y: number, facing: number): void {
+   *  or any deliberate snap. Activates prediction. `bodyFacing` defaults to `facing` (no
+   *  distinct movement direction known yet, matching Scene.ts's own fresh-spawn default). */
+  reset(x: number, y: number, facing: number, bodyFacing: number = facing): void {
     this.x = x;
     this.y = y;
     this.facing = facing;
+    this.bodyFacing = bodyFacing;
     this.active = true;
   }
 
@@ -72,8 +76,11 @@ export class LocalPredictor {
 
   /**
    * Dead-reckon one render frame from the live local command. Advances the predicted
-   * position by the sim's own per-second speed scaled by move magnitude, and sets facing
-   * straight from aim (instant — the felt win). No-op while inactive.
+   * position by the sim's own per-second speed scaled by move magnitude, sets facing
+   * straight from aim (instant — the felt win), and updates bodyFacing to the move
+   * direction while actually moving — held at its last value while idle, mirroring
+   * Scene.ts's own "no snap-to-zero" body-facing rule for the confirmed (non-predicted)
+   * path. No-op while inactive.
    */
   predict(moveBrad: number, moveMag: number, aimBrad: number, dtMs: number): void {
     if (!this.active) return;
@@ -83,6 +90,7 @@ export class LocalPredictor {
       const dir = bradToRad(moveBrad);
       this.x += Math.cos(dir) * v;
       this.y += Math.sin(dir) * v;
+      this.bodyFacing = dir;
     }
     this.facing = bradToRad(aimBrad);
   }

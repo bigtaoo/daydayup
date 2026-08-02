@@ -2,6 +2,7 @@ import { Container, Graphics, Text } from 'pixi.js';
 import type { WeaponSpec } from '@dd/engine';
 import { applyQuality, WEAPON_SPECS } from '@dd/engine';
 import { Panel } from './widgets';
+import { t } from '../../i18n';
 
 // The compare card (design/03 "ground compare card" + design/10's open loadout-detail
 // question). One widget, two call sites: the forge loadout screen passes a full stat
@@ -29,21 +30,21 @@ export function buildCompareRows(a: WeaponSpec, b: WeaponSpec): CompareRow[] | n
   const dmg = (s: WeaponSpec) => String(applyQuality(s.damage, s.rarity));
   const type = (s: WeaponSpec) => s.damageType ?? 'physical';
   const rows: CompareRow[] = [
-    { label: 'Damage', left: dmg(a), right: dmg(b) },
-    { label: 'Type', left: type(a), right: type(b) },
+    { label: t('compareCard.damage'), left: dmg(a), right: dmg(b) },
+    { label: t('compareCard.type'), left: type(a), right: type(b) },
   ];
   if (a.kind === 'ranged' && b.kind === 'ranged') {
     rows.push(
-      { label: 'Fire rate', left: `${a.cooldownSec.toFixed(2)}s`, right: `${b.cooldownSec.toFixed(2)}s` },
-      { label: 'Spread', left: `${a.spreadDeg}°`, right: `${b.spreadDeg}°` },
-      { label: 'Speed', left: `${a.bulletSpeed}g/s`, right: `${b.bulletSpeed}g/s` },
+      { label: t('compareCard.fireRate'), left: `${a.cooldownSec.toFixed(2)}s`, right: `${b.cooldownSec.toFixed(2)}s` },
+      { label: t('compareCard.spread'), left: `${a.spreadDeg}°`, right: `${b.spreadDeg}°` },
+      { label: t('compareCard.speed'), left: `${a.bulletSpeed}g/s`, right: `${b.bulletSpeed}g/s` },
     );
   } else if (a.kind === 'melee' && b.kind === 'melee') {
     rows.push(
-      { label: 'Swing', left: `${a.cooldownSec.toFixed(2)}s`, right: `${b.cooldownSec.toFixed(2)}s` },
-      { label: 'Arc', left: `${a.arcDeg}°`, right: `${b.arcDeg}°` },
-      { label: 'Reach', left: `${a.rangeGrid}g`, right: `${b.rangeGrid}g` },
-      { label: 'Deflect', left: a.deflect ? 'yes' : 'no', right: b.deflect ? 'yes' : 'no' },
+      { label: t('compareCard.swing'), left: `${a.cooldownSec.toFixed(2)}s`, right: `${b.cooldownSec.toFixed(2)}s` },
+      { label: t('compareCard.arc'), left: `${a.arcDeg}°`, right: `${b.arcDeg}°` },
+      { label: t('compareCard.reach'), left: `${a.rangeGrid}g`, right: `${b.rangeGrid}g` },
+      { label: t('compareCard.deflect'), left: a.deflect ? t('compareCard.yes') : t('compareCard.no'), right: b.deflect ? t('compareCard.yes') : t('compareCard.no') },
     );
   }
   return rows;
@@ -114,8 +115,9 @@ export class CompareCard {
 
     const labelW = Math.max(6, ...opts.rows.map((r) => r.label.length));
     const valW = Math.max(4, ...opts.rows.map((r) => Math.max(r.left.length, r.right.length)));
+    const vs = t('compareCard.vs');
     this.body.text = opts.rows
-      .map((r) => `${r.label.padEnd(labelW)} ${r.left.padStart(valW)}  vs  ${r.right.padStart(valW)}`)
+      .map((r) => `${r.label.padEnd(labelW)} ${r.left.padStart(valW)}  ${vs}  ${r.right.padStart(valW)}`)
       .join('\n');
     this.body.position.set(12, headerH);
 

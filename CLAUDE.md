@@ -21,3 +21,15 @@ If any step finds nothing to do (e.g. no unmerged branch exists), skip it silent
 rather than asking. Treat "结束任务" as a distinct trigger phrase from an ordinary
 "commit this" or "merge this" request — it means run the full four-step sequence, not
 just whichever single step the wording most resembles.
+
+## Language policy
+
+- All code, code comments, and documentation in this repository must be written
+  in English — no exceptions for design docs, READMEs, or inline comments.
+- Commit messages must be written in English.
+- The only non-English content allowed anywhere in the repo is translation/localization
+  data itself (i18n locale files, e.g. `zh.json`) — content whose entire purpose is to
+  hold a non-English translation. English is the source-of-truth locale that all other
+  locales key off of / translate from.
+- This applies to new content going forward; it does not retroactively require
+  rewriting existing non-English comments unless you're already touching that file.

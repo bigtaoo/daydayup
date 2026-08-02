@@ -1,6 +1,9 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { WEAPON_SPECS, applyQuality } from '@dd/engine';
 import { buildCompareRows, equippedSpecOfKind } from './compareCard';
+import { setLocale, resetLocaleForTests } from '../../i18n';
+
+afterEach(() => resetLocaleForTests());
 
 describe('buildCompareRows', () => {
   it('returns null comparing a ranged spec against a melee spec', () => {
@@ -51,5 +54,36 @@ describe('equippedSpecOfKind', () => {
 
   it('returns undefined for an empty loadout', () => {
     expect(equippedSpecOfKind([], 'ranged')).toBeUndefined();
+  });
+});
+
+describe('buildCompareRows — i18n (design/17-i18n.md)', () => {
+  it('row labels translate under zh; the values themselves (data, not copy) do not', () => {
+    setLocale('zh');
+    const rows = buildCompareRows(WEAPON_SPECS.blaster!, WEAPON_SPECS.repeater!)!;
+    const byLabel = Object.fromEntries(rows.map((r) => [r.label, r]));
+    expect(byLabel['伤害']).toBeDefined();
+    expect(byLabel['射速']).toBeDefined();
+    expect(byLabel['散射']).toBeDefined();
+    expect(byLabel['速度']).toBeDefined();
+    // English row labels must be gone, not merely supplemented.
+    expect(byLabel.Damage).toBeUndefined();
+  });
+
+  it('melee row labels translate under zh, including the yes/no deflect value', () => {
+    setLocale('zh');
+    const rows = buildCompareRows(WEAPON_SPECS.saber!, WEAPON_SPECS.hammer!)!;
+    const byLabel = Object.fromEntries(rows.map((r) => [r.label, r]));
+    expect(byLabel['格挡']).toBeDefined();
+    expect(['是', '否']).toContain(byLabel['格挡']!.left);
+    expect(['是', '否']).toContain(byLabel['格挡']!.right);
+  });
+
+  it('switching back to English restores the original labels', () => {
+    setLocale('zh');
+    buildCompareRows(WEAPON_SPECS.blaster!, WEAPON_SPECS.repeater!);
+    setLocale('en');
+    const rows = buildCompareRows(WEAPON_SPECS.blaster!, WEAPON_SPECS.repeater!)!;
+    expect(rows.some((r) => r.label === 'Damage')).toBe(true);
   });
 });

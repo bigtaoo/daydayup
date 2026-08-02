@@ -10,12 +10,19 @@
  * from the row list + compare card and only *clamped* to fit once it overflowed —
  * which left it floating on top of the still-there row list instead of below it.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { DOMAdapter } from 'pixi.js';
 import { Forge } from './Forge';
 import { defaultMetaState, acquireBlueprint, purchasableBlueprints } from '../meta';
 import type { MetaState } from '../meta';
-import type { Button } from './ui/widgets';
+import { setLocale, resetLocaleForTests } from '../i18n';
+
+// `Button.label` is private on the real class — same escape hatch every other screen
+// test here uses (MainMenu.test.ts/PauseMenu.test.ts/Settings.test.ts) to read it anyway.
+interface TestButton {
+  view: { visible: boolean; position: { x: number; y: number } };
+  label: { text: string };
+}
 
 // This suite is the first to call Forge.render(), which reads `Text.height` to flow
 // its layout — that lazily asks Pixi to measure text on a real `<canvas>` 2D context,
@@ -44,14 +51,17 @@ DOMAdapter.set({
 
 function privateOf(f: Forge) {
   return f as unknown as {
+    title: { text: string };
     infoText: { text: string };
-    rowBtns: Button[];
-    clearBtn: Button;
-    startBtn: Button;
-    hint: { position: { x: number; y: number } };
+    rowBtns: TestButton[];
+    clearBtn: TestButton;
+    startBtn: TestButton;
+    hint: { position: { x: number; y: number }; text: string };
     compareCard: { view: { visible: boolean; position: { x: number; y: number }; height: number } };
   };
 }
+
+afterEach(() => resetLocaleForTests());
 
 // Buys down the shelf to `max` or fewer remaining purchasable blueprints (defaultMetaState
 // starts with 17 — see forge.test.ts's own purchasableBlueprints assertion).
@@ -148,5 +158,37 @@ describe('Forge — compare card no-room hide', () => {
     // And the action bar itself must still be exactly where a taller render would put
     // it relative to `h` — hiding the card must not be achieved by moving the bar.
     expect(p.startBtn.view.position.y).toBe(380 - 60);
+  });
+});
+
+describe('Forge — i18n (design/17-i18n.md)', () => {
+  it('render() retexts static labels and interpolates the info block under zh', () => {
+    const f = new Forge();
+    setLocale('zh');
+    f.render(defaultMetaState(), 1280, 720);
+    const p = privateOf(f);
+    expect(p.title.text).toBe('锻造场');
+    expect(p.startBtn.label.text).toBe('开始行动 ▸');
+    expect(p.clearBtn.label.text).toBe('清空装备');
+    expect(p.hint.text).toBe('[↑↓]/[1-9]/[C]/[X]/[Enter] 键盘快捷键仍然可用');
+    expect(p.infoText.text).toContain('材料');
+    expect(p.infoText.text).toContain('已拥有角色：3');
+  });
+
+  it('a blueprint row still shows the status text translated', () => {
+    const f = new Forge();
+    setLocale('zh');
+    f.render(defaultMetaState(), 1280, 720);
+    const text = privateOf(f).rowBtns[0]!.label.text;
+    expect(text).toMatch(/材料不足|可打造|未解锁/);
+  });
+
+  it('switching back to English on a later render() fully reverts', () => {
+    const f = new Forge();
+    setLocale('zh');
+    f.render(defaultMetaState(), 1280, 720);
+    setLocale('en');
+    f.render(defaultMetaState(), 1280, 720);
+    expect(privateOf(f).title.text).toBe('FORGE OUTPOST');
   });
 });

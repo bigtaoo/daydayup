@@ -1,5 +1,6 @@
 // SettingsStore — persistence port for SettingsState, symmetric to ../meta/store.ts.
 import { defaultSettingsState, type SettingsState } from './SettingsState';
+import { LOCALES, type Locale } from '../i18n';
 
 export interface SettingsStore {
   load(): SettingsState;
@@ -52,11 +53,12 @@ function migrate(parsed: unknown): SettingsState {
   if (!parsed || typeof parsed !== 'object') return d;
   const p = parsed as Partial<SettingsState>;
   const num = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : fallback);
+  const locale = (v: unknown, fallback: Locale) => (LOCALES.includes(v as Locale) ? (v as Locale) : fallback);
   return {
     master: num(p.master, d.master),
     sfx: num(p.sfx, d.sfx),
     music: num(p.music, d.music),
     muted: typeof p.muted === 'boolean' ? p.muted : d.muted,
-    autoAim: typeof p.autoAim === 'boolean' ? p.autoAim : d.autoAim,
+    locale: locale(p.locale, d.locale),
   };
 }

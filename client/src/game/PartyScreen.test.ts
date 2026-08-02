@@ -5,9 +5,10 @@
  * vitest with no renderer attached (same finding TouchControlsView.test.ts made) —
  * asserted here via `.visible`/`.text`, not pixel output.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { PartyScreen, type PartyApi } from './PartyScreen';
 import type { PartyInfo } from '../net/party';
+import { setLocale, resetLocaleForTests } from '../i18n';
 
 function fakeApi(overrides: Partial<PartyApi> = {}): PartyApi {
   return {
@@ -33,10 +34,11 @@ function makeScreen(api: PartyApi, playerId = 'me') {
 // engine/sim state.
 function privateOf(s: PartyScreen) {
   return s as unknown as {
-    createBtn: { view: { visible: boolean } };
-    joinBtn: { view: { visible: boolean } };
-    startBtn: { view: { visible: boolean } };
-    leaveBtn: { view: { visible: boolean } };
+    title: { text: string };
+    createBtn: { view: { visible: boolean }; label: { text: string } };
+    joinBtn: { view: { visible: boolean }; label: { text: string } };
+    startBtn: { view: { visible: boolean }; label: { text: string } };
+    leaveBtn: { view: { visible: boolean }; label: { text: string } };
     codeText: { text: string };
     membersText: { text: string };
     statusText: { text: string };
@@ -47,6 +49,8 @@ function privateOf(s: PartyScreen) {
     pollOnce(): Promise<void>;
   };
 }
+
+afterEach(() => resetLocaleForTests());
 
 describe('PartyScreen — no party yet', () => {
   it('shows create/join, hides start/leave, before any party exists', () => {
@@ -191,5 +195,44 @@ describe('PartyScreen — hide()', () => {
   it('hides the view without throwing even with no open input overlay', () => {
     const s = makeScreen(fakeApi());
     expect(() => s.hide()).not.toThrow();
+  });
+});
+
+describe('PartyScreen — i18n (design/17-i18n.md)', () => {
+  it('retexts on show() under zh', () => {
+    const s = makeScreen(fakeApi());
+    setLocale('zh');
+    s.show(800, 600);
+    const p = privateOf(s);
+    expect(p.title.text).toBe('组队');
+    expect(p.createBtn.label.text).toBe('创建队伍');
+    expect(p.joinBtn.label.text).toBe('输入邀请码加入');
+  });
+
+  it('translates the code line, member "you" label, and status messages under zh', async () => {
+    const api = fakeApi({ createParty: vi.fn().mockResolvedValue(PARTY) });
+    setLocale('zh');
+    const s = makeScreen(api);
+    await privateOf(s).doCreate();
+    const p = privateOf(s);
+    expect(p.codeText.text).toBe('邀请码：ABCDE');
+    expect(p.membersText.text).toContain('你');
+  });
+
+  it('a failed create under zh surfaces the translated error', async () => {
+    const api = fakeApi({ createParty: vi.fn().mockRejectedValue(new Error('boom')) });
+    setLocale('zh');
+    const s = makeScreen(api);
+    await privateOf(s).doCreate();
+    expect(privateOf(s).statusText.text).toBe('创建队伍失败，请重试。');
+  });
+
+  it('switching back to English on a later show() fully reverts', () => {
+    const s = makeScreen(fakeApi());
+    setLocale('zh');
+    s.show(800, 600);
+    setLocale('en');
+    s.show(800, 600);
+    expect(privateOf(s).title.text).toBe('SQUAD');
   });
 });
