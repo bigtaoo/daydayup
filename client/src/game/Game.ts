@@ -46,6 +46,7 @@ import { Backdrop } from './Backdrop';
 import { PortalPrompt } from './PortalPrompt';
 import { RunOutcome } from './RunOutcome';
 import { parseGameQueryParams } from './gameQueryParams';
+import { shouldConfirmOnFireEdge, type Phase } from './confirmEdge';
 import { fpToPx, bradToRad } from './coords';
 import type { AudioBus, InputCanvas, InputSource } from '../platform/types';
 
@@ -72,8 +73,8 @@ const PORTAL_PROMPT_RADIUS_PX = 90;
 // resolved) — 'settings' also serves as the pause menu's settings sub-screen (Game
 // tracks which phase to return to via settingsReturnPhase). 'squad' is the PvP
 // pre-formed-party lobby (design/05/15's squad follow-up) — the first runtime (not
-// boot-flag) entry point into PvP.
-type Phase = 'menu' | 'forge' | 'playing' | 'paused' | 'victory' | 'defeat' | 'settings' | 'squad' | 'account';
+// boot-flag) entry point into PvP. Declared in confirmEdge.ts, which needs it for the
+// fire-edge gate below and is unit-testable without standing up a Pixi Application.
 
 export class Game {
   private app: Application;
@@ -1049,10 +1050,14 @@ export class Game {
     this.builder.suppressFire(this.portalPrompt.isOpen);
   }
 
-  // Rising-edge fire → confirm (start/restart) on non-playing screens.
+  // Rising-edge fire → confirm, on the RESULT screens only — see confirmEdge.ts for
+  // why every other screen must be driven by its own Buttons instead.
   private pollConfirm() {
     const firing = this.input.read().firing;
-    if (firing && !this.prevFire) this.confirm();
+    if (shouldConfirmOnFireEdge(this.phase, firing, this.prevFire)) this.confirm();
+    // Tracked on every screen, not just the eligible ones, so arriving on a result
+    // screen with fire already held doesn't instantly confirm — the press has to be
+    // released and re-issued (same reason advanceSim keeps it fresh during play).
     this.prevFire = firing;
   }
 }

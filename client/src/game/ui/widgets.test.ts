@@ -99,6 +99,32 @@ describe('Button', () => {
     expect(calls).toBe(2);
   });
 
+  // "Press" is not "activate". A Button must only commit on the full down-then-up
+  // gesture, because the frames between the two belong to whatever screen the press
+  // started on — anything that acts on `pointerdown` alone can navigate that screen away
+  // and swallow the tap that was actually intended (see game/confirmEdge.ts for the real
+  // bug this describes, where a raw mouse-down poll did exactly that to every menu
+  // button). The `pointerdown` listener here exists only to stop propagation.
+  it('does not fire onTap on pointerdown alone — only the completed tap commits', () => {
+    // Unlike the pointertap handler above, the pointerdown one DOES read its payload
+    // (it calls stopPropagation), so this emit needs a stub rather than a bare cast.
+    let stopped = 0;
+    const ev = { stopPropagation: () => { stopped += 1; } };
+    const emit = (view: { emit: (event: string, ev?: unknown) => void }, name: string) => view.emit(name, ev);
+    const b = new Button('X', { w: 100, h: 40 });
+    let calls = 0;
+    b.onTap = () => { calls += 1; };
+
+    emit(b.view, 'pointerdown');
+    expect(calls).toBe(0);
+    expect(stopped).toBe(1); // it consumed the press, but did not commit the action
+    emit(b.view, 'pointerup');
+    expect(calls).toBe(0); // Pixi synthesizes pointertap itself; up alone is not it
+
+    emit(b.view, 'pointertap');
+    expect(calls).toBe(1);
+  });
+
   it('setIcon adds a chip + sprite and re-anchors the label to sit left-of-center', () => {
     const b = new Button('X', { w: 100, h: 40 });
     const label = b.view.children[1] as Text;
