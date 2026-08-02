@@ -188,11 +188,17 @@ export class Button {
   private readonly h: number;
   onTap: (() => void) | null = null;
 
-  constructor(text: string, opts: { w: number; h: number; color?: number; textColor?: number; fontSize?: number }) {
-    const { w, h, color = 0x2a3140, textColor = 0xe2e8f0, fontSize = 15 } = opts;
+  // Border (opt-in, same convention as Panel's — design/10 legibility fix,
+  // 2026-08-02): a flat fill alone reads as low-contrast wherever a button sits over
+  // a background image darker/lighter than the fill itself (e.g. MainMenu's hub art).
+  // A crisp stroke keeps the button legible regardless of what's behind it.
+  constructor(text: string, opts: { w: number; h: number; color?: number; textColor?: number; fontSize?: number; borderColor?: number; borderAlpha?: number }) {
+    const { w, h, color = 0x2a3140, textColor = 0xe2e8f0, fontSize = 15, borderColor, borderAlpha = 0.9 } = opts;
     this.w = w;
     this.h = h;
-    this.bg.roundRect(0, 0, w, h, Math.min(8, h / 2)).fill({ color, alpha: 0.9 });
+    const radius = Math.min(8, h / 2);
+    this.bg.roundRect(0, 0, w, h, radius).fill({ color, alpha: 1 });
+    if (borderColor !== undefined) this.bg.roundRect(0.5, 0.5, w - 1, h - 1, radius).stroke({ color: borderColor, alpha: borderAlpha, width: 1.5 });
     // `padding` works around a real font-metrics mismatch observed in headless/sandboxed
     // Chromium: Pixi's own text measurement can come in narrower than the canvas's actual
     // paint-time glyph width for bold text, clipping the last character(s) — Pixi's own

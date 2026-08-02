@@ -18,6 +18,12 @@ import { t } from '../i18n';
 export class MainMenu {
   readonly view = new Container();
   private panel = new Panel({ alpha: 0.82, background: 'hub' });
+  // A dedicated card behind the nav buttons (design/10 legibility fix, 2026-08-02):
+  // the hub art's brightness varies a lot behind where the buttons sit, so relying on
+  // the button fill alone for contrast made them nearly disappear over the lighter
+  // stonework. A flat, consistently-dark backing card guarantees contrast regardless
+  // of what's in the art underneath.
+  private menuCard = new Panel({ radius: 18, color: 0x05070c, alpha: 0.62, borderColor: 0x3a4a5c, borderAlpha: 0.5 });
   private title: Text;
   private subtitle: Text;
   private playBtn: Button;
@@ -38,21 +44,29 @@ export class MainMenu {
     this.subtitle = new Text({ text: t('mainMenu.subtitle'), style: { fill: 0x90cdf4, fontSize: 16, fontFamily: 'monospace', padding: 26 } });
     this.subtitle.anchor.set(0.5, 0);
 
-    this.playBtn = new Button(t('mainMenu.play'), { w: 220, h: 56, fontSize: 22 });
+    // Hierarchy (design/10 legibility fix, 2026-08-02): PLAY is the one primary
+    // action — biggest, filled with the same "go" green every other screen in this
+    // project uses for its primary action (PartyScreen's START MATCHING, LoginScreen's
+    // REGISTER), with a matching bright border so it reads as the obvious next step.
+    // SQUAD is the one secondary action a run needs before it starts. ACCOUNT/SETTINGS
+    // are tertiary utility — sized down and placed side by side (not stacked) so their
+    // near-identical badge-style icons at small scale don't invite a misclick between
+    // two vertically-adjacent targets; distinct chip colors give each a second cue.
+    this.playBtn = new Button(t('mainMenu.play'), { w: 280, h: 68, fontSize: 26, color: 0x2f855a, borderColor: 0x68d391 });
     this.playBtn.onTap = () => this.onPlay?.();
     this.playBtn.setIcon(getUiTexture('icon_play'));
-    this.squadBtn = new Button(t('mainMenu.squad'), { w: 220, h: 40, fontSize: 16 });
+    this.squadBtn = new Button(t('mainMenu.squad'), { w: 280, h: 50, fontSize: 18, borderColor: 0x718096 });
     this.squadBtn.onTap = () => this.onSquad?.();
-    this.squadBtn.setIcon(getUiTexture('icon_squad'));
-    this.accountBtn = new Button(t('mainMenu.account'), { w: 220, h: 36, fontSize: 14 });
+    this.squadBtn.setIcon(getUiTexture('icon_squad'), 0x2c5282);
+    this.accountBtn = new Button(t('mainMenu.account'), { w: 135, h: 42, fontSize: 14, borderColor: 0x718096 });
     this.accountBtn.onTap = () => this.onAccount?.();
-    this.accountBtn.setIcon(getUiTexture('icon_account'));
-    this.settingsBtn = new Button(t('mainMenu.settings'), { w: 160, h: 36, fontSize: 14 });
+    this.accountBtn.setIcon(getUiTexture('icon_account'), 0x6b46c1);
+    this.settingsBtn = new Button(t('mainMenu.settings'), { w: 135, h: 42, fontSize: 14, borderColor: 0x718096 });
     this.settingsBtn.onTap = () => this.onSettings?.();
-    this.settingsBtn.setIcon(getUiTexture('icon_settings'));
+    this.settingsBtn.setIcon(getUiTexture('icon_settings'), 0x4a5568);
 
     this.view.addChild(
-      this.panel.view, this.title, this.subtitle,
+      this.panel.view, this.menuCard.view, this.title, this.subtitle,
       this.playBtn.view, this.squadBtn.view, this.accountBtn.view, this.settingsBtn.view,
     );
     this.view.eventMode = 'static';
@@ -66,10 +80,18 @@ export class MainMenu {
     const cy = h / 2;
     this.title.position.set(cx, cy - 150);
     this.subtitle.position.set(cx, cy - 96);
-    this.playBtn.view.position.set(cx - 110, cy - 20);
-    this.squadBtn.view.position.set(cx - 110, cy + 42);
-    this.accountBtn.view.position.set(cx - 110, cy + 94);
-    this.settingsBtn.view.position.set(cx - 80, cy + 148);
+
+    const cardW = 280 + 40;
+    const cardTop = cy - 44;
+    const cardH = 68 + 12 + 50 + 12 + 42 + 24;
+    this.menuCard.layout(cardW, cardH);
+    this.menuCard.view.position.set(cx - cardW / 2, cardTop);
+
+    this.playBtn.view.position.set(cx - 140, cardTop + 12);
+    this.squadBtn.view.position.set(cx - 140, cardTop + 12 + 68 + 12);
+    const tertiaryY = cardTop + 12 + 68 + 12 + 50 + 12;
+    this.accountBtn.view.position.set(cx - 140, tertiaryY);
+    this.settingsBtn.view.position.set(cx + 5, tertiaryY);
     this.refreshAccountLabel();
     this.view.visible = true;
   }
