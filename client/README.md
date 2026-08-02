@@ -1,6 +1,10 @@
 # DayDayUp Client
 
-Single-engine PixiJS v8 client. Currently a **vertical slice** that validates the core architecture and gameplay.
+Single-engine PixiJS v8 client — the render/host half of the game. It owns screens, input,
+scene views, audio and art; it owns **no** gameplay outcome (those all come from `@dd/engine`).
+What it drives today: the full PvE run loop (menu → loadout → generated floors → checkpoint →
+extract or descend → result), online co-op, 8-player PvP with squads, accounts, and a 中文/English
+locale toggle.
 
 ## Run (Web)
 
@@ -17,26 +21,32 @@ npm run dev -w client        # open http://localhost:5173
 
 | Input | Action |
 |-------|--------|
-| `WASD` / arrows | Move |
-| Mouse | Aim (character faces the cursor) |
+| `WASD` / arrows | Move — the **body** faces the movement direction |
+| Mouse | Aim — the **weapon** points at the cursor, independently of the body |
 | Left click | Fire / swing (depends on the equipped weapon) |
-| `1` | Switch to ranged gun |
-| `2` | Switch to melee sword |
-| Right click / `Shift` (with sword) | **Block**: deflect enemy bullets back at enemies |
-| `Space` | Jump (demonstrates height / shadow separation) |
+| `1` / `2` | Switch to weapon slot 1 / 2 |
+| `E` or `Space` | Interact: pick up / swap the weapon under you, hold to revive a downed ally |
+| `Escape` or `P` | Pause (offline play only — an online match cannot stop the frame stream) |
+| `O` | Settings (`Escape`/`O` closes it again) |
 
-**Touch (mobile browser, Capacitor, WeChat):** virtual twin-stick — left half moves,
-right half aims + fires; corner buttons for jump / block / weapon 1 / weapon 2. Shared
-logic in `src/platform/TouchControls.ts`, so all touch targets behave identically.
+There is no block button and no jump: a melee **swing** parries bullets inside its own arc
+(`design/03`), and jump was removed from the sim — actor `z` is a render offset only.
 
-## What the demo validates
+**Touch (mobile browser, Capacitor, WeChat):** virtual twin-stick — left half moves, right
+half aims + fires; two corner buttons for weapon 1 / 2. Hit-test geometry lives in
+`src/platform/TouchControls.ts` so every touch target behaves identically, and
+`src/game/ui/TouchControlsView.ts` draws it, latched on the first touch so a mouse player
+never sees it. Not there yet: an on-screen INTERACT control, and any verification of how this
+feels under real thumbs on a real device (`design/04`).
+
+## What the render layer is responsible for
 
 - Tilted-view scene + **Y-sort depth occlusion** (walking in front of / behind a pillar occludes correctly)
-- **Height / shadow separation** (jumping lifts the character while the shadow stays on the ground and shrinks)
+- **Height / shadow separation** — the `z`/shadow split the tilted view needs, kept in the render layer where a future hop or blink would live
 - **Actor / Skin / Weapon three-layer structure** (see `design/02-entity-model.md`)
-- **Weapon-swap system** + **melee block/deflect** (the core fun, see `design/03-weapon-system.md`)
-- Weapon positioning by facing with local z-order switching
-- Additive-blend fx layer (muzzle / deflect flashes), WeChat-safe rendering path (pure Graphics, no canvas2D dependency)
+- **Upper/lower body split** — body faces movement, weapon tracks aim, both driven off one engine actor
+- `.tao` **rig playback** (`src/render/`) with per-character atlases and weapon sprites mounted on the rig's sockets
+- Additive-blend fx layer (muzzle / deflect flashes), post-processing and particles, WeChat-safe rendering path
 
 ## Layout
 

@@ -52,4 +52,6 @@ Notes: element system + icon badges validated. Mirror-to-hero link is soft — o
 
 ## Retired
 
-The three originals in this folder (`5fe18b84…`, `85e22acf…`, `b488d349…` — reclaimer diver / extraction room / blight beast) are the **rejected** first direction. Kept for reference only; see the "Art-first" note in `design/13`.
+The three originals in this folder (`retired_reclaimer_diver.png`, `retired_extraction_room.png`, `retired_blight_beast.png`) are the **rejected** first direction. Kept for reference only; see the "Art-first" note in `design/13`.
+
+The accepted pieces are named after the prompt that produced them: `01_hero_orb_core_turnaround.png` (1), `02_weapon_mount_ranged.png` (2), `03_weapon_mount_melee_deflect.png` (3), `04_weapon_sheet.png` (4), `05_enemies_by_element.png` (5).

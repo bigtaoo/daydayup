@@ -11,11 +11,11 @@ build step between them, so a shared type can never go stale against a built art
 |-----------|----------|
 | `design/` | Design and technical decisions (architecture, data models, rationale) |
 | `art/` | Art assets and asset conventions |
-| `engine/` | `@dd/engine` — the deterministic simulation core (`design/06`, `design/08`). Renderer- and host-free: it compiles without the DOM lib and may not import any other package. Consumed by client, server and both tools. |
-| `client/` | Game client. Single-engine PixiJS v8. Targets: Web / PC / Android / iOS / WeChat mini-game |
+| `engine/` | `@dd/engine` — the deterministic simulation core (`design/06`, `design/08`). Renderer- and host-free: it compiles without the DOM lib and may not import any other package. Consumed by client, server and both tools. See `engine/README.md`. |
+| `client/` | Game client. Single-engine PixiJS v8. Targets: Web / PC / Android / iOS / WeChat mini-game. See `client/README.md`. |
 | `server/` | Co-op backend: the frame-broadcast **gameserver** (WebSocket data plane) + the **matchsvc** matchmaking/ticket control plane. See `server/README.md`. |
-| `tools/` | `animator` (`.tao` rig editor), `map-editor` (arena/room authoring), `png-pipeline` (dependency-free PNG codec used by the asset pipeline) |
-| `world/` | Authored world data the tools produce and the engine consumes (arena maps) |
+| `tools/` | Authoring tools, none of them shipped to players. `animator` — the `.tao` rig/clip editor (`design/12`); its `projects/*.editortao` files are the authoring source for every rig in the game. `map-editor` — arena/room authoring, the authority on the `ArenaMap` layout the engine only consumes (`design/15`). `png-pipeline` — a dependency-free pure-Node PNG codec (`pngCodec.mjs`) plus the `compress.mjs` trim/downsample/re-encode step every asset in `client/public/` went through. |
+| `world/` | Authored world data the tools produce and the engine consumes — today `arenas/arena_prototype_60.json`, the validated 60-room PvP map wired into `ARENA_CATALOG` |
 
 `tsconfig.base.json` and `build/ddAlias.mjs` are the type-side and bundler-side halves
 of one `@dd/*` path map — kept as a single file each so they cannot drift apart.
@@ -58,7 +58,7 @@ npm run dev        # client dev server, http://localhost:5173
 - [x] Online co-op (Phase 3): frame-broadcast netcode, downed/revive, matchmaking + signed tickets, local-player prediction — two-tab byte-identical lockstep
 - [x] PvP (Phase 4): 8-player solo-or-squad battle royale, team/hostility model, real 60-room arena map, shrinking zone, placement win condition, anti-cheat checkpoints, matchsvc Elo ladder — see `design/15-pvp-arena.md`
 - [x] PvP squads (design/05/15 follow-up): pre-formed party invite codes, squad-chunked matchmaking/teamId, gated bandage revive, party lobby UI
-- [x] Art pipeline (Phase 5): `.tao` rig runtime, full 3-character + boss/critter/brute/floater roster art, per-weapon art (9/11 ids), UI widget kit, post-processing/particles — real (non-placeholder) atlas art and WeChat device verification are the remaining work
+- [x] Art pipeline (Phase 5): `.tao` rig runtime, full 3-character + boss/critter/brute/floater roster art, a distinct sprite for every ranged/melee weapon id, per-element biome floor/wall art, hub background + button icons + the Forger NPC, UI widget kit, post-processing/particles — every asset is AI-generated placeholder art awaiting an authored replacement (`design/12` 5.3), and WeChat device verification is still outstanding
 - [x] Accounts (Phase 6, `design/16-accounts.md`): real username/password login (SQLite via `node:sqlite`), never required to play — bound to PvP ladder rating and Forge blueprints/materials/loadout; third-party OAuth reserved, not built
 - [x] Internationalization (Phase 7, `design/17-i18n.md`): English-canonical `t()` system with compile-time key checking, first translation (中文), every screen migrated, Settings language toggle — enum/data-driven values (damage type, weapon kind, rarity) deliberately left untranslated
 - [ ] WeChat mini-game adaptation (run in WeChat DevTools, see `design/04-wechat.md`)

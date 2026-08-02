@@ -2,7 +2,16 @@
 
 How pixels get onto the screen: **skins** (the `02` appearance layer made concrete), the **spritesheet/atlas + animation-data format**, the **asset-loading path** (web and WeChat), and the **art constraints the tilted view imposes** (`01`). It builds on the Actor/Skin/Weapon split (`02`), the rendering/depth model (`01`), the WeChat asset constraints (`04`), and the events channel (`08`). This doc is the source of truth for **what an art asset looks like, how it loads, and the hard rule that art is pure presentation — it never feeds the engine**.
 
-> **Status:** the current vertical slice is **Graphics-only** (procedural rectangles/ellipses/glows in `Game.ts`, `Skin.ts`) — deliberately, so WeChat boot+render was verified with zero image loaders (`04`). This doc defines the pipeline that replaces those placeholders when real art lands; nothing here is built yet.
+> **Status (2026-08-02): the pipeline defined here is built and carrying real art.** The
+> `.tao` rig runtime ships in the game (`render/`), `tools/animator` authors it, and the
+> bound roster is the full 3 characters + boss/critter/brute/floater enemies + a distinct
+> sprite for every ranged/melee weapon id + biome floor/wall art + UI/NPC art. The original
+> Graphics-only slice (procedural rectangles/ellipses/glows in `Skin.ts`) survives only as
+> the fallback drawn when a skin has no atlas entry, and for bullets/pickups/portal, which
+> were never planned as sprite art. The dated Update notes at the bottom of this doc record
+> how each piece landed; what remains open is listed in `ROADMAP.md`'s 5.3/5.4 (real
+> authored — not AI-generated — art, normal-map lighting, custom shaders) and `04` (WeChat
+> device verification).
 
 ## The decisions (locked)
 
