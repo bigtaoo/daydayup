@@ -1,14 +1,17 @@
-import { Container, Text } from 'pixi.js';
+import { Container, Graphics, Text } from 'pixi.js';
 import { THEME, rarityColor } from '../theme';
 import type { Layers } from '../scene/layers';
-import { Bar, Panel, ToastQueue } from './widgets';
-import { estimateMonoWidth } from './textWidth';
+import { Panel, ToastQueue } from './widgets';
 import { CompareCard } from './compareCard';
 import { nearestWeaponPickup } from './pickupProximity';
 import { Minimap, type MinimapPlayer } from './Minimap';
 import { FloorProgress } from './FloorProgress';
+import { PlayerCard, AllyRow } from './PlayerCard';
+import { WeaponCard } from './WeaponCard';
+import { StatChip } from './StatChip';
+import type { HudIconId } from './hudIcons';
 import { WEAPON_SIM_BY_ID, EMBER_DUNGEON, SIM, type GameState } from '@dd/engine';
-import { t } from '../../i18n';
+import { t, type TranslationKey } from '../../i18n';
 
 // Ground compare card proximity ring (design/03:125) — wider than PickupSystem's own
 // collect radius (SIM.pickupRadius) so the card has a beat to show before auto-collect.
@@ -27,92 +30,110 @@ export interface HudContext {
   allySkinId: string;
 }
 
-function totalBanked(s: GameState): number {
-  let n = 0;
-  for (const v of Object.values(s.bankedMaterials)) n += v ?? 0;
-  return n;
-}
+type ChipKey = 'floor' | 'room' | 'enemies' | 'banked' | 'score' | 'buffs' | 'stage' | 'alive';
+
+// Each chip's glyph + tint. Tints are pulled from what the stat refers to ON SCREEN, not
+// picked for variety: the foe count takes the enemy faction red, banked materials take
+// the material-pickup yellow, buffs take the buff-pickup violet, the PvP zone stage takes
+// the same amber the Minimap telegraphs a closing room with. A player who has learned a
+// colour in the world reads the chip for free.
+const CHIP_DEFS: Record<ChipKey, { icon: HudIconId; color: number; label: TranslationKey }> = {
+  floor: { icon: 'floor', color: 0xf6ad55, label: 'hud.chips.floor' },
+  room: { icon: 'room', color: 0x90cdf4, label: 'hud.chips.room' },
+  enemies: { icon: 'enemies', color: THEME.colors.enemy, label: 'hud.chips.enemies' },
+  banked: { icon: 'banked', color: THEME.colors.pickupMaterial, label: 'hud.chips.banked' },
+  score: { icon: 'score', color: 0xffd27f, label: 'hud.chips.score' },
+  buffs: { icon: 'buffs', color: THEME.colors.pickupBuff, label: 'hud.chips.buffs' },
+  stage: { icon: 'stage', color: 0xf6ad55, label: 'hud.chips.stage' },
+  alive: { icon: 'alive', color: 0x68d391, label: 'hud.chips.alive' },
+};
+
+// Which chips a mode shows, in row order. `buffs` is in both and drops out of the row
+// whenever the run has none — an always-zero chip is noise.
+const PVE_CHIPS: readonly ChipKey[] = ['floor', 'room', 'enemies', 'banked', 'score', 'buffs'];
+const PVP_CHIPS: readonly ChipKey[] = ['stage', 'alive', 'score', 'buffs'];
+
+const PAD = 12; // panel inset, all four sides
+const GAP = 8; // vertical gap between HUD sections
+const CHIP_GAP = 6;
 
 /**
- * In-match HUD (design/10 widget kit), extracted out of Game.ts 2026-07-28 (that file
- * had accreted 6+ unrelated jobs — this is the "composed bars/text/toast" slice: HP/
- * shield/cooldown bars, the floor/PvP info line, the co-op ally line, the ground
- * weapon-compare card, toasts, and the PvP room-graph minimap). `view` is the
- * visibility root Game's own phase transitions toggle — same role `hudView` played
- * before extraction. `settingsBtn` deliberately stayed on Game: it's shown in the
- * FORGE phase too, not just during a run, so it isn't really part of "the HUD."
+ * In-match HUD (design/10 widget kit), extracted out of Game.ts 2026-07-28 and rebuilt
+ * as real UI 2026-08-02. It previously composed a couple of bars with two monospace
+ * strings — a weapon line and one long "Floor 1/3 Room 1/2 Enemies 1 Banked 0 Score 0"
+ * run-on — which read as a debug print rather than a HUD (the user's own complaint).
+ * Every one of those values is now a widget: a `PlayerCard` (portrait + name + the two
+ * defensive pools), a `WeaponCard` (real weapon art + rarity + element + damage +
+ * cooldown), and a row of icon-led `StatChip`s, over one backing `Panel` that sizes
+ * itself to whichever section is widest.
+ *
+ * `view` is the visibility root Game's own phase transitions toggle; HudView owns the
+ * widgets, not the show/hide root. `settingsBtn` deliberately stays on Game: it's shown
+ * in the FORGE phase too, so it isn't really part of "the HUD."
  */
 export class HudView {
   readonly view = new Container();
-  // Backing panel for the stat cluster (design/10 legibility fix, 2026-08-01: a raw
-  // stack of Text over the game world read as visual noise, especially wherever the
-  // world's own dark room background happened not to sit behind it) — purely
-  // decorative, sized to the cluster's own fixed layout below.
-  private statsPanel!: Panel;
-  private hpBar!: Bar;
-  private shieldBar!: Bar;
-  private cdBar!: Bar;
-  private weaponText!: Text;
-  private infoText!: Text;
-  private allyText!: Text;
-  private toasts!: ToastQueue;
-  private minimap!: Minimap;
-  private floorProgress!: FloorProgress;
+  // Sub-widgets are public so tests (and any future caller) can assert against a named
+  // widget rather than indexing into `view.children` by position, which is what the
+  // previous version of this file forced on HudView.test.ts.
+  readonly playerCard = new PlayerCard();
+  readonly weaponCard = new WeaponCard();
+  readonly allyRow = new AllyRow();
+  readonly chips = new Map<ChipKey, StatChip>();
+  readonly floorProgress = new FloorProgress();
   // Ground compare card (design/03:125, locked spec: name/element/rarity, non-blocking,
   // render-only). Shown while standing near an uncollected floor weapon pickup.
-  private readonly groundCard = new CompareCard();
+  readonly groundCard = new CompareCard();
+
+  private statsPanel!: Panel;
+  private readonly dividers = new Graphics();
+  private toasts!: ToastQueue;
+  private minimap!: Minimap;
   // Weapon pickup is button-driven (design/03:121-126, ENGINE_VERSION 21) — unlike
   // every other pickup kind, standing on it does nothing without this prompt's cue.
   private groundHint!: Text;
+  private panelW = 0;
+  private panelH = 0;
 
   build(layers: Layers, screenPx: { w: number; h: number }): void {
-    this.statsPanel = new Panel({ radius: 8, color: 0x0b0e14, alpha: 0.55, borderColor: 0x4c566a, borderAlpha: 0.5 });
-    this.hpBar = new Bar({ w: 160, h: 14, fillColor: 0xf56565, trackColor: 0x2a1620, label: true });
-    this.shieldBar = new Bar({ w: 160, h: 9, fillColor: THEME.colors.shield, label: false });
-    this.cdBar = new Bar({ w: 90, h: 7, fillColor: 0x63b3ed, label: false });
-    // `padding` on every style below works around a real Pixi font-metrics mismatch
-    // (see Button's own comment in ui/widgets.ts): its text measurement can come in
-    // narrower than the canvas's actual paint-time glyph width, clipping the last
-    // character(s) — this is what made "blaster [common] (ranged) dmg 12" render as
-    // "...dm" (design/10 legibility fix, 2026-08-01).
-    const smallStyle = { fill: 0xcbd5e0, fontSize: 13, fontFamily: 'monospace' as const, padding: 6 };
-    this.weaponText = new Text({ text: '', style: { fill: 0xe2e8f0, fontSize: 14, fontFamily: 'monospace', padding: 6 } });
-    this.infoText = new Text({ text: '', style: smallStyle });
-    this.allyText = new Text({ text: '', style: smallStyle });
+    this.statsPanel = new Panel({ radius: 10, color: 0x0b0e14, alpha: 0.66, borderColor: 0x4c566a, borderAlpha: 0.55 });
     this.toasts = new ToastQueue({ w: 220 });
+    // `padding` works around a real Pixi font-metrics mismatch (see Button's own comment
+    // in ui/widgets.ts): its text measurement can come in narrower than the canvas's
+    // actual paint-time glyph width, clipping the last character(s).
     this.groundHint = new Text({
       text: t('hud.swapHint'),
       style: { fill: 0x90cdf4, fontSize: 13, fontFamily: 'monospace', fontWeight: 'bold', padding: 6 },
     });
 
     this.statsPanel.view.position.set(4, 4);
-    this.hpBar.view.position.set(12, 10);
-    this.shieldBar.view.position.set(12, 28);
-    this.weaponText.position.set(12, 44);
-    this.cdBar.view.position.set(12, 64);
-    this.infoText.position.set(12, 78);
-    this.floorProgress = new FloorProgress();
-    this.floorProgress.view.position.set(12, 96);
-    this.allyText.position.set(12, 112);
-    // Placeholder size for the first frame before `update()` ever runs; `update()`
-    // re-measures against the live text every tick (see the width comment there).
-    this.statsPanel.layout(220, 128);
+    this.playerCard.view.position.set(PAD, 10);
+    this.weaponCard.view.position.set(PAD, 10 + PlayerCard.HEIGHT + GAP);
+
+    for (const [key, def] of Object.entries(CHIP_DEFS) as Array<[ChipKey, (typeof CHIP_DEFS)[ChipKey]]>) {
+      this.chips.set(key, new StatChip(def.icon, def.color));
+    }
 
     this.view.addChild(
       this.statsPanel.view,
-      this.hpBar.view, this.shieldBar.view, this.weaponText, this.cdBar.view,
-      this.infoText, this.floorProgress.view, this.allyText,
-      this.toasts.view, this.groundCard.view, this.groundHint,
+      this.dividers,
+      this.playerCard.view,
+      this.weaponCard.view,
+      ...[...this.chips.values()].map((c) => c.view),
+      this.floorProgress.view,
+      this.allyRow.view,
+      this.toasts.view,
+      this.groundCard.view,
+      this.groundHint,
     );
     // NOTE: `view` itself is NOT added to `layers.ui` here — the caller (Game) mounts
-    // it inside its own visibility-toggled `hudView` container, exactly like before
-    // extraction; HudView only owns the widgets, not the show/hide root.
+    // it inside its own visibility-toggled `hudView` container.
 
     // PvP minimap (design/10 "room progress") — hidden unless state.zoneEnabled
     // (update). Top-right, inset enough to keep the WeChat capsule corner clear
     // (design/10 layout note). A sibling of `view`, not a child — its own visibility
     // is driven independently of the rest of the HUD (zoneEnabled, not phase), so it
-    // is mounted directly into `layers.ui`, same as before extraction.
+    // is mounted directly into `layers.ui`.
     this.minimap = new Minimap({ w: 140, h: 140 });
     layers.ui.addChild(this.minimap.view);
 
@@ -124,117 +145,59 @@ export class HudView {
   reposition(screenPx: { w: number; h: number }): void {
     this.toasts.view.position.set(screenPx.w / 2 - 110, screenPx.h * 0.22);
     this.minimap.view.position.set(screenPx.w - 140 - 20, 60);
-    // Beside the weapon HUD row (design/03:125 "beside your active weapon").
-    this.groundCard.view.position.set(220, 40);
   }
 
   update(s: GameState, dt: number, ctx: HudContext): void {
     const p = s.players[ctx.localOwner];
 
-    const hp = p ? Math.max(0, p.hp) : 0;
-    const maxHp = p ? p.maxHp : 0;
-    this.hpBar.set(hp, maxHp);
-    this.hpBar.update(dt);
+    this.playerCard.set(ctx.selectedSkin, p?.hp ?? 0, p?.maxHp ?? 0, p?.shield ?? 0, p?.maxShield ?? 0);
+    this.playerCard.update(dt);
 
-    // Shield pool (design/07 two-pool) — a separate bar, hidden for a zero-shield body.
-    const maxSh = p ? p.maxShield : 0;
-    this.shieldBar.view.visible = maxSh > 0;
-    if (maxSh > 0) {
-      this.shieldBar.set(p ? Math.max(0, p.shield) : 0, maxSh);
-      this.shieldBar.update(dt);
-    }
-
-    const weapon = p?.weapon;
-    this.weaponText.text = weapon
-      ? t('hud.weaponLine', { name: weapon.spec.name, rarity: weapon.spec.rarity, kind: weapon.spec.kind, damage: weapon.spec.damage })
-      : t('hud.weaponNone');
     // Cooldown sweep (design/10): weapon.cooldownTicks counts DOWN from the spec's fixed
     // cooldown (already whole ticks, sim-facing) to 0=ready — the bar fills as it recovers.
+    const weapon = p?.weapon;
     const maxCdTicks = weapon
       ? Math.max(1, weapon.spec.kind === 'ranged' ? weapon.spec.fireRateTicks : weapon.spec.swingCooldownTicks)
       : 1;
-    const readyTicks = weapon ? maxCdTicks - weapon.cooldownTicks : maxCdTicks;
-    this.cdBar.set(readyTicks, maxCdTicks);
-    this.cdBar.update(dt);
+    this.weaponCard.set(weapon?.spec ?? null, weapon ? maxCdTicks - weapon.cooldownTicks : maxCdTicks, maxCdTicks);
+    this.weaponCard.update(dt);
 
-    const buffs = p && p.buffs.length ? t('hud.buffsSuffix', { count: p.buffs.length }) : '';
+    const buffCount = p?.buffs.length ?? 0;
     if (s.zoneEnabled) {
-      // PvP arena (design/15) — a score/timer/team HUD row (design/10) instead of the
-      // dungeon floor/room line, which has no meaning here.
+      // PvP arena (design/15) — zone stage / survivors / score, instead of the dungeon
+      // floor-and-room chips, which have no meaning here.
       const zone = s.zone;
-      const alive = s.players.filter((pl) => pl.alive).length;
-      const escalation = zone?.escalation ? t('hud.escalationSuffix', { n: zone.escalation }) : '';
-      this.infoText.text = t('hud.pvpLine', {
-        skin: ctx.selectedSkin, stage: zone?.stage ?? 0, escalation, alive, total: s.players.length,
-        score: ctx.score, buffs,
-      });
+      const stage = zone?.stage ?? 0;
+      this.chips.get('stage')!.set(t('hud.chips.stage'), zone?.escalation ? `${stage}+${zone.escalation}` : `${stage}`);
+      this.chips.get('alive')!.set(t('hud.chips.alive'), `${s.players.filter((pl) => pl.alive).length}/${s.players.length}`);
       this.floorProgress.update(0, -1); // hides — this is the PvP arena's own Minimap's job
     } else {
       // Dungeon progress (ROADMAP 1.3): floor / room within floor, plus the banked bag.
-      const floor = s.floorIndex + 1;
-      const room = Math.max(1, s.roomIndex + 1);
       const rooms = s.floorStages.length; // total stages this floor (linear or branching)
-      const banked = totalBanked(s);
-      this.infoText.text = t('hud.pveLine', {
-        skin: ctx.selectedSkin, floor, floorCount: EMBER_DUNGEON.floorCount, room, rooms,
-        enemies: s.enemies.length, banked, score: ctx.score, buffs,
-      });
+      this.chips.get('floor')!.set(t('hud.chips.floor'), `${s.floorIndex + 1}/${EMBER_DUNGEON.floorCount}`);
+      this.chips.get('room')!.set(t('hud.chips.room'), `${Math.max(1, s.roomIndex + 1)}/${rooms}`);
+      this.chips.get('enemies')!.set(t('hud.chips.enemies'), `${s.enemies.length}`);
+      this.chips.get('banked')!.set(t('hud.chips.banked'), `${totalBanked(s)}`);
       // A real PvE minimap (design/10) — a progress TRACK, not a spatial map (see
       // FloorProgress's own doc comment for why PvE's data shape doesn't support the
       // PvP room-graph Minimap's kind of widget). 0 stages (flat EngineConfig.floors
       // mode) hides it, same as the PvP branch above.
-      this.floorProgress.update(s.floorStages.length, s.roomIndex);
+      this.floorProgress.update(rooms, s.roomIndex);
+    }
+    this.chips.get('score')!.set(t('hud.chips.score'), `${ctx.score}`);
+    this.chips.get('buffs')!.set(t('hud.chips.buffs'), `${buffCount}`);
+
+    // Co-op teammate (ROADMAP 3.1): the ally seat's health + downed/bleedout state, so
+    // the second player is legible. Single-player omits the row entirely.
+    const ally = ctx.showAlly ? s.players.find((_, i) => i !== ctx.localOwner) : undefined;
+    this.allyRow.view.visible = ally !== undefined;
+    if (ally) {
+      this.allyRow.set(ctx.allySkinId, ally.hp, ally.maxHp, ally.downed, Math.ceil(ally.bleedoutTicks / 30));
+      this.allyRow.update(dt);
     }
 
-    // Backing panel width tracks the widest live line (skin name / score digits vary
-    // the dungeon and PvP info rows) instead of a fixed guess — a fixed width either
-    // clips a long line or wastes space behind a short one every other frame. Uses
-    // `estimateMonoWidth` (not `Text.width`/`getBounds()`, both canvas-measurement calls)
-    // — see textWidth.ts for why: cheaper every frame, and testable without a live canvas.
-    const contentW = Math.max(
-      160, // hpBar/shieldBar's own fixed width
-      estimateMonoWidth(this.weaponText.text, 14),
-      estimateMonoWidth(this.infoText.text, 13),
-      this.floorProgress.estimatedWidth(),
-    );
-    this.statsPanel.layout(Math.max(220, Math.ceil(contentW) + 24), 128);
-
-    // Co-op teammate line (ROADMAP 3.1): the ally seat's health + downed/revive state, so
-    // the second player is legible and its bleedout is visible. Single-player omits it.
-    if (ctx.showAlly) {
-      const ally = s.players.find((_, i) => i !== ctx.localOwner);
-      const status = ally
-        ? (ally.downed
-            ? t('hud.allyDowned', { seconds: Math.ceil(ally.bleedoutTicks / 30) })
-            : t('hud.allyHp', { hp: Math.max(0, ally.hp), maxHp: ally.maxHp }))
-        : '';
-      this.allyText.text = ally ? t('hud.allyLine', { skin: ctx.allySkinId, status }) : '';
-    } else {
-      this.allyText.text = '';
-    }
-
-    // Ground compare card (design/03:125) — floats while standing near an uncollected
-    // floor weapon, name/element/rarity only (no stat table; that's the forge's job,
-    // and a mid-run comparison needs to read at a glance, not be studied).
-    const nearby = p ? nearestWeaponPickup(s.pickups, p.gx, p.gy, GROUND_CARD_RADIUS_FP) : undefined;
-    const groundSpec = nearby?.weaponId ? WEAPON_SIM_BY_ID[nearby.weaponId] : undefined;
-    if (p?.weapon && groundSpec) {
-      this.groundCard.set({
-        w: 220,
-        leftName: p.weapon.spec.name,
-        leftColor: rarityColor(p.weapon.spec),
-        rightName: groundSpec.name,
-        rightColor: rarityColor(groundSpec),
-        rows: [{ label: t('compareCard.type'), left: p.weapon.spec.damageType, right: groundSpec.damageType }],
-      });
-      this.groundHint.text = t('hud.swapHint');
-      this.groundHint.position.set(220, this.groundCard.view.y + this.groundCard.view.height + 4);
-      this.groundHint.visible = true;
-    } else {
-      this.groundCard.hide();
-      this.groundHint.visible = false;
-    }
-
+    this.layout(s.zoneEnabled ? PVP_CHIPS : PVE_CHIPS, buffCount > 0, ally !== undefined);
+    this.updateGroundCard(s, p);
     this.toasts.update(dt);
 
     // PvP room-graph minimap (design/10) — no-op/hidden for PvE, same convention as the
@@ -256,4 +219,101 @@ export class HudView {
   toast(text: string, color: number): void {
     this.toasts.push(text, color);
   }
+
+  /** Pack the chip row, stack whatever sections are live, and size the backing panel to
+   *  the widest of them. Sizing is `estimateMonoWidth`-derived throughout (never
+   *  `Text.width`/`getBounds()`, both canvas-measurement calls) — see textWidth.ts for
+   *  why: cheaper every frame, and testable without a live canvas. */
+  private layout(order: readonly ChipKey[], showBuffs: boolean, showAlly: boolean): void {
+    let chipX = PAD;
+    for (const [key, chip] of this.chips) {
+      const active = order.includes(key) && (key !== 'buffs' || showBuffs);
+      chip.view.visible = active;
+      if (!active) continue;
+      chip.view.position.set(chipX, 0); // y set below, once the row's own y is known
+      chipX += chip.width + CHIP_GAP;
+    }
+    const chipsW = chipX - PAD - CHIP_GAP;
+
+    let y = 10 + PlayerCard.HEIGHT + GAP + WeaponCard.HEIGHT + GAP;
+    const chipRowY = y;
+    for (const chip of this.chips.values()) if (chip.view.visible) chip.view.position.y = chipRowY;
+    y += StatChip.HEIGHT;
+
+    if (this.floorProgress.view.visible) {
+      this.floorProgress.view.position.set(PAD, y + 6);
+      y += 6 + 12;
+    }
+    if (showAlly) {
+      this.allyRow.view.position.set(PAD, y + 8);
+      y += 8 + AllyRow.HEIGHT;
+    }
+
+    const w =
+      Math.ceil(
+        Math.max(
+          this.playerCard.estimatedWidth(),
+          this.weaponCard.estimatedWidth(),
+          chipsW,
+          this.floorProgress.view.visible ? this.floorProgress.estimatedWidth() : 0,
+          showAlly ? this.allyRow.estimatedWidth() : 0,
+        ),
+      ) + PAD;
+    const h = y + 10;
+    if (w !== this.panelW || h !== this.panelH) {
+      this.panelW = w;
+      this.panelH = h;
+      this.statsPanel.layout(w, h);
+      this.redrawDividers(w);
+      // The ground compare card floats immediately right of the HUD (design/03:125
+      // "beside your active weapon") — it has to track the panel's live width, or a
+      // long localized weapon subtitle slides the panel out from under it.
+      this.groundCard.view.position.set(w + 12, 40);
+    }
+  }
+
+  private redrawDividers(w: number): void {
+    // Hairlines between the three fixed sections (who you are / what you hold / how the
+    // run is going). Cheap grouping cue — without them the card reads as one dense block.
+    const line = (y: number) => {
+      this.dividers.moveTo(PAD, y).lineTo(w - PAD + 4, y);
+    };
+    this.dividers.clear();
+    line(10 + PlayerCard.HEIGHT + GAP / 2);
+    line(10 + PlayerCard.HEIGHT + GAP + WeaponCard.HEIGHT + GAP / 2);
+    this.dividers.stroke({ color: 0x4c566a, alpha: 0.35, width: 1 });
+  }
+
+  // Ground compare card (design/03:125) — floats while standing near an uncollected
+  // floor weapon, name/element/rarity only (no stat table; that's the forge's job, and a
+  // mid-run comparison needs to read at a glance, not be studied).
+  private updateGroundCard(s: GameState, p: GameState['players'][number] | undefined): void {
+    const nearby = p ? nearestWeaponPickup(s.pickups, p.gx, p.gy, GROUND_CARD_RADIUS_FP) : undefined;
+    const groundSpec = nearby?.weaponId ? WEAPON_SIM_BY_ID[nearby.weaponId] : undefined;
+    if (p?.weapon && groundSpec) {
+      this.groundCard.set({
+        w: 220,
+        leftName: p.weapon.spec.name,
+        leftColor: rarityColor(p.weapon.spec),
+        rightName: groundSpec.name,
+        rightColor: rarityColor(groundSpec),
+        rows: [{ label: t('compareCard.type'), left: p.weapon.spec.damageType, right: groundSpec.damageType }],
+      });
+      this.groundHint.text = t('hud.swapHint');
+      this.groundHint.position.set(
+        this.groundCard.view.x,
+        this.groundCard.view.y + this.groundCard.view.height + 4,
+      );
+      this.groundHint.visible = true;
+    } else {
+      this.groundCard.hide();
+      this.groundHint.visible = false;
+    }
+  }
+}
+
+function totalBanked(s: GameState): number {
+  let n = 0;
+  for (const v of Object.values(s.bankedMaterials)) n += v ?? 0;
+  return n;
 }

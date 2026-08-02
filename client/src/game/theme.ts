@@ -1,4 +1,4 @@
-import { RARITY_TIERS, type WeaponSimSpec } from '@dd/engine';
+import { RARITY_TIERS, type DamageType, type WeaponSimSpec } from '@dd/engine';
 
 // The palette everything on screen is drawn with.
 //
@@ -48,12 +48,20 @@ export const THEME = {
 // Element → fx colour. `physical` is intentionally absent (falls back to the
 // faction colour); the four elements reuse their status-fx hues so a fire bullet,
 // its trail, and the burn aura it leaves all read as the same orange (design/03/07).
-export const ELEMENT_COLORS: Partial<Record<import('@dd/engine').DamageType, number>> = {
+export const ELEMENT_COLORS: Partial<Record<DamageType, number>> = {
   fire: THEME.colors.statusBurn,
   ice: THEME.colors.statusChill,
   lightning: THEME.colors.statusShock,
   poison: THEME.colors.statusPoison,
 };
+
+/** design/13's locked element palette, including the `physical` entry ELEMENT_COLORS
+ * deliberately omits. That omission is right for world FX — a physical bullet takes the
+ * faction colour so it reads as "yours"/"theirs" — but a HUD chip has no faction to
+ * fall back on, so physical gets its own locked neutral (#E2E8F0) here. */
+export function elementColor(damageType: DamageType): number {
+  return ELEMENT_COLORS[damageType] ?? 0xe2e8f0;
+}
 
 // Per-biome ground/wall palette (design/13 "per-biome background palettes" — the
 // element hex table is locked, so these are DERIVED from it, not hand-picked hexes).

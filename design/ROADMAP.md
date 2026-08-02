@@ -194,6 +194,46 @@ colours. Render-only, no `ENGINE_VERSION` impact. 9 new tests (`Button` border/t
 standing rule this produced is recorded in design/10: a screen drawn over background art owns
 its own contrast, and two adjacent buttons must differ by more than their label.
 
+**2026-08-02, after that: the in-run HUD rebuilt from formatted text into real widgets, plus a
+"which one is me" marker.** Prompted by a third annotated screenshot in the same lineage as the
+two passes above — this time the user circled their own character next to a floor drop and asked
+what the two things were, then asked for everything in the top-left corner to be turned into UI.
+Both halves were fair. The corner was two monospace strings (`blaster [common] (ranged) dmg 1`
+and `juggernaut  Floor 1/3  Room 1/2  Enemies 1  Banked 0  Score 0`) — complete, and unreadable
+as anything but debug output. And the earlier pass's own decision to give *every* actor a
+floating health bar had made the player's bar identical to a mob's, which is exactly why the
+character needed circling to ask about. Shipped, all render-only, no `ENGINE_VERSION` impact:
+(1) **`PlayerCard`** (`ui/PlayerCard.ts`) — the character's own portrait (reusing the rig
+bundle's `shell` texture, so a new character needs no extra art), name, HP bar, and a shield bar
+that appears only for a character that has a pool; (2) **`WeaponCard`** (`ui/WeaponCard.ts`) —
+the same business-end texture the rig mounts in-world and the Forge rows already use, on a
+rarity-bordered chip, with a `rarity · kind · element` subtitle and a damage badge tinted by
+`damageType` off design/13's locked element palette; (3) **`StatChip`** (`ui/StatChip.ts` +
+`ui/hudIcons.ts`) — the info line replaced by icon-led pills, PvE `FLOOR/ROOM/FOES/BANKED/SCORE`
+vs PvP `ZONE/ALIVE/SCORE`, `BUFFS` present only while the run has one, each icon tinted to match
+what it refers to in the world; (4) **`AllyRow`** — the co-op teammate's one-sentence status line
+became a name + bar + bleedout countdown; (5) **`Actor.setLocal()`** — a teal ground ring plus a
+teal health-bar outline on the local seat only (driven by `Scene.reconcile`'s already-resolved
+local player id), in `THEME.colors.player`, the one hue no enemy tint ever takes; a teammate
+deliberately does *not* get it. Three real bugs fell out along the way: `ui/textWidth.ts`'s
+`estimateMonoWidth` measured every CJK string at 60% of its true width (`length × 0.6`), so every
+panel sized from a translated string came up short in Chinese and looked correct in English —
+now East-Asian-width aware; the ground compare card sat at a hardcoded `x=220` chosen when the
+panel was a fixed 220 wide, and now tracks the panel's live width; and two widgets cached their
+redraw against a `''` key that collided with their own uninitialized state, so an unarmed weapon
+card and an empty stat chip could never draw at all. New i18n keys under `hud.chips`/`hud.weapon`/
+`hud.rarity`/`hud.kind`/`hud.element`/`hud.ally`, mapped through `satisfies Record<…,
+TranslationKey>` tables rather than template-literal casts so a new engine-side rarity tier or
+damage type is a build error here, not a raw key at runtime. Verified live via claude-in-chrome
+in both locales and in `?coop=1` (the ally correctly gets no ring). 518 client tests (113 new,
+covering the width estimator's wide-character and code-point behaviour, every HUD icon's
+stay-inside-its-box layout contract, chip width derivation, the weapon card's cache-invalidation
+boundaries incl. locale, the shield bar's presence rule, and the compare-card regression) +
+`tsc --noEmit` clean; 1061 across the repo. The standing rules this produced are recorded in
+design/10: every value on screen is a widget rather than a formatted line, the widget shows the
+same art the world shows, the local player is identifiable in the world and not only in the HUD,
+and HUD layout math never touches canvas text measurement.
+
 - **5.4 Fidelity roadmap** (01): ✅ post-processing (bloom-lite, vignette, chromatic aberration, hit-stop, screen-shake) + particles shipped 2026-07-26. Still open, both explicitly blocked on 5.3 landing real (non-placeholder) art first: normal-map lighting, custom shaders (dissolve/outline/energy-shield/heat-haze).
 - **5.5 WeChat device verification** (04): lowest base library, low-end frame rate, real-device touch, WebGL2 fallback — none of this can be done without a physical device or WeChat DevTools install, neither found on this machine as of 2026-07-27.
 

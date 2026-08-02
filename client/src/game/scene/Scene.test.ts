@@ -78,6 +78,37 @@ describe('Scene.reconcile — player body/aim facing split', () => {
   });
 });
 
+describe('Scene.reconcile — local-seat marker (design/10 legibility)', () => {
+  function ringWidth(view: unknown): number {
+    return ((view as { children: Array<{ getLocalBounds(): { width: number } }> }).children[4]?.getLocalBounds()
+      .width) ?? 0;
+  }
+
+  it('marks only the named local seat, not the other players', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }, { start: [200, 100] }] });
+    const [me, other] = s.players;
+    const scene = new Scene(new Layers());
+
+    scene.reconcile(s, me!.id);
+
+    const views = (scene as unknown as { views: Map<number, unknown> }).views;
+    expect(ringWidth(views.get(me!.id))).toBeGreaterThan(0);
+    expect(ringWidth(views.get(other!.id))).toBe(0);
+  });
+
+  it('keeps the single-player default (no localPlayerId) marked across later reconciles', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const scene = new Scene(new Layers());
+
+    scene.reconcile(s);
+    scene.reconcile(s); // the sticky-choice path: playerView is already set by now
+
+    const views = (scene as unknown as { views: Map<number, unknown> }).views;
+    expect(ringWidth(views.get(s.players[0]!.id))).toBeGreaterThan(0);
+    expect(scene.player).toBe(views.get(s.players[0]!.id));
+  });
+});
+
 describe('Scene.reconcile — enemies keep a single facing (no body/aim split)', () => {
   it("an enemy's view bodyFacingRad always equals its facingRad", () => {
     const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });

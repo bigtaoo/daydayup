@@ -73,9 +73,11 @@ src/
 │  │                  EventReactor, RunOutcome)
 │  ├─ match/          how a run is configured and connected (arenaCatalog, matchConfig,
 │  │                  offlineConfig, pvpConfig, onlineConnect, gameQueryParams)
-│  ├─ ui/             HUD + widget kit (HudView, widgets, Minimap, FloorProgress, …)
+│  ├─ ui/             HUD + widget kit (HudView composing PlayerCard/WeaponCard/
+│  │                  StatChip/FloorProgress/Minimap, plus the shared widgets)
 │  │                  — pure-math modules sit beside their views so they stay testable
-│  │                  without a canvas
+│  │                  without a canvas (textWidth is the only sizing input the HUD
+│  │                  has; nothing here may call Text.width/getBounds)
 │  └─ fx/             FxController, particles, filters
 ├─ render/            skin/rig/atlas infrastructure (.tao runtime, weapon + UI skins)
 ├─ net/               transport, CoopSession, matchmaking, party, auth, session

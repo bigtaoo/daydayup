@@ -31,6 +31,8 @@ export class Actor extends Entity {
   private auraMask = 0; // bitmask of the effects currently drawn (skip redraw if same)
   private auraT = 0; // aura pulse clock (render-only, ms)
   private healthBar: Graphics | null = null; // floating hp bar above the head (both factions)
+  private localRing: Graphics | null = null; // "this one is you" ground marker (setLocal)
+  private isLocal = false;
   private readonly isBoss: boolean;
   private hpRatio = -1; // last-drawn hp fraction (skip redraw if unchanged)
   private weaponKind: WeaponKind | null | undefined = undefined;
@@ -121,9 +123,44 @@ export class Actor extends Entity {
     this.drawWeapon(rigCanMountWeapon ? null : kind);
   }
 
-  // Update the boss health bar from the engine actor's hp (no-op for non-bosses).
-  // Colour ramps green → amber → red as it drains; redraws only when the fraction
-  // changes, so a boss sitting at full hp costs nothing per tick.
+  /**
+   * Mark this actor as the seat THIS client is driving (`Scene` resolves which one).
+   *
+   * Every actor got a floating health bar in the 2026-08-02 legibility pass, which had
+   * an unintended cost: the player's own bar became indistinguishable from a mob's, so
+   * "which one of these is me" stopped being answerable at a glance — the user's own
+   * report, pointing at their character and asking what it was. Two cues fix it without
+   * touching the sim: a teal ground ring at the feet (the player faction's own hue,
+   * THEME.colors.player — the one colour no enemy tint ever takes), and a health bar
+   * outlined in that same teal instead of the default near-black.
+   */
+  setLocal(local: boolean): void {
+    if (local === this.isLocal) return;
+    this.isLocal = local;
+    if (local && !this.localRing) {
+      this.localRing = new Graphics();
+      this.localRing.zIndex = -2; // behind the status aura (-1) and the body
+      this.addChild(this.localRing);
+    }
+    if (this.localRing) {
+      // Squashed to the same 0.5 ratio Entity.makeShadow uses, so it reads as lying on
+      // the ground plane rather than as a halo standing up around the body.
+      const r = this.radiusPx * 1.2;
+      this.localRing.clear();
+      if (local) {
+        this.localRing
+          .ellipse(0, 0, r, r * 0.5)
+          .stroke({ color: THEME.colors.player, width: 2, alpha: 0.9 })
+          .ellipse(0, 0, r * 0.7, r * 0.35)
+          .stroke({ color: THEME.colors.player, width: 1, alpha: 0.3 });
+      }
+    }
+    this.hpRatio = -1; // force setHealth to redraw the bar in its new outline style
+  }
+
+  // Update the floating health bar from the engine actor's hp. Colour ramps green →
+  // amber → red as it drains; redraws only when the fraction changes, so an actor
+  // sitting at full hp costs nothing per tick.
   setHealth(hp: number, maxHp: number): void {
     if (!this.healthBar || maxHp <= 0) return;
     const ratio = Math.max(0, Math.min(1, hp / maxHp));
@@ -139,7 +176,11 @@ export class Actor extends Entity {
       const color = ratio > 0.5 ? 0x66bb6a : ratio > 0.25 ? 0xffca28 : 0xef5350;
       g.roundRect(-w / 2, -h / 2, w * ratio, h, 2).fill({ color });
     }
-    g.roundRect(-w / 2, -h / 2, w, h, 2).stroke({ color: 0x0c0e14, width: 1, alpha: 0.9 });
+    g.roundRect(-w / 2, -h / 2, w, h, 2).stroke(
+      this.isLocal
+        ? { color: THEME.colors.player, width: 1.5, alpha: 1 }
+        : { color: 0x0c0e14, width: 1, alpha: 0.9 },
+    );
   }
 
   // Mirror the engine actor's lingering status (design/03/07). Draws one glowing

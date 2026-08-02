@@ -59,10 +59,16 @@ export class Scene {
         v.pushState(fpToPx(p.gx), fpToPx(p.gy), fpToPx(p.z), aimRad, bodyFacingRad);
       }
       // The camera-follow target: the local seat if named, else the first player (the
-      // single-player default — playerView is only unset, so the first alive player wins).
-      if (p.id === localPlayerId || (localPlayerId === -1 && this.playerView === null)) {
-        this.playerView = v;
-      }
+      // single-player default — playerView is only unset, so the first alive player wins;
+      // `this.playerView === v` keeps that choice sticky across later reconciles, which
+      // is what the original `playerView === null` test did implicitly).
+      const isLocal =
+        p.id === localPlayerId ||
+        (localPlayerId === -1 && (this.playerView === null || this.playerView === v));
+      if (isLocal) this.playerView = v;
+      // "Which one is me" cue (design/10 legibility, 2026-08-02) — a teal ground ring +
+      // teal health-bar outline on the local seat only. See Actor.setLocal.
+      v.setLocal(isLocal);
       v.setWeaponKind(p.weapon?.spec.kind ?? null, p.weapon?.spec.damageType, p.weapon?.spec.name);
       v.setStatus(p.status);
       v.setHealth(p.hp, p.maxHp);
