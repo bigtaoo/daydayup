@@ -24,12 +24,20 @@ export class Panel {
    * Panel with no `background`, so it never picks up the big hub art meant for
    * full-screen menus. */
   private readonly backgroundKey?: string;
+  // Border (opt-in): a flat near-black fill at low alpha is indistinguishable from the
+  // app's own black backdrop wherever the panel sits outside the game world (design/10
+  // legibility fix, 2026-08-02) — a thin lighter stroke gives it a readable edge
+  // regardless of what's behind it.
+  private readonly borderColor?: number;
+  private readonly borderAlpha: number;
 
-  constructor(opts: { radius?: number; color?: number; alpha?: number; background?: string } = {}) {
+  constructor(opts: { radius?: number; color?: number; alpha?: number; background?: string; borderColor?: number; borderAlpha?: number } = {}) {
     this.radius = opts.radius ?? 0;
     this.color = opts.color ?? 0x0b0e14;
     this.alpha = opts.alpha ?? 0.82;
     this.backgroundKey = opts.background;
+    this.borderColor = opts.borderColor;
+    this.borderAlpha = opts.borderAlpha ?? 0.4;
     this.view.addChild(this.scrim);
   }
 
@@ -60,6 +68,10 @@ export class Panel {
     const scrimAlpha = bgTexture ? Math.min(this.alpha, 0.55) : this.alpha;
     if (this.radius > 0) this.scrim.roundRect(0, 0, w, h, this.radius).fill({ color: this.color, alpha: scrimAlpha });
     else this.scrim.rect(0, 0, w, h).fill({ color: this.color, alpha: scrimAlpha });
+    if (this.borderColor !== undefined) {
+      if (this.radius > 0) this.scrim.roundRect(0.5, 0.5, w - 1, h - 1, this.radius).stroke({ color: this.borderColor, alpha: this.borderAlpha, width: 1 });
+      else this.scrim.rect(0.5, 0.5, w - 1, h - 1).stroke({ color: this.borderColor, alpha: this.borderAlpha, width: 1 });
+    }
   }
 }
 

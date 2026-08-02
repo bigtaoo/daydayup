@@ -5,6 +5,18 @@ import type { PickupKind } from '@dd/engine';
 
 export type { PickupKind };
 
+// Glow tint per kind — same colour as the shape itself (CONFIG.colors.pickup*), just
+// softened/additive, so the glow reads as "this shape, glowing" rather than a mismatched
+// halo.
+const PICKUP_GLOW: Record<PickupKind, number> = {
+  heal: CONFIG.colors.pickupHeal,
+  weapon: CONFIG.colors.pickupWeapon,
+  buff: CONFIG.colors.pickupBuff,
+  crate: CONFIG.colors.pickupCrate,
+  material: CONFIG.colors.pickupMaterial,
+  bandage: CONFIG.colors.pickupHeal, // no dedicated bandage art yet — falls into the same crystal fallback shape below as 'material'
+};
+
 // Pickup view — an in-run drop (health / coin / weapon). Pure presentation:
 // the engine owns the drop roll and collection; the hover bob here is render-only
 // eye candy (it is NOT part of the sim, which is why PickupItem has no z). Position
@@ -17,6 +29,16 @@ export class Pickup extends Entity {
   constructor(kind: PickupKind) {
     super();
     this.kind = kind;
+    // A soft additive glow behind the shape (design/10 legibility fix, 2026-08-02): a
+    // flat-filled ~14px silhouette reads as a plain dot against a dark/busy floor —
+    // the glow gives every pickup a bit of "pop" at a glance without new art. A
+    // separate Graphics (not the crisp shape below) so only the glow itself blends
+    // additively — the shape on top stays a normal, non-washed-out fill.
+    const glow = new Graphics();
+    glow.circle(0, 0, 13).fill({ color: PICKUP_GLOW[kind], alpha: 0.28 });
+    glow.blendMode = 'add';
+    this.addChild(glow);
+
     const gfx = new Graphics();
     if (kind === 'heal') {
       const color = CONFIG.colors.pickupHeal;

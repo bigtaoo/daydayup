@@ -5,6 +5,7 @@ import { ParticleSystem } from './fx/Particles';
 
 const FX_LIFE_MS = 170; // flash/trail lifetime
 const MAX_SHAKE_PX = 14; // camera-shake offset at full trauma (design/01 milestone 3)
+const MAX_ZOOM = 1.8; // cap on updateCamera's small-room fill zoom
 
 /** Something that can report its interpolated ground position — the local player's
  *  Actor view, duck-typed so FxController never needs to import game/Actor.ts. */
@@ -28,6 +29,10 @@ export class FxController {
   readonly chromatic = new ChromaticAberrationFilter(0);
   private shakeTrauma = 0;
   private hitStopMs = 0;
+  /** Current world→screen zoom applied in updateCamera — CommandBuilder needs this
+   *  to convert a screen-space mouse point back to world space (Game.ts reads it
+   *  into `cam.zoom`). 1 until the first updateCamera call (no zoom applied yet). */
+  zoom = 1;
 
   constructor(private readonly layers: Layers) {}
 
@@ -93,20 +98,29 @@ export class FxController {
   }
 
   /** Follow `player`, pin the camera inside the room, then add screen-shake on top. A
-   *  room smaller than the viewport is centred (the follow-clamp would otherwise fight
-   *  itself, lo > hi). No-op (leaves layers.world untouched) if there's no player yet. */
+   *  room smaller than the viewport is zoomed up to fill it (contain-fit: the tighter
+   *  axis touches the viewport edge, capped at MAX_ZOOM so a tiny/degenerate room
+   *  doesn't blow sprites up into blocks) instead of leaving it centred in a sea of
+   *  black — a big room/arena that already covers the viewport at 1x is untouched
+   *  (zoom floors at 1, never shrinks). No-op (leaves layers.world untouched) if
+   *  there's no player yet. */
   updateCamera(alpha: number, viewport: { vw: number; vh: number }, worldSize: { w: number; h: number } | null, player: CameraTarget | null): void {
     if (!player) return;
     const { vw, vh } = viewport;
     const worldW = worldSize ? worldSize.w : vw;
     const worldH = worldSize ? worldSize.h : vh;
-    const cx = worldW <= vw ? (vw - worldW) / 2 : clamp(vw / 2 - player.interpGroundX(alpha), vw - worldW, 0);
-    const cy = worldH <= vh ? (vh - worldH) / 2 : clamp(vh / 2 - player.interpGroundY(alpha), vh - worldH, 0);
+    const zoom = Math.min(MAX_ZOOM, Math.max(1, Math.min(vw / worldW, vh / worldH)));
+    this.zoom = zoom;
+    const effW = worldW * zoom;
+    const effH = worldH * zoom;
+    const cx = effW <= vw ? (vw - effW) / 2 : clamp(vw / 2 - player.interpGroundX(alpha) * zoom, vw - effW, 0);
+    const cy = effH <= vh ? (vh - effH) / 2 : clamp(vh / 2 - player.interpGroundY(alpha) * zoom, vh - effH, 0);
 
     const shakeMag = this.shakeTrauma * this.shakeTrauma * MAX_SHAKE_PX;
     const shakeX = shakeMag > 0.05 ? (Math.random() * 2 - 1) * shakeMag : 0;
     const shakeY = shakeMag > 0.05 ? (Math.random() * 2 - 1) * shakeMag : 0;
 
+    this.layers.world.scale.set(zoom);
     this.layers.world.x = cx + shakeX;
     this.layers.world.y = cy + shakeY;
   }

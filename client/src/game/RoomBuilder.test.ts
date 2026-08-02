@@ -94,6 +94,68 @@ describe('RoomBuilder — biome art registered for this element', () => {
   });
 });
 
+function stateWithOneObstacle(): GameState {
+  const s = createGameState({
+    seed: 1, worldW: 800, worldH: 600, waves: [],
+    walls: [],
+    obstacles: [[150, 120, 20]],
+  });
+  (s as unknown as { dungeonConfig?: { biomeId: string } }).dungeonConfig = { biomeId: 'ember' };
+  return s;
+}
+
+describe('RoomBuilder — pillars (design/10 legibility fix, 2026-08-02: faux-shading)', () => {
+  it('creates one Entity per obstacle, positioned at its grid coords (px round trip)', () => {
+    const rb = new RoomBuilder(new Layers());
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    rb.build(stateWithOneObstacle());
+    expect(layers.entities.children.length).toBe(1);
+    const pillar = layers.entities.children[0]!;
+    // px -> fp -> px round trip through the grid quantizes to a fraction of a pixel
+    // (same tolerance the existing wall test's `toBeCloseTo(100)` needed, just spelled
+    // out here since 150 doesn't happen to land on a round grid step).
+    expect(pillar.x).toBeCloseTo(150, 1);
+    expect(pillar.y).toBeCloseTo(120, 1);
+  });
+
+  it('gives the pillar body real drawn geometry, not a blank placeholder', () => {
+    const rb = new RoomBuilder(new Layers());
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    rb.build(stateWithOneObstacle());
+    const pillar = layers.entities.children[0]!;
+    const body = pillar.children[0] as Graphics;
+    // Shading bands + rim strokes extend a little past the base body rect — real
+    // drawn content, not a zero-size stub.
+    expect(body.getLocalBounds().width).toBeGreaterThan(0);
+    expect(body.getLocalBounds().height).toBeGreaterThan(0);
+  });
+
+  it('adds a matching shadow to the shadow layer for each pillar', () => {
+    const rb = new RoomBuilder(new Layers());
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    rb.build(stateWithOneObstacle());
+    expect(layers.shadow.children.length).toBe(1);
+  });
+
+  it('rebuilds pillars fresh on a second build() call, not appended', () => {
+    const rb = new RoomBuilder(new Layers());
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    rb.build(stateWithOneObstacle());
+    const firstCount = layers.entities.children.length;
+    rb.build(stateWithOneObstacle());
+    expect(layers.entities.children.length).toBe(firstCount);
+  });
+
+  it('clear() removes every pillar and its shadow', () => {
+    const rb = new RoomBuilder(new Layers());
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    rb.build(stateWithOneObstacle());
+    rb.clear();
+    expect(layers.entities.children.length).toBe(0);
+    expect(layers.shadow.children.length).toBe(0);
+  });
+});
+
 describe('RoomBuilder — grid overlay and rebuild', () => {
   it('always draws the grid overlay regardless of whether biome art exists', () => {
     mocks.floorTex = fakeTexture(64, 64);

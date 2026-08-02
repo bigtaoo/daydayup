@@ -93,7 +93,15 @@ export class RoomBuilder {
       const p = new Entity();
       const body = new Graphics();
       body.roundRect(-bodyW / 2, -height, bodyW, height + 10, 6).fill({ color: palette.pillar });
+      // Cheap faux-volumetric shading (design/10 legibility fix, 2026-08-02): the flat
+      // single-colour fill above read as a placeholder cylinder next to the textured
+      // floor/walls — a lit-from-upper-left highlight band + an opposite shadow band,
+      // plus a dark rim stroke, fake enough depth without needing new pillar art.
+      body.roundRect(-bodyW / 2, -height, bodyW * 0.32, height + 10, 6).fill({ color: 0xffffff, alpha: 0.1 });
+      body.roundRect(bodyW * 0.18, -height, bodyW * 0.32, height + 10, 6).fill({ color: 0x000000, alpha: 0.22 });
+      body.roundRect(-bodyW / 2, -height, bodyW, height + 10, 6).stroke({ color: 0x000000, alpha: 0.35, width: 2 });
       body.ellipse(0, -height, bodyW / 2 + 2, 12).fill({ color: palette.pillarTop });
+      body.ellipse(0, -height, bodyW / 2 + 2, 12).stroke({ color: 0xffffff, alpha: 0.25, width: 1.5 });
       p.addChild(body);
       p.makeShadow(rad + 12);
       this.layers.entities.addChild(p);

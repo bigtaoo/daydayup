@@ -1,6 +1,5 @@
-import { Container, Graphics, Text } from 'pixi.js';
+import { Container, Graphics } from 'pixi.js';
 import { computeFloorProgress, type StageStatus } from './floorProgressMath';
-import { estimateMonoWidth } from './textWidth';
 
 const STATUS_COLOR: Record<StageStatus, number> = {
   done: 0x68d391, // matches the extract/heal green used elsewhere in the HUD
@@ -15,23 +14,19 @@ const STATUS_COLOR: Record<StageStatus, number> = {
 export class FloorProgress {
   readonly view = new Container();
   private g = new Graphics();
-  // A one-line key beside the dots (design/10 legibility fix, 2026-08-01): a bare row of
-  // colored circles/a diamond has no self-evident meaning on first sight — this spells it
-  // out in the same small text style every other HUD stat line already uses, so it costs
-  // no extra visual weight while making "green = done" / "diamond = checkpoint" legible.
-  private legend: Text;
   private lastStepCount = 0;
   private static readonly NODE_R = 6;
   private static readonly SPACING = 20;
 
   constructor() {
-    this.legend = new Text({
-      text: '',
-      style: { fill: 0xa0aec0, fontSize: 12, fontFamily: 'monospace', padding: 6 },
-    });
-    this.view.addChild(this.g, this.legend);
+    this.view.addChild(this.g);
   }
 
+  // Icon-first, not a text legend (design/10 legibility fix, 2026-08-02): a spelled-out
+  // "green=done amber=now diamond=checkpoint" sentence was tried first (2026-08-01) but
+  // reads as debug text next to the rest of the HUD's chrome — this bakes the same
+  // meaning into the dots themselves (a checkmark stroke = done, a bright ring = the
+  // room you're in, the diamond shape = checkpoint), so no separate key is needed at all.
   update(stageCount: number, roomIndex: number) {
     const steps = computeFloorProgress(stageCount, roomIndex);
     this.view.visible = steps.length > 0;
@@ -39,19 +34,28 @@ export class FloorProgress {
     const r = FloorProgress.NODE_R;
     for (const s of steps) {
       const cx = s.index * FloorProgress.SPACING + r;
+      const cy = r;
       const color = STATUS_COLOR[s.status];
       if (s.capstone) {
-        // A small diamond marks the checkpoint/boss room — the one stage every floor
+        // A diamond marks the checkpoint/boss room — the one stage every floor
         // guarantees (dungeon.ts), so it's always the visually distinct final node.
-        this.g
-          .poly([cx, 0, cx + r, r, cx, r * 2, cx - r, r])
-          .fill({ color });
+        this.g.poly([cx, 0, cx + r, r, cx, r * 2, cx - r, r]).fill({ color });
+        this.g.poly([cx, 0, cx + r, r, cx, r * 2, cx - r, r]).stroke({ color: 0xfff8e1, alpha: 0.7, width: 1 });
       } else {
-        this.g.circle(cx, r, r).fill({ color });
+        this.g.circle(cx, cy, r).fill({ color });
+        if (s.status === 'done') {
+          // A small checkmark reads as "cleared" without a word next to it.
+          this.g
+            .moveTo(cx - r * 0.5, cy)
+            .lineTo(cx - r * 0.1, cy + r * 0.4)
+            .lineTo(cx + r * 0.55, cy - r * 0.4)
+            .stroke({ color: 0x0b2016, alpha: 0.85, width: 1.6 });
+        } else if (s.status === 'current') {
+          // A bright outer ring reads as "you are here" without a word either.
+          this.g.circle(cx, cy, r + 2).stroke({ color: 0xfff3e0, alpha: 0.85, width: 1.6 });
+        }
       }
     }
-    this.legend.text = steps.length ? 'green=done  amber=now  diamond=checkpoint' : '';
-    this.legend.position.set(steps.length * FloorProgress.SPACING + 8, 0);
     this.lastStepCount = steps.length;
   }
 
@@ -59,7 +63,6 @@ export class FloorProgress {
    * `textWidth.ts` for why this avoids `view.width`/`getBounds()`. */
   estimatedWidth(): number {
     if (this.lastStepCount === 0) return 0;
-    const dotsW = this.lastStepCount * FloorProgress.SPACING + 8;
-    return dotsW + estimateMonoWidth(this.legend.text, 12);
+    return this.lastStepCount * FloorProgress.SPACING + 8;
   }
 }
