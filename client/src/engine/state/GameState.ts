@@ -259,7 +259,6 @@ export class GameState {
   // The run's carry-out bag — the ONLY thing that leaves a run (design/05). Never
   // wiped by death; only ever grows, at an extraction checkpoint.
   bankedMaterials: Partial<Record<string, number>> = {};
-  extractHoldTicks = 0; // ticks INTERACT has been held at the checkpoint this attempt
 
   // Seeded dungeon mode (design/05/09, ROADMAP 1.3 wired live). All inert unless
   // `dungeonEnabled` (EngineConfig.dungeon was provided) — see SpawnSystem's dungeon
@@ -453,6 +452,8 @@ export class GameState {
       firing: false,
       interacting: false,
       wasInteracting: false,
+      confirmExtract: false,
+      confirmDescend: false,
       downed: false, // co-op downed/revive (design/05/07, ROADMAP 3.2)
       bleedoutTicks: 0,
       reviveProgressTicks: 0,

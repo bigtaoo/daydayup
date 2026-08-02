@@ -231,9 +231,16 @@ export interface PlayerActor extends Actor {
   // Stores buff ids; magnitude/kind live in the RUN_BUFFS catalogue.
   buffs: RunBuffId[];
   // This tick's INTERACT hold state (mirrors `firing`'s FIRE mirror), set by
-  // ApplyInputSystem. Read by ExtractionSystem (design/05, ROADMAP 1.4) to resolve
-  // the extraction-checkpoint hold-to-extract / tap-to-descend gesture.
+  // ApplyInputSystem. Read by PickupSystem (freshly-pressed weapon swap) and
+  // ReviveSystem (sustained channel) — no longer by ExtractionSystem, see below.
   interacting: boolean;
+  // This tick's portal-popup choice (mirrors `firing`, set by ApplyInputSystem from
+  // Button.CONFIRM_EXTRACT/CONFIRM_DESCEND). Already a one-tick pulse by construction
+  // (CommandBuilder latches then clears the bit, same as SWAP_WEAPON), so
+  // ExtractionSystem (design/05, ROADMAP 1.4) reads these directly — no edge detection
+  // needed, unlike INTERACT's continuous hold.
+  confirmExtract: boolean;
+  confirmDescend: boolean;
   // Last tick's `interacting`, owned solely by PickupSystem (design/03 weapon-swap
   // "tap INTERACT"). NOT `prevButtons`-derived: ApplyInputSystem overwrites
   // `prevButtons` with THIS tick's bitfield before PickupSystem (step 10) runs, so

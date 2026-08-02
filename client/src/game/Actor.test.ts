@@ -12,7 +12,7 @@ function healthBarOf(a: Actor): Graphics {
   return a.children[Child.HealthBar] as Graphics;
 }
 
-describe('Actor — per-enemy health bars (design/10 legibility fix, 2026-08-02)', () => {
+describe('Actor — floating health bars (design/10 legibility fix, 2026-08-02)', () => {
   it('gives every enemy a floating health bar, not just bosses', () => {
     const mob = new Actor('enemy', 12, undefined, false);
     expect(mob.children.length).toBe(4); // statusAura, skin.view, weaponGfx, healthBar
@@ -25,9 +25,10 @@ describe('Actor — per-enemy health bars (design/10 legibility fix, 2026-08-02)
     expect(healthBarOf(boss)).toBeDefined();
   });
 
-  it('gives a player actor no floating health bar (the HUD already shows theirs)', () => {
+  it('gives a player actor a floating health bar too (visible on the map, not just the HUD)', () => {
     const player = new Actor('player', 12, undefined, false);
-    expect(player.children.length).toBe(3); // statusAura, skin.view, weaponGfx — no healthBar
+    expect(player.children.length).toBe(4); // statusAura, skin.view, weaponGfx, healthBar
+    expect(healthBarOf(player)).toBeDefined();
   });
 
   it('draws a wider/taller bar for a boss than for a regular mob at the same radius', () => {

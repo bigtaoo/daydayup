@@ -3,6 +3,10 @@
  * is a no-op unless EngineConfig.floors is set (additive, no ENGINE_VERSION bump —
  * see config.ts's note); these tests cover both the floors-enabled behavior and the
  * floors-disabled regression (old configs must be byte-identical to before).
+ *
+ * The checkpoint gesture (design/10 legibility pass, ENGINE_VERSION 31) resolves from
+ * explicit one-shot `Button.CONFIRM_EXTRACT`/`CONFIRM_DESCEND` presses (a render-side
+ * portal + popup), not the original hold-to-extract/tap-to-descend INTERACT timer.
  */
 import { describe, it, expect } from 'vitest';
 import { createGameState } from '@dd/engine/state/GameState';
@@ -13,7 +17,7 @@ import { createGameEngine } from '@dd/engine/GameEngine';
 import { Button } from '@dd/engine/state/commands';
 import { makeCommand } from '@dd/engine/state/input';
 import type { Brad } from '@dd/engine/math/trig';
-import { ExtractionSystem, EXTRACT_HOLD_TICKS, PickupSystem, WinConditionSystem } from '@dd/engine/systems';
+import { ExtractionSystem, PickupSystem, WinConditionSystem } from '@dd/engine/systems';
 
 // Two floors total: floor 0 (config.waves) is NOT last (extraFloors.length === 1);
 // floor 1 (extraFloors[0]) IS last (floorIndex 1 >= extraFloors.length 1).
@@ -37,36 +41,37 @@ describe('ExtractionSystem — no-op unless floorsEnabled', () => {
     atCheckpoint(s);
     new ExtractionSystem().tick(s);
     expect(s.phase).not.toBe('gameover');
-    expect(s.extractHoldTicks).toBe(0);
     new WinConditionSystem().tick(s); // the pre-1.4 win path must still fire
     expect(s.phase).toBe('gameover');
     expect(s.winner).toBe(0);
   });
 });
 
-describe('ExtractionSystem — DESCEND (a tap: hold released before the threshold)', () => {
+describe('ExtractionSystem — DESCEND (explicit confirmDescend press)', () => {
   it('banks the floor buffer, advances the floor, and reloads its waves', () => {
     const s = createGameState(FLOORS_CFG);
     s.floorMaterials.mat_fire = 3;
     atCheckpoint(s);
     const p = s.players[0]!;
 
-    p.interacting = true;
-    new ExtractionSystem().tick(s); // holding — accumulates, does not resolve yet
-    expect(s.extractHoldTicks).toBe(1);
-    expect(s.phase).not.toBe('gameover');
-
-    p.interacting = false; // released before EXTRACT_HOLD_TICKS
+    p.confirmDescend = true;
     new ExtractionSystem().tick(s);
 
     expect(s.floorIndex).toBe(1);
     expect(s.waves).toEqual(FLOORS_CFG.floors![0]);
     expect(s.waveIndex).toBe(-1);
     expect(s.wavesExhausted).toBe(false);
-    expect(s.extractHoldTicks).toBe(0);
     expect(s.bankedMaterials.mat_fire).toBe(3);
     expect(s.floorMaterials).toEqual({});
     expect(s.events.some((e) => e.type === 'descend' && e.floorIndex === 1)).toBe(true);
+    expect(s.phase).not.toBe('gameover');
+  });
+
+  it('does not resolve while confirmDescend is unset', () => {
+    const s = createGameState(FLOORS_CFG);
+    atCheckpoint(s);
+    new ExtractionSystem().tick(s); // no popup choice pressed at all
+    expect(s.floorIndex).toBe(0);
     expect(s.phase).not.toBe('gameover');
   });
 
@@ -75,22 +80,20 @@ describe('ExtractionSystem — DESCEND (a tap: hold released before the threshol
     atCheckpoint(s);
     s.pickups.push({ id: s.nextId(), kind: 'heal', gx: s.worldW, gy: s.worldH, spawnTick: 0, alive: true });
     const p = s.players[0]!;
-    p.interacting = true;
-    new ExtractionSystem().tick(s);
-    p.interacting = false;
+    p.confirmDescend = true;
     new ExtractionSystem().tick(s);
     expect(s.pickups).toHaveLength(0);
   });
 });
 
-describe('ExtractionSystem — EXTRACT (a sustained hold to the threshold)', () => {
+describe('ExtractionSystem — EXTRACT (explicit confirmExtract press)', () => {
   it('banks the floor buffer and ends the run as a win, without advancing the floor', () => {
     const s = createGameState(FLOORS_CFG);
     s.floorMaterials.mat_ice = 2;
     atCheckpoint(s);
     const p = s.players[0]!;
-    p.interacting = true;
-    for (let i = 0; i < EXTRACT_HOLD_TICKS; i++) new ExtractionSystem().tick(s);
+    p.confirmExtract = true;
+    new ExtractionSystem().tick(s);
 
     expect(s.phase).toBe('gameover');
     expect(s.winner).toBe(0);
@@ -99,13 +102,14 @@ describe('ExtractionSystem — EXTRACT (a sustained hold to the threshold)', () 
     expect(s.events.some((e) => e.type === 'win' && e.winner === 0)).toBe(true);
   });
 
-  it('does not resolve one tick before the threshold', () => {
+  it('confirmExtract wins out over a simultaneous confirmDescend on the same tick', () => {
     const s = createGameState(FLOORS_CFG);
     atCheckpoint(s);
     const p = s.players[0]!;
-    p.interacting = true;
-    for (let i = 0; i < EXTRACT_HOLD_TICKS - 1; i++) new ExtractionSystem().tick(s);
-    expect(s.phase).not.toBe('gameover');
+    p.confirmExtract = true;
+    p.confirmDescend = true;
+    new ExtractionSystem().tick(s);
+    expect(s.phase).toBe('gameover');
   });
 });
 
@@ -115,7 +119,7 @@ describe('ExtractionSystem — the last floor auto-resolves as EXTRACT (no gestu
     s.floorIndex = 1; // the last floor (extraFloors.length === 1)
     s.floorMaterials.mat_poison = 4;
     atCheckpoint(s);
-    new ExtractionSystem().tick(s); // no INTERACT held at all
+    new ExtractionSystem().tick(s); // no popup choice needed at all
     expect(s.phase).toBe('gameover');
     expect(s.winner).toBe(0);
     expect(s.bankedMaterials.mat_poison).toBe(4);
@@ -172,23 +176,28 @@ describe('Materials tier by depth (ROADMAP 1.5)', () => {
 });
 
 describe('Integration — full engine step() drives the extraction gesture via real input', () => {
-  it('holding INTERACT at a checkpoint through createGameEngine resolves EXTRACT', () => {
+  it('pressing CONFIRM_EXTRACT at a checkpoint through createGameEngine resolves EXTRACT', () => {
     const eng = createGameEngine(FLOORS_CFG);
     atCheckpoint(eng.state); // shortcut past clearing the actual wave
-    let tick = 1;
-    for (; tick <= EXTRACT_HOLD_TICKS; tick++) {
-      eng.step([makeCommand({ owner: 0, tick, moveBrad: 0 as Brad, moveMag: 0, aimBrad: 0 as Brad, buttons: Button.INTERACT })]);
-    }
+    eng.step([makeCommand({ owner: 0, tick: 1, moveBrad: 0 as Brad, moveMag: 0, aimBrad: 0 as Brad, buttons: Button.CONFIRM_EXTRACT })]);
     expect(eng.state.phase).toBe('gameover');
     expect(eng.state.winner).toBe(0);
   });
 
-  it('tapping INTERACT (one tick, then idle) at a checkpoint resolves DESCEND', () => {
+  it('pressing CONFIRM_DESCEND at a checkpoint resolves DESCEND', () => {
     const eng = createGameEngine(FLOORS_CFG);
     atCheckpoint(eng.state);
-    eng.step([makeCommand({ owner: 0, tick: 1, moveBrad: 0 as Brad, moveMag: 0, aimBrad: 0 as Brad, buttons: Button.INTERACT })]);
-    eng.step([]); // idle-hold releases INTERACT
+    eng.step([makeCommand({ owner: 0, tick: 1, moveBrad: 0 as Brad, moveMag: 0, aimBrad: 0 as Brad, buttons: Button.CONFIRM_DESCEND })]);
     expect(eng.state.floorIndex).toBe(1);
     expect(eng.state.phase).not.toBe('gameover');
+  });
+
+  it('a single-tick press only resolves once — the next idle tick does nothing further', () => {
+    const eng = createGameEngine(FLOORS_CFG);
+    atCheckpoint(eng.state);
+    eng.step([makeCommand({ owner: 0, tick: 1, moveBrad: 0 as Brad, moveMag: 0, aimBrad: 0 as Brad, buttons: Button.CONFIRM_DESCEND })]);
+    expect(eng.state.floorIndex).toBe(1);
+    eng.step([]); // idle — no repeated descend
+    expect(eng.state.floorIndex).toBe(1);
   });
 });

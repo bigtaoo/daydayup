@@ -229,6 +229,13 @@ RoomPiece = {
 
 `solids` are integer-grid AABBs → converted to `Fp` bounds on load. This is the schema `07` said it needed and left to `09`.
 
+`exits` is still not read by the sim's own traversal (room-to-room movement is an automatic
+teleport to the next room's spawn on clear, never "walk through a door" — confirmed by grep
+2026-08-02) — but `ember.ts`'s `perimeterWalls()` content helper now reads it render-side, to
+decide which edge of a room's new perimeter wall (added 2026-08-02, design/10 legibility
+pass) gets a door-shaped gap instead of a solid segment. A cosmetic consumer, not the
+"connective opening for dungeon assembly" the schema originally named — that remains open.
+
 ### Dungeon assembly (`05` hybrid) ✅ generation shipped 2026-07-24 (ROADMAP 1.3, additive — no `ENGINE_VERSION` bump)
 
 ⟂ The core divergence from funny. Instead of one scripted level, a **seeded layout stitches hand-authored pieces**. `world/dungeon.ts` implements `DungeonConfig` + the pure `generateFloor(config, floorIndex, roomgenPrng, library)`: draws a room count within `roomsPerFloor`, then that many normal pieces from the `pieceTags`-matched pool, appending the floor's capstone (`extractionPieceId`, or `bossPieceId` on the last floor) — same "pure, unwired" shape as `content/rooms.ts roomGeometry` (1.2). `GameState` gained the `roomgenPrng` stream this doc's schema always named (additive — nothing draws from it yet). `world/rooms/ember.ts` is a first hand-authored library (4 normal + 1 extraction + 1 boss piece, tagged `'ember'`). **Both `layout: 'linear'` and `'branching'` are implemented** (`world/dungeon.ts`, `GameState.ts`, `SpawnSystem.ts`, `dungeon.test.ts`). **Also since ROADMAP 1.4/1.5 (no longer remaining):** a generated floor IS placed into a live run — mutable room geometry, room-to-room transitions, and the encounter `WaveScript` driving spawns are all wired end-to-end, together with the extraction checkpoint and materials banking, into a real, testable dungeon loop (this is what the shipped client actually runs — ROADMAP Phase 1 is fully closed).

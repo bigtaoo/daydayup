@@ -86,8 +86,10 @@ const DUN_CFG: EngineConfig = {
 
 const idle = (tick: number) =>
   makeCommand({ owner: 0, tick, moveBrad: 0 as Brad, moveMag: 0, aimBrad: 0 as Brad, buttons: 0 });
-const interact = (tick: number) =>
-  makeCommand({ owner: 0, tick, moveBrad: 0 as Brad, moveMag: 0, aimBrad: 0 as Brad, buttons: Button.INTERACT });
+// Portal-popup DESCEND choice (design/10 legibility pass, ENGINE_VERSION 31) — a
+// one-shot press, not a held key; resolves the very tick it's pressed.
+const confirmDescend = (tick: number) =>
+  makeCommand({ owner: 0, tick, moveBrad: 0 as Brad, moveMag: 0, aimBrad: 0 as Brad, buttons: Button.CONFIRM_DESCEND });
 
 describe('Dungeon mode — no-op unless a `dungeon` config is provided', () => {
   it('a plain config never enters a room, never draws roomgenPrng, keeps its static geometry', () => {
@@ -159,7 +161,7 @@ describe('Dungeon mode — a cleared room advances to the next, geometry swappin
 });
 
 describe('Dungeon mode — DESCEND generates the next floor', () => {
-  it('a tap at the floor-0 checkpoint banks, advances the floor index, and regenerates', () => {
+  it('a CONFIRM_DESCEND press at the floor-0 checkpoint banks, advances the floor index, and regenerates', () => {
     const eng = createGameEngine(DUN_CFG);
     const s = eng.state;
     s.floorMaterials.mat_fire = 2; // pretend we picked up some material this floor
@@ -169,15 +171,13 @@ describe('Dungeon mode — DESCEND generates the next floor', () => {
     eng.step([idle(3)]); // checkpoint (wavesExhausted)
     expect(s.wavesExhausted).toBe(true);
 
-    eng.step([interact(4)]); // hold one tick
-    expect(s.extractHoldTicks).toBe(1);
-    eng.step([idle(5)]); // release before the threshold → DESCEND
+    eng.step([confirmDescend(4)]); // one-shot press — resolves immediately
     expect(s.floorIndex).toBe(1);
     expect(s.roomIndex).toBe(-1); // marked for regeneration
     expect(s.bankedMaterials.mat_fire).toBe(2); // floor buffer banked
     expect(s.phase).not.toBe('gameover');
 
-    eng.step([idle(6)]); // SpawnSystem generates floor 1 and loads its first room
+    eng.step([idle(5)]); // SpawnSystem generates floor 1 and loads its first room
     expect(s.roomIndex).toBe(0);
     expect(s.floorStages.length).toBe(2);
     expect(s.floorStages[1]![0]!.role).toBe('boss'); // floor 1 is the last → boss capstone
@@ -192,10 +192,9 @@ describe('Dungeon mode — the last floor auto-extracts (no descend option)', ()
     eng.step([idle(1)]);
     eng.step([idle(2)]);
     eng.step([idle(3)]);
-    eng.step([interact(4)]);
-    eng.step([idle(5)]);
+    eng.step([confirmDescend(4)]);
     // Floor 1 (last): normal → boss capstone (enemy-free in TEST_LIB) → auto-extract.
-    for (let t = 6; t <= 12 && s.phase !== 'gameover'; t++) eng.step([idle(t)]);
+    for (let t = 5; t <= 11 && s.phase !== 'gameover'; t++) eng.step([idle(t)]);
     expect(s.floorIndex).toBe(1);
     expect(s.phase).toBe('gameover');
     expect(s.winner).toBe(0);

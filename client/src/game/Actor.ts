@@ -30,7 +30,7 @@ export class Actor extends Entity {
   private statusAura = new Graphics(); // lingering elemental aura, behind the body
   private auraMask = 0; // bitmask of the effects currently drawn (skip redraw if same)
   private auraT = 0; // aura pulse clock (render-only, ms)
-  private healthBar: Graphics | null = null; // enemies only; null for player actors (their HP is already the HUD's own bar)
+  private healthBar: Graphics | null = null; // floating hp bar above the head (both factions)
   private readonly isBoss: boolean;
   private hpRatio = -1; // last-drawn hp fraction (skip redraw if unchanged)
   private weaponKind: WeaponKind | null | undefined = undefined;
@@ -89,15 +89,15 @@ export class Actor extends Entity {
     this.weaponGfx.y = -lift;
     this.statusAura.y = -lift;
 
-    // Every enemy carries a floating health bar above its head (design/10 legibility
-    // fix, 2026-08-02: previously boss-only, so a regular mob's damage state — and a
-    // poison/burn melt — was invisible without reading the HUD). A boss's is drawn
-    // bigger/further out (setHealth) so it still reads as the more prominent threat.
-    if (faction === 'enemy') {
-      this.healthBar = new Graphics();
-      this.healthBar.y = -lift - radiusPx * (boss ? 1.7 : 1.3);
-      this.addChild(this.healthBar);
-    }
+    // Every actor carries a floating health bar above its head (design/10 legibility
+    // fix, 2026-08-02 for enemies: previously boss-only, so a regular mob's damage
+    // state — and a poison/burn melt — was invisible without reading the HUD; extended
+    // to the player 2026-08-02 so hp is readable on the map itself, not just the corner
+    // HUD). A boss's is drawn bigger/further out (setHealth) so it still reads as the
+    // more prominent threat.
+    this.healthBar = new Graphics();
+    this.healthBar.y = -lift - radiusPx * (boss ? 1.7 : 1.3);
+    this.addChild(this.healthBar);
   }
 
   // Swap the cosmetic weapon shape to match the engine's active weapon kind. A real

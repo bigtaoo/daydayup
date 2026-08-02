@@ -13,12 +13,34 @@ import type { InputSource } from '../platform/types';
 export class CommandBuilder {
   private lastAim = 0 as Brad; // idle stick keeps the last facing (no snap-to-zero)
   private swapLatch = false;
+  private confirmExtractLatch = false;
+  private confirmDescendLatch = false;
+  // Set while the portal popup is open (PortalPrompt.isOpen) so a click on one of its
+  // buttons doesn't also register as a shot — WebInput's `leftDown` is set from a raw
+  // `canvas.addEventListener('mousedown', ...)`, independent of Pixi's own event
+  // system, so it fires regardless of what a Pixi button's hit-test consumes.
+  private fireSuppressed = false;
 
   constructor(private readonly input: InputSource) {}
 
   /** Discrete-action latch, set from Game's onSwitchWeapon routing. */
   requestSwap(): void {
     this.swapLatch = true;
+  }
+
+  /** One-shot portal-popup choices (design/10, ROADMAP 1.4 follow-up), set from
+   * PortalPrompt's onExtract/onDescend callbacks — same one-shot-latch shape as
+   * requestSwap(). */
+  requestConfirmExtract(): void {
+    this.confirmExtractLatch = true;
+  }
+
+  requestConfirmDescend(): void {
+    this.confirmDescendLatch = true;
+  }
+
+  suppressFire(active: boolean): void {
+    this.fireSuppressed = active;
   }
 
   /**
@@ -57,11 +79,19 @@ export class CommandBuilder {
     this.lastAim = aim;
 
     let buttons = 0;
-    if (inp.firing) buttons |= Button.FIRE;
-    if (inp.interacting) buttons |= Button.INTERACT; // extraction hold/tap (ROADMAP 1.4)
+    if (inp.firing && !this.fireSuppressed) buttons |= Button.FIRE;
+    if (inp.interacting) buttons |= Button.INTERACT; // revive channel / weapon-swap-on-pickup
     if (this.swapLatch) {
       buttons |= Button.SWAP_WEAPON;
       this.swapLatch = false;
+    }
+    if (this.confirmExtractLatch) {
+      buttons |= Button.CONFIRM_EXTRACT;
+      this.confirmExtractLatch = false;
+    }
+    if (this.confirmDescendLatch) {
+      buttons |= Button.CONFIRM_DESCEND;
+      this.confirmDescendLatch = false;
     }
 
     return makeCommand({ owner, tick, moveBrad, moveMag, aimBrad: aim, buttons });

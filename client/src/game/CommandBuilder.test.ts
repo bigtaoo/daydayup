@@ -113,4 +113,32 @@ describe('CommandBuilder — move/buttons', () => {
     expect(first.buttons & Button.SWAP_WEAPON).toBeTruthy();
     expect(second.buttons & Button.SWAP_WEAPON).toBeFalsy();
   });
+
+  it('requestConfirmExtract()/requestConfirmDescend() each latch for exactly one build() call', () => {
+    const input = fakeInput(IDLE_STATE);
+    const builder = new CommandBuilder(input);
+    builder.requestConfirmExtract();
+    const extractCmd = builder.build(1, 0, PLAYER_PX, CAM);
+    const afterExtract = builder.build(2, 0, PLAYER_PX, CAM);
+    expect(extractCmd.buttons & Button.CONFIRM_EXTRACT).toBeTruthy();
+    expect(afterExtract.buttons & Button.CONFIRM_EXTRACT).toBeFalsy();
+
+    builder.requestConfirmDescend();
+    const descendCmd = builder.build(3, 0, PLAYER_PX, CAM);
+    const afterDescend = builder.build(4, 0, PLAYER_PX, CAM);
+    expect(descendCmd.buttons & Button.CONFIRM_DESCEND).toBeTruthy();
+    expect(afterDescend.buttons & Button.CONFIRM_DESCEND).toBeFalsy();
+  });
+
+  it('suppressFire(true) zeroes the FIRE bit even while the input source reports firing', () => {
+    const input = fakeInput({ ...IDLE_STATE, firing: true });
+    const builder = new CommandBuilder(input);
+    builder.suppressFire(true);
+    const suppressed = builder.build(1, 0, PLAYER_PX, CAM);
+    expect(suppressed.buttons & Button.FIRE).toBeFalsy();
+
+    builder.suppressFire(false);
+    const restored = builder.build(2, 0, PLAYER_PX, CAM);
+    expect(restored.buttons & Button.FIRE).toBeTruthy();
+  });
 });

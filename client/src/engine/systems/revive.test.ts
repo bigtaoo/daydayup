@@ -38,7 +38,8 @@ function addPlayer(s: GameState, xpx: number, ypx: number): PlayerActor {
     facing: 0 as Brad, hp: 6, maxHp: 6, shield: 0, maxShield: 0, ticksSinceHit: 0,
     radius: PLAYER_BASE.radius, footprintRadius: PLAYER_BASE.footprintRadius,
     alive: true, weapon: w, weapons: [w], activeSlot: 0, buffs: [],
-    firing: false, interacting: false, wasInteracting: false, downed: false, bleedoutTicks: 0, reviveProgressTicks: 0,
+    firing: false, interacting: false, wasInteracting: false, confirmExtract: false, confirmDescend: false,
+    downed: false, bleedoutTicks: 0, reviveProgressTicks: 0,
     bandages: 0, prevButtons: 0, status: freshStatus(),
   };
   s.players.push(p);

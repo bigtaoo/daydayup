@@ -19,6 +19,12 @@ export const Button = {
   FIRE: 1 << 0,
   SWAP_WEAPON: 1 << 1,
   INTERACT: 1 << 2,
+  // One-shot portal-popup choices (design/10, ROADMAP 1.4 follow-up — replaces the
+  // original hold-to-extract/tap-to-descend INTERACT gesture with an explicit two-
+  // button choice). Same one-tick-pulse convention as SWAP_WEAPON: the render layer
+  // latches the bit for exactly one command, never held across ticks.
+  CONFIRM_EXTRACT: 1 << 3,
+  CONFIRM_DESCEND: 1 << 4,
 } as const;
 
 export interface PlayerCommand {

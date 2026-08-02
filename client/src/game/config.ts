@@ -102,6 +102,11 @@ export interface BiomePalette {
   pillarTop: number;
   wall: number;
   wallEdge: number;
+  // The full-viewport backdrop behind the room (Backdrop.ts, design/10 legibility fix
+  // 2026-08-02: a room smaller than the viewport left a plain black void around it).
+  // Deliberately darker than `ground`, not just the same fill, so the room itself
+  // still reads as a distinct rect rather than bleeding into "more floor".
+  void: number;
 }
 
 const NEUTRAL_PALETTE: BiomePalette = {
@@ -111,6 +116,7 @@ const NEUTRAL_PALETTE: BiomePalette = {
   pillarTop: CONFIG.colors.pillarTop,
   wall: CONFIG.colors.wall,
   wallEdge: CONFIG.colors.wallEdge,
+  void: mixHex(CONFIG.colors.ground, 0x000000, 0.45),
 };
 
 const BIOME_PALETTES: Record<BiomeElement, BiomePalette> = {
@@ -125,6 +131,7 @@ const BIOME_PALETTES: Record<BiomeElement, BiomePalette> = {
         pillarTop: mixHex(NEUTRAL_PALETTE.pillarTop, hex, 0.18),
         wall: mixHex(NEUTRAL_PALETTE.wall, hex, 0.14),
         wallEdge: mixHex(NEUTRAL_PALETTE.wallEdge, hex, 0.22),
+        void: mixHex(NEUTRAL_PALETTE.void, hex, 0.1),
       },
     ]),
   ) as Record<Exclude<BiomeElement, 'neutral'>, BiomePalette>),

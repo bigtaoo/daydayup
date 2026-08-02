@@ -14,6 +14,11 @@ import { createGameState } from '@dd/engine/state/GameState';
 import type { GameState } from '@dd/engine/state/GameState';
 import { Layers } from './layers';
 import { RoomBuilder } from './RoomBuilder';
+import { Backdrop } from './Backdrop';
+
+function makeRoomBuilder(layers = new Layers()): RoomBuilder {
+  return new RoomBuilder(layers, new Backdrop(layers));
+}
 
 const mocks = vi.hoisted(() => ({
   floorTex: undefined as Texture | undefined,
@@ -46,7 +51,7 @@ describe('RoomBuilder — no biome art registered (fallback)', () => {
   it('fills the ground and each wall with flat Graphics, not a TilingSprite', () => {
     mocks.floorTex = undefined;
     mocks.wallTex = undefined;
-    const rb = new RoomBuilder(new Layers());
+    const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(stateWithOneWall('ember'));
     const ground = layers.ground.children;
@@ -59,7 +64,7 @@ describe('RoomBuilder — biome art registered for this element', () => {
   it('uses a TilingSprite for the ground fill, sized to the room', () => {
     mocks.floorTex = fakeTexture(64, 64);
     mocks.wallTex = undefined;
-    const rb = new RoomBuilder(new Layers());
+    const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     const s = stateWithOneWall('ember');
     rb.build(s);
@@ -71,7 +76,7 @@ describe('RoomBuilder — biome art registered for this element', () => {
   it('uses a TilingSprite for each wall, positioned at the wall rect, plus its outline', () => {
     mocks.floorTex = undefined;
     mocks.wallTex = fakeTexture(32, 32);
-    const rb = new RoomBuilder(new Layers());
+    const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(stateWithOneWall('ember'));
     const wallSprite = layers.ground.children.find((c) => c instanceof TilingSprite) as TilingSprite | undefined;
@@ -87,7 +92,7 @@ describe('RoomBuilder — biome art registered for this element', () => {
   it('falls back to Graphics for an element with no swatch registered (e.g. neutral/poison), even with other elements loaded', () => {
     mocks.floorTex = undefined; // simulates: this call's element has no registered swatch
     mocks.wallTex = undefined;
-    const rb = new RoomBuilder(new Layers());
+    const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(stateWithOneWall(undefined)); // undefined biomeId -> 'neutral' element
     expect(layers.ground.children.some((c) => c instanceof TilingSprite)).toBe(false);
@@ -106,10 +111,12 @@ function stateWithOneObstacle(): GameState {
 
 describe('RoomBuilder — pillars (design/10 legibility fix, 2026-08-02: faux-shading)', () => {
   it('creates one Entity per obstacle, positioned at its grid coords (px round trip)', () => {
-    const rb = new RoomBuilder(new Layers());
+    const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(stateWithOneObstacle());
-    expect(layers.entities.children.length).toBe(1);
+    // The pillar plus the room's own portal (Portal.ts, design/10 legibility fix
+    // 2026-08-02) — the portal is built AFTER pillars, so index 0 is still the pillar.
+    expect(layers.entities.children.length).toBe(2);
     const pillar = layers.entities.children[0]!;
     // px -> fp -> px round trip through the grid quantizes to a fraction of a pixel
     // (same tolerance the existing wall test's `toBeCloseTo(100)` needed, just spelled
@@ -119,7 +126,7 @@ describe('RoomBuilder — pillars (design/10 legibility fix, 2026-08-02: faux-sh
   });
 
   it('gives the pillar body real drawn geometry, not a blank placeholder', () => {
-    const rb = new RoomBuilder(new Layers());
+    const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(stateWithOneObstacle());
     const pillar = layers.entities.children[0]!;
@@ -131,14 +138,15 @@ describe('RoomBuilder — pillars (design/10 legibility fix, 2026-08-02: faux-sh
   });
 
   it('adds a matching shadow to the shadow layer for each pillar', () => {
-    const rb = new RoomBuilder(new Layers());
+    const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(stateWithOneObstacle());
-    expect(layers.shadow.children.length).toBe(1);
+    // The pillar's shadow plus the portal's own (Portal.ts also calls makeShadow()).
+    expect(layers.shadow.children.length).toBe(2);
   });
 
   it('rebuilds pillars fresh on a second build() call, not appended', () => {
-    const rb = new RoomBuilder(new Layers());
+    const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(stateWithOneObstacle());
     const firstCount = layers.entities.children.length;
@@ -147,7 +155,7 @@ describe('RoomBuilder — pillars (design/10 legibility fix, 2026-08-02: faux-sh
   });
 
   it('clear() removes every pillar and its shadow', () => {
-    const rb = new RoomBuilder(new Layers());
+    const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(stateWithOneObstacle());
     rb.clear();
@@ -160,7 +168,7 @@ describe('RoomBuilder — grid overlay and rebuild', () => {
   it('always draws the grid overlay regardless of whether biome art exists', () => {
     mocks.floorTex = fakeTexture(64, 64);
     mocks.wallTex = fakeTexture(32, 32);
-    const rb = new RoomBuilder(new Layers());
+    const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(stateWithOneWall('ember'));
     // ground fill (TilingSprite) + grid (Graphics) + wall (TilingSprite) + wall edge
@@ -171,7 +179,7 @@ describe('RoomBuilder — grid overlay and rebuild', () => {
   it('clears the previous room contents on a second build() call', () => {
     mocks.floorTex = undefined;
     mocks.wallTex = undefined;
-    const rb = new RoomBuilder(new Layers());
+    const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(stateWithOneWall('ember'));
     const firstCount = layers.ground.children.length;

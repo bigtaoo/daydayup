@@ -164,12 +164,11 @@ export function serializeState(s: GameState): unknown {
       k.id, k.kind, k.gx, k.gy, k.spawnTick, k.alive,
       k.weaponId ?? '', k.buffId ?? '', k.materialId ?? '', k.qty ?? 0, k.tier ?? 0,
     ]),
-    // Extraction / materials-banking (design/05, ROADMAP 1.4/1.5). floorIndex/
-    // extractHoldTicks are plain numbers; the two material maps are sorted by key so
-    // the hash doesn't depend on Object.entries' (already-deterministic) insertion
-    // order matching between two independently-constructed-but-equal states.
+    // Extraction / materials-banking (design/05, ROADMAP 1.4/1.5). floorIndex is a
+    // plain number; the two material maps are sorted by key so the hash doesn't depend
+    // on Object.entries' (already-deterministic) insertion order matching between two
+    // independently-constructed-but-equal states.
     floorIndex: s.floorIndex,
-    extractHoldTicks: s.extractHoldTicks,
     floorMaterials: sortedEntries(s.floorMaterials),
     bankedMaterials: sortedEntries(s.bankedMaterials),
     // Dungeon-mode room cursor (ROADMAP 1.3 wired). -1 for a non-dungeon config (never

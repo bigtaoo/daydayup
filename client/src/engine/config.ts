@@ -370,8 +370,23 @@ import { BRAD_FULL } from './math/trig';
  * A new `{kind:'bandage'}` arena-only drop (`content/drops.ts`) also shifts
  * `ARENA_DROP_TABLE`'s roll weights — same divergence shape as any past drop-pool
  * growth (v28/v29's own weapon-pool entries).
+ *
+ * v31: in-run legibility pass (design/10, 2026-08-02). Three independent outcome
+ * changes:
+ * (1) `ExtractionSystem` no longer resolves the checkpoint from a hold-to-extract/
+ * tap-to-descend INTERACT timer (`EXTRACT_HOLD_TICKS`, removed along with
+ * `state.extractHoldTicks`) — it now resolves from explicit one-shot
+ * `Button.CONFIRM_EXTRACT`/`CONFIRM_DESCEND` presses (a render-side portal + popup
+ * replaces the old text prompt). Any replay that held/tapped INTERACT at a
+ * checkpoint now does nothing instead — diverges the instant it would have resolved.
+ * (2) `SpawnSystem.loadRoom` now clears `state.pickups` on every room-to-room
+ * transition within a floor (previously only on floor-to-floor DESCEND) — an
+ * uncollected drop from the room just left no longer persists into the next room.
+ * (3) `EMBER_ROOMS` (content/world/rooms/ember.ts) gained perimeter walls with door
+ * gaps on every piece (previously bare/near-empty `solids`) — existing dungeon
+ * replays now collide with geometry that wasn't there before.
  */
-export const ENGINE_VERSION = 30;
+export const ENGINE_VERSION = 31;
 
 // ── Two-pool health tuning (design/07; final values are 07 "to design") ──────────
 // Whole ticks @30Hz. Shield regen is an idle timer, not a heal: after taking ANY

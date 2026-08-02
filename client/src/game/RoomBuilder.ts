@@ -5,6 +5,8 @@ import { Entity } from './Entity';
 import { biomePalette, biomeElementOf, type BiomePalette } from './config';
 import { fpToPx } from './coords';
 import { getFloorTexture, getWallTexture } from '../render/biomeTiles';
+import type { Backdrop } from './Backdrop';
+import { Portal } from './Portal';
 
 /**
  * Render-side mirror of the engine's dungeon/arena room geometry (design/08 "render
@@ -15,8 +17,15 @@ import { getFloorTexture, getWallTexture } from '../render/biomeTiles';
  */
 export class RoomBuilder {
   private readonly pillars: Entity[] = [];
+  private portal: Portal | null = null;
+  // World-px position of the current room's portal (its center), or null before the
+  // first room ever loads. Game reads this to gate the popup's proximity check.
+  portalPx: { x: number; y: number } | null = null;
 
-  constructor(private readonly layers: Layers) {}
+  constructor(
+    private readonly layers: Layers,
+    private readonly backdrop: Backdrop,
+  ) {}
 
   /** Rebuild the ground, AABB walls, and pillars for the CURRENTLY LOADED room. */
   build(s: GameState): void {
@@ -32,6 +41,7 @@ export class RoomBuilder {
     const element = biomeElementOf(s.dungeonConfig?.biomeId);
     const floorTex = getFloorTexture(element);
     const wallTex = getWallTexture(element);
+    this.backdrop.setPalette(palette);
 
     // Ground fill — a real tileable swatch (render/biomeTiles.ts) once one's been
     // generated for this element, else the same flat palette-colour fill as before.
@@ -74,6 +84,27 @@ export class RoomBuilder {
     }
 
     this.buildPillars(s, palette);
+    this.buildPortal(w, h);
+  }
+
+  /** One portal per room, centered — hidden until `setPortalOpen(true)` (Game, gated
+   *  on the same checkpoint condition PortalPrompt uses). Rebuilt (not just repositioned)
+   *  per room so a stale reference never survives a room swap. */
+  private buildPortal(w: number, h: number): void {
+    this.portal?.shadow?.destroy();
+    this.portal?.destroy();
+    const portal = new Portal();
+    this.layers.entities.addChild(portal);
+    this.layers.shadow.addChild(portal.shadow!);
+    portal.place(w / 2, h / 2);
+    this.portal = portal;
+    this.portalPx = { x: w / 2, y: h / 2 };
+  }
+
+  /** Toggle the current room's portal visibility — open once the checkpoint condition
+   *  is met (design/05 "the portal opens" — generalized to every checkpoint room). */
+  setPortalOpen(open: boolean): void {
+    this.portal?.setOpen(open);
   }
 
   /** Round pillars for the current room, from the engine's obstacle solids. Tall
@@ -120,5 +151,9 @@ export class RoomBuilder {
       p.destroy();
     }
     this.pillars.length = 0;
+    this.portal?.shadow?.destroy();
+    this.portal?.destroy();
+    this.portal = null;
+    this.portalPx = null;
   }
 }

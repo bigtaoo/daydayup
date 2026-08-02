@@ -65,6 +65,7 @@ export class Scene {
       }
       v.setWeaponKind(p.weapon?.spec.kind ?? null, p.weapon?.spec.damageType, p.weapon?.spec.name);
       v.setStatus(p.status);
+      v.setHealth(p.hp, p.maxHp);
       seen.add(p.id);
     }
 

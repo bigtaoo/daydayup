@@ -10,7 +10,7 @@ export { StatusEffectSystem } from './StatusEffectSystem';
 export { DeathDropsSystem } from './DeathDropsSystem';
 export { PickupSystem } from './PickupSystem';
 export { SpawnSystem } from './SpawnSystem';
-export { ExtractionSystem, EXTRACT_HOLD_TICKS } from './ExtractionSystem';
+export { ExtractionSystem } from './ExtractionSystem';
 export { ReviveSystem } from './ReviveSystem';
 export { WinConditionSystem } from './WinConditionSystem';
 export { ZoneSystem } from './ZoneSystem';

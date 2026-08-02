@@ -66,9 +66,9 @@ export const en = {
     allyLine: 'Ally ({skin})   {status}',
     allyDowned: 'DOWNED — bleedout {seconds}s',
     allyHp: 'HP {hp}/{maxHp}',
-    checkpointTitle: 'FLOOR CLEARED — CHECKPOINT',
-    checkpointExtract: 'HOLD [E] to EXTRACT: bank {pending} materials now & end the run safely',
-    checkpointDescend: 'TAP [E] to DESCEND to Floor {floor}: riskier, but keeps you playing',
+    portalTitle: 'FLOOR CLEARED — a portal has opened',
+    portalExtract: 'Bank & Extract ({pending} materials)',
+    portalDescend: 'Descend to Floor {floor}',
   },
   auth: {
     title: 'ACCOUNT',

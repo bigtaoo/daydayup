@@ -212,6 +212,13 @@ export class SpawnSystem {
     state.worldW = toFpGrid(room.sizeGrid.w);
     state.worldH = toFpGrid(room.sizeGrid.h);
 
+    // Room-to-room movement is an automatic teleport to the next room's spawn (never
+    // "walk out a door"), so an uncollected drop from the room just left can never be
+    // reached again — and left in place it renders at a stale world position that may
+    // now sit outside the new (possibly smaller) room's bounds entirely. Same rule
+    // ExtractionSystem.resolveDescend already applies on floor-to-floor.
+    state.pickups.length = 0;
+
     // Teleport each player onto the room's player spawn (co-op players share spawn 0
     // if the room authored fewer points than there are players — single-player today).
     state.players.forEach((p, i) => {

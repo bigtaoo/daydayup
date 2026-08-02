@@ -67,9 +67,9 @@ export const zh: Translations<typeof en> = {
     allyLine: '队友（{skin}）   {status}',
     allyDowned: '倒地 — {seconds}秒后流血过多',
     allyHp: '生命 {hp}/{maxHp}',
-    checkpointTitle: '楼层已清空 — 检查点',
-    checkpointExtract: '长按 [E] 撤离：立即存入 {pending} 份材料并安全结束本轮',
-    checkpointDescend: '轻按 [E] 下降至第 {floor} 层：风险更高，但可继续游玩',
+    portalTitle: '楼层已清空 — 传送门已开启',
+    portalExtract: '存入并撤离（{pending} 份材料）',
+    portalDescend: '下降至第 {floor} 层',
   },
   auth: {
     title: '账户',

@@ -4,6 +4,7 @@ import {
   hashState,
   SKIN_DEFS,
   PLAYER_BASE,
+  EMBER_DUNGEON,
   type GameEngine,
   type GameEvent,
   type GameState,
@@ -41,6 +42,8 @@ import { CommandBuilder } from './CommandBuilder';
 import { AllyController } from './AllyController';
 import { EventReactor } from './EventReactor';
 import { RoomBuilder } from './RoomBuilder';
+import { Backdrop } from './Backdrop';
+import { PortalPrompt } from './PortalPrompt';
 import { RunOutcome } from './RunOutcome';
 import { parseGameQueryParams } from './gameQueryParams';
 import { fpToPx, bradToRad } from './coords';
@@ -56,6 +59,11 @@ import type { AudioBus, InputCanvas, InputSource } from '../platform/types';
 const SEED_BASE = 0xda1d; // per-run seed = base + run index (deterministic, no Date)
 const SIM_DT_MS = 1000 / 30; // fixed sim step: the engine runs at 30 Hz (design/06)
 const MAX_STEPS = 5; // catch-up cap per render frame → no spiral of death
+// How close (world px) the player must stand to the portal for PortalPrompt's popup to
+// appear (design/10 legibility fix, 2026-08-02) — wide enough to reach comfortably
+// before the portal's own footprint, narrow enough that it doesn't show while still
+// crossing the room.
+const PORTAL_PROMPT_RADIUS_PX = 90;
 
 // Render-side run phases (design/10). The engine only knows idle/playing/gameover;
 // the main menu (the boot front door), the forge/loadout outpost (the between-run hub,
@@ -100,11 +108,13 @@ export class Game {
   private loginScreen!: LoginScreen;
   private settingsScreen = new Settings();
   private pauseMenu = new PauseMenu();
+  private readonly portalPrompt = new PortalPrompt();
   // Settings can be opened from the main menu, the forge, OR the in-run pause menu
   // (design/10); this is which phase the settings screen's BACK button returns to. Set
   // right before each openSettings()/openSettingsFromPause() call, never read otherwise.
   private settingsReturnPhase: 'menu' | 'forge' | 'paused' = 'menu';
-  private readonly roomBuilder = new RoomBuilder(this.layers);
+  private readonly backdrop = new Backdrop(this.layers);
+  private readonly roomBuilder = new RoomBuilder(this.layers, this.backdrop);
   // Win/lose/placement screens (design/15), extracted into RunOutcome 2026-07-28 — `this`
   // is its host for the score/meta/phase/screen reactions (see that file's doc comment).
   private readonly runOutcome = new RunOutcome(this);
@@ -282,6 +292,11 @@ export class Game {
     this.pauseMenu.onResume = () => this.resume();
     this.pauseMenu.onSettings = () => this.openSettingsFromPause();
     this.pauseMenu.onQuit = () => this.quitRun();
+    // Portal popup (design/10 legibility fix, 2026-08-02): a button click is the
+    // player's explicit checkpoint choice — routes to CommandBuilder's one-shot
+    // latches, same shape as onSwitchWeapon → builder.requestSwap() below.
+    this.portalPrompt.onExtract = () => this.builder.requestConfirmExtract();
+    this.portalPrompt.onDescend = () => this.builder.requestConfirmDescend();
 
     this.input.attach(this.app.canvas as unknown as InputCanvas);
     // Discrete actions route through the shell: during a run they latch a one-tick
@@ -327,8 +342,10 @@ export class Game {
   // — see roomBuilder.build() calls in beginArenaDemoRun / EventReactorHost.onRoomEnter.
 
   private buildHud() {
+    this.backdrop.resize(this.screenSize().w, this.screenSize().h);
     this.hud.build(this.layers, this.screenSize());
-    this.hudView.addChild(this.hud.view, this.touchControlsView.view);
+    this.portalPrompt.reposition(this.screenSize());
+    this.hudView.addChild(this.hud.view, this.touchControlsView.view, this.portalPrompt.view);
     this.layers.ui.addChild(this.hudView);
 
     // Settings entry (design/10) — only shown in the forge phase (showForge/beginRun).
@@ -416,7 +433,9 @@ export class Game {
   // wired to anything.
   private relayoutViewport() {
     const { w, h } = this.screenSize();
+    this.backdrop.resize(w, h);
     this.hud.reposition({ w, h });
+    this.portalPrompt.reposition({ w, h });
     if (this.phase === 'forge') this.settingsBtn.view.position.set(w - 130, h - 50);
     switch (this.phase) {
       case 'menu': this.mainMenu.show(w, h); break;
@@ -1011,6 +1030,23 @@ export class Game {
       showAlly: this.coop || this.arenaDemo,
       allySkinId: this.allySkinId(),
     });
+
+    // Portal popup (design/10 legibility fix, 2026-08-02) — replaces the old E-key
+    // text prompt. "Checkpoint eligible" is shared between the portal's own open/
+    // closed visual (RoomBuilder) and the popup's proximity gate, computed once here
+    // so neither has to duplicate the other's half of the condition.
+    const floor = s.floorIndex + 1;
+    const isLastFloor = floor >= EMBER_DUNGEON.floorCount;
+    const checkpointEligible =
+      !s.zoneEnabled && s.phase !== 'gameover' && s.wavesExhausted && s.enemies.length === 0 && !isLastFloor;
+    this.roomBuilder.setPortalOpen(checkpointEligible);
+
+    const p = s.players[this.localOwner];
+    const portalPx = this.roomBuilder.portalPx;
+    const nearPortal =
+      !!p && !!portalPx && Math.hypot(fpToPx(p.gx) - portalPx.x, fpToPx(p.gy) - portalPx.y) <= PORTAL_PROMPT_RADIUS_PX;
+    this.portalPrompt.update(s, checkpointEligible && nearPortal);
+    this.builder.suppressFire(this.portalPrompt.isOpen);
   }
 
   // Rising-edge fire → confirm (start/restart) on non-playing screens.
