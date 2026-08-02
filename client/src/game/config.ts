@@ -82,7 +82,7 @@ function mixHex(base: number, tint: number, amount: number): number {
   return (mix(br, tr) << 16) | (mix(bg, tg) << 8) | mix(bb, tb);
 }
 
-type BiomeElement = 'fire' | 'ice' | 'lightning' | 'poison' | 'neutral';
+export type BiomeElement = 'fire' | 'ice' | 'lightning' | 'poison' | 'neutral';
 
 // 'neutral' has no element hue to hint at — it's not in this table, so it stays
 // EXACTLY today's existing palette (below), byte-identical, never run through
@@ -139,6 +139,13 @@ const BIOME_ID_TO_ELEMENT: Record<string, BiomeElement> = {
 
 export function biomePalette(biomeId: string | undefined): BiomePalette {
   return BIOME_PALETTES[biomeId ? (BIOME_ID_TO_ELEMENT[biomeId] ?? 'neutral') : 'neutral'];
+}
+
+/** Same `biomeId` → element resolution as `biomePalette`, exposed on its own so
+ * `render/biomeTiles.ts` can pick a `floor_${element}`/`wall_${element}` texture key
+ * without RoomBuilder needing its own copy of `BIOME_ID_TO_ELEMENT`. */
+export function biomeElementOf(biomeId: string | undefined): BiomeElement {
+  return biomeId ? (BIOME_ID_TO_ELEMENT[biomeId] ?? 'neutral') : 'neutral';
 }
 
 // Rarity → border/ornament colour (design/14 白蓝紫橙金). The engine owns only the

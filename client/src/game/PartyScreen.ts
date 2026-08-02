@@ -4,6 +4,7 @@ import { TextInputOverlay } from './ui/TextInputOverlay';
 import * as partyApi from '../net/party';
 import type { PartyInfo } from '../net/party';
 import { getPlayerId } from '../net/identity';
+import { getUiTexture } from '../render/uiSkins';
 
 /** The party network calls this screen needs — injected (default: the real
  * `net/party.ts` functions) so tests can drive it with a fake, same DI convention as
@@ -71,14 +72,19 @@ export class PartyScreen {
 
     this.createBtn = new Button('CREATE PARTY', { w: 200, h: 44, fontSize: 15 });
     this.createBtn.onTap = () => void this.doCreate();
+    this.createBtn.setIcon(getUiTexture('icon_party_create'));
     this.joinBtn = new Button('JOIN WITH CODE', { w: 200, h: 44, fontSize: 15 });
     this.joinBtn.onTap = () => this.openJoinInput();
+    this.joinBtn.setIcon(getUiTexture('icon_party_join'));
     this.startBtn = new Button('START MATCHING', { w: 200, h: 44, fontSize: 15, color: 0x2f855a });
     this.startBtn.onTap = () => void this.doStart();
+    this.startBtn.setIcon(getUiTexture('icon_play'));
     this.leaveBtn = new Button('LEAVE PARTY', { w: 160, h: 36, fontSize: 13, color: 0x742a2a });
     this.leaveBtn.onTap = () => void this.doLeave();
+    this.leaveBtn.setIcon(getUiTexture('icon_party_leave'));
     this.backBtn = new Button('BACK', { w: 120, h: 32, fontSize: 13 });
     this.backBtn.onTap = () => this.onBack?.();
+    this.backBtn.setIcon(getUiTexture('icon_back'));
 
     this.view.addChild(
       this.panel.view, this.title, this.codeText, this.membersText, this.statusText,

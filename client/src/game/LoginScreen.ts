@@ -3,6 +3,7 @@ import { Panel, Button } from './ui/widgets';
 import { TextInputOverlay } from './ui/TextInputOverlay';
 import * as authApi from '../net/auth';
 import { getSession, setSession, type Session } from '../net/session';
+import { getUiTexture } from '../render/uiSkins';
 
 /** The auth network calls this screen needs — injected (default: the real
  * `net/auth.ts` functions), same DI convention as PartyScreen's `PartyApi`. */
@@ -61,14 +62,19 @@ export class LoginScreen {
 
     this.loginBtn = new Button('LOGIN', { w: 200, h: 44, fontSize: 15 });
     this.loginBtn.onTap = () => this.beginLogin();
+    this.loginBtn.setIcon(getUiTexture('icon_account'));
     this.registerBtn = new Button('REGISTER', { w: 200, h: 44, fontSize: 15, color: 0x2f855a });
     this.registerBtn.onTap = () => this.beginRegister();
+    this.registerBtn.setIcon(getUiTexture('icon_register'));
     this.changePasswordBtn = new Button('CHANGE PASSWORD', { w: 200, h: 40, fontSize: 13 });
     this.changePasswordBtn.onTap = () => this.beginChangePassword();
+    this.changePasswordBtn.setIcon(getUiTexture('icon_password'));
     this.logoutBtn = new Button('LOG OUT', { w: 160, h: 36, fontSize: 13, color: 0x742a2a });
     this.logoutBtn.onTap = () => void this.doLogout();
+    this.logoutBtn.setIcon(getUiTexture('icon_logout'));
     this.backBtn = new Button('BACK', { w: 120, h: 32, fontSize: 13 });
     this.backBtn.onTap = () => this.onBack?.();
+    this.backBtn.setIcon(getUiTexture('icon_back'));
 
     this.view.addChild(
       this.panel.view, this.title, this.whoText, this.statusText,

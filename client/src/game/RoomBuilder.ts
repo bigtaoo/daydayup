@@ -1,9 +1,10 @@
-import { Graphics } from 'pixi.js';
+import { Graphics, TilingSprite } from 'pixi.js';
 import type { GameState } from '@dd/engine';
 import type { Layers } from './layers';
 import { Entity } from './Entity';
-import { biomePalette, type BiomePalette } from './config';
+import { biomePalette, biomeElementOf, type BiomePalette } from './config';
 import { fpToPx } from './coords';
+import { getFloorTexture, getWallTexture } from '../render/biomeTiles';
 
 /**
  * Render-side mirror of the engine's dungeon/arena room geometry (design/08 "render
@@ -28,24 +29,49 @@ export class RoomBuilder {
     // biomeId (undefined outside dungeon mode, e.g. flat EngineConfig.floors/PvP
     // arena, which fall back to today's neutral palette unchanged).
     const palette = biomePalette(s.dungeonConfig?.biomeId);
+    const element = biomeElementOf(s.dungeonConfig?.biomeId);
+    const floorTex = getFloorTexture(element);
+    const wallTex = getWallTexture(element);
 
-    const g = new Graphics();
-    g.rect(0, 0, w, h).fill({ color: palette.ground });
+    // Ground fill — a real tileable swatch (render/biomeTiles.ts) once one's been
+    // generated for this element, else the same flat palette-colour fill as before.
+    if (floorTex) {
+      const floor = new TilingSprite({ texture: floorTex, width: w, height: h });
+      this.layers.ground.addChild(floor);
+    } else {
+      const groundG = new Graphics();
+      groundG.rect(0, 0, w, h).fill({ color: palette.ground });
+      this.layers.ground.addChild(groundG);
+    }
+
+    // Grid overlay — always drawn (readability aid, independent of ground art).
+    const grid = new Graphics();
     const step = 64;
-    for (let x = 0; x <= w; x += step) g.moveTo(x, 0).lineTo(x, h);
-    for (let y = 0; y <= h; y += step) g.moveTo(0, y).lineTo(w, y);
-    g.stroke({ color: palette.gridLine, width: 1 });
+    for (let x = 0; x <= w; x += step) grid.moveTo(x, 0).lineTo(x, h);
+    for (let y = 0; y <= h; y += step) grid.moveTo(0, y).lineTo(w, y);
+    grid.stroke({ color: palette.gridLine, width: 1 });
+    this.layers.ground.addChild(grid);
 
-    // AABB walls (ROADMAP 1.2 — finally drawn): filled tiles with an outline so the
-    // solid collision geometry reads at a glance.
+    // AABB walls (ROADMAP 1.2 — finally drawn): a tiled swatch + outline once wall art
+    // exists for this element, else the same flat fill + outline as before.
     for (const wall of s.walls) {
       const wx = fpToPx(wall.x);
       const wy = fpToPx(wall.y);
       const ww = fpToPx(wall.w);
       const wh = fpToPx(wall.h);
-      g.rect(wx, wy, ww, wh).fill({ color: palette.wall }).stroke({ color: palette.wallEdge, width: 2 });
+      if (wallTex) {
+        const wallSprite = new TilingSprite({ texture: wallTex, width: ww, height: wh });
+        wallSprite.position.set(wx, wy);
+        this.layers.ground.addChild(wallSprite);
+        const edge = new Graphics();
+        edge.rect(wx, wy, ww, wh).stroke({ color: palette.wallEdge, width: 2 });
+        this.layers.ground.addChild(edge);
+      } else {
+        const wallG = new Graphics();
+        wallG.rect(wx, wy, ww, wh).fill({ color: palette.wall }).stroke({ color: palette.wallEdge, width: 2 });
+        this.layers.ground.addChild(wallG);
+      }
     }
-    this.layers.ground.addChild(g);
 
     this.buildPillars(s, palette);
   }
