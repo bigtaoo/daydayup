@@ -31,6 +31,9 @@ export const it: Translations<typeof en> = {
     autoAimOn: 'MIRA AUTO: ON',
     autoAimOff: 'MIRA AUTO: OFF',
     language: 'LINGUA: {name}',
+    controlLayout: 'COMANDI: {mode}',
+    controlLayoutStandard: 'STANDARD',
+    controlLayoutMirrored: 'MANCINO',
     back: 'INDIETRO',
   },
   forge: {
@@ -95,6 +98,12 @@ export const it: Translations<typeof en> = {
     ally: {
       tag: 'ALLEATO · {skin}',
       downed: 'A TERRA {seconds}s',
+      reviving: 'RIANIMAZIONE {pct}%',
+    },
+    downed: {
+      title: 'SEI A TERRA',
+      bleedout: 'Dissanguamento — {seconds}s rimasti',
+      reviving: 'RIANIMAZIONE IN CORSO…',
     },
     portalTitle: 'PIANO RIPULITO — un portale si è aperto',
     portalExtract: 'Deposita ed estrai ({pending} materiali)',
@@ -142,6 +151,13 @@ export const it: Translations<typeof en> = {
     tutorial: 'TUTORIAL',
     recommended: 'NUOVO QUI?',
     back: '← MENU',
+  },
+  pvpPreview: {
+    title: 'PARTITA PVP',
+    map: 'Mappa: {name} ({rooms} stanze)',
+    fairnessNote: 'Statistiche scalate ×{factor} per il PvP — l’equipaggiamento permanente non viene mai portato.',
+    queue: 'CERCA',
+    back: 'INDIETRO',
   },
   matchmaking: {
     searching: 'Ricerca di una partita…',

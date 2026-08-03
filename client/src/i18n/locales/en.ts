@@ -30,6 +30,9 @@ export const en = {
     autoAimOn: 'AUTO-AIM: ON',
     autoAimOff: 'AUTO-AIM: OFF',
     language: 'LANGUAGE: {name}',
+    controlLayout: 'CONTROLS: {mode}',
+    controlLayoutStandard: 'STANDARD',
+    controlLayoutMirrored: 'LEFT-HANDED',
     back: 'BACK',
   },
   forge: {
@@ -96,6 +99,12 @@ export const en = {
     ally: {
       tag: 'ALLY · {skin}',
       downed: 'DOWNED {seconds}s',
+      reviving: 'REVIVING {pct}%',
+    },
+    downed: {
+      title: 'YOU ARE DOWN',
+      bleedout: 'Bleeding out — {seconds}s left',
+      reviving: 'BEING REVIVED…',
     },
     portalTitle: 'FLOOR CLEARED — a portal has opened',
     portalExtract: 'Bank & Extract ({pending} materials)',
@@ -143,6 +152,13 @@ export const en = {
     tutorial: 'TUTORIAL',
     recommended: 'NEW HERE?',
     back: '← MENU',
+  },
+  pvpPreview: {
+    title: 'PVP MATCH',
+    map: 'Map: {name} ({rooms} rooms)',
+    fairnessNote: 'Stats scaled ×{factor} for PvP — persistent gear never carries in.',
+    queue: 'QUEUE',
+    back: 'BACK',
   },
   matchmaking: {
     searching: 'Finding a match…',

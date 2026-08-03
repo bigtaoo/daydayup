@@ -1,7 +1,11 @@
 import { Container, Text } from 'pixi.js';
-import type { SettingsState } from '../../settings';
+import type { ControlLayout, SettingsState } from '../../settings';
 import { Panel, Slider, Button } from '../ui/widgets';
 import { t, setLocale, LOCALES, type Locale } from '../../i18n';
+
+function nextControlLayout(current: ControlLayout): ControlLayout {
+  return current === 'standard' ? 'mirrored' : 'standard';
+}
 
 /** Display name for the LANGUAGE toggle — always shown in that language's own name
  * (not translated), same convention most apps use for a language picker. */
@@ -44,12 +48,15 @@ export class Settings {
   private musicSlider: Slider;
   private muteBtn: Button;
   private languageBtn: Button;
+  private controlLayoutBtn: Button;
   private backBtn: Button;
 
   onChange: ((s: SettingsState) => void) | null = null;
   onBack: (() => void) | null = null;
 
-  private state: SettingsState = { master: 1, sfx: 0.5, music: 0.5, muted: false, locale: 'en' };
+  private state: SettingsState = {
+    master: 1, sfx: 0.5, music: 0.5, muted: false, locale: 'en', controlLayout: 'standard',
+  };
 
   constructor() {
     this.title = new Text({ text: t('settings.title'), style: { fill: 0xf7fafc, fontSize: 30, fontWeight: 'bold', fontFamily: 'sans-serif' } });
@@ -83,6 +90,16 @@ export class Settings {
       this.update({ ...this.state, locale: next });
     };
 
+    // Left-handed control-layout toggle (design/10 open question) — same tap-to-cycle
+    // pattern as languageBtn; only meaningfully affects touch play (TouchControls'
+    // stick/button geometry), but lives here rather than being hidden behind a touch-
+    // only check, since a desktop player may still be setting this up for later.
+    this.controlLayoutBtn = new Button('', { w: 200, h: 34 });
+    this.controlLayoutBtn.onTap = () => {
+      const next = nextControlLayout(this.state.controlLayout);
+      this.update({ ...this.state, controlLayout: next });
+    };
+
     this.backBtn = new Button(t('settings.back'), { w: 120, h: 34 });
     this.backBtn.onTap = () => this.onBack?.();
 
@@ -91,7 +108,7 @@ export class Settings {
       this.masterLabel, this.masterSlider.view,
       this.sfxLabel, this.sfxSlider.view,
       this.musicLabel, this.musicSlider.view,
-      this.muteBtn.view, this.languageBtn.view, this.backBtn.view,
+      this.muteBtn.view, this.languageBtn.view, this.controlLayoutBtn.view, this.backBtn.view,
     );
     this.view.eventMode = 'static';
     this.view.visible = false;
@@ -119,6 +136,8 @@ export class Settings {
     this.musicLabel.text = `${t('settings.music').padEnd(9)}${pct(this.state.music)}`;
     this.muteBtn.setText(this.state.muted ? t('settings.unmute') : t('settings.mute'));
     this.languageBtn.setText(t('settings.language', { name: LOCALE_NAMES[this.state.locale] }));
+    const modeKey = this.state.controlLayout === 'mirrored' ? 'settings.controlLayoutMirrored' : 'settings.controlLayoutStandard';
+    this.controlLayoutBtn.setText(t('settings.controlLayout', { mode: t(modeKey) }));
   }
 
   show(w: number, h: number, s: SettingsState) {
@@ -139,6 +158,8 @@ export class Settings {
       y += 70;
     }
     this.languageBtn.view.position.set(cx - 80, y + 10);
+    y += 44;
+    this.controlLayoutBtn.view.position.set(cx - 100, y + 10);
     y += 44;
     this.muteBtn.view.position.set(cx - 130, y + 10);
     this.backBtn.view.position.set(cx + 10, y + 10);

@@ -28,7 +28,12 @@ export class TouchControls {
   onSwitchWeapon: ((slot: number) => void) | null = null;
 
   private w = 0;
+  private h = 0;
   private stickRadius = 1;
+  // design/10 open question ("control layout … left-handed mirror") — swaps which half
+  // of the screen drives movement vs. aim/fire, and moves the weapon buttons to the
+  // opposite corner. Persisted in SettingsState.controlLayout, applied via setMirrored.
+  private mirrored = false;
 
   private move: Stick | null = null;
   private aim: Stick | null = null;
@@ -44,14 +49,33 @@ export class TouchControls {
   // Screen size in logical (CSS) pixels — the same units the pointer coords use.
   layout(width: number, height: number) {
     this.w = width;
+    this.h = height;
     const unit = Math.min(width, height);
     this.stickRadius = unit * 0.18;
 
     const r = unit * 0.08;
     const m = r + unit * 0.04; // margin from the edge to a button centre
     const gap = r * 2.4;
-    this.weapon1Btn = { cx: width - m, cy: m, r };
-    this.weapon2Btn = { cx: width - m - gap, cy: m, r };
+    // Standard: buttons sit top-right (thumb-natural for a right-handed grip holding
+    // the movement stick on the left). Mirrored: top-left instead.
+    if (this.mirrored) {
+      this.weapon1Btn = { cx: m, cy: m, r };
+      this.weapon2Btn = { cx: m + gap, cy: m, r };
+    } else {
+      this.weapon1Btn = { cx: width - m, cy: m, r };
+      this.weapon2Btn = { cx: width - m - gap, cy: m, r };
+    }
+  }
+
+  /** Left-handed control-layout toggle (design/10, `Settings.ts`) — swaps which half of
+   *  the screen drives movement vs. aim/fire and re-anchors the weapon buttons to the
+   *  opposite corner. Re-lays out immediately against the last known screen size (if
+   *  any) rather than waiting for the next resize, so a mid-session toggle takes effect
+   *  right away. A no-op if the value hasn't actually changed. */
+  setMirrored(mirrored: boolean) {
+    if (this.mirrored === mirrored) return;
+    this.mirrored = mirrored;
+    if (this.w > 0 && this.h > 0) this.layout(this.w, this.h);
   }
 
   pointerDown(id: number, x: number, y: number) {
@@ -67,9 +91,11 @@ export class TouchControls {
       return;
     }
 
-    // Otherwise: left half drives movement, right half drives aim/fire.
+    // Otherwise: left half drives movement, right half drives aim/fire — swapped when
+    // `mirrored` (setMirrored/design/10's left-handed layout option).
     const stick: Stick = { id, ox: x, oy: y, dx: 0, dy: 0 };
-    if (x < this.w * 0.5) this.move = stick;
+    const leftHalf = x < this.w * 0.5;
+    if (leftHalf !== this.mirrored) this.move = stick;
     else this.aim = stick;
   }
 

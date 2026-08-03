@@ -1,5 +1,5 @@
 import { Container, Graphics, Sprite, Text } from 'pixi.js';
-import { SKIN_DEFS } from '@dd/engine';
+import { SKIN_DEFS, REVIVE_CHANNEL_TICKS } from '@dd/engine';
 import { getRigSkin } from '../../render/skinRegistry';
 import { THEME } from '../theme';
 import { Bar } from './widgets';
@@ -139,10 +139,17 @@ export class AllyRow {
     this.view.addChild(this.icon, this.name, this.hpBar.view, this.status);
   }
 
-  set(skinId: string, hp: number, maxHp: number, downed: boolean, bleedoutSeconds: number): void {
+  /** `reviveProgressTicks` (default 0, ReviveSystem) — while a revive channel is
+   *  actually progressing, bleedout is paused (frozen, not counting down), so showing
+   *  the channel's own percentage reads truer than a stalled countdown would. */
+  set(skinId: string, hp: number, maxHp: number, downed: boolean, bleedoutSeconds: number, reviveProgressTicks = 0): void {
     this.name.text = t('hud.ally.tag', { skin: skinId });
     this.hpBar.set(downed ? 0 : Math.max(0, hp), maxHp);
-    this.status.text = downed ? t('hud.ally.downed', { seconds: bleedoutSeconds }) : '';
+    if (downed && reviveProgressTicks > 0) {
+      this.status.text = t('hud.ally.reviving', { pct: Math.round((reviveProgressTicks / REVIVE_CHANNEL_TICKS) * 100) });
+    } else {
+      this.status.text = downed ? t('hud.ally.downed', { seconds: bleedoutSeconds }) : '';
+    }
     this.status.visible = downed;
   }
 

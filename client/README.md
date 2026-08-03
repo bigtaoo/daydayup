@@ -67,15 +67,15 @@ src/
 │  ├─ coords.ts       the one place engine fp/brad becomes screen px/radians
 │  ├─ scene/          world views mirroring engine state (Scene, Entity, Actor, Enemy,
 │  │                  Bullet, Pickup, Portal, Backdrop, Skin, RoomBuilder, layers)
-│  ├─ screens/        full-screen flow (MainMenu, Forge, Login, Party, Pause, Settings,
-│  │                  Screens, confirmEdge)
+│  ├─ screens/        full-screen flow (MainMenu, ModeSelect, PvpPreview, Matchmaking,
+│  │                  Forge, Login, Party, Pause, Settings, Screens, confirmEdge)
 │  ├─ controllers/    input → PlayerCommand and engine events → host callbacks
 │  │                  (CommandBuilder, Ally/PvpBot controllers, LocalPredictor,
 │  │                  EventReactor, RunOutcome)
 │  ├─ match/          how a run is configured and connected (arenaCatalog, matchConfig,
 │  │                  offlineConfig, pvpConfig, onlineConnect, gameQueryParams)
 │  ├─ ui/             HUD + widget kit (HudView composing PlayerCard/WeaponCard/
-│  │                  StatChip/FloorProgress/Minimap, plus the shared widgets)
+│  │                  StatChip/FloorProgress/Minimap/DownedBanner, plus the shared widgets)
 │  │                  — pure-math modules sit beside their views so they stay testable
 │  │                  without a canvas (textWidth is the only sizing input the HUD
 │  │                  has; nothing here may call Text.width/getBounds)

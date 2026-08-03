@@ -9,6 +9,7 @@ import { FloorProgress } from './FloorProgress';
 import { PlayerCard, AllyRow } from './PlayerCard';
 import { WeaponCard } from './WeaponCard';
 import { StatChip } from './StatChip';
+import { DownedBanner } from './DownedBanner';
 import type { HudIconId } from './hudIcons';
 import { WEAPON_SIM_BY_ID, SIM, type GameState } from '@dd/engine';
 import { t, type TranslationKey } from '../../i18n';
@@ -80,6 +81,7 @@ export class HudView {
   readonly playerCard = new PlayerCard();
   readonly weaponCard = new WeaponCard();
   readonly allyRow = new AllyRow();
+  readonly downedBanner = new DownedBanner();
   readonly chips = new Map<ChipKey, StatChip>();
   readonly floorProgress = new FloorProgress();
   // Ground compare card (design/03:125, locked spec: name/element/rarity, non-blocking,
@@ -126,6 +128,7 @@ export class HudView {
       this.toasts.view,
       this.groundCard.view,
       this.groundHint,
+      this.downedBanner.view,
     );
     // NOTE: `view` itself is NOT added to `layers.ui` here — the caller (Game) mounts
     // it inside its own visibility-toggled `hudView` container.
@@ -146,6 +149,7 @@ export class HudView {
   reposition(screenPx: { w: number; h: number }): void {
     this.toasts.view.position.set(screenPx.w / 2 - 110, screenPx.h * 0.22);
     this.minimap.view.position.set(screenPx.w - 140 - 20, 60);
+    this.downedBanner.reposition(screenPx);
   }
 
   update(s: GameState, dt: number, ctx: HudContext): void {
@@ -193,9 +197,15 @@ export class HudView {
     const ally = ctx.showAlly ? s.players.find((_, i) => i !== ctx.localOwner) : undefined;
     this.allyRow.view.visible = ally !== undefined;
     if (ally) {
-      this.allyRow.set(ctx.allySkinId, ally.hp, ally.maxHp, ally.downed, Math.ceil(ally.bleedoutTicks / 30));
+      this.allyRow.set(ctx.allySkinId, ally.hp, ally.maxHp, ally.downed, Math.ceil(ally.bleedoutTicks / 30), ally.reviveProgressTicks);
       this.allyRow.update(dt);
     }
+
+    // Local seat's own downed/revive state (design/10 open question, ROADMAP 3.2) —
+    // previously invisible: a downed player saw only a frozen world, nothing explaining
+    // why or how long until either a revive completes or bleedout ends the run.
+    this.downedBanner.set(p?.downed ?? false, p?.bleedoutTicks ?? 0, p?.reviveProgressTicks ?? 0);
+    this.downedBanner.update(dt);
 
     this.layout(s.zoneEnabled ? PVP_CHIPS : PVE_CHIPS, buffCount > 0, ally !== undefined);
     this.updateGroundCard(s, p);

@@ -76,6 +76,36 @@ describe('createWebSettingsStore — locale migration', () => {
   });
 });
 
+describe('createWebSettingsStore — control-layout migration (design/10 left-handed toggle)', () => {
+  it('defaults to standard', () => {
+    expect(defaultSettingsState().controlLayout).toBe('standard');
+  });
+
+  it('round-trips a valid saved control layout', () => {
+    withFakeLocalStorage(() => {
+      const store = createWebSettingsStore('t.settings.9');
+      store.save({ ...defaultSettingsState(), controlLayout: 'mirrored' });
+      expect(createWebSettingsStore('t.settings.9').load().controlLayout).toBe('mirrored');
+    });
+  });
+
+  it('falls back to standard for a value that is no longer valid', () => {
+    withFakeLocalStorage(() => {
+      localStorage.setItem('t.settings.10', JSON.stringify({ ...defaultSettingsState(), controlLayout: 'left' }));
+      expect(createWebSettingsStore('t.settings.10').load().controlLayout).toBe('standard');
+    });
+  });
+
+  it('falls back to standard when missing entirely (a pre-existing save)', () => {
+    withFakeLocalStorage(() => {
+      const { controlLayout, ...rest } = defaultSettingsState();
+      void controlLayout;
+      localStorage.setItem('t.settings.11', JSON.stringify(rest));
+      expect(createWebSettingsStore('t.settings.11').load().controlLayout).toBe('standard');
+    });
+  });
+});
+
 describe('createWebSettingsStore — first-boot browser-locale detection', () => {
   it('a genuinely fresh install (no save at all) picks up a matching browser language', () => {
     withFakeLocalStorage(() => {

@@ -5,8 +5,8 @@ closed loop the design docs describe, and the running record of how each phase a
 landed. Phases are written top-to-bottom in dependency order; each one keeps its dated
 shipped-notes underneath it, so a phase section is both the plan and the history.
 
-**Current built state (2026-08-03).** `ENGINE_VERSION` **31**; 1190 tests green across the
-five workspace packages (engine 373 / client 623 / server 158 / animator 23 / map-editor 13,
+**Current built state (2026-08-03).** `ENGINE_VERSION` **31**; 1234 tests green across the
+five workspace packages (engine 373 / client 667 / server 158 / animator 23 / map-editor 13,
 `npm run check`). **Phases 0–4, 6 and 7 are closed with no deferred items**: the deterministic
 engine and the locked content model (0), the full in-run loop — frame library, room pieces,
 seeded dungeon generation, extraction checkpoints, materials (1), the meta/forge loop and the
@@ -16,7 +16,8 @@ with signed tickets, render-layer local prediction (3), 8-player solo-or-squad P
 ladder (4), username/password accounts bound to ladder rating and forge progress (6), and an
 English-canonical i18n system with a 中文 translation (7). **Phase 5 (presentation) is the only
 partially-open phase** — the widget kit/HUD/screens (now including a menu-driven Mode Select,
-a real Matchmaking connecting/error screen, and a standalone tutorial level, all 2026-08-03 —
+a real Matchmaking connecting/error screen, a standalone tutorial level, a local-player downed/
+revive HUD, a PvP match-preview screen, and a left-handed control-layout toggle, all 2026-08-03 —
 see that entry under Phase 5 below), the `.tao` art pipeline with a fully bound roster,
 post-processing, particles, and all four fidelity-roadmap custom shaders (5.4) all ship;
 what remains is real *authored* art in place of the AI-generated placeholders, real
@@ -303,6 +304,50 @@ every existing caller is byte-identical) to become testable at all. New/extended
 `onlineConnect.test.ts` (9), plus new cases in `HudView.test.ts`/`RunOutcome.test.ts`/
 `PauseMenu.test.ts`/`forge.test.ts`/`confirmEdge.test.ts`. 582 client tests (was 546 at the
 start of this pass, 518 before that) + `tsc --noEmit` clean; 1125 across the repo.
+
+**Update (2026-08-03, later still): three more design/10 "Open questions" closed — a local
+downed/revive HUD, a PvP match-preview screen, and a left-handed control-layout toggle.** All
+render-only / net-layer-optional, no `ENGINE_VERSION` impact.
+- **Downed/revive HUD** (`ui/DownedBanner.ts`) — the local seat's own downed state had NO
+  feedback at all before this: `AllyRow` (`ui/PlayerCard.ts`) already showed a co-op
+  teammate's bleedout countdown, but a downed local player just saw the world go quiet with
+  nothing explaining why, for how long, or whether a rescue was even underway. `DownedBanner`
+  reads the same `ReviveSystem` fields (`downed`/`bleedoutTicks`/`reviveProgressTicks`) and
+  shows a centered "YOU ARE DOWN — bleeding out Xs" banner that switches to a "BEING
+  REVIVED…" progress bar the instant a teammate's channel actually starts (bleedout is
+  PAUSED, not just slow, during a channel — showing its own frozen number would have read as
+  a stall). `AllyRow` got the matching upgrade: a `reviveProgressTicks` param swaps its
+  "DOWNED Xs" text for "REVIVING {pct}%" under the same condition. Wired into `HudView`
+  (`downedBanner` field, `reposition`/`update`). Browser-verified live in a real `?coop=1`
+  run (bot ally in range, local seat forced downed via `window.__game`).
+- **PvP match preview** (`game/screens/PvpPreview.ts`, new `'pvpPreview'` `Phase`) — design/10
+  had flagged "PvP preset-pick has no UI yet" as an open question; the actual gap turned out
+  to be narrower than a picker (`design/15`'s `ARENA_PRESETS` schema supports multiple
+  presets, but only one, `landing_basic`, exists today, and there is only one real map,
+  `arena_prototype_60`) — so this is a confirm/preview step, not a picker, inserted between
+  ModeSelect's PVP SOLO QUEUE button and Matchmaking. It shows the real map name/room count,
+  and the player's own PvP-scaled character + landing-kit weapon via `buildArenaSpecs` — the
+  SAME function `GameState.buildSeat` calls for a real arena seat, so the preview can never
+  drift from what a match actually seats them with. Deliberately does **NOT** run for the
+  squad path (`beginSquadMatch`): every party member's poll auto-advances there, so a manual
+  confirm gate would desync followers who never see it — `PartyScreen`'s own lobby already
+  serves as squad's pre-match review step (see `phase.ts`'s doc comment on `'pvpPreview'`).
+  Browser-verified live end-to-end: ModeSelect → PVP MATCH preview (real scaled stats/map) →
+  QUEUE → Matchmaking's real connecting/error states.
+- **Left-handed control layout** (design/10 "control layout" open question) —
+  `SettingsState.controlLayout: 'standard' | 'mirrored'`, migrated/defaulted like every other
+  setting. `platform/TouchControls.ts`'s `setMirrored()` swaps which half of the screen
+  drives movement vs. aim/fire and re-anchors the weapon-swap buttons to the opposite corner,
+  re-laying out immediately against the last known screen size rather than waiting for a
+  resize. Threaded through a new optional `InputSource.setControlMirror` (implemented by
+  `WebInput`/`WeChatInput`, both proxying to the shared `TouchControls`) so `Game.ts` can
+  apply it on boot and on every settings change. `Settings.ts` gained a tap-to-cycle
+  `CONTROLS: STANDARD/LEFT-HANDED` button next to the language toggle. Browser-verified live
+  (Settings screen, toggles and relabels immediately).
+
+All copy translated across all 8 locales (new `hud.downed.*`/`hud.ally.reviving`/
+`pvpPreview.*`/`settings.controlLayout*` keys). 667 client tests (was 582) + `tsc --noEmit`
+clean; 1234 across the repo. `npm run check` green on all five packages throughout.
 
 - **5.4 Fidelity roadmap** (01): ✅ post-processing (bloom-lite, vignette, chromatic aberration, hit-stop, screen-shake) + particles shipped 2026-07-26; ✅ ALL FOUR custom shaders (energy shield, outline/hit-flash, dissolve-on-death, heat-haze) shipped 2026-08-03 — `game/fx/filters.ts`'s `EnergyShieldFilter`/`OutlineFilter`/`DissolveFilter`/`HeatHazeFilter`, wired into `Actor`'s live shield/hit/death/burn signals (see 01's milestone 5 for the per-shader detail, including the `Scene.reconcile` architecture change dissolve needed and a Pixi-uniform-precision gotcha worth knowing before writing another filter). Shipped clean against today's placeholder art — the "shaders read best after real art lands" sequencing note from earlier turned out not to matter. Still open: normal-map lighting only — genuinely blocked on 5.3 landing real, non-placeholder art first (see 01's milestone 2 note), the one remaining 5.4 item.
 - **5.5 WeChat device verification** (04): lowest base library, low-end frame rate, real-device touch, WebGL2 fallback — none of this can be done without a physical device or WeChat DevTools install, neither found on this machine as of 2026-07-27.

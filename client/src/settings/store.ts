@@ -1,5 +1,5 @@
 // SettingsStore — persistence port for SettingsState, symmetric to ../meta/store.ts.
-import { defaultSettingsState, type SettingsState } from './SettingsState';
+import { defaultSettingsState, type ControlLayout, type SettingsState } from './SettingsState';
 import { LOCALES, detectBrowserLocale, type Locale } from '../i18n';
 
 export interface SettingsStore {
@@ -75,11 +75,14 @@ function migrate(parsed: unknown): SettingsState {
   const p = parsed as Partial<SettingsState>;
   const num = (v: unknown, fallback: number) => (typeof v === 'number' && Number.isFinite(v) ? Math.max(0, Math.min(1, v)) : fallback);
   const locale = (v: unknown, fallback: Locale) => (LOCALES.includes(v as Locale) ? (v as Locale) : fallback);
+  const controlLayout = (v: unknown, fallback: ControlLayout): ControlLayout =>
+    v === 'standard' || v === 'mirrored' ? v : fallback;
   return {
     master: num(p.master, d.master),
     sfx: num(p.sfx, d.sfx),
     music: num(p.music, d.music),
     muted: typeof p.muted === 'boolean' ? p.muted : d.muted,
     locale: locale(p.locale, d.locale),
+    controlLayout: controlLayout(p.controlLayout, d.controlLayout),
   };
 }

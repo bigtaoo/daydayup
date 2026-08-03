@@ -135,4 +135,16 @@ describe('AllyRow', () => {
     row.set('vanguard', 8, 10, false, 0);
     expect(() => row.update(16)).not.toThrow();
   });
+
+  it('shows revive progress instead of the frozen bleedout countdown once a channel is active', () => {
+    const row = new AllyRow();
+    row.set('vanguard', 0, 10, true, 4, 225); // REVIVE_CHANNEL_TICKS is 450 → 50%
+    expect(row.statusText).toBe('REVIVING 50%');
+  });
+
+  it('falls back to the bleedout countdown when no revive is in progress (default param)', () => {
+    const row = new AllyRow();
+    row.set('vanguard', 0, 10, true, 4);
+    expect(row.statusText).toBe('DOWNED 4s');
+  });
 });

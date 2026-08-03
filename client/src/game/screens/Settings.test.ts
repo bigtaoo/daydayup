@@ -21,6 +21,7 @@ function privateOf(s: Settings) {
     musicSlider: { onChange: ((v: number) => void) | null };
     muteBtn: { label: { text: string }; onTap: (() => void) | null };
     languageBtn: { label: { text: string }; onTap: (() => void) | null };
+    controlLayoutBtn: { label: { text: string }; onTap: (() => void) | null };
     backBtn: { label: { text: string }; onTap: (() => void) | null };
   };
 }
@@ -111,5 +112,51 @@ describe('Settings — language toggle (design/17-i18n.md)', () => {
     s.show(800, 600, zhState);
     expect(privateOf(s).title.text).toBe('设置');
     expect(privateOf(s).masterLabel.text).toContain('总音量');
+  });
+});
+
+describe('Settings — control-layout toggle (design/10 open question, left-handed mirror)', () => {
+  it('starts on standard', () => {
+    const s = new Settings();
+    s.show(800, 600, defaultSettingsState());
+    expect(privateOf(s).controlLayoutBtn.label.text).toBe('CONTROLS: STANDARD');
+  });
+
+  it('tapping the toggle flips to mirrored and reports it via onChange', () => {
+    const s = new Settings();
+    s.show(800, 600, defaultSettingsState());
+    const onChange = vi.fn();
+    s.onChange = onChange;
+    privateOf(s).controlLayoutBtn.onTap?.();
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ controlLayout: 'mirrored' }));
+    expect(privateOf(s).controlLayoutBtn.label.text).toBe('CONTROLS: LEFT-HANDED');
+  });
+
+  it('tapping twice returns to standard', () => {
+    const s = new Settings();
+    s.show(800, 600, defaultSettingsState());
+    privateOf(s).controlLayoutBtn.onTap?.();
+    privateOf(s).controlLayoutBtn.onTap?.();
+    expect(privateOf(s).controlLayoutBtn.label.text).toBe('CONTROLS: STANDARD');
+  });
+
+  it('does not disturb the other fields (master/sfx/music/muted/locale)', () => {
+    const s = new Settings();
+    s.show(800, 600, defaultSettingsState());
+    const onChange = vi.fn();
+    s.onChange = onChange;
+    privateOf(s).controlLayoutBtn.onTap?.();
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ master: 1, sfx: 0.5, music: 0.5, muted: false, locale: 'en' }),
+    );
+  });
+
+  it('translates under zh', () => {
+    setLocale('zh');
+    const s = new Settings();
+    s.show(800, 600, { ...defaultSettingsState(), locale: 'zh' });
+    expect(privateOf(s).controlLayoutBtn.label.text).toBe('操作布局：标准');
+    privateOf(s).controlLayoutBtn.onTap?.();
+    expect(privateOf(s).controlLayoutBtn.label.text).toBe('操作布局：左手模式');
   });
 });

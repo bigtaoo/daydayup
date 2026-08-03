@@ -65,6 +65,10 @@ export class WebInput implements InputSource {
     return this.controls.getVisual();
   }
 
+  setControlMirror(mirrored: boolean): void {
+    this.controls.setMirrored(mirrored);
+  }
+
   read(): InputState {
     if (this.controls.hasActiveTouch()) return this.controls.read();
 

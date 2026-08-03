@@ -32,6 +32,7 @@ import { Screens } from './screens/Screens';
 import { Forge } from './screens/Forge';
 import { MainMenu } from './screens/MainMenu';
 import { ModeSelect } from './screens/ModeSelect';
+import { PvpPreview } from './screens/PvpPreview';
 import { Matchmaking, type MatchmakingSignal } from './screens/Matchmaking';
 import { PartyScreen } from './screens/PartyScreen';
 import { LoginScreen } from './screens/LoginScreen';
@@ -108,6 +109,11 @@ export class Game {
   // ModeSelect (design/10 screen-flow gap): PLAY's new destination — solo PvE / co-op /
   // PvP solo queue / tutorial, previously only reachable as boot-time URL flags.
   private modeSelect = new ModeSelect();
+  // PvP match preview (design/10 open question "PvP preset-pick has no UI yet") —
+  // ModeSelect's PVP SOLO QUEUE routes here before Matchmaking, so a player sees their
+  // character/map/PvP-scaled stats instead of jumping straight into "Finding a match…".
+  // Solo-queue path only — see phase.ts's doc comment for why squad doesn't route here.
+  private pvpPreview = new PvpPreview();
   // Matchmaking (design/10 screen-flow gap): wraps connectOnlineSession with real
   // connecting/error feedback — previously the game sat in a blank `playing` phase with
   // no UI while matchmaking ran, and a post-ticket failure hung forever with no error.
@@ -263,11 +269,13 @@ export class Game {
     // reads, `this.settings.locale` is only the persisted copy).
     this.settings = this.settingsStore.load();
     this.applyAudioSettings();
+    this.applyControlLayout();
     setLocale(this.settings.locale);
     this.settingsScreen.onChange = (s) => {
       this.settings = s;
       this.settingsStore.save(s);
       this.applyAudioSettings();
+      this.applyControlLayout();
     };
     this.settingsScreen.onBack = () =>
       this.settingsReturnPhase === 'paused' ? this.openPauseFromSettings() : this.closeSettings();
@@ -276,6 +284,13 @@ export class Game {
   private applyAudioSettings() {
     this.audio.setSfxVolume(effectiveVolume(this.settings, 'sfx'));
     this.audio.setMusicVolume(effectiveVolume(this.settings, 'music'));
+  }
+
+  // Left-handed control-layout option (design/10 open question, `Settings.ts`) — a
+  // no-op for any InputSource that doesn't implement setControlMirror (a test fake
+  // with no touch controls at all has nothing to mirror).
+  private applyControlLayout() {
+    this.input.setControlMirror?.(this.settings.controlLayout === 'mirrored');
   }
 
   start() {
@@ -292,7 +307,7 @@ export class Game {
     this.partyScreen = new PartyScreen({ matchBaseUrl: this.matchBaseUrl });
     this.loginScreen = new LoginScreen({ matchBaseUrl: this.matchBaseUrl });
     this.layers.ui.addChild(
-      this.mainMenu.view, this.modeSelect.view, this.forge.view, this.matchmaking.view,
+      this.mainMenu.view, this.modeSelect.view, this.forge.view, this.pvpPreview.view, this.matchmaking.view,
       this.screens.view, this.settingsScreen.view, this.pauseMenu.view,
       this.partyScreen.view, this.loginScreen.view,
     );
@@ -305,6 +320,8 @@ export class Game {
     this.modeSelect.onPvpSolo = () => this.beginSoloQueue(true);
     this.modeSelect.onTutorial = () => this.beginTutorialRun();
     this.modeSelect.onBack = () => this.showMenu();
+    this.pvpPreview.onQueue = () => this.showMatchmaking();
+    this.pvpPreview.onBack = () => this.showModeSelect();
     this.matchmaking.onConnected = (session) => this.finalizeOnlineRun(session);
     this.matchmaking.onCancelled = () => this.onMatchmakingCancelled();
     this.partyScreen.onBack = () => this.showMenu();
@@ -497,6 +514,7 @@ export class Game {
     switch (this.phase) {
       case 'menu': this.mainMenu.show(w, h); break;
       case 'modeSelect': this.modeSelect.show(w, h); break;
+      case 'pvpPreview': this.pvpPreview.show(w, h, this.meta.selectedSkin); break;
       case 'forge': this.forge.render(this.meta, w, h); break;
       case 'matchmaking': this.matchmaking.resize(w, h); break; // NOT show() — must not restart connect()
       case 'squad': this.partyScreen.show(w, h); break;
@@ -521,6 +539,7 @@ export class Game {
     this.phase = 'menu';
     this.hudView.visible = false;
     this.modeSelect.hide();
+    this.pvpPreview.hide();
     this.matchmaking.hide();
     this.forge.hide();
     this.screens.hide();
@@ -541,6 +560,7 @@ export class Game {
     this.hudView.visible = false;
     this.mainMenu.hide();
     this.forge.hide();
+    this.pvpPreview.hide();
     this.matchmaking.hide();
     this.screens.hide();
     this.settingsScreen.hide();
@@ -552,6 +572,29 @@ export class Game {
     this.modeSelect.show(w, h);
   }
 
+  /**
+   * PvP match preview (design/10 open question "PvP preset-pick has no UI yet", 15) —
+   * shown for the solo PVP-SOLO-QUEUE path only (`beginSoloQueue(true)`), between
+   * ModeSelect and Matchmaking, so a player sees their character/the real map/PvP-
+   * scaled stats before committing to queue. Does NOT run for the squad path — see
+   * phase.ts's doc comment on 'pvpPreview' for why.
+   */
+  private showPvpPreview() {
+    this.phase = 'pvpPreview';
+    this.hudView.visible = false;
+    this.mainMenu.hide();
+    this.modeSelect.hide();
+    this.matchmaking.hide();
+    this.forge.hide();
+    this.screens.hide();
+    this.settingsScreen.hide();
+    this.partyScreen.hide();
+    this.loginScreen.hide();
+    this.settingsBtn.view.visible = false;
+    const { w, h } = this.screenSize();
+    this.pvpPreview.show(w, h, this.meta.selectedSkin);
+  }
+
   // The PvP pre-formed-party lobby (design/05/15's squad follow-up). BACK returns to
   // the main menu; a successful `onStartMatch` hands off to beginSquadMatch below.
   private showSquad() {
@@ -559,6 +602,7 @@ export class Game {
     this.hudView.visible = false;
     this.mainMenu.hide();
     this.modeSelect.hide();
+    this.pvpPreview.hide();
     this.matchmaking.hide();
     this.forge.hide();
     this.screens.hide();
@@ -575,6 +619,7 @@ export class Game {
     this.hudView.visible = false;
     this.mainMenu.hide();
     this.modeSelect.hide();
+    this.pvpPreview.hide();
     this.matchmaking.hide();
     this.forge.hide();
     this.screens.hide();
@@ -595,6 +640,7 @@ export class Game {
     this.hudView.visible = false;
     this.mainMenu.hide();
     this.modeSelect.hide();
+    this.pvpPreview.hide();
     this.forge.hide();
     this.screens.hide();
     this.settingsScreen.hide();
@@ -633,7 +679,10 @@ export class Game {
     this.pvp = pvp;
     this.partyId = undefined;
     this.matchmakingReturnPhase = 'modeSelect';
-    this.showMatchmaking();
+    // PvP gets the match-preview confirm step first (design/10 open question); co-op
+    // is plain PvE dungeon content and has nothing PvP-scaled to preview.
+    if (pvp) this.showPvpPreview();
+    else this.showMatchmaking();
   }
 
   /**
@@ -660,6 +709,7 @@ export class Game {
     this.hudView.visible = false;
     this.mainMenu.hide();
     this.modeSelect.hide();
+    this.pvpPreview.hide();
     this.matchmaking.hide();
     this.screens.hide();
     this.settingsScreen.hide();

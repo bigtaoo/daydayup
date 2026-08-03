@@ -31,6 +31,9 @@ export const fr: Translations<typeof en> = {
     autoAimOn: 'VISÉE AUTO : ON',
     autoAimOff: 'VISÉE AUTO : OFF',
     language: 'LANGUE : {name}',
+    controlLayout: 'COMMANDES : {mode}',
+    controlLayoutStandard: 'STANDARD',
+    controlLayoutMirrored: 'GAUCHER',
     back: 'RETOUR',
   },
   forge: {
@@ -95,6 +98,12 @@ export const fr: Translations<typeof en> = {
     ally: {
       tag: 'ALLIÉ · {skin}',
       downed: 'À TERRE {seconds}s',
+      reviving: 'RÉANIMATION {pct}%',
+    },
+    downed: {
+      title: 'VOUS ÊTES À TERRE',
+      bleedout: 'Saignement — {seconds}s restantes',
+      reviving: 'EN COURS DE RÉANIMATION…',
     },
     portalTitle: 'ÉTAGE NETTOYÉ — un portail s\'est ouvert',
     portalExtract: 'Stocker et extraire ({pending} matériaux)',
@@ -142,6 +151,13 @@ export const fr: Translations<typeof en> = {
     tutorial: 'TUTORIEL',
     recommended: 'NOUVEAU ICI ?',
     back: '← MENU',
+  },
+  pvpPreview: {
+    title: 'MATCH PVP',
+    map: 'Carte : {name} ({rooms} salles)',
+    fairnessNote: 'Stats mises à l’échelle ×{factor} pour le PvP — l’équipement permanent n’est jamais importé.',
+    queue: 'RECHERCHER',
+    back: 'RETOUR',
   },
   matchmaking: {
     searching: "Recherche d'un match…",

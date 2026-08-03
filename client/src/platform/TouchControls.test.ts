@@ -138,6 +138,75 @@ describe('TouchControls weapon-swap buttons', () => {
   });
 });
 
+describe('TouchControls.setMirrored (design/10 left-handed control layout)', () => {
+  it('moves the weapon buttons to the opposite corner', () => {
+    const c = laidOut();
+    c.setMirrored(true);
+    const v = c.getVisual();
+    expect(v.weapon1).toEqual({ cx: 60, cy: 60, r: 40 });
+    expect(v.weapon2).toEqual({ cx: 156, cy: 60, r: 40 });
+  });
+
+  it('swaps which half drives movement vs. aim', () => {
+    const c = laidOut();
+    c.setMirrored(true);
+    c.pointerDown(1, 100, 100); // left half → aim, mirrored
+    expect(c.getVisual().aim).toEqual({ ox: 100, oy: 100, dx: 0, dy: 0 });
+    expect(c.getVisual().move).toBeNull();
+
+    c.pointerDown(2, 900, 400); // right half → move, mirrored
+    expect(c.getVisual().move).toEqual({ ox: 900, oy: 400, dx: 0, dy: 0 });
+  });
+
+  it('re-lays out immediately against the last known screen size, no resize needed', () => {
+    const c = laidOut();
+    expect(c.getVisual().weapon1.cx).toBe(940); // still standard before the toggle
+    c.setMirrored(true);
+    expect(c.getVisual().weapon1.cx).toBe(60);
+  });
+
+  it('is a no-op when the value has not actually changed', () => {
+    const c = laidOut();
+    const before = c.getVisual().weapon1;
+    c.setMirrored(false); // already false
+    expect(c.getVisual().weapon1).toEqual(before);
+  });
+
+  it('toggling back to standard restores the original geometry', () => {
+    const c = laidOut();
+    c.setMirrored(true);
+    c.setMirrored(false);
+    expect(c.getVisual().weapon1).toEqual({ cx: 940, cy: 60, r: 40 });
+  });
+
+  it('does nothing (no throw) before the first layout() call', () => {
+    const c = new TouchControls();
+    expect(() => c.setMirrored(true)).not.toThrow();
+  });
+
+  it('a real pointerDown hits the button at its NEW mirrored position, not the old one', () => {
+    const c = laidOut();
+    c.setMirrored(true);
+    const switched: number[] = [];
+    c.onSwitchWeapon = (slot) => switched.push(slot);
+
+    c.pointerDown(1, 60, 60); // weapon1's new (mirrored) centre
+    expect(switched).toEqual([1]);
+    expect(c.hasActiveTouch()).toBe(false); // a button tap, not a stick
+  });
+
+  it('the OLD (standard) button position falls through to a stick once mirrored', () => {
+    const c = laidOut();
+    c.setMirrored(true);
+    const switched: number[] = [];
+    c.onSwitchWeapon = (slot) => switched.push(slot);
+
+    c.pointerDown(1, 940, 60); // weapon1's old (standard) centre — now empty space
+    expect(switched).toEqual([]);
+    expect(c.hasActiveTouch()).toBe(true);
+  });
+});
+
 describe('TouchControls.getVisual().active', () => {
   it('starts false, and never touches everything else before any touch', () => {
     const c = laidOut();

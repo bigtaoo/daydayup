@@ -263,6 +263,77 @@ describe('HudView — mode-dependent widgets', () => {
   });
 });
 
+describe('HudView — ally row revive progress (design/10 open question, ROADMAP 3.2)', () => {
+  it('passes the ally\'s reviveProgressTicks through to a REVIVING readout', () => {
+    const hud = newHud();
+    const s = createGameState({ ...PVE_CFG, players: [{}, {}] });
+    const ally = s.players[1]!;
+    ally.downed = true;
+    ally.bleedoutTicks = 60;
+    ally.reviveProgressTicks = 225; // REVIVE_CHANNEL_TICKS is 450 → 50%
+
+    hud.update(s, 16, { ...CTX, showAlly: true, allySkinId: 'juggernaut' });
+
+    expect(hud.allyRow.statusText).toBe('REVIVING 50%');
+  });
+
+  it('falls back to the bleedout countdown when the ally has no revive in progress', () => {
+    const hud = newHud();
+    const s = createGameState({ ...PVE_CFG, players: [{}, {}] });
+    const ally = s.players[1]!;
+    ally.downed = true;
+    ally.bleedoutTicks = 60;
+
+    hud.update(s, 16, { ...CTX, showAlly: true, allySkinId: 'juggernaut' });
+
+    expect(hud.allyRow.statusText).toBe('DOWNED 2s');
+  });
+});
+
+describe('HudView — local downed banner (design/10 open question, ROADMAP 3.2)', () => {
+  it('stays hidden while the local player is up', () => {
+    const hud = newHud();
+    hud.update(pveState(), 16, CTX);
+    expect(hud.downedBanner.view.visible).toBe(false);
+  });
+
+  it('shows once the local player goes down', () => {
+    const hud = newHud();
+    const s = pveState();
+    s.players[0]!.downed = true;
+    s.players[0]!.bleedoutTicks = 60;
+
+    hud.update(s, 16, CTX);
+
+    expect(hud.downedBanner.view.visible).toBe(true);
+    expect(hud.downedBanner.detailText).toContain('2'); // 60 ticks / 30 tick-rate
+  });
+
+  it('switches to a revive-progress readout once a teammate\'s channel starts', () => {
+    const hud = newHud();
+    const s = pveState();
+    s.players[0]!.downed = true;
+    s.players[0]!.bleedoutTicks = 60;
+    s.players[0]!.reviveProgressTicks = 90;
+
+    hud.update(s, 16, CTX);
+
+    expect(hud.downedBanner.progressVisible).toBe(true);
+  });
+
+  it('hides again once revived', () => {
+    const hud = newHud();
+    const s = pveState();
+    s.players[0]!.downed = true;
+    hud.update(s, 16, CTX);
+    expect(hud.downedBanner.view.visible).toBe(true);
+
+    s.players[0]!.downed = false;
+    hud.update(s, 16, CTX);
+    expect(hud.downedBanner.view.visible).toBe(false);
+  });
+});
+
 describe('HudView — degenerate states', () => {
   it('does not throw when the local seat index has no player (post-death frame)', () => {
     const hud = newHud();

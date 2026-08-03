@@ -10,6 +10,7 @@ const EXPECTED: Record<Phase, boolean> = {
   menu: false,
   modeSelect: false,
   forge: false,
+  pvpPreview: false,
   matchmaking: false,
   squad: false,
   account: false,
@@ -60,7 +61,7 @@ describe('shouldConfirmOnFireEdge', () => {
   });
 
   it('never fires on a button-driven screen, at any point in a press', () => {
-    for (const phase of ['menu', 'modeSelect', 'forge', 'matchmaking', 'squad', 'account', 'settings'] as Phase[]) {
+    for (const phase of ['menu', 'modeSelect', 'forge', 'pvpPreview', 'matchmaking', 'squad', 'account', 'settings'] as Phase[]) {
       for (const [firing, prev] of [[true, false], [true, true], [false, true], [false, false]] as const) {
         expect(shouldConfirmOnFireEdge(phase, firing, prev), `${phase} ${firing}/${prev}`).toBe(false);
       }

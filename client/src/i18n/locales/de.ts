@@ -31,6 +31,9 @@ export const de: Translations<typeof en> = {
     autoAimOn: 'AUTO-ZIEL: AN',
     autoAimOff: 'AUTO-ZIEL: AUS',
     language: 'SPRACHE: {name}',
+    controlLayout: 'STEUERUNG: {mode}',
+    controlLayoutStandard: 'STANDARD',
+    controlLayoutMirrored: 'LINKSHÄNDIG',
     back: 'ZURÜCK',
   },
   forge: {
@@ -95,6 +98,12 @@ export const de: Translations<typeof en> = {
     ally: {
       tag: 'VERBÜNDETER · {skin}',
       downed: 'AM BODEN {seconds}s',
+      reviving: 'WIEDERBELEBUNG {pct}%',
+    },
+    downed: {
+      title: 'DU BIST AM BODEN',
+      bleedout: 'Verblutet in {seconds}s',
+      reviving: 'WIRD WIEDERBELEBT…',
     },
     portalTitle: 'ETAGE GESÄUBERT — ein Portal hat sich geöffnet',
     portalExtract: 'Sichern & Extrahieren ({pending} Materialien)',
@@ -142,6 +151,13 @@ export const de: Translations<typeof en> = {
     tutorial: 'TUTORIAL',
     recommended: 'NEU HIER?',
     back: '← MENÜ',
+  },
+  pvpPreview: {
+    title: 'PVP-MATCH',
+    map: 'Karte: {name} ({rooms} Räume)',
+    fairnessNote: 'Werte ×{factor} für PvP skaliert — dauerhafte Ausrüstung wird nie mitgenommen.',
+    queue: 'SUCHEN',
+    back: 'ZURÜCK',
   },
   matchmaking: {
     searching: 'Suche nach einem Match…',

@@ -36,6 +36,9 @@ export const ru: Translations<typeof en> = {
     autoAimOn: 'АВТОПРИЦЕЛ: ВКЛ',
     autoAimOff: 'АВТОПРИЦЕЛ: ВЫКЛ',
     language: 'ЯЗЫК: {name}',
+    controlLayout: 'УПРАВЛЕНИЕ: {mode}',
+    controlLayoutStandard: 'СТАНДАРТ',
+    controlLayoutMirrored: 'ЛЕВША',
     back: 'НАЗАД',
   },
   forge: {
@@ -100,6 +103,12 @@ export const ru: Translations<typeof en> = {
     ally: {
       tag: 'СОЮЗНИК · {skin}',
       downed: 'СБИТ {seconds}с',
+      reviving: 'РЕАНИМАЦИЯ {pct}%',
+    },
+    downed: {
+      title: 'ВЫ СБИТЫ',
+      bleedout: 'Кровотечение — осталось {seconds}с',
+      reviving: 'ВАС РЕАНИМИРУЮТ…',
     },
     portalTitle: 'ЭТАЖ ЗАЧИЩЕН — портал открылся',
     portalExtract: 'Сохранить и эвакуироваться ({pending} материалов)',
@@ -147,6 +156,13 @@ export const ru: Translations<typeof en> = {
     tutorial: 'ОБУЧЕНИЕ',
     recommended: 'ВПЕРВЫЕ ЗДЕСЬ?',
     back: '← МЕНЮ',
+  },
+  pvpPreview: {
+    title: 'PVP-МАТЧ',
+    map: 'Карта: {name} ({rooms} комнат)',
+    fairnessNote: 'Характеристики масштабированы ×{factor} для PvP — постоянное снаряжение никогда не переносится.',
+    queue: 'ИСКАТЬ',
+    back: 'НАЗАД',
   },
   matchmaking: {
     searching: 'Поиск матча…',

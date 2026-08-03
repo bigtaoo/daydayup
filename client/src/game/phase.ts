@@ -6,9 +6,14 @@
 // 'matchmaking' wraps the connectOnlineSession call for BOTH the solo-queue paths and the
 // pre-formed squad path (PartyScreen's onStartMatch now routes through it too) so there is
 // one real "connecting…"/error screen instead of a blank 'playing' phase with no feedback.
+// 'pvpPreview' sits between ModeSelect's PVP SOLO QUEUE button and 'matchmaking' (design/10
+// open question "PvP preset-pick has no UI yet") — the squad path does NOT route through it
+// (every party member's poll auto-advances to beginSquadMatch, so a manual confirm gate
+// there would desync followers who never see it; PartyScreen's own lobby/roster already
+// serves as squad's pre-match review step).
 //
 // Lives at the game root rather than under screens/ because it is the shared vocabulary
 // Game.ts and the screen layer both speak, not a screen implementation detail.
 export type Phase =
-  | 'menu' | 'modeSelect' | 'forge' | 'matchmaking' | 'playing' | 'paused'
+  | 'menu' | 'modeSelect' | 'forge' | 'pvpPreview' | 'matchmaking' | 'playing' | 'paused'
   | 'victory' | 'defeat' | 'settings' | 'squad' | 'account';

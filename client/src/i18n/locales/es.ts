@@ -31,6 +31,9 @@ export const es: Translations<typeof en> = {
     autoAimOn: 'AUTOAPUNTADO: ON',
     autoAimOff: 'AUTOAPUNTADO: OFF',
     language: 'IDIOMA: {name}',
+    controlLayout: 'CONTROLES: {mode}',
+    controlLayoutStandard: 'ESTÁNDAR',
+    controlLayoutMirrored: 'ZURDO',
     back: 'ATRÁS',
   },
   forge: {
@@ -95,6 +98,12 @@ export const es: Translations<typeof en> = {
     ally: {
       tag: 'ALIADO · {skin}',
       downed: 'CAÍDO {seconds}s',
+      reviving: 'REVIVIENDO {pct}%',
+    },
+    downed: {
+      title: 'HAS CAÍDO',
+      bleedout: 'Desangrando — {seconds}s restantes',
+      reviving: 'SIENDO REVIVIDO…',
     },
     portalTitle: 'PISO DESPEJADO — se ha abierto un portal',
     portalExtract: 'Guardar y extraer ({pending} materiales)',
@@ -142,6 +151,13 @@ export const es: Translations<typeof en> = {
     tutorial: 'TUTORIAL',
     recommended: '¿NUEVO AQUÍ?',
     back: '← MENÚ',
+  },
+  pvpPreview: {
+    title: 'PARTIDA PVP',
+    map: 'Mapa: {name} ({rooms} salas)',
+    fairnessNote: 'Estadísticas escaladas ×{factor} para PvP — el equipo permanente nunca se lleva.',
+    queue: 'BUSCAR',
+    back: 'ATRÁS',
   },
   matchmaking: {
     searching: 'Buscando partida…',

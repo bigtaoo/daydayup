@@ -43,4 +43,8 @@ export class WeChatInput implements InputSource {
   getTouchVisual(): TouchVisual {
     return this.controls.getVisual();
   }
+
+  setControlMirror(mirrored: boolean): void {
+    this.controls.setMirrored(mirrored);
+  }
 }

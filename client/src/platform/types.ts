@@ -62,6 +62,11 @@ export interface InputSource {
   // Both Web and WeChat proxy this straight from their shared TouchControls instance
   // (platform/TouchControls.ts) — see TouchVisual's own doc comment.
   getTouchVisual(): TouchVisual;
+  // Left-handed control-layout option (design/10, `Settings.ts` — SettingsState.
+  // controlLayout), proxied to TouchControls.setMirrored. Optional: only Web/WeChat's
+  // touch-backed sources implement it — a test fake with no touch controls at all has
+  // nothing to mirror.
+  setControlMirror?(mirrored: boolean): void;
 }
 
 // Audio cue vocabulary — a small closed set of ids, shared with fx/animation

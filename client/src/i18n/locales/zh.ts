@@ -31,6 +31,9 @@ export const zh: Translations<typeof en> = {
     autoAimOn: '自动瞄准：开',
     autoAimOff: '自动瞄准：关',
     language: '语言：{name}',
+    controlLayout: '操作布局：{mode}',
+    controlLayoutStandard: '标准',
+    controlLayoutMirrored: '左手模式',
     back: '返回',
   },
   forge: {
@@ -95,6 +98,12 @@ export const zh: Translations<typeof en> = {
     ally: {
       tag: '队友·{skin}',
       downed: '倒地 {seconds}秒',
+      reviving: '救援中 {pct}%',
+    },
+    downed: {
+      title: '你已倒地',
+      bleedout: '流血倒计时——剩余 {seconds} 秒',
+      reviving: '正在被救援…',
     },
     portalTitle: '楼层已清空 — 传送门已开启',
     portalExtract: '存入并撤离（{pending} 份材料）',
@@ -142,6 +151,13 @@ export const zh: Translations<typeof en> = {
     tutorial: '新手教程',
     recommended: '新手推荐',
     back: '← 菜单',
+  },
+  pvpPreview: {
+    title: 'PVP 对战',
+    map: '地图：{name}（{rooms} 个房间）',
+    fairnessNote: '数值已按 PvP ×{factor} 缩放——永久装备不会带入对战。',
+    queue: '开始匹配',
+    back: '返回',
   },
   matchmaking: {
     searching: '正在匹配对局…',

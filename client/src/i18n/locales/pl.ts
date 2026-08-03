@@ -31,6 +31,9 @@ export const pl: Translations<typeof en> = {
     autoAimOn: 'AUTOCELOWANIE: WŁ.',
     autoAimOff: 'AUTOCELOWANIE: WYŁ.',
     language: 'JĘZYK: {name}',
+    controlLayout: 'STEROWANIE: {mode}',
+    controlLayoutStandard: 'STANDARDOWE',
+    controlLayoutMirrored: 'LEWORĘCZNE',
     back: 'WSTECZ',
   },
   forge: {
@@ -95,6 +98,12 @@ export const pl: Translations<typeof en> = {
     ally: {
       tag: 'SOJUSZNIK · {skin}',
       downed: 'POWALONY {seconds}s',
+      reviving: 'REANIMACJA {pct}%',
+    },
+    downed: {
+      title: 'JESTEŚ POWALONY',
+      bleedout: 'Wykrwawianie — {seconds}s do końca',
+      reviving: 'TRWA REANIMACJA…',
     },
     portalTitle: 'PIĘTRO OCZYSZCZONE — otworzył się portal',
     portalExtract: 'Złóż i wydostań się ({pending} surowców)',
@@ -142,6 +151,13 @@ export const pl: Translations<typeof en> = {
     tutorial: 'SAMOUCZEK',
     recommended: 'NOWY TUTAJ?',
     back: '← MENU',
+  },
+  pvpPreview: {
+    title: 'MECZ PVP',
+    map: 'Mapa: {name} ({rooms} pokoi)',
+    fairnessNote: 'Statystyki przeskalowane ×{factor} na potrzeby PvP — trwały ekwipunek nigdy nie jest wnoszony.',
+    queue: 'SZUKAJ',
+    back: 'WSTECZ',
   },
   matchmaking: {
     searching: 'Szukanie meczu…',

@@ -7,6 +7,12 @@
 import type { Locale } from '../i18n';
 import { DEFAULT_LOCALE } from '../i18n';
 
+/** design/10 open question ("control layout … left-handed mirror") — 'mirrored' swaps
+ * which half of the screen drives the movement vs. aim/fire stick, and moves the
+ * weapon-swap buttons to the opposite corner (`platform/TouchControls.ts`). Desktop
+ * mouse/keyboard play is unaffected either way. */
+export type ControlLayout = 'standard' | 'mirrored';
+
 export interface SettingsState {
   master: number; // 0..1
   sfx: number; // 0..1
@@ -15,10 +21,11 @@ export interface SettingsState {
   /** The persisted UI language — the live `t()` mirror is set via `setLocale()` at
    * boot and on every change (design/17-i18n.md), not read directly from here. */
   locale: Locale;
+  controlLayout: ControlLayout;
 }
 
 export function defaultSettingsState(): SettingsState {
-  return { master: 1, sfx: 0.5, music: 0.5, muted: false, locale: DEFAULT_LOCALE };
+  return { master: 1, sfx: 0.5, music: 0.5, muted: false, locale: DEFAULT_LOCALE, controlLayout: 'standard' };
 }
 
 /** The effective 0..1 gain to hand the AudioBus for a given slider — `muted` zeroes
