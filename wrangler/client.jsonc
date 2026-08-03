@@ -1,0 +1,21 @@
+{
+  // Static hosting (Cloudflare Workers static assets) for the daydayup game client,
+  // served at b.gamestao.com. Same Cloudflare account as the funny project's
+  // gamestao.com zone — mirrors the pattern in funny's design/product/deploy-cloudflare.md §6.
+  //
+  // Build (outputs client/dist):
+  //   npm run build -w client
+  // Deploy (from repo root, reads this file):
+  //   npx wrangler deploy -c wrangler/client.jsonc
+  //
+  // routes[].custom_domain=true auto-provisions DNS + edge cert on first deploy.
+  "name": "daydayup-client",
+  "compatibility_date": "2026-08-03",
+  "assets": {
+    "directory": "../client/dist",
+    "not_found_handling": "single-page-application"
+  },
+  "routes": [
+    { "pattern": "b.gamestao.com", "custom_domain": true }
+  ]
+}
