@@ -15,7 +15,7 @@
  *
  *   POST /find             { playerCount, mode?, partyId? } → { queueId, match? }
  *   GET  /find/:id                                       → { status: 'queued'|'matched'|'expired', match? }
- *   POST /rating/report     { accountIds, places }       → { changes: [{accountId,before,after}] }
+ *   POST /rating/report     { accountIds, places, teamIds? } → { changes: [{accountId,before,after}] }
  *   GET  /rating/:accountId                               → { accountId, rating }
  *   POST /party/create      { playerId }                 → PartyInfo
  *   POST /party/join        { playerId, code }           → PartyInfo | 404
@@ -192,11 +192,15 @@ export function createMatchsvcServer(opts: MatchsvcServerOptions = {}): Server {
     // client directly; the gameserver is the one that knows `hashOk`).
     if (req.method === 'POST' && url.pathname === '/rating/report') {
       return readJson(req, (body) => {
-        const { accountIds, places } = (body as { accountIds?: unknown; places?: unknown }) ?? {};
+        const { accountIds, places, teamIds } =
+          (body as { accountIds?: unknown; places?: unknown; teamIds?: unknown }) ?? {};
         if (!Array.isArray(accountIds) || !Array.isArray(places) || accountIds.length !== places.length) {
           return send(res, 400, { error: 'accountIds and places must be equal-length arrays' });
         }
-        const changes = ratings.applyMatch(accountIds as string[], places as number[]);
+        if (teamIds !== undefined && (!Array.isArray(teamIds) || teamIds.length !== accountIds.length)) {
+          return send(res, 400, { error: 'teamIds, if present, must be the same length as accountIds' });
+        }
+        const changes = ratings.applyMatch(accountIds as string[], places as number[], teamIds as number[] | undefined);
         send(res, 200, { changes });
       });
     }

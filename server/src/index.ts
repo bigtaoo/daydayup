@@ -43,7 +43,7 @@ const MATCHSVC_URL = process.env.DDU_MATCHSVC_URL;
  */
 function reportSettledMatch(match: SettledMatch): void {
   if (!MATCHSVC_URL || !match.hashOk || !match.placements || typeof match.winner !== 'number') return;
-  const body = buildRatingReportBody(match.roomId, match.winner, match.placements, match.seatAccounts);
+  const body = buildRatingReportBody(match.roomId, match.winner, match.placements, match.playerCount, match.seatAccounts);
   fetch(`${MATCHSVC_URL}/rating/report`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

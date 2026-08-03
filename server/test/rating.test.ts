@@ -37,6 +37,37 @@ describe('computeRatingDeltas', () => {
   });
 });
 
+describe('computeRatingDeltas — squad-aware (design/05/15 squad follow-up)', () => {
+  it('omitting teamIds is byte-identical to the original per-seat formula', () => {
+    const ratings = [1400, 1000, 1000, 600];
+    const places = [4, 2, 3, 1];
+    expect(computeRatingDeltas(ratings, places)).toEqual(
+      computeRatingDeltas(ratings, places, ratings.map((_, i) => i)), // singleton teams
+    );
+  });
+
+  it('every member of a squad gets the identical delta, even with different individual places', () => {
+    // team0 = seats 0,1 (adjacent places 1,2 — the winning squad); team1 = seats 2,3 (places 3,4).
+    const deltas = computeRatingDeltas([1000, 1000, 1000, 1000], [1, 2, 3, 4], [0, 0, 1, 1]);
+    expect(deltas[0]).toBe(deltas[1]); // same squad, same delta
+    expect(deltas[2]).toBe(deltas[3]);
+    expect(deltas[0]!).toBeGreaterThan(0); // winning squad gains
+    expect(deltas[2]!).toBeLessThan(0); // losing squad loses
+  });
+
+  it('expected score compares the SQUAD average rating, not each member\'s own', () => {
+    // team0 = a 1400-favorite paired with a 600-underdog (avg 1000) that still WINS;
+    // team1 = two 1000s (avg 1000). Field average is also 1000, so both squads' expected
+    // score is identical (0.5) despite wildly different individual ratings within team0 —
+    // proof the math uses the squad average, not the 1400 or the 600 individually.
+    const deltas = computeRatingDeltas([1400, 600, 1000, 1000], [1, 2, 3, 4], [0, 0, 1, 1]);
+    expect(deltas[0]).toBe(deltas[1]);
+    expect(deltas[0]).toBe(16); // K=32 * (actual 1 - expected 0.5)
+    expect(deltas[2]).toBe(deltas[3]);
+    expect(deltas[2]).toBe(-16);
+  });
+});
+
 describe('RatingStore', () => {
   it('an unknown account starts at DEFAULT_RATING', () => {
     const store = new RatingStore();
@@ -60,6 +91,15 @@ describe('RatingStore', () => {
     const afterFirst = store.get('alice');
     store.applyMatch(['alice', 'bob'], [1, 2]);
     expect(store.get('alice')).toBeGreaterThan(afterFirst); // won again, rating keeps climbing
+  });
+
+  it('applyMatch, given teamIds, applies the same delta to every squadmate', () => {
+    const store = new RatingStore();
+    const changes = store.applyMatch(['alice', 'bob', 'carol', 'dave'], [1, 2, 3, 4], [0, 0, 1, 1]);
+    const delta = (c: (typeof changes)[number]) => c.after - c.before;
+    expect(delta(changes[0]!)).toBe(delta(changes[1]!)); // alice/bob, same squad
+    expect(delta(changes[2]!)).toBe(delta(changes[3]!)); // carol/dave, same squad
+    expect(delta(changes[0]!)).toBeGreaterThan(delta(changes[2]!)); // winning squad > losing squad
   });
 });
 

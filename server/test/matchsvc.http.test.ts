@@ -202,6 +202,70 @@ describe('matchsvc HTTP — /account/meta', () => {
   });
 });
 
+describe('matchsvc HTTP — /rating/report and /rating/:accountId', () => {
+  it('GET on an unknown account returns the DEFAULT_RATING', async () => {
+    const res = await fetch(`${baseUrl}/rating/never-seen-before`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ accountId: 'never-seen-before', rating: 1000 });
+  });
+
+  it('POST applies a match and returns before/after for every account, without teamIds', async () => {
+    const res = await fetch(`${baseUrl}/rating/report`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ accountIds: ['http-r-alice', 'http-r-bob'], places: [1, 2] }),
+    });
+    expect(res.status).toBe(200);
+    const { changes } = (await res.json()) as { changes: { accountId: string; before: number; after: number }[] };
+    expect(changes).toHaveLength(2);
+    const alice = changes.find((c) => c.accountId === 'http-r-alice')!;
+    expect(alice.after).toBeGreaterThan(alice.before); // 1st place gained
+
+    const getRes = await fetch(`${baseUrl}/rating/http-r-alice`);
+    const getBody = (await getRes.json()) as { rating: number };
+    expect(getBody.rating).toBe(alice.after); // persisted over the real wire
+  });
+
+  it('rejects mismatched-length accountIds/places with 400', async () => {
+    const res = await fetch(`${baseUrl}/rating/report`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ accountIds: ['http-r-x', 'http-r-y'], places: [1] }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a teamIds array whose length disagrees with accountIds with 400', async () => {
+    const res = await fetch(`${baseUrl}/rating/report`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ accountIds: ['http-r-x', 'http-r-y'], places: [1, 2], teamIds: [0] }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('a squad-aware POST (teamIds present) applies the identical delta to every teammate over the real wire', async () => {
+    const res = await fetch(`${baseUrl}/rating/report`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        accountIds: ['http-sq-a', 'http-sq-b', 'http-sq-c', 'http-sq-d'],
+        places: [1, 2, 3, 4],
+        teamIds: [0, 0, 1, 1],
+      }),
+    });
+    expect(res.status).toBe(200);
+    const { changes } = (await res.json()) as { changes: { accountId: string; before: number; after: number }[] };
+    const delta = (id: string) => {
+      const c = changes.find((x) => x.accountId === id)!;
+      return c.after - c.before;
+    };
+    expect(delta('http-sq-a')).toBe(delta('http-sq-b')); // same squad, same delta
+    expect(delta('http-sq-c')).toBe(delta('http-sq-d'));
+    expect(delta('http-sq-a')).toBeGreaterThan(delta('http-sq-c')); // winning squad > losing squad
+  });
+});
+
 describe('matchsvc HTTP — CORS (regression: design/16-accounts.md missing-authorization-header bug)', () => {
   it('a preflight for /account/meta allows the authorization header — the exact bug a real browser caught that no other test could', async () => {
     const res = await fetch(`${baseUrl}/account/meta`, {

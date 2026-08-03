@@ -49,6 +49,10 @@ export interface SettledMatch {
   roomId: string;
   winner: Winner;
   placements?: readonly number[];
+  /** Total seat count — needed by `ladderReport.ts` to recover the winning squad's
+   * OTHER members (design/15's squad-aware ladder follow-up), since `placements`
+   * only ever holds LOSING seats and `winner` names just one representative. */
+  playerCount: number;
   hashOk: boolean;
   /** seat owner index → accountId (design/16-accounts.md), for whichever seats were
    * logged in. Omits guest/bot seats entirely — `ladderReport.ts` falls back to its
@@ -357,6 +361,7 @@ export class MatchRoom {
       roomId: this.roomId,
       winner: agreedWinner,
       placements: agreedPlacements,
+      playerCount: this.playerCount,
       hashOk,
       // Omitted entirely when no seat was logged in — keeps the pre-account SettledMatch
       // shape byte-identical for every guest-only match (and every existing test).
