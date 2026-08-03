@@ -5,8 +5,8 @@ closed loop the design docs describe, and the running record of how each phase a
 landed. Phases are written top-to-bottom in dependency order; each one keeps its dated
 shipped-notes underneath it, so a phase section is both the plan and the history.
 
-**Current built state (2026-08-03).** `ENGINE_VERSION` **31**; 1125 tests green across the
-five workspace packages (engine 373 / client 582 / server 134 / animator 23 / map-editor 13,
+**Current built state (2026-08-03).** `ENGINE_VERSION` **31**; 1146 tests green across the
+five workspace packages (engine 373 / client 593 / server 144 / animator 23 / map-editor 13,
 `npm run check`). **Phases 0–4, 6 and 7 are closed with no deferred items**: the deterministic
 engine and the locked content model (0), the full in-run loop — frame library, room pieces,
 seeded dungeon generation, extraction checkpoints, materials (1), the meta/forge loop and the
@@ -306,7 +306,11 @@ start of this pass, 518 before that) + `tsc --noEmit` clean; 1125 across the rep
 
 Real username/password login (`design/16-accounts.md`), closing every "no account system exists anywhere" scaffold note left by 4.6/the 2026-07-29 squad update (`rating.ts`, `ladderReport.ts`, `PartyService.ts`, `net/identity.ts`). Server: SQLite via Node's built-in `node:sqlite` (no `better-sqlite3` — this dev box has no C++ build toolchain, and the built-in module needs nothing extra), `AuthService` (scrypt password hashing, opaque bearer sessions, no JWT/bcrypt dependency), new `/auth/*`+`/account/*` routes on `matchsvc.ts`. Client: `net/session.ts`+`net/auth.ts`, a `LoginScreen.ts` reachable from a new MainMenu button — logging in is never required to play. `net/identity.ts`'s `getPlayerId()` now prefers the real `accountId`, which is the one seam every downstream caller (party/matchmaking/rating) already read through. Two systems are now actually bound to an account: **PvP ladder rating** (`accountId` threaded through the signed ticket → `MatchRoom.SettledMatch.seatAccounts` → `ladderReport.buildRatingReportBody`'s new optional param, falling back to the old `seat:{roomId}:{seatIdx}` scaffold for guests/bots — fully backward compatible) and **Forge blueprints/materials/loadout** (`meta/accountSync.ts` best-effort mirrors `MetaState` to `/account/meta` once logged in, pulls it back on login). 100 server tests (was 93) + 564 client tests (was 555), both `tsc --noEmit` clean. **A real bug only live browser verification caught (not vitest, not curl):** `matchsvc.ts`'s CORS policy declared `access-control-allow-headers: content-type` only — every bearer-token call (`/auth/me`, `/account/meta`) was silently rejected by the browser's CORS preflight (`Failed to fetch`, no server-side log at all, since curl/Node's own fetch don't enforce preflight). Fixed (`authorization` added to the allow-list) and re-verified live end-to-end via claude-in-chrome: register → unlock a blueprint → log out → clear local state → log in with a changed password → the blueprint reappeared, pulled from the account's real SQLite row.
 
-**Update (same day): expanded test coverage on request.** `matchsvc.ts` refactored for testability (`createMatchsvcServer(opts)` builds the server without starting it; `main()` guarded behind an ESM entrypoint check) so `server/test/matchsvc.http.test.ts` could become the first-ever direct HTTP-layer test in this repo — a real server on an ephemeral port, real `fetch`, and a real CORS preflight assertion that regression-tests the exact bug above. Added a local username blacklist (`usernameFilter.ts` — reserved names + a starter profanity list, no external moderation API configured anywhere in this project). `AuthService` edge cases (boundary lengths, unicode rejection, SQL-injection-style strings proven inert, concurrent-registration race) surfaced and fixed a real gap: username uniqueness/login lookup were case-sensitive, now `COLLATE NOCASE`. `LoginScreen`'s `doLogin`/`doRegister`/`doChangePassword`/`doLogout` gained the re-entrant busy-guard `PartyScreen`'s `doCreate`/`doJoin` already had but this screen had missed. **134 server tests (was 100) + 568 client tests (was 564).** Not built: third-party OAuth (columns/routing reserved), persisted ladder ratings (still the in-memory `RatingStore`), password reset/rate-limiting.
+**Update (same day): expanded test coverage on request.** `matchsvc.ts` refactored for testability (`createMatchsvcServer(opts)` builds the server without starting it; `main()` guarded behind an ESM entrypoint check) so `server/test/matchsvc.http.test.ts` could become the first-ever direct HTTP-layer test in this repo — a real server on an ephemeral port, real `fetch`, and a real CORS preflight assertion that regression-tests the exact bug above. Added a local username blacklist (`usernameFilter.ts` — reserved names + a starter profanity list, no external moderation API configured anywhere in this project). `AuthService` edge cases (boundary lengths, unicode rejection, SQL-injection-style strings proven inert, concurrent-registration race) surfaced and fixed a real gap: username uniqueness/login lookup were case-sensitive, now `COLLATE NOCASE`. `LoginScreen`'s `doLogin`/`doRegister`/`doChangePassword`/`doLogout` gained the re-entrant busy-guard `PartyScreen`'s `doCreate`/`doJoin` already had but this screen had missed. **134 server tests (was 100) + 568 client tests (was 564).** Not built (at the time): third-party OAuth (columns/routing reserved), persisted ladder ratings (still the in-memory `RatingStore`), password reset/rate-limiting — **the latter two are done, see the 2026-08-03 update below.**
+
+**Update (2026-08-03): the two items flagged above are done — ladder ratings persist, login is rate-limited.** `server/src/rating.ts`'s `RatingStore` gained an optional `DatabaseSync` constructor param; when passed (matchsvc.ts now passes its own `openDb()` result), `get`/`applyMatch` read/write `db.ts`'s pre-existing (previously unused) `ratings` table instead of an in-memory `Map`, so a player's ladder rating survives a server restart. Caught a real schema bug before shipping: `ratings.account_id` had a `REFERENCES accounts(id)` foreign key from when the table was first added, but `node:sqlite` enforces FKs by default (unlike a bare `sqlite3` CLI) — inserting a guest/bot's `seat:{roomId}:{seatIdx}` scaffold id (never a real `accounts` row) threw `FOREIGN KEY constraint failed`, a real gap only a test exercising that exact path caught. Fixed by dropping the FK (a rating key was never truly a foreign key into accounts — no real DB file exists on disk yet, so the schema was changed directly rather than migrated). Also added: `AuthService.login` now locks a username out for 15 minutes after 5 consecutive failures (in-memory counter, case-folded key to match the `COLLATE NOCASE` lookup, reset on any success) — a standard brute-force throttle, keyed by username rather than request IP since this server has no IP plumbing today. 142 server tests (was 134), `tsc --noEmit` clean; 1133 across the repo.
+
+**Update (same day, later): expired `sessions` rows are now swept too.** The last of the three items this doc had flagged as not built. `verifySession` already deleted the one expired row it happened to look up, but a session nobody came back to check (e.g. logged in once, never returned) just sat in the table forever. `AuthService.issueSession` (the one place a new row is written) now runs an opportunistic `DELETE FROM sessions WHERE expires_at < now` sweep first — not a background timer, matching the project's existing "no process the team doesn't need yet" convention; `verifySession`'s own hot per-request path is deliberately untouched, so an authenticated request stays one indexed lookup. 144 server tests (was 142), `tsc --noEmit` clean; 1135 across the repo. Still not built: third-party OAuth, email/password-reset flows.
 
 ---
 
@@ -335,6 +339,32 @@ any test coverage before), `tsc --noEmit` clean, verified live (English↔中文
 across every migrated screen).
 Also recorded as a standing repo rule (`CLAUDE.md`): all code/comments/docs/commit
 messages stay English; translation locale files are the one exception.
+
+**Update (2026-08-03): six more locales, browser-language auto-detect on first boot,
+a real CJK word-wrap bug found and fixed, one plural mismatch reworded.** `de`/`fr`/
+`es`/`pl`/`ru`/`it` join `en`/`zh` (8 locales total), each a full `Translations<typeof
+en>` translation — the existing "locale parity" test already walks every locale
+against every `en.ts` key, so all six are covered by the same guard `zh` always had,
+no new test-writing needed for coverage. `Settings.ts`'s language toggle became a
+`nextLocale()` cycle through all 8 (the old 2-entry `en`⇄`zh` swap doesn't scale).
+`index.ts`'s new `detectBrowserLocale(languages)` maps `navigator.languages` to a
+supported locale (falling back to English on no match); wired into
+`createWebSettingsStore` for a genuinely fresh install ONLY (`localStorage.getItem`
+returns `null`) — a pre-i18n or corrupt save still falls back to English via the
+existing `migrate()`, since a returning player's implicit "never touched this
+setting" should never be silently overridden. Verified live under `zh` (real Chrome)
+that Pixi's `wordWrap` — which only breaks at whitespace — genuinely overflows an
+unbroken long CJK string instead of wrapping it, exactly as design/17 had
+speculated; `TextStyle.breakWords = true` fixed it (`PortalPrompt.ts`'s title text,
+the one place today's copy could someday hit it, plus `Forge.ts`'s `infoText` as
+defense-in-depth). `results.materialsBanked`'s `'+{count} materials banked'` (wrong
+at count=1) reworded to `'Materials banked: {count}'`, a count-agnostic label style
+applied pre-emptively across the new locales' own count-adjacent strings too (Polish/
+Russian have plural rules far more complex than English's). A follow-up pass then added `wordWrap`/`breakWords`
+config-pinning tests to `PortalPrompt.test.ts`/`Forge.test.ts` (the wrap fix itself can
+only be verified live — Pixi text layout needs a real canvas — but a test can still pin
+the config so a future edit can't silently drop `breakWords` unnoticed). 593 client
+tests (was 582), `tsc --noEmit` clean. See design/17-i18n.md for the full account.
 
 ---
 

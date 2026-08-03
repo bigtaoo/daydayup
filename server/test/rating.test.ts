@@ -3,6 +3,7 @@
  * store, in isolation from any HTTP/matchsvc wiring.
  */
 import { describe, it, expect } from 'vitest';
+import { openDb } from '../src/db';
 import { computeRatingDeltas, RatingStore, DEFAULT_RATING } from '../src/rating';
 
 describe('computeRatingDeltas', () => {
@@ -59,5 +60,33 @@ describe('RatingStore', () => {
     const afterFirst = store.get('alice');
     store.applyMatch(['alice', 'bob'], [1, 2]);
     expect(store.get('alice')).toBeGreaterThan(afterFirst); // won again, rating keeps climbing
+  });
+});
+
+describe('RatingStore — SQLite-backed', () => {
+  it('persists ratings in the given db, surviving a fresh RatingStore instance', () => {
+    const db = openDb(':memory:');
+    const store = new RatingStore(db);
+    const changes = store.applyMatch(['alice', 'bob'], [1, 2]);
+
+    // A brand new store over the SAME db (simulates a server restart) sees the same ratings.
+    const reopened = new RatingStore(db);
+    expect(reopened.get('alice')).toBe(changes[0]!.after);
+    expect(reopened.get('bob')).toBe(changes[1]!.after);
+  });
+
+  it('a db-backed store does not leak into an in-memory-only store, and vice versa', () => {
+    const db = openDb(':memory:');
+    const dbStore = new RatingStore(db);
+    const memStore = new RatingStore();
+    dbStore.applyMatch(['alice', 'bob'], [1, 2]);
+    expect(memStore.get('alice')).toBe(DEFAULT_RATING);
+  });
+
+  it('a scaffold guest/bot id (seat:{roomId}:{seatIdx}) persists fine despite the FK on accounts', () => {
+    const db = openDb(':memory:');
+    const store = new RatingStore(db);
+    expect(() => store.applyMatch(['seat:room1:0', 'seat:room1:1'], [1, 2])).not.toThrow();
+    expect(store.get('seat:room1:0')).toBeGreaterThan(DEFAULT_RATING);
   });
 });

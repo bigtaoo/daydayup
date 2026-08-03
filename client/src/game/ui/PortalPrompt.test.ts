@@ -15,7 +15,7 @@ afterEach(() => resetLocaleForTests());
 
 function privateOf(p: PortalPrompt) {
   return p as unknown as {
-    titleText: { text: string };
+    titleText: { text: string; style: { wordWrap: boolean; breakWords: boolean } };
     extractBtn: { onTap: (() => void) | null };
     descendBtn: { onTap: (() => void) | null };
   };
@@ -53,6 +53,16 @@ describe('PortalPrompt — visibility follows the caller-computed `show` flag', 
     expect(prompt.view.visible).toBe(true);
     prompt.update(s, false);
     expect(prompt.view.visible).toBe(false);
+  });
+});
+
+describe('PortalPrompt — text wrapping (design/17-i18n.md)', () => {
+  it('reposition() sets wordWrap AND breakWords — CJK text has no spaces to wrap at, so a plain wordWrap alone would overflow the panel instead of wrapping (confirmed live, 2026-08-03)', () => {
+    const prompt = new PortalPrompt();
+    prompt.reposition({ w: 320, h: 800 });
+    const style = privateOf(prompt).titleText.style;
+    expect(style.wordWrap).toBe(true);
+    expect(style.breakWords).toBe(true);
   });
 });
 

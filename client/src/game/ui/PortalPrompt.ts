@@ -60,6 +60,13 @@ export class PortalPrompt {
     this.panel.view.position.set(x, y);
     this.titleText.style.wordWrap = true;
     this.titleText.style.wordWrapWidth = w - 24;
+    // Pixi's wordWrap only breaks at whitespace by default — CJK text has none, so an
+    // unbroken Chinese/Japanese/Korean run longer than wordWrapWidth would otherwise
+    // overflow the panel as one line instead of wrapping (confirmed live under the zh
+    // locale, design/17-i18n.md's flagged-but-unverified risk). `breakWords` forces a
+    // character-level break when a run has no earlier break point, fixing CJK without
+    // changing anything about how space-delimited English wraps.
+    this.titleText.style.breakWords = true;
     this.titleText.position.set(screenPx.w / 2, y + 12);
     this.extractBtn.view.position.set(x + w / 2 - 130, y + 52);
     this.descendBtn.view.position.set(x + w / 2 - 130, y + 100);

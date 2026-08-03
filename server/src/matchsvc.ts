@@ -134,13 +134,13 @@ export function createMatchsvcServer(opts: MatchsvcServerOptions = {}): Server {
   });
 
   const withUrl = (t: MatchTicket) => ({ ...t, wsUrl: GAMESERVER_URL });
-  const ratings = new RatingStore();
+  const db = openDb(opts.dbPath);
+  const ratings = new RatingStore(db);
   const parties = new PartyService({
     nowMs: () => Date.now(),
     newPartyId: () => randomUUID(),
     newCode: randomCode,
   });
-  const db = openDb(opts.dbPath);
   const auth = new AuthService(db);
 
   const server = createServer((req, res) => {

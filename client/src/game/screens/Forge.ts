@@ -93,7 +93,12 @@ export class Forge {
     // wordWrap: the buyable-blueprint list appended below (`Store (demo: free): ...`)
     // has no fixed length — without wrapping it was a real bug, running off both
     // edges of the screen as one unbroken line instead of staying inside the panel.
-    this.infoText = new Text({ text: '', style: { fill: 0xcbd5e0, fontSize: 14, fontFamily: 'monospace', lineHeight: 20, align: 'center', padding: 24, wordWrap: true, wordWrapWidth: 760 } });
+    // breakWords: defense-in-depth for CJK locales (design/17-i18n.md) — Pixi's
+    // wordWrap only breaks at whitespace, so a translated line with no natural break
+    // point would otherwise overflow instead of wrapping; today's actual copy is
+    // already length-capped (see `buyableText` below) so this isn't a live bug, but
+    // costs nothing to guard against a future longer translated line doing the same.
+    this.infoText = new Text({ text: '', style: { fill: 0xcbd5e0, fontSize: 14, fontFamily: 'monospace', lineHeight: 20, align: 'center', padding: 24, wordWrap: true, wordWrapWidth: 760, breakWords: true } });
     this.infoText.anchor.set(0.5, 0);
     this.hint = new Text({ text: t('forge.hint'), style: { fill: 0x90cdf4, fontSize: 12, fontFamily: 'monospace', padding: 10 } });
     this.hint.anchor.set(0.5, 1);

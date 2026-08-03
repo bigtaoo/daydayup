@@ -172,7 +172,7 @@ export const zh: Translations<typeof en> = {
     confirmHint: '按开火键返回装备界面',
     timeLine: '用时 {m}:{ss}',
     floorLine: '楼层 {floor}/{floorCount}',
-    materialsBanked: '+{count} 份材料已存入',
+    materialsBanked: '已存入材料：{count}',
     scoreLine: '分数 {score}',
     fellOnFloor: '倒在第 {floor}/{floorCount} 层',
     materialsLost: '本层材料已全部丢失',

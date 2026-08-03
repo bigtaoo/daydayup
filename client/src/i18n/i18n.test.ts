@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { t, getLocale, setLocale, resetLocaleForTests, LOCALES } from './index';
+import { t, getLocale, setLocale, resetLocaleForTests, LOCALES, detectBrowserLocale } from './index';
 import { en } from './locales/en';
 import { zh } from './locales/zh';
 
@@ -29,6 +29,29 @@ describe('t()', () => {
     setLocale('zh');
     resetLocaleForTests();
     expect(getLocale()).toBe('en');
+  });
+});
+
+describe('detectBrowserLocale', () => {
+  it('matches the first supported language in preference order', () => {
+    expect(detectBrowserLocale(['fr-FR', 'en-US'])).toBe('fr');
+  });
+
+  it('strips a region/script subtag before comparing', () => {
+    expect(detectBrowserLocale(['zh-CN'])).toBe('zh');
+    expect(detectBrowserLocale(['zh-Hans-CN'])).toBe('zh');
+  });
+
+  it('skips an unsupported language and matches a later one', () => {
+    expect(detectBrowserLocale(['pt-BR', 'de-DE'])).toBe('de');
+  });
+
+  it('falls back to the default locale when nothing matches', () => {
+    expect(detectBrowserLocale(['pt-BR', 'nl-NL'])).toBe('en');
+  });
+
+  it('falls back to the default locale for an empty list', () => {
+    expect(detectBrowserLocale([])).toBe('en');
   });
 });
 

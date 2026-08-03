@@ -12,9 +12,15 @@
  */
 import { en } from './locales/en';
 import { zh } from './locales/zh';
+import { de } from './locales/de';
+import { fr } from './locales/fr';
+import { es } from './locales/es';
+import { pl } from './locales/pl';
+import { ru } from './locales/ru';
+import { it } from './locales/it';
 
-export type Locale = 'en' | 'zh';
-export const LOCALES: readonly Locale[] = ['en', 'zh'];
+export type Locale = 'en' | 'zh' | 'de' | 'fr' | 'es' | 'pl' | 'ru' | 'it';
+export const LOCALES: readonly Locale[] = ['en', 'zh', 'de', 'fr', 'es', 'pl', 'ru', 'it'];
 export const DEFAULT_LOCALE: Locale = 'en';
 
 type DotPaths<T> = T extends string
@@ -27,7 +33,7 @@ export type TranslationKey = DotPaths<typeof en>;
 /** The shape a translation locale must have: `en.ts`'s exact nested keys, string leaves. */
 export type Translations<T> = { [K in keyof T]: T[K] extends string ? string : Translations<T[K]> };
 
-const MESSAGES: Record<Locale, Translations<typeof en>> = { en, zh };
+const MESSAGES: Record<Locale, Translations<typeof en>> = { en, zh, de, fr, es, pl, ru, it };
 
 let currentLocale: Locale = DEFAULT_LOCALE;
 
@@ -44,6 +50,23 @@ export function setLocale(locale: Locale): void {
  * into the next one (same convention as `net/session.ts`'s `resetSessionCacheForTests`). */
 export function resetLocaleForTests(): void {
   currentLocale = DEFAULT_LOCALE;
+}
+
+/**
+ * Maps a browser/system language-tag list (`navigator.languages`-shaped — most to
+ * least preferred) to a supported `Locale`, or `DEFAULT_LOCALE` if none match.
+ * Pure/injectable so `settings/store.ts`'s first-boot detection is testable without a
+ * real `navigator` — matches this project's DI convention elsewhere (net/matchmaking.ts
+ * etc). Only the base subtag is compared (`'zh-CN'`/`'zh-Hans'` → `'zh'`, `'pt-BR'` →
+ * no match since Portuguese isn't a supported locale), so a region/script suffix never
+ * blocks an otherwise-valid match.
+ */
+export function detectBrowserLocale(languages: readonly string[]): Locale {
+  for (const tag of languages) {
+    const base = tag.split('-')[0]?.toLowerCase();
+    if ((LOCALES as readonly string[]).includes(base ?? '')) return base as Locale;
+  }
+  return DEFAULT_LOCALE;
 }
 
 function lookup(key: TranslationKey, locale: Locale): string {

@@ -28,8 +28,11 @@ CREATE TABLE IF NOT EXISTS sessions (
   expires_at INTEGER NOT NULL
 );
 
+-- No FK to accounts(id): a rating key is any opaque id ladderReport.ts hands us,
+-- including a guest/bot scaffold (\`seat:{roomId}:{seatIdx}\`) that never has an
+-- accounts row at all (design/15's ladder predates design/16's accounts table).
 CREATE TABLE IF NOT EXISTS ratings (
-  account_id TEXT PRIMARY KEY REFERENCES accounts(id),
+  account_id TEXT PRIMARY KEY,
   rating INTEGER NOT NULL
 );
 

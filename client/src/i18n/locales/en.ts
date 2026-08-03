@@ -173,7 +173,7 @@ export const en = {
     confirmHint: 'Press Fire — back to the loadout',
     timeLine: 'Time {m}:{ss}',
     floorLine: 'Floor {floor}/{floorCount}',
-    materialsBanked: '+{count} materials banked',
+    materialsBanked: 'Materials banked: {count}',
     scoreLine: 'Score {score}',
     fellOnFloor: 'Fell on floor {floor}/{floorCount}',
     materialsLost: "The floor's materials were lost",

@@ -1,12 +1,30 @@
 import { Container, Text } from 'pixi.js';
 import type { SettingsState } from '../../settings';
 import { Panel, Slider, Button } from '../ui/widgets';
-import { t, setLocale, type Locale } from '../../i18n';
+import { t, setLocale, LOCALES, type Locale } from '../../i18n';
 
 /** Display name for the LANGUAGE toggle — always shown in that language's own name
  * (not translated), same convention most apps use for a language picker. */
-const LOCALE_NAMES: Record<Locale, string> = { en: 'English', zh: '中文' };
-const OTHER_LOCALE: Record<Locale, Locale> = { en: 'zh', zh: 'en' };
+const LOCALE_NAMES: Record<Locale, string> = {
+  en: 'English',
+  zh: '中文',
+  de: 'Deutsch',
+  fr: 'Français',
+  es: 'Español',
+  pl: 'Polski',
+  ru: 'Русский',
+  it: 'Italiano',
+};
+
+/** Cycles to the next locale in `LOCALES`' declared order, wrapping around — the
+ * two-locale `OTHER_LOCALE` swap this replaced doesn't scale past 2 entries, but a
+ * tap-to-cycle button still does for `LOCALES.length` this small (8). A real list/
+ * picker widget would read better at this size; deliberately not built (design/17-
+ * i18n.md), since it's a new widget shape this project doesn't have yet elsewhere. */
+function nextLocale(current: Locale): Locale {
+  const i = LOCALES.indexOf(current);
+  return LOCALES[(i + 1) % LOCALES.length]!;
+}
 
 /**
  * The settings screen (design/10 "Settings incl. SFX/music volume"). Pure
@@ -54,13 +72,13 @@ export class Settings {
     this.muteBtn = new Button('', { w: 120, h: 34 });
     this.muteBtn.onTap = () => this.update({ ...this.state, muted: !this.state.muted });
 
-    // Language toggle (design/17-i18n.md) — same tappable-toggle pattern as muteBtn
-    // (design/10 "no DOM widgets"). Only two locales exist today, so a toggle rather
-    // than a picker; `setLocale` takes effect immediately so this button's own next
+    // Language cycle button (design/17-i18n.md) — same tappable pattern as muteBtn
+    // (design/10 "no DOM widgets"), stepping through `LOCALES` in declared order on
+    // each tap; `setLocale` takes effect immediately so this button's own next
     // `syncWidgets()` already reads in the new language.
     this.languageBtn = new Button('', { w: 160, h: 34 });
     this.languageBtn.onTap = () => {
-      const next = OTHER_LOCALE[this.state.locale];
+      const next = nextLocale(this.state.locale);
       setLocale(next);
       this.update({ ...this.state, locale: next });
     };

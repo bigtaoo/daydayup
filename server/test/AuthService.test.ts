@@ -89,6 +89,54 @@ describe('AuthService — login', () => {
   });
 });
 
+describe('AuthService — login rate limiting', () => {
+  it('locks out login after 5 consecutive failures, even with the correct password', () => {
+    const { auth } = make();
+    auth.register('alice', 'hunter22');
+    for (let i = 0; i < 5; i++) {
+      expect(auth.login('alice', 'wrongpass')).toMatchObject({ error: expect.any(String) });
+    }
+    const locked = auth.login('alice', 'hunter22') as { error: string };
+    expect(locked.error).toMatch(/too many/i);
+  });
+
+  it('a correct login before the 5th failure resets the streak', () => {
+    const { auth } = make();
+    auth.register('alice', 'hunter22');
+    auth.login('alice', 'wrongpass');
+    auth.login('alice', 'wrongpass');
+    expect(auth.login('alice', 'hunter22')).toMatchObject({ accountId: 'acct-1' });
+    // Streak reset — 4 more failures shouldn't trip the 5-attempt lock yet.
+    for (let i = 0; i < 4; i++) auth.login('alice', 'wrongpass');
+    expect(auth.login('alice', 'hunter22')).toMatchObject({ accountId: 'acct-1' });
+  });
+
+  it('the lockout is per-username — another account is unaffected', () => {
+    const { auth } = make();
+    auth.register('alice', 'hunter22');
+    auth.register('bob', 'hunter22');
+    for (let i = 0; i < 5; i++) auth.login('alice', 'wrongpass');
+    expect(auth.login('alice', 'hunter22')).toMatchObject({ error: expect.stringMatching(/too many/i) });
+    expect(auth.login('bob', 'hunter22')).toMatchObject({ accountId: expect.any(String) });
+  });
+
+  it('the lockout key folds case, matching the COLLATE NOCASE username lookup', () => {
+    const { auth } = make();
+    auth.register('alice', 'hunter22');
+    for (let i = 0; i < 5; i++) auth.login('Alice', 'wrongpass');
+    expect(auth.login('ALICE', 'hunter22')).toMatchObject({ error: expect.stringMatching(/too many/i) });
+  });
+
+  it('login succeeds again once the lockout window elapses', () => {
+    const { auth, advance } = make();
+    auth.register('alice', 'hunter22');
+    for (let i = 0; i < 5; i++) auth.login('alice', 'wrongpass');
+    expect(auth.login('alice', 'hunter22')).toMatchObject({ error: expect.stringMatching(/too many/i) });
+    advance(15 * 60_000 + 1);
+    expect(auth.login('alice', 'hunter22')).toMatchObject({ accountId: 'acct-1' });
+  });
+});
+
 describe('AuthService — sessions', () => {
   it('verifies a live session token', () => {
     const { auth } = make();
@@ -130,6 +178,31 @@ describe('AuthService — changePassword', () => {
     const { auth } = make();
     const { accountId } = auth.register('alice', 'hunter22') as { accountId: string };
     expect(auth.changePassword(accountId, 'wrongpass', 'newpassword1')).toMatchObject({ error: expect.any(String) });
+  });
+});
+
+describe('AuthService — expired session sweep', () => {
+  it('a login/register sweeps away already-expired session rows (not just the one it happens to look up)', () => {
+    const { auth, db, advance } = make();
+    auth.register('alice', 'hunter22');
+    const { token: staleToken } = auth.register('bob', 'hunter22') as { token: string };
+    advance(31 * 24 * 60 * 60_000); // past the 30-day TTL for both existing sessions
+
+    // A fresh login for a THIRD account should sweep bob's/alice's now-expired rows,
+    // even though neither is the token this call is looking at.
+    auth.register('carol', 'hunter22');
+
+    const remaining = db.prepare('SELECT token FROM sessions').all() as { token: string }[];
+    expect(remaining.map((r) => r.token)).not.toContain(staleToken);
+    expect(remaining).toHaveLength(1); // only carol's fresh session survives
+  });
+
+  it('does not sweep a still-valid session', () => {
+    const { auth, db } = make();
+    const { token } = auth.register('alice', 'hunter22') as { token: string };
+    auth.register('bob', 'hunter22'); // triggers a sweep pass
+    const row = db.prepare('SELECT token FROM sessions WHERE token = ?').get(token);
+    expect(row).toBeTruthy();
   });
 });
 

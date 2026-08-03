@@ -3,8 +3,9 @@
 Single-engine PixiJS v8 client — the render/host half of the game. It owns screens, input,
 scene views, audio and art; it owns **no** gameplay outcome (those all come from `@dd/engine`).
 What it drives today: the full PvE run loop (menu → loadout → generated floors → checkpoint →
-extract or descend → result), online co-op, 8-player PvP with squads, accounts, and a 中文/English
-locale toggle.
+extract or descend → result), online co-op, 8-player PvP with squads, accounts, and an
+8-locale i18n system (English canonical + 中文/Deutsch/Français/Español/Polski/Русский/Italiano)
+with first-boot browser-language auto-detection.
 
 ## Run (Web)
 

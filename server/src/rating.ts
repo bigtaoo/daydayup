@@ -14,6 +14,8 @@
  * Exact K-factor/starting rating are first-pass constants (design/15 doesn't lock
  * ladder tuning), not a tuned production curve.
  */
+import type { DatabaseSync } from 'node:sqlite';
+
 export const K_FACTOR = 32;
 export const DEFAULT_RATING = 1000;
 
@@ -41,17 +43,30 @@ export interface RatingChange {
 }
 
 /**
- * In-memory ladder store (matches the existing project convention — `Matchmaker`
- * is in-memory too, no DB in this repo yet). Keyed by an opaque `accountId` string;
- * this module doesn't define what an account IS — that's outside matchsvc's current
- * scope (no account/auth system exists yet anywhere in this project) — it only
- * defines the rating math and storage once given stable ids.
+ * Ladder store, keyed by an opaque `accountId` string; this module doesn't define
+ * what an account IS — a guest/bot's scaffold `seat:{roomId}:{seatIdx}` id (see
+ * ladderReport.ts) works exactly like a real one, it just resets every restart.
+ *
+ * Persists to db.ts's `ratings` table when a `DatabaseSync` is passed in (design/16
+ * added that table for exactly this — matchsvc.ts wires its own `openDb()` result
+ * through), so a real player's rating now survives a server restart the same way
+ * their account/blueprints already do. Falls back to an in-memory `Map` when
+ * constructed with no db (every existing test, plus any future caller that wants a
+ * scratch store) — same value, same shape, just not durable.
  */
 export class RatingStore {
-  private readonly ratings = new Map<string, number>();
+  private readonly cache = new Map<string, number>();
+
+  constructor(private readonly db?: DatabaseSync) {}
 
   get(accountId: string): number {
-    return this.ratings.get(accountId) ?? DEFAULT_RATING;
+    if (this.db) {
+      const row = this.db.prepare('SELECT rating FROM ratings WHERE account_id = ?').get(accountId) as
+        | { rating: number }
+        | undefined;
+      return row?.rating ?? DEFAULT_RATING;
+    }
+    return this.cache.get(accountId) ?? DEFAULT_RATING;
   }
 
   /** Apply one verified match's placements; returns every account's {before, after}. */
@@ -61,7 +76,15 @@ export class RatingStore {
     return accountIds.map((accountId, i) => {
       const b = before[i]!;
       const after = b + deltas[i]!;
-      this.ratings.set(accountId, after);
+      if (this.db) {
+        this.db
+          .prepare(
+            'INSERT INTO ratings (account_id, rating) VALUES (?, ?) ON CONFLICT(account_id) DO UPDATE SET rating = excluded.rating',
+          )
+          .run(accountId, after);
+      } else {
+        this.cache.set(accountId, after);
+      }
       return { accountId, before: b, after };
     });
   }

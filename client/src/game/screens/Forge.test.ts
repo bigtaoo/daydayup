@@ -52,7 +52,7 @@ DOMAdapter.set({
 function privateOf(f: Forge) {
   return f as unknown as {
     title: { text: string };
-    infoText: { text: string };
+    infoText: { text: string; style: { wordWrap: boolean; breakWords: boolean } };
     rowBtns: TestButton[];
     clearBtn: TestButton;
     startBtn: TestButton;
@@ -104,6 +104,13 @@ describe('Forge — infoText buyable-list bound', () => {
     expect(purchasableBlueprints(m)).toHaveLength(0);
     f.render(m, 1280, 720);
     expect(privateOf(f).infoText.text).not.toContain('Store');
+  });
+
+  it('infoText wraps AND force-breaks unbroken runs (CJK locales have no spaces to wrap at, design/17-i18n.md)', () => {
+    const f = new Forge();
+    const style = privateOf(f).infoText.style;
+    expect(style.wordWrap).toBe(true);
+    expect(style.breakWords).toBe(true);
   });
 });
 

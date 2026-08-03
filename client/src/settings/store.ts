@@ -1,6 +1,6 @@
 // SettingsStore — persistence port for SettingsState, symmetric to ../meta/store.ts.
 import { defaultSettingsState, type SettingsState } from './SettingsState';
-import { LOCALES, type Locale } from '../i18n';
+import { LOCALES, detectBrowserLocale, type Locale } from '../i18n';
 
 export interface SettingsStore {
   load(): SettingsState;
@@ -22,17 +22,38 @@ export class MemorySettingsStore implements SettingsStore {
 
 const DEFAULT_KEY = 'daydayup.settings.v1';
 
+export interface SettingsStoreDeps {
+  /** Overrides `navigator.languages`/`navigator.language` for first-boot locale
+   * detection — tests inject a fixed list instead of depending on a real `navigator`. */
+  languages?: readonly string[];
+}
+
+function browserLanguages(): readonly string[] {
+  if (typeof navigator === 'undefined') return [];
+  return navigator.languages && navigator.languages.length > 0 ? navigator.languages : [navigator.language];
+}
+
 /** localStorage-backed store for the web build. Fails soft, same convention as
  * ../meta/store.ts's createWebMetaStore: a corrupt/missing save falls back to
- * defaults rather than throwing. */
-export function createWebSettingsStore(key: string = DEFAULT_KEY): SettingsStore {
+ * defaults rather than throwing.
+ *
+ * First boot (no save at ALL, `raw === null`) auto-selects a locale from the
+ * browser/system language via `detectBrowserLocale` — falls back to English if
+ * nothing matches. This deliberately does NOT apply to a save that merely predates
+ * `locale` (a pre-i18n save, or a corrupt one) — that's a RETURNING player, whose
+ * existing choice of "never touched the language setting" should never be
+ * silently overridden after the fact; `migrate()`'s own `en` fallback (below)
+ * already covers that case correctly. */
+export function createWebSettingsStore(key: string = DEFAULT_KEY, deps: SettingsStoreDeps = {}): SettingsStore {
   const available = typeof localStorage !== 'undefined';
+  const languages = deps.languages ?? browserLanguages();
   return {
     load(): SettingsState {
       if (!available) return defaultSettingsState();
       try {
         const raw = localStorage.getItem(key);
-        return raw ? migrate(JSON.parse(raw)) : defaultSettingsState();
+        if (raw === null) return { ...defaultSettingsState(), locale: detectBrowserLocale(languages) };
+        return migrate(JSON.parse(raw));
       } catch {
         return defaultSettingsState();
       }

@@ -81,7 +81,7 @@ describe('RunOutcome — PvE extraction/death', () => {
       title: 'EXTRACTED',
       lines: [
         `Floor 3/${EMBER_DUNGEON.floorCount}`,
-        '+5 materials banked',
+        'Materials banked: 5',
         'Time 1:37',
         `Score ${SCORE.victory}`,
       ],
@@ -114,11 +114,11 @@ describe('RunOutcome — PvE extraction/death', () => {
     });
   });
 
-  it('a zero-material extraction still shows "+0 materials banked", not blank', () => {
+  it('a zero-material extraction still shows "Materials banked: 0", not blank', () => {
     const s = pveState();
     const host = mockHost();
     new RunOutcome(host).handle(s);
-    expect(host.shown?.lines).toContain('+0 materials banked');
+    expect(host.shown?.lines).toContain('Materials banked: 0');
   });
 });
 
@@ -180,7 +180,7 @@ describe('RunOutcome — i18n (design/17-i18n.md)', () => {
     expect(host.shown?.title).toBe('撤离成功');
     expect(host.shown?.lines).toEqual([
       `楼层 3/${EMBER_DUNGEON.floorCount}`,
-      '+5 份材料已存入',
+      '已存入材料：5',
       '用时 1:37',
       `分数 ${SCORE.victory}`,
     ]);

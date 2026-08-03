@@ -50,7 +50,10 @@ describe('createWebSettingsStore — locale migration', () => {
 
   it('falls back to English for a saved locale that is no longer valid', () => {
     withFakeLocalStorage(() => {
-      localStorage.setItem('t.settings.2', JSON.stringify({ ...defaultSettingsState(), locale: 'fr' }));
+      // 'xx' is not, and should never become, a real Locale — unlike 'fr' (a real
+      // supported locale since 2026-08-03), it can't accidentally start passing once
+      // more locales ship, so it stays a reliable "definitely invalid" fixture.
+      localStorage.setItem('t.settings.2', JSON.stringify({ ...defaultSettingsState(), locale: 'xx' }));
       expect(createWebSettingsStore('t.settings.2').load().locale).toBe('en');
     });
   });
@@ -69,6 +72,44 @@ describe('createWebSettingsStore — locale migration', () => {
       localStorage.setItem('t.settings.4', 'not json');
       expect(() => createWebSettingsStore('t.settings.4').load()).not.toThrow();
       expect(createWebSettingsStore('t.settings.4').load().locale).toBe('en');
+    });
+  });
+});
+
+describe('createWebSettingsStore — first-boot browser-locale detection', () => {
+  it('a genuinely fresh install (no save at all) picks up a matching browser language', () => {
+    withFakeLocalStorage(() => {
+      const store = createWebSettingsStore('t.settings.5', { languages: ['de-DE', 'en-US'] });
+      expect(store.load().locale).toBe('de');
+    });
+  });
+
+  it('falls back to English when no browser language matches a supported locale', () => {
+    withFakeLocalStorage(() => {
+      const store = createWebSettingsStore('t.settings.6', { languages: ['pt-BR', 'nl-NL'] });
+      expect(store.load().locale).toBe('en');
+    });
+  });
+
+  it('does NOT apply browser detection once anything has been saved, even a pre-i18n save missing locale', () => {
+    withFakeLocalStorage(() => {
+      const { locale, ...preI18n } = defaultSettingsState();
+      void locale;
+      localStorage.setItem('t.settings.7', JSON.stringify(preI18n));
+      // A returning player predating i18n — must stay English, not get "upgraded"
+      // to a detected locale just because this field happened to be absent.
+      const store = createWebSettingsStore('t.settings.7', { languages: ['de-DE'] });
+      expect(store.load().locale).toBe('en');
+    });
+  });
+
+  it('does not re-detect on a second load once a save exists (e.g. after the player changed it back)', () => {
+    withFakeLocalStorage(() => {
+      const store = createWebSettingsStore('t.settings.8', { languages: ['de-DE'] });
+      const first = store.load(); // detects 'de', but doesn't persist by itself
+      expect(first.locale).toBe('de');
+      store.save({ ...first, locale: 'en' }); // player switches back to English
+      expect(createWebSettingsStore('t.settings.8', { languages: ['de-DE'] }).load().locale).toBe('en');
     });
   });
 });

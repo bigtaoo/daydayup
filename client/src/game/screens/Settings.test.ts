@@ -8,7 +8,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { Settings } from './Settings';
 import { defaultSettingsState, type SettingsState } from '../../settings';
-import { getLocale, setLocale, resetLocaleForTests } from '../../i18n';
+import { getLocale, setLocale, resetLocaleForTests, LOCALES } from '../../i18n';
 
 function privateOf(s: Settings) {
   return s as unknown as {
@@ -88,13 +88,18 @@ describe('Settings — language toggle (design/17-i18n.md)', () => {
     expect(p.backBtn.label.text).toBe('返回');
   });
 
-  it('tapping twice cycles back to English', () => {
+  it('cycles through every locale in declared order and wraps back to English', () => {
     const s = new Settings();
     s.show(800, 600, defaultSettingsState());
     const p = privateOf(s);
-    p.languageBtn.onTap?.();
-    p.languageBtn.onTap?.();
-    expect(getLocale()).toBe('en');
+    const seen: string[] = [getLocale()];
+    for (let i = 0; i < LOCALES.length; i++) {
+      p.languageBtn.onTap?.();
+      seen.push(getLocale());
+    }
+    // One full cycle (LOCALES.length taps) visits every locale exactly once, in
+    // LOCALES' own declared order, and lands back on English.
+    expect(seen).toEqual(['en', ...LOCALES.slice(1), 'en']);
     expect(p.languageBtn.label.text).toBe('LANGUAGE: English');
   });
 
