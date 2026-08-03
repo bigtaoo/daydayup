@@ -49,6 +49,25 @@ npm run dev        # client dev server, http://localhost:5173
 | `npm run dev:animator` / `npm run dev:map-editor` | The two authoring tools |
 | `npm run test:pvp-sim` | The offline PvP balance harness (`client/sim/`, kept out of the default test glob — ~6s) |
 
+## Deployment
+
+The client is live at **https://b.gamestao.com** — static assets (`client/dist`) served
+by a Cloudflare Worker (`daydayup-client`, `wrangler/client.jsonc`), same Cloudflare
+account as the `funny` project's `gamestao.com` zone.
+
+`.github/workflows/client-deploy.yml` auto-deploys on every push to `main` that touches
+`client/**` or `engine/**` (the client build reads the engine as source via the vite
+alias), or via manual `workflow_dispatch`. Gated behind repo variable
+`CLIENT_DEPLOY_ENABLED` and repo secrets `CLOUDFLARE_API_TOKEN` /
+`CLOUDFLARE_ACCOUNT_ID`.
+
+Manual deploy (fallback, or first-time setup):
+
+```bash
+npm run build -w client
+npx wrangler deploy -c wrangler/client.jsonc
+```
+
 ## Status
 
 - [x] Project structure
