@@ -1,6 +1,7 @@
 import { Rig } from './Rig';
 import { ORB_CORE_RIG, ORB_CORE_REFERENCE_RADIUS } from './orbCoreRig';
 import { CRITTER_CORE_RIG, CRITTER_CORE_REFERENCE_RADIUS } from './critterCoreRig';
+import { BOSS_CORE_RIG, BOSS_CORE_REFERENCE_RADIUS } from './bossCoreRig';
 import { loadRigSkinBundle, type RigSkinBundle } from './taoBundle';
 
 // Preload real art at boot (design/12: "load a core bundle at boot"), then hand
@@ -24,6 +25,7 @@ export interface LoadedRigSkin {
 // skins reuse a single instance (design/12: "one rig per body archetype, many skins").
 const orbCoreRig = new Rig(ORB_CORE_RIG);
 const critterCoreRig = new Rig(CRITTER_CORE_RIG);
+const bossCoreRig = new Rig(BOSS_CORE_RIG);
 // Two more enemy body forms (design/13 "roster variety beyond the base body: a heavy
 // brute, a floating ranged form") share the SAME one-bone critter-core Rig/reference
 // radius — only the bound art + each skin's own binding.scaleX/Y (client/public/skins/
@@ -36,6 +38,7 @@ const RIG_DEFS: Record<string, { rig: Rig; referenceRadius: number }> = {
   'critter-core': { rig: critterCoreRig, referenceRadius: CRITTER_CORE_REFERENCE_RADIUS },
   'brute-core': { rig: critterCoreRig, referenceRadius: CRITTER_CORE_REFERENCE_RADIUS },
   'floater-core': { rig: critterCoreRig, referenceRadius: CRITTER_CORE_REFERENCE_RADIUS },
+  'boss-core': { rig: bossCoreRig, referenceRadius: BOSS_CORE_REFERENCE_RADIUS },
 };
 
 const registry = new Map<string, LoadedRigSkin>();

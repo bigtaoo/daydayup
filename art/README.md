@@ -15,8 +15,8 @@
 | Directory | Contents | Shipped copy |
 |-----------|----------|--------------|
 | `concept/` | Direction/exploration pieces, named after the `prompts.md` prompt that produced them (`01_…`–`05_…`, plus the `retired_…` first direction) | — (reference only) |
-| `units/` | Every character and enemy part: the three orb-cores (`shell`/`belly`/`eye_front`/`eye_back`, prefixed `skirmisher_`/`juggernaut_`, unprefixed = the default vanguard), the boss, and the enemy bodies (`enemy_critter`/`enemy_brute`/`enemy_floater`) | `client/public/skins/*/` |
-| `weapon/` | Per-weapon-id business-end sprites (`<weaponId>_raw.png`) | `client/public/weapons/` |
+| `units/` | Every character and enemy part: the three orb-cores (`shell`/`belly`/`eye_front`/`eye_back`, prefixed `skirmisher_`/`juggernaut_`, unprefixed = the default vanguard), the boss (`boss.png` is an orphaned early attempt, unwired — see `prompts.md` for the real `core`/`ring` pair still needed), and the enemy bodies (`enemy_critter`/`enemy_brute`/`enemy_floater`) + `prompts.md` | `client/public/skins/*/` |
+| `weapon/` | Per-weapon-id business-end sprites (`<weaponId>_raw.png`) + `prompts.md` + `leftover/` (picked-over duplicate generations, incl. two rejected grip-pistol ice attempts). All 6 elemental ids now shipped (`flamer`/`teslagun`/`venomspit`/`cinderscatter`/`cryobolt`/`frostseeker`) | `client/public/weapons/` |
 | `biome/` | Floor/wall tiles per element + `prompts.md` | `client/public/biome/` |
 | `ui/` | Hub background, button icons, result badges + `prompts.md` | `client/public/ui/` |
 | `npc/` | Outpost NPCs (the Forger) + `prompts.md` | `client/public/ui/npc_forger.png` |
@@ -58,5 +58,12 @@ Two traps this pipeline exists to catch, both hit for real:
 ## Still to come
 
 - Real **authored** art to replace the AI-generated placeholders (`ROADMAP.md` 5.3).
+- Two concrete gaps found by cross-checking the code (not just this doc), both **closed
+  2026-08-03**: the boss had no dedicated art/rig at all (it silently fell back to a
+  scaled/retinted `critter-core` body) — real `core`/`ring` art now bound via a new
+  `boss-core` rig (`units/prompts.md`). All 6 elemental weapon ids that fell back to the plain
+  `gun_default` housing now have real art (`weapon/prompts.md`) — `cryobolt`/`frostseeker`
+  needed a second generation round each after the first came back as a fiction-breaking
+  hand-grip/trigger-guard raygun.
 - `normal/` normal maps for the dynamic-lighting milestone and `fx/` particle textures — both
   blocked on 5.4, neither started.

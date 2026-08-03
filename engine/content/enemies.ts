@@ -154,6 +154,7 @@ export const BLIGHTLORD: EnemyBlueprint = {
   resist: { physical: 400, fire: 800, ice: 800, lightning: 800, poison: 2000 },
   tint: 0x8e24aa, // toxic purple
   boss: true,
+  bodyRig: 'boss-core', // design/13's "giant failed core" — its own rig, not a scaled critter-core
   // Boss AI depth (design/09 aspirational `traits`/`onDeathSpawn`, ENGINE_VERSION 27,
   // first-pass numbers — tune against real play like every other constant here).
   // Below 30% HP (the "poison is really biting now" moment): +50% damage, +50% fire

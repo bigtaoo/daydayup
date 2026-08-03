@@ -28,6 +28,7 @@ async function boot() {
     ['critter-core', '/skins/critter-core'],
     ['brute-core', '/skins/brute-core'],
     ['floater-core', '/skins/floater-core'],
+    ['boss-core', '/skins/boss-core'],
   ];
   await Promise.all([
     ...CHAR_BUNDLES.map(async ([name, baseUrl]) => {

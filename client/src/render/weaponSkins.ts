@@ -79,6 +79,22 @@ const WEAPON_DEFS: Partial<Record<string, WeaponVisualDef>> = {
   frostbrand: { path: '/weapons/sword_frostbrand.png', anchor: { x: 0.22, y: 0.32 }, scale: 100 / 320, rotationOffsetRad: deg(-15.1) },
   stormglaive: { path: '/weapons/sword_stormglaive.png', anchor: { x: 0.14, y: 0.32 }, scale: 100 / 320, rotationOffsetRad: deg(-5.8) },
   leech: { path: '/weapons/sword_leech.png', anchor: { x: 0.28, y: 0.35 }, scale: 90 / 320, rotationOffsetRad: deg(-12.9) },
+
+  // 2026-08-03 batch: the 6 starter-frame elemental variants that never got their own
+  // silhouette (flamer/cryobolt/teslagun/venomspit all fell back to gun_default) plus
+  // cinderscatter/frostseeker (the scattergun/seeker frames' fire/ice variants). Anchors
+  // are first-pass eyeball, rotationOffsetRad measured by the same farthest-alpha-pixel-
+  // from-anchor method as every entry above. cryobolt/frostseeker took two rounds of
+  // generation — the first attempt for both came back as a handheld raygun with a grip/
+  // trigger guard (art/weapon/leftover/*ice_weapon_icon*/*crystal_tech_rifle_icon*),
+  // which broke this game's no-hands fiction; the prompt was rewritten to forbid that
+  // explicitly (art/weapon/prompts.md) and the second attempt landed clean.
+  flamer: { path: '/weapons/gun_flamer.png', anchor: { x: 0.14, y: 0.16 }, scale: 80 / 320, rotationOffsetRad: deg(-40.6) },
+  teslagun: { path: '/weapons/gun_teslagun.png', anchor: { x: 0.08, y: 0.14 }, scale: 80 / 320, rotationOffsetRad: deg(-25.8) },
+  venomspit: { path: '/weapons/gun_venomspit.png', anchor: { x: 0.14, y: 0.16 }, scale: 78 / 320, rotationOffsetRad: deg(-43.2) },
+  cinderscatter: { path: '/weapons/gun_cinderscatter.png', anchor: { x: 0.11, y: 0.10 }, scale: 80 / 320, rotationOffsetRad: deg(-43.8) },
+  cryobolt: { path: '/weapons/gun_cryobolt.png', anchor: { x: 0.08, y: 0.12 }, scale: 80 / 320, rotationOffsetRad: deg(-38.6) },
+  frostseeker: { path: '/weapons/gun_frostseeker.png', anchor: { x: 0.084, y: 0.078 }, scale: 78 / 320, rotationOffsetRad: deg(-42.4) },
 };
 
 const textures = new Map<string, Texture>();
