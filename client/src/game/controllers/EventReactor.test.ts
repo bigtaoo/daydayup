@@ -40,6 +40,7 @@ function fakeHost(): EventReactorHost {
     addScore: vi.fn(),
     onRoomEnter: vi.fn(),
     onWeaponPickup: vi.fn(),
+    actorAt: vi.fn(() => undefined),
   };
 }
 
@@ -110,5 +111,28 @@ describe('EventReactor — score reactions unaffected by the toast migration', (
     const reactor = new EventReactor(fakeFx(), hud, fakeAudio(), host);
     reactor.consume([{ type: 'death', faction: 'enemy', gx: 0, gy: 0 } as GameEvent]);
     expect(host.addScore).toHaveBeenCalled();
+  });
+});
+
+describe('EventReactor — hit-flash outline (design/01 fidelity roadmap milestone 5)', () => {
+  it('flashes the specific actor named by a hit event\'s `target` id', () => {
+    const hud = new HudView();
+    hud.build(new Layers(), { w: 1280, h: 720 });
+    const hitFlash = vi.fn();
+    const host = fakeHost();
+    (host.actorAt as ReturnType<typeof vi.fn>).mockReturnValue({ hitFlash });
+    const reactor = new EventReactor(fakeFx(), hud, fakeAudio(), host);
+    reactor.consume([{ type: 'hit', target: 7, faction: 'player', gx: 0, gy: 0, damage: 1, damageType: 'physical' } as GameEvent]);
+    expect(host.actorAt).toHaveBeenCalledWith(7);
+    expect(hitFlash).toHaveBeenCalled();
+  });
+
+  it('is a no-op when the target id has no live view (already gone)', () => {
+    const hud = new HudView();
+    hud.build(new Layers(), { w: 1280, h: 720 });
+    const reactor = new EventReactor(fakeFx(), hud, fakeAudio(), fakeHost());
+    expect(() =>
+      reactor.consume([{ type: 'hit', target: 99, faction: 'enemy', gx: 0, gy: 0, damage: 1, damageType: 'physical' } as GameEvent]),
+    ).not.toThrow();
   });
 });

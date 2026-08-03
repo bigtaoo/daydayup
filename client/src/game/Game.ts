@@ -937,6 +937,10 @@ export class Game {
     }
   }
 
+  actorAt(id: number): { hitFlash(): void } | undefined {
+    return this.scene.actorAt(id);
+  }
+
   private confirm() {
     this.audio.resume(); // a confirm tap is a user gesture — clears the autoplay gate (design/11)
     if (this.phase === 'menu') this.showForge();

@@ -5,8 +5,8 @@ closed loop the design docs describe, and the running record of how each phase a
 landed. Phases are written top-to-bottom in dependency order; each one keeps its dated
 shipped-notes underneath it, so a phase section is both the plan and the history.
 
-**Current built state (2026-08-03).** `ENGINE_VERSION` **31**; 1160 tests green across the
-five workspace packages (engine 373 / client 593 / server 158 / animator 23 / map-editor 13,
+**Current built state (2026-08-03).** `ENGINE_VERSION` **31**; 1190 tests green across the
+five workspace packages (engine 373 / client 623 / server 158 / animator 23 / map-editor 13,
 `npm run check`). **Phases 0–4, 6 and 7 are closed with no deferred items**: the deterministic
 engine and the locked content model (0), the full in-run loop — frame library, room pieces,
 seeded dungeon generation, extraction checkpoints, materials (1), the meta/forge loop and the
@@ -18,8 +18,9 @@ English-canonical i18n system with a 中文 translation (7). **Phase 5 (presenta
 partially-open phase** — the widget kit/HUD/screens (now including a menu-driven Mode Select,
 a real Matchmaking connecting/error screen, and a standalone tutorial level, all 2026-08-03 —
 see that entry under Phase 5 below), the `.tao` art pipeline with a fully bound roster,
-post-processing and particles all ship; what remains is real *authored* art in place of
-the AI-generated placeholders, real authored SFX/music, the 5.4 lighting/shader items, and 5.5
+post-processing, particles, and all four fidelity-roadmap custom shaders (5.4) all ship;
+what remains is real *authored* art in place of the AI-generated placeholders, real
+authored SFX/music, 5.4's normal-map lighting (blocked on that same real-art pass), and 5.5
 WeChat device verification (blocked on hardware). A repo structure pass (bottom of this doc)
 made the engine its own DOM-free package and the repo an npm workspace. Per-item detail,
 including what each phase deliberately did *not* build, is in the sections below; the
@@ -303,7 +304,7 @@ every existing caller is byte-identical) to become testable at all. New/extended
 `PauseMenu.test.ts`/`forge.test.ts`/`confirmEdge.test.ts`. 582 client tests (was 546 at the
 start of this pass, 518 before that) + `tsc --noEmit` clean; 1125 across the repo.
 
-- **5.4 Fidelity roadmap** (01): ✅ post-processing (bloom-lite, vignette, chromatic aberration, hit-stop, screen-shake) + particles shipped 2026-07-26. Still open, both explicitly blocked on 5.3 landing real (non-placeholder) art first: normal-map lighting, custom shaders (dissolve/outline/energy-shield/heat-haze).
+- **5.4 Fidelity roadmap** (01): ✅ post-processing (bloom-lite, vignette, chromatic aberration, hit-stop, screen-shake) + particles shipped 2026-07-26; ✅ ALL FOUR custom shaders (energy shield, outline/hit-flash, dissolve-on-death, heat-haze) shipped 2026-08-03 — `game/fx/filters.ts`'s `EnergyShieldFilter`/`OutlineFilter`/`DissolveFilter`/`HeatHazeFilter`, wired into `Actor`'s live shield/hit/death/burn signals (see 01's milestone 5 for the per-shader detail, including the `Scene.reconcile` architecture change dissolve needed and a Pixi-uniform-precision gotcha worth knowing before writing another filter). Shipped clean against today's placeholder art — the "shaders read best after real art lands" sequencing note from earlier turned out not to matter. Still open: normal-map lighting only — genuinely blocked on 5.3 landing real, non-placeholder art first (see 01's milestone 2 note), the one remaining 5.4 item.
 - **5.5 WeChat device verification** (04): lowest base library, low-end frame rate, real-device touch, WebGL2 fallback — none of this can be done without a physical device or WeChat DevTools install, neither found on this machine as of 2026-07-27.
 
 ---

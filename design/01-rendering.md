@@ -71,4 +71,52 @@ For this game's scale (rooms, pillars, crates, enemies) these are largely avoida
 2. Dynamic lighting: normal maps + point lights + lightmap (multiply composite). **Still blocked on real art**, but the blocking condition has shifted: real (AI-placeholder) character/enemy/weapon atlases have since landed (`12`/`13`, Phase 5.3) — the actual remaining gate is normal-map *authoring*, which needs the placeholder atlases replaced with final art first (or a flat+normal-map re-author pass over the placeholders), not the atlases' mere existence. Do not start until that art-production pass lands.
 3. **[shipped 2026-07-26]** Post-processing: bloom-lite (`BlurFilter` on the additive `fx` layer — a cheap approximation, not real multi-pass bloom), custom `VignetteFilter`/`ChromaticAberrationFilter` (`game/fx/filters.ts`, hand-written GLSL, no third-party filter package), hit-stop (brief sim-tick freeze, offline-only) + screen-shake (decaying trauma, `game/Game.ts`).
 4. **[shipped 2026-07-26]** Particle system: `game/fx/Particles.ts` — muzzle flames + shell casings (on `bullet_fired`), explosion debris (on enemy `death`), ambient drifting dust. Graphics-only (no textures), same events-queue-driven render-only discipline as the rest of this doc.
-5. Custom shaders: dissolve on death, outline, energy shield, heat-haze distortion. **Not started** — dissolve/outline read best against a real sprite silhouette (`12`), so this likely wants to follow milestone 2, not jump ahead of it.
+5. **[shipped 2026-08-03] Custom shaders — all four items done:** dissolve on death,
+   outline, energy shield, heat-haze distortion. All four are hand-written-GLSL custom
+   Pixi `Filter`s in `game/fx/filters.ts`, applied to `Skin.view` only (not the whole
+   actor container — weapon/aura/hp-bar/local-ring are separate children), composited
+   together via `Actor.applySkinFilters()` when more than one is live at once (order:
+   heat-haze warp, then shield glow, then outline highlight, then dissolve last). Shipped
+   against today's placeholder art with no issues — the "read best against a real sprite
+   silhouette, so this likely wants to follow milestone 2" sequencing preference recorded
+   here earlier turned out not to matter in practice; milestone 2 (lighting) remains
+   genuinely blocked on real art for an unrelated reason (normal-map authoring).
+   - **`EnergyShieldFilter`** — a shimmering rim-glow using the same UV-distance-from-
+     centre technique as `VignetteFilter` (not true alpha-edge detection, so it needs no
+     extra per-skin wiring against either the Graphics placeholder body or a real `.tao`
+     rig). `Actor.setShield` drives `intensity` off the actor's live two-pool shield ratio
+     (design/02/05/07) — full glow at a full shield, fading as it drains, gone once it
+     hits 0 (the `shield_break` event's own flash, `EventReactor`, already covers that
+     instant).
+   - **`OutlineFilter`** — a REAL alpha-edge-detected silhouette outline (samples the
+     actual rendered alpha at 4 neighbour texels via Pixi's auto-bound `uInputSize` filter
+     uniform), unlike the shield's approximation — needed because an outline must hug
+     whatever shape is actually drawn. `Actor.hitFlash()` fires it as a brief "you were
+     just hit" flash, wired from `EventReactor`'s `hit` case via a new `Scene.actorAt(id)`
+     lookup (added to `EventReactorHost` as a duck-typed `{ hitFlash(): void }`, so
+     `EventReactor` still never imports scene/ types) — independent of the existing
+     position-anchored `fx.flash()` burst, which reads as "impact happened here" rather
+     than "this actor took it".
+   - **`DissolveFilter`** — procedural cell noise (a GLSL hash of the UV, no noise
+     texture — same "no textures" discipline as `Particles.ts`) burns away in patches as
+     death progresses, ember-coloured edge trailing the boundary. Needed a real render-
+     side architecture change, not just a new filter: `Scene.reconcile` used to destroy a
+     dead entity's view the SAME tick it dropped out of the engine's `alive` list (the
+     `seen`-diff cleanup loop). Now, when the vanished view is an `Actor` (not a bullet/
+     pickup — those still destroy immediately), `Scene` calls `Actor.startDissolve()`
+     (hides weapon/aura/hp-bar/local-ring, leaving only the dissolving body) and keeps it
+     in a separate `dying: Actor[]` list, stepped every `Scene.interpolate()` call until
+     `Actor.isDissolved` reports the ~700ms animation done, then destroys it for real.
+   - **`HeatHazeFilter`** — a cheap sine-based UV wobble (no noise texture, no real
+     refraction pass — same "own the code, own the cost" simplification as the vignette).
+     Driven by `Actor.setStatus`'s existing `burnTicks > 0` condition (the same signal
+     that already drives the burn ring in `AURAS`) — a burning actor's silhouette itself
+     shimmers, on top of the ring.
+   - **Gotcha hit while building `OutlineFilter`:** redeclaring Pixi's auto-bound
+     `uInputSize` filter uniform in a fragment shader without an explicit `highp`
+     qualifier fails to link on GL ("Precisions of uniform 'uInputSize' differ between
+     VERTEX and FRAGMENT shaders") — the default vertex shader (`defaultFilterVert`)
+     implicitly gets `highp` (GLSL ES vertex-stage default for `float`), while a fragment
+     shader has no default and Pixi's own precision header pins it to `mediump`. Any
+     future filter that reads `uInputSize` (or another Pixi-auto-bound uniform) in its
+     fragment stage needs `uniform highp vec4 uInputSize;`, not a bare `uniform vec4`.

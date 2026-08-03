@@ -19,6 +19,12 @@ export interface EventReactorHost {
   onRoomEnter(s: GameState): void;
   /** A catalogued weapon was picked up — unlock its forge blueprint if not already. */
   onWeaponPickup(weaponId: string): void;
+  /** The specific actor view a `hit` event's `target` id names — for a reaction that
+   *  must target ONE actor (the hit-flash outline, design/01 milestone 5), not just
+   *  flash at a world position the way `fx.flash()` does. Undefined for a bullet/pickup
+   *  id, or an actor that's already gone. Duck-typed (not `Actor`) so this file still
+   *  never imports scene/ — same decoupling as the rest of this interface. */
+  actorAt(id: number): { hitFlash(): void } | undefined;
 }
 
 /**
@@ -57,6 +63,10 @@ export class EventReactor {
         case 'hit':
           this.fx.flash(fpToPx(e.gx), fpToPx(e.gy),
             e.faction === 'enemy' ? THEME.colors.enemy : THEME.colors.swordGlow, 16);
+          // A silhouette flash on the SPECIFIC actor hit (design/01 milestone 5,
+          // `OutlineFilter`) — independent of the position-anchored burst above, which
+          // reads as "impact happened here" rather than "this one took it".
+          this.host.actorAt(e.target)?.hitFlash();
           if (e.faction === 'enemy') {
             // The (any) player took the hit — a small punch of feedback.
             this.fx.addShake(0.18);

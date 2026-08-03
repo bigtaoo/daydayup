@@ -1,6 +1,31 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import type { Graphics } from 'pixi.js';
+import { freshStatus } from '@dd/engine/content/damage';
 import { Actor } from './Actor';
+
+// EnergyShieldFilter/OutlineFilter/DissolveFilter all build a real WebGL GlProgram at
+// construction time — unavailable under plain vitest (no `document`/canvas), same reason
+// FxController.test.ts stubs fx/filters.ts. Bare classes with the settable properties
+// Actor actually touches are enough to exercise its attach/detach/reuse logic without
+// touching the GPU.
+vi.mock('../fx/filters', () => ({
+  EnergyShieldFilter: class {
+    intensity = 0;
+    constructor(public color?: number) {}
+    tick() {}
+  },
+  OutlineFilter: class {
+    alpha = 0;
+    constructor(public color?: number) {}
+  },
+  DissolveFilter: class {
+    progress = 0;
+  },
+  HeatHazeFilter: class {
+    intensity = 1;
+    tick() {}
+  },
+}));
 
 // Children are appended in this fixed order in the constructor — indexing into
 // `.children` is the only way in from the outside, since healthBar is private (same
@@ -118,6 +143,209 @@ function frontOf(a: Actor): { rotation: number } {
 function weaponGfxOf(a: Actor): { rotation: number } {
   return (a as unknown as { weaponGfx: { rotation: number } }).weaponGfx;
 }
+
+function skinFiltersOf(a: Actor): unknown {
+  return (a as unknown as { skin: { view: { filters: unknown } } }).skin.view.filters;
+}
+function shieldFilterOf(a: Actor): { intensity: number } | null {
+  return (a as unknown as { shieldFilter: { intensity: number } | null }).shieldFilter;
+}
+
+describe('Actor.setShield — energy-shield shader (design/01 fidelity roadmap milestone 5)', () => {
+  it('is a no-op with no shield pool (maxShield <= 0) — most enemies never pay for a filter', () => {
+    const mob = new Actor('enemy', 12);
+    mob.setShield(0, 0);
+    expect(skinFiltersOf(mob)).toBeFalsy();
+    expect(shieldFilterOf(mob)).toBeNull();
+  });
+
+  it('attaches the filter once shield > 0 and drives intensity off the live ratio', () => {
+    const a = new Actor('player', 12);
+    a.setShield(4, 8);
+    expect(skinFiltersOf(a)).toBeTruthy();
+    expect(shieldFilterOf(a)!.intensity).toBeCloseTo(0.5);
+  });
+
+  it('reuses the same filter instance across updates instead of rebuilding it', () => {
+    const a = new Actor('player', 12);
+    a.setShield(8, 8);
+    const first = shieldFilterOf(a);
+    a.setShield(4, 8);
+    expect(shieldFilterOf(a)).toBe(first);
+    expect(shieldFilterOf(a)!.intensity).toBeCloseTo(0.5);
+  });
+
+  it('detaches the filter once the shield hits 0 (shield_break already flashes the moment)', () => {
+    const a = new Actor('player', 12);
+    a.setShield(4, 8);
+    expect(skinFiltersOf(a)).toBeTruthy();
+    a.setShield(0, 8);
+    expect(skinFiltersOf(a)).toBeFalsy();
+  });
+
+  it('re-attaches on regen after a break, without rebuilding the filter', () => {
+    const a = new Actor('player', 12);
+    a.setShield(4, 8);
+    const first = shieldFilterOf(a);
+    a.setShield(0, 8);
+    expect(skinFiltersOf(a)).toBeFalsy();
+    a.setShield(2, 8);
+    expect(skinFiltersOf(a)).toBeTruthy();
+    expect(shieldFilterOf(a)).toBe(first);
+  });
+
+  it('skips redundant work when the ratio has not changed', () => {
+    const a = new Actor('player', 12);
+    a.setShield(4, 8);
+    const before = shieldFilterOf(a);
+    before!.intensity = 0.99; // tamper — a real update at the same ratio should leave it alone
+    a.setShield(4, 8);
+    expect(shieldFilterOf(a)!.intensity).toBe(0.99);
+  });
+});
+
+function outlineFilterOf(a: Actor): { alpha: number } | null {
+  return (a as unknown as { outlineFilter: { alpha: number } | null }).outlineFilter;
+}
+
+describe('Actor.hitFlash — outline shader (design/01 fidelity roadmap milestone 5)', () => {
+  it('attaches the outline filter at full alpha on the first hit', () => {
+    const a = new Actor('enemy', 12);
+    expect(skinFiltersOf(a)).toBeFalsy();
+    a.hitFlash();
+    expect(skinFiltersOf(a)).toBeTruthy();
+    expect(outlineFilterOf(a)!.alpha).toBe(1);
+  });
+
+  it('decays to 0 over HIT_FLASH_MS and then detaches', () => {
+    const a = new Actor('player', 12);
+    a.hitFlash();
+    a.interpolate(1, 80); // half of the 160ms flash
+    expect(outlineFilterOf(a)!.alpha).toBeCloseTo(0.5, 1);
+    expect(skinFiltersOf(a)).toBeTruthy();
+    a.interpolate(1, 80); // fully decayed
+    expect(outlineFilterOf(a)!.alpha).toBe(0);
+    expect(skinFiltersOf(a)).toBeFalsy();
+  });
+
+  it('reuses the same filter instance across repeated hits', () => {
+    const a = new Actor('player', 12);
+    a.hitFlash();
+    const first = outlineFilterOf(a);
+    a.interpolate(1, 160); // fully decays
+    a.hitFlash();
+    expect(outlineFilterOf(a)).toBe(first);
+    expect(outlineFilterOf(a)!.alpha).toBe(1);
+  });
+
+  it('coexists with an active shield glow — both filters attach at once', () => {
+    const a = new Actor('player', 12);
+    a.setShield(4, 8);
+    a.hitFlash();
+    expect(skinFiltersOf(a) as unknown[]).toHaveLength(2);
+  });
+});
+
+function dissolveFilterOf(a: Actor): { progress: number } | null {
+  return (a as unknown as { dissolveFilter: { progress: number } | null }).dissolveFilter;
+}
+
+describe('Actor.startDissolve — death-dissolve shader (design/01 fidelity roadmap milestone 5)', () => {
+  it('attaches the dissolve filter and hides the weapon/aura/hp-bar/local-ring', () => {
+    const a = new Actor('player', 12);
+    a.setLocal(true);
+    a.setHealth(50, 100);
+    a.startDissolve();
+    expect(skinFiltersOf(a)).toBeTruthy();
+    expect(dissolveFilterOf(a)!.progress).toBe(0);
+    expect(a.isDissolved).toBe(false);
+    const weaponGfx = (a as unknown as { weaponGfx: { visible: boolean } }).weaponGfx;
+    const statusAura = (a as unknown as { statusAura: { visible: boolean } }).statusAura;
+    expect(weaponGfx.visible).toBe(false);
+    expect(statusAura.visible).toBe(false);
+  });
+
+  it('progresses over DISSOLVE_MS and reports isDissolved once fully played out', () => {
+    const a = new Actor('enemy', 12);
+    a.startDissolve();
+    a.interpolate(1, 350); // half of the 700ms dissolve
+    expect(dissolveFilterOf(a)!.progress).toBeCloseTo(0.5, 1);
+    expect(a.isDissolved).toBe(false);
+    a.interpolate(1, 400); // past the end — clamps, doesn't overshoot
+    expect(dissolveFilterOf(a)!.progress).toBe(1);
+    expect(a.isDissolved).toBe(true);
+  });
+
+  it('is idempotent — a second call does not rebuild the filter or reset progress', () => {
+    const a = new Actor('enemy', 12);
+    a.startDissolve();
+    a.interpolate(1, 350);
+    const first = dissolveFilterOf(a);
+    a.startDissolve();
+    expect(dissolveFilterOf(a)).toBe(first);
+    expect(dissolveFilterOf(a)!.progress).toBeCloseTo(0.5, 1);
+  });
+});
+
+function heatHazeFilterOf(a: Actor): unknown {
+  return (a as unknown as { heatHazeFilter: unknown }).heatHazeFilter;
+}
+
+describe('Actor.setStatus — heat-haze shader on burn (design/01 fidelity roadmap milestone 5)', () => {
+  it('is a no-op with no active status at all', () => {
+    const a = new Actor('enemy', 12);
+    a.setStatus(freshStatus());
+    expect(skinFiltersOf(a)).toBeFalsy();
+    expect(heatHazeFilterOf(a)).toBeNull();
+  });
+
+  it('attaches the heat-haze filter on a burn, alongside the existing status-aura ring', () => {
+    const a = new Actor('enemy', 12);
+    a.setStatus({ ...freshStatus(), burnTicks: 10 });
+    expect(skinFiltersOf(a)).toBeTruthy();
+    expect(heatHazeFilterOf(a)).not.toBeNull();
+  });
+
+  it('detaches once the burn ends, even if a different status (chill) is still active', () => {
+    const a = new Actor('enemy', 12);
+    a.setStatus({ ...freshStatus(), burnTicks: 10, chillTicks: 5 });
+    expect(skinFiltersOf(a)).toBeTruthy();
+    a.setStatus({ ...freshStatus(), burnTicks: 0, chillTicks: 5 }); // burn ends, chill lingers
+    expect(skinFiltersOf(a)).toBeFalsy(); // no heat-haze, no shield/outline/dissolve either
+  });
+
+  it('does not rebuild the filter on an unrelated aura change while still burning', () => {
+    const a = new Actor('enemy', 12);
+    a.setStatus({ ...freshStatus(), burnTicks: 10 });
+    const first = heatHazeFilterOf(a);
+    a.setStatus({ ...freshStatus(), burnTicks: 10, chillTicks: 5 }); // chill joins, burn continues
+    expect(heatHazeFilterOf(a)).toBe(first);
+  });
+
+  it('coexists with the shield glow — both filters attach at once', () => {
+    const a = new Actor('player', 12);
+    a.setShield(4, 8);
+    a.setStatus({ ...freshStatus(), burnTicks: 10 });
+    expect(skinFiltersOf(a) as unknown[]).toHaveLength(2);
+  });
+});
+
+describe('Actor — all four fidelity-roadmap shaders composed at once (design/01 milestone 5)', () => {
+  it('stacks heat-haze, shield, outline, and dissolve together in a fixed warp→glow→highlight→dissolve order', () => {
+    const a = new Actor('player', 12);
+    a.setStatus({ ...freshStatus(), burnTicks: 10 });
+    a.setShield(4, 8);
+    a.hitFlash();
+    a.startDissolve();
+
+    const list = skinFiltersOf(a) as unknown[];
+    expect(list).toHaveLength(4);
+    expect(list[0]).toBe(heatHazeFilterOf(a));
+    expect(list[1]).toBe(shieldFilterOf(a));
+    expect(list[2]).toBe(outlineFilterOf(a));
+    expect(list[3]).toBe(dissolveFilterOf(a));
+  });
+});
 
 describe('Actor.interpolate — body vs weapon facing (upper/lower body split)', () => {
   it('the body indicator follows bodyFacingRad, the weapon graphic follows facingRad', () => {

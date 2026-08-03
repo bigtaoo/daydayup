@@ -6,7 +6,7 @@
  * weapon) stays exactly the engine's aim-derived `PlayerActor.facing`, unaffected by
  * movement. Enemies/bullets are unaffected — they keep a single facing.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createGameState } from '@dd/engine/state/GameState';
 import type { GameState } from '@dd/engine/state/GameState';
 import { pxToFp } from '@dd/engine/content/convert';
@@ -14,10 +14,30 @@ import { freshStatus } from '@dd/engine/content/damage';
 import { BASIC_ENEMY } from '@dd/engine/content/enemies';
 import { toFp } from '@dd/engine/math/fixed';
 import type { Brad } from '@dd/engine/math/trig';
-import { ENEMY_TEAM_ID, type EnemyActor } from '@dd/engine/state/entities';
+import { ENEMY_TEAM_ID, type EnemyActor, type Projectile, type PickupItem } from '@dd/engine/state/entities';
 import { Scene } from './Scene';
 import { Layers } from './layers';
 import { bradToRad } from '../coords';
+
+// EnergyShieldFilter/OutlineFilter/DissolveFilter (Actor's setShield/hitFlash/
+// startDissolve) all build a real WebGL GlProgram at construction time — unavailable
+// under plain vitest, same reason Actor.test.ts/FxController.test.ts stub fx/filters.ts.
+vi.mock('../fx/filters', () => ({
+  EnergyShieldFilter: class {
+    intensity = 0;
+    tick() {}
+  },
+  OutlineFilter: class {
+    alpha = 0;
+  },
+  DissolveFilter: class {
+    progress = 0;
+  },
+  HeatHazeFilter: class {
+    intensity = 1;
+    tick() {}
+  },
+}));
 
 const CFG = { seed: 1, worldW: 800, worldH: 600, waves: [] as const };
 
@@ -33,6 +53,25 @@ function addEnemy(s: GameState, xpx: number, ypx: number, facing: Brad): EnemyAc
   };
   s.enemies.push(e);
   return e;
+}
+
+function addBullet(s: GameState, xpx: number, ypx: number): Projectile {
+  const b: Projectile = {
+    id: s.nextId(), faction: 'enemy', teamId: ENEMY_TEAM_ID,
+    gx: pxToFp(xpx), gy: pxToFp(ypx), z: toFp(0), vx: toFp(1), vy: toFp(0),
+    radius: toFp(4), damage: 1, damageType: 'physical', lifeTicks: 60, alive: true,
+  };
+  s.projectiles.push(b);
+  return b;
+}
+
+function addPickup(s: GameState, xpx: number, ypx: number): PickupItem {
+  const it: PickupItem = {
+    id: s.nextId(), kind: 'material', gx: pxToFp(xpx), gy: pxToFp(ypx),
+    spawnTick: 0, alive: true, materialId: 'fire', qty: 1,
+  };
+  s.pickups.push(it);
+  return it;
 }
 
 describe('Scene.reconcile — player body/aim facing split', () => {
@@ -120,5 +159,132 @@ describe('Scene.reconcile — enemies keep a single facing (no body/aim split)',
     expect(view).toBeDefined();
     expect(view!.bodyFacingRad).toBe(view!.facingRad);
     expect(view!.facingRad).toBeCloseTo(bradToRad(16384), 5);
+  });
+});
+
+describe('Scene.actorAt — actor-lookup by id (EventReactor hit-flash, design/01 milestone 5)', () => {
+  it('resolves a live enemy/player id to its Actor view', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const enemy = addEnemy(s, 300, 300, 0 as Brad);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+    expect(scene.actorAt(enemy.id)).toBeDefined();
+    expect(scene.actorAt(s.players[0]!.id)).toBeDefined();
+  });
+
+  it('is undefined for an id with no view (bullet/pickup ids, or one never spawned)', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+    expect(scene.actorAt(999999)).toBeUndefined();
+  });
+});
+
+describe('Scene.reconcile — death-dissolve lingering view (design/01 fidelity roadmap milestone 5)', () => {
+  it('keeps a dead enemy\'s view around (dissolving) instead of destroying it the same tick', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const enemy = addEnemy(s, 300, 300, 0 as Brad);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+    const views = (scene as unknown as { views: Map<number, unknown> }).views;
+    expect(views.has(enemy.id)).toBe(true);
+
+    enemy.alive = false;
+    scene.reconcile(s);
+    // Gone from the live-views map (a fresh reconcile shouldn't try to push new state
+    // into it), but not actually torn down yet — it's dissolving.
+    expect(views.has(enemy.id)).toBe(false);
+    const dying = (scene as unknown as { dying: Array<{ isDissolved: boolean }> }).dying;
+    expect(dying.length).toBe(1);
+    expect(dying[0].isDissolved).toBe(false);
+  });
+
+  it('destroys the dying view once its dissolve finishes interpolating', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const enemy = addEnemy(s, 300, 300, 0 as Brad);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+    enemy.alive = false;
+    scene.reconcile(s);
+
+    scene.interpolate(1, 700); // the full 700ms dissolve duration in one step
+    const dying = (scene as unknown as { dying: unknown[] }).dying;
+    expect(dying.length).toBe(0);
+  });
+
+  it('clear() tears down any still-dissolving views along with the live ones', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const enemy = addEnemy(s, 300, 300, 0 as Brad);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+    enemy.alive = false;
+    scene.reconcile(s);
+
+    expect(() => scene.clear()).not.toThrow();
+    const dying = (scene as unknown as { dying: unknown[] }).dying;
+    expect(dying.length).toBe(0);
+  });
+
+  it("a dead LOCAL player also dissolves, and playerView clears immediately (not after the dissolve)", () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const p = s.players[0]!;
+    const scene = new Scene(new Layers());
+    scene.reconcile(s, p.id);
+    expect(scene.player).not.toBeNull();
+
+    p.alive = false;
+    scene.reconcile(s, p.id);
+    // The camera should stop following a dead player right away — it shouldn't wait
+    // for the lingering dissolve view to finish playing out.
+    expect(scene.player).toBeNull();
+    const dying = (scene as unknown as { dying: Array<{ isDissolved: boolean }> }).dying;
+    expect(dying.length).toBe(1);
+    expect(dying[0].isDissolved).toBe(false);
+  });
+
+  it('a removed bullet is destroyed immediately — no dissolve for non-Actor views', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const bullet = addBullet(s, 300, 300);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+    const views = (scene as unknown as { views: Map<number, unknown> }).views;
+    expect(views.has(bullet.id)).toBe(true);
+
+    bullet.alive = false;
+    scene.reconcile(s);
+    expect(views.has(bullet.id)).toBe(false);
+    const dying = (scene as unknown as { dying: unknown[] }).dying;
+    expect(dying.length).toBe(0); // gone outright, not queued to dissolve
+  });
+
+  it('a collected pickup is destroyed immediately — no dissolve for non-Actor views', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const pickup = addPickup(s, 300, 300);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+
+    pickup.alive = false;
+    scene.reconcile(s);
+    const dying = (scene as unknown as { dying: unknown[] }).dying;
+    expect(dying.length).toBe(0);
+  });
+
+  it('two enemies dying the same tick both dissolve independently — no array-splice off-by-one', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const a = addEnemy(s, 300, 300, 0 as Brad);
+    const b = addEnemy(s, 400, 300, 0 as Brad);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+
+    a.alive = false;
+    b.alive = false;
+    scene.reconcile(s);
+    const dying = (scene as unknown as { dying: Array<{ isDissolved: boolean }> }).dying;
+    expect(dying.length).toBe(2);
+
+    // Finish only enough of the dissolve for both to complete, one interpolate() call —
+    // exercises the reverse-iterating splice loop with more than one entry at once.
+    scene.interpolate(1, 700);
+    expect(dying.length).toBe(0);
   });
 });

@@ -16,6 +16,11 @@ import { fpToPx, bradToRad } from '../coords';
 export class Scene {
   private views = new Map<number, Entity>();
   private playerView: Actor | null = null;
+  // Actors whose id just dropped out of the engine's alive list, still playing their
+  // death-dissolve shader (design/01 milestone 5) — kept out of `views` so a same-id
+  // respawn (shouldn't happen for players/enemies today, but not this file's contract to
+  // assume) can never collide with one still fading out.
+  private dying: Actor[] = [];
   // Reused every reconcile() instead of a fresh Set per tick — cleared and refilled
   // each call, never read across ticks.
   private readonly seenScratch = new Set<number>();
@@ -27,10 +32,20 @@ export class Scene {
     return this.playerView;
   }
 
+  /** The live Actor/Enemy view for an engine entity id, for a render reaction that needs
+   *  to target a SPECIFIC actor rather than just a world position (e.g. EventReactor's
+   *  hit-flash outline). Undefined for a bullet/pickup id, or one that already died. */
+  actorAt(id: number): Actor | undefined {
+    const v = this.views.get(id);
+    return v instanceof Actor ? v : undefined;
+  }
+
   /** Drop every view — called on a fresh run before a new engine is created. */
   clear(): void {
     for (const v of this.views.values()) v.destroy();
     this.views.clear();
+    for (const v of this.dying) v.destroy();
+    this.dying = [];
     this.playerView = null;
   }
 
@@ -72,6 +87,7 @@ export class Scene {
       v.setWeaponKind(p.weapon?.spec.kind ?? null, p.weapon?.spec.damageType, p.weapon?.spec.name);
       v.setStatus(p.status);
       v.setHealth(p.hp, p.maxHp);
+      v.setShield(p.shield, p.maxShield);
       seen.add(p.id);
     }
 
@@ -87,6 +103,7 @@ export class Scene {
       v.setWeaponKind(e.weapon?.spec.kind ?? null, e.weapon?.spec.damageType, e.weapon?.spec.name);
       v.setStatus(e.status);
       v.setHealth(e.hp, e.maxHp);
+      v.setShield(e.shield, e.maxShield);
       seen.add(e.id);
     }
 
@@ -126,14 +143,30 @@ export class Scene {
 
     for (const [id, v] of this.views) {
       if (seen.has(id)) continue;
-      v.destroy();
       this.views.delete(id);
       if (v === this.playerView) this.playerView = null;
+      // A dead player/enemy plays its death-dissolve instead of vanishing outright
+      // (design/01 milestone 5) — bullets/pickups have no dissolve and destroy same as
+      // ever. `interpolate()` below keeps stepping the dissolve until it finishes.
+      if (v instanceof Actor) {
+        v.startDissolve();
+        this.dying.push(v);
+      } else {
+        v.destroy();
+      }
     }
   }
 
   interpolate(alpha: number, frameDt: number): void {
     for (const v of this.views.values()) v.interpolate(alpha, frameDt);
+    for (let i = this.dying.length - 1; i >= 0; i--) {
+      const v = this.dying[i];
+      v.interpolate(alpha, frameDt);
+      if (v.isDissolved) {
+        v.destroy();
+        this.dying.splice(i, 1);
+      }
+    }
   }
 
   /**

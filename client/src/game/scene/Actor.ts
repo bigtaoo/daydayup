@@ -1,6 +1,7 @@
-import { Graphics } from 'pixi.js';
+import { Filter, Graphics } from 'pixi.js';
 import type { DamageType, StatusState } from '@dd/engine';
 import { THEME, ELEMENT_COLORS } from '../theme';
+import { EnergyShieldFilter, OutlineFilter, DissolveFilter, HeatHazeFilter } from '../fx/filters';
 import { Entity } from './Entity';
 import { Skin } from './Skin';
 
@@ -10,6 +11,9 @@ export type WeaponKind = 'ranged' | 'melee';
 // How far (× body radius) to lift the sprite so the ground anchor sits at the feet.
 // Bigger → more of the body rises above the anchor → more it can overlap a pillar.
 const BODY_LIFT_R = 0.7;
+
+const HIT_FLASH_MS = 160; // outline "you were just hit" flash duration (Actor.hitFlash)
+const DISSOLVE_MS = 700; // death-dissolve shader duration (Actor.startDissolve)
 
 // Lingering status auras (design/03/07): a concentric glowing ring per active
 // on-hit effect, so a burning / chilled / poisoned actor reads while the DoT lasts —
@@ -35,6 +39,15 @@ export class Actor extends Entity {
   private isLocal = false;
   private readonly isBoss: boolean;
   private hpRatio = -1; // last-drawn hp fraction (skip redraw if unchanged)
+  private shieldFilter: EnergyShieldFilter | null = null; // lazily built — most actors never carry a shield pool
+  private shieldActive = false;
+  private shieldRatio = -1; // last-applied shield fraction (skip redundant work if unchanged)
+  private outlineFilter: OutlineFilter | null = null; // lazily built — most actors never get hit while on screen
+  private outlineMs = 0; // remaining ms of the current hit flash, 0 = inactive
+  private dissolveFilter: DissolveFilter | null = null;
+  private dissolveMs = -1; // -1 = not dissolving; counts up from 0 once startDissolve fires
+  private heatHazeFilter: HeatHazeFilter | null = null; // lazily built — most actors never burn
+  private heatHazeActive = false;
   private weaponKind: WeaponKind | null | undefined = undefined;
   private weaponName: string | undefined = undefined;
   private weaponElement: DamageType | undefined = undefined;
@@ -190,19 +203,111 @@ export class Actor extends Entity {
     let mask = 0;
     for (const a of AURAS) if (a.active(status)) mask |= a.bit;
     if (mask === this.auraMask) return;
+    const prevMask = this.auraMask;
     this.auraMask = mask;
 
     const g = this.statusAura;
     g.clear();
-    if (mask === 0) return;
-    const r = this.radiusPx;
-    let ring = 0;
-    for (const a of AURAS) {
-      if (!(mask & a.bit)) continue;
-      const rad = r * (1.15 + ring * 0.22);
-      g.circle(0, 0, rad).stroke({ color: a.color, width: 3, alpha: 0.55 });
-      ring++;
+    if (mask !== 0) {
+      const r = this.radiusPx;
+      let ring = 0;
+      for (const a of AURAS) {
+        if (!(mask & a.bit)) continue;
+        const rad = r * (1.15 + ring * 0.22);
+        g.circle(0, 0, rad).stroke({ color: a.color, width: 3, alpha: 0.55 });
+        ring++;
+      }
     }
+
+    // Heat-haze distortion (design/01 fidelity roadmap milestone 5, `HeatHazeFilter`) —
+    // the silhouette itself shimmers while burning, on top of the ring above. Burn is
+    // bit 1 (AURAS[0]); only reacts on an actual burn on/off edge, not every aura change
+    // (a chill/poison toggle alongside an ongoing burn shouldn't rebuild this filter).
+    const wasBurning = (prevMask & 1) !== 0;
+    const isBurning = (mask & 1) !== 0;
+    if (isBurning !== wasBurning) {
+      if (isBurning && !this.heatHazeFilter) this.heatHazeFilter = new HeatHazeFilter();
+      this.heatHazeActive = isBurning;
+      this.applySkinFilters();
+    }
+  }
+
+  // Mirror the engine actor's two-pool shield (design/02/05/07) as a shimmering rim-glow
+  // (design/01 fidelity roadmap milestone 5, `EnergyShieldFilter`). maxShield <= 0 is the
+  // common case (most enemies, the 0-shield starter) and stays a cheap no-op — the filter
+  // is only ever built for an actor that actually carries a shield pool. Ratio 0 (broken,
+  // still has a maxShield) removes it — the `shield_break` event's own flash already
+  // covers that instant, so there's nothing left for the glow to do.
+  setShield(shield: number, maxShield: number): void {
+    if (maxShield <= 0) {
+      this.shieldRatio = -1;
+      this.setShieldActive(false);
+      return;
+    }
+    const ratio = Math.max(0, Math.min(1, shield / maxShield));
+    if (ratio === this.shieldRatio) return;
+    this.shieldRatio = ratio;
+    if (ratio <= 0) {
+      this.setShieldActive(false);
+      return;
+    }
+    if (!this.shieldFilter) this.shieldFilter = new EnergyShieldFilter(THEME.colors.shield);
+    this.shieldFilter.intensity = ratio;
+    this.setShieldActive(true);
+  }
+
+  private setShieldActive(active: boolean): void {
+    if (active === this.shieldActive) return;
+    this.shieldActive = active;
+    this.applySkinFilters();
+  }
+
+  // Brief "you were just hit" silhouette flash (design/01 milestone 5, `OutlineFilter`)
+  // — real alpha-edge detection, unlike the shield's UV-distance approximation, so it
+  // reads correctly against any body shape. Fired from EventReactor's 'hit' case for
+  // BOTH factions (whichever actor the event names as `target`), independent of the
+  // existing position-anchored `fx.flash()` burst — that one reads as "impact happened
+  // here", this one reads as "THIS actor took it".
+  hitFlash(): void {
+    if (!this.outlineFilter) this.outlineFilter = new OutlineFilter(0xffffff);
+    this.outlineFilter.alpha = 1;
+    this.outlineMs = HIT_FLASH_MS;
+    this.applySkinFilters();
+  }
+
+  // Kick off the death-dissolve shader (design/01 milestone 5, `DissolveFilter`) — called
+  // once by Scene when this actor's id drops out of the engine's alive list, instead of
+  // destroying the view that same tick. Hides everything except the dissolving body
+  // itself (weapon/aura/hp-bar/local-ring are all meaningless on a dead actor and would
+  // otherwise float oddly over a half-dissolved silhouette).
+  startDissolve(): void {
+    if (this.dissolveMs >= 0) return; // already dissolving — defensive, shouldn't double-fire
+    this.dissolveFilter = new DissolveFilter();
+    this.dissolveMs = 0;
+    this.weaponGfx.visible = false;
+    this.statusAura.visible = false;
+    if (this.healthBar) this.healthBar.visible = false;
+    if (this.localRing) this.localRing.visible = false;
+    this.applySkinFilters();
+  }
+
+  /** True once the death-dissolve has fully played out — Scene destroys the view then. */
+  get isDissolved(): boolean {
+    return this.dissolveMs >= DISSOLVE_MS;
+  }
+
+  // Recompute `skin.view.filters` from whichever of the four skin-level shaders are
+  // currently live. Order is warp-then-glow-then-highlight-then-dissolve: the UV wobble
+  // should distort what the glow/outline draw (not the other way around), a hit flash
+  // should still read on top of an active shield glow, and a dying actor's dissolve
+  // should be the last word regardless of what else was active the instant it died.
+  private applySkinFilters(): void {
+    const list: Filter[] = [];
+    if (this.heatHazeActive && this.heatHazeFilter) list.push(this.heatHazeFilter);
+    if (this.shieldActive && this.shieldFilter) list.push(this.shieldFilter);
+    if (this.outlineMs > 0 && this.outlineFilter) list.push(this.outlineFilter);
+    if (this.dissolveMs >= 0 && this.dissolveFilter) list.push(this.dissolveFilter);
+    this.skin.view.filters = list.length ? list : null;
   }
 
   private drawWeapon(kind: WeaponKind | null): void {
@@ -232,6 +337,17 @@ export class Actor extends Entity {
     if (this.auraMask !== 0) {
       this.auraT += frameDt;
       this.statusAura.alpha = 0.75 + 0.25 * Math.sin(this.auraT * 0.008);
+    }
+    if (this.shieldActive && this.shieldFilter) this.shieldFilter.tick(frameDt);
+    if (this.heatHazeActive && this.heatHazeFilter) this.heatHazeFilter.tick(frameDt);
+    if (this.outlineMs > 0) {
+      this.outlineMs = Math.max(0, this.outlineMs - frameDt);
+      this.outlineFilter!.alpha = this.outlineMs / HIT_FLASH_MS;
+      if (this.outlineMs === 0) this.applySkinFilters();
+    }
+    if (this.dissolveMs >= 0 && this.dissolveMs < DISSOLVE_MS) {
+      this.dissolveMs = Math.min(DISSOLVE_MS, this.dissolveMs + frameDt);
+      this.dissolveFilter!.progress = this.dissolveMs / DISSOLVE_MS;
     }
   }
 }
