@@ -1227,6 +1227,17 @@ export class Game {
     const s = this.activeState();
     const dustBounds = s ? { x: 0, y: 0, w: fpToPx(s.worldW), h: fpToPx(s.worldH) } : undefined;
     this.fx.updateFx(dt, this.phase === 'playing' ? 700 : 0, dustBounds);
+
+    // Dynamic lighting (design/01 milestone 2): the local player carries their own
+    // persistent glow, re-registered at their current position every frame rather than
+    // tracked as a one-time spawn; every other point light (muzzle flash/impact bursts)
+    // is registered directly by FxController.flash. This one `updateFx` wrapper is
+    // already called from every render path (paused/menu/offline/online), so shading
+    // every live actor here covers all of them with no per-path wiring.
+    const player = this.scene.player;
+    if (player) this.fx.lights.addPersistent('local', { x: player.curX, y: player.curY, color: 0xfff4d6, radius: 140, intensity: 0.35 });
+    else this.fx.lights.removePersistent('local');
+    this.scene.applyLighting(this.fx.lights);
   }
 
   private updateCamera(alpha: number) {

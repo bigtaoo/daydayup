@@ -9,9 +9,13 @@ How pixels get onto the screen: **skins** (the `02` appearance layer made concre
 > Graphics-only slice (procedural rectangles/ellipses/glows in `Skin.ts`) survives only as
 > the fallback drawn when a skin has no atlas entry, and for bullets/pickups/portal, which
 > were never planned as sprite art. The dated Update notes at the bottom of this doc record
-> how each piece landed; what remains open is listed in `ROADMAP.md`'s 5.3/5.4 (real
-> authored — not AI-generated — art, normal-map lighting, custom shaders) and `04` (WeChat
-> device verification).
+> how each piece landed. **Update (2026-08-03): ROADMAP 5.3/5.4 are both closed too** — the
+> GPT-Image-2 art this pipeline generates is now treated as final production art (not a
+> placeholder awaiting an authored replacement), which also unblocked dynamic/normal-map
+> lighting (shipped as a shader-derived approximation, no normal-map asset needed) and the
+> four fidelity-roadmap custom shaders. What remains open is only `04` (WeChat device
+> verification, blocked on hardware) and real authored SFX/music (`11`, a sourcing/licensing
+> task, unrelated to this pipeline).
 
 ## The decisions (locked)
 
@@ -92,7 +96,7 @@ Authoring rules so 2D art produces the fake-3D feel and doesn't hit `01`'s known
 ## To design
 
 - **Bundle boundaries** — what's in the boot core bundle vs. lazy per-biome/enemy, sized against WeChat download limits (`04`).
-- **Placeholder→final swap process** — keep the `Skin` interface stable so the Graphics slice and `.tao`-driven art are interchangeable during production.
+- ~~Placeholder→final swap process~~ — moot as of 2026-08-03: this pipeline's GPT-Image-2 output is now the final art, so there is no later swap to design for. The `Skin` interface (Graphics slice vs. `.tao`-driven atlas) stays exactly as documented above regardless — that decoupling was never specific to a placeholder/final distinction.
 - **Normal-map / lighting authoring** for `01`'s milestone-2 lightmap — flat+normal vs. pre-shaded.
 > Resolved by the Animation decision above: **animation-data source** (funny's editor + `.tao`) and **atlas tooling** (the editor packs the spritesheet via shelf bin-packing; anchors are authored in-tool as Bindings/attachment points) — no longer open.
 

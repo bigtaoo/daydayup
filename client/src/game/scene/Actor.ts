@@ -1,7 +1,8 @@
 import { Filter, Graphics } from 'pixi.js';
 import type { DamageType, StatusState } from '@dd/engine';
 import { THEME, ELEMENT_COLORS } from '../theme';
-import { EnergyShieldFilter, OutlineFilter, DissolveFilter, HeatHazeFilter } from '../fx/filters';
+import { EnergyShieldFilter, OutlineFilter, DissolveFilter, HeatHazeFilter, NormalLitFilter } from '../fx/filters';
+import type { LightHit } from '../fx/lighting';
 import { Entity } from './Entity';
 import { Skin } from './Skin';
 
@@ -39,6 +40,10 @@ export class Actor extends Entity {
   private isLocal = false;
   private readonly isBoss: boolean;
   private hpRatio = -1; // last-drawn hp fraction (skip redraw if unchanged)
+  // Dynamic lighting (design/01 fidelity roadmap milestone 2) — unlike every filter
+  // below, this one is never conditionally active: every actor is always lit, so it's
+  // built eagerly instead of lazily, and always first in applySkinFilters()'s list.
+  private readonly litFilter = new NormalLitFilter();
   private shieldFilter: EnergyShieldFilter | null = null; // lazily built — most actors never carry a shield pool
   private shieldActive = false;
   private shieldRatio = -1; // last-applied shield fraction (skip redundant work if unchanged)
@@ -113,6 +118,11 @@ export class Actor extends Entity {
     this.healthBar = new Graphics();
     this.healthBar.y = -lift - radiusPx * (boss ? 1.7 : 1.3);
     this.addChild(this.healthBar);
+
+    // litFilter is always on (unlike the four conditionally-active shaders below, whose
+    // own setters call applySkinFilters on their own activation edge) — an actor that
+    // never takes a status/shield/hit/death would otherwise never get it attached at all.
+    this.applySkinFilters();
   }
 
   // Swap the cosmetic weapon shape to match the engine's active weapon kind. A real
@@ -256,6 +266,14 @@ export class Actor extends Entity {
     this.setShieldActive(true);
   }
 
+  /** Apply this frame's strongest nearby point light (design/01 milestone 2) — called
+   *  once per render frame by Scene.applyLighting, `null` when nothing is close enough
+   *  to matter (the filter's fixed key light still shades in that case). */
+  setLighting(hit: LightHit | null): void {
+    if (hit) this.litFilter.setPoint(hit.dirX, hit.dirY, hit.color, hit.intensity);
+    else this.litFilter.clearPoint();
+  }
+
   private setShieldActive(active: boolean): void {
     if (active === this.shieldActive) return;
     this.shieldActive = active;
@@ -296,13 +314,15 @@ export class Actor extends Entity {
     return this.dissolveMs >= DISSOLVE_MS;
   }
 
-  // Recompute `skin.view.filters` from whichever of the four skin-level shaders are
-  // currently live. Order is warp-then-glow-then-highlight-then-dissolve: the UV wobble
+  // Recompute `skin.view.filters` from `litFilter` (always on) plus whichever of the
+  // four conditionally-active skin-level shaders are currently live. Order is
+  // lit-then-warp-then-glow-then-highlight-then-dissolve: lighting establishes the base
+  // shaded colour every later overlay then distorts/adds onto/highlights, the UV wobble
   // should distort what the glow/outline draw (not the other way around), a hit flash
   // should still read on top of an active shield glow, and a dying actor's dissolve
   // should be the last word regardless of what else was active the instant it died.
   private applySkinFilters(): void {
-    const list: Filter[] = [];
+    const list: Filter[] = [this.litFilter];
     if (this.heatHazeActive && this.heatHazeFilter) list.push(this.heatHazeFilter);
     if (this.shieldActive && this.shieldFilter) list.push(this.shieldFilter);
     if (this.outlineMs > 0 && this.outlineFilter) list.push(this.outlineFilter);

@@ -18,6 +18,12 @@ import { ENEMY_TEAM_ID, type EnemyActor, type Projectile, type PickupItem } from
 import { Scene } from './Scene';
 import { Layers } from './layers';
 import { bradToRad } from '../coords';
+import { LightRegistry } from '../fx/lighting';
+import type { Actor } from './Actor';
+
+function litFilterOf(a: Actor): { dirX: number; dirY: number; intensity: number } {
+  return (a as unknown as { litFilter: { dirX: number; dirY: number; intensity: number } }).litFilter;
+}
 
 // EnergyShieldFilter/OutlineFilter/DissolveFilter (Actor's setShield/hitFlash/
 // startDissolve) all build a real WebGL GlProgram at construction time — unavailable
@@ -36,6 +42,21 @@ vi.mock('../fx/filters', () => ({
   HeatHazeFilter: class {
     intensity = 1;
     tick() {}
+  },
+  NormalLitFilter: class {
+    dirX = 0;
+    dirY = 0;
+    color = 0;
+    intensity = 0;
+    setPoint(dirX: number, dirY: number, color: number, intensity: number) {
+      this.dirX = dirX;
+      this.dirY = dirY;
+      this.color = color;
+      this.intensity = intensity;
+    }
+    clearPoint() {
+      this.intensity = 0;
+    }
   },
 }));
 
@@ -286,5 +307,58 @@ describe('Scene.reconcile — death-dissolve lingering view (design/01 fidelity 
     // exercises the reverse-iterating splice loop with more than one entry at once.
     scene.interpolate(1, 700);
     expect(dying.length).toBe(0);
+  });
+});
+
+describe('Scene.applyLighting — dynamic point lighting (design/01 fidelity roadmap milestone 2)', () => {
+  it('shades a live Actor (player) against the strongest nearby light', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+
+    const lights = new LightRegistry();
+    lights.addPersistent('a', { x: 150, y: 100, color: 0x66e0ff, radius: 200, intensity: 1 });
+    scene.applyLighting(lights);
+
+    expect(litFilterOf(scene.player!).intensity).toBeGreaterThan(0);
+  });
+
+  it('shades enemies too, not just the player (Enemy extends Actor)', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const enemy = addEnemy(s, 300, 300, 0 as Brad);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+
+    const lights = new LightRegistry();
+    lights.addPersistent('a', { x: 310, y: 300, color: 0xff8844, radius: 200, intensity: 1 });
+    scene.applyLighting(lights);
+
+    const view = scene.actorAt(enemy.id)!;
+    expect(litFilterOf(view).intensity).toBeGreaterThan(0);
+  });
+
+  it('clears the point term when nothing is close enough to matter', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+
+    const lights = new LightRegistry();
+    lights.addPersistent('far', { x: 100000, y: 100000, color: 0xffffff, radius: 50, intensity: 1 });
+    scene.applyLighting(lights);
+
+    expect(litFilterOf(scene.player!).intensity).toBe(0);
+  });
+
+  it('leaves bullets/pickups alone — only Actor views (player/enemy) get shaded', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    addBullet(s, 300, 300);
+    addPickup(s, 300, 300);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+
+    const lights = new LightRegistry();
+    lights.addPersistent('a', { x: 300, y: 300, color: 0xffffff, radius: 200, intensity: 1 });
+    // Would throw if it ever tried to read `.litFilter` off a Bullet/Pickup view.
+    expect(() => scene.applyLighting(lights)).not.toThrow();
   });
 });

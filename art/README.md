@@ -57,7 +57,12 @@ Two traps this pipeline exists to catch, both hit for real:
 
 ## Still to come
 
-- Real **authored** art to replace the AI-generated placeholders (`ROADMAP.md` 5.3).
+- **(Closed 2026-08-03.)** This directory's art is GPT-Image-2-generated, and the project
+  now treats that as final production art rather than a placeholder awaiting an authored
+  replacement (`ROADMAP.md` 5.3) — an explicit scope decision, not a pipeline change. One
+  caveat this decision does NOT resolve on its own: some assets may still carry the known
+  opaque-matte-background bug (a real bug, not a placeholder-vs-authored question) — that
+  hasn't been audited as part of this change.
 - Two concrete gaps found by cross-checking the code (not just this doc), both **closed
   2026-08-03**: the boss had no dedicated art/rig at all (it silently fell back to a
   scaled/retinted `critter-core` body) — real `core`/`ring` art now bound via a new
@@ -65,5 +70,9 @@ Two traps this pipeline exists to catch, both hit for real:
   `gun_default` housing now have real art (`weapon/prompts.md`) — `cryobolt`/`frostseeker`
   needed a second generation round each after the first came back as a fiction-breaking
   hand-grip/trigger-guard raygun.
-- `normal/` normal maps for the dynamic-lighting milestone and `fx/` particle textures — both
-  blocked on 5.4, neither started.
+- ~~`normal/` normal maps for the dynamic-lighting milestone~~ — **not needed, per 5.4's
+  2026-08-03 update**: lighting derives its per-pixel normal from each sprite's own existing
+  diffuse texture at shader runtime (a Sobel-style gradient over rendered luminance/alpha, no
+  precomputed normal-map asset), so there is no separate normal-map source-art directory to
+  fill. `fx/` particle textures remain unstarted (Particles.ts is still Graphics-only, by its
+  own design — no textures needed there either).

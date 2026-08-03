@@ -2,6 +2,7 @@ import { BlurFilter, Container, Graphics } from 'pixi.js';
 import type { Layers } from '../scene/layers';
 import { VignetteFilter, ChromaticAberrationFilter } from './filters';
 import { ParticleSystem } from './Particles';
+import { LightRegistry } from './lighting';
 
 const FX_LIFE_MS = 170; // flash/trail lifetime
 const MAX_SHAKE_PX = 14; // camera-shake offset at full trauma (design/01 milestone 3)
@@ -27,6 +28,9 @@ export class FxController {
   readonly particles = new ParticleSystem();
   readonly vignette = new VignetteFilter();
   readonly chromatic = new ChromaticAberrationFilter(0);
+  /** Dynamic point lights (design/01 milestone 2) — the local-player glow (registered
+   *  by Game.ts each frame) plus transient bursts registered by `flash()` below. */
+  readonly lights = new LightRegistry();
   private shakeTrauma = 0;
   private hitStopMs = 0;
   /** Current world→screen zoom applied in updateCamera — CommandBuilder needs this
@@ -57,7 +61,10 @@ export class FxController {
     this.layers.fx.addChild(dot);
   }
 
-  /** A radial glow burst at (x,y) — hit/pickup/status feedback (consumeEvents). */
+  /** A radial glow burst at (x,y) — hit/pickup/status feedback (consumeEvents). Also
+   *  registers a matching transient point light (design/01 milestone 2) so nearby
+   *  actors visibly brighten for the same instant the burst is on screen — same
+   *  lifetime, same colour, no separate call site needed. */
   flash(x: number, y: number, color: number, radius: number): void {
     const glow = new Graphics();
     const steps = 5;
@@ -69,6 +76,7 @@ export class FxController {
     glow.y = y - 12;
     (glow as unknown as { _life: number })._life = FX_LIFE_MS;
     this.layers.fx.addChild(glow);
+    this.lights.addTransient({ x, y, color, radius: radius * 3, intensity: 0.7 }, FX_LIFE_MS);
   }
 
   /** Fade/expire every `_life`-tagged fx child, step ambient dust, and decay the
@@ -89,6 +97,7 @@ export class FxController {
     }
 
     this.particles.update(dt, dustRate, dustBounds);
+    this.lights.update(dt);
 
     // Chromatic-aberration pulse decays back to 0 — a hit reaction, never a permanent look.
     this.chromatic.amount = Math.max(0, this.chromatic.amount - dt * 0.006);
@@ -154,6 +163,7 @@ export class FxController {
    *  itself, which is a persistent child of layers.fx mounted once in attach(). */
   resetForNewRun(): void {
     this.particles.clear();
+    this.lights.clear();
     this.shakeTrauma = 0;
     this.hitStopMs = 0;
     this.chromatic.amount = 0;

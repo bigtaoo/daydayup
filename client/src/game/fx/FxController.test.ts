@@ -20,6 +20,37 @@ function fakePlayer(x: number, y: number): CameraTarget {
   return { interpGroundX: () => x, interpGroundY: () => y };
 }
 
+describe('FxController.lights (design/01 fidelity roadmap milestone 2)', () => {
+  it('registers a transient light from flash(), matching the burst position/colour', () => {
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.flash(100, 200, 0x66e0ff, 20);
+    const hit = fx.lights.strongestAt(100, 200);
+    expect(hit).not.toBeNull();
+    expect(hit!.color).toBe(0x66e0ff);
+  });
+
+  it('decays flash()-registered lights via updateFx, same lifetime as the visual burst', () => {
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.flash(0, 0, 0xffffff, 20);
+    const full = fx.lights.strongestAt(0, 0)!.intensity;
+    fx.updateFx(85, 0, undefined); // half of FX_LIFE_MS (170ms)
+    const half = fx.lights.strongestAt(0, 0)!.intensity;
+    expect(half).toBeLessThan(full);
+    fx.updateFx(86, 0, undefined); // past its lifetime
+    expect(fx.lights.strongestAt(0, 0)).toBeNull();
+  });
+
+  it('resetForNewRun clears every light — a fresh run inherits none of the last one\'s glow', () => {
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.lights.addPersistent('local', { x: 0, y: 0, color: 0xffffff, radius: 100, intensity: 1 });
+    fx.resetForNewRun();
+    expect(fx.lights.strongestAt(0, 0)).toBeNull();
+  });
+});
+
 describe('FxController.updateCamera', () => {
   it('is a no-op (leaves layers.world untouched) with no player', () => {
     const layers = new Layers();

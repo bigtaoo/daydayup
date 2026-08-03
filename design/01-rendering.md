@@ -68,7 +68,7 @@ For this game's scale (rooms, pillars, crates, enemies) these are largely avoida
 ## Fidelity roadmap (by priority)
 
 1. **[verified in demo]** Tilted view + Y-sort + height/shadow + additive-blend FX.
-2. Dynamic lighting: normal maps + point lights + lightmap (multiply composite). **Still blocked on real art**, but the blocking condition has shifted: real (AI-placeholder) character/enemy/weapon atlases have since landed (`12`/`13`, Phase 5.3) — the actual remaining gate is normal-map *authoring*, which needs the placeholder atlases replaced with final art first (or a flat+normal-map re-author pass over the placeholders), not the atlases' mere existence. Do not start until that art-production pass lands.
+2. **[shipped 2026-08-03]** Dynamic lighting: a per-pixel fake normal derived at shader time from a sprite's own rendered luminance/alpha (a Sobel-style gradient over 4 neighbour-texel taps, the same trick milestone 5's `OutlineFilter` already uses for alpha-edge detection — no normal-map texture asset exists or is needed), shaded against a fixed key light (reusing `RoomBuilder.ts`'s "lit from upper-left" pillar-shading direction) plus a small dynamic point-light registry (`game/fx/lighting.ts`'s `LightRegistry` — the local player's own glow + transient muzzle-flash/impact bursts). This is a scoped equivalent of "normal maps + point lights + lightmap (multiply composite)," not that literal architecture: no `RenderTexture`/deferred-lighting layer exists anywhere in this codebase, and building one would be disproportionate to a fixed-camera 2D sim — a fifth custom `Filter` (`NormalLitFilter`, `game/fx/filters.ts`) does the job instead, following the same template as the four milestone-5 shaders below. Unblocked once ROADMAP 5.3 settled that GPT-Image-2-generated art counts as final production art (no more "normal-map authoring needs real art first" gate) — see ROADMAP's 2026-08-03 updates on both items for the full account.
 3. **[shipped 2026-07-26]** Post-processing: bloom-lite (`BlurFilter` on the additive `fx` layer — a cheap approximation, not real multi-pass bloom), custom `VignetteFilter`/`ChromaticAberrationFilter` (`game/fx/filters.ts`, hand-written GLSL, no third-party filter package), hit-stop (brief sim-tick freeze, offline-only) + screen-shake (decaying trauma, `game/Game.ts`).
 4. **[shipped 2026-07-26]** Particle system: `game/fx/Particles.ts` — muzzle flames + shell casings (on `bullet_fired`), explosion debris (on enemy `death`), ambient drifting dust. Graphics-only (no textures), same events-queue-driven render-only discipline as the rest of this doc.
 5. **[shipped 2026-08-03] Custom shaders — all four items done:** dissolve on death,
@@ -79,8 +79,9 @@ For this game's scale (rooms, pillars, crates, enemies) these are largely avoida
    heat-haze warp, then shield glow, then outline highlight, then dissolve last). Shipped
    against today's placeholder art with no issues — the "read best against a real sprite
    silhouette, so this likely wants to follow milestone 2" sequencing preference recorded
-   here earlier turned out not to matter in practice; milestone 2 (lighting) remains
-   genuinely blocked on real art for an unrelated reason (normal-map authoring).
+   here earlier turned out not to matter in practice. Milestone 2 (lighting) has since
+   shipped too (2026-08-03, see above) — the "genuinely blocked on real art" note that used
+   to live here no longer applies, now that this project's GPT-Image-2 art counts as final.
    - **`EnergyShieldFilter`** — a shimmering rim-glow using the same UV-distance-from-
      centre technique as `VignetteFilter` (not true alpha-edge detection, so it needs no
      extra per-skin wiring against either the Graphics placeholder body or a real `.tao`
