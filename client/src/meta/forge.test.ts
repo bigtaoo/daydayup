@@ -190,8 +190,23 @@ describe('persistence (MetaStore)', () => {
     expect(old.unlockedBlueprints).toEqual(expect.arrayContaining([...d.unlockedBlueprints, 'cryobolt']));
     expect(old.selectedSkin).toBe(d.selectedSkin); // backfilled
     expect(old.loadout).toEqual([]);
+    expect(old.hasSeenTutorial).toBe(false); // backfilled — a save from before the tutorial existed
     expect(migrate(null)).toEqual(d); // garbage → default
     expect(migrate('nonsense')).toEqual(d);
+  });
+
+  // design/10 screen-flow gap: hasSeenTutorial (new field) must both backfill to false
+  // for an old save that predates the tutorial AND survive migration once set — a save
+  // written by a build that HAS it must never regress back to "unseen".
+  it('migrate preserves hasSeenTutorial:true from a save that already has it', () => {
+    const saved = migrate({ hasSeenTutorial: true });
+    expect(saved.hasSeenTutorial).toBe(true);
+  });
+
+  it('migrate ignores a non-boolean hasSeenTutorial and falls back to the default', () => {
+    const d = defaultMetaState();
+    const saved = migrate({ hasSeenTutorial: 'yes' });
+    expect(saved.hasSeenTutorial).toBe(d.hasSeenTutorial);
   });
 });
 

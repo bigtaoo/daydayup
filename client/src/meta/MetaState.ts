@@ -27,6 +27,10 @@ export interface MetaState {
   loadout: string[];
   /** The chosen character carried into the next run (EngineConfig.skinId, design/14). */
   selectedSkin: string;
+  /** Whether this local player has completed or explicitly skipped the tutorial level
+   * (design/10 screen-flow gap). Guest-local, account-independent — it only gates the
+   * "recommended" badge ModeSelect shows on the Tutorial option, never blocks play. */
+  hasSeenTutorial: boolean;
 }
 
 /** The free character roster — every SkinDef currently shipped (no paid ones yet; the
@@ -43,5 +47,6 @@ export function defaultMetaState(): MetaState {
     ownedCharacters: [...FREE_CHARACTERS],
     loadout: [],
     selectedSkin: DEFAULT_SKIN_ID,
+    hasSeenTutorial: false,
   };
 }

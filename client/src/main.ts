@@ -46,6 +46,7 @@ async function boot() {
 
   const game = new Game(app, input, audio);
   game.start();
+  document.getElementById('boot-loading')?.remove();
 
   // Expose for debugging
   (globalThis as unknown as { __game: Game }).__game = game;

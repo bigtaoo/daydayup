@@ -43,6 +43,39 @@ describe('PauseMenu — show()', () => {
   });
 });
 
+// design/10 screen-flow gap: the tutorial level's Skip reuses this same pause menu, but
+// "QUIT TO FORGE" is wrong once quitting no longer always returns to Forge — the quit
+// button's label can be overridden per-show() without changing what it calls (onQuit).
+describe('PauseMenu — quit label override (design/10 tutorial Skip)', () => {
+  it('uses the default label when no override is given', () => {
+    const m = new PauseMenu();
+    m.show(800, 600);
+    expect(privateOf(m).quitBtn.label.text).toBe('QUIT TO FORGE');
+  });
+
+  it('uses the override text when given', () => {
+    const m = new PauseMenu();
+    m.show(800, 600, 'SKIP TUTORIAL');
+    expect(privateOf(m).quitBtn.label.text).toBe('SKIP TUTORIAL');
+  });
+
+  it('a later show() without an override reverts to the default label', () => {
+    const m = new PauseMenu();
+    m.show(800, 600, 'SKIP TUTORIAL');
+    m.show(800, 600);
+    expect(privateOf(m).quitBtn.label.text).toBe('QUIT TO FORGE');
+  });
+
+  it('the override never changes which callback the button fires', () => {
+    const m = new PauseMenu();
+    const calls: string[] = [];
+    m.onQuit = () => calls.push('quit');
+    m.show(800, 600, 'SKIP TUTORIAL');
+    privateOf(m).quitBtn.onTap?.();
+    expect(calls).toEqual(['quit']);
+  });
+});
+
 describe('PauseMenu — i18n (design/17-i18n.md)', () => {
   it('defaults to English', () => {
     const p = privateOf(new PauseMenu());

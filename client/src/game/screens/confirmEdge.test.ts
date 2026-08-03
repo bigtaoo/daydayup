@@ -8,7 +8,9 @@ import type { Phase } from '../phase';
 // this module — leaving it to a default is how the original bug shipped.
 const EXPECTED: Record<Phase, boolean> = {
   menu: false,
+  modeSelect: false,
   forge: false,
+  matchmaking: false,
   squad: false,
   account: false,
   settings: false,
@@ -58,7 +60,7 @@ describe('shouldConfirmOnFireEdge', () => {
   });
 
   it('never fires on a button-driven screen, at any point in a press', () => {
-    for (const phase of ['menu', 'forge', 'squad', 'account', 'settings'] as Phase[]) {
+    for (const phase of ['menu', 'modeSelect', 'forge', 'matchmaking', 'squad', 'account', 'settings'] as Phase[]) {
       for (const [firing, prev] of [[true, false], [true, true], [false, true], [false, false]] as const) {
         expect(shouldConfirmOnFireEdge(phase, firing, prev), `${phase} ${firing}/${prev}`).toBe(false);
       }

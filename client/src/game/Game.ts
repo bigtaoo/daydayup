@@ -4,7 +4,6 @@ import {
   hashState,
   SKIN_DEFS,
   PLAYER_BASE,
-  EMBER_DUNGEON,
   type GameEngine,
   type GameEvent,
   type GameState,
@@ -12,6 +11,8 @@ import {
 import { CoopSession } from '../net/CoopSession';
 import { connectOnlineSession } from './match/onlineConnect';
 import { buildDungeonRunConfig, buildArenaDemoConfig } from './match/offlineConfig';
+import { buildTutorialConfig } from './match/tutorialConfig';
+import { totalFloorCount } from './match/floorCount';
 import { LocalPredictor, DEFAULT_PREDICTOR } from './controllers/LocalPredictor';
 import {
   defaultMetaState, bankMaterials, craft, clearLoadout, selectCharacter,
@@ -30,6 +31,8 @@ import { Scene } from './scene/Scene';
 import { Screens } from './screens/Screens';
 import { Forge } from './screens/Forge';
 import { MainMenu } from './screens/MainMenu';
+import { ModeSelect } from './screens/ModeSelect';
+import { Matchmaking, type MatchmakingSignal } from './screens/Matchmaking';
 import { PartyScreen } from './screens/PartyScreen';
 import { LoginScreen } from './screens/LoginScreen';
 import { Settings } from './screens/Settings';
@@ -41,6 +44,7 @@ import { TouchControlsView } from './ui/TouchControlsView';
 import { CommandBuilder } from './controllers/CommandBuilder';
 import { AllyController } from './controllers/AllyController';
 import { EventReactor } from './controllers/EventReactor';
+import { TutorialHintController } from './controllers/TutorialHintController';
 import { RoomBuilder } from './scene/RoomBuilder';
 import { Backdrop } from './scene/Backdrop';
 import { PortalPrompt } from './ui/PortalPrompt';
@@ -101,6 +105,17 @@ export class Game {
   private screens = new Screens();
   private forge = new Forge();
   private mainMenu = new MainMenu();
+  // ModeSelect (design/10 screen-flow gap): PLAY's new destination — solo PvE / co-op /
+  // PvP solo queue / tutorial, previously only reachable as boot-time URL flags.
+  private modeSelect = new ModeSelect();
+  // Matchmaking (design/10 screen-flow gap): wraps connectOnlineSession with real
+  // connecting/error feedback — previously the game sat in a blank `playing` phase with
+  // no UI while matchmaking ran, and a post-ticket failure hung forever with no error.
+  private matchmaking = new Matchmaking();
+  // Where Cancel/Back on the Matchmaking screen returns to — modeSelect for a solo
+  // co-op/PvP queue (beginSoloQueue), squad for a pre-formed party (beginSquadMatch).
+  // Same "remember the caller" convention as settingsReturnPhase.
+  private matchmakingReturnPhase: 'modeSelect' | 'squad' = 'modeSelect';
   // Constructed in start(), not as a field initializer — it needs `this.matchBaseUrl`
   // AFTER the constructor's `?matchBaseUrl=` query-param override has applied, which a
   // field initializer would run before (design/05/15's PvP squad follow-up).
@@ -205,6 +220,14 @@ export class Game {
   // 2026-07-28 — see that file's doc comment. `this` is its host for the handful of
   // reactions that reach back into Game-owned state (score/meta/room rebuild).
   private readonly events: EventReactor;
+  // The tutorial level's teaching-beat toasts (design/10 screen-flow gap) — same
+  // render-only, state+events-only shape as EventReactor, only ever consumed while
+  // `tutorialActive` (see stepSim). `this` satisfies its tiny Host (`localOwner`).
+  private readonly tutorialHints: TutorialHintController;
+  // True only for the standalone tutorial level (beginTutorialRun) — always offline,
+  // never `this.online`. Gates the tutorial hint reactions and where Pause/result-screen
+  // confirm/quit actually return to (ModeSelect instead of Forge).
+  private tutorialActive = false;
 
   constructor(app: Application, input: InputSource, audio: AudioBus) {
     this.app = app;
@@ -213,6 +236,7 @@ export class Game {
     // Built here (not as a field initializer) — it needs `this.audio`, which isn't
     // assigned yet when field initializers run.
     this.events = new EventReactor(this.fx, this.hud, this.audio, this);
+    this.tutorialHints = new TutorialHintController(this.hud, this);
     this.builder = new CommandBuilder(input);
     // Load persistent meta (bank / unlocks / loadout / chosen character, design/14).
     this.meta = this.store.load();
@@ -268,13 +292,21 @@ export class Game {
     this.partyScreen = new PartyScreen({ matchBaseUrl: this.matchBaseUrl });
     this.loginScreen = new LoginScreen({ matchBaseUrl: this.matchBaseUrl });
     this.layers.ui.addChild(
-      this.mainMenu.view, this.forge.view, this.screens.view, this.settingsScreen.view, this.pauseMenu.view,
+      this.mainMenu.view, this.modeSelect.view, this.forge.view, this.matchmaking.view,
+      this.screens.view, this.settingsScreen.view, this.pauseMenu.view,
       this.partyScreen.view, this.loginScreen.view,
     );
-    this.mainMenu.onPlay = () => this.showForge();
+    this.mainMenu.onPlay = () => this.showModeSelect();
     this.mainMenu.onSquad = () => this.showSquad();
     this.mainMenu.onAccount = () => this.showAccount();
     this.mainMenu.onSettings = () => this.openSettings();
+    this.modeSelect.onSolo = () => this.showForge();
+    this.modeSelect.onCoop = () => this.beginSoloQueue(false);
+    this.modeSelect.onPvpSolo = () => this.beginSoloQueue(true);
+    this.modeSelect.onTutorial = () => this.beginTutorialRun();
+    this.modeSelect.onBack = () => this.showMenu();
+    this.matchmaking.onConnected = (session) => this.finalizeOnlineRun(session);
+    this.matchmaking.onCancelled = () => this.onMatchmakingCancelled();
     this.partyScreen.onBack = () => this.showMenu();
     this.partyScreen.onStartMatch = (partyId) => this.beginSquadMatch(partyId);
     this.loginScreen.onBack = () => this.showMenu();
@@ -387,7 +419,7 @@ export class Game {
   private pause() {
     this.phase = 'paused';
     const { w, h } = this.screenSize();
-    this.pauseMenu.show(w, h);
+    this.pauseMenu.show(w, h, this.tutorialActive ? t('tutorial.skip') : undefined);
   }
 
   private resume() {
@@ -407,13 +439,16 @@ export class Game {
     this.settingsScreen.hide();
     this.phase = 'paused';
     const { w, h } = this.screenSize();
-    this.pauseMenu.show(w, h);
+    this.pauseMenu.show(w, h, this.tutorialActive ? t('tutorial.skip') : undefined);
   }
 
   // Voluntary quit (design/10) — behaves like a death for the run's own bookkeeping:
   // the floor's un-banked materials are simply forfeited, same as `lose()` never
   // calling bankMaterials (design/05 "death forfeits the floor buffer for free"). No
-  // defeat screen/score penalty though — this was a choice, not a loss.
+  // defeat screen/score penalty though — this was a choice, not a loss. Doubles as the
+  // tutorial's Skip (design/10 screen-flow gap): a skip counts the same as a completion
+  // for `hasSeenTutorial` (never forced, same ethos as LoginScreen's guest path), and
+  // returns to ModeSelect instead of Forge (a tutorial run never touched the loadout).
   private quitRun() {
     this.pauseMenu.hide();
     if (this.online) {
@@ -422,7 +457,27 @@ export class Game {
     } else {
       this.engine = null;
     }
-    this.showForge();
+    // Reset so a later offline run never inherits a stale online flag — a pre-existing
+    // gap (quitRun never reset this before) that ModeSelect's new solo-queue entry
+    // points make more reachable (activeState()/stepSim-vs-advanceOnline both key off
+    // `this.online`, previously only set by the `?online=1`/`?pvp=1` URL flags).
+    this.online = false;
+    const wasTutorial = this.tutorialActive;
+    this.tutorialActive = false;
+    if (wasTutorial) {
+      this.markTutorialSeen();
+      this.showModeSelect();
+    } else {
+      this.showForge();
+    }
+  }
+
+  /** Guest-local, account-independent (design/10) — set once, on tutorial completion OR
+   * skip alike. Idempotent: a no-op (no extra save) once already true. */
+  private markTutorialSeen() {
+    if (this.meta.hasSeenTutorial) return;
+    this.meta = { ...this.meta, hasSeenTutorial: true };
+    this.store.save(this.meta);
   }
 
   // Re-run whichever screen's own layout math is currently on-screen against a fresh
@@ -441,10 +496,12 @@ export class Game {
     if (this.phase === 'forge') this.settingsBtn.view.position.set(w - 130, h - 50);
     switch (this.phase) {
       case 'menu': this.mainMenu.show(w, h); break;
+      case 'modeSelect': this.modeSelect.show(w, h); break;
       case 'forge': this.forge.render(this.meta, w, h); break;
+      case 'matchmaking': this.matchmaking.resize(w, h); break; // NOT show() — must not restart connect()
       case 'squad': this.partyScreen.show(w, h); break;
       case 'account': this.loginScreen.show(w, h); break;
-      case 'paused': this.pauseMenu.show(w, h); break;
+      case 'paused': this.pauseMenu.show(w, h, this.tutorialActive ? t('tutorial.skip') : undefined); break;
       case 'settings': this.settingsScreen.show(w, h, this.settings); break;
       case 'victory':
       case 'defeat':
@@ -463,6 +520,8 @@ export class Game {
   private showMenu() {
     this.phase = 'menu';
     this.hudView.visible = false;
+    this.modeSelect.hide();
+    this.matchmaking.hide();
     this.forge.hide();
     this.screens.hide();
     this.settingsScreen.hide();
@@ -473,12 +532,34 @@ export class Game {
     this.mainMenu.show(w, h);
   }
 
+  // The mode-select branch point (design/10 screen-flow gap) — PLAY's new destination.
+  // BACK returns to the main menu; SOLO routes to the unchanged Forge/offline path,
+  // CO-OP/PVP SOLO QUEUE open the matchmaking screen (beginSoloQueue), TUTORIAL starts
+  // the standalone level (beginTutorialRun).
+  private showModeSelect() {
+    this.phase = 'modeSelect';
+    this.hudView.visible = false;
+    this.mainMenu.hide();
+    this.forge.hide();
+    this.matchmaking.hide();
+    this.screens.hide();
+    this.settingsScreen.hide();
+    this.partyScreen.hide();
+    this.loginScreen.hide();
+    this.settingsBtn.view.visible = false;
+    this.modeSelect.setRecommendTutorial(!this.meta.hasSeenTutorial);
+    const { w, h } = this.screenSize();
+    this.modeSelect.show(w, h);
+  }
+
   // The PvP pre-formed-party lobby (design/05/15's squad follow-up). BACK returns to
   // the main menu; a successful `onStartMatch` hands off to beginSquadMatch below.
   private showSquad() {
     this.phase = 'squad';
     this.hudView.visible = false;
     this.mainMenu.hide();
+    this.modeSelect.hide();
+    this.matchmaking.hide();
     this.forge.hide();
     this.screens.hide();
     this.settingsScreen.hide();
@@ -493,12 +574,66 @@ export class Game {
     this.phase = 'account';
     this.hudView.visible = false;
     this.mainMenu.hide();
+    this.modeSelect.hide();
+    this.matchmaking.hide();
     this.forge.hide();
     this.screens.hide();
     this.settingsScreen.hide();
     this.partyScreen.hide();
     const { w, h } = this.screenSize();
     this.loginScreen.show(w, h);
+  }
+
+  /**
+   * Wraps connectOnlineSession with real connecting/error feedback (design/10 screen-
+   * flow gap) — reached from ModeSelect's CO-OP/PVP SOLO QUEUE (beginSoloQueue) or
+   * PartyScreen's START MATCHING (beginSquadMatch), which set `matchmakingReturnPhase`
+   * first so Cancel/Back knows where to go back to.
+   */
+  private showMatchmaking() {
+    this.phase = 'matchmaking';
+    this.hudView.visible = false;
+    this.mainMenu.hide();
+    this.modeSelect.hide();
+    this.forge.hide();
+    this.screens.hide();
+    this.settingsScreen.hide();
+    this.partyScreen.hide();
+    this.loginScreen.hide();
+    const { w, h } = this.screenSize();
+    this.matchmaking.show(w, h, (signal) => this.connectForMatchmaking(signal));
+  }
+
+  /** The Matchmaking screen's injected connect function. */
+  private connectForMatchmaking(signal: MatchmakingSignal): Promise<CoopSession> {
+    return connectOnlineSession({
+      matchBaseUrl: this.matchBaseUrl,
+      pvp: this.pvp,
+      pvpSeats: this.pvpSeats,
+      lagMs: this.lagMs,
+      partyId: this.partyId,
+      signal,
+      onMatchStart: (localOwner) => { this.localOwner = localOwner; },
+    });
+  }
+
+  private onMatchmakingCancelled() {
+    this.matchmaking.hide();
+    this.online = false;
+    this.partyId = undefined;
+    if (this.matchmakingReturnPhase === 'squad') this.showSquad();
+    else this.showModeSelect();
+  }
+
+  /** ModeSelect's CO-OP / PVP SOLO QUEUE buttons (design/10 screen-flow gap) — the
+   * menu-driven counterpart to the `?online=1`/`?pvp=1` boot-time URL flags, which were
+   * previously the ONLY way to reach either mode. */
+  private beginSoloQueue(pvp: boolean) {
+    this.online = true;
+    this.pvp = pvp;
+    this.partyId = undefined;
+    this.matchmakingReturnPhase = 'modeSelect';
+    this.showMatchmaking();
   }
 
   /**
@@ -513,7 +648,8 @@ export class Game {
     this.pvp = true;
     this.pvpSeats = 8;
     this.partyId = partyId;
-    this.beginRun();
+    this.matchmakingReturnPhase = 'squad';
+    this.showMatchmaking();
   }
 
   // The forge outpost / loadout screen — the between-run hub (design/14). Shows the
@@ -523,6 +659,8 @@ export class Game {
     this.phase = 'forge';
     this.hudView.visible = false;
     this.mainMenu.hide();
+    this.modeSelect.hide();
+    this.matchmaking.hide();
     this.screens.hide();
     this.settingsScreen.hide();
     this.partyScreen.hide();
@@ -634,8 +772,14 @@ export class Game {
     return selectCharacter(m, owned[(i + 1) % owned.length]!);
   }
 
-  // Fresh run: reset render state and stand up a new engine (design/10 rebuild).
-  private beginRun() {
+  /**
+   * Render state reset shared by every fresh run: offline dungeon/arenaDemo (beginRun),
+   * a newly-connected online match (finalizeOnlineRun), and the tutorial
+   * (beginTutorialRun). Extracted (design/10 screen-flow gap) so the online/tutorial
+   * paths get the exact same cleanup the offline path always had, instead of
+   * duplicating it or (as the online path used to) skipping it until connect resolved.
+   */
+  private resetRunRenderState() {
     this.scene.clear();
     // `particles.view` is a PERSISTENT child of `layers.fx` (added once in start()),
     // not a transient `_life`-tagged flash/trail — skip it here or a restart would
@@ -648,14 +792,15 @@ export class Game {
     this.score = 0;
     this.acc = 0;
     this.settingsBtn.view.visible = false;
+  }
 
-    // Online co-op (ROADMAP 3.3): the run is driven off a real matchmade socket, not a
-    // locally-owned engine. Hand off to the async connect path and enter `playing` — the
-    // render loop idles (advanceOnline) until the server's match_start builds the engine.
-    if (this.online) {
-      this.beginOnlineRun();
-      return;
-    }
+  // Fresh OFFLINE run: reset render state and stand up a new engine (design/10
+  // rebuild). Online runs no longer go through here at all (design/10 screen-flow gap)
+  // — they route ModeSelect/PartyScreen → showMatchmaking → finalizeOnlineRun instead,
+  // so a real connecting/error screen exists instead of a blank `playing` phase.
+  private beginRun() {
+    this.resetRunRenderState();
+    this.tutorialActive = false;
 
     // `?arenaDemo=1` (dev-only, see the field's doc comment) — a synthetic local PvP
     // arena instead of the PvE dungeon, purely so the zone HUD row + Minimap have real
@@ -689,6 +834,28 @@ export class Game {
     this.phase = 'playing';
     this.hudView.visible = true;
     this.forge.hide();
+    this.screens.hide();
+  }
+
+  /**
+   * ModeSelect's TUTORIAL button (design/10 screen-flow gap) — a fixed, offline,
+   * always-skippable standalone level (`tutorialConfig.ts`'s own doc comment has the
+   * full account of why it's flat-mode, not the real dungeon). Mirrors
+   * `beginArenaDemoRun`'s directness: flat mode never fires `room_enter` (that event is
+   * dungeon-only, `SpawnSystem.loadRoom`), so `RoomBuilder`/`Portal` never gets
+   * constructed by the normal event path — primed here directly instead, exactly like
+   * the PvP arena demo (which has the same property, being all co-resident from tick 0).
+   */
+  private beginTutorialRun() {
+    this.resetRunRenderState();
+    this.tutorialActive = true;
+    this.tutorialHints.reset();
+    this.engine = createGameEngine(buildTutorialConfig({ skinId: this.meta.selectedSkin }));
+    this.runCount++;
+    this.roomBuilder.build(this.engine.state);
+    this.phase = 'playing';
+    this.hudView.visible = true;
+    this.modeSelect.hide();
     this.screens.hide();
   }
 
@@ -774,7 +941,17 @@ export class Game {
     this.audio.resume(); // a confirm tap is a user gesture — clears the autoplay gate (design/11)
     if (this.phase === 'menu') this.showForge();
     else if (this.phase === 'forge') this.beginRun();
-    else if (this.phase === 'victory' || this.phase === 'defeat') this.showForge();
+    else if (this.phase === 'victory' || this.phase === 'defeat') {
+      // The tutorial never touched the loadout, so it returns to ModeSelect instead of
+      // Forge (design/10 screen-flow gap) — `hasSeenTutorial` was already marked the
+      // moment this run hit gameover (stepSim), not here.
+      if (this.tutorialActive) {
+        this.tutorialActive = false;
+        this.showModeSelect();
+      } else {
+        this.showForge();
+      }
+    }
   }
 
   // ---- Main loop: fixed-step sim + interpolated render ----
@@ -858,50 +1035,40 @@ export class Game {
     this.scene.reconcile(s, p?.id ?? -1); // camera follows the LOCAL seat
     this.spawnBulletTrails(s);
     this.consumeEvents(events);
+    // Tutorial-only teaching-beat toasts (design/10 screen-flow gap) — render-only,
+    // reads the same state+events every real run's HUD/fx already read.
+    if (this.tutorialActive) this.tutorialHints.consume(s, events);
 
-    if (s.phase === 'gameover') this.runOutcome.handle(s);
+    if (s.phase === 'gameover') {
+      if (this.tutorialActive) this.markTutorialSeen();
+      this.runOutcome.handle(s);
+    }
   }
 
   // ---- Online co-op (ROADMAP 3.3): matchmaking → socket → CoopSession ----
   //
   // Connection setup (matchmaking + ticket redemption) lives in onlineConnect.ts, and the
   // run-config shape it needs in matchConfig.ts (both extracted 2026-07-28, pure of Game
-  // state) — this just owns the session's lifecycle and phase transition.
+  // state) — this just owns the session's lifecycle and phase transition. The matchmaking
+  // ATTEMPT itself (design/10 screen-flow gap) now lives entirely in the Matchmaking
+  // screen (connectForMatchmaking is just its injected connect function) — this method
+  // only runs once that screen already has a connected session in hand, so there's no
+  // more "blank playing phase while invisibly connecting" window.
 
-  /**
-   * Enter a matchmade run. Async: connectOnlineSession asks the control plane for a
-   * match and redeems the signed ticket, and CoopSession then drives the engine off the
-   * confirmed frame stream. We enter `playing` immediately — advanceOnline idles until
-   * `match_start` builds the engine — so the shell shows the run frame, not the forge.
-   */
-  private async beginOnlineRun() {
+  /** A match actually started — enter `playing` with the now-live session. */
+  private finalizeOnlineRun(session: CoopSession) {
+    this.resetRunRenderState();
+    this.tutorialActive = false;
+    this.session?.close();
+    this.session = session;
+    this.predictor.deactivate(); // re-anchors on the first confirmed frame of the new run
+    this.predLastTick = -1;
+    this.matchmaking.hide();
     this.phase = 'playing';
     this.hudView.visible = true;
-    this.settingsBtn.view.visible = false;
     this.forge.hide();
     this.screens.hide();
     this.partyScreen.hide();
-    this.session?.close();
-    this.session = null;
-    this.predictor.deactivate(); // re-anchors on the first confirmed frame of the new run
-    this.predLastTick = -1;
-    try {
-      this.session = await connectOnlineSession({
-        matchBaseUrl: this.matchBaseUrl,
-        pvp: this.pvp,
-        pvpSeats: this.pvpSeats,
-        lagMs: this.lagMs,
-        partyId: this.partyId,
-        onMatchStart: (localOwner) => { this.localOwner = localOwner; },
-      });
-    } catch (e) {
-      // Matchmaking or the socket failed — return to the forge (a real UI would toast this).
-      console.error('[online] failed to start match', e);
-      this.online = false; // fall back to offline for the next run attempt
-      this.partyId = undefined; // don't silently retry a failed squad match with a stale party
-      this.showForge();
-      this.online = true;
-    }
   }
 
   /**
@@ -1038,7 +1205,7 @@ export class Game {
     // closed visual (RoomBuilder) and the popup's proximity gate, computed once here
     // so neither has to duplicate the other's half of the condition.
     const floor = s.floorIndex + 1;
-    const isLastFloor = floor >= EMBER_DUNGEON.floorCount;
+    const isLastFloor = floor >= totalFloorCount(s);
     const checkpointEligible =
       !s.zoneEnabled && s.phase !== 'gameover' && s.wavesExhausted && s.enemies.length === 0 && !isLastFloor;
     this.roomBuilder.setPortalOpen(checkpointEligible);

@@ -10,8 +10,9 @@ import { PlayerCard, AllyRow } from './PlayerCard';
 import { WeaponCard } from './WeaponCard';
 import { StatChip } from './StatChip';
 import type { HudIconId } from './hudIcons';
-import { WEAPON_SIM_BY_ID, EMBER_DUNGEON, SIM, type GameState } from '@dd/engine';
+import { WEAPON_SIM_BY_ID, SIM, type GameState } from '@dd/engine';
 import { t, type TranslationKey } from '../../i18n';
+import { totalFloorCount } from '../match/floorCount';
 
 // Ground compare card proximity ring (design/03:125) — wider than PickupSystem's own
 // collect radius (SIM.pickupRadius) so the card has a beat to show before auto-collect.
@@ -174,7 +175,7 @@ export class HudView {
     } else {
       // Dungeon progress (ROADMAP 1.3): floor / room within floor, plus the banked bag.
       const rooms = s.floorStages.length; // total stages this floor (linear or branching)
-      this.chips.get('floor')!.set(t('hud.chips.floor'), `${s.floorIndex + 1}/${EMBER_DUNGEON.floorCount}`);
+      this.chips.get('floor')!.set(t('hud.chips.floor'), `${s.floorIndex + 1}/${totalFloorCount(s)}`);
       this.chips.get('room')!.set(t('hud.chips.room'), `${Math.max(1, s.roomIndex + 1)}/${rooms}`);
       this.chips.get('enemies')!.set(t('hud.chips.enemies'), `${s.enemies.length}`);
       this.chips.get('banked')!.set(t('hud.chips.banked'), `${totalBanked(s)}`);

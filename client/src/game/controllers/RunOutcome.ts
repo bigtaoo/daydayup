@@ -1,6 +1,7 @@
-import { EMBER_DUNGEON, TICK_RATE, type GameState } from '@dd/engine';
+import { TICK_RATE, type GameState } from '@dd/engine';
 import { SCORE } from '../score';
 import { t } from '../../i18n';
+import { totalFloorCount } from '../match/floorCount';
 
 /** The bits of Game a run-outcome reaction needs — score/meta/phase/screen are all
  *  Game-owned state, so this stays a callback interface (same EventReactor-style
@@ -66,7 +67,7 @@ export class RunOutcome {
     this.host.hideHud();
     this.host.addScore(SCORE.victory);
     this.host.showOutcomeScreen(true, t('results.extractedTitle'), [
-      t('results.floorLine', { floor, floorCount: EMBER_DUNGEON.floorCount }),
+      t('results.floorLine', { floor, floorCount: totalFloorCount(s) }),
       t('results.materialsBanked', { count: carried }),
       timeText(s),
       t('results.scoreLine', { score: this.host.currentScore() }),
@@ -78,7 +79,7 @@ export class RunOutcome {
     this.host.setPhase('defeat');
     this.host.hideHud();
     this.host.showOutcomeScreen(false, t('results.defeatTitle'), [
-      t('results.fellOnFloor', { floor, floorCount: EMBER_DUNGEON.floorCount }),
+      t('results.fellOnFloor', { floor, floorCount: totalFloorCount(s) }),
       t('results.materialsLost'),
       timeText(s),
       t('results.scoreLine', { score: this.host.currentScore() }),

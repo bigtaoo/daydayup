@@ -69,5 +69,6 @@ export function migrate(parsed: unknown): MetaState {
     ownedCharacters: union(d.ownedCharacters, p.ownedCharacters),
     loadout: Array.isArray(p.loadout) ? p.loadout.filter((x): x is string => typeof x === 'string') : [],
     selectedSkin: typeof p.selectedSkin === 'string' ? p.selectedSkin : d.selectedSkin,
+    hasSeenTutorial: typeof p.hasSeenTutorial === 'boolean' ? p.hasSeenTutorial : d.hasSeenTutorial,
   };
 }

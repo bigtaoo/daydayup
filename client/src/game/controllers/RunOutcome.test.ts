@@ -211,3 +211,34 @@ describe('RunOutcome — i18n (design/17-i18n.md)', () => {
     expect(host.shown?.title).toBe('EXTRACTED');
   });
 });
+
+// design/10 screen-flow gap: win()/lose() used to hardcode EMBER_DUNGEON.floorCount for
+// the "Floor N/M" line regardless of the run's actual config — wrong for a flat
+// (non-dungeon) floors config like the tutorial level (ROADMAP totalFloorCount fix).
+describe('RunOutcome — a flat (non-dungeon) floors config reports its own floor count', () => {
+  function flatFloorsState(): GameState {
+    return createGameState({ seed: 1, worldW: 0, worldH: 0, waves: [], floors: [[[[100, 100]]]] }); // 1 extra floor → 2 total
+  }
+
+  it('win (extract): "Floor N/2", not the ember-dungeon default', () => {
+    const s = flatFloorsState();
+    s.floorIndex = 0; // floor 1 of 2
+    expect(s.dungeonEnabled).toBe(false);
+
+    const host = mockHost();
+    new RunOutcome(host).handle(s);
+
+    expect(host.shown?.lines[0]).toBe('Floor 1/2');
+  });
+
+  it('lose (death): "Fell on floor N/2", not the ember-dungeon default', () => {
+    const s = flatFloorsState();
+    s.floorIndex = 1; // floor 2 of 2 (the last floor)
+    s.winner = 'enemies';
+
+    const host = mockHost();
+    new RunOutcome(host).handle(s);
+
+    expect(host.shown?.lines[0]).toBe('Fell on floor 2/2');
+  });
+});

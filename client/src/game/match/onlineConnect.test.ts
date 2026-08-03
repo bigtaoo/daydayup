@@ -1,0 +1,216 @@
+/**
+ * connectOnlineSession (ROADMAP 3.3; design/10 screen-flow gap — the Matchmaking
+ * screen). Previously untested (no `fetch`/transport injection existed at all — every
+ * prior verification was live-browser only, per ROADMAP's "browser-verified two-tab"
+ * notes). Now drives it with a fake `findMatch` fetch (same convention as
+ * `net/matchmaking.test.ts`) and a fake `Transport` (same shape as
+ * `net/coopsession.test.ts`'s `FakeTransport`), so the whole matchmaking → ticket →
+ * match_start / timeout / disconnect / cancel flow is testable with no real network or
+ * WebSocket.
+ */
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { connectOnlineSession } from './onlineConnect';
+import type { Transport } from '../../net/transport';
+import type { ClientMsg, ServerMsg } from '@dd/engine';
+
+class FakeTransport implements Transport {
+  readonly sent: ClientMsg[] = [];
+  closed = false;
+  private handler: ((m: ServerMsg) => void) | null = null;
+  private disconnectHandler: ((reason: string) => void) | null = null;
+  send(m: ClientMsg): void {
+    this.sent.push(m);
+  }
+  onMessage(h: (m: ServerMsg) => void): void {
+    this.handler = h;
+  }
+  onDisconnect(h: (reason: string) => void): void {
+    this.disconnectHandler = h;
+  }
+  close(): void {
+    this.closed = true;
+  }
+  deliver(m: ServerMsg): void {
+    this.handler?.(m);
+  }
+  fail(reason: string): void {
+    this.disconnectHandler?.(reason);
+  }
+}
+
+const MATCH = { wsUrl: 'ws://localhost:8787/ws', roomId: 'room-1', owner: 0, seed: 1, playerCount: 2, teamId: 0, token: 'tok' };
+const MATCH_START: ServerMsg = { type: 'match_start', seed: 1, startFrame: 0, localOwner: 0, playerCount: 2 };
+
+/** A fetch stub that returns the queued JSON bodies in sequence — mirrors
+ * matchmaking.test.ts's own `fakeFetch` exactly. */
+function fakeFetch(bodies: unknown[]) {
+  let i = 0;
+  return vi.fn(async () => {
+    const body = bodies[Math.min(i++, bodies.length - 1)];
+    return { ok: true, status: 200, json: async () => body } as Response;
+  });
+}
+
+const noSleep = async () => {};
+
+/** Flush the microtask queue (fetch/json Promise chain resolution) without needing fake
+ * timers — connectOnlineSession's own internal setTimeout is untouched by this. */
+async function flush(times = 5): Promise<void> {
+  for (let i = 0; i < times; i++) await Promise.resolve();
+}
+
+afterEach(() => vi.useRealTimers());
+
+describe('connectOnlineSession — success', () => {
+  it('resolves with a live, started CoopSession once match_start arrives', async () => {
+    let transport!: FakeTransport;
+    const promise = connectOnlineSession({
+      matchBaseUrl: 'http://mm', pvp: false, pvpSeats: 2, lagMs: 0,
+      onMatchStart: () => {},
+      fetch: fakeFetch([{ queueId: 'q1', match: MATCH }]),
+      sleep: noSleep,
+      createTransport: (url) => {
+        transport = new FakeTransport();
+        expect(url).toBe(`${MATCH.wsUrl}?ticket=${MATCH.token}`);
+        return transport;
+      },
+    });
+    await flush();
+    transport.deliver(MATCH_START);
+
+    const session = await promise;
+    expect(session.started).toBe(true);
+  });
+
+  it('calls onMatchStart with the ticket-assigned localOwner before resolving', async () => {
+    let transport!: FakeTransport;
+    const seen: number[] = [];
+    const promise = connectOnlineSession({
+      matchBaseUrl: 'http://mm', pvp: false, pvpSeats: 2, lagMs: 0,
+      onMatchStart: (localOwner) => seen.push(localOwner),
+      fetch: fakeFetch([{ queueId: 'q1', match: MATCH }]),
+      sleep: noSleep,
+      createTransport: () => (transport = new FakeTransport()),
+    });
+    await flush();
+    transport.deliver({ ...MATCH_START, localOwner: 1 });
+    await promise;
+    expect(seen).toEqual([1]);
+  });
+
+  it('joins the room with the seat/seed/playerCount the ticket assigned', async () => {
+    let transport!: FakeTransport;
+    const promise = connectOnlineSession({
+      matchBaseUrl: 'http://mm', pvp: true, pvpSeats: 8, lagMs: 0,
+      onMatchStart: () => {},
+      fetch: fakeFetch([{ queueId: 'q1', match: MATCH }]),
+      sleep: noSleep,
+      createTransport: () => (transport = new FakeTransport()),
+    });
+    await flush();
+    expect(transport.sent).toEqual([{ type: 'join', roomId: MATCH.roomId, owner: MATCH.owner, seed: MATCH.seed, playerCount: MATCH.playerCount }]);
+    transport.deliver(MATCH_START);
+    await promise;
+  });
+});
+
+describe('connectOnlineSession — failure before a transport ever exists', () => {
+  it('propagates a findMatch failure (e.g. cancelled) without constructing a transport', async () => {
+    const createTransport = vi.fn();
+    const signal = { cancelled: true };
+    await expect(
+      connectOnlineSession({
+        matchBaseUrl: 'http://mm', pvp: false, pvpSeats: 2, lagMs: 0,
+        onMatchStart: () => {},
+        fetch: fakeFetch([{ queueId: 'q1' }]),
+        sleep: noSleep,
+        signal,
+        createTransport,
+      }),
+    ).rejects.toThrow(/cancelled/);
+    expect(createTransport).not.toHaveBeenCalled();
+  });
+
+  it('propagates a matchsvc service error the same way', async () => {
+    const fetch = vi.fn(async () => ({ ok: false, status: 400, json: async () => ({ error: 'playerCount must be an integer in [1, 8]' }) } as Response));
+    await expect(
+      connectOnlineSession({
+        matchBaseUrl: 'http://mm', pvp: true, pvpSeats: 99, lagMs: 0,
+        onMatchStart: () => {},
+        fetch, sleep: noSleep,
+      }),
+    ).rejects.toThrow(/playerCount/);
+  });
+});
+
+describe('connectOnlineSession — failure after ticket redemption (design/10 gap)', () => {
+  it('rejects if the transport disconnects before match_start ever arrives', async () => {
+    let transport!: FakeTransport;
+    const promise = connectOnlineSession({
+      matchBaseUrl: 'http://mm', pvp: false, pvpSeats: 2, lagMs: 0,
+      onMatchStart: () => {},
+      fetch: fakeFetch([{ queueId: 'q1', match: MATCH }]),
+      sleep: noSleep,
+      createTransport: () => (transport = new FakeTransport()),
+    });
+    await flush();
+    transport.fail('socket closed (1006)');
+    await expect(promise).rejects.toThrow(/connection failed/);
+  });
+
+  it('rejects after matchStartTimeoutMs if match_start never arrives, and closes the transport', async () => {
+    vi.useFakeTimers();
+    let transport!: FakeTransport;
+    const promise = connectOnlineSession({
+      matchBaseUrl: 'http://mm', pvp: false, pvpSeats: 2, lagMs: 0,
+      onMatchStart: () => {},
+      fetch: fakeFetch([{ queueId: 'q1', match: MATCH }]),
+      sleep: noSleep,
+      matchStartTimeoutMs: 5000,
+      createTransport: () => (transport = new FakeTransport()),
+    });
+    await flush();
+    // Attach the rejection expectation BEFORE advancing timers, so the handler is in
+    // place the instant the timer fires — otherwise there's a real window where the
+    // rejection is briefly "unhandled" from Node's perspective (a test-ordering
+    // artifact, not a bug in connectOnlineSession itself).
+    const rejected = expect(promise).rejects.toThrow(/timed out waiting for the match to start/);
+    await vi.advanceTimersByTimeAsync(5000);
+    await rejected;
+    expect(transport.closed).toBe(true);
+  });
+
+  it('a disconnect that arrives AFTER match_start (late/duplicate close event) is ignored — the promise already settled', async () => {
+    let transport!: FakeTransport;
+    const promise = connectOnlineSession({
+      matchBaseUrl: 'http://mm', pvp: false, pvpSeats: 2, lagMs: 0,
+      onMatchStart: () => {},
+      fetch: fakeFetch([{ queueId: 'q1', match: MATCH }]),
+      sleep: noSleep,
+      createTransport: () => (transport = new FakeTransport()),
+    });
+    await flush();
+    transport.deliver(MATCH_START);
+    const session = await promise;
+    expect(() => transport.fail('socket closed (1000)')).not.toThrow();
+    expect(session.started).toBe(true); // unaffected — nothing to reject into any more
+  });
+
+  it('a timeout that fires AFTER match_start never rejects an already-resolved promise', async () => {
+    vi.useFakeTimers();
+    let transport!: FakeTransport;
+    const promise = connectOnlineSession({
+      matchBaseUrl: 'http://mm', pvp: false, pvpSeats: 2, lagMs: 0,
+      onMatchStart: () => {},
+      fetch: fakeFetch([{ queueId: 'q1', match: MATCH }]),
+      sleep: noSleep,
+      matchStartTimeoutMs: 5000,
+      createTransport: () => (transport = new FakeTransport()),
+    });
+    await flush();
+    transport.deliver(MATCH_START);
+    await promise; // resolved well before the timeout
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(transport.closed).toBe(false); // the timeout's own transport.close() never ran
+  });
+});

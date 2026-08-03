@@ -10,14 +10,25 @@ export interface Transport {
   /** Register the handler for decoded server messages. Called once by CoopSession. */
   onMessage(handler: (msg: ServerMsg) => void): void;
   close(): void;
+  /**
+   * Register a handler for an unrecoverable transport failure (socket error, or a
+   * close the caller didn't itself request via `close()`) — optional so every
+   * pre-existing fake `Transport` (tests) stays a valid implementer unchanged.
+   * `connectOnlineSession` is the one production caller: before this existed, a bad
+   * ticket or a dropped connection was completely unobservable (no throw, no reject,
+   * no callback anywhere), so the client just hung on a blank `playing` screen forever.
+   */
+  onDisconnect?(handler: (reason: string) => void): void;
 }
 
 /** Browser WebSocket transport. Buffers outbound messages until the socket opens. */
 export class WebSocketTransport implements Transport {
   private readonly ws: WebSocket;
   private handler: ((msg: ServerMsg) => void) | null = null;
+  private disconnectHandler: ((reason: string) => void) | null = null;
   private readonly outbox: string[] = [];
   private open = false;
+  private closedByUs = false;
 
   constructor(url: string) {
     this.ws = new WebSocket(url);
@@ -34,6 +45,18 @@ export class WebSocketTransport implements Transport {
         /* ignore malformed frames */
       }
     });
+    this.ws.addEventListener('error', () => {
+      this.disconnectHandler?.('socket error');
+    });
+    this.ws.addEventListener('close', (ev) => {
+      if (this.closedByUs) return; // a caller-requested close() is not a failure
+      // Structurally typed (not `CloseEvent`) — this file is reachable from server's
+      // compilation graph too via the shared `@dd/net/*` path alias (tsconfig.base.json),
+      // whose Node lib has no DOM globals; a `code` field exists on both DOM's
+      // `CloseEvent` and Node's own WebSocket close event without naming either type.
+      const code = (ev as { code?: number }).code;
+      this.disconnectHandler?.(`socket closed (${code ?? 'unknown'})`);
+    });
   }
 
   send(msg: ClientMsg): void {
@@ -46,7 +69,12 @@ export class WebSocketTransport implements Transport {
     this.handler = handler;
   }
 
+  onDisconnect(handler: (reason: string) => void): void {
+    this.disconnectHandler = handler;
+  }
+
   close(): void {
+    this.closedByUs = true;
     this.ws.close();
   }
 }
@@ -68,6 +96,9 @@ export class LaggyTransport implements Transport {
   }
   onMessage(handler: (msg: ServerMsg) => void): void {
     this.inner.onMessage((msg) => setTimeout(() => handler(msg), this.lagMs));
+  }
+  onDisconnect(handler: (reason: string) => void): void {
+    this.inner.onDisconnect?.(handler); // not itself delayed — a real failure shouldn't hide behind lag
   }
   close(): void {
     this.inner.close();

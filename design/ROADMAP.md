@@ -5,8 +5,8 @@ closed loop the design docs describe, and the running record of how each phase a
 landed. Phases are written top-to-bottom in dependency order; each one keeps its dated
 shipped-notes underneath it, so a phase section is both the plan and the history.
 
-**Current built state (2026-08-02).** `ENGINE_VERSION` **31**; 931 tests green across the
-five workspace packages (engine 373 / client 388 / server 134 / animator 23 / map-editor 13,
+**Current built state (2026-08-03).** `ENGINE_VERSION` **31**; 1125 tests green across the
+five workspace packages (engine 373 / client 582 / server 134 / animator 23 / map-editor 13,
 `npm run check`). **Phases 0–4, 6 and 7 are closed with no deferred items**: the deterministic
 engine and the locked content model (0), the full in-run loop — frame library, room pieces,
 seeded dungeon generation, extraction checkpoints, materials (1), the meta/forge loop and the
@@ -15,8 +15,10 @@ with signed tickets, render-layer local prediction (3), 8-player solo-or-squad P
 60-room arena map with a shrinking zone, placement scoring, anti-cheat checkpoints and an Elo
 ladder (4), username/password accounts bound to ladder rating and forge progress (6), and an
 English-canonical i18n system with a 中文 translation (7). **Phase 5 (presentation) is the only
-partially-open phase** — the widget kit/HUD/screens, the `.tao` art pipeline with a fully bound
-roster, post-processing and particles all ship; what remains is real *authored* art in place of
+partially-open phase** — the widget kit/HUD/screens (now including a menu-driven Mode Select,
+a real Matchmaking connecting/error screen, and a standalone tutorial level, all 2026-08-03 —
+see that entry under Phase 5 below), the `.tao` art pipeline with a fully bound roster,
+post-processing and particles all ship; what remains is real *authored* art in place of
 the AI-generated placeholders, real authored SFX/music, the 5.4 lighting/shader items, and 5.5
 WeChat device verification (blocked on hardware). A repo structure pass (bottom of this doc)
 made the engine its own DOM-free package and the repo an npm workspace. Per-item detail,
@@ -151,7 +153,7 @@ Still not done, on purpose (scoped out of this pass, not forgotten): (1) the rea
 - **5.1 Audio finish** (11): ✅ event→sound seam + a procedural/synthesised voice-table backend ship on BOTH web and WeChat (`wx.createWebAudioContext()`, feature-detected, 2026-07-26) — no asset files, no licensing needed for this half. Still open: real authored SFX/music/ambience (needs sourcing + a licence check — the owner's to do, not a tooling gap) + real-device verification of the WeChat fallback path (5.5).
 - **5.2 UI/HUD** (10): ✅ shipped 2026-07-26 — real Pixi widget kit (`Panel`/`Bar`/`ToastQueue`/`Button`/`Slider`), a real in-match HUD, settings screen (SFX/music/master volume + mute), PvP room-graph minimap, forge + ground-pickup compare cards. **2026-07-27: the two remaining items shipped too** — a real in-run pause menu (`game/PauseMenu.ts`, ESC/settings-button entry point) and a real PvE floor-progress minimap (`game/ui/Minimap.ts`/`FloorProgress.ts`, distinct from the PvP room-graph shape — tracks dungeon room-to-room progress, not a synthetic `?arenaDemo=1` stand-in). Nothing open in 5.2.
 
-**2026-07-29: the front door design/10 had described but nobody had built.** A player reported the game felt "all placeholder UI" — the HUD/Settings/PauseMenu were genuinely real (5.2 above), but there was no boot/main-menu screen at all (`main.ts` dropped straight into the forge outpost) and the forge/loadout screen was a keyboard-only monospace text board, no clickable tiles. Shipped: a real **Main Menu** (`game/MainMenu.ts` — PLAY/SETTINGS, deliberately minimal; PvP/Arena entry stays a boot-time `?pvp=1` flag for now, not a runtime choice — a separate, scoped follow-up); the **Loadout screen** upgraded in place (`game/Forge.ts` — clickable blueprint rows paged 8-at-a-time since `BLUEPRINT_CATALOG` has more entries than the old digit-key shortcuts ever reached, character-cycle arrows, Clear/Start buttons; keyboard shortcuts unchanged as a second input path onto the same underlying methods); and a richer **result screen** (`RunOutcome.ts`/`Screens.ts` — floor/materials/`Time M:SS` off the sim's own `s.tick`/`TICK_RATE`/score, plus a secondary Main Menu exit link). Also resolved two design/10 open questions: auto-aim-to-nearest is now the canonical control scheme (not just a toggle default), and the clutter question favors few/large/clear elements over dense text or many small controls. All render-only, no `ENGINE_VERSION` impact. Along the way, found and fixed a real font-metrics clipping bug (Pixi under-measuring bold/monospace text vs. the browser's actual glyph width in this environment, cropping the last character(s) of titles/labels/hint text) via Pixi's own documented `padding` mitigation, applied to every Text style touched plus the shared `Button` widget and the pre-existing `compareCard.ts` (confirming the bug predated this session, just never visually verified before). Browser-verified live (real Chrome, not the sandboxed preview pane): Main Menu → Loadout (row craft, pagination, character cycle) → Start Run → forced result screen → Main Menu link, plus Settings open/close from both entry points and keyboard-shortcut parity on the Loadout screen. 450 client tests + `tsc --noEmit` + `vite build` all green throughout. Not built (explicitly out of scope, flagged separately): visible on-screen touch stick/button graphics (`platform/TouchControls.ts` renders zero visuals today — invisible hit-zones only, a real gap affecting WeChat/mobile).
+**2026-07-29: the front door design/10 had described but nobody had built.** A player reported the game felt "all placeholder UI" — the HUD/Settings/PauseMenu were genuinely real (5.2 above), but there was no boot/main-menu screen at all (`main.ts` dropped straight into the forge outpost) and the forge/loadout screen was a keyboard-only monospace text board, no clickable tiles. Shipped: a real **Main Menu** (`game/MainMenu.ts` — PLAY/SETTINGS, deliberately minimal; PvP/Arena entry stays a boot-time `?pvp=1` flag for now, not a runtime choice — a separate, scoped follow-up, **closed 2026-08-03 by Mode Select, see that entry below**); the **Loadout screen** upgraded in place (`game/Forge.ts` — clickable blueprint rows paged 8-at-a-time since `BLUEPRINT_CATALOG` has more entries than the old digit-key shortcuts ever reached, character-cycle arrows, Clear/Start buttons; keyboard shortcuts unchanged as a second input path onto the same underlying methods); and a richer **result screen** (`RunOutcome.ts`/`Screens.ts` — floor/materials/`Time M:SS` off the sim's own `s.tick`/`TICK_RATE`/score, plus a secondary Main Menu exit link). Also resolved two design/10 open questions: auto-aim-to-nearest is now the canonical control scheme (not just a toggle default), and the clutter question favors few/large/clear elements over dense text or many small controls. All render-only, no `ENGINE_VERSION` impact. Along the way, found and fixed a real font-metrics clipping bug (Pixi under-measuring bold/monospace text vs. the browser's actual glyph width in this environment, cropping the last character(s) of titles/labels/hint text) via Pixi's own documented `padding` mitigation, applied to every Text style touched plus the shared `Button` widget and the pre-existing `compareCard.ts` (confirming the bug predated this session, just never visually verified before). Browser-verified live (real Chrome, not the sandboxed preview pane): Main Menu → Loadout (row craft, pagination, character cycle) → Start Run → forced result screen → Main Menu link, plus Settings open/close from both entry points and keyboard-shortcut parity on the Loadout screen. 450 client tests + `tsc --noEmit` + `vite build` all green throughout. Not built (explicitly out of scope, flagged separately): visible on-screen touch stick/button graphics (`platform/TouchControls.ts` renders zero visuals today — invisible hit-zones only, a real gap affecting WeChat/mobile).
 - **5.3 Art pipeline** (12/13): ✅ `.tao` editor ported (`tools/animator`, 2026-07-26) — instantiable multi-rig `Rig` class (was funny's static 11-bone humanoid), the orb-core's own 6-bone `RigDef` (root/shell/eye/belly/2 weapon sockets, no arms/legs/walk-cycle), and orb-core preset clips (hover-bob/lean/squash-stretch) replacing the humanoid idle/walk/attack/hurt/death/spawn. **2026-07-27: tooling+render gaps fully closed too** — real (AI-placeholder) art bound for the full 3-character launch roster + a boss-core rig + a critter-core enemy rig, the client's own `.tao` runtime renderer shipped (bone FK, animation playback, aim-tracking weapon-socket rotation, front/back eye hemisphere swap, runtime elemental re-tinting), and the element colour palette locked. Still open, and now PURELY real-art-production work, no more tooling/render gaps: replace the AI-placeholder atlases with final art (several of which also need a transparent-background regen — an opaque matte-colour bug, not a code gap).
 
 **2026-07-28: per-biome background palette done too — no art needed.** `game/theme.ts`'s `biomePalette(biomeId)`: the room-floor renderer (`Game.ts buildRoom`/`buildPillars`, previously one hardcoded `THEME.colors.ground/wall/...` set) now derives a per-biome ground/grid/pillar/wall palette from the ALREADY-locked element hex table (`statusBurn`/`statusChill`/`statusShock`/`statusPoison`), via a small `mixHex` blend (10–22% depending on the surface) so the room stays close to today's dark neutral look with just a hint of the biome's hue — the raw saturated hex stays reserved for bullets/status FX/loot (design/13 "environment desaturated, hazards saturated"), not painted across the walls. `BIOME_ID_TO_ELEMENT` maps a `DungeonConfig.biomeId` (today only `'ember'`→`'fire'`) to that vocabulary, so a future biome is one new map entry, not a parallel colour table; an unknown/absent biomeId (flat `EngineConfig.floors`, PvP arena) falls back to `'neutral'`, which is byte-identical to the pre-existing palette (verified, not just assumed — a real regression risk, since a naive version of this mixed even the neutral case toward its own placeholder hex and visibly lightened it; caught and fixed before shipping). Browser-verified live: the Ember dungeon room floor/walls/pillar now read a warm dark plum-grey instead of the old cold navy-grey, zero console errors.
@@ -233,6 +235,67 @@ boundaries incl. locale, the shield bar's presence rule, and the compare-card re
 design/10: every value on screen is a widget rather than a formatted line, the widget shows the
 same art the world shows, the local player is identifiable in the world and not only in the HUD,
 and HUD layout math never touches canvas text measurement.
+
+**2026-08-03: the screen-flow gaps a full walkthrough surfaced — Mode Select, a real
+Matchmaking screen, and a standalone tutorial level.** Walking the new-user journey
+(onboarding → register/login → first PvE match → matchmaking) end to end found five real
+gaps: no boot loading feedback; no menu-driven path into co-op/PvP (only the `?online=1`/
+`?pvp=1` boot flags reached them — the 2026-07-29 entry above's own deferred item); no
+visible feedback while `connectOnlineSession` ran (the game sat in a blank `playing` phase,
+and a post-ticket failure hung forever with zero feedback — a real bug, not just missing
+UI); and no tutorial for a first-time player. All five closed, render-only except two
+necessary bug fixes (no `ENGINE_VERSION` impact):
+- **Boot splash** — plain HTML/CSS spinner in `client/index.html` (paints before Pixi/WebGL
+  even initializes), removed by `main.ts` right after `game.start()`.
+- **Mode Select** (`game/screens/ModeSelect.ts`) — PLAY's new destination: SOLO PvE (routes
+  to Forge, byte-identical to before), CO-OP / PVP SOLO QUEUE (open Matchmaking below), and
+  TUTORIAL (below), with a "NEW HERE?" badge on Tutorial until `MetaState.hasSeenTutorial` —
+  never forced. SQUAD stays MainMenu's own separate button, unchanged.
+- **Matchmaking** (`game/screens/Matchmaking.ts`) — owns the `connectOnlineSession` attempt
+  with a connecting state (elapsed time + Cancel) and an error state (message + Retry +
+  Back); PartyScreen's pre-formed-squad path now routes through it too, instead of jumping
+  straight to `playing`. Building it surfaced two real, previously-invisible bugs, both
+  fixed: `net/transport.ts`'s `WebSocketTransport` had no `error`/`close` listener at all
+  (a bad ticket or a dropped connection was completely unobservable), and
+  `connectOnlineSession` had no bound waiting for `match_start` (a stalled connect just
+  hung the caller's promise forever). Both are now real rejections the screen surfaces.
+- **Tutorial level** (`game/match/tutorialConfig.ts` + `game/controllers/
+  TutorialHintController.ts`) — a fixed, flat (non-dungeon) 2-floor `EngineConfig`, one
+  small hand-built arena reused across both floors, fixed seed. Floor 0 teaches move/aim/
+  fire (a render-side elapsed-tick hint) → weapon-swap (persists until `activeSlot`
+  changes) → melee-deflect (persists until a `'deflect'` event fires), via one weak `basic`
+  enemy (already fires the shared enemy gun — deflectable with zero special-cased
+  content). Floor 0 is deliberately not the last floor, so its checkpoint shows the REAL
+  interactive `Portal`/`PortalPrompt` (Bank-and-Extract vs Descend) instead of
+  auto-resolving; floor 1 (the last floor) is one trivial enemy, so either checkpoint
+  choice ends the run normally through the real result screen. Always skippable via the
+  pause menu (relabeled "SKIP TUTORIAL" for this run only, `PauseMenu.show`'s new optional
+  label param) — completing OR skipping alike sets `hasSeenTutorial` (new `MetaState`
+  field, migrated/backfilled like every other field `meta/store.ts` already handles).
+  Exposed and fixed a real, generic bug along the way: `Game.ts`'s checkpoint-eligibility
+  gate, `HudView.ts`'s floor chip, and `RunOutcome.ts`'s result-screen floor line all
+  hardcoded `EMBER_DUNGEON.floorCount` instead of reading the run's actual config —
+  harmless while the ember dungeon was the only floored content in the game, wrong for any
+  flat `EngineConfig.floors` run. Fixed via one shared `totalFloorCount()` helper
+  (`game/match/floorCount.ts`, mirrors `ExtractionSystem.ts`'s own already-correct
+  mode-generic check) used at all three sites instead of the hardcoded import.
+
+Browser-verified live (two real tabs against a running `matchsvc` + gameserver): Solo PvE
+regression, a full tutorial playthrough on BOTH checkpoint branches (Extract and Descend,
+both ending correctly with the right floor count), Skip-via-pause, a real 2-player co-op
+match completing end-to-end, PvP solo-queue Cancel, a simulated matchmaking failure showing
+the new error UI, Retry succeeding afterward, and the Squad flow's create→join→start→cancel
+all routing correctly — zero console errors throughout. A follow-up pass added full test
+coverage for everything that had none, including two files (`net/transport.ts`,
+`game/match/onlineConnect.ts`) that had never been unit-tested at all before this — the
+latter needed a small DI addition (`fetch`/`sleep`/`createTransport` injection options,
+same convention `net/matchmaking.ts` already documents for itself; defaults unchanged, so
+every existing caller is byte-identical) to become testable at all. New/extended:
+`ModeSelect.test.ts` (9), `Matchmaking.test.ts` (10), `tutorialConfig.test.ts` (3),
+`TutorialHintController.test.ts` (6), `floorCount.test.ts` (4), `transport.test.ts` (14),
+`onlineConnect.test.ts` (9), plus new cases in `HudView.test.ts`/`RunOutcome.test.ts`/
+`PauseMenu.test.ts`/`forge.test.ts`/`confirmEdge.test.ts`. 582 client tests (was 546 at the
+start of this pass, 518 before that) + `tsc --noEmit` clean; 1125 across the repo.
 
 - **5.4 Fidelity roadmap** (01): ✅ post-processing (bloom-lite, vignette, chromatic aberration, hit-stop, screen-shake) + particles shipped 2026-07-26. Still open, both explicitly blocked on 5.3 landing real (non-placeholder) art first: normal-map lighting, custom shaders (dissolve/outline/energy-shield/heat-haze).
 - **5.5 WeChat device verification** (04): lowest base library, low-end frame rate, real-device touch, WebGL2 fallback — none of this can be done without a physical device or WeChat DevTools install, neither found on this machine as of 2026-07-27.

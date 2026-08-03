@@ -40,13 +40,16 @@ export class PauseMenu {
     this.view.visible = false;
   }
 
-  show(w: number, h: number) {
+  /** `quitLabelText`, if given, overrides the quit button's label (e.g. "SKIP TUTORIAL"
+   * during the tutorial level, design/10 screen-flow gap) — the button still calls the
+   * same `onQuit`, only the wording changes since it no longer always returns to Forge. */
+  show(w: number, h: number, quitLabelText?: string) {
     // Re-apply static labels so a language change (design/17-i18n.md) takes effect the
     // next time this screen opens, same convention as MainMenu.ts's `retext()`.
     this.title.text = t('pauseMenu.title');
     this.resumeBtn.setText(t('pauseMenu.resume'));
     this.settingsBtn.setText(t('pauseMenu.settings'));
-    this.quitBtn.setText(t('pauseMenu.quit'));
+    this.quitBtn.setText(quitLabelText ?? t('pauseMenu.quit'));
     this.panel.layout(w, h);
     const cx = w / 2;
     const cy = h / 2;

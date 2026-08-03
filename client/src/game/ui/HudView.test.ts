@@ -143,6 +143,20 @@ describe('HudView — stat chips (design/10, replaced the monospace info line)',
     expect(hud.chips.get('floor')!.valueText).toBe('2/3');
     expect(hud.chips.get('room')!.valueText).toBe('3/4');
   });
+
+  // design/10 screen-flow gap: the floor chip used to hardcode EMBER_DUNGEON.floorCount
+  // regardless of the run's actual config — harmless while the ember dungeon was the
+  // only floored content, wrong for a flat (non-dungeon) floors config like the
+  // tutorial level (ROADMAP totalFloorCount fix, floorCount.ts).
+  it('reports a flat (non-dungeon) floors config\'s own floor count, not the ember-dungeon default', () => {
+    const hud = newHud();
+    const s = createGameState({ ...PVE_CFG, floors: [[[[100, 100]]]] }); // 1 extra floor → 2 total
+    expect(s.dungeonEnabled).toBe(false);
+
+    hud.update(s, 16, CTX);
+
+    expect(hud.chips.get('floor')!.valueText).toBe('1/2');
+  });
 });
 
 describe('HudView — weapon card', () => {
