@@ -1,33 +1,30 @@
 import type { Fp, PickupItem } from '@dd/engine';
 
-// Pure proximity check for the design/03 ground compare card ("standing next to a
-// floor weapon floats a non-blocking card"). Deliberately NOT the pickup's own
-// collect radius (PickupSystem, which auto-swaps on overlap) — this is a wider,
-// render-only ring so the card appears just before collection, giving the player a
-// beat to see what they're about to pick up. Squared-distance, no sqrt (matches the
-// engine's own geom.ts convention), but this lives in the render layer since it's
-// UI-only and never feeds the sim.
+// Pure proximity check for the design/03 weapon-pickup panel ("standing next to one or
+// more floor weapons pops a non-blocking click-to-collect list"). Deliberately NOT the
+// pickup's own collect radius (PickupSystem's SIM.pickupRadius) — this is the wider,
+// render-only ring the panel is shown (and clickable) from, matching PickupSystem's own
+// SIM.lootRevealRadius gate for weapon-kind collection. Squared-distance, no sqrt
+// (matches the engine's own geom.ts convention), but this lives in the render layer
+// since it's UI-only and never feeds the sim.
 
-/** The nearest alive `weapon`-kind pickup within `radius` of (px, py), or undefined.
+/** Every alive `weapon`-kind pickup within `radius` of (px, py), nearest first.
  * All units Fp (fixed-point, same space as GameState positions). */
-export function nearestWeaponPickup(
+export function nearbyWeaponPickups(
   pickups: readonly PickupItem[],
   px: Fp,
   py: Fp,
   radius: Fp,
-): PickupItem | undefined {
+): PickupItem[] {
   const r2 = radius * radius;
-  let best: PickupItem | undefined;
-  let bestD2 = Infinity;
+  const found: Array<{ item: PickupItem; d2: number }> = [];
   for (const item of pickups) {
     if (!item.alive || item.kind !== 'weapon') continue;
     const dx = item.gx - px;
     const dy = item.gy - py;
     const d2 = dx * dx + dy * dy;
-    if (d2 <= r2 && d2 < bestD2) {
-      best = item;
-      bestD2 = d2;
-    }
+    if (d2 <= r2) found.push({ item, d2 });
   }
-  return best;
+  found.sort((a, b) => a.d2 - b.d2);
+  return found.map((f) => f.item);
 }

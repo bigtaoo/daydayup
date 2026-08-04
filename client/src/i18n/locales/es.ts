@@ -28,8 +28,6 @@ export const es: Translations<typeof en> = {
     music: 'Música',
     mute: 'SILENCIO',
     unmute: 'ACTIVAR SONIDO',
-    autoAimOn: 'AUTOAPUNTADO: ON',
-    autoAimOff: 'AUTOAPUNTADO: OFF',
     language: 'IDIOMA: {name}',
     controlLayout: 'CONTROLES: {mode}',
     controlLayoutStandard: 'ESTÁNDAR',
@@ -60,7 +58,7 @@ export const es: Translations<typeof en> = {
     candidateHeader: 'Candidato: {id}',
   },
   hud: {
-    swapHint: '[E] cambiar',
+    pickupPrompt: { title: 'Armas cercanas' },
     chips: {
       floor: 'PISO',
       room: 'SALA',

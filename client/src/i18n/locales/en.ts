@@ -27,8 +27,6 @@ export const en = {
     music: 'Music',
     mute: 'MUTE',
     unmute: 'UNMUTE',
-    autoAimOn: 'AUTO-AIM: ON',
-    autoAimOff: 'AUTO-AIM: OFF',
     language: 'LANGUAGE: {name}',
     controlLayout: 'CONTROLS: {mode}',
     controlLayoutStandard: 'STANDARD',
@@ -59,7 +57,7 @@ export const en = {
     candidateHeader: 'Candidate: {id}',
   },
   hud: {
-    swapHint: '[E] swap',
+    pickupPrompt: { title: 'Nearby weapons' },
     // Stat-chip labels (ui/StatChip.ts) — short by design: each sits under a tinted
     // icon in a pill, so it only has to disambiguate, not describe.
     chips: {

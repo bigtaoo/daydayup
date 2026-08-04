@@ -134,7 +134,7 @@ export class Scene {
         v = undefined;
       }
       if (!v) {
-        v = new Pickup(it.kind);
+        v = new Pickup(it.kind, it.weaponId);
         this.spawn(it.id, v, fpToPx(it.gx), fpToPx(it.gy), 0, 0);
       } else {
         v.pushState(fpToPx(it.gx), fpToPx(it.gy), 0, 0);

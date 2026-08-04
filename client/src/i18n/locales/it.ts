@@ -28,8 +28,6 @@ export const it: Translations<typeof en> = {
     music: 'Musica',
     mute: 'MUTO',
     unmute: 'ATTIVA AUDIO',
-    autoAimOn: 'MIRA AUTO: ON',
-    autoAimOff: 'MIRA AUTO: OFF',
     language: 'LINGUA: {name}',
     controlLayout: 'COMANDI: {mode}',
     controlLayoutStandard: 'STANDARD',
@@ -60,7 +58,7 @@ export const it: Translations<typeof en> = {
     candidateHeader: 'Candidato: {id}',
   },
   hud: {
-    swapHint: '[E] cambia',
+    pickupPrompt: { title: 'Armi vicine' },
     chips: {
       floor: 'PIANO',
       room: 'STANZA',

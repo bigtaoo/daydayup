@@ -28,8 +28,6 @@ export const zh: Translations<typeof en> = {
     music: '音乐',
     mute: '静音',
     unmute: '取消静音',
-    autoAimOn: '自动瞄准：开',
-    autoAimOff: '自动瞄准：关',
     language: '语言：{name}',
     controlLayout: '操作布局：{mode}',
     controlLayoutStandard: '标准',
@@ -60,7 +58,7 @@ export const zh: Translations<typeof en> = {
     candidateHeader: '候选：{id}',
   },
   hud: {
-    swapHint: '[E] 更换',
+    pickupPrompt: { title: '附近武器' },
     chips: {
       floor: '楼层',
       room: '房间',

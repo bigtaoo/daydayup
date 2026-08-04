@@ -133,12 +133,12 @@ Adding a weapon = adding a config row (+ code only for special behavior), not ha
 - Melee sword: click to swing; the swing damages enemies in its arc **and** deflects enemy bullets caught in that same arc back at enemies — no separate block input.
 - `[1]`/`[2]` swap the active weapon slot. Weapon positions by facing, with local z-order switching.
 
-## Pickup & switch (locked — see `05`)
+## Pickup & switch (shipped — see `05`)
 
-Weapons are **not** auto-picked-up (unlike materials/consumables) — swapping your weapon is a choice, so it stays button-driven:
+Weapons are **not** auto-picked-up (unlike materials/consumables) — swapping your weapon is a choice, so it stays click-driven:
 
-- **Ground compare card (render-only) — shipped (5.2).** Standing next to a floor weapon floats a non-blocking card (name / element / rarity) beside your active weapon. It is **pure client render — never in the sim**, so it does not touch determinism (`06`) and never pauses the co-op run (no modal — a blocking popup is impossible under lockstep, `06`). Implementation: `Game.ts`'s `updateHud` + `ui/pickupProximity.ts` (a proximity ring wider than `PickupSystem`'s own collect radius) + `ui/compareCard.ts`.
-- **`INTERACT` swaps it into the active slot — shipped (ENGINE_VERSION 21).** and the **replaced weapon drops back onto the floor** (`02`); the switch button chooses which of the two slots to overwrite. No manual drop button. Was previously unimplemented (auto-swapped on mere overlap, contradicting this doc); fixed in `PickupSystem.ts` — a rising-edge INTERACT check (`PlayerActor.wasInteracting`, since `prevButtons` is already stale by the time `PickupSystem` runs) gates the weapon-kind branch only, and `applyWeapon` pushes the outgoing weapon as a fresh floor `PickupItem` before overwriting the slot.
+- **Weapon-pickup panel (render-only, click-to-collect) — shipped (ENGINE_VERSION 32, replacing the single-nearest "ground compare card" + tap-INTERACT gesture below).** Standing near one or more floor weapons pops a non-blocking panel listing every one of them (real icon — the same business-end art the rig mounts, `render/weaponSkins.ts` — + name); tapping a row IS the pickup action, closing just leaves them all on the floor. The panel itself is pure client render (`ui/pickupProximity.ts#nearbyWeaponPickups` + `ui/WeaponPickupPrompt.ts`, driven by `HudView`), same non-blocking-overlay shape as the portal popup (`10`) — the run keeps simulating while it's open, never a modal (still impossible under lockstep, `06`). The *click itself*, unlike the panel's rendering, does touch the sim: it sets `PlayerCommand.pickupTargetId` (a one-shot latch, `CommandBuilder.requestPickup`, same convention as the portal popup's `CONFIRM_EXTRACT`/`CONFIRM_DESCEND`), and `PickupSystem`'s weapon-kind branch collects only when that id matches an alive item within `SIM.lootRevealRadius` — server-authoritative, exactly like every other pickup kind's overlap check.
+- **Swaps it into the active slot** and the **replaced weapon drops back onto the floor** (`02`); the switch button chooses which of the two slots to overwrite. No manual drop button. `applyWeapon` (`PickupSystem.ts`) pushes the outgoing weapon as a fresh floor `PickupItem` before overwriting the slot — unchanged from before, only the trigger gesture (click vs. INTERACT) moved.
 
 ## To design
 

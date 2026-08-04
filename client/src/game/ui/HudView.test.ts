@@ -192,14 +192,15 @@ describe('HudView — player card', () => {
   });
 });
 
-describe('HudView — ground compare card placement (design/03:125)', () => {
-  // Regression: the card used to sit at a hardcoded x=220, chosen when the HUD panel
+describe('HudView — weapon-pickup panel placement (design/03)', () => {
+  // Regression (pre-dates the click-to-collect panel, back when this was the ground
+  // compare card): the card used to sit at a hardcoded x=220, chosen when the HUD panel
   // was a fixed 220 wide. The rebuilt panel is wider (and varies with the locale and
   // the character name), so a fixed offset put the card straight on top of it.
   it('sits clear of the backing panel, not on top of it', () => {
     const hud = newHud();
     hud.update(pveState(), 16, CTX);
-    expect(hud.groundCard.view.x).toBeGreaterThan(statsPanelOf(hud).width);
+    expect(hud.weaponPickupPrompt.view.x).toBeGreaterThan(statsPanelOf(hud).width);
   });
 
   it('slides right when the panel grows', () => {
@@ -207,18 +208,32 @@ describe('HudView — ground compare card placement (design/03:125)', () => {
     const s = pveState();
 
     hud.update(s, 16, CTX);
-    const near = hud.groundCard.view.x;
+    const near = hud.weaponPickupPrompt.view.x;
 
     hud.update(s, 16, { ...CTX, selectedSkin: 'a-very-long-character-skin-name-indeed' });
 
-    expect(hud.groundCard.view.x).toBeGreaterThan(near);
-    expect(hud.groundCard.view.x).toBeGreaterThan(statsPanelOf(hud).width);
+    expect(hud.weaponPickupPrompt.view.x).toBeGreaterThan(near);
+    expect(hud.weaponPickupPrompt.view.x).toBeGreaterThan(statsPanelOf(hud).width);
   });
 
   it('stays hidden while no floor weapon is in reach', () => {
     const hud = newHud();
     hud.update(pveState(), 16, CTX);
-    expect(hud.groundCard.view.visible).toBe(false);
+    expect(hud.weaponPickupPrompt.view.visible).toBe(false);
+  });
+
+  it('opens and lists a weapon pickup dropped at the player position', () => {
+    const hud = newHud();
+    const s = pveState();
+    const p = s.players[0]!;
+    s.pickups.push({
+      id: s.nextId(), kind: 'weapon', weaponId: 'blaster',
+      gx: p.gx, gy: p.gy, spawnTick: -1, alive: true,
+    });
+
+    hud.update(s, 16, CTX);
+
+    expect(hud.weaponPickupPrompt.isOpen).toBe(true);
   });
 });
 

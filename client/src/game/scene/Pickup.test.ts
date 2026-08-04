@@ -1,6 +1,16 @@
-import { describe, it, expect } from 'vitest';
-import type { Graphics } from 'pixi.js';
+import { describe, it, expect, vi } from 'vitest';
+import { Texture, TextureSource, type Graphics, type Sprite } from 'pixi.js';
 import { Pickup, type PickupKind } from './Pickup';
+
+// `render/weaponSkins.ts` is mocked here so the "texture exists" branch (the real
+// weapon icon) is actually reachable under vitest — without it every Pickup test below
+// would only ever exercise the chevron fallback (no art preloaded in a plain-node
+// vitest run), same convention as Forge.npc.test.ts's `uiSkins` mock.
+const mocks = vi.hoisted(() => ({ blasterTexture: undefined as Texture | undefined }));
+
+vi.mock('../../render/weaponSkins', () => ({
+  getWeaponTexture: (name: string | undefined) => (name === 'blaster' ? mocks.blasterTexture : undefined),
+}));
 
 // Every kind a Pickup can render (@dd/engine's PickupKind) — 'bandage' has no dedicated
 // glow colour/shape yet and deliberately falls into the same crystal fallback as
@@ -44,5 +54,27 @@ describe('Pickup — glow ring (design/10 legibility fix, 2026-08-02)', () => {
   it('still gets a soft shadow (Entity.makeShadow), unrelated to the new glow', () => {
     const p = new Pickup('material');
     expect(p.shadow).not.toBeNull();
+  });
+});
+
+describe('Pickup — real weapon icon on the ground (design/03)', () => {
+  it('falls back to the double-chevron shape when no texture is resolvable (unknown/unset weaponId)', () => {
+    const p = new Pickup('weapon', 'not_a_real_weapon');
+    expect(p.children.length).toBe(2); // glow + chevron, no sprite
+    expect(shapeOf(p).getLocalBounds().width).toBeGreaterThan(0); // chevron actually drew something
+  });
+
+  it('draws the real weapon sprite in place of the chevron once a texture resolves', () => {
+    mocks.blasterTexture = new Texture({ source: new TextureSource({ width: 8, height: 8 }) });
+    try {
+      const p = new Pickup('weapon', 'blaster');
+      expect(p.children.length).toBe(3); // glow + icon sprite + the (now-empty) chevron Graphics
+      const icon = p.children[1] as Sprite;
+      expect(icon.texture).toBe(mocks.blasterTexture);
+      const chevron = p.children[2] as Graphics;
+      expect(chevron.getLocalBounds().width).toBe(0); // chevron never drew — icon took its place
+    } finally {
+      mocks.blasterTexture = undefined; // don't leak into later tests
+    }
   });
 });

@@ -33,8 +33,6 @@ export const ru: Translations<typeof en> = {
     music: 'Музыка',
     mute: 'БЕЗ ЗВУКА',
     unmute: 'ВКЛЮЧИТЬ ЗВУК',
-    autoAimOn: 'АВТОПРИЦЕЛ: ВКЛ',
-    autoAimOff: 'АВТОПРИЦЕЛ: ВЫКЛ',
     language: 'ЯЗЫК: {name}',
     controlLayout: 'УПРАВЛЕНИЕ: {mode}',
     controlLayoutStandard: 'СТАНДАРТ',
@@ -65,7 +63,7 @@ export const ru: Translations<typeof en> = {
     candidateHeader: 'Кандидат: {id}',
   },
   hud: {
-    swapHint: '[E] сменить',
+    pickupPrompt: { title: 'Оружие рядом' },
     chips: {
       floor: 'ЭТАЖ',
       room: 'КОМНАТА',

@@ -207,8 +207,9 @@ describe('PickupSystem — PvP arena weapon pickups scale like the landing kit (
     const p = s.players[0]!;
     const base = WEAPON_SIM_BY_ID.cannon!;
     const untouchedDamage = base.damage;
+    const id = s.nextId();
     s.pickups.push({
-      id: s.nextId(),
+      id,
       kind: 'weapon',
       weaponId: 'cannon',
       gx: p.gx,
@@ -216,7 +217,7 @@ describe('PickupSystem — PvP arena weapon pickups scale like the landing kit (
       spawnTick: -1,
       alive: true,
     });
-    p.interacting = true;
+    p.pickupTargetId = id;
     new PickupSystem().tick(s);
 
     expect(p.weapon!.spec.name).toBe('cannon');
@@ -228,8 +229,9 @@ describe('PickupSystem — PvP arena weapon pickups scale like the landing kit (
     const s = createGameState({ seed: 1, worldW: 1600, worldH: 1200, waves: [] });
     const p = s.players[0]!;
     const base = WEAPON_SIM_BY_ID.cannon!;
+    const id = s.nextId();
     s.pickups.push({
-      id: s.nextId(),
+      id,
       kind: 'weapon',
       weaponId: 'cannon',
       gx: p.gx,
@@ -237,7 +239,7 @@ describe('PickupSystem — PvP arena weapon pickups scale like the landing kit (
       spawnTick: -1,
       alive: true,
     });
-    p.interacting = true;
+    p.pickupTargetId = id;
     new PickupSystem().tick(s);
     expect(p.weapon!.spec.damage).toBe(base.damage);
   });

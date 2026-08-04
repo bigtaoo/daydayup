@@ -362,3 +362,48 @@ describe('Scene.applyLighting — dynamic point lighting (design/01 fidelity roa
     expect(() => scene.applyLighting(lights)).not.toThrow();
   });
 });
+
+// `render/weaponSkins` is mocked here so the "texture exists" branch is reachable
+// under vitest (no art preloaded in a plain-node run) — same convention as
+// Pickup.test.ts's own mock of the same module.
+const weaponSkinMocks = vi.hoisted(() => ({ texture: undefined as unknown }));
+vi.mock('../../render/weaponSkins', () => ({
+  getWeaponTexture: (name: string | undefined) => (name === 'blaster' ? weaponSkinMocks.texture : undefined),
+}));
+
+describe('Scene.reconcile — weapon pickup id passthrough (design/03)', () => {
+  it('passes the PickupItem.weaponId through to the Pickup view (real icon, not the chevron fallback)', async () => {
+    const { Texture, TextureSource } = await import('pixi.js');
+    weaponSkinMocks.texture = new Texture({ source: new TextureSource({ width: 8, height: 8 }) });
+    try {
+      const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+      const it: PickupItem = {
+        id: s.nextId(), kind: 'weapon', gx: pxToFp(300), gy: pxToFp(300),
+        spawnTick: 0, alive: true, weaponId: 'blaster',
+      };
+      s.pickups.push(it);
+      const scene = new Scene(new Layers());
+      scene.reconcile(s);
+
+      const views = (scene as unknown as { views: Map<number, { children: unknown[] }> }).views;
+      const view = views.get(it.id)!;
+      expect(view.children.length).toBe(3); // glow + real icon sprite + empty chevron Graphics
+    } finally {
+      weaponSkinMocks.texture = undefined;
+    }
+  });
+
+  it('falls back to the chevron shape when the pickup has no weaponId', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const it: PickupItem = {
+      id: s.nextId(), kind: 'weapon', gx: pxToFp(300), gy: pxToFp(300),
+      spawnTick: 0, alive: true,
+    };
+    s.pickups.push(it);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+
+    const views = (scene as unknown as { views: Map<number, { children: unknown[] }> }).views;
+    expect(views.get(it.id)!.children.length).toBe(2); // glow + chevron, no icon sprite
+  });
+});

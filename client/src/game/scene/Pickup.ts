@@ -1,5 +1,7 @@
-import { Graphics } from 'pixi.js';
+import { Graphics, Sprite } from 'pixi.js';
+import { WEAPON_SIM_BY_ID } from '@dd/engine';
 import { THEME } from '../theme';
+import { getWeaponTexture } from '../../render/weaponSkins';
 import { Entity } from './Entity';
 import type { PickupKind } from '@dd/engine';
 
@@ -26,7 +28,7 @@ export class Pickup extends Entity {
   private bob = 0;
   readonly kind: PickupKind;
 
-  constructor(kind: PickupKind) {
+  constructor(kind: PickupKind, weaponId?: string) {
     super();
     this.kind = kind;
     // A soft additive glow behind the shape (design/10 legibility fix, 2026-08-02): a
@@ -46,10 +48,25 @@ export class Pickup extends Entity {
       gfx.roundRect(-3, -9, 6, 18, 2).fill({ color });
       gfx.roundRect(-9, -3, 18, 6, 2).fill({ color });
     } else if (kind === 'weapon') {
-      // A double chevron — "gear / new weapon".
-      const color = THEME.colors.pickupWeapon;
-      gfx.poly([-8, -7, 0, -1, -8, 5, -5, -1]).fill({ color });
-      gfx.poly([0, -7, 8, -1, 0, 5, 3, -1]).fill({ color });
+      // The weapon's own real business-end art (same texture WeaponCard/Forge mount,
+      // render/weaponSkins.ts) — reads as "that specific gun/blade", not just "a new
+      // weapon". Falls back to the old double-chevron ("gear / new weapon") when the
+      // texture isn't resolvable (unknown id / not yet loaded) — a ground item, unlike
+      // WeaponCard's chip, has no adjacent name text to fall back on, so it must always
+      // draw *something*.
+      const simKind = weaponId ? WEAPON_SIM_BY_ID[weaponId]?.kind : undefined;
+      const texture = getWeaponTexture(weaponId, simKind ?? 'ranged');
+      if (texture) {
+        const icon = new Sprite(texture);
+        icon.anchor.set(0.5);
+        const box = 22;
+        icon.scale.set(Math.min(box / texture.width, box / texture.height));
+        this.addChild(icon);
+      } else {
+        const color = THEME.colors.pickupWeapon;
+        gfx.poly([-8, -7, 0, -1, -8, 5, -5, -1]).fill({ color });
+        gfx.poly([0, -7, 8, -1, 0, 5, 3, -1]).fill({ color });
+      }
     } else if (kind === 'buff') {
       // An upward chevron in a diamond — "power up / run buff" (design/14).
       const color = THEME.colors.pickupBuff;

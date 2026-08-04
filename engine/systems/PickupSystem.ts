@@ -9,20 +9,19 @@
  *   material — added to this floor's un-banked buffer (state.floorMaterials,
  *              design/05, ROADMAP 1.4/1.5); banked at an extraction checkpoint
  *              (ExtractionSystem), forfeited on a run-ending death. Auto, on overlap.
- *   weapon   — design/03:121-126 "NOT auto-picked-up... button-driven": overlap alone
- *              does nothing; a freshly-pressed INTERACT (rising edge, mirrors
- *              ApplyInputSystem's own SWAP_WEAPON edge check) swaps it into the
- *              active slot AND drops the outgoing weapon back onto the floor as a
- *              new pickup at the player's position (`dropReplacedWeapon`) — "no
- *              manual drop button," the drop is only ever a side effect of a swap.
+ *   weapon   — design/03 "NOT auto-picked-up... click-driven" (ENGINE_VERSION 32,
+ *              replacing v21's INTERACT gesture): overlap alone does nothing; the
+ *              player must have clicked this exact item this tick (`pickupTargetId`
+ *              matches the item's id — set by the render-side weapon-pickup panel,
+ *              CommandBuilder.requestPickup) while within `SIM.lootRevealRadius` —
+ *              wider than the tight overlap every other kind uses, since the panel
+ *              already showed it from that range. Swaps it into the active slot AND
+ *              drops the outgoing weapon back onto the floor as a new pickup at the
+ *              player's position (`applyWeapon`) — "no manual drop button," the drop
+ *              is only ever a side effect of a swap.
  *   buff     — added to the run-scoped stack. Auto, on overlap.
  *   bandage  — PvP-arena-only (design/05/15's squad follow-up): +1 to the player's
  *              squad-revive currency, spent by ReviveSystem. Auto, on overlap.
- *
- * The rising edge can't reuse `prevButtons` (`ApplyInputSystem`, step 1, already
- * overwrote it with THIS tick's bitfield before this step runs) — `wasInteracting`
- * is this system's own cross-tick memory instead, updated once per player per tick
- * regardless of whether a pickup was nearby.
  *
  * Ports Game.ts updatePickups(): float px → fp, squared-distance overlap. The
  * render-only hover bob is dropped (visual, not sim).
@@ -45,24 +44,23 @@ export class PickupSystem {
     // waiting an extra tick.
     this.resolveCrates(state);
 
-    // Snapshot each player's INTERACT rising edge ONCE up front, before any swap in
-    // this same tick can push a fresh pickup back onto `state.pickups` — that new
-    // item must never itself read as "just pressed" (it wasn't the input, the swap
-    // was), and every player's `wasInteracting` memory must advance exactly once per
-    // tick even if they're nowhere near a pickup.
-    const interactPressed = state.players.map((p) => p.alive && p.interacting && !p.wasInteracting);
-
     for (const item of state.pickups) {
       if (!item.alive || item.spawnTick === state.tick) continue;
       // Never directly collectible — resolveCrates above always turns a crate into a
       // real kind before a player gets this close (lootRevealRadius > pickupRadius),
       // but guard explicitly rather than relying on that margin implicitly.
       if (item.kind === 'crate') continue;
+      const isWeapon = item.kind === 'weapon';
+      // Weapon-kind uses the wider "can see it" ring (SIM.lootRevealRadius) since
+      // collection is now a click on the render-side panel that showed it from that
+      // range (design/03, ENGINE_VERSION 32) — every other kind keeps the tight
+      // auto-overlap radius.
+      const radius = isWeapon ? SIM.lootRevealRadius : SIM.pickupRadius;
       for (let i = 0; i < state.players.length; i++) {
         const p = state.players[i]!;
         if (!p.alive) continue;
-        if (!circlesOverlap(item.gx, item.gy, SIM.pickupRadius, p.gx, p.gy, p.radius)) continue;
-        if (item.kind === 'weapon' && !interactPressed[i]) continue; // button-driven, not auto (design/03)
+        if (isWeapon && p.pickupTargetId !== item.id) continue; // must have clicked THIS item this tick
+        if (!circlesOverlap(item.gx, item.gy, radius, p.gx, p.gy, p.radius)) continue;
         this.apply(state, p, item);
         item.alive = false;
         state.events.push({
@@ -80,8 +78,6 @@ export class PickupSystem {
       }
     }
     retainAlive(state.pickups);
-
-    for (const p of state.players) p.wasInteracting = p.interacting;
   }
 
   /**

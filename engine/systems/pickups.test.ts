@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { createGameState } from '@dd/engine/state/GameState';
 import type { GameState } from '@dd/engine/state/GameState';
 import type { PickupItem, RangedSimSpec } from '@dd/engine/state/entities';
+import type { Fp } from '@dd/engine/math/fixed';
 import { PickupSystem } from '@dd/engine/systems';
+import { toFpGrid } from '@dd/engine/content/convert';
 
 const CFG = { seed: 7, worldW: 1600, worldH: 1200, waves: [] as const };
 
@@ -29,23 +31,34 @@ describe('PickupSystem — the in-run power ramp (design/05)', () => {
     expect(p.hp).toBe(p.maxHp); // capped
   });
 
-  it('a weapon drop is NOT collected on overlap alone (design/03: button-driven, not auto)', () => {
+  it('a weapon drop is NOT collected on overlap alone (design/03: click-driven, not auto)', () => {
     const s = createGameState(CFG);
     const p = s.players[0]!;
     const before = p.weapon!.spec.name;
     dropOnPlayer(s, { kind: 'weapon', weaponId: 'cannon' });
-    sys.tick(s); // no INTERACT held
+    sys.tick(s); // no pickupTargetId set
     expect(p.weapon!.spec.name).toBe(before); // untouched
     expect(s.pickups).toHaveLength(1); // still sitting on the floor
     expect(s.pickups[0]!.alive).toBe(true);
   });
 
-  it('a freshly-pressed INTERACT while overlapping swaps the active slot and drops the outgoing weapon', () => {
+  it('clicking the wrong/stale item id does nothing, even while overlapping a real one', () => {
+    const s = createGameState(CFG);
+    const p = s.players[0]!;
+    const before = p.weapon!.spec.name;
+    dropOnPlayer(s, { kind: 'weapon', weaponId: 'cannon' });
+    p.pickupTargetId = s.pickups[0]!.id + 999; // some other/stale id
+    sys.tick(s);
+    expect(p.weapon!.spec.name).toBe(before);
+    expect(s.pickups[0]!.alive).toBe(true);
+  });
+
+  it('clicking (pickupTargetId matching the item) swaps the active slot and drops the outgoing weapon', () => {
     const s = createGameState(CFG);
     const p = s.players[0]!;
     const outgoingId = p.weapon!.spec.name;
     dropOnPlayer(s, { kind: 'weapon', weaponId: 'cannon' });
-    p.interacting = true; // rising edge: wasInteracting defaults false
+    p.pickupTargetId = s.pickups[0]!.id;
     sys.tick(s);
 
     const active = p.weapon!;
@@ -60,20 +73,32 @@ describe('PickupSystem — the in-run power ramp (design/05)', () => {
     expect(dropped!.spawnTick).toBe(s.tick);
   });
 
-  it('holding INTERACT does not re-swap on a later tick (no ping-pong while stationary)', () => {
+  it('a click is a one-tick pulse — not re-applied on a later tick without a fresh click', () => {
     const s = createGameState(CFG);
     const p = s.players[0]!;
     dropOnPlayer(s, { kind: 'weapon', weaponId: 'cannon' });
-    p.interacting = true;
+    p.pickupTargetId = s.pickups[0]!.id;
     sys.tick(s); // swaps in cannon, drops the starter weapon at the same spot
     expect(p.weapon!.spec.name).toBe('cannon');
+    p.pickupTargetId = 0; // ApplyInputSystem would reset this every tick without a fresh click
 
-    // Advance past the dropped item's spawnTick guard so this exercises the
-    // wasInteracting edge check itself, not just the "same-tick drop" guard.
+    // Advance past the dropped item's spawnTick guard so this actually exercises
+    // whether the stale click re-fires, not just the "same-tick drop" guard.
     s.tick += 1;
-    p.interacting = true; // still held — no NEW rising edge (wasInteracting is now true)
     sys.tick(s);
     expect(p.weapon!.spec.name).toBe('cannon'); // unchanged, did not swap back
+  });
+
+  it('collects a weapon click from beyond pickupRadius but within the wider lootRevealRadius', () => {
+    const s = createGameState(CFG);
+    const p = s.players[0]!;
+    // pickupRadius is ~0.47 grid; lootRevealRadius is 2.5 grid — 1 grid away is out of
+    // the tight ring every other kind uses but well inside the panel's own ring.
+    const id = s.nextId();
+    s.pickups.push({ id, kind: 'weapon', weaponId: 'cannon', gx: (p.gx + toFpGrid(1)) as Fp, gy: p.gy, spawnTick: -1, alive: true });
+    p.pickupTargetId = id;
+    sys.tick(s);
+    expect(p.weapon!.spec.name).toBe('cannon');
   });
 
   it('materials have no in-sim effect yet (a distinct, not-yet-banked currency)', () => {

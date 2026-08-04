@@ -1,9 +1,9 @@
-import { Container, Graphics, Text } from 'pixi.js';
-import { THEME, rarityColor } from '../theme';
+import { Container, Graphics } from 'pixi.js';
+import { THEME } from '../theme';
 import type { Layers } from '../scene/layers';
 import { Panel, ToastQueue } from './widgets';
-import { CompareCard } from './compareCard';
-import { nearestWeaponPickup } from './pickupProximity';
+import { nearbyWeaponPickups } from './pickupProximity';
+import { WeaponPickupPrompt } from './WeaponPickupPrompt';
 import { Minimap, type MinimapPlayer } from './Minimap';
 import { FloorProgress } from './FloorProgress';
 import { PlayerCard, AllyRow } from './PlayerCard';
@@ -11,16 +11,17 @@ import { WeaponCard } from './WeaponCard';
 import { StatChip } from './StatChip';
 import { DownedBanner } from './DownedBanner';
 import type { HudIconId } from './hudIcons';
-import { WEAPON_SIM_BY_ID, SIM, type GameState } from '@dd/engine';
+import { SIM, type GameState } from '@dd/engine';
 import { t, type TranslationKey } from '../../i18n';
 import { totalFloorCount } from '../match/floorCount';
 
-// Ground compare card proximity ring (design/03:125) — wider than PickupSystem's own
-// collect radius (SIM.pickupRadius) so the card has a beat to show before auto-collect.
-// Same constant PickupSystem uses to resolve an arena crate (SIM.lootRevealRadius) —
-// sharing it means a resolved weapon pickup is always already known by the time this
-// card's ring would want to show it, never one tick behind.
-const GROUND_CARD_RADIUS_FP = SIM.lootRevealRadius;
+// Weapon-pickup panel proximity ring (design/03) — wider than PickupSystem's own tight
+// collect radius (SIM.pickupRadius) so the panel has a beat to show before it's even
+// clickable. Same constant PickupSystem's weapon-kind branch itself gates collection
+// on (SIM.lootRevealRadius) — sharing it means "if the panel shows it, you can click
+// it," and also the constant used to resolve an arena crate, so a resolved weapon
+// pickup is always already known by the time the panel would want to show it.
+const WEAPON_PROMPT_RADIUS_FP = SIM.lootRevealRadius;
 
 /** The bits of Game's own state updateHud needs that aren't already on GameState. */
 export interface HudContext {
@@ -84,30 +85,21 @@ export class HudView {
   readonly downedBanner = new DownedBanner();
   readonly chips = new Map<ChipKey, StatChip>();
   readonly floorProgress = new FloorProgress();
-  // Ground compare card (design/03:125, locked spec: name/element/rarity, non-blocking,
-  // render-only). Shown while standing near an uncollected floor weapon pickup.
-  readonly groundCard = new CompareCard();
+  // Ground weapon-pickup panel (design/03, ENGINE_VERSION 32) — lists every nearby
+  // floor weapon (icon + name); tapping one is the collect action itself. Replaces the
+  // old single-nearest "ground compare card" + tap-INTERACT gesture.
+  readonly weaponPickupPrompt = new WeaponPickupPrompt();
 
   private statsPanel!: Panel;
   private readonly dividers = new Graphics();
   private toasts!: ToastQueue;
   private minimap!: Minimap;
-  // Weapon pickup is button-driven (design/03:121-126, ENGINE_VERSION 21) — unlike
-  // every other pickup kind, standing on it does nothing without this prompt's cue.
-  private groundHint!: Text;
   private panelW = 0;
   private panelH = 0;
 
   build(layers: Layers, screenPx: { w: number; h: number }): void {
     this.statsPanel = new Panel({ radius: 10, color: 0x0b0e14, alpha: 0.66, borderColor: 0x4c566a, borderAlpha: 0.55 });
     this.toasts = new ToastQueue({ w: 220 });
-    // `padding` works around a real Pixi font-metrics mismatch (see Button's own comment
-    // in ui/widgets.ts): its text measurement can come in narrower than the canvas's
-    // actual paint-time glyph width, clipping the last character(s).
-    this.groundHint = new Text({
-      text: t('hud.swapHint'),
-      style: { fill: 0x90cdf4, fontSize: 13, fontFamily: 'monospace', fontWeight: 'bold', padding: 6 },
-    });
 
     this.statsPanel.view.position.set(4, 4);
     this.playerCard.view.position.set(PAD, 10);
@@ -126,8 +118,7 @@ export class HudView {
       this.floorProgress.view,
       this.allyRow.view,
       this.toasts.view,
-      this.groundCard.view,
-      this.groundHint,
+      this.weaponPickupPrompt.view,
       this.downedBanner.view,
     );
     // NOTE: `view` itself is NOT added to `layers.ui` here — the caller (Game) mounts
@@ -208,7 +199,7 @@ export class HudView {
     this.downedBanner.update(dt);
 
     this.layout(s.zoneEnabled ? PVP_CHIPS : PVE_CHIPS, buffCount > 0, ally !== undefined);
-    this.updateGroundCard(s, p);
+    this.updateWeaponPickupPrompt(s, p);
     this.toasts.update(dt);
 
     // PvP room-graph minimap (design/10) — no-op/hidden for PvE, same convention as the
@@ -276,10 +267,10 @@ export class HudView {
       this.panelH = h;
       this.statsPanel.layout(w, h);
       this.redrawDividers(w);
-      // The ground compare card floats immediately right of the HUD (design/03:125
-      // "beside your active weapon") — it has to track the panel's live width, or a
-      // long localized weapon subtitle slides the panel out from under it.
-      this.groundCard.view.position.set(w + 12, 40);
+      // The weapon-pickup panel floats immediately right of the HUD (design/03) — it
+      // has to track the panel's live width, or a long localized weapon name slides
+      // the panel out from under it.
+      this.weaponPickupPrompt.view.position.set(w + 12, 40);
     }
   }
 
@@ -295,31 +286,12 @@ export class HudView {
     this.dividers.stroke({ color: 0x4c566a, alpha: 0.35, width: 1 });
   }
 
-  // Ground compare card (design/03:125) — floats while standing near an uncollected
-  // floor weapon, name/element/rarity only (no stat table; that's the forge's job, and a
-  // mid-run comparison needs to read at a glance, not be studied).
-  private updateGroundCard(s: GameState, p: GameState['players'][number] | undefined): void {
-    const nearby = p ? nearestWeaponPickup(s.pickups, p.gx, p.gy, GROUND_CARD_RADIUS_FP) : undefined;
-    const groundSpec = nearby?.weaponId ? WEAPON_SIM_BY_ID[nearby.weaponId] : undefined;
-    if (p?.weapon && groundSpec) {
-      this.groundCard.set({
-        w: 220,
-        leftName: p.weapon.spec.name,
-        leftColor: rarityColor(p.weapon.spec),
-        rightName: groundSpec.name,
-        rightColor: rarityColor(groundSpec),
-        rows: [{ label: t('compareCard.type'), left: p.weapon.spec.damageType, right: groundSpec.damageType }],
-      });
-      this.groundHint.text = t('hud.swapHint');
-      this.groundHint.position.set(
-        this.groundCard.view.x,
-        this.groundCard.view.y + this.groundCard.view.height + 4,
-      );
-      this.groundHint.visible = true;
-    } else {
-      this.groundCard.hide();
-      this.groundHint.visible = false;
-    }
+  // Weapon-pickup panel (design/03) — lists every nearby floor weapon while standing
+  // near one or more; the click itself is the collect action (WeaponPickupPrompt.onPick,
+  // wired to CommandBuilder.requestPickup by Game.ts).
+  private updateWeaponPickupPrompt(s: GameState, p: GameState['players'][number] | undefined): void {
+    const nearby = p ? nearbyWeaponPickups(s.pickups, p.gx, p.gy, WEAPON_PROMPT_RADIUS_FP) : [];
+    this.weaponPickupPrompt.update(nearby);
   }
 }
 

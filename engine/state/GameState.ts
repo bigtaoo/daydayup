@@ -451,9 +451,9 @@ export class GameState {
       buffs: [], // run-scoped buff stack (design/14); filled by 'buff' pickups
       firing: false,
       interacting: false,
-      wasInteracting: false,
       confirmExtract: false,
       confirmDescend: false,
+      pickupTargetId: 0,
       downed: false, // co-op downed/revive (design/05/07, ROADMAP 3.2)
       bleedoutTicks: 0,
       reviveProgressTicks: 0,
