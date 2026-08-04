@@ -224,7 +224,16 @@ export class NetInputSource implements InputSource {
  * here, so a plain `!==` on it IS "did the quantized value change" — one existing
  * mechanism (determinism quantization) doing double duty as the compression key,
  * not a second threshold invented on top. Buttons are already edge-shaped
- * (bit-flip = a real change); `owner`/`tick`/`type` never factor in. */
+ * (bit-flip = a real change); `owner`/`tick`/`type` never factor in.
+ * `pickupTargetId` (ENGINE_VERSION 32) is a one-shot click latch, not a held button —
+ * a click can land on a tick where every other field happens to be unchanged (e.g.
+ * standing still, already firing), so it must factor in here too or the click is
+ * silently swallowed as a duplicate and never reaches the server. */
 function changed(a: PlayerCommand, b: PlayerCommand): boolean {
-  return a.moveBrad !== b.moveBrad || a.moveMag !== b.moveMag || a.buttons !== b.buttons;
+  return (
+    a.moveBrad !== b.moveBrad ||
+    a.moveMag !== b.moveMag ||
+    a.buttons !== b.buttons ||
+    a.pickupTargetId !== b.pickupTargetId
+  );
 }

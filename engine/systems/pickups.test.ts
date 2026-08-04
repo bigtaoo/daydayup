@@ -5,6 +5,9 @@ import type { PickupItem, RangedSimSpec } from '@dd/engine/state/entities';
 import type { Fp } from '@dd/engine/math/fixed';
 import { PickupSystem } from '@dd/engine/systems';
 import { toFpGrid } from '@dd/engine/content/convert';
+import { createGameEngine } from '@dd/engine/GameEngine';
+import { makeCommand } from '@dd/engine/state/input';
+import type { Brad } from '@dd/engine/math/trig';
 
 const CFG = { seed: 7, worldW: 1600, worldH: 1200, waves: [] as const };
 
@@ -150,6 +153,28 @@ describe('PickupSystem — the in-run power ramp (design/05)', () => {
     dropOnPlayer(s, { kind: 'bandage' });
     sys.tick(s);
     expect(p.bandages).toBe(2); // no cap
+  });
+
+  it('a real PlayerCommand.pickupTargetId (via ApplyInputSystem, engine.step) actually collects — not just a directly-set actor field', () => {
+    // Regression coverage for the real wiring, not PickupSystem in isolation: every
+    // other case above sets PlayerActor.pickupTargetId directly, which would keep
+    // passing unchanged even if the command→actor wiring were completely absent (as
+    // it briefly was) — this is the ONLY place in the suite that drives a click
+    // through the full path (CommandBuilder's would-be output → ApplyInputSystem →
+    // PickupSystem).
+    const e = createGameEngine(CFG);
+    const p = e.state.players[0]!;
+    const before = p.weapon!.spec.name;
+    const id = e.state.nextId();
+    e.state.pickups.push({ id, kind: 'weapon', weaponId: 'cannon', gx: p.gx, gy: p.gy, spawnTick: -1, alive: true });
+
+    e.step([makeCommand({
+      owner: 0, tick: e.state.tick + 1, moveBrad: 0 as Brad, moveMag: 0, buttons: 0,
+      pickupTargetId: id,
+    })]);
+
+    expect(p.weapon!.spec.name).toBe('cannon');
+    expect(p.weapon!.spec.name).not.toBe(before);
   });
 
   it('does not vacuum a pickup dropped this very tick (spawnTick guard)', () => {

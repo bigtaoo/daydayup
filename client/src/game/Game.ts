@@ -348,6 +348,9 @@ export class Game {
     // latches, same shape as onSwitchWeapon → builder.requestSwap() below.
     this.portalPrompt.onExtract = () => this.builder.requestConfirmExtract();
     this.portalPrompt.onDescend = () => this.builder.requestConfirmDescend();
+    // Ground-weapon click-to-collect (design/03, ENGINE_VERSION 32) — same shape as
+    // the portal popup above: a row click latches the target id onto the builder.
+    this.hud.weaponPickupPrompt.onPick = (id) => this.builder.requestPickup(id);
 
     this.input.attach(this.app.canvas as unknown as InputCanvas);
     // Discrete actions route through the shell: during a run they latch a one-tick
@@ -1278,7 +1281,10 @@ export class Game {
     const nearPortal =
       !!p && !!portalPx && Math.hypot(fpToPx(p.gx) - portalPx.x, fpToPx(p.gy) - portalPx.y) <= PORTAL_PROMPT_RADIUS_PX;
     this.portalPrompt.update(s, checkpointEligible && nearPortal);
-    this.builder.suppressFire(this.portalPrompt.isOpen);
+    // Fire is suppressed while EITHER popup is open — a row click on the weapon-pickup
+    // panel must not also register as a shot (same WebInput raw-mousedown reasoning as
+    // the portal popup's own suppression above).
+    this.builder.suppressFire(this.portalPrompt.isOpen || this.hud.weaponPickupPrompt.isOpen);
   }
 
   // Rising-edge fire → confirm, on the RESULT screens only — see confirmEdge.ts for

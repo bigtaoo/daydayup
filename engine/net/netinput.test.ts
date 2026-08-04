@@ -110,6 +110,17 @@ describe('NetInputSource — sparse held-input sync (design/15, ROADMAP 4.5)', (
     expect(sink.sent).toHaveLength(3);
   });
 
+  it('submit() DOES resend a ground-weapon click (pickupTargetId) on an otherwise-idle tick (ENGINE_VERSION 32)', () => {
+    const sink = collectingSink();
+    const net = new NetInputSource(sink);
+    const base = cmd(0, 1); // idle: no move, no buttons
+    net.submit(base);
+    // Every other field is identical to `base` — only the click latch differs.
+    net.submit({ ...base, tick: 2, pickupTargetId: 7 });
+    expect(sink.sent).toHaveLength(2);
+    expect(sink.sent[1]?.pickupTargetId).toBe(7);
+  });
+
   it('a pure metronome pulse (frames: []) holds every known owner\'s last command instead of going idle', () => {
     const net = new NetInputSource(collectingSink(), { bufferFrames: 0 });
     net.handleServerMsg(START);
