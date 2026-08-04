@@ -18,6 +18,7 @@ import { Button } from '@dd/engine/state/commands';
 import { makeCommand } from '@dd/engine/state/input';
 import type { Brad } from '@dd/engine/math/trig';
 import { ExtractionSystem, PickupSystem, WinConditionSystem } from '@dd/engine/systems';
+import type { RoomPiece } from '@dd/engine/content/rooms';
 
 // Two floors total: floor 0 (config.waves) is NOT last (extraFloors.length === 1);
 // floor 1 (extraFloors[0]) IS last (floorIndex 1 >= extraFloors.length 1).
@@ -172,6 +173,59 @@ describe('Materials tier by depth (ROADMAP 1.5)', () => {
       const d = rollDrop(p2);
       if (d.kind === 'material') expect(d.tier).toBe(0);
     }
+  });
+});
+
+describe('ExtractionSystem — dungeon mode checks the floor\'s capstone room, not wavesExhausted (design/05, 2026-08-04)', () => {
+  // A single-room floor (roomsPerFloor min=max=1 → normalCount 0, so the floor is
+  // JUST the capstone) — a dummy normal-tagged piece is still needed since
+  // generateFloor validates the tag pool exists regardless of whether it's ever drawn.
+  const DUMMY_NORMAL: RoomPiece = {
+    id: 'solo_normal', tags: ['solo'], sizeGrid: { w: 10, h: 10 }, solids: [],
+    spawns: { player: [{ x: 5, y: 5 }], enemy: [] }, exits: [],
+  };
+  const SOLO_CAPSTONE: RoomPiece = {
+    id: 'solo_cap', role: 'boss', sizeGrid: { w: 20, h: 16 }, solids: [],
+    spawns: { player: [{ x: 2, y: 8 }], enemy: [{ x: 16, y: 8, type: 'basic' }] }, exits: [],
+  };
+  const CFG: EngineConfig = {
+    seed: 4, worldW: 640, worldH: 640, waves: [],
+    dungeon: {
+      config: {
+        biomeId: 'solo', nameKey: 'solo', floorCount: 1, roomsPerFloor: { min: 1, max: 1 },
+        pieceTags: ['solo'], layout: 'linear', extractionPieceId: 'solo_cap', bossPieceId: 'solo_cap',
+        difficultyCurve: { base: 1, perFloor: 0 },
+      },
+      library: [DUMMY_NORMAL, SOLO_CAPSTONE],
+    },
+  };
+
+  it('setting the OLD flat-floors wavesExhausted flag does nothing in dungeon mode', () => {
+    const eng = createGameEngine(CFG);
+    eng.step([]); // tick 1: floor places
+    eng.state.wavesExhausted = true; // dungeon mode must never read this
+    eng.step([]);
+    expect(eng.state.phase).not.toBe('gameover');
+  });
+
+  it('never resolves before the capstone has even been reached (activated)', () => {
+    const eng = createGameEngine(CFG);
+    eng.step([]); // tick 1: floor places, player teleported in, but not yet activated
+    expect(eng.state.dungeonRoomRuntime[0]!.activated).toBe(false);
+    expect(eng.state.phase).not.toBe('gameover'); // no false-positive "cleared" before ever entering
+  });
+
+  it('reaching and clearing the capstone auto-extracts (last floor, no gesture needed)', () => {
+    const eng = createGameEngine(CFG);
+    eng.step([]); // tick 1: floor places
+    eng.step([]); // tick 2: player's roomId now matches → activates → its enemy spawns
+    expect(eng.state.enemies.length).toBe(1);
+    expect(eng.state.phase).not.toBe('gameover'); // enemy still alive — not cleared yet
+
+    eng.state.enemies.length = 0; // simulate the boss dying (combat exercised elsewhere)
+    eng.step([]); // tick 3: DoorSystem's hasLiveEnemy falls → ExtractionSystem sees it cleared
+    expect(eng.state.phase).toBe('gameover');
+    expect(eng.state.winner).toBe(0);
   });
 });
 

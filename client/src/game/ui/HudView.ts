@@ -168,17 +168,25 @@ export class HudView {
       this.chips.get('alive')!.set(t('hud.chips.alive'), `${s.players.filter((pl) => pl.alive).length}/${s.players.length}`);
       this.floorProgress.update(0, -1); // hides — this is the PvP arena's own Minimap's job
     } else {
-      // Dungeon progress (ROADMAP 1.3): floor / room within floor, plus the banked bag.
-      const rooms = s.floorStages.length; // total stages this floor (linear or branching)
+      // Dungeon progress (ROADMAP 1.3; co-resident room/door model, design/05
+      // 2026-08-04): floor / room within floor, plus the banked bag. `s.dungeonRooms`
+      // is the WHOLE floor (every room placed at once, ROADMAP 1.3/design/05) — "which
+      // room" is now per-player (`roomId`), not a single global cursor, so it's looked
+      // up via `dungeonRoomIndexById`. `-1` (roomId not yet resolved to any placed
+      // room — before the floor places, or the one-tick activation lag right after)
+      // reads the same as the old "-1 before the first room loads," so
+      // `computeFloorProgress`'s own -1 handling (below) needs no change.
+      const rooms = s.dungeonRooms.length;
+      const roomIndex = p?.roomId !== undefined ? s.dungeonRoomIndexById.get(p.roomId) ?? -1 : -1;
       this.chips.get('floor')!.set(t('hud.chips.floor'), `${s.floorIndex + 1}/${totalFloorCount(s)}`);
-      this.chips.get('room')!.set(t('hud.chips.room'), `${Math.max(1, s.roomIndex + 1)}/${rooms}`);
+      this.chips.get('room')!.set(t('hud.chips.room'), `${Math.max(1, roomIndex + 1)}/${rooms}`);
       this.chips.get('enemies')!.set(t('hud.chips.enemies'), `${s.enemies.length}`);
       this.chips.get('banked')!.set(t('hud.chips.banked'), `${totalBanked(s)}`);
       // A real PvE minimap (design/10) — a progress TRACK, not a spatial map (see
       // FloorProgress's own doc comment for why PvE's data shape doesn't support the
       // PvP room-graph Minimap's kind of widget). 0 stages (flat EngineConfig.floors
       // mode) hides it, same as the PvP branch above.
-      this.floorProgress.update(rooms, s.roomIndex);
+      this.floorProgress.update(rooms, roomIndex);
     }
     this.chips.get('score')!.set(t('hud.chips.score'), `${ctx.score}`);
     this.chips.get('buffs')!.set(t('hud.chips.buffs'), `${buffCount}`);

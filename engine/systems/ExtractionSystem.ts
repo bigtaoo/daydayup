@@ -31,7 +31,21 @@ export class ExtractionSystem {
   tick(state: GameState): void {
     if (!state.floorsEnabled) return;
     if (state.phase === 'gameover') return;
-    if (!(state.wavesExhausted && state.enemies.length === 0)) return;
+
+    // The checkpoint condition differs by mode (design/05, 2026-08-04). Dungeon mode's
+    // old `wavesExhausted` (a floor-wide "last sequential stage cleared" flag) doesn't
+    // make sense once every room is co-resident and independently activated — it is
+    // simply never set anymore in dungeon mode. Availability is instead a direct check
+    // against the floor's own capstone (extraction/boss) room: reached (activated) and
+    // cleared (no live enemy) — never true before a player has actually been inside it,
+    // which is what `activated` guards against (DoorSystem's own softlock-prevention
+    // reasoning applies here too). The flat `floors` list (no dungeon config) keeps the
+    // original floor-wide flag untouched.
+    if (state.dungeonEnabled) {
+      if (!this.capstoneCleared(state)) return;
+    } else {
+      if (!(state.wavesExhausted && state.enemies.length === 0)) return;
+    }
 
     // Last-floor test differs by mode: the flat-`floors` list counts extraFloors; a
     // generated dungeon counts its configured floorCount (design/05 "the last floor's
@@ -48,6 +62,14 @@ export class ExtractionSystem {
     if (!p || !p.alive) return;
     if (p.confirmExtract) this.resolveExtract(state);
     else if (p.confirmDescend) this.resolveDescend(state);
+  }
+
+  /** The floor's capstone (extraction/boss) room — always the LAST entry, since
+   * `generateFloor` always appends it last (design/05/09). `undefined` before a
+   * fresh floor has been placed yet (`dungeonRooms` still empty). */
+  private capstoneCleared(state: GameState): boolean {
+    const rt = state.dungeonRoomRuntime[state.dungeonRoomRuntime.length - 1];
+    return rt !== undefined && rt.activated && !rt.hasLiveEnemy;
   }
 
   /** Merge this floor's buffer into the run's carry-out bag and reset it. Insertion
@@ -70,12 +92,16 @@ export class ExtractionSystem {
     this.bankFloorMaterials(state);
     state.floorIndex++;
     if (state.dungeonEnabled) {
-      // The next floor's stages are generated lazily by SpawnSystem when it sees a fresh
-      // floor (roomIndex -1) — the single owner of roomgenPrng draws, same as floor 0.
-      // Just reset the room cursor; the current geometry stays until stage 0 loads.
-      state.roomIndex = -1;
-      state.floorStages = [];
-      state.floorLayout = [];
+      // The next floor is generated + placed lazily by SpawnSystem when it sees a fresh
+      // floor (`dungeonRooms.length === 0`) — the single owner of roomgenPrng draws, same
+      // as floor 0. Just clear the co-resident room/door state; the current geometry
+      // stays live until the new floor is placed and stitched in.
+      state.dungeonRooms.length = 0;
+      state.dungeonDoors.length = 0;
+      state.dungeonRoomRuntime.length = 0;
+      state.dungeonRoomRects.length = 0;
+      state.dungeonRoomIndexById.clear();
+      state.dungeonBaseWalls.length = 0;
     } else {
       state.waves = state.extraFloors[state.floorIndex - 1]!;
     }

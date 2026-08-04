@@ -3,14 +3,21 @@ import type { ZoneState } from '@dd/engine';
 
 // Pure minimap math (design/10 "room progress"), decoupled from Pixi so it's unit-
 // testable the same way the engine's own content converters are (content/arenas.ts
-// buildArenaGeometry). PvP-only, and PERMANENTLY so — not a staging gap. PvE's
-// ROADMAP 1.3 dungeon wiring has been live since 2026-07-24 (an earlier version of
-// this comment was stale on that point), but PvE loads exactly ONE room live at a
-// time, hot-swapping its geometry on every transition — there is no co-resident
-// multi-room `ArenaMap`-shaped layout for PvE to ever feed into `computeMinimapLayout`
-// (PvP's map is co-resident by design, ROADMAP 4.2b). PvE's own "real minimap" is a
-// different, honest shape for its actual data — a progress TRACK, not a spatial map
-// — see `client/src/game/ui/floorProgressMath.ts`/`FloorProgress.ts`.
+// buildArenaGeometry). PvP-only for now, but no longer for the structural reason an
+// earlier version of this comment gave: PvE floors ARE co-resident since design/05
+// "Room & door model" (2026-08-04) — `GameState.dungeonRooms`/`dungeonDoors` is real
+// x/y-placed, door-connected data, the same SHAPE of thing this function consumes.
+// The reason this function still isn't fed from PvE is narrower and purely
+// type-level: `computeMinimapLayout` takes engine's `ArenaMap`/`ArenaRoom`/`Door`
+// specifically, and PvE's placed-room data is a distinct (structurally similar, not
+// identical) type — `PlacedRoom`/`DoorRuntime` in `world/dungeon.ts`/`GameState.ts`,
+// not `ArenaMap`. Feeding PvE into a real spatial minimap is a real, doable follow-up
+// (an adapter from `PlacedRoom[]`/`DoorRuntime[]` to this function's shape, or a
+// small overload), just not done yet — this file wiring PvE in is not blocked on any
+// engine-side co-residency gap anymore, only on someone writing that adapter. Until
+// then, PvE's own "real minimap" stays the different, honest shape for its actual
+// data that's actually wired today — a progress TRACK, not a spatial map — see
+// `client/src/game/ui/floorProgressMath.ts`/`FloorProgress.ts`.
 
 export interface MinimapRoomLayout {
   id: RoomId;

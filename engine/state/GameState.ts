@@ -21,6 +21,7 @@ import {
   buildArenaRoomRects,
   type ArenaMap,
   type CellTrait,
+  type Door,
   type RoomId,
 } from '../content/arenas';
 import type {
@@ -35,7 +36,7 @@ import type {
   Winner,
 } from './entities';
 import type { GameEvent } from './events';
-import type { DungeonConfig } from '../world/dungeon';
+import type { DungeonConfig, PlacedRoom } from '../world/dungeon';
 import type { RoomPiece } from '../content/rooms';
 
 export type Phase = 'idle' | 'playing' | 'gameover';
@@ -182,6 +183,44 @@ export interface ArenaRoomRuntime {
   lootSpawned: boolean;
 }
 
+/**
+ * One dungeon room's lazy-activation + WaveScript runtime + combat-lock state
+ * (design/05 "Room & door model", 2026-08-04, DoorSystem). Parallel array to
+ * `dungeonRooms` (index-aligned, same array-order-determinism convention as
+ * `arenaRoomRuntime`). `activated`/`roomTick`/`schedule`/`cursor` mirror
+ * `ArenaRoomRuntime`'s exact shape and trigger (activates the tick a player's
+ * `roomId` first matches this room; its WaveScript starts fresh from that
+ * moment — NOT a shared floor-wide clock, so a room nobody has reached yet
+ * keeps its full intended spawn pacing whenever it's eventually activated).
+ * `hasLiveEnemy` is new: a room is "in combat" purely because it has a live
+ * enemy (never an authored flag) — see `DoorSystem`. No separate `locked` field
+ * here: a room's OWN combat state is exactly `hasLiveEnemy` (that's the thing
+ * whose rising/falling edge fires force-regroup / unlocks its doors); "locked"
+ * as a concept only exists per-DOOR (`DoorRuntime.locked` below), since a door
+ * shared by two rooms locks if EITHER side has a live enemy.
+ */
+export interface DungeonRoomRuntime {
+  activated: boolean;
+  roomTick: number;
+  schedule: { atTick: number; spawnPoint: number; enemyType?: string }[];
+  cursor: number;
+  hasLiveEnemy: boolean;
+}
+
+/**
+ * One dungeon door's runtime lock state (design/05, 2026-08-04, DoorSystem).
+ * `passageAabb` is `door.passageGrid` pre-converted to Fp ONCE (same
+ * "convert once, never inside a system" rule as `walls`/`obstacles`/
+ * `arenaRoomRects`) — `DoorSystem` re-adds it into `state.walls` while locked
+ * and removes it while open, without ever re-deriving the rect from grid units
+ * at match time.
+ */
+export interface DoorRuntime {
+  door: Door;
+  passageAabb: AABB;
+  locked: boolean;
+}
+
 export class GameState {
   readonly seed: number;
   phase: Phase = 'idle';
@@ -266,30 +305,37 @@ export class GameState {
   readonly dungeonEnabled: boolean;
   readonly dungeonConfig?: DungeonConfig;
   readonly roomLibrary: readonly RoomPiece[];
-  // The CURRENT floor's generated STAGE plan (world/dungeon.ts generateFloor): each
-  // stage is the candidate room(s) offered at that step (1 for linear, branchFactor for
-  // branching); the last stage is the single capstone. Regenerated per floor when
-  // SpawnSystem sees a fresh floor (roomIndex -1).
-  floorStages: readonly (readonly RoomPiece[])[] = [];
-  // The RESOLVED path this run has actually taken through the current floor — the room
-  // chosen at each stage entered so far, in order. Grows by one per stage; for a linear
-  // floor this ends up equal to `floorStages` flattened. `floorLayout[roomIndex]` is the
-  // live room (render + HUD read it). Reset to [] when a fresh floor is generated.
-  floorLayout: readonly RoomPiece[] = [];
-  // Index of the live STAGE (into floorStages / the resolved floorLayout); -1 = no room
-  // loaded yet (run start, or just DESCENDed → SpawnSystem regenerates + loads stage 0).
-  roomIndex = -1;
-  // Ticks since the live room loaded (room-local clock for WaveScript timing). Drives
-  // the staggered spawn schedule below; reset to 0 by SpawnSystem.loadRoom.
-  roomTick = 0;
-  // The live room's spawn schedule (design/09 WaveScript), pre-expanded at room load:
-  // each WaveEntry becomes `count` timed spawn events (copy j at atTick + j*spacingTicks),
-  // sorted by (atTick, authoring order) so dispatch is deterministic. Empty for a room
-  // with no enemies. `roomSpawnCursor` is how many have been dispatched so far — a room
-  // is not "cleared" (and won't advance) until the cursor reaches the end AND no enemies
-  // remain, so staggered spawns can't be skipped by killing the early ones fast.
-  roomSchedule: { atTick: number; spawnPoint: number; enemyType?: string }[] = [];
-  roomSpawnCursor = 0;
+  // Co-resident room/door model (design/05 "Room & door model", 2026-08-04) —
+  // supersedes the old one-room-at-a-time swap (roomIndex/roomTick/roomSchedule/
+  // roomSpawnCursor/floorStages/floorLayout): every room of the current floor is
+  // placed and stitched into `walls`/`obstacles` at once, matching PvP's co-resident
+  // `arenaMap` shape. `dungeonRooms.length === 0` is the "generate a fresh floor"
+  // sentinel SpawnSystem checks (mirrors the old `roomIndex === -1`) — set by
+  // ExtractionSystem.resolveDescend, populated by SpawnSystem's dungeon branch.
+  // `readonly` is the array REFERENCE, not its contents (same convention as
+  // `walls`/`obstacles` above) — a fresh floor clears-and-repushes in place.
+  readonly dungeonRooms: PlacedRoom[] = [];
+  readonly dungeonDoors: DoorRuntime[] = [];
+  // Parallel array to `dungeonRooms` (index-aligned) — same convention as
+  // `arenaRoomRuntime`. The floor's capstone (extraction/boss) room is always the
+  // LAST entry, since `generateFloor` always appends it last.
+  readonly dungeonRoomRuntime: DungeonRoomRuntime[] = [];
+  // Every dungeon room's rect, pre-converted to Fp ONCE (same rule as
+  // `arenaRoomRects`) — `EnvironmentSystem`'s room-membership test reads this,
+  // never `dungeonRooms` directly.
+  readonly dungeonRoomRects: { id: RoomId; rect: AABB }[] = [];
+  // O(1) RoomId → index lookup into `dungeonRooms`/`dungeonRoomRuntime` (same
+  // sanctioned pattern as `content/arenas.ts computeRoomDistances`'s own
+  // `idToIndex` — a pure lookup, never iterated, so Map iteration order never
+  // affects any result). Rebuilt alongside `dungeonRooms` on a fresh floor.
+  readonly dungeonRoomIndexById: Map<RoomId, number> = new Map();
+  // The floor's fully-open wall geometry (every door carved, none re-added) — set
+  // once when the floor is placed, alongside `walls`/`obstacles` (which start
+  // identical to this). `DoorSystem` recomputes `walls` from THIS plus whichever
+  // doors are currently locked, every time a lock changes, rather than trying to
+  // incrementally add/remove an AABB from a flat array with no memory of which
+  // door put it there.
+  readonly dungeonBaseWalls: AABB[] = [];
 
   // PvP arena mode (design/15, ROADMAP 4.2b/c/d). All inert unless `zoneEnabled`
   // (EngineConfig.arena was provided) — ZoneSystem/EnvironmentSystem are strict

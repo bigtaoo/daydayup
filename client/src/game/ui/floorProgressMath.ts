@@ -1,14 +1,16 @@
 // Pure PvE dungeon-progress math (design/10 "a real PvE minimap"), decoupled from
 // Pixi like minimapLayout.ts. NOT the same shape as that file's PvP room-graph
-// layout: PvE loads exactly one room "live" at a time, hot-swapping its geometry on
-// every transition (ROADMAP 1.3), so there is no co-resident multi-room map with
-// real x/y positions to fit into a box — the earlier "blocked on multi-room floor
-// wiring" note turned out to be stale (that wiring has been live since 2026-07-24),
-// but the actual PvP-style spatial minimap still has no PvE data to draw from, by
-// design. What PvE DOES have is `GameState.floorStages`/`roomIndex`: a known-upfront
-// STAGE COUNT for the current floor (`world/dungeon.ts generateFloor`'s own
-// guarantee: the last stage is always the single capstone extraction/boss room) and
-// how far into it the run has gotten — a linear/branching PROGRESS TRACK, not a map.
+// layout — PvE floors ARE co-resident now too (design/05 "Room & door model",
+// 2026-08-04: every room of a floor is placed and stitched at once, matching PvP's
+// `ArenaMap`), but this widget deliberately stays a linear PROGRESS TRACK rather than
+// switching to the spatial `Minimap`: a PvE floor's rooms sit on a single generated
+// west→east spine (`world/dungeon.ts placeFloor`), so a room-count + "how far in"
+// track already tells the whole story with less screen space than a room-graph map
+// would, for no real loss of information. `stageCount`/`roomIndex` below are derived
+// from `GameState.dungeonRooms.length` and the local player's own `roomId` (looked up
+// via `dungeonRoomIndexById`) by the caller (`HudView`) — there is no longer a single
+// global "current room" field on `GameState` itself, since rooms are all live at once
+// and "current" is inherently per-player.
 
 export type StageStatus = 'done' | 'current' | 'upcoming';
 
@@ -20,10 +22,12 @@ export interface FloorProgressStep {
   capstone: boolean;
 }
 
-/** `stageCount` = `state.floorStages.length` (0 for a non-dungeon config — flat
+/** `stageCount` = `state.dungeonRooms.length` (0 for a non-dungeon config — flat
  * `EngineConfig.floors` or a PvP arena — the caller hides the widget entirely then,
- * same convention as roomStatus's "no zone → nothing is unsafe"). `roomIndex` =
- * `state.roomIndex` (-1 before the first room of a fresh floor loads). */
+ * same convention as roomStatus's "no zone → nothing is unsafe"). `roomIndex` = the
+ * local player's room index (`dungeonRoomIndexById.get(p.roomId)`), or -1 before a
+ * floor has placed / before that lookup resolves (the same one-tick activation lag
+ * every room has right after a fresh floor is placed). */
 export function computeFloorProgress(stageCount: number, roomIndex: number): FloorProgressStep[] {
   const steps: FloorProgressStep[] = [];
   for (let i = 0; i < stageCount; i++) {

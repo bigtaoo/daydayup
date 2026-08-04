@@ -132,16 +132,37 @@ describe('HudView — stat chips (design/10, replaced the monospace info line)',
   });
 
   it('reports the floor and room the state is actually on', () => {
+    // Co-resident room/door model (design/05, 2026-08-04): the floor's room COUNT is
+    // `dungeonRooms.length` (every room placed at once); WHICH room is per-player
+    // (`roomId`, looked up via `dungeonRoomIndexById`) rather than a single global
+    // cursor — a real `PlacedRoom` shape isn't needed since HudView only reads length.
     const hud = newHud();
     const s = pveState();
     s.floorIndex = 1;
-    s.roomIndex = 2;
-    s.floorStages = ['combat', 'combat', 'combat', 'boss'] as never;
+    s.dungeonRooms.push({} as never, {} as never, {} as never, {} as never); // 4 rooms this floor
+    s.dungeonRoomIndexById.set('r2', 2);
+    s.players[0]!.roomId = 'r2';
 
     hud.update(s, 16, CTX);
 
     expect(hud.chips.get('floor')!.valueText).toBe('2/3');
     expect(hud.chips.get('room')!.valueText).toBe('3/4');
+  });
+
+  it('falls back to room 1 before the local player\'s roomId resolves to any placed room', () => {
+    // The one-tick activation lag right after a fresh floor places (design/05,
+    // 2026-08-04): dungeonRooms is already populated, but EnvironmentSystem hasn't
+    // confirmed the player's roomId against it yet — `dungeonRoomIndexById.get`
+    // returns undefined, which must read as "room 1", not crash or show "0/3".
+    const hud = newHud();
+    const s = pveState();
+    s.dungeonRooms.push({} as never, {} as never, {} as never);
+    expect(s.players[0]!.roomId).toBeUndefined();
+
+    hud.update(s, 16, CTX);
+
+    expect(hud.chips.get('room')!.valueText).toBe('1/3');
+    expect(hud.floorProgress.view.visible).toBe(true);
   });
 
   // design/10 screen-flow gap: the floor chip used to hardcode EMBER_DUNGEON.floorCount
@@ -247,17 +268,16 @@ describe('HudView — mode-dependent widgets', () => {
   it('shows the PvE floor track outside an arena', () => {
     const hud = newHud();
     const s = pveState();
-    s.floorStages = ['combat', 'combat', 'boss'] as never;
+    s.dungeonRooms.push({} as never, {} as never, {} as never);
 
     hud.update(s, 16, CTX);
 
     expect(hud.floorProgress.view.visible).toBe(true);
   });
 
-  it('hides the floor track for a flat (non-dungeon) config with no stages', () => {
+  it('hides the floor track for a flat (non-dungeon) config with no rooms placed', () => {
     const hud = newHud();
-    const s = pveState();
-    s.floorStages = [] as never;
+    const s = pveState(); // dungeonRooms is empty by default for a non-dungeon config
 
     hud.update(s, 16, CTX);
 

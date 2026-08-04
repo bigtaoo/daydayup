@@ -14,7 +14,7 @@ import { BASIC_ENEMY } from '@dd/engine/content/enemies';
 import { PLAYER_BASE } from '@dd/engine/content/players';
 import { makeWeapon, BLASTER_SIM } from '@dd/engine/content/weapons';
 import { createGameState } from '@dd/engine/state/GameState';
-import type { GameState } from '@dd/engine/state/GameState';
+import type { EngineConfig, GameState } from '@dd/engine/state/GameState';
 import { ENEMY_TEAM_ID, type EnemyActor, type PlayerActor, type Projectile } from '@dd/engine/state/entities';
 import {
   DOWNED_BLEEDOUT_TICKS, REVIVE_CHANNEL_TICKS, REVIVE_HP, REVIVE_RANGE_GRID,
@@ -24,6 +24,8 @@ import {
 } from '@dd/engine/systems';
 import { createGameEngine } from '@dd/engine/GameEngine';
 import { makeCommand } from '@dd/engine/state/input';
+import { Button } from '@dd/engine/state/commands';
+import type { RoomPiece } from '@dd/engine/content/rooms';
 
 const CFG = { seed: 7, worldW: 1600, worldH: 1200, waves: [] as const };
 const state = (): GameState => createGameState(CFG);
@@ -272,6 +274,71 @@ describe('downed players are invulnerable (design/07, 3.2)', () => {
     new HitResolveSystem().tick(s);
     expect(p.hp).toBe(0); // unchanged — no overkill, no re-death
     expect(b.alive).toBe(true); // bullet not consumed by a downed body
+  });
+});
+
+describe('ReviveSystem — a dungeon force-regroup interrupts an in-progress revive (design/05, 2026-08-04)', () => {
+  // Two rooms; room 2 has one enemy so stepping a player inside it activates combat
+  // and DoorSystem force-regroups every OTHER online, non-downed player into it —
+  // this test's actual subject is what that does to a channel running back in room 1.
+  const ROOM1: RoomPiece = {
+    id: 'fr_room1', tags: ['fr'], sizeGrid: { w: 20, h: 16 }, solids: [],
+    spawns: { player: [{ x: 2, y: 8 }], enemy: [] },
+    exits: [{ edge: 'east' }],
+  };
+  const ROOM2: RoomPiece = {
+    id: 'fr_room2', role: 'boss', sizeGrid: { w: 20, h: 16 }, solids: [],
+    spawns: { player: [{ x: 2, y: 8 }], enemy: [{ x: 16, y: 8, type: 'basic' }] },
+    exits: [{ edge: 'west' }],
+  };
+  const CFG: EngineConfig = {
+    seed: 21, worldW: 640, worldH: 640, waves: [],
+    players: [{}, {}, {}], // A (downed), B (reviver), C (the one who walks into room 2)
+    dungeon: {
+      config: {
+        biomeId: 'fr', nameKey: 'fr', floorCount: 1, roomsPerFloor: { min: 2, max: 2 },
+        pieceTags: ['fr'], layout: 'linear', extractionPieceId: 'fr_room2', bossPieceId: 'fr_room2',
+        difficultyCurve: { base: 1, perFloor: 0 },
+      },
+      library: [ROOM1, ROOM2],
+    },
+  };
+  const interactCmd = (owner: number, tick: number) =>
+    makeCommand({ owner, tick, moveBrad: 0 as Brad, moveMag: 0, buttons: Button.INTERACT });
+
+  it("yanking the reviver away resets the channel via the SAME unmodified findReviver distance check — no bespoke interrupt code", () => {
+    const eng = createGameEngine(CFG);
+    const s = eng.state;
+    eng.step([]); // tick 1: floor places (co-resident); room 1 not yet activated (1-tick lag)
+
+    const [a, b, c] = s.players;
+    a!.downed = true;
+    a!.hp = 0;
+    a!.bleedoutTicks = DOWNED_BLEEDOUT_TICKS;
+
+    for (let t = 2; t <= 6; t++) eng.step([interactCmd(1, t)]); // B channels A's revive
+    expect(a!.downed).toBe(true); // not complete yet (REVIVE_CHANNEL_TICKS is well above 5)
+    expect(a!.reviveProgressTicks).toBe(5);
+    expect(a!.bleedoutTicks).toBe(DOWNED_BLEEDOUT_TICKS); // paused — a valid reviver was present throughout
+
+    // Directly place C inside room 2 (bypassing real movement — a targeted state poke,
+    // same convention this file already uses for "force a downed/lethal state").
+    const room2 = s.dungeonRooms.find((r) => r.piece.id === 'fr_room2')!;
+    c!.gx = toFpGrid(room2.offsetXGrid + 16);
+    c!.gy = toFpGrid(room2.offsetYGrid + 8);
+
+    // Tick 7, one call: EnvironmentSystem sees C's new roomId → SpawnSystem activates
+    // room 2 + spawns its enemy (roomId set directly) → DoorSystem's rising edge force-
+    // regroups B (the only OTHER online, non-downed player — A is downed, C is already
+    // there) → ReviveSystem, later this SAME tick, re-checks B's distance from A and
+    // fails, exactly as an ordinary "reviver walked off" interruption would.
+    eng.step([interactCmd(1, 7)]);
+
+    expect(b!.roomId).toBe(room2.id); // B was pulled into the fight, not walked
+    expect(c!.roomId).toBe(room2.id); // C (the trigger) stays exactly where it was
+    expect(a!.reviveProgressTicks).toBe(0); // channel reset
+    expect(a!.bleedoutTicks).toBe(DOWNED_BLEEDOUT_TICKS - 1); // bleedout resumed for one tick
+    expect(a!.downed).toBe(true); // still down — just no longer being revived
   });
 });
 

@@ -10,6 +10,7 @@ export { StatusEffectSystem } from './StatusEffectSystem';
 export { DeathDropsSystem } from './DeathDropsSystem';
 export { PickupSystem } from './PickupSystem';
 export { SpawnSystem } from './SpawnSystem';
+export { DoorSystem } from './DoorSystem';
 export { ExtractionSystem } from './ExtractionSystem';
 export { ReviveSystem } from './ReviveSystem';
 export { WinConditionSystem } from './WinConditionSystem';

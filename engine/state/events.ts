@@ -37,10 +37,21 @@ export type GameEvent =
   // buffer just banked and the next floor's waves are loading. EXTRACT reuses the
   // existing 'win' event (a successful run end either way).
   | { type: 'descend'; floorIndex: number }
-  // A generated dungeon room just became live (design/05/09, ROADMAP 1.3 wired) — its
-  // collision geometry, world bounds, and enemies were swapped in (SpawnSystem). The
-  // render layer will use this to rebuild the room's ground/walls; fx-only, transient.
-  | { type: 'room_enter'; floorIndex: number; roomIndex: number; roomId: string }
+  // A dungeon room just activated (design/05/09, ROADMAP 1.3; reshaped 2026-08-04 for
+  // the co-resident room/door model — DoorSystem) — the first tick any player's
+  // `roomId` matched it, so its WaveScript just started. Every floor's rooms are all
+  // simultaneously live (`state.dungeonRooms`), so there is no single numeric "current
+  // room index" left to report — `roomId` alone identifies which room. fx-only,
+  // transient, used by the render layer to know a room just became relevant.
+  | { type: 'room_enter'; floorIndex: number; roomId: string }
+  // A dungeon room's doors locked/unlocked as a unit (design/05, 2026-08-04, DoorSystem)
+  // — locked the instant the room has ANY live enemy, unlocked the instant the last one
+  // dies (never re-locked after that, since a cleared room never respawns). fx-only.
+  | { type: 'door_locked'; roomId: string }
+  | { type: 'door_unlocked'; roomId: string }
+  // A room's combat rising edge force-regrouped every other online, non-downed player
+  // to its entrance (design/05, 2026-08-04, DoorSystem) — not optional, no opt-out.
+  | { type: 'force_regroup'; roomId: string; playerIds: readonly number[] }
   // PvP zone (design/15, ROADMAP 4.2d) — render/HUD/minimap-only, never fed back into
   // sim decisions (the `06` render/logic split, unchanged). `zone_warn` telegraphs the
   // NEXT stage's soon-to-close rooms; `zone_close` fires the instant they go live;

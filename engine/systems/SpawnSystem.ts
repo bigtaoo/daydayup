@@ -13,12 +13,11 @@ import type { Fp } from '../math/fixed';
 import { SIM } from '../sim.config';
 import { pxToFp, toFpGrid } from '../content/convert';
 import { buildEnemyActor } from '../content/enemies';
-import { cosFp, BRAD_FULL } from '../math/trig';
-import { roomGeometry, type RoomPiece, type WaveScript } from '../content/rooms';
+import type { WaveScript } from '../content/rooms';
 import type { ArenaRoom } from '../content/arenas';
-import { generateFloor } from '../world/dungeon';
-import type { PickupItem } from '../state/entities';
-import type { ArenaRoomRuntime, GameState, WaveDef } from '../state/GameState';
+import { generateFloor, placeFloor, buildFloorGeometry, toFpAabbGrid, type PlacedRoom } from '../world/dungeon';
+import type { EnemyActor, PickupItem } from '../state/entities';
+import type { ArenaRoomRuntime, DungeonRoomRuntime, GameState, WaveDef } from '../state/GameState';
 import { clampToWalkable } from './geom';
 
 /** One expanded, timed spawn entry — shared shape between dungeon's single global
@@ -112,153 +111,146 @@ export class SpawnSystem {
    * design/09 forward-compat); the aiPrng draw stays one-per-spawn regardless of
    * variant, so fire-phase jitter is unaffected by which mobs a wave/room contains.
    */
-  private spawnEnemyAt(state: GameState, gx: Fp, gy: Fp, type?: string): void {
-    state.enemies.push(buildEnemyActor(state, gx, gy, type));
+  private spawnEnemyAt(state: GameState, gx: Fp, gy: Fp, type?: string): EnemyActor {
+    const enemy = buildEnemyActor(state, gx, gy, type);
+    state.enemies.push(enemy);
+    return enemy;
   }
 
-  // ── Dungeon mode (design/05/09, ROADMAP 1.3 wired live) ─────────────────────────
+  // ── Dungeon mode (design/05 "Room & door model", 2026-08-04 — co-resident) ──────
 
   /**
-   * The room-by-room director. A floor is a generated `RoomPiece` sequence; one room
-   * is live at a time. On entering a floor (roomIndex -1) it generates the layout and
-   * loads room 0. Thereafter, when the live room is cleared (no enemies), it either
-   * advances to the next room or — if that WAS the floor's capstone — raises
-   * `wavesExhausted`, handing off to ExtractionSystem (step 12) exactly as the flat
-   * wave director does. It never loads or advances while enemies remain, so a room is
-   * "clear it to proceed" (the WaveScript timeline — staggered atTick spawns — is a
-   * documented follow-up; entries spawn at room-load for now).
+   * The floor director. A floor is now every one of its `RoomPiece`s placed into ONE
+   * co-resident, door-connected map (`world/dungeon.ts` `generateFloor`→`placeFloor`→
+   * `buildFloorGeometry`) — matching PvP's `ArenaMap` shape — rather than one room
+   * swapped in at a time. On a fresh floor (`dungeonRooms.length === 0`, the sentinel
+   * `ExtractionSystem.resolveDescend` resets to) it generates + places + stitches the
+   * whole floor once (the only live `roomgenPrng` draw site, room selection AND door
+   * placement together). Every tick thereafter, each room activates — and its own
+   * `WaveScript` starts, completely fresh from its own `roomTick === 0` — the first
+   * tick any player's `roomId` matches it, EXACTLY mirroring `tickArena`'s own
+   * activation trigger/timing below (deliberately not a shared floor-wide clock: a
+   * room nobody has reached yet keeps its full intended spawn pacing whenever it's
+   * eventually activated, design/05). `DoorSystem` (step 11.5, right after this one)
+   * reads this tick's freshly-dispatched enemies to lock/unlock doors and force-
+   * regroup — never this system's concern.
    */
   private tickDungeon(state: GameState): void {
-    if (state.roomIndex === -1) {
-      // Fresh floor: generate its stage plan (the only live roomgenPrng draw site) and
-      // enter stage 0. Runs exactly once per floor — roomIndex is -1 only at run start
-      // and immediately after a DESCEND (ExtractionSystem resets it).
-      state.floorStages = generateFloor(
-        state.dungeonConfig!,
-        state.floorIndex,
-        state.roomgenPrng,
-        state.roomLibrary,
-      ).stages;
-      state.floorLayout = []; // reset the resolved path for the new floor
-      this.enterStage(state, 0);
-      return;
+    if (state.dungeonRooms.length === 0) {
+      this.generateAndPlaceFloor(state);
+    }
+    for (let i = 0; i < state.dungeonRooms.length; i++) {
+      const room = state.dungeonRooms[i]!;
+      const rt = state.dungeonRoomRuntime[i]!;
+      if (!rt.activated) {
+        const entered = state.players.some((p) => p.alive && p.roomId === room.id);
+        if (!entered) continue;
+        rt.activated = true;
+        rt.roomTick = 0;
+        rt.schedule = expandEncounter(
+          room.piece.encounter,
+          room.piece.spawns.enemy.length,
+          (idx) => room.piece.spawns.enemy[idx]?.type,
+        );
+        rt.cursor = 0;
+        state.events.push({ type: 'room_enter', floorIndex: state.floorIndex, roomId: room.id });
+      } else {
+        rt.roomTick++;
+      }
+      this.dispatchDungeonSpawns(state, room, rt);
+    }
+  }
+
+  /**
+   * Generate this floor's room sequence, place it into a co-resident, door-connected
+   * map, and stitch its collision geometry in — replacing the previous floor's
+   * (content-swap in place, `state.rebuildSpatialIndex()`, same convention every
+   * other room-geometry rebuild in this engine already follows). Every per-room
+   * runtime/rect array is cleared and repopulated (never reassigned — `readonly` on
+   * these fields is the array reference, not the contents). Teleports every player
+   * onto the floor's first room's own authored spawn points (co-op players share
+   * spawn 0 if the room authored fewer points than there are players) — a
+   * force-regroup mid-floor teleport (DoorSystem) uses each room's single
+   * `entranceGrid` instead, since spreading players out is a floor-start-only
+   * concern.
+   */
+  private generateAndPlaceFloor(state: GameState): void {
+    const layout = generateFloor(state.dungeonConfig!, state.floorIndex, state.roomgenPrng, state.roomLibrary);
+    const { placed, doors } = placeFloor(layout.rooms, state.roomgenPrng);
+    const geo = buildFloorGeometry(placed, doors);
+
+    state.dungeonRooms.length = 0;
+    state.dungeonRooms.push(...placed);
+    state.dungeonRoomIndexById.clear();
+    placed.forEach((r, i) => state.dungeonRoomIndexById.set(r.id, i));
+
+    state.dungeonDoors.length = 0;
+    for (const door of doors) {
+      state.dungeonDoors.push({ door, passageAabb: toFpAabbGrid(door.passageGrid), locked: false });
     }
 
-    state.roomTick++;
-    this.dispatchDueSpawns(state); // spawn any WaveScript entries now due (design/09 timing)
-
-    // A room is cleared only once every scheduled spawn has been dispatched AND no
-    // enemy remains — so a staggered encounter can't be skipped by killing its first
-    // wave before the later ones appear.
-    if (state.roomSpawnCursor < state.roomSchedule.length) return;
-    if (state.enemies.length > 0) return;
-
-    if (state.roomIndex >= state.floorStages.length - 1) {
-      // The floor's capstone room is cleared → checkpoint. ExtractionSystem resolves
-      // EXTRACT/DESCEND (or auto-EXTRACT on the last floor). Idempotent while it waits.
-      state.wavesExhausted = true;
-      return;
+    state.dungeonRoomRuntime.length = 0;
+    for (let i = 0; i < placed.length; i++) {
+      state.dungeonRoomRuntime.push({ activated: false, roomTick: 0, schedule: [], cursor: 0, hasLiveEnemy: false });
     }
 
-    this.enterStage(state, state.roomIndex + 1); // advance to the next stage in this floor
-  }
+    state.dungeonRoomRects.length = 0;
+    for (const r of placed) {
+      state.dungeonRoomRects.push({
+        id: r.id,
+        rect: {
+          x: toFpGrid(r.offsetXGrid),
+          y: toFpGrid(r.offsetYGrid),
+          w: toFpGrid(r.piece.sizeGrid.w),
+          h: toFpGrid(r.piece.sizeGrid.h),
+        },
+      });
+    }
 
-  /**
-   * Resolve which candidate of stage `idx` to enter, append it to the resolved path
-   * (so floorLayout[roomIndex] is always the live room), and load it. A linear stage
-   * has one option; a branching stage's choice comes from chooseBranch.
-   */
-  private enterStage(state: GameState, idx: number): void {
-    const candidates = state.floorStages[idx] ?? [];
-    const room = candidates[this.chooseBranch(state, candidates)] ?? candidates[0];
-    if (!room) return; // empty stage (shouldn't happen — generateFloor never emits one)
-    state.floorLayout = [...state.floorLayout, room];
-    this.loadRoom(state, idx, room);
-  }
-
-  /**
-   * Pick which candidate to enter at a branching stage (design/05 reward-choice). A
-   * single-option (linear) stage returns 0; for two, facing west takes the first and
-   * east the second; for more, the facing circle splits into equal sectors. Resolved
-   * from player 0's `facing` — deterministic (ApplyInputSystem sets it every tick from
-   * the command stream) and needs no new input. Since design/10's aim removal (v33),
-   * `facing` at a branch point (no enemies alive to auto-lock onto) is whichever
-   * direction the player is walking — so in practice this reads as "walk toward the
-   * west exit to take it," not a separate aiming gesture. A door/portal selection UX
-   * is a presentation follow-up (design/10).
-   */
-  private chooseBranch(state: GameState, candidates: readonly RoomPiece[]): number {
-    const n = candidates.length;
-    if (n <= 1) return 0;
-    const facing = state.players[0]?.facing ?? 0;
-    if (n === 2) return cosFp(facing) < 0 ? 0 : 1;
-    const frac = (((facing % BRAD_FULL) + BRAD_FULL) % BRAD_FULL) / BRAD_FULL;
-    return Math.min(n - 1, Math.floor(frac * n));
-  }
-
-  /**
-   * Make room `idx` of the current floor live: swap in its collision geometry, resize
-   * the world to the room, teleport the players onto its spawn points, and spawn its
-   * enemies. Content-swaps the walls/obstacles arrays (never reassigns the reference,
-   * so readers stay valid). Emits `room_enter` for the render layer.
-   */
-  private loadRoom(state: GameState, idx: number, room: RoomPiece): void {
-    state.roomIndex = idx;
-    state.roomTick = 0; // restart the room-local clock for the WaveScript schedule
-
-    const { walls, obstacles } = roomGeometry(room);
+    state.dungeonBaseWalls.length = 0;
+    state.dungeonBaseWalls.push(...geo.walls);
     state.walls.length = 0;
-    state.walls.push(...walls);
+    state.walls.push(...geo.walls);
     state.obstacles.length = 0;
-    state.obstacles.push(...obstacles);
+    state.obstacles.push(...geo.obstacles);
     state.rebuildSpatialIndex();
+    state.worldW = geo.worldW;
+    state.worldH = geo.worldH;
 
-    state.worldW = toFpGrid(room.sizeGrid.w);
-    state.worldH = toFpGrid(room.sizeGrid.h);
-
-    // Room-to-room movement is an automatic teleport to the next room's spawn (never
-    // "walk out a door"), so an uncollected drop from the room just left can never be
-    // reached again — and left in place it renders at a stale world position that may
-    // now sit outside the new (possibly smaller) room's bounds entirely. Same rule
-    // ExtractionSystem.resolveDescend already applies on floor-to-floor.
+    // Same rule as every floor/room transition before this one (design/05/09): an
+    // uncollected drop can never be reached again once the geometry it sat on is gone.
     state.pickups.length = 0;
 
-    // Teleport each player onto the room's player spawn (co-op players share spawn 0
-    // if the room authored fewer points than there are players — single-player today).
-    state.players.forEach((p, i) => {
-      const sp = room.spawns.player[i] ?? room.spawns.player[0];
+    const first = placed[0];
+    if (first) {
+      state.players.forEach((p, i) => {
+        const sp = first.piece.spawns.player[i] ?? first.piece.spawns.player[0];
+        if (sp) {
+          p.gx = toFpGrid(sp.x + first.offsetXGrid);
+          p.gy = toFpGrid(sp.y + first.offsetYGrid);
+        }
+      });
+    }
+  }
+
+  /** Same dispatch shape as the arena's `dispatchArenaSpawns` — a room's own
+   * independent clock/cursor, since every dungeon room is now co-resident too.
+   * Sets each newly-spawned enemy's `roomId` DIRECTLY (never left to next tick's
+   * `EnvironmentSystem` inference, unlike a PvP arena spawn) so `DoorSystem`
+   * (step 11.5, right after this system) sees an accurate `hasLiveEnemy` this SAME
+   * tick — a real, deliberate difference from the arena path: without it, a room's
+   * doors would stay open for one extra tick after its first enemy spawns, a real
+   * (if narrow) walk-back-out window. */
+  private dispatchDungeonSpawns(state: GameState, room: PlacedRoom, rt: DungeonRoomRuntime): void {
+    while (rt.cursor < rt.schedule.length) {
+      const ev = rt.schedule[rt.cursor]!;
+      if (ev.atTick > rt.roomTick) break;
+      const sp = room.piece.spawns.enemy[ev.spawnPoint];
       if (sp) {
-        p.gx = toFpGrid(sp.x);
-        p.gy = toFpGrid(sp.y);
+        const enemy = this.spawnEnemyAt(state, toFpGrid(sp.x + room.offsetXGrid), toFpGrid(sp.y + room.offsetYGrid), ev.enemyType);
+        enemy.roomId = room.id;
       }
-    });
-
-    this.buildSchedule(state, room);
-    this.dispatchDueSpawns(state); // atTick-0 entries appear the tick the room loads
-    state.events.push({ type: 'room_enter', floorIndex: state.floorIndex, roomIndex: idx, roomId: room.id });
-  }
-
-  /** Pre-expand a room's enemies into a timed spawn schedule — `expandEncounter`
-   * above does the actual work; this just points it at a dungeon RoomPiece's
-   * spawn-point source and stashes the result in the (single, global — one room
-   * live at a time) dungeon schedule fields. */
-  private buildSchedule(state: GameState, room: RoomPiece): void {
-    state.roomSchedule = expandEncounter(room.encounter, room.spawns.enemy.length, (i) => room.spawns.enemy[i]?.type);
-    state.roomSpawnCursor = 0;
-  }
-
-  /** Spawn every scheduled entry whose `atTick` has arrived (relative to room load).
-   * The schedule is sorted, so a single forward cursor suffices. A spawn point index
-   * out of range is skipped (forward-compat, design/09). */
-  private dispatchDueSpawns(state: GameState): void {
-    const room = state.floorLayout[state.roomIndex];
-    if (!room) return;
-    while (state.roomSpawnCursor < state.roomSchedule.length) {
-      const ev = state.roomSchedule[state.roomSpawnCursor]!;
-      if (ev.atTick > state.roomTick) break;
-      const sp = room.spawns.enemy[ev.spawnPoint];
-      if (sp) this.spawnEnemyAt(state, toFpGrid(sp.x), toFpGrid(sp.y), ev.enemyType);
-      state.roomSpawnCursor++;
+      rt.cursor++;
     }
   }
 

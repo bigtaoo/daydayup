@@ -9,54 +9,28 @@
  * Wired live (ROADMAP 1.3): pair EMBER_ROOMS with EMBER_DUNGEON (below) as
  * `EngineConfig.dungeon` and SpawnSystem generates + traverses floors from them.
  */
-import type { AabbGrid, RoomEdge, RoomPiece } from '../../content/rooms';
+import type { AabbGrid, RoomPiece } from '../../content/rooms';
 import type { DungeonConfig } from '../dungeon';
 
-// Perimeter walls (design/10 legibility fix, 2026-08-02): every piece used to be a bare
-// open rectangle of floor — no boundary at all, just whatever interior stubs/pillars it
-// authored — which read as unfinished (and let the room's ground fill bleed straight
-// into the render layer's backdrop with nothing framing it). `perimeterWalls` adds a
-// 1-grid-unit-thick border on all 4 edges, with a 4-unit door gap centered on any edge
-// the piece already lists in its own `exits` (confirmed repo-wide: `exits` is otherwise
-// unread by the sim — room-to-room movement is an automatic teleport to the next room's
-// spawn, never "walk through a door" — so this is a purely visual, gameplay-safe
-// addition; it does still change existing collision geometry, so it's a replay-breaking
-// content change like the rest of this session's fixes). An edge absent from `exits`
-// gets one unbroken wall segment instead of a gap.
-function perimeterWalls(w: number, h: number, exits: ReadonlyArray<RoomEdge>): AabbGrid[] {
-  const has = (edge: RoomEdge) => exits.includes(edge);
-  const DOOR = 4;
-  const out: AabbGrid[] = [];
-
-  if (has('north')) {
-    const gapStart = (w - DOOR) / 2;
-    out.push({ x: 0, y: 0, w: gapStart, h: 1 }, { x: gapStart + DOOR, y: 0, w: w - gapStart - DOOR, h: 1 });
-  } else {
-    out.push({ x: 0, y: 0, w, h: 1 });
-  }
-
-  if (has('south')) {
-    const gapStart = (w - DOOR) / 2;
-    out.push({ x: 0, y: h - 1, w: gapStart, h: 1 }, { x: gapStart + DOOR, y: h - 1, w: w - gapStart - DOOR, h: 1 });
-  } else {
-    out.push({ x: 0, y: h - 1, w, h: 1 });
-  }
-
-  if (has('west')) {
-    const gapStart = 1 + (h - 2 - DOOR) / 2;
-    out.push({ x: 0, y: 1, w: 1, h: gapStart - 1 }, { x: 0, y: gapStart + DOOR, w: 1, h: h - 1 - (gapStart + DOOR) });
-  } else {
-    out.push({ x: 0, y: 1, w: 1, h: h - 2 });
-  }
-
-  if (has('east')) {
-    const gapStart = 1 + (h - 2 - DOOR) / 2;
-    out.push({ x: w - 1, y: 1, w: 1, h: gapStart - 1 }, { x: w - 1, y: gapStart + DOOR, w: 1, h: h - 1 - (gapStart + DOOR) });
-  } else {
-    out.push({ x: w - 1, y: 1, w: 1, h: h - 2 });
-  }
-
-  return out;
+// Perimeter walls (design/10 legibility fix, 2026-08-02; door gaps moved to generic
+// placement-time carving, design/05 "Room & door model" 2026-08-04): every piece used
+// to be a bare open rectangle of floor — no boundary at all — which read as unfinished.
+// `perimeterWalls` adds a 1-grid-unit-thick border on all 4 edges. It used to also carve
+// a CENTERED gap on whichever edge the piece listed in `exits` — that centering directly
+// contradicted the locked "door position is never wall-centered" requirement once real,
+// freely-positioned doors existed, so gap-carving moved entirely to `world/dungeon.ts`
+// `carveDoorGaps` (placement-time, given the actual placed+drawn door anchor — this
+// function no longer knows where, or even whether, a door will end up on any edge).
+// Every edge is now always a single unbroken wall segment; `exits` still names which
+// edges a piece is willing to connect through (read by `placeFloor`), just no longer
+// drives this function's own geometry.
+function perimeterWalls(w: number, h: number): AabbGrid[] {
+  return [
+    { x: 0, y: 0, w, h: 1 }, // north
+    { x: 0, y: h - 1, w, h: 1 }, // south
+    { x: 0, y: 1, w: 1, h: h - 2 }, // west
+    { x: w - 1, y: 1, w: 1, h: h - 2 }, // east
+  ];
 }
 
 export const EMBER_ROOMS: readonly RoomPiece[] = [
@@ -65,7 +39,7 @@ export const EMBER_ROOMS: readonly RoomPiece[] = [
     tags: ['ember'],
     sizeGrid: { w: 20, h: 14 },
     // A stub wall jutting from the north edge (interior flavor), plus the perimeter.
-    solids: [{ x: 8, y: 0, w: 4, h: 3 }, ...perimeterWalls(20, 14, ['west', 'east'])],
+    solids: [{ x: 8, y: 0, w: 4, h: 3 }, ...perimeterWalls(20, 14)],
     spawns: { player: [{ x: 2, y: 7 }], enemy: [{ x: 14, y: 4, type: 'floater' }, { x: 14, y: 10 }] },
     exits: [{ edge: 'west' }, { edge: 'east' }],
   },
@@ -73,7 +47,7 @@ export const EMBER_ROOMS: readonly RoomPiece[] = [
     id: 'ember_pillars',
     tags: ['ember'],
     sizeGrid: { w: 18, h: 18 },
-    solids: perimeterWalls(18, 18, ['west', 'east']),
+    solids: perimeterWalls(18, 18),
     pillars: [
       { center: { x: 6, y: 6 }, radius: 1 },
       { center: { x: 12, y: 12 }, radius: 1 },
@@ -88,7 +62,7 @@ export const EMBER_ROOMS: readonly RoomPiece[] = [
     solids: [
       { x: 0, y: 7, w: 5, h: 2 },
       { x: 11, y: 7, w: 5, h: 2 },
-      ...perimeterWalls(16, 16, ['north', 'south', 'east', 'west']),
+      ...perimeterWalls(16, 16),
     ],
     spawns: { player: [{ x: 8, y: 2 }], enemy: [{ x: 4, y: 12, type: 'brute' }, { x: 12, y: 12 }] },
     exits: [{ edge: 'north' }, { edge: 'south' }, { edge: 'east' }, { edge: 'west' }],
@@ -97,7 +71,7 @@ export const EMBER_ROOMS: readonly RoomPiece[] = [
     id: 'ember_narrow',
     tags: ['ember'],
     sizeGrid: { w: 24, h: 8 },
-    solids: perimeterWalls(24, 8, ['west', 'east']),
+    solids: perimeterWalls(24, 8),
     pillars: [{ center: { x: 12, y: 4 }, radius: 1.5 }],
     spawns: { player: [{ x: 2, y: 4 }], enemy: [{ x: 20, y: 4, type: 'ironclad' }] },
     exits: [{ edge: 'west' }, { edge: 'east' }],
@@ -106,7 +80,7 @@ export const EMBER_ROOMS: readonly RoomPiece[] = [
     id: 'ember_extraction',
     role: 'extraction',
     sizeGrid: { w: 12, h: 10 },
-    solids: perimeterWalls(12, 10, ['west']),
+    solids: perimeterWalls(12, 10),
     spawns: { player: [{ x: 6, y: 8 }], enemy: [] },
     exits: [{ edge: 'west' }],
   },
@@ -114,7 +88,7 @@ export const EMBER_ROOMS: readonly RoomPiece[] = [
     id: 'ember_boss',
     role: 'boss',
     sizeGrid: { w: 22, h: 18 },
-    solids: perimeterWalls(22, 18, ['west']),
+    solids: perimeterWalls(22, 18),
     spawns: { player: [{ x: 11, y: 16 }], enemy: [{ x: 11, y: 4, type: 'blightlord' }] },
     exits: [{ edge: 'west' }],
     encounter: { entries: [{ atTick: 0, enemyType: 'blightlord', spawnPoint: 0, count: 1, isBoss: true }] },

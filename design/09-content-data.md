@@ -236,6 +236,27 @@ decide which edge of a room's new perimeter wall (added 2026-08-02, design/10 le
 pass) gets a door-shaped gap instead of a solid segment. A cosmetic consumer, not the
 "connective opening for dungeon assembly" the schema originally named — that remains open.
 
+**Superseded by `05`'s room & door model.** ✅ **Shipped 2026-08-04 (`ENGINE_VERSION` 34).**
+PvE floors moved from the single-room-at-a-time swap above to the same co-resident
+multi-room graph PvP's `ArenaMap` already uses: every room in a floor stays live in
+`GameState` at once. `RoomPiece.exits` itself is unchanged (still just `{edge, toTag?}`
+authoring metadata, read by `world/dungeon.ts placeFloor` to validate which pieces can
+chain to which) — the real traversable door data is a `content/arenas.ts` `Door{roomA,
+roomB, passageGrid}` **reused verbatim**, computed at placement time
+(`placeFloor`/`pickDoorAnchor`), never wall-centered. `GameState` gained
+`dungeonRooms`/`dungeonDoors`/`dungeonRoomRuntime` (an `activated` + `hasLiveEnemy` pair
+per room — activation gates AI logic via `AIDecideSystem`, `hasLiveEnemy` gates each
+door's lock via the new `DoorSystem`, step 11.5) /`dungeonRoomRects`/
+`dungeonRoomIndexById`/`dungeonBaseWalls`. `world/dungeon.ts` also gained
+`placeFloor`/`carveDoorGaps`/`buildFloorGeometry` (a west→east spine placement — the MVP
+shape; a real 2D graph layout is a deferred follow-up, same as fully-realized
+`layout:'branching'`, which now resolves its extra candidate at generation time via one
+more `roomgenPrng` draw instead of a live player choice). **Not shipped: client
+rendering** — single-room draw, minimap reuse, and the door sprites
+(`art/environment/door_{locked,open}_raw.png`, already generated and alpha-verified) are
+unwired; `client/src/game/ui/HudView.ts`'s floor/room HUD line still reads the removed
+per-room-swap fields and needs updating before the client compiles again.
+
 ### Dungeon assembly (`05` hybrid) ✅ generation shipped 2026-07-24 (ROADMAP 1.3, additive — no `ENGINE_VERSION` bump)
 
 ⟂ The core divergence from funny. Instead of one scripted level, a **seeded layout stitches hand-authored pieces**. `world/dungeon.ts` implements `DungeonConfig` + the pure `generateFloor(config, floorIndex, roomgenPrng, library)`: draws a room count within `roomsPerFloor`, then that many normal pieces from the `pieceTags`-matched pool, appending the floor's capstone (`extractionPieceId`, or `bossPieceId` on the last floor) — same "pure, unwired" shape as `content/rooms.ts roomGeometry` (1.2). `GameState` gained the `roomgenPrng` stream this doc's schema always named (additive — nothing draws from it yet). `world/rooms/ember.ts` is a first hand-authored library (4 normal + 1 extraction + 1 boss piece, tagged `'ember'`). **Both `layout: 'linear'` and `'branching'` are implemented** (`world/dungeon.ts`, `GameState.ts`, `SpawnSystem.ts`, `dungeon.test.ts`). **Also since ROADMAP 1.4/1.5 (no longer remaining):** a generated floor IS placed into a live run — mutable room geometry, room-to-room transitions, and the encounter `WaveScript` driving spawns are all wired end-to-end, together with the extraction checkpoint and materials banking, into a real, testable dungeon loop (this is what the shipped client actually runs — ROADMAP Phase 1 is fully closed).

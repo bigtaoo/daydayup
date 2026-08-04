@@ -410,8 +410,53 @@ import { BRAD_FULL } from './math/trig';
  * auto-face their target too. Any replay recorded before v33 has `aimBrad` values
  * that are now simply ignored — a manually-aimed shot that used to hit a target
  * off the auto-face line now diverges from the direction it fires.
+ *
+ * v34: PvE dungeon floors become co-resident (design/05 "Room & door model",
+ * 2026-08-04) — every room of a floor is placed and stitched into `GameState` at
+ * once (matching PvP's `ArenaMap` shape), replacing the old one-room-at-a-time swap.
+ * A `dungeonEnabled` config has no way to opt into "old" vs "new" behavior, so this
+ * bundles five independent, atomic outcome changes:
+ * (1) Co-residency itself: `state.roomIndex`/`roomTick`/`roomSchedule`/
+ * `roomSpawnCursor`/`floorStages`/`floorLayout` are gone, replaced by
+ * `dungeonRooms`/`dungeonDoors`/`dungeonRoomRuntime`/`dungeonRoomRects`/
+ * `dungeonRoomIndexById`/`dungeonBaseWalls`. A room no longer auto-teleports the
+ * player on clear — every room is live from floor-generation, connected by real,
+ * freely-positioned (never wall-centered) doors a player must actually walk
+ * through; backtracking within a floor is free. Any replay that relied on the old
+ * auto-advance diverges the instant the first room would have swapped.
+ * (2) `world/dungeon.ts generateFloor` drops its `stages`/candidate-list shape
+ * (`FloorLayout.rooms` is now the only, already-resolved sequence); a
+ * `layout:'branching'` config resolves its extra candidate via ONE MORE
+ * `roomgenPrng.nextInt` draw at generation time, not player facing at "the moment
+ * of arrival" (that moment no longer exists once every room pre-exists) — a
+ * branching replay now draws one extra value per normal stage and diverges from
+ * that draw onward. A `layout:'linear'` config's draw sequence is unaffected
+ * (branchFactor stays 1, the extra draw never happens) — byte-identical.
+ * (3) `world/rooms/ember.ts perimeterWalls()` no longer carves a centered door gap
+ * on the edges a piece names in `exits` — it always emits one full, uncut wall per
+ * edge. All door gaps are now cut generically at placement time
+ * (`world/dungeon.ts carveDoorGaps`), at a drawn, non-centered anchor. Every
+ * existing Ember dungeon replay's wall geometry differs the instant a room with a
+ * previously-centered gap is stitched in.
+ * (4) `AIDecideSystem` gains a room-activation gate (`state.dungeonEnabled` only):
+ * an enemy whose room hasn't activated (no player has ever reached it) runs no
+ * face/fire decision at all, leaving `firing` inert. Previously every enemy decided
+ * unconditionally regardless of any player's location. `EnvironmentSystem`'s
+ * `roomId`-tracking half is generalized to run for dungeon mode too (previously
+ * PvP-only), which is what makes this gate possible.
+ * (5) New `DoorSystem` (step 11.5, PvE dungeon only): a room's doors lock as a unit
+ * — added back into `state.walls` as a real blocking rect — for as long as it has
+ * any live enemy, and unlock permanently once cleared (nothing ever respawns into
+ * an already-cleared room). The instant a room's live-enemy count rises from zero,
+ * every OTHER online, non-downed player is teleported instantly onto its entrance
+ * (not walked) — a new, unconditional interrupt source for anything a hard-
+ * interrupted player was mid-doing (e.g. resets an in-progress `ReviveSystem`
+ * channel via that system's own unmodified per-tick distance check — no bespoke
+ * code needed there). `ExtractionSystem`'s dungeon-mode branch no longer reads
+ * `state.wavesExhausted` (never set in dungeon mode anymore) — the checkpoint is a
+ * direct check against the floor's capstone room: `activated && !hasLiveEnemy`.
  */
-export const ENGINE_VERSION = 33;
+export const ENGINE_VERSION = 34;
 
 // ── Two-pool health tuning (design/07; final values are 07 "to design") ──────────
 // Whole ticks @30Hz. Shield regen is an idle timer, not a heal: after taking ANY

@@ -171,21 +171,21 @@ export function serializeState(s: GameState): unknown {
     floorIndex: s.floorIndex,
     floorMaterials: sortedEntries(s.floorMaterials),
     bankedMaterials: sortedEntries(s.bankedMaterials),
-    // Dungeon-mode room cursor (ROADMAP 1.3 wired). -1 for a non-dungeon config (never
-    // changes), so this is a stable constant there — the golden-replay test compares two
-    // independent runs, so a new always-equal field is safe (no bump). Room SELECTION is
-    // deterministic from roomgenPrng (already hashed above); this catches a progression
-    // divergence (advanced to a different room) that hasn't yet moved an entity.
-    roomIndex: s.roomIndex,
-    // The resolved live room's id — for a branching floor two runs can share roomIndex
-    // yet be in different rooms (a different branch chosen), so hash the identity too.
-    // '' for a non-dungeon config (stable). '' also before the first room loads.
-    roomId: s.floorLayout[s.roomIndex]?.id ?? '',
-    // Room-local WaveScript clock + how many scheduled spawns have fired. Stable 0 for
-    // a non-dungeon config; catches a timing divergence (an entry dispatched a tick
-    // early/late) before it surfaces in the enemy list.
-    roomTick: s.roomTick,
-    roomSpawnCursor: s.roomSpawnCursor,
+    // Dungeon-mode co-resident room/door state (design/05 "Room & door model",
+    // 2026-08-04). Empty/stable for a non-dungeon config, so this is safe to add
+    // without a bump (the golden-replay test compares two independent runs, so a new
+    // always-equal field never breaks it). Room SELECTION+PLACEMENT is deterministic
+    // from roomgenPrng (already hashed above); this catches a PROGRESSION divergence —
+    // a different room activated, locked, or cleared — before it surfaces in an entity.
+    // Hashed per-room, not just "the current one": every room in a floor is
+    // simultaneously live (design/05), so a divergence in any one of them must be
+    // caught, not only whichever room a client happens to be standing in. Player/enemy
+    // `roomId` is deliberately NOT hashed separately — it's a pure function of already-
+    // hashed position + already-hashed room placement, so it carries no independent
+    // information a divergence there wouldn't already show up as a position mismatch.
+    dungeonRoomIds: s.dungeonRooms.map((r) => r.id),
+    dungeonRoomRuntime: s.dungeonRoomRuntime.map((rt) => [rt.activated, rt.roomTick, rt.cursor, rt.hasLiveEnemy]),
+    dungeonDoorsLocked: s.dungeonDoors.map((d) => d.locked),
     // PvP zone + placement (design/15, ROADMAP 4.2d/4.2e/4.4). undefined/empty for
     // every non-arena config (stable, safe to add without touching other modes).
     // Hashing the zone directly catches a stage/safe-set divergence before it would

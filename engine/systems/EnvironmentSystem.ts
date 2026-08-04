@@ -1,13 +1,18 @@
 /**
- * Step — PvP zone + hazard-tile damage (design/15, ROADMAP 4.2d). One step, two data
- * sources, because both reduce to the same test: "is this actor's position inside a
- * triggering region right now." AI enemies go through the identical check as players
- * — no special-casing needed for "does the zone kill monsters too," it just does.
+ * Step — room-id tracking (PvE + PvP) + PvP zone/hazard-tile damage (design/15,
+ * ROADMAP 4.2d; generalized to dungeon mode design/05 "Room & door model",
+ * 2026-08-04). AI enemies go through the identical check as players — no special-
+ * casing needed for "does the zone kill monsters too," it just does.
  *
- * Strict no-op when `!state.zoneEnabled` (every pre-4.2d config, and any PvE config)
- * — ExtractionSystem's precedent for "an added step that doesn't bump ENGINE_VERSION"
- * (GameEngine.ts). Runs after `ZoneSystem` (this tick's `state.zone.safe` is current)
- * and after `StatusEffectSystem` — same global-tick-cadence placement as burn/poison
+ * The `roomId`-tracking half now runs for EITHER co-resident mode (`zoneEnabled`
+ * PvP, or `dungeonEnabled` PvE) — `DoorSystem`'s combat-lock/activation logic and
+ * `SpawnSystem`'s per-room spawn dispatch both need a fresh `roomId` every tick,
+ * same as PvP's zone/`EnvironmentSystem` always has. The zone/trait-damage half
+ * stays strictly PvP-only (PvE has neither a `zone` nor `cellTraits`). Strict no-op
+ * when NEITHER mode is enabled (every pre-4.2d config) — ExtractionSystem's
+ * precedent for "an added step that doesn't bump ENGINE_VERSION" (GameEngine.ts).
+ * Runs after `ZoneSystem` (this tick's `state.zone.safe` is current) and after
+ * `StatusEffectSystem` — same global-tick-cadence placement as burn/poison
  * (design/15).
  */
 import { circleOverlapsAabb } from './geom';
@@ -19,38 +24,45 @@ import type { RoomId } from '../content/arenas';
 
 export class EnvironmentSystem {
   tick(state: GameState): void {
-    if (!state.zoneEnabled || !state.zone) return;
-    const zone = state.zone;
+    if (!state.zoneEnabled && !state.dungeonEnabled) return;
+    const rects = state.zoneEnabled ? state.arenaRoomRects : state.dungeonRoomRects;
+    const zone = state.zoneEnabled ? state.zone : undefined;
 
     for (const p of state.players) {
       if (!p.alive) continue;
-      this.updateRoomId(state, p);
-      this.applyZoneDamage(state, p, zone);
-      this.applyTraitDamage(state, p);
+      this.updateRoomId(p, rects);
+      if (zone) {
+        this.applyZoneDamage(state, p, zone);
+        this.applyTraitDamage(state, p);
+      }
     }
     for (const e of state.enemies) {
       if (!e.alive) continue;
-      this.updateRoomId(state, e);
-      this.applyZoneDamage(state, e, zone);
-      this.applyTraitDamage(state, e);
+      this.updateRoomId(e, rects);
+      if (zone) {
+        this.applyZoneDamage(state, e, zone);
+        this.applyTraitDamage(state, e);
+      }
     }
   }
 
   /**
-   * Refresh `actor.roomId` — cheap amortized: most ticks the actor is still inside
-   * its cached room's rect (design/15 "O(1) amortized, not an O(60) scan every
-   * tick"), so the full room list is only scanned on the (rarer) tick it actually
-   * crosses a boundary. A point inside no room's rect (a doorway gap) clears
-   * `roomId` to undefined — treated as "not confirmed safe" by the zone check, never
-   * as automatically safe. All comparisons are Fp integers (`arenaRoomRects`,
-   * pre-converted at load) — no float conversion in this per-tick path.
+   * Refresh `actor.roomId` against whichever mode's room-rect list is active — cheap
+   * amortized: most ticks the actor is still inside its cached room's rect (design/15
+   * "O(1) amortized, not an O(60) scan every tick"), so the full room list is only
+   * scanned on the (rarer) tick it actually crosses a boundary. A point inside no
+   * room's rect (a doorway gap) clears `roomId` to undefined — treated as "not
+   * confirmed safe" by the PvP zone check, and as "not yet inside any room" by
+   * dungeon mode's activation trigger; never as automatically safe/activated either
+   * way. All comparisons are Fp integers (`rects`, pre-converted at load) — no float
+   * conversion in this per-tick path.
    */
-  private updateRoomId(state: GameState, a: Actor): void {
+  private updateRoomId(a: Actor, rects: readonly { id: RoomId; rect: AABB }[]): void {
     if (a.roomId !== undefined) {
-      const cached = state.arenaRoomRects.find((r) => r.id === a.roomId);
+      const cached = rects.find((r) => r.id === a.roomId);
       if (cached && pointInAabb(a.gx, a.gy, cached.rect)) return;
     }
-    const found = state.arenaRoomRects.find((r) => pointInAabb(a.gx, a.gy, r.rect));
+    const found = rects.find((r) => pointInAabb(a.gx, a.gy, r.rect));
     a.roomId = found?.id as RoomId | undefined;
   }
 

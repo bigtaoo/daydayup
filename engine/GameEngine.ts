@@ -1,11 +1,12 @@
 /**
- * GameEngine — the single orchestrator (design/08). Owns a GameState and the 16
+ * GameEngine — the single orchestrator (design/08). Owns a GameState and the 17
  * systems, instantiated once and run in the frozen step() order. That order IS the
  * determinism contract; reordering it (or changing how a system iterates a
- * collection) bumps ENGINE_VERSION. ExtractionSystem (12, ROADMAP 1.4/1.5) and
- * ZoneSystem/EnvironmentSystem (8a/8b, ROADMAP 4.2d) are the exceptions to "adding a
- * step bumps the version": each is a strict no-op for any config that doesn't opt
- * into `floors`/`arena` respectively, so their presence changes nothing for an
+ * collection) bumps ENGINE_VERSION. ExtractionSystem (12, ROADMAP 1.4/1.5),
+ * ZoneSystem/EnvironmentSystem (8a/8b, ROADMAP 4.2d), and DoorSystem (11.5,
+ * design/05 "Room & door model") are the exceptions to "adding a step bumps the
+ * version": each is a strict no-op for any config that doesn't opt into
+ * `floors`/`arena`/`dungeon` respectively, so their presence changes nothing for an
  * older config or replay.
  *
  * step(commands) is the direct entry (headless/tests). The InputSource seam
@@ -22,6 +23,7 @@ import {
   ApplyInputSystem,
   DeathDropsSystem,
   DeflectSystem,
+  DoorSystem,
   EnvironmentSystem,
   ExtractionSystem,
   HitResolveSystem,
@@ -53,6 +55,7 @@ export class GameEngine {
   private readonly deathDrops = new DeathDropsSystem();
   private readonly pickup = new PickupSystem();
   private readonly spawns = new SpawnSystem();
+  private readonly doors = new DoorSystem();
   private readonly extraction = new ExtractionSystem();
   private readonly revive = new ReviveSystem();
   private readonly winCondition = new WinConditionSystem();
@@ -92,6 +95,7 @@ export class GameEngine {
     this.deathDrops.tick(s); //           9
     this.pickup.tick(s); //              10
     this.spawns.tick(s); //              11  (PvE)
+    this.doors.tick(s); //              11.5 (PvE dungeon only — design/05 "Room & door model")
     this.extraction.tick(s); //          12  (PvE, floors-mode only — ROADMAP 1.4/1.5)
     this.revive.tick(s); //              13  (co-op downed/revive — ROADMAP 3.2)
     this.winCondition.tick(s); //        14
