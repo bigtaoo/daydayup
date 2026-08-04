@@ -35,6 +35,24 @@ function triggerDownload(blob: Blob, filename: string): void {
   URL.revokeObjectURL(url);
 }
 
+// Native file I/O bridge injected by tools/desktop-shell's preload.ts when this page
+// runs inside the Electron shell; undefined when running standalone (`npm run dev`
+// in a browser tab). Declared minimally — just the surface saveWithPicker uses.
+interface NwDesktopFsBridge {
+  openFile(
+    filters: Array<{ name: string; extensions: string[] }>,
+  ): Promise<{ canceled: boolean; path?: string; data?: ArrayBuffer; error?: string }>;
+  saveFileAs(
+    opts: { defaultPath?: string; filters: Array<{ name: string; extensions: string[] }> },
+    data: ArrayBuffer,
+  ): Promise<{ canceled: boolean; path?: string; error?: string }>;
+}
+declare global {
+  interface Window {
+    nwDesktop?: { fs: NwDesktopFsBridge };
+  }
+}
+
 /** First accepted extension declared in `types` (e.g. ".editortao"), or '' if none. */
 function primaryExt(types: Array<{ accept: Record<string, string[]> }>): string {
   for (const t of types) {
@@ -43,6 +61,17 @@ function primaryExt(types: Array<{ accept: Record<string, string[]> }>): string 
     }
   }
   return '';
+}
+
+/** File System Access API `types` (accept: {mime: ['.ext']}) → Electron dialog filters
+ *  ({name, extensions}, extensions without the leading dot). */
+function toElectronFilters(
+  types: Array<{ description?: string; accept: Record<string, string[]> }>,
+): Array<{ name: string; extensions: string[] }> {
+  return types.map((t, i) => {
+    const extensions = Object.values(t.accept).flat().map(ext => ext.replace(/^\./, ''));
+    return { name: t.description ?? `Type ${i + 1}`, extensions };
+  });
 }
 
 /** Guarantee `name` ends with exactly one `ext`. Collapses an accidentally
@@ -64,6 +93,25 @@ function ensureSingleExt(name: string, ext: string): string {
   return n;
 }
 
+/** True when running inside tools/desktop-shell's Electron shell (window.nwDesktop.fs injected). */
+export function hasDesktopBridge(): boolean {
+  return !!window.nwDesktop?.fs;
+}
+
+/** Open a file via the desktop shell's native picker (bypasses the hidden <input type=file>
+ *  flow used when running standalone). Returns null if the bridge isn't present, the user
+ *  cancelled, or the read failed — callers should already have checked hasDesktopBridge()
+ *  before choosing this path over the <input> fallback. */
+export async function openViaDesktopBridge(
+  types: Array<{ description?: string; accept: Record<string, string[]> }>,
+): Promise<{ name: string; blob: Blob } | null> {
+  if (!window.nwDesktop?.fs) return null;
+  const result = await window.nwDesktop.fs.openFile(toElectronFilters(types));
+  if (result.canceled || !result.data || !result.path) return null;
+  const name = result.path.replace(/^.*[/\\]/, '');
+  return { name, blob: new Blob([result.data]) };
+}
+
 /** Save blob via the File System Access API (native save dialog with folder + filename).
  *  Falls back to a filename prompt + triggerDownload for browsers without the API (e.g. Firefox). */
 export async function saveWithPicker(
@@ -75,6 +123,13 @@ export async function saveWithPicker(
   // the native picker nor the user prompt can produce a doubled ".editortao".
   const ext       = primaryExt(types);
   const suggested = ensureSingleExt(suggestedName, ext);
+
+  if (window.nwDesktop?.fs) {
+    const data = await blob.arrayBuffer();
+    const result = await window.nwDesktop.fs.saveFileAs({ defaultPath: suggested, filters: toElectronFilters(types) }, data);
+    if (!result.canceled && result.error) throw new Error(result.error);
+    return;
+  }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const picker = (window as any).showSaveFilePicker;

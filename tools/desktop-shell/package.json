@@ -1,0 +1,45 @@
+{
+  "name": "daydayup-desktop-shell",
+  "productName": "DD Tool",
+  "version": "0.1.0",
+  "private": true,
+  "main": "dist/main.js",
+  "description": "Electron shell hosting the animator and map-editor authoring tools as switchable pages (ported from funny/tools/desktop-shell)",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "npm run build && electron .",
+    "pack": "npm run build && electron-builder --dir",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.9",
+    "electron": "^31.3.1",
+    "electron-builder": "^24.13.3",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.10"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
+  "build": {
+    "appId": "com.daydayup.desktopshell",
+    "productName": "DD Tool",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "renderer/**/*"
+    ],
+    "win": {
+      "verifyUpdateCodeSignature": false
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "bigtaoo",
+      "repo": "daydayup"
+    }
+  }
+}

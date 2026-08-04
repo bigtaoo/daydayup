@@ -7,6 +7,18 @@
 interface FileSystemFileHandleLike {
   createWritable(): Promise<{ write(data: string): Promise<void>; close(): Promise<void> }>;
 }
+// Native file I/O bridge injected by tools/desktop-shell's preload.ts when this page
+// runs inside the Electron shell; undefined when running standalone (`npm run dev`
+// in a browser tab).
+interface NwDesktopFsBridge {
+  openFile(
+    filters: Array<{ name: string; extensions: string[] }>,
+  ): Promise<{ canceled: boolean; path?: string; data?: ArrayBuffer; error?: string }>;
+  saveFileAs(
+    opts: { defaultPath?: string; filters: Array<{ name: string; extensions: string[] }> },
+    data: ArrayBuffer,
+  ): Promise<{ canceled: boolean; path?: string; error?: string }>;
+}
 declare global {
   interface Window {
     showSaveFilePicker?(options?: {
@@ -16,13 +28,21 @@ declare global {
     showOpenFilePicker?(options?: {
       types?: { description: string; accept: Record<string, string[]> }[];
     }): Promise<{ getFile(): Promise<File> }[]>;
+    nwDesktop?: { fs: NwDesktopFsBridge };
   }
 }
 
 const JSON_TYPE = [{ description: 'JSON', accept: { 'application/json': ['.json'] } }];
+const JSON_FILTER = [{ name: 'JSON', extensions: ['json'] }];
 
 export async function saveJson(data: unknown, suggestedName: string): Promise<void> {
   const text = JSON.stringify(data, null, 2);
+  if (window.nwDesktop?.fs) {
+    const buf = new TextEncoder().encode(text).buffer;
+    const result = await window.nwDesktop.fs.saveFileAs({ defaultPath: suggestedName, filters: JSON_FILTER }, buf);
+    if (!result.canceled && result.error) throw new Error(result.error);
+    return;
+  }
   if (window.showSaveFilePicker) {
     const handle = await window.showSaveFilePicker({ suggestedName, types: JSON_TYPE });
     const writable = await handle.createWritable();
@@ -41,6 +61,13 @@ export async function saveJson(data: unknown, suggestedName: string): Promise<vo
 }
 
 export async function openJson<T>(): Promise<{ name: string; data: T } | null> {
+  if (window.nwDesktop?.fs) {
+    const result = await window.nwDesktop.fs.openFile(JSON_FILTER);
+    if (result.canceled || !result.data || !result.path) return null;
+    const name = result.path.replace(/^.*[/\\]/, '');
+    const text = new TextDecoder().decode(result.data);
+    return { name, data: JSON.parse(text) as T };
+  }
   if (window.showOpenFilePicker) {
     const [handle] = await window.showOpenFilePicker({ types: JSON_TYPE });
     if (!handle) return null;

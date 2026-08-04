@@ -110,7 +110,7 @@ export class TaoExporter {
 
   // ── Import ────────────────────────────────────────────────────────────────
 
-  async importTao(file: File): Promise<void> {
+  async importTao(file: Blob, name = 'animation.tao'): Promise<void> {
     try {
       const zip = await JSZip.loadAsync(file);
 
@@ -149,7 +149,7 @@ export class TaoExporter {
       const first = [...this.animCtrl.store.keys()][0];
       if (first) this.animCtrl.selectClip(first);
 
-      this.bus.emit('status', `Loaded ${file.name}`);
+      this.bus.emit('status', `Loaded ${name}`);
     } catch (err) {
       this.bus.emit('error', `Import failed: ${(err as Error).message}`);
     }

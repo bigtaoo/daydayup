@@ -14,7 +14,7 @@ build step between them, so a shared type can never go stale against a built art
 | `engine/` | `@dd/engine` — the deterministic simulation core (`design/06`, `design/08`). Renderer- and host-free: it compiles without the DOM lib and may not import any other package. Consumed by client, server and both tools. See `engine/README.md`. |
 | `client/` | Game client. Single-engine PixiJS v8. Targets: Web / PC / Android / iOS / WeChat mini-game. See `client/README.md`. |
 | `server/` | Co-op backend: the frame-broadcast **gameserver** (WebSocket data plane) + the **matchsvc** matchmaking/ticket control plane. See `server/README.md`. |
-| `tools/` | Authoring tools, none of them shipped to players. `animator` — the `.tao` rig/clip editor (`design/12`); its `projects/*.editortao` files are the authoring source for every rig in the game. `map-editor` — arena/room authoring, the authority on the `ArenaMap` layout the engine only consumes (`design/15`). `png-pipeline` — a dependency-free pure-Node PNG codec (`pngCodec.mjs`) plus the `compress.mjs` trim/downsample/re-encode step every asset in `client/public/` went through. |
+| `tools/` | Authoring tools, none of them shipped to players. `animator` — the `.tao` rig/clip editor (`design/12`); its `projects/*.editortao` files are the authoring source for every rig in the game. `map-editor` — arena/room authoring, the authority on the `ArenaMap` layout the engine only consumes (`design/15`). `png-pipeline` — a dependency-free pure-Node PNG codec (`pngCodec.mjs`) plus the `compress.mjs` trim/downsample/re-encode step every asset in `client/public/` went through. `desktop-shell` — an Electron app hosting `animator` and `map-editor` as switchable pages in one window, with a native file I/O bridge (`window.nwDesktop.fs`) so Save/Load use real OS dialogs instead of the browser File System Access API. |
 | `world/` | Authored world data the tools produce and the engine consumes — today `arenas/arena_prototype_60.json`, the validated 60-room PvP map wired into `ARENA_CATALOG` |
 
 `tsconfig.base.json` and `build/ddAlias.mjs` are the type-side and bundler-side halves
@@ -47,6 +47,7 @@ npm run dev        # client dev server, http://localhost:5173
 | `npm run typecheck` | `tsc --noEmit` in every package |
 | `npm run dev:server` / `npm run dev:matchsvc` | Co-op gameserver / matchmaking service |
 | `npm run dev:animator` / `npm run dev:map-editor` | The two authoring tools |
+| `npm run dev:desktop-shell` | The Electron shell hosting both authoring tools (run the two `dev:` commands above first, in separate terminals) |
 | `npm run test:pvp-sim` | The offline PvP balance harness (`client/sim/`, kept out of the default test glob — ~6s) |
 
 ## Deployment
@@ -67,6 +68,14 @@ Manual deploy (fallback, or first-time setup):
 npm run build -w client
 npx wrangler deploy -c wrangler/client.jsonc
 ```
+
+The two authoring tools have the same setup — `wrangler/animator.jsonc` /
+`wrangler/map-editor.jsonc` + `.github/workflows/animator-deploy.yml` /
+`map-editor-deploy.yml`, gated behind `ANIMATOR_DEPLOY_ENABLED` /
+`MAP_EDITOR_DEPLOY_ENABLED` — but those repo variables are **not yet set**, so neither
+workflow deploys until that's turned on. Once live they'd serve at
+`dd-animator.gamestao.com` / `dd-map.gamestao.com`, which is what the desktop shell's
+`tools/desktop-shell/src/tools.ts` `prodUrl` fields point to for a packaged install.
 
 ## Status
 

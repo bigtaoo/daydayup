@@ -10,10 +10,11 @@
     "server",
     "tools/animator",
     "tools/map-editor",
-    "tools/png-pipeline"
+    "tools/png-pipeline",
+    "tools/desktop-shell"
   ],
   "scripts": {
-    "test": "npm run test --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present && npx vitest run build/versionManifestPlugin.test.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "check": "npm run typecheck && npm run test",
     "test:pvp-sim": "npm run test:pvp-sim -w client",
@@ -22,11 +23,17 @@
     "dev:matchsvc": "npm run matchsvc -w server",
     "dev:animator": "npm run dev -w tools/animator",
     "dev:map-editor": "npm run dev -w tools/map-editor",
+    "dev:desktop-shell": "npm run start -w tools/desktop-shell",
     "build": "npm run build -w client"
   },
   "devDependencies": {
     "typescript": "^5.7.2",
     "vite": "^6.0.7",
     "vitest": "^4.1.10"
+  },
+  "allowScripts": {
+    "electron@31.7.7": true,
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.1": true
   }
 }

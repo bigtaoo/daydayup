@@ -1,0 +1,63 @@
+name: animator-deploy
+
+# Auto-publish the animator authoring tool (static web build, Worker daydayup-animator)
+# to Cloudflare, served at dd-animator.gamestao.com.
+# Trigger: push to main touching the animator/engine source or this workflow/config, or manual
+# Run from the Actions page.
+# Flow: npm ci (root, npm workspaces) → npm run build -w tools/animator → wrangler deploy.
+# Mirrors client-deploy.yml — see that workflow / wrangler/client.jsonc for the
+# account/pattern this reuses.
+#
+# Reuses the gamestao.com Cloudflare account (same secrets as client-deploy.yml):
+#   CLOUDFLARE_API_TOKEN   — repo secret, needs at least Workers Scripts:Edit
+#   CLOUDFLARE_ACCOUNT_ID  — repo secret, Cloudflare account id
+# Enable switch: repo variable ANIMATOR_DEPLOY_ENABLED = true (job skipped if not set, to
+# avoid red builds before setup is complete).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tools/animator/**'
+      # The animator build reads the deterministic engine as source via the vite alias
+      # @dd/engine → engine/src (build/ddAlias.mjs), so an engine-only change still ships
+      # to this tool only through its own build and must retrigger the deploy.
+      - 'engine/**'
+      - 'build/versionManifestPlugin.mjs'
+      - 'wrangler/animator.jsonc'
+      - '.github/workflows/animator-deploy.yml'
+  workflow_dispatch: {}
+
+# Only one animator deployment runs at a time; new run cancels the old one.
+concurrency:
+  group: animator-deploy
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    # Skip the entire job if repo variable ANIMATOR_DEPLOY_ENABLED is not 'true'.
+    if: ${{ vars.ANIMATOR_DEPLOY_ENABLED == 'true' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      # Single root lockfile (npm workspaces) — install from repo root, not tools/animator.
+      - name: install
+        run: npm ci
+
+      - name: build animator
+        run: npm run build -w tools/animator
+
+      # Run from repo root using -c to specify the animator config (assets point to
+      # ./tools/animator/dist, no Worker script). Uses npx wrangler directly so errors
+      # are visible as-is.
+      - name: deploy to Cloudflare
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx -y wrangler@4.118.0 deploy -c wrangler/animator.jsonc

@@ -1,0 +1,21 @@
+{
+  // Static hosting (Cloudflare Workers static assets) for the map-editor authoring
+  // tool, served at dd-map.gamestao.com. Same Cloudflare account/zone as the game
+  // client (see wrangler/client.jsonc) and funny's gamestao.com tools.
+  //
+  // Build (outputs tools/map-editor/dist):
+  //   npm run build -w tools/map-editor
+  // Deploy (from repo root, reads this file):
+  //   npx wrangler deploy -c wrangler/map-editor.jsonc
+  //
+  // routes[].custom_domain=true auto-provisions DNS + edge cert on first deploy.
+  "name": "daydayup-map-editor",
+  "compatibility_date": "2026-08-03",
+  "assets": {
+    "directory": "../tools/map-editor/dist",
+    "not_found_handling": "single-page-application"
+  },
+  "routes": [
+    { "pattern": "dd-map.gamestao.com", "custom_domain": true }
+  ]
+}

@@ -6,6 +6,10 @@ import type { EventBus, AppEvents } from '../core/EventBus';
 import type { Rig } from '../skeleton/Rig';
 import { EditorProjectIO } from './EditorProjectIO';
 import { TaoExporter } from './TaoExporter';
+import { hasDesktopBridge, openViaDesktopBridge } from './ioUtils';
+
+const TAO_TYPES = [{ description: 'Tao Animation', accept: { 'application/octet-stream': ['.tao'] } }];
+const EDITORTAO_TYPES = [{ description: 'Tao Editor Project', accept: { 'application/octet-stream': ['.editortao'] } }];
 
 /**
  * Wires the save/load/export/import DOM buttons and owns the two format-specific
@@ -34,14 +38,12 @@ export class IOController {
     document.getElementById('btn-import')?.addEventListener('click', () => this.triggerImport());
     document.getElementById('file-input')?.addEventListener('change', e => {
       const file = (e.target as HTMLInputElement).files?.[0];
-      if (file) this.importTao(file);
+      if (file) this.importTao(file, file.name);
       (e.target as HTMLInputElement).value = '';
     });
 
     document.getElementById('btn-save-editor')?.addEventListener('click', () => this.saveEditorProject());
-    document.getElementById('btn-load-editor')?.addEventListener('click', () => {
-      (document.getElementById('editor-file-input') as HTMLInputElement | null)?.click();
-    });
+    document.getElementById('btn-load-editor')?.addEventListener('click', () => this.triggerLoadEditor());
     document.getElementById('editor-file-input')?.addEventListener('change', e => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (file) this.loadEditorProject(file);
@@ -77,11 +79,25 @@ export class IOController {
     return this.taoExporter.exportTao();
   }
 
-  importTao(file: File): Promise<void> {
-    return this.taoExporter.importTao(file);
+  importTao(file: Blob, name?: string): Promise<void> {
+    return this.taoExporter.importTao(file, name);
   }
 
-  private triggerImport(): void {
+  private async triggerImport(): Promise<void> {
+    if (hasDesktopBridge()) {
+      const opened = await openViaDesktopBridge(TAO_TYPES);
+      if (opened) await this.importTao(opened.blob, opened.name);
+      return;
+    }
     (document.getElementById('file-input') as HTMLInputElement | null)?.click();
+  }
+
+  private async triggerLoadEditor(): Promise<void> {
+    if (hasDesktopBridge()) {
+      const opened = await openViaDesktopBridge(EDITORTAO_TYPES);
+      if (opened) await this.loadEditorBlob(opened.blob, opened.name);
+      return;
+    }
+    (document.getElementById('editor-file-input') as HTMLInputElement | null)?.click();
   }
 }
