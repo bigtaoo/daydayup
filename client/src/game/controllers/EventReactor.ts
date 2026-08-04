@@ -17,6 +17,13 @@ export interface EventReactorHost {
   addScore(delta: number): void;
   /** A `room_enter` event landed — rebuild the render-side room geometry. */
   onRoomEnter(s: GameState): void;
+  /** A `door_locked`/`door_unlocked` event landed (DoorSystem) — restyle the
+   *  affected door fixture(s) in place, no full room rebuild. */
+  onDoorStateChange(s: GameState): void;
+  /** The LOCAL player was just force-regrouped (DoorSystem, design/05) — an instant
+   *  position snap, not organic movement, so the camera must cut to it rather than
+   *  interpolate/pan across the floor. */
+  onForceRegroup(): void;
   /** A catalogued weapon was picked up — unlock its forge blueprint if not already. */
   onWeaponPickup(weaponId: string): void;
   /** The specific actor view a `hit` event's `target` id names — for a reaction that
@@ -162,6 +169,28 @@ export class EventReactor {
           // AABB walls, pillars, and the resized world bounds (design/08 render-only).
           const s = this.host.activeState();
           if (s) this.host.onRoomEnter(s);
+          break;
+        }
+        case 'door_locked':
+        case 'door_unlocked': {
+          // A room's doors flipped lock state as a unit (design/05, DoorSystem) — the
+          // engine already rewrote state.walls; just restyle the door fixture(s), no
+          // full room rebuild.
+          const s = this.host.activeState();
+          if (s) this.host.onDoorStateChange(s);
+          break;
+        }
+        case 'force_regroup': {
+          // Every OTHER online, non-downed player was just teleported onto the
+          // fighting room's entrance (design/05, DoorSystem) — react only if the
+          // LOCAL player was one of them (playerIds are entity ids, not seats/owners,
+          // same lookup the 'hit' case above uses for `actorAt`).
+          const s = this.host.activeState();
+          const p = s?.players[this.host.localOwner];
+          if (p && e.playerIds.includes(p.id)) {
+            this.host.onForceRegroup();
+            this.fx.flash(fpToPx(p.gx), fpToPx(p.gy), THEME.colors.extractGlow, 24);
+          }
           break;
         }
         case 'descend': {

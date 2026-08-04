@@ -6,7 +6,7 @@
  * HudView.test.ts.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import type { GameEvent } from '@dd/engine';
+import type { GameEvent, GameState } from '@dd/engine';
 import { EventReactor, type EventReactorHost } from './EventReactor';
 import type { FxController } from '../fx/FxController';
 import { HudView } from '../ui/HudView';
@@ -39,6 +39,8 @@ function fakeHost(): EventReactorHost {
     activeState: () => null,
     addScore: vi.fn(),
     onRoomEnter: vi.fn(),
+    onDoorStateChange: vi.fn(),
+    onForceRegroup: vi.fn(),
     onWeaponPickup: vi.fn(),
     actorAt: vi.fn(() => undefined),
   };
@@ -134,5 +136,75 @@ describe('EventReactor — hit-flash outline (design/01 fidelity roadmap milesto
     expect(() =>
       reactor.consume([{ type: 'hit', target: 99, faction: 'enemy', gx: 0, gy: 0, damage: 1, damageType: 'physical' } as GameEvent]),
     ).not.toThrow();
+  });
+});
+
+describe('EventReactor — door lock/unlock (design/05 "Room & door model" DoorSystem)', () => {
+  it('door_locked restyles the door fixture(s) via onDoorStateChange, given the active state', () => {
+    const hud = new HudView();
+    hud.build(new Layers(), { w: 1280, h: 720 });
+    const host = fakeHost();
+    const state = {} as GameState;
+    host.activeState = () => state;
+    const reactor = new EventReactor(fakeFx(), hud, fakeAudio(), host);
+    reactor.consume([{ type: 'door_locked', roomId: 'r1' } as GameEvent]);
+    expect(host.onDoorStateChange).toHaveBeenCalledWith(state);
+  });
+
+  it('door_unlocked does the same', () => {
+    const hud = new HudView();
+    hud.build(new Layers(), { w: 1280, h: 720 });
+    const host = fakeHost();
+    const state = {} as GameState;
+    host.activeState = () => state;
+    const reactor = new EventReactor(fakeFx(), hud, fakeAudio(), host);
+    reactor.consume([{ type: 'door_unlocked', roomId: 'r1' } as GameEvent]);
+    expect(host.onDoorStateChange).toHaveBeenCalledWith(state);
+  });
+
+  it('is a no-op when there is no active state', () => {
+    const hud = new HudView();
+    hud.build(new Layers(), { w: 1280, h: 720 });
+    const host = fakeHost(); // activeState() => null by default
+    const reactor = new EventReactor(fakeFx(), hud, fakeAudio(), host);
+    reactor.consume([{ type: 'door_locked', roomId: 'r1' } as GameEvent]);
+    expect(host.onDoorStateChange).not.toHaveBeenCalled();
+  });
+});
+
+describe('EventReactor — force_regroup (design/05 DoorSystem)', () => {
+  function stateWithLocalPlayer(id: number): GameState {
+    return { players: [{ id, gx: 0, gy: 0 }] } as unknown as GameState;
+  }
+
+  it('snaps the camera when the local player is among the regrouped ids', () => {
+    const hud = new HudView();
+    hud.build(new Layers(), { w: 1280, h: 720 });
+    const host = fakeHost();
+    host.activeState = () => stateWithLocalPlayer(7);
+    const reactor = new EventReactor(fakeFx(), hud, fakeAudio(), host);
+    reactor.consume([{ type: 'force_regroup', roomId: 'r1', playerIds: [7] } as GameEvent]);
+    expect(host.onForceRegroup).toHaveBeenCalled();
+  });
+
+  it('is a no-op when the local player is not among the regrouped ids', () => {
+    const hud = new HudView();
+    hud.build(new Layers(), { w: 1280, h: 720 });
+    const host = fakeHost();
+    host.activeState = () => stateWithLocalPlayer(7);
+    const reactor = new EventReactor(fakeFx(), hud, fakeAudio(), host);
+    reactor.consume([{ type: 'force_regroup', roomId: 'r1', playerIds: [3, 9] } as GameEvent]);
+    expect(host.onForceRegroup).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op when there is no active state', () => {
+    const hud = new HudView();
+    hud.build(new Layers(), { w: 1280, h: 720 });
+    const host = fakeHost(); // activeState() => null by default
+    const reactor = new EventReactor(fakeFx(), hud, fakeAudio(), host);
+    expect(() =>
+      reactor.consume([{ type: 'force_regroup', roomId: 'r1', playerIds: [7] } as GameEvent]),
+    ).not.toThrow();
+    expect(host.onForceRegroup).not.toHaveBeenCalled();
   });
 });

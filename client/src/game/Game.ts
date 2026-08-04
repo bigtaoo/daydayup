@@ -1004,6 +1004,17 @@ export class Game {
     this.roomBuilder.build(s);
   }
 
+  onDoorStateChange(s: GameState): void {
+    this.roomBuilder.updateDoors(s);
+  }
+
+  onForceRegroup(): void {
+    // Collapse prev==cur on the local player's view so interpolate() draws the new,
+    // teleported position with no lerp-pan (same mechanism Scene.positionLocal/new-
+    // entity spawn already use `Entity.snap()` for).
+    this.scene.player?.snap();
+  }
+
   onWeaponPickup(weaponId: string): void {
     if (!this.meta.unlockedBlueprints.includes(weaponId)) {
       this.meta = unlockBlueprint(this.meta, weaponId);

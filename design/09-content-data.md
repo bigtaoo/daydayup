@@ -251,11 +251,15 @@ door's lock via the new `DoorSystem`, step 11.5) /`dungeonRoomRects`/
 `placeFloor`/`carveDoorGaps`/`buildFloorGeometry` (a west→east spine placement — the MVP
 shape; a real 2D graph layout is a deferred follow-up, same as fully-realized
 `layout:'branching'`, which now resolves its extra candidate at generation time via one
-more `roomgenPrng` draw instead of a live player choice). **Not shipped: client
-rendering** — single-room draw, minimap reuse, and the door sprites
-(`art/environment/door_{locked,open}_raw.png`, already generated and alpha-verified) are
-unwired; `client/src/game/ui/HudView.ts`'s floor/room HUD line still reads the removed
-per-room-swap fields and needs updating before the client compiles again.
+more `roomgenPrng` draw instead of a live player choice). ✅ **Client rendering also
+shipped 2026-08-04 (same-day follow-up):** `HudView.ts`'s floor/room HUD line was fixed to
+the new per-`roomId` schema, and the door sprites
+(`art/environment/door_{locked,open}_raw.png`) are now wired — `RoomBuilder` draws one
+`Sprite` per `state.dungeonDoors` entry (excluded from the generic wall fill, texture/tint
+swappable in place on lock/unlock, no full room rebuild), and `EventReactor` reacts to
+`force_regroup` with a camera snap. See `design/05`'s "Room & door model" section and
+`ROADMAP.md` for the full account. **Still open:** the PvE minimap adapter, same as noted
+in `05`.
 
 ### Dungeon assembly (`05` hybrid) ✅ generation shipped 2026-07-24 (ROADMAP 1.3, additive — no `ENGINE_VERSION` bump)
 

@@ -4,6 +4,7 @@ import { preloadRigSkin } from './render/skinRegistry';
 import { preloadWeaponSkins } from './render/weaponSkins';
 import { preloadUiArt } from './render/uiSkins';
 import { preloadBiomeTiles } from './render/biomeTiles';
+import { preloadEnvironmentSprites } from './render/environmentSprites';
 import { reportWebBootFailure } from './bootError';
 
 // Web entry. The WeChat entry is client/src/main.wechat.ts (loaded by client/wechat/game.js).
@@ -44,6 +45,7 @@ async function boot() {
     }),
     preloadUiArt(),
     preloadBiomeTiles(),
+    preloadEnvironmentSprites(),
   ]);
 
   const game = new Game(app, input, audio);

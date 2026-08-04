@@ -1,10 +1,11 @@
-import { Graphics, TilingSprite } from 'pixi.js';
+import { Graphics, Sprite, Texture, TilingSprite } from 'pixi.js';
 import type { GameState } from '@dd/engine';
 import type { Layers } from './layers';
 import { Entity } from './Entity';
 import { biomePalette, biomeElementOf, type BiomePalette } from '../theme';
 import { fpToPx } from '../coords';
 import { getFloorTexture, getWallTexture } from '../../render/biomeTiles';
+import { getDoorTexture } from '../../render/environmentSprites';
 import type { Backdrop } from './Backdrop';
 import { Portal } from './Portal';
 
@@ -17,6 +18,11 @@ import { Portal } from './Portal';
  */
 export class RoomBuilder {
   private readonly pillars: Entity[] = [];
+  // Index-aligned with `state.dungeonDoors` (design/05 "Room & door model") — a real
+  // fixture per door, never a bare gap / never folded into the generic wall fill.
+  // `updateDoors()` swaps textures on these in place on door_locked/door_unlocked
+  // (DoorSystem), so a lock-state flip doesn't need a full room rebuild.
+  private readonly doorSprites: Sprite[] = [];
   private portal: Portal | null = null;
   // World-px position of the current room's portal (its center), or null before the
   // first room ever loads. Game reads this to gate the popup's proximity check.
@@ -63,8 +69,15 @@ export class RoomBuilder {
     this.layers.ground.addChild(grid);
 
     // AABB walls (ROADMAP 1.2 — finally drawn): a tiled swatch + outline once wall art
-    // exists for this element, else the same flat fill + outline as before.
+    // exists for this element, else the same flat fill + outline as before. A
+    // currently-locked door's passage rect lives in `s.walls` too (DoorSystem folds it
+    // in while locked) but must render as a door fixture, not a generic wall segment —
+    // `doorAabbs` is a reference-identity set (DoorSystem pushes the SAME `passageAabb`
+    // object, never a copy) so this skip is exact and free for non-dungeon modes
+    // (`dungeonDoors` is empty there).
+    const doorAabbs = new Set(s.dungeonDoors.map((dr) => dr.passageAabb));
     for (const wall of s.walls) {
+      if (doorAabbs.has(wall)) continue;
       const wx = fpToPx(wall.x);
       const wy = fpToPx(wall.y);
       const ww = fpToPx(wall.w);
@@ -84,7 +97,50 @@ export class RoomBuilder {
     }
 
     this.buildPillars(s, palette);
+    this.buildDoors(s);
     this.buildPortal(w, h);
+  }
+
+  /** One sprite per dungeon door (design/05: "always-present physical fixtures with
+   *  exactly two visual states, locked/open — never a bare gap"), sized to its own
+   *  `passageAabb`. Rebuilt fresh each `build()`; `updateDoors()` is the cheap
+   *  in-place path for a lock-state flip alone (same sprite, texture/tint swapped).
+   *  Door sprites live on `layers.ground` alongside the walls, so `build()`'s own
+   *  "destroy every ground child" sweep above already tore down the previous set —
+   *  this only needs to drop the stale array references, not destroy again. */
+  private buildDoors(s: GameState): void {
+    this.doorSprites.length = 0;
+
+    for (const dr of s.dungeonDoors) {
+      const sprite = new Sprite();
+      sprite.position.set(fpToPx(dr.passageAabb.x), fpToPx(dr.passageAabb.y));
+      sprite.width = fpToPx(dr.passageAabb.w);
+      sprite.height = fpToPx(dr.passageAabb.h);
+      this.applyDoorTexture(sprite, dr.locked);
+      this.layers.ground.addChild(sprite);
+      this.doorSprites.push(sprite);
+    }
+  }
+
+  /** `environmentSprites.getDoorTexture` once loaded; otherwise Pixi's built-in white
+   *  texture tinted hazard-red (locked) / neutral grey (open) — `13`'s "hazard-
+   *  saturated glowing barrier / desaturated inert frame" read without the real art
+   *  yet, same texture-or-fallback convention as the floor/wall loop above. Tint (not
+   *  a second Graphics branch) is what lets `updateDoors` restyle the SAME sprite. */
+  private applyDoorTexture(sprite: Sprite, locked: boolean): void {
+    const tex = getDoorTexture(locked);
+    sprite.texture = tex ?? Texture.WHITE;
+    sprite.tint = tex ? 0xffffff : locked ? 0xe53e3e : 0x4c566a;
+  }
+
+  /** Cheap reaction to `door_locked`/`door_unlocked` (DoorSystem) — swap each door's
+   *  texture/tint in place, no destroy/rebuild of the room. No-op if called before
+   *  any `build()` has run for this floor (index mismatch). */
+  updateDoors(s: GameState): void {
+    if (this.doorSprites.length !== s.dungeonDoors.length) return;
+    for (let i = 0; i < s.dungeonDoors.length; i++) {
+      this.applyDoorTexture(this.doorSprites[i]!, s.dungeonDoors[i]!.locked);
+    }
   }
 
   /** One portal per room, centered — hidden until `setPortalOpen(true)` (Game, gated
@@ -145,7 +201,8 @@ export class RoomBuilder {
   /** Tear down the current room's ground + pillars (beginRun) so a restart doesn't
    *  leak the previous run's geometry. */
   clear(): void {
-    for (const c of [...this.layers.ground.children]) c.destroy();
+    for (const c of [...this.layers.ground.children]) c.destroy(); // also destroys door sprites (ground children)
+    this.doorSprites.length = 0;
     for (const p of this.pillars) {
       p.shadow?.destroy();
       p.destroy();

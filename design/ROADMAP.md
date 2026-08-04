@@ -5,9 +5,10 @@ closed loop the design docs describe, and the running record of how each phase a
 landed. Phases are written top-to-bottom in dependency order; each one keeps its dated
 shipped-notes underneath it, so a phase section is both the plan and the history.
 
-**Current built state (2026-08-04).** `ENGINE_VERSION` **33** (32: ground-weapon pickup is
-click-driven; 33: manual aim removed entirely — both below); 1497 tests green across all 7
-workspace packages (engine 384 / client 795 / server 167 / animator 62 / map-editor 26 /
+**Current built state (2026-08-04).** `ENGINE_VERSION` **34** (32: ground-weapon pickup is
+click-driven; 33: manual aim removed entirely; 34: co-resident PvE room/door model, engine +
+client rendering — see the Room & door model section below); 1537 tests green across all 7
+workspace packages (engine 407 / client 812 / server 167 / animator 62 / map-editor 26 /
 desktop-shell 56 / root build-script 7, `npm run check`) after a full client code-review pass
 (2026-08-04, see the Phase 3/4 updates and the Client hardening pass section below) that found
 and closed a real Phase-3 gap (mid-match reconnect was server-ready but never actually wired
@@ -608,13 +609,37 @@ after a floor places. Two other now-stale comments (`floorProgressMath.ts`,
 `minimapLayout.ts` — both used to claim PvE structurally *couldn't* have co-resident data)
 corrected in place. 796 client tests (was 795), `tsc --noEmit` clean.
 
+**Client room rendering ✅ (2026-08-04, follow-up):** research going in found the *base
+geometry* already rendered correctly — `state.walls`/`obstacles` are stitched for a whole
+floor at once (co-resident, matching PvP's `arenaMap`) and `RoomBuilder.build()` already
+drew all of it in one pass, so backtracking between already-drawn rooms already worked.
+The real gaps were narrower: doors folded into the generic wall fill (locked) or a bare gap
+(open), a lock/unlock flip was invisible after the first draw (`RoomBuilder` only reruns on
+`room_enter`, and `DoorSystem` never fires that), and `force_regroup` was silently dropped
+by `EventReactor`. Fixed: new `client/src/render/environmentSprites.ts` (same
+`Assets.load`/best-effort-preload convention as `biomeTiles.ts`) loads
+`door_{locked,open}_raw.png` (processed into `client/public/environment/`, alpha-audited
+clean); `RoomBuilder` now excludes a locked door's `passageAabb` from the generic wall loop
+by reference identity (`DoorSystem.rebuildWalls` pushes the same object, never a copy) and
+draws one `Sprite` per `state.dungeonDoors` entry instead, texture/tint swappable in place
+via a new `updateDoors()` (no full rebuild) — falls back to a hazard-red/neutral-grey tint
+on `Texture.WHITE` if art isn't loaded. `EventReactor` gained `door_locked`/`door_unlocked`
+(→ `onDoorStateChange` → `updateDoors()`) and `force_regroup` (→ `onForceRegroup()` →
+`Scene.player.snap()`, collapsing `prevX/Y` onto `curX/Y` so the camera cuts instantly to
+the teleport instead of interpolating a pan across the floor — same mechanism
+`positionLocal`/new-entity spawn already used `Entity.snap()` for) cases, gated correctly
+on `e.playerIds` (entity ids) containing the local player's own id, not `localOwner`
+itself. Verified live in the browser (not just unit tests): drove a real generated 2-room
+floor, confirmed the door sprite renders in its own gap with no wall/sprite overlap,
+confirmed a kill→revive-enemy cycle flips the door's texture in place with the ground
+layer's child count unchanged (same sprite instance, no rebuild), and confirmed a
+force-regrouped player's view snaps (`prevX===curX`) to the room's exact entrance.
+`environmentSprites.ts` got its own preload/fallback registry test, mirroring
+`biomeTiles.test.ts`'s "no asset server in this test environment" convention — the one
+new file this pass didn't already cover on the first pass ("全部加测试" follow-up). 812
+client tests (was 796, +16), `tsc --noEmit` clean.
+
 **Not done — real follow-up work, not just polish:**
-- **Client room rendering.** The client still draws PvE as if it were one swapped-in
-  room — there is no code yet that renders "the room the local player is currently in"
-  out of a co-resident multi-room `dungeonRooms` list, and no door sprites are wired
-  (the art exists, `render/` never loads it). This is the actual "does backtracking/
-  co-op room-splitting look right on screen" gap; `HudView`'s fix only kept the numbers
-  honest, it didn't touch the game view itself.
 - **PvE minimap.** `computeMinimapLayout`/`Minimap` are wired for PvP's `ArenaMap` only.
   PvE's data is now structurally similar (`PlacedRoom[]`/`DoorRuntime[]`, real x/y +
   door adjacency) but a distinct type — needs an adapter (or a small overload), not an
@@ -682,7 +707,7 @@ Phase 3 (co-op/net)     ALL DONE (✅). 3.2 revive/downed engine-side; 3.1 net l
 Phase 4 (PvP)           COMPLETELY DONE (✅ 4.1 through 4.6, design/15, no open items). 8p solo BR decided; team/hostility (ENGINE_VERSION 18) + multi-room broadphase/stitching + zone/EnvironmentSystem + placement win condition + in-arena loot/AI + anti-cheat checkpoints (ENGINE_VERSION 19) + sparse net sync + matchsvc ladder rating all shipped and tested. End-to-end match assembly wired (2026-07-26): mode:'coop'|'pvp' threaded through Matchmaker/ticket/MatchRoom/matchsvc, client ?pvp=1 -> arena EngineConfig (teamId per seat) -> placement gameover screens -> CoopSession.reportResult actually fires (was dead code for coop too) -> checkpoint/ladder settlement. The real ~60-room ArenaMap (arena_prototype_60.json, a concurrent session) is wired into ARENA_CATALOG. buildArenaSpecs' HP-scale/loadout preset is now called from GameState.buildSeat too (ENGINE_VERSION 19->20) — a PvP seat's weapons/maxHp/maxShield come from the scaled arena preset, never the PvE loadout. All browser-verified two-tab, byte-identical. 2026-07-29: the 4.1 "squads/revive reserved interface" is now built too (ENGINE_VERSION 29->30) — pre-formed party invite (server/src/PartyService.ts) + squad-chunked Matchmaker/teamId + squad placement/gated bandage revive + a PartyScreen lobby UI; see the Phase 4 update above. 2026-08-04: fixed a real squad-win scoring bug (RunOutcome compared seat identity instead of team membership, so most of a winning squad saw a DEFEAT screen) — see the Phase 4 update above.
 Phase 5 (presentation)  parallelizable throughout
 Client hardening pass   DONE (✅ 2026-08-04) — full client/src code review (182 files), fixed in place: PartyScreen/LoginScreen staleness guards, weaponSkins preload/fallback resilience, net/transport.ts dead-socket + swallowed-handler-exception fixes, TextInputOverlay blur teardown, Slider pointercancel, Rig bone-order validation, main.ts/main.wechat.ts boot() error boundary, meta/store.ts materialBank validation, auth.ts non-JSON error guard, theme.ts English-policy fix. See the Client hardening pass section above.
-Room & door model       ENGINE DONE (✅ 2026-08-04, ENGINE_VERSION 34) — PvE floors co-resident + door-connected (placeFloor/carveDoorGaps/buildFloorGeometry, new DoorSystem: activation/lock-unlock/force-regroup), replacing the old one-room swap. HudView.ts fixed to compile against the new schema. STILL OPEN: client room rendering (single-room draw off a co-resident list, door sprites), PvE minimap adapter, fully-realized branching, map-editor door placement. See the Room & door model section above.
+Room & door model       ENGINE + CLIENT RENDERING DONE (✅ 2026-08-04, ENGINE_VERSION 34) — PvE floors co-resident + door-connected (placeFloor/carveDoorGaps/buildFloorGeometry, new DoorSystem: activation/lock-unlock/force-regroup), replacing the old one-room swap. HudView.ts fixed to compile against the new schema. Client room rendering shipped same day: door_{locked,open}_raw.png loaded and wired onto RoomBuilder's per-door Sprite (reactive lock/unlock in place via updateDoors(), no full rebuild), EventReactor reacts to force_regroup with a local-player camera snap. STILL OPEN: PvE minimap adapter, fully-realized branching, map-editor door placement. See the Room & door model section above.
 Phase 6 (accounts)      DONE (✅) — real username/password login (SQLite via node:sqlite), never required to play. Bound to PvP ladder rating (accountId in the signed ticket -> MatchRoom.seatAccounts -> ladderReport, guest/bot fallback preserved) and Forge MetaState (best-effort /account/meta sync). Independent of Phases 1-5; third-party OAuth reserved, not built.
 Phase 7 (i18n)          DONE (✅) — client/src/i18n/: en.ts canonical + zh.ts translation, both compile-time key-checked (Translations<typeof en>, TranslationKey). Every screen migrated to t(); Settings gained a language toggle backed by SettingsState.locale. Independent of Phases 1-6; enum/data-driven values (damage type, weapon kind, rarity/ids) deliberately left untranslated.
 Documentation           DONE (✅ 2026-08-02) — all 19 design docs + every README audited against the code; stale top-of-file Status blocks rewritten (12/10/client/art READMEs and this file's own header), design/README index completed, engine/README written, art/ UUID filenames + duplicate files cleaned up. Docs-only, no code change.

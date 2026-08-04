@@ -9,9 +9,10 @@
  * preload contract.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { Graphics, TilingSprite, Texture, TextureSource } from 'pixi.js';
+import { Graphics, Sprite, TilingSprite, Texture, TextureSource } from 'pixi.js';
 import { createGameState } from '@dd/engine/state/GameState';
-import type { GameState } from '@dd/engine/state/GameState';
+import type { GameState, DoorRuntime } from '@dd/engine/state/GameState';
+import { pxToFp } from '@dd/engine/content/convert';
 import { Layers } from './layers';
 import { RoomBuilder } from './RoomBuilder';
 import { Backdrop } from './Backdrop';
@@ -20,15 +21,35 @@ function makeRoomBuilder(layers = new Layers()): RoomBuilder {
   return new RoomBuilder(layers, new Backdrop(layers));
 }
 
+function doorSprites(rb: RoomBuilder): Sprite[] {
+  return (rb as unknown as { doorSprites: Sprite[] }).doorSprites;
+}
+
 const mocks = vi.hoisted(() => ({
   floorTex: undefined as Texture | undefined,
   wallTex: undefined as Texture | undefined,
+  doorLockedTex: undefined as Texture | undefined,
+  doorOpenTex: undefined as Texture | undefined,
 }));
 
 vi.mock('../../render/biomeTiles', () => ({
   getFloorTexture: () => mocks.floorTex,
   getWallTexture: () => mocks.wallTex,
 }));
+
+vi.mock('../../render/environmentSprites', () => ({
+  getDoorTexture: (locked: boolean) => (locked ? mocks.doorLockedTex : mocks.doorOpenTex),
+}));
+
+/** A `DoorRuntime`-shaped fixture (design/05 DoorSystem) at a given px rect. Pushing
+ *  the SAME `passageAabb` object into `s.walls` too (only when `locked`) mirrors
+ *  `DoorSystem.rebuildWalls`'s real behaviour — it pushes the identical reference,
+ *  never a copy — which is what RoomBuilder's reference-identity skip depends on. */
+function pushDoor(s: GameState, locked: boolean, [x, y, w, h]: [number, number, number, number]): void {
+  const passageAabb = { x: pxToFp(x), y: pxToFp(y), w: pxToFp(w), h: pxToFp(h) };
+  s.dungeonDoors.push({ door: { roomA: 'a', roomB: 'b', passageGrid: { x, y, w, h } }, passageAabb, locked } as DoorRuntime);
+  if (locked) s.walls.push(passageAabb);
+}
 
 function fakeTexture(w: number, h: number): Texture {
   return new Texture({ source: new TextureSource({ width: w, height: h }) });
@@ -185,5 +206,111 @@ describe('RoomBuilder — grid overlay and rebuild', () => {
     const firstCount = layers.ground.children.length;
     rb.build(stateWithOneWall('ember'));
     expect(layers.ground.children.length).toBe(firstCount); // rebuilt fresh, not appended
+  });
+});
+
+describe('RoomBuilder — doors (design/05 "Room & door model", 2026-08-04)', () => {
+  it('excludes a locked door\'s passage rect from the generic wall loop', () => {
+    mocks.wallTex = undefined;
+    const s = stateWithOneWall('ember'); // one real wall at [100,100,64,64]
+    pushDoor(s, true, [300, 100, 20, 64]);
+    const rb = makeRoomBuilder();
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    rb.build(s);
+    // Ground fill + grid overlay + the ONE real wall's fill+stroke Graphics node — if
+    // the locked door's passageAabb (also present in s.walls, mirroring DoorSystem)
+    // weren't excluded, it would draw a 4th "generic wall" Graphics here.
+    expect(layers.ground.children.filter((c) => c instanceof Graphics).length).toBe(3);
+    expect(doorSprites(rb)).toHaveLength(1);
+  });
+
+  it('renders one Sprite per dungeon door, sized/positioned to its passageAabb', () => {
+    const s = stateWithOneWall('ember');
+    pushDoor(s, true, [300, 100, 20, 64]);
+    const rb = makeRoomBuilder();
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    rb.build(s);
+    const sprite = doorSprites(rb)[0]!;
+    expect(layers.ground.children).toContain(sprite);
+    expect(sprite.position.x).toBeCloseTo(300);
+    expect(sprite.position.y).toBeCloseTo(100);
+    expect(sprite.width).toBeCloseTo(20);
+    expect(sprite.height).toBeCloseTo(64);
+  });
+
+  it('a locked door uses the locked texture when loaded, tinted white', () => {
+    mocks.doorLockedTex = fakeTexture(32, 32);
+    mocks.doorOpenTex = fakeTexture(32, 32);
+    const s = stateWithOneWall('ember');
+    pushDoor(s, true, [300, 100, 20, 64]);
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    const sprite = doorSprites(rb)[0]!;
+    expect(sprite.texture).toBe(mocks.doorLockedTex);
+    expect(sprite.tint).toBe(0xffffff);
+  });
+
+  it('an unlocked door renders the open texture, not folded into s.walls at all', () => {
+    mocks.doorLockedTex = fakeTexture(32, 32);
+    mocks.doorOpenTex = fakeTexture(32, 32);
+    const s = stateWithOneWall('ember');
+    pushDoor(s, false, [300, 100, 20, 64]); // unlocked: never added to s.walls
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    const sprite = doorSprites(rb)[0]!;
+    expect(sprite.texture).toBe(mocks.doorOpenTex);
+  });
+
+  it('falls back to a tinted rect (hazard-red locked / grey open) when no door art is loaded', () => {
+    mocks.doorLockedTex = undefined;
+    mocks.doorOpenTex = undefined;
+    const s = stateWithOneWall('ember');
+    pushDoor(s, true, [300, 100, 20, 64]);
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    const sprite = doorSprites(rb)[0]!;
+    expect(sprite.texture).toBe(Texture.WHITE);
+    expect(sprite.tint).toBe(0xe53e3e);
+  });
+
+  it('updateDoors() swaps texture/tint in place on a lock-state flip, without touching child count', () => {
+    mocks.doorLockedTex = fakeTexture(32, 32);
+    mocks.doorOpenTex = fakeTexture(32, 32);
+    const s = stateWithOneWall('ember');
+    pushDoor(s, true, [300, 100, 20, 64]);
+    const rb = makeRoomBuilder();
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    rb.build(s);
+    const sprite = doorSprites(rb)[0]!;
+    const countBefore = layers.ground.children.length;
+    expect(sprite.texture).toBe(mocks.doorLockedTex);
+
+    // Mirror DoorSystem: the door unlocks, its passageAabb drops out of s.walls.
+    s.dungeonDoors[0]!.locked = false;
+    s.walls.length = 0;
+    rb.updateDoors(s);
+
+    expect(doorSprites(rb)[0]).toBe(sprite); // same sprite instance, not rebuilt
+    expect(layers.ground.children.length).toBe(countBefore);
+    expect(sprite.texture).toBe(mocks.doorOpenTex);
+  });
+
+  it('updateDoors() is a no-op before any build() has populated doorSprites', () => {
+    const s = stateWithOneWall('ember');
+    pushDoor(s, true, [300, 100, 20, 64]);
+    const rb = makeRoomBuilder();
+    expect(() => rb.updateDoors(s)).not.toThrow();
+    expect(doorSprites(rb)).toHaveLength(0);
+  });
+
+  it('clear() removes door sprites along with the rest of the room', () => {
+    const s = stateWithOneWall('ember');
+    pushDoor(s, true, [300, 100, 20, 64]);
+    const rb = makeRoomBuilder();
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    rb.build(s);
+    rb.clear();
+    expect(doorSprites(rb)).toHaveLength(0);
+    expect(layers.ground.children.length).toBe(0);
   });
 });
