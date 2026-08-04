@@ -8,7 +8,8 @@ import type { InputState, TouchVisual } from './types';
 // behave identically everywhere.
 //
 //   left half  → movement joystick (dynamic origin at touch-down)
-//   right half → aim joystick; firing while held (a melee swing is also the parry)
+//   right half → hold-to-fire (design/10 v33: no more aim stick — the engine auto-faces,
+//                see ApplyInputSystem; a melee swing is also the parry)
 //   corner buttons → weapon 1 / weapon 2  (no jump/block — parry is the swing arc)
 interface Stick {
   id: number;
@@ -31,12 +32,12 @@ export class TouchControls {
   private h = 0;
   private stickRadius = 1;
   // design/10 open question ("control layout … left-handed mirror") — swaps which half
-  // of the screen drives movement vs. aim/fire, and moves the weapon buttons to the
+  // of the screen drives movement vs. fire, and moves the weapon buttons to the
   // opposite corner. Persisted in SettingsState.controlLayout, applied via setMirrored.
   private mirrored = false;
 
   private move: Stick | null = null;
-  private aim: Stick | null = null;
+  private fireTouchId: number | null = null;
 
   // Set on the first pointerDown ever and never cleared — this is "is this session a
   // touch session" (drives TouchVisual.active), distinct from hasActiveTouch() below,
@@ -45,6 +46,7 @@ export class TouchControls {
 
   private weapon1Btn: Button = { cx: 0, cy: 0, r: 0 };
   private weapon2Btn: Button = { cx: 0, cy: 0, r: 0 };
+  private fireBtn: Button = { cx: 0, cy: 0, r: 0 };
 
   // Screen size in logical (CSS) pixels — the same units the pointer coords use.
   layout(width: number, height: number) {
@@ -65,10 +67,16 @@ export class TouchControls {
       this.weapon1Btn = { cx: width - m, cy: m, r };
       this.weapon2Btn = { cx: width - m - gap, cy: m, r };
     }
+    // Fire button: centred in the fire-side half (mirrored: left, else right), same
+    // radius as the move stick so it's an equally generous thumb target. Fixed position
+    // (unlike the old dynamic-origin aim stick), so it stays put across presses instead
+    // of appearing wherever the player last tapped.
+    const fireCx = this.mirrored ? unit * 0.25 : width - unit * 0.25;
+    this.fireBtn = { cx: fireCx, cy: height * 0.5, r: this.stickRadius };
   }
 
   /** Left-handed control-layout toggle (design/10, `Settings.ts`) — swaps which half of
-   *  the screen drives movement vs. aim/fire and re-anchors the weapon buttons to the
+   *  the screen drives movement vs. fire and re-anchors the weapon buttons to the
    *  opposite corner. Re-lays out immediately against the last known screen size (if
    *  any) rather than waiting for the next resize, so a mid-session toggle takes effect
    *  right away. A no-op if the value hasn't actually changed. */
@@ -91,28 +99,27 @@ export class TouchControls {
       return;
     }
 
-    // Otherwise: left half drives movement, right half drives aim/fire — swapped when
-    // `mirrored` (setMirrored/design/10's left-handed layout option).
-    const stick: Stick = { id, ox: x, oy: y, dx: 0, dy: 0 };
+    // Otherwise: left half drives movement, right half fires (hold anywhere in that
+    // half — no precision tap needed) — swapped when `mirrored` (setMirrored/design/10's
+    // left-handed layout option).
     const leftHalf = x < this.w * 0.5;
-    if (leftHalf !== this.mirrored) this.move = stick;
-    else this.aim = stick;
+    if (leftHalf !== this.mirrored) this.move = { id, ox: x, oy: y, dx: 0, dy: 0 };
+    else this.fireTouchId = id;
   }
 
   pointerMove(id: number, x: number, y: number) {
     if (this.move && id === this.move.id) this.updateStick(this.move, x, y);
-    if (this.aim && id === this.aim.id) this.updateStick(this.aim, x, y);
   }
 
   pointerUp(id: number) {
     if (this.move && id === this.move.id) this.move = null;
-    if (this.aim && id === this.aim.id) this.aim = null;
+    if (this.fireTouchId === id) this.fireTouchId = null;
   }
 
   // True while the player is touching any control — lets a platform that also has
   // mouse/keyboard (desktop Web) decide which source is currently driving.
   hasActiveTouch(): boolean {
-    return this.move !== null || this.aim !== null;
+    return this.move !== null || this.fireTouchId !== null;
   }
 
   // Render-facing snapshot for the on-screen overlay (TouchControlsView) — see
@@ -125,9 +132,7 @@ export class TouchControls {
       move: this.move
         ? { ox: this.move.ox, oy: this.move.oy, dx: this.move.dx * this.stickRadius, dy: this.move.dy * this.stickRadius }
         : null,
-      aim: this.aim
-        ? { ox: this.aim.ox, oy: this.aim.oy, dx: this.aim.dx * this.stickRadius, dy: this.aim.dy * this.stickRadius }
-        : null,
+      fire: { ...this.fireBtn, pressed: this.fireTouchId !== null },
       weapon1: { ...this.weapon1Btn },
       weapon2: { ...this.weapon2Btn },
     };
@@ -148,24 +153,10 @@ export class TouchControls {
   read(): InputState {
     const move = this.move ?? { dx: 0, dy: 0 };
 
-    // Aim: unit direction from the right stick. Idle → (0,0) so Game keeps last facing.
-    let adx = 0;
-    let ady = 0;
-    let firing = false;
-    if (this.aim) {
-      const len = Math.hypot(this.aim.dx, this.aim.dy);
-      if (len > 0.001) {
-        adx = this.aim.dx / len;
-        ady = this.aim.dy / len;
-        firing = true;
-      }
-    }
-
     return {
       moveX: move.dx,
       moveY: move.dy,
-      aim: { mode: 'dir', dx: adx, dy: ady },
-      firing,
+      firing: this.fireTouchId !== null,
       // No on-screen INTERACT button yet — a touch extraction control is a follow-up
       // (design/05). Touch players reach a checkpoint but can't resolve it for now.
       interacting: false,

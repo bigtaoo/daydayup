@@ -8,20 +8,19 @@
 // at the SAME tick get the identical command, which is exactly what lets
 // server/src/BotClient.ts drive a bot seat as a normal headless client, indistinguishable
 // from a real one at the wire level (design/06).
-import { type Brad, type GameState, type PlayerCommand } from '@dd/engine';
+import { type GameState, type PlayerCommand } from '@dd/engine';
 import { engageNearest, idleCommand, type Point } from './ai/engage';
 
 export class PvpBotController {
   /** Build this bot seat's command for `tick`. */
   build(s: GameState, owner: number, tick: number): PlayerCommand {
     const me = s.players[owner];
-    const hold = (me?.facing ?? 0) as Brad;
-    if (!me || !me.alive || me.downed) return idleCommand(owner, tick, hold);
+    if (!me || !me.alive || me.downed) return idleCommand(owner, tick);
 
     // Nearest living opponent on a different team.
     const opponents: Point[] = [];
     for (const p of s.players) if (p !== me && p.alive && !p.downed && p.teamId !== me.teamId) opponents.push(p);
 
-    return engageNearest(owner, tick, me, opponents) ?? idleCommand(owner, tick, hold);
+    return engageNearest(owner, tick, me, opponents) ?? idleCommand(owner, tick);
   }
 }

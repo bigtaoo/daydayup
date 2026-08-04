@@ -179,7 +179,7 @@ describe('Integration — full engine step() drives the extraction gesture via r
   it('pressing CONFIRM_EXTRACT at a checkpoint through createGameEngine resolves EXTRACT', () => {
     const eng = createGameEngine(FLOORS_CFG);
     atCheckpoint(eng.state); // shortcut past clearing the actual wave
-    eng.step([makeCommand({ owner: 0, tick: 1, moveBrad: 0 as Brad, moveMag: 0, aimBrad: 0 as Brad, buttons: Button.CONFIRM_EXTRACT })]);
+    eng.step([makeCommand({ owner: 0, tick: 1, moveBrad: 0 as Brad, moveMag: 0, buttons: Button.CONFIRM_EXTRACT })]);
     expect(eng.state.phase).toBe('gameover');
     expect(eng.state.winner).toBe(0);
   });
@@ -187,7 +187,7 @@ describe('Integration — full engine step() drives the extraction gesture via r
   it('pressing CONFIRM_DESCEND at a checkpoint resolves DESCEND', () => {
     const eng = createGameEngine(FLOORS_CFG);
     atCheckpoint(eng.state);
-    eng.step([makeCommand({ owner: 0, tick: 1, moveBrad: 0 as Brad, moveMag: 0, aimBrad: 0 as Brad, buttons: Button.CONFIRM_DESCEND })]);
+    eng.step([makeCommand({ owner: 0, tick: 1, moveBrad: 0 as Brad, moveMag: 0, buttons: Button.CONFIRM_DESCEND })]);
     expect(eng.state.floorIndex).toBe(1);
     expect(eng.state.phase).not.toBe('gameover');
   });
@@ -195,7 +195,7 @@ describe('Integration — full engine step() drives the extraction gesture via r
   it('a single-tick press only resolves once — the next idle tick does nothing further', () => {
     const eng = createGameEngine(FLOORS_CFG);
     atCheckpoint(eng.state);
-    eng.step([makeCommand({ owner: 0, tick: 1, moveBrad: 0 as Brad, moveMag: 0, aimBrad: 0 as Brad, buttons: Button.CONFIRM_DESCEND })]);
+    eng.step([makeCommand({ owner: 0, tick: 1, moveBrad: 0 as Brad, moveMag: 0, buttons: Button.CONFIRM_DESCEND })]);
     expect(eng.state.floorIndex).toBe(1);
     eng.step([]); // idle — no repeated descend
     expect(eng.state.floorIndex).toBe(1);

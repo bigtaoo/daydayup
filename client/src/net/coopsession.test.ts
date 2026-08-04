@@ -69,7 +69,7 @@ describe('CoopSession — full client↔server loop reproduces a replay', () => 
       const cmd = makeCommand({
         owner: 0, tick: f,
         moveBrad: ((f * 337) & 0xffff) as Brad, moveMag: (f * 7) % 256,
-        aimBrad: ((f * 911) & 0xffff) as Brad, buttons: Button.FIRE,
+        buttons: Button.FIRE,
       });
       session.submit(cmd); // → transport 'cmd'
       server.submit(transport.lastCmd()); // server receives exactly what was sent
@@ -124,12 +124,16 @@ describe('CoopSession — full client↔server loop reproduces a replay', () => 
     });
     transport.deliver({ type: 'match_start', seed: SEED, startFrame: 0, localOwner: 0, playerCount: 1 });
 
+    // No FIRE held (design/10 v33: the engine now auto-faces and would land every shot
+    // on the nearest enemy, clearing the waves — and hitting gameover — well before tick
+    // 150). This test only cares about the checkpoint mechanism, so never firing keeps
+    // the match in 'playing' for the whole window.
     const server = new FrameBroadcast({ framesPerBatch, startFrame: 0 });
     for (let f = 1; f <= N; f++) {
       const cmd = makeCommand({
         owner: 0, tick: f,
         moveBrad: ((f * 337) & 0xffff) as Brad, moveMag: (f * 7) % 256,
-        aimBrad: ((f * 911) & 0xffff) as Brad, buttons: Button.FIRE,
+        buttons: 0,
       });
       session.submit(cmd);
       server.submit(transport.lastCmd());

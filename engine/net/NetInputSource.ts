@@ -220,11 +220,11 @@ export class NetInputSource implements InputSource {
 }
 
 /** Did any of a `PlayerCommand`'s MEANINGFUL fields change (design/15, ROADMAP 4.5)?
- * `aimBrad`/`moveBrad` are already brad-quantized upstream (state/input.ts) before
- * reaching here, so a plain `!==` on them IS "did the quantized value change" — one
- * existing mechanism (determinism quantization) doing double duty as the compression
- * key, not a second threshold invented on top. Buttons are already edge-shaped
+ * `moveBrad` is already brad-quantized upstream (state/input.ts) before reaching
+ * here, so a plain `!==` on it IS "did the quantized value change" — one existing
+ * mechanism (determinism quantization) doing double duty as the compression key,
+ * not a second threshold invented on top. Buttons are already edge-shaped
  * (bit-flip = a real change); `owner`/`tick`/`type` never factor in. */
 function changed(a: PlayerCommand, b: PlayerCommand): boolean {
-  return a.moveBrad !== b.moveBrad || a.moveMag !== b.moveMag || a.aimBrad !== b.aimBrad || a.buttons !== b.buttons;
+  return a.moveBrad !== b.moveBrad || a.moveMag !== b.moveMag || a.buttons !== b.buttons;
 }

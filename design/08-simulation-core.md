@@ -124,7 +124,7 @@ Whatever the final order, it is frozen; changing it bumps `ENGINE_VERSION` — e
 
 ## `PlayerCommand` — the twin-stick input snapshot
 
-⟂ The core divergence from funny. One command per player per tick, carrying a full frame of controller state. Everything is already quantized for determinism (`06`: aim is an integer brad, move is a quantized stick):
+⟂ The core divergence from funny. One command per player per tick, carrying a full frame of controller state. Everything is already quantized for determinism (`06`: move is a quantized stick). **There is no aim field** (`10` v33 — manual aim was removed; facing is engine-decided every tick, see below):
 
 ```
 PlayerCommand = {
@@ -133,14 +133,14 @@ PlayerCommand = {
   tick: number             // frame this input applies to (matches step's tick)
   moveBrad: Brad           // desired move direction (integer binary-radian)
   moveMag: 0..255          // left-stick deflection, 0 = idle (quantized; fp-scaled in engine)
-  aimBrad: Brad            // right-stick / mouse aim (integer binary-radian)
   buttons: number          // bitfield, edge-detected in the engine:
                            //   FIRE | SWAP_WEAPON | INTERACT
                            //   (no BLOCK — parry is the melee swing; no JUMP — removed)
 }
 ```
 
-- **Aim and move are quantized at the input edge** (`04`/`06`): mouse `point` or joystick `dir` → `atan2`-free brad on the way in, so the wire value is already deterministic and compact. The engine never sees a float angle.
+- **Move is quantized at the input edge** (`04`/`06`): joystick `dir` (or keyboard 8-way) → `atan2`-free brad on the way in, so the wire value is already deterministic and compact. The engine never sees a float angle.
+- **Facing is engine-decided, not input** (`10` v33): `ApplyInputSystem` sets `PlayerActor.facing` every tick — the nearest hostile actor if one exists (unlimited range, same contract `nearestHostile` gives homing/deflect), else the current movement direction, else it holds last tick's facing. A fired shot (and a melee swing's hit-arc) travels along this facing, same as an enemy's own `AIDecideSystem`-computed facing.
 - **Discrete actions are edge-detected**, not separate commands: the engine compares this tick's `buttons` to the player's last-tick buttons; a rising edge on `SWAP_WEAPON` toggles the active weapon slot (`02`; picking up then replaces the *active* slot), `INTERACT` opens a chest / takes a pickup / **starts or sustains a revive channel** on a downed teammate (`07`), etc. A held `INTERACT` (level, not edge) is what sustains the multi-second revive. This keeps one command type and makes "held vs tapped" unambiguous and replayable.
 - **Empty/absent = idle-hold.** A tick with no command for a player replays as "same buttons, zero move" (sparse replay frames, funny `ReplayFrame`). Movement stops, held buttons are *not* assumed still held — define the idle default explicitly in code and test it in the golden replay.
 

@@ -5,18 +5,11 @@
 // input devices, lifecycle — lives behind these interfaces. See design/04-wechat.md.
 import type { Application } from 'pixi.js';
 
-// Aim is expressed two ways so both mouse and virtual-joystick controls fit the
-// same Game code:
-//  - 'point': a screen-space position (mouse cursor). Game converts it to world space.
-//  - 'dir':   a normalized aim direction (right joystick). Game uses it as facing directly.
-export type Aim =
-  | { mode: 'point'; x: number; y: number }
-  | { mode: 'dir'; dx: number; dy: number };
-
 export interface InputState {
   moveX: number; // normalized movement, [-1, 1]
   moveY: number;
-  aim: Aim;
+  // No aim field (design/10 v33): manual aim is gone. The engine auto-faces the nearest
+  // hostile, else the movement direction, else holds last facing (ApplyInputSystem).
   firing: boolean; // fires ranged / swings melee — a melee swing is also the parry (no block key)
   // Held at a dungeon extraction checkpoint (design/05, ROADMAP 1.4): a sustained hold
   // EXTRACTs (bank + leave), a tap DESCENDs (bank + go deeper). Engine reads it as
@@ -44,12 +37,14 @@ export interface TouchVisual {
   active: boolean;
   // Shared hit-zone radius (CSS px, from TouchControls.layout()) for both sticks' base circles.
   stickRadius: number;
-  // Null when that stick isn't currently held. ox/oy is the touch-down origin (dynamic,
-  // set fresh each press); dx/dy is the current pixel offset from it, already clamped
-  // to stickRadius — same units as ox/oy, so a render layer can draw the knob at
+  // Null when the move stick isn't currently held. ox/oy is the touch-down origin
+  // (dynamic, set fresh each press); dx/dy is the current pixel offset from it, already
+  // clamped to stickRadius — same units as ox/oy, so a render layer can draw the knob at
   // (ox + dx, oy + dy) with no further math.
   move: { ox: number; oy: number; dx: number; dy: number } | null;
-  aim: { ox: number; oy: number; dx: number; dy: number } | null;
+  // The right-side fire zone (design/10 v33: no more aim stick, just hold-to-fire) — a
+  // fixed button, same shape as weapon1/weapon2, plus whether it's currently held.
+  fire: { cx: number; cy: number; r: number; pressed: boolean };
   weapon1: { cx: number; cy: number; r: number };
   weapon2: { cx: number; cy: number; r: number };
 }

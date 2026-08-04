@@ -6,8 +6,6 @@ import { TouchControls } from '../TouchControls';
 // touch state whenever a control is being touched, otherwise keyboard/mouse.
 export class WebInput implements InputSource {
   private keys = new Set<string>();
-  private mouseX = 0;
-  private mouseY = 0;
   private leftDown = false;
 
   private controls = new TouchControls();
@@ -26,11 +24,6 @@ export class WebInput implements InputSource {
     });
     window.addEventListener('keyup', (e) => this.keys.delete(e.code));
 
-    canvas.addEventListener('mousemove', (e) => {
-      const r = canvas.getBoundingClientRect();
-      this.mouseX = e.clientX - r.left;
-      this.mouseY = e.clientY - r.top;
-    });
     canvas.addEventListener('mousedown', (e) => {
       if (e.button === 0) this.leftDown = true;
     });
@@ -83,7 +76,6 @@ export class WebInput implements InputSource {
     return {
       moveX: mx / len,
       moveY: my / len,
-      aim: { mode: 'point', x: this.mouseX, y: this.mouseY },
       firing: this.leftDown,
       // E or Space held = INTERACT (extraction checkpoint hold/tap, ROADMAP 1.4).
       interacting: k.has('KeyE') || k.has('Space'),

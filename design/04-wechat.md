@@ -68,10 +68,11 @@ Core logic is reused from `src/game`; only the entry and platform layer differ.
 - Web entry `main.ts` uses `WebPlatform` (keyboard + mouse). WeChat entry
   `main.wechat.ts` uses `WeChatPlatform` (wx canvas + `WeChatAdapter` + touch), reusing
   the same `Game` core.
-- **Input:** Web is mouse + keyboard; WeChat is a **virtual twin-stick** (`WeChatInput`):
-  left stick moves, right stick aims + fires, corner buttons for weapon 1 / weapon 2
-  (no jump/block button — parry is the melee swing). Aim is abstracted as a screen
-  `point` (mouse) or a `dir` (joystick) so both drive the same loop.
+- **Input:** Web is mouse (fire) + keyboard (move); WeChat is a **move stick + a fire
+  button** (`WeChatInput`, design/10 v33 — the right side used to be a second, aiming
+  stick, but manual aim is gone: the engine auto-faces the nearest hostile, else the
+  movement direction), plus corner buttons for weapon 1 / weapon 2 (no jump/block
+  button — parry is the melee swing).
 
 ## Verification checklist
 

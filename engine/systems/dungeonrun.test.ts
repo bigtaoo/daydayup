@@ -85,11 +85,11 @@ const DUN_CFG: EngineConfig = {
 };
 
 const idle = (tick: number) =>
-  makeCommand({ owner: 0, tick, moveBrad: 0 as Brad, moveMag: 0, aimBrad: 0 as Brad, buttons: 0 });
+  makeCommand({ owner: 0, tick, moveBrad: 0 as Brad, moveMag: 0, buttons: 0 });
 // Portal-popup DESCEND choice (design/10 legibility pass, ENGINE_VERSION 31) — a
 // one-shot press, not a held key; resolves the very tick it's pressed.
 const confirmDescend = (tick: number) =>
-  makeCommand({ owner: 0, tick, moveBrad: 0 as Brad, moveMag: 0, aimBrad: 0 as Brad, buttons: Button.CONFIRM_DESCEND });
+  makeCommand({ owner: 0, tick, moveBrad: 0 as Brad, moveMag: 0, buttons: Button.CONFIRM_DESCEND });
 
 describe('Dungeon mode — no-op unless a `dungeon` config is provided', () => {
   it('a plain config never enters a room, never draws roomgenPrng, keeps its static geometry', () => {
@@ -331,7 +331,7 @@ describe('Dungeon mode — WaveScript timing (atTick / spacingTicks)', () => {
   });
 });
 
-describe('Dungeon mode — branching layout picks the next room by player aim', () => {
+describe('Dungeon mode — branching layout picks the next room by walking direction', () => {
   const BR_LIB: RoomPiece[] = [
     { id: 'br_a', tags: ['b'], sizeGrid: { w: 20, h: 16 }, solids: [], spawns: { player: [{ x: 2, y: 8 }], enemy: [] }, exits: [] },
     { id: 'br_b', tags: ['b'], sizeGrid: { w: 22, h: 14 }, solids: [], spawns: { player: [{ x: 2, y: 7 }], enemy: [] }, exits: [] },
@@ -348,23 +348,27 @@ describe('Dungeon mode — branching layout picks the next room by player aim', 
       library: BR_LIB,
     },
   });
-  const aimCmd = (tick: number, aimBrad: number) =>
-    makeCommand({ owner: 0, tick, moveBrad: 0 as Brad, moveMag: 0, aimBrad: aimBrad as Brad, buttons: 0 });
+  // No enemies exist anywhere in BR_LIB, so nearestHostile never finds a target here —
+  // ApplyInputSystem's facing falls back to the movement direction, which is what
+  // SpawnSystem's chooseBranch reads (design/10 v33: aim is gone, walking the direction
+  // stands in for it).
+  const moveCmd = (tick: number, dir: number) =>
+    makeCommand({ owner: 0, tick, moveBrad: dir as Brad, moveMag: 255, buttons: 0 });
 
-  it('aiming west enters the first candidate, east the second — distinct rooms from the same seed', () => {
+  it('walking west enters the first candidate, east the second — distinct rooms from the same seed', () => {
     // The normal stage offers two candidates (same pair + order for both engines, one
     // seed). ApplyInputSystem sets facing from the command before SpawnSystem chooses.
     const west = createGameEngine(cfg());
-    west.step([aimCmd(1, BRAD_FULL / 2)]); // facing west → cosFp < 0 → candidate 0
+    west.step([moveCmd(1, BRAD_FULL / 2)]); // facing west → cosFp < 0 → candidate 0
     const east = createGameEngine(cfg());
-    east.step([aimCmd(1, 0)]); // facing east → cosFp > 0 → candidate 1
+    east.step([moveCmd(1, 0)]); // facing east → cosFp > 0 → candidate 1
 
     expect(west.state.floorStages[0]!.length).toBe(2); // a real two-way branch
     const wId = west.state.floorLayout[0]!.id;
     const eId = east.state.floorLayout[0]!.id;
     expect(wId).toBe(west.state.floorStages[0]![0]!.id);
     expect(eId).toBe(east.state.floorStages[0]![1]!.id);
-    expect(wId).not.toBe(eId); // the aim genuinely changed which room was entered
+    expect(wId).not.toBe(eId); // the walking direction genuinely changed which room was entered
   });
 });
 

@@ -38,7 +38,7 @@ function addPlayer(s: GameState, xpx: number, ypx: number): PlayerActor {
     facing: 0 as Brad, hp: 6, maxHp: 6, shield: 0, maxShield: 0, ticksSinceHit: 0,
     radius: PLAYER_BASE.radius, footprintRadius: PLAYER_BASE.footprintRadius,
     alive: true, weapon: w, weapons: [w], activeSlot: 0, buffs: [],
-    firing: false, interacting: false, wasInteracting: false, confirmExtract: false, confirmDescend: false,
+    firing: false, interacting: false, pickupTargetId: 0, confirmExtract: false, confirmDescend: false,
     downed: false, bleedoutTicks: 0, reviveProgressTicks: 0,
     bandages: 0, prevButtons: 0, status: freshStatus(),
   };
@@ -285,7 +285,7 @@ describe('Integration — single-player downed→wipe through the real engine st
     const e = addEnemy(eng.state, 470, 300);
     e.weapon = makeWeapon(BLASTER_SIM);
     for (let t = 1; t <= 200 && eng.state.phase !== 'gameover'; t++) {
-      eng.step([makeCommand({ owner: 0, tick: t, moveBrad: 0 as Brad, moveMag: 0, aimBrad: 0 as Brad, buttons: 0 })]);
+      eng.step([makeCommand({ owner: 0, tick: t, moveBrad: 0 as Brad, moveMag: 0, buttons: 0 })]);
     }
     expect(eng.state.phase).toBe('gameover');
     expect(eng.state.winner).toBe('enemies');

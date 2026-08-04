@@ -16,7 +16,7 @@ import { toReplay, runReplay, runHeadless, hashState } from '@dd/engine/replay';
 import type { EngineConfig } from '@dd/engine/state/GameState';
 
 const cmd = (owner: number, tick: number, buttons = 0) =>
-  makeCommand({ owner, tick, moveBrad: 0 as Brad, moveMag: 0, aimBrad: 0 as Brad, buttons });
+  makeCommand({ owner, tick, moveBrad: 0 as Brad, moveMag: 0, buttons });
 const nullSink: CmdSink = { submit: () => {} };
 
 describe('FrameBroadcast — metronome / ordering / watermark / log', () => {
@@ -72,7 +72,7 @@ describe('loopback: FrameBroadcast → NetInputSource → engine == plain replay
       perFrame.push(makeCommand({
         owner: 0, tick: f,
         moveBrad: ((f * 337) & 0xffff) as Brad, moveMag: (f * 7) % 256,
-        aimBrad: ((f * 911) & 0xffff) as Brad, buttons: Button.FIRE,
+        buttons: Button.FIRE,
       }));
     }
 

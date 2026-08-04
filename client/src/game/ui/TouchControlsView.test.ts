@@ -7,7 +7,7 @@ import type { TouchVisual } from '../../platform/types';
 // `view.children` is the only way in from the outside, since the individual
 // Graphics/Text are private (this mirrors how the feature was hand-verified live in
 // the browser: see the daydayup memory notes on why screenshots aren't available here).
-const enum Child { MoveBase, MoveKnob, FireBase, FireKnob, Weapon1, Weapon2, Weapon1Label, Weapon2Label }
+const enum Child { MoveBase, MoveKnob, FireButton, Weapon1, Weapon2, Weapon1Label, Weapon2Label }
 
 function graphicsAt(v: TouchControlsView, i: Child): Graphics {
   return v.view.children[i] as Graphics;
@@ -20,7 +20,7 @@ const BASE_VISUAL: TouchVisual = {
   active: true,
   stickRadius: 50,
   move: null,
-  aim: null,
+  fire: { cx: 300, cy: 60, r: 50, pressed: false },
   weapon1: { cx: 100, cy: 20, r: 15 },
   weapon2: { cx: 60, cy: 20, r: 15 },
 };
@@ -42,14 +42,20 @@ describe('TouchControlsView', () => {
     expect(v.view.visible).toBe(false);
   });
 
-  it('becomes visible once active, with both sticks hidden while untouched', () => {
+  it('becomes visible once active, with the move stick hidden while untouched', () => {
     const v = new TouchControlsView();
     v.update(BASE_VISUAL);
     expect(v.view.visible).toBe(true);
     expect(graphicsAt(v, Child.MoveBase).visible).toBe(false);
     expect(graphicsAt(v, Child.MoveKnob).visible).toBe(false);
-    expect(graphicsAt(v, Child.FireBase).visible).toBe(false);
-    expect(graphicsAt(v, Child.FireKnob).visible).toBe(false);
+  });
+
+  it('draws the fire button at its fixed reported position regardless of the move stick', () => {
+    const v = new TouchControlsView();
+    v.update(BASE_VISUAL); // fixed position, drawn even though nothing is held
+    const bounds = graphicsAt(v, Child.FireButton).getBounds();
+    expect(bounds.x + bounds.width / 2).toBeCloseTo(300);
+    expect(bounds.y + bounds.height / 2).toBeCloseTo(60);
   });
 
   it('draws the move stick base+knob at the reported origin/offset when held', () => {
@@ -67,22 +73,9 @@ describe('TouchControlsView', () => {
     const knobBounds = knob.getBounds();
     expect(knobBounds.x + knobBounds.width / 2).toBeCloseTo(60); // ox + dx
     expect(knobBounds.y + knobBounds.height / 2).toBeCloseTo(50); // oy + dy
-
-    // The fire stick wasn't touched this update — stays hidden.
-    expect(graphicsAt(v, Child.FireBase).visible).toBe(false);
   });
 
-  it('draws the fire stick independently of the move stick', () => {
-    const v = new TouchControlsView();
-    v.update({ ...BASE_VISUAL, aim: { ox: 300, oy: 60, dx: 30, dy: -40 } });
-    expect(graphicsAt(v, Child.FireBase).visible).toBe(true);
-    const knobBounds = graphicsAt(v, Child.FireKnob).getBounds();
-    expect(knobBounds.x + knobBounds.width / 2).toBeCloseTo(330);
-    expect(knobBounds.y + knobBounds.height / 2).toBeCloseTo(20);
-    expect(graphicsAt(v, Child.MoveBase).visible).toBe(false);
-  });
-
-  it('re-hides a stick the frame after release', () => {
+  it('re-hides the move stick the frame after release', () => {
     const v = new TouchControlsView();
     v.update({ ...BASE_VISUAL, move: { ox: 40, oy: 60, dx: 20, dy: -10 } });
     expect(graphicsAt(v, Child.MoveBase).visible).toBe(true);

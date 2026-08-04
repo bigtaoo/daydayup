@@ -29,8 +29,8 @@ function cmd(tick: number, o: Partial<PlayerCommand> = {}): PlayerCommand {
     tick,
     moveBrad: (o.moveBrad ?? 0) as Brad,
     moveMag: o.moveMag ?? 0,
-    aimBrad: (o.aimBrad ?? 0) as Brad,
     buttons: o.buttons ?? 0,
+    pickupTargetId: o.pickupTargetId ?? 0,
   };
 }
 
@@ -50,8 +50,8 @@ describe('GameEngine determinism (design/08 contract)', () => {
     const a = createGameEngine(ARENA);
     const b = createGameEngine(ARENA);
     for (let t = 1; t <= 400; t++) {
-      // A deterministic, varied stream: rotating aim, some movement, held fire.
-      const c = cmd(t, { aimBrad: ((t * 911) & 0xffff) as Brad, moveBrad: ((t * 337) & 0xffff) as Brad, moveMag: (t * 7) % 256, buttons: Button.FIRE });
+      // A deterministic, varied stream: rotating move direction, held fire.
+      const c = cmd(t, { moveBrad: ((t * 337) & 0xffff) as Brad, moveMag: (t * 7) % 256, buttons: Button.FIRE });
       a.step([c]);
       b.step([{ ...c }]); // distinct object, same values
       expect(snap(b.state)).toBe(snap(a.state));
@@ -60,9 +60,9 @@ describe('GameEngine determinism (design/08 contract)', () => {
 });
 
 describe('GameEngine step order', () => {
-  it('fire (step 3) reads THIS tick aim: a bullet spawns at the muzzle then moves', () => {
+  it('fire (step 3) reads THIS tick facing: a bullet spawns at the muzzle then moves', () => {
     const e = createGameEngine({ seed: 1, worldW: 800, worldH: 800, playerStart: [400, 400], waves: [] });
-    e.step([cmd(1, { aimBrad: 0 as Brad, buttons: Button.FIRE })]); // facing +x
+    e.step([cmd(1, { buttons: Button.FIRE })]); // no target, idle → default facing +x
     const b = e.state.projectiles[0]!;
     expect(b.faction).toBe('player');
     // spawned at player-centre + muzzleOffset, then advanced one tick by bulletSpeed
@@ -84,7 +84,7 @@ describe('GameEngine end-to-end loop', () => {
     let t = 0;
     while (e.state.winner === null && t < 600) {
       t++;
-      e.step([cmd(t, { aimBrad: 0 as Brad, buttons: Button.FIRE })]);
+      e.step([cmd(t, { buttons: Button.FIRE })]);
     }
     expect(e.state.winner).toBe(0);
     expect(e.state.phase).toBe('gameover');
@@ -112,7 +112,7 @@ describe('GameEngine end-to-end loop', () => {
     let t = 0;
     while (e.state.winner === null && t < 600) {
       t++;
-      e.step([cmd(t, { aimBrad: 0 as Brad, buttons: Button.FIRE })]);
+      e.step([cmd(t, { buttons: Button.FIRE })]);
     }
     const tickAtWin = e.state.tick;
     const events = e.step([cmd(t + 1, { buttons: Button.FIRE })]);

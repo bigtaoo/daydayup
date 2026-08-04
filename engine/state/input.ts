@@ -1,10 +1,12 @@
 /**
- * Input-edge quantization (design/06 "quantize aim & move on input", design/08
+ * Input-edge quantization (design/06 "quantize move on input", design/08
  * "everything is already quantized for determinism"). This is the ONE place a
- * float controller sample is allowed to touch the input path: mouse/joystick
- * vectors become integer brad + a 0..255 magnitude here, and that integer is what
- * gets recorded / broadcast / stepped. Every client and every replay reads the
- * same integer, so upstream float divergence in atan2/hypot is harmless.
+ * float controller sample is allowed to touch the input path: a mouse/joystick
+ * move vector becomes integer brad + a 0..255 magnitude here, and that integer is
+ * what gets recorded / broadcast / stepped. Every client and every replay reads
+ * the same integer, so upstream float divergence in atan2/hypot is harmless.
+ * (Aim used to be quantized here too — removed with manual aim itself, design/10;
+ * facing is now engine-decided, see ApplyInputSystem.)
  *
  * Stage E formalizes this as an engine seam: the render-side CommandBuilder and
  * the golden-replay tests both go through these functions, so there is a single
@@ -30,24 +32,15 @@ export function quantizeMove(dx: number, dy: number): { moveBrad: Brad; moveMag:
   return { moveBrad: radToBrad(Math.atan2(dy, dx)), moveMag: mag };
 }
 
-/**
- * Quantize a raw aim vector (world-space delta toward the cursor, or a stick
- * direction) → integer brad. Caller decides the vector (screen→world for a mouse
- * point, stick dx/dy for a joystick) and what to do when it is zero (typically
- * hold the last aim); this only does the float→brad quantization.
- */
-export function quantizeAim(dx: number, dy: number): Brad {
-  return radToBrad(Math.atan2(dy, dx));
-}
-
 /** Assemble a PlayerCommand from already-quantized fields (shape guard, design/08). */
 export function makeCommand(fields: {
   owner: number;
   tick: number;
   moveBrad: Brad;
   moveMag: number;
-  aimBrad: Brad;
   buttons: number;
+  pickupTargetId?: number; // omitted = 0 (no pickup click this tick) — every caller
+  // that doesn't care about ground-weapon pickup (most golden/net tests) is unaffected.
 }): PlayerCommand {
   return {
     type: 'input',
@@ -55,7 +48,7 @@ export function makeCommand(fields: {
     tick: fields.tick,
     moveBrad: fields.moveBrad,
     moveMag: fields.moveMag,
-    aimBrad: fields.aimBrad,
     buttons: fields.buttons,
+    pickupTargetId: fields.pickupTargetId ?? 0,
   };
 }

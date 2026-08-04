@@ -178,10 +178,14 @@ export class SpawnSystem {
 
   /**
    * Pick which candidate to enter at a branching stage (design/05 reward-choice). A
-   * single-option (linear) stage returns 0; for two, aiming west takes the first and
-   * east the second; for more, the aim circle splits into equal sectors. Resolved from
-   * player 0's aim — deterministic (facing is in the command stream) and needs no new
-   * input. A door/portal selection UX is a presentation follow-up (design/10).
+   * single-option (linear) stage returns 0; for two, facing west takes the first and
+   * east the second; for more, the facing circle splits into equal sectors. Resolved
+   * from player 0's `facing` — deterministic (ApplyInputSystem sets it every tick from
+   * the command stream) and needs no new input. Since design/10's aim removal (v33),
+   * `facing` at a branch point (no enemies alive to auto-lock onto) is whichever
+   * direction the player is walking — so in practice this reads as "walk toward the
+   * west exit to take it," not a separate aiming gesture. A door/portal selection UX
+   * is a presentation follow-up (design/10).
    */
   private chooseBranch(state: GameState, candidates: readonly RoomPiece[]): number {
     const n = candidates.length;

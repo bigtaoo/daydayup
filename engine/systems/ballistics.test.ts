@@ -354,7 +354,7 @@ describe('Integration — each new frame survives the full engine step() pipelin
     eng.state.enemies.push(e);
     for (let t = 1; t <= 90; t++) {
       expect(() =>
-        eng.step([makeCommand({ owner: 0, tick: t, moveBrad: 0 as Brad, moveMag: 0, aimBrad: 0 as Brad, buttons: Button.FIRE })]),
+        eng.step([makeCommand({ owner: 0, tick: t, moveBrad: 0 as Brad, moveMag: 0, buttons: Button.FIRE })]),
       ).not.toThrow();
     }
     expect(e.hp).toBeLessThan(30);

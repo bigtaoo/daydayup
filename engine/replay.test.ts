@@ -3,7 +3,7 @@ import { ENGINE_VERSION } from '@dd/engine/config';
 import { createGameEngine } from '@dd/engine/GameEngine';
 import type { EngineConfig } from '@dd/engine/state/GameState';
 import { Button, LocalInputSource, type PlayerCommand } from '@dd/engine/state/commands';
-import { makeCommand, quantizeAim, quantizeMove } from '@dd/engine/state/input';
+import { makeCommand, quantizeMove } from '@dd/engine/state/input';
 import {
   hashState,
   ReplayInputSource,
@@ -26,13 +26,12 @@ const ARENA: EngineConfig = {
 };
 
 // A scripted, varied but deterministic stream through the engine's own input edge:
-// aim swept via quantizeAim, movement via quantizeMove, held fire + periodic swap.
+// movement swept via quantizeMove, held fire + periodic swap.
 function scriptedCommand(tick: number): PlayerCommand {
-  const aim = quantizeAim(Math.cos(tick * 0.11), Math.sin(tick * 0.11));
   const { moveBrad, moveMag } = quantizeMove(Math.sin(tick * 0.07), Math.cos(tick * 0.05));
   let buttons = Button.FIRE;
   if (tick % 37 === 0) buttons |= Button.SWAP_WEAPON;
-  return makeCommand({ owner: 0, tick, moveBrad, moveMag, aimBrad: aim, buttons });
+  return makeCommand({ owner: 0, tick, moveBrad, moveMag, buttons });
 }
 
 describe('golden replay (design/08: seed + config + input → identical终局)', () => {
@@ -77,7 +76,7 @@ describe('golden replay (design/08: seed + config + input → identical终局)',
     // A far-off enemy keeps the run in 'playing' (an empty wave list wins at tick 1).
     const e = createGameEngine({ seed: 1, worldW: 800, worldH: 800, playerStart: [400, 400], waves: [[[760, 760]]] });
     // Tick 1: move east at full stick.
-    e.step([makeCommand({ owner: 0, tick: 1, moveBrad: 0 as never, moveMag: 255, aimBrad: 0 as never, buttons: 0 })]);
+    e.step([makeCommand({ owner: 0, tick: 1, moveBrad: 0 as never, moveMag: 255, buttons: 0 })]);
     const p = e.state.players[0]!;
     expect(p.vx).toBeGreaterThan(0);
     // Tick 2: no command → idle-hold stops the player (design/08 idle default).
@@ -109,7 +108,7 @@ describe('runHeadless (shared authoritative loop)', () => {
     const cfg: EngineConfig = { seed: 9, worldW: 400, worldH: 400, playerStart: [200, 200], waves: [[[280, 200]]] };
     const src = new LocalInputSource();
     for (let t = 1; t <= 600; t++) {
-      src.submit(makeCommand({ owner: 0, tick: t, moveBrad: 0 as never, moveMag: 0, aimBrad: 0 as never, buttons: Button.FIRE }));
+      src.submit(makeCommand({ owner: 0, tick: t, moveBrad: 0 as never, moveMag: 0, buttons: Button.FIRE }));
     }
     const e = runHeadless(cfg, src, 600);
     expect(e.state.phase).toBe('gameover');
@@ -117,7 +116,7 @@ describe('runHeadless (shared authoritative loop)', () => {
     // Same inputs, same seed → identical outcome hash on a second headless run.
     const src2 = new LocalInputSource();
     for (let t = 1; t <= 600; t++) {
-      src2.submit(makeCommand({ owner: 0, tick: t, moveBrad: 0 as never, moveMag: 0, aimBrad: 0 as never, buttons: Button.FIRE }));
+      src2.submit(makeCommand({ owner: 0, tick: t, moveBrad: 0 as never, moveMag: 0, buttons: Button.FIRE }));
     }
     expect(hashState(runHeadless(cfg, src2, 600).state)).toBe(hashState(e.state));
   });

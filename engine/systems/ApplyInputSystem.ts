@@ -1,7 +1,15 @@
 /**
  * Step 1 — Apply input. Fold each player's confirmed command for this tick into
- * per-tick intent: move vector (fp/tick from moveBrad+moveMag), facing (= aimBrad),
- * the firing flag, and the edge-detected weapon-swap action.
+ * per-tick intent: move vector (fp/tick from moveBrad+moveMag), facing (see below —
+ * no longer player input), the firing flag, and the edge-detected weapon-swap action.
+ *
+ * Facing (design/10, reversed-then-reversed-again 2026-08-03): there is no manual aim
+ * input at all anymore. Every tick, a player faces the nearest hostile actor if one
+ * exists (any distance — same unlimited-range contract `nearestHostile` already gives
+ * homing/deflect), else the direction it's moving, else it holds last tick's facing
+ * (idle default, same as before). Because this is engine-decided rather than fought
+ * over with a manual aim input, it avoids the earlier "a locking bullet reads wrong"
+ * failure mode that got the original auto-aim reverted.
  *
  * Idle default (design/08 open question, pinned here for Stage B): a player with
  * no command this tick holds idle — zero move, not firing — and its prevButtons is
@@ -14,11 +22,12 @@
  */
 import { FP_SCALE } from '../math/fixed';
 import type { Fp } from '../math/fixed';
-import { cosFp, sinFp } from '../math/trig';
+import { atan2Brad, cosFp, sinFp } from '../math/trig';
 import type { GameState } from '../state/GameState';
 import { Button, type PlayerCommand } from '../state/commands';
 import type { PlayerActor } from '../state/entities';
 import { PLAYER_BASE } from '../content/players';
+import { nearestHostile } from './targeting';
 
 export class ApplyInputSystem {
   tick(state: GameState, commands: readonly PlayerCommand[]): void {
@@ -37,12 +46,12 @@ export class ApplyInputSystem {
         continue;
       }
       const cmd = byOwner.get(i);
-      if (cmd) this.apply(p, cmd);
+      if (cmd) this.apply(state, p, cmd);
       else this.idle(p);
     }
   }
 
-  private apply(p: PlayerActor, cmd: PlayerCommand): void {
+  private apply(state: GameState, p: PlayerActor, cmd: PlayerCommand): void {
     // Move: (dir/1000) × speedPerTick × (mag/255), single truncation → deterministic.
     const cos = cosFp(cmd.moveBrad);
     const sin = sinFp(cmd.moveBrad);
@@ -50,7 +59,12 @@ export class ApplyInputSystem {
     p.vx = Math.trunc((cos * speed * cmd.moveMag) / (FP_SCALE * 255)) as Fp;
     p.vy = Math.trunc((sin * speed * cmd.moveMag) / (FP_SCALE * 255)) as Fp;
 
-    p.facing = cmd.aimBrad;
+    const target = nearestHostile(state, p, p.gx, p.gy);
+    if (target) {
+      p.facing = atan2Brad(target.gy - p.gy, target.gx - p.gx);
+    } else if (cmd.moveMag > 0) {
+      p.facing = cmd.moveBrad;
+    } // else: no target, not moving — hold last tick's facing.
 
     const held = cmd.buttons;
     const pressed = held & ~p.prevButtons; // rising edges this tick
@@ -65,6 +79,10 @@ export class ApplyInputSystem {
     // same convention as SWAP_WEAPON below, so no edge detection needed here.
     p.confirmExtract = (held & Button.CONFIRM_EXTRACT) !== 0;
     p.confirmDescend = (held & Button.CONFIRM_DESCEND) !== 0;
+    // Ground-weapon click target (design/03, ENGINE_VERSION 32) — already a one-tick
+    // pulse (CommandBuilder latches then clears it), so no edge detection needed here,
+    // same as confirmExtract/confirmDescend above.
+    p.pickupTargetId = cmd.pickupTargetId;
 
     if (pressed & Button.SWAP_WEAPON) this.swap(p);
 
@@ -78,6 +96,7 @@ export class ApplyInputSystem {
     p.interacting = false;
     p.confirmExtract = false;
     p.confirmDescend = false;
+    p.pickupTargetId = 0;
     // prevButtons deliberately unchanged (idle-hold semantics above).
   }
 

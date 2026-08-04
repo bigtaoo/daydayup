@@ -51,7 +51,7 @@ class BridgeTransport implements Transport {
 }
 
 const humanCmd = (tick: number): PlayerCommand =>
-  makeCommand({ owner: 0, tick, moveBrad: 0 as Brad, moveMag: 0, aimBrad: 0 as Brad, buttons: 0 });
+  makeCommand({ owner: 0, tick, moveBrad: 0 as Brad, moveMag: 0, buttons: 0 });
 
 afterEach(() => {
   vi.useRealTimers();

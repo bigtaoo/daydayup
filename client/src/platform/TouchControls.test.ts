@@ -4,6 +4,7 @@ import { TouchControls } from './TouchControls';
 // width=1000, height=500 → unit=500 gives round numbers throughout:
 // stickRadius=90, button r=40, margin m=60, gap=96
 // weapon1 = { cx: 940, cy: 60, r: 40 }, weapon2 = { cx: 844, cy: 60, r: 40 }
+// fire button (design/10 v33, fixed position, standard layout) = { cx: 875, cy: 250, r: 90 }
 function laidOut(): TouchControls {
   const c = new TouchControls();
   c.layout(1000, 500);
@@ -17,6 +18,7 @@ describe('TouchControls.layout', () => {
     expect(v.stickRadius).toBe(90);
     expect(v.weapon1).toEqual({ cx: 940, cy: 60, r: 40 });
     expect(v.weapon2).toEqual({ cx: 844, cy: 60, r: 40 });
+    expect(v.fire).toEqual({ cx: 875, cy: 250, r: 90, pressed: false });
   });
 });
 
@@ -28,7 +30,7 @@ describe('TouchControls movement stick', () => {
     c.pointerDown(1, 100, 100);
     expect(c.hasActiveTouch()).toBe(true);
     expect(c.getVisual().move).toEqual({ ox: 100, oy: 100, dx: 0, dy: 0 });
-    expect(c.getVisual().aim).toBeNull();
+    expect(c.getVisual().fire.pressed).toBe(false);
   });
 
   it('tracks drag offset within the stick radius, unclamped', () => {
@@ -66,39 +68,35 @@ describe('TouchControls movement stick', () => {
   });
 });
 
-describe('TouchControls aim/fire stick', () => {
+describe('TouchControls fire button (design/10 v33 — no more aim stick)', () => {
   let c: TouchControls;
   beforeEach(() => { c = laidOut(); });
 
-  it('opens an aim stick at the touch-down origin on the right half', () => {
-    c.pointerDown(2, 600, 100);
-    expect(c.getVisual().aim).toEqual({ ox: 600, oy: 100, dx: 0, dy: 0 });
+  it('holding anywhere in the right half marks the fire button pressed, opens no move stick', () => {
+    c.pointerDown(2, 600, 100); // right half, nowhere near the fixed button geometry
+    expect(c.getVisual().fire).toEqual({ cx: 875, cy: 250, r: 90, pressed: true });
     expect(c.getVisual().move).toBeNull();
+    expect(c.read().firing).toBe(true);
   });
 
-  it('an idle (untouched) aim stick reports no direction and does not fire', () => {
-    c.pointerDown(2, 600, 100);
-    const inp = c.read();
-    expect(inp.aim).toEqual({ mode: 'dir', dx: 0, dy: 0 });
-    expect(inp.firing).toBe(false);
+  it('fires immediately on touch-down — no drag/threshold needed (unlike the old aim stick)', () => {
+    c.pointerDown(2, 501, 100); // barely into the right half
+    expect(c.read().firing).toBe(true);
+    c.pointerMove(2, 501, 100); // no movement at all
+    expect(c.read().firing).toBe(true);
   });
 
-  it('a dragged aim stick reports a unit direction and fires', () => {
+  it('releases on pointerUp for the matching id', () => {
     c.pointerDown(2, 600, 100);
-    c.pointerMove(2, 630, 60); // dx=30, dy=-40 → a 3-4-5 triangle, magnitude 50
-    const inp = c.read();
-    expect(inp.firing).toBe(true);
-    expect(inp.aim.mode).toBe('dir');
-    if (inp.aim.mode === 'dir') {
-      expect(inp.aim.dx).toBeCloseTo(0.6);
-      expect(inp.aim.dy).toBeCloseTo(-0.8);
-    }
-  });
-
-  it('a bare tap-and-hold (zero drag) does not fire, matching the visual "held" threshold', () => {
-    c.pointerDown(2, 600, 100);
-    c.pointerMove(2, 600, 100); // no actual movement
+    c.pointerUp(2);
+    expect(c.getVisual().fire.pressed).toBe(false);
     expect(c.read().firing).toBe(false);
+  });
+
+  it('ignores pointerUp for a non-matching id', () => {
+    c.pointerDown(2, 600, 100);
+    c.pointerUp(3);
+    expect(c.getVisual().fire.pressed).toBe(true);
   });
 });
 
@@ -115,7 +113,7 @@ describe('TouchControls weapon-swap buttons', () => {
     c.pointerDown(1, 940, 60); // dead centre of weapon1
     expect(switched).toEqual([1]);
     expect(c.hasActiveTouch()).toBe(false);
-    expect(c.getVisual().aim).toBeNull();
+    expect(c.getVisual().fire.pressed).toBe(false);
   });
 
   it('tapping weapon2 fires the callback and opens no stick', () => {
@@ -124,17 +122,17 @@ describe('TouchControls weapon-swap buttons', () => {
     expect(c.hasActiveTouch()).toBe(false);
   });
 
-  it('buttons take priority over the stick zones even though both sit in the right half', () => {
-    // Exactly on weapon1's edge (still inside the circle) — would otherwise start an aim stick.
+  it('buttons take priority over the fire zone even though both sit in the right half', () => {
+    // Exactly on weapon1's edge (still inside the circle) — would otherwise start firing.
     c.pointerDown(1, 940 + 39, 60);
     expect(switched).toEqual([1]);
-    expect(c.getVisual().aim).toBeNull();
+    expect(c.getVisual().fire.pressed).toBe(false);
   });
 
-  it('a touch just outside both button circles falls through to the aim stick', () => {
+  it('a touch just outside both button circles falls through to firing', () => {
     c.pointerDown(1, 940 + 41, 60); // 41 > r(40), and far from weapon2 too
     expect(switched).toEqual([]);
-    expect(c.getVisual().aim).not.toBeNull();
+    expect(c.getVisual().fire.pressed).toBe(true);
   });
 });
 
@@ -147,11 +145,17 @@ describe('TouchControls.setMirrored (design/10 left-handed control layout)', () 
     expect(v.weapon2).toEqual({ cx: 156, cy: 60, r: 40 });
   });
 
-  it('swaps which half drives movement vs. aim', () => {
+  it('moves the fire button to the opposite half too', () => {
     const c = laidOut();
     c.setMirrored(true);
-    c.pointerDown(1, 100, 100); // left half → aim, mirrored
-    expect(c.getVisual().aim).toEqual({ ox: 100, oy: 100, dx: 0, dy: 0 });
+    expect(c.getVisual().fire).toEqual({ cx: 125, cy: 250, r: 90, pressed: false });
+  });
+
+  it('swaps which half drives movement vs. fire', () => {
+    const c = laidOut();
+    c.setMirrored(true);
+    c.pointerDown(1, 100, 100); // left half → fire, mirrored
+    expect(c.getVisual().fire.pressed).toBe(true);
     expect(c.getVisual().move).toBeNull();
 
     c.pointerDown(2, 900, 400); // right half → move, mirrored

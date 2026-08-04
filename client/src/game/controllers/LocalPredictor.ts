@@ -5,9 +5,14 @@
  * instantly under network latency, then eases back to the authoritative position as
  * confirmed frames arrive. It NEVER touches the deterministic sim — the confirmed path stays
  * byte-identical (design/06 "slots on top without changing the confirmed path"), so there is
- * zero desync risk. Scope is the local player's MOVEMENT + AIM only; firing stays sim-
- * confirmed (bullets are sim entities — predicting them would need sim rollback, the costly
- * path design/06 rejects for casual/WeChat).
+ * zero desync risk. Scope is the local player's MOVEMENT only; firing stays sim-confirmed
+ * (bullets are sim entities — predicting them would need sim rollback, the costly path
+ * design/06 rejects for casual/WeChat). Weapon-facing is NOT predicted either (design/10
+ * v33): it's no longer player input at all — the engine auto-faces the nearest hostile, else
+ * the movement direction (ApplyInputSystem) — so predicting it here would mean re-deriving
+ * that same target-lock client-side, just to get it wrong the instant it disagreed with the
+ * confirmed engine. A facing angle lagging by a tick or two of confirmed-frame latency is
+ * imperceptible; Game.ts reads it straight off confirmed state every frame instead.
  *
  * Model: dead-reckon the predicted position by the live local input each render frame
  * (matching the sim's own speed, so at zero latency predicted ≈ confirmed), and on each new
@@ -31,7 +36,6 @@ export interface PredictorConfig {
 export interface Pose {
   x: number;
   y: number;
-  facing: number; // radians — aim/shot direction (weapon)
   bodyFacing: number; // radians — movement direction (body/legs), held while idle
 }
 
@@ -45,7 +49,6 @@ const MOVE_MAG_MAX = 255; // PlayerCommand.moveMag range (state/commands.ts)
 export class LocalPredictor {
   private x = 0;
   private y = 0;
-  private facing = 0;
   private bodyFacing = 0;
   private active = false;
 
@@ -55,16 +58,16 @@ export class LocalPredictor {
     return this.active;
   }
   get pose(): Pose {
-    return { x: this.x, y: this.y, facing: this.facing, bodyFacing: this.bodyFacing };
+    return { x: this.x, y: this.y, bodyFacing: this.bodyFacing };
   }
 
   /** Anchor prediction to a known confirmed pose (px/radians): match start, first frame,
-   *  or any deliberate snap. Activates prediction. `bodyFacing` defaults to `facing` (no
-   *  distinct movement direction known yet, matching Scene.ts's own fresh-spawn default). */
-  reset(x: number, y: number, facing: number, bodyFacing: number = facing): void {
+   *  or any deliberate snap. Activates prediction. `bodyFacing` seeds from the confirmed
+   *  facing (no distinct movement direction known yet, matching Scene.ts's own fresh-spawn
+   *  default). */
+  reset(x: number, y: number, bodyFacing: number): void {
     this.x = x;
     this.y = y;
-    this.facing = facing;
     this.bodyFacing = bodyFacing;
     this.active = true;
   }
@@ -76,13 +79,12 @@ export class LocalPredictor {
 
   /**
    * Dead-reckon one render frame from the live local command. Advances the predicted
-   * position by the sim's own per-second speed scaled by move magnitude, sets facing
-   * straight from aim (instant — the felt win), and updates bodyFacing to the move
-   * direction while actually moving — held at its last value while idle, mirroring
-   * Scene.ts's own "no snap-to-zero" body-facing rule for the confirmed (non-predicted)
-   * path. No-op while inactive.
+   * position by the sim's own per-second speed scaled by move magnitude, and updates
+   * bodyFacing to the move direction while actually moving — held at its last value while
+   * idle, mirroring Scene.ts's own "no snap-to-zero" body-facing rule for the confirmed
+   * (non-predicted) path. No-op while inactive.
    */
-  predict(moveBrad: number, moveMag: number, aimBrad: number, dtMs: number): void {
+  predict(moveBrad: number, moveMag: number, dtMs: number): void {
     if (!this.active) return;
     const mag = Math.max(0, Math.min(MOVE_MAG_MAX, moveMag)) / MOVE_MAG_MAX;
     const v = this.cfg.speedPxPerSec * mag * (dtMs / 1000);
@@ -92,7 +94,6 @@ export class LocalPredictor {
       this.y += Math.sin(dir) * v;
       this.bodyFacing = dir;
     }
-    this.facing = bradToRad(aimBrad);
   }
 
   /**

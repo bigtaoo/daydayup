@@ -13,8 +13,7 @@ export class TouchControlsView {
   readonly view = new Container();
   private readonly moveBase = new Graphics();
   private readonly moveKnob = new Graphics();
-  private readonly fireBase = new Graphics();
-  private readonly fireKnob = new Graphics();
+  private readonly fireButton = new Graphics();
   private readonly weapon1 = new Graphics();
   private readonly weapon2 = new Graphics();
   private readonly weapon1Label: Text;
@@ -28,7 +27,7 @@ export class TouchControlsView {
     this.weapon2Label.anchor.set(0.5);
 
     this.view.addChild(
-      this.moveBase, this.moveKnob, this.fireBase, this.fireKnob,
+      this.moveBase, this.moveKnob, this.fireButton,
       this.weapon1, this.weapon2, this.weapon1Label, this.weapon2Label,
     );
     this.view.visible = false;
@@ -44,11 +43,9 @@ export class TouchControlsView {
     // Movement stick — base+knob only exist once the origin is known (dynamic origin
     // on touch-down; there is nothing meaningful to draw at rest).
     drawStick(this.moveBase, this.moveKnob, visual.move, visual.stickRadius, THEME.colors.player);
-    // Right-side zone: with auto-aim on (the default) this only ever needs to say
-    // "hold here to fire" — direction is decorative there, but still the real aim
-    // input when auto-aim is off — so one stick visual serves both, distinguished by
-    // colour (warm = fire) and a brighter knob once the drag is far enough to fire.
-    drawStick(this.fireBase, this.fireKnob, visual.aim, visual.stickRadius, THEME.colors.muzzle);
+    // Right-side zone: a plain hold-to-fire button (design/10 v33 — no more aim stick,
+    // the engine auto-faces the nearest hostile). Fixed position, brightens while held.
+    drawFireButton(this.fireButton, visual.fire);
 
     drawButton(this.weapon1, this.weapon1Label, visual.weapon1);
     drawButton(this.weapon2, this.weapon2Label, visual.weapon2);
@@ -68,10 +65,18 @@ function drawStick(
 
   base.clear().circle(stick.ox, stick.oy, radius).fill({ color, alpha: 0.14 }).stroke({ color, width: 2, alpha: 0.4 });
   // Held true once the drag has moved enough to actually register (matches
-  // TouchControls.read()'s own len>0.001 threshold for firing/aim) — the knob
-  // brightens so a bare tap-and-hold visibly reads as "not quite there yet".
+  // TouchControls.read()'s own len>0.001 threshold for firing) — the knob brightens so
+  // a bare tap-and-hold visibly reads as "not quite there yet".
   const held = Math.hypot(stick.dx, stick.dy) > 0.001;
   knob.clear().circle(stick.ox + stick.dx, stick.oy + stick.dy, radius * 0.4).fill({ color, alpha: held ? 0.9 : 0.5 });
+}
+
+function drawFireButton(g: Graphics, b: { cx: number; cy: number; r: number; pressed: boolean }): void {
+  const color = THEME.colors.muzzle;
+  g.clear()
+    .circle(b.cx, b.cy, b.r)
+    .fill({ color, alpha: b.pressed ? 0.32 : 0.14 })
+    .stroke({ color, width: 2, alpha: b.pressed ? 0.7 : 0.4 });
 }
 
 function drawButton(g: Graphics, label: Text, b: { cx: number; cy: number; r: number }): void {

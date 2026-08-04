@@ -44,7 +44,7 @@ class FakeConn implements RoomConnection {
 }
 
 const cmd = (owner: number, buttons = 0): PlayerCommand =>
-  makeCommand({ owner, tick: 0, moveBrad: 0 as Brad, moveMag: 0, aimBrad: 0 as Brad, buttons });
+  makeCommand({ owner, tick: 0, moveBrad: 0 as Brad, moveMag: 0, buttons });
 
 function room(playerCount = 2, framesPerBatch = 3) {
   const scheduler = new FakeScheduler();

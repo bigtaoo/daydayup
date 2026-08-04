@@ -1070,11 +1070,9 @@ export class Game {
     const engine = this.engine!;
     const s = engine.state;
     const p = s.players[this.localOwner];
-    const playerPx = p ? { x: fpToPx(p.gx), y: fpToPx(p.gy) } : { x: 0, y: 0 };
-    const cam = { x: this.layers.world.x, y: this.layers.world.y, zoom: this.fx.zoom };
 
     const frame = s.tick + 1;
-    engine.submit(this.builder.build(frame, this.localOwner, playerPx, cam));
+    engine.submit(this.builder.build(frame, this.localOwner));
     // Local co-op (ROADMAP 3.1) — and the `?arenaDemo=1` dev harness, which reuses this
     // exact path: every non-local seat is driven by the bot ally, whose command goes
     // through the exact same submit path a networked teammate's would — the engine
@@ -1129,9 +1127,11 @@ export class Game {
    * The online counterpart to advanceSim. The SERVER is the clock: each render frame we
    * relay the local seat's latest command and drain every frame the server has confirmed
    * (CoopSession.drive self-paces the catch-up), then mirror the resulting state. The LOCAL
-   * seat's movement/aim is drawn from a render-layer predictor ahead of the confirmed frame
+   * seat's movement is drawn from a render-layer predictor ahead of the confirmed frame
    * (design/06 latency-hiding) and eased back on each confirmed frame; remote seats/enemies/
-   * bullets stay confirmed. The sim is never touched — determinism is preserved.
+   * bullets stay confirmed. Weapon-facing is never predicted (design/10 v33: it's engine-
+   * decided, not player input) — it's read straight off the confirmed state every frame,
+   * same as every other actor. The sim is never touched — determinism is preserved.
    */
   private advanceOnline(dt: number) {
     const session = this.session;
@@ -1143,17 +1143,15 @@ export class Game {
     }
     const s = session.state!;
     const p = s.players[this.localOwner];
-    const playerPx = p ? { x: fpToPx(p.gx), y: fpToPx(p.gy) } : { x: 0, y: 0 };
-    const cam = { x: this.layers.world.x, y: this.layers.world.y, zoom: this.fx.zoom };
 
     // Relay this render tick's local command (server stamps the authoritative seat/frame).
-    const cmd = this.builder.build(session.frame, this.localOwner, playerPx, cam);
+    const cmd = this.builder.build(session.frame, this.localOwner);
     session.submit(cmd);
 
     // Predict the local seat's own motion for THIS render frame (before draining confirmed
-    // frames) so movement/aim respond instantly under latency. Suspended when downed/dead.
+    // frames) so movement responds instantly under latency. Suspended when downed/dead.
     const predicting = !!p && p.alive && !p.downed;
-    if (predicting) this.predictor.predict(cmd.moveBrad, cmd.moveMag, cmd.aimBrad, dt);
+    if (predicting) this.predictor.predict(cmd.moveBrad, cmd.moveMag, dt);
 
     const events = session.drive();
 
@@ -1174,7 +1172,7 @@ export class Game {
     // Draw the local seat from the predictor (camera follows it too); remote seats confirmed.
     if (predicting && p && this.predictor.isActive) {
       const pose = this.predictor.pose;
-      this.scene.positionLocal(pose.x, pose.y, fpToPx(p.z), pose.facing, pose.bodyFacing);
+      this.scene.positionLocal(pose.x, pose.y, fpToPx(p.z), bradToRad(p.facing), pose.bodyFacing);
     }
     this.spawnBulletTrails(s);
     this.consumeEvents(events);

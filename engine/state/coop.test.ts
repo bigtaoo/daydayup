@@ -25,7 +25,7 @@ function cmd(owner: number, tick: number, o: { moveBrad?: Brad; moveMag?: number
   return makeCommand({
     owner, tick,
     moveBrad: o.moveBrad ?? (0 as Brad), moveMag: o.moveMag ?? 0,
-    aimBrad: 0 as Brad, buttons: o.buttons ?? 0,
+    buttons: o.buttons ?? 0,
   });
 }
 

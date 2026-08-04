@@ -10,7 +10,7 @@ import type { Brad } from '@dd/engine/math/trig';
 import { buildTutorialConfig } from './tutorialConfig';
 
 const idle = (tick: number) =>
-  makeCommand({ owner: 0, tick, moveBrad: 0 as Brad, moveMag: 0, aimBrad: 0 as Brad, buttons: 0 });
+  makeCommand({ owner: 0, tick, moveBrad: 0 as Brad, moveMag: 0, buttons: 0 });
 
 describe('buildTutorialConfig', () => {
   it('is a flat, 2-floor config (floor 0 not last, floor 1 the last floor)', () => {

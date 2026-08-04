@@ -1,10 +1,11 @@
 /**
  * PvpBotController — the PvP practice bot (design/15 follow-up). Mirrors ally.test.ts's
- * structure: verifies it engages the nearest LIVING opponent on a different team (aim +
- * fire in range, hold spacing), ignores teammates and downed/dead seats, idles with no
- * opponents left, and — the point of it — that a real multi-seat engine SIMULATES the
- * bot's commands (a bot-controlled seat actually moves under its own control through
- * step(), exactly like AllyController's co-op counterpart).
+ * structure: verifies it engages the nearest LIVING opponent on a different team (fire in
+ * range, hold spacing), ignores teammates and downed/dead seats, idles with no opponents
+ * left, and — the point of it — that a real multi-seat engine SIMULATES the bot's commands
+ * (a bot-controlled seat actually moves under its own control through step(), exactly like
+ * AllyController's co-op counterpart). Facing is engine-decided (design/10 v33), not part
+ * of the command.
  */
 import { describe, it, expect } from 'vitest';
 import { createGameEngine } from '@dd/engine/GameEngine';
@@ -18,14 +19,13 @@ const bot = new PvpBotController();
 const CFG = { seed: 3, worldW: 1600, worldH: 1200, waves: [] as const };
 
 describe('PvpBotController — command generation', () => {
-  it('aims at and fires on the nearest opposing-team seat, advancing while outside spacing', () => {
+  it('fires on the nearest opposing-team seat, advancing while outside spacing', () => {
     const s = createGameState({
       ...CFG,
       players: [{ start: [400, 400], teamId: 0 }, { start: [620, 400], teamId: 1 }],
     });
     const cmd = bot.build(s, 0, 5); // ~6 grid east — in fire range, outside keep-dist
     expect(cmd.buttons & Button.FIRE).toBeTruthy();
-    expect(cmd.aimBrad).toBe(0); // due east (dx>0, dy=0 → brad 0)
     expect(cmd.moveMag).toBeGreaterThan(0);
   });
 
@@ -60,7 +60,8 @@ describe('PvpBotController — command generation', () => {
     });
     s.players[1]!.downed = true;
     const cmd = bot.build(s, 0, 5);
-    expect(cmd.aimBrad).toBe(BRAD_FULL / 2); // due west toward seat 2, not east toward seat 1
+    // Outside keep-dist, so it's advancing — moveBrad reveals which target was chosen.
+    expect(cmd.moveBrad).toBe(BRAD_FULL / 2); // due west toward seat 2, not east toward seat 1
   });
 
   it('a downed bot issues an idle command (it cannot act)', () => {
@@ -101,7 +102,7 @@ describe('two-seat run: the bot actually drives its seat through step()', () => 
 
     const startX = eng.state.players[0]!.gx;
     for (let t = 1; t <= 10; t++) {
-      eng.step([bot.build(eng.state, 0, t), makeCommand({ owner: 1, tick: t, moveBrad: 0 as Brad, moveMag: 0, aimBrad: 0 as Brad, buttons: 0 })]);
+      eng.step([bot.build(eng.state, 0, t), makeCommand({ owner: 1, tick: t, moveBrad: 0 as Brad, moveMag: 0, buttons: 0 })]);
     }
     expect(eng.state.players[0]!.gx).toBe(startX); // held position — no opponent to chase
   });

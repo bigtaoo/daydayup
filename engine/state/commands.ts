@@ -33,8 +33,12 @@ export interface PlayerCommand {
   tick: number; // frame this input applies to (matches step's tick)
   moveBrad: Brad; // desired move direction
   moveMag: number; // 0..255 left-stick deflection, 0 = idle
-  aimBrad: Brad; // right-stick / mouse aim
   buttons: number; // Button bitfield
+  // The PickupItem.id this tick's click asked to collect (design/03, ENGINE_VERSION
+  // 32 — the ground-weapon panel's click-to-collect gesture). 0 = none. Not a
+  // Button bit because it carries a value, not just an edge; CommandBuilder latches
+  // it for exactly one tick, same one-shot convention as SWAP_WEAPON/CONFIRM_EXTRACT.
+  pickupTargetId: number;
 }
 
 /**

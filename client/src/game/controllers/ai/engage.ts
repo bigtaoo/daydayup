@@ -7,7 +7,7 @@
 // (AllyController falls back to regrouping on the leader; PvpBotController just
 // idles) — that fallback stays caller-side rather than being forced into one
 // over-parameterized function.
-import { Button, makeCommand, quantizeAim, quantizeMove, FP_SCALE, type Brad, type PlayerCommand } from '@dd/engine';
+import { Button, makeCommand, quantizeMove, FP_SCALE, type Brad, type PlayerCommand } from '@dd/engine';
 
 export const gridFp = (g: number): number => g * FP_SCALE; // 1 grid unit = FP_SCALE fp
 export const FIRE_RANGE_FP = gridFp(11); // open fire once this close to a target
@@ -18,16 +18,18 @@ export interface Point {
   gy: number;
 }
 
-/** A bare "do nothing" command: hold current facing, no movement, no fire. */
-export function idleCommand(owner: number, tick: number, holdFacing: Brad): PlayerCommand {
-  return makeCommand({ owner, tick, moveBrad: 0 as Brad, moveMag: 0, aimBrad: holdFacing, buttons: 0 });
+/** A bare "do nothing" command: no movement, no fire. Facing is engine-decided
+ *  (design/10 v33) — the caller no longer needs to track/pass one. */
+export function idleCommand(owner: number, tick: number): PlayerCommand {
+  return makeCommand({ owner, tick, moveBrad: 0 as Brad, moveMag: 0, buttons: 0 });
 }
 
 /**
  * Move toward the nearest candidate (squared fp distance — JS doubles, no overflow
  * worry at arena/floor scale), holding spacing at KEEP_DIST_FP and firing once
  * within FIRE_RANGE_FP. Returns null if `candidates` is empty so the caller decides
- * its own no-target fallback.
+ * its own no-target fallback. Facing is engine-decided (design/10 v33, ApplyInputSystem
+ * auto-faces the nearest hostile) — this only decides movement + fire.
  */
 export function engageNearest(owner: number, tick: number, me: Point, candidates: Iterable<Point>): PlayerCommand | null {
   let target: Point | null = null;
@@ -46,5 +48,5 @@ export function engageNearest(owner: number, tick: number, me: Point, candidates
   // Advance while out of spacing; hold position once close enough to fight.
   const move = dist > KEEP_DIST_FP ? quantizeMove(dx, dy) : { moveBrad: 0 as Brad, moveMag: 0 };
   const buttons = dist <= FIRE_RANGE_FP ? Button.FIRE : 0;
-  return makeCommand({ owner, tick, moveBrad: move.moveBrad, moveMag: move.moveMag, aimBrad: quantizeAim(dx, dy), buttons });
+  return makeCommand({ owner, tick, moveBrad: move.moveBrad, moveMag: move.moveMag, buttons });
 }

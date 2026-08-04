@@ -21,7 +21,7 @@ function collectingSink(): CmdSink & { sent: PlayerCommand[] } {
 
 const START: ServerMsg = { type: 'match_start', seed: 1, startFrame: 0, localOwner: 0, playerCount: 2 };
 const cmd = (owner: number, frame: number, buttons = 0) =>
-  makeCommand({ owner, tick: frame, moveBrad: 0 as Brad, moveMag: 0, aimBrad: 0 as Brad, buttons });
+  makeCommand({ owner, tick: frame, moveBrad: 0 as Brad, moveMag: 0, buttons });
 
 describe('NetInputSource — stall / watermark / cushion contract', () => {
   it('stalls (null) until match_start, then the start frame is immediately playable', () => {
@@ -100,7 +100,7 @@ describe('NetInputSource — sparse held-input sync (design/15, ROADMAP 4.5)', (
     expect(sink.sent[0]).toEqual(held);
   });
 
-  it('submit() DOES resend when any meaningful field changes (moveBrad/moveMag/aimBrad/buttons)', () => {
+  it('submit() DOES resend when any meaningful field changes (moveBrad/moveMag/buttons)', () => {
     const sink = collectingSink();
     const net = new NetInputSource(sink);
     const base = cmd(0, 1, Button.FIRE);
@@ -160,7 +160,7 @@ describe('NetInputSource drives the engine identically to a replay (design/06 on
       commands.push(makeCommand({
         owner: 0, tick: f,
         moveBrad: ((f * 337) & 0xffff) as Brad, moveMag: (f * 7) % 256,
-        aimBrad: ((f * 911) & 0xffff) as Brad, buttons: Button.FIRE,
+        buttons: Button.FIRE,
       }));
     }
 

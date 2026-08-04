@@ -385,8 +385,33 @@ import { BRAD_FULL } from './math/trig';
  * (3) `EMBER_ROOMS` (content/world/rooms/ember.ts) gained perimeter walls with door
  * gaps on every piece (previously bare/near-empty `solids`) — existing dungeon
  * replays now collide with geometry that wasn't there before.
+ *
+ * v32: ground-weapon pickup is click-driven now, not INTERACT-driven (design/03,
+ * reversing the v21 "tap INTERACT while overlapping" gesture — a render-side panel
+ * listing every nearby weapon pickup replaces the single nearest-only ground compare
+ * card). `PlayerCommand`/`PlayerActor` gain `pickupTargetId` (0 = none, else the
+ * `PickupItem.id` the player clicked this tick — a one-shot value, same latch
+ * convention as `CONFIRM_EXTRACT`/`CONFIRM_DESCEND`). `PickupSystem`'s weapon-kind
+ * branch now collects when `pickupTargetId` matches an alive weapon item's id AND the
+ * player is within `SIM.lootRevealRadius` (the wider "can see it" ring, not the tight
+ * `SIM.pickupRadius` every other kind still uses) — INTERACT held/tapped next to a
+ * weapon now does nothing. `PlayerActor.wasInteracting` (v21's rising-edge memory,
+ * `PickupSystem`'s only reader) is removed as dead state. Any replay that collected a
+ * ground weapon via INTERACT now leaves it uncollected — diverges the instant that
+ * pickup would have resolved.
+ *
+ * v33: manual aim is removed entirely (design/10, reversed-then-reversed-again
+ * 2026-08-03) — `PlayerCommand.aimBrad` and `state/input.ts`'s `quantizeAim` are
+ * gone. `ApplyInputSystem` now sets `PlayerActor.facing` itself every tick: the
+ * nearest hostile actor (unlimited range, same contract `nearestHostile` already
+ * gives homing/deflect) if one exists, else the current movement direction, else
+ * (idle, no target) last tick's facing is held, same as before. This also drives
+ * melee's hit-arc (`HitResolveSystem.meleeArc` gates on `facing`), so melee swings
+ * auto-face their target too. Any replay recorded before v33 has `aimBrad` values
+ * that are now simply ignored — a manually-aimed shot that used to hit a target
+ * off the auto-face line now diverges from the direction it fires.
  */
-export const ENGINE_VERSION = 31;
+export const ENGINE_VERSION = 33;
 
 // ── Two-pool health tuning (design/07; final values are 07 "to design") ──────────
 // Whole ticks @30Hz. Shield regen is an idle timer, not a heal: after taking ANY
