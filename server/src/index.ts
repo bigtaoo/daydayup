@@ -20,7 +20,7 @@ import { createServer } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { ClientMsg, ServerMsg } from '@dd/engine';
 import { RoomManager } from './RoomManager';
-import type { RoomConnection, SettledMatch } from './MatchRoom';
+import { Phase, type RoomConnection, type SettledMatch } from './MatchRoom';
 import { buildRatingReportBody } from './ladderReport';
 import { verifyTicket, type MatchMode } from './ticket';
 import { ticketSecret } from './config';
@@ -145,10 +145,28 @@ function main(): void {
     const { roomId, owner, seed, count, mode, accountId } = seat;
 
     const conn = new SocketConnection(owner, roomId, ws, accountId);
-    const seated = manager.join(conn, roomId, seed, count, mode);
-    if (!seated) {
-      ws.close(4403, 'seat unavailable / room mismatch');
-      return;
+
+    // A room already IN_MATCH (or settled/OVER) can never be `join()`-ed — that call
+    // only succeeds while seats are still filling (MatchRoom.join). Reaching here with
+    // a ticket for such a room means this is a RECONNECT (ROADMAP reconnect, design/06):
+    // matchsvc's `/resume` mints a ticket for the exact seat/seed/playerCount/mode the
+    // client already held, so a genuine mismatch (wrong seed/count/mode) still means a
+    // stale/foreign ticket and gets rejected exactly like the old join-mismatch case did.
+    // A real reconnect instead just holds the socket open and waits for the client's own
+    // `resume` message (with `lastFrame`) to actually reseat it via `room.resume()` —
+    // there's no seat-claim work to do here at handshake time the way a fresh `join` has.
+    const existing = manager.room(roomId);
+    if (existing && existing.phase !== Phase.WAITING) {
+      if (existing.seedValue !== seed || existing.playerCountValue !== count || existing.modeValue !== mode) {
+        ws.close(4403, 'seat unavailable / room mismatch');
+        return;
+      }
+    } else {
+      const seated = manager.join(conn, roomId, seed, count, mode);
+      if (!seated) {
+        ws.close(4403, 'seat unavailable / room mismatch');
+        return;
+      }
     }
 
     ws.on('message', (data: Buffer) => {

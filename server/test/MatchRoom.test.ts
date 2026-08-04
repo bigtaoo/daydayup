@@ -395,6 +395,47 @@ describe('RoomManager — routing + room parameter cross-check', () => {
     expect(mgr.size).toBe(0); // room destroyed when empty
   });
 
+  it('a resume against a room that is no longer resumable sends the client a resume_failed error (ROADMAP reconnect)', () => {
+    const scheduler = new FakeScheduler();
+    const mgr = new RoomManager({ scheduler });
+    // No `join` at all — 'room' doesn't even exist, exactly like a resume ticket
+    // redeemed after the match already settled and its MatchRoom was destroyed.
+    const conn = new FakeConn(0);
+    mgr.handle(conn, 'room', { type: 'resume', roomId: 'room', owner: 0, lastFrame: 0 });
+    expect(conn.msgs).toEqual([]); // handle() itself no-ops on an unknown roomId (unchanged)
+  });
+
+  it('a resume against a room that HAS a MatchRoom but rejects it (e.g. still WAITING) reports resume_failed', () => {
+    const scheduler = new FakeScheduler();
+    const mgr = new RoomManager({ scheduler });
+    const a = new FakeConn(0);
+    mgr.join(a, 'room', 7, 2); // seat 1 never joins — room stays WAITING, never IN_MATCH
+
+    const b = new FakeConn(1);
+    mgr.handle(b, 'room', { type: 'resume', roomId: 'room', owner: 1, lastFrame: 0 });
+
+    expect(b.ofType('error')).toEqual([
+      { type: 'error', code: 'resume_failed', message: 'Unable to resume this match — it may have already ended.' },
+    ]);
+    expect(b.ofType('conn_resync')).toEqual([]); // never actually reseated
+  });
+
+  it('a resume that DOES succeed never sends a resume_failed error', () => {
+    const scheduler = new FakeScheduler();
+    const mgr = new RoomManager({ scheduler });
+    const a = new FakeConn(0);
+    const b = new FakeConn(1);
+    mgr.join(a, 'room', 7, 2);
+    mgr.join(b, 'room', 7, 2); // both seated → IN_MATCH
+
+    mgr.onClose(b, 'room'); // b drops
+    const b2 = new FakeConn(1);
+    mgr.handle(b2, 'room', { type: 'resume', roomId: 'room', owner: 1, lastFrame: 0 });
+
+    expect(b2.ofType('conn_resync')).toHaveLength(1);
+    expect(b2.ofType('error')).toEqual([]);
+  });
+
   it('routes checkpoint messages through to the room (design/15, ROADMAP 4.4)', () => {
     const scheduler = new FakeScheduler();
     const mgr = new RoomManager({ scheduler });

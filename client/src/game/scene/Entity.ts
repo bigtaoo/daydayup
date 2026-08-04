@@ -22,6 +22,17 @@ export class Entity extends Container {
   facingRad = 0; // aim/shot direction (weapon)
   bodyFacingRad = 0; // movement direction (body/legs) — see Actor's upper/lower split
 
+  /**
+   * Explicit idle/move cue for a caller whose own tick ALSO collapses prev onto cur
+   * (`Scene.positionLocal`'s predicted-pose snap, ROADMAP 3.3) — `Actor.interpolate`'s
+   * default heuristic (curX/prevX delta) reads as permanently stationary once prev==cur,
+   * which is exactly what that snap does every render frame. `null` (the default, reset
+   * on every `pushState()`) means "derive it from the buffer delta as usual" — the
+   * correct signal for every entity driven the normal way (`Scene.reconcile`, never
+   * snapped mid-motion).
+   */
+  movingOverride: boolean | null = null;
+
   shadow: Graphics | null = null;
 
   // Create an elliptical soft shadow, added to the shadow layer by the caller.
@@ -52,6 +63,7 @@ export class Entity extends Container {
     this.curZ = z;
     this.facingRad = facingRad;
     this.bodyFacingRad = bodyFacingRad;
+    this.movingOverride = null; // back to the default buffer-delta heuristic until told otherwise
   }
 
   // Collapse prev onto cur — call right after a view is created so it appears at

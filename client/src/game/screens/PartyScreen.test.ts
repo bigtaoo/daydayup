@@ -10,6 +10,16 @@ import { PartyScreen, type PartyApi } from './PartyScreen';
 import type { PartyInfo } from '../../net/party';
 import { setLocale, resetLocaleForTests } from '../../i18n';
 
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 function fakeApi(overrides: Partial<PartyApi> = {}): PartyApi {
   return {
     createParty: vi.fn(),
@@ -195,6 +205,83 @@ describe('PartyScreen — hide()', () => {
   it('hides the view without throwing even with no open input overlay', () => {
     const s = makeScreen(fakeApi());
     expect(() => s.hide()).not.toThrow();
+  });
+});
+
+describe('PartyScreen — staleness guard (backing out mid-request never lands a late onStartMatch)', () => {
+  it('doStart: hiding the screen before startPartyMatching resolves discards the result and never fires onStartMatch', async () => {
+    const d = deferred<PartyInfo>();
+    const api = fakeApi({
+      createParty: vi.fn().mockResolvedValue(PARTY),
+      startPartyMatching: vi.fn().mockReturnValue(d.promise),
+    });
+    const s = makeScreen(api);
+    const p = privateOf(s);
+    const onStart = vi.fn();
+    s.onStartMatch = onStart;
+    await p.doCreate();
+
+    const startPromise = p.doStart(); // leader taps START MATCHING...
+    s.hide(); // ...then immediately backs out (Game.ts's showMenu() → partyScreen.hide())
+    d.resolve({ ...PARTY, matching: true }); // the server call finally lands
+    await startPromise;
+
+    expect(onStart).not.toHaveBeenCalled();
+  });
+
+  it('pollOnce: hiding the screen mid-poll discards the result and never fires onStartMatch', async () => {
+    const joined: PartyInfo = { partyId: 'p1', code: 'ABCDE', leaderId: 'alice', members: ['alice', 'me'], matching: false };
+    const d = deferred<PartyInfo>();
+    const api = fakeApi({
+      joinParty: vi.fn().mockResolvedValue(joined),
+      getParty: vi.fn().mockReturnValue(d.promise),
+    });
+    const s = makeScreen(api, 'me');
+    const p = privateOf(s);
+    const onStart = vi.fn();
+    s.onStartMatch = onStart;
+    await p.doJoin('ABCDE');
+
+    const pollPromise = p.pollOnce(); // a routine 1s poll goes out...
+    s.hide(); // ...player backs out before it lands
+    d.resolve({ ...joined, matching: true });
+    await pollPromise;
+
+    expect(onStart).not.toHaveBeenCalled();
+  });
+
+  it('doCreate: a stale resolve after hide() never overwrites `party` (no stale state on the NEXT show())', async () => {
+    const d = deferred<PartyInfo>();
+    const api = fakeApi({ createParty: vi.fn().mockReturnValue(d.promise) });
+    const s = makeScreen(api);
+    const p = privateOf(s);
+
+    const createPromise = p.doCreate();
+    s.hide();
+    d.resolve(PARTY);
+    await createPromise;
+
+    s.show(800, 600); // re-enter the screen later
+    expect(p.createBtn.view.visible).toBe(true); // still pre-party — the stale create never landed
+    expect(p.codeText.text).toBe('');
+  });
+
+  it('`busy` always clears after a stale (post-hide) resolve, so re-showing the screen can create/join/start again', async () => {
+    const d = deferred<PartyInfo>();
+    const api = fakeApi({ createParty: vi.fn().mockReturnValue(d.promise) });
+    const s = makeScreen(api);
+    const p = privateOf(s);
+
+    const first = p.doCreate();
+    s.hide();
+    d.resolve(PARTY);
+    await first;
+
+    s.show(800, 600);
+    const api2 = api.createParty as ReturnType<typeof vi.fn>;
+    api2.mockResolvedValue({ ...PARTY, code: 'ZZZZZ' });
+    await p.doCreate(); // must not be swallowed by a `busy` flag stuck true from the stale attempt
+    expect(p.codeText.text).toContain('ZZZZZ');
   });
 });
 

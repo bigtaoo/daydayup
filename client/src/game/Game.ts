@@ -25,7 +25,7 @@ import {
   type SettingsState, type SettingsStore,
 } from '../settings';
 import { t, setLocale } from '../i18n';
-import { ELEMENT_COLORS } from './theme';
+import { ELEMENT_COLORS, THEME } from './theme';
 import { Layers } from './scene/layers';
 import { Scene } from './scene/Scene';
 import { Screens } from './screens/Screens';
@@ -663,7 +663,28 @@ export class Game {
       partyId: this.partyId,
       signal,
       onMatchStart: (localOwner) => { this.localOwner = localOwner; },
+      // Mid-match reconnect feedback (ROADMAP reconnect, design/06) — a drop this far
+      // in is no longer this promise's business (it already resolved), so it's
+      // surfaced straight through the HUD/outcome screen instead of Matchmaking's own
+      // connecting/error state.
+      onReconnecting: () => this.hud.toast(t('toast.reconnecting'), THEME.colors.enemy),
+      onReconnected: () => this.hud.toast(t('toast.reconnected'), THEME.colors.pickupHeal),
+      onConnectionLost: () => this.onOnlineConnectionLost(),
     });
+  }
+
+  /**
+   * The bounded mid-match reconnect loop gave up (ROADMAP reconnect, design/06) —
+   * previously this class of failure just left the run frozen forever with no
+   * feedback at all (`CoopSession.drive()` silently stalls on a dead transport).
+   * Ends the run the same way a real defeat does: the player gets a clear result
+   * screen instead of a stuck one.
+   */
+  private onOnlineConnectionLost(): void {
+    if (this.phase !== 'playing') return; // already resolved some other way (e.g. gameover raced it)
+    this.setPhase('defeat');
+    this.hideHud();
+    this.showOutcomeScreen(false, t('results.connectionLostTitle'), [t('results.connectionLostBody')]);
   }
 
   private onMatchmakingCancelled() {
@@ -1175,7 +1196,7 @@ export class Game {
     // Draw the local seat from the predictor (camera follows it too); remote seats confirmed.
     if (predicting && p && this.predictor.isActive) {
       const pose = this.predictor.pose;
-      this.scene.positionLocal(pose.x, pose.y, fpToPx(p.z), bradToRad(p.facing), pose.bodyFacing);
+      this.scene.positionLocal(pose.x, pose.y, fpToPx(p.z), bradToRad(p.facing), pose.bodyFacing, pose.moving);
     }
     this.spawnBulletTrails(s);
     this.consumeEvents(events);

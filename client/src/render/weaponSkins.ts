@@ -106,13 +106,30 @@ function allDefs(): Array<[string, WeaponVisualDef]> {
 export async function preloadWeaponSkins(): Promise<void> {
   await Promise.all(
     allDefs().map(async ([key, def]) => {
-      textures.set(key, await Assets.load<Texture>(def.path));
+      try {
+        textures.set(key, await Assets.load<Texture>(def.path));
+      } catch {
+        // Best-effort, like every sibling preloader (uiSkins.ts/biomeTiles.ts) — a
+        // per-item try/catch so one bad fetch can't abort every OTHER still-in-flight
+        // weapon texture via Promise.all's fail-fast rejection. getWeaponTexture()'s own
+        // kind-default fallback below covers the gap until a retry/redeploy fixes it.
+      }
     }),
   );
 }
 
+/**
+ * Resolve a weapon id to its texture KEY + calibration (anchor/scale/rotation) as ONE
+ * coherent unit — never texture from one weapon's entry paired with another's anchor/
+ * scale/rotationOffset, which would misplace/mis-rotate whichever texture actually
+ * rendered. Falls back to the kind default (key AND def together) both when the id
+ * isn't registered at all AND when it IS registered but its texture never made it into
+ * `textures` (a preload failure/race, `preloadWeaponSkins` above) — otherwise a missing
+ * texture left the weapon socket fully invisible instead of the neutral silhouette
+ * "the socket base is identical for every weapon" (file header) promises.
+ */
 function resolve(name: string | undefined, kind: WeaponVisualKind): { key: string; def: WeaponVisualDef } {
-  if (name && WEAPON_DEFS[name]) return { key: name, def: WEAPON_DEFS[name]! };
+  if (name && WEAPON_DEFS[name] && textures.has(name)) return { key: name, def: WEAPON_DEFS[name]! };
   return { key: kind, def: KIND_DEFAULTS[kind] };
 }
 

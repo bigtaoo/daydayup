@@ -18,16 +18,26 @@ import { toReplay, runReplay, hashState } from '@dd/engine/replay';
 
 class FakeTransport implements Transport {
   readonly sent: ClientMsg[] = [];
+  closed = false;
   private handler: ((m: ServerMsg) => void) | null = null;
+  private disconnectHandler: ((reason: string) => void) | null = null;
   send(m: ClientMsg): void {
     this.sent.push(m);
   }
   onMessage(h: (m: ServerMsg) => void): void {
     this.handler = h;
   }
-  close(): void {}
+  onDisconnect(h: (reason: string) => void): void {
+    this.disconnectHandler = h;
+  }
+  close(): void {
+    this.closed = true;
+  }
   deliver(m: ServerMsg): void {
     this.handler?.(m);
+  }
+  fail(reason: string): void {
+    this.disconnectHandler?.(reason);
   }
   lastCmd(): PlayerCommand {
     const c = [...this.sent].reverse().find((m) => m.type === 'cmd');
@@ -154,5 +164,98 @@ describe('CoopSession — full client↔server loop reproduces a replay', () => 
     const referenceAt150 = runReplay(toReplay(CONFIG, confirmed), 150);
     expect(referenceAt150.state.tick).toBe(150);
     expect(checkpoints[0]!.stateHash).toBe(hashState(referenceAt150.state));
+  });
+});
+
+describe('CoopSession — reconnect (ROADMAP reconnect, design/06)', () => {
+  it('reconnect() sends `resume` (with the current lastFrame) on the NEW transport, not the old one', () => {
+    const transport = new FakeTransport();
+    const session = new CoopSession({
+      transport, roomId: 'r', owner: 2, seed: SEED, playerCount: 1,
+      buildConfig: () => CONFIG, bufferFrames: 0,
+    });
+    transport.deliver({ type: 'match_start', seed: SEED, startFrame: 0, localOwner: 2, playerCount: 1 });
+
+    const server = new FrameBroadcast({ framesPerBatch: 3, startFrame: 0 });
+    for (let i = 0; i < 2; i++) transport.deliver({ type: 'frame_batch', ...server.tick() });
+    session.drive(); // net.resumeFrame() tracks the confirmed watermark, not what drive() actually stepped
+
+    const transport2 = new FakeTransport();
+    session.reconnect(transport2);
+
+    expect(transport2.sent).toEqual([{ type: 'resume', roomId: 'r', owner: 2, lastFrame: 6 }]);
+    expect(transport.sent.some((m) => m.type === 'resume')).toBe(false); // never touches the dead transport
+  });
+
+  it('after reconnect(), submit/checkpoint/reportResult/close all route through the NEW transport', () => {
+    const transport = new FakeTransport();
+    const session = new CoopSession({
+      transport, roomId: 'r', owner: 0, seed: SEED, playerCount: 1,
+      buildConfig: () => CONFIG, bufferFrames: 0,
+    });
+    transport.deliver({ type: 'match_start', seed: SEED, startFrame: 0, localOwner: 0, playerCount: 1 });
+
+    const transport2 = new FakeTransport();
+    session.reconnect(transport2);
+    transport.sent.length = 0; // only care what happens AFTER the swap
+
+    session.submit(makeCommand({ owner: 0, tick: 1, moveBrad: 0 as Brad, moveMag: 10, buttons: 0 }));
+    session.reportResult(0xabc);
+    session.close();
+
+    expect(transport.sent).toEqual([]); // nothing more ever reaches the dead transport
+    expect(transport2.sent.some((m) => m.type === 'cmd')).toBe(true);
+    expect(transport2.sent).toContainEqual({ type: 'result', stateHash: 0xabc, winner: null, placements: undefined });
+    expect(transport2.closed).toBe(true);
+  });
+
+  it('a `conn_resync` delivered on the new transport folds into the confirmed stream exactly like a fresh frame_batch', () => {
+    const transport = new FakeTransport();
+    const session = new CoopSession({
+      transport, roomId: 'r', owner: 0, seed: SEED, playerCount: 1,
+      buildConfig: () => CONFIG, bufferFrames: 0,
+    });
+    transport.deliver({ type: 'match_start', seed: SEED, startFrame: 0, localOwner: 0, playerCount: 1 });
+    expect(session.drive()).toEqual([]); // stalled — nothing confirmed yet
+
+    const transport2 = new FakeTransport();
+    session.reconnect(transport2);
+    transport2.deliver({ type: 'conn_resync', startFrame: 0, curFrame: 9, log: [] });
+
+    session.drive();
+    expect(session.state!.tick).toBe(9); // caught straight up to the resynced watermark
+  });
+
+  it('onDisconnect fires from either transport, routed through whichever is currently wired', () => {
+    const transport = new FakeTransport();
+    const session = new CoopSession({
+      transport, roomId: 'r', owner: 0, seed: SEED, playerCount: 1,
+      buildConfig: () => CONFIG, bufferFrames: 0,
+    });
+    const seen: string[] = [];
+    session.onDisconnect((reason) => seen.push(reason));
+
+    transport.fail('first drop');
+    const transport2 = new FakeTransport();
+    session.reconnect(transport2);
+    transport2.fail('second drop');
+
+    expect(seen).toEqual(['first drop', 'second drop']);
+  });
+
+  it('onServerError surfaces a `{type:"error"}` message without disturbing NetInputSource', () => {
+    const transport = new FakeTransport();
+    const session = new CoopSession({
+      transport, roomId: 'r', owner: 0, seed: SEED, playerCount: 1,
+      buildConfig: () => CONFIG, bufferFrames: 0,
+    });
+    transport.deliver({ type: 'match_start', seed: SEED, startFrame: 0, localOwner: 0, playerCount: 1 });
+
+    const seen: { code: string; message: string }[] = [];
+    session.onServerError((code, message) => seen.push({ code, message }));
+    transport.deliver({ type: 'error', code: 'resume_failed', message: 'gone' });
+
+    expect(seen).toEqual([{ code: 'resume_failed', message: 'gone' }]);
+    expect(session.started).toBe(true); // an 'error' message is not a match_over/gameover signal
   });
 });

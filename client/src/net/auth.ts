@@ -63,9 +63,13 @@ export async function fetchMe(
   const doFetch = opts.fetch ?? fetch;
   const res = await doFetch(`${baseUrl}/auth/me`, { headers: { authorization: `Bearer ${token}` } });
   if (res.status === 401) return null;
-  const json = (await res.json()) as { accountId: string; username: string; error?: string };
-  if (!res.ok || json.error) throw new Error(json.error ?? `auth request failed (${res.status})`);
-  return json;
+  // Guarded like `call()`'s own res.json() — a non-2xx response can come back with a
+  // non-JSON body (e.g. a proxy's HTML error page on a 502/504), which would otherwise
+  // throw an unhandled SyntaxError here instead of the clean Error every other auth call
+  // in this file produces.
+  const json = (await res.json().catch(() => null)) as { accountId: string; username: string; error?: string } | null;
+  if (!res.ok || json?.error) throw new Error(json?.error ?? `auth request failed (${res.status})`);
+  return json as { accountId: string; username: string };
 }
 
 export type MetaCallOptions = AuthCallOptions;
@@ -74,9 +78,10 @@ export type MetaCallOptions = AuthCallOptions;
 export async function fetchAccountMeta(baseUrl: string, token: string, opts: MetaCallOptions = {}): Promise<unknown | null> {
   const doFetch = opts.fetch ?? fetch;
   const res = await doFetch(`${baseUrl}/account/meta`, { headers: { authorization: `Bearer ${token}` } });
-  const json = (await res.json()) as { data: unknown; error?: string };
-  if (!res.ok || json.error) throw new Error(json.error ?? `auth request failed (${res.status})`);
-  return json.data;
+  // Guarded like `call()`'s own res.json() — see fetchMe's identical note above.
+  const json = (await res.json().catch(() => null)) as { data: unknown; error?: string } | null;
+  if (!res.ok || json?.error) throw new Error(json?.error ?? `auth request failed (${res.status})`);
+  return json?.data ?? null;
 }
 
 export async function saveAccountMeta(baseUrl: string, token: string, data: unknown, opts: MetaCallOptions = {}): Promise<void> {

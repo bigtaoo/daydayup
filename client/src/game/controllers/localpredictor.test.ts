@@ -26,7 +26,7 @@ describe('LocalPredictor — prediction', () => {
     expect(p.isActive).toBe(false);
     p.predict(EAST, 255, DT);
     p.reconcile(500, 500);
-    expect(p.pose).toEqual({ x: 0, y: 0, bodyFacing: 0 });
+    expect(p.pose).toEqual({ x: 0, y: 0, bodyFacing: 0, moving: false });
   });
 
   it('dead-reckons at the sim speed', () => {
@@ -110,8 +110,28 @@ describe('LocalPredictor — reconciliation', () => {
     p.deactivate();
     p.predict(EAST, 255, DT);
     p.reconcile(999, 999);
-    expect(p.pose).toEqual({ x: 5, y: 5, bodyFacing: 0 });
+    expect(p.pose).toEqual({ x: 5, y: 5, bodyFacing: 0, moving: false });
     expect(p.isActive).toBe(false);
+  });
+});
+
+describe('LocalPredictor — moving flag (ROADMAP: fixes the local player\'s walk animation never playing under prediction)', () => {
+  it('is true the frame a nonzero move magnitude is predicted, false when idle', () => {
+    const p = make();
+    p.reset(0, 0, 0);
+    expect(p.pose.moving).toBe(false); // fresh reset, nothing predicted yet
+
+    p.predict(EAST, 255, DT);
+    expect(p.pose.moving).toBe(true);
+
+    p.predict(EAST, 0, DT); // stick released
+    expect(p.pose.moving).toBe(false);
+  });
+
+  it('stays false while inactive, even if predict() is (harmlessly) called', () => {
+    const p = make();
+    p.predict(EAST, 255, DT); // no-op — never reset()
+    expect(p.pose.moving).toBe(false);
   });
 });
 

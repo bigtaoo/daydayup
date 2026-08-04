@@ -187,11 +187,18 @@ export class Scene {
    * onto the predicted (px, radians) position so the sprite — and the camera that follows
    * it — show the render-ahead prediction, while every remote view keeps its confirmed
    * reconcile+interpolate. No-op before the local view exists. Never touches the sim.
+   *
+   * `moving` is `LocalPredictor.pose.moving` — the snap just below collapses prev onto
+   * cur, so `Actor.interpolate`'s own curX/prevX-delta heuristic can't tell idle from
+   * moving here the way it does for every confirmed (non-predicted) entity; this is the
+   * explicit substitute (`Entity.movingOverride`), fixing what was otherwise a local
+   * player whose walk animation never played under prediction.
    */
-  positionLocal(x: number, y: number, z: number, facingRad: number, bodyFacingRad: number = facingRad): void {
+  positionLocal(x: number, y: number, z: number, facingRad: number, bodyFacingRad: number = facingRad, moving = false): void {
     if (!this.playerView) return;
     this.playerView.pushState(x, y, z, facingRad, bodyFacingRad);
     this.playerView.snap(); // prev == cur → no lerp; interpolate() draws it exactly here
+    this.playerView.movingOverride = moving;
   }
 
   private spawn(id: number, v: Entity, x: number, y: number, z: number, facingRad: number, bodyFacingRad: number = facingRad): void {

@@ -192,6 +192,8 @@ export const zh: Translations<typeof en> = {
     materialsLost: '本层材料已全部丢失',
     placeOf: '第一名，共 {total} 名',
     placedOfTotal: '第 {place}/{total} 名',
+    connectionLostTitle: '连接已断开',
+    connectionLostBody: '无法重新连接到对局。',
   },
   toast: {
     heal: '+1 生命',
@@ -200,6 +202,8 @@ export const zh: Translations<typeof en> = {
     buffGeneric: '增益',
     materialQty: '+{qty} {material}',
     materialFallback: '材料',
+    reconnecting: '正在重新连接…',
+    reconnected: '已重新连接',
   },
   compareCard: {
     damage: '伤害',

@@ -37,6 +37,11 @@ export interface Pose {
   x: number;
   y: number;
   bodyFacing: number; // radians — movement direction (body/legs), held while idle
+  /** Was this frame's predicted movement nonzero? `Scene.positionLocal`'s snap collapses
+   *  the interpolation buffer every frame, so the render layer can't derive idle/move
+   *  from position deltas the way it does for every confirmed (non-predicted) entity —
+   *  this is that signal, straight from the same input `predict()` already reads. */
+  moving: boolean;
 }
 
 export const DEFAULT_PREDICTOR: Omit<PredictorConfig, 'speedPxPerSec'> = {
@@ -50,6 +55,7 @@ export class LocalPredictor {
   private x = 0;
   private y = 0;
   private bodyFacing = 0;
+  private moving = false;
   private active = false;
 
   constructor(private readonly cfg: PredictorConfig) {}
@@ -58,7 +64,7 @@ export class LocalPredictor {
     return this.active;
   }
   get pose(): Pose {
-    return { x: this.x, y: this.y, bodyFacing: this.bodyFacing };
+    return { x: this.x, y: this.y, bodyFacing: this.bodyFacing, moving: this.moving };
   }
 
   /** Anchor prediction to a known confirmed pose (px/radians): match start, first frame,
@@ -69,6 +75,7 @@ export class LocalPredictor {
     this.x = x;
     this.y = y;
     this.bodyFacing = bodyFacing;
+    this.moving = false;
     this.active = true;
   }
 
@@ -88,6 +95,7 @@ export class LocalPredictor {
     if (!this.active) return;
     const mag = Math.max(0, Math.min(MOVE_MAG_MAX, moveMag)) / MOVE_MAG_MAX;
     const v = this.cfg.speedPxPerSec * mag * (dtMs / 1000);
+    this.moving = v > 0;
     if (v > 0) {
       const dir = bradToRad(moveBrad);
       this.x += Math.cos(dir) * v;

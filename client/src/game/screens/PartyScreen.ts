@@ -50,6 +50,12 @@ export class PartyScreen {
   private busy = false; // in-flight create/join/start/leave call guard — no double-fire
   private pollAccMs = 0;
   private static readonly POLL_INTERVAL_MS = 1000;
+  // Guards a stale create/join/start/poll continuation from acting after the player has
+  // already backed out (`hide()` bumps this) — same `attemptToken` convention
+  // Matchmaking.ts already uses. Before this existed, a leader who tapped START then
+  // immediately BACK (or was simply mid-poll) would still get yanked into
+  // `onStartMatch` once the in-flight call resolved, even though they'd already left.
+  private attemptToken = 0;
 
   onBack: (() => void) | null = null;
   /** Fired once — either the leader tapping START, or a non-leader member's poll
@@ -117,6 +123,7 @@ export class PartyScreen {
   hide(): void {
     this.view.visible = false;
     this.inputOverlay.close(); // never leave a DOM input dangling once navigated away
+    this.attemptToken++; // any create/join/start/poll still in flight becomes stale
   }
 
   /** Call once per render frame while visible (mirrors Bar/ToastQueue's own `update(dt)`
@@ -147,8 +154,10 @@ export class PartyScreen {
 
   private async pollOnce(): Promise<void> {
     if (!this.party) return;
+    const token = this.attemptToken;
     try {
       const info = await this.api.getParty(this.matchBaseUrl, this.party.partyId);
+      if (token !== this.attemptToken) return; // hidden/backed out while this poll was in flight
       if (!info) {
         this.party = null;
         this.statusText.text = t('party.partyClosed');
@@ -172,13 +181,19 @@ export class PartyScreen {
     if (this.busy) return;
     this.busy = true;
     this.statusText.text = '';
+    const token = this.attemptToken;
     try {
-      this.party = await this.api.createParty(this.matchBaseUrl, this.playerId);
+      const party = await this.api.createParty(this.matchBaseUrl, this.playerId);
+      if (token === this.attemptToken) this.party = party; // else: backed out — discard
     } catch {
-      this.statusText.text = t('party.createFailed');
+      if (token === this.attemptToken) this.statusText.text = t('party.createFailed');
     } finally {
+      // `busy` always clears regardless of staleness — it's this screen's OWN
+      // re-entrancy guard (not tied to whether the player navigated away), and must
+      // never get stuck permanently true or a later re-entry to this screen would be
+      // unable to create/join/start ever again.
       this.busy = false;
-      this.refresh();
+      if (token === this.attemptToken) this.refresh();
     }
   }
 
@@ -195,13 +210,15 @@ export class PartyScreen {
     if (!code || this.busy) return;
     this.busy = true;
     this.statusText.text = '';
+    const token = this.attemptToken;
     try {
-      this.party = await this.api.joinParty(this.matchBaseUrl, this.playerId, code);
+      const party = await this.api.joinParty(this.matchBaseUrl, this.playerId, code);
+      if (token === this.attemptToken) this.party = party;
     } catch {
-      this.statusText.text = t('party.invalidCode');
+      if (token === this.attemptToken) this.statusText.text = t('party.invalidCode');
     } finally {
-      this.busy = false;
-      this.refresh();
+      this.busy = false; // see doCreate's note — always clears, independent of staleness
+      if (token === this.attemptToken) this.refresh();
     }
   }
 
@@ -209,15 +226,17 @@ export class PartyScreen {
     if (!this.party || this.busy || !this.isLeader()) return;
     this.busy = true;
     this.statusText.text = '';
+    const token = this.attemptToken;
     try {
       const info = await this.api.startPartyMatching(this.matchBaseUrl, this.party.partyId, this.playerId);
+      if (token !== this.attemptToken) return; // backed out before matching actually started
       this.party = info;
       this.onStartMatch?.(info.partyId);
     } catch {
-      this.statusText.text = t('party.startFailed');
+      if (token === this.attemptToken) this.statusText.text = t('party.startFailed');
     } finally {
       this.busy = false;
-      this.refresh();
+      if (token === this.attemptToken) this.refresh();
     }
   }
 

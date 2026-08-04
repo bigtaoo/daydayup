@@ -21,6 +21,19 @@ export class Rig {
 
     const boneMap = new Map<string, BoneDef>();
     const boneDefs: BoneDef[] = def.bones.map(raw => {
+      // Both this constructor's own parentRwa lookup AND computeFK's per-bone loop
+      // assume every bone's parent was already processed earlier in `def.bones` — a
+      // rig authored with a child listed before its parent would otherwise silently
+      // compute a wrong rla here (parentRwa defaults to 0 via `?? 0`) and then crash
+      // deep inside computeFK with a bare "Cannot read properties of undefined"
+      // instead of a diagnosis pointing at the actual mistake. Fail fast, at rig
+      // construction (load time), not mid-render.
+      if (raw.parent && !boneMap.has(raw.parent)) {
+        throw new Error(
+          `Rig '${def.id}': bone '${raw.id}' lists parent '${raw.parent}', which is not ` +
+          `yet defined — RigDef.bones must list every parent before its children.`,
+        );
+      }
       const parentRwa = raw.parent ? (boneMap.get(raw.parent)?.rwa ?? 0) : 0;
       const bone: BoneDef = { ...raw, rla: raw.rwa - (raw.parent ? parentRwa : 0) };
       boneMap.set(bone.id, bone);

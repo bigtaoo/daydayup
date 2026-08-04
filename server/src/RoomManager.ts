@@ -62,7 +62,13 @@ export class RoomManager {
         room.submitCmd(conn.owner, msg.cmd);
         return;
       case 'resume':
-        room.resume(conn, msg.lastFrame);
+        // A resume ticket can outlive the match it names (the room already settled/
+        // destroyed by the time the client reconnects) — tell the client so instead of
+        // leaving it connected but silently stuck (the gap this reconnect path exists
+        // to close in the first place).
+        if (!room.resume(conn, msg.lastFrame)) {
+          conn.send({ type: 'error', code: 'resume_failed', message: 'Unable to resume this match — it may have already ended.' });
+        }
         return;
       case 'result':
         room.reportResult(conn.owner, msg.stateHash, msg.winner, msg.placements);

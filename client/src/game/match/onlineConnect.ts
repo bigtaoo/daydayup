@@ -1,6 +1,7 @@
 import { CoopSession } from '../../net/CoopSession';
 import { WebSocketTransport, LaggyTransport, type Transport } from '../../net/transport';
 import { findMatch } from '../../net/matchmaking';
+import { driveReconnect } from '../../net/reconnect';
 import { buildOnlineConfig } from './matchConfig';
 
 export interface OnlineConnectOptions {
@@ -37,6 +38,26 @@ export interface OnlineConnectOptions {
    * instead of a real socket, the same way `net/coopsession.test.ts`'s `FakeTransport`
    * already does for `CoopSession` directly. */
   createTransport?: (url: string) => Transport;
+
+  // ── Mid-match reconnect (ROADMAP reconnect, design/06) — see `net/reconnect.ts`.
+  // A drop BEFORE match_start still just rejects this promise (unchanged); a drop
+  // AFTER match_start drives this bounded retry loop instead of leaving the session
+  // silently stalled. Every callback here is optional — a caller that doesn't wire
+  // them gets a session that reconnects silently, still better than never.
+  /** Fired when a mid-match drop starts a reconnect attempt (e.g. show a banner). */
+  onReconnecting?: (attempt: number) => void;
+  /** Fired once a reconnect attempt has redeemed a fresh ticket and reopened the socket. */
+  onReconnected?: () => void;
+  /** Fired once the reconnect loop gives up (attempts exhausted, or the server
+   *  confirmed the match is gone) — the caller should end the run with a real
+   *  failure state instead of leaving it frozen. */
+  onConnectionLost?: (reason: string) => void;
+  /** Injected for tests — same DI convention as `fetch`/`sleep`/`createTransport` above,
+   * defaulting to those when omitted since a resume redeems against the same matchsvc
+   * and (absent `createTransport`) opens the same kind of socket. */
+  resumeFetch?: typeof fetch;
+  reconnectSleep?: (ms: number) => Promise<void>;
+  maxReconnectAttempts?: number;
 }
 
 /**
@@ -71,13 +92,6 @@ export async function connectOnlineSession(opts: OnlineConnectOptions): Promise<
       reject(new Error('matchmaking: timed out waiting for the match to start'));
     }, opts.matchStartTimeoutMs ?? 20_000);
 
-    transport.onDisconnect?.((reason) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(new Error(`matchmaking: connection failed (${reason})`));
-    });
-
     const session = new CoopSession({
       transport,
       roomId: info.roomId,
@@ -92,6 +106,30 @@ export async function connectOnlineSession(opts: OnlineConnectOptions): Promise<
         clearTimeout(timer);
         resolve(session);
       },
+    });
+
+    // ONE handler covers both eras of this session's life: BEFORE match_start a
+    // transport failure still just rejects this promise (unchanged behavior); AFTER,
+    // it hands off to the bounded reconnect loop instead of leaving the caller with a
+    // session that silently never advances again (ROADMAP reconnect, design/06).
+    session.onDisconnect((reason) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        reject(new Error(`matchmaking: connection failed (${reason})`));
+        return;
+      }
+      driveReconnect(session, {
+        matchBaseUrl: opts.matchBaseUrl,
+        initialToken: info.token,
+        fetch: opts.resumeFetch ?? opts.fetch,
+        sleep: opts.reconnectSleep ?? opts.sleep,
+        maxAttempts: opts.maxReconnectAttempts,
+        createTransport: opts.createTransport,
+        onReconnecting: opts.onReconnecting,
+        onReconnected: opts.onReconnected,
+        onGiveUp: opts.onConnectionLost,
+      });
     });
   });
 }

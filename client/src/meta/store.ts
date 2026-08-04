@@ -63,8 +63,20 @@ export function migrate(parsed: unknown): MetaState {
   const p = parsed as Partial<MetaState>;
   const union = (base: readonly string[], saved: unknown): string[] =>
     Array.isArray(saved) ? [...new Set([...base, ...saved.filter((x): x is string => typeof x === 'string')])] : [...base];
+  // Every OTHER field here drops anything ill-typed rather than trusting a parsed save
+  // verbatim; materialBank didn't, so a corrupted/hand-edited entry (e.g. a string qty)
+  // passed straight through and broke forge.ts's `sum + e.qty` reduce (string
+  // concatenation instead of addition) instead of failing safe like everything else.
+  const materialBank = (saved: unknown): Record<string, number> => {
+    if (!saved || typeof saved !== 'object') return {};
+    const out: Record<string, number> = {};
+    for (const [k, v] of Object.entries(saved as Record<string, unknown>)) {
+      if (typeof v === 'number' && Number.isFinite(v)) out[k] = v;
+    }
+    return out;
+  };
   return {
-    materialBank: p.materialBank && typeof p.materialBank === 'object' ? { ...p.materialBank } : {},
+    materialBank: materialBank(p.materialBank),
     unlockedBlueprints: union(d.unlockedBlueprints, p.unlockedBlueprints),
     ownedCharacters: union(d.ownedCharacters, p.ownedCharacters),
     loadout: Array.isArray(p.loadout) ? p.loadout.filter((x): x is string => typeof x === 'string') : [],

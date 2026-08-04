@@ -86,3 +86,29 @@ describe('auth client calls', () => {
     expect(JSON.parse((init as RequestInit).body as string)).toEqual({ data: { unlockedBlueprints: ['a'] } });
   });
 });
+
+/** A response whose body genuinely isn't JSON — e.g. a proxy's HTML error page in
+ * front of a 502/504 — so `res.json()` itself rejects with a SyntaxError. */
+function fakeFetchNonJsonBody(status: number) {
+  const json = async (): Promise<never> => {
+    throw new SyntaxError('Unexpected token < in JSON');
+  };
+  return vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({ ok: status < 400, status, json }) as unknown as Response);
+}
+
+describe('auth client calls — non-JSON error bodies (a proxy 502/504 HTML page, not a real API response)', () => {
+  it('fetchMe throws a clean Error instead of an unhandled SyntaxError', async () => {
+    const fetch = fakeFetchNonJsonBody(502);
+    await expect(fetchMe('http://mm', 'tok-1', { fetch })).rejects.toThrow(/auth request failed \(502\)/);
+  });
+
+  it('fetchAccountMeta throws a clean Error instead of an unhandled SyntaxError', async () => {
+    const fetch = fakeFetchNonJsonBody(504);
+    await expect(fetchAccountMeta('http://mm', 'tok-1', { fetch })).rejects.toThrow(/auth request failed \(504\)/);
+  });
+
+  it('every other auth call already had this guard via call() — confirms the same shape applies here too', async () => {
+    const fetch = fakeFetchNonJsonBody(500);
+    await expect(login('http://mm', 'alice', 'hunter22', { fetch })).rejects.toThrow(/auth request failed \(500\)/);
+  });
+});

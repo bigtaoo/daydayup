@@ -29,26 +29,45 @@ export class WebSocketTransport implements Transport {
   private readonly outbox: string[] = [];
   private open = false;
   private closedByUs = false;
+  // Set the instant this socket is no longer usable — by our own close(), a close
+  // event, or an error — and never unset. `close()` sets it SYNCHRONOUSLY (not just in
+  // the eventual 'close' event listener) because a caller-requested close doesn't wait
+  // for the handshake to finish before this transport is considered done: a `send()`
+  // that was merely QUEUED before close() (e.g. behind LaggyTransport's own setTimeout
+  // delay) must not reach the socket once close() has already been called, even though
+  // the real 'close' event hasn't fired yet.
+  private dead = false;
 
   constructor(url: string) {
     this.ws = new WebSocket(url);
     this.ws.addEventListener('open', () => {
+      if (this.dead) return; // closed/errored before the handshake even finished
       this.open = true;
       for (const s of this.outbox) this.ws.send(s);
       this.outbox.length = 0;
     });
     this.ws.addEventListener('message', (ev) => {
       if (!this.handler) return;
+      let msg: ServerMsg;
       try {
-        this.handler(JSON.parse(String(ev.data)) as ServerMsg);
+        msg = JSON.parse(String(ev.data)) as ServerMsg;
       } catch {
-        /* ignore malformed frames */
+        return; // genuinely malformed frame — nothing to hand the caller
       }
+      // Deliberately OUTSIDE the try/catch above: that one exists only for bad JSON.
+      // A bug inside the handler itself (NetInputSource.onFrameBatch etc.) must not be
+      // swallowed the same way — it needs to surface (console/error reporting) so a
+      // silently-stalled client is at least diagnosable instead of indistinguishable
+      // from a malformed frame.
+      this.handler(msg);
     });
     this.ws.addEventListener('error', () => {
+      this.dead = true;
       this.disconnectHandler?.('socket error');
     });
     this.ws.addEventListener('close', (ev) => {
+      this.dead = true;
+      this.outbox.length = 0; // nothing left to flush — the socket is gone
       if (this.closedByUs) return; // a caller-requested close() is not a failure
       // Structurally typed (not `CloseEvent`) — this file is reachable from server's
       // compilation graph too via the shared `@dd/net/*` path alias (tsconfig.base.json),
@@ -60,6 +79,7 @@ export class WebSocketTransport implements Transport {
   }
 
   send(msg: ClientMsg): void {
+    if (this.dead) return; // the socket is gone — silently drop instead of touching it further
     const s = JSON.stringify(msg);
     if (this.open) this.ws.send(s);
     else this.outbox.push(s); // flushed on open
@@ -75,6 +95,7 @@ export class WebSocketTransport implements Transport {
 
   close(): void {
     this.closedByUs = true;
+    this.dead = true;
     this.ws.close();
   }
 }

@@ -346,8 +346,11 @@ export class Actor extends Entity {
   override interpolate(alpha: number, frameDt: number): void {
     super.interpolate(alpha, frameDt);
     // Cheap idle/move clip pick straight from Entity's own interpolation buffers —
-    // attack/hurt/death need real GameState signals Actor doesn't receive yet.
-    const moving = Math.hypot(this.curX - this.prevX, this.curY - this.prevY) > 0.01;
+    // attack/hurt/death need real GameState signals Actor doesn't receive yet. A caller
+    // that collapses prev onto cur mid-motion (`Scene.positionLocal`'s predicted-pose
+    // snap) sets `movingOverride` explicitly since the buffer delta alone would always
+    // read as stationary in that case.
+    const moving = this.movingOverride ?? Math.hypot(this.curX - this.prevX, this.curY - this.prevY) > 0.01;
     // Upper/lower body split: the body (legs/torso) faces movement (`bodyFacingRad`,
     // == facingRad for anything that doesn't move independently of its aim, like an
     // enemy), while the weapon always points at the aim/shot direction (`facingRad`).

@@ -49,12 +49,22 @@ export class RunOutcome {
 
   handle(s: GameState): void {
     if (s.zoneEnabled) {
-      if (s.winner === this.host.localOwner) this.winArena(s);
+      if (this.wonArena(s)) this.winArena(s);
       else this.loseArena(s);
     } else {
       if (s.winner === 'enemies') this.lose(s);
       else this.win(s);
     }
+  }
+
+  /** `s.winner` names one representative seat of the winning SQUAD (design/15's
+   *  squad follow-up — see WinConditionSystem.tickPlacement), not necessarily the
+   *  local seat itself, so this must compare team membership, not seat equality. */
+  private wonArena(s: GameState): boolean {
+    if (typeof s.winner !== 'number') return false;
+    const localTeam = s.players[this.host.localOwner]?.teamId;
+    const winnerTeam = s.players[s.winner]?.teamId;
+    return localTeam !== undefined && localTeam === winnerTeam;
   }
 
   private win(s: GameState): void {

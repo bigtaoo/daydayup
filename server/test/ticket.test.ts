@@ -66,6 +66,17 @@ describe('ticket — rejection surface', () => {
     expect(verifyTicket(`${forged}.${sig}`, SECRET, 0)).toBeNull();
   });
 
+  it('ignoreExpiry accepts an expired-but-validly-signed ticket (matchsvc /resume, ROADMAP reconnect)', () => {
+    const token = signTicket(payload, SECRET);
+    expect(verifyTicket(token, SECRET, payload.exp + 1)).toBeNull(); // still rejects by default
+    expect(verifyTicket(token, SECRET, payload.exp + 1, { ignoreExpiry: true })).toEqual(payload);
+  });
+
+  it('ignoreExpiry still rejects a bad signature — proof-of-prior-grant, not a blank cheque', () => {
+    const token = signTicket(payload, SECRET);
+    expect(verifyTicket(token, 'other-secret', payload.exp + 1, { ignoreExpiry: true })).toBeNull();
+  });
+
   it('rejects a missing or non-integer teamId (design/05/15 — unlike mode, never optional)', () => {
     const sig = signTicket(payload, SECRET).split('.')[1];
     const withoutTeamId = { ...payload } as Partial<TicketPayload>;

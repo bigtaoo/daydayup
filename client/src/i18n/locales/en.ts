@@ -193,6 +193,8 @@ export const en = {
     materialsLost: "The floor's materials were lost",
     placeOf: '1st place of {total}',
     placedOfTotal: 'Placed {place}/{total}',
+    connectionLostTitle: 'CONNECTION LOST',
+    connectionLostBody: "Couldn't reconnect to the match.",
   },
   toast: {
     heal: '+1 HP',
@@ -201,6 +203,8 @@ export const en = {
     buffGeneric: 'Buff',
     materialQty: '+{qty} {material}',
     materialFallback: 'material',
+    reconnecting: 'Reconnecting…',
+    reconnected: 'Reconnected',
   },
   compareCard: {
     damage: 'Damage',

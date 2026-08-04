@@ -87,6 +87,25 @@ manual testing. Set `DDU_GAMESERVER_URL` on matchsvc so its issued tickets carry
 `wsUrl` (default `ws://localhost:8787/ws`). Where the two services physically deploy is an
 ops call; the architecture split (design/06) is settled.
 
+**Reconnect (design/06, wired end-to-end 2026-08-04):** the join handshake above only
+ever succeeds while a room is still `WAITING` (filling seats) — a socket for a room
+already `IN_MATCH` gets `4403` from that path. A dropped mid-match connection instead
+calls `POST /resume {token}` with its *original* (by now likely expired) join ticket:
+matchsvc re-verifies its signature while ignoring `exp` (proof the caller once
+legitimately held that seat — a match runs far longer than a ticket's 30s TTL, so the
+original can't just be redeemed again) and mints a fresh one for the same
+`{roomId,owner,seed,playerCount,teamId,mode}`. The client then reopens `/ws?ticket=` with
+that fresh ticket; the gameserver detects the room is already `IN_MATCH` (not `WAITING`)
+and, instead of trying `join()`, waits for the client's own `{type:'resume', lastFrame}`
+message, which `MatchRoom.resume()` answers with `conn_resync` (the frame log past
+`lastFrame` + the current watermark) and resumes the metronome once every seat is back.
+A resume against a room that's already settled/destroyed gets `{type:'error',
+code:'resume_failed'}` instead of hanging silently. **This was dead code from 3.1 until
+this pass** — `resume`/`conn_resync` existed and were unit-tested in isolation, but
+nothing on the client ever called `resume`, and the handshake above would have rejected
+the attempt anyway; a real disconnect just froze the match forever. See design/06's
+"Mid-match reconnect" open question and `client/src/net/reconnect.ts`.
+
 ## Not in scope (by design)
 
 Anti-cheat beyond the post-match `runHeadless` re-judge (design/06: full state is

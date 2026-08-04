@@ -427,3 +427,55 @@ describe('Actor.interpolate — body vs weapon facing (upper/lower body split)',
     expect(weaponGfxOf(a).rotation).toBeCloseTo(Math.PI / 2, 10);
   });
 });
+
+// `movingOverride` (ROADMAP: fixes the local player's walk animation never playing
+// under prediction) — `Scene.positionLocal`'s predicted-pose snap collapses prev onto
+// cur every render frame, so the default curX/prevX-delta heuristic below would always
+// read "stationary" for the local player. Spying on `skin.setFacing` (rather than
+// reading the Graphics placeholder's rotation, which is identical for idle/move) is the
+// only way to observe which clip name `interpolate()` actually picked.
+function skinOf(a: Actor): { setFacing: (...args: unknown[]) => void } {
+  return (a as unknown as { skin: { setFacing: (...args: unknown[]) => void } }).skin;
+}
+
+describe('Actor.interpolate — movingOverride (idle/move clip selection survives a positionLocal-style snap)', () => {
+  it('by default, derives moving from the buffer delta (Scene.reconcile\'s normal per-tick pushState, no snap)', () => {
+    const a = new Actor('player', 20);
+    const spy = vi.spyOn(skinOf(a), 'setFacing');
+    a.pushState(0, 0, 0, 0, 0);
+    a.snap();
+    a.pushState(10, 0, 0, 0, 0); // moved 10px this tick — no snap, so the delta itself is the signal
+    a.interpolate(1, 16);
+    expect(spy).toHaveBeenLastCalledWith(0, 0, 16, 'move');
+  });
+
+  it('a snap to the same position (no override set) still reads idle, exactly as before this fix', () => {
+    const a = new Actor('player', 20);
+    const spy = vi.spyOn(skinOf(a), 'setFacing');
+    a.pushState(5, 5, 0, 0, 0);
+    a.snap();
+    a.interpolate(1, 16);
+    expect(spy).toHaveBeenLastCalledWith(0, 0, 16, 'idle');
+  });
+
+  it('movingOverride=true forces the move clip even though prev==cur — what Scene.positionLocal now sets from LocalPredictor.pose.moving', () => {
+    const a = new Actor('player', 20);
+    const spy = vi.spyOn(skinOf(a), 'setFacing');
+    a.pushState(5, 5, 0, 0, 0);
+    a.snap(); // prev == cur, same as positionLocal's own snap()
+    a.movingOverride = true;
+    a.interpolate(1, 16);
+    expect(spy).toHaveBeenLastCalledWith(0, 0, 16, 'move');
+  });
+
+  it('movingOverride is reset by the next pushState (e.g. prediction deactivating, back to the confirmed path)', () => {
+    const a = new Actor('player', 20);
+    const spy = vi.spyOn(skinOf(a), 'setFacing');
+    a.pushState(0, 0, 0, 0, 0);
+    a.snap();
+    a.movingOverride = true;
+    a.pushState(0, 0, 0, 0, 0); // Scene.reconcile's ordinary push — no override set afterward
+    a.interpolate(1, 16);
+    expect(spy).toHaveBeenLastCalledWith(0, 0, 16, 'idle'); // falls back to the (stationary) buffer delta
+  });
+});

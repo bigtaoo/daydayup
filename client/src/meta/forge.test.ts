@@ -208,6 +208,42 @@ describe('persistence (MetaStore)', () => {
     const saved = migrate({ hasSeenTutorial: 'yes' });
     expect(saved.hasSeenTutorial).toBe(d.hasSeenTutorial);
   });
+
+  // ROADMAP: materialBank used to be the one field migrate() spread through unchecked
+  // instead of validating like every sibling field — a corrupted/hand-edited save with
+  // a string qty passed straight through and broke forge.ts's `sum + e.qty` reduce
+  // (string concatenation) instead of failing safe.
+  describe('migrate — materialBank value validation', () => {
+    it('drops a non-numeric qty (e.g. a hand-edited string) instead of passing it through', () => {
+      const saved = migrate({ materialBank: { mat_fire: '5', mat_ice: 3 } });
+      expect(saved.materialBank.mat_fire).toBeUndefined();
+      expect(saved.materialBank.mat_ice).toBe(3);
+    });
+
+    it('drops non-finite qtys (NaN/Infinity)', () => {
+      const saved = migrate({ materialBank: { mat_fire: NaN, mat_ice: Infinity, mat_poison: 4 } });
+      expect(saved.materialBank).toEqual({ mat_poison: 4 });
+    });
+
+    it('a materialBank that is itself not an object (array, string, number) falls back to empty, not a crash', () => {
+      expect(migrate({ materialBank: ['not', 'an', 'object'] }).materialBank).toEqual({});
+      expect(migrate({ materialBank: 'nonsense' }).materialBank).toEqual({});
+      expect(migrate({ materialBank: 5 }).materialBank).toEqual({});
+    });
+
+    it('a fully well-typed materialBank round-trips exactly (no behavior change for a healthy save)', () => {
+      const saved = migrate({ materialBank: { mat_fire: 2, 'mat_ice#1': 7 } });
+      expect(saved.materialBank).toEqual({ mat_fire: 2, 'mat_ice#1': 7 });
+    });
+
+    it('a corrupted qty can no longer corrupt bankTotal via string concatenation (the actual failure this caused)', () => {
+      const saved = migrate({ materialBank: { mat_fire: '5', mat_ice: 3 } });
+      // Before the fix, summing a string qty alongside a real number produced string
+      // concatenation ("0" + 3 + "5" style) instead of numeric addition; now the bad
+      // entry is simply absent, so the sum is the healthy remainder only.
+      expect(bankTotal(saved, 'ice')).toBe(3);
+    });
+  });
 });
 
 describe('meta loadout reaches the run via EngineConfig.loadout', () => {

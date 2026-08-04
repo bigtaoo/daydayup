@@ -12,6 +12,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import { createMatchsvcServer } from '../src/matchsvc';
+import { signTicket, verifyTicket, type TicketPayload } from '../src/ticket';
 
 let baseUrl: string;
 let close: () => Promise<void>;
@@ -263,6 +264,61 @@ describe('matchsvc HTTP — /rating/report and /rating/:accountId', () => {
     expect(delta('http-sq-a')).toBe(delta('http-sq-b')); // same squad, same delta
     expect(delta('http-sq-c')).toBe(delta('http-sq-d'));
     expect(delta('http-sq-a')).toBeGreaterThan(delta('http-sq-c')); // winning squad > losing squad
+  });
+});
+
+describe('matchsvc HTTP — /resume (ROADMAP reconnect, design/06)', () => {
+  const SECRET = 'test-secret'; // matches createMatchsvcServer({ secret: 'test-secret' }) above
+  const EXPIRED: TicketPayload = { roomId: 'room-http', owner: 1, seed: 7, playerCount: 2, teamId: 1, exp: 1 }; // long expired
+
+  it('reissues a fresh ticket for an expired-but-validly-signed original', async () => {
+    const staleToken = signTicket(EXPIRED, SECRET);
+    const res = await fetch(`${baseUrl}/resume`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: staleToken }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { match: { roomId: string; owner: number; seed: number; playerCount: number; teamId: number; token: string; wsUrl: string } };
+    expect(body.match).toMatchObject({ roomId: 'room-http', owner: 1, seed: 7, playerCount: 2, teamId: 1 });
+    expect(typeof body.match.wsUrl).toBe('string');
+
+    // The reissued token itself verifies (fresh exp, no ignoreExpiry needed) and names
+    // the SAME seat grant — this is the ticket the client redeems on the gameserver.
+    const reverified = verifyTicket(body.match.token, SECRET, Date.now());
+    expect(reverified).toMatchObject({ roomId: 'room-http', owner: 1, seed: 7, playerCount: 2, teamId: 1 });
+    expect(reverified!.exp).toBeGreaterThan(Date.now());
+    expect(body.match.token).not.toBe(staleToken); // a genuinely fresh signature, not an echo
+  });
+
+  it('rejects a bogus/forged token with 401', async () => {
+    const res = await fetch(`${baseUrl}/resume`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: 'not-a-real-ticket' }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects a tampered body (owner escalation) with 401 even though the ticket is otherwise well-formed', async () => {
+    const token = signTicket(EXPIRED, SECRET);
+    const sig = token.split('.')[1];
+    const forgedBody = Buffer.from(JSON.stringify({ ...EXPIRED, owner: 0 }), 'utf8').toString('base64url');
+    const res = await fetch(`${baseUrl}/resume`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ token: `${forgedBody}.${sig}` }),
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('rejects a missing token with 400', async () => {
+    const res = await fetch(`${baseUrl}/resume`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
   });
 });
 

@@ -141,6 +141,19 @@ describe('RunOutcome — PvP arena victory/elimination', () => {
     });
   });
 
+  it('winArena: local seat is a squad-mate of the named winner (shared teamId), not the seat itself — still victory, not defeat', () => {
+    const s = pvpState(4);
+    s.players[2]!.teamId = s.players[3]!.teamId; // seats 2 and 3 share a squad
+    s.winner = 2; // WinConditionSystem names the squad's lowest seat as the representative
+    s.tick = TICK_RATE * 65;
+
+    const host = mockHost(3); // local seat is the OTHER member of the winning squad
+    new RunOutcome(host).handle(s);
+
+    expect(host.phaseSet).toEqual(['victory']);
+    expect(host.shown?.won).toBe(true);
+  });
+
   it('loseArena: placement computed from worst-to-best `placements`, winner never in it', () => {
     const s = pvpState(4);
     s.winner = 3; // seat 3 won, not the local seat

@@ -192,6 +192,8 @@ export const de: Translations<typeof en> = {
     materialsLost: 'Die Materialien dieser Etage sind verloren',
     placeOf: '1. Platz von {total}',
     placedOfTotal: 'Platz {place}/{total}',
+    connectionLostTitle: 'VERBINDUNG VERLOREN',
+    connectionLostBody: 'Verbindung zum Match konnte nicht wiederhergestellt werden.',
   },
   toast: {
     heal: '+1 LP',
@@ -200,6 +202,8 @@ export const de: Translations<typeof en> = {
     buffGeneric: 'Buff',
     materialQty: '+{qty} {material}',
     materialFallback: 'Material',
+    reconnecting: 'Verbinde erneut…',
+    reconnected: 'Wieder verbunden',
   },
   compareCard: {
     damage: 'Schaden',

@@ -295,6 +295,11 @@ export class Slider {
     });
     surface.on('pointerup', () => { this.dragging = false; });
     surface.on('pointerupoutside', () => { this.dragging = false; });
+    // An OS-level interruption (e.g. an incoming call/notification mid-drag) delivers
+    // pointercancel instead of pointerup — without this, `dragging` gets stuck true, and
+    // when several sliders share one `dragSurface` (Settings.ts), the NEXT unrelated
+    // pointer move over that surface silently drags this slider's value again.
+    surface.on('pointercancel', () => { this.dragging = false; });
   }
 
   private seekFromGlobal(gx: number, gy: number) {

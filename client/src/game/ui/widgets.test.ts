@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
-import { Graphics, Text, Texture } from 'pixi.js';
-import { Panel, Button } from './widgets';
+import { Container, Graphics, Text, Texture } from 'pixi.js';
+import { Panel, Button, Slider } from './widgets';
 
 // Panel's border option (design/10 legibility fix, 2026-08-02): a flat near-black fill
 // at low alpha reads as invisible over the app's own black backdrop — borderColor
@@ -144,5 +144,63 @@ describe('Button', () => {
     const b = new Button('X', { w: 100, h: 40 });
     expect(() => b.setIcon(Texture.WHITE, 0x6b46c1)).not.toThrow();
     expect(b.view.children.length).toBe(4);
+  });
+});
+
+describe('Slider — drag lifecycle', () => {
+  function draggingOf(s: Slider): boolean {
+    return (s as unknown as { dragging: boolean }).dragging;
+  }
+  const down = (view: { emit: (e: string, ev?: unknown) => void }, x: number) =>
+    view.emit('pointerdown', { global: { x, y: 0 } });
+  const move = (target: { emit: (e: string, ev?: unknown) => void }, x: number) =>
+    target.emit('globalpointermove', { global: { x, y: 0 } });
+  // No payload for these — same bare-cast convention Button's own `emitTap` test uses.
+  const fire = (target: { emit: (e: string) => void }, name: string) => target.emit(name);
+
+  it('starts dragging on pointerdown and updates value on globalpointermove', () => {
+    const s = new Slider({ w: 200 });
+    down(s.view, 100);
+    expect(draggingOf(s)).toBe(true);
+    expect(s.get()).toBeCloseTo(0.5, 5);
+  });
+
+  it('stops dragging on pointerup', () => {
+    const s = new Slider({ w: 200 });
+    down(s.view, 100);
+    fire(s.view, 'pointerup');
+    expect(draggingOf(s)).toBe(false);
+  });
+
+  it('stops dragging on pointerupoutside', () => {
+    const s = new Slider({ w: 200 });
+    down(s.view, 100);
+    fire(s.view, 'pointerupoutside');
+    expect(draggingOf(s)).toBe(false);
+  });
+
+  it('stops dragging on pointercancel (an OS-level interruption mid-drag, e.g. an incoming call) — previously stuck true forever', () => {
+    const s = new Slider({ w: 200 });
+    down(s.view, 100);
+    expect(draggingOf(s)).toBe(true);
+    fire(s.view, 'pointercancel');
+    expect(draggingOf(s)).toBe(false);
+  });
+
+  it('after a pointercancel, a later globalpointermove no longer drags this slider', () => {
+    const s = new Slider({ w: 200 });
+    down(s.view, 0);
+    fire(s.view, 'pointercancel');
+    move(s.view, 200); // an unrelated later move over the same surface
+    expect(s.get()).toBe(0); // never dragged by it — cancel already cleared `dragging`
+  });
+
+  it('a pointercancel on a SHARED dragSurface (Settings.ts\'s three sliders) protects THIS slider from a later unrelated move on that surface', () => {
+    const surface = new Container();
+    const s = new Slider({ w: 200, dragSurface: surface });
+    down(s.view, 0); // pointerdown is always on the slider's own view, cancel/move on the shared surface
+    fire(surface, 'pointercancel');
+    move(surface, 200);
+    expect(s.get()).toBe(0);
   });
 });

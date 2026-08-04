@@ -73,6 +73,19 @@ export class TextInputOverlay {
       }
       e.stopPropagation(); // never let a keystroke also drive the game's own key handlers
     });
+    // Blur teardown (the class doc's third documented close trigger, previously
+    // unimplemented): without this, tapping a nearby Pixi button instead of pressing
+    // Escape left the still-focused/still-present DOM `<input>` sitting on top of the
+    // canvas, able to intercept that very click instead of letting it reach the button
+    // underneath. `this.el !== input` guards against `close()`'s own `.remove()` call
+    // synchronously re-triggering this same blur handler (removing a focused element
+    // fires a native blur) — that path already reset `this.el` to null first, so this
+    // only ever proceeds for a GENUINE external blur.
+    input.addEventListener('blur', () => {
+      if (this.el !== input) return;
+      this.close();
+      opts.onCancel?.();
+    });
 
     document.body.appendChild(input);
     this.el = input;
@@ -80,8 +93,9 @@ export class TextInputOverlay {
   }
 
   close(): void {
-    if (!this.el) return;
-    this.el.remove();
-    this.el = null;
+    const el = this.el;
+    if (!el) return;
+    this.el = null; // clear BEFORE remove() — see the blur listener's re-entrancy guard above
+    el.remove();
   }
 }

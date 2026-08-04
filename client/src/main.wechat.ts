@@ -5,6 +5,7 @@
 import 'pixi.js/unsafe-eval';
 import { Game } from './game/Game';
 import { WeChatPlatform } from './platform/wechat/WeChatPlatform';
+import { reportWeChatBootFailure } from './bootError';
 
 // WeChat mini-game entry. It is loaded by client/wechat/game.js, which MUST have
 // already required weapp-adapter so window/document/Image exist before Pixi imports.
@@ -20,4 +21,4 @@ async function boot() {
   (GameGlobal as Record<string, unknown>).__game = game;
 }
 
-boot();
+boot().catch(reportWeChatBootFailure);

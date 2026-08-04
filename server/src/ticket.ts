@@ -57,8 +57,19 @@ export function signTicket(payload: TicketPayload, secret: string): string {
  * matches (constant-time) AND it has not expired; otherwise `null` — a bad signature,
  * a tampered body, a malformed token, and an expired-but-valid ticket are indistinguishable
  * to the caller (all "reject and close"), which is the posture we want.
+ *
+ * `ignoreExpiry` (matchsvc's `/resume` reissue endpoint only, ROADMAP reconnect) skips
+ * the `exp` check while still requiring a valid signature — proof the caller once
+ * legitimately held this exact seat grant, even though a match runs far longer than a
+ * ticket's short TTL. Every other caller (the gameserver handshake) always leaves this
+ * off, so a stale ticket still can't open a fresh connection.
  */
-export function verifyTicket(token: string, secret: string, nowMs: number): TicketPayload | null {
+export function verifyTicket(
+  token: string,
+  secret: string,
+  nowMs: number,
+  opts: { ignoreExpiry?: boolean } = {},
+): TicketPayload | null {
   const dot = token.indexOf('.');
   if (dot <= 0 || dot === token.length - 1) return null;
   const body = token.slice(0, dot);
@@ -89,6 +100,6 @@ export function verifyTicket(token: string, secret: string, nowMs: number): Tick
   ) {
     return null;
   }
-  if (nowMs > payload.exp) return null; // expired
+  if (!opts.ignoreExpiry && nowMs > payload.exp) return null; // expired
   return payload;
 }

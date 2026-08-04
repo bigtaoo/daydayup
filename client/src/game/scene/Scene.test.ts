@@ -138,6 +138,43 @@ describe('Scene.reconcile — player body/aim facing split', () => {
   });
 });
 
+// ROADMAP: fixes the local player's walk animation never playing under online
+// prediction — `positionLocal`'s snap() collapses prev onto cur every render frame, so
+// Actor.interpolate's default curX/prevX-delta heuristic would always read "stationary"
+// for the predicted local view. `moving` is threaded straight to `Entity.movingOverride`.
+describe('Scene.positionLocal — moving flag survives the predicted-pose snap', () => {
+  it('sets movingOverride from its `moving` argument (default false)', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const scene = new Scene(new Layers());
+    scene.reconcile(s, s.players[0]!.id);
+
+    scene.positionLocal(10, 10, 0, 0, 0, true);
+    expect(scene.player!.movingOverride).toBe(true);
+
+    scene.positionLocal(10, 10, 0, 0, 0, false);
+    expect(scene.player!.movingOverride).toBe(false);
+
+    scene.positionLocal(10, 10, 0, 0, 0);
+    expect(scene.player!.movingOverride).toBe(false); // omitted → defaults to idle, not "derive from buffer"
+  });
+
+  it('the very next reconcile() (a normal confirmed pushState) resets movingOverride to null again', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const scene = new Scene(new Layers());
+    scene.reconcile(s, s.players[0]!.id);
+    scene.positionLocal(10, 10, 0, 0, 0, true);
+    expect(scene.player!.movingOverride).toBe(true);
+
+    scene.reconcile(s, s.players[0]!.id); // e.g. prediction deactivated — back to the confirmed path
+    expect(scene.player!.movingOverride).toBeNull();
+  });
+
+  it('is a no-op before the local view exists (no crash)', () => {
+    const scene = new Scene(new Layers());
+    expect(() => scene.positionLocal(0, 0, 0, 0, 0, true)).not.toThrow();
+  });
+});
+
 describe('Scene.reconcile — local-seat marker (design/10 legibility)', () => {
   function ringWidth(view: unknown): number {
     return ((view as { children: Array<{ getLocalBounds(): { width: number } }> }).children[4]?.getLocalBounds()

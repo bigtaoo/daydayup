@@ -97,6 +97,17 @@ describe('WebSocketTransport — receiving', () => {
     void t;
     expect(() => lastSocket().fireMessage(JSON.stringify(MATCH_START))).not.toThrow();
   });
+
+  it('a well-formed message that makes the HANDLER itself throw is NOT swallowed the same way a malformed frame is', () => {
+    const t = new WebSocketTransport('ws://x');
+    t.onMessage(() => {
+      throw new Error('bug inside NetInputSource.onFrameBatch or similar');
+    });
+    // JSON.parse succeeds here — only ITS failures are meant to be silently ignored;
+    // a handler bug on well-formed input must actually surface, not vanish into the
+    // same catch used for bad JSON.
+    expect(() => lastSocket().fireMessage(JSON.stringify(MATCH_START))).toThrow(/bug inside/);
+  });
 });
 
 describe('WebSocketTransport — disconnect (design/10 Matchmaking screen)', () => {
@@ -138,6 +149,50 @@ describe('WebSocketTransport — disconnect (design/10 Matchmaking screen)', () 
     void t;
     expect(() => lastSocket().fireError()).not.toThrow();
     expect(() => lastSocket().fireClose(1006)).not.toThrow();
+  });
+});
+
+describe('WebSocketTransport — invalidation after close/error (a late send never touches the dead socket)', () => {
+  it('a send() called after close() never reaches the underlying socket', () => {
+    const t = new WebSocketTransport('ws://x');
+    lastSocket().fireOpen();
+    t.close();
+    t.send(JOIN); // e.g. a LaggyTransport-delayed send whose timer fires after close()
+    expect(lastSocket().sent).toEqual([]);
+  });
+
+  it('a send() queued before close() but flushed after it is dropped, not sent late', () => {
+    const t = new WebSocketTransport('ws://x'); // never opened — send() queues into the outbox
+    t.send(JOIN);
+    t.close();
+    lastSocket().fireOpen(); // the handshake happened to complete after close() was called
+    expect(lastSocket().sent).toEqual([]); // the queued send must NOT flush onto a dead socket
+  });
+
+  it('a send() called after a socket error never reaches the underlying socket', () => {
+    const t = new WebSocketTransport('ws://x');
+    lastSocket().fireOpen();
+    lastSocket().fireError();
+    t.send(JOIN);
+    expect(lastSocket().sent).toEqual([]);
+  });
+
+  it('a send() called after an unrequested close never reaches the underlying socket', () => {
+    const t = new WebSocketTransport('ws://x');
+    lastSocket().fireOpen();
+    lastSocket().fireClose(1006);
+    t.send(JOIN);
+    expect(lastSocket().sent).toEqual([]);
+  });
+
+  it('close() is still reported as caller-requested even though it also marks the transport dead', () => {
+    const t = new WebSocketTransport('ws://x');
+    const reasons: string[] = [];
+    t.onDisconnect((r) => reasons.push(r));
+    t.close();
+    t.send(JOIN); // dropped, not thrown
+    lastSocket().fireClose(1000);
+    expect(reasons).toEqual([]); // unchanged from the existing close()-suppresses-onDisconnect behavior
   });
 });
 

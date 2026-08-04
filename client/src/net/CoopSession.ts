@@ -58,19 +58,63 @@ export class CoopSession {
   readonly net: NetInputSource;
   private engine: GameEngine | null = null;
   private nextFrame = 1;
+  // Mutable — `reconnect()` swaps this after a mid-match transport failure (design/06's
+  // `resume`/`conn_resync` plumbing, ROADMAP reconnect). Every outbound send below reads
+  // THIS field (never `opts.transport` directly), so a swap takes effect immediately
+  // for `submit`/`drive`'s checkpoints/`reportResult`/`close` alike.
+  private transport: Transport;
+  private disconnectHandler: ((reason: string) => void) | null = null;
+  private serverErrorHandler: ((code: string, message: string) => void) | null = null;
 
   constructor(private readonly opts: CoopSessionOptions) {
+    this.transport = opts.transport;
     this.net = new NetInputSource(
-      { submit: (cmd) => opts.transport.send({ type: 'cmd', cmd }) },
+      { submit: (cmd) => this.transport.send({ type: 'cmd', cmd }) },
       {
         bufferFrames: opts.bufferFrames,
         onMatchStart: (info) => this.onStart(info),
         onMatchOver: (over) => opts.onMatchOver?.(over),
       },
     );
-    opts.transport.onMessage((msg) => this.net.handleServerMsg(msg));
+    this.wireTransport(this.transport);
     // Claim the seat; the server starts the match once every seat is joined.
-    opts.transport.send({ type: 'join', roomId: opts.roomId, owner: opts.owner, seed: opts.seed, playerCount: opts.playerCount });
+    this.transport.send({ type: 'join', roomId: opts.roomId, owner: opts.owner, seed: opts.seed, playerCount: opts.playerCount });
+  }
+
+  private wireTransport(t: Transport): void {
+    t.onMessage((msg) => {
+      if (msg.type === 'error') this.serverErrorHandler?.(msg.code, msg.message);
+      this.net.handleServerMsg(msg);
+    });
+    t.onDisconnect?.((reason) => this.disconnectHandler?.(reason));
+  }
+
+  /** Register the handler for a transport failure (socket error, or an unrequested
+   *  close) — the seam `net/reconnect.ts`'s reconnect driver hooks to trigger a resume
+   *  attempt. Single-slot, same convention as `Transport.onDisconnect` itself. */
+  onDisconnect(handler: (reason: string) => void): void {
+    this.disconnectHandler = handler;
+  }
+
+  /** A server `{type:'error'}` message — currently only ever `resume_failed` (the
+   *  resumed match already ended/was destroyed server-side), but generic in shape. */
+  onServerError(handler: (code: string, message: string) => void): void {
+    this.serverErrorHandler = handler;
+  }
+
+  /**
+   * Swap in a freshly connected transport after a mid-match disconnect (design/06's
+   * reconnect plumbing — `resume`/`conn_resync` — existed server-side but was never
+   * driven from the client until now; see `net/reconnect.ts`). The engine/NetInputSource
+   * are untouched: only the wire is replaced. The server replays everything this client
+   * missed via `conn_resync`, which `NetInputSource.onConnResync` already folds into the
+   * confirmed stream — `drive()`'s existing catch-up logic (the same path a merely-
+   * backgrounded tab already uses) takes it from there.
+   */
+  reconnect(transport: Transport): void {
+    this.transport = transport;
+    this.wireTransport(transport);
+    transport.send({ type: 'resume', roomId: this.opts.roomId, owner: this.opts.owner, lastFrame: this.net.resumeFrame() });
   }
 
   private onStart(info: MatchStart): void {
@@ -121,7 +165,7 @@ export class CoopSession {
       // progress tick), so every honest client reports at the identical logical
       // instant regardless of its own wall-clock pacing.
       if (engine.state.tick % CHECKPOINT_TICKS === 0) {
-        this.opts.transport.send({ type: 'checkpoint', tick: engine.state.tick, stateHash: hashState(engine.state) });
+        this.transport.send({ type: 'checkpoint', tick: engine.state.tick, stateHash: hashState(engine.state) });
       }
       if (engine.state.phase === 'gameover') break;
     }
@@ -140,10 +184,10 @@ export class CoopSession {
     const s = this.engine?.state;
     if (!s) return;
     const placements = s.zoneEnabled ? s.placements : undefined;
-    this.opts.transport.send({ type: 'result', stateHash, winner: s.winner, placements });
+    this.transport.send({ type: 'result', stateHash, winner: s.winner, placements });
   }
 
   close(): void {
-    this.opts.transport.close();
+    this.transport.close();
   }
 }

@@ -180,13 +180,14 @@ describe('connectOnlineSession — failure after ticket redemption (design/10 ga
     expect(transport.closed).toBe(true);
   });
 
-  it('a disconnect that arrives AFTER match_start (late/duplicate close event) is ignored — the promise already settled', async () => {
+  it('a disconnect that arrives AFTER match_start (late/duplicate close event) never rejects the already-settled promise', async () => {
     let transport!: FakeTransport;
     const promise = connectOnlineSession({
       matchBaseUrl: 'http://mm', pvp: false, pvpSeats: 2, lagMs: 0,
       onMatchStart: () => {},
       fetch: fakeFetch([{ queueId: 'q1', match: MATCH }]),
       sleep: noSleep,
+      reconnectSleep: noSleep,
       createTransport: () => (transport = new FakeTransport()),
     });
     await flush();
@@ -194,6 +195,7 @@ describe('connectOnlineSession — failure after ticket redemption (design/10 ga
     const session = await promise;
     expect(() => transport.fail('socket closed (1000)')).not.toThrow();
     expect(session.started).toBe(true); // unaffected — nothing to reject into any more
+    await flush(); // let the reconnect attempt this now kicks off (see below) settle
   });
 
   it('a timeout that fires AFTER match_start never rejects an already-resolved promise', async () => {
@@ -212,5 +214,102 @@ describe('connectOnlineSession — failure after ticket redemption (design/10 ga
     await promise; // resolved well before the timeout
     await vi.advanceTimersByTimeAsync(5000);
     expect(transport.closed).toBe(false); // the timeout's own transport.close() never ran
+  });
+});
+
+describe('connectOnlineSession — mid-match reconnect (ROADMAP reconnect, design/06)', () => {
+  const RESUMED = { ...MATCH, token: 'tok2' };
+
+  it('a mid-match disconnect requests a resume ticket and sends `resume` (not `join`) on the fresh transport', async () => {
+    let transport!: FakeTransport;
+    let transport2!: FakeTransport;
+    const resumeFetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ match: RESUMED }) }) as unknown as Response);
+    const reconnecting: number[] = [];
+    let reconnected = false;
+
+    const promise = connectOnlineSession({
+      matchBaseUrl: 'http://mm', pvp: false, pvpSeats: 2, lagMs: 0,
+      onMatchStart: () => {},
+      fetch: fakeFetch([{ queueId: 'q1', match: MATCH }]),
+      sleep: noSleep,
+      reconnectSleep: noSleep,
+      resumeFetch,
+      onReconnecting: (n) => reconnecting.push(n),
+      onReconnected: () => { reconnected = true; },
+      createTransport: (url) => {
+        if (!transport) {
+          expect(url).toBe(`${MATCH.wsUrl}?ticket=${MATCH.token}`);
+          return (transport = new FakeTransport());
+        }
+        expect(url).toBe(`${RESUMED.wsUrl}?ticket=${RESUMED.token}`);
+        return (transport2 = new FakeTransport());
+      },
+    });
+    await flush();
+    transport.deliver(MATCH_START);
+    await promise;
+
+    transport.fail('socket closed (1006)');
+    await flush(10);
+
+    expect(resumeFetch).toHaveBeenCalledTimes(1);
+    expect(reconnecting).toEqual([1]);
+    expect(reconnected).toBe(true);
+    expect(transport2.sent).toEqual([{ type: 'resume', roomId: MATCH.roomId, owner: MATCH.owner, lastFrame: 0 }]);
+  });
+
+  it('gives up after maxReconnectAttempts and reports the last failure', async () => {
+    const resumeFetch = vi.fn(async () => ({ ok: false, status: 500, json: async () => ({ error: 'boom' }) }) as unknown as Response);
+    let lost: string | undefined;
+    let transport!: FakeTransport;
+
+    const promise = connectOnlineSession({
+      matchBaseUrl: 'http://mm', pvp: false, pvpSeats: 2, lagMs: 0,
+      onMatchStart: () => {},
+      fetch: fakeFetch([{ queueId: 'q1', match: MATCH }]),
+      sleep: noSleep,
+      reconnectSleep: noSleep,
+      resumeFetch,
+      maxReconnectAttempts: 2,
+      onConnectionLost: (reason) => { lost = reason; },
+      createTransport: () => (transport = new FakeTransport()),
+    });
+    await flush();
+    transport.deliver(MATCH_START);
+    await promise;
+
+    transport.fail('socket closed (1006)');
+    await flush(20);
+
+    expect(resumeFetch).toHaveBeenCalledTimes(2);
+    expect(lost).toMatch(/boom/);
+  });
+
+  it('a `resume_failed` server error ends the retry loop immediately, without waiting out further attempts', async () => {
+    let transport!: FakeTransport;
+    let transport2!: FakeTransport;
+    let lost: string | undefined;
+    const resumeFetch = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ match: RESUMED }) }) as unknown as Response);
+
+    const promise = connectOnlineSession({
+      matchBaseUrl: 'http://mm', pvp: false, pvpSeats: 2, lagMs: 0,
+      onMatchStart: () => {},
+      fetch: fakeFetch([{ queueId: 'q1', match: MATCH }]),
+      sleep: noSleep,
+      reconnectSleep: noSleep,
+      resumeFetch,
+      onConnectionLost: (reason) => { lost = reason; },
+      createTransport: () => (transport ? (transport2 = new FakeTransport()) : (transport = new FakeTransport())),
+    });
+    await flush();
+    transport.deliver(MATCH_START);
+    await promise;
+
+    transport.fail('socket closed (1006)');
+    await flush(10);
+    transport2.deliver({ type: 'error', code: 'resume_failed', message: 'match already ended' });
+    await flush();
+
+    expect(lost).toBe('match already ended');
   });
 });

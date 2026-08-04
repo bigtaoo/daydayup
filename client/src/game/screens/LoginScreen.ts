@@ -43,6 +43,15 @@ export class LoginScreen {
   private readonly api: AuthApi;
   private session: Session | null;
   private busy = false;
+  // Guards a stale login/register/change-password continuation from reacting after the
+  // player has already backed out (`hide()` bumps this) — same `attemptToken`
+  // convention PartyScreen/Matchmaking already use. `setSession()` itself (the actual
+  // persisted-session write) still always runs on a genuine success — the credential
+  // really was valid — but `onSessionChange` (which Game.ts wires to overwrite the
+  // live `meta` mid-run) and this screen's own local state/UI only react while still
+  // the current attempt, so a login that resolves after the player left can't yank a
+  // guest run's meta out from under it.
+  private attemptToken = 0;
 
   onBack: (() => void) | null = null;
   /** Fired once a login/register succeeds, or once account meta should re-sync after a
@@ -108,6 +117,7 @@ export class LoginScreen {
   hide(): void {
     this.view.visible = false;
     this.inputOverlay.close(); // never leave a DOM input dangling once navigated away
+    this.attemptToken++; // any login/register/change-password still in flight becomes stale
   }
 
   private layout(w: number, h: number): void {
@@ -176,46 +186,53 @@ export class LoginScreen {
   private async doLogin(username: string, password: string): Promise<void> {
     if (this.busy) return; // re-entrant guard — mirrors PartyScreen's doCreate/doJoin
     this.busy = true;
+    const token = this.attemptToken;
     try {
       const result = await this.api.login(this.matchBaseUrl, username, password);
-      setSession(result);
-      this.session = result;
-      this.onSessionChange?.();
+      setSession(result); // the login really did succeed — persist it regardless of staleness
+      if (token === this.attemptToken) {
+        this.session = result;
+        this.onSessionChange?.();
+      }
     } catch (e) {
-      this.statusText.text = (e as Error).message || t('auth.loginFailed');
+      if (token === this.attemptToken) this.statusText.text = (e as Error).message || t('auth.loginFailed');
     } finally {
-      this.busy = false;
-      this.refresh();
+      this.busy = false; // always clears — this screen's own guard, not tied to staleness
+      if (token === this.attemptToken) this.refresh();
     }
   }
 
   private async doRegister(username: string, password: string): Promise<void> {
     if (this.busy) return;
     this.busy = true;
+    const token = this.attemptToken;
     try {
       const result = await this.api.register(this.matchBaseUrl, username, password);
       setSession(result);
-      this.session = result;
-      this.onSessionChange?.();
+      if (token === this.attemptToken) {
+        this.session = result;
+        this.onSessionChange?.();
+      }
     } catch (e) {
-      this.statusText.text = (e as Error).message || t('auth.registerFailed');
+      if (token === this.attemptToken) this.statusText.text = (e as Error).message || t('auth.registerFailed');
     } finally {
       this.busy = false;
-      this.refresh();
+      if (token === this.attemptToken) this.refresh();
     }
   }
 
   private async doChangePassword(oldPassword: string, newPassword: string): Promise<void> {
     if (!this.session || this.busy) return;
     this.busy = true;
+    const token = this.attemptToken;
     try {
       await this.api.changePassword(this.matchBaseUrl, this.session.token, oldPassword, newPassword);
-      this.statusText.text = t('auth.passwordChanged');
+      if (token === this.attemptToken) this.statusText.text = t('auth.passwordChanged');
     } catch (e) {
-      this.statusText.text = (e as Error).message || t('auth.passwordChangeFailed');
+      if (token === this.attemptToken) this.statusText.text = (e as Error).message || t('auth.passwordChangeFailed');
     } finally {
       this.busy = false;
-      this.refresh();
+      if (token === this.attemptToken) this.refresh();
     }
   }
 

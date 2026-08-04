@@ -192,6 +192,8 @@ export const es: Translations<typeof en> = {
     materialsLost: 'Los materiales de este piso se perdieron',
     placeOf: '1er puesto de {total}',
     placedOfTotal: 'Puesto {place}/{total}',
+    connectionLostTitle: 'CONEXIÓN PERDIDA',
+    connectionLostBody: 'No se pudo reconectar a la partida.',
   },
   toast: {
     heal: '+1 PV',
@@ -200,6 +202,8 @@ export const es: Translations<typeof en> = {
     buffGeneric: 'Mejora',
     materialQty: '+{qty} {material}',
     materialFallback: 'material',
+    reconnecting: 'Reconectando…',
+    reconnected: 'Reconectado',
   },
   compareCard: {
     damage: 'Daño',

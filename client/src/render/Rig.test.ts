@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Rig } from './Rig';
+import { Rig, type RigDef } from './Rig';
 import { ORB_CORE_RIG } from './orbCoreRig';
 import type { ResolvedBoneTransform } from './types';
 
@@ -39,5 +39,43 @@ describe('Rig (orb-core, ported computeFK)', () => {
 
     expect(rotated.get('shell')!.wa - rest.get('shell')!.wa).toBeCloseTo(30);
     expect(rotated.get('socket_l')!.sx).not.toBeCloseTo(rest.get('socket_l')!.sx, 3);
+  });
+});
+
+// ROADMAP: previously a rig with a bone listed before its parent silently computed a
+// wrong rla here (defaulting parentRwa to 0) and only crashed later, deep inside
+// computeFK, with a bare "Cannot read properties of undefined" pointing nowhere near
+// the actual authoring mistake. The constructor now fails fast with a real diagnosis.
+describe('Rig — bone ordering validation (parent-before-child)', () => {
+  const rigDef = (bones: RigDef['bones']): RigDef => ({ id: 'test-rig', label: 'Test', bones, drawOrder: [] });
+
+  it('constructs fine when every bone lists its parent before itself (the normal case)', () => {
+    expect(() => new Rig(rigDef([
+      { id: 'root', parent: null, len: 0, rwa: 0, label: 'Root' },
+      { id: 'arm', parent: 'root', len: 10, rwa: 0, label: 'Arm' },
+      { id: 'hand', parent: 'arm', len: 5, rwa: 0, label: 'Hand' },
+    ]))).not.toThrow();
+  });
+
+  it('throws a clear, actionable error when a bone lists a parent not yet defined', () => {
+    expect(() => new Rig(rigDef([
+      { id: 'root', parent: null, len: 0, rwa: 0, label: 'Root' },
+      { id: 'hand', parent: 'arm', len: 5, rwa: 0, label: 'Hand' }, // 'arm' comes AFTER this
+      { id: 'arm', parent: 'root', len: 10, rwa: 0, label: 'Arm' },
+    ]))).toThrow(/bone 'hand' lists parent 'arm'.*not yet defined/);
+  });
+
+  it('throws the same way for a parent id that is a plain typo (never defined anywhere)', () => {
+    expect(() => new Rig(rigDef([
+      { id: 'root', parent: null, len: 0, rwa: 0, label: 'Root' },
+      { id: 'arm', parent: 'roor', len: 10, rwa: 0, label: 'Arm' }, // typo: 'roor'
+    ]))).toThrow(/bone 'arm' lists parent 'roor'/);
+  });
+
+  it('names the offending rig id in the error message', () => {
+    const bad: RigDef = { id: 'my-broken-rig', label: 'Broken', drawOrder: [], bones: [
+      { id: 'child', parent: 'missing', len: 1, rwa: 0, label: 'Child' },
+    ] };
+    expect(() => new Rig(bad)).toThrow(/my-broken-rig/);
   });
 });

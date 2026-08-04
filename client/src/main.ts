@@ -4,6 +4,7 @@ import { preloadRigSkin } from './render/skinRegistry';
 import { preloadWeaponSkins } from './render/weaponSkins';
 import { preloadUiArt } from './render/uiSkins';
 import { preloadBiomeTiles } from './render/biomeTiles';
+import { reportWebBootFailure } from './bootError';
 
 // Web entry. The WeChat entry is client/src/main.wechat.ts (loaded by client/wechat/game.js).
 // Both reuse the Game core; only the Platform differs. The real `.tao` rig skin
@@ -53,4 +54,4 @@ async function boot() {
   (globalThis as unknown as { __game: Game }).__game = game;
 }
 
-boot();
+boot().catch(reportWebBootFailure);

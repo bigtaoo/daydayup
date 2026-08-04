@@ -203,6 +203,74 @@ describe('LoginScreen — re-entrant guard (edge case: a double-fire while a cal
   });
 });
 
+describe('LoginScreen — staleness guard (backing out mid-request never lands a late onSessionChange)', () => {
+  it('doLogin: hiding the screen before login resolves still persists the session, but never fires onSessionChange or mutates local state', async () => {
+    const d = deferred<AuthResult>();
+    const api = fakeApi({ login: vi.fn().mockReturnValue(d.promise) });
+    const s = makeScreen(api);
+    const p = privateOf(s);
+    const onChange = vi.fn();
+    s.onSessionChange = onChange;
+
+    const loginPromise = p.doLogin('alice', 'hunter22'); // player starts logging in...
+    s.hide(); // ...then immediately backs out
+    d.resolve(SESSION); // the server call finally lands
+    await loginPromise;
+
+    expect(getSession()).toEqual(SESSION); // the login really did succeed — persisted regardless
+    expect(onChange).not.toHaveBeenCalled(); // but nothing reacts to it anymore
+    expect(p.whoText.text).toMatch(/guest/i); // this screen's own local state never mutated
+  });
+
+  it('doRegister: hiding the screen before register resolves never fires onSessionChange', async () => {
+    const d = deferred<AuthResult>();
+    const api = fakeApi({ register: vi.fn().mockReturnValue(d.promise) });
+    const s = makeScreen(api);
+    const p = privateOf(s);
+    const onChange = vi.fn();
+    s.onSessionChange = onChange;
+
+    const registerPromise = p.doRegister('alice', 'hunter22');
+    s.hide();
+    d.resolve(SESSION);
+    await registerPromise;
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it('doChangePassword: hiding the screen before it resolves never touches statusText', async () => {
+    const d = deferred<void>();
+    const api = fakeApi({ login: vi.fn().mockResolvedValue(SESSION), changePassword: vi.fn().mockReturnValue(d.promise) });
+    const s = makeScreen(api);
+    const p = privateOf(s);
+    await p.doLogin('alice', 'hunter22');
+
+    const changePromise = p.doChangePassword('hunter22', 'newpassword1');
+    s.hide();
+    d.resolve();
+    await changePromise;
+
+    expect(p.statusText.text).toBe(''); // never overwritten with the stale "changed" message
+  });
+
+  it('`busy` always clears after a stale (post-hide) resolve, so re-showing the screen can log in again', async () => {
+    const d = deferred<AuthResult>();
+    const login = vi.fn().mockReturnValue(d.promise);
+    const s = makeScreen(fakeApi({ login }));
+    const p = privateOf(s);
+
+    const first = p.doLogin('alice', 'hunter22');
+    s.hide();
+    d.resolve(SESSION);
+    await first;
+
+    s.show(800, 600);
+    login.mockResolvedValue({ ...SESSION, username: 'bob' });
+    await p.doLogin('bob', 'hunter22'); // must not be swallowed by a `busy` flag stuck true
+    expect(p.whoText.text).toContain('bob');
+  });
+});
+
 describe('LoginScreen — hide()', () => {
   it('hides the view without throwing even with no open input overlay', () => {
     const s = makeScreen(fakeApi());

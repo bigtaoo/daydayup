@@ -5,7 +5,7 @@
  * server's ticket/Matchmaker tests own that surface; this pins the client's poll loop.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { findMatch, type MatchInfo } from './matchmaking';
+import { findMatch, requestResume, type MatchInfo } from './matchmaking';
 
 const MATCH: MatchInfo = {
   wsUrl: 'ws://localhost:8787/ws', roomId: 'room-1', owner: 1, seed: 42, playerCount: 2, teamId: 1, token: 'tok',
@@ -95,5 +95,27 @@ describe('findMatch', () => {
     await findMatch('http://mm', { playerCount: 2, fetch, sleep: noSleep });
     const [, init] = fetch.mock.calls[0]!;
     expect(JSON.parse((init as RequestInit).body as string)).not.toHaveProperty('partyId');
+  });
+});
+
+describe('requestResume (ROADMAP reconnect, design/06)', () => {
+  it('POSTs the expired-but-signed token and resolves with the freshly-reissued match', async () => {
+    const RESUMED = { ...MATCH, token: 'tok2' };
+    const fetch = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => ({ ok: true, status: 200, json: async () => ({ match: RESUMED }) }) as unknown as Response);
+    const info = await requestResume('http://mm', 'stale-tok', { fetch });
+    expect(info).toEqual(RESUMED);
+    const [url, init] = fetch.mock.calls[0]!;
+    expect(url).toBe('http://mm/resume');
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ token: 'stale-tok' });
+  });
+
+  it('rejects with the server error message on a 401 (bad signature)', async () => {
+    const fetch = vi.fn(async () => ({ ok: false, status: 401, json: async () => ({ error: 'invalid ticket' }) }) as unknown as Response);
+    await expect(requestResume('http://mm', 'forged', { fetch })).rejects.toThrow(/invalid ticket/);
+  });
+
+  it('rejects with a generic message when the error body itself is unparseable', async () => {
+    const fetch = vi.fn(async () => ({ ok: false, status: 500, json: async () => { throw new Error('not json'); } }) as unknown as Response);
+    await expect(requestResume('http://mm', 'tok', { fetch })).rejects.toThrow(/resume/);
   });
 });

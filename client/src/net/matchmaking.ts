@@ -94,3 +94,31 @@ export async function findMatch(baseUrl: string, opts: FindMatchOptions): Promis
     // otherwise 'queued' → keep polling
   }
 }
+
+export interface RequestResumeOptions {
+  /** Injected for tests; defaults to the global fetch. */
+  fetch?: typeof fetch;
+}
+
+/**
+ * Mint a fresh, short-lived ticket for an in-progress match (ROADMAP reconnect,
+ * design/06) — the ORIGINAL match ticket has almost certainly expired by the time a
+ * mid-match disconnect happens (30s TTL vs. a match that runs for minutes), so a
+ * dropped client can't just redeem it again. `matchsvc./resume` re-signs the same
+ * `{roomId, owner, seed, playerCount, teamId, mode}` grant with a new expiry, proving
+ * legitimacy via the original (now-expired-but-still-validly-signed) `token` rather
+ * than trusting the caller's word for which seat it once held. Rejects if the token's
+ * signature doesn't check out (a forged/foreign ticket) — matchsvc has no notion of
+ * whether the room itself is still alive on the gameserver; that's `resume`'s job.
+ */
+export async function requestResume(baseUrl: string, token: string, opts: RequestResumeOptions = {}): Promise<MatchInfo> {
+  const doFetch = opts.fetch ?? fetch;
+  const res = await doFetch(`${baseUrl}/resume`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token }),
+  });
+  const body = (await res.json().catch(() => null)) as { match?: MatchInfo; error?: string } | null;
+  if (!res.ok || !body?.match) throw new Error(body?.error ?? `resume: failed to reconnect (${res.status})`);
+  return body.match;
+}

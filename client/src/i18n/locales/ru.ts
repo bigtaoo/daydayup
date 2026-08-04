@@ -197,6 +197,8 @@ export const ru: Translations<typeof en> = {
     materialsLost: 'Материалы этого этажа потеряны',
     placeOf: '1-е место из {total}',
     placedOfTotal: 'Место {place}/{total}',
+    connectionLostTitle: 'СОЕДИНЕНИЕ ПОТЕРЯНО',
+    connectionLostBody: 'Не удалось переподключиться к матчу.',
   },
   toast: {
     heal: '+1 ОЗ',
@@ -205,6 +207,8 @@ export const ru: Translations<typeof en> = {
     buffGeneric: 'Бафф',
     materialQty: '+{qty} {material}',
     materialFallback: 'материал',
+    reconnecting: 'Переподключение…',
+    reconnected: 'Переподключено',
   },
   compareCard: {
     damage: 'Урон',

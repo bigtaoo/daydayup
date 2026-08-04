@@ -77,8 +77,11 @@ export interface MatchRoomDeps {
   framesPerBatch?: number;
 }
 
-const Phase = { WAITING: 0, IN_MATCH: 1, OVER: 2 } as const;
-type PhaseVal = (typeof Phase)[keyof typeof Phase];
+// Exported so index.ts's handshake can tell "still filling seats" (a fresh `join`)
+// apart from "already running" (a reconnect must wait for an explicit `resume`
+// instead) without duplicating the enum or poking a private field.
+export const Phase = { WAITING: 0, IN_MATCH: 1, OVER: 2 } as const;
+export type PhaseVal = (typeof Phase)[keyof typeof Phase];
 
 const DEFAULT_BATCH_MS = 100;
 const DEFAULT_FRAMES_PER_BATCH = 3;

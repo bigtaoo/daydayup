@@ -192,6 +192,8 @@ export const pl: Translations<typeof en> = {
     materialsLost: 'Surowce z tego piętra zostały utracone',
     placeOf: '1. miejsce z {total}',
     placedOfTotal: 'Miejsce {place}/{total}',
+    connectionLostTitle: 'UTRACONO POŁĄCZENIE',
+    connectionLostBody: 'Nie udało się ponownie połączyć z meczem.',
   },
   toast: {
     heal: '+1 PŻ',
@@ -200,6 +202,8 @@ export const pl: Translations<typeof en> = {
     buffGeneric: 'Wzmocnienie',
     materialQty: '+{qty} {material}',
     materialFallback: 'surowiec',
+    reconnecting: 'Ponowne łączenie…',
+    reconnected: 'Połączono ponownie',
   },
   compareCard: {
     damage: 'Obrażenia',

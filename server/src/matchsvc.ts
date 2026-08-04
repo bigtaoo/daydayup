@@ -15,6 +15,7 @@
  *
  *   POST /find             { playerCount, mode?, partyId? } → { queueId, match? }
  *   GET  /find/:id                                       → { status: 'queued'|'matched'|'expired', match? }
+ *   POST /resume            { token }                     → { match } | 401 (ROADMAP reconnect)
  *   POST /rating/report     { accountIds, places, teamIds? } → { changes: [{accountId,before,after}] }
  *   GET  /rating/:accountId                               → { accountId, rating }
  *   POST /party/create      { playerId }                 → PartyInfo
@@ -51,7 +52,7 @@ import { fileURLToPath } from 'node:url';
 import { Matchmaker, type MatchTicket } from './Matchmaker';
 import { RatingStore } from './rating';
 import { PartyService } from './PartyService';
-import { signTicket, type MatchMode, type TicketPayload } from './ticket';
+import { signTicket, verifyTicket, type MatchMode, type TicketPayload } from './ticket';
 import { ticketSecret, teamIdForOwner } from './config';
 import { spawnBotClient } from './BotClient';
 import { openDb } from './db';
@@ -65,6 +66,11 @@ function randomCode(): string {
   for (let i = 0; i < 5; i++) s += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
   return s;
 }
+
+// A reconnect ticket only needs to outlive the client opening the socket with it, not
+// the whole match (unlike the original match ticket, which the client redeems once
+// right after `/find` resolves) — same window `onBotFill` already grants a bot ticket.
+const RESUME_TICKET_TTL_MS = 30_000;
 
 const PORT = Number(process.env.MATCH_PORT ?? 8788);
 const HOST = process.env.HOST ?? '0.0.0.0';
@@ -185,6 +191,34 @@ export function createMatchsvcServer(opts: MatchsvcServerOptions = {}): Server {
     if (req.method === 'GET' && findMatch) {
       const result = matchmaker.poll(decodeURIComponent(findMatch[1]!));
       return send(res, 200, result.status === 'matched' ? { status: 'matched', match: withUrl(result.ticket) } : result);
+    }
+
+    // Reconnect (ROADMAP reconnect, design/06): mint a fresh, short-lived ticket for the
+    // SAME seat grant a now-expired ticket once named, so a mid-match disconnect (which
+    // by definition happens well after the original 30s ticket TTL) can redeem a new one
+    // on the gameserver instead of being stuck forever. `ignoreExpiry` is the only
+    // difference from the normal handshake check — the signature still has to verify,
+    // so this can't mint a ticket for a seat the caller was never actually granted.
+    // Whether the room itself is still alive/in-match is the gameserver's call (`resume`
+    // there fails cleanly if it isn't); matchsvc has no visibility into live room state.
+    if (req.method === 'POST' && url.pathname === '/resume') {
+      return readJson(req, (body) => {
+        const token = (body as { token?: unknown })?.token;
+        if (typeof token !== 'string' || !token) return send(res, 400, { error: 'token required' });
+        const payload = verifyTicket(token, secret, Date.now(), { ignoreExpiry: true });
+        if (!payload) return send(res, 401, { error: 'invalid ticket' });
+        const fresh: TicketPayload = { ...payload, exp: Date.now() + RESUME_TICKET_TTL_MS };
+        const ticket: MatchTicket = {
+          roomId: fresh.roomId,
+          owner: fresh.owner,
+          seed: fresh.seed,
+          playerCount: fresh.playerCount,
+          teamId: fresh.teamId,
+          mode: fresh.mode ?? 'coop',
+          token: signTicket(fresh, secret),
+        };
+        send(res, 200, { match: withUrl(ticket) });
+      });
     }
 
     // Ladder rating (design/15, ROADMAP 4.6) — called by the gameserver once a PvP
