@@ -13,6 +13,7 @@ import {
   curveAt,
   generateFloor,
   placeFloor,
+  placeFloorGraph2d,
   placeAuthoredFloor,
   type DungeonConfig,
   type DungeonFloorMap,
@@ -471,6 +472,280 @@ describe('placeFloor — branching fork stage (design/05, 2026-08-05 "fully-real
     const TINY_SIB_1: RoomPiece = { id: 'tiny_sib_1', sizeGrid: { w: 6, h: 6 }, solids: [], spawns: { player: [{ x: 3, y: 3 }], enemy: [] }, exits: [{ edge: 'west' }, { edge: 'east' }] };
     const TINY_SIB_2: RoomPiece = { id: 'tiny_sib_2', sizeGrid: { w: 6, h: 6 }, solids: [], spawns: { player: [{ x: 3, y: 3 }], enemy: [] }, exits: [{ edge: 'west' }, { edge: 'east' }] };
     expect(() => placeFloor([TINY, [TINY_SIB_1, TINY_SIB_2], MERGE], new Prng(1))).toThrow(/too small/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// placeFloorGraph2d (design/05, ROADMAP "real 2D graph layout" follow-up) — a
+// sibling to placeFloor, driven directly with hand-picked RoomPiece fixtures,
+// matching placeFloor's own test style above.
+// ---------------------------------------------------------------------------
+
+describe('placeFloorGraph2d', () => {
+  it('a spawn room with only ONE exit, chained through west/east-only pieces, places exactly like placeFloor\'s own spine', () => {
+    // Every step here has exactly one viable direction (no ambiguity to draw from),
+    // so the two functions consume roomgenPrng identically and must agree exactly —
+    // matching TEST_LIB's own convention (dungeonrun.test.ts) of giving a spawn
+    // piece only the one exit it actually uses to chain forward.
+    const start: RoomPiece = {
+      id: 'start', sizeGrid: { w: 10, h: 10 }, solids: [], spawns: { player: [{ x: 5, y: 5 }], enemy: [] },
+      exits: [{ edge: 'east' }],
+    };
+    const mid: RoomPiece = {
+      id: 'mid', sizeGrid: { w: 10, h: 10 }, solids: [], spawns: { player: [{ x: 5, y: 5 }], enemy: [] },
+      exits: [{ edge: 'west' }, { edge: 'east' }],
+    };
+    const cap: RoomPiece = {
+      id: 'cap', role: 'boss', sizeGrid: { w: 10, h: 10 }, solids: [], spawns: { player: [{ x: 5, y: 5 }], enemy: [] },
+      exits: [{ edge: 'west' }],
+    };
+    const g2d = placeFloorGraph2d([start, mid, cap], new Prng(9));
+    const lin = placeFloor([start, mid, cap], new Prng(9));
+    expect(g2d.placed.map((p) => ({ id: p.id, x: p.offsetXGrid, y: p.offsetYGrid }))).toEqual(
+      lin.placed.map((p) => ({ id: p.id, x: p.offsetXGrid, y: p.offsetYGrid })),
+    );
+    expect(g2d.doors).toEqual(lin.doors);
+  });
+
+  it("a spawn room with BOTH west and east can legitimately place its first neighbor to either side — real 2D freedom, not a bug", () => {
+    // HALL/NARROW (EMBER_ROOMS) both have west+east; unlike a `placeFloor` spine,
+    // the very first room has no entryEdge to exclude, so both its exits are
+    // genuinely viable and a direction is drawn — this is the one place a
+    // west/east-only pool can actually diverge from 'linear'.
+    const west = new Set<boolean>();
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
+      const { placed } = placeFloorGraph2d([HALL, NARROW], new Prng(seed));
+      west.add(placed[1]!.offsetXGrid < placed[0]!.offsetXGrid);
+    }
+    expect(west.size).toBe(2); // both true and false actually occur across seeds
+  });
+
+  it('a piece with a free south exit can place the next room south of it, not just east', () => {
+    // CROSS has all 4 exits on both ends, so every direction stays viable regardless
+    // of which one the first draw consumes — a real PRNG choice, no dead ends.
+    const seenDirs = new Set<string>();
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) {
+      const { placed } = placeFloorGraph2d([CROSS, CROSS, CROSS], new Prng(seed));
+      const [a, b] = placed;
+      if (b!.offsetYGrid < a!.offsetYGrid) seenDirs.add('north');
+      else if (b!.offsetYGrid > a!.offsetYGrid) seenDirs.add('south');
+      else if (b!.offsetXGrid > a!.offsetXGrid) seenDirs.add('east');
+      else seenDirs.add('west');
+    }
+    // Real variety across seeds — not just always 'east' — proves direction is
+    // actually drawn, not hardcoded to the old spine.
+    expect(seenDirs.size).toBeGreaterThan(1);
+  });
+
+  it('places the next room directly south when south is the only viable direction', () => {
+    const SOUTH_ONLY: RoomPiece = {
+      id: 'south_only', sizeGrid: { w: 10, h: 10 }, solids: [],
+      spawns: { player: [{ x: 5, y: 5 }], enemy: [] }, exits: [{ edge: 'south' }],
+    };
+    const NORTH_CAP: RoomPiece = {
+      id: 'north_cap', role: 'boss', sizeGrid: { w: 10, h: 10 }, solids: [],
+      spawns: { player: [{ x: 5, y: 5 }], enemy: [] }, exits: [{ edge: 'north' }],
+    };
+    const { placed, doors } = placeFloorGraph2d([SOUTH_ONLY, NORTH_CAP], new Prng(1));
+    const [a, b] = placed;
+    expect(b!.offsetXGrid).toBe(a!.offsetXGrid); // centered, same width → same X
+    expect(b!.offsetYGrid).toBe(a!.offsetYGrid + SOUTH_ONLY.sizeGrid.h);
+    expect(doors).toHaveLength(1);
+    expect(doors[0]!.passageGrid.w).toBeGreaterThan(doors[0]!.passageGrid.h); // a horizontal (N/S-wall) passage
+  });
+
+  it('places the next room directly north when north is the only viable direction', () => {
+    const NORTH_ONLY: RoomPiece = {
+      id: 'north_only', sizeGrid: { w: 10, h: 10 }, solids: [],
+      spawns: { player: [{ x: 5, y: 5 }], enemy: [] }, exits: [{ edge: 'north' }],
+    };
+    const SOUTH_CAP: RoomPiece = {
+      id: 'south_cap', role: 'boss', sizeGrid: { w: 10, h: 10 }, solids: [],
+      spawns: { player: [{ x: 5, y: 5 }], enemy: [] }, exits: [{ edge: 'south' }],
+    };
+    const { placed } = placeFloorGraph2d([NORTH_ONLY, SOUTH_CAP], new Prng(1));
+    const [a, b] = placed;
+    expect(b!.offsetYGrid).toBe(a!.offsetYGrid - NORTH_ONLY.sizeGrid.h);
+  });
+
+  it('gives every placed room a floor-unique id even if the same piece is drawn twice', () => {
+    const { placed } = placeFloorGraph2d([HALL, HALL], new Prng(1));
+    expect(placed[0]!.id).toBe('ember_hall#0');
+    expect(placed[1]!.id).toBe('ember_hall#1');
+  });
+
+  it('is deterministic for a given seed', () => {
+    const a = placeFloorGraph2d([CROSS, CROSS, CROSS], new Prng(21));
+    const b = placeFloorGraph2d([CROSS, CROSS, CROSS], new Prng(21));
+    expect(a.placed.map((p) => ({ id: p.id, x: p.offsetXGrid, y: p.offsetYGrid }))).toEqual(
+      b.placed.map((p) => ({ id: p.id, x: p.offsetXGrid, y: p.offsetYGrid })),
+    );
+    expect(a.doors).toEqual(b.doors);
+  });
+
+  it('throws (fail loud) when no exit on the previous room is compatible with the next piece', () => {
+    expect(() => placeFloorGraph2d([HALL, NO_EXIT], new Prng(1))).toThrow(/no exit compatible/i);
+  });
+
+  it('throws (fail loud) when two adjacent rooms are too small/mismatched to fit a door', () => {
+    expect(() => placeFloorGraph2d([TINY, TINY], new Prng(1))).toThrow(/too small/i);
+  });
+
+  it('throws (fail loud) on an empty stage list', () => {
+    expect(() => placeFloorGraph2d([], new Prng(1))).toThrow(/empty stage list/i);
+  });
+
+  it('throws (fail loud) when a direction sequence folds the floor back onto an earlier room', () => {
+    // A fully-forced square loop (each room offers exactly one viable outgoing
+    // direction, so this needs no PRNG luck — deterministic for any seed):
+    // ROOM0 --east--> ROOM1 --south--> ROOM2 --west--> ROOM3 --north--> ROOM4,
+    // and since every room is the same 16x16 size, ROOM4 lands EXACTLY on ROOM0's
+    // own footprint.
+    const ROOM0: RoomPiece = {
+      id: 'r0', sizeGrid: { w: 16, h: 16 }, solids: [], spawns: { player: [{ x: 8, y: 8 }], enemy: [] },
+      exits: [{ edge: 'east' }],
+    };
+    const ROOM1: RoomPiece = {
+      id: 'r1', sizeGrid: { w: 16, h: 16 }, solids: [], spawns: { player: [{ x: 8, y: 8 }], enemy: [] },
+      exits: [{ edge: 'west' }, { edge: 'south' }],
+    };
+    const ROOM2: RoomPiece = {
+      id: 'r2', sizeGrid: { w: 16, h: 16 }, solids: [], spawns: { player: [{ x: 8, y: 8 }], enemy: [] },
+      exits: [{ edge: 'north' }, { edge: 'west' }],
+    };
+    const ROOM3: RoomPiece = {
+      id: 'r3', sizeGrid: { w: 16, h: 16 }, solids: [], spawns: { player: [{ x: 8, y: 8 }], enemy: [] },
+      exits: [{ edge: 'east' }, { edge: 'north' }],
+    };
+    const ROOM4: RoomPiece = {
+      id: 'r4', role: 'boss', sizeGrid: { w: 16, h: 16 }, solids: [], spawns: { player: [{ x: 8, y: 8 }], enemy: [] },
+      exits: [{ edge: 'south' }],
+    };
+    expect(() => placeFloorGraph2d([ROOM0, ROOM1, ROOM2, ROOM3, ROOM4], new Prng(1))).toThrow(/overlaps already-placed/i);
+  });
+
+  it('doors connect stages in order — roomA/roomB match the chain, not just a count', () => {
+    const { placed, doors } = placeFloorGraph2d([HALL, HALL, HALL], new Prng(1));
+    expect(doors).toHaveLength(2);
+    doors.forEach((d, i) => {
+      expect(d.roomA).toBe(placed[i]!.id);
+      expect(d.roomB).toBe(placed[i + 1]!.id);
+    });
+  });
+
+  it("a non-entrance room's entranceGrid comes from entranceFromDoor, off its OWN connecting door (east/west)", () => {
+    const { placed, doors } = placeFloorGraph2d([HALL, HALL], new Prng(1));
+    const door = doors[0]!;
+    // HALL/HALL going east: a vertical (east/west-wall) passage, w <= h — inset
+    // along X off whichever side of room 1's own center the door falls on, same
+    // math `entranceFromDoor` already applies for placeAuthoredFloor.
+    const room1 = placed[1]!;
+    const roomCenterX = room1.offsetXGrid + room1.piece.sizeGrid.w / 2;
+    const doorCenterX = door.passageGrid.x + door.passageGrid.w / 2;
+    const expectedX =
+      doorCenterX <= roomCenterX ? room1.offsetXGrid + 1.5 : room1.offsetXGrid + room1.piece.sizeGrid.w - 1.5; // 1.5 === ENTRANCE_INSET_GRID
+    expect(room1.entranceGrid).toEqual({ x: expectedX, y: door.passageGrid.y + door.passageGrid.h / 2 });
+  });
+
+  it("a non-entrance room's entranceGrid insets along Y for a north/south connection", () => {
+    const SOUTH_ONLY: RoomPiece = {
+      id: 'south_only2', sizeGrid: { w: 10, h: 10 }, solids: [],
+      spawns: { player: [{ x: 5, y: 5 }], enemy: [] }, exits: [{ edge: 'south' }],
+    };
+    const NORTH_CAP: RoomPiece = {
+      id: 'north_cap2', role: 'boss', sizeGrid: { w: 10, h: 10 }, solids: [],
+      spawns: { player: [{ x: 5, y: 5 }], enemy: [] }, exits: [{ edge: 'north' }],
+    };
+    const { placed, doors } = placeFloorGraph2d([SOUTH_ONLY, NORTH_CAP], new Prng(1));
+    const door = doors[0]!;
+    const room1 = placed[1]!;
+    // A horizontal (north/south-wall) passage sits on room1's own NORTH wall here
+    // (room1 is south of room0) — inset down by ENTRANCE_INSET_GRID, x unchanged.
+    expect(room1.entranceGrid).toEqual({ x: door.passageGrid.x + door.passageGrid.w / 2, y: room1.offsetYGrid + 1.5 });
+  });
+
+  it('the spawn room falls back to an inset/size-half entranceGrid when it authored no player spawn', () => {
+    const noSpawnStart: RoomPiece = {
+      id: 'no_spawn_start', sizeGrid: { w: 10, h: 10 }, solids: [], spawns: { player: [], enemy: [] },
+      exits: [{ edge: 'east' }],
+    };
+    const cap: RoomPiece = {
+      id: 'g2_cap2', role: 'boss', sizeGrid: { w: 8, h: 8 }, solids: [], spawns: { player: [{ x: 4, y: 4 }], enemy: [] },
+      exits: [{ edge: 'west' }],
+    };
+    const { placed } = placeFloorGraph2d([noSpawnStart, cap], new Prng(1));
+    // 1.5 === ENTRANCE_INSET_GRID (an internal, unexported module constant).
+    expect(placed[0]!.entranceGrid).toEqual({ x: 0 + 1.5, y: noSpawnStart.sizeGrid.h / 2 });
+  });
+
+  it("a door's passage is not pinned to one fixed anchor across seeds, for both an east and a south connection", () => {
+    const seenEastY = new Set<number>();
+    const seenSouthX = new Set<number>();
+    const SOUTH_ONLY: RoomPiece = {
+      id: 'south_only3', sizeGrid: { w: 14, h: 10 }, solids: [],
+      spawns: { player: [{ x: 5, y: 5 }], enemy: [] }, exits: [{ edge: 'south' }],
+    };
+    const NORTH_CAP: RoomPiece = {
+      id: 'north_cap3', role: 'boss', sizeGrid: { w: 20, h: 10 }, solids: [],
+      spawns: { player: [{ x: 5, y: 5 }], enemy: [] }, exits: [{ edge: 'north' }],
+    };
+    for (const seed of [1, 100000, 5000000, 999999999, 123456789, 555555555, 42, 7, 88888, 314159265]) {
+      const eastPrng = new Prng(seed);
+      eastPrng.nextInt(1000); // warmup — same LCG low-order-bits convention placeFloor's own spread test uses
+      seenEastY.add(placeFloorGraph2d([HALL, NARROW], eastPrng).doors[0]!.passageGrid.y);
+
+      const southPrng = new Prng(seed);
+      southPrng.nextInt(1000);
+      seenSouthX.add(placeFloorGraph2d([SOUTH_ONLY, NORTH_CAP], southPrng).doors[0]!.passageGrid.x);
+    }
+    expect(seenEastY.size).toBeGreaterThan(1);
+    expect(seenSouthX.size).toBeGreaterThan(1);
+  });
+
+  it('a direction is drawn ONLY when more than one exit is viable — exactly 1 roomgenPrng draw per door otherwise', () => {
+    class CountingPrng extends Prng {
+      calls = 0;
+      override nextInt(max: number): number {
+        this.calls++;
+        return super.nextInt(max);
+      }
+    }
+    // Forced single-direction chain (south only viable at every step) — every door
+    // should cost exactly the ONE anchor draw, never a direction draw too.
+    const SOUTH_ONLY: RoomPiece = {
+      id: 'cnt_south', sizeGrid: { w: 10, h: 10 }, solids: [],
+      spawns: { player: [{ x: 5, y: 5 }], enemy: [] }, exits: [{ edge: 'south' }],
+    };
+    const NORTH_CAP: RoomPiece = {
+      id: 'cnt_cap', role: 'boss', sizeGrid: { w: 10, h: 10 }, solids: [],
+      spawns: { player: [{ x: 5, y: 5 }], enemy: [] }, exits: [{ edge: 'north' }],
+    };
+    const forced = new CountingPrng(1);
+    placeFloorGraph2d([SOUTH_ONLY, NORTH_CAP], forced);
+    expect(forced.calls).toBe(1); // 1 door, single viable direction → anchor draw only
+
+    // CROSS→CROSS: the very first hop has 4 genuinely viable directions (no
+    // entryEdge to exclude on the spawn room) → 1 direction draw + 1 anchor draw.
+    const ambiguous = new CountingPrng(1);
+    placeFloorGraph2d([CROSS, CROSS], ambiguous);
+    expect(ambiguous.calls).toBe(2);
+  });
+});
+
+describe('generateFloor — graph2d layout (design/05, ROADMAP "real 2D graph layout" follow-up)', () => {
+  const GRAPH2D: DungeonConfig = { ...CONFIG, layout: 'graph2d' };
+
+  it('selects the exact same stage/piece sequence as linear (selection is unchanged)', () => {
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const lin = generateFloor({ ...CONFIG, layout: 'linear' }, 0, new Prng(seed), EMBER_ROOMS).rooms.map((r) => r.id);
+      const g2d = generateFloor(GRAPH2D, 0, new Prng(seed), EMBER_ROOMS).rooms.map((r) => r.id);
+      expect(g2d).toEqual(lin);
+    }
+  });
+
+  it('never forks (every stage stays a single RoomPiece, never a sibling array)', () => {
+    const f = generateFloor(GRAPH2D, 0, new Prng(42), EMBER_ROOMS);
+    for (const s of f.stages) expect(Array.isArray(s)).toBe(false);
   });
 });
 

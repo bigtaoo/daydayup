@@ -13,9 +13,17 @@ import type { Fp } from '../math/fixed';
 import { SIM } from '../sim.config';
 import { pxToFp, toFpGrid } from '../content/convert';
 import { buildEnemyActor } from '../content/enemies';
-import type { WaveScript } from '../content/rooms';
+import type { WaveScript, RoomPiece } from '../content/rooms';
 import type { ArenaRoom } from '../content/arenas';
-import { generateFloor, placeFloor, placeAuthoredFloor, buildFloorGeometry, toFpAabbGrid, type PlacedRoom } from '../world/dungeon';
+import {
+  generateFloor,
+  placeFloor,
+  placeFloorGraph2d,
+  placeAuthoredFloor,
+  buildFloorGeometry,
+  toFpAabbGrid,
+  type PlacedRoom,
+} from '../world/dungeon';
 import type { EnemyActor, PickupItem } from '../state/entities';
 import type { ArenaRoomRuntime, DungeonRoomRuntime, GameState, WaveDef } from '../state/GameState';
 import { clampToWalkable } from './geom';
@@ -178,11 +186,21 @@ export class SpawnSystem {
     // Hand-authored floors (design/05 "Hand-authored PvE floors", 2026-08-05) take
     // priority over procedural generation for this floor index — zero roomgenPrng
     // draws for it either way, so a later procedural floor's own draw sequence is
-    // unaffected by whether an earlier floor was authored or generated.
+    // unaffected by whether an earlier floor was authored or generated. Otherwise,
+    // `layout: 'graph2d'` (world/dungeon.ts, ROADMAP "real 2D graph layout" follow-up)
+    // places `generateFloor`'s SAME stage sequence via the 2D-capable
+    // `placeFloorGraph2d` instead of `placeFloor`'s west→east-only spine; a
+    // 'graph2d' config never forks (`generateFloor` only forks for 'branching'), so
+    // `stages` here is always plain `RoomPiece[]`, never a fork-array `FloorStage`.
     const authored = state.dungeonConfig!.floorMaps?.[state.floorIndex];
+    const generated = authored
+      ? undefined
+      : generateFloor(state.dungeonConfig!, state.floorIndex, state.roomgenPrng, state.roomLibrary);
     const { placed, doors } = authored
       ? placeAuthoredFloor(authored, state.roomLibrary)
-      : placeFloor(generateFloor(state.dungeonConfig!, state.floorIndex, state.roomgenPrng, state.roomLibrary).stages, state.roomgenPrng);
+      : state.dungeonConfig!.layout === 'graph2d'
+        ? placeFloorGraph2d(generated!.stages as readonly RoomPiece[], state.roomgenPrng)
+        : placeFloor(generated!.stages, state.roomgenPrng);
     const geo = buildFloorGeometry(placed, doors);
 
     state.dungeonRooms.length = 0;

@@ -8,8 +8,9 @@ shipped-notes underneath it, so a phase section is both the plan and the history
 **Current built state (2026-08-05).** `ENGINE_VERSION` **35** (32: ground-weapon pickup is
 click-driven; 33: manual aim removed entirely; 34: co-resident PvE room/door model, engine +
 client rendering; 35: fully-realized branching — see the Room & door model section below;
-same-day map-editor door placement is additive, no version bump);
-1623 tests green across all 7 workspace packages (engine 441 / client 826 / server 167 /
+same-day map-editor door placement AND the `layout: 'graph2d'` real-2D-layout follow-up are
+both additive, no version bump);
+1647 tests green across all 7 workspace packages (engine 465 / client 826 / server 167 /
 animator 62 / map-editor 64 / desktop-shell 56 / root build-script 7, `npm run check`) after a
 full client code-review pass
 (2026-08-04, see the Phase 3/4 updates and the Client hardening pass section below) that found
@@ -111,7 +112,7 @@ The core PvE loop (floors → extraction → bank) is fully designed (05/09) and
 - **1.4 ✅ Extraction rooms** (05) — DONE. `EngineConfig.floors?` (the flat, non-dungeon mode — same single arena reused every floor, still supported for configs that opt into it) OR `EngineConfig.dungeon` (the room-generated mode, see 1.3) opts a run into the checkpoint loop; `ExtractionSystem` (step 12) resolves the per-floor checkpoint (`wavesExhausted && enemies.length===0`) into `EXTRACT` or `DESCEND` (in dungeon mode, regenerates the next floor's rooms; in flat mode, reloads the next floor's flat wave list). Death forfeits the floor buffer for free (a run-ending death simply never reaches the bank step). The last floor auto-resolves as `EXTRACT` with no gesture (design/05 "the boss room IS its extraction room"). **The gesture itself was rewritten 2026-08-02** (see that entry below): originally a sustained-INTERACT hold=EXTRACT/tap=DESCEND (mirroring the revive channel), now two explicit one-shot `Button.CONFIRM_EXTRACT`/`CONFIRM_DESCEND` presses driven by a world-space portal + popup, `ENGINE_VERSION` 31.
 - **1.5 ✅ Materials carry-out** (05/09) — DONE, additive. `state.floorMaterials` (this floor's un-banked buffer, filled by `PickupSystem`) merges into `state.bankedMaterials` (the run's only carry-out) on every `EXTRACT`/`DESCEND`. `rollDrop` gained an optional depth `tier` param (`DeathDropsSystem` passes `state.floorIndex`) so a material pickup/event carries a rolled instance tier — first-pass "material quality shift per floor" (a straight `tier = floorIndex` identity curve; `DungeonConfig.materialTierByDepth` remains an unused schema field for a future non-identity curve).
 
-**Phase 1 status: fully closed, including live multi-room floors.** A run goes floors → checkpoint → EXTRACT-or-DESCEND → bank, with materials as the only carry-out. Both modes are real and tested: `EngineConfig.floors` (flat, single-arena-reused-per-floor, still available for configs that want it) and `EngineConfig.dungeon` (generated multi-room floors via `generateFloor`/`RoomPiece`/`placeFloor`, `'branching'` layout, `WaveScript` timing) — the latter is what the real client actually uses for every live run. Nothing from 1.2/1.3 is unwired or demo-only. **2026-08-04 update:** "room-to-room traversal" here no longer means the original sequential swap-on-clear — see the "Room & door model" section below (design/05, `ENGINE_VERSION` 34): a floor's rooms are now co-resident and door-connected, freely walkable/backtrackable, with combat-derived door locking and force-regroup. **2026-08-05 update:** `'branching'` layout now places a real fork-and-reconverge diamond of sibling rooms instead of resolving at generation time (`ENGINE_VERSION` 35, same section).
+**Phase 1 status: fully closed, including live multi-room floors.** A run goes floors → checkpoint → EXTRACT-or-DESCEND → bank, with materials as the only carry-out. Both modes are real and tested: `EngineConfig.floors` (flat, single-arena-reused-per-floor, still available for configs that want it) and `EngineConfig.dungeon` (generated multi-room floors via `generateFloor`/`RoomPiece`/`placeFloor`, `'branching'` layout, `WaveScript` timing) — the latter is what the real client actually uses for every live run. Nothing from 1.2/1.3 is unwired or demo-only. **2026-08-04 update:** "room-to-room traversal" here no longer means the original sequential swap-on-clear — see the "Room & door model" section below (design/05, `ENGINE_VERSION` 34): a floor's rooms are now co-resident and door-connected, freely walkable/backtrackable, with combat-derived door locking and force-regroup. **2026-08-05 update:** `'branching'` layout now places a real fork-and-reconverge diamond of sibling rooms instead of resolving at generation time (`ENGINE_VERSION` 35, same section). **2026-08-05 update (same day): the west→east-spine scope cut is closed too** — a new `layout: 'graph2d'` (`world/dungeon.ts placeFloorGraph2d`, additive, no `ENGINE_VERSION` bump) places a *generated* floor in real 2D instead of forcing it onto a single axis; see design/05's "Room & door model" section for the full account. No shipped `DungeonConfig` uses it yet (`EMBER_DUNGEON` stays `'linear'`) — authoring real north/south-exit content to make a shipped biome actually bend is a content task, not part of this pass.
 
 ## Phase 2 — Close the meta loop ✅ (2026-07-24)
 
@@ -729,6 +730,56 @@ private methods directly" technique (see design/05's matching entry for the
 full reasoning) — `DungeonFloorCanvas.test.ts`, 28 tests. 49 new tests total (11
 engine, 38 map-editor), 1623 total across all 7 workspaces, `tsc --noEmit`
 clean.
+
+**Real 2D graph layout ✅ (2026-08-05, same day) — closes the last deliberate scope
+cut from this section's original 2026-08-04 entry** ("a west→east spine placement
+— the MVP shape, real 2D graph layout deferred"). A new third
+`DungeonConfig.layout: 'graph2d'` (alongside `'linear'`/`'branching'`) places a
+*generated* floor in real 2D instead of a single axis — `generateFloor`'s own
+stage/piece selection is completely unchanged for it (it never forks, same
+one-`nextInt`-per-stage stream `'linear'` already uses); what's new is placement,
+in `world/dungeon.ts placeFloorGraph2d` — a sibling to `placeFloor`, not a variant
+of it, same precedent `placeAuthoredFloor` already set. Each transition walks out
+of whichever of the previous room's exits is unconsumed (not the one already used
+entering it) and has a matching opposite exit on the next piece;
+`roomgenPrng.nextInt` draws a direction only when more than one is viable — the
+same "only draw when it matters" discipline `combatPrng`'s crit draw established
+(design/07). Consequence: a west/east-only content pool (every `EMBER_ROOMS`
+normal piece but `ember_cross`) places every stage after the first exactly like
+`'linear'`'s own spine, and only a piece with a free north/south exit (or an
+ambiguous first room with both a west and an east exit) actually bends the floor
+— a real, if occasionally subtle, expression of 2D freedom rather than a
+relabeled clone of the old spine. Throws (fail loud, design/09) if a placement
+would overlap an earlier room — a real risk once placement can walk any of 4
+directions, unlike `placeFloor`'s single-axis spine where it structurally
+cannot happen; this module does not try to auto-avoid it, same "curated content,
+not a solver" contract `placeFloor`'s own too-small-for-a-door check already
+assumes. No `ENGINE_VERSION` bump (no shipped `DungeonConfig` uses `'graph2d'` —
+`EMBER_DUNGEON` stays `'linear'`; authoring real north/south-exit content to make
+a shipped biome actually bend is a content task, not part of this pass, same
+"no shipped content exercises it yet" note `'branching'` and hand-authored floors
+both shipped with). 16 new tests (11 `dungeon.test.ts` unit + 2 `generateFloor`
+graph2d-selection + 3 `dungeonrun.test.ts` end-to-end integration), 1639 total
+across all 7 workspaces, `tsc --noEmit` clean.
+
+**"加测试" follow-up, same day:** `entranceFromDoor`'s reuse inside
+`placeFloorGraph2d` itself now has dedicated east/west AND north/south
+assertions (the first pass only re-verified the function directly, via
+`placeAuthoredFloor`'s own tests), plus the spawn room's inset/size-half
+fallback when it authors no player spawn; a door-anchor "not pinned to one
+position" spread check (`placeFloor`'s own existing convention) now covers a
+`graph2d` south-going connection too, not just east; a `roomA`/`roomB`
+chain-order assertion across a 3-room stretch; and a `CountingPrng` test
+subclass asserting the EXACT `roomgenPrng` draw count per door (1 when only
+one direction is viable, 2 when a real choice exists) — closing the sharpest
+gap, since "a direction is drawn ONLY when more than one exit is viable" is
+the module doc's own central claim and the first pass never asserted the
+draw count directly. `dungeonrun.test.ts` gained a forced, seed-independent
+SOUTH-bending floor (every other dungeon fixture in that file only ever
+produces an east-going/vertical door) proving `buildFloorGeometry`'s carving
+and `DoorSystem` activation genuinely handle a horizontal (north/south-wall)
+door end-to-end. 8 new tests (6 engine unit + 2 integration) — 1647 total
+across all 7 workspaces, `tsc --noEmit` clean.
 
 ---
 

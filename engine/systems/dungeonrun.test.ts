@@ -594,3 +594,119 @@ describe('Dungeon mode — the real Ember biome runs end-to-end', () => {
     }
   });
 });
+
+describe('Dungeon mode — `layout: \'graph2d\'` places a real 2D floor end-to-end (ROADMAP "real 2D graph layout" follow-up)', () => {
+  // A pool with one all-4-exit piece (like ember_cross) and a west-only capstone —
+  // roomsPerFloor min=max=2 → exactly [g2_cross, capstone], so the ONE transition
+  // is cross's own outgoing choice (undefined entryEdge → all 4 exits viable,
+  // narrowed to whichever the capstone's lone 'west' exit matches: 'east' only —
+  // deterministic, not seed-dependent, so this floor always places due east,
+  // proving graph2d wires correctly end-to-end without needing a seed search for a
+  // north/south-bending case (that geometry is dungeon.test.ts's own concern).
+  const G2_CROSS: RoomPiece = {
+    id: 'g2_cross', tags: ['g2'], sizeGrid: { w: 16, h: 16 }, solids: [],
+    spawns: { player: [{ x: 8, y: 8 }], enemy: [] },
+    exits: [{ edge: 'north' }, { edge: 'south' }, { edge: 'east' }, { edge: 'west' }],
+  };
+  const G2_CAP: RoomPiece = {
+    id: 'g2_cap', role: 'boss', sizeGrid: { w: 12, h: 10 }, solids: [],
+    spawns: { player: [{ x: 6, y: 5 }], enemy: [] }, exits: [{ edge: 'west' }],
+  };
+  const G2_DUN: DungeonConfig = {
+    biomeId: 'g2', nameKey: 'g2', floorCount: 1, roomsPerFloor: { min: 2, max: 2 },
+    pieceTags: ['g2'], layout: 'graph2d',
+    extractionPieceId: 'g2_cap', bossPieceId: 'g2_cap', difficultyCurve: { base: 1, perFloor: 0 },
+  };
+  const G2_CFG: EngineConfig = {
+    seed: 3, worldW: 640, worldH: 640, waves: [],
+    dungeon: { config: G2_DUN, library: [G2_CROSS, G2_CAP] },
+  };
+
+  it('generates + places a floor via placeFloorGraph2d, stitches one shared world, no throw', () => {
+    const eng = createGameEngine(G2_CFG);
+    const s = eng.state;
+    eng.step([idle(1)]);
+    expect(s.dungeonRooms.length).toBe(2);
+    expect(s.dungeonDoors.length).toBe(1);
+    const [room0, cap] = s.dungeonRooms;
+    expect(room0!.piece.id).toBe('g2_cross');
+    expect(cap!.piece.id).toBe('g2_cap');
+    expect(cap!.offsetXGrid).toBe(room0!.offsetXGrid + room0!.piece.sizeGrid.w); // placed east
+    expect(s.worldW).toBe(toFpGrid(room0!.piece.sizeGrid.w + cap!.piece.sizeGrid.w));
+  });
+
+  it('walking through the door into the capstone activates it, same as any other layout', () => {
+    const eng = createGameEngine(G2_CFG);
+    const s = eng.state;
+    eng.step([idle(1)]);
+    eng.step([idle(2)]); // room 0 activates
+    const cap = s.dungeonRooms[1]!;
+    teleportPlayerInto(eng, cap);
+    eng.step([idle(3)]);
+    expect(s.dungeonRoomRuntime[1]!.activated).toBe(true);
+  });
+
+  it('is deterministic end-to-end for a given seed', () => {
+    const a = createGameEngine(G2_CFG);
+    const b = createGameEngine(G2_CFG);
+    a.step([idle(1)]);
+    b.step([idle(1)]);
+    expect(a.state.dungeonRooms.map((r) => ({ id: r.id, x: r.offsetXGrid, y: r.offsetYGrid }))).toEqual(
+      b.state.dungeonRooms.map((r) => ({ id: r.id, x: r.offsetXGrid, y: r.offsetYGrid })),
+    );
+  });
+});
+
+describe('Dungeon mode — a `graph2d` floor that actually BENDS (south, not east) runs end-to-end', () => {
+  // Forced, seed-independent bend: the spawn room has only a 'south' exit and the
+  // capstone only a 'north' one, so there is exactly one viable direction and no
+  // PRNG luck involved — proving the whole live pipeline (buildFloorGeometry's
+  // door-gap carving, DoorSystem activation, walkability) handles a horizontal
+  // (north/south-wall) door correctly, not just the always-vertical doors every
+  // other dungeon fixture in this file happens to produce.
+  const BEND_SPAWN: RoomPiece = {
+    id: 'bend_spawn', tags: ['bend'], sizeGrid: { w: 14, h: 12 }, solids: [],
+    spawns: { player: [{ x: 7, y: 2 }], enemy: [] }, exits: [{ edge: 'south' }],
+  };
+  const BEND_CAP: RoomPiece = {
+    id: 'bend_cap', role: 'boss', sizeGrid: { w: 14, h: 10 }, solids: [],
+    spawns: { player: [{ x: 7, y: 5 }], enemy: [] }, exits: [{ edge: 'north' }],
+  };
+  const BEND_DUN: DungeonConfig = {
+    biomeId: 'bend', nameKey: 'bend', floorCount: 1, roomsPerFloor: { min: 2, max: 2 },
+    pieceTags: ['bend'], layout: 'graph2d',
+    extractionPieceId: 'bend_cap', bossPieceId: 'bend_cap', difficultyCurve: { base: 1, perFloor: 0 },
+  };
+  const BEND_CFG: EngineConfig = {
+    seed: 11, worldW: 640, worldH: 640, waves: [],
+    dungeon: { config: BEND_DUN, library: [BEND_SPAWN, BEND_CAP] },
+  };
+
+  it('places the capstone directly SOUTH of the spawn room, with a horizontal door carved through both walls', () => {
+    const eng = createGameEngine(BEND_CFG);
+    const s = eng.state;
+    eng.step([idle(1)]);
+    const [room0, cap] = s.dungeonRooms;
+    expect(cap!.offsetYGrid).toBe(room0!.offsetYGrid + room0!.piece.sizeGrid.h); // south, not east
+    expect(cap!.offsetXGrid).toBe(room0!.offsetXGrid); // centered — same width, same X
+
+    const doorRt = s.dungeonDoors[0]!;
+    expect(doorRt.door.passageGrid.w).toBeGreaterThan(doorRt.door.passageGrid.h); // horizontal passage
+    // The door's own center is open (not a wall) — a real, walkable carved gap.
+    const cx = toFpGrid(doorRt.door.passageGrid.x + doorRt.door.passageGrid.w / 2);
+    const cy = toFpGrid(doorRt.door.passageGrid.y + doorRt.door.passageGrid.h / 2);
+    const coveredAtCenter = s.walls.some((w) => cx >= w.x && cx < w.x + w.w && cy >= w.y && cy < w.y + w.h);
+    expect(coveredAtCenter).toBe(false);
+  });
+
+  it('walking south through the door activates the capstone, same as any east-going floor', () => {
+    const eng = createGameEngine(BEND_CFG);
+    const s = eng.state;
+    eng.step([idle(1)]);
+    eng.step([idle(2)]); // room 0 activates
+    const cap = s.dungeonRooms[1]!;
+    teleportPlayerInto(eng, cap);
+    eng.step([idle(3)]);
+    expect(s.dungeonRoomRuntime[1]!.activated).toBe(true);
+  });
+});

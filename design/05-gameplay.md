@@ -112,6 +112,55 @@ rendering as-is), which `FloorProgress` never could (it only ever showed the loc
 player's own linear position). No engine changes, no `ENGINE_VERSION` bump — purely a
 client-side adapter over data the engine already exposed.
 
+✅ **Real 2D graph layout shipped 2026-08-05 (ROADMAP "real 2D graph layout"
+follow-up, additive, no `ENGINE_VERSION` bump):** closes the one remaining
+scope cut the 2026-08-04 engine bullet named above — a *generated* (not
+hand-authored) floor is no longer forced onto a west→east spine. A new third
+`DungeonConfig.layout: 'graph2d'` (alongside `'linear'`/`'branching'`) pairs
+`generateFloor`'s UNCHANGED stage-selection stream (it never forks, so every
+stage stays a plain `RoomPiece`, matching `'linear'`'s own selection exactly)
+with a new `world/dungeon.ts placeFloorGraph2d` — a sibling to `placeFloor`,
+not a variant of it, same precedent as `placeAuthoredFloor`. Each transition
+walks out of whichever of the previous room's exits is both unconsumed (not
+the one already used entering it) and has a matching opposite exit on the next
+piece; `roomgenPrng` draws a direction only when more than one is viable (the
+same "only draw when it matters" discipline `combatPrng`'s crit draw already
+established) — so a west/east-only content pool places exactly like `'linear'`'s
+own spine for every stage after the first, and only a piece with a free
+north/south exit (or an ambiguous first room) actually lets the floor bend.
+Throws (fail loud, design/09) if a placement would overlap an earlier room —
+a real risk once placement can walk in any of 4 directions, unlike
+`placeFloor`'s single-axis spine where it structurally cannot happen; this
+module does not try to auto-avoid it, same "curated content, not a solver"
+contract `placeFloor` itself already assumes. No shipped `DungeonConfig` uses
+`'graph2d'` yet (`EMBER_DUNGEON` stays `'linear'`) — authoring content with
+real north/south exits to make a shipped biome actually bend is a content
+task, not part of this pass, same "no shipped content exercises it yet" note
+`'branching'` and hand-authored floors both shipped with. 16 new tests
+(`dungeon.test.ts`'s `placeFloorGraph2d`/graph2d-`generateFloor` unit
+coverage + a `dungeonrun.test.ts` end-to-end integration block).
+
+**"加测试" follow-up, same day:** closed the coverage gaps a first pass left —
+`entranceFromDoor`'s reuse inside `placeFloorGraph2d` itself (not just
+`placeAuthoredFloor`, which already covered the function directly) now has
+dedicated east/west AND north/south assertions, plus the spawn room's own
+inset/size-half fallback when it authors no player spawn; a door-anchor
+"not pinned to one position" spread check (`placeFloor`'s own existing
+convention) now has a `graph2d` counterpart for both an east- and a
+south-going connection; a `roomA`/`roomB` chain-order assertion across a
+3-room stretch; and — closing the sharpest gap, since the module doc's own
+central claim is "a direction is drawn ONLY when more than one exit is
+viable" — a `CountingPrng` test subclass that asserts the EXACT draw count
+per door (1 when only one direction is viable, 2 when a real choice exists),
+not just that the output varies. `dungeonrun.test.ts` also gained a
+forced, seed-independent SOUTH-bending floor (every other dungeon fixture in
+that file only ever produces an east-going/vertical door) to prove
+`buildFloorGeometry`'s carving and `DoorSystem` activation genuinely handle a
+horizontal (north/south-wall) door end-to-end, not just in the pure
+placement-function tests above. 8 new tests (6 `dungeon.test.ts` + 2
+`dungeonrun.test.ts`) — 1647 total across all 7 workspaces, `tsc --noEmit`
+clean.
+
 See `ROADMAP.md`'s "Room & door model" section for the full file list — including
 hand-authored PvE floor placement (map editor), shipped 2026-08-05, see the
 "Hand-authored PvE floors" subsection below.
