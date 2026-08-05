@@ -47,6 +47,7 @@ export const en = {
     materialsLine: 'Materials   {bank}   |   owned chars: {ownedChars}',
     loadoutLine: 'Loadout     {loadout}   ({count}/{max})',
     storeLine: 'Store (demo: free): {items}  — [B] acquire next',
+    acquireButton: 'ACQUIRE',
     lockedFind: 'locked (find it)',
     lockedSource: 'locked ({source})',
     craftable: 'craftable',

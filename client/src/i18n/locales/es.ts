@@ -48,6 +48,7 @@ export const es: Translations<typeof en> = {
     materialsLine: 'Materiales   {bank}   |   personajes obtenidos: {ownedChars}',
     loadoutLine: 'Equipo      {loadout}   ({count}/{max})',
     storeLine: 'Tienda (demo: gratis): {items}  — [B] obtener el siguiente',
+    acquireButton: 'OBTENER',
     lockedFind: 'bloqueado (hay que encontrarlo)',
     lockedSource: 'bloqueado ({source})',
     craftable: 'fabricable',

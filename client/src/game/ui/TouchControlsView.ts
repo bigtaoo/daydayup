@@ -16,19 +16,28 @@ export class TouchControlsView {
   private readonly fireButton = new Graphics();
   private readonly weapon1 = new Graphics();
   private readonly weapon2 = new Graphics();
+  private readonly interactButton = new Graphics();
   private readonly weapon1Label: Text;
   private readonly weapon2Label: Text;
+  private readonly interactLabel: Text;
 
   constructor() {
     const labelStyle = { fill: 0xe2e8f0, fontSize: 15, fontFamily: 'monospace' as const, fontWeight: 'bold' as const, padding: 8 };
     this.weapon1Label = new Text({ text: '1', style: labelStyle });
     this.weapon2Label = new Text({ text: '2', style: labelStyle });
+    // '+' reads as "support/revive" without needing a translated word (design/10's own
+    // "few, large, clear elements" preference) — same single-glyph-label convention
+    // weapon1Label/weapon2Label already use, just tinted to match the button's own
+    // pickupHeal-green rather than the neutral weapon-button grey.
+    this.interactLabel = new Text({ text: '+', style: { ...labelStyle, fill: THEME.colors.pickupHeal } });
     this.weapon1Label.anchor.set(0.5);
     this.weapon2Label.anchor.set(0.5);
+    this.interactLabel.anchor.set(0.5);
 
     this.view.addChild(
       this.moveBase, this.moveKnob, this.fireButton,
       this.weapon1, this.weapon2, this.weapon1Label, this.weapon2Label,
+      this.interactButton, this.interactLabel,
     );
     this.view.visible = false;
     // Presentation only — never intercepts the DOM/wx touch events TouchControls
@@ -49,6 +58,10 @@ export class TouchControlsView {
 
     drawButton(this.weapon1, this.weapon1Label, visual.weapon1);
     drawButton(this.weapon2, this.weapon2Label, visual.weapon2);
+    // INTERACT — held (like fire), so it gets the same brighten-while-pressed treatment,
+    // just tinted green (revive/support) instead of fire's amber.
+    drawInteractButton(this.interactButton, visual.interact);
+    this.interactLabel.position.set(visual.interact.cx, visual.interact.cy);
   }
 }
 
@@ -73,6 +86,16 @@ function drawStick(
 
 function drawFireButton(g: Graphics, b: { cx: number; cy: number; r: number; pressed: boolean }): void {
   const color = THEME.colors.muzzle;
+  g.clear()
+    .circle(b.cx, b.cy, b.r)
+    .fill({ color, alpha: b.pressed ? 0.32 : 0.14 })
+    .stroke({ color, width: 2, alpha: b.pressed ? 0.7 : 0.4 });
+}
+
+// Same held/brighten shape as drawFireButton, tinted heal-green so INTERACT reads as a
+// distinct, "supportive" action rather than another weapon-swap tap.
+function drawInteractButton(g: Graphics, b: { cx: number; cy: number; r: number; pressed: boolean }): void {
+  const color = THEME.colors.pickupHeal;
   g.clear()
     .circle(b.cx, b.cy, b.r)
     .fill({ color, alpha: b.pressed ? 0.32 : 0.14 })

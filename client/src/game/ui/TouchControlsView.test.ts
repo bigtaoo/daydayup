@@ -7,7 +7,7 @@ import type { TouchVisual } from '../../platform/types';
 // `view.children` is the only way in from the outside, since the individual
 // Graphics/Text are private (this mirrors how the feature was hand-verified live in
 // the browser: see the daydayup memory notes on why screenshots aren't available here).
-const enum Child { MoveBase, MoveKnob, FireButton, Weapon1, Weapon2, Weapon1Label, Weapon2Label }
+const enum Child { MoveBase, MoveKnob, FireButton, Weapon1, Weapon2, Weapon1Label, Weapon2Label, InteractButton, InteractLabel }
 
 function graphicsAt(v: TouchControlsView, i: Child): Graphics {
   return v.view.children[i] as Graphics;
@@ -23,6 +23,7 @@ const BASE_VISUAL: TouchVisual = {
   fire: { cx: 300, cy: 60, r: 50, pressed: false },
   weapon1: { cx: 100, cy: 20, r: 15 },
   weapon2: { cx: 60, cy: 20, r: 15 },
+  interact: { cx: 20, cy: 20, r: 15, pressed: false },
 };
 
 describe('TouchControlsView', () => {
@@ -115,5 +116,47 @@ describe('TouchControlsView', () => {
     const l1 = textAt(v, Child.Weapon1Label);
     expect(l1.position.x).toBe(200);
     expect(l1.position.y).toBe(40);
+  });
+
+  describe('INTERACT button (revive channel — a real gap this pass closed)', () => {
+    it('draws at its reported centre/radius every update, labelled +', () => {
+      const v = new TouchControlsView();
+      v.update(BASE_VISUAL);
+
+      const bounds = graphicsAt(v, Child.InteractButton).getBounds();
+      expect(bounds.x + bounds.width / 2).toBeCloseTo(20);
+      expect(bounds.y + bounds.height / 2).toBeCloseTo(20);
+
+      const label = textAt(v, Child.InteractLabel);
+      expect(label.text).toBe('+');
+      expect(label.position.x).toBe(20);
+      expect(label.position.y).toBe(20);
+    });
+
+    it('brightens while held, same shape as the fire button', () => {
+      const v = new TouchControlsView();
+      v.update({ ...BASE_VISUAL, interact: { cx: 20, cy: 20, r: 15, pressed: true } });
+      // Drawn even though nothing about its geometry changed — pressed alone flips the
+      // fill/stroke alpha (same "brighten while held" contract drawFireButton has).
+      const bounds = graphicsAt(v, Child.InteractButton).getBounds();
+      expect(bounds.x + bounds.width / 2).toBeCloseTo(20);
+    });
+
+    it('follows the button if its reported position changes (screen resize)', () => {
+      const v = new TouchControlsView();
+      v.update(BASE_VISUAL);
+      v.update({ ...BASE_VISUAL, interact: { cx: 150, cy: 45, r: 15, pressed: false } });
+      const label = textAt(v, Child.InteractLabel);
+      expect(label.position.x).toBe(150);
+      expect(label.position.y).toBe(45);
+    });
+
+    it('is drawn even when it sits at TouchVisual.active but nothing is pressed (always visible, unlike the dynamic move stick)', () => {
+      const v = new TouchControlsView();
+      v.update(BASE_VISUAL);
+      // Unlike moveBase/moveKnob (hidden until a stick is held), the interact button has
+      // no `null`/hidden state — same "always drawn" contract as the weapon buttons.
+      expect(graphicsAt(v, Child.InteractButton).getBounds().width).toBeGreaterThan(0);
+    });
   });
 });

@@ -4,6 +4,7 @@ import { TouchControls } from './TouchControls';
 // width=1000, height=500 → unit=500 gives round numbers throughout:
 // stickRadius=90, button r=40, margin m=60, gap=96
 // weapon1 = { cx: 940, cy: 60, r: 40 }, weapon2 = { cx: 844, cy: 60, r: 40 }
+// interact = { cx: 748, cy: 60, r: 40 } (a third button, one more `gap` out)
 // fire button (design/10 v33, fixed position, standard layout) = { cx: 875, cy: 250, r: 90 }
 function laidOut(): TouchControls {
   const c = new TouchControls();
@@ -18,6 +19,7 @@ describe('TouchControls.layout', () => {
     expect(v.stickRadius).toBe(90);
     expect(v.weapon1).toEqual({ cx: 940, cy: 60, r: 40 });
     expect(v.weapon2).toEqual({ cx: 844, cy: 60, r: 40 });
+    expect(v.interact).toEqual({ cx: 748, cy: 60, r: 40, pressed: false });
     expect(v.fire).toEqual({ cx: 875, cy: 250, r: 90, pressed: false });
   });
 });
@@ -133,6 +135,61 @@ describe('TouchControls weapon-swap buttons', () => {
     c.pointerDown(1, 940 + 41, 60); // 41 > r(40), and far from weapon2 too
     expect(switched).toEqual([]);
     expect(c.getVisual().fire.pressed).toBe(true);
+  });
+});
+
+describe('TouchControls INTERACT button (revive channel — a real gap this pass closed)', () => {
+  let c: TouchControls;
+  beforeEach(() => { c = laidOut(); });
+
+  it('holding it marks `interacting` true — previously hardcoded false with no on-screen control at all', () => {
+    c.pointerDown(3, 748, 60); // dead centre of interact
+    expect(c.read().interacting).toBe(true);
+    expect(c.getVisual().interact.pressed).toBe(true);
+    expect(c.hasActiveTouch()).toBe(true);
+  });
+
+  it('opens no stick and does not also fire, even though it sits in the "fire half"', () => {
+    c.pointerDown(3, 748, 60);
+    expect(c.getVisual().move).toBeNull();
+    expect(c.read().firing).toBe(false);
+  });
+
+  it('releases on pointerUp for the matching id', () => {
+    c.pointerDown(3, 748, 60);
+    c.pointerUp(3);
+    expect(c.read().interacting).toBe(false);
+    expect(c.getVisual().interact.pressed).toBe(false);
+    expect(c.hasActiveTouch()).toBe(false);
+  });
+
+  it('ignores pointerUp for a non-matching id', () => {
+    c.pointerDown(3, 748, 60);
+    c.pointerUp(4);
+    expect(c.read().interacting).toBe(true);
+  });
+
+  it('takes priority over the fire zone, same as the weapon buttons', () => {
+    // Exactly on interact's edge (still inside the circle) — would otherwise start firing.
+    c.pointerDown(3, 748 + 39, 60);
+    expect(c.read().interacting).toBe(true);
+    expect(c.getVisual().fire.pressed).toBe(false);
+  });
+
+  it('holding weapon1/weapon2 and interact independently (three simultaneous touches)', () => {
+    const switched: number[] = [];
+    c.onSwitchWeapon = (slot) => switched.push(slot);
+    c.pointerDown(1, 940, 60); // weapon1
+    c.pointerDown(2, 748, 60); // interact
+    expect(switched).toEqual([1]);
+    expect(c.read().interacting).toBe(true);
+    c.pointerUp(2);
+    expect(c.read().interacting).toBe(false);
+  });
+
+  it('moves with the rest of the corner cluster when mirrored', () => {
+    c.setMirrored(true);
+    expect(c.getVisual().interact).toEqual({ cx: 252, cy: 60, r: 40, pressed: false });
   });
 });
 

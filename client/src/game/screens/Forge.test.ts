@@ -56,6 +56,7 @@ function privateOf(f: Forge) {
     rowBtns: TestButton[];
     clearBtn: TestButton;
     startBtn: TestButton;
+    acquireBtn: TestButton;
     hint: { position: { x: number; y: number }; text: string };
     compareCard: { view: { visible: boolean; position: { x: number; y: number }; height: number } };
   };
@@ -111,6 +112,39 @@ describe('Forge — infoText buyable-list bound', () => {
     const style = privateOf(f).infoText.style;
     expect(style.wordWrap).toBe(true);
     expect(style.breakWords).toBe(true);
+  });
+});
+
+describe('Forge — acquire button (a real gap this pass closed: the buyable shelf line was display-only)', () => {
+  it('is visible when there is something purchasable', () => {
+    const f = new Forge();
+    const m = withFewBuyable(2);
+    expect(purchasableBlueprints(m).length).toBeGreaterThan(0);
+    f.render(m, 1280, 720);
+    expect(privateOf(f).acquireBtn.view.visible).toBe(true);
+  });
+
+  it('is hidden once nothing is left to buy — same condition the Store info line uses', () => {
+    const f = new Forge();
+    const m = withFewBuyable(0);
+    f.render(m, 1280, 720);
+    expect(privateOf(f).acquireBtn.view.visible).toBe(false);
+  });
+
+  it('tapping it fires onAcquire — Game wires this to the exact same forgeAcquireBlueprint() the KeyB shortcut calls', () => {
+    const f = new Forge();
+    let fired = 0;
+    f.onAcquire = () => { fired++; };
+    f.render(withFewBuyable(2), 1280, 720);
+    (f as unknown as { acquireBtn: { onTap: (() => void) | null } }).acquireBtn.onTap?.();
+    expect(fired).toBe(1);
+  });
+
+  it("doesn't overlap the first blueprint row when shown", () => {
+    const f = new Forge();
+    f.render(withFewBuyable(2), 1280, 720);
+    const p = privateOf(f);
+    expect(p.acquireBtn.view.position.y).toBeLessThan(p.rowBtns[0]!.view.position.y);
   });
 });
 
@@ -177,6 +211,7 @@ describe('Forge — i18n (design/17-i18n.md)', () => {
     expect(p.title.text).toBe('锻造场');
     expect(p.startBtn.label.text).toBe('开始行动 ▸');
     expect(p.clearBtn.label.text).toBe('清空装备');
+    expect(p.acquireBtn.label.text).toBe('获取');
     expect(p.hint.text).toBe('[↑↓]/[1-9]/[C]/[X]/[Enter] 键盘快捷键仍然可用');
     expect(p.infoText.text).toContain('材料');
     expect(p.infoText.text).toContain('已拥有角色：3');

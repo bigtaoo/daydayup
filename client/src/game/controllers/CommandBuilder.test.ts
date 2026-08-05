@@ -33,6 +33,7 @@ function fakeInput(initial: InputState): InputSource & { state: InputState } {
         active: false, stickRadius: 0, move: null,
         fire: { cx: 0, cy: 0, r: 0, pressed: false },
         weapon1: { cx: 0, cy: 0, r: 0 }, weapon2: { cx: 0, cy: 0, r: 0 },
+        interact: { cx: 0, cy: 0, r: 0, pressed: false },
       };
     },
   };

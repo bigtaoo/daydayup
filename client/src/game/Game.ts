@@ -338,6 +338,7 @@ export class Game {
     this.forge.onClear = () => this.forgeClear();
     this.forge.onCraftAt = (i) => this.forgeCraftAt(i);
     this.forge.onStart = () => this.confirm();
+    this.forge.onAcquire = () => this.forgeAcquireBlueprint();
     this.screens.onConfirm = () => this.confirm();
     this.screens.onMenu = () => this.showMenu();
     this.pauseMenu.onResume = () => this.resume();
@@ -351,6 +352,13 @@ export class Game {
     // Ground-weapon click-to-collect (design/03, ENGINE_VERSION 32) — same shape as
     // the portal popup above: a row click latches the target id onto the builder.
     this.hud.weaponPickupPrompt.onPick = (id) => this.builder.requestPickup(id);
+    // In-run pause button (a real gap this pass closed — see HudView.pauseBtn's own
+    // doc comment): the same pause() the Escape/P keyboard handler below already calls,
+    // guarded by the same `!this.online` check (pause() freezes the local sim loop
+    // unconditionally — see its own doc comment on why that's unsafe for a shared match).
+    this.hud.onPause = () => {
+      if (!this.online && this.phase === 'playing') this.pause();
+    };
 
     this.input.attach(this.app.canvas as unknown as InputCanvas);
     // Discrete actions route through the shell: during a run they latch a one-tick
@@ -769,10 +777,10 @@ export class Game {
   }
 
   // Apply a forge control (web keyboard). Mutates meta through the pure forge
-  // transactions, persists, and re-renders. No-op outside the forge phase. Digits/C/X
+  // transactions, persists, and re-renders. No-op outside the forge phase. Digits/C/X/B
   // route through the SAME private methods the Loadout screen's buttons call
-  // (forgeCraftAt/forgeCycleCharacter/forgeClear) — one source of truth for both input
-  // paths, not duplicated logic.
+  // (forgeCraftAt/forgeCycleCharacter/forgeClear/forgeAcquireBlueprint) — one source of
+  // truth for both input paths, not duplicated logic.
   private onForgeKey(code: string) {
     if (this.phase !== 'forge') return;
     const digit = /^Digit([1-9])$/.exec(code);
@@ -784,13 +792,7 @@ export class Game {
     } else if (code === 'KeyX') {
       this.forgeClear();
     } else if (code === 'KeyB') {
-      const buyable = purchasableBlueprints(this.meta);
-      if (buyable[0]) {
-        this.meta = acquireBlueprint(this.meta, buyable[0]); // demo: free grant (2.4 scaffold)
-        this.store.save(this.meta);
-        const { w, h } = this.screenSize();
-        this.forge.render(this.meta, w, h);
-      }
+      this.forgeAcquireBlueprint();
     } else if (code === 'KeyO') {
       this.openSettings();
     } else if (code === 'Enter' || code === 'NumpadEnter') {
@@ -825,6 +827,20 @@ export class Game {
     const next = this.cycleCharacter(this.meta);
     if (next !== this.meta) {
       this.meta = next;
+      this.store.save(this.meta);
+      const { w, h } = this.screenSize();
+      this.forge.render(this.meta, w, h);
+    }
+  }
+
+  /** Acquires the first purchasable blueprint (a real gap this pass closed — the row
+   *  of buyable names in the info text was always display-only; only the `KeyB`
+   *  keyboard shortcut could actually trigger it, unlike every other Forge action).
+   *  `demo: free grant` scaffold (2.4) — real billing is a platform adapter's job. */
+  private forgeAcquireBlueprint() {
+    const buyable = purchasableBlueprints(this.meta);
+    if (buyable[0]) {
+      this.meta = acquireBlueprint(this.meta, buyable[0]);
       this.store.save(this.meta);
       const { w, h } = this.screenSize();
       this.forge.render(this.meta, w, h);

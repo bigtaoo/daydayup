@@ -48,6 +48,7 @@ export const de: Translations<typeof en> = {
     materialsLine: 'Materialien   {bank}   |   eigene Charaktere: {ownedChars}',
     loadoutLine: 'Ausrüstung  {loadout}   ({count}/{max})',
     storeLine: 'Shop (Demo: kostenlos): {items}  — [B] nächstes freischalten',
+    acquireButton: 'ERWERBEN',
     lockedFind: 'gesperrt (erst finden)',
     lockedSource: 'gesperrt ({source})',
     craftable: 'herstellbar',

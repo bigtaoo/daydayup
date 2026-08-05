@@ -48,6 +48,7 @@ export const zh: Translations<typeof en> = {
     materialsLine: '材料   {bank}   |   已拥有角色：{ownedChars}',
     loadoutLine: '装备     {loadout}   （{count}/{max}）',
     storeLine: '商店（演示期间免费）：{items}  — [B] 获取下一件',
+    acquireButton: '获取',
     lockedFind: '未解锁（需寻获）',
     lockedSource: '未解锁（{source}）',
     craftable: '可打造',

@@ -384,6 +384,40 @@ describe('HudView — local downed banner (design/10 open question, ROADMAP 3.2)
   });
 });
 
+describe('HudView — pause button (a real touch/WeChat gap this pass closed)', () => {
+  // Before this pass, Game.pause() had exactly one entry point — a keyboard Escape/P
+  // listener — so a touch/WeChat player (no keyboard at all) could never pause mid-run.
+  it('exists, is part of the HUD (toggled by the same view Game shows/hides per phase)', () => {
+    const hud = newHud();
+    expect(hud.view.children).toContain(hud.pauseBtn.view);
+  });
+
+  it('is positioned in the top-right corner, above the minimap', () => {
+    const hud = newHud();
+    expect(hud.pauseBtn.view.position.x).toBeGreaterThan(1280 - 140 - 20); // right of the minimap's own left edge
+    expect(hud.pauseBtn.view.position.y).toBeLessThan(hud.minimap.view.position.y);
+  });
+
+  it('re-anchors on reposition (viewport resize), same as the rest of the HUD', () => {
+    const hud = newHud();
+    hud.reposition({ w: 640, h: 480 });
+    expect(hud.pauseBtn.view.position.x).toBeCloseTo(640 - 20 - 36);
+  });
+
+  it('tapping it fires onPause — Game wires this to the exact same pause() the keyboard calls', () => {
+    const hud = newHud();
+    let fired = 0;
+    hud.onPause = () => { fired++; };
+    hud.pauseBtn.onTap?.();
+    expect(fired).toBe(1);
+  });
+
+  it('does nothing (no throw) when onPause is never wired', () => {
+    const hud = newHud();
+    expect(() => hud.pauseBtn.onTap?.()).not.toThrow();
+  });
+});
+
 describe('HudView — degenerate states', () => {
   it('does not throw when the local seat index has no player (post-death frame)', () => {
     const hud = newHud();

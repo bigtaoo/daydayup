@@ -44,6 +44,7 @@ export class Forge {
   private charText: Text;
   private clearBtn: Button;
   private startBtn: Button;
+  private acquireBtn: Button;
   private prevPageBtn: Button;
   private nextPageBtn: Button;
   /** Fixed pool of PAGE_SIZE row buttons, reused across pages (relabeled + shown/hidden
@@ -84,6 +85,11 @@ export class Forge {
    * separate select-then-confirm step (design/10's "favor fewer, clearer actions"
    * clutter decision). */
   onCraftAt: ((i: number) => void) | null = null;
+  /** Acquires the first purchasable blueprint (`purchasableBlueprints`'s own order — a
+   * real gap this pass closed: the `buyableText` line below was always display-only,
+   * with no tap equivalent to the keyboard's `KeyB`, unlike every other Forge action).
+   * `demo: free grant` scaffold, same as the keyboard path (2.4). */
+  onAcquire: (() => void) | null = null;
 
   constructor() {
     // `padding` guards against a real observed font-metrics clipping bug (see
@@ -135,6 +141,8 @@ export class Forge {
     this.startBtn = new Button(t('forge.startRun'), { w: 220, h: 44, fontSize: 17 });
     this.startBtn.onTap = () => this.onStart?.();
     this.startBtn.setIcon(getUiTexture('icon_play'));
+    this.acquireBtn = new Button(t('forge.acquireButton'), { w: 160, h: 30, fontSize: 12 });
+    this.acquireBtn.onTap = () => this.onAcquire?.();
 
     this.npcSprite.anchor.set(0.5, 1);
     this.npcSprite.visible = false;
@@ -142,7 +150,7 @@ export class Forge {
     this.view.addChild(
       this.panel.view, this.npcSprite, this.title, this.backBtn.view,
       this.prevCharBtn.view, this.charText, this.nextCharBtn.view,
-      this.infoText,
+      this.infoText, this.acquireBtn.view,
       ...this.rowBtns.map((b) => b.view),
       this.prevPageBtn.view, this.pageLabel, this.nextPageBtn.view,
       this.clearBtn.view, this.compareCard.view, this.startBtn.view, this.hint,
@@ -183,6 +191,7 @@ export class Forge {
     this.nextPageBtn.setText(t('forge.pageNextButton'));
     this.clearBtn.setText(t('forge.clearLoadout'));
     this.startBtn.setText(t('forge.startRun'));
+    this.acquireBtn.setText(t('forge.acquireButton'));
 
     // Material bank — the five elemental kinds (design/14), summed across every rolled tier.
     const bank = DAMAGE_TYPES.map((e) => `${short(e)} ${bankTotal(m, e)}`).join('   ');
@@ -256,6 +265,14 @@ export class Forge {
     this.infoText.style.wordWrapWidth = Math.min(760, w - 80);
     this.infoText.position.set(cx, y);
     y += this.infoText.height + 14;
+    // Acquire button (a real gap this pass closed): only shown when there's actually
+    // something to acquire, right-aligned with the row column below it — reserves its
+    // own row so it never overlaps the first blueprint row.
+    this.acquireBtn.view.visible = buyable.length > 0;
+    if (this.acquireBtn.view.visible) {
+      this.acquireBtn.view.position.set(cx + 280 - 160, y);
+      y += 36;
+    }
     for (const b of this.rowBtns) {
       b.view.position.set(cx - 280, y);
       y += 32;

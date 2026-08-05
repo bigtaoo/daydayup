@@ -10,7 +10,9 @@ import type { InputState, TouchVisual } from './types';
 //   left half  → movement joystick (dynamic origin at touch-down)
 //   right half → hold-to-fire (design/10 v33: no more aim stick — the engine auto-faces,
 //                see ApplyInputSystem; a melee swing is also the parry)
-//   corner buttons → weapon 1 / weapon 2  (no jump/block — parry is the swing arc)
+//   corner buttons → weapon 1 / weapon 2 / INTERACT (hold, revive channel only — the
+//                extraction/descend gesture is PortalPrompt's own tappable buttons, not
+//                this field; no jump/block — parry is the swing arc)
 interface Stick {
   id: number;
   ox: number;
@@ -38,6 +40,7 @@ export class TouchControls {
 
   private move: Stick | null = null;
   private fireTouchId: number | null = null;
+  private interactTouchId: number | null = null;
 
   // Set on the first pointerDown ever and never cleared — this is "is this session a
   // touch session" (drives TouchVisual.active), distinct from hasActiveTouch() below,
@@ -47,6 +50,7 @@ export class TouchControls {
   private weapon1Btn: Button = { cx: 0, cy: 0, r: 0 };
   private weapon2Btn: Button = { cx: 0, cy: 0, r: 0 };
   private fireBtn: Button = { cx: 0, cy: 0, r: 0 };
+  private interactBtn: Button = { cx: 0, cy: 0, r: 0 };
 
   // Screen size in logical (CSS) pixels — the same units the pointer coords use.
   layout(width: number, height: number) {
@@ -59,13 +63,18 @@ export class TouchControls {
     const m = r + unit * 0.04; // margin from the edge to a button centre
     const gap = r * 2.4;
     // Standard: buttons sit top-right (thumb-natural for a right-handed grip holding
-    // the movement stick on the left). Mirrored: top-left instead.
+    // the movement stick on the left). Mirrored: top-left instead. INTERACT is a third
+    // button continuing the same row, one more `gap` out — held (like fire), not
+    // tapped (like the weapon-swap pair), but it shares their corner cluster rather
+    // than fighting the move/fire zones for space.
     if (this.mirrored) {
       this.weapon1Btn = { cx: m, cy: m, r };
       this.weapon2Btn = { cx: m + gap, cy: m, r };
+      this.interactBtn = { cx: m + gap * 2, cy: m, r };
     } else {
       this.weapon1Btn = { cx: width - m, cy: m, r };
       this.weapon2Btn = { cx: width - m - gap, cy: m, r };
+      this.interactBtn = { cx: width - m - gap * 2, cy: m, r };
     }
     // Fire button: centred in the fire-side half (mirrored: left, else right), same
     // radius as the move stick so it's an equally generous thumb target. Fixed position
@@ -98,6 +107,14 @@ export class TouchControls {
       this.onSwitchWeapon?.(2);
       return;
     }
+    // INTERACT: held for as long as the touch stays down, same shape as the fire
+    // zone below (not a one-shot latch like the weapon buttons above) — the revive
+    // channel (ReviveSystem) reads it every tick it's held, exactly like the
+    // keyboard's E/Space hold.
+    if (inCircle(x, y, this.interactBtn)) {
+      this.interactTouchId = id;
+      return;
+    }
 
     // Otherwise: left half drives movement, right half fires (hold anywhere in that
     // half — no precision tap needed) — swapped when `mirrored` (setMirrored/design/10's
@@ -114,12 +131,13 @@ export class TouchControls {
   pointerUp(id: number) {
     if (this.move && id === this.move.id) this.move = null;
     if (this.fireTouchId === id) this.fireTouchId = null;
+    if (this.interactTouchId === id) this.interactTouchId = null;
   }
 
   // True while the player is touching any control — lets a platform that also has
   // mouse/keyboard (desktop Web) decide which source is currently driving.
   hasActiveTouch(): boolean {
-    return this.move !== null || this.fireTouchId !== null;
+    return this.move !== null || this.fireTouchId !== null || this.interactTouchId !== null;
   }
 
   // Render-facing snapshot for the on-screen overlay (TouchControlsView) — see
@@ -135,6 +153,7 @@ export class TouchControls {
       fire: { ...this.fireBtn, pressed: this.fireTouchId !== null },
       weapon1: { ...this.weapon1Btn },
       weapon2: { ...this.weapon2Btn },
+      interact: { ...this.interactBtn, pressed: this.interactTouchId !== null },
     };
   }
 
@@ -157,9 +176,13 @@ export class TouchControls {
       moveX: move.dx,
       moveY: move.dy,
       firing: this.fireTouchId !== null,
-      // No on-screen INTERACT button yet — a touch extraction control is a follow-up
-      // (design/05). Touch players reach a checkpoint but can't resolve it for now.
-      interacting: false,
+      // A real on-screen INTERACT hold, added this pass — previously hardcoded false
+      // (a real, self-documented gap: touch/WeChat players could never revive a downed
+      // teammate). Extraction/descend already went through PortalPrompt's own tappable
+      // buttons instead of this field once that gesture was rewritten (design/10,
+      // 2026-08-02), so this only ever gates the revive channel now — see
+      // ReviveSystem's own doc comment.
+      interacting: this.interactTouchId !== null,
     };
   }
 }

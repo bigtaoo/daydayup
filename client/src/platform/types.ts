@@ -47,6 +47,11 @@ export interface TouchVisual {
   fire: { cx: number; cy: number; r: number; pressed: boolean };
   weapon1: { cx: number; cy: number; r: number };
   weapon2: { cx: number; cy: number; r: number };
+  // INTERACT — a third corner button, held (not tapped) the same way `fire` is: the
+  // revive channel (ReviveSystem, ROADMAP 3.2) reads it every tick for as long as it's
+  // down, exactly like the keyboard's E/Space hold. Desktop-only until this pass — see
+  // TouchControls.ts's own doc comment for why it was missing.
+  interact: { cx: number; cy: number; r: number; pressed: boolean };
 }
 
 // A swappable input device. Web = keyboard + mouse; WeChat = virtual joystick + touch.

@@ -10,7 +10,7 @@ click-driven; 33: manual aim removed entirely; 34: co-resident PvE room/door mod
 client rendering; 35: fully-realized branching — see the Room & door model section below;
 same-day map-editor door placement AND the `layout: 'graph2d'` real-2D-layout follow-up are
 both additive, no version bump);
-1647 tests green across all 7 workspace packages (engine 465 / client 826 / server 167 /
+1667 tests green across all 7 workspace packages (engine 465 / client 846 / server 167 /
 animator 62 / map-editor 64 / desktop-shell 56 / root build-script 7, `npm run check`) after a
 full client code-review pass
 (2026-08-04, see the Phase 3/4 updates and the Client hardening pass section below) that found
@@ -174,6 +174,47 @@ Still not done, on purpose (scoped out of this pass, not forgotten): (1) the rea
 
 - **5.1 Audio finish** (11): ✅ event→sound seam + a procedural/synthesised voice-table backend ship on BOTH web and WeChat (`wx.createWebAudioContext()`, feature-detected, 2026-07-26) — no asset files, no licensing needed for this half. Still open: real authored SFX/music/ambience (needs sourcing + a licence check — the owner's to do, not a tooling gap) + real-device verification of the WeChat fallback path (5.5).
 - **5.2 UI/HUD** (10): ✅ shipped 2026-07-26 — real Pixi widget kit (`Panel`/`Bar`/`ToastQueue`/`Button`/`Slider`), a real in-match HUD, settings screen (SFX/music/master volume + mute), PvP room-graph minimap, forge + ground-pickup compare cards. **2026-07-27: the two remaining items shipped too** — a real in-run pause menu (`game/PauseMenu.ts`, ESC/settings-button entry point) and a real PvE floor-progress minimap (`game/ui/Minimap.ts`/`FloorProgress.ts`, distinct from the PvP room-graph shape — tracks dungeon room-to-room progress, not a synthetic `?arenaDemo=1` stand-in). Nothing open in 5.2.
+
+**2026-08-05: three real touch/WeChat input gaps closed, found by cross-checking the actual
+code rather than trusting this doc's own "nothing open in 5.2" claim** (same "don't trust
+ROADMAP checkmarks in isolation" instinct earlier passes in this file have already needed).
+All three were self-documented in the code itself (a comment admitting the gap) or a silent
+missing `Button` where every sibling action already had one — not new design work, no
+`ENGINE_VERSION` impact (render/input-only), all additive.
+1. **Touch/WeChat players could never revive a downed teammate** — `TouchControls.read()`
+   hardcoded `interacting: false` unconditionally, with no on-screen control at all
+   (`ReviveSystem` reads it as a sustained hold, exactly like the keyboard's `KeyE`/`Space`).
+   The extraction/descend gesture this same field used to ALSO gate was unaffected — it
+   already moved to `PortalPrompt`'s own tappable `Button`s (design/10, 2026-08-02), which
+   touch could already reach. Fixed: a third corner button, `TouchControls.ts`'s
+   `interactBtn` (held, not tapped — same shape as the fire zone), rendered in
+   `TouchControlsView.ts` tinted `pickupHeal` green with a `+` label so it reads as a
+   distinct "supportive" action, not another weapon-swap tap. `TouchVisual` gained an
+   `interact` field; `hasActiveTouch()`/`getVisual()` updated to match.
+2. **No way to pause mid-run on touch/WeChat at all** — `Game.pause()` had exactly one
+   entry point, a keyboard `Escape`/`P` listener; `HudView`/`TouchControlsView` had zero
+   buttons. Fixed: `HudView.pauseBtn` (`‖`, top-right corner, above the minimap) — lives
+   inside `HudView.view`, so it inherits every existing phase-transition's show/hide for
+   free (the ~11 call sites that already toggle `hudView.visible`), and is gated by the
+   same `!this.online` check the keyboard handler already has (`pause()`'s freeze is
+   unconditional once entered — `phase === 'paused'` skips both `advanceSim` AND
+   `advanceOnline` — so a shared match still can't be locally frozen from one client).
+3. **The Forge's "buy a blueprint" action had no tap equivalent** — every other Forge
+   action (craft, character-cycle, clear, start) got a real `Button` in the 2026-07-29
+   Loadout-screen pass; the buyable-shelf line stayed display-only, reachable only via the
+   `KeyB` keyboard shortcut. Fixed: `Forge.acquireBtn`, shown only while
+   `purchasableBlueprints(m).length > 0`, wired to a new `Game.forgeAcquireBlueprint()`
+   extracted from the `KeyB` handler (one source of truth for both input paths, matching
+   every other Forge action's existing convention). New `forge.acquireButton` i18n key
+   across all 8 locales (design/17-i18n.md parity).
+
+Browser-verified live (real Chrome, not the sandboxed preview pane — a synthetic
+`TouchEvent`/`Touch` dispatch drove the INTERACT button specifically, confirmed via
+`window.__game.input.getTouchVisual()`/`.read()` state, not just pixels): the pause button
+opens/resumes the real `PauseMenu`, the Forge acquire button decrements the purchasable
+count live, and the INTERACT button renders its distinct green tint and flips
+`interacting: true` while held, `false` on release — zero console errors throughout. 20 new
+client tests (846 total, was 826), `tsc --noEmit` clean across all 7 workspaces.
 
 **2026-07-29: the front door design/10 had described but nobody had built.** A player reported the game felt "all placeholder UI" — the HUD/Settings/PauseMenu were genuinely real (5.2 above), but there was no boot/main-menu screen at all (`main.ts` dropped straight into the forge outpost) and the forge/loadout screen was a keyboard-only monospace text board, no clickable tiles. Shipped: a real **Main Menu** (`game/MainMenu.ts` — PLAY/SETTINGS, deliberately minimal; PvP/Arena entry stays a boot-time `?pvp=1` flag for now, not a runtime choice — a separate, scoped follow-up, **closed 2026-08-03 by Mode Select, see that entry below**); the **Loadout screen** upgraded in place (`game/Forge.ts` — clickable blueprint rows paged 8-at-a-time since `BLUEPRINT_CATALOG` has more entries than the old digit-key shortcuts ever reached, character-cycle arrows, Clear/Start buttons; keyboard shortcuts unchanged as a second input path onto the same underlying methods); and a richer **result screen** (`RunOutcome.ts`/`Screens.ts` — floor/materials/`Time M:SS` off the sim's own `s.tick`/`TICK_RATE`/score, plus a secondary Main Menu exit link). Also resolved two design/10 open questions: auto-aim-to-nearest is now the canonical control scheme (not just a toggle default), and the clutter question favors few/large/clear elements over dense text or many small controls. All render-only, no `ENGINE_VERSION` impact. Along the way, found and fixed a real font-metrics clipping bug (Pixi under-measuring bold/monospace text vs. the browser's actual glyph width in this environment, cropping the last character(s) of titles/labels/hint text) via Pixi's own documented `padding` mitigation, applied to every Text style touched plus the shared `Button` widget and the pre-existing `compareCard.ts` (confirming the bug predated this session, just never visually verified before). Browser-verified live (real Chrome, not the sandboxed preview pane): Main Menu → Loadout (row craft, pagination, character cycle) → Start Run → forced result screen → Main Menu link, plus Settings open/close from both entry points and keyboard-shortcut parity on the Loadout screen. 450 client tests + `tsc --noEmit` + `vite build` all green throughout. Not built (explicitly out of scope, flagged separately): visible on-screen touch stick/button graphics (`platform/TouchControls.ts` renders zero visuals today — invisible hit-zones only, a real gap affecting WeChat/mobile).
 - **5.3 Art pipeline** (12/13): ✅ `.tao` editor ported (`tools/animator`, 2026-07-26) — instantiable multi-rig `Rig` class (was funny's static 11-bone humanoid), the orb-core's own 6-bone `RigDef` (root/shell/eye/belly/2 weapon sockets, no arms/legs/walk-cycle), and orb-core preset clips (hover-bob/lean/squash-stretch) replacing the humanoid idle/walk/attack/hurt/death/spawn. **2026-07-27: tooling+render gaps fully closed too** — real (AI-placeholder) art bound for the full 3-character launch roster + a boss-core rig + a critter-core enemy rig, the client's own `.tao` runtime renderer shipped (bone FK, animation playback, aim-tracking weapon-socket rotation, front/back eye hemisphere swap, runtime elemental re-tinting), and the element colour palette locked.

@@ -53,6 +53,7 @@ export const ru: Translations<typeof en> = {
     materialsLine: 'Материалы   {bank}   |   персонажей в наличии: {ownedChars}',
     loadoutLine: 'Снаряжение  {loadout}   ({count}/{max})',
     storeLine: 'Магазин (демо: бесплатно): {items}  — [B] получить следующее',
+    acquireButton: 'ПОЛУЧИТЬ',
     lockedFind: 'заблокировано (нужно найти)',
     lockedSource: 'заблокировано ({source})',
     craftable: 'можно скрафтить',

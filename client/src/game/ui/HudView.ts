@@ -1,7 +1,7 @@
 import { Container, Graphics } from 'pixi.js';
 import { THEME } from '../theme';
 import type { Layers } from '../scene/layers';
-import { Panel, ToastQueue } from './widgets';
+import { Panel, ToastQueue, Button } from './widgets';
 import { nearbyWeaponPickups } from './pickupProximity';
 import { WeaponPickupPrompt } from './WeaponPickupPrompt';
 import { Minimap, type MinimapPlayer } from './Minimap';
@@ -93,6 +93,15 @@ export class HudView {
   // dungeonRooms, not phase), so it's mounted directly into `layers.ui`, not `view`
   // (see build()). Box size is fixed, so it can construct as a plain field.
   readonly minimap = new Minimap({ w: 140, h: 140 });
+  // In-run pause entry point (design/10, "now resolved" — a real gap this pass closed:
+  // `Game.pause()` had exactly one way in, a keyboard Escape/P listener, so touch/WeChat
+  // players — who have no keyboard at all — could never pause mid-run. Top-right corner,
+  // above the minimap; '‖' reads as a universal pause glyph with no translation needed
+  // (same single-glyph-label convention Forge's ‹/› cycle buttons already use).
+  readonly pauseBtn = new Button('‖', { w: 36, h: 36, fontSize: 16 });
+  /** Wired by Game to the same `pause()` its Escape/P keyboard handler already calls —
+   *  one source of truth for both input paths, matching Forge's onX callback shape. */
+  onPause: (() => void) | null = null;
 
   private statsPanel!: Panel;
   private readonly dividers = new Graphics();
@@ -103,6 +112,7 @@ export class HudView {
   build(layers: Layers, screenPx: { w: number; h: number }): void {
     this.statsPanel = new Panel({ radius: 10, color: 0x0b0e14, alpha: 0.66, borderColor: 0x4c566a, borderAlpha: 0.55 });
     this.toasts = new ToastQueue({ w: 220 });
+    this.pauseBtn.onTap = () => this.onPause?.();
 
     this.statsPanel.view.position.set(4, 4);
     this.playerCard.view.position.set(PAD, 10);
@@ -122,6 +132,7 @@ export class HudView {
       this.toasts.view,
       this.weaponPickupPrompt.view,
       this.downedBanner.view,
+      this.pauseBtn.view,
     );
     // NOTE: `view` itself is NOT added to `layers.ui` here — the caller (Game) mounts
     // it inside its own visibility-toggled `hudView` container.
@@ -140,6 +151,7 @@ export class HudView {
   reposition(screenPx: { w: number; h: number }): void {
     this.toasts.view.position.set(screenPx.w / 2 - 110, screenPx.h * 0.22);
     this.minimap.view.position.set(screenPx.w - 140 - 20, 60);
+    this.pauseBtn.view.position.set(screenPx.w - 20 - 36, 12); // top-right corner, above the minimap
     this.downedBanner.reposition(screenPx);
   }
 
