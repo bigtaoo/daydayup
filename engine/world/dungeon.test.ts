@@ -18,7 +18,7 @@ import {
   type DungeonConfig,
   type DungeonFloorMap,
 } from '@dd/engine/world/dungeon';
-import { EMBER_ROOMS } from '@dd/engine/world/rooms/ember';
+import { EMBER_DUNGEON, EMBER_ROOMS } from '@dd/engine/world/rooms/ember';
 import { roomGeometry, type RoomPiece } from '@dd/engine/content/rooms';
 import { toFpGrid } from '@dd/engine/content/convert';
 import { fp } from '@dd/engine/math/fixed';
@@ -248,6 +248,116 @@ describe('EMBER_ROOMS library shape', () => {
       if (r.role) expect(r.tags).toBeUndefined();
       else expect(r.tags?.length).toBeGreaterThan(0);
     }
+  });
+});
+
+describe("EMBER_DUNGEON ships with layout: 'graph2d' — the shipped biome actually bends (design/05, 2026-08-05 follow-up)", () => {
+  it("EMBER_DUNGEON.layout is 'graph2d'", () => {
+    expect(EMBER_DUNGEON.layout).toBe('graph2d');
+  });
+
+  it('no two normal EMBER_ROOMS pieces share a width — branching stays unused by this config, not an accidental side effect of the new piece', () => {
+    const widths = EMBER_ROOMS.filter((r) => !r.role).map((r) => r.sizeGrid.w);
+    expect(new Set(widths).size).toBe(widths.length);
+  });
+
+  it('ember_pillars and ember_atrium both offer all 4 exits now, alongside the pre-existing ember_cross', () => {
+    const flexible = EMBER_ROOMS.filter((r) => !r.role && r.exits.length === 4).map((r) => r.id);
+    expect(new Set(flexible)).toEqual(new Set(['ember_cross', 'ember_pillars', 'ember_atrium']));
+  });
+
+  // `placeAdjacent2d` (world/dungeon.ts) centers whichever axis the hop DIDN'T
+  // travel along: an east/west hop preserves the two rooms' shared centerY
+  // (offsetYGrid alone can still differ room-to-room whenever heights differ —
+  // not a reliable "did it bend" signal on its own), a north/south hop preserves
+  // centerX instead. So "this hop was vertical (north/south)" is exactly
+  // "the two rooms share one centerX" — a direct read of the direction actually
+  // drawn, not a proxy.
+  function isVerticalHop(a: { offsetXGrid: number; piece: RoomPiece }, b: { offsetXGrid: number; piece: RoomPiece }): boolean {
+    return a.offsetXGrid + a.piece.sizeGrid.w / 2 === b.offsetXGrid + b.piece.sizeGrid.w / 2;
+  }
+
+  it('a real seed sweep genuinely bends: some floor takes at least one north/south hop', () => {
+    // generateFloor + placeFloorGraph2d off the SAME roomgenPrng instance, exactly
+    // how SpawnSystem.generateAndPlaceFloor chains them (world/systems/SpawnSystem.ts)
+    // — not a synthetic pool, the real shipped EMBER_DUNGEON/EMBER_ROOMS pairing.
+    let bent = false;
+    for (let seed = 1; seed <= 200 && !bent; seed++) {
+      const prng = new Prng(seed);
+      const layout = generateFloor(EMBER_DUNGEON, 0, prng, EMBER_ROOMS);
+      const { placed } = placeFloorGraph2d(layout.rooms, prng);
+      for (let i = 1; i < placed.length; i++) {
+        if (isVerticalHop(placed[i - 1]!, placed[i]!)) bent = true;
+      }
+    }
+    expect(bent).toBe(true);
+  });
+
+  it('a real seed sweep also produces straight (unbent) floors — bending is real 2D freedom, not a forced zig-zag', () => {
+    let straight = false;
+    for (let seed = 1; seed <= 200 && !straight; seed++) {
+      const prng = new Prng(seed);
+      const layout = generateFloor(EMBER_DUNGEON, 0, prng, EMBER_ROOMS);
+      const { placed } = placeFloorGraph2d(layout.rooms, prng);
+      const allHorizontal = Array.from({ length: placed.length - 1 }, (_, i) => i + 1).every(
+        (i) => !isVerticalHop(placed[i - 1]!, placed[i]!),
+      );
+      if (allHorizontal) straight = true;
+    }
+    expect(straight).toBe(true);
+  });
+
+  // Exhaustive, not sampled: `EMBER_DUNGEON.roomsPerFloor` caps a floor at 3
+  // rooms (2 normal + capstone), and `generateFloor`'s stage draws are IID over
+  // the pool — so "every seed" reduces to a small, fully enumerable space:
+  // every (normal1, normal2, capstone) triple the real pool can produce, times
+  // every direction `placeFloorGraph2d` could resolve stage 0→1 to. Found BOTH
+  // of ember_extraction/ember_boss's `world/rooms/ember.ts` exit fixes this way
+  // (its module doc's "found NOT by inspection" paragraph) — a 200-seed sample
+  // had already gone green in between, which is exactly why this is exhaustive
+  // rather than another sample: a bigger sample proves "rarer than 1/N", never
+  // "impossible". `ForcedPrng` only pins stage 0→1's direction draw (a 2-room
+  // floor structurally can't overlap — a single hop off the spawn only ever
+  // touches, never overlaps, its one neighbor); stage 1→capstone is left to
+  // `placeFloorGraph2d`'s own direction-retry to resolve, since that retry
+  // already tries every viable direction — if resolving stage 1→capstone were
+  // possible at all for a given stage-0→1 outcome, this test relies on the
+  // retry actually finding it, which is the exact behavior under test.
+  describe('exhaustive: every 3-room (normal, normal, capstone) combo the real pool can produce places without throwing', () => {
+    class ForcedFirstDrawPrng extends Prng {
+      private consumed = false;
+      constructor(seed: number, private readonly forcedFirst: number) {
+        super(seed);
+      }
+      override nextInt(max: number): number {
+        if (!this.consumed) {
+          this.consumed = true;
+          return Math.min(this.forcedFirst, max - 1);
+        }
+        return super.nextInt(max);
+      }
+    }
+
+    const normals = EMBER_ROOMS.filter((r) => !r.role);
+    const capstones = EMBER_ROOMS.filter((r) => r.role);
+
+    it('every combo resolves (no dead end, no fold-back overlap)', () => {
+      const failures: string[] = [];
+      for (const n1 of normals) {
+        for (const n2 of normals) {
+          for (const cap of capstones) {
+            for (let forcedFirst = 0; forcedFirst < 4; forcedFirst++) {
+              try {
+                placeFloorGraph2d([n1, n2, cap], new ForcedFirstDrawPrng(1, forcedFirst));
+              } catch (e) {
+                failures.push(`${n1.id},${n2.id},${cap.id} forcedFirst=${forcedFirst} :: ${(e as Error).message}`);
+              }
+            }
+          }
+        }
+      }
+      expect(failures).toEqual([]);
+    });
   });
 });
 
@@ -622,6 +732,45 @@ describe('placeFloorGraph2d', () => {
       exits: [{ edge: 'south' }],
     };
     expect(() => placeFloorGraph2d([ROOM0, ROOM1, ROOM2, ROOM3, ROOM4], new Prng(1))).toThrow(/overlaps already-placed/i);
+  });
+
+  it("direction-retry: falls back past TWO overlapping candidates to the one viable direction that doesn't overlap (design/05, 2026-08-05 'graph2d content' follow-up)", () => {
+    // Hand-verified geometry (see world/rooms/ember.ts's module doc for how this
+    // was actually found — ember_boss overhanging past a shorter room it bent
+    // off of). START --east--> MID --?--> CAP: CAP is wider than MID, so a
+    // north OR south hop both center it back over part of START's own
+    // footprint (touching MID only, never overlapping MID itself, since MID's
+    // own N/S edges sit strictly inside START's Y-range) — only 'east'
+    // (continuing away from START) is actually clear. All 3 room pairs satisfy
+    // the door-fit minimum (shared band >= `DOOR_EDGE_MARGIN_GRID*2 +
+    // DOOR_WIDTH_GRID` = 7) so `pickDoorAnchor2d` never rejects the eventual
+    // real connection.
+    const START: RoomPiece = {
+      id: 'start', sizeGrid: { w: 10, h: 10 }, solids: [], spawns: { player: [{ x: 5, y: 5 }], enemy: [] },
+      exits: [{ edge: 'east' }],
+    };
+    const MID: RoomPiece = {
+      id: 'mid', sizeGrid: { w: 8, h: 8 }, solids: [], spawns: { player: [{ x: 4, y: 4 }], enemy: [] },
+      exits: [{ edge: 'west' }, { edge: 'north' }, { edge: 'south' }, { edge: 'east' }],
+    };
+    const CAP: RoomPiece = {
+      id: 'cap', role: 'boss', sizeGrid: { w: 14, h: 8 }, solids: [], spawns: { player: [{ x: 7, y: 4 }], enemy: [] },
+      exits: [{ edge: 'south' }, { edge: 'north' }, { edge: 'west' }],
+    };
+    class ForceNorthFirst extends Prng {
+      private consumed = false;
+      override nextInt(max: number): number {
+        if (!this.consumed) {
+          this.consumed = true;
+          return 0; // 'north' is viable[0] (MID's own exits order, minus entryEdge 'west')
+        }
+        return super.nextInt(max);
+      }
+    }
+    const { placed } = placeFloorGraph2d([START, MID, CAP], new ForceNorthFirst(1));
+    const cap = placed[2]!;
+    expect(cap.piece.id).toBe('cap');
+    expect({ x: cap.offsetXGrid, y: cap.offsetYGrid }).toEqual({ x: 18, y: 1 }); // 'east' — the one non-overlapping option
   });
 
   it('doors connect stages in order — roomA/roomB match the chain, not just a count', () => {

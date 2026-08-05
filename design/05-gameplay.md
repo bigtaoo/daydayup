@@ -89,9 +89,12 @@ changes). Deliberate scope cuts, not data-model limits (`Door`/`PlacedRoom` alre
 arbitrary graph, same as PvP's `ArenaMap`): only one fork per floor (no fork-into-fork
 chaining), and a fork's siblings must share their pool piece's exact width (so their shared
 east boundary lines up with one merge-room X, reusing `pickDoorAnchor`'s existing adjacency
-assumption unmodified). No shipped content uses `'branching'` yet (`EMBER_DUNGEON` stays
-`'linear'`, untouched) — authoring same-width `EMBER_ROOMS` variants to make a fork visible in
-the shipped biome is a content task, not part of this pass. The known side effect it
+assumption unmodified). No shipped content used `'branching'` at the time this shipped
+(`EMBER_DUNGEON` was `'linear'`) — authoring same-width `EMBER_ROOMS` variants to make a fork
+visible in the shipped biome was left as a content task. **Update, 2026-08-05 same day, "graph2d
+content" pass below:** `EMBER_DUNGEON` switched to `'graph2d'` instead, so `'branching'` still
+stays unused by this config — see that pass's own note on why (`ember_atrium`'s deliberately
+unique width). The known side effect it
 introduced — the client's `FloorProgress` HUD track computed done/current/upcoming purely
 from `dungeonRooms` array index, which wasn't meaningful once a floor has siblings — is
 resolved by the minimap adapter below, same-day.
@@ -132,11 +135,13 @@ Throws (fail loud, design/09) if a placement would overlap an earlier room —
 a real risk once placement can walk in any of 4 directions, unlike
 `placeFloor`'s single-axis spine where it structurally cannot happen; this
 module does not try to auto-avoid it, same "curated content, not a solver"
-contract `placeFloor` itself already assumes. No shipped `DungeonConfig` uses
-`'graph2d'` yet (`EMBER_DUNGEON` stays `'linear'`) — authoring content with
-real north/south exits to make a shipped biome actually bend is a content
-task, not part of this pass, same "no shipped content exercises it yet" note
-`'branching'` and hand-authored floors both shipped with. 16 new tests
+contract `placeFloor` itself already assumes. No shipped `DungeonConfig` used
+`'graph2d'` at the time this shipped (`EMBER_DUNGEON` was `'linear'`) — authoring
+content with real north/south exits to make a shipped biome actually bend was
+left as a content task, same "no shipped content exercises it yet" note
+`'branching'` and hand-authored floors both shipped with. **Update, 2026-08-05
+same day, "graph2d content" pass below: `EMBER_DUNGEON` now IS `'graph2d'`,
+closing this gap.** 16 new tests
 (`dungeon.test.ts`'s `placeFloorGraph2d`/graph2d-`generateFloor` unit
 coverage + a `dungeonrun.test.ts` end-to-end integration block).
 
@@ -160,6 +165,41 @@ horizontal (north/south-wall) door end-to-end, not just in the pure
 placement-function tests above. 8 new tests (6 `dungeon.test.ts` + 2
 `dungeonrun.test.ts`) — 1647 total across all 7 workspaces, `tsc --noEmit`
 clean.
+
+✅ **"graph2d content" pass shipped 2026-08-05 (same day, additive, no `ENGINE_VERSION`
+bump):** closes the "no shipped content exercises it yet" gap both the branching and
+graph2d bullets above left open — `EMBER_DUNGEON.layout` switches from `'linear'` to
+`'graph2d'`, so a generated Ember floor can now genuinely bend north/south, not just walk
+a west→east spine. `world/rooms/ember.ts` gained a 5th normal piece, `ember_atrium` (a
+fully open room, all 4 exits, deliberately a unique width so `'branching'` still stays
+unused by this config — only same-width normal pieces are fork-eligible), and
+`ember_pillars` gained `north`+`south` on top of its existing `west`+`east` — alongside
+the pre-existing all-4-exit `ember_cross`, that's 3 of 5 normal pieces now able to bend a
+floor. `generateFloor`'s stage-selection stream is unchanged (module doc,
+`world/dungeon.ts`), so no past seed's room SEQUENCE changes — only placement.
+
+Two real bugs surfaced by testing, not inspection, both now fixed (full account in
+`world/rooms/ember.ts`'s own module doc): (1) a **dead end** — the spawn room's
+undocumented freedom to walk `'west'` (module doc above) could exhaust a plain
+west/east piece's only remaining exit before it ever reached the original `west`-only
+capstone, which had no `east` to receive it; fixed by giving `ember_extraction`/
+`ember_boss` `east` too. (2) Once (1) was fixed and a 3-room floor became reachable, a
+**fold-back overlap** — `ember_boss` (22×18, the pool's largest piece) connecting via
+`west` or `east` centers on the previous room's centerline and can overhang past it into
+whatever sits on the OTHER side; fixed by giving both capstones full 4-exit symmetry AND
+a new engine-side **direction-retry** in `placeFloorGraph2d` (`world/dungeon.ts`): when
+the drawn direction's placement would overlap an already-placed room, it now falls back
+through every OTHER viable direction (fixed order, no extra PRNG draw) before giving up —
+strictly reactive (only ever checks rooms already placed, never looks ahead a stage), so
+it changes nothing for any placement that never overlapped in the first place. Verified
+both by a real-seed sweep (mirroring `SpawnSystem`'s own `generateFloor`→
+`placeFloorGraph2d` draw sequence) AND, since the failure space is small and finite
+(`EMBER_DUNGEON.roomsPerFloor` caps a floor at 3 rooms), an EXHAUSTIVE enumeration over
+every `(normal1, normal2, capstone)` triple the real pool can produce — confirmed zero
+failures, not just "rarer than N seeds." 10 new engine tests (`dungeon.test.ts`'s
+EMBER_DUNGEON bend/straight/exhaustive coverage + the direction-retry unit test +
+`dungeonrun.test.ts`'s live bending-seed end-to-end check) — 1678 total across all 7
+workspace packages, `tsc --noEmit` clean.
 
 See `ROADMAP.md`'s "Room & door model" section for the full file list — including
 hand-authored PvE floor placement (map editor), shipped 2026-08-05, see the

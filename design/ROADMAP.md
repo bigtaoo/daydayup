@@ -8,9 +8,9 @@ shipped-notes underneath it, so a phase section is both the plan and the history
 **Current built state (2026-08-05).** `ENGINE_VERSION` **35** (32: ground-weapon pickup is
 click-driven; 33: manual aim removed entirely; 34: co-resident PvE room/door model, engine +
 client rendering; 35: fully-realized branching — see the Room & door model section below;
-same-day map-editor door placement AND the `layout: 'graph2d'` real-2D-layout follow-up are
-both additive, no version bump);
-1670 tests green across all 7 workspace packages (engine 465 / client 849 / server 167 /
+same-day map-editor door placement, the `layout: 'graph2d'` real-2D-layout follow-up, AND the
+"graph2d content" pass that switches `EMBER_DUNGEON` to it are all additive, no version bump);
+1736 tests green across all 7 workspace packages (engine 473 / client 907 / server 167 /
 animator 62 / map-editor 64 / desktop-shell 56 / root build-script 7, `npm run check`) after a
 full client code-review pass
 (2026-08-04, see the Phase 3/4 updates and the Client hardening pass section below) that found
@@ -108,11 +108,13 @@ The core PvE loop (floors → extraction → bank) is fully designed (05/09) and
 
 - **1.1 ✅ 🔴 Frame library** beyond `straight` (design/03 landing order) — DONE (`ENGINE_VERSION` 14→15, then 15→16 for the tier-4 finish). Shipped: `spread` emission (WeaponFireSystem, combatPrng jitter), `homing`/`lob`/`beam`/`boomerang` ballistics (`content/ballistics.ts` + `ProjectileStepSystem`/`HitResolveSystem`), melee `hammer`/`spear` frames (pure data — `MeleeSimSpec` was already generic). Then the tier-4 finish (`ENGINE_VERSION` 15→16): `orbit` ballistic (a projectile that circles its owner, tracking the moving owner each tick — new `Projectile.ownerId`/orbit fields + `orbitStep`) and `radial` emission (a PRNG-free even ring; `RangedSimSpec.pattern` = `'spread'`|`'radial'`, `'spread'` the byte-identical default). Nine showcase weapons in the drop pool (scattergun/seeker/mortar/lasercutter/tomahawk/hammer/spear + novaburst/gyre). **`k_*` on-hit procs done too (`ENGINE_VERSION` 28)**: `k_lifesteal`/`k_ricochet`, two more showcase weapons (leech/carom), plus a real adjacent bug found and fixed (`piercing` was authored since Stage C but never wired — see design/03).
 - **1.2 ✅ RoomState collision geometry** (07/09) — DONE, additive (no `ENGINE_VERSION` bump). AABB tile/wall solids (`state.walls`, `MovementSystem`/`ProjectileStepSystem`) + the `RoomPiece` schema + `roomGeometry()` converter (`content/rooms.ts`).
-- **1.3 ✅ Seeded dungeon assembly** (05/09) — DONE, additive (no `ENGINE_VERSION` bump). `world/dungeon.ts DungeonConfig` + pure `generateFloor()` (floors × rooms via `roomgenPrng`, `layout:'linear'`|`'branching'`) + a first hand-authored `RoomPiece` library (`world/rooms/ember.ts`, 4 normal + 1 extraction + 1 boss). **Wired into a live, traversable run** (2026-07-24, same day, commits `4d05555`/`aac5829`/`7a611e4`): `EngineConfig.dungeon = {config, library}` opts a run in; `SpawnSystem.tickDungeon` calls `generateFloor` per floor and `loadRoom` per room (swaps `state.walls`/`state.obstacles` via `roomGeometry()`, rebuilds the spatial index, repositions players, loads the room's `WaveScript`), `ExtractionSystem.resolveDescend` resets the room cursor so the next floor regenerates lazily, and `expandEncounter`/`dispatchDueSpawns` interpret `WaveScript`'s `atTick`/`spacingTicks` timing (shared with the PvP arena spawn path). Branching layout picks the next room by aim direction. Covered end-to-end by `dungeonrun.test.ts` (room load/advance/descend/branching/determinism/a full Ember-biome run) driven through `createGameEngine`, not just `dungeon.test.ts`'s pure-function unit tests. The real client (`Game.ts`) already builds every single-player/co-op/online run with `EngineConfig.dungeon: {config: EMBER_DUNGEON, library: EMBER_ROOMS}` — this is the live path, not a demo fallback.
+- **1.3 ✅ Seeded dungeon assembly** (05/09) — DONE, additive (no `ENGINE_VERSION` bump). `world/dungeon.ts DungeonConfig` + pure `generateFloor()` (floors × rooms via `roomgenPrng`, `layout:'linear'`|`'branching'`) + a first hand-authored `RoomPiece` library (`world/rooms/ember.ts`, 5 normal + 1 extraction + 1 boss
+— the 5th normal piece, `ember_atrium`, and the extraction/boss pieces' full 4-exit symmetry were
+added 2026-08-05's "graph2d content" pass, Room & door model section below). **Wired into a live, traversable run** (2026-07-24, same day, commits `4d05555`/`aac5829`/`7a611e4`): `EngineConfig.dungeon = {config, library}` opts a run in; `SpawnSystem.tickDungeon` calls `generateFloor` per floor and `loadRoom` per room (swaps `state.walls`/`state.obstacles` via `roomGeometry()`, rebuilds the spatial index, repositions players, loads the room's `WaveScript`), `ExtractionSystem.resolveDescend` resets the room cursor so the next floor regenerates lazily, and `expandEncounter`/`dispatchDueSpawns` interpret `WaveScript`'s `atTick`/`spacingTicks` timing (shared with the PvP arena spawn path). Branching layout picks the next room by aim direction. Covered end-to-end by `dungeonrun.test.ts` (room load/advance/descend/branching/determinism/a full Ember-biome run) driven through `createGameEngine`, not just `dungeon.test.ts`'s pure-function unit tests. The real client (`Game.ts`) already builds every single-player/co-op/online run with `EngineConfig.dungeon: {config: EMBER_DUNGEON, library: EMBER_ROOMS}` — this is the live path, not a demo fallback.
 - **1.4 ✅ Extraction rooms** (05) — DONE. `EngineConfig.floors?` (the flat, non-dungeon mode — same single arena reused every floor, still supported for configs that opt into it) OR `EngineConfig.dungeon` (the room-generated mode, see 1.3) opts a run into the checkpoint loop; `ExtractionSystem` (step 12) resolves the per-floor checkpoint (`wavesExhausted && enemies.length===0`) into `EXTRACT` or `DESCEND` (in dungeon mode, regenerates the next floor's rooms; in flat mode, reloads the next floor's flat wave list). Death forfeits the floor buffer for free (a run-ending death simply never reaches the bank step). The last floor auto-resolves as `EXTRACT` with no gesture (design/05 "the boss room IS its extraction room"). **The gesture itself was rewritten 2026-08-02** (see that entry below): originally a sustained-INTERACT hold=EXTRACT/tap=DESCEND (mirroring the revive channel), now two explicit one-shot `Button.CONFIRM_EXTRACT`/`CONFIRM_DESCEND` presses driven by a world-space portal + popup, `ENGINE_VERSION` 31.
 - **1.5 ✅ Materials carry-out** (05/09) — DONE, additive. `state.floorMaterials` (this floor's un-banked buffer, filled by `PickupSystem`) merges into `state.bankedMaterials` (the run's only carry-out) on every `EXTRACT`/`DESCEND`. `rollDrop` gained an optional depth `tier` param (`DeathDropsSystem` passes `state.floorIndex`) so a material pickup/event carries a rolled instance tier — first-pass "material quality shift per floor" (a straight `tier = floorIndex` identity curve; `DungeonConfig.materialTierByDepth` remains an unused schema field for a future non-identity curve).
 
-**Phase 1 status: fully closed, including live multi-room floors.** A run goes floors → checkpoint → EXTRACT-or-DESCEND → bank, with materials as the only carry-out. Both modes are real and tested: `EngineConfig.floors` (flat, single-arena-reused-per-floor, still available for configs that want it) and `EngineConfig.dungeon` (generated multi-room floors via `generateFloor`/`RoomPiece`/`placeFloor`, `'branching'` layout, `WaveScript` timing) — the latter is what the real client actually uses for every live run. Nothing from 1.2/1.3 is unwired or demo-only. **2026-08-04 update:** "room-to-room traversal" here no longer means the original sequential swap-on-clear — see the "Room & door model" section below (design/05, `ENGINE_VERSION` 34): a floor's rooms are now co-resident and door-connected, freely walkable/backtrackable, with combat-derived door locking and force-regroup. **2026-08-05 update:** `'branching'` layout now places a real fork-and-reconverge diamond of sibling rooms instead of resolving at generation time (`ENGINE_VERSION` 35, same section). **2026-08-05 update (same day): the west→east-spine scope cut is closed too** — a new `layout: 'graph2d'` (`world/dungeon.ts placeFloorGraph2d`, additive, no `ENGINE_VERSION` bump) places a *generated* floor in real 2D instead of forcing it onto a single axis; see design/05's "Room & door model" section for the full account. No shipped `DungeonConfig` uses it yet (`EMBER_DUNGEON` stays `'linear'`) — authoring real north/south-exit content to make a shipped biome actually bend is a content task, not part of this pass.
+**Phase 1 status: fully closed, including live multi-room floors.** A run goes floors → checkpoint → EXTRACT-or-DESCEND → bank, with materials as the only carry-out. Both modes are real and tested: `EngineConfig.floors` (flat, single-arena-reused-per-floor, still available for configs that want it) and `EngineConfig.dungeon` (generated multi-room floors via `generateFloor`/`RoomPiece`/`placeFloor`, `'branching'` layout, `WaveScript` timing) — the latter is what the real client actually uses for every live run. Nothing from 1.2/1.3 is unwired or demo-only. **2026-08-04 update:** "room-to-room traversal" here no longer means the original sequential swap-on-clear — see the "Room & door model" section below (design/05, `ENGINE_VERSION` 34): a floor's rooms are now co-resident and door-connected, freely walkable/backtrackable, with combat-derived door locking and force-regroup. **2026-08-05 update:** `'branching'` layout now places a real fork-and-reconverge diamond of sibling rooms instead of resolving at generation time (`ENGINE_VERSION` 35, same section). **2026-08-05 update (same day): the west→east-spine scope cut is closed too** — a new `layout: 'graph2d'` (`world/dungeon.ts placeFloorGraph2d`, additive, no `ENGINE_VERSION` bump) places a *generated* floor in real 2D instead of forcing it onto a single axis; see design/05's "Room & door model" section for the full account. **2026-08-05 update (same day, "graph2d content" pass): `EMBER_DUNGEON` now uses `'graph2d'`** (was `'linear'`) — a new `ember_atrium` piece and wider exit authoring on `ember_pillars`/`ember_extraction`/`ember_boss` make the shipped biome actually bend, and a new `placeFloorGraph2d` direction-retry (found necessary by testing, not inspection — full account in `world/rooms/ember.ts`'s module doc) makes that safe against fold-back overlaps. `'branching'` still stays unused by any shipped config.
 
 ## Phase 2 — Close the meta loop ✅ (2026-07-24)
 
@@ -589,6 +591,57 @@ already-"closed" functionality, not new work. The rest, all real but lower-sever
 
 ---
 
+## Platform-layer test coverage pass ✅ (2026-08-05, "全部加测试")
+
+Closed the last remaining self-flagged gap from a prior audit (`WeChatInput.test.ts`
+didn't exist — the one bare-code, mechanically-testable item, per the
+daydayup-testing-conventions memory's standing "add tests for everything" preference),
+then went further and closed every OTHER untested file under `client/src/platform/`
+in the same pass rather than leaving the rest for a future prompt to re-flag. Full
+account in design/04-wechat.md's "Adaptation layer" section; summary here:
+
+- **`WeChatInput.test.ts`** (10 tests) — a fake `wx` global capturing registered touch
+  callbacks + a fake `Application`, mirroring `WebInput.test.ts`'s own convention.
+  Covers layout-on-attach, the movement stick, the fire zone, the INTERACT hold, the
+  weapon-switch buttons + `onSwitchWeapon` proxy, multiple simultaneous touches in one
+  `changedTouches` batch, and — the one branch `WebInput` doesn't have —
+  `touchcancel` closing the stick the same as `touchend`.
+- **`audioSynth.test.ts`** (9 tests) — the shared procedural SFX voice table (design/11),
+  driven with a fake `AudioContext`/node graph whose `connect()` returns whatever was
+  passed in (matching real `AudioNode.connect()`'s own return value, so
+  `a.connect(b).connect(c)` chains exactly like production code). Covers `tone()`/
+  `noise()`'s exact oscillator/gain-envelope/filter parameters and every one of the 16
+  `AudioCue` voices in the table (looped, so a future typo'd/missing voice fails loud).
+- **`WebAudio.test.ts`** (12) / **`WeChatAudio.test.ts`** (9) — `../audioSynth`'s
+  `playCue` mocked out so these only exercise the two backends' OWN logic: the
+  autoplay-gesture resume gate, the `ctx.state === 'running'` play gate, the
+  `AudioContext`/`webkitAudioContext` fallback (Web) or `wx.createWebAudioContext`
+  absence (WeChat), volume clamping, and — WeChat-only — the "base library claims
+  `createWebAudioContext` exists but construction throws" permanent-degrade branch
+  (`supported = false`, never retries).
+- **`WeChatAdapter.test.ts`** (12) — Pixi's DOM-adapter surface against a fake `wx`.
+  The module caches its 2D-context-constructor probe at MODULE scope, so every test
+  resets the module fresh via `vi.resetModules()` + a dynamic re-import first — otherwise
+  an earlier test in file order would silently pre-populate the cache for every test
+  after it. Also covers the WebGL1-detection global-vs-stub-class branch, and the
+  `fetch`/`parseXML` not-implemented rejects/throws.
+- **`WebPlatform.test.ts`** (3) / **`WeChatPlatform.test.ts`** (3) — only the two
+  testable factory methods, `createInput`/`createAudio` (confirms the right class, a
+  fresh instance per call). `createApp()` on both is explicitly NOT covered: it
+  constructs a real Pixi `Application` and calls a real `app.init()` against a real
+  WebGL context, the same class of exemption `Game.ts`/`ArenaCanvas.mount()` already
+  have (daydayup-testing-conventions memory) — flagged here rather than silently
+  skipped.
+
+Every new file needed nothing beyond a hand-rolled global fake (`wx`/`window`/
+`AudioContext`) — no jsdom, no real DOM, matching this repo's existing plain-node
+vitest convention throughout. `client/src/platform/types.ts` (pure type declarations,
+no runtime code) is the only file in the directory with no test file, correctly so.
+48 new client tests (907, was 859), `tsc --noEmit` clean, `npm run check` green end to
+end (see the updated tally in this doc's header).
+
+---
+
 ## Repo structure pass ✅ (2026-08-02)
 
 Not a feature phase — a four-step reorganization prompted by asking whether the code was
@@ -731,7 +784,9 @@ fork for free. Scope cuts, not data-model limits (`Door`/`PlacedRoom` already su
 arbitrary graph, same as PvP's `ArenaMap`): only one fork per floor (no fork-into-fork
 chaining), siblings must share one width. `ENGINE_VERSION` bumped (34→35) purely because the
 module's own documented `'branching'` draw-sequence contract changed again — no shipped
-content uses `'branching'` yet (`EMBER_DUNGEON` stays `'linear'`), so no real replay breaks.
+content used `'branching'` yet (`EMBER_DUNGEON` was `'linear'` at the time), so no real
+replay broke. (`EMBER_DUNGEON` later switched to `'graph2d'` instead, 2026-08-05's
+"graph2d content" pass, Phase 1 section above — `'branching'` still stays unused.)
 19 new/updated engine tests (426, was 407), `tsc --noEmit` clean across all 7 workspaces (1556
 total tests, was 1537). One known side effect, left for the minimap-adapter item below to fix:
 the client's `FloorProgress` HUD track computes done/current/upcoming purely from `dungeonRooms`
@@ -824,13 +879,19 @@ would overlap an earlier room — a real risk once placement can walk any of 4
 directions, unlike `placeFloor`'s single-axis spine where it structurally
 cannot happen; this module does not try to auto-avoid it, same "curated content,
 not a solver" contract `placeFloor`'s own too-small-for-a-door check already
-assumes. No `ENGINE_VERSION` bump (no shipped `DungeonConfig` uses `'graph2d'` —
-`EMBER_DUNGEON` stays `'linear'`; authoring real north/south-exit content to make
-a shipped biome actually bend is a content task, not part of this pass, same
-"no shipped content exercises it yet" note `'branching'` and hand-authored floors
+assumes. No `ENGINE_VERSION` bump (no shipped `DungeonConfig` used `'graph2d'` at
+the time — `EMBER_DUNGEON` was `'linear'`; authoring real north/south-exit content
+to make a shipped biome actually bend was left as a content task, same "no
+shipped content exercises it yet" note `'branching'` and hand-authored floors
 both shipped with). 16 new tests (11 `dungeon.test.ts` unit + 2 `generateFloor`
 graph2d-selection + 3 `dungeonrun.test.ts` end-to-end integration), 1639 total
-across all 7 workspaces, `tsc --noEmit` clean.
+across all 7 workspaces, `tsc --noEmit` clean. **Update, 2026-08-05 same day,
+"graph2d content" pass (Phase 1 section above):** `EMBER_DUNGEON` switched to
+`'graph2d'`, closing this gap — that pass also added a direction-retry to
+`placeFloorGraph2d` itself (found necessary by testing the real content, not by
+inspection), so this paragraph's "does not try to auto-avoid" overlap-avoidance
+claim is superseded; see that pass's own notes and `world/dungeon.ts`'s current
+`placeFloorGraph2d` doc comment for the up-to-date contract.
 
 **"加测试" follow-up, same day:** `entranceFromDoor`'s reuse inside
 `placeFloorGraph2d` itself now has dedicated east/west AND north/south
@@ -902,7 +963,7 @@ Phase 3 (co-op/net)     ALL DONE (✅). 3.2 revive/downed engine-side; 3.1 net l
 Phase 4 (PvP)           COMPLETELY DONE (✅ 4.1 through 4.6, design/15, no open items). 8p solo BR decided; team/hostility (ENGINE_VERSION 18) + multi-room broadphase/stitching + zone/EnvironmentSystem + placement win condition + in-arena loot/AI + anti-cheat checkpoints (ENGINE_VERSION 19) + sparse net sync + matchsvc ladder rating all shipped and tested. End-to-end match assembly wired (2026-07-26): mode:'coop'|'pvp' threaded through Matchmaker/ticket/MatchRoom/matchsvc, client ?pvp=1 -> arena EngineConfig (teamId per seat) -> placement gameover screens -> CoopSession.reportResult actually fires (was dead code for coop too) -> checkpoint/ladder settlement. The real ~60-room ArenaMap (arena_prototype_60.json, a concurrent session) is wired into ARENA_CATALOG. buildArenaSpecs' HP-scale/loadout preset is now called from GameState.buildSeat too (ENGINE_VERSION 19->20) — a PvP seat's weapons/maxHp/maxShield come from the scaled arena preset, never the PvE loadout. All browser-verified two-tab, byte-identical. 2026-07-29: the 4.1 "squads/revive reserved interface" is now built too (ENGINE_VERSION 29->30) — pre-formed party invite (server/src/PartyService.ts) + squad-chunked Matchmaker/teamId + squad placement/gated bandage revive + a PartyScreen lobby UI; see the Phase 4 update above. 2026-08-04: fixed a real squad-win scoring bug (RunOutcome compared seat identity instead of team membership, so most of a winning squad saw a DEFEAT screen) — see the Phase 4 update above.
 Phase 5 (presentation)  parallelizable throughout
 Client hardening pass   DONE (✅ 2026-08-04) — full client/src code review (182 files), fixed in place: PartyScreen/LoginScreen staleness guards, weaponSkins preload/fallback resilience, net/transport.ts dead-socket + swallowed-handler-exception fixes, TextInputOverlay blur teardown, Slider pointercancel, Rig bone-order validation, main.ts/main.wechat.ts boot() error boundary, meta/store.ts materialBank validation, auth.ts non-JSON error guard, theme.ts English-policy fix. See the Client hardening pass section above.
-Room & door model       DONE (✅ 2026-08-04/05, ENGINE_VERSION 34→35) — PvE floors co-resident + door-connected (placeFloor/carveDoorGaps/buildFloorGeometry, new DoorSystem: activation/lock-unlock/force-regroup), replacing the old one-room swap. HudView.ts fixed to compile against the new schema. Client room rendering shipped same day: door_{locked,open}_raw.png loaded and wired onto RoomBuilder's per-door Sprite (reactive lock/unlock in place via updateDoors(), no full rebuild), EventReactor reacts to force_regroup with a local-player camera snap. Fully-realized branching shipped 2026-08-05 (ENGINE_VERSION 35) — a real fork-and-reconverge diamond of sibling rooms, needing zero client changes (DoorSystem/RoomBuilder/EventReactor already topology-agnostic). PvE minimap adapter shipped same day — FloorProgress deleted, PvE now shares PvP's own Minimap widget via dungeonToArenaMap/dungeonRoomStatus (minimapLayout.ts). Map-editor door placement shipped same day (no engine version bump) — DungeonFloorMap/placeAuthoredFloor/DungeonConfig.floorMaps + a third tools/map-editor mode ("PvE Dungeon Floor") + validateDungeonFloorMap, closing the last item of the original three-item follow-up list. "全部加测试" follow-up added DungeonFloorCanvas.test.ts (28 tests, previously zero coverage on the tool's most complex new file). See the Room & door model section above.
+Room & door model       DONE (✅ 2026-08-04/05, ENGINE_VERSION 34→35) — PvE floors co-resident + door-connected (placeFloor/carveDoorGaps/buildFloorGeometry, new DoorSystem: activation/lock-unlock/force-regroup), replacing the old one-room swap. HudView.ts fixed to compile against the new schema. Client room rendering shipped same day: door_{locked,open}_raw.png loaded and wired onto RoomBuilder's per-door Sprite (reactive lock/unlock in place via updateDoors(), no full rebuild), EventReactor reacts to force_regroup with a local-player camera snap. Fully-realized branching shipped 2026-08-05 (ENGINE_VERSION 35) — a real fork-and-reconverge diamond of sibling rooms, needing zero client changes (DoorSystem/RoomBuilder/EventReactor already topology-agnostic). PvE minimap adapter shipped same day — FloorProgress deleted, PvE now shares PvP's own Minimap widget via dungeonToArenaMap/dungeonRoomStatus (minimapLayout.ts). Map-editor door placement shipped same day (no engine version bump) — DungeonFloorMap/placeAuthoredFloor/DungeonConfig.floorMaps + a third tools/map-editor mode ("PvE Dungeon Floor") + validateDungeonFloorMap, closing the last item of the original three-item follow-up list. "全部加测试" follow-up added DungeonFloorCanvas.test.ts (28 tests, previously zero coverage on the tool's most complex new file). Real 2D graph layout (`layout: 'graph2d'`, `placeFloorGraph2d`) shipped same day too — a generated floor can place in real 2D instead of a forced west→east spine. "graph2d content" pass shipped 2026-08-05 (same day): `EMBER_DUNGEON` switches to `'graph2d'` (a new `ember_atrium` piece + wider exit authoring on `ember_pillars`/`ember_extraction`/`ember_boss`), and `placeFloorGraph2d` gains a direction-retry fallback for fold-back overlaps — both found necessary by testing the real content, not by inspection. `'branching'` still stays unused by any shipped config. See the Room & door model section above.
 Phase 6 (accounts)      DONE (✅) — real username/password login (SQLite via node:sqlite), never required to play. Bound to PvP ladder rating (accountId in the signed ticket -> MatchRoom.seatAccounts -> ladderReport, guest/bot fallback preserved) and Forge MetaState (best-effort /account/meta sync). Independent of Phases 1-5; third-party OAuth reserved, not built.
 Phase 7 (i18n)          DONE (✅) — client/src/i18n/: en.ts canonical + zh.ts translation, both compile-time key-checked (Translations<typeof en>, TranslationKey). Every screen migrated to t(); Settings gained a language toggle backed by SettingsState.locale. Independent of Phases 1-6; enum/data-driven values (damage type, weapon kind, rarity/ids) deliberately left untranslated.
 Documentation           DONE (✅ 2026-08-02) — all 19 design docs + every README audited against the code; stale top-of-file Status blocks rewritten (12/10/client/art READMEs and this file's own header), design/README index completed, engine/README written, art/ UUID filenames + duplicate files cleaned up. Docs-only, no code change.

@@ -73,6 +73,27 @@ Core logic is reused from `src/game`; only the entry and platform layer differ.
   stick, but manual aim is gone: the engine auto-faces the nearest hostile, else the
   movement direction), plus corner buttons for weapon 1 / weapon 2 (no jump/block
   button — parry is the melee swing).
+- ✅ **Full unit-test coverage across the platform layer, 2026-08-05 ("全部加测试" pass):**
+  every file under `client/src/platform/` now has a dedicated test file except
+  `types.ts` (pure type declarations) and `{Web,WeChat}Platform.ts`'s own `createApp()`
+  method (constructs a real Pixi `Application`/`app.init()` against a real WebGL
+  context — the same class of exemption `Game.ts`/`ArenaCanvas.mount()` already have,
+  daydayup-testing-conventions memory). All of it runs under plain-node vitest, no
+  jsdom: a hand-rolled `wx`/`window`/`AudioContext` fake per file (mirroring
+  `WebInput.test.ts`'s pre-existing convention) is enough — `WeChatInput.test.ts`
+  (touch→`TouchControls` wiring, including the `touchcancel` branch `WebInput` doesn't
+  have), `audioSynth.test.ts` (the shared synth voice table, driven with a fake
+  `AudioContext`/node graph that records its own calls), `WebAudio.test.ts`/
+  `WeChatAudio.test.ts` (the autoplay-gesture gate, the `ctx.state==='running'` play
+  gate, volume clamping, and — WeChat-only — the "base library claims support but
+  construction throws" permanent-degrade branch), `WeChatAdapter.test.ts` (Pixi's DOM
+  adapter surface against a fake `wx`, including the module-scoped 2D-context-probe
+  cache — reset via `vi.resetModules()` per test so the cache can't leak across tests),
+  and `{Web,WeChat}Platform.test.ts` (the two testable factory methods,
+  `createInput`/`createAudio`). This closes the last gap this doc's own verification
+  checklist below couldn't (screenshot/log-based live checks confirm the real device
+  behaves correctly, but never pinned down the platform layer's OWN logic branches as a
+  fast, deterministic regression suite).
 
 ## Verification checklist
 

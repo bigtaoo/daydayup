@@ -404,16 +404,14 @@ function pickDoorAnchor2d(a: PlacedRoom, b: PlacedRoom, direction: RoomEdge, roo
     : { x: center - DOOR_WIDTH_GRID / 2, y: boundary - 1, w: DOOR_WIDTH_GRID, h: 2 };
 }
 
-/** Throws (fail loud, design/09) if `room` spatially overlaps any already-placed
- * room — a real risk once placement can walk in any of 4 directions (a sequence
- * that turns back on itself can fold the floor onto its own earlier rooms), unlike
- * `placeFloor`'s single-axis spine where it structurally cannot happen. This module
- * does not try to auto-avoid it (no backtracking/re-placement search) — same
- * "curated content, not a solver" contract `placeFloor`'s own too-small-for-a-door
- * checks already assume; a config/library author is responsible for a piece
- * sequence that does not loop back on itself, exactly like the map editor's
- * `validateDungeonFloorMap` puts the same responsibility on a hand-authored floor. */
-function assertNoOverlap2d(room: PlacedRoom, placed: readonly PlacedRoom[]): void {
+/** Returns the first already-placed room `room` spatially overlaps, or `undefined`
+ * if it fits cleanly — a real risk once placement can walk in any of 4 directions
+ * (a sequence that turns back on itself can fold the floor onto its own earlier
+ * rooms), unlike `placeFloor`'s single-axis spine where it structurally cannot
+ * happen. Non-throwing (unlike its name might suggest at a glance): `placeFloorGraph2d`
+ * uses this to try alternate directions before giving up, see its own doc comment's
+ * "direction retry" paragraph. */
+function findOverlap2d(room: PlacedRoom, placed: readonly PlacedRoom[]): PlacedRoom | undefined {
   const ax0 = room.offsetXGrid;
   const ax1 = room.offsetXGrid + room.piece.sizeGrid.w;
   const ay0 = room.offsetYGrid;
@@ -423,12 +421,9 @@ function assertNoOverlap2d(room: PlacedRoom, placed: readonly PlacedRoom[]): voi
     const bx1 = other.offsetXGrid + other.piece.sizeGrid.w;
     const by0 = other.offsetYGrid;
     const by1 = other.offsetYGrid + other.piece.sizeGrid.h;
-    if (ax0 < bx1 && bx0 < ax1 && ay0 < by1 && by0 < ay1) {
-      throw new Error(
-        `placeFloorGraph2d: '${room.id}' overlaps already-placed '${other.id}' — the drawn direction sequence folded the floor back onto itself`,
-      );
-    }
+    if (ax0 < bx1 && bx0 < ax1 && ay0 < by1 && by0 < ay1) return other;
   }
+  return undefined;
 }
 
 /**
@@ -440,9 +435,24 @@ function assertNoOverlap2d(room: PlacedRoom, placed: readonly PlacedRoom[]): voi
  * entering it (all of them, for the first/spawn room) AND has a matching opposite
  * exit on the next piece — `roomgenPrng.nextInt` draws a direction only when more
  * than one is viable (module doc). Throws (fail loud, design/09) if no exit is
- * compatible, if the two rooms are too small/mismatched to fit a door
- * (`pickDoorAnchor2d`), or if the resulting placement overlaps an earlier room
- * (`assertNoOverlap2d`).
+ * compatible, or if the two rooms are too small/mismatched to fit a door
+ * (`pickDoorAnchor2d`).
+ *
+ * **Direction retry (design/05, 2026-08-05 "graph2d content" follow-up):** the
+ * drawn direction's placement can overlap an already-placed room (`findOverlap2d`)
+ * — found live once real content gave a normal piece more than 2 exits: a floor
+ * that bends north/south and THEN needs to reach a west-only-turned-west/east
+ * capstone can legitimately draw the direction that folds back toward the
+ * spawn room. Rather than throw immediately on the FIRST candidate (which would
+ * turn an otherwise-fine seed into a crash), this tries every OTHER viable
+ * direction, in fixed array order, before giving up — deterministic (no extra
+ * PRNG draw; same seed always tries directions in the same order) and strictly
+ * reactive (it only ever looks at rooms already placed, never at what stage
+ * comes next), so this is still not a solver: a sequence where EVERY viable
+ * direction overlaps still throws, same as before. For any placement that never
+ * overlapped in the first place (every seed this module's tests already
+ * covered), the drawn direction is still tried first and still wins immediately
+ * — zero behavior change, same PRNG draw count, same output.
  */
 export function placeFloorGraph2d(
   stages: readonly RoomPiece[],
@@ -465,12 +475,29 @@ export function placeFloorGraph2d(
     if (viable.length === 0) {
       throw new Error(`placeFloorGraph2d: '${prev.id}' (stage ${i - 1}) has no exit compatible with stage ${i} ('${piece.id}')`);
     }
-    const direction = viable.length === 1 ? viable[0]! : viable[roomgenPrng.nextInt(viable.length)]!;
+    const preferred = viable.length === 1 ? viable[0]! : viable[roomgenPrng.nextInt(viable.length)]!;
+    const order = [preferred, ...viable.filter((dir) => dir !== preferred)];
 
-    const id: RoomId = `${piece.id}#${i}`;
-    const { offsetXGrid, offsetYGrid } = placeAdjacent2d(prev, piece, direction);
-    const room: PlacedRoom = { id, piece, offsetXGrid, offsetYGrid, entranceGrid: { x: 0, y: 0 } };
-    assertNoOverlap2d(room, placed);
+    let room: PlacedRoom | undefined;
+    let direction: RoomEdge | undefined;
+    let lastConflict: { candidate: PlacedRoom; other: PlacedRoom } | undefined;
+    for (const dir of order) {
+      const { offsetXGrid, offsetYGrid } = placeAdjacent2d(prev, piece, dir);
+      const candidate: PlacedRoom = { id: `${piece.id}#${i}`, piece, offsetXGrid, offsetYGrid, entranceGrid: { x: 0, y: 0 } };
+      const conflict = findOverlap2d(candidate, placed);
+      if (!conflict) {
+        room = candidate;
+        direction = dir;
+        break;
+      }
+      lastConflict = { candidate, other: conflict };
+    }
+    if (!room || !direction) {
+      const { candidate, other } = lastConflict!;
+      throw new Error(
+        `placeFloorGraph2d: '${candidate.id}' overlaps already-placed '${other.id}' — the drawn direction sequence folded the floor back onto itself`,
+      );
+    }
 
     const passageGrid = pickDoorAnchor2d(prev, room, direction, roomgenPrng);
     doors.push({ roomA: prev.id, roomB: room.id, passageGrid });

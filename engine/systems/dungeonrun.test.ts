@@ -593,6 +593,54 @@ describe('Dungeon mode — the real Ember biome runs end-to-end', () => {
       expect(s.worldH).toBe(worldHAtPlacement);
     }
   });
+
+  // `placeAdjacent2d` (world/dungeon.ts) centers whichever axis a hop DIDN'T
+  // travel along, so plain `offsetYGrid !== 0` is not a reliable "did it bend"
+  // signal by itself (an east/west-only chain already shifts offsetYGrid room to
+  // room whenever two consecutive pieces have different heights) — a shared
+  // centerX between two consecutive rooms is what a real north/south hop leaves
+  // behind, matching dungeon.test.ts's own `isVerticalHop` check.
+  function tookVerticalHop(rooms: readonly { offsetXGrid: number; piece: RoomPiece }[]): boolean {
+    for (let i = 1; i < rooms.length; i++) {
+      const a = rooms[i - 1]!;
+      const b = rooms[i]!;
+      if (a.offsetXGrid + a.piece.sizeGrid.w / 2 === b.offsetXGrid + b.piece.sizeGrid.w / 2) return true;
+    }
+    return false;
+  }
+
+  it("a bending seed places the real Ember biome via placeFloorGraph2d end-to-end, doors and all (design/05, 2026-08-05 'graph2d' content follow-up)", () => {
+    // Found by a live search here (rather than pinning dungeon.test.ts's own found
+    // seed, which searches at the pure-function level) so this exact seed is
+    // checked through the FULL live pipeline (buildFloorGeometry's door-gap
+    // carving + DoorSystem), not just the pure placement function.
+    let bendingSeed = -1;
+    for (let seed = 1; seed <= 200; seed++) {
+      const eng = createGameEngine({
+        seed, worldW: 1600, worldH: 1200, waves: [],
+        dungeon: { config: EMBER_DUNGEON, library: EMBER_ROOMS },
+      });
+      eng.step([idle(1)]);
+      if (tookVerticalHop(eng.state.dungeonRooms)) {
+        bendingSeed = seed;
+        break;
+      }
+    }
+    expect(bendingSeed).toBeGreaterThan(0);
+
+    const eng = createGameEngine({
+      seed: bendingSeed, worldW: 1600, worldH: 1200, waves: [],
+      dungeon: { config: EMBER_DUNGEON, library: EMBER_ROOMS },
+    });
+    const s = eng.state;
+    eng.step([idle(1)]);
+    expect(tookVerticalHop(s.dungeonRooms)).toBe(true);
+    expect(s.dungeonDoors.length).toBe(s.dungeonRooms.length - 1);
+    // The bent floor still stitches into one shared, walkable world — same
+    // door-gap-carving/DoorSystem machinery as any straight floor, no special case.
+    for (let t = 2; t <= 10; t++) eng.step([idle(t)]);
+    expect(s.dungeonRoomRuntime.length).toBe(s.dungeonRooms.length);
+  });
 });
 
 describe('Dungeon mode — `layout: \'graph2d\'` places a real 2D floor end-to-end (ROADMAP "real 2D graph layout" follow-up)', () => {
