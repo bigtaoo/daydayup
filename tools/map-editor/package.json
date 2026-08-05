@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.1",
   "type": "module",
-  "description": "DayDayUp map editor — authors PvE RoomPiece + PvP ArenaMap JSON content (design/09, design/15, ROADMAP Phase 4)",
+  "description": "DayDayUp map editor — authors PvE RoomPiece + hand-authored DungeonFloorMap + PvP ArenaMap JSON content (design/09, design/05, design/15, ROADMAP Phase 4)",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",

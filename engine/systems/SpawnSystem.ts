@@ -15,7 +15,7 @@ import { pxToFp, toFpGrid } from '../content/convert';
 import { buildEnemyActor } from '../content/enemies';
 import type { WaveScript } from '../content/rooms';
 import type { ArenaRoom } from '../content/arenas';
-import { generateFloor, placeFloor, buildFloorGeometry, toFpAabbGrid, type PlacedRoom } from '../world/dungeon';
+import { generateFloor, placeFloor, placeAuthoredFloor, buildFloorGeometry, toFpAabbGrid, type PlacedRoom } from '../world/dungeon';
 import type { EnemyActor, PickupItem } from '../state/entities';
 import type { ArenaRoomRuntime, DungeonRoomRuntime, GameState, WaveDef } from '../state/GameState';
 import { clampToWalkable } from './geom';
@@ -175,8 +175,14 @@ export class SpawnSystem {
    * concern.
    */
   private generateAndPlaceFloor(state: GameState): void {
-    const layout = generateFloor(state.dungeonConfig!, state.floorIndex, state.roomgenPrng, state.roomLibrary);
-    const { placed, doors } = placeFloor(layout.stages, state.roomgenPrng);
+    // Hand-authored floors (design/05 "Hand-authored PvE floors", 2026-08-05) take
+    // priority over procedural generation for this floor index — zero roomgenPrng
+    // draws for it either way, so a later procedural floor's own draw sequence is
+    // unaffected by whether an earlier floor was authored or generated.
+    const authored = state.dungeonConfig!.floorMaps?.[state.floorIndex];
+    const { placed, doors } = authored
+      ? placeAuthoredFloor(authored, state.roomLibrary)
+      : placeFloor(generateFloor(state.dungeonConfig!, state.floorIndex, state.roomgenPrng, state.roomLibrary).stages, state.roomgenPrng);
     const geo = buildFloorGeometry(placed, doors);
 
     state.dungeonRooms.length = 0;

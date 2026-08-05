@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import type { RoomPiece } from '@dd/engine';
+import type { RoomPiece, DungeonFloorMap } from '@dd/engine';
 import type { ArenaMap } from '@dd/engine/content/arenas';
-import { validateRoomPiece, validateArenaMap } from './validate';
+import { validateRoomPiece, validateArenaMap, validateDungeonFloorMap } from './validate';
 
 function makeRoom(overrides: Partial<RoomPiece> = {}): RoomPiece {
   return {
@@ -134,5 +134,112 @@ describe('validateArenaMap', () => {
     });
     const issues = validateArenaMap(map);
     expect(issues.some((i) => i.message.includes('no matching enemy spawn'))).toBe(true);
+  });
+});
+
+function makePiece(id: string, w: number, h: number, role?: 'extraction' | 'boss'): RoomPiece {
+  return {
+    id,
+    sizeGrid: { w, h },
+    solids: [],
+    spawns: { player: [{ x: 1, y: 1 }], enemy: [] },
+    exits: [],
+    ...(role ? { role } : {}),
+  };
+}
+
+const FLOOR_LIB: RoomPiece[] = [makePiece('start', 10, 10), makePiece('end', 10, 10, 'extraction')];
+
+function makeFloor(overrides: Partial<DungeonFloorMap> = {}): DungeonFloorMap {
+  return {
+    id: 'floor_1',
+    rooms: [
+      { id: 'a', pieceId: 'start', offsetXGrid: 0, offsetYGrid: 0 },
+      { id: 'b', pieceId: 'end', offsetXGrid: 10, offsetYGrid: 0 },
+    ],
+    doors: [{ roomA: 'a', roomB: 'b', passageGrid: { x: 10, y: 3, w: 1, h: 4 } }],
+    ...overrides,
+  };
+}
+
+describe('validateDungeonFloorMap (design/05 "Hand-authored PvE floors", 2026-08-05)', () => {
+  it('accepts a minimal valid floor', () => {
+    expect(validateDungeonFloorMap(makeFloor(), FLOOR_LIB)).toEqual([]);
+  });
+
+  it('rejects an empty rooms list', () => {
+    const issues = validateDungeonFloorMap({ id: 'f', rooms: [], doors: [] }, FLOOR_LIB);
+    expect(issues.some((i) => i.message.includes('at least one room'))).toBe(true);
+  });
+
+  it('rejects duplicate room ids', () => {
+    const map = makeFloor({
+      rooms: [
+        { id: 'a', pieceId: 'start', offsetXGrid: 0, offsetYGrid: 0 },
+        { id: 'a', pieceId: 'end', offsetXGrid: 20, offsetYGrid: 0 },
+      ],
+      doors: [],
+    });
+    const issues = validateDungeonFloorMap(map, FLOOR_LIB);
+    expect(issues.some((i) => i.message.includes('Duplicate room id'))).toBe(true);
+  });
+
+  it('rejects a room referencing an unknown piece', () => {
+    const map = makeFloor({ rooms: [{ id: 'a', pieceId: 'ghost', offsetXGrid: 0, offsetYGrid: 0 }], doors: [] });
+    const issues = validateDungeonFloorMap(map, FLOOR_LIB);
+    expect(issues.some((i) => i.message.includes('unknown piece "ghost"'))).toBe(true);
+  });
+
+  it('rejects overlapping rooms', () => {
+    const map = makeFloor({
+      rooms: [
+        { id: 'a', pieceId: 'start', offsetXGrid: 0, offsetYGrid: 0 },
+        { id: 'b', pieceId: 'end', offsetXGrid: 5, offsetYGrid: 5 },
+      ],
+      doors: [],
+    });
+    const issues = validateDungeonFloorMap(map, FLOOR_LIB);
+    expect(issues.some((i) => i.message.includes('overlap'))).toBe(true);
+  });
+
+  it('accepts two rooms that only share a boundary edge', () => {
+    expect(validateDungeonFloorMap(makeFloor(), FLOOR_LIB)).toEqual([]);
+  });
+
+  it('rejects a door referencing an unknown room', () => {
+    const map = makeFloor({ doors: [{ roomA: 'a', roomB: 'ghost', passageGrid: { x: 10, y: 3, w: 1, h: 4 } }] });
+    const issues = validateDungeonFloorMap(map, FLOOR_LIB);
+    expect(issues.some((i) => i.message.includes('unknown room "ghost"'))).toBe(true);
+  });
+
+  it('rejects a door whose passageGrid does not sit on a real shared wall', () => {
+    const map = makeFloor({ doors: [{ roomA: 'a', roomB: 'b', passageGrid: { x: 3, y: 3, w: 1, h: 4 } }] }); // not near the shared boundary (x=10)
+    const issues = validateDungeonFloorMap(map, FLOOR_LIB);
+    expect(issues.some((i) => i.message.includes('does not sit on a real shared wall'))).toBe(true);
+  });
+
+  it('rejects a room unreachable from the entrance room (rooms[0]) via the door graph', () => {
+    const map = makeFloor({
+      rooms: [
+        { id: 'a', pieceId: 'start', offsetXGrid: 0, offsetYGrid: 0 },
+        { id: 'b', pieceId: 'end', offsetXGrid: 10, offsetYGrid: 0 },
+        { id: 'c', pieceId: 'start', offsetXGrid: 100, offsetYGrid: 100 }, // never connected by any door
+      ],
+      doors: [{ roomA: 'a', roomB: 'b', passageGrid: { x: 10, y: 3, w: 1, h: 4 } }],
+    });
+    const issues = validateDungeonFloorMap(map, FLOOR_LIB);
+    expect(issues.some((i) => i.message.includes('not reachable'))).toBe(true);
+  });
+
+  it('rejects a floor whose last room is not an extraction/boss piece', () => {
+    const map = makeFloor({
+      rooms: [
+        { id: 'a', pieceId: 'start', offsetXGrid: 0, offsetYGrid: 0 },
+        { id: 'b', pieceId: 'start', offsetXGrid: 10, offsetYGrid: 0 }, // last room, but 'start' has no role
+      ],
+      doors: [{ roomA: 'a', roomB: 'b', passageGrid: { x: 10, y: 3, w: 1, h: 4 } }],
+    });
+    const issues = validateDungeonFloorMap(map, FLOOR_LIB);
+    expect(issues.some((i) => i.message.includes('must use an extraction/boss'))).toBe(true);
   });
 });

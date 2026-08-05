@@ -1,9 +1,11 @@
 import { ENEMY_BLUEPRINTS } from '@dd/engine';
-import type { DamageType, RoomEdge, RoomRole } from '@dd/engine';
+import type { DamageType, RoomEdge, RoomPiece, RoomRole } from '@dd/engine';
 import type { RoomDocument } from '../state/RoomDocument';
 import type { ArenaDocument } from '../state/ArenaDocument';
+import type { DungeonFloorDocument } from '../state/DungeonFloorDocument';
 import type { RoomEditTarget, Selection } from '../canvas/RoomEditTarget';
 import type { ArenaSelection } from '../canvas/ArenaCanvas';
+import type { DungeonFloorSelection } from '../canvas/DungeonFloorCanvas';
 import { button, checkboxField, el, numberField, section, selectField, textField } from './fields';
 import { renderEncounterTable } from './EncounterTable';
 
@@ -14,7 +16,14 @@ const EDGES: RoomEdge[] = ['north', 'south', 'east', 'west'];
 export type InspectorContext =
   | { kind: 'roomPiece'; doc: RoomDocument; target: RoomEditTarget; selection: Selection | null; onAfterDelete: () => void }
   | { kind: 'arenaRoom'; target: RoomEditTarget; selection: Selection | null; onBack: () => void; onAfterDelete: () => void }
-  | { kind: 'arenaMap'; doc: ArenaDocument; selection: ArenaSelection; onDrillDown: (roomId: string) => void };
+  | { kind: 'arenaMap'; doc: ArenaDocument; selection: ArenaSelection; onDrillDown: (roomId: string) => void }
+  | {
+      kind: 'dungeonFloor';
+      doc: DungeonFloorDocument;
+      library: readonly RoomPiece[];
+      selection: DungeonFloorSelection;
+      onAfterDelete: () => void;
+    };
 
 /** Appends to `container` — callers own clearing it (main.ts's refreshSidebar
  * clears once, then may prepend other sections like the Room Library doc list
@@ -30,9 +39,12 @@ export function renderInspector(container: HTMLElement, ctx: InspectorContext): 
     container.appendChild(back);
     renderShapeSection(container, ctx.target, ctx.selection, ctx.onAfterDelete);
     renderEncounterTable(container, ctx.target);
-  } else {
+  } else if (ctx.kind === 'arenaMap') {
     renderArenaMapMetadata(container, ctx.doc);
     renderArenaSelectionSection(container, ctx.doc, ctx.selection, ctx.onDrillDown);
+  } else {
+    renderDungeonFloorMetadata(container, ctx.doc, ctx.library);
+    renderDungeonFloorSelectionSection(container, ctx.doc, ctx.library, ctx.selection, ctx.onAfterDelete);
   }
 }
 
@@ -282,5 +294,93 @@ function renderArenaSelectionSection(container: HTMLElement, doc: ArenaDocument,
       sec.appendChild(numberField('y', p.y, (v) => doc.mutate(() => (p.y = Math.round(v)))));
     }
   }
+  container.appendChild(sec);
+}
+
+function renderDungeonFloorMetadata(container: HTMLElement, doc: DungeonFloorDocument, library: readonly RoomPiece[]): void {
+  const sec = section('Dungeon Floor');
+  sec.appendChild(textField('id', doc.map.id, (v) => doc.mutate((m) => (m.id = v))));
+  const hint = el('div', 'hint');
+  const entranceId = doc.map.rooms[0]?.id;
+  const capstoneId = doc.map.rooms[doc.map.rooms.length - 1]?.id;
+  hint.textContent =
+    `${doc.map.rooms.length} rooms · ${doc.map.doors.length} doors. ` +
+    (entranceId ? `Entrance: "${entranceId}". ` : '') +
+    (capstoneId ? `Capstone: "${capstoneId}".` : '');
+  sec.appendChild(hint);
+  const camHint = el('div', 'hint');
+  camHint.textContent = 'Scroll to zoom, right-drag to pan, "Fit View" to reset. Array order matters — the FIRST room placed is the entrance, the LAST is the capstone (extraction/boss).';
+  sec.appendChild(camHint);
+  if (library.length === 0) {
+    const warn = el('div', 'hint error');
+    warn.textContent = 'No RoomPieces open — switch to "PvE Room Library" and open/author some pieces first, then come back here to place them.';
+    sec.appendChild(warn);
+  }
+  container.appendChild(sec);
+}
+
+function renderDungeonFloorSelectionSection(
+  container: HTMLElement,
+  doc: DungeonFloorDocument,
+  library: readonly RoomPiece[],
+  selection: DungeonFloorSelection,
+  onAfterDelete: () => void,
+): void {
+  const sec = section('Selected');
+  if (!selection) {
+    const hint = el('div', 'hint');
+    hint.textContent = 'Nothing selected — pick "Place" and a piece above, then click the canvas to drop a room instance; or pick "Door" and click two adjacent rooms.';
+    sec.appendChild(hint);
+    container.appendChild(sec);
+    return;
+  }
+
+  if (selection.kind === 'room') {
+    const room = doc.map.rooms.find((r) => r.id === selection.id);
+    if (!room) {
+      container.appendChild(sec);
+      return;
+    }
+    const piece = library.find((p) => p.id === room.pieceId);
+    const idRow = el('div');
+    idRow.textContent = `id: ${room.id} · piece: ${room.pieceId}${piece ? ` (${piece.sizeGrid.w}×${piece.sizeGrid.h})` : ' — NOT OPEN'}`;
+    idRow.className = 'hint';
+    sec.appendChild(idRow);
+    sec.appendChild(numberField('offsetXGrid', room.offsetXGrid, (v) => doc.mutate(() => (room.offsetXGrid = Math.round(v)))));
+    sec.appendChild(numberField('offsetYGrid', room.offsetYGrid, (v) => doc.mutate(() => (room.offsetYGrid = Math.round(v)))));
+  } else {
+    const door = doc.map.doors[selection.index];
+    if (door) {
+      const idRow = el('div');
+      idRow.textContent = `${door.roomA} ↔ ${door.roomB}`;
+      idRow.className = 'hint';
+      sec.appendChild(idRow);
+      const p = door.passageGrid;
+      sec.appendChild(numberField('passageGrid.x', p.x, (v) => doc.mutate(() => (p.x = Math.round(v)))));
+      sec.appendChild(numberField('passageGrid.y', p.y, (v) => doc.mutate(() => (p.y = Math.round(v)))));
+      sec.appendChild(numberField('passageGrid.w', p.w, (v) => doc.mutate(() => (p.w = Math.max(1, Math.round(v))))));
+      sec.appendChild(numberField('passageGrid.h', p.h, (v) => doc.mutate(() => (p.h = Math.max(1, Math.round(v))))));
+    }
+  }
+
+  sec.appendChild(
+    button(
+      'Delete selected',
+      () => {
+        if (!confirm('Delete selected item?')) return;
+        doc.mutate((map) => {
+          if (selection.kind === 'room') {
+            const i = map.rooms.findIndex((r) => r.id === selection.id);
+            if (i >= 0) map.rooms.splice(i, 1);
+            map.doors = map.doors.filter((d) => d.roomA !== selection.id && d.roomB !== selection.id);
+          } else {
+            map.doors.splice(selection.index, 1);
+          }
+        });
+        onAfterDelete();
+      },
+      true,
+    ),
+  );
   container.appendChild(sec);
 }

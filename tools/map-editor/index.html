@@ -9,7 +9,7 @@
       #app { display: flex; flex-direction: row; width: 100vw; height: 100vh; }
       #canvasHost { flex: 1 1 auto; position: relative; min-width: 0; }
       #canvasHost canvas { display: block; }
-      #roomCanvasHost, #arenaCanvasHost { position: absolute; inset: 0; overflow: hidden; }
+      #roomCanvasHost, #arenaCanvasHost, #dungeonFloorCanvasHost { position: absolute; inset: 0; overflow: hidden; }
       #sidebar { flex: 0 0 340px; display: flex; flex-direction: column; background: #11141c; border-left: 1px solid #232838; overflow-y: auto; }
       #topbar { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 8px; background: #161a24; border-bottom: 1px solid #232838; }
       button { background: #232838; color: #d8dee9; border: 1px solid #3a4152; border-radius: 4px; padding: 4px 10px; cursor: pointer; font: inherit; }
@@ -34,6 +34,7 @@
       <div id="canvasHost">
         <div id="roomCanvasHost"></div>
         <div id="arenaCanvasHost"></div>
+        <div id="dungeonFloorCanvasHost"></div>
       </div>
       <div id="sidebar">
         <div id="topbar"></div>

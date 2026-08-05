@@ -1,25 +1,29 @@
-import type { RoomPiece } from '@dd/engine';
+import type { RoomPiece, DungeonFloorMap } from '@dd/engine';
 import type { ArenaMap } from '@dd/engine/content/arenas';
 import { RoomCanvas } from './canvas/RoomCanvas';
 import { ArenaCanvas, type ArenaTool } from './canvas/ArenaCanvas';
+import { DungeonFloorCanvas, type DungeonFloorTool } from './canvas/DungeonFloorCanvas';
 import { RoomPieceTarget, ArenaRoomTarget, type ToolKind } from './canvas/RoomEditTarget';
 import { RoomDocument } from './state/RoomDocument';
 import { ArenaDocument } from './state/ArenaDocument';
+import { DungeonFloorDocument } from './state/DungeonFloorDocument';
 import { renderInspector } from './ui/Inspector';
 import { saveJson, openJson } from './ui/DocumentIO';
-import { validateRoomPiece, validateArenaMap } from './validate';
-import { button, el } from './ui/fields';
+import { validateRoomPiece, validateArenaMap, validateDungeonFloorMap } from './validate';
+import { button, el, selectField } from './ui/fields';
 
-type Mode = 'roomLibrary' | 'arena';
+type Mode = 'roomLibrary' | 'arena' | 'dungeonFloor';
 type ArenaView = { kind: 'map' } | { kind: 'room'; roomId: string };
 
 const roomCanvasHost = document.getElementById('roomCanvasHost') as HTMLElement;
 const arenaCanvasHost = document.getElementById('arenaCanvasHost') as HTMLElement;
+const dungeonFloorCanvasHost = document.getElementById('dungeonFloorCanvasHost') as HTMLElement;
 const topbar = document.getElementById('topbar') as HTMLElement;
 const inspector = document.getElementById('inspector') as HTMLElement;
 
 const roomCanvas = new RoomCanvas(roomCanvasHost);
 const arenaCanvas = new ArenaCanvas(arenaCanvasHost);
+const dungeonFloorCanvas = new DungeonFloorCanvas(dungeonFloorCanvasHost);
 
 let mode: Mode = 'roomLibrary';
 let autosaveKeyCounter = 0;
@@ -31,15 +35,35 @@ let arenaDoc = new ArenaDocument(ArenaDocument.loadAutosave() ?? ArenaDocument.b
 let arenaView: ArenaView = { kind: 'map' };
 let arenaTool: ArenaTool = 'select';
 
+let dungeonFloorDoc = new DungeonFloorDocument(DungeonFloorDocument.loadAutosave() ?? DungeonFloorDocument.blank('floor_1'));
+let dungeonFloorTool: DungeonFloorTool = 'select';
+let pendingPieceId: string | null = null;
+
+/** Whatever RoomPieces are currently open in the "PvE Room Library" tab — the
+ * palette a dungeon floor's room instances are picked from (design/05
+ * "Hand-authored PvE floors": the editor resolves against whatever's open, not
+ * a claim about the eventual runtime library). */
+function currentRoomLibrary(): RoomPiece[] {
+  return roomDocs.map((d) => d.piece);
+}
+
+function syncDungeonFloorLibrary(): void {
+  dungeonFloorCanvas.setLibrary(currentRoomLibrary());
+  if (pendingPieceId && !currentRoomLibrary().some((p) => p.id === pendingPieceId)) pendingPieceId = null;
+}
+
 async function init(): Promise<void> {
   await roomCanvas.mount();
   await arenaCanvas.mount();
+  await dungeonFloorCanvas.mount();
   roomCanvas.onSelectionChange(() => refreshSidebar());
   arenaCanvas.onSelectionChange(() => refreshSidebar());
+  dungeonFloorCanvas.onSelectionChange(() => refreshSidebar());
   arenaCanvas.onDrillDown((roomId) => {
     arenaView = { kind: 'room', roomId };
     syncArenaView();
   });
+  syncDungeonFloorLibrary();
   setMode('roomLibrary');
 }
 
@@ -54,8 +78,16 @@ function setMode(next: Mode): void {
   if (mode === 'roomLibrary') {
     roomCanvasHost.style.display = '';
     arenaCanvasHost.style.display = 'none';
+    dungeonFloorCanvasHost.style.display = 'none';
     roomCanvas.setTool(roomTool);
     roomCanvas.setTarget(new RoomPieceTarget(roomDocs[activeRoomDocIndex]!));
+  } else if (mode === 'dungeonFloor') {
+    roomCanvasHost.style.display = 'none';
+    arenaCanvasHost.style.display = 'none';
+    dungeonFloorCanvasHost.style.display = '';
+    syncDungeonFloorLibrary();
+    dungeonFloorCanvas.setTool(dungeonFloorTool);
+    dungeonFloorCanvas.setDocument(dungeonFloorDoc);
   } else {
     arenaView = { kind: 'map' };
     syncArenaView();
@@ -67,11 +99,13 @@ function setMode(next: Mode): void {
 function syncArenaView(): void {
   if (arenaView.kind === 'map') {
     roomCanvasHost.style.display = 'none';
+    dungeonFloorCanvasHost.style.display = 'none';
     arenaCanvasHost.style.display = '';
     arenaCanvas.setTool(arenaTool);
     arenaCanvas.setDocument(arenaDoc);
   } else {
     arenaCanvasHost.style.display = 'none';
+    dungeonFloorCanvasHost.style.display = 'none';
     roomCanvasHost.style.display = '';
     roomCanvas.setTool(roomTool);
     roomCanvas.setTarget(new ArenaRoomTarget(arenaDoc, arenaView.roomId));
@@ -91,6 +125,14 @@ function refreshSidebar(): void {
       target: new RoomPieceTarget(doc),
       selection: roomCanvas.getSelection(),
       onAfterDelete: () => roomCanvas.setSelection(null),
+    });
+  } else if (mode === 'dungeonFloor') {
+    renderInspector(inspector, {
+      kind: 'dungeonFloor',
+      doc: dungeonFloorDoc,
+      library: currentRoomLibrary(),
+      selection: dungeonFloorCanvas.getSelection(),
+      onAfterDelete: () => dungeonFloorCanvas.setSelection(null),
     });
   } else if (arenaView.kind === 'room') {
     renderInspector(inspector, {
@@ -184,6 +226,12 @@ const ARENA_TOOLS: { id: ArenaTool; label: string }[] = [
   { id: 'spawn', label: 'Player Spawn' },
 ];
 
+const DUNGEON_FLOOR_TOOLS: { id: DungeonFloorTool; label: string }[] = [
+  { id: 'select', label: 'Select' },
+  { id: 'place', label: 'Place' },
+  { id: 'door', label: 'Door' },
+];
+
 function renderTopbar(): void {
   topbar.innerHTML = '';
 
@@ -191,9 +239,11 @@ function renderTopbar(): void {
   modeRow.style.display = 'flex';
   modeRow.style.gap = '4px';
   const roomBtn = button('PvE Room Library', () => setMode('roomLibrary'));
+  const floorBtn = button('PvE Dungeon Floor', () => setMode('dungeonFloor'));
   const arenaBtn = button('PvP Arena', () => setMode('arena'));
-  (mode === 'roomLibrary' ? roomBtn : arenaBtn).classList.add('active');
+  (mode === 'roomLibrary' ? roomBtn : mode === 'dungeonFloor' ? floorBtn : arenaBtn).classList.add('active');
   modeRow.appendChild(roomBtn);
+  modeRow.appendChild(floorBtn);
   modeRow.appendChild(arenaBtn);
   topbar.appendChild(modeRow);
 
@@ -202,7 +252,7 @@ function renderTopbar(): void {
   toolRow.style.gap = '4px';
   toolRow.style.flexWrap = 'wrap';
 
-  const onRoomCanvas = mode === 'roomLibrary' || arenaView.kind === 'room';
+  const onRoomCanvas = mode === 'roomLibrary' || (mode === 'arena' && arenaView.kind === 'room');
   if (onRoomCanvas) {
     const isPve = mode === 'roomLibrary';
     for (const t of ROOM_TOOLS) {
@@ -215,6 +265,31 @@ function renderTopbar(): void {
       });
       if (roomTool === t.id) b.classList.add('active');
       toolRow.appendChild(b);
+    }
+  } else if (mode === 'dungeonFloor') {
+    for (const t of DUNGEON_FLOOR_TOOLS) {
+      const b = button(t.label, () => {
+        dungeonFloorTool = t.id;
+        dungeonFloorCanvas.setTool(t.id);
+        renderTopbar();
+      });
+      if (dungeonFloorTool === t.id) b.classList.add('active');
+      toolRow.appendChild(b);
+    }
+    if (dungeonFloorTool === 'place') {
+      const library = currentRoomLibrary();
+      const options = library.map((p) => p.id);
+      if (options.length > 0) {
+        const current = pendingPieceId && options.includes(pendingPieceId) ? pendingPieceId : options[0]!;
+        pendingPieceId = current;
+        dungeonFloorCanvas.setPendingPieceId(current);
+        toolRow.appendChild(
+          selectField('piece to place', current, options, (v) => {
+            pendingPieceId = v;
+            dungeonFloorCanvas.setPendingPieceId(v);
+          }),
+        );
+      }
     }
   } else {
     for (const t of ARENA_TOOLS) {
@@ -259,6 +334,41 @@ function renderTopbar(): void {
           return;
         }
         await saveJson(arenaDoc.map, `${arenaDoc.map.id}.json`);
+      }),
+    );
+    topbar.appendChild(ioRow);
+  }
+
+  if (mode === 'dungeonFloor') {
+    const ioRow = el('div');
+    ioRow.style.display = 'flex';
+    ioRow.style.gap = '4px';
+    ioRow.appendChild(
+      button('New Floor', () => {
+        if (!confirm('Discard the current floor and start a new blank one?')) return;
+        dungeonFloorDoc = new DungeonFloorDocument(DungeonFloorDocument.blank('floor_1'));
+        dungeonFloorCanvas.setDocument(dungeonFloorDoc);
+        refreshSidebar();
+      }),
+    );
+    ioRow.appendChild(
+      button('Open…', async () => {
+        const opened = await openJson<DungeonFloorMap>();
+        if (!opened) return;
+        dungeonFloorDoc = new DungeonFloorDocument(opened.data);
+        dungeonFloorCanvas.setDocument(dungeonFloorDoc);
+        refreshSidebar();
+      }),
+    );
+    ioRow.appendChild(button('Fit View', () => dungeonFloorCanvas.fitView()));
+    ioRow.appendChild(
+      button('Save', async () => {
+        const issues = validateDungeonFloorMap(dungeonFloorDoc.map, currentRoomLibrary());
+        if (issues.length) {
+          alert('Cannot save — fix these first:\n' + issues.map((i) => `• ${i.message}`).join('\n'));
+          return;
+        }
+        await saveJson(dungeonFloorDoc.map, `${dungeonFloorDoc.map.id}.json`);
       }),
     );
     topbar.appendChild(ioRow);

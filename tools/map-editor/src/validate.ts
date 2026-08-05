@@ -3,7 +3,7 @@
 // no schema-library dependency — matches this repo's existing style (no
 // validation library appears anywhere in client/server either). Pure functions,
 // no DOM/Pixi — kept trivially unit-testable.
-import type { RoomPiece } from '@dd/engine';
+import type { RoomPiece, DungeonFloorMap } from '@dd/engine';
 import type { ArenaMap } from '@dd/engine/content/arenas';
 
 export interface ValidationIssue {
@@ -102,6 +102,128 @@ export function validateArenaMap(map: ArenaMap): ValidationIssue[] {
           message: `Room "${room.id}" encounter.entries[${i}].spawnPoint (${entry.spawnPoint}) has no matching enemy spawn (only ${enemyCount} placed).`,
         });
       }
+    });
+  }
+
+  return issues;
+}
+
+/** Whether `passage` sits within the actual touching band between `a` and `b` —
+ * mirrors `DungeonFloorCanvas.tryConnectDoor`'s own touch computation, but as a
+ * static check (a hand-edited `passageGrid` value, not one the door tool itself
+ * just computed, can drift from a real shared wall). */
+function doorSitsOnSharedBoundary(
+  a: { x: number; y: number; w: number; h: number },
+  b: { x: number; y: number; w: number; h: number },
+  passage: { x: number; y: number; w: number; h: number },
+): boolean {
+  const vTouch = a.x + a.w === b.x || b.x + b.w === a.x;
+  if (vTouch) {
+    const boundaryX = a.x + a.w === b.x ? b.x : a.x;
+    if (Math.abs(passage.x + passage.w / 2 - boundaryX) > passage.w) return false;
+    const overlapY0 = Math.max(a.y, b.y);
+    const overlapY1 = Math.min(a.y + a.h, b.y + b.h);
+    return passage.y >= overlapY0 && passage.y + passage.h <= overlapY1;
+  }
+  const hTouch = a.y + a.h === b.y || b.y + b.h === a.y;
+  if (hTouch) {
+    const boundaryY = a.y + a.h === b.y ? b.y : a.y;
+    if (Math.abs(passage.y + passage.h / 2 - boundaryY) > passage.h) return false;
+    const overlapX0 = Math.max(a.x, b.x);
+    const overlapX1 = Math.min(a.x + a.w, b.x + b.w);
+    return passage.x >= overlapX0 && passage.x + passage.w <= overlapX1;
+  }
+  return false; // the two rooms don't even share a boundary
+}
+
+/**
+ * Save-time gate for a hand-authored PvE floor (design/05 "Hand-authored PvE
+ * floors", 2026-08-05) — mirrors `validateArenaMap`'s shape (structural,
+ * save-blocking, no engine dependency beyond the types) plus the two checks a
+ * PvE floor specifically needs that PvP's `ArenaMap` doesn't: reachability from
+ * the entrance room (a PvE floor's progression genuinely depends on it, unlike
+ * PvP's simultaneously-relevant zone rooms) and the capstone-must-be-last
+ * convention `ExtractionSystem`/`SpawnSystem` already assume
+ * (`engine/systems/ExtractionSystem.ts`'s `dungeonRoomRuntime[length - 1]`,
+ * `engine/systems/SpawnSystem.ts`'s `placed[0]`). `library` is whatever's
+ * currently open in the "PvE Room Library" tab — the same resolution scope
+ * `DungeonFloorCanvas` itself uses, not a claim about the eventual runtime
+ * library.
+ */
+export function validateDungeonFloorMap(map: DungeonFloorMap, library: readonly RoomPiece[]): ValidationIssue[] {
+  const issues: ValidationIssue[] = [];
+
+  if (map.rooms.length === 0) {
+    issues.push({ message: 'A dungeon floor needs at least one room.' });
+    return issues;
+  }
+
+  const seenIds = new Set<string>();
+  const rects = new Map<string, { x: number; y: number; w: number; h: number }>();
+  for (const room of map.rooms) {
+    if (!room.id.trim()) issues.push({ message: 'Every room needs a non-empty id.' });
+    if (seenIds.has(room.id)) issues.push({ message: `Duplicate room id "${room.id}".` });
+    seenIds.add(room.id);
+    const piece = library.find((p) => p.id === room.pieceId);
+    if (!piece) {
+      issues.push({ message: `Room "${room.id}" references unknown piece "${room.pieceId}" (open it in the Room Library tab).` });
+      continue;
+    }
+    rects.set(room.id, { x: room.offsetXGrid, y: room.offsetYGrid, w: piece.sizeGrid.w, h: piece.sizeGrid.h });
+  }
+
+  const ids = map.rooms.map((r) => r.id);
+  for (let i = 0; i < ids.length; i++) {
+    for (let j = i + 1; j < ids.length; j++) {
+      const a = rects.get(ids[i]!);
+      const b = rects.get(ids[j]!);
+      if (a && b && rectsOverlap(a, b)) issues.push({ message: `Rooms "${ids[i]}" and "${ids[j]}" overlap.` });
+    }
+  }
+
+  for (const door of map.doors) {
+    if (!seenIds.has(door.roomA)) issues.push({ message: `Door references unknown room "${door.roomA}".` });
+    if (!seenIds.has(door.roomB)) issues.push({ message: `Door references unknown room "${door.roomB}".` });
+    if (door.roomA === door.roomB) issues.push({ message: `Door cannot connect room "${door.roomA}" to itself.` });
+    const a = rects.get(door.roomA);
+    const b = rects.get(door.roomB);
+    if (a && b && !doorSitsOnSharedBoundary(a, b, door.passageGrid)) {
+      issues.push({ message: `Door between "${door.roomA}" and "${door.roomB}" does not sit on a real shared wall.` });
+    }
+  }
+
+  // Reachability from the entrance room (rooms[0]) via the door graph.
+  const adjacency = new Map<string, string[]>();
+  for (const id of ids) adjacency.set(id, []);
+  for (const door of map.doors) {
+    if (adjacency.has(door.roomA) && adjacency.has(door.roomB)) {
+      adjacency.get(door.roomA)!.push(door.roomB);
+      adjacency.get(door.roomB)!.push(door.roomA);
+    }
+  }
+  const entranceId = ids[0]!;
+  const reached = new Set<string>([entranceId]);
+  const queue = [entranceId];
+  while (queue.length > 0) {
+    const cur = queue.shift()!;
+    for (const next of adjacency.get(cur) ?? []) {
+      if (!reached.has(next)) {
+        reached.add(next);
+        queue.push(next);
+      }
+    }
+  }
+  for (const id of ids) {
+    if (!reached.has(id)) issues.push({ message: `Room "${id}" is not reachable from the entrance room "${entranceId}".` });
+  }
+
+  // Capstone convention: the LAST room must resolve to an extraction/boss piece —
+  // ExtractionSystem/SpawnSystem read placement order, not an authored flag.
+  const lastRoom = map.rooms[map.rooms.length - 1]!;
+  const lastPiece = library.find((p) => p.id === lastRoom.pieceId);
+  if (lastPiece && lastPiece.role !== 'extraction' && lastPiece.role !== 'boss') {
+    issues.push({
+      message: `The last room ("${lastRoom.id}") must use an extraction/boss RoomPiece — the engine reads placement order, not an authored flag, to find the capstone.`,
     });
   }
 

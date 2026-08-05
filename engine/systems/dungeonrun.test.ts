@@ -25,7 +25,7 @@ import { makeCommand } from '@dd/engine/state/input';
 import type { Brad } from '@dd/engine/math/trig';
 import { toFpGrid } from '@dd/engine/content/convert';
 import type { RoomPiece } from '@dd/engine/content/rooms';
-import type { DungeonConfig } from '@dd/engine/world/dungeon';
+import type { DungeonConfig, DungeonFloorMap } from '@dd/engine/world/dungeon';
 import { EMBER_DUNGEON, EMBER_ROOMS } from '@dd/engine/world/rooms/ember';
 
 // A tiny, fully-controlled library. Two normal pieces (distinct geometry, NO enemies →
@@ -230,6 +230,54 @@ describe('Dungeon mode — the last floor auto-extracts (no descend option)', ()
     expect(s.floorIndex).toBe(1);
     expect(s.phase).toBe('gameover');
     expect(s.winner).toBe(0);
+  });
+});
+
+describe('Dungeon mode — hand-authored floors override generation for that floor index (design/05 "Hand-authored PvE floors", 2026-08-05)', () => {
+  const AUTHORED_LIB: RoomPiece[] = [
+    { id: 'auth_start', sizeGrid: { w: 20, h: 16 }, solids: [], spawns: { player: [{ x: 2, y: 8 }], enemy: [] }, exits: [] },
+    { id: 'auth_end', role: 'extraction', sizeGrid: { w: 10, h: 10 }, solids: [], spawns: { player: [{ x: 5, y: 8 }], enemy: [] }, exits: [] },
+  ];
+  const AUTHORED_FLOOR: DungeonFloorMap = {
+    id: 'floor0',
+    rooms: [
+      { id: 'start', pieceId: 'auth_start', offsetXGrid: 0, offsetYGrid: 0 },
+      { id: 'end', pieceId: 'auth_end', offsetXGrid: 20, offsetYGrid: 0 },
+    ],
+    doors: [{ roomA: 'start', roomB: 'end', passageGrid: { x: 19, y: 4, w: 2, h: 4 } }],
+  };
+  const cfg: EngineConfig = {
+    ...DUN_CFG,
+    dungeon: { config: { ...TEST_DUN, floorMaps: { 0: AUTHORED_FLOOR } }, library: [...TEST_LIB, ...AUTHORED_LIB] },
+  };
+
+  it('floor 0 places the authored map exactly, drawing zero roomgenPrng values', () => {
+    const eng = createGameEngine(cfg);
+    const s = eng.state;
+    const roomgenBefore = s.roomgenPrng.peek();
+    eng.step([idle(1)]);
+    expect(s.roomgenPrng.peek()).toBe(roomgenBefore); // authored floor draws nothing
+    expect(s.dungeonRooms.map((r) => r.id)).toEqual(['start', 'end']);
+    expect(s.dungeonDoors).toHaveLength(1);
+    expect(s.dungeonDoors[0]!.door.passageGrid).toEqual(AUTHORED_FLOOR.doors[0]!.passageGrid);
+    expect(s.dungeonRooms[1]!.piece.role).toBe('extraction');
+  });
+
+  it('a floor index absent from floorMaps still generates procedurally, even after an earlier floor was authored', () => {
+    const eng = createGameEngine(cfg);
+    const s = eng.state;
+    eng.step([idle(1)]); // floor 0: authored
+    eng.step([idle(2)]); // 'start' activates (empty)
+    teleportPlayerInto(eng, s.dungeonRooms[1]!);
+    eng.step([idle(3)]); // 'end' (capstone) activates (empty) → cleared instantly
+    eng.step([confirmDescend(4)]);
+    expect(s.floorIndex).toBe(1);
+
+    const roomgenBefore = s.roomgenPrng.peek();
+    eng.step([idle(5)]); // floor 1 has no floorMaps entry → SpawnSystem falls back to generateFloor/placeFloor
+    expect(s.roomgenPrng.peek()).not.toBe(roomgenBefore); // procedural generation DID draw
+    expect(s.dungeonRooms.length).toBe(2);
+    expect(s.dungeonRooms[1]!.piece.role).toBe('boss'); // floor 1 is the last → TEST_LIB's boss capstone
   });
 });
 

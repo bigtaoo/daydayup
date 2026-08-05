@@ -112,8 +112,9 @@ rendering as-is), which `FloorProgress` never could (it only ever showed the loc
 player's own linear position). No engine changes, no `ENGINE_VERSION` bump — purely a
 client-side adapter over data the engine already exposed.
 
-See `ROADMAP.md`'s "Room & door model" section for the full file list. **Still open:**
-map-editor door placement.
+See `ROADMAP.md`'s "Room & door model" section for the full file list — including
+hand-authored PvE floor placement (map editor), shipped 2026-08-05, see the
+"Hand-authored PvE floors" subsection below.
 
 - **A floor's rooms are all simultaneously live in sim, matching PvP's co-resident `ArenaMap`** — not generated on entry. The tick advances uniformly across every room regardless of who is rendering what (determinism needs the same input → same result everywhere, not "no one is watching so skip it"); what presence gates is enemy AI *behavior*, not the tick. A room that no player has entered yet ("not activated") still ticks forward but runs no walk/attack logic on its enemies — they sit inert until a player activates the room. A cleared room never respawns enemies, including on backtrack.
 - **Doors connect rooms bidirectionally and are freely walkable within a floor.** This reuses `content/arenas.ts`'s `Door{roomA, roomB, passageGrid}` shape rather than inventing a separate PvE type — a PvE floor is the same "room graph with explicit door adjacency" primitive PvP already has. Backtracking to an earlier room in the same floor is allowed, at any time, no penalty.
@@ -123,6 +124,109 @@ map-editor door placement.
 - **Door position is authored freely, not wall-centered.** A door's `passageGrid` is an arbitrary rect along its wall, exactly like PvP's `Door` — "~5 positions per wall" is a snapping aid for the map editor / a safe candidate set `generateFloor` draws from, not a constraint baked into the data shape.
 - **Rendering matches PvP's own approach: the whole co-resident floor is drawn in one pass, not just the local player's current room** (corrected 2026-08-04 — the original "single-room" framing here didn't match what either mode actually does or needs). `RoomBuilder` builds every room's geometry from the floor's stitched `state.walls`/`obstacles` at once; the camera following the local player is what keeps the *screen* showing only their vicinity, exactly like PvP's ~60-room arena. A minimap remains the only place teammates' rooms/clear-state surface at a glance (`10`).
 - **Cross-floor transitions are unaffected and stay one-way** — the extraction/descend portal between floors remains irreversible (the "forward-only" decision in Open questions below is unchanged); only navigation *within* a floor gained the door graph.
+
+### Hand-authored PvE floors ✅ (2026-08-05)
+
+Closes the "map-editor door placement" gap named above: before this, the ONLY way a
+PvE floor got built was `generateFloor`/`placeFloor` drawing rooms and door positions
+from `roomgenPrng` — there was no way to hand-place a specific `RoomPiece` at a
+specific position with a door at a specific position, the same way PvP's `ArenaMap`
+already lets an author hand-place a room and a door (`content/arenas.ts`). Locked and
+shipped same day.
+
+- **A new `DungeonFloorMap` content type, analogous to PvP's `ArenaMap`.**
+  `{id, rooms: {id, pieceId, offsetXGrid, offsetYGrid}[], doors: Door[]}` —
+  `Door` is the exact same type PvP's `ArenaMap` already uses, so a hand-placed
+  PvE door is no different a shape from a hand-placed PvP one. A room entry
+  references a piece from the SAME `RoomPiece` library `generateFloor` already
+  draws from, by `pieceId` — a hand-authored floor is not a separate content
+  vocabulary, just a different way of arranging the existing one.
+- **Array order carries meaning, reusing the two single-index assumptions
+  already baked into the engine** (`SpawnSystem`'s `placed[0]` for the run's
+  initial spawn, `ExtractionSystem`'s `dungeonRoomRuntime[length-1]` for the
+  capstone/extraction check) rather than inventing a third, parallel "which
+  room is special" mechanism: `rooms[0]` is the entrance/spawn room, `rooms[last]`
+  is the capstone (extraction/boss) room. The map editor's validator enforces
+  both ends before allowing a save.
+- **New `world/dungeon.ts placeAuthoredFloor(map, library)`, a sibling to
+  `placeFloor`, not a variant of it.** Resolves each room's `pieceId` against
+  the library (fail-loud on a missing piece, same "fail loud, never at use"
+  convention as `generateFloor`'s own missing-capstone check), passes `doors`
+  straight through unchanged (no PRNG draw — a hand-authored door's position IS
+  its authored `passageGrid`, nothing left to roll), and computes each
+  non-entrance room's `entranceGrid` from whichever connecting door reaches it
+  first in `doors` array order (same tie-break `placeFloor` already uses for a
+  fork's merge room), inset into the room along whichever axis the door's
+  passage is narrower on — generalizing `ENTRANCE_INSET_GRID`'s existing
+  west-only inset, which only worked because a generated floor's spine is
+  always west→east; a hand-authored floor's doors can sit on any of a room's
+  four walls, matching PvP's own `ArenaCanvas` door tool. Returns the exact same
+  `{placed: PlacedRoom[], doors: Door[]}` shape `placeFloor` does, so
+  `buildFloorGeometry` and every system downstream of it (`DoorSystem`,
+  `RoomBuilder`, `EventReactor`, the minimap adapter) needs zero changes — the
+  same "already topology-agnostic" property the branching pass already
+  confirmed for those systems.
+- **`DungeonConfig` gains an optional `floorMaps?: Partial<Record<number,
+  DungeonFloorMap>>`** — a per-floor-index override. `SpawnSystem` checks it
+  first; a floor index absent from `floorMaps` still draws from
+  `generateFloor`/`placeFloor`'s PRNG stream exactly as today. A biome can mix
+  hand-authored and procedural floors in the same run (e.g. a hand-authored
+  floor 0 as a tuned opening floor, procedural floors after it) — this is a
+  per-floor override, never a per-room patch of an otherwise-generated floor.
+- **Map editor gains a third mode, "PvE Dungeon Floor," alongside the existing
+  "PvE Room Library"/"PvP Arena" (`tools/map-editor`)** — not a new tool.
+  Reuses `ArenaCanvas`'s move/resize-reject-overlap/pan/zoom/door-connect-tool
+  machinery as-is; the one real difference is what "place a room" means: an
+  `ArenaMap` room is freehand-drawn (its own solids authored inline), a
+  `DungeonFloorMap` room is an instance of an already-authored, fixed-size
+  `RoomPiece` (picked from whatever's currently open in the "PvE Room Library"
+  tab) dropped at a position, never resized. A new `validateDungeonFloorMap`
+  (`validate.ts`) is the save-time gate, mirroring `validateArenaMap`: every
+  `pieceId` resolves against the open library docs, no two rooms overlap, every
+  door sits on a real shared room boundary, the door graph is reachable from
+  `rooms[0]`, and `rooms[last]`'s piece has `role: 'extraction'` or `'boss'`.
+- **Deliberate scope cuts, matching the branching pass's own precedent**: no
+  in-editor encounter/wave authoring beyond what "PvE Room Library" mode
+  already offers per-piece (a floor's wave schedule stays generated from each
+  room's own authored `WaveScript`, same as today — this pass only changes
+  which rooms/doors exist and where, never encounter timing); no mixed
+  procedural-with-manual-override *within* one floor (a `floorMaps` entry
+  replaces a floor's placement wholesale). No shipped biome uses `floorMaps`
+  yet (`EMBER_DUNGEON` is untouched) — authoring one is a content task, not
+  part of this pass, same as branching's own "no shipped content forks yet"
+  note.
+
+Verified live in the browser, not just unit tests (synthetic `PointerEvent`/`WheelEvent`
+dispatch, since the sandboxed Browser pane can't composite Pixi frames for a real
+screenshot — see the memory's documented workaround): mode switch, the piece picker,
+placing two room instances with overlap rejection, dragging a room, connecting a real
+door between two adjacent rooms (`tryConnectDoor` computed the exact expected
+`passageGrid`), and the Save button's validation gate correctly blocking a
+capstone-convention violation with the right message. No `ENGINE_VERSION` bump (no
+shipped config sets `floorMaps`, and it changes nothing for one that doesn't).
+
+**"全部加测试" follow-up, same day:** `DungeonFloorCanvas` — the single most complex new
+file this pass (overlap-rejecting placement, the door tool's two-click state machine,
+drag-move-with-revert, dangling-piece-reference rendering) — had zero dedicated tests,
+matching `ArenaCanvas`/`RoomCanvas`'s own long-standing gap (their `mount()` needs a
+real `Application.init()`/canvas, unavailable in plain vitest). Closed it instead of
+extending the gap: confirmed empirically that this class's constructor never touches
+`host`/`document`/`window` (every field — `app`, `camera`, `world`, `shapes`, `labels`,
+`preview` — is a plain, renderer-free Pixi object) and that an unparented `Container`'s
+`toLocal()` still applies its own `position` correctly with no render pass ever run —
+so skipping `mount()` entirely leaves `toGrid(px,py)` reduced to the clean, predictable
+`(px/GRID_PX, py/GRID_PX)`. New `DungeonFloorCanvas.test.ts` (28 tests) drives the real
+private `onPointerDown`/`onPointerMove`/`onPointerUp`/`tryConnectDoor`/`roomAt`/`doorAt`/
+`nextRoomId` methods directly (bracket-notation access, same convention
+`Minimap.test.ts`/`HudView.test.ts` already use) and reads `redraw()`'s actual
+`Graphics.context.instructions` output (fill vs. stroke, since every shape here draws
+both — unlike `Minimap`'s fill-only rooms) for entrance/capstone tinting, dangling-piece
+placeholders, door lines, and selection-stroke highlighting. Not covered, documented
+in the file's own header rather than silently skipped: `onKeyDown`'s Delete path (needs
+`document`/`HTMLInputElement`/`HTMLTextAreaElement`, not worth stubbing for one path),
+and `onWheel`/pan/`fitView`'s exact camera math (cosmetic view-fitting, not authoring
+correctness). 28 new map-editor tests (64, was 36) — 1623 total across all 7 workspaces,
+`tsc --noEmit` clean.
 
 ## Survivability model (HP + shield)
 

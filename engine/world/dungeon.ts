@@ -63,6 +63,14 @@ export interface DungeonConfig {
   extractionPieceId: string; // this floor's checkpoint room (every floor but the last)
   bossPieceId: string; // the deepest floor's room — doubles as ITS extraction
   difficultyCurve: CurveSpec;
+  /** Optional per-floor-index hand-authored override (design/05 "Hand-authored PvE
+   * floors", 2026-08-05): when `floorIndex` has an entry, `SpawnSystem` calls
+   * `placeAuthoredFloor` instead of `generateFloor`/`placeFloor` for that floor —
+   * zero `roomgenPrng` draws for it, the same PRNG-free property PvP's `ArenaMap`
+   * already has. A floor index absent here still draws procedurally, byte-identical
+   * to before this field existed — fully additive, no `ENGINE_VERSION` bump (no
+   * shipped config sets it, and it changes nothing for one that doesn't). */
+  floorMaps?: Partial<Record<number, DungeonFloorMap>>;
 }
 
 /** One resolved stage: normally a single `RoomPiece`; a `RoomPiece[]` (length
@@ -307,6 +315,119 @@ export function placeFloor(
     : { x: first.offsetXGrid + ENTRANCE_INSET_GRID, y: first.piece.sizeGrid.h / 2 };
 
   return { placed, doors };
+}
+
+// ---------------------------------------------------------------------------
+// Hand-authored floors (design/05 "Hand-authored PvE floors", 2026-08-05)
+// ---------------------------------------------------------------------------
+
+/**
+ * A hand-authored floor — the `DungeonConfig.floorMaps` per-floor-index override
+ * that lets a floor be placed exactly, instead of drawn from `generateFloor`/
+ * `placeFloor`'s PRNG stream. `rooms` reference the SAME `RoomPiece` library
+ * `generateFloor` already draws from, by id — a hand-authored floor is not a
+ * separate content vocabulary, just a different way of arranging the existing
+ * one. `doors` reuses PvP's own `Door` type unchanged (`content/arenas.ts`) — a
+ * hand-placed PvE door is no different a shape from a hand-placed PvP one.
+ *
+ * Array order carries meaning, reusing the two single-index assumptions already
+ * baked into the engine rather than inventing a third: `rooms[0]` is the
+ * entrance/spawn room (`SpawnSystem`'s `placed[0]`), `rooms[rooms.length - 1]` is
+ * the capstone extraction/boss room (`ExtractionSystem`'s
+ * `dungeonRoomRuntime[length - 1]`). This module trusts that ordering — it fails
+ * loud only on a broken reference (a missing piece/room id), never re-validates
+ * placement or the capstone convention; `tools/map-editor`'s
+ * `validateDungeonFloorMap` is the save-time gate for those, matching how
+ * `validateArenaMap` is PvP's own save-time gate rather than an engine-side check.
+ */
+export interface DungeonFloorMap {
+  id: string;
+  rooms: { id: RoomId; pieceId: string; offsetXGrid: number; offsetYGrid: number }[];
+  doors: Door[];
+}
+
+/**
+ * Place an already-authored floor (design/05 "Hand-authored PvE floors") — a
+ * sibling to `placeFloor`, not a variant of it: every door's `passageGrid` is
+ * already fully authored, so there is no PRNG draw here at all (unlike
+ * `placeFloor`'s `pickDoorAnchor`). Resolves each room's `pieceId` against
+ * `library` (throws if missing — fail loud, matches `generateFloor`'s own
+ * missing-capstone check) and computes each non-entrance room's `entranceGrid`
+ * from whichever connecting door reaches it FIRST in `doors` array order (same
+ * "first door wins" tie-break `placeFloor` already uses for a fork's merge
+ * room), inset into the room along whichever axis the door's passage is
+ * narrower on (`entranceFromDoor` below) — generalizing `ENTRANCE_INSET_GRID`'s
+ * existing west-only inset, which only worked because a generated floor's spine
+ * is always west→east; a hand-authored floor's doors can sit on any of a room's
+ * four walls, matching PvP's own map-editor door tool. `rooms[0]`'s own
+ * `entranceGrid` instead comes from its own authored player spawn point (or a
+ * size/2 fallback) — the same "first room reads its own spawn" rule
+ * `placeFloor` uses, generalized to an arbitrary (not-necessarily-zero)
+ * `offsetYGrid` since a hand-authored entrance room need not sit at the origin.
+ * Returns the exact same `{placed, doors}` shape `placeFloor` does, so
+ * `buildFloorGeometry` and every system downstream of it (`DoorSystem`,
+ * `RoomBuilder`, `EventReactor`, the minimap adapter) need zero changes.
+ */
+export function placeAuthoredFloor(
+  map: DungeonFloorMap,
+  library: readonly RoomPiece[],
+): { placed: PlacedRoom[]; doors: Door[] } {
+  if (map.rooms.length === 0) throw new Error(`placeAuthoredFloor: '${map.id}' has no rooms`);
+
+  const placed: PlacedRoom[] = map.rooms.map((r) => {
+    const piece = library.find((p) => p.id === r.pieceId);
+    if (!piece) throw new Error(`placeAuthoredFloor: '${map.id}' room '${r.id}' references unknown piece '${r.pieceId}'`);
+    return { id: r.id, piece, offsetXGrid: r.offsetXGrid, offsetYGrid: r.offsetYGrid, entranceGrid: { x: 0, y: 0 } };
+  });
+
+  const byId = new Map(placed.map((r) => [r.id, r] as const));
+  const first = placed[0]!;
+  const entranceSet = new Set<RoomId>([first.id]); // first.entranceGrid is set below, from its own spawn, never from a door
+
+  for (const door of map.doors) {
+    const a = byId.get(door.roomA);
+    const b = byId.get(door.roomB);
+    if (!a || !b) {
+      throw new Error(`placeAuthoredFloor: '${map.id}' door references unknown room ('${door.roomA}'/'${door.roomB}')`);
+    }
+    for (const target of [b, a]) {
+      if (entranceSet.has(target.id)) continue;
+      target.entranceGrid = entranceFromDoor(target, door.passageGrid);
+      entranceSet.add(target.id);
+    }
+  }
+
+  const sp = first.piece.spawns.player[0];
+  first.entranceGrid = sp
+    ? { x: first.offsetXGrid + sp.x, y: first.offsetYGrid + sp.y }
+    : { x: first.offsetXGrid + ENTRANCE_INSET_GRID, y: first.offsetYGrid + first.piece.sizeGrid.h / 2 };
+
+  return { placed, doors: map.doors.slice() };
+}
+
+/** A point just inside `room`, off `passageGrid`'s door — generalizes
+ * `pickDoorAnchor`'s spine-only west-inset convention to an arbitrary wall. The
+ * passage's narrower dimension identifies which axis to inset along (a
+ * vertical passage — narrower in X — sits on an east/west wall, so the inset is
+ * along X; a horizontal passage sits on a north/south wall, so the inset is
+ * along Y); whichever side of `room`'s own center the passage falls on picks
+ * the inset direction (west vs east, or north vs south). Ties (a square
+ * passage, or a center exactly on the room's own center) resolve to the
+ * vertical/west-ish branch — an arbitrary but deterministic choice, same class
+ * as any other tie-break in this module. */
+function entranceFromDoor(room: PlacedRoom, passageGrid: AabbGrid): { x: number; y: number } {
+  const cx = passageGrid.x + passageGrid.w / 2;
+  const cy = passageGrid.y + passageGrid.h / 2;
+  if (passageGrid.w <= passageGrid.h) {
+    const roomCenterX = room.offsetXGrid + room.piece.sizeGrid.w / 2;
+    const x =
+      cx <= roomCenterX ? room.offsetXGrid + ENTRANCE_INSET_GRID : room.offsetXGrid + room.piece.sizeGrid.w - ENTRANCE_INSET_GRID;
+    return { x, y: cy };
+  }
+  const roomCenterY = room.offsetYGrid + room.piece.sizeGrid.h / 2;
+  const y =
+    cy <= roomCenterY ? room.offsetYGrid + ENTRANCE_INSET_GRID : room.offsetYGrid + room.piece.sizeGrid.h - ENTRANCE_INSET_GRID;
+  return { x: cx, y };
 }
 
 /** Draw one door's `passageGrid` between two directly-adjacent rooms (`b` sits

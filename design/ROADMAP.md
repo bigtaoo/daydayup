@@ -7,9 +7,10 @@ shipped-notes underneath it, so a phase section is both the plan and the history
 
 **Current built state (2026-08-05).** `ENGINE_VERSION` **35** (32: ground-weapon pickup is
 click-driven; 33: manual aim removed entirely; 34: co-resident PvE room/door model, engine +
-client rendering; 35: fully-realized branching — see the Room & door model section below);
-1574 tests green across all 7 workspace packages (engine 430 / client 826 / server 167 /
-animator 62 / map-editor 26 / desktop-shell 56 / root build-script 7, `npm run check`) after a
+client rendering; 35: fully-realized branching — see the Room & door model section below;
+same-day map-editor door placement is additive, no version bump);
+1623 tests green across all 7 workspace packages (engine 441 / client 826 / server 167 /
+animator 62 / map-editor 64 / desktop-shell 56 / root build-script 7, `npm run check`) after a
 full client code-review pass
 (2026-08-04, see the Phase 3/4 updates and the Client hardening pass section below) that found
 and closed a real Phase-3 gap (mid-match reconnect was server-ready but never actually wired
@@ -702,12 +703,32 @@ through, and a doors-empty floor; `dungeonRoomStatus` coverage for a stale/out-o
 index (distinct from an unknown roomId entirely). 4 new engine tests (430, was 426), 15
 new client tests (826, was 811) — 1574 total, `tsc --noEmit` clean.
 
-**Not done — real follow-up work, not just polish:**
-- **Map-editor door placement.** The "~5 positions per wall, editor-configurable, not
-  wall-centered" instinct only has a procedural-generation-side implementation
-  (`pickDoorAnchor`'s candidate anchors + PRNG draw). There is no PvE map editor to
-  hand-place a door in yet — `placeFloor`'s spine layout is the only PvE floor
-  authoring path that exists.
+**Map-editor door placement ✅ (2026-08-05)** — closes the last item from the
+original three-item follow-up list (fully-realized branching and the PvE minimap
+adapter above already closed the other two). The "~5 positions per wall,
+editor-configurable, not wall-centered" instinct used to only have a
+procedural-generation-side implementation (`pickDoorAnchor`'s candidate anchors +
+PRNG draw); there is now a real PvE map editor to hand-place a door in. See
+design/05's "Hand-authored PvE floors" subsection for the full shape: a new
+`DungeonFloorMap` content type (analogous to PvP's `ArenaMap`), a new
+`placeAuthoredFloor` sibling to `placeFloor` (`world/dungeon.ts`),
+`DungeonConfig.floorMaps` as the per-floor-index override `SpawnSystem` checks
+before falling back to procedural generation, and a third `tools/map-editor` mode
+("PvE Dungeon Floor") reusing `ArenaCanvas`'s move/pan/zoom/door-connect-tool
+machinery (a "place a fixed-size RoomPiece instance" tool instead of freehand-draw),
+plus a new `validateDungeonFloorMap` save-time gate (piece resolution, no
+overlaps, doors on a real shared wall, reachability from the entrance room, the
+last room being an extraction/boss piece). No `ENGINE_VERSION` bump (no shipped
+config sets `floorMaps`). Verified live in the browser via synthetic event
+dispatch (mode/tool switching, room placement with overlap rejection, drag-move,
+a real door connect, the save-validation gate blocking a bad capstone). **"全部加
+测试" follow-up, same day:** `DungeonFloorCanvas` (the tool's most complex new
+file) had zero dedicated tests, matching `ArenaCanvas`/`RoomCanvas`'s own gap —
+closed instead of extended, via a confirmed-safe "skip `mount()`, drive the real
+private methods directly" technique (see design/05's matching entry for the
+full reasoning) — `DungeonFloorCanvas.test.ts`, 28 tests. 49 new tests total (11
+engine, 38 map-editor), 1623 total across all 7 workspaces, `tsc --noEmit`
+clean.
 
 ---
 
@@ -760,7 +781,7 @@ Phase 3 (co-op/net)     ALL DONE (✅). 3.2 revive/downed engine-side; 3.1 net l
 Phase 4 (PvP)           COMPLETELY DONE (✅ 4.1 through 4.6, design/15, no open items). 8p solo BR decided; team/hostility (ENGINE_VERSION 18) + multi-room broadphase/stitching + zone/EnvironmentSystem + placement win condition + in-arena loot/AI + anti-cheat checkpoints (ENGINE_VERSION 19) + sparse net sync + matchsvc ladder rating all shipped and tested. End-to-end match assembly wired (2026-07-26): mode:'coop'|'pvp' threaded through Matchmaker/ticket/MatchRoom/matchsvc, client ?pvp=1 -> arena EngineConfig (teamId per seat) -> placement gameover screens -> CoopSession.reportResult actually fires (was dead code for coop too) -> checkpoint/ladder settlement. The real ~60-room ArenaMap (arena_prototype_60.json, a concurrent session) is wired into ARENA_CATALOG. buildArenaSpecs' HP-scale/loadout preset is now called from GameState.buildSeat too (ENGINE_VERSION 19->20) — a PvP seat's weapons/maxHp/maxShield come from the scaled arena preset, never the PvE loadout. All browser-verified two-tab, byte-identical. 2026-07-29: the 4.1 "squads/revive reserved interface" is now built too (ENGINE_VERSION 29->30) — pre-formed party invite (server/src/PartyService.ts) + squad-chunked Matchmaker/teamId + squad placement/gated bandage revive + a PartyScreen lobby UI; see the Phase 4 update above. 2026-08-04: fixed a real squad-win scoring bug (RunOutcome compared seat identity instead of team membership, so most of a winning squad saw a DEFEAT screen) — see the Phase 4 update above.
 Phase 5 (presentation)  parallelizable throughout
 Client hardening pass   DONE (✅ 2026-08-04) — full client/src code review (182 files), fixed in place: PartyScreen/LoginScreen staleness guards, weaponSkins preload/fallback resilience, net/transport.ts dead-socket + swallowed-handler-exception fixes, TextInputOverlay blur teardown, Slider pointercancel, Rig bone-order validation, main.ts/main.wechat.ts boot() error boundary, meta/store.ts materialBank validation, auth.ts non-JSON error guard, theme.ts English-policy fix. See the Client hardening pass section above.
-Room & door model       ENGINE + CLIENT RENDERING DONE (✅ 2026-08-04, ENGINE_VERSION 34) — PvE floors co-resident + door-connected (placeFloor/carveDoorGaps/buildFloorGeometry, new DoorSystem: activation/lock-unlock/force-regroup), replacing the old one-room swap. HudView.ts fixed to compile against the new schema. Client room rendering shipped same day: door_{locked,open}_raw.png loaded and wired onto RoomBuilder's per-door Sprite (reactive lock/unlock in place via updateDoors(), no full rebuild), EventReactor reacts to force_regroup with a local-player camera snap. Fully-realized branching shipped 2026-08-05 (ENGINE_VERSION 35) — a real fork-and-reconverge diamond of sibling rooms, needing zero client changes (DoorSystem/RoomBuilder/EventReactor already topology-agnostic). PvE minimap adapter shipped same day — FloorProgress deleted, PvE now shares PvP's own Minimap widget via dungeonToArenaMap/dungeonRoomStatus (minimapLayout.ts). STILL OPEN: map-editor door placement. See the Room & door model section above.
+Room & door model       DONE (✅ 2026-08-04/05, ENGINE_VERSION 34→35) — PvE floors co-resident + door-connected (placeFloor/carveDoorGaps/buildFloorGeometry, new DoorSystem: activation/lock-unlock/force-regroup), replacing the old one-room swap. HudView.ts fixed to compile against the new schema. Client room rendering shipped same day: door_{locked,open}_raw.png loaded and wired onto RoomBuilder's per-door Sprite (reactive lock/unlock in place via updateDoors(), no full rebuild), EventReactor reacts to force_regroup with a local-player camera snap. Fully-realized branching shipped 2026-08-05 (ENGINE_VERSION 35) — a real fork-and-reconverge diamond of sibling rooms, needing zero client changes (DoorSystem/RoomBuilder/EventReactor already topology-agnostic). PvE minimap adapter shipped same day — FloorProgress deleted, PvE now shares PvP's own Minimap widget via dungeonToArenaMap/dungeonRoomStatus (minimapLayout.ts). Map-editor door placement shipped same day (no engine version bump) — DungeonFloorMap/placeAuthoredFloor/DungeonConfig.floorMaps + a third tools/map-editor mode ("PvE Dungeon Floor") + validateDungeonFloorMap, closing the last item of the original three-item follow-up list. "全部加测试" follow-up added DungeonFloorCanvas.test.ts (28 tests, previously zero coverage on the tool's most complex new file). See the Room & door model section above.
 Phase 6 (accounts)      DONE (✅) — real username/password login (SQLite via node:sqlite), never required to play. Bound to PvP ladder rating (accountId in the signed ticket -> MatchRoom.seatAccounts -> ladderReport, guest/bot fallback preserved) and Forge MetaState (best-effort /account/meta sync). Independent of Phases 1-5; third-party OAuth reserved, not built.
 Phase 7 (i18n)          DONE (✅) — client/src/i18n/: en.ts canonical + zh.ts translation, both compile-time key-checked (Translations<typeof en>, TranslationKey). Every screen migrated to t(); Settings gained a language toggle backed by SettingsState.locale. Independent of Phases 1-6; enum/data-driven values (damage type, weapon kind, rarity/ids) deliberately left untranslated.
 Documentation           DONE (✅ 2026-08-02) — all 19 design docs + every README audited against the code; stale top-of-file Status blocks rewritten (12/10/client/art READMEs and this file's own header), design/README index completed, engine/README written, art/ UUID filenames + duplicate files cleaned up. Docs-only, no code change.

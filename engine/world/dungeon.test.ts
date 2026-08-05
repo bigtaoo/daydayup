@@ -13,7 +13,9 @@ import {
   curveAt,
   generateFloor,
   placeFloor,
+  placeAuthoredFloor,
   type DungeonConfig,
+  type DungeonFloorMap,
 } from '@dd/engine/world/dungeon';
 import { EMBER_ROOMS } from '@dd/engine/world/rooms/ember';
 import { roomGeometry, type RoomPiece } from '@dd/engine/content/rooms';
@@ -534,5 +536,137 @@ describe('buildFloorGeometry', () => {
     const insideHallWallXFp = toFpGrid(door.passageGrid.x + door.passageGrid.w / 2 - 0.5);
     const farYGrid = door.passageGrid.y > HALL.sizeGrid.h / 2 ? 1.6 : HALL.sizeGrid.h - 1.6;
     expect(coveredAt(walls, insideHallWallXFp, toFpGrid(farYGrid))).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// placeAuthoredFloor (design/05 "Hand-authored PvE floors", 2026-08-05) — a
+// sibling to placeFloor, driven directly with a hand-built DungeonFloorMap
+// fixture (no Prng at all: unlike placeFloor, there is nothing to draw).
+// ---------------------------------------------------------------------------
+
+const NO_SPAWN: RoomPiece = {
+  id: 'test_no_spawn',
+  sizeGrid: { w: 10, h: 10 },
+  solids: [],
+  spawns: { player: [], enemy: [] },
+  exits: [],
+};
+
+describe('placeAuthoredFloor', () => {
+  it('places every room at its exact authored offset and passes doors through byte-unchanged', () => {
+    const map: DungeonFloorMap = {
+      id: 'test_floor',
+      rooms: [
+        { id: 'a', pieceId: 'ember_hall', offsetXGrid: 0, offsetYGrid: 0 },
+        { id: 'b', pieceId: 'ember_narrow', offsetXGrid: 20, offsetYGrid: 0 },
+        { id: 'c', pieceId: 'ember_extraction', offsetXGrid: 44, offsetYGrid: 0 },
+      ],
+      doors: [
+        { roomA: 'a', roomB: 'b', passageGrid: { x: 19, y: 2, w: 2, h: 4 } },
+        { roomA: 'b', roomB: 'c', passageGrid: { x: 43, y: 1, w: 2, h: 4 } },
+      ],
+    };
+    const { placed, doors } = placeAuthoredFloor(map, EMBER_ROOMS);
+    expect(placed.map((p) => ({ id: p.id, x: p.offsetXGrid, y: p.offsetYGrid, piece: p.piece.id }))).toEqual([
+      { id: 'a', x: 0, y: 0, piece: 'ember_hall' },
+      { id: 'b', x: 20, y: 0, piece: 'ember_narrow' },
+      { id: 'c', x: 44, y: 0, piece: 'ember_extraction' },
+    ]);
+    expect(doors).toEqual(map.doors); // no PRNG draw — the authored passageGrid IS the door
+  });
+
+  it("the entrance room (rooms[0])'s entranceGrid comes from its own authored player spawn, offset by its placement", () => {
+    const map: DungeonFloorMap = {
+      id: 'f',
+      rooms: [{ id: 'a', pieceId: 'ember_hall', offsetXGrid: 5, offsetYGrid: 3 }],
+      doors: [],
+    };
+    const { placed } = placeAuthoredFloor(map, EMBER_ROOMS);
+    const sp = HALL.spawns.player[0]!;
+    expect(placed[0]!.entranceGrid).toEqual({ x: 5 + sp.x, y: 3 + sp.y });
+  });
+
+  it('falls back to an inset/size-half point when the entrance room authored no player spawn', () => {
+    const map: DungeonFloorMap = {
+      id: 'f',
+      rooms: [{ id: 'a', pieceId: 'test_no_spawn', offsetXGrid: 4, offsetYGrid: 6 }],
+      doors: [],
+    };
+    const { placed } = placeAuthoredFloor(map, [NO_SPAWN]);
+    // 1.5 === ENTRANCE_INSET_GRID (an internal, unexported module constant).
+    expect(placed[0]!.entranceGrid).toEqual({ x: 4 + 1.5, y: 6 + NO_SPAWN.sizeGrid.h / 2 });
+  });
+
+  it("a non-entrance room's entranceGrid insets along X off a vertical (east/west-wall) door", () => {
+    const map: DungeonFloorMap = {
+      id: 'f',
+      rooms: [
+        { id: 'a', pieceId: 'ember_hall', offsetXGrid: 0, offsetYGrid: 0 },
+        { id: 'b', pieceId: 'ember_narrow', offsetXGrid: 20, offsetYGrid: 0 }, // b sits east of a
+      ],
+      doors: [{ roomA: 'a', roomB: 'b', passageGrid: { x: 19, y: 2, w: 2, h: 4 } }], // vertical: w <= h
+    };
+    const { placed } = placeAuthoredFloor(map, EMBER_ROOMS);
+    // Door center (20, 4) sits on b's WEST wall (20 <= b's own center x, 20+24/2=32) —
+    // inset 1.5 grid units in from that wall, y unchanged from the passage's own center.
+    expect(placed[1]!.entranceGrid).toEqual({ x: 20 + 1.5, y: 4 });
+  });
+
+  it("a non-entrance room's entranceGrid insets along Y off a horizontal (north/south-wall) door", () => {
+    const map: DungeonFloorMap = {
+      id: 'f',
+      rooms: [
+        { id: 'a', pieceId: 'ember_cross', offsetXGrid: 0, offsetYGrid: 0 },
+        { id: 'b', pieceId: 'ember_cross', offsetXGrid: 0, offsetYGrid: 16 }, // b sits south of a
+      ],
+      doors: [{ roomA: 'a', roomB: 'b', passageGrid: { x: 6, y: 15, w: 4, h: 2 } }], // horizontal: w > h
+    };
+    const { placed } = placeAuthoredFloor(map, EMBER_ROOMS);
+    // Door center (8, 16) sits on b's NORTH wall (16 <= b's own center y, 16+16/2=24) —
+    // inset 1.5 grid units down from that wall, x unchanged from the passage's own center.
+    expect(placed[1]!.entranceGrid).toEqual({ x: 8, y: 16 + 1.5 });
+  });
+
+  it('a room with multiple incoming doors takes its entranceGrid from whichever comes FIRST in doors array order', () => {
+    const map: DungeonFloorMap = {
+      id: 'f',
+      rooms: [
+        { id: 'a', pieceId: 'ember_hall', offsetXGrid: 0, offsetYGrid: 0 },
+        { id: 'b', pieceId: 'ember_pillars', offsetXGrid: 20, offsetYGrid: 0 },
+        { id: 'c', pieceId: 'ember_pillars', offsetXGrid: 20, offsetYGrid: 20 },
+        { id: 'merge', pieceId: 'ember_extraction', offsetXGrid: 38, offsetYGrid: 10 },
+      ],
+      doors: [
+        { roomA: 'b', roomB: 'merge', passageGrid: { x: 37, y: 12, w: 2, h: 4 } }, // FIRST — wins
+        { roomA: 'c', roomB: 'merge', passageGrid: { x: 37, y: 25, w: 2, h: 4 } }, // ignored for entrance
+      ],
+    };
+    const { placed } = placeAuthoredFloor(map, EMBER_ROOMS);
+    const merge = placed.find((p) => p.id === 'merge')!;
+    expect(merge.entranceGrid).toEqual({ x: 38 + 1.5, y: 14 });
+  });
+
+  it('throws (fail loud) when a room references an unknown pieceId', () => {
+    const map: DungeonFloorMap = {
+      id: 'f',
+      rooms: [{ id: 'a', pieceId: 'does_not_exist', offsetXGrid: 0, offsetYGrid: 0 }],
+      doors: [],
+    };
+    expect(() => placeAuthoredFloor(map, EMBER_ROOMS)).toThrow(/unknown piece/i);
+  });
+
+  it('throws (fail loud) when a door references an unknown room id', () => {
+    const map: DungeonFloorMap = {
+      id: 'f',
+      rooms: [{ id: 'a', pieceId: 'ember_hall', offsetXGrid: 0, offsetYGrid: 0 }],
+      doors: [{ roomA: 'a', roomB: 'ghost', passageGrid: { x: 0, y: 0, w: 1, h: 1 } }],
+    };
+    expect(() => placeAuthoredFloor(map, EMBER_ROOMS)).toThrow(/unknown room/i);
+  });
+
+  it('throws (fail loud) on an empty rooms list', () => {
+    const map: DungeonFloorMap = { id: 'f', rooms: [], doors: [] };
+    expect(() => placeAuthoredFloor(map, EMBER_ROOMS)).toThrow(/no rooms/i);
   });
 });
