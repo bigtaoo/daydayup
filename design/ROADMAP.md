@@ -10,11 +10,16 @@ click-driven; 33: manual aim removed entirely; 34: co-resident PvE room/door mod
 client rendering; 35: fully-realized branching — see the Room & door model section below;
 same-day map-editor door placement, the `layout: 'graph2d'` real-2D-layout follow-up, AND the
 "graph2d content" pass that switches `EMBER_DUNGEON` to it are all additive, no version bump);
-2627 tests green across all 7 workspace packages (engine 546 / client 1085 / server 186 /
-animator 444 / map-editor 260 / png-pipeline 20 / desktop-shell 79 / root build-script 7,
-`npm run check`) after a full test-coverage audit pass (2026-08-05, see the Test coverage audit
-pass section below) that closed ~50 previously-untested files and found zero dead/obsolete
-tests to remove, plus, before that, a full client code-review pass
+2636 tests green across all 7 workspace packages (engine 546 / client 1085 / server 186 /
+animator 444 / map-editor 260 / png-pipeline 20 / desktop-shell 81 / root build-script 14,
+`npm run check`, verified 2026-08-05 — desktop-shell/root run 2/7 higher than the count the
+test-coverage audit below originally reported, a pre-existing miscount in that pass rather
+than anything introduced since) after closing a real gap that same audit pass had flagged
+and left open: `onRequestSave` (tools/desktop-shell/src/preload.ts) now catches a
+*synchronously*-thrown save callback too, not just a rejecting one, so `nw:save-ack` always
+fires. That audit pass itself (see the Test coverage audit pass section below) closed ~50
+previously-untested files and found zero dead/obsolete tests to remove; before that, a full
+client code-review pass
 (2026-08-04, see the Phase 3/4 updates and the Client hardening pass section below) that found
 and closed a real Phase-3 gap (mid-match reconnect was server-ready but never actually wired
 from the client) plus a real Phase-4 squad-scoring bug, alongside a dozen smaller correctness/
@@ -1003,7 +1008,10 @@ unlike `EditorProjectIO.loadEditorBlob`'s equivalent path — a `.tao` re-import
 any per-bone length customization. `tools/desktop-shell/src/preload.ts`'s `onRequestSave` was
 also found to send its save-ack even when the save callback's promise rejects, without ever
 catching that rejection (an unhandled-rejection, not a hang) — spun off as a separate follow-up
-rather than folded into this pass.
+rather than folded into this pass. **Follow-up (✅ 2026-08-05):** fixed — `onRequestSave` now
+catches both a rejecting promise and a synchronously-thrown callback (the latter a second,
+related gap found while adding the fix's test), logs via `console.error`, and always sends
+the ack. `TaoExporter.restoreAnimationData`'s bug is still open.
 
 `npm run check` (typecheck + full test suite, all 7 workspaces) is clean before and after.
 
