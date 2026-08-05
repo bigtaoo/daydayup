@@ -5,7 +5,7 @@ import { Panel, ToastQueue } from './widgets';
 import { nearbyWeaponPickups } from './pickupProximity';
 import { WeaponPickupPrompt } from './WeaponPickupPrompt';
 import { Minimap, type MinimapPlayer } from './Minimap';
-import { FloorProgress } from './FloorProgress';
+import { dungeonRoomStatus, dungeonToArenaMap, roomStatus } from './minimapLayout';
 import { PlayerCard, AllyRow } from './PlayerCard';
 import { WeaponCard } from './WeaponCard';
 import { StatChip } from './StatChip';
@@ -84,16 +84,19 @@ export class HudView {
   readonly allyRow = new AllyRow();
   readonly downedBanner = new DownedBanner();
   readonly chips = new Map<ChipKey, StatChip>();
-  readonly floorProgress = new FloorProgress();
   // Ground weapon-pickup panel (design/03, ENGINE_VERSION 32) — lists every nearby
   // floor weapon (icon + name); tapping one is the collect action itself. Replaces the
   // old single-nearest "ground compare card" + tap-INTERACT gesture.
   readonly weaponPickupPrompt = new WeaponPickupPrompt();
+  // Shared PvP/PvE room-graph minimap (design/10, PvE wiring 2026-08-05) — its own
+  // visibility is driven independently of the rest of the HUD (zoneEnabled/
+  // dungeonRooms, not phase), so it's mounted directly into `layers.ui`, not `view`
+  // (see build()). Box size is fixed, so it can construct as a plain field.
+  readonly minimap = new Minimap({ w: 140, h: 140 });
 
   private statsPanel!: Panel;
   private readonly dividers = new Graphics();
   private toasts!: ToastQueue;
-  private minimap!: Minimap;
   private panelW = 0;
   private panelH = 0;
 
@@ -115,7 +118,6 @@ export class HudView {
       this.playerCard.view,
       this.weaponCard.view,
       ...[...this.chips.values()].map((c) => c.view),
-      this.floorProgress.view,
       this.allyRow.view,
       this.toasts.view,
       this.weaponPickupPrompt.view,
@@ -124,12 +126,10 @@ export class HudView {
     // NOTE: `view` itself is NOT added to `layers.ui` here — the caller (Game) mounts
     // it inside its own visibility-toggled `hudView` container.
 
-    // PvP minimap (design/10 "room progress") — hidden unless state.zoneEnabled
-    // (update). Top-right, inset enough to keep the WeChat capsule corner clear
-    // (design/10 layout note). A sibling of `view`, not a child — its own visibility
-    // is driven independently of the rest of the HUD (zoneEnabled, not phase), so it
-    // is mounted directly into `layers.ui`.
-    this.minimap = new Minimap({ w: 140, h: 140 });
+    // Minimap (design/10 "room progress") — hidden unless zoneEnabled/PvE has rooms
+    // placed (update()). Top-right, inset enough to keep the WeChat capsule corner
+    // clear (design/10 layout note). A sibling of `view`, not a child — see the field
+    // doc comment above for why it's mounted directly into `layers.ui`.
     layers.ui.addChild(this.minimap.view);
 
     this.reposition(screenPx);
@@ -166,7 +166,6 @@ export class HudView {
       const stage = zone?.stage ?? 0;
       this.chips.get('stage')!.set(t('hud.chips.stage'), zone?.escalation ? `${stage}+${zone.escalation}` : `${stage}`);
       this.chips.get('alive')!.set(t('hud.chips.alive'), `${s.players.filter((pl) => pl.alive).length}/${s.players.length}`);
-      this.floorProgress.update(0, -1); // hides — this is the PvP arena's own Minimap's job
     } else {
       // Dungeon progress (ROADMAP 1.3; co-resident room/door model, design/05
       // 2026-08-04): floor / room within floor, plus the banked bag. `s.dungeonRooms`
@@ -174,19 +173,13 @@ export class HudView {
       // room" is now per-player (`roomId`), not a single global cursor, so it's looked
       // up via `dungeonRoomIndexById`. `-1` (roomId not yet resolved to any placed
       // room — before the floor places, or the one-tick activation lag right after)
-      // reads the same as the old "-1 before the first room loads," so
-      // `computeFloorProgress`'s own -1 handling (below) needs no change.
+      // is clamped to "room 1" for the chip text below.
       const rooms = s.dungeonRooms.length;
       const roomIndex = p?.roomId !== undefined ? s.dungeonRoomIndexById.get(p.roomId) ?? -1 : -1;
       this.chips.get('floor')!.set(t('hud.chips.floor'), `${s.floorIndex + 1}/${totalFloorCount(s)}`);
       this.chips.get('room')!.set(t('hud.chips.room'), `${Math.max(1, roomIndex + 1)}/${rooms}`);
       this.chips.get('enemies')!.set(t('hud.chips.enemies'), `${s.enemies.length}`);
       this.chips.get('banked')!.set(t('hud.chips.banked'), `${totalBanked(s)}`);
-      // A real PvE minimap (design/10) — a progress TRACK, not a spatial map (see
-      // FloorProgress's own doc comment for why PvE's data shape doesn't support the
-      // PvP room-graph Minimap's kind of widget). 0 stages (flat EngineConfig.floors
-      // mode) hides it, same as the PvP branch above.
-      this.floorProgress.update(rooms, roomIndex);
     }
     this.chips.get('score')!.set(t('hud.chips.score'), `${ctx.score}`);
     this.chips.get('buffs')!.set(t('hud.chips.buffs'), `${buffCount}`);
@@ -210,16 +203,26 @@ export class HudView {
     this.updateWeaponPickupPrompt(s, p);
     this.toasts.update(dt);
 
-    // PvP room-graph minimap (design/10) — no-op/hidden for PvE, same convention as the
-    // engine-side ZoneSystem/EnvironmentSystem (ROADMAP 4.2d).
+    // Shared room-graph minimap (design/10 "room progress"; PvE wiring 2026-08-05,
+    // retiring the old FloorProgress track — a linear index couldn't represent a
+    // fork's untaken sibling, the spatial map can). PvP reads state.arenaMap/zone
+    // directly; PvE converts its placed-room/door data via dungeonToArenaMap/
+    // dungeonRoomStatus (minimapLayout.ts) into the same ArenaMap shape.
+    const players: MinimapPlayer[] = s.players.map((pl, i) => ({
+      roomId: pl.roomId,
+      alive: pl.alive,
+      isLocal: i === ctx.localOwner,
+    }));
     if (s.zoneEnabled && s.arenaMap) {
       this.minimap.view.visible = true;
-      const players: MinimapPlayer[] = s.players.map((pl, i) => ({
-        roomId: pl.roomId,
-        alive: pl.alive,
-        isLocal: i === ctx.localOwner,
-      }));
-      this.minimap.update(s.arenaMap, s.zone, players);
+      this.minimap.update(s.arenaMap, (id) => roomStatus(s.zone, id), players);
+    } else if (s.dungeonRooms.length > 0) {
+      this.minimap.view.visible = true;
+      this.minimap.update(
+        dungeonToArenaMap(s.dungeonRooms, s.dungeonDoors),
+        (id) => dungeonRoomStatus(s.dungeonRoomRuntime, s.dungeonRoomIndexById, id),
+        players,
+      );
     } else {
       this.minimap.view.visible = false;
     }
@@ -250,10 +253,6 @@ export class HudView {
     for (const chip of this.chips.values()) if (chip.view.visible) chip.view.position.y = chipRowY;
     y += StatChip.HEIGHT;
 
-    if (this.floorProgress.view.visible) {
-      this.floorProgress.view.position.set(PAD, y + 6);
-      y += 6 + 12;
-    }
     if (showAlly) {
       this.allyRow.view.position.set(PAD, y + 8);
       y += 8 + AllyRow.HEIGHT;
@@ -265,7 +264,6 @@ export class HudView {
           this.playerCard.estimatedWidth(),
           this.weaponCard.estimatedWidth(),
           chipsW,
-          this.floorProgress.view.visible ? this.floorProgress.estimatedWidth() : 0,
           showAlly ? this.allyRow.estimatedWidth() : 0,
         ),
       ) + PAD;

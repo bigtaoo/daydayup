@@ -6,8 +6,8 @@ import { estimateMonoWidth } from './textWidth';
  * One in-run stat, as a pill: a tinted icon, a small caps label, and the value under it
  * (design/10 HUD widget kit). Replaces a segment of the old single monospace info line
  * — the label survives so nothing became a guess-the-icon puzzle (the same reason
- * `FloorProgress` bakes its meaning into the dot shapes rather than dropping the
- * legend), but the icon + colour is what makes the row scannable mid-fight.
+ * `Minimap` encodes room status as color rather than requiring a separate legend),
+ * but the icon + colour is what makes the row scannable mid-fight.
  *
  * Pure presentation, like every other widget here: it takes already-formatted strings.
  * Width is derived from `estimateMonoWidth`, never `Text.width` — see textWidth.ts.

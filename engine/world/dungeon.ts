@@ -12,18 +12,22 @@
  * touch GameState. Wiring a generated, placed floor into a live run is
  * `SpawnSystem`'s job.
  *
- * Two layouts (design/05 reward-choice structure): `'linear'` is a single ordered
- * room sequence (one candidate per stage); `'branching'` offers `branchFactor`
- * DISTINCT candidate rooms per normal stage. **Branching resolves at generation
- * time now, via one extra `roomgenPrng` draw per stage — not a live player choice
- * (design/05, 2026-08-04)**: the old resolution read player facing at "the moment
- * of arrival" into a stage, but under the co-resident model every room in the
- * floor is generated and placed before any player has acted, so there is no such
- * moment left to read from. A linear config draws exactly the same ONE `nextInt`
- * per stage as before (byte-identical to every pre-branching replay); a branching
- * config draws that same call PLUS one more to pick among the `branchFactor`
- * candidates. A fully-realized "walk through whichever door" branching (real
- * sibling rooms, a real in-run choice) is a deferred follow-up, not this pass.
+ * Two layouts: `'linear'` is a single ordered room sequence, one room per normal
+ * stage. `'branching'` (design/05, 2026-08-05 "fully-realized branching") gets
+ * **one real fork-and-reconverge diamond per floor**: a PRNG-chosen interior
+ * normal-stage transition splits into `branchFactor` DISTINCT, same-width sibling
+ * rooms placed side-by-side (real `PlacedRoom`s, a real walk-through-the-door
+ * choice), which reconverge into the very next stage's room (an ordinary room or
+ * the capstone) with no separate merge-room concept needed. Superseded prior
+ * behavior (ENGINE_VERSION 34): branching used to resolve at generation time via a
+ * second `roomgenPrng.nextInt(branchFactor)` draw per stage that just perturbed the
+ * linear pick by a wraparound offset into the same pool — no sibling ever existed
+ * as data. See the `FloorStage`/`generateFloor`/`placeFloor` doc comments below for
+ * the concrete draw sequence and placement geometry. Only one fork per floor
+ * (no fork-into-fork chaining) and siblings must share their pool piece's exact
+ * width (so their shared east boundary lines up with one merge-room X, reusing
+ * `pickDoorAnchor`'s adjacency assumption unmodified) — both deliberate scope cuts,
+ * not data-model limits (`Door`/`PlacedRoom` already support an arbitrary graph).
  */
 import type { Prng } from '../math/prng';
 import { roomGeometry, type AabbGrid, type RoomPiece } from '../content/rooms';
@@ -61,13 +65,27 @@ export interface DungeonConfig {
   difficultyCurve: CurveSpec;
 }
 
-/** One floor's generated room sequence, already fully resolved — branching has
- * already picked ONE candidate per stage (module doc), so there is no further
- * choice left to make. The last room is always the capstone: `extractionPieceId`
- * on every floor except the last, `bossPieceId` on the last (design/05 "the last
- * floor's boss room IS its extraction room"). */
+/** One resolved stage: normally a single `RoomPiece`; a `RoomPiece[]` (length
+ * always `>= 2`) only at a `'branching'` floor's one fork stage — real, distinct
+ * sibling rooms `placeFloor` places side-by-side (module doc "fully-realized
+ * branching"), not a resolved single pick. Deliberately NOT `readonly RoomPiece[]`
+ * here — TS's `Array.isArray` type guard doesn't narrow a `readonly T[]` union
+ * member out of the non-array branch (a `readonly T[] extends any[]` conditional
+ * check is false), which would leave every `Array.isArray(stage) ? ... : stage`
+ * site still seeing the array type in the `RoomPiece` branch. */
+export type FloorStage = RoomPiece | RoomPiece[];
+
+/** One floor's generated room sequence, already fully resolved — at most one
+ * stage is a real fork (module doc), so `placeFloor` never has to make its own
+ * content choice, only a placement one. The last stage is always the capstone:
+ * `extractionPieceId` on every floor except the last, `bossPieceId` on the last
+ * (design/05 "the last floor's boss room IS its extraction room"). */
 export interface FloorLayout {
   floorIndex: number; // 0-based
+  stages: readonly FloorStage[];
+  /** Flattened, one-piece-per-stage view for simple/back-compat consumers (HUD
+   * stage count, non-branching callers): the fork stage's first/primary candidate.
+   * Always `stages.map(s => Array.isArray(s) ? s[0] : s)`. */
   rooms: readonly RoomPiece[];
 }
 
@@ -75,9 +93,16 @@ export interface FloorLayout {
  * Generate one floor deterministically from `roomgenPrng` (design/06/08: same
  * seed + same PRNG draw sequence → identical layout on every client). Draws, in
  * order: (1) how many rooms this floor has, within `roomsPerFloor` — ONE `nextInt`
- * call; (2) one normal ROOM per room-before-the-capstone — one `nextInt` call
- * each, in order, PLUS (branching only) one more `nextInt` to resolve which of the
- * `branchFactor` candidates is actually taken (module doc).
+ * call; (2) for `'branching'` only, with at least 2 normal stages, ONE more
+ * `nextInt` to pick which INTERIOR normal-stage transition forks (never stage 0,
+ * so the run's spawn stays a single ordinary room — module doc); (3) one normal
+ * ROOM per room-before-the-capstone — one `nextInt(pool.length)` call each, in
+ * order, in the SAME stream position a `'linear'` config would use, PLUS, only at
+ * the chosen fork stage, up to `branchFactor - 1` further `nextInt` draws to pick
+ * that many more DISTINCT, same-width siblings from the pool (clamped down if the
+ * pool doesn't have that many — a graceful degrade, not a throw: fewer eligible
+ * siblings just means a smaller (or no) fork, same as `branchFactor` itself already
+ * clamps to the pool size).
  *
  * Throws (a load-time validation, design/09 "fail loud, never at use") if the
  * tag pool is empty or the required capstone piece id is missing from `library`.
@@ -97,25 +122,41 @@ export function generateFloor(
   const roomCount = config.roomsPerFloor.min + roomgenPrng.nextInt(span);
   const normalCount = Math.max(0, roomCount - 1); // the capstone is the final room
 
-  // branchFactor > 1 only for 'branching' — never more candidates than the pool has.
-  const branchFactor = config.layout === 'branching'
-    ? Math.max(1, Math.min(config.branchFactor ?? 2, pool.length))
-    : 1;
+  // The floor's one fork stage (module doc) — never stage 0, only when there's
+  // room for both a fork point AND a reconvergence point among normal stages.
+  const forkStageIndex = config.layout === 'branching' && normalCount >= 2
+    ? 1 + roomgenPrng.nextInt(normalCount - 1)
+    : -1;
 
-  const rooms: RoomPiece[] = [];
+  const stages: FloorStage[] = [];
   for (let i = 0; i < normalCount; i++) {
-    const base = roomgenPrng.nextInt(pool.length); // the ONE draw every layout costs
-    const branchPick = branchFactor > 1 ? roomgenPrng.nextInt(branchFactor) : 0; // branching-only 2nd draw
-    rooms.push(pool[(base + branchPick) % pool.length]!);
+    const base = roomgenPrng.nextInt(pool.length); // the ONE draw every stage costs
+    const basePiece = pool[base]!;
+    if (i === forkStageIndex) {
+      const branchFactor = Math.max(1, config.branchFactor ?? 2);
+      const sameWidth = pool.filter((p) => p.id !== basePiece.id && p.sizeGrid.w === basePiece.sizeGrid.w);
+      const extra = Math.min(branchFactor - 1, sameWidth.length);
+      const siblings: RoomPiece[] = [basePiece];
+      const remaining = sameWidth.slice(); // local copy — splice is array-order, never Map/Set iteration
+      for (let j = 0; j < extra; j++) {
+        const pick = roomgenPrng.nextInt(remaining.length);
+        siblings.push(remaining[pick]!);
+        remaining.splice(pick, 1); // never drawn twice
+      }
+      stages.push(siblings.length > 1 ? siblings : basePiece);
+    } else {
+      stages.push(basePiece);
+    }
   }
 
   const isLastFloor = floorIndex === config.floorCount - 1;
   const capstoneId = isLastFloor ? config.bossPieceId : config.extractionPieceId;
   const capstone = library.find((p) => p.id === capstoneId);
   if (!capstone) throw new Error(`generateFloor: missing capstone RoomPiece '${capstoneId}'`);
-  rooms.push(capstone);
+  stages.push(capstone);
 
-  return { floorIndex, rooms };
+  const rooms = stages.map((s) => (Array.isArray(s) ? s[0]! : (s as RoomPiece)));
+  return { floorIndex, stages, rooms };
 }
 
 // ---------------------------------------------------------------------------
@@ -138,6 +179,11 @@ const DOOR_ANCHOR_COUNT = 5;
 /** How far inside a room, off its entry door, the force-regroup landing point /
  * a mid-floor room's default spawn sits. */
 const ENTRANCE_INSET_GRID = 1.5;
+/** Vertical gap between two stacked fork siblings (module doc "fully-realized
+ * branching") — keeps their AABBs from touching/overlapping; same order of
+ * magnitude as `DOOR_EDGE_MARGIN_GRID`, just a distinct constant since it governs
+ * room-to-room spacing, not a door-to-wall-edge margin. */
+const BRANCH_GAP_GRID = 2;
 
 /** One room placed into a floor's shared coordinate space. `id` is synthesized as
  * `${piece.id}#${stageIndex}` — a `RoomPiece` can be drawn more than once per
@@ -154,50 +200,104 @@ export interface PlacedRoom {
 }
 
 /**
- * Place a floor's already-resolved room sequence (`generateFloor`'s output) along
- * a single west→east spine, each room touching the next (design/05 "a strict
- * room-to-room spine" — the MVP placement shape; a real 2D graph layout is
- * deferred, same as fully-realized branching). Every normal `ember.ts` piece
- * already authors both `west`+`east` exits and the capstone pieces author only
- * `west`, so no content re-authoring is needed to chain them this way — this
- * throws (fail loud, design/09) if some future piece breaks that assumption.
+ * Place a floor's already-resolved stage sequence (`generateFloor`'s output)
+ * along a west→east spine (design/05 "a strict room-to-room spine" — the MVP
+ * placement shape; a real 2D graph layout stays deferred). At most one stage is a
+ * real fork (module doc "fully-realized branching"): its siblings are placed
+ * side-by-side (same X, stacked in Y) directly east of the previous stage's room,
+ * and each connects onward to the next stage's room, reconverging with no
+ * separate merge-room concept needed. Every normal `ember.ts` piece already
+ * authors both `west`+`east` exits and the capstone pieces author only `west`, so
+ * no content re-authoring is needed to chain them this way — this throws (fail
+ * loud, design/09) if some future piece breaks that assumption.
  *
- * For each adjacent pair, `pickDoorAnchor` draws ONE `roomgenPrng` value to place
- * a real, non-centered `Door` — continuing the SAME stream `generateFloor` already
- * drew from, so a floor's room selection AND its door placement are one
- * reproducible draw sequence together.
+ * For each door, `pickDoorAnchor` draws ONE `roomgenPrng` value to place a real,
+ * non-centered `Door` — continuing the SAME stream `generateFloor` already drew
+ * from, so a floor's room selection AND its door placement are one reproducible
+ * draw sequence together.
  */
 export function placeFloor(
-  rooms: readonly RoomPiece[],
+  stages: readonly FloorStage[],
   roomgenPrng: Prng,
 ): { placed: PlacedRoom[]; doors: Door[] } {
-  if (rooms.length === 0) throw new Error('placeFloor: empty room list');
+  if (stages.length === 0) throw new Error('placeFloor: empty stage list');
 
   const placed: PlacedRoom[] = [];
+  const doors: Door[] = [];
   let cursorXGrid = 0;
-  for (let i = 0; i < rooms.length; i++) {
-    const piece = rooms[i]!;
-    const id: RoomId = `${piece.id}#${i}`;
-    if (i > 0) {
-      const prev = placed[i - 1]!;
-      if (!prev.piece.exits.some((e) => e.edge === 'east')) {
-        throw new Error(`placeFloor: '${prev.id}' (stage ${i - 1}) has no east exit to connect to stage ${i}`);
-      }
-      if (!piece.exits.some((e) => e.edge === 'west')) {
+  let prevExit: PlacedRoom[] = []; // rooms whose east side is unconnected, waiting for the next stage
+
+  for (let i = 0; i < stages.length; i++) {
+    const stage = stages[i]!;
+    const pieces = Array.isArray(stage) ? stage : [stage];
+
+    if (pieces.length === 1) {
+      const piece = pieces[0]!;
+      const id: RoomId = `${piece.id}#${i}`;
+      if (prevExit.length > 0 && !piece.exits.some((e) => e.edge === 'west')) {
         throw new Error(`placeFloor: '${id}' (stage ${i}) has no west exit to connect to stage ${i - 1}`);
       }
-    }
-    placed.push({ id, piece, offsetXGrid: cursorXGrid, offsetYGrid: 0, entranceGrid: { x: 0, y: 0 } });
-    cursorXGrid += piece.sizeGrid.w;
-  }
+      const room: PlacedRoom = { id, piece, offsetXGrid: cursorXGrid, offsetYGrid: 0, entranceGrid: { x: 0, y: 0 } };
+      placed.push(room);
+      cursorXGrid += piece.sizeGrid.w;
 
-  const doors: Door[] = [];
-  for (let i = 1; i < placed.length; i++) {
-    const a = placed[i - 1]!;
-    const b = placed[i]!;
-    const passageGrid = pickDoorAnchor(a, b, roomgenPrng);
-    doors.push({ roomA: a.id, roomB: b.id, passageGrid });
-    b.entranceGrid = { x: b.offsetXGrid + ENTRANCE_INSET_GRID, y: passageGrid.y + passageGrid.h / 2 };
+      let entranceSet = false;
+      for (const prev of prevExit) {
+        if (!prev.piece.exits.some((e) => e.edge === 'east')) {
+          throw new Error(`placeFloor: '${prev.id}' has no east exit to connect to stage ${i}`);
+        }
+        const passageGrid = pickDoorAnchor(prev, room, roomgenPrng);
+        doors.push({ roomA: prev.id, roomB: room.id, passageGrid });
+        // A merge room can receive more than one incoming door (reconvergence,
+        // module doc); its entranceGrid is set from whichever is computed first
+        // (deterministic — draw order), same "pick one, document it" choice as
+        // any other arbitrary-but-consistent tie-break in this module.
+        if (!entranceSet) {
+          room.entranceGrid = { x: room.offsetXGrid + ENTRANCE_INSET_GRID, y: passageGrid.y + passageGrid.h / 2 };
+          entranceSet = true;
+        }
+      }
+      prevExit = [room];
+    } else {
+      // A real fork (module doc): `pieces.length >= 2`, all sharing one width
+      // (generateFloor's own contract) so they share one east boundary X with the
+      // upcoming merge room, reusing pickDoorAnchor's adjacency assumption as-is.
+      if (prevExit.length !== 1) {
+        throw new Error(`placeFloor: fork stage ${i} must follow a single-room stage (no fork-into-fork chaining)`);
+      }
+      const width = pieces[0]!.sizeGrid.w;
+      if (pieces.some((p) => p.sizeGrid.w !== width)) {
+        throw new Error(`placeFloor: fork stage ${i}'s siblings must share one width`);
+      }
+      const hub = prevExit[0]!;
+      if (!hub.piece.exits.some((e) => e.edge === 'east')) {
+        throw new Error(`placeFloor: '${hub.id}' has no east exit to connect to fork stage ${i}`);
+      }
+
+      const gap = BRANCH_GAP_GRID;
+      const totalH = pieces.reduce((sum, p) => sum + p.sizeGrid.h, 0) + gap * (pieces.length - 1);
+      const hubCenterY = hub.offsetYGrid + hub.piece.sizeGrid.h / 2;
+      let cursorY = hubCenterY - totalH / 2;
+      const siblings: PlacedRoom[] = [];
+      for (const piece of pieces) {
+        if (!piece.exits.some((e) => e.edge === 'west') || !piece.exits.some((e) => e.edge === 'east')) {
+          throw new Error(`placeFloor: fork sibling '${piece.id}' (stage ${i}) needs both west+east exits`);
+        }
+        const id: RoomId = `${piece.id}#${i}`;
+        siblings.push({ id, piece, offsetXGrid: cursorXGrid, offsetYGrid: cursorY, entranceGrid: { x: 0, y: 0 } });
+        cursorY += piece.sizeGrid.h + gap;
+      }
+
+      for (const sib of siblings) {
+        const passageGrid = pickDoorAnchor(hub, sib, roomgenPrng);
+        doors.push({ roomA: hub.id, roomB: sib.id, passageGrid });
+        sib.entranceGrid = { x: sib.offsetXGrid + ENTRANCE_INSET_GRID, y: passageGrid.y + passageGrid.h / 2 };
+      }
+
+      placed.push(...siblings);
+      cursorXGrid += width;
+      prevExit = siblings; // the NEXT stage connects from every sibling — the reconvergence
+    }
   }
 
   const first = placed[0]!;

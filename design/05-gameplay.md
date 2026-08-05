@@ -57,7 +57,7 @@ Loadout (bring up to 2 weapons; none → auto pistol)
 
 Supersedes `09`'s "automatic teleport to the next room's spawn, never walk through a door" note: a floor's rooms are now a real door graph, not a strict single-room sequence.
 
-✅ **Engine shipped 2026-08-04 (`ENGINE_VERSION` 34, see `09` for the schema):** everything below is live — `world/dungeon.ts` `placeFloor`/`carveDoorGaps`/`buildFloorGeometry` place a generated floor's rooms along a west→east spine (the MVP placement shape; a real 2D graph layout stays a follow-up) and stitch them into one co-resident world; the new `DoorSystem` (step 11.5) owns activation, lock/unlock, and force-regroup. One deliberate scope note not obvious from the bullets below: `layout:'branching'` now resolves its extra candidate at **generation time** via one more `roomgenPrng` draw, not a live "walk through whichever door" choice — that moment no longer exists once every room pre-exists before any player acts; a fully-realized real-sibling-rooms branching is a deferred follow-up, same as the spine-only placement.
+✅ **Engine shipped 2026-08-04 (`ENGINE_VERSION` 34, see `09` for the schema):** everything below is live — `world/dungeon.ts` `placeFloor`/`carveDoorGaps`/`buildFloorGeometry` place a generated floor's rooms along a west→east spine (the MVP placement shape; a real 2D graph layout stays a follow-up) and stitch them into one co-resident world; the new `DoorSystem` (step 11.5) owns activation, lock/unlock, and force-regroup.
 
 ✅ **Client rendering shipped 2026-08-04 (same-day follow-up):** `HudView.ts`'s floor/room
 line was fixed first (reads `roomId` via `dungeonRoomIndexById`, no more single global
@@ -68,9 +68,52 @@ below), so the real gap was doors — they now render as a real `Sprite` fixture
 `render/environmentSprites.ts`), excluded from the generic wall fill by reference identity,
 texture/tint-swappable in place on `door_locked`/`door_unlocked` (no full room rebuild).
 `EventReactor` also reacts to `force_regroup` (`Scene.player.snap()` so the camera cuts to
-the teleport instead of panning). See `ROADMAP.md`'s "Room & door model" section for the
-full file list. **Still open:** PvE minimap adapter (`10`'s data-shape note), fully-realized
-branching, map-editor door placement.
+the teleport instead of panning).
+
+✅ **Fully-realized branching shipped 2026-08-05 (`ENGINE_VERSION` 35):** `layout:'branching'`
+no longer resolves its candidate at generation time via a wraparound-offset PRNG perturbation
+(the scope cut both passes above deferred) — a `'branching'` floor now gets **one real
+fork-and-reconverge diamond**: `world/dungeon.ts generateFloor` draws which interior
+normal-stage transition forks (never the very first room, so spawn stays a single ordinary
+room), then resolves that stage to `branchFactor` DISTINCT, same-width sibling `RoomPiece`s
+(clamped to however many the pool actually offers — a graceful degrade to a plain single room,
+not a throw, when the pool has no same-width match). `placeFloor` places those siblings
+**side-by-side** (same X, stacked in Y with a gap, centered on the fork point's own vertical
+center) directly east of the fork-point room, and connects each sibling's own door onward
+into the very next stage's room (an ordinary room or the capstone) — the reconvergence, with
+no separate merge-room concept needed in the data model. This is a real walk-through-the-door
+choice now: both siblings are real, simultaneously-live `PlacedRoom`s with their own
+`DoorRuntime`/combat-lock/force-regroup state, exercised through the unmodified `DoorSystem`/
+`RoomBuilder`/`EventReactor` (all already topology-agnostic — this pass needed zero client
+changes). Deliberate scope cuts, not data-model limits (`Door`/`PlacedRoom` already support an
+arbitrary graph, same as PvP's `ArenaMap`): only one fork per floor (no fork-into-fork
+chaining), and a fork's siblings must share their pool piece's exact width (so their shared
+east boundary lines up with one merge-room X, reusing `pickDoorAnchor`'s existing adjacency
+assumption unmodified). No shipped content uses `'branching'` yet (`EMBER_DUNGEON` stays
+`'linear'`, untouched) — authoring same-width `EMBER_ROOMS` variants to make a fork visible in
+the shipped biome is a content task, not part of this pass. The known side effect it
+introduced — the client's `FloorProgress` HUD track computed done/current/upcoming purely
+from `dungeonRooms` array index, which wasn't meaningful once a floor has siblings — is
+resolved by the minimap adapter below, same-day.
+
+✅ **PvE minimap adapter shipped 2026-08-05 (same-day follow-up):** `FloorProgress`/
+`floorProgressMath.ts` are deleted — PvE now shares the exact same `Minimap` widget PvP
+already had (`client/src/game/ui/Minimap.ts`), via two new pure functions in
+`minimapLayout.ts`: `dungeonToArenaMap` converts `PlacedRoom[]`/`DoorRuntime[]` into the
+same `ArenaMap` shape `computeMinimapLayout` already consumes (`Door` needs no remapping —
+it's the same type PvP uses; room offsets are normalized to a non-negative origin, since a
+fork's siblings can have negative `offsetYGrid`), and `dungeonRoomStatus` extends the
+existing `safe`/`closing`/`danger` tint with a new `unvisited` bucket — exactly the state an
+untaken fork sibling needs, closing the `FloorProgress` gap named above rather than just
+working around it. `Minimap.update()` no longer hardcodes PvP's zone semantics: it takes a
+`statusOf` resolver the caller supplies, so the one Pixi widget stays mode-agnostic. Also
+shows other online players' rooms in PvE now (reusing `Minimap`'s existing player-dot
+rendering as-is), which `FloorProgress` never could (it only ever showed the local
+player's own linear position). No engine changes, no `ENGINE_VERSION` bump — purely a
+client-side adapter over data the engine already exposed.
+
+See `ROADMAP.md`'s "Room & door model" section for the full file list. **Still open:**
+map-editor door placement.
 
 - **A floor's rooms are all simultaneously live in sim, matching PvP's co-resident `ArenaMap`** — not generated on entry. The tick advances uniformly across every room regardless of who is rendering what (determinism needs the same input → same result everywhere, not "no one is watching so skip it"); what presence gates is enemy AI *behavior*, not the tick. A room that no player has entered yet ("not activated") still ticks forward but runs no walk/attack logic on its enemies — they sit inert until a player activates the room. A cleared room never respawns enemies, including on backtrack.
 - **Doors connect rooms bidirectionally and are freely walkable within a floor.** This reuses `content/arenas.ts`'s `Door{roomA, roomB, passageGrid}` shape rather than inventing a separate PvE type — a PvE floor is the same "room graph with explicit door adjacency" primitive PvP already has. Backtracking to an earlier room in the same floor is allowed, at any time, no penalty.

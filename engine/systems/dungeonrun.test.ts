@@ -373,11 +373,16 @@ describe('Dungeon mode — WaveScript timing (atTick / spacingTicks), room-local
 });
 
 describe('Dungeon mode — branching layout resolves at generation time, not via player input', () => {
-  // design/05 (2026-08-04): the old chooseBranch read player facing "at the moment of
-  // arrival" — that moment no longer exists once every room is placed before any
-  // player acts. Deep resolution-mechanics coverage lives in dungeon.test.ts; this is
-  // just the integration smoke test that the full engine still produces a valid,
-  // deterministic floor.
+  // design/05 (2026-08-04, updated 2026-08-05 "fully-realized branching"): the old
+  // chooseBranch read player facing "at the moment of arrival" — that moment no
+  // longer exists once every room is placed before any player acts. This fixture's
+  // roomsPerFloor min=max=2 → normalCount=1, BELOW the 2-normal-stage minimum a real
+  // fork needs (a fork point AND a reconvergence point), so it still exercises the
+  // "no eligible fork slot" degrade path under the new algorithm too — a real
+  // sibling fork, exercised end-to-end, is the dedicated describe block below. Deep
+  // resolution-mechanics coverage (both the degrade and the real-fork case) lives in
+  // dungeon.test.ts; this is just the integration smoke test that the full engine
+  // still produces a valid, deterministic floor.
   const BR_LIB: RoomPiece[] = [
     { id: 'br_a', tags: ['b'], sizeGrid: { w: 20, h: 16 }, solids: [], spawns: { player: [{ x: 2, y: 8 }], enemy: [] }, exits: [{ edge: 'east' }] },
     { id: 'br_b', tags: ['b'], sizeGrid: { w: 22, h: 14 }, solids: [], spawns: { player: [{ x: 2, y: 7 }], enemy: [] }, exits: [{ edge: 'east' }] },
@@ -404,6 +409,119 @@ describe('Dungeon mode — branching layout resolves at generation time, not via
     expect(['br_a', 'br_b']).toContain(a1.state.dungeonRooms[0]!.piece.id);
     expect(a1.state.dungeonRooms[1]!.piece.id).toBe('br_boss');
     expect(a1.state.dungeonRooms.map((r) => r.piece.id)).toEqual(a2.state.dungeonRooms.map((r) => r.piece.id));
+  });
+});
+
+describe('Dungeon mode — a real fork places real sibling rooms end-to-end (design/05, 2026-08-05)', () => {
+  // A pool of exactly TWO same-width, same-height, enemy-carrying pieces — with
+  // roomsPerFloor min=max=3 (normalCount=2), forkStageIndex = 1 + nextInt(1) = 1
+  // ALWAYS, for every seed, and the fork's sameWidth partner search always finds
+  // exactly the other pool piece, so this floor is ALWAYS
+  // [hub, [sibA, sibB], capstone] regardless of seed — no seed search needed. Both
+  // pool pieces carry an enemy (whichever one is drawn for the hub gets cleared in
+  // the test below before proceeding, exactly like doors.test.ts's own "clear the
+  // guard" convention) so combat-lock is exercised on every room, not just siblings.
+  const FK_A: RoomPiece = {
+    id: 'fk_a', tags: ['fk'], sizeGrid: { w: 20, h: 20 }, solids: [],
+    spawns: { player: [{ x: 2, y: 10 }], enemy: [{ x: 10, y: 10, type: 'basic' }] },
+    exits: [{ edge: 'west' }, { edge: 'east' }],
+  };
+  const FK_B: RoomPiece = {
+    id: 'fk_b', tags: ['fk'], sizeGrid: { w: 20, h: 20 }, solids: [],
+    spawns: { player: [{ x: 2, y: 10 }], enemy: [{ x: 10, y: 10, type: 'basic' }] },
+    exits: [{ edge: 'west' }, { edge: 'east' }],
+  };
+  const FK_CAP: RoomPiece = {
+    id: 'fk_cap', role: 'boss', sizeGrid: { w: 14, h: 42 }, solids: [],
+    spawns: { player: [{ x: 7, y: 21 }], enemy: [] }, exits: [{ edge: 'west' }],
+  };
+  const FORK_DUN: DungeonConfig = {
+    biomeId: 'fk', nameKey: 'fk', floorCount: 1, roomsPerFloor: { min: 3, max: 3 },
+    pieceTags: ['fk'], layout: 'branching', branchFactor: 2,
+    extractionPieceId: 'fk_cap', bossPieceId: 'fk_cap', difficultyCurve: { base: 1, perFloor: 0 },
+  };
+  const FORK_CFG: EngineConfig = {
+    seed: 7, worldW: 640, worldH: 640, waves: [],
+    players: [{}, {}], // trigger (owner 0) + bystander, same shape as doors.test.ts's force-regroup fixture
+    dungeon: { config: FORK_DUN, library: [FK_A, FK_B, FK_CAP] },
+  };
+
+  it('places 4 rooms / 4 doors (a diamond, not a rooms.length-1 chain)', () => {
+    const eng = createGameEngine(FORK_CFG);
+    eng.step([idle(1)]);
+    const s = eng.state;
+    expect(s.dungeonRooms.length).toBe(4); // hub, 2 siblings, capstone
+    expect(s.dungeonDoors.length).toBe(4); // hub→sib0, hub→sib1, sib0→cap, sib1→cap
+    // Siblings share the hub's east boundary X and are stacked apart in Y.
+    const [hub, sibA, sibB, cap] = s.dungeonRooms;
+    expect(sibA!.offsetXGrid).toBe(hub!.offsetXGrid + hub!.piece.sizeGrid.w);
+    expect(sibB!.offsetXGrid).toBe(sibA!.offsetXGrid);
+    expect(sibA!.offsetYGrid).not.toBe(sibB!.offsetYGrid);
+    expect(cap!.offsetXGrid).toBe(sibA!.offsetXGrid + sibA!.piece.sizeGrid.w);
+  });
+
+  it('combat-lock is per-sibling: entering one sibling never locks the untaken sibling\'s door', () => {
+    const eng = createGameEngine(FORK_CFG);
+    const s = eng.state;
+    eng.step([idle(1)]); // floor places
+    eng.step([idle(2)]); // hub activates → its own authored enemy spawns → hub's forward doors lock
+    const [hub, sibA, sibB, cap] = s.dungeonRooms;
+    expect(s.dungeonRoomRuntime[0]!.hasLiveEnemy).toBe(true);
+
+    s.enemies.length = 0; // clear the hub's guard (doors.test.ts's own "clear the guard" convention)
+    eng.step([idle(3)]); // DoorSystem sees zero live enemies → hub's doors unlock
+
+    teleportPlayerInto(eng, sibA!); // walk through the now-open hub→sibA door
+    eng.step([idle(4)]); // sibA's roomId confirmed → activates → its own enemy spawns → locks
+
+    expect(s.dungeonRoomRuntime[1]!.activated).toBe(true);
+    expect(s.dungeonRoomRuntime[1]!.hasLiveEnemy).toBe(true);
+    expect(s.dungeonRoomRuntime[2]!.activated).toBe(false); // sibB never entered
+    expect(s.dungeonRoomRuntime[2]!.hasLiveEnemy).toBe(false);
+
+    const doorLockedBetween = (aId: string, bId: string) =>
+      s.dungeonDoors.find((d) => (d.door.roomA === aId && d.door.roomB === bId) || (d.door.roomA === bId && d.door.roomB === aId))!.locked;
+    expect(doorLockedBetween(hub!.id, sibA!.id)).toBe(true); // sibA's own doors locked
+    expect(doorLockedBetween(sibA!.id, cap!.id)).toBe(true);
+    expect(doorLockedBetween(hub!.id, sibB!.id)).toBe(false); // sibB's own doors untouched
+    expect(doorLockedBetween(sibB!.id, cap!.id)).toBe(false);
+  });
+
+  it('force-regroup pulls the bystander into the entered sibling, never the untaken one', () => {
+    const eng = createGameEngine(FORK_CFG);
+    const s = eng.state;
+    eng.step([idle(1)]); // floor places
+    eng.step([idle(2)]); // hub activates, locks
+    s.enemies.length = 0;
+    eng.step([idle(3)]); // hub unlocks
+    const [, sibA, sibB] = s.dungeonRooms;
+    const bystanderRoomBefore = s.players[1]!.roomId;
+
+    teleportPlayerInto(eng, sibA!);
+    const events = eng.step([idle(4)]); // sibA activates → force-regroup fires
+
+    expect(s.players[1]!.roomId).toBe(sibA!.id); // pulled into the entered sibling
+    expect(s.players[1]!.roomId).not.toBe(bystanderRoomBefore);
+    expect(s.players[1]!.roomId).not.toBe(sibB!.id); // never the untaken one
+    expect(events.some((e) => e.type === 'force_regroup' && e.roomId === sibA!.id)).toBe(true);
+  });
+
+  it('walking from either sibling into the capstone works — the reconvergence', () => {
+    const eng = createGameEngine(FORK_CFG);
+    const s = eng.state;
+    eng.step([idle(1)]);
+    eng.step([idle(2)]);
+    s.enemies.length = 0;
+    eng.step([idle(3)]);
+    const [, sibA, , cap] = s.dungeonRooms;
+    teleportPlayerInto(eng, sibA!);
+    eng.step([idle(4)]); // sibA activates, locks
+    s.enemies.length = 0;
+    eng.step([idle(5)]); // sibA unlocks
+
+    teleportPlayerInto(eng, cap!);
+    eng.step([idle(6)]);
+    expect(s.dungeonRoomRuntime[3]!.activated).toBe(true);
   });
 });
 

@@ -5,7 +5,7 @@ import type { Graphics } from 'pixi.js';
  * state out as one monospace run-on line ("Floor 1/3   Room 1/2   Enemies 1 …"), which
  * read as debug output rather than UI; every stat is now an icon-led chip and these are
  * the icons. Drawn with `Graphics` rather than shipped as art so a chip can be tinted
- * per stat and stays crisp at any DPR — the same reason `Pickup`/`FloorProgress` draw
+ * per stat and stays crisp at any DPR — the same reason `Pickup`/`Minimap` draw
  * their own silhouettes.
  *
  * Each glyph is drawn inside the box (cx±r, cy±r) and MUST stay inside it — `StatChip`

@@ -75,7 +75,9 @@ src/
 │  ├─ match/          how a run is configured and connected (arenaCatalog, matchConfig,
 │  │                  offlineConfig, pvpConfig, onlineConnect, gameQueryParams)
 │  ├─ ui/             HUD + widget kit (HudView composing PlayerCard/WeaponCard/
-│  │                  StatChip/FloorProgress/Minimap/DownedBanner, plus the shared widgets)
+│  │                  StatChip/Minimap/DownedBanner, plus the shared widgets — Minimap
+│  │                  is shared by both PvP and PvE, reading either state.arenaMap or a
+│  │                  dungeonToArenaMap-converted floor via minimapLayout.ts)
 │  │                  — pure-math modules sit beside their views so they stay testable
 │  │                  without a canvas (textWidth is the only sizing input the HUD
 │  │                  has; nothing here may call Text.width/getBounds)

@@ -455,8 +455,28 @@ import { BRAD_FULL } from './math/trig';
  * code needed there). `ExtractionSystem`'s dungeon-mode branch no longer reads
  * `state.wavesExhausted` (never set in dungeon mode anymore) — the checkpoint is a
  * direct check against the floor's capstone room: `activated && !hasLiveEnemy`.
+ *
+ * v35: fully-realized branching (design/05, 2026-08-05 — the "Room & door model"
+ * follow-up v34 itself named as deferred). `layout:'branching'` no longer resolves
+ * a stage's room via a second `roomgenPrng.nextInt(branchFactor)` draw per stage
+ * that just perturbed the linear pick by a wraparound offset into the same pool —
+ * a floor now gets at most ONE real fork-and-reconverge diamond: real, distinct,
+ * same-width sibling `PlacedRoom`s placed side-by-side, each with its own door, a
+ * real walk-through-the-door choice, reconverging into the next stage's room.
+ * `world/dungeon.ts generateFloor`'s draw sequence for `'branching'` changes
+ * shape accordingly — ONE `nextInt` to pick which interior normal-stage
+ * transition forks (never stage 0), then per stage the SAME single
+ * `nextInt(pool.length)` a `'linear'` config already draws, plus, only at the
+ * chosen fork stage, up to `branchFactor - 1` further draws for the extra
+ * siblings. `FloorLayout.rooms` (flattened, one piece per stage) stays for
+ * back-compat callers; the new `stages: readonly FloorStage[]` field (`RoomPiece
+ * | readonly RoomPiece[]`) is what `placeFloor` now consumes. No shipped content
+ * uses `'branching'` yet (`EMBER_DUNGEON` is `'linear'`, untouched, byte-
+ * identical), so no real replay breaks — this bumps purely because the module's
+ * own documented draw-sequence contract for `'branching'` changed again, same
+ * precedent v34's own point (2) already established for this exact layout.
  */
-export const ENGINE_VERSION = 34;
+export const ENGINE_VERSION = 35;
 
 // ── Two-pool health tuning (design/07; final values are 07 "to design") ──────────
 // Whole ticks @30Hz. Shield regen is an idle timer, not a heal: after taking ANY

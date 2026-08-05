@@ -44,8 +44,8 @@ vi.mock('../fx/filters', () => ({
 
 // Children are appended in this fixed order in the constructor — indexing into
 // `.children` is the only way in from the outside, since healthBar is private (same
-// convention as TouchControlsView.test.ts/FloorProgress.test.ts: no public API, and
-// screenshots aren't available in this environment — see the daydayup memory notes).
+// convention as TouchControlsView.test.ts: no public API, and screenshots aren't
+// available in this environment — see the daydayup memory notes).
 const enum Child { StatusAura, SkinView, WeaponGfx, HealthBar }
 
 function healthBarOf(a: Actor): Graphics {

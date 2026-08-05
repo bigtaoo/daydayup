@@ -5,11 +5,12 @@ closed loop the design docs describe, and the running record of how each phase a
 landed. Phases are written top-to-bottom in dependency order; each one keeps its dated
 shipped-notes underneath it, so a phase section is both the plan and the history.
 
-**Current built state (2026-08-04).** `ENGINE_VERSION` **34** (32: ground-weapon pickup is
+**Current built state (2026-08-05).** `ENGINE_VERSION` **35** (32: ground-weapon pickup is
 click-driven; 33: manual aim removed entirely; 34: co-resident PvE room/door model, engine +
-client rendering — see the Room & door model section below); 1537 tests green across all 7
-workspace packages (engine 407 / client 812 / server 167 / animator 62 / map-editor 26 /
-desktop-shell 56 / root build-script 7, `npm run check`) after a full client code-review pass
+client rendering; 35: fully-realized branching — see the Room & door model section below);
+1574 tests green across all 7 workspace packages (engine 430 / client 826 / server 167 /
+animator 62 / map-editor 26 / desktop-shell 56 / root build-script 7, `npm run check`) after a
+full client code-review pass
 (2026-08-04, see the Phase 3/4 updates and the Client hardening pass section below) that found
 and closed a real Phase-3 gap (mid-match reconnect was server-ready but never actually wired
 from the client) plus a real Phase-4 squad-scoring bug, alongside a dozen smaller correctness/
@@ -109,7 +110,7 @@ The core PvE loop (floors → extraction → bank) is fully designed (05/09) and
 - **1.4 ✅ Extraction rooms** (05) — DONE. `EngineConfig.floors?` (the flat, non-dungeon mode — same single arena reused every floor, still supported for configs that opt into it) OR `EngineConfig.dungeon` (the room-generated mode, see 1.3) opts a run into the checkpoint loop; `ExtractionSystem` (step 12) resolves the per-floor checkpoint (`wavesExhausted && enemies.length===0`) into `EXTRACT` or `DESCEND` (in dungeon mode, regenerates the next floor's rooms; in flat mode, reloads the next floor's flat wave list). Death forfeits the floor buffer for free (a run-ending death simply never reaches the bank step). The last floor auto-resolves as `EXTRACT` with no gesture (design/05 "the boss room IS its extraction room"). **The gesture itself was rewritten 2026-08-02** (see that entry below): originally a sustained-INTERACT hold=EXTRACT/tap=DESCEND (mirroring the revive channel), now two explicit one-shot `Button.CONFIRM_EXTRACT`/`CONFIRM_DESCEND` presses driven by a world-space portal + popup, `ENGINE_VERSION` 31.
 - **1.5 ✅ Materials carry-out** (05/09) — DONE, additive. `state.floorMaterials` (this floor's un-banked buffer, filled by `PickupSystem`) merges into `state.bankedMaterials` (the run's only carry-out) on every `EXTRACT`/`DESCEND`. `rollDrop` gained an optional depth `tier` param (`DeathDropsSystem` passes `state.floorIndex`) so a material pickup/event carries a rolled instance tier — first-pass "material quality shift per floor" (a straight `tier = floorIndex` identity curve; `DungeonConfig.materialTierByDepth` remains an unused schema field for a future non-identity curve).
 
-**Phase 1 status: fully closed, including live multi-room floors.** A run goes floors → checkpoint → EXTRACT-or-DESCEND → bank, with materials as the only carry-out. Both modes are real and tested: `EngineConfig.floors` (flat, single-arena-reused-per-floor, still available for configs that want it) and `EngineConfig.dungeon` (generated multi-room floors via `generateFloor`/`RoomPiece`/`placeFloor`, `'branching'` layout, `WaveScript` timing) — the latter is what the real client actually uses for every live run. Nothing from 1.2/1.3 is unwired or demo-only. **2026-08-04 update:** "room-to-room traversal" here no longer means the original sequential swap-on-clear — see the "Room & door model" section below (design/05, `ENGINE_VERSION` 34): a floor's rooms are now co-resident and door-connected, freely walkable/backtrackable, with combat-derived door locking and force-regroup. Client-side room rendering for this is still open (same section).
+**Phase 1 status: fully closed, including live multi-room floors.** A run goes floors → checkpoint → EXTRACT-or-DESCEND → bank, with materials as the only carry-out. Both modes are real and tested: `EngineConfig.floors` (flat, single-arena-reused-per-floor, still available for configs that want it) and `EngineConfig.dungeon` (generated multi-room floors via `generateFloor`/`RoomPiece`/`placeFloor`, `'branching'` layout, `WaveScript` timing) — the latter is what the real client actually uses for every live run. Nothing from 1.2/1.3 is unwired or demo-only. **2026-08-04 update:** "room-to-room traversal" here no longer means the original sequential swap-on-clear — see the "Room & door model" section below (design/05, `ENGINE_VERSION` 34): a floor's rooms are now co-resident and door-connected, freely walkable/backtrackable, with combat-derived door locking and force-regroup. **2026-08-05 update:** `'branching'` layout now places a real fork-and-reconverge diamond of sibling rooms instead of resolving at generation time (`ENGINE_VERSION` 35, same section).
 
 ## Phase 2 — Close the meta loop ✅ (2026-07-24)
 
@@ -639,17 +640,69 @@ force-regrouped player's view snaps (`prevX===curX`) to the room's exact entranc
 new file this pass didn't already cover on the first pass ("全部加测试" follow-up). 812
 client tests (was 796, +16), `tsc --noEmit` clean.
 
+**Fully-realized branching ✅ (2026-08-05, `ENGINE_VERSION` 34→35):** closes the deliberate
+scope cut named above. `layout:'branching'` no longer resolves its candidate at generation
+time via a wraparound-offset PRNG perturbation on the same linear pick — a `'branching'`
+floor now gets **one real fork-and-reconverge diamond**: `generateFloor` draws which interior
+normal-stage transition forks (never stage 0, so spawn stays a single ordinary room), then
+resolves that stage to `branchFactor` distinct, same-width sibling `RoomPiece`s (clamped down
+to a plain single room, no throw, when the pool has no same-width match — same graceful-degrade
+convention `branchFactor` itself already had). `placeFloor` places those siblings side-by-side
+(same X, stacked in Y with a gap, centered on the fork point's own vertical center) and
+connects each one's own door onward into the next stage's room (ordinary room or capstone) —
+the reconvergence, no separate merge-room concept needed. New `FloorStage = RoomPiece |
+RoomPiece[]` type; `FloorLayout` gained `stages` (what `placeFloor` now consumes) alongside the
+existing flattened `rooms` (kept for back-compat). Needed **zero client changes** —
+`DoorSystem`/`RoomBuilder`/`EventReactor` were already topology-agnostic (confirmed by reading
+all three before writing any code), so combat-lock/force-regroup/rendering all work on a real
+fork for free. Scope cuts, not data-model limits (`Door`/`PlacedRoom` already support an
+arbitrary graph, same as PvP's `ArenaMap`): only one fork per floor (no fork-into-fork
+chaining), siblings must share one width. `ENGINE_VERSION` bumped (34→35) purely because the
+module's own documented `'branching'` draw-sequence contract changed again — no shipped
+content uses `'branching'` yet (`EMBER_DUNGEON` stays `'linear'`), so no real replay breaks.
+19 new/updated engine tests (426, was 407), `tsc --noEmit` clean across all 7 workspaces (1556
+total tests, was 1537). One known side effect, left for the minimap-adapter item below to fix:
+the client's `FloorProgress` HUD track computes done/current/upcoming purely from `dungeonRooms`
+array index, which isn't meaningful once a floor has siblings — a latent inaccuracy with no live
+impact today, since no shipped content forks yet.
+
+**PvE minimap adapter ✅ (2026-08-05, same-day follow-up):** decided with the user against
+the "not a replacement" framing this section used to have — `FloorProgress`/
+`floorProgressMath.ts` are deleted; PvE now shares the exact same `Minimap` widget PvP
+already had. Two new pure functions in `minimapLayout.ts`: `dungeonToArenaMap(rooms,
+doors)` converts `PlacedRoom[]`/`DoorRuntime[]` into the same `ArenaMap` shape
+`computeMinimapLayout` already consumes (`Door` needs no remapping — same type PvP uses;
+room offsets normalized to a non-negative origin, since a fork's siblings can have
+negative `offsetYGrid`), and `dungeonRoomStatus(runtimes, indexById, roomId)` extends the
+existing `RoomStatus` (`safe`/`closing`/`danger`) with a new `unvisited` bucket — exactly
+the state an untaken fork sibling needs, closing (not just working around) the
+branching-floor inaccuracy the previous entry above documented. `Minimap.update()`'s
+signature changed from `(map, zone, players)` to `(map, statusOf, players)` — the caller
+now supplies the room-tint resolver, so the one shared widget stays mode-agnostic instead
+of hardcoding PvP's zone semantics. PvE also shows other online players' rooms now
+(reusing `Minimap`'s existing player-dot rendering as-is), which `FloorProgress` never
+could. No engine changes, no `ENGINE_VERSION` bump. 4 client files touched
+(`minimapLayout.ts`/`Minimap.ts`/`HudView.ts` + 3 one-line stale-comment fixes citing the
+deleted widget), 2 test files deleted, `minimapLayout.test.ts`/`HudView.test.ts` gained
+new/updated coverage, `tsc --noEmit` clean across all 7 workspaces.
+
+**"全部加测试" follow-up, same day:** closed the coverage gaps a first read-through left —
+`Minimap.ts` itself had never had a dedicated test file (only the pure `minimapLayout.ts`
+functions it wraps were tested, and this pass changed its own public `update()` signature),
+so it gained one (`Minimap.test.ts`, 12 tests) reading Pixi's internal
+`context.instructions` log directly (no renderer attached, same class of workaround
+`getLocalBounds()` already is elsewhere in this repo, just precise enough to assert exact
+fill color/shape) to verify room tinting per `RoomStatus` (including `unvisited`), door
+lines, player-dot presence/color/radius, and redraw-clears-stale-state. Also added:
+`placeFloor` fail-loud coverage for a fork's hub/sibling missing an exit, and direct
+entranceGrid-tie-break assertions (a merge room's entrance is set from whichever
+connecting door is processed first); `dungeonToArenaMap` coverage for negative-offsetX
+normalization (symmetric with the Y case a fork actually produces), multi-solid pass-
+through, and a doors-empty floor; `dungeonRoomStatus` coverage for a stale/out-of-range
+index (distinct from an unknown roomId entirely). 4 new engine tests (430, was 426), 15
+new client tests (826, was 811) — 1574 total, `tsc --noEmit` clean.
+
 **Not done — real follow-up work, not just polish:**
-- **PvE minimap.** `computeMinimapLayout`/`Minimap` are wired for PvP's `ArenaMap` only.
-  PvE's data is now structurally similar (`PlacedRoom[]`/`DoorRuntime[]`, real x/y +
-  door adjacency) but a distinct type — needs an adapter (or a small overload), not an
-  engine change. `FloorProgress`'s linear track stays as PvE's *primary* progress
-  widget either way (design/05's spine layout genuinely doesn't need a full spatial map
-  the way PvP's 60-room arena does) — a minimap would be a "also show teammates'
-  rooms" addition on top, not a replacement.
-- **Fully-realized branching.** Still resolves at generation time via PRNG (this
-  pass's own deliberate scope cut) rather than a real "walk through whichever door"
-  in-run choice with sibling rooms actually placed side-by-side.
 - **Map-editor door placement.** The "~5 positions per wall, editor-configurable, not
   wall-centered" instinct only has a procedural-generation-side implementation
   (`pickDoorAnchor`'s candidate anchors + PRNG draw). There is no PvE map editor to
@@ -707,7 +760,7 @@ Phase 3 (co-op/net)     ALL DONE (✅). 3.2 revive/downed engine-side; 3.1 net l
 Phase 4 (PvP)           COMPLETELY DONE (✅ 4.1 through 4.6, design/15, no open items). 8p solo BR decided; team/hostility (ENGINE_VERSION 18) + multi-room broadphase/stitching + zone/EnvironmentSystem + placement win condition + in-arena loot/AI + anti-cheat checkpoints (ENGINE_VERSION 19) + sparse net sync + matchsvc ladder rating all shipped and tested. End-to-end match assembly wired (2026-07-26): mode:'coop'|'pvp' threaded through Matchmaker/ticket/MatchRoom/matchsvc, client ?pvp=1 -> arena EngineConfig (teamId per seat) -> placement gameover screens -> CoopSession.reportResult actually fires (was dead code for coop too) -> checkpoint/ladder settlement. The real ~60-room ArenaMap (arena_prototype_60.json, a concurrent session) is wired into ARENA_CATALOG. buildArenaSpecs' HP-scale/loadout preset is now called from GameState.buildSeat too (ENGINE_VERSION 19->20) — a PvP seat's weapons/maxHp/maxShield come from the scaled arena preset, never the PvE loadout. All browser-verified two-tab, byte-identical. 2026-07-29: the 4.1 "squads/revive reserved interface" is now built too (ENGINE_VERSION 29->30) — pre-formed party invite (server/src/PartyService.ts) + squad-chunked Matchmaker/teamId + squad placement/gated bandage revive + a PartyScreen lobby UI; see the Phase 4 update above. 2026-08-04: fixed a real squad-win scoring bug (RunOutcome compared seat identity instead of team membership, so most of a winning squad saw a DEFEAT screen) — see the Phase 4 update above.
 Phase 5 (presentation)  parallelizable throughout
 Client hardening pass   DONE (✅ 2026-08-04) — full client/src code review (182 files), fixed in place: PartyScreen/LoginScreen staleness guards, weaponSkins preload/fallback resilience, net/transport.ts dead-socket + swallowed-handler-exception fixes, TextInputOverlay blur teardown, Slider pointercancel, Rig bone-order validation, main.ts/main.wechat.ts boot() error boundary, meta/store.ts materialBank validation, auth.ts non-JSON error guard, theme.ts English-policy fix. See the Client hardening pass section above.
-Room & door model       ENGINE + CLIENT RENDERING DONE (✅ 2026-08-04, ENGINE_VERSION 34) — PvE floors co-resident + door-connected (placeFloor/carveDoorGaps/buildFloorGeometry, new DoorSystem: activation/lock-unlock/force-regroup), replacing the old one-room swap. HudView.ts fixed to compile against the new schema. Client room rendering shipped same day: door_{locked,open}_raw.png loaded and wired onto RoomBuilder's per-door Sprite (reactive lock/unlock in place via updateDoors(), no full rebuild), EventReactor reacts to force_regroup with a local-player camera snap. STILL OPEN: PvE minimap adapter, fully-realized branching, map-editor door placement. See the Room & door model section above.
+Room & door model       ENGINE + CLIENT RENDERING DONE (✅ 2026-08-04, ENGINE_VERSION 34) — PvE floors co-resident + door-connected (placeFloor/carveDoorGaps/buildFloorGeometry, new DoorSystem: activation/lock-unlock/force-regroup), replacing the old one-room swap. HudView.ts fixed to compile against the new schema. Client room rendering shipped same day: door_{locked,open}_raw.png loaded and wired onto RoomBuilder's per-door Sprite (reactive lock/unlock in place via updateDoors(), no full rebuild), EventReactor reacts to force_regroup with a local-player camera snap. Fully-realized branching shipped 2026-08-05 (ENGINE_VERSION 35) — a real fork-and-reconverge diamond of sibling rooms, needing zero client changes (DoorSystem/RoomBuilder/EventReactor already topology-agnostic). PvE minimap adapter shipped same day — FloorProgress deleted, PvE now shares PvP's own Minimap widget via dungeonToArenaMap/dungeonRoomStatus (minimapLayout.ts). STILL OPEN: map-editor door placement. See the Room & door model section above.
 Phase 6 (accounts)      DONE (✅) — real username/password login (SQLite via node:sqlite), never required to play. Bound to PvP ladder rating (accountId in the signed ticket -> MatchRoom.seatAccounts -> ladderReport, guest/bot fallback preserved) and Forge MetaState (best-effort /account/meta sync). Independent of Phases 1-5; third-party OAuth reserved, not built.
 Phase 7 (i18n)          DONE (✅) — client/src/i18n/: en.ts canonical + zh.ts translation, both compile-time key-checked (Translations<typeof en>, TranslationKey). Every screen migrated to t(); Settings gained a language toggle backed by SettingsState.locale. Independent of Phases 1-6; enum/data-driven values (damage type, weapon kind, rarity/ids) deliberately left untranslated.
 Documentation           DONE (✅ 2026-08-02) — all 19 design docs + every README audited against the code; stale top-of-file Status blocks rewritten (12/10/client/art READMEs and this file's own header), design/README index completed, engine/README written, art/ UUID filenames + duplicate files cleaned up. Docs-only, no code change.

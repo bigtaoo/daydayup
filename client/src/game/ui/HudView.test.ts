@@ -2,6 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import type { Container } from 'pixi.js';
 import { createGameState } from '@dd/engine/state/GameState';
 import type { GameState, EngineConfig } from '@dd/engine/state/GameState';
+import type { PlacedRoom } from '@dd/engine/world/dungeon';
 import { Layers } from '../scene/layers';
 import { HudView, type HudContext } from './HudView';
 import { StatChip } from './StatChip';
@@ -50,6 +51,21 @@ function pvpState(): GameState {
  *  handle, since nothing but this test ever needs to look at it. */
 function statsPanelOf(hud: HudView): Container {
   return hud.view.children[0] as Container;
+}
+
+/** Minimal, well-typed `PlacedRoom` stand-in — these tests poke rooms directly into
+ *  `dungeonRooms` to exercise the floor/room chips and the minimap without a real
+ *  floor-generation pipeline (same shortcut this file always used); a bare `{}` no
+ *  longer suffices now that the minimap adapter (`dungeonToArenaMap`) reads real
+ *  room geometry off every entry. */
+function fakeRoom(id: string, offsetXGrid = 0): PlacedRoom {
+  return {
+    id,
+    piece: { id, sizeGrid: { w: 20, h: 16 }, solids: [], spawns: { player: [], enemy: [] }, exits: [] },
+    offsetXGrid,
+    offsetYGrid: 0,
+    entranceGrid: { x: 0, y: 0 },
+  };
 }
 
 describe('HudView — stat cluster backing panel', () => {
@@ -139,7 +155,7 @@ describe('HudView — stat chips (design/10, replaced the monospace info line)',
     const hud = newHud();
     const s = pveState();
     s.floorIndex = 1;
-    s.dungeonRooms.push({} as never, {} as never, {} as never, {} as never); // 4 rooms this floor
+    s.dungeonRooms.push(fakeRoom('r0', 0), fakeRoom('r1', 20), fakeRoom('r2', 40), fakeRoom('r3', 60)); // 4 rooms this floor
     s.dungeonRoomIndexById.set('r2', 2);
     s.players[0]!.roomId = 'r2';
 
@@ -156,13 +172,12 @@ describe('HudView — stat chips (design/10, replaced the monospace info line)',
     // returns undefined, which must read as "room 1", not crash or show "0/3".
     const hud = newHud();
     const s = pveState();
-    s.dungeonRooms.push({} as never, {} as never, {} as never);
+    s.dungeonRooms.push(fakeRoom('r0', 0), fakeRoom('r1', 20), fakeRoom('r2', 40));
     expect(s.players[0]!.roomId).toBeUndefined();
 
     hud.update(s, 16, CTX);
 
     expect(hud.chips.get('room')!.valueText).toBe('1/3');
-    expect(hud.floorProgress.view.visible).toBe(true);
   });
 
   // design/10 screen-flow gap: the floor chip used to hardcode EMBER_DUNGEON.floorCount
@@ -259,29 +274,29 @@ describe('HudView — weapon-pickup panel placement (design/03)', () => {
 });
 
 describe('HudView — mode-dependent widgets', () => {
-  it('hides the PvE floor track in a PvP arena (the room-graph Minimap covers it there)', () => {
+  it('shows the minimap for a PvP arena, reading state.arenaMap/zone', () => {
     const hud = newHud();
     hud.update(pvpState(), 16, CTX);
-    expect(hud.floorProgress.view.visible).toBe(false);
+    expect(hud.minimap.view.visible).toBe(true);
   });
 
-  it('shows the PvE floor track outside an arena', () => {
+  it('shows the minimap for a PvE floor (design/05 "fully-realized branching" follow-up, 2026-08-05 — replaces the old FloorProgress track)', () => {
     const hud = newHud();
     const s = pveState();
-    s.dungeonRooms.push({} as never, {} as never, {} as never);
+    s.dungeonRooms.push(fakeRoom('r0', 0), fakeRoom('r1', 20), fakeRoom('r2', 40));
 
     hud.update(s, 16, CTX);
 
-    expect(hud.floorProgress.view.visible).toBe(true);
+    expect(hud.minimap.view.visible).toBe(true);
   });
 
-  it('hides the floor track for a flat (non-dungeon) config with no rooms placed', () => {
+  it('hides the minimap for a flat (non-dungeon) config with no rooms placed and no arena', () => {
     const hud = newHud();
     const s = pveState(); // dungeonRooms is empty by default for a non-dungeon config
 
     hud.update(s, 16, CTX);
 
-    expect(hud.floorProgress.view.visible).toBe(false);
+    expect(hud.minimap.view.visible).toBe(false);
   });
 
   it('survives a viewport resize (reposition is called on every relayout)', () => {

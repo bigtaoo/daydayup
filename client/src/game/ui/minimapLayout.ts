@@ -1,23 +1,23 @@
 import type { ArenaMap, RoomId } from '@dd/engine/content/arenas';
 import type { ZoneState } from '@dd/engine';
+import type { PlacedRoom } from '@dd/engine/world/dungeon';
+import type { DoorRuntime, DungeonRoomRuntime } from '@dd/engine/state/GameState';
 
 // Pure minimap math (design/10 "room progress"), decoupled from Pixi so it's unit-
 // testable the same way the engine's own content converters are (content/arenas.ts
-// buildArenaGeometry). PvP-only for now, but no longer for the structural reason an
-// earlier version of this comment gave: PvE floors ARE co-resident since design/05
-// "Room & door model" (2026-08-04) — `GameState.dungeonRooms`/`dungeonDoors` is real
-// x/y-placed, door-connected data, the same SHAPE of thing this function consumes.
-// The reason this function still isn't fed from PvE is narrower and purely
-// type-level: `computeMinimapLayout` takes engine's `ArenaMap`/`ArenaRoom`/`Door`
-// specifically, and PvE's placed-room data is a distinct (structurally similar, not
-// identical) type — `PlacedRoom`/`DoorRuntime` in `world/dungeon.ts`/`GameState.ts`,
-// not `ArenaMap`. Feeding PvE into a real spatial minimap is a real, doable follow-up
-// (an adapter from `PlacedRoom[]`/`DoorRuntime[]` to this function's shape, or a
-// small overload), just not done yet — this file wiring PvE in is not blocked on any
-// engine-side co-residency gap anymore, only on someone writing that adapter. Until
-// then, PvE's own "real minimap" stays the different, honest shape for its actual
-// data that's actually wired today — a progress TRACK, not a spatial map — see
-// `client/src/game/ui/floorProgressMath.ts`/`FloorProgress.ts`.
+// buildArenaGeometry). `computeMinimapLayout`/`roomStatus` are PvP's own math, fed
+// straight from `state.arenaMap`/`state.zone` (already the exact `ArenaMap`/`Door`
+// shape). `dungeonToArenaMap`/`dungeonRoomStatus` (design/05 "fully-realized
+// branching" follow-up, 2026-08-05) are the PvE-side adapter this file used to just
+// name as a future follow-up: PvE's placed-room data (`PlacedRoom`/`DoorRuntime`,
+// `world/dungeon.ts`/`GameState.ts`) is structurally similar but a distinct type from
+// `ArenaMap`, so it converts once here rather than teaching `computeMinimapLayout` two
+// input shapes. Both modes now share the exact same `Minimap` Pixi widget
+// (`Minimap.ts`) — PvE retired its own separate progress-track widget
+// (`FloorProgress.ts`/`floorProgressMath.ts`, deleted this pass) in favor of the real
+// spatial map, which a floor with a real fork (siblings placed off the spine's y=0)
+// genuinely needs: a linear array-index track can't represent an untaken sibling
+// (it'd show as a phantom step, or read "done" once its index is passed).
 
 export interface MinimapRoomLayout {
   id: RoomId;
@@ -70,7 +70,10 @@ export function computeMinimapLayout(map: ArenaMap, box: { w: number; h: number 
   return { rooms, doors };
 }
 
-export type RoomStatus = 'safe' | 'closing' | 'danger';
+// `'unvisited'` (PvE-only — see `dungeonRoomStatus` below) is the one bucket `roomStatus`
+// (PvP) never produces: a zone has no "haven't been there yet" concept, every room is
+// either safe, about to close, or already outside the safe set from the first tick.
+export type RoomStatus = 'safe' | 'closing' | 'danger' | 'unvisited';
 
 /** A room's current zone read, for minimap tinting. No `zone` yet (the first tick
  * before ZoneSystem draws the eye, or simply not an arena match) → nothing is unsafe.
@@ -80,4 +83,66 @@ export function roomStatus(zone: ZoneState | undefined, roomId: RoomId): RoomSta
   if (!zone) return 'safe';
   if (zone.phase === 'warn' && zone.closing.includes(roomId)) return 'closing';
   return zone.safe.includes(roomId) ? 'safe' : 'danger';
+}
+
+/**
+ * Convert PvE's placed-room/door data into the same `ArenaMap` shape
+ * `computeMinimapLayout` already consumes for PvP — this file's own header used to
+ * name this as the only missing piece, and design/05's "fully-realized branching"
+ * pass (2026-08-05) is what made it worth actually writing: a fork's siblings have
+ * real, non-zero `offsetYGrid` (stacked off the spine), so a PvE floor is genuinely
+ * 2D now, not just a 1D spine a plain progress track could already represent.
+ * `Door{roomA,roomB,passageGrid}` is already the exact type PvP uses (design/09
+ * "reused verbatim") — `dr.door` needs no field remapping at all.
+ *
+ * Room offsets can be negative (a fork's siblings are stacked centered on the fork
+ * point, so one sibling typically lands above y=0) — `computeMinimapLayout` assumes
+ * every room's `rectGrid` sits within `[0,sizeGrid.w] x [0,sizeGrid.h]` (the
+ * invariant every hand-authored PvP `ArenaMap` already satisfies), so this shifts
+ * every room by the floor's own minimum x/y before handing it off, rather than
+ * teaching the layout function about negative offsets. `id`/`spawns`/`eyeCandidates`
+ * are inert for minimap purposes (unread by `computeMinimapLayout`) — filled with a
+ * placeholder/empty value rather than left to invent meaning that isn't there.
+ */
+export function dungeonToArenaMap(rooms: readonly PlacedRoom[], doors: readonly DoorRuntime[]): ArenaMap {
+  if (rooms.length === 0) {
+    return { id: 'dungeon', sizeGrid: { w: 0, h: 0 }, rooms: [], doors: [], spawns: [], eyeCandidates: [] };
+  }
+  const minX = Math.min(...rooms.map((r) => r.offsetXGrid));
+  const minY = Math.min(...rooms.map((r) => r.offsetYGrid));
+  const maxX = Math.max(...rooms.map((r) => r.offsetXGrid + r.piece.sizeGrid.w));
+  const maxY = Math.max(...rooms.map((r) => r.offsetYGrid + r.piece.sizeGrid.h));
+  return {
+    id: 'dungeon',
+    sizeGrid: { w: maxX - minX, h: maxY - minY },
+    rooms: rooms.map((r) => ({
+      id: r.id,
+      rectGrid: { x: r.offsetXGrid - minX, y: r.offsetYGrid - minY, w: r.piece.sizeGrid.w, h: r.piece.sizeGrid.h },
+      solids: r.piece.solids,
+    })),
+    doors: doors.map((dr) => dr.door),
+    spawns: [],
+    eyeCandidates: [],
+  };
+}
+
+/** A PvE room's minimap tint — the same palette `roomStatus` (PvP) already defines,
+ * plus `'unvisited'` (a bucket PvP never produces): PvE has no zone-driven "closing"
+ * telegraph, but DOES have a real "haven't been there yet" state `roomStatus` has no
+ * equivalent for — exactly what a fork's untaken sibling needs to read as, rather
+ * than collapsing into the same tint as an already-cleared room (design/05's own
+ * documented gap this closes). `'safe'` = cleared (activated, no live enemy);
+ * `'danger'` = in combat (`hasLiveEnemy`, the same signal `DoorSystem` itself locks
+ * doors on); `'unvisited'` = never activated (including an unknown/malformed
+ * `roomId` — same "content bug, don't crash the widget" tolerance
+ * `computeMinimapLayout`'s own door-skip already has). */
+export function dungeonRoomStatus(
+  runtimes: readonly DungeonRoomRuntime[],
+  indexById: ReadonlyMap<RoomId, number>,
+  roomId: RoomId,
+): RoomStatus {
+  const idx = indexById.get(roomId);
+  const rt = idx !== undefined ? runtimes[idx] : undefined;
+  if (!rt || !rt.activated) return 'unvisited';
+  return rt.hasLiveEnemy ? 'danger' : 'safe';
 }

@@ -94,10 +94,10 @@ describe('generateFloor', () => {
   });
 });
 
-describe('generateFloor — branching layout resolves at generation time (design/05, 2026-08-04)', () => {
+describe('generateFloor — branching layout gets at most one real fork (design/05, 2026-08-05)', () => {
   const BRANCHING: DungeonConfig = { ...CONFIG, layout: 'branching', branchFactor: 2 };
 
-  it('every resolved room is a single, in-pool piece — no candidate list is exposed', () => {
+  it('every flattened .rooms entry is still a single, in-pool piece, and .rooms === stages flattened', () => {
     const f = generateFloor(BRANCHING, 0, new Prng(42), EMBER_ROOMS);
     const poolIds = new Set(EMBER_ROOMS.filter((r) => !r.role && r.tags?.includes('ember')).map((r) => r.id));
     for (const r of f.rooms.slice(0, -1)) {
@@ -105,12 +105,26 @@ describe('generateFloor — branching layout resolves at generation time (design
       expect(r.role).toBeUndefined();
     }
     expect(f.rooms[f.rooms.length - 1]!.id).toBe('ember_extraction');
+    expect(f.rooms).toEqual(f.stages.map((s) => (Array.isArray(s) ? s[0] : s)));
   });
 
-  it('the extra branch draw can select a different room than linear would, for the same seed', () => {
-    // Not a strict guarantee for any one seed (the branch pick can land back on the same
-    // room), but true across a small seed sweep — pins "the extra draw actually changes
-    // the outcome sometimes," not just "branching doesn't crash."
+  // EMBER_ROOMS' 4 normal pieces (ember_hall/pillars/cross/narrow) all have DIFFERENT
+  // widths, so — same-width being the fork-eligibility rule (module doc) — a fork
+  // stage here always finds zero eligible partners and gracefully degrades to a
+  // single piece: this pool never actually shows a materialized sibling set. See the
+  // dedicated 'a real fork with distinct siblings' describe block below for a pool
+  // that DOES exercise real forking.
+  it('gracefully degrades to a single piece per stage when the pool has no same-width match (EMBER_ROOMS)', () => {
+    const f = generateFloor(BRANCHING, 0, new Prng(42), EMBER_ROOMS);
+    for (const s of f.stages) expect(Array.isArray(s)).toBe(false);
+  });
+
+  it('the extra fork-position draw shifts the whole per-stage stream, so branching still diverges from linear', () => {
+    // Not "the extra draw picks a different room" anymore (module doc — that's the
+    // OLD mechanism); now branching draws ONE extra value up front (which interior
+    // transition forks) before the per-stage loop, offsetting every subsequent
+    // nextInt() call by one position in the LCG stream relative to 'linear'. Not a
+    // strict per-seed guarantee, but true across a small seed sweep.
     const linIds = (seed: number) => generateFloor({ ...CONFIG, layout: 'linear' }, 0, new Prng(seed), EMBER_ROOMS).rooms.map((r) => r.id);
     const brIds = (seed: number) => generateFloor(BRANCHING, 0, new Prng(seed), EMBER_ROOMS).rooms.map((r) => r.id);
     const seeds = [1, 2, 3, 4, 5, 6, 7, 8];
@@ -128,6 +142,85 @@ describe('generateFloor — branching layout resolves at generation time (design
     const a = generateFloor(BRANCHING, 1, new Prng(7), EMBER_ROOMS);
     const b = generateFloor(BRANCHING, 1, new Prng(7), EMBER_ROOMS);
     expect(a.rooms.map((r) => r.id)).toEqual(b.rooms.map((r) => r.id));
+  });
+
+  it('never forks with fewer than 2 normal stages (nowhere to put both a fork and a merge point)', () => {
+    const oneNormal: DungeonConfig = { ...BRANCHING, roomsPerFloor: { min: 2, max: 2 } }; // roomCount 2 → normalCount 1
+    for (const seed of [1, 2, 3, 4, 5]) {
+      const f = generateFloor(oneNormal, 0, new Prng(seed), EMBER_ROOMS);
+      expect(f.stages.length).toBe(2); // 1 normal + capstone
+      for (const s of f.stages) expect(Array.isArray(s)).toBe(false);
+    }
+  });
+
+  it('never forks at stage 0 — the run\'s spawn room is always a single ordinary room', () => {
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+      const f = generateFloor(BRANCHING, 0, new Prng(seed), EMBER_ROOMS);
+      expect(Array.isArray(f.stages[0])).toBe(false);
+    }
+  });
+});
+
+describe('generateFloor — a real fork with distinct siblings (design/05, 2026-08-05)', () => {
+  // A bespoke pool where forking has somewhere to land: FORK_A/FORK_B share a width
+  // (20) and nothing else in the pool does, so ANY base pick at the fork stage is
+  // guaranteed exactly one same-width partner — deterministic shape, seed-independent.
+  const FORK_A: RoomPiece = {
+    id: 'fork_a', tags: ['fk'], sizeGrid: { w: 20, h: 14 }, solids: [],
+    spawns: { player: [{ x: 2, y: 7 }], enemy: [] }, exits: [{ edge: 'west' }, { edge: 'east' }],
+  };
+  const FORK_B: RoomPiece = {
+    id: 'fork_b', tags: ['fk'], sizeGrid: { w: 20, h: 18 }, solids: [],
+    spawns: { player: [{ x: 2, y: 9 }], enemy: [] }, exits: [{ edge: 'west' }, { edge: 'east' }],
+  };
+  const FORK_CAP: RoomPiece = {
+    id: 'fork_cap', role: 'boss', sizeGrid: { w: 12, h: 30 }, solids: [],
+    spawns: { player: [{ x: 6, y: 15 }], enemy: [] }, exits: [{ edge: 'west' }],
+  };
+  const FORK_LIB = [FORK_A, FORK_B, FORK_CAP];
+  // roomsPerFloor min=max=3 → normalCount=2 → forkStageIndex = 1 + nextInt(1) = 1,
+  // ALWAYS — every seed puts the fork at stage 1, the last normal stage.
+  const FORK_CFG: DungeonConfig = {
+    biomeId: 'fk', nameKey: 'fk', floorCount: 1, roomsPerFloor: { min: 3, max: 3 },
+    pieceTags: ['fk'], layout: 'branching', branchFactor: 2,
+    extractionPieceId: 'fork_cap', bossPieceId: 'fork_cap', difficultyCurve: { base: 1, perFloor: 0 },
+  };
+
+  it('resolves stage 1 to both distinct, same-width siblings, for every seed', () => {
+    for (const seed of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      const f = generateFloor(FORK_CFG, 0, new Prng(seed), FORK_LIB);
+      expect(Array.isArray(f.stages[0])).toBe(false); // stage 0 stays ordinary
+      const fork = f.stages[1];
+      expect(Array.isArray(fork)).toBe(true);
+      const siblings = fork as readonly RoomPiece[];
+      expect(siblings).toHaveLength(2);
+      expect(new Set(siblings.map((s) => s.id))).toEqual(new Set(['fork_a', 'fork_b']));
+      expect(siblings[0]!.sizeGrid.w).toBe(siblings[1]!.sizeGrid.w);
+      expect(f.stages[2]).toBe(FORK_CAP); // capstone, ordinary
+    }
+  });
+
+  it('.rooms flattens the fork stage down to its first/primary sibling', () => {
+    const f = generateFloor(FORK_CFG, 0, new Prng(3), FORK_LIB);
+    const fork = f.stages[1] as readonly RoomPiece[];
+    expect(f.rooms[1]).toBe(fork[0]);
+  });
+
+  it('degrades to a single piece when the pool has no eligible partner at all (pool of one)', () => {
+    const lonely = generateFloor(
+      { ...FORK_CFG, pieceTags: ['lonely'] },
+      0,
+      new Prng(1),
+      [{ ...FORK_A, id: 'only_one', tags: ['lonely'] }, FORK_CAP],
+    );
+    expect(Array.isArray(lonely.stages[1])).toBe(false);
+  });
+
+  it('is deterministic for a given seed', () => {
+    const a = generateFloor(FORK_CFG, 0, new Prng(11), FORK_LIB);
+    const b = generateFloor(FORK_CFG, 0, new Prng(11), FORK_LIB);
+    const norm = (f: typeof a) => f.stages.map((s) => (Array.isArray(s) ? s.map((p) => p.id) : s.id));
+    expect(norm(a)).toEqual(norm(b));
   });
 });
 
@@ -245,6 +338,137 @@ describe('placeFloor', () => {
 
   it('throws (fail loud) when two adjacent rooms are too small/mismatched to fit a door', () => {
     expect(() => placeFloor([TINY, TINY], new Prng(1))).toThrow(/too small/i);
+  });
+});
+
+describe('placeFloor — branching fork stage (design/05, 2026-08-05 "fully-realized branching")', () => {
+  // HUB/MERGE are tall (30) relative to the stacked siblings (10 each + a 2-unit gap
+  // = 22 total) so BOTH siblings land comfortably within each's own y-range once
+  // centered — pickDoorAnchor needs real vertical overlap on every hub/sibling and
+  // sibling/merge pair, not just the stack as a whole (module doc's own documented
+  // "curated content" contract).
+  const HUB: RoomPiece = {
+    id: 'hub', sizeGrid: { w: 14, h: 30 }, solids: [],
+    spawns: { player: [{ x: 2, y: 15 }], enemy: [] }, exits: [{ edge: 'west' }, { edge: 'east' }],
+  };
+  const SIB_A: RoomPiece = {
+    id: 'sib_a', sizeGrid: { w: 20, h: 10 }, solids: [],
+    spawns: { player: [{ x: 2, y: 5 }], enemy: [] }, exits: [{ edge: 'west' }, { edge: 'east' }],
+  };
+  const SIB_B: RoomPiece = {
+    id: 'sib_b', sizeGrid: { w: 20, h: 10 }, solids: [],
+    spawns: { player: [{ x: 2, y: 5 }], enemy: [] }, exits: [{ edge: 'west' }, { edge: 'east' }],
+  };
+  const MERGE: RoomPiece = {
+    id: 'merge', sizeGrid: { w: 14, h: 30 }, solids: [],
+    spawns: { player: [{ x: 2, y: 15 }], enemy: [] }, exits: [{ edge: 'west' }],
+  };
+
+  it('places siblings side-by-side east of the hub — same X, stacked and non-overlapping in Y', () => {
+    const { placed } = placeFloor([HUB, [SIB_A, SIB_B], MERGE], new Prng(1));
+    expect(placed).toHaveLength(4);
+    const [hub, a, b, merge] = placed;
+    expect(a!.piece.id).toBe('sib_a');
+    expect(b!.piece.id).toBe('sib_b');
+    expect(a!.offsetXGrid).toBe(hub!.offsetXGrid + HUB.sizeGrid.w);
+    expect(b!.offsetXGrid).toBe(a!.offsetXGrid); // same X — side by side
+    expect(a!.offsetYGrid).not.toBe(b!.offsetYGrid); // stacked, not on top of each other
+    // Non-overlapping Y ranges (order-independent — either could be stacked first).
+    const [lo, hi] = a!.offsetYGrid < b!.offsetYGrid ? [a!, b!] : [b!, a!];
+    expect(lo.offsetYGrid + lo.piece.sizeGrid.h).toBeLessThanOrEqual(hi.offsetYGrid);
+    expect(merge!.offsetXGrid).toBe(a!.offsetXGrid + SIB_A.sizeGrid.w); // merge starts after the shared width
+    expect(merge!.offsetYGrid).toBe(0); // merge stays on the spine's Y=0, like every plain stage
+  });
+
+  it('connects the hub to every sibling and every sibling to the merge room — the reconvergence', () => {
+    const { placed, doors } = placeFloor([HUB, [SIB_A, SIB_B], MERGE], new Prng(1));
+    const [hub, a, b, merge] = placed;
+    expect(doors).toHaveLength(4); // hub→a, hub→b, a→merge, b→merge — NOT rooms.length-1
+    const pairs = doors.map((d) => `${d.roomA}->${d.roomB}`);
+    expect(pairs).toEqual(
+      expect.arrayContaining([`${hub!.id}->${a!.id}`, `${hub!.id}->${b!.id}`, `${a!.id}->${merge!.id}`, `${b!.id}->${merge!.id}`]),
+    );
+  });
+
+  it('each sibling\'s entranceGrid is set from its OWN connecting door, not shared with its sibling', () => {
+    const { placed } = placeFloor([HUB, [SIB_A, SIB_B], MERGE], new Prng(1));
+    const [, a, b] = placed;
+    // Each sibling's entrance x is inset into ITS OWN offsetXGrid (same for both,
+    // since they share an X), but the y comes from ITS OWN door's anchor — which
+    // differs, since the two doors were drawn independently and the siblings sit at
+    // different Y — so the two entrances must differ overall.
+    expect(a!.entranceGrid).not.toEqual(b!.entranceGrid);
+    expect(a!.entranceGrid.x).toBe(a!.offsetXGrid + 1.5); // ENTRANCE_INSET_GRID
+    expect(b!.entranceGrid.x).toBe(b!.offsetXGrid + 1.5);
+  });
+
+  it('the merge room\'s entranceGrid is set from the FIRST connecting door processed (sibling draw order)', () => {
+    const { placed, doors } = placeFloor([HUB, [SIB_A, SIB_B], MERGE], new Prng(1));
+    const merge = placed[3]!;
+    const firstDoorIntoMerge = doors.find((d) => d.roomB === merge.id)!;
+    expect(merge.entranceGrid).toEqual({
+      x: merge.offsetXGrid + 1.5,
+      y: firstDoorIntoMerge.passageGrid.y + firstDoorIntoMerge.passageGrid.h / 2,
+    });
+  });
+
+  it('no two placed rooms spatially overlap', () => {
+    const { placed } = placeFloor([HUB, [SIB_A, SIB_B], MERGE], new Prng(1));
+    const rect = (r: (typeof placed)[number]) => ({
+      x0: r.offsetXGrid, x1: r.offsetXGrid + r.piece.sizeGrid.w,
+      y0: r.offsetYGrid, y1: r.offsetYGrid + r.piece.sizeGrid.h,
+    });
+    for (let i = 0; i < placed.length; i++) {
+      for (let j = i + 1; j < placed.length; j++) {
+        const ri = rect(placed[i]!);
+        const rj = rect(placed[j]!);
+        const overlaps = ri.x0 < rj.x1 && rj.x0 < ri.x1 && ri.y0 < rj.y1 && rj.y0 < ri.y1;
+        expect(overlaps).toBe(false);
+      }
+    }
+  });
+
+  it('is deterministic for a given seed', () => {
+    const a = placeFloor([HUB, [SIB_A, SIB_B], MERGE], new Prng(5));
+    const b = placeFloor([HUB, [SIB_A, SIB_B], MERGE], new Prng(5));
+    expect(a.placed.map((p) => ({ id: p.id, x: p.offsetXGrid, y: p.offsetYGrid }))).toEqual(
+      b.placed.map((p) => ({ id: p.id, x: p.offsetXGrid, y: p.offsetYGrid })),
+    );
+    expect(a.doors).toEqual(b.doors);
+  });
+
+  it('throws (fail loud) when a fork stage\'s siblings do not share one width', () => {
+    const NARROW_SIB: RoomPiece = { ...SIB_A, id: 'sib_narrow', sizeGrid: { w: 18, h: 12 } };
+    expect(() => placeFloor([HUB, [SIB_A, NARROW_SIB], MERGE], new Prng(1))).toThrow(/share one width/i);
+  });
+
+  it('throws (fail loud) when the hub has no east exit to connect to the fork', () => {
+    const HUB_NO_EAST: RoomPiece = { ...HUB, id: 'hub_no_east', exits: [{ edge: 'west' }] };
+    expect(() => placeFloor([HUB_NO_EAST, [SIB_A, SIB_B], MERGE], new Prng(1))).toThrow(/east exit/i);
+  });
+
+  it('throws (fail loud) when a fork sibling is missing its west or east exit', () => {
+    const SIB_NO_WEST: RoomPiece = { ...SIB_A, id: 'sib_no_west', exits: [{ edge: 'east' }] };
+    expect(() => placeFloor([HUB, [SIB_NO_WEST, SIB_B], MERGE], new Prng(1))).toThrow(/west\+east exits/i);
+    const SIB_NO_EAST: RoomPiece = { ...SIB_A, id: 'sib_no_east', exits: [{ edge: 'west' }] };
+    expect(() => placeFloor([HUB, [SIB_NO_EAST, SIB_B], MERGE], new Prng(1))).toThrow(/west\+east exits/i);
+  });
+
+  it('throws (fail loud) when a fork stage is stage 0 (no predecessor to fork from)', () => {
+    expect(() => placeFloor([[SIB_A, SIB_B], MERGE], new Prng(1))).toThrow(/single-room stage/i);
+  });
+
+  it('throws (fail loud) when a fork stage immediately follows another fork stage', () => {
+    expect(() => placeFloor([HUB, [SIB_A, SIB_B], [SIB_A, SIB_B], MERGE], new Prng(1))).toThrow(/single-room stage/i);
+  });
+
+  it('still throws (fail loud) if the hub is too small to fit a door to a stacked-away sibling', () => {
+    // Two same-width TINY-sized siblings, stacked with a gap and centered on TINY's
+    // (also tiny) own vertical center — the stack pushes each sibling far enough off
+    // TINY's own y-range that pickDoorAnchor's overlap band goes negative.
+    const TINY_SIB_1: RoomPiece = { id: 'tiny_sib_1', sizeGrid: { w: 6, h: 6 }, solids: [], spawns: { player: [{ x: 3, y: 3 }], enemy: [] }, exits: [{ edge: 'west' }, { edge: 'east' }] };
+    const TINY_SIB_2: RoomPiece = { id: 'tiny_sib_2', sizeGrid: { w: 6, h: 6 }, solids: [], spawns: { player: [{ x: 3, y: 3 }], enemy: [] }, exits: [{ edge: 'west' }, { edge: 'east' }] };
+    expect(() => placeFloor([TINY, [TINY_SIB_1, TINY_SIB_2], MERGE], new Prng(1))).toThrow(/too small/i);
   });
 });
 

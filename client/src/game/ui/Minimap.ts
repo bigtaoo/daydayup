@@ -1,12 +1,12 @@
 import { Container, Graphics } from 'pixi.js';
 import type { ArenaMap, RoomId } from '@dd/engine/content/arenas';
-import type { ZoneState } from '@dd/engine';
-import { computeMinimapLayout, roomStatus, type RoomStatus } from './minimapLayout';
+import { computeMinimapLayout, type RoomStatus } from './minimapLayout';
 
 const STATUS_COLOR: Record<RoomStatus, number> = {
   safe: 0x2a3140,
   closing: 0xf6ad55, // WARN telegraph tint (matches CONFIG's amber-family fx colours)
   danger: 0x9b2c2c, // already poison
+  unvisited: 0x384258, // PvE-only (dungeonRoomStatus) — dim/muted, never a zone read
 };
 
 export interface MinimapPlayer {
@@ -15,9 +15,12 @@ export interface MinimapPlayer {
   isLocal: boolean;
 }
 
-/** PvP room-graph minimap (design/10 "room progress"), thin Pixi wrapper over the pure
- * `computeMinimapLayout`/`roomStatus` (minimapLayout.ts). No-op/hidden for PvE — see
- * that file's header for why. */
+/** Shared room-graph minimap for both PvP arenas and PvE dungeon floors (design/10
+ * "room progress"; PvE wiring 2026-08-05, retiring the old `FloorProgress` track), a
+ * thin Pixi wrapper over the pure `computeMinimapLayout` (minimapLayout.ts). Mode-
+ * specific room-status logic (PvP zone read vs PvE activation/combat) lives entirely
+ * in the caller's `statusOf` resolver — this widget doesn't know which mode it's
+ * drawing, only that every room has SOME `RoomStatus`. */
 export class Minimap {
   readonly view = new Container();
   private bg = new Graphics();
@@ -32,7 +35,7 @@ export class Minimap {
     this.view.addChild(this.bg, this.doors, this.rooms, this.dots);
   }
 
-  update(map: ArenaMap, zone: ZoneState | undefined, players: readonly MinimapPlayer[]) {
+  update(map: ArenaMap, statusOf: (roomId: RoomId) => RoomStatus, players: readonly MinimapPlayer[]) {
     const layout = computeMinimapLayout(map, this.box);
     const byId = new Map(layout.rooms.map((r) => [r.id, r]));
 
@@ -43,10 +46,10 @@ export class Minimap {
 
     this.rooms.clear();
     for (const r of layout.rooms) {
-      const status = roomStatus(zone, r.id);
+      const status = statusOf(r.id);
       this.rooms
         .rect(r.x, r.y, Math.max(1, r.w), Math.max(1, r.h))
-        .fill({ color: STATUS_COLOR[status], alpha: status === 'danger' ? 0.5 : 0.9 });
+        .fill({ color: STATUS_COLOR[status], alpha: status === 'danger' ? 0.5 : status === 'unvisited' ? 0.4 : 0.9 });
     }
 
     this.dots.clear();

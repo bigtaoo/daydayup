@@ -176,7 +176,7 @@ export class SpawnSystem {
    */
   private generateAndPlaceFloor(state: GameState): void {
     const layout = generateFloor(state.dungeonConfig!, state.floorIndex, state.roomgenPrng, state.roomLibrary);
-    const { placed, doors } = placeFloor(layout.rooms, state.roomgenPrng);
+    const { placed, doors } = placeFloor(layout.stages, state.roomgenPrng);
     const geo = buildFloorGeometry(placed, doors);
 
     state.dungeonRooms.length = 0;
