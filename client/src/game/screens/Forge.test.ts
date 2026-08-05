@@ -146,6 +146,34 @@ describe('Forge — acquire button (a real gap this pass closed: the buyable she
     const p = privateOf(f);
     expect(p.acquireBtn.view.position.y).toBeLessThan(p.rowBtns[0]!.view.position.y);
   });
+
+  it('reflows the row list up once the button disappears — same instance, not a fresh one', () => {
+    // The two tests above use separate Forge instances with separate MetaStates, which
+    // only proves the button's OWN .visible flag toggles — not that render()'s
+    // `y += 36` (only added when acquireBtn is visible) actually reflows every row/
+    // page-nav element below it for the SAME screen across a real state transition
+    // (buyable>0 → buyable==0), the same "boundary transition on one instance" pattern
+    // the fixed-bottom-action-bar tests below already use via moveSelection/re-render.
+    const f = new Forge();
+    let m = withFewBuyable(2);
+    f.render(m, 1280, 720);
+    const p = privateOf(f);
+    expect(p.acquireBtn.view.visible).toBe(true);
+    const rowYWithButton = p.rowBtns[0]!.view.position.y;
+
+    while (purchasableBlueprints(m).length > 0) {
+      m = acquireBlueprint(m, purchasableBlueprints(m)[0]!);
+    }
+    f.render(m, 1280, 720);
+    expect(p.acquireBtn.view.visible).toBe(false);
+    const rowYWithoutButton = p.rowBtns[0]!.view.position.y;
+    // The shift is AT LEAST the button's own reserved 36px — dropping the Store info
+    // line at the same time also shrinks infoText by one line's height, so the real
+    // total delta is bigger than 36 alone; the >=36 floor is what actually pins down
+    // "the button's reserved space really disappeared," without being coupled to the
+    // separate, unrelated infoText line-count arithmetic.
+    expect(rowYWithButton - rowYWithoutButton).toBeGreaterThanOrEqual(36);
+  });
 });
 
 describe('Forge — fixed bottom action bar', () => {

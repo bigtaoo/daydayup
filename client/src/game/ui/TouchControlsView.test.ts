@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import type { Graphics, Text } from 'pixi.js';
 import { TouchControlsView } from './TouchControlsView';
 import type { TouchVisual } from '../../platform/types';
+import { THEME } from '../theme';
 
 // Children are appended in this fixed order in the constructor — indexing into
 // `view.children` is the only way in from the outside, since the individual
@@ -14,6 +15,18 @@ function graphicsAt(v: TouchControlsView, i: Child): Graphics {
 }
 function textAt(v: TouchControlsView, i: Child): Text {
   return v.view.children[i] as Text;
+}
+
+/** Every button here draws a `.circle(...).fill(...).stroke(...)` chain — TWO
+ *  instructions per shape (`action: 'fill'` vs `'stroke'`), same gotcha
+ *  `DungeonFloorCanvas.test.ts` already found (filter on `ins.action` first, don't
+ *  assume one instruction per shape) — so this reads just the `'fill'` one's own
+ *  color/alpha, the same technique `Minimap.test.ts`'s `drawnShapes` uses for a
+ *  fill-only shape, generalized to skip the stroke instruction here. */
+function fillOf(g: Graphics): { color: number; alpha: number } {
+  const ctx = g.context as unknown as { instructions: { action: string; data: { style?: { color: number; alpha: number } } }[] };
+  const fill = ctx.instructions.find((ins) => ins.action === 'fill')!;
+  return { color: fill.data.style!.color, alpha: fill.data.style!.alpha };
 }
 
 const BASE_VISUAL: TouchVisual = {
@@ -133,13 +146,17 @@ describe('TouchControlsView', () => {
       expect(label.position.y).toBe(20);
     });
 
-    it('brightens while held, same shape as the fire button', () => {
+    it('brightens while held, same shape as the fire button — a real alpha assertion, not just position', () => {
       const v = new TouchControlsView();
+      v.update({ ...BASE_VISUAL, interact: { cx: 20, cy: 20, r: 15, pressed: false } });
+      const unpressed = fillOf(graphicsAt(v, Child.InteractButton));
+      expect(unpressed.color).toBe(THEME.colors.pickupHeal);
+      expect(unpressed.alpha).toBeCloseTo(0.14);
+
       v.update({ ...BASE_VISUAL, interact: { cx: 20, cy: 20, r: 15, pressed: true } });
-      // Drawn even though nothing about its geometry changed — pressed alone flips the
-      // fill/stroke alpha (same "brighten while held" contract drawFireButton has).
-      const bounds = graphicsAt(v, Child.InteractButton).getBounds();
-      expect(bounds.x + bounds.width / 2).toBeCloseTo(20);
+      const pressed = fillOf(graphicsAt(v, Child.InteractButton));
+      expect(pressed.alpha).toBeCloseTo(0.32); // brighter than unpressed — the actual "held" signal
+      expect(pressed.alpha).toBeGreaterThan(unpressed.alpha);
     });
 
     it('follows the button if its reported position changes (screen resize)', () => {

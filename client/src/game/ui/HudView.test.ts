@@ -398,6 +398,12 @@ describe('HudView — pause button (a real touch/WeChat gap this pass closed)', 
     expect(hud.pauseBtn.view.position.y).toBeLessThan(hud.minimap.view.position.y);
   });
 
+  it('renders the universal pause glyph, needing no translation', () => {
+    const hud = newHud();
+    // Same private-`label`-field cast PauseMenu.test.ts/Forge.test.ts already use.
+    expect((hud.pauseBtn as unknown as { label: { text: string } }).label.text).toBe('‖');
+  });
+
   it('re-anchors on reposition (viewport resize), same as the rest of the HUD', () => {
     const hud = newHud();
     hud.reposition({ w: 640, h: 480 });

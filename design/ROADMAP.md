@@ -10,7 +10,7 @@ click-driven; 33: manual aim removed entirely; 34: co-resident PvE room/door mod
 client rendering; 35: fully-realized branching — see the Room & door model section below;
 same-day map-editor door placement AND the `layout: 'graph2d'` real-2D-layout follow-up are
 both additive, no version bump);
-1667 tests green across all 7 workspace packages (engine 465 / client 846 / server 167 /
+1670 tests green across all 7 workspace packages (engine 465 / client 849 / server 167 /
 animator 62 / map-editor 64 / desktop-shell 56 / root build-script 7, `npm run check`) after a
 full client code-review pass
 (2026-08-04, see the Phase 3/4 updates and the Client hardening pass section below) that found
@@ -215,6 +215,35 @@ opens/resumes the real `PauseMenu`, the Forge acquire button decrements the purc
 count live, and the INTERACT button renders its distinct green tint and flips
 `interacting: true` while held, `false` on release — zero console errors throughout. 20 new
 client tests (846 total, was 826), `tsc --noEmit` clean across all 7 workspaces.
+
+**"全部加测试" follow-up, same day:** a dedicated audit subagent (told to verify actual
+test assertions, not just check a describe block exists) found four real gaps the pass
+above left. (1) `TouchControlsView.test.ts`'s "brightens while held" test for the new
+INTERACT button asserted only its bounding-box position — identical whether `pressed` is
+true or false — so it would stay green even if the brighten-on-hold behavior were deleted
+entirely; fixed by reading `Graphics.context.instructions` directly (filtering to the
+`'fill'` action, since each button draws a `.fill().stroke()` pair — two instructions per
+shape, the same gotcha `DungeonFloorCanvas.test.ts` already found) to assert the actual
+fill alpha differs (0.14 unpressed vs. 0.32 pressed) and matches `THEME.colors.pickupHeal`.
+(2) `Forge.test.ts`'s acquire-button visibility tests used two separate instances/
+`MetaState`s, proving only that the button's own `.visible` flag toggles — never that
+`render()`'s `y += 36` (added only while the button is shown) actually reflows the row
+list on a SINGLE instance crossing the real buyable→0 boundary; fixed with a same-instance
+test draining a shelf to zero mid-test and asserting the row list's own Y position moves
+up by at least the button's reserved 36px. (3) The actual production entry point for the
+new INTERACT capability — `WebInput.ts`'s delegation from a real `touchstart` event through
+to `read().interacting` — was untested; `TouchControls.ts` itself was thorough, but nothing
+proved the wrapper the app actually ships wires it through, unlike the pre-existing `move`/
+`fire` coverage in the same describe block. (4) `HudView.test.ts`'s new pause-button tests
+never asserted the actual glyph it renders (`'‖'`) — the same private-`label`-field cast
+`PauseMenu.test.ts`/`Forge.test.ts` already use, just not applied here. Explicitly NOT
+closed, flagged rather than silently skipped (a pre-existing, larger-scope gap, not
+introduced by this pass): `WeChatInput.ts` has no test file anywhere in this repo — it's a
+one-line delegation to the same `TouchControls` this pass tested thoroughly, but a real
+suite for it would need mocking the global `wx` object from scratch, a standalone effort
+bigger than this follow-up's scope. 3 new client tests (849 total, was 846 — one of the
+four fixes rewrote an existing assertion rather than adding a new test), `tsc --noEmit`
+clean across all 7 workspaces.
 
 **2026-07-29: the front door design/10 had described but nobody had built.** A player reported the game felt "all placeholder UI" — the HUD/Settings/PauseMenu were genuinely real (5.2 above), but there was no boot/main-menu screen at all (`main.ts` dropped straight into the forge outpost) and the forge/loadout screen was a keyboard-only monospace text board, no clickable tiles. Shipped: a real **Main Menu** (`game/MainMenu.ts` — PLAY/SETTINGS, deliberately minimal; PvP/Arena entry stays a boot-time `?pvp=1` flag for now, not a runtime choice — a separate, scoped follow-up, **closed 2026-08-03 by Mode Select, see that entry below**); the **Loadout screen** upgraded in place (`game/Forge.ts` — clickable blueprint rows paged 8-at-a-time since `BLUEPRINT_CATALOG` has more entries than the old digit-key shortcuts ever reached, character-cycle arrows, Clear/Start buttons; keyboard shortcuts unchanged as a second input path onto the same underlying methods); and a richer **result screen** (`RunOutcome.ts`/`Screens.ts` — floor/materials/`Time M:SS` off the sim's own `s.tick`/`TICK_RATE`/score, plus a secondary Main Menu exit link). Also resolved two design/10 open questions: auto-aim-to-nearest is now the canonical control scheme (not just a toggle default), and the clutter question favors few/large/clear elements over dense text or many small controls. All render-only, no `ENGINE_VERSION` impact. Along the way, found and fixed a real font-metrics clipping bug (Pixi under-measuring bold/monospace text vs. the browser's actual glyph width in this environment, cropping the last character(s) of titles/labels/hint text) via Pixi's own documented `padding` mitigation, applied to every Text style touched plus the shared `Button` widget and the pre-existing `compareCard.ts` (confirming the bug predated this session, just never visually verified before). Browser-verified live (real Chrome, not the sandboxed preview pane): Main Menu → Loadout (row craft, pagination, character cycle) → Start Run → forced result screen → Main Menu link, plus Settings open/close from both entry points and keyboard-shortcut parity on the Loadout screen. 450 client tests + `tsc --noEmit` + `vite build` all green throughout. Not built (explicitly out of scope, flagged separately): visible on-screen touch stick/button graphics (`platform/TouchControls.ts` renders zero visuals today — invisible hit-zones only, a real gap affecting WeChat/mobile).
 - **5.3 Art pipeline** (12/13): ✅ `.tao` editor ported (`tools/animator`, 2026-07-26) — instantiable multi-rig `Rig` class (was funny's static 11-bone humanoid), the orb-core's own 6-bone `RigDef` (root/shell/eye/belly/2 weapon sockets, no arms/legs/walk-cycle), and orb-core preset clips (hover-bob/lean/squash-stretch) replacing the humanoid idle/walk/attack/hurt/death/spawn. **2026-07-27: tooling+render gaps fully closed too** — real (AI-placeholder) art bound for the full 3-character launch roster + a boss-core rig + a critter-core enemy rig, the client's own `.tao` runtime renderer shipped (bone FK, animation playback, aim-tracking weapon-socket rotation, front/back eye hemisphere swap, runtime elemental re-tinting), and the element colour palette locked.

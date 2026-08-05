@@ -141,6 +141,27 @@ describe('WebInput — touch overrides keyboard/mouse while active', () => {
     expect(inp.moveY).toBe(0);
   });
 
+  it('a touch on the on-screen INTERACT button sets interacting=true with no keyboard involved — the real gap this pass closed', () => {
+    // Interact button center for an 800x600 canvas, standard (non-mirrored) layout:
+    // unit=600, r=48, m=72, gap=115.2 → weapon1 cx=728, weapon2 cx=612.8,
+    // interact cx=497.6, cy=72 (same corner-cluster math WebInput — layout's own test
+    // above already pins down for weapon1).
+    expect(input.read().interacting).toBe(false); // KeyE not held, no prior touch
+    canvas.fire('touchstart', {
+      preventDefault() {},
+      changedTouches: [{ identifier: 5, clientX: 497.6, clientY: 72 }],
+    });
+    expect(input.read().interacting).toBe(true);
+    expect(input.getTouchVisual().interact.pressed).toBe(true);
+
+    canvas.fire('touchend', {
+      preventDefault() {},
+      changedTouches: [{ identifier: 5, clientX: 497.6, clientY: 72 }],
+    });
+    expect(input.read().interacting).toBe(false);
+    expect(input.getTouchVisual().interact.pressed).toBe(false);
+  });
+
   it('touchmove/touchend drive the underlying TouchControls, reflected in getTouchVisual()', () => {
     canvas.fire('touchstart', {
       preventDefault() {},
