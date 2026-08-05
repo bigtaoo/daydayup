@@ -10,9 +10,11 @@ click-driven; 33: manual aim removed entirely; 34: co-resident PvE room/door mod
 client rendering; 35: fully-realized branching — see the Room & door model section below;
 same-day map-editor door placement, the `layout: 'graph2d'` real-2D-layout follow-up, AND the
 "graph2d content" pass that switches `EMBER_DUNGEON` to it are all additive, no version bump);
-1736 tests green across all 7 workspace packages (engine 473 / client 907 / server 167 /
-animator 62 / map-editor 64 / desktop-shell 56 / root build-script 7, `npm run check`) after a
-full client code-review pass
+2627 tests green across all 7 workspace packages (engine 546 / client 1085 / server 186 /
+animator 444 / map-editor 260 / png-pipeline 20 / desktop-shell 79 / root build-script 7,
+`npm run check`) after a full test-coverage audit pass (2026-08-05, see the Test coverage audit
+pass section below) that closed ~50 previously-untested files and found zero dead/obsolete
+tests to remove, plus, before that, a full client code-review pass
 (2026-08-04, see the Phase 3/4 updates and the Client hardening pass section below) that found
 and closed a real Phase-3 gap (mid-match reconnect was server-ready but never actually wired
 from the client) plus a real Phase-4 squad-scoring bug, alongside a dozen smaller correctness/
@@ -950,6 +952,63 @@ and three enemy concepts misfiled under `art/map/`.
 
 ---
 
+## Test coverage audit pass ✅ (2026-08-05)
+
+Prompted by "全部核查项目的tests，该补的补，该删的删" (fully audit the project's tests — add what
+needs adding, delete what needs deleting) — a from-scratch audit of every source file across all
+7 workspace packages against its test coverage, run as parallel per-workspace sweeps rather than
+by precedent/memory of what was tested before.
+
+**该删的删 (deletions): nothing found.** Every workspace came back clean — no orphaned tests
+(source file deleted, test left behind), no stale imports (test importing a symbol that no
+longer exists), no exact-duplicate coverage, and zero `.skip`/`.todo`/commented-out test bodies
+anywhere in the repo. The suite had no rot to clear.
+
+**该补的补 (additions): ~50 files closed, 891 new tests** (1736 → 2627): `engine/systems/
+targeting.ts`/`AIDecideSystem.ts`/`nearest.ts` and `content/ballistics.ts`/`materials.ts` (real
+logic only ever exercised transitively via consumer tests before); `server/src/config.ts`/
+`db.ts`; a `client/src` sweep across `game/match/*Config.ts`, `meta/{store,MetaState,
+accountSync}.ts`, `game/scene/{Skin,Bullet,Portal,Backdrop,layers}.ts`, `game/theme.ts`,
+`game/coords.ts`, `render/{skinRegistry,taoBundle}.ts`, `game/fx/{Particles,filters}.ts`
+(`VignetteFilter`/`ChromaticAberrationFilter` had literally never run for real anywhere — every
+existing test mocked the whole module out), and `settings/SettingsState.ts`; and, in `tools/`,
+`map-editor`'s `ArenaCanvas.ts`/`RoomCanvas.ts` (the stated "needs `mount()`/DOM" exemption
+carried over from `DungeonFloorCanvas.ts`'s own precedent turned out to be stale — same
+unmounted-constructor technique applies), its state layer (`RoomEditTarget.ts` + all 3
+`*Document.ts` classes), and its `fields.ts`/`Inspector.ts`/`EncounterTable.ts` UI (a small
+hand-rolled fake-DOM-element helper, no jsdom); `animator`'s core (`EventBus`/`CommandManager`/
+`AppState`), io layer (`EditorProjectIO.ts`/`TaoExporter.ts`/`AutoSaveController.ts` — the
+largest untested files in the workspace), `InteractionController.ts`/`AnimationController.ts`,
+`TimelineView.ts` (a hand-rolled call-recording fake `CanvasRenderingContext2D`, since Canvas2D
+has no built-in "what got drawn" introspection the way Pixi's `Graphics.context.instructions`
+does), its remaining UI panels, and `ProjectStore.ts` (a from-scratch minimal fake IndexedDB —
+no `fake-indexeddb` dependency existed in the repo, and none was added); `png-pipeline`, which
+had **zero test infrastructure at all** before this pass (no `vitest` devDependency wired, no
+`test` script), now has both plus real `pngCodec.mjs` coverage; and `desktop-shell`'s
+`preload.ts`/`preloadSidebar.ts` (driven through a mocked `electron` `contextBridge`/
+`ipcRenderer`, same convention as its existing `main.test.ts`).
+
+Two small, behavior-preserving production changes fell out of chasing "mechanically testable,
+just needs a seam" rather than accepting an exemption at face value: `server/src/index.ts` got
+the same `createGameserver(opts)` factory + run-only-when-main guard `matchsvc.ts` already had,
+so a real-HTTP integration test could exercise it the way `matchsvc.http.test.ts` does; and
+`tools/map-editor/src/main.ts`'s mode-transition/tool-visibility branching moved into a small
+pure `modeLogic.ts` so it could be unit-tested directly instead of staying trapped in an
+entry-point shell with top-level DOM side effects.
+
+One real bug surfaced and was deliberately left unfixed as out of scope for a test-only pass
+(documented inline in the new test instead): `tools/animator/src/io/TaoExporter.ts`'s
+`restoreAnimationData` (used by `.tao` re-import) never calls `state.setAllLengthScales(...)`,
+unlike `EditorProjectIO.loadEditorBlob`'s equivalent path — a `.tao` re-import silently drops
+any per-bone length customization. `tools/desktop-shell/src/preload.ts`'s `onRequestSave` was
+also found to send its save-ack even when the save callback's promise rejects, without ever
+catching that rejection (an unhandled-rejection, not a hang) — spun off as a separate follow-up
+rather than folded into this pass.
+
+`npm run check` (typecheck + full test suite, all 7 workspaces) is clean before and after.
+
+---
+
 ## Dependency summary
 
 ```
@@ -968,4 +1027,5 @@ Phase 6 (accounts)      DONE (✅) — real username/password login (SQLite via 
 Phase 7 (i18n)          DONE (✅) — client/src/i18n/: en.ts canonical + zh.ts translation, both compile-time key-checked (Translations<typeof en>, TranslationKey). Every screen migrated to t(); Settings gained a language toggle backed by SettingsState.locale. Independent of Phases 1-6; enum/data-driven values (damage type, weapon kind, rarity/ids) deliberately left untranslated.
 Documentation           DONE (✅ 2026-08-02) — all 19 design docs + every README audited against the code; stale top-of-file Status blocks rewritten (12/10/client/art READMEs and this file's own header), design/README index completed, engine/README written, art/ UUID filenames + duplicate files cleaned up. Docs-only, no code change.
 Repo structure          DONE (✅ 2026-08-02) — engine/ hoisted to its own top-level package (DOM-free, self-only paths: the determinism rule is now compile-enforced); client/src/game/ split into screens|scene|controllers|match; root npm workspace with a single `npm run check` across all 5 packages; game/config.ts deleted (dead pre-engine duplicates) and split into theme.ts + score.ts. 931 tests before and after, zero behaviour change.
+Test coverage audit     DONE (✅ 2026-08-05) — full test-coverage sweep across all 7 workspaces; zero dead/obsolete tests found (nothing to delete); ~50 previously-untested files closed, 1736 → 2627 tests. See the Test coverage audit pass section above.
 ```

@@ -16,7 +16,8 @@
  * is already compact plain data, so JSON is fine for the co-op MVP; a WeChat/production
  * build would swap in a binary codec behind this same seam.
  */
-import { createServer } from 'node:http';
+import { createServer, type Server } from 'node:http';
+import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { ClientMsg, ServerMsg } from '@dd/engine';
 import { RoomManager } from './RoomManager';
@@ -111,7 +112,20 @@ function resolveSeat(url: URL, secret: string, isDev: boolean): Seat | null {
   return { roomId, owner, seed, count, mode };
 }
 
-function main(): void {
+export interface GameserverOptions {
+  /** Ticket secret/isDev override — tests can pin a fixed value instead of the
+   * env-derived `ticketSecret()` default (mirrors matchsvc's `secret` option in
+   * `MatchsvcServerOptions`). */
+  ticketSecret?: { secret: string; isDev: boolean };
+}
+
+/**
+ * Builds the gameserver's HTTP+WS stack WITHOUT starting it (`server.listen()` is the
+ * caller's job) — the same testability seam as `matchsvc.ts`'s `createMatchsvcServer`.
+ * `main()` below is the real CLI entrypoint; a test can bind an ephemeral port and drive
+ * real HTTP/WS traffic against the returned `server`/`wss` instead.
+ */
+export function createGameserver(opts: GameserverOptions = {}): { server: Server; wss: WebSocketServer; manager: RoomManager } {
   const manager = new RoomManager({
     // Node timers are the metronome clock in production; the tests inject a fake.
     scheduler: {
@@ -131,7 +145,7 @@ function main(): void {
     res.end('Upgrade Required');
   });
   const wss = new WebSocketServer({ server: http, path: '/ws' });
-  const { secret, isDev } = ticketSecret();
+  const { secret, isDev } = opts.ticketSecret ?? ticketSecret();
 
   wss.on('connection', (ws: WebSocket, req) => {
     const url = new URL(req.url ?? '', `ws://${req.headers.host}`);
@@ -184,18 +198,29 @@ function main(): void {
     });
   });
 
+  return { server: http, wss, manager };
+}
+
+function main(): void {
+  const { server, wss, manager } = createGameserver();
+
   const shutdown = (): void => {
     manager.destroyAll();
     wss.close();
-    http.close();
+    server.close();
     process.exit(0);
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  http.listen(PORT, HOST, () => {
+  server.listen(PORT, HOST, () => {
     console.log(`daydayup gameserver (co-op frame relay) on ws://${HOST}:${PORT}/ws`);
   });
 }
 
-main();
+// Only auto-start when run directly (`node --import tsx/esm src/index.ts`), not when
+// imported by a test — the same ESM `require.main === module` equivalent matchsvc.ts
+// uses now that `createGameserver` is a real importable export.
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main();
+}

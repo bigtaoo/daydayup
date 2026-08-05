@@ -77,7 +77,7 @@ anti-cheat checkpoint (`design/15`).
 ## Working on it
 
 ```bash
-npm test -w engine          # vitest, 373 tests
+npm test -w engine          # vitest, 546 tests
 npm run typecheck -w engine # tsc --noEmit, DOM-free
 ```
 

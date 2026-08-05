@@ -11,9 +11,7 @@ import { renderInspector } from './ui/Inspector';
 import { saveJson, openJson } from './ui/DocumentIO';
 import { validateRoomPiece, validateArenaMap, validateDungeonFloorMap } from './validate';
 import { button, el, selectField } from './ui/fields';
-
-type Mode = 'roomLibrary' | 'arena' | 'dungeonFloor';
-type ArenaView = { kind: 'map' } | { kind: 'room'; roomId: string };
+import { visibleHost, onRoomCanvas, roomToolsForMode, type Mode, type ArenaView } from './modeLogic';
 
 const roomCanvasHost = document.getElementById('roomCanvasHost') as HTMLElement;
 const arenaCanvasHost = document.getElementById('arenaCanvasHost') as HTMLElement;
@@ -73,18 +71,22 @@ function setActiveRoomDoc(index: number): void {
   refreshSidebar();
 }
 
+/** Applies modeLogic.ts's `visibleHost` decision to the three real mounted canvas
+ * hosts — the only side-effecting half of that decision, kept here in main.ts. */
+function applyVisibleHost(host: ReturnType<typeof visibleHost>): void {
+  roomCanvasHost.style.display = host === 'room' ? '' : 'none';
+  arenaCanvasHost.style.display = host === 'arena' ? '' : 'none';
+  dungeonFloorCanvasHost.style.display = host === 'dungeonFloor' ? '' : 'none';
+}
+
 function setMode(next: Mode): void {
   mode = next;
   if (mode === 'roomLibrary') {
-    roomCanvasHost.style.display = '';
-    arenaCanvasHost.style.display = 'none';
-    dungeonFloorCanvasHost.style.display = 'none';
+    applyVisibleHost(visibleHost(mode, arenaView));
     roomCanvas.setTool(roomTool);
     roomCanvas.setTarget(new RoomPieceTarget(roomDocs[activeRoomDocIndex]!));
   } else if (mode === 'dungeonFloor') {
-    roomCanvasHost.style.display = 'none';
-    arenaCanvasHost.style.display = 'none';
-    dungeonFloorCanvasHost.style.display = '';
+    applyVisibleHost(visibleHost(mode, arenaView));
     syncDungeonFloorLibrary();
     dungeonFloorCanvas.setTool(dungeonFloorTool);
     dungeonFloorCanvas.setDocument(dungeonFloorDoc);
@@ -97,16 +99,11 @@ function setMode(next: Mode): void {
 }
 
 function syncArenaView(): void {
+  applyVisibleHost(visibleHost(mode, arenaView));
   if (arenaView.kind === 'map') {
-    roomCanvasHost.style.display = 'none';
-    dungeonFloorCanvasHost.style.display = 'none';
-    arenaCanvasHost.style.display = '';
     arenaCanvas.setTool(arenaTool);
     arenaCanvas.setDocument(arenaDoc);
   } else {
-    arenaCanvasHost.style.display = 'none';
-    dungeonFloorCanvasHost.style.display = 'none';
-    roomCanvasHost.style.display = '';
     roomCanvas.setTool(roomTool);
     roomCanvas.setTarget(new ArenaRoomTarget(arenaDoc, arenaView.roomId));
   }
@@ -252,12 +249,8 @@ function renderTopbar(): void {
   toolRow.style.gap = '4px';
   toolRow.style.flexWrap = 'wrap';
 
-  const onRoomCanvas = mode === 'roomLibrary' || (mode === 'arena' && arenaView.kind === 'room');
-  if (onRoomCanvas) {
-    const isPve = mode === 'roomLibrary';
-    for (const t of ROOM_TOOLS) {
-      if (t.id === 'playerSpawn' && !isPve) continue; // PvP rooms have no per-room player spawn (design/15)
-      if ((t.id === 'cellTrait' || t.id === 'lootMarker') && isPve) continue; // PvE RoomPiece has neither field
+  if (onRoomCanvas(mode, arenaView)) {
+    for (const t of roomToolsForMode(mode, ROOM_TOOLS)) {
       const b = button(t.label, () => {
         roomTool = t.id;
         roomCanvas.setTool(t.id);

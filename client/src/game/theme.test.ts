@@ -1,0 +1,93 @@
+/**
+ * theme.ts is pure colour-derivation math. `mixHex` isn't exported (it's an
+ * internal helper), so its channel-mixing behavior is pinned indirectly through
+ * `biomePalette`'s derived fields — the exact hex values below are computed with
+ * the SAME lerp-per-channel-then-round formula the source uses (base + (tint-base)*amount,
+ * rounded, one channel at a time), so a regression in that math (wrong channel order,
+ * wrong rounding, wrong amount) changes these constants.
+ */
+import { describe, it, expect } from 'vitest';
+import { WEAPON_SIM_BY_ID, type WeaponSimSpec } from '@dd/engine';
+import { THEME, ELEMENT_COLORS, elementColor, biomePalette, biomeElementOf, rarityColor } from './theme';
+
+describe('elementColor', () => {
+  it('maps each elemental damage type to its status-fx hue', () => {
+    expect(elementColor('fire')).toBe(THEME.colors.statusBurn);
+    expect(elementColor('ice')).toBe(THEME.colors.statusChill);
+    expect(elementColor('lightning')).toBe(THEME.colors.statusShock);
+    expect(elementColor('poison')).toBe(THEME.colors.statusPoison);
+  });
+
+  it('falls back to the locked neutral hex for physical (deliberately absent from ELEMENT_COLORS)', () => {
+    expect(ELEMENT_COLORS.physical).toBeUndefined();
+    expect(elementColor('physical')).toBe(0xe2e8f0);
+  });
+});
+
+describe('biomeElementOf', () => {
+  it('maps the one registered biome id to its element', () => {
+    expect(biomeElementOf('ember')).toBe('fire');
+  });
+
+  it('falls back to neutral for undefined (outside dungeon mode) and any unknown id', () => {
+    expect(biomeElementOf(undefined)).toBe('neutral');
+    expect(biomeElementOf('not-a-real-biome')).toBe('neutral');
+  });
+});
+
+describe('biomePalette — neutral (unchanged existing palette)', () => {
+  it('undefined and any unknown biomeId both resolve to the exact THEME.colors palette', () => {
+    const undef = biomePalette(undefined);
+    const unknown = biomePalette('not-a-real-biome');
+    expect(undef).toEqual(unknown);
+    expect(undef.ground).toBe(THEME.colors.ground);
+    expect(undef.gridLine).toBe(THEME.colors.gridLine);
+    expect(undef.pillar).toBe(THEME.colors.pillar);
+    expect(undef.pillarTop).toBe(THEME.colors.pillarTop);
+    expect(undef.wall).toBe(THEME.colors.wall);
+    expect(undef.wallEdge).toBe(THEME.colors.wallEdge);
+  });
+
+  it('void is ground mixed 45% toward black (never toward the bright FX neutral)', () => {
+    // mixHex(ground, 0x000000, 0.45), computed channel-by-channel: ground=0x161a24
+    // (22,26,36) -> round(22*0.55)=12=0x0c, round(26*0.55)=14=0x0e, round(36*0.55)=20=0x14
+    expect(biomePalette(undefined).void).toBe(0x0c0e14);
+  });
+});
+
+describe('biomePalette — ember (fire-tinted derivation, design/13)', () => {
+  const p = biomePalette('ember');
+
+  it('mixes each neutral field toward statusBurn by its documented amount, exactly', () => {
+    // Values computed with the source's own mix(b,t)=round(b+(t-b)*amount) formula,
+    // per channel, against THEME.colors.statusBurn (0xff7043) — see file header.
+    expect(p.ground).toBe(0x2d2327); // mixHex(ground, statusBurn, 0.10)
+    expect(p.gridLine).toBe(0x3e3034); // mixHex(gridLine, statusBurn, 0.14)
+    expect(p.pillar).toBe(0x564850); // mixHex(pillar, statusBurn, 0.14)
+    expect(p.pillarTop).toBe(0x6c5b63); // mixHex(pillarTop, statusBurn, 0.18)
+    expect(p.wall).toBe(0x483a40); // mixHex(wall, statusBurn, 0.14)
+    expect(p.wallEdge).toBe(0x735c61); // mixHex(wallEdge, statusBurn, 0.22)
+    expect(p.void).toBe(0x241819); // mixHex(neutral.void, statusBurn, 0.10)
+  });
+
+  it('never mutates or aliases the neutral palette object', () => {
+    const neutral = biomePalette(undefined);
+    expect(p).not.toBe(neutral);
+    expect(p.ground).not.toBe(neutral.ground);
+  });
+});
+
+describe('rarityColor', () => {
+  const BASE = WEAPON_SIM_BY_ID.blaster!;
+  function withRarity(rarity: WeaponSimSpec['rarity']): WeaponSimSpec {
+    return { ...BASE, rarity };
+  }
+
+  it('maps every tier to its design/14 white/blue/purple/orange/gold hex', () => {
+    expect(rarityColor(withRarity('common'))).toBe(0xe2e8f0);
+    expect(rarityColor(withRarity('fine'))).toBe(0x63b3ed);
+    expect(rarityColor(withRarity('epic'))).toBe(0xb794f4);
+    expect(rarityColor(withRarity('legend'))).toBe(0xf6ad55);
+    expect(rarityColor(withRarity('legendary'))).toBe(0xf6e05e);
+  });
+});

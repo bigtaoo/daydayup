@@ -50,7 +50,7 @@ export function openDb(path: string = defaultDbPath()): DatabaseSync {
   return db;
 }
 
-function defaultDbPath(): string {
+export function defaultDbPath(): string {
   const env = process.env.DDU_DB_PATH;
   if (env && env.length > 0) return env;
   const here = dirname(fileURLToPath(import.meta.url));
