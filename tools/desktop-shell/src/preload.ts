@@ -24,7 +24,15 @@ contextBridge.exposeInMainWorld('nwDesktop', {
   /** Shell asks the tool page to save immediately (first step of the content hot-update flow). Returns an unsubscribe function. */
   onRequestSave(cb: () => void | Promise<void>): () => void {
     const listener = () => {
-      Promise.resolve(cb())
+      let result: void | Promise<void>;
+      try {
+        result = cb();
+      } catch (err) {
+        console.error('[desktop-shell] onRequestSave callback failed:', err);
+        ipcRenderer.send('nw:save-ack');
+        return;
+      }
+      Promise.resolve(result)
         .catch((err) => console.error('[desktop-shell] onRequestSave callback failed:', err))
         .finally(() => ipcRenderer.send('nw:save-ack'));
     };

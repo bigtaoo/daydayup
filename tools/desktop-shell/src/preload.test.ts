@@ -127,6 +127,24 @@ describe('preload (nwDesktop content-page bridge)', () => {
 
       consoleErrorSpy.mockRestore();
     });
+
+    it('still acks and logs (without throwing) when the callback throws synchronously', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const err = new Error('save failed sync');
+      const cb = vi.fn(() => {
+        throw err;
+      });
+      nwDesktop.onRequestSave(cb);
+      const listener = electronMock.ipcRenderer.on.mock.calls[0][1];
+
+      expect(() => listener()).not.toThrow();
+      await flush();
+
+      expect(consoleErrorSpy).toHaveBeenCalledWith('[desktop-shell] onRequestSave callback failed:', err);
+      expect(electronMock.ipcRenderer.send).toHaveBeenCalledWith('nw:save-ack');
+
+      consoleErrorSpy.mockRestore();
+    });
   });
 
   describe('onUpdateAvailable', () => {
