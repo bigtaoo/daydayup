@@ -1130,6 +1130,37 @@ plus zero console errors.
 before and after; `engine`/`server`/`tools/*` all sit at 0 tracked file-length exceptions,
 `client` at 1 (`Game.ts`, documented above).
 
+**Follow-up (✅ same day, 2026-08-12): the main loop.** User asked specifically to split
+"Game.ts's remaining main loop" — `controllers/GameLoop.ts` now owns `update()`'s three
+phase branches (playing/paused/idle), the offline fixed-step loop (`advanceSim`/`stepSim`),
+its online counterpart (`advanceOnline`, latency-hiding local-player prediction), and the
+render-side adapters they share (`spawnBulletTrails`/`updateFx`/`updateCamera`/`updateHud`/
+`pollConfirm`) — plus the accumulator (`acc`), rising-edge confirm latch (`prevFire`), and
+online predictor (`predictor`/`predLastTick`), none of which were read anywhere outside
+those methods, so they moved in as `GameLoop`'s own private state rather than staying on
+Game. Takes a `GameLoopDeps` bundle of already-independent collaborators (scene/fx/hud/
+touchControlsView/portalPrompt/roomBuilder/partyScreen/builder/ally/input/events/
+runOutcome/tutorialHints — none of which call back into Game themselves) plus a narrow
+`GameLoopHost` (phase/online/coop/arenaDemo/tutorialActive/localOwner/engine/session reads,
+`activeState`/`currentScore` reused from the existing EventReactorHost/RunOutcomeHost
+methods, plus `markTutorialSeen`/`confirm` — both genuinely shared with run-lifecycle so
+they stay host-owned). `resetForNewRun()`/`resetOnlinePrediction()` replace Game's direct
+`acc`/`predictor` field pokes from `resetRunRenderState`/`finalizeOnlineRun`. 17 new tests
+against a real `createGameEngine` (same convention as `controllers/ally.test.ts`) plus
+faked Pixi collaborators (same convention as `EventReactor.test.ts`'s fake `FxController`)
+— covering phase dispatch, the fixed-step cadence and its `MAX_STEPS` catch-up cap,
+coop/arenaDemo ally-seat driving, hit-stop freezing `stepSim` but not rendering, the online
+session lifecycle (not-started/started/gameover-reporting), and both reset hooks. Verified
+live via `window.__game` (real offline run: 10×16ms frames → tick 4, matching the 30Hz
+accumulator math; pause genuinely freezes the tick, resume continues it; tutorial run ticks
+and quits to the right phase) — zero console errors throughout. Landed Game.ts at **1029
+lines** (1348→1256→1029). What's left — `start()`'s screen-callback wiring (inherently
+belongs in the assembly shell), the constructor, run lifecycle (`beginRun`/
+`beginTutorialRun`/`beginArenaDemoRun`/`finalizeOnlineRun`/`quitRun`/`resetRunRenderState`),
+matchmaking/network glue, and the now-trivial host-interface one-liners — is recorded in the
+client baseline's updated inline note; run lifecycle specifically is the next real
+candidate if this gets revisited.
+
 ---
 
 ## Dependency summary

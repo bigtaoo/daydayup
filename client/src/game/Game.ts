@@ -1,19 +1,14 @@
 import { Application, Container } from 'pixi.js';
 import {
   createGameEngine,
-  hashState,
   SKIN_DEFS,
-  PLAYER_BASE,
   type GameEngine,
-  type GameEvent,
   type GameState,
 } from '@dd/engine';
 import { CoopSession } from '../net/CoopSession';
 import { connectOnlineSession } from './match/onlineConnect';
 import { buildDungeonRunConfig, buildArenaDemoConfig } from './match/offlineConfig';
 import { buildTutorialConfig } from './match/tutorialConfig';
-import { totalFloorCount } from './match/floorCount';
-import { LocalPredictor, DEFAULT_PREDICTOR } from './controllers/LocalPredictor';
 import {
   defaultMetaState, bankMaterials, clearLoadout, selectCharacter,
   unlockBlueprint, createAccountSyncMetaStore, pullAccountMeta, type MetaState, type MetaStore,
@@ -24,7 +19,7 @@ import {
   type SettingsState, type SettingsStore,
 } from '../settings';
 import { t, setLocale } from '../i18n';
-import { ELEMENT_COLORS, THEME } from './theme';
+import { THEME } from './theme';
 import { Layers } from './scene/layers';
 import { Scene } from './scene/Scene';
 import { Screens } from './screens/Screens';
@@ -51,10 +46,9 @@ import { PortalPrompt } from './ui/PortalPrompt';
 import { RunOutcome } from './controllers/RunOutcome';
 import { ForgeActions } from './controllers/ForgeActions';
 import { ScreenFlow } from './controllers/ScreenFlow';
+import { GameLoop } from './controllers/GameLoop';
 import { parseGameQueryParams } from './match/gameQueryParams';
-import { shouldConfirmOnFireEdge } from './screens/confirmEdge';
 import type { Phase } from './phase';
-import { fpToPx, bradToRad } from './coords';
 import type { AudioBus, InputCanvas, InputSource } from '../platform/types';
 
 // The demo runs the Ember biome as a seeded dungeon (design/05/09, ROADMAP 1.3): each
@@ -65,13 +59,6 @@ import type { AudioBus, InputCanvas, InputSource } from '../platform/types';
 // ignored in dungeon/arena mode — each room/arena resizes the world as it loads).
 
 const SEED_BASE = 0xda1d; // per-run seed = base + run index (deterministic, no Date)
-const SIM_DT_MS = 1000 / 30; // fixed sim step: the engine runs at 30 Hz (design/06)
-const MAX_STEPS = 5; // catch-up cap per render frame → no spiral of death
-// How close (world px) the player must stand to the portal for PortalPrompt's popup to
-// appear (design/10 legibility fix, 2026-08-02) — wide enough to reach comfortably
-// before the portal's own footprint, narrow enough that it doesn't show while still
-// crossing the room.
-const PORTAL_PROMPT_RADIUS_PX = 90;
 
 // Render-side run phases (design/10). The engine only knows idle/playing/gameover;
 // the main menu (the boot front door), the forge/loadout outpost (the between-run hub,
@@ -169,10 +156,8 @@ export class Game {
   private settings: SettingsState = defaultSettingsState();
 
   private phase: Phase = 'menu';
-  private acc = 0; // accumulated real time (ms) not yet consumed by a sim step
   private runCount = 0;
   private score = 0;
-  private prevFire = false; // rising-edge confirm on menus
   // Chosen character (design/14) now lives in `this.meta.selectedSkin` — picked at the
   // forge outpost and carried into a run via EngineConfig.skinId (see beginRun).
 
@@ -212,19 +197,14 @@ export class Game {
   private matchBaseUrl = 'http://localhost:8788';
   private session: CoopSession | null = null;
   private readonly ally = new AllyController();
-
-  // Online local-player prediction (design/06): the render layer draws the local seat's own
-  // movement/aim ahead of the confirmed frame stream to hide RTT, then eases to the
-  // authoritative position. Render-only — the sim is untouched. `lagMs` is a `?lag=` DEV
-  // harness (LaggyTransport) to feel/tune the smoothing without real devices.
-  private readonly predictor = new LocalPredictor({
-    // Match the sim's own speed so predicted ≈ confirmed at zero latency: player moves
-    // PLAYER_BASE.speedPerTick per 30 Hz tick (players.ts) → px/sec.
-    speedPxPerSec: fpToPx(PLAYER_BASE.speedPerTick) * (1000 / SIM_DT_MS),
-    ...DEFAULT_PREDICTOR,
-  });
-  private predLastTick = -1;
+  // `?lag=` DEV harness (LaggyTransport, CoopSession construction in connectForMatchmaking)
+  // to feel/tune the online predictor's smoothing without real devices — the predictor
+  // itself now lives in GameLoop (extracted 2026-08-12, see that file's doc comment).
   private lagMs = 0;
+  // Fixed-step sim + interpolated render main loop (extracted 2026-08-12, see that
+  // file's doc comment) — constructed in start(), same late-construction reason as
+  // screenFlow (needs partyScreen, built there too).
+  private gameLoop!: GameLoop;
 
   // Post-processing / game-feel (design/01 fidelity roadmap milestone 3), extracted
   // into FxController 2026-07-28. Offline-only (never touches advanceOnline — see
@@ -330,6 +310,14 @@ export class Game {
       forge: this.forge, screens: this.screens, settingsScreen: this.settingsScreen,
       pauseMenu: this.pauseMenu, settingsBtn: this.settingsBtn, hudView: this.hudView,
     });
+    // Same late-construction reason as screenFlow above — needs partyScreen.
+    this.gameLoop = new GameLoop({
+      scene: this.scene, roomBuilder: this.roomBuilder, fx: this.fx, hud: this.hud,
+      touchControlsView: this.touchControlsView, portalPrompt: this.portalPrompt,
+      partyScreen: this.partyScreen, builder: this.builder, ally: this.ally,
+      input: this.input, events: this.events, runOutcome: this.runOutcome,
+      tutorialHints: this.tutorialHints,
+    }, this);
     this.mainMenu.onPlay = () => this.showModeSelect();
     this.mainMenu.onSquad = () => this.showSquad();
     this.mainMenu.onAccount = () => this.showAccount();
@@ -516,7 +504,7 @@ export class Game {
 
   /** Guest-local, account-independent (design/10) — set once, on tutorial completion OR
    * skip alike. Idempotent: a no-op (no extra save) once already true. */
-  private markTutorialSeen() {
+  markTutorialSeen() {
     if (this.meta.hasSeenTutorial) return;
     this.meta = { ...this.meta, hasSeenTutorial: true };
     this.store.save(this.meta);
@@ -788,7 +776,7 @@ export class Game {
     this.fx.resetForNewRun();
     this.roomBuilder.clear();
     this.score = 0;
-    this.acc = 0;
+    this.gameLoop.resetForNewRun();
     this.screenFlow.hideSettingsButton();
   }
 
@@ -876,8 +864,33 @@ export class Game {
     this.screens.hide();
   }
 
+  // ---- Online co-op (ROADMAP 3.3): matchmaking → socket → CoopSession ----
+  //
+  // Connection setup (matchmaking + ticket redemption) lives in onlineConnect.ts, and the
+  // run-config shape it needs in matchConfig.ts (both extracted 2026-07-28, pure of Game
+  // state) — this just owns the session's lifecycle and phase transition. The matchmaking
+  // ATTEMPT itself (design/10 screen-flow gap) now lives entirely in the Matchmaking
+  // screen (connectForMatchmaking is just its injected connect function) — this method
+  // only runs once that screen already has a connected session in hand, so there's no
+  // more "blank playing phase while invisibly connecting" window.
+
+  /** A match actually started — enter `playing` with the now-live session. */
+  private finalizeOnlineRun(session: CoopSession) {
+    this.resetRunRenderState();
+    this.tutorialActive = false;
+    this.session?.close();
+    this.session = session;
+    this.gameLoop.resetOnlinePrediction(); // re-anchors on the first confirmed frame of the new run
+    this.matchmaking.hide();
+    this.phase = 'playing';
+    this.hudView.visible = true;
+    this.forge.hide();
+    this.screens.hide();
+    this.partyScreen.hide();
+  }
+
   /** A free character distinct from the local pick, for the co-op bot ally (ROADMAP 3.1). */
-  private allySkinId(): string {
+  allySkinId(): string {
     return Object.keys(SKIN_DEFS).find((id) => id !== this.meta.selectedSkin) ?? this.meta.selectedSkin;
   }
 
@@ -950,7 +963,7 @@ export class Game {
     return this.scene.actorAt(id);
   }
 
-  private confirm() {
+  confirm() {
     this.audio.resume(); // a confirm tap is a user gesture — clears the autoplay gate (design/11)
     if (this.phase === 'menu') this.showForge();
     else if (this.phase === 'forge') this.beginRun();
@@ -967,290 +980,50 @@ export class Game {
     }
   }
 
-  // ---- Main loop: fixed-step sim + interpolated render ----
+  // ---- Main loop (see GameLoop.ts) ----
 
   private update(dt: number) {
-    if (this.phase === 'playing') {
-      if (this.online) this.advanceOnline(dt);
-      else this.advanceSim(dt);
-    } else if (this.phase === 'paused') {
-      // Genuinely frozen (offline-only, see pause()'s doc comment): advanceSim/
-      // advanceOnline are never called, so `acc` simply doesn't move — the same
-      // no-catch-up-burst property hitStopMs already relies on. fx keeps fading so
-      // the frozen frame doesn't look inert.
-      this.updateFx(dt);
-      this.scene.interpolate(1, dt);
-    } else {
-      // Menu / result / squad lobby: freeze the last frame, keep fx fading, poll for
-      // confirm. `partyScreen.update` no-ops when hidden, so it's safe to call
-      // unconditionally rather than gating on `this.phase === 'squad'` here too.
-      this.updateFx(dt);
-      this.scene.interpolate(1, dt);
-      this.pollConfirm();
-      this.partyScreen.update(dt);
-    }
+    this.gameLoop.update(dt);
   }
 
-  private advanceSim(dt: number) {
-    // Hit-stop (design/01 milestone 3): a brief FULL freeze of sim ticks on a strong
-    // hit — offline/local only (see the `hitStopMs` field doc). Render (fx/particles/
-    // camera shake) keeps animating through the freeze; only `stepSim` is skipped, and
-    // `acc` deliberately does NOT accumulate `dt` while frozen, so the sim resumes at a
-    // clean single-tick cadence afterward instead of bursting through a catch-up.
-    if (this.fx.consumeHitStop(dt)) {
-      // frozen this frame — sim skipped, render still animates below
-    } else {
-      this.acc += dt;
-      let steps = 0;
-      while (this.phase === 'playing' && this.acc >= SIM_DT_MS && steps < MAX_STEPS) {
-        this.stepSim();
-        this.acc -= SIM_DT_MS;
-        steps++;
-      }
-      if (steps >= MAX_STEPS) this.acc = 0; // drop the backlog after a long stall
-    }
+  // ---- GameLoopHost (see GameLoop.ts) ----
 
-    const alpha = this.phase === 'playing' ? Math.min(1, this.acc / SIM_DT_MS) : 1;
-    this.scene.interpolate(alpha, dt);
-    this.updateFx(dt);
-    this.updateCamera(alpha);
-    if (this.phase === 'playing') {
-      this.updateHud(dt);
-      this.touchControlsView.update(this.input.getTouchVisual());
-      // Keep the confirm edge fresh so arriving on a result screen with fire still
-      // held doesn't instantly restart (the press must be released and re-issued).
-      this.prevFire = this.input.read().firing;
-    }
+  getPhase(): Phase {
+    return this.phase;
   }
 
-  // One deterministic sim frame: collect input → command → advance the engine →
-  // mirror the new state into views → react to this tick's events.
-  private stepSim() {
-    const engine = this.engine!;
-    const s = engine.state;
-    const p = s.players[this.localOwner];
-
-    const frame = s.tick + 1;
-    engine.submit(this.builder.build(frame, this.localOwner));
-    // Local co-op (ROADMAP 3.1) — and the `?arenaDemo=1` dev harness, which reuses this
-    // exact path: every non-local seat is driven by the bot ally, whose command goes
-    // through the exact same submit path a networked teammate's would — the engine
-    // can't tell a local bot from a remote player.
-    if (this.coop || this.arenaDemo) {
-      for (let owner = 0; owner < s.players.length; owner++) {
-        if (owner !== this.localOwner) engine.submit(this.ally.build(s, owner, this.localOwner, frame));
-      }
-    }
-    const events = engine.advance(frame) ?? [];
-
-    this.scene.reconcile(s, p?.id ?? -1); // camera follows the LOCAL seat
-    this.spawnBulletTrails(s);
-    this.consumeEvents(events);
-    // Tutorial-only teaching-beat toasts (design/10 screen-flow gap) — render-only,
-    // reads the same state+events every real run's HUD/fx already read.
-    if (this.tutorialActive) this.tutorialHints.consume(s, events);
-
-    if (s.phase === 'gameover') {
-      if (this.tutorialActive) this.markTutorialSeen();
-      this.runOutcome.handle(s);
-    }
+  isOnline(): boolean {
+    return this.online;
   }
 
-  // ---- Online co-op (ROADMAP 3.3): matchmaking → socket → CoopSession ----
-  //
-  // Connection setup (matchmaking + ticket redemption) lives in onlineConnect.ts, and the
-  // run-config shape it needs in matchConfig.ts (both extracted 2026-07-28, pure of Game
-  // state) — this just owns the session's lifecycle and phase transition. The matchmaking
-  // ATTEMPT itself (design/10 screen-flow gap) now lives entirely in the Matchmaking
-  // screen (connectForMatchmaking is just its injected connect function) — this method
-  // only runs once that screen already has a connected session in hand, so there's no
-  // more "blank playing phase while invisibly connecting" window.
-
-  /** A match actually started — enter `playing` with the now-live session. */
-  private finalizeOnlineRun(session: CoopSession) {
-    this.resetRunRenderState();
-    this.tutorialActive = false;
-    this.session?.close();
-    this.session = session;
-    this.predictor.deactivate(); // re-anchors on the first confirmed frame of the new run
-    this.predLastTick = -1;
-    this.matchmaking.hide();
-    this.phase = 'playing';
-    this.hudView.visible = true;
-    this.forge.hide();
-    this.screens.hide();
-    this.partyScreen.hide();
+  isCoop(): boolean {
+    return this.coop;
   }
 
-  /**
-   * The online counterpart to advanceSim. The SERVER is the clock: each render frame we
-   * relay the local seat's latest command and drain every frame the server has confirmed
-   * (CoopSession.drive self-paces the catch-up), then mirror the resulting state. The LOCAL
-   * seat's movement is drawn from a render-layer predictor ahead of the confirmed frame
-   * (design/06 latency-hiding) and eased back on each confirmed frame; remote seats/enemies/
-   * bullets stay confirmed. Weapon-facing is never predicted (design/10 v33: it's engine-
-   * decided, not player input) — it's read straight off the confirmed state every frame,
-   * same as every other actor. The sim is never touched — determinism is preserved.
-   */
-  private advanceOnline(dt: number) {
-    const session = this.session;
-    if (!session || !session.started) {
-      // Connecting / awaiting match_start — hold the scene, keep fx fading.
-      this.scene.interpolate(1, dt);
-      this.updateFx(dt);
-      return;
-    }
-    const s = session.state!;
-    const p = s.players[this.localOwner];
-
-    // Relay this render tick's local command (server stamps the authoritative seat/frame).
-    const cmd = this.builder.build(session.frame, this.localOwner);
-    session.submit(cmd);
-
-    // Predict the local seat's own motion for THIS render frame (before draining confirmed
-    // frames) so movement responds instantly under latency. Suspended when downed/dead.
-    const predicting = !!p && p.alive && !p.downed;
-    if (predicting) this.predictor.predict(cmd.moveBrad, cmd.moveMag, dt);
-
-    const events = session.drive();
-
-    // Reconcile toward the confirmed local position — but ONLY when a new confirmed frame
-    // landed (a stall must not drag the prediction back); first activation snaps to spawn.
-    if (predicting && p) {
-      if (!this.predictor.isActive) {
-        this.predictor.reset(fpToPx(p.gx), fpToPx(p.gy), bradToRad(p.facing));
-      } else if (s.tick > this.predLastTick) {
-        this.predictor.reconcile(fpToPx(p.gx), fpToPx(p.gy));
-      }
-      this.predLastTick = s.tick;
-    } else {
-      this.predictor.deactivate();
-    }
-
-    this.scene.reconcile(s, p?.id ?? -1); // camera follows the LOCAL (ticket-assigned) seat
-    // Draw the local seat from the predictor (camera follows it too); remote seats confirmed.
-    if (predicting && p && this.predictor.isActive) {
-      const pose = this.predictor.pose;
-      this.scene.positionLocal(pose.x, pose.y, fpToPx(p.z), bradToRad(p.facing), pose.bodyFacing, pose.moving);
-    }
-    this.spawnBulletTrails(s);
-    this.consumeEvents(events);
-    this.scene.interpolate(1, dt);
-    this.updateFx(dt);
-    this.updateCamera(1);
-    this.updateHud(dt);
-    this.touchControlsView.update(this.input.getTouchVisual());
-    this.prevFire = this.input.read().firing;
-
-    if (s.phase === 'gameover') {
-      // Report the local end-of-match hash (+ placements, for a PvP result) so the
-      // server's checkpoint/hash-verified settlement — and, for PvP, the matchsvc
-      // ladder-rating report (design/15, ROADMAP 4.4/4.6) — actually fires for a REAL
-      // match. Exactly once: this branch only runs while `this.phase === 'playing'`,
-      // and runOutcome.handle always moves it to 'victory'/'defeat' before returning.
-      this.session?.reportResult(hashState(s));
-      this.runOutcome.handle(s);
-    }
+  isArenaDemo(): boolean {
+    return this.arenaDemo;
   }
 
-  // Events are the only engine→render channel (design/08): fx feedback + score + audio.
-  // The actual per-event-type reactions live in EventReactor (extracted 2026-07-28).
-  private consumeEvents(events: readonly GameEvent[]) {
-    this.events.consume(events);
+  isTutorialActive(): boolean {
+    return this.tutorialActive;
   }
 
-  // ---- fx / camera (FxController does the actual work — see that file) ----
-
-  // Per-element bullet trails (design/03/07). Once per sim tick, drop a fading
-  // element-coloured dot at each live elemental bullet's position; the fx fade
-  // (FxController.updateFx) turns the string of dots into a comet tail. Physical
-  // rounds leave none — the trail IS the "this shot is elemental" tell, matched to
-  // the bullet's glow and the aura it will leave on a hit. Render-only: reads
-  // engine state, never writes it (design/08).
-  private spawnBulletTrails(s: GameState) {
-    for (const b of s.projectiles) {
-      if (!b.alive) continue;
-      const color = ELEMENT_COLORS[b.damageType];
-      if (color === undefined) continue; // physical → no trail
-      this.fx.trailDot(fpToPx(b.gx), fpToPx(b.gy), color, fpToPx(b.radius) * 0.9);
-    }
+  getEngine(): GameEngine | null {
+    return this.engine;
   }
 
-  // Thin adapters: FxController itself is decoupled from GameState/phase/screen size,
-  // so these gather this frame's derived values (dust bounds, viewport, camera target)
-  // and hand them down — the only reason these still live on Game rather than being
-  // inlined at every call site.
-  private updateFx(dt: number) {
-    const s = this.activeState();
-    const dustBounds = s ? { x: 0, y: 0, w: fpToPx(s.worldW), h: fpToPx(s.worldH) } : undefined;
-    this.fx.updateFx(dt, this.phase === 'playing' ? 700 : 0, dustBounds);
-
-    // Dynamic lighting (design/01 milestone 2): the local player carries their own
-    // persistent glow, re-registered at their current position every frame rather than
-    // tracked as a one-time spawn; every other point light (muzzle flash/impact bursts)
-    // is registered directly by FxController.flash. This one `updateFx` wrapper is
-    // already called from every render path (paused/menu/offline/online), so shading
-    // every live actor here covers all of them with no per-path wiring.
-    const player = this.scene.player;
-    if (player) this.fx.lights.addPersistent('local', { x: player.curX, y: player.curY, color: 0xfff4d6, radius: 140, intensity: 0.35 });
-    else this.fx.lights.removePersistent('local');
-    this.scene.applyLighting(this.fx.lights);
+  getSession(): CoopSession | null {
+    return this.session;
   }
 
-  private updateCamera(alpha: number) {
-    const s = this.activeState();
-    const worldSize = s ? { w: fpToPx(s.worldW), h: fpToPx(s.worldH) } : null;
-    const { w: vw, h: vh } = this.screenSize();
-    this.fx.updateCamera(alpha, { vw, vh }, worldSize, this.scene.player);
+  selectedSkinId(): string {
+    return this.meta.selectedSkin;
   }
 
-  private screenSize() {
+  screenSize() {
     return {
       w: this.app.renderer.width / this.app.renderer.resolution,
       h: this.app.renderer.height / this.app.renderer.resolution,
     };
-  }
-
-  private updateHud(dt: number) {
-    const s = this.activeState();
-    if (!s) return;
-    this.hud.update(s, dt, {
-      localOwner: this.localOwner,
-      score: this.score,
-      selectedSkin: this.meta.selectedSkin,
-      showAlly: this.coop || this.arenaDemo,
-      allySkinId: this.allySkinId(),
-    });
-
-    // Portal popup (design/10 legibility fix, 2026-08-02) — replaces the old E-key
-    // text prompt. "Checkpoint eligible" is shared between the portal's own open/
-    // closed visual (RoomBuilder) and the popup's proximity gate, computed once here
-    // so neither has to duplicate the other's half of the condition.
-    const floor = s.floorIndex + 1;
-    const isLastFloor = floor >= totalFloorCount(s);
-    const checkpointEligible =
-      !s.zoneEnabled && s.phase !== 'gameover' && s.wavesExhausted && s.enemies.length === 0 && !isLastFloor;
-    this.roomBuilder.setPortalOpen(checkpointEligible);
-
-    const p = s.players[this.localOwner];
-    const portalPx = this.roomBuilder.portalPx;
-    const nearPortal =
-      !!p && !!portalPx && Math.hypot(fpToPx(p.gx) - portalPx.x, fpToPx(p.gy) - portalPx.y) <= PORTAL_PROMPT_RADIUS_PX;
-    this.portalPrompt.update(s, checkpointEligible && nearPortal);
-    // Fire is suppressed while EITHER popup is open — a row click on the weapon-pickup
-    // panel must not also register as a shot (same WebInput raw-mousedown reasoning as
-    // the portal popup's own suppression above).
-    this.builder.suppressFire(this.portalPrompt.isOpen || this.hud.weaponPickupPrompt.isOpen);
-  }
-
-  // Rising-edge fire → confirm, on the RESULT screens only — see confirmEdge.ts for
-  // why every other screen must be driven by its own Buttons instead.
-  private pollConfirm() {
-    const firing = this.input.read().firing;
-    if (shouldConfirmOnFireEdge(this.phase, firing, this.prevFire)) this.confirm();
-    // Tracked on every screen, not just the eligible ones, so arriving on a result
-    // screen with fire already held doesn't instantly confirm — the press has to be
-    // released and re-issued (same reason advanceSim keeps it fresh during play).
-    this.prevFire = firing;
   }
 }

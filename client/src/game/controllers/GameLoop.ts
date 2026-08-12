@@ -1,0 +1,384 @@
+import { hashState, PLAYER_BASE, type GameEngine, type GameEvent, type GameState } from '@dd/engine';
+import type { CoopSession } from '../../net/CoopSession';
+import type { InputSource } from '../../platform/types';
+import type { Phase } from '../phase';
+import { fpToPx, bradToRad } from '../coords';
+import { ELEMENT_COLORS } from '../theme';
+import { totalFloorCount } from '../match/floorCount';
+import { shouldConfirmOnFireEdge } from '../screens/confirmEdge';
+import { LocalPredictor, DEFAULT_PREDICTOR } from './LocalPredictor';
+import type { CommandBuilder } from './CommandBuilder';
+import type { AllyController } from './AllyController';
+import type { EventReactor } from './EventReactor';
+import type { RunOutcome } from './RunOutcome';
+import type { TutorialHintController } from './TutorialHintController';
+import type { Scene } from '../scene/Scene';
+import type { RoomBuilder } from '../scene/RoomBuilder';
+import type { FxController } from '../fx/FxController';
+import type { HudView } from '../ui/HudView';
+import type { TouchControlsView } from '../ui/TouchControlsView';
+import type { PortalPrompt } from '../ui/PortalPrompt';
+import type { PartyScreen } from '../screens/PartyScreen';
+
+const SIM_DT_MS = 1000 / 30; // fixed sim step: the engine runs at 30 Hz (design/06)
+const MAX_STEPS = 5; // catch-up cap per render frame → no spiral of death
+// How close (world px) the player must stand to the portal for PortalPrompt's popup to
+// appear (design/10 legibility fix, 2026-08-02) — wide enough to reach comfortably
+// before the portal's own footprint, narrow enough that it doesn't show while still
+// crossing the room.
+const PORTAL_PROMPT_RADIUS_PX = 90;
+
+/** Every already-independent collaborator the main loop drives — none of these need a
+ * host callback themselves (they're either stateless adapters or, for `runOutcome`/
+ * `events`/`tutorialHints`, already wired to Game as THEIR OWN host — GameLoop just
+ * calls through them transparently, same as Game itself used to). */
+export interface GameLoopDeps {
+  scene: Scene;
+  roomBuilder: RoomBuilder;
+  fx: FxController;
+  hud: HudView;
+  touchControlsView: TouchControlsView;
+  portalPrompt: PortalPrompt;
+  partyScreen: PartyScreen;
+  builder: CommandBuilder;
+  ally: AllyController;
+  input: InputSource;
+  events: EventReactor;
+  runOutcome: RunOutcome;
+  tutorialHints: TutorialHintController;
+}
+
+/** The bits of Game the main loop needs but doesn't own itself — `phase`/`engine`/
+ * `session`/`meta`/the co-op/PvP-demo flags are all genuinely shared with the run-
+ * lifecycle and forge concerns (no single one of them owns these more than another),
+ * so this stays a callback interface (same EventReactor/RunOutcome-style decoupling:
+ * this file never imports Game.ts). Several of these (`activeState`/`currentScore`)
+ * are methods Game already implements for EventReactorHost/RunOutcomeHost — reused
+ * here rather than duplicated. */
+export interface GameLoopHost {
+  getPhase(): Phase;
+  isOnline(): boolean;
+  isCoop(): boolean;
+  isArenaDemo(): boolean;
+  isTutorialActive(): boolean;
+  readonly localOwner: number;
+  getEngine(): GameEngine | null;
+  getSession(): CoopSession | null;
+  activeState(): GameState | null;
+  currentScore(): number;
+  selectedSkinId(): string;
+  allySkinId(): string;
+  screenSize(): { w: number; h: number };
+  /** Guest-local "tutorial seen" flag — shared with quitRun's Skip path, so it stays
+   * on the host rather than duplicated here. */
+  markTutorialSeen(): void;
+  /** Phase-routing on a menu/result-screen confirm (Fire/Enter) — reaches into
+   * run-lifecycle (`beginRun`) and screen-flow (`showForge`/`showModeSelect`), neither
+   * of which this file owns. */
+  confirm(): void;
+}
+
+/**
+ * The fixed-step sim + interpolated render main loop, split out of Game.ts (CLAUDE.md
+ * "500-line file convention", form ② — independent class + composition): `update()`'s
+ * three branches (playing/paused/idle), the offline fixed-step loop (`advanceSim`/
+ * `stepSim`) and its online counterpart (`advanceOnline`, latency-hiding local-player
+ * prediction), plus the render-side adapters they share (`spawnBulletTrails`/
+ * `updateFx`/`updateCamera`/`updateHud`/`pollConfirm`). Owns the accumulator (`acc`),
+ * the rising-edge confirm latch (`prevFire`), and the online local-player predictor
+ * (`predictor`/`predLastTick`) as its own private state — none of those are read
+ * anywhere outside these methods, unlike `phase`/`engine`/`session`/`meta` (which stay
+ * on Game, see `GameLoopHost`'s own doc comment).
+ */
+export class GameLoop {
+  private acc = 0; // accumulated real time (ms) not yet consumed by a sim step
+  private prevFire = false; // rising-edge confirm on menus
+
+  // Online local-player prediction (design/06): the render layer draws the local seat's own
+  // movement/aim ahead of the confirmed frame stream to hide RTT, then eases to the
+  // authoritative position. Render-only — the sim is untouched. `lagMs` is a `?lag=` DEV
+  // harness (LaggyTransport, wired at CoopSession construction in Game.ts) to feel/tune
+  // the smoothing without real devices.
+  private readonly predictor = new LocalPredictor({
+    // Match the sim's own speed so predicted ≈ confirmed at zero latency: player moves
+    // PLAYER_BASE.speedPerTick per 30 Hz tick (players.ts) → px/sec.
+    speedPxPerSec: fpToPx(PLAYER_BASE.speedPerTick) * (1000 / SIM_DT_MS),
+    ...DEFAULT_PREDICTOR,
+  });
+  private predLastTick = -1;
+
+  constructor(
+    private readonly deps: GameLoopDeps,
+    private readonly host: GameLoopHost,
+  ) {}
+
+  /** Run lifecycle's `resetRunRenderState` (Game.ts) — a fresh run always starts with
+   * a clean accumulator, whether offline or (via `resetOnlinePrediction` below,
+   * separately) online. */
+  resetForNewRun(): void {
+    this.acc = 0;
+  }
+
+  /** Run lifecycle's `finalizeOnlineRun` (Game.ts) — re-anchors the predictor on the
+   * first confirmed frame of a newly-connected match. */
+  resetOnlinePrediction(): void {
+    this.predictor.deactivate();
+    this.predLastTick = -1;
+  }
+
+  update(dt: number): void {
+    const phase = this.host.getPhase();
+    if (phase === 'playing') {
+      if (this.host.isOnline()) this.advanceOnline(dt);
+      else this.advanceSim(dt);
+    } else if (phase === 'paused') {
+      // Genuinely frozen (offline-only, see Game.pause()'s doc comment): advanceSim/
+      // advanceOnline are never called, so `acc` simply doesn't move — the same
+      // no-catch-up-burst property hitStopMs already relies on. fx keeps fading so
+      // the frozen frame doesn't look inert.
+      this.updateFx(dt);
+      this.deps.scene.interpolate(1, dt);
+    } else {
+      // Menu / result / squad lobby: freeze the last frame, keep fx fading, poll for
+      // confirm. `partyScreen.update` no-ops when hidden, so it's safe to call
+      // unconditionally rather than gating on `phase === 'squad'` here too.
+      this.updateFx(dt);
+      this.deps.scene.interpolate(1, dt);
+      this.pollConfirm();
+      this.deps.partyScreen.update(dt);
+    }
+  }
+
+  private advanceSim(dt: number): void {
+    // Hit-stop (design/01 milestone 3): a brief FULL freeze of sim ticks on a strong
+    // hit — offline/local only (see FxController's `hitStopMs` field doc). Render (fx/
+    // particles/camera shake) keeps animating through the freeze; only `stepSim` is
+    // skipped, and `acc` deliberately does NOT accumulate `dt` while frozen, so the sim
+    // resumes at a clean single-tick cadence afterward instead of bursting through a
+    // catch-up.
+    if (this.deps.fx.consumeHitStop(dt)) {
+      // frozen this frame — sim skipped, render still animates below
+    } else {
+      this.acc += dt;
+      let steps = 0;
+      while (this.host.getPhase() === 'playing' && this.acc >= SIM_DT_MS && steps < MAX_STEPS) {
+        this.stepSim();
+        this.acc -= SIM_DT_MS;
+        steps++;
+      }
+      if (steps >= MAX_STEPS) this.acc = 0; // drop the backlog after a long stall
+    }
+
+    const alpha = this.host.getPhase() === 'playing' ? Math.min(1, this.acc / SIM_DT_MS) : 1;
+    this.deps.scene.interpolate(alpha, dt);
+    this.updateFx(dt);
+    this.updateCamera(alpha);
+    if (this.host.getPhase() === 'playing') {
+      this.updateHud(dt);
+      this.deps.touchControlsView.update(this.deps.input.getTouchVisual());
+      // Keep the confirm edge fresh so arriving on a result screen with fire still
+      // held doesn't instantly restart (the press must be released and re-issued).
+      this.prevFire = this.deps.input.read().firing;
+    }
+  }
+
+  // One deterministic sim frame: collect input → command → advance the engine →
+  // mirror the new state into views → react to this tick's events.
+  private stepSim(): void {
+    const engine = this.host.getEngine()!;
+    const s = engine.state;
+    const localOwner = this.host.localOwner;
+    const p = s.players[localOwner];
+
+    const frame = s.tick + 1;
+    engine.submit(this.deps.builder.build(frame, localOwner));
+    // Local co-op (ROADMAP 3.1) — and the `?arenaDemo=1` dev harness, which reuses this
+    // exact path: every non-local seat is driven by the bot ally, whose command goes
+    // through the exact same submit path a networked teammate's would — the engine
+    // can't tell a local bot from a remote player.
+    if (this.host.isCoop() || this.host.isArenaDemo()) {
+      for (let owner = 0; owner < s.players.length; owner++) {
+        if (owner !== localOwner) engine.submit(this.deps.ally.build(s, owner, localOwner, frame));
+      }
+    }
+    const events = engine.advance(frame) ?? [];
+
+    this.deps.scene.reconcile(s, p?.id ?? -1); // camera follows the LOCAL seat
+    this.spawnBulletTrails(s);
+    this.consumeEvents(events);
+    // Tutorial-only teaching-beat toasts (design/10 screen-flow gap) — render-only,
+    // reads the same state+events every real run's HUD/fx already read.
+    if (this.host.isTutorialActive()) this.deps.tutorialHints.consume(s, events);
+
+    if (s.phase === 'gameover') {
+      if (this.host.isTutorialActive()) this.host.markTutorialSeen();
+      this.deps.runOutcome.handle(s);
+    }
+  }
+
+  /**
+   * The online counterpart to advanceSim. The SERVER is the clock: each render frame we
+   * relay the local seat's latest command and drain every frame the server has confirmed
+   * (CoopSession.drive self-paces the catch-up), then mirror the resulting state. The LOCAL
+   * seat's movement is drawn from a render-layer predictor ahead of the confirmed frame
+   * (design/06 latency-hiding) and eased back on each confirmed frame; remote seats/enemies/
+   * bullets stay confirmed. Weapon-facing is never predicted (design/10 v33: it's engine-
+   * decided, not player input) — it's read straight off the confirmed state every frame,
+   * same as every other actor. The sim is never touched — determinism is preserved.
+   */
+  private advanceOnline(dt: number): void {
+    const session = this.host.getSession();
+    if (!session || !session.started) {
+      // Connecting / awaiting match_start — hold the scene, keep fx fading.
+      this.deps.scene.interpolate(1, dt);
+      this.updateFx(dt);
+      return;
+    }
+    const s = session.state!;
+    const localOwner = this.host.localOwner;
+    const p = s.players[localOwner];
+
+    // Relay this render tick's local command (server stamps the authoritative seat/frame).
+    const cmd = this.deps.builder.build(session.frame, localOwner);
+    session.submit(cmd);
+
+    // Predict the local seat's own motion for THIS render frame (before draining confirmed
+    // frames) so movement responds instantly under latency. Suspended when downed/dead.
+    const predicting = !!p && p.alive && !p.downed;
+    if (predicting) this.predictor.predict(cmd.moveBrad, cmd.moveMag, dt);
+
+    const events = session.drive();
+
+    // Reconcile toward the confirmed local position — but ONLY when a new confirmed frame
+    // landed (a stall must not drag the prediction back); first activation snaps to spawn.
+    if (predicting && p) {
+      if (!this.predictor.isActive) {
+        this.predictor.reset(fpToPx(p.gx), fpToPx(p.gy), bradToRad(p.facing));
+      } else if (s.tick > this.predLastTick) {
+        this.predictor.reconcile(fpToPx(p.gx), fpToPx(p.gy));
+      }
+      this.predLastTick = s.tick;
+    } else {
+      this.predictor.deactivate();
+    }
+
+    this.deps.scene.reconcile(s, p?.id ?? -1); // camera follows the LOCAL (ticket-assigned) seat
+    // Draw the local seat from the predictor (camera follows it too); remote seats confirmed.
+    if (predicting && p && this.predictor.isActive) {
+      const pose = this.predictor.pose;
+      this.deps.scene.positionLocal(pose.x, pose.y, fpToPx(p.z), bradToRad(p.facing), pose.bodyFacing, pose.moving);
+    }
+    this.spawnBulletTrails(s);
+    this.consumeEvents(events);
+    this.deps.scene.interpolate(1, dt);
+    this.updateFx(dt);
+    this.updateCamera(1);
+    this.updateHud(dt);
+    this.deps.touchControlsView.update(this.deps.input.getTouchVisual());
+    this.prevFire = this.deps.input.read().firing;
+
+    if (s.phase === 'gameover') {
+      // Report the local end-of-match hash (+ placements, for a PvP result) so the
+      // server's checkpoint/hash-verified settlement — and, for PvP, the matchsvc
+      // ladder-rating report (design/15, ROADMAP 4.4/4.6) — actually fires for a REAL
+      // match. Exactly once: this branch only runs while `phase === 'playing'`, and
+      // runOutcome.handle always moves it to 'victory'/'defeat' before returning.
+      session.reportResult(hashState(s));
+      this.deps.runOutcome.handle(s);
+    }
+  }
+
+  // Events are the only engine→render channel (design/08): fx feedback + score + audio.
+  // The actual per-event-type reactions live in EventReactor.
+  private consumeEvents(events: readonly GameEvent[]): void {
+    this.deps.events.consume(events);
+  }
+
+  // ---- fx / camera (FxController does the actual work — see that file) ----
+
+  // Per-element bullet trails (design/03/07). Once per sim tick, drop a fading
+  // element-coloured dot at each live elemental bullet's position; the fx fade
+  // (FxController.updateFx) turns the string of dots into a comet tail. Physical
+  // rounds leave none — the trail IS the "this shot is elemental" tell, matched to
+  // the bullet's glow and the aura it will leave on a hit. Render-only: reads
+  // engine state, never writes it (design/08).
+  private spawnBulletTrails(s: GameState): void {
+    for (const b of s.projectiles) {
+      if (!b.alive) continue;
+      const color = ELEMENT_COLORS[b.damageType];
+      if (color === undefined) continue; // physical → no trail
+      this.deps.fx.trailDot(fpToPx(b.gx), fpToPx(b.gy), color, fpToPx(b.radius) * 0.9);
+    }
+  }
+
+  // Thin adapters: FxController itself is decoupled from GameState/phase/screen size,
+  // so these gather this frame's derived values (dust bounds, viewport, camera target)
+  // and hand them down — the only reason these still live here rather than being
+  // inlined at every call site.
+  private updateFx(dt: number): void {
+    const s = this.host.activeState();
+    const dustBounds = s ? { x: 0, y: 0, w: fpToPx(s.worldW), h: fpToPx(s.worldH) } : undefined;
+    this.deps.fx.updateFx(dt, this.host.getPhase() === 'playing' ? 700 : 0, dustBounds);
+
+    // Dynamic lighting (design/01 milestone 2): the local player carries their own
+    // persistent glow, re-registered at their current position every frame rather than
+    // tracked as a one-time spawn; every other point light (muzzle flash/impact bursts)
+    // is registered directly by FxController.flash. This one `updateFx` wrapper is
+    // already called from every render path (paused/menu/offline/online), so shading
+    // every live actor here covers all of them with no per-path wiring.
+    const player = this.deps.scene.player;
+    if (player) this.deps.fx.lights.addPersistent('local', { x: player.curX, y: player.curY, color: 0xfff4d6, radius: 140, intensity: 0.35 });
+    else this.deps.fx.lights.removePersistent('local');
+    this.deps.scene.applyLighting(this.deps.fx.lights);
+  }
+
+  private updateCamera(alpha: number): void {
+    const s = this.host.activeState();
+    const worldSize = s ? { w: fpToPx(s.worldW), h: fpToPx(s.worldH) } : null;
+    const { w: vw, h: vh } = this.host.screenSize();
+    this.deps.fx.updateCamera(alpha, { vw, vh }, worldSize, this.deps.scene.player);
+  }
+
+  private updateHud(dt: number): void {
+    const s = this.host.activeState();
+    if (!s) return;
+    this.deps.hud.update(s, dt, {
+      localOwner: this.host.localOwner,
+      score: this.host.currentScore(),
+      selectedSkin: this.host.selectedSkinId(),
+      showAlly: this.host.isCoop() || this.host.isArenaDemo(),
+      allySkinId: this.host.allySkinId(),
+    });
+
+    // Portal popup (design/10 legibility fix, 2026-08-02) — replaces the old E-key
+    // text prompt. "Checkpoint eligible" is shared between the portal's own open/
+    // closed visual (RoomBuilder) and the popup's proximity gate, computed once here
+    // so neither has to duplicate the other's half of the condition.
+    const floor = s.floorIndex + 1;
+    const isLastFloor = floor >= totalFloorCount(s);
+    const checkpointEligible =
+      !s.zoneEnabled && s.phase !== 'gameover' && s.wavesExhausted && s.enemies.length === 0 && !isLastFloor;
+    this.deps.roomBuilder.setPortalOpen(checkpointEligible);
+
+    const p = s.players[this.host.localOwner];
+    const portalPx = this.deps.roomBuilder.portalPx;
+    const nearPortal =
+      !!p && !!portalPx && Math.hypot(fpToPx(p.gx) - portalPx.x, fpToPx(p.gy) - portalPx.y) <= PORTAL_PROMPT_RADIUS_PX;
+    this.deps.portalPrompt.update(s, checkpointEligible && nearPortal);
+    // Fire is suppressed while EITHER popup is open — a row click on the weapon-pickup
+    // panel must not also register as a shot (same WebInput raw-mousedown reasoning as
+    // the portal popup's own suppression above).
+    this.deps.builder.suppressFire(this.deps.portalPrompt.isOpen || this.deps.hud.weaponPickupPrompt.isOpen);
+  }
+
+  // Rising-edge fire → confirm, on the RESULT screens only — see confirmEdge.ts for
+  // why every other screen must be driven by its own Buttons instead.
+  private pollConfirm(): void {
+    const firing = this.deps.input.read().firing;
+    if (shouldConfirmOnFireEdge(this.host.getPhase(), firing, this.prevFire)) this.host.confirm();
+    // Tracked on every screen, not just the eligible ones, so arriving on a result
+    // screen with fire already held doesn't instantly confirm — the press has to be
+    // released and re-issued (same reason advanceSim keeps it fresh during play).
+    this.prevFire = firing;
+  }
+}
