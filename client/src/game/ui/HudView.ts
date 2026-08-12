@@ -8,6 +8,7 @@ import { Minimap, type MinimapPlayer } from './Minimap';
 import { dungeonRoomStatus, dungeonToArenaMap, roomStatus } from './minimapLayout';
 import { PlayerCard, AllyRow } from './PlayerCard';
 import { WeaponCard } from './WeaponCard';
+import { WeaponSlotChip } from './WeaponSlotChip';
 import { StatChip } from './StatChip';
 import { DownedBanner } from './DownedBanner';
 import type { HudIconId } from './hudIcons';
@@ -59,6 +60,7 @@ const PVP_CHIPS: readonly ChipKey[] = ['stage', 'alive', 'score', 'buffs'];
 const PAD = 12; // panel inset, all four sides
 const GAP = 8; // vertical gap between HUD sections
 const CHIP_GAP = 6;
+const WEAPON_SLOT_GAP = 10; // horizontal gap between the active WeaponCard and the idle-slot chip
 
 /**
  * In-match HUD (design/10 widget kit), extracted out of Game.ts 2026-07-28 and rebuilt
@@ -81,6 +83,10 @@ export class HudView {
   // previous version of this file forced on HudView.test.ts.
   readonly playerCard = new PlayerCard();
   readonly weaponCard = new WeaponCard();
+  // The OTHER carried weapon (design/10 HUD follow-up, 2026-08-12) — a small tappable
+  // icon beside the active WeaponCard; tapping it swaps the active slot. Hidden
+  // whenever the loadout has fewer than two weapons (update()).
+  readonly weaponSlotChip = new WeaponSlotChip();
   readonly allyRow = new AllyRow();
   readonly downedBanner = new DownedBanner();
   readonly chips = new Map<ChipKey, StatChip>();
@@ -102,6 +108,10 @@ export class HudView {
   /** Wired by Game to the same `pause()` its Escape/P keyboard handler already calls —
    *  one source of truth for both input paths, matching Forge's onX callback shape. */
   onPause: (() => void) | null = null;
+  /** Wired by Game to the same swap action the keyboard (1/2) and touch corner buttons
+   *  already trigger — see WeaponSlotChip's own doc comment for why "tap the idle
+   *  slot" and "cycle the active slot" are the same action with a two-weapon loadout. */
+  onSwapWeapon: (() => void) | null = null;
 
   private statsPanel!: Panel;
   private readonly dividers = new Graphics();
@@ -113,10 +123,14 @@ export class HudView {
     this.statsPanel = new Panel({ radius: 10, color: 0x0b0e14, alpha: 0.66, borderColor: 0x4c566a, borderAlpha: 0.55 });
     this.toasts = new ToastQueue({ w: 220 });
     this.pauseBtn.onTap = () => this.onPause?.();
+    this.weaponSlotChip.onTap = () => this.onSwapWeapon?.();
 
     this.statsPanel.view.position.set(4, 4);
     this.playerCard.view.position.set(PAD, 10);
     this.weaponCard.view.position.set(PAD, 10 + PlayerCard.HEIGHT + GAP);
+    // x is re-set every layout() once weaponCard's real width is known; y is fixed here
+    // (+2 to match the WeaponCard's own icon chip, which starts at local y=2, not 0).
+    this.weaponSlotChip.view.position.set(PAD, 10 + PlayerCard.HEIGHT + GAP + 2);
 
     for (const [key, def] of Object.entries(CHIP_DEFS) as Array<[ChipKey, (typeof CHIP_DEFS)[ChipKey]]>) {
       this.chips.set(key, new StatChip(def.icon, def.color));
@@ -127,6 +141,7 @@ export class HudView {
       this.dividers,
       this.playerCard.view,
       this.weaponCard.view,
+      this.weaponSlotChip.view,
       ...[...this.chips.values()].map((c) => c.view),
       this.allyRow.view,
       this.toasts.view,
@@ -169,6 +184,13 @@ export class HudView {
       : 1;
     this.weaponCard.set(weapon?.spec ?? null, weapon ? maxCdTicks - weapon.cooldownTicks : maxCdTicks, maxCdTicks);
     this.weaponCard.update(dt);
+
+    // The OTHER loadout slot (design/10 HUD follow-up) — only meaningful with a real
+    // two-weapon loadout; a solo-weapon spawn (or no player yet) hides the chip rather
+    // than drawing an empty "nothing to swap to" tile.
+    const otherWeapon = p && p.weapons.length > 1 ? p.weapons[(p.activeSlot + 1) % p.weapons.length] : undefined;
+    this.weaponSlotChip.view.visible = otherWeapon !== undefined;
+    if (otherWeapon) this.weaponSlotChip.set(otherWeapon.spec);
 
     const buffCount = p?.buffs.length ?? 0;
     if (s.zoneEnabled) {
@@ -260,6 +282,12 @@ export class HudView {
     }
     const chipsW = chipX - PAD - CHIP_GAP;
 
+    // The idle-slot chip's x tracks the active WeaponCard's real (name-length-dependent)
+    // width — a static offset would either overlap a long weapon name or leave a gap
+    // after a short one.
+    const weaponRowW = this.weaponCard.estimatedWidth() + (this.weaponSlotChip.view.visible ? WEAPON_SLOT_GAP + WeaponSlotChip.SIZE : 0);
+    this.weaponSlotChip.view.position.x = PAD + this.weaponCard.estimatedWidth() + WEAPON_SLOT_GAP;
+
     let y = 10 + PlayerCard.HEIGHT + GAP + WeaponCard.HEIGHT + GAP;
     const chipRowY = y;
     for (const chip of this.chips.values()) if (chip.view.visible) chip.view.position.y = chipRowY;
@@ -274,7 +302,7 @@ export class HudView {
       Math.ceil(
         Math.max(
           this.playerCard.estimatedWidth(),
-          this.weaponCard.estimatedWidth(),
+          weaponRowW,
           chipsW,
           showAlly ? this.allyRow.estimatedWidth() : 0,
         ),

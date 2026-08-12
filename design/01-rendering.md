@@ -6,19 +6,24 @@ Goal: a fixed tilted view (not pure top-down; slightly forward-leaning, like Sou
 
 - **Tilted (3/4) view:** walls, pillars, and characters show a small "front face" instead of a pure top face, so height and volume read. This is the basis of the 3D feel.
 - The camera has a fixed angle and never rotates; it may pan to follow the player.
-- **Small-room zoom-to-fit** (legibility fix, 2026-08-02; cap raised 2026-08-12): a room
-  smaller than the viewport is scaled up (contain-fit against the tighter axis, capped
-  at 2.5x — was 1.8x — so a tiny/degenerate room doesn't blow sprites into blocks)
-  instead of sitting centred in a sea of black canvas backdrop —
-  `FxController.updateCamera` (`client/src/game/fx/FxController.ts`). The cap was raised
-  after a user report of a narrow dungeon floor leaving a wide dark `Backdrop`-filled
-  void that read as "the viewport doesn't fill the window" rather than an intentional
-  letterbox (the void colour is deliberately very dark, so it's easy to mistake for an
-  unrendered canvas) — see "Live-play bug-fix pass" in `ROADMAP.md`.
-  A room/arena that already covers the viewport at 1x is untouched (zoom floors at 1,
-  never shrinks). (`CommandBuilder` used to divide a screen-space mouse aim point by
-  this same zoom before converting it to world space — moot since `10` v33 removed
-  manual aim; the camera zoom itself is otherwise unaffected.)
+- **Room zoom-to-cover** (legibility fix, 2026-08-02; cap raised 1.8→2.5 2026-08-12;
+  contain-fit → cover-fit 2026-08-12, same day, follow-up): a room smaller than the
+  viewport on either axis is scaled up so BOTH axes cover the viewport (cover-fit — zoom
+  by whichever axis needs MORE zoom, capped at 2.5x so a tiny/degenerate room doesn't
+  blow sprites into blocks) — `FxController.updateCamera`
+  (`client/src/game/fx/FxController.ts`). Originally contain-fit (zoom by whichever axis
+  is TIGHTER), which left a real dark `Backdrop`-filled void on the other axis whenever
+  the room's aspect ratio didn't match the viewport's — raising the cap (2026-08-12,
+  earlier that day) only shrank that void for a too-small room, it couldn't fix an
+  aspect-ratio mismatch. Switched to cover-fit (2026-08-12, user's own pick between that
+  and "keep the whole room visible, reposition the void") to close it for good: the
+  room can now exceed the viewport on the axis that used to have void, and the camera
+  pans/clamps to the player there, same as it already did for a big room/arena. A room
+  that already covers the viewport at 1x on both axes is untouched (zoom floors at 1,
+  never shrinks). See "Camera cover-fit + weapon-slot HUD chip" in `ROADMAP.md`.
+  (`CommandBuilder` used to divide a screen-space mouse aim point by this same zoom
+  before converting it to world space — moot since `10` v33 removed manual aim; the
+  camera zoom itself is otherwise unaffected.)
 
 ## Coordinates & height model
 

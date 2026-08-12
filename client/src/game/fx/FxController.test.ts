@@ -11,11 +11,13 @@ vi.mock('./filters', () => ({
   ChromaticAberrationFilter: class { amount: number; constructor(amount = 0) { this.amount = amount; } },
 }));
 
-// updateCamera's small-room zoom-to-fit (design/10 legibility fix, 2026-08-02): a room
-// smaller than the viewport used to just sit centred in a sea of black — this zooms it
-// up to fill the tighter axis (contain-fit), capped so a tiny/degenerate room doesn't
-// blow sprites up into blocks, and leaves an already-big room (arenas, big dungeon
-// rooms) untouched at 1x.
+// updateCamera's zoom-to-fill (design/10 legibility fix, 2026-08-02; cover-fit follow-up
+// 2026-08-12): a room smaller than the viewport is zoomed up so BOTH axes cover it
+// (cover-fit — zoom by whichever axis needs the most zoom), capped so a tiny/degenerate
+// room doesn't blow sprites up into blocks, and leaves an already-big room (arenas, big
+// dungeon rooms) untouched at 1x. No letterbox void on either axis; the axis that didn't
+// need the zoom instead overflows the viewport and pans with the player (the existing
+// clamp-to-room-bounds branch).
 function fakePlayer(x: number, y: number): CameraTarget {
   return { interpGroundX: () => x, interpGroundY: () => y };
 }
@@ -61,23 +63,23 @@ describe('FxController.updateCamera', () => {
     expect(layers.world.y).toBe(0);
   });
 
-  it('zooms a small room up to fill the tighter axis, capped at MAX_ZOOM', () => {
+  it('zooms a small room up to cover both axes, capped at MAX_ZOOM', () => {
     const layers = new Layers();
     const fx = new FxController(layers);
-    // zoomX = 800/200 = 4, zoomY = 600/200 = 3 — min is 3, past the cap (2.5).
+    // zoomX = 800/200 = 4, zoomY = 600/200 = 3 — cover-fit picks the max (4), past the cap (2.5).
     fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 200, h: 200 }, fakePlayer(100, 100));
     expect(layers.world.scale.x).toBeCloseTo(2.5);
     expect(layers.world.scale.y).toBeCloseTo(2.5);
     expect(fx.zoom).toBeCloseTo(2.5);
   });
 
-  it('zooms by the uncapped contain-fit ratio when under MAX_ZOOM', () => {
+  it('zooms by the uncapped cover-fit ratio when under MAX_ZOOM', () => {
     const layers = new Layers();
     const fx = new FxController(layers);
-    // zoomX = 800/500 = 1.6, zoomY = 600/500 = 1.2 — min is 1.2, under the cap.
+    // zoomX = 800/500 = 1.6, zoomY = 600/500 = 1.2 — cover-fit picks the max (1.6), under the cap.
     fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 500, h: 500 }, fakePlayer(250, 250));
-    expect(layers.world.scale.x).toBeCloseTo(1.2);
-    expect(fx.zoom).toBeCloseTo(1.2);
+    expect(layers.world.scale.x).toBeCloseTo(1.6);
+    expect(fx.zoom).toBeCloseTo(1.6);
   });
 
   it('never shrinks a room that already covers the viewport (zoom floors at 1)', () => {
@@ -96,16 +98,16 @@ describe('FxController.updateCamera', () => {
     expect(fx.zoom).toBe(layers.world.scale.x);
   });
 
-  it('centres a room that fits entirely within the viewport at its computed zoom', () => {
+  it('fills the axis that needs more zoom exactly, panning the other axis with the player (cover-fit, no void)', () => {
     const layers = new Layers();
     const fx = new FxController(layers);
-    // A square room in a wider-than-tall viewport: zoom picks the tighter (vertical)
-    // axis, so the effective height exactly fills vh (no vertical bar) while the
-    // effective width is centred with equal bars left/right.
+    // A square room in a wider-than-tall viewport: cover-fit picks the axis that needs
+    // MORE zoom (horizontal, 800/400=2 vs vertical 400/400=1), so the effective width
+    // exactly fills vw (no horizontal void) while the effective height now overflows
+    // vh and the clamp-to-room-bounds branch pans it toward the player instead.
     fx.updateCamera(1, { vw: 800, vh: 400 }, { w: 400, h: 400 }, fakePlayer(200, 200));
-    const zoom = layers.world.scale.x;
-    const effW = 400 * zoom;
-    expect(layers.world.x).toBeCloseTo((800 - effW) / 2);
-    expect(layers.world.y).toBeCloseTo(0); // effH === vh exactly at this zoom
+    expect(layers.world.scale.x).toBeCloseTo(2);
+    expect(layers.world.x).toBeCloseTo(0); // effW === vw exactly at this zoom — no horizontal void
+    expect(layers.world.y).toBeCloseTo(-200); // effH (800) > vh (400) — panned toward the player, clamped to [-400, 0]
   });
 });

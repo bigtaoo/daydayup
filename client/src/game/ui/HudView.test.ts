@@ -220,6 +220,44 @@ describe('HudView — weapon card', () => {
   });
 });
 
+describe('HudView — idle weapon slot chip (design/10 HUD follow-up, 2026-08-12)', () => {
+  it('shows the other carried weapon for the default two-weapon loadout', () => {
+    const hud = newHud();
+    const s = pveState();
+    const p = s.players[0]!;
+    expect(p.weapons.length).toBe(2);
+    const otherSpec = p.weapons[(p.activeSlot + 1) % p.weapons.length]!.spec;
+
+    hud.update(s, 16, CTX);
+
+    expect(hud.weaponSlotChip.view.visible).toBe(true);
+    expect(hud.view.children).toContain(hud.weaponSlotChip.view);
+    expect(hud.weaponSlotChip.view.position.x).toBeGreaterThan(hud.weaponCard.view.position.x + hud.weaponCard.estimatedWidth());
+    void otherSpec; // exercised via bindIcon/redraw internally — no public getter to assert the spec name against
+  });
+
+  it('hides when the loadout has only one weapon', () => {
+    const hud = newHud();
+    const s = pveState();
+    s.players[0]!.weapons.length = 1;
+
+    hud.update(s, 16, CTX);
+
+    expect(hud.weaponSlotChip.view.visible).toBe(false);
+  });
+
+  it('tapping it fires onSwapWeapon — Game wires this to the same builder.requestSwap() the keyboard/touch swap uses', () => {
+    const hud = newHud();
+    hud.update(pveState(), 16, CTX);
+    let fired = 0;
+    hud.onSwapWeapon = () => { fired++; };
+
+    hud.weaponSlotChip.onTap?.();
+
+    expect(fired).toBe(1);
+  });
+});
+
 describe('HudView — player card', () => {
   it('titles the card with the selected character', () => {
     const hud = newHud();

@@ -3,13 +3,15 @@ import type { Layers } from './layers';
 import type { BiomePalette } from '../theme';
 
 /**
- * Full-viewport backdrop (design/10 legibility fix, 2026-08-02) — a small room
- * zoomed-to-fit (FxController.updateCamera, capped at MAX_ZOOM) leaves a plain black
- * rect around it since nothing painted there before. This is screen space (mounted on
- * `layers.backdrop`, a sibling of `world`, not a child of it), so it just needs to
- * track the viewport's own pixel size — it never has to account for the camera's
- * zoom/pan. Recolored per-biome (`BiomePalette.void`) so it doesn't look like a
- * different game bolted on behind the room.
+ * Full-viewport backdrop (design/10 legibility fix, 2026-08-02) — a plain black rect
+ * behind the room since nothing painted there before. FxController.updateCamera's
+ * cover-fit zoom (2026-08-12 follow-up) means the room now covers the viewport on
+ * every axis for the vast majority of rooms, so this is mostly a safety net for a
+ * MAX_ZOOM-capped degenerate/tiny room that still can't fully cover it. This is screen
+ * space (mounted on `layers.backdrop`, a sibling of `world`, not a child of it), so it
+ * just needs to track the viewport's own pixel size — it never has to account for the
+ * camera's zoom/pan. Recolored per-biome (`BiomePalette.void`) so it doesn't look like
+ * a different game bolted on behind the room.
  */
 export class Backdrop {
   private readonly gfx = new Graphics();

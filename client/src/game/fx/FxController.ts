@@ -6,14 +6,17 @@ import { LightRegistry } from './lighting';
 
 const FX_LIFE_MS = 170; // flash/trail lifetime
 const MAX_SHAKE_PX = 14; // camera-shake offset at full trauma (design/01 milestone 3)
-// Cap on updateCamera's small-room fill zoom — raised from 1.8 (design/10's original
-// legibility fix) to 2.5 (user report, 2026-08-12): a floor whose combined room width
-// is well under the viewport left a wide dark `Backdrop` void on both sides that read
-// as "the game viewport doesn't fill the window" rather than an intentional letterbox
-// (the void colour is deliberately very dark — theme.ts's `BiomePalette.void` — so it's
-// visually indistinguishable from an unrendered black canvas). A higher cap shrinks
-// that void by zooming a small floor in further before the degenerate-blockiness limit
-// kicks in; it does NOT touch the zoom=1 floor for anything already viewport-sized+.
+// Cap on updateCamera's fill zoom — raised from 1.8 (design/10's original legibility
+// fix) to 2.5 (user report, 2026-08-12): a floor whose combined room width is well
+// under the viewport left a wide dark `Backdrop` void beside the room that read as "the
+// game viewport doesn't fill the window" rather than an intentional letterbox (the void
+// colour is deliberately very dark — theme.ts's `BiomePalette.void` — so it's visually
+// indistinguishable from an unrendered black canvas). A higher cap shrinks that void by
+// zooming a small floor in further before the degenerate-blockiness limit kicks in; it
+// does NOT touch the zoom=1 floor for anything already viewport-sized+. Superseded for
+// the VOID ITSELF by the cover-fit switch below (2026-08-12 follow-up) — this cap now
+// only guards against a truly tiny/degenerate room forcing an absurd zoom, not against
+// letterboxing (cover-fit has none).
 const MAX_ZOOM = 2.5;
 
 /** Something that can report its interpolated ground position — the local player's
@@ -114,19 +117,24 @@ export class FxController {
     this.shakeTrauma = Math.max(0, this.shakeTrauma - dt * 0.0025);
   }
 
-  /** Follow `player`, pin the camera inside the room, then add screen-shake on top. A
-   *  room smaller than the viewport is zoomed up to fill it (contain-fit: the tighter
-   *  axis touches the viewport edge, capped at MAX_ZOOM so a tiny/degenerate room
-   *  doesn't blow sprites up into blocks) instead of leaving it centred in a sea of
-   *  black — a big room/arena that already covers the viewport at 1x is untouched
-   *  (zoom floors at 1, never shrinks). No-op (leaves layers.world untouched) if
-   *  there's no player yet. */
+  /** Follow `player`, pin the camera inside the room, then add screen-shake on top.
+   *  Cover-fit zoom (design/10, 2026-08-12 follow-up — replaced the original contain-
+   *  fit): zoom by whichever axis needs the MOST zoom to fill the viewport, so both
+   *  axes always cover it — no letterbox void on either axis, ever, capped at MAX_ZOOM
+   *  so a tiny/degenerate room doesn't blow sprites up into blocks. The tradeoff (the
+   *  room is now routinely bigger than the viewport on the axis that didn't need the
+   *  zoom) is exactly what the existing clamp-to-room-bounds branch below was already
+   *  built to handle — a room edge or door can scroll off-screen while the player is
+   *  elsewhere in the room, back into view as they approach it, same as any camera-
+   *  follow game. A big room/arena that already covers the viewport at 1x on both axes
+   *  is untouched (zoom floors at 1, never shrinks). No-op (leaves layers.world
+   *  untouched) if there's no player yet. */
   updateCamera(alpha: number, viewport: { vw: number; vh: number }, worldSize: { w: number; h: number } | null, player: CameraTarget | null): void {
     if (!player) return;
     const { vw, vh } = viewport;
     const worldW = worldSize ? worldSize.w : vw;
     const worldH = worldSize ? worldSize.h : vh;
-    const zoom = Math.min(MAX_ZOOM, Math.max(1, Math.min(vw / worldW, vh / worldH)));
+    const zoom = Math.min(MAX_ZOOM, Math.max(1, vw / worldW, vh / worldH));
     this.zoom = zoom;
     const effW = worldW * zoom;
     const effH = worldH * zoom;

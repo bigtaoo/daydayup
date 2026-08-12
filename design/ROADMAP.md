@@ -125,7 +125,7 @@ The core PvE loop (floors → extraction → bank) is fully designed (05/09) and
 - **1.3 ✅ Seeded dungeon assembly** (05/09) — DONE, additive (no `ENGINE_VERSION` bump). `world/dungeon.ts DungeonConfig` + pure `generateFloor()` (floors × rooms via `roomgenPrng`, `layout:'linear'`|`'branching'`) + a first hand-authored `RoomPiece` library (`world/rooms/ember.ts`, 5 normal + 1 extraction + 1 boss
 — the 5th normal piece, `ember_atrium`, and the extraction/boss pieces' full 4-exit symmetry were
 added 2026-08-05's "graph2d content" pass, Room & door model section below). **Wired into a live, traversable run** (2026-07-24, same day, commits `4d05555`/`aac5829`/`7a611e4`): `EngineConfig.dungeon = {config, library}` opts a run in; `SpawnSystem.tickDungeon` calls `generateFloor` per floor and `loadRoom` per room (swaps `state.walls`/`state.obstacles` via `roomGeometry()`, rebuilds the spatial index, repositions players, loads the room's `WaveScript`), `ExtractionSystem.resolveDescend` resets the room cursor so the next floor regenerates lazily, and `expandEncounter`/`dispatchDueSpawns` interpret `WaveScript`'s `atTick`/`spacingTicks` timing (shared with the PvP arena spawn path). Branching layout picks the next room by aim direction. Covered end-to-end by `dungeonrun.test.ts` (room load/advance/descend/branching/determinism/a full Ember-biome run) driven through `createGameEngine`, not just `dungeon.test.ts`'s pure-function unit tests. The real client (`Game.ts`) already builds every single-player/co-op/online run with `EngineConfig.dungeon: {config: EMBER_DUNGEON, library: EMBER_ROOMS}` — this is the live path, not a demo fallback.
-- **1.4 ✅ Extraction rooms** (05) — DONE. `EngineConfig.floors?` (the flat, non-dungeon mode — same single arena reused every floor, still supported for configs that opt into it) OR `EngineConfig.dungeon` (the room-generated mode, see 1.3) opts a run into the checkpoint loop; `ExtractionSystem` (step 12) resolves the per-floor checkpoint (`wavesExhausted && enemies.length===0`) into `EXTRACT` or `DESCEND` (in dungeon mode, regenerates the next floor's rooms; in flat mode, reloads the next floor's flat wave list). Death forfeits the floor buffer for free (a run-ending death simply never reaches the bank step). The last floor auto-resolves as `EXTRACT` with no gesture (design/05 "the boss room IS its extraction room"). **The gesture itself was rewritten 2026-08-02** (see that entry below): originally a sustained-INTERACT hold=EXTRACT/tap=DESCEND (mirroring the revive channel), now two explicit one-shot `Button.CONFIRM_EXTRACT`/`CONFIRM_DESCEND` presses driven by a world-space portal + popup, `ENGINE_VERSION` 31.
+- **1.4 ✅ Extraction rooms** (05) — DONE. `EngineConfig.floors?` (the flat, non-dungeon mode — same single arena reused every floor, still supported for configs that opt into it) OR `EngineConfig.dungeon` (the room-generated mode, see 1.3) opts a run into the checkpoint loop; `ExtractionSystem` (step 12) resolves the per-floor checkpoint (`wavesExhausted && enemies.length===0`) into `EXTRACT` or `DESCEND` (in dungeon mode, regenerates the next floor's rooms; in flat mode, reloads the next floor's flat wave list). Death forfeits the floor buffer for free (a run-ending death simply never reaches the bank step). The last floor has no `DESCEND` option, but otherwise resolves the same explicit-gesture way as any other floor (design/05 "the boss room IS its extraction room" — see the Live-play bug-fix pass entries below for why the original no-gesture auto-resolve was dropped 2026-08-12). **The gesture itself was rewritten 2026-08-02** (see that entry below): originally a sustained-INTERACT hold=EXTRACT/tap=DESCEND (mirroring the revive channel), now two explicit one-shot `Button.CONFIRM_EXTRACT`/`CONFIRM_DESCEND` presses driven by a world-space portal + popup, `ENGINE_VERSION` 31.
 - **1.5 ✅ Materials carry-out** (05/09) — DONE, additive. `state.floorMaterials` (this floor's un-banked buffer, filled by `PickupSystem`) merges into `state.bankedMaterials` (the run's only carry-out) on every `EXTRACT`/`DESCEND`. `rollDrop` gained an optional depth `tier` param (`DeathDropsSystem` passes `state.floorIndex`) so a material pickup/event carries a rolled instance tier — first-pass "material quality shift per floor" (a straight `tier = floorIndex` identity curve; `DungeonConfig.materialTierByDepth` remains an unused schema field for a future non-identity curve).
 
 **Phase 1 status: fully closed, including live multi-room floors.** A run goes floors → checkpoint → EXTRACT-or-DESCEND → bank, with materials as the only carry-out. Both modes are real and tested: `EngineConfig.floors` (flat, single-arena-reused-per-floor, still available for configs that want it) and `EngineConfig.dungeon` (generated multi-room floors via `generateFloor`/`RoomPiece`/`placeFloor`, `'branching'` layout, `WaveScript` timing) — the latter is what the real client actually uses for every live run. Nothing from 1.2/1.3 is unwired or demo-only. **2026-08-04 update:** "room-to-room traversal" here no longer means the original sequential swap-on-clear — see the "Room & door model" section below (design/05, `ENGINE_VERSION` 34): a floor's rooms are now co-resident and door-connected, freely walkable/backtrackable, with combat-derived door locking and force-regroup. **2026-08-05 update:** `'branching'` layout now places a real fork-and-reconverge diamond of sibling rooms instead of resolving at generation time (`ENGINE_VERSION` 35, same section). **2026-08-05 update (same day): the west→east-spine scope cut is closed too** — a new `layout: 'graph2d'` (`world/dungeon.ts placeFloorGraph2d`, additive, no `ENGINE_VERSION` bump) places a *generated* floor in real 2D instead of forcing it onto a single axis; see design/05's "Room & door model" section for the full account. **2026-08-05 update (same day, "graph2d content" pass): `EMBER_DUNGEON` now uses `'graph2d'`** (was `'linear'`) — a new `ember_atrium` piece and wider exit authoring on `ember_pillars`/`ember_extraction`/`ember_boss` make the shipped biome actually bend, and a new `placeFloorGraph2d` direction-retry (found necessary by testing, not inspection — full account in `world/rooms/ember.ts`'s module doc) makes that safe against fold-back overlaps. `'branching'` still stays unused by any shipped config.
@@ -1347,6 +1347,65 @@ every `Assets.load` call carries `data.autoGenerateMipmaps: true`). 1154 client 
 (was 1150), `tsc --noEmit` clean.
 
 ---
+
+## Boss-room instant-extract bug fix ✅ (2026-08-12, follow-up — a fifth user report:
+"打完boss直接就退出房间了，掉的东西都没捡" / killed the boss, got kicked out of the room
+immediately, never got to pick up its drops)
+
+Root cause: `ExtractionSystem`'s LAST-floor branch resolved `EXTRACT` — `state.phase =
+'gameover'` — the instant the capstone room's `activated && !hasLiveEnemy` went true,
+which is the SAME tick the boss dies (`DeathDropsSystem` spawns its drops a few steps
+earlier in that same tick's system order, `PickupSystem` a few steps after — but the run
+was already over before the player could ever walk to them). This was a deliberate
+design decision (design/05 "the boss fight was the challenge, walking through the portal
+after is automatic") — `GameLoop.ts`'s `updateHud` even explicitly excluded the last
+floor from opening the portal/popup at all, since `ExtractionSystem` never waited on one.
+Live play showed the "automatic" framing read as "instant," not "walk up and it just
+works" — reversed per the user's own follow-up spec ("boss打完之后出传送门,玩家主动通过
+传送门退出" / "打完boss玩家原地停留" — a portal should open and the player should stay put
+until they choose to leave through it).
+
+Fix, three files: (1) `ExtractionSystem.tick` drops the LAST-floor early-return
+entirely — every floor now resolves identically off `p.confirmExtract`/`confirmDescend`,
+with the last floor's only remaining special case being `confirmDescend` staying a no-op
+(no next floor to descend to). (2) `GameLoop.ts`'s `checkpointEligible` drops its
+`&& !isLastFloor` clause, so the portal opens on the last floor too, exactly like any
+other checkpoint; `updateHud` now also passes `isLastFloor` through to
+`portalPrompt.update`. (3) `PortalPrompt.update` gained that third `isLastFloor` param
+(default `false`, so every pre-existing call site is unaffected) — hides the Descend
+button and re-centres Extract into its slot, so the last floor's popup reads as one
+deliberate choice instead of a two-button prompt with a dead half. Net effect: the boss's
+own death drops (materials auto-collect on proximity, weapons via the loot panel) are
+reachable exactly like any other floor's before the player chooses to leave.
+
+10 new/updated tests across 4 files. `extraction.test.ts`: the last-floor checkpoint no
+longer resolves without an explicit `confirmExtract`; a `confirmDescend` press there is
+ignored; plus a full end-to-end regression for the actual reported bug — a material drop
+placed 50 grid units from the player survives the checkpoint opening untouched
+(`PickupSystem` doesn't vacuum it from a distance), gets collected into
+`floorMaterials` once the player actually walks over, and still banks into
+`bankedMaterials` on the `confirmExtract` the player presses afterward. `dungeonrun.test.ts`:
+both its capstone-clear integration tests (the plain last-floor case and the
+live-enemy-elsewhere-on-the-floor case) now assert the checkpoint WAITS after the capstone
+clears, then press `CONFIRM_EXTRACT` explicitly instead of asserting an auto-resolve.
+`GameLoop.test.ts`: the portal now opens on the last floor too; `isLastFloor` is passed
+through to the popup. `PortalPrompt.test.ts`: Descend hidden/shown across `isLastFloor`
+true/false/back-to-false.
+
+Also verified live against the running dev client (`window.__game`, same
+screenshot-times-out workaround as this doc's other entries): jumped a real run to its
+last floor, killed the boss capstone's enemy, confirmed `phase` stayed `'playing'` and the
+portal opened, confirmed the popup showed Extract only (Descend hidden), then tapped
+Extract and confirmed `phase` went `'gameover'`/`winner: 0` — the full user-facing flow,
+not just the unit-level assertions above.
+
+Engine suite: 552 tests (was 549 before extraction/dungeonrun edits, net +3 there since
+one old auto-resolve assertion was replaced rather than added alongside). Client suite:
+1161 tests, unchanged count (existing tests rewritten in place, no new files).
+`tsc --noEmit` and `check:filelength` clean across all 7 workspaces.
+
+---
+
 
 ## Dependency summary
 

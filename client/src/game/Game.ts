@@ -367,6 +367,11 @@ export class Game {
     this.hud.onPause = () => {
       if (!this.online && this.phase === 'playing') this.pause();
     };
+    // Tapping the idle-slot chip (HudView, design/10 HUD follow-up) swaps the active
+    // weapon — same latch as the keyboard/touch swap controls just below.
+    this.hud.onSwapWeapon = () => {
+      if (this.phase === 'playing') this.builder.requestSwap();
+    };
 
     this.input.attach(this.app.canvas as unknown as InputCanvas);
     // Discrete actions route through the shell: during a run they latch a one-tick
