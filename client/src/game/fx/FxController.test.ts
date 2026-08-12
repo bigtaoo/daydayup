@@ -64,11 +64,11 @@ describe('FxController.updateCamera', () => {
   it('zooms a small room up to fill the tighter axis, capped at MAX_ZOOM', () => {
     const layers = new Layers();
     const fx = new FxController(layers);
-    // zoomX = 800/200 = 4, zoomY = 600/200 = 3 — min is 3, past the cap.
+    // zoomX = 800/200 = 4, zoomY = 600/200 = 3 — min is 3, past the cap (2.5).
     fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 200, h: 200 }, fakePlayer(100, 100));
-    expect(layers.world.scale.x).toBeCloseTo(1.8);
-    expect(layers.world.scale.y).toBeCloseTo(1.8);
-    expect(fx.zoom).toBeCloseTo(1.8);
+    expect(layers.world.scale.x).toBeCloseTo(2.5);
+    expect(layers.world.scale.y).toBeCloseTo(2.5);
+    expect(fx.zoom).toBeCloseTo(2.5);
   });
 
   it('zooms by the uncapped contain-fit ratio when under MAX_ZOOM', () => {

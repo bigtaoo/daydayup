@@ -6,10 +6,15 @@ Goal: a fixed tilted view (not pure top-down; slightly forward-leaning, like Sou
 
 - **Tilted (3/4) view:** walls, pillars, and characters show a small "front face" instead of a pure top face, so height and volume read. This is the basis of the 3D feel.
 - The camera has a fixed angle and never rotates; it may pan to follow the player.
-- **Small-room zoom-to-fit** (legibility fix, 2026-08-02): a room smaller than the
-  viewport is scaled up (contain-fit against the tighter axis, capped at 1.8x so a
-  tiny/degenerate room doesn't blow sprites into blocks) instead of sitting centred in
-  a sea of black canvas backdrop — `FxController.updateCamera` (`client/src/game/fx/FxController.ts`).
+- **Small-room zoom-to-fit** (legibility fix, 2026-08-02; cap raised 2026-08-12): a room
+  smaller than the viewport is scaled up (contain-fit against the tighter axis, capped
+  at 2.5x — was 1.8x — so a tiny/degenerate room doesn't blow sprites into blocks)
+  instead of sitting centred in a sea of black canvas backdrop —
+  `FxController.updateCamera` (`client/src/game/fx/FxController.ts`). The cap was raised
+  after a user report of a narrow dungeon floor leaving a wide dark `Backdrop`-filled
+  void that read as "the viewport doesn't fill the window" rather than an intentional
+  letterbox (the void colour is deliberately very dark, so it's easy to mistake for an
+  unrendered canvas) — see "Live-play bug-fix pass" in `ROADMAP.md`.
   A room/arena that already covers the viewport at 1x is untouched (zoom floors at 1,
   never shrinks). (`CommandBuilder` used to divide a screen-space mouse aim point by
   this same zoom before converting it to world space — moot since `10` v33 removed
@@ -89,7 +94,13 @@ For this game's scale (rooms, pillars, crates, enemies) these are largely avoida
      rig). `Actor.setShield` drives `intensity` off the actor's live two-pool shield ratio
      (design/02/05/07) — full glow at a full shield, fading as it drains, gone once it
      hits 0 (the `shield_break` event's own flash, `EventReactor`, already covers that
-     instant).
+     instant). Its UV-distance-from-0.5 assumption DOES need the render area itself to be
+     centred and symmetric, though — Pixi's auto-computed filter bounds for `skin.view`
+     are not (the placeholder's facing-direction wedge / a real rig's aim-mounted weapon
+     sprite both extend outward on one side only), which read as a lopsided glow until
+     fixed (2026-08-12): `Actor`'s constructor now pins an explicit, fixed `filterArea`
+     on `skin.view`, centred on the actor's true local origin regardless of facing/weapon
+     pose.
    - **`OutlineFilter`** — a REAL alpha-edge-detected silhouette outline (samples the
      actual rendered alpha at 4 neighbour texels via Pixi's auto-bound `uInputSize` filter
      uniform), unlike the shield's approximation — needed because an outline must hug

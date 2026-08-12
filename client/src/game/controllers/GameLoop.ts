@@ -4,7 +4,7 @@ import type { InputSource } from '../../platform/types';
 import type { Phase } from '../phase';
 import { fpToPx, bradToRad } from '../coords';
 import { ELEMENT_COLORS } from '../theme';
-import { totalFloorCount } from '../match/floorCount';
+import { totalFloorCount, checkpointReached } from '../match/floorCount';
 import { shouldConfirmOnFireEdge } from '../screens/confirmEdge';
 import { LocalPredictor, DEFAULT_PREDICTOR } from './LocalPredictor';
 import type { CommandBuilder } from './CommandBuilder';
@@ -356,8 +356,7 @@ export class GameLoop {
     // so neither has to duplicate the other's half of the condition.
     const floor = s.floorIndex + 1;
     const isLastFloor = floor >= totalFloorCount(s);
-    const checkpointEligible =
-      !s.zoneEnabled && s.phase !== 'gameover' && s.wavesExhausted && s.enemies.length === 0 && !isLastFloor;
+    const checkpointEligible = !s.zoneEnabled && s.phase !== 'gameover' && checkpointReached(s) && !isLastFloor;
     this.deps.roomBuilder.setPortalOpen(checkpointEligible);
 
     const p = s.players[this.host.localOwner];

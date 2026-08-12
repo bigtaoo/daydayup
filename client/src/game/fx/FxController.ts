@@ -6,7 +6,15 @@ import { LightRegistry } from './lighting';
 
 const FX_LIFE_MS = 170; // flash/trail lifetime
 const MAX_SHAKE_PX = 14; // camera-shake offset at full trauma (design/01 milestone 3)
-const MAX_ZOOM = 1.8; // cap on updateCamera's small-room fill zoom
+// Cap on updateCamera's small-room fill zoom — raised from 1.8 (design/10's original
+// legibility fix) to 2.5 (user report, 2026-08-12): a floor whose combined room width
+// is well under the viewport left a wide dark `Backdrop` void on both sides that read
+// as "the game viewport doesn't fill the window" rather than an intentional letterbox
+// (the void colour is deliberately very dark — theme.ts's `BiomePalette.void` — so it's
+// visually indistinguishable from an unrendered black canvas). A higher cap shrinks
+// that void by zooming a small floor in further before the degenerate-blockiness limit
+// kicks in; it does NOT touch the zoom=1 floor for anything already viewport-sized+.
+const MAX_ZOOM = 2.5;
 
 /** Something that can report its interpolated ground position — the local player's
  *  Actor view, duck-typed so FxController never needs to import game/Actor.ts. */

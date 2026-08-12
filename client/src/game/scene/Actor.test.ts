@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import type { Graphics } from 'pixi.js';
+import type { Graphics, Rectangle } from 'pixi.js';
 import { freshStatus } from '@dd/engine/content/damage';
 import { Actor } from './Actor';
 
@@ -162,12 +162,50 @@ function weaponGfxOf(a: Actor): { rotation: number } {
 function skinFiltersOf(a: Actor): unknown {
   return (a as unknown as { skin: { view: { filters: unknown } } }).skin.view.filters;
 }
+function skinFilterAreaOf(a: Actor): Rectangle {
+  return (a as unknown as { skin: { view: { filterArea: Rectangle } } }).skin.view.filterArea;
+}
 function shieldFilterOf(a: Actor): { intensity: number } | null {
   return (a as unknown as { shieldFilter: { intensity: number } | null }).shieldFilter;
 }
 function litFilterOf(a: Actor): { dirX: number; dirY: number; color: number; intensity: number } {
   return (a as unknown as { litFilter: { dirX: number; dirY: number; color: number; intensity: number } }).litFilter;
 }
+
+// Lopsided-shield-glow fix (2026-08-12): `EnergyShieldFilter`'s shader hardcodes
+// texture-coordinate (0.5,0.5) as the character's centre, but `skin.view`'s
+// AUTO-computed bounds are asymmetric (the placeholder's facing-direction "front"
+// wedge, or a real rig's mounted weapon sprite, both extend outward on one side only)
+// — pinning an explicit, symmetric `filterArea` centred on the skin's true local
+// origin (0,0) is what keeps the shield (and every other skin-level filter) centred
+// regardless of which way the actor is currently facing/aiming.
+describe('Actor — skin filterArea is a fixed square centred on the true local origin (2026-08-12 lopsided-shield fix)', () => {
+  it('is centred on (0,0), not offset by facing/weapon geometry', () => {
+    const a = new Actor('player', 20);
+    const area = skinFilterAreaOf(a);
+    expect(area.x + area.width / 2).toBeCloseTo(0);
+    expect(area.y + area.height / 2).toBeCloseTo(0);
+  });
+
+  it('scales with the actor\'s own radius, not a fixed pixel size', () => {
+    const small = skinFilterAreaOf(new Actor('enemy', 10));
+    const big = skinFilterAreaOf(new Actor('enemy', 30));
+    expect(big.width).toBeGreaterThan(small.width);
+    expect(big.width / small.width).toBeCloseTo(30 / 10, 5);
+  });
+
+  it('does not shift when the actor turns to face a different direction', () => {
+    const a = new Actor('player', 20);
+    const before = skinFilterAreaOf(a);
+    const beforeCenter = { x: before.x + before.width / 2, y: before.y + before.height / 2 };
+    a.pushState(0, 0, 0, Math.PI, -Math.PI / 2);
+    a.snap();
+    a.interpolate(1, 16);
+    const after = skinFilterAreaOf(a);
+    expect(after.x + after.width / 2).toBeCloseTo(beforeCenter.x);
+    expect(after.y + after.height / 2).toBeCloseTo(beforeCenter.y);
+  });
+});
 
 describe('Actor.setShield — energy-shield shader (design/01 fidelity roadmap milestone 5)', () => {
   it('is a no-op with no shield pool (maxShield <= 0) — most enemies never pay for a filter', () => {

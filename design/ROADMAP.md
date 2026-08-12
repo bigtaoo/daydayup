@@ -1163,6 +1163,56 @@ candidate if this gets revisited.
 
 ---
 
+## Live-play bug-fix pass ✅ (2026-08-12, user report from a dungeon-mode screenshot)
+
+Three bugs reported from a live screenshot (`FLOOR 1/3 · ROOM 2/2` HUD chip, i.e. dungeon
+mode):
+
+1. **Stuck after clearing a non-final-floor room.** Root cause: the 2026-08-04 "Room & door
+   model" pass (above) rewrote `ExtractionSystem`'s dungeon branch to check the floor's
+   capstone room directly (`activated && !hasLiveEnemy`) instead of the old floor-wide
+   `wavesExhausted` flag, but the client-side render gate — then `Game.ts`, now
+   `GameLoop.ts`'s `updateHud` — was never updated to match, and kept reading
+   `s.wavesExhausted` (which dungeon mode's `SpawnSystem.tick` returns before ever setting).
+   The portal's open/closed visual and the extract/descend popup were therefore permanently
+   gated shut on any non-final floor — masked on the LAST floor only, where
+   `ExtractionSystem`'s own capstone check auto-resolves regardless of what the client
+   thinks. Fixed by mirroring `ExtractionSystem`'s per-mode condition into a new
+   `checkpointReached()` (`client/src/game/match/floorCount.ts`, alongside the existing
+   `totalFloorCount()` — same "engine's private logic needs a render-side copy" pattern),
+   used by `GameLoop.ts` in place of the raw `wavesExhausted` read. Also fixes a second,
+   latent mismatch the old code had even in flat/non-dungeon mode's shape: dungeon mode's
+   capstone check was never supposed to be ANDed with a global `enemies.length === 0` (a
+   co-resident floor can have a live mob in some OTHER room while the capstone itself is
+   clear) — `checkpointReached()` folds the right per-mode condition into one place instead
+   of composing it at each call site.
+2. **Dark bars around a small floor, reported as "viewport doesn't scale with the window."**
+   Confirmed NOT a resize-tracking bug (window size was unchanged the whole time, per the
+   user) — it's `FxController.updateCamera`'s intentional small-room contain-fit zoom
+   (design/10, 2026-08-02) hitting its `MAX_ZOOM` cap on a floor narrower than the viewport,
+   with `Backdrop` filling the leftover void in the biome's (deliberately very dark)
+   `void` palette colour — visually indistinguishable from an unrendered black canvas. Per
+   the user's choice among three options (brighten the void colour / raise the zoom cap /
+   leave as-is), raised `MAX_ZOOM` 1.8 → 2.5 (`client/src/game/fx/FxController.ts`), shrinking
+   the void for undersized floors without touching anything already viewport-sized+.
+3. **Energy-shield glow rendering off-centre ("leaning to one side").** `EnergyShieldFilter`'s
+   shader (`fx/filters.ts`) hardcodes texture-coordinate (0.5, 0.5) as the character's centre,
+   but the filter is applied to `Actor`'s whole `skin.view`, whose auto-computed bounds are
+   asymmetric — the Graphics placeholder's facing-direction "front" wedge and a real rig's
+   aim-mounted weapon sprite both extend outward on one side only, dragging the
+   auto-bounds' centre (and therefore the shader's UV origin) along with them. Fixed by
+   pinning an explicit, fixed, symmetric `filterArea` on `skin.view` (`Actor.ts` constructor,
+   `±3×radiusPx` centred on the actor's true local origin) — every skin-level filter now
+   renders against a stable area that doesn't drift with facing/weapon pose.
+
+13 new tests (`floorCount.test.ts` ×7 for `checkpointReached`'s dungeon/flat-mode cases
+including the co-resident-room regression, `Actor.test.ts` ×3 for `filterArea` centering,
+`GameLoop.test.ts` ×3 end-to-end through `updateHud`/`setPortalOpen`) plus the matching
+`FxController.test.ts` cap-value update. 1134 client tests (was 1121), 548 engine tests
+unaffected, `tsc --noEmit` and `check:filelength` clean across all 7 workspaces.
+
+---
+
 ## Dependency summary
 
 ```

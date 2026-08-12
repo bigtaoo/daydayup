@@ -1,4 +1,4 @@
-import { Filter, Graphics } from 'pixi.js';
+import { Filter, Graphics, Rectangle } from 'pixi.js';
 import type { DamageType, StatusState } from '@dd/engine';
 import { THEME, ELEMENT_COLORS } from '../theme';
 import { EnergyShieldFilter, OutlineFilter, DissolveFilter, HeatHazeFilter, NormalLitFilter } from '../fx/filters';
@@ -95,6 +95,24 @@ export class Actor extends Entity {
       faction === 'enemy' ? resolvedTint : undefined,
     );
     this.addChild(this.skin.view);
+    // Pin the filter render area to a fixed square centered on the skin's true local
+    // origin (0,0) — the placeholder's facing-direction "front" wedge (Skin.ts) and a
+    // real rig's mounted weapon sprite both extend the auto-computed bounds out to one
+    // side only (whichever way the actor is currently facing/aiming), which drags
+    // EVERY skin-level filter's UV-space "center" along with it. Most filters
+    // (OutlineFilter, NormalLitFilter, HeatHazeFilter) sample the real alpha edge so
+    // they're visually tolerant of that drift, but EnergyShieldFilter's rim-glow is a
+    // hardcoded UV-distance-from-0.5 circle (see filters.ts) — it needs the render
+    // area itself to stay centered and symmetric, or the glow renders lopsided toward
+    // whichever side the bounds happen to extend that frame. 3x radius comfortably
+    // covers body + any mounted weapon reach in every facing/aim direction.
+    const filterHalfExtent = radiusPx * 3;
+    this.skin.view.filterArea = new Rectangle(
+      -filterHalfExtent,
+      -filterHalfExtent,
+      filterHalfExtent * 2,
+      filterHalfExtent * 2,
+    );
 
     this.weaponGfx.zIndex = 1;
     this.addChild(this.weaponGfx);

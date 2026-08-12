@@ -10,7 +10,7 @@
  * by design, never imports.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { createGameEngine } from '@dd/engine';
+import { createGameEngine, createGameState, buildEnemyActor, toFp, EMBER_DUNGEON, EMBER_ROOMS, type DungeonConfig } from '@dd/engine';
 import type { CoopSession } from '../../net/CoopSession';
 import type { InputSource, InputState, TouchVisual } from '../../platform/types';
 import { CommandBuilder } from './CommandBuilder';
@@ -356,4 +356,69 @@ describe('GameLoop — reset hooks (run-lifecycle callbacks)', () => {
   function fakeOnlineSessionForReset(): CoopSession {
     return { started: false } as unknown as CoopSession;
   }
+});
+
+// Stuck-portal fix (2026-08-12): dungeon mode's `wavesExhausted` is never set
+// (SpawnSystem.tick's dungeon branch returns before the line that sets it), so
+// checkpointEligible used to be permanently false on any non-final floor — the
+// portal never opened and the extract/descend popup never appeared. `updateHud`
+// (private, called from `advanceSim` while `phase === 'playing'`) is exercised here
+// via a real dungeon `GameState` from `host.activeState()` — dt stays under one sim
+// tick so `stepSim`/`engine.submit` never runs, isolating just the checkpoint gate.
+describe('GameLoop — portal/checkpoint eligibility (dungeon mode, 2026-08-12 stuck-portal fix)', () => {
+  const TINY_DUNGEON: DungeonConfig = { ...EMBER_DUNGEON, floorCount: 5 };
+
+  function dungeonStateWithRooms(roomCount: number) {
+    const s = createGameState({
+      seed: 1, worldW: 800, worldH: 800, waves: [],
+      dungeon: { config: TINY_DUNGEON, library: EMBER_ROOMS },
+    });
+    for (let i = 0; i < roomCount; i++) {
+      s.dungeonRoomRuntime.push({ activated: false, roomTick: 0, schedule: [], cursor: 0, hasLiveEnemy: false });
+    }
+    return s;
+  }
+
+  it('portal stays closed before the capstone room is cleared', () => {
+    const { deps } = buildDeps();
+    const s = dungeonStateWithRooms(2);
+    const host = buildHost({ getPhase: () => 'playing', activeState: () => s });
+    const loop = new GameLoop(deps, host);
+
+    loop.update(16); // under one sim tick — engine.submit/stepSim never runs
+
+    expect(deps.roomBuilder.setPortalOpen).toHaveBeenCalledWith(false);
+  });
+
+  it('THE FIX: portal opens once the capstone is cleared, even with a live enemy in another co-resident room', () => {
+    const { deps } = buildDeps();
+    const s = dungeonStateWithRooms(2);
+    s.dungeonRoomRuntime[0]!.activated = true;
+    s.dungeonRoomRuntime[0]!.hasLiveEnemy = true; // another room on the floor still has a mob up
+    s.dungeonRoomRuntime[1]!.activated = true;
+    s.dungeonRoomRuntime[1]!.hasLiveEnemy = false; // the capstone itself is clear
+    s.enemies.push(buildEnemyActor(s, toFp(10), toFp(10)));
+    const host = buildHost({ getPhase: () => 'playing', activeState: () => s });
+    const loop = new GameLoop(deps, host);
+
+    loop.update(16);
+
+    // Before the fix, the old `s.wavesExhausted && s.enemies.length === 0` check was
+    // permanently false in dungeon mode — this call would have been `false` here too.
+    expect(deps.roomBuilder.setPortalOpen).toHaveBeenCalledWith(true);
+  });
+
+  it('portal stays closed on the LAST floor (that floor auto-resolves via ExtractionSystem instead)', () => {
+    const { deps } = buildDeps();
+    const s = dungeonStateWithRooms(2);
+    s.dungeonRoomRuntime[1]!.activated = true;
+    s.dungeonRoomRuntime[1]!.hasLiveEnemy = false;
+    s.floorIndex = TINY_DUNGEON.floorCount - 1; // the final floor
+    const host = buildHost({ getPhase: () => 'playing', activeState: () => s });
+    const loop = new GameLoop(deps, host);
+
+    loop.update(16);
+
+    expect(deps.roomBuilder.setPortalOpen).toHaveBeenCalledWith(false);
+  });
 });
