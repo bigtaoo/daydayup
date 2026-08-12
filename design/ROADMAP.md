@@ -1406,6 +1406,64 @@ one old auto-resolve assertion was replaced rather than added alongside). Client
 
 ---
 
+## Camera cover-fit + weapon-slot HUD chip ✅ (2026-08-12, follow-up — a sixth user
+request, from an annotated screenshot: the current room should fill the viewport as much
+as possible; show the OTHER carried weapon next to the active one, tappable to swap; and
+confirm a melee attack targets the nearest enemy, falling back to the character's own
+facing when there is none)
+
+Two real changes plus one confirmation that no change was needed:
+
+1. **Camera: contain-fit → cover-fit (closes the void gap item 2 of the "Live-play
+   bug-fix pass" above left open).** That earlier pass raised `MAX_ZOOM` 1.8→2.5 to *shrink* the dead void beside
+   a narrow room, but a room whose aspect ratio just doesn't match the viewport's still
+   left a real, un-rendered void on one axis — raising the cap further couldn't fix an
+   aspect-ratio mismatch, only a too-low cap. Asked the user to pick between eliminating
+   the void entirely (cover-fit: zoom by whichever axis needs MORE zoom, room can exceed
+   the viewport and pan/crop with the player) or keeping the whole room always visible
+   and just repositioning the leftover void; the user picked cover-fit. Fix is a one-line
+   formula change in `FxController.updateCamera` (`client/src/game/fx/FxController.ts`):
+   `Math.min(vw/worldW, vh/worldH)` (contain-fit) → `Math.max(1, vw/worldW, vh/worldH)`
+   (cover-fit, still capped at `MAX_ZOOM`) — the existing clamp-to-room-bounds branch for
+   `cx`/`cy` already handled "room bigger than viewport, pan with the player" (needed
+   before for arenas/big rooms), so it just runs for the previously-letterboxed axis too,
+   no new code. `Backdrop`'s void-color rect is now only a safety net for a
+   `MAX_ZOOM`-capped degenerate/tiny room, not the common case. Tradeoff, confirmed
+   accepted by the user: a door/wall can scroll off-screen while the player is elsewhere
+   in the room (visible near the top of the screen only when the player is actually near
+   it) — same as any camera-follow game. Confirmed live via `claude-in-chrome`: a room
+   that previously showed dark void bands on both sides now fills edge-to-edge with zero
+   void.
+2. **The idle weapon slot is now shown, and tappable to swap** (closes the gap `10`'s own
+   HUD table used to call out: "the HUD shows the active weapon only"). New
+   `WeaponSlotChip` (`client/src/game/ui/WeaponSlotChip.ts`) — a small, dimmed icon chip
+   using the same rarity-bordered-chip look as the active `WeaponCard`'s own icon, just
+   quieter, so it visibly reads as "idle." Wired into `HudView.ts` immediately right of
+   the active `WeaponCard` (x tracks the card's own name-length-dependent width every
+   `layout()`, so a long weapon name never overlaps it), hidden whenever the loadout has
+   fewer than two weapons. Tapping it doesn't target a slot directly — a player carries
+   at most two weapons (`PlayerActor.weapons`), so "tap the idle slot" and "cycle the
+   active slot" are the same action — `onTap` routes through `HudView.onSwapWeapon` to
+   the exact same `CommandBuilder.requestSwap()` the keyboard (1/2) and touch corner
+   buttons already use (`Game.ts`). Confirmed live via `claude-in-chrome`: the chip
+   renders next to the active card, and tapping it actually flips `activeSlot` and swaps
+   which weapon the active `WeaponCard` shows.
+3. **Melee targeting — checked, already correct, no code change.** `ApplyInputSystem`
+   already faces a player at the nearest hostile (any range) every tick if one exists,
+   else the movement direction, else it holds its last facing — and a melee swing (and a
+   ranged shot) already fires along that same facing (design/10 v33's auto-face). This
+   already matches the request; nothing needed changing.
+
+New tests: `FxController.test.ts`'s 3 zoom-math tests updated for the cover-fit formula
+(including a rewritten case proving zero letterbox void on the axis that used to have
+one), `HudView.test.ts` +3 (chip shows/hides by loadout size, positions right of the
+active card, tap fires the swap callback), and a new `WeaponSlotChip.test.ts` +9 (tap
+wiring mirrors `Button`'s own "press ≠ activate" contract; the icon's cache-key guard,
+same shape `WeaponCard.test.ts` pins for the active card, verified via a mocked
+`render/weaponSkins` texture since real weapon art needs `Assets.load`). `tsc --noEmit`
+and the full client suite green.
+
+---
 
 ## Dependency summary
 
