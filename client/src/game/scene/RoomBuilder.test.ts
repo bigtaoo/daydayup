@@ -314,3 +314,68 @@ describe('RoomBuilder — doors (design/05 "Room & door model", 2026-08-04)', ()
     expect(layers.ground.children.length).toBe(0);
   });
 });
+
+describe('RoomBuilder — portal placement (2026-08-12 fix: capstone room, not the floor bbox)', () => {
+  it('with no dungeonRoomRects (flat mode), centers on the room itself — worldW/H, unchanged behavior', () => {
+    const s = stateWithOneWall('ember'); // worldW: 800, worldH: 600
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    expect(rb.portalPx).toEqual({ x: 400, y: 300 });
+  });
+
+  it('with dungeonRoomRects populated, centers on the LAST rect (the capstone room), not the floor bbox', () => {
+    // A floor whose overall bounding box (worldW/H, set by buildFloorGeometry in real
+    // play) is much bigger than any one room — this is what used to put the portal in
+    // a corridor or on a wall on multi-room floors.
+    const s = createGameState({ seed: 1, worldW: 2000, worldH: 1200, waves: [], walls: [], obstacles: [] });
+    (s as unknown as { dungeonConfig?: { biomeId: string } }).dungeonConfig = { biomeId: 'ember' };
+    s.dungeonRoomRects.push(
+      { id: 'entry', rect: { x: pxToFp(0), y: pxToFp(0), w: pxToFp(400), h: pxToFp(300) } },
+      { id: 'capstone', rect: { x: pxToFp(1600), y: pxToFp(900), w: pxToFp(400), h: pxToFp(300) } },
+    );
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    // Capstone rect center = (1600 + 200, 900 + 150) = (1800, 1050) — nowhere near the
+    // floor bbox's own center (1000, 600).
+    expect(rb.portalPx!.x).toBeCloseTo(1800, 0);
+    expect(rb.portalPx!.y).toBeCloseTo(1050, 0);
+  });
+
+  it('with a single-room dungeon floor (capstone == only entry), still centers on that room', () => {
+    // A degenerate but real case: a one-room floor. dungeonRoomRects has exactly one
+    // entry, which is trivially both "the last room" and "the only room" — the fix must
+    // not assume there are at least two entries.
+    const s = createGameState({ seed: 1, worldW: 500, worldH: 400, waves: [], walls: [], obstacles: [] });
+    (s as unknown as { dungeonConfig?: { biomeId: string } }).dungeonConfig = { biomeId: 'ember' };
+    s.dungeonRoomRects.push({
+      id: 'capstone',
+      rect: { x: pxToFp(50), y: pxToFp(50), w: pxToFp(300), h: pxToFp(200) },
+    });
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    // (50+300/2, 50+200/2) — a fp round trip, not an exact float match (see the
+    // dungeonRoomRects-populated case above).
+    expect(rb.portalPx!.x).toBeCloseTo(200, 0);
+    expect(rb.portalPx!.y).toBeCloseTo(150, 0);
+  });
+
+  it('re-centers on the NEW capstone after a floor transition (dungeonRoomRects reset + repopulated)', () => {
+    // Mirrors ExtractionSystem.resolveDescend: dungeonRoomRects is cleared, then
+    // SpawnSystem repopulates it for the freshly-generated next floor. A stale portalPx
+    // from the previous floor's capstone must not survive the rebuild.
+    const s = createGameState({ seed: 1, worldW: 2000, worldH: 1200, waves: [], walls: [], obstacles: [] });
+    (s as unknown as { dungeonConfig?: { biomeId: string } }).dungeonConfig = { biomeId: 'ember' };
+    s.dungeonRoomRects.push({ id: 'floor1-capstone', rect: { x: pxToFp(1600), y: pxToFp(900), w: pxToFp(400), h: pxToFp(300) } });
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    expect(rb.portalPx!.x).toBeCloseTo(1800, 0);
+    expect(rb.portalPx!.y).toBeCloseTo(1050, 0);
+
+    // Floor transition: old rects cleared, new floor's rects pushed (SpawnSystem).
+    s.dungeonRoomRects.length = 0;
+    s.dungeonRoomRects.push({ id: 'floor2-capstone', rect: { x: pxToFp(0), y: pxToFp(0), w: pxToFp(200), h: pxToFp(100) } });
+    rb.build(s);
+    expect(rb.portalPx!.x).toBeCloseTo(100, 0);
+    expect(rb.portalPx!.y).toBeCloseTo(50, 0);
+  });
+});

@@ -98,7 +98,7 @@ export class RoomBuilder {
 
     this.buildPillars(s, palette);
     this.buildDoors(s);
-    this.buildPortal(w, h);
+    this.buildPortal(s, w, h);
   }
 
   /** One sprite per dungeon door (design/05: "always-present physical fixtures with
@@ -143,18 +143,37 @@ export class RoomBuilder {
     }
   }
 
-  /** One portal per room, centered — hidden until `setPortalOpen(true)` (Game, gated
-   *  on the same checkpoint condition PortalPrompt uses). Rebuilt (not just repositioned)
-   *  per room so a stale reference never survives a room swap. */
-  private buildPortal(w: number, h: number): void {
+  /** Hidden until `setPortalOpen(true)` (Game, gated on the same checkpoint condition
+   *  PortalPrompt uses). Rebuilt (not just repositioned) per room so a stale reference
+   *  never survives a room swap.
+   *
+   *  Placement bug fix (2026-08-12, live screenshot report): this used to center on
+   *  `(w/2, h/2)` — but in dungeon mode `w`/`h` are `fpToPx(s.worldW/worldH)`, the
+   *  bounding box of the WHOLE floor's co-resident rooms (buildFloorGeometry), not the
+   *  single room the checkpoint actually belongs to. On any floor with more than one
+   *  room that box's center can land in a corridor or on top of a wall instead of
+   *  inside the capstone (extraction/boss) room. `state.dungeonRoomRects` — populated
+   *  per room by SpawnSystem, always with the capstone LAST (ExtractionSystem's own
+   *  "capstone = last entry" convention, generateFloor always appends it last) — gives
+   *  the correct room to center on. Flat (non-dungeon) runs never populate
+   *  `dungeonRoomRects` (SpawnSystem only pushes into it in the dungeon branch), where
+   *  `w/h` already IS the single room's own size, so the old `w/2, h/2` center is kept
+   *  as the fallback for that mode. */
+  private buildPortal(s: GameState, w: number, h: number): void {
     this.portal?.shadow?.destroy();
     this.portal?.destroy();
     const portal = new Portal();
     this.layers.entities.addChild(portal);
     this.layers.shadow.addChild(portal.shadow!);
-    portal.place(w / 2, h / 2);
+
+    const capstone = s.dungeonRoomRects[s.dungeonRoomRects.length - 1]?.rect;
+    const px = capstone
+      ? { x: fpToPx(capstone.x) + fpToPx(capstone.w) / 2, y: fpToPx(capstone.y) + fpToPx(capstone.h) / 2 }
+      : { x: w / 2, y: h / 2 };
+
+    portal.place(px.x, px.y);
     this.portal = portal;
-    this.portalPx = { x: w / 2, y: h / 2 };
+    this.portalPx = px;
   }
 
   /** Toggle the current room's portal visibility — open once the checkpoint condition

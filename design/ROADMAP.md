@@ -1247,6 +1247,46 @@ one line UNDER its 1029-line baseline (1028) rather than growing it. 1138 client
 
 ---
 
+## Portal placement + VFX pass ✅ (2026-08-12, follow-up — a third user screenshot,
+same dungeon-mode run)
+
+The visible-but-open portal from the "Live-play bug-fix pass" above landed in the wrong
+place: a user screenshot showed it sitting in a corridor/doorway area outside the room
+it belonged to, and separately asked for a more convincing "space-time portal" look than
+the original static ring + glow.
+
+1. **Wrong position.** `RoomBuilder.buildPortal` centered the portal on `(w/2, h/2)`,
+   where `w`/`h` are `fpToPx(s.worldW/worldH)`. In dungeon mode those are the bounding
+   box of the floor's WHOLE co-resident room set (`buildFloorGeometry`), not the single
+   checkpoint room — on any floor with more than one room, that box's center can land in
+   a corridor or on a wall instead of inside the capstone (extraction/boss) room. Fixed
+   by centering on `state.dungeonRoomRects[state.dungeonRoomRects.length - 1]` instead —
+   the capstone room's own rect, always the LAST entry (`SpawnSystem`'s own convention,
+   already relied on by `ExtractionSystem.capstoneCleared`). Flat (non-dungeon) runs never
+   populate `dungeonRoomRects`, where `w/h` already IS the single room's size, so the old
+   `w/2, h/2` center is kept as that mode's fallback — unchanged behavior there.
+2. **VFX redesign.** `Portal.ts`'s single static ring + one pulsing ellipse read as a flat
+   sticker, not a gate. Rebuilt from four layers, all still plain Pixi `Graphics` (no new
+   art asset, no shader) reusing `THEME.colors.extractGlow`: a wide additive ground bloom,
+   a standing dark-rimmed arch (the pillar-shading "highlight/shadow band" trick), a
+   two-ring vortex around a bright core that spin in opposite directions at different
+   speeds (turbulent "event horizon" read from two static shapes, just spun via
+   `rotation`), and a handful of motes that spiral inward and vanish on a deterministic,
+   golden-angle-spaced schedule (matter falling into the portal — no `Math.random`, so
+   the animation stays reproducible frame-to-frame). Verified live via `claude-in-chrome`
+   (the sandboxed Browser-pane tool can't composite frames — see
+   [[daydayup-engine-conventions]]): instantiated `Portal` directly onto the running app's
+   stage and screenshotted the spin/particle motion across two frames.
+
+17 new tests (`RoomBuilder.test.ts` ×4 for capstone-vs-flat-mode centering, a single-room
+dungeon floor, and re-centering across a floor transition; `Portal.test.ts` rewritten for
+the new 4-layer structure plus counter-rotation, radius-scaled vortex/core geometry, and
+the particle field's determinism/redraw-not-accumulate/actually-moves properties). 1150
+client tests (was 1134 — some prior Portal tests were replaced, not just added to),
+`tsc --noEmit` and `check:filelength` clean.
+
+---
+
 ## Dependency summary
 
 ```
