@@ -678,6 +678,51 @@ describe('placeFloorGraph2d', () => {
     expect(b!.offsetYGrid).toBe(a!.offsetYGrid - NORTH_ONLY.sizeGrid.h);
   });
 
+  it('never leaves a negative offset on any room, even after a north/west hop off the origin-pinned spawn room (bug report: door unlocks with foes:0 but is physically unreachable)', () => {
+    // Regression: `placeAdjacent2d`'s 'north'/'west' cases subtract the new
+    // piece's own size off the spawn room's offset (0), which used to land the
+    // second room at a NEGATIVE offset. `buildFloorGeometry`'s worldW/worldH is a
+    // running max seeded at 0 (blind to negative extents) and `MovementSystem
+    // .clampToWorld` hard-clamps to `[margin, worldW - margin]` with no bound
+    // below 0 — so a player could never actually walk into (or even fully reach
+    // the door of) a negative-offset room, despite the door itself correctly
+    // unlocking. The floor-wide shift this test guards must put EVERY room's
+    // offset — and its own connecting door's passage rect, and its entranceGrid
+    // — at >= 0 on both axes, while leaving every relative adjacency intact.
+    const NORTH_ONLY: RoomPiece = {
+      id: 'ro_north_only', sizeGrid: { w: 10, h: 10 }, solids: [],
+      spawns: { player: [{ x: 5, y: 5 }], enemy: [] }, exits: [{ edge: 'north' }],
+    };
+    const SOUTH_CAP: RoomPiece = {
+      id: 'ro_south_cap', role: 'boss', sizeGrid: { w: 10, h: 10 }, solids: [],
+      spawns: { player: [{ x: 5, y: 5 }], enemy: [] }, exits: [{ edge: 'south' }],
+    };
+    const { placed, doors } = placeFloorGraph2d([NORTH_ONLY, SOUTH_CAP], new Prng(1));
+    for (const room of placed) {
+      expect(room.offsetXGrid).toBeGreaterThanOrEqual(0);
+      expect(room.offsetYGrid).toBeGreaterThanOrEqual(0);
+      expect(room.entranceGrid.x).toBeGreaterThanOrEqual(0);
+      expect(room.entranceGrid.y).toBeGreaterThanOrEqual(0);
+    }
+    for (const door of doors) {
+      expect(door.passageGrid.x).toBeGreaterThanOrEqual(0);
+      expect(door.passageGrid.y).toBeGreaterThanOrEqual(0);
+    }
+    // The relative adjacency (the thing this whole module computes) is unaffected
+    // by the shift — room 1 is still exactly one room-height north of room 0.
+    const [a, b] = placed;
+    expect(a!.offsetYGrid - b!.offsetYGrid).toBe(NORTH_ONLY.sizeGrid.h);
+
+    // And every room's full footprint now lands inside buildFloorGeometry's own
+    // worldW/worldH — the actual bound MovementSystem.clampToWorld enforces — so
+    // no room (and no door on its boundary) is ever out of physical reach.
+    const geo = buildFloorGeometry(placed, doors);
+    for (const room of placed) {
+      expect(toFpGrid(room.offsetXGrid + room.piece.sizeGrid.w)).toBeLessThanOrEqual(geo.worldW);
+      expect(toFpGrid(room.offsetYGrid + room.piece.sizeGrid.h)).toBeLessThanOrEqual(geo.worldH);
+    }
+  });
+
   it('gives every placed room a floor-unique id even if the same piece is drawn twice', () => {
     const { placed } = placeFloorGraph2d([HALL, HALL], new Prng(1));
     expect(placed[0]!.id).toBe('ember_hall#0');

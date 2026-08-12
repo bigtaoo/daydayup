@@ -475,8 +475,35 @@ import { BRAD_FULL } from './math/trig';
  * identical), so no real replay breaks — this bumps purely because the module's
  * own documented draw-sequence contract for `'branching'` changed again, same
  * precedent v34's own point (2) already established for this exact layout.
+ *
+ * v36: two Room & door model bug fixes (design/05), both found from a live
+ * player report — "cleared the room, door is unlocked, still can't walk
+ * through it" — rather than by inspection. Both are real replay-affecting
+ * changes for `EMBER_DUNGEON` (shipped `'graph2d'` since v35's same-day
+ * follow-up), so this is a genuine simulation-output bump, not a docs-only one.
+ * (1) `DeathDropsSystem`'s `onDeathSpawn` boss-adds never inherited the dying
+ * boss's own `roomId` — unlike `SpawnSystem.dispatchDungeonSpawns`'s existing
+ * "set roomId DIRECTLY, same tick" fix for the identical class of bug. `DoorSystem`'s
+ * `hasLiveEnemy` scan (step 11.5, same tick) skips any enemy with `roomId===undefined`,
+ * so a boss room's door would briefly unlock the instant the boss died, then
+ * re-lock (and force-regroup the player straight back) the very next tick once
+ * `EnvironmentSystem` caught up and tagged the new minions — a real, if narrow,
+ * "door opens, then slams shut and yanks you back" window. Fixed: the minion
+ * now inherits `e.roomId` at the moment it's spawned, same tick, same as the
+ * wave-spawn path. (2) `placeFloorGraph2d`'s 'north'/'west' hops off the spawn
+ * room (pinned at the origin) could place the next room at a NEGATIVE offset.
+ * `buildFloorGeometry`'s `worldW`/`worldH` is a running max seeded at 0 (blind
+ * to negative extents) and `MovementSystem.clampToWorld` hard-clamps to
+ * `[margin, worldW - margin]` with no bound below 0 — so a player could never
+ * physically reach (or fully cross into) a negative-offset room, even though
+ * its door had correctly unlocked. Fixed: `placeFloorGraph2d` now shifts the
+ * WHOLE floor by the same delta so the minimum offset on each axis lands at
+ * exactly 0 — a pure translation, so every relative adjacency it already
+ * computed is unaffected, only the shared origin moves. `'linear'`/`'branching'`
+ * (`placeFloor`) only ever walk west→east (+ south-only hub forks) and so never
+ * produce a negative offset — a deliberate no-op for them, never even reached.
  */
-export const ENGINE_VERSION = 35;
+export const ENGINE_VERSION = 36;
 
 // ── Two-pool health tuning (design/07; final values are 07 "to design") ──────────
 // Whole ticks @30Hz. Shield regen is an idle timer, not a heal: after taking ANY

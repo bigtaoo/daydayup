@@ -201,6 +201,32 @@ EMBER_DUNGEON bend/straight/exhaustive coverage + the direction-retry unit test 
 `dungeonrun.test.ts`'s live bending-seed end-to-end check) — 1678 total across all 7
 workspace packages, `tsc --noEmit` clean.
 
+✅ **Bug fix pass shipped 2026-08-12 (`ENGINE_VERSION` 36):** two real bugs found from a
+live player report ("cleared the room, door's unlocked, still can't walk through it"),
+not by inspection — both real replay-affecting changes for `EMBER_DUNGEON` (`'graph2d'`
+since the "graph2d content" pass above). (1) `DeathDropsSystem`'s `onDeathSpawn` boss-adds
+(e.g. `BLIGHTLORD`'s two basic adds) never inherited the dying boss's own `roomId`, unlike
+`SpawnSystem.dispatchDungeonSpawns`'s existing "set `roomId` DIRECTLY, same tick" fix for
+the identical class of bug — `DoorSystem`'s `hasLiveEnemy` scan (step 11.5, same tick)
+skips any enemy with `roomId===undefined`, so a boss room's door would briefly unlock the
+instant the boss died, then re-lock (and force-regroup the player straight back) the very
+next tick once `EnvironmentSystem` caught up — a real, if narrow, "door opens, then slams
+shut and yanks you back" window. Fixed: the minion now inherits `e.roomId` at spawn time,
+same tick, same as the wave-spawn path. (2) `placeFloorGraph2d`'s `'north'`/`'west'` hops
+off the spawn room (pinned at the origin) could place the next room at a NEGATIVE offset
+— `buildFloorGeometry`'s `worldW`/`worldH` is a running max seeded at 0 (blind to negative
+extents) and `MovementSystem.clampToWorld` hard-clamps to `[margin, worldW - margin]` with
+no bound below 0, so a player could never physically reach (or fully cross into) a
+negative-offset room even though its door had correctly unlocked — the minimap's own
+`dungeonToArenaMap` normalization (note above, "room offsets are normalized to a
+non-negative origin") had already worked around this for RENDERING, but the actual
+walkable-world bounds were never fixed. Fixed: `placeFloorGraph2d` now shifts the WHOLE
+floor by the same delta so the minimum offset on each axis lands at exactly 0 — a pure
+translation, every relative adjacency stays intact; `'linear'`/`'branching'` never produce
+a negative offset and this is a deliberate no-op for them. 2 new regression tests
+(`engine/systems/doors.test.ts`, `engine/world/dungeon.test.ts`) — 2631 tests green across
+all 7 workspace packages, `tsc --noEmit` clean.
+
 See `ROADMAP.md`'s "Room & door model" section for the full file list — including
 hand-authored PvE floor placement (map editor), shipped 2026-08-05, see the
 "Hand-authored PvE floors" subsection below.

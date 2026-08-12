@@ -138,6 +138,58 @@ describe('DoorSystem — a locked door is a REAL physical blocker, not just a fl
   });
 });
 
+describe('DoorSystem — a dying boss\'s onDeathSpawn adds never open a walk-back-out window', () => {
+  // Regression for the bug report: a cleared boss room's door briefly unlocked (then
+  // slammed shut + force-regrouped the player back) because DeathDropsSystem's
+  // onDeathSpawn minions were pushed onto state.enemies without a roomId — so
+  // DoorSystem's SAME-tick hasLiveEnemy scan (which skips roomId===undefined) saw the
+  // boss room as empty for exactly one tick. Mirrors SpawnSystem.dispatchDungeonSpawns'
+  // own "sets roomId DIRECTLY, same tick" fix for the identical class of bug.
+  const BOSS_GUARD_ROOM: RoomPiece = {
+    id: 'bg', tags: ['bg'], sizeGrid: { w: 20, h: 16 }, solids: [],
+    spawns: { player: [{ x: 2, y: 8 }], enemy: [{ x: 16, y: 8, type: 'blightlord' }] }, exits: [{ edge: 'east' }],
+  };
+  const BOSS_EXIT_ROOM: RoomPiece = {
+    id: 'bge', role: 'boss', sizeGrid: { w: 20, h: 16 }, solids: [],
+    spawns: { player: [{ x: 2, y: 8 }], enemy: [] }, exits: [{ edge: 'west' }],
+  };
+  const BOSS_GUARD_DUN: DungeonConfig = {
+    biomeId: 'bg', nameKey: 'bg', floorCount: 1, roomsPerFloor: { min: 2, max: 2 },
+    pieceTags: ['bg'], layout: 'linear', extractionPieceId: 'bge', bossPieceId: 'bge',
+    difficultyCurve: { base: 1, perFloor: 0 },
+  };
+  const BOSS_GUARD_CFG: EngineConfig = {
+    seed: 9, worldW: 640, worldH: 640, waves: [],
+    dungeon: { config: BOSS_GUARD_DUN, library: [BOSS_GUARD_ROOM, BOSS_EXIT_ROOM] },
+  };
+
+  it('door stays locked the SAME tick the boss dies and its adds spawn (no unlock flicker)', () => {
+    const eng = createGameEngine(BOSS_GUARD_CFG);
+    const s = eng.state;
+    eng.step([idle(0, 1)]); // floor places
+    eng.step([idle(0, 2)]); // room 0 activates → blightlord spawns → door locks
+    expect(s.dungeonDoors[0]!.locked).toBe(true);
+
+    const boss = s.enemies.find((e) => e.boss)!;
+    expect(boss).toBeDefined();
+    const bossRoomId = boss.roomId;
+    boss.hp = 0; // lethal, to be processed by DeathDropsSystem next tick
+
+    eng.step([idle(0, 3)]); // DeathDropsSystem kills the boss + spawns its 2 adds, THEN DoorSystem runs
+    // The adds must be visible to DoorSystem's hasLiveEnemy scan this SAME tick.
+    const adds = s.enemies.filter((e) => !e.boss);
+    expect(adds).toHaveLength(2);
+    for (const add of adds) expect(add.roomId).toBe(bossRoomId);
+    expect(s.dungeonRoomRuntime[0]!.hasLiveEnemy).toBe(true);
+    expect(s.dungeonDoors[0]!.locked).toBe(true); // never flickered open
+
+    // Only once the adds are actually cleared does it unlock, same as any other room.
+    s.enemies.length = 0;
+    eng.step([idle(0, 4)]);
+    expect(s.dungeonDoors[0]!.locked).toBe(false);
+  });
+});
+
 describe('DoorSystem — force-regroup targets every OTHER online, non-downed player', () => {
   // Deterministic by construction, not by seed luck: the pool has exactly ONE normal
   // piece (enemy-free, where every co-op seat starts), so the single normal draw

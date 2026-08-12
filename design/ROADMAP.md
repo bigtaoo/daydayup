@@ -5,19 +5,24 @@ closed loop the design docs describe, and the running record of how each phase a
 landed. Phases are written top-to-bottom in dependency order; each one keeps its dated
 shipped-notes underneath it, so a phase section is both the plan and the history.
 
-**Current built state (2026-08-05).** `ENGINE_VERSION` **35** (32: ground-weapon pickup is
+**Current built state (2026-08-12).** `ENGINE_VERSION` **36** (32: ground-weapon pickup is
 click-driven; 33: manual aim removed entirely; 34: co-resident PvE room/door model, engine +
 client rendering; 35: fully-realized branching — see the Room & door model section below;
 same-day map-editor door placement, the `layout: 'graph2d'` real-2D-layout follow-up, AND the
-"graph2d content" pass that switches `EMBER_DUNGEON` to it are all additive, no version bump);
-2636 tests green across all 7 workspace packages (engine 546 / client 1085 / server 186 /
-animator 444 / map-editor 260 / png-pipeline 20 / desktop-shell 81 / root build-script 14,
-`npm run check`, verified 2026-08-05 — desktop-shell/root run 2/7 higher than the count the
-test-coverage audit below originally reported, a pre-existing miscount in that pass rather
-than anything introduced since) after closing a real gap that same audit pass had flagged
-and left open: `onRequestSave` (tools/desktop-shell/src/preload.ts) now catches a
-*synchronously*-thrown save callback too, not just a rejecting one, so `nw:save-ack` always
-fires. That audit pass itself (see the Test coverage audit pass section below) closed ~50
+"graph2d content" pass that switches `EMBER_DUNGEON` to it are all additive, no version bump;
+36: two Room & door model bug fixes, `onDeathSpawn` roomId + negative-offset floor bounds —
+see the Room & door model section below); 2631 tests green across all 7 workspace packages
+(engine 548 / client 1085 / server 186 / animator 444 / map-editor 260 / png-pipeline 20 /
+desktop-shell 81 / root build-script 7, `npm run check`, verified 2026-08-12 — root
+build-script corrects to its actual count: the prior entry's "14" was itself a stale
+miscount, same class of drift that same prior entry's own note already flagged once for
+desktop-shell/root) after fixing two real bugs found from a live player report ("cleared
+the room, door's unlocked, still can't walk through it") — see the Room & door model
+section below for the full account. Before that, closing a real gap the test-coverage audit
+pass had flagged and left open: `onRequestSave` (tools/desktop-shell/src/preload.ts) now
+catches a *synchronously*-thrown save callback too, not just a rejecting one, so
+`nw:save-ack` always fires. That audit pass itself (see the Test coverage audit pass section
+below) closed ~50
 previously-untested files and found zero dead/obsolete tests to remove; before that, a full
 client code-review pass
 (2026-08-04, see the Phase 3/4 updates and the Client hardening pass section below) that found
@@ -919,6 +924,49 @@ and `DoorSystem` activation genuinely handle a horizontal (north/south-wall)
 door end-to-end. 8 new tests (6 engine unit + 2 integration) — 1647 total
 across all 7 workspaces, `tsc --noEmit` clean.
 
+**Bug fix pass ✅ (2026-08-12, `ENGINE_VERSION` 35→36) — two real bugs from a live player
+report, not inspection.** The report: "I moved to the door, cleared every enemy in the
+room, and still can't walk through it." Two independent, unrelated root causes, both fixed:
+
+1. **`DeathDropsSystem`'s `onDeathSpawn` boss-adds skipped `DoorSystem`'s same-tick
+   `hasLiveEnemy` scan.** `BLIGHTLORD` (and any future boss with `onDeathSpawn`) spawns 2
+   basic adds the instant it dies (`engine/systems/DeathDropsSystem.ts`), but those minions
+   never got a `roomId` — unlike `SpawnSystem.dispatchDungeonSpawns`'s existing "set `roomId`
+   DIRECTLY, same tick" fix (its own doc comment already named the general bug class:
+   "without it, a room's doors would stay open for one extra tick after its first enemy
+   spawns"). `DoorSystem` (step 11.5, right after death/spawns) skips any enemy with
+   `roomId===undefined`, so it saw the boss room as cleared for exactly one tick: the door
+   unlocked, then — the moment `EnvironmentSystem` tagged the new minions next tick — re-locked
+   and force-regrouped the player straight back. From the player's seat: door opens, you walk
+   in, door slams shut and yanks you back. Fixed by inheriting `e.roomId` on the minion at
+   spawn time, same tick.
+2. **`placeFloorGraph2d` could place a room at a negative offset, which the world-bounds
+   math never accounted for.** A `'graph2d'` floor's spawn room is pinned at the origin
+   (`world/dungeon.ts`); walking out through its `'north'` or `'west'` exit places the next
+   room at a NEGATIVE `offsetXGrid`/`offsetYGrid` (`placeAdjacent2d`). `buildFloorGeometry`'s
+   `worldW`/`worldH` is a running max seeded at 0 — blind to negative extents — and
+   `MovementSystem.clampToWorld` hard-clamps every player to `[margin, worldW - margin]` with
+   no lower bound below 0. A player standing at (or trying to cross) a negative-offset door
+   was physically walled off from ever reaching the room beyond it, even though the door
+   itself had genuinely unlocked. (The minimap adapter above already normalized negative
+   offsets for RENDERING — `dungeonToArenaMap`'s "room offsets are normalized to a
+   non-negative origin" note — but that never touched the actual walkable-world bounds.)
+   Fixed by having `placeFloorGraph2d` shift the WHOLE floor (every room's offset + entrance,
+   every door's passage rect) by the same delta once, right before returning, so the minimum
+   offset on each axis lands at exactly 0 — a pure translation; every relative adjacency the
+   function already computed is unaffected. `'linear'`/`'branching'` (`placeFloor`) only ever
+   walk west→east (+ south-only hub forks) and so never produce a negative offset — a
+   deliberate no-op for them, never even reached.
+
+Both bugs are real, replay-affecting changes for `EMBER_DUNGEON` specifically (already
+`'graph2d'` since the "graph2d content" pass above) — not just docs-contract bumps, hence
+`ENGINE_VERSION` 36. 2 new regression tests (`engine/systems/doors.test.ts`'s "onDeathSpawn
+adds never open a walk-back-out window", `engine/world/dungeon.test.ts`'s "never leaves a
+negative offset on any room") — 2631 tests green across all 7 workspaces (root build-script
+corrected from a stale "14" to its actual "7" while touching this count — same class of
+pre-existing miscount the header above already flagged once for desktop-shell/root), `tsc
+--noEmit` clean.
+
 ---
 
 ## Documentation pass ✅ (2026-08-02)
@@ -1030,7 +1078,7 @@ Phase 3 (co-op/net)     ALL DONE (✅). 3.2 revive/downed engine-side; 3.1 net l
 Phase 4 (PvP)           COMPLETELY DONE (✅ 4.1 through 4.6, design/15, no open items). 8p solo BR decided; team/hostility (ENGINE_VERSION 18) + multi-room broadphase/stitching + zone/EnvironmentSystem + placement win condition + in-arena loot/AI + anti-cheat checkpoints (ENGINE_VERSION 19) + sparse net sync + matchsvc ladder rating all shipped and tested. End-to-end match assembly wired (2026-07-26): mode:'coop'|'pvp' threaded through Matchmaker/ticket/MatchRoom/matchsvc, client ?pvp=1 -> arena EngineConfig (teamId per seat) -> placement gameover screens -> CoopSession.reportResult actually fires (was dead code for coop too) -> checkpoint/ladder settlement. The real ~60-room ArenaMap (arena_prototype_60.json, a concurrent session) is wired into ARENA_CATALOG. buildArenaSpecs' HP-scale/loadout preset is now called from GameState.buildSeat too (ENGINE_VERSION 19->20) — a PvP seat's weapons/maxHp/maxShield come from the scaled arena preset, never the PvE loadout. All browser-verified two-tab, byte-identical. 2026-07-29: the 4.1 "squads/revive reserved interface" is now built too (ENGINE_VERSION 29->30) — pre-formed party invite (server/src/PartyService.ts) + squad-chunked Matchmaker/teamId + squad placement/gated bandage revive + a PartyScreen lobby UI; see the Phase 4 update above. 2026-08-04: fixed a real squad-win scoring bug (RunOutcome compared seat identity instead of team membership, so most of a winning squad saw a DEFEAT screen) — see the Phase 4 update above.
 Phase 5 (presentation)  parallelizable throughout
 Client hardening pass   DONE (✅ 2026-08-04) — full client/src code review (182 files), fixed in place: PartyScreen/LoginScreen staleness guards, weaponSkins preload/fallback resilience, net/transport.ts dead-socket + swallowed-handler-exception fixes, TextInputOverlay blur teardown, Slider pointercancel, Rig bone-order validation, main.ts/main.wechat.ts boot() error boundary, meta/store.ts materialBank validation, auth.ts non-JSON error guard, theme.ts English-policy fix. See the Client hardening pass section above.
-Room & door model       DONE (✅ 2026-08-04/05, ENGINE_VERSION 34→35) — PvE floors co-resident + door-connected (placeFloor/carveDoorGaps/buildFloorGeometry, new DoorSystem: activation/lock-unlock/force-regroup), replacing the old one-room swap. HudView.ts fixed to compile against the new schema. Client room rendering shipped same day: door_{locked,open}_raw.png loaded and wired onto RoomBuilder's per-door Sprite (reactive lock/unlock in place via updateDoors(), no full rebuild), EventReactor reacts to force_regroup with a local-player camera snap. Fully-realized branching shipped 2026-08-05 (ENGINE_VERSION 35) — a real fork-and-reconverge diamond of sibling rooms, needing zero client changes (DoorSystem/RoomBuilder/EventReactor already topology-agnostic). PvE minimap adapter shipped same day — FloorProgress deleted, PvE now shares PvP's own Minimap widget via dungeonToArenaMap/dungeonRoomStatus (minimapLayout.ts). Map-editor door placement shipped same day (no engine version bump) — DungeonFloorMap/placeAuthoredFloor/DungeonConfig.floorMaps + a third tools/map-editor mode ("PvE Dungeon Floor") + validateDungeonFloorMap, closing the last item of the original three-item follow-up list. "全部加测试" follow-up added DungeonFloorCanvas.test.ts (28 tests, previously zero coverage on the tool's most complex new file). Real 2D graph layout (`layout: 'graph2d'`, `placeFloorGraph2d`) shipped same day too — a generated floor can place in real 2D instead of a forced west→east spine. "graph2d content" pass shipped 2026-08-05 (same day): `EMBER_DUNGEON` switches to `'graph2d'` (a new `ember_atrium` piece + wider exit authoring on `ember_pillars`/`ember_extraction`/`ember_boss`), and `placeFloorGraph2d` gains a direction-retry fallback for fold-back overlaps — both found necessary by testing the real content, not by inspection. `'branching'` still stays unused by any shipped config. See the Room & door model section above.
+Room & door model       DONE (✅ 2026-08-04/05, ENGINE_VERSION 34→35) — PvE floors co-resident + door-connected (placeFloor/carveDoorGaps/buildFloorGeometry, new DoorSystem: activation/lock-unlock/force-regroup), replacing the old one-room swap. HudView.ts fixed to compile against the new schema. Client room rendering shipped same day: door_{locked,open}_raw.png loaded and wired onto RoomBuilder's per-door Sprite (reactive lock/unlock in place via updateDoors(), no full rebuild), EventReactor reacts to force_regroup with a local-player camera snap. Fully-realized branching shipped 2026-08-05 (ENGINE_VERSION 35) — a real fork-and-reconverge diamond of sibling rooms, needing zero client changes (DoorSystem/RoomBuilder/EventReactor already topology-agnostic). PvE minimap adapter shipped same day — FloorProgress deleted, PvE now shares PvP's own Minimap widget via dungeonToArenaMap/dungeonRoomStatus (minimapLayout.ts). Map-editor door placement shipped same day (no engine version bump) — DungeonFloorMap/placeAuthoredFloor/DungeonConfig.floorMaps + a third tools/map-editor mode ("PvE Dungeon Floor") + validateDungeonFloorMap, closing the last item of the original three-item follow-up list. "全部加测试" follow-up added DungeonFloorCanvas.test.ts (28 tests, previously zero coverage on the tool's most complex new file). Real 2D graph layout (`layout: 'graph2d'`, `placeFloorGraph2d`) shipped same day too — a generated floor can place in real 2D instead of a forced west→east spine. "graph2d content" pass shipped 2026-08-05 (same day): `EMBER_DUNGEON` switches to `'graph2d'` (a new `ember_atrium` piece + wider exit authoring on `ember_pillars`/`ember_extraction`/`ember_boss`), and `placeFloorGraph2d` gains a direction-retry fallback for fold-back overlaps — both found necessary by testing the real content, not by inspection. `'branching'` still stays unused by any shipped config. **Bug fix pass shipped 2026-08-12 (ENGINE_VERSION 35→36):** two real bugs found from a live player report (door unlocked but still physically impassable) — `DeathDropsSystem`'s `onDeathSpawn` boss-adds now inherit the dying boss's own `roomId` (was `undefined`, so `DoorSystem` briefly saw the room as cleared and force-regrouped the player back), and `placeFloorGraph2d` now shifts a floor's whole coordinate space so a north/west hop off the origin-pinned spawn room never leaves a room (and its door) at a negative, physically-unreachable offset. See the Room & door model section above.
 Phase 6 (accounts)      DONE (✅) — real username/password login (SQLite via node:sqlite), never required to play. Bound to PvP ladder rating (accountId in the signed ticket -> MatchRoom.seatAccounts -> ladderReport, guest/bot fallback preserved) and Forge MetaState (best-effort /account/meta sync). Independent of Phases 1-5; third-party OAuth reserved, not built.
 Phase 7 (i18n)          DONE (✅) — client/src/i18n/: en.ts canonical + zh.ts translation, both compile-time key-checked (Translations<typeof en>, TranslationKey). Every screen migrated to t(); Settings gained a language toggle backed by SettingsState.locale. Independent of Phases 1-6; enum/data-driven values (damage type, weapon kind, rarity/ids) deliberately left untranslated.
 Documentation           DONE (✅ 2026-08-02) — all 19 design docs + every README audited against the code; stale top-of-file Status blocks rewritten (12/10/client/art READMEs and this file's own header), design/README index completed, engine/README written, art/ UUID filenames + duplicate files cleaned up. Docs-only, no code change.

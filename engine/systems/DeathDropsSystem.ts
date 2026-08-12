@@ -44,6 +44,14 @@ export class DeathDropsSystem {
           const pos = clampToWalkable(rawGx, rawGy, minion.footprintRadius, state);
           minion.gx = pos.gx;
           minion.gy = pos.gy;
+          // Inherit the dying boss's own roomId DIRECTLY (never left to next tick's
+          // EnvironmentSystem inference) — same reasoning as SpawnSystem's
+          // dispatchDungeonSpawns (engine/systems/SpawnSystem.ts). Without this,
+          // DoorSystem's hasLiveEnemy scan (step 11.5, this SAME tick) skips the
+          // minion as roomId===undefined and sees the boss room as cleared for one
+          // tick — the door briefly unlocks, then re-locks (and force-regroups the
+          // player back) the instant EnvironmentSystem catches up next tick.
+          minion.roomId = e.roomId;
           state.enemies.push(minion);
         }
       }

@@ -513,6 +513,40 @@ export function placeFloorGraph2d(
     ? { x: first.offsetXGrid + sp.x, y: first.offsetYGrid + sp.y }
     : { x: first.offsetXGrid + ENTRANCE_INSET_GRID, y: first.piece.sizeGrid.h / 2 };
 
+  // A north/west hop off the spawn room (pinned at the origin by construction,
+  // above) produces a negative `offsetXGrid`/`offsetYGrid` (`placeAdjacent2d`'s
+  // 'north'/'west' cases subtract the new piece's own size) — fine for the
+  // placement math itself, which only ever compares relative offsets, but every
+  // downstream consumer assumes the floor's playable area starts at (0,0):
+  // `buildFloorGeometry`'s `worldW`/`worldH` is a running MAX seeded at 0 (blind
+  // to negative extents), and `MovementSystem.clampToWorld` hard-clamps to
+  // `[margin, worldW - margin]` with no lower bound below 0 — so a player
+  // standing at a negative-offset door is walled off from ever stepping through
+  // it into the room beyond, even though the door itself correctly unlocks (the
+  // bug report this fixes: "door unlocked, foes:0, still can't pass through").
+  // Fix: shift the WHOLE floor by the same delta so the minimum offset on each
+  // axis lands at exactly 0 — pure translation, so every relative
+  // distance/adjacency already computed above is unaffected; only the shared
+  // origin moves. `'linear'`/`'branching'` floors (`placeFloor`) only ever walk
+  // west→east (+ south-only hub forks) and so never produce a negative offset —
+  // this is a deliberate no-op for them, never even reached.
+  let shiftX = 0;
+  let shiftY = 0;
+  for (const room of placed) {
+    shiftX = Math.min(shiftX, room.offsetXGrid);
+    shiftY = Math.min(shiftY, room.offsetYGrid);
+  }
+  if (shiftX !== 0 || shiftY !== 0) {
+    for (const room of placed) {
+      room.offsetXGrid -= shiftX;
+      room.offsetYGrid -= shiftY;
+      room.entranceGrid = { x: room.entranceGrid.x - shiftX, y: room.entranceGrid.y - shiftY };
+    }
+    for (const door of doors) {
+      door.passageGrid = { ...door.passageGrid, x: door.passageGrid.x - shiftX, y: door.passageGrid.y - shiftY };
+    }
+  }
+
   return { placed, doors };
 }
 
