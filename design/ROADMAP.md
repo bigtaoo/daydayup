@@ -11,9 +11,11 @@ client rendering; 35: fully-realized branching — see the Room & door model sec
 same-day map-editor door placement, the `layout: 'graph2d'` real-2D-layout follow-up, AND the
 "graph2d content" pass that switches `EMBER_DUNGEON` to it are all additive, no version bump;
 36: two Room & door model bug fixes, `onDeathSpawn` roomId + negative-offset floor bounds —
-see the Room & door model section below); 2631 tests green across all 7 workspace packages
-(engine 548 / client 1085 / server 186 / animator 444 / map-editor 260 / png-pipeline 20 /
-desktop-shell 81 / root build-script 7, `npm run check`, verified 2026-08-12 — root
+see the Room & door model section below); 2684 tests green across all 7 workspace packages
+(engine 548 / client 1138 / server 186 / animator 444 / map-editor 260 / png-pipeline 20 /
+desktop-shell 81 / root build-script 7, `npm run check`, verified 2026-08-12 — client's count
+includes the same-day viewport-fill fix, see the Viewport-fill bug-fix pass section below —
+root
 build-script corrects to its actual count: the prior entry's "14" was itself a stale
 miscount, same class of drift that same prior entry's own note already flagged once for
 desktop-shell/root) after fixing two real bugs found from a live player report ("cleared
@@ -1210,6 +1212,38 @@ including the co-resident-room regression, `Actor.test.ts` ×3 for `filterArea` 
 `GameLoop.test.ts` ×3 end-to-end through `updateHud`/`setPortalOpen`) plus the matching
 `FxController.test.ts` cap-value update. 1134 client tests (was 1121), 548 engine tests
 unaffected, `tsc --noEmit` and `check:filelength` clean across all 7 workspaces.
+
+---
+
+## Viewport-fill bug-fix pass ✅ (2026-08-12, follow-up — a second, real "viewport doesn't
+fill the window" report)
+
+A different bug from item 2 of the pass above — that one was confirmed NOT a resize bug
+(a small floor's intentional zoom-cap void, mistaken for one); this one IS a real
+resize/layout bug, reported this time from the **main-menu** screen (not a dungeon room),
+via a user screenshot showing black bars along the right and bottom edges of the window.
+
+Root cause: `Game.screenSize()` computed `app.renderer.width / app.renderer.resolution`,
+on the assumption that `.width` is a device-pixel size needing conversion back to
+logical/CSS pixels. Empirically, in this Pixi build (`autoDensity: true`,
+`platform/web/WebPlatform.ts`), `.width` is ALREADY logical and equal to
+`.renderer.screen.width` — so that division silently shrank every screen's whole layout
+to `1/devicePixelRatio` of the real viewport. Invisible at devicePixelRatio 1 (division
+by 1 is a no-op — most quick local checks run at 100% display scaling), so it kept
+surviving review; real on any HiDPI display — reproduced live via `claude-in-chrome`
+(real Chrome, not the sandboxed Browser-pane tool, which has its own unrelated
+non-compositing limitation — see [[daydayup-engine-conventions]]) at devicePixelRatio 1.5:
+game content rendered into only the top-left ~2/3 of the canvas.
+
+Fixed by reading `app.renderer.screen.width/height` directly — Pixi's own documented
+logical render-area size, no resolution math needed. Extracted the one-line formula into
+a new `client/src/game/viewport.ts` (`computeScreenSize`) purely so it's unit-testable
+without a live Pixi `Application` — `Game.ts` itself still has no test file (documented,
+standing exemption), but there was no reason the formula it delegates to needed the same
+exemption. 4 new tests (`viewport.test.ts`) covering resolution 1, the exact HiDPI
+regression case (1.5), resolution 2, and non-integer window sizes. Landed with `Game.ts`
+one line UNDER its 1029-line baseline (1028) rather than growing it. 1138 client tests
+(was 1134), `tsc --noEmit` and `check:filelength` clean.
 
 ---
 

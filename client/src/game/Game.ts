@@ -48,6 +48,7 @@ import { ForgeActions } from './controllers/ForgeActions';
 import { ScreenFlow } from './controllers/ScreenFlow';
 import { GameLoop } from './controllers/GameLoop';
 import { parseGameQueryParams } from './match/gameQueryParams';
+import { computeScreenSize } from './viewport';
 import type { Phase } from './phase';
 import type { AudioBus, InputCanvas, InputSource } from '../platform/types';
 
@@ -1020,10 +1021,8 @@ export class Game {
     return this.meta.selectedSkin;
   }
 
+  // Formula (and the HiDPI bug it fixes) lives in viewport.ts, split out to be unit-testable.
   screenSize() {
-    return {
-      w: this.app.renderer.width / this.app.renderer.resolution,
-      h: this.app.renderer.height / this.app.renderer.resolution,
-    };
+    return computeScreenSize(this.app);
   }
 }
