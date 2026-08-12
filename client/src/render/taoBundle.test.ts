@@ -54,7 +54,7 @@ function fakeFetch() {
 
 beforeEach(() => {
   mocks.assetsLoad.mockReset();
-  mocks.assetsLoad.mockImplementation(async (url: string) => ({ __url: url }));
+  mocks.assetsLoad.mockImplementation(async (opts: { src: string }) => ({ __url: opts.src }));
 });
 
 describe('loadRigSkinBundle', () => {
@@ -93,17 +93,39 @@ describe('loadRigSkinBundle', () => {
   it('loads one texture per default frame, keyed by slotId alone', async () => {
     vi.stubGlobal('fetch', fakeFetch());
     const bundle = await loadRigSkinBundle('/skins/orb-core');
-    expect(mocks.assetsLoad).toHaveBeenCalledWith('/skins/orb-core/shell.png');
+    expect(mocks.assetsLoad).toHaveBeenCalledWith(
+      expect.objectContaining({ src: '/skins/orb-core/shell.png' }),
+    );
     expect(bundle.textures.get('shell')).toEqual({ __url: '/skins/orb-core/shell.png' });
   });
 
   it('loads a non-default variant keyed as "<slotId>__<variantId>" (e.g. eye\'s back swap)', async () => {
     vi.stubGlobal('fetch', fakeFetch());
     const bundle = await loadRigSkinBundle('/skins/orb-core');
-    expect(mocks.assetsLoad).toHaveBeenCalledWith('/skins/orb-core/eye.png'); // default
-    expect(mocks.assetsLoad).toHaveBeenCalledWith('/skins/orb-core/eye__back.png'); // variant
+    expect(mocks.assetsLoad).toHaveBeenCalledWith(
+      expect.objectContaining({ src: '/skins/orb-core/eye.png' }), // default
+    );
+    expect(mocks.assetsLoad).toHaveBeenCalledWith(
+      expect.objectContaining({ src: '/skins/orb-core/eye__back.png' }), // variant
+    );
     expect(bundle.textures.get('eye')).toEqual({ __url: '/skins/orb-core/eye.png' });
     expect(bundle.textures.get('eye__back')).toEqual({ __url: '/skins/orb-core/eye__back.png' });
+  });
+
+  // Mipmap-aliasing fix (2026-08-12): these source PNGs are authored at ~1250px but a
+  // rig bone routinely renders at a tiny fraction of that on screen (a live user report
+  // — "can't tell what this character is" — traced to un-mipmapped bilinear sampling
+  // aliasing into colour noise at that minification ratio, see taoBundle.ts). Every
+  // loaded texture needs a generated mip chain, not just the ones that happen to end up
+  // small — Skin.ts scales the SAME bundle to whatever `radiusPx` an actor is built with,
+  // so there's no "this one's always big enough" texture to special-case around.
+  it('requests a generated mipmap chain for every texture it loads (default frames and variants alike)', async () => {
+    vi.stubGlobal('fetch', fakeFetch());
+    await loadRigSkinBundle('/skins/orb-core');
+    expect(mocks.assetsLoad).toHaveBeenCalledTimes(3); // shell, eye (default), eye__back
+    for (const call of mocks.assetsLoad.mock.calls) {
+      expect(call[0]).toMatchObject({ data: { autoGenerateMipmaps: true } });
+    }
   });
 
   it('a fetch rejection propagates (no best-effort fallback — an art bundle either loads or the caller sees the error)', async () => {

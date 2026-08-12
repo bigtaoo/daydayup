@@ -95,7 +95,7 @@ export class Actor extends Entity {
       faction === 'enemy' ? resolvedTint : undefined,
     );
     this.addChild(this.skin.view);
-    // Pin the filter render area to a fixed square centered on the skin's true local
+    // Pin the filter render area to a fixed square, X-centered on the skin's local
     // origin (0,0) — the placeholder's facing-direction "front" wedge (Skin.ts) and a
     // real rig's mounted weapon sprite both extend the auto-computed bounds out to one
     // side only (whichever way the actor is currently facing/aiming), which drags
@@ -106,10 +106,26 @@ export class Actor extends Entity {
     // area itself to stay centered and symmetric, or the glow renders lopsided toward
     // whichever side the bounds happen to extend that frame. 3x radius comfortably
     // covers body + any mounted weapon reach in every facing/aim direction.
+    //
+    // Y is measured, not assumed 0: a rig's decorative bones hang off the body bone's
+    // TIP, not its center (design/12/13's FK convention — orb-core's eye/belly/weapon
+    // sockets all sit ~1 body-length above the shell's own origin, see orbCoreRig.ts),
+    // so the assembled silhouette is consistently top-heavy relative to (0,0) — found
+    // 2026-08-12 from a user report that the shield glow sat low, hugging the ground
+    // instead of the character (`critter-core`'s single-bone enemies have no such
+    // offset and were never visibly wrong). Unlike the X asymmetry above, this one does
+    // NOT depend on facing/aim (only the weapon socket's own rotation does, an X-axis
+    // effect already handled by pinning X), so measuring it once, here, at a neutral
+    // rest pose is safe — it won't drift during play the way a per-frame bounds read
+    // would. `setFacing` lays the rig out at rest (or is a harmless no-op default for
+    // the Graphics placeholder) so `getLocalBounds` reports real numbers.
+    this.skin.setFacing(0, 0, 0, 'idle');
+    const restBounds = this.skin.view.getLocalBounds();
+    const filterCenterY = restBounds.y + restBounds.height / 2;
     const filterHalfExtent = radiusPx * 3;
     this.skin.view.filterArea = new Rectangle(
       -filterHalfExtent,
-      -filterHalfExtent,
+      filterCenterY - filterHalfExtent,
       filterHalfExtent * 2,
       filterHalfExtent * 2,
     );

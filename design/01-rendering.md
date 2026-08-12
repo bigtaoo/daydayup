@@ -99,8 +99,16 @@ For this game's scale (rooms, pillars, crates, enemies) these are largely avoida
      are not (the placeholder's facing-direction wedge / a real rig's aim-mounted weapon
      sprite both extend outward on one side only), which read as a lopsided glow until
      fixed (2026-08-12): `Actor`'s constructor now pins an explicit, fixed `filterArea`
-     on `skin.view`, centred on the actor's true local origin regardless of facing/weapon
-     pose.
+     on `skin.view`. X stays pinned to the actor's local origin (that asymmetry is
+     genuinely facing-dependent). Y is a follow-up fix the same day: a real rig's
+     decorative bones hang off the body bone's TIP, not its centre (`orbCoreRig.ts`), so
+     the assembled silhouette is consistently top-heavy relative to local `(0,0)` in a
+     way that does NOT depend on facing — pinning Y to a flat 0 (the first pass) still
+     left the glow hugging the ground with the top of the sprite poking out above it.
+     Fixed by measuring `skin.view.getLocalBounds()` once at a neutral rest pose and
+     centring Y on that instead — ROADMAP's 2026-08-12 "Shield-centering follow-up" entry
+     has the full account, including why the first fix's own test never caught this (it
+     only ever exercised the Graphics placeholder, not a real loaded rig).
    - **`OutlineFilter`** — a REAL alpha-edge-detected silhouette outline (samples the
      actual rendered alpha at 4 neighbour texels via Pixi's auto-bound `uInputSize` filter
      uniform), unlike the shield's approximation — needed because an outline must hug

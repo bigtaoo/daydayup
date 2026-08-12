@@ -1287,6 +1287,67 @@ client tests (was 1134 — some prior Portal tests were replaced, not just added
 
 ---
 
+## Shield-centering follow-up + rig-art aliasing fix ✅ (2026-08-12, follow-up — a fourth
+user screenshot, same character/monster-legibility report)
+
+Two more bugs off the same screenshot ("角色和怪物的图片看起来不对，根本看不出特点" /
+"护盾没有将角色放在中心位置" — character and monster art unreadable, and the shield glow
+doesn't centre on the character).
+
+1. **The "Live-play bug-fix pass" shield fix (item 3, above) only fixed HALF the
+   problem.** That fix pinned `EnergyShieldFilter`'s `filterArea` to a fixed square
+   centred on `skin.view`'s local `(0,0)` — which stopped the glow drifting sideways
+   with facing/aim (the bug it targeted), but its own test only ever exercised the
+   Graphics placeholder (no `skinRegistry` mock in `Actor.test.ts`), so it never caught
+   that a real rig's decorative bones hang off the body bone's TIP, not its centre
+   (`orbCoreRig.ts`: `char_vanguard`'s eye/belly/weapon-socket bones all sit roughly one
+   body-length above the `shell` bone's own origin). That makes the assembled character
+   consistently top-heavy relative to `(0,0)` — pinning Y to a flat 0 left the glow
+   hugging the ground/feet while the top of the sprite poked out above it, which is
+   exactly the follow-up report. `critter-core`'s single-bone enemies have no such
+   offset, which is why the first fix looked complete at the time. Real fix: `Actor.ts`'s
+   constructor now calls `skin.setFacing(0,0,0,'idle')` once and measures
+   `skin.view.getLocalBounds()` for that rest pose, centring the filter square's Y on the
+   MEASURED bounds centre instead of an assumed 0 (X stays pinned at 0 — that asymmetry
+   genuinely is facing-dependent, so baking in one frame's reading would just move the
+   bug). Confirmed live via `claude-in-chrome`, not just the unit test: the shield glow
+   now evenly surrounds the whole character instead of sitting low.
+2. **Character/monster art reads as unidentifiable blobs at actual gameplay scale.**
+   Traced to the ART PIPELINE, not the art itself — pulling `orb-core`'s source PNGs
+   directly (`shell.png`, `eye.png`) shows a well-drawn robot body and a distinct blue
+   cartoon eye. The problem: those sources are ~1254px, but a decorative bone like `eye`
+   renders at only ~13px on screen at `char_vanguard`'s gameplay `radiusPx` — a ~96:1
+   minification ratio. `Assets.load` was requesting these textures with NO mip chain
+   (`autoGenerateMipmaps: false`, confirmed via the live texture source), so bilinear
+   filtering at that ratio only samples a 2×2 texel neighbourhood per output pixel —
+   textbook un-mipmapped aliasing, which reads as unrecognizable colour noise on
+   anything with fine detail (worse for the small, high-contrast `eye` than the larger,
+   flatter `shell`). Fixed in `taoBundle.ts`: `Assets.load` now passes
+   `{src, data: {autoGenerateMipmaps: true}}` for every texture it loads, not a bare url
+   string. Confirmed live two ways: the GL sampler state
+   (`gl.getTexParameter(...,TEXTURE_MIN_FILTER)`) now reads `LINEAR_MIPMAP_LINEAR` with
+   an 11-level chain (was 1 level), and an isolated render of just the `eye` sprite (every
+   other bone + the mounted weapon hidden) now shows a clean, correctly light-blue circle
+   instead of the aliased smear. NPOT (1254px, not power-of-two) was a real risk — Pixi's
+   WebGL backend gates auto-mipmap generation on `nonPowOf2mipmaps` support — but this
+   project's context reports that `true` (WebGL2), so it wasn't blocked. The fix is
+   generic (every loaded rig texture, not special-cased to Vanguard's eye), so it should
+   help every skin sharing the same "huge source, tiny on-screen radius" shape
+   (`critter-core`/`brute-core`/etc.) — only re-verified live for `char_vanguard`.
+
+Separately **flagged, not fixed**: even with the eye rendering cleanly, the mounted
+weapon sprite sits almost on top of the eye/face cluster in normal play (both anchor
+near the `shell` bone's tip), so the gun still visibly covers a good chunk of the face at
+gameplay scale — a weapon-socket-position/z-order question, out of scope for this pass.
+
+4 new tests (`Actor.test.ts` ×3 — X-pinned assertion split out on its own, a
+placeholder-Y-matches-measured-bounds regression, and a real-rig repro using the same
+faked-bundle-over-a-real-`Rig` trick as `Skin.test.ts`; `taoBundle.test.ts` ×1 asserting
+every `Assets.load` call carries `data.autoGenerateMipmaps: true`). 1154 client tests
+(was 1150), `tsc --noEmit` clean.
+
+---
+
 ## Dependency summary
 
 ```

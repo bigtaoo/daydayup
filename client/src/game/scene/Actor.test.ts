@@ -1,7 +1,37 @@
-import { describe, it, expect, vi } from 'vitest';
-import type { Graphics, Rectangle } from 'pixi.js';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { Texture, type Graphics, type Rectangle } from 'pixi.js';
 import { freshStatus } from '@dd/engine/content/damage';
 import { Actor } from './Actor';
+import { Rig } from '../../render/Rig';
+import { ORB_CORE_RIG, ORB_CORE_REFERENCE_RADIUS } from '../../render/orbCoreRig';
+import type { RigSkinBundle } from '../../render/taoBundle';
+import type { SpriteBinding } from '../../render/types';
+import type { LoadedRigSkin } from '../../render/skinRegistry';
+
+// A real rig's decorative bones (orb-core's eye/belly/weapon sockets) hang off the
+// body bone's TIP, not its centre (orbCoreRig.ts) — the exact geometry that makes the
+// shield-centring fix below non-trivial. Faked bundle over the REAL Rig, same trick as
+// Skin.test.ts/RigSkin.test.ts, so this asymmetry is genuinely exercised under plain
+// vitest rather than assumed.
+const skinRegistryMocks = vi.hoisted(() => ({ loaded: undefined as LoadedRigSkin | undefined }));
+vi.mock('../../render/skinRegistry', () => ({
+  getRigSkin: (_name: string) => skinRegistryMocks.loaded,
+}));
+
+function fakeOrbCoreBundle(rig: Rig): RigSkinBundle {
+  const bindings = new Map<string, SpriteBinding>();
+  const textures = new Map<string, Texture>();
+  for (const boneId of rig.drawOrder) {
+    bindings.set(boneId, { anchorX: 0.5, anchorY: 0.5, flipX: false, zOrder: 0, rotation: 0, scaleX: 1, scaleY: 1 });
+    textures.set(boneId, Texture.WHITE);
+  }
+  return { bindings, clips: new Map(), textures };
+}
+
+function loadedOrbCoreRig(): LoadedRigSkin {
+  const rig = new Rig(ORB_CORE_RIG);
+  return { rig, bundle: fakeOrbCoreBundle(rig), referenceRadius: ORB_CORE_REFERENCE_RADIUS };
+}
 
 // EnergyShieldFilter/OutlineFilter/DissolveFilter all build a real WebGL GlProgram at
 // construction time — unavailable under plain vitest (no `document`/canvas), same reason
@@ -165,6 +195,9 @@ function skinFiltersOf(a: Actor): unknown {
 function skinFilterAreaOf(a: Actor): Rectangle {
   return (a as unknown as { skin: { view: { filterArea: Rectangle } } }).skin.view.filterArea;
 }
+function skinViewOf(a: Actor): { getLocalBounds: () => Rectangle } {
+  return (a as unknown as { skin: { view: { getLocalBounds: () => Rectangle } } }).skin.view;
+}
 function shieldFilterOf(a: Actor): { intensity: number } | null {
   return (a as unknown as { shieldFilter: { intensity: number } | null }).shieldFilter;
 }
@@ -176,15 +209,48 @@ function litFilterOf(a: Actor): { dirX: number; dirY: number; color: number; int
 // texture-coordinate (0.5,0.5) as the character's centre, but `skin.view`'s
 // AUTO-computed bounds are asymmetric (the placeholder's facing-direction "front"
 // wedge, or a real rig's mounted weapon sprite, both extend outward on one side only)
-// — pinning an explicit, symmetric `filterArea` centred on the skin's true local
-// origin (0,0) is what keeps the shield (and every other skin-level filter) centred
-// regardless of which way the actor is currently facing/aiming.
-describe('Actor — skin filterArea is a fixed square centred on the true local origin (2026-08-12 lopsided-shield fix)', () => {
-  it('is centred on (0,0), not offset by facing/weapon geometry', () => {
+// — pinning an explicit, symmetric `filterArea` is what keeps the shield (and every
+// other skin-level filter) from drifting sideways as the actor turns to face/aim a
+// different direction.
+//
+// Revised same day: pinning that square's Y to a flat 0 (this test's original
+// assertion) turned out to be a DIFFERENT bug wearing the same clothes — a real rig's
+// decorative bones hang off the body bone's TIP, not its centre (orbCoreRig.ts's
+// eye/belly/weapon sockets all sit ~1 body-length above the shell's own origin), so
+// the assembled character is consistently top-heavy relative to (0,0). A live user
+// report ("护盾没有将角色放在中心位置" — the shield doesn't centre the character) caught
+// this: `critter-core`'s single-bone enemies have no such offset and looked fine,
+// `char_vanguard`'s orb-core rig does and visibly didn't. Fix: measure the skin's own
+// rest-pose bounds once (facing/aim-independent — only the X asymmetry above depends
+// on those) and centre Y on THAT, not on an assumed (0,0).
+describe('Actor — skin filterArea is a fixed square centred on the skin\'s own rest-pose centroid (2026-08-12 lopsided-shield fix, revised)', () => {
+  afterEach(() => {
+    skinRegistryMocks.loaded = undefined;
+  });
+
+  it('X stays pinned to the local origin — not offset by facing/weapon geometry', () => {
     const a = new Actor('player', 20);
     const area = skinFilterAreaOf(a);
     expect(area.x + area.width / 2).toBeCloseTo(0);
-    expect(area.y + area.height / 2).toBeCloseTo(0);
+  });
+
+  it('Y matches the skin\'s own measured rest-pose bounds, not a hardcoded 0 — even the Graphics placeholder is very slightly top/bottom-asymmetric', () => {
+    const a = new Actor('player', 20);
+    const area = skinFilterAreaOf(a);
+    const bounds = skinViewOf(a).getLocalBounds();
+    expect(area.y + area.height / 2).toBeCloseTo(bounds.y + bounds.height / 2);
+  });
+
+  it('a real rig whose decorative bones sit off the body\'s own centre still gets a correctly-centred shield (repro: orb-core\'s eye/belly/sockets hang off the shell\'s tip, not its middle)', () => {
+    skinRegistryMocks.loaded = loadedOrbCoreRig();
+    const a = new Actor('player', 20, undefined, false, 'char_vanguard');
+    const area = skinFilterAreaOf(a);
+    const bounds = skinViewOf(a).getLocalBounds();
+    const expectedCenterY = bounds.y + bounds.height / 2;
+    expect(area.y + area.height / 2).toBeCloseTo(expectedCenterY);
+    // The whole point of the fix: for this top-heavy rig the correct centre is nowhere
+    // near 0 — the original "pin to (0,0)" attempt would have failed this assertion.
+    expect(Math.abs(expectedCenterY)).toBeGreaterThan(1);
   });
 
   it('scales with the actor\'s own radius, not a fixed pixel size', () => {
@@ -196,6 +262,19 @@ describe('Actor — skin filterArea is a fixed square centred on the true local 
 
   it('does not shift when the actor turns to face a different direction', () => {
     const a = new Actor('player', 20);
+    const before = skinFilterAreaOf(a);
+    const beforeCenter = { x: before.x + before.width / 2, y: before.y + before.height / 2 };
+    a.pushState(0, 0, 0, Math.PI, -Math.PI / 2);
+    a.snap();
+    a.interpolate(1, 16);
+    const after = skinFilterAreaOf(a);
+    expect(after.x + after.width / 2).toBeCloseTo(beforeCenter.x);
+    expect(after.y + after.height / 2).toBeCloseTo(beforeCenter.y);
+  });
+
+  it('does not shift when a rig-backed actor turns to face a different direction', () => {
+    skinRegistryMocks.loaded = loadedOrbCoreRig();
+    const a = new Actor('player', 20, undefined, false, 'char_vanguard');
     const before = skinFilterAreaOf(a);
     const beforeCenter = { x: before.x + before.width / 2, y: before.y + before.height / 2 };
     a.pushState(0, 0, 0, Math.PI, -Math.PI / 2);

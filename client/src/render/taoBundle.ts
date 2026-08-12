@@ -64,7 +64,20 @@ export async function loadRigSkinBundle(baseUrl: string): Promise<RigSkinBundle>
     Object.entries(framesJson).flatMap(([slotId, variantIds]) =>
       variantIds.map(async variantId => {
         const frameId = variantId === 'default' ? slotId : `${slotId}__${variantId}`;
-        const texture = await Assets.load<Texture>(`${baseUrl}/${frameId}.png`);
+        // `autoGenerateMipmaps` (found 2026-08-12, live user report "can't tell what
+        // this character is"): these source PNGs are authored at ~1250px but a rig
+        // bone routinely renders at 10-30px on screen (an actor's gameplay radiusPx is
+        // a small fraction of a decorative bone's own authoring-px footprint) — a
+        // 90:1+ minification ratio. Pixi's default (no mip chain, plain bilinear) only
+        // samples a 2x2 texel neighbourhood per output pixel at that ratio, which reads
+        // essentially RANDOM texels off a detailed source (confirmed live: an isolated
+        // `eye` sprite rendered as an unreadable colour smear, not its actual blue iris)
+        // — classic un-mipmapped texture aliasing, not a flaw in the source art itself.
+        // A generated mip chain lets the GPU sample a pre-downsampled level instead.
+        const texture = await Assets.load<Texture>({
+          src: `${baseUrl}/${frameId}.png`,
+          data: { autoGenerateMipmaps: true },
+        });
         textures.set(frameId, texture);
       }),
     ),
