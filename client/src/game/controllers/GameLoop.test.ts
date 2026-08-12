@@ -408,7 +408,12 @@ describe('GameLoop — portal/checkpoint eligibility (dungeon mode, 2026-08-12 s
     expect(deps.roomBuilder.setPortalOpen).toHaveBeenCalledWith(true);
   });
 
-  it('portal stays closed on the LAST floor (that floor auto-resolves via ExtractionSystem instead)', () => {
+  // 2026-08-12 follow-up (live bug report: boss loot never had a chance to be picked
+  // up, since ExtractionSystem used to auto-resolve EXTRACT the instant the capstone
+  // cleared — no portal, no popup, no time to walk over to the drops). The last floor
+  // now opens the same portal as every other checkpoint; only the popup's Descend
+  // button is hidden (PortalPrompt.test.ts covers that half).
+  it('portal ALSO opens on the LAST floor once its capstone is cleared (no more instant auto-resolve)', () => {
     const { deps } = buildDeps();
     const s = dungeonStateWithRooms(2);
     s.dungeonRoomRuntime[1]!.activated = true;
@@ -419,6 +424,20 @@ describe('GameLoop — portal/checkpoint eligibility (dungeon mode, 2026-08-12 s
 
     loop.update(16);
 
-    expect(deps.roomBuilder.setPortalOpen).toHaveBeenCalledWith(false);
+    expect(deps.roomBuilder.setPortalOpen).toHaveBeenCalledWith(true);
+  });
+
+  it('passes isLastFloor=true through to the popup on the LAST floor, so it can hide Descend', () => {
+    const { deps } = buildDeps();
+    const s = dungeonStateWithRooms(2);
+    s.dungeonRoomRuntime[1]!.activated = true;
+    s.dungeonRoomRuntime[1]!.hasLiveEnemy = false;
+    s.floorIndex = TINY_DUNGEON.floorCount - 1; // the final floor
+    const host = buildHost({ getPhase: () => 'playing', activeState: () => s });
+    const loop = new GameLoop(deps, host);
+
+    loop.update(16);
+
+    expect(deps.portalPrompt.update).toHaveBeenCalledWith(s, expect.any(Boolean), true);
   });
 });

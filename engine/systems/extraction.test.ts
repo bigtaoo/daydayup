@@ -12,6 +12,7 @@ import { describe, it, expect } from 'vitest';
 import { createGameState } from '@dd/engine/state/GameState';
 import type { GameState, EngineConfig } from '@dd/engine/state/GameState';
 import { Prng } from '@dd/engine/math/prng';
+import { addFp, toFp } from '@dd/engine/math/fixed';
 import { rollDrop } from '@dd/engine/content/drops';
 import { createGameEngine } from '@dd/engine/GameEngine';
 import { Button } from '@dd/engine/state/commands';
@@ -114,16 +115,81 @@ describe('ExtractionSystem — EXTRACT (explicit confirmExtract press)', () => {
   });
 });
 
-describe('ExtractionSystem — the last floor auto-resolves as EXTRACT (no gesture needed)', () => {
-  it('reaching the checkpoint on the last floor ends the run immediately', () => {
+describe('ExtractionSystem — the last floor still needs an explicit CONFIRM_EXTRACT (2026-08-12, live bug report: instant auto-resolve left boss loot unpicked-up)', () => {
+  it('reaching the checkpoint on the last floor does NOT end the run by itself', () => {
     const s = createGameState(FLOORS_CFG);
     s.floorIndex = 1; // the last floor (extraFloors.length === 1)
+    atCheckpoint(s);
+    new ExtractionSystem().tick(s); // no popup choice pressed at all
+    expect(s.phase).not.toBe('gameover');
+  });
+
+  it('an explicit confirmExtract press on the last floor ends the run as a win', () => {
+    const s = createGameState(FLOORS_CFG);
+    s.floorIndex = 1;
     s.floorMaterials.mat_poison = 4;
     atCheckpoint(s);
-    new ExtractionSystem().tick(s); // no popup choice needed at all
+    const p = s.players[0]!;
+    p.confirmExtract = true;
+    new ExtractionSystem().tick(s);
     expect(s.phase).toBe('gameover');
     expect(s.winner).toBe(0);
     expect(s.bankedMaterials.mat_poison).toBe(4);
+  });
+
+  it('a confirmDescend press on the last floor is ignored — no next floor to descend to', () => {
+    const s = createGameState(FLOORS_CFG);
+    s.floorIndex = 1;
+    atCheckpoint(s);
+    const p = s.players[0]!;
+    p.confirmDescend = true;
+    new ExtractionSystem().tick(s);
+    expect(s.floorIndex).toBe(1); // unchanged
+    expect(s.phase).not.toBe('gameover');
+  });
+
+  // The actual reported bug, end to end: a boss's own death drop sits away from where
+  // it died (the player is rarely standing on top of the boss the instant it dies), so
+  // it takes a real tick of walking to reach. Before this fix, the run had already ended
+  // by then — this pins the window now existing: the checkpoint waits, the drop stays on
+  // the floor untouched until the player is actually close enough, PickupSystem still
+  // banks it into the floor buffer once they are, and it still carries into
+  // bankedMaterials on the EXTRACT the player chooses afterward.
+  it('a boss drop placed away from the player survives the checkpoint opening, and still banks once collected', () => {
+    const s = createGameState(FLOORS_CFG);
+    s.floorIndex = 1; // the last floor
+    atCheckpoint(s);
+    const p = s.players[0]!;
+    const drop = {
+      // spawnTick one tick in the past — PickupSystem skips a pickup on its own spawn
+      // tick (design/08 ordering note, DeathDropsSystem's doc comment above), same as
+      // a real boss drop would be by the time PickupSystem runs again below.
+      id: s.nextId(), kind: 'material' as const, gx: addFp(p.gx, toFp(50)), gy: addFp(p.gy, toFp(50)),
+      spawnTick: s.tick - 1, alive: true, materialId: 'mat_fire', qty: 3,
+    };
+    s.pickups.push(drop);
+
+    // Checkpoint reached — the run must wait, not resolve out from under the drop.
+    new ExtractionSystem().tick(s);
+    expect(s.phase).not.toBe('gameover');
+
+    // Still out of pickupRadius — PickupSystem must not vacuum it from a distance.
+    new PickupSystem().tick(s);
+    expect(s.pickups).toHaveLength(1);
+    expect(s.floorMaterials.mat_fire).toBeUndefined();
+
+    // The player walks over to it.
+    p.gx = drop.gx;
+    p.gy = drop.gy;
+    new PickupSystem().tick(s);
+    expect(s.pickups).toHaveLength(0);
+    expect(s.floorMaterials.mat_fire).toBe(3);
+
+    // Only now does the player choose to leave.
+    p.confirmExtract = true;
+    new ExtractionSystem().tick(s);
+    expect(s.phase).toBe('gameover');
+    expect(s.bankedMaterials.mat_fire).toBe(3);
   });
 });
 
@@ -215,7 +281,7 @@ describe('ExtractionSystem — dungeon mode checks the floor\'s capstone room, n
     expect(eng.state.phase).not.toBe('gameover'); // no false-positive "cleared" before ever entering
   });
 
-  it('reaching and clearing the capstone auto-extracts (last floor, no gesture needed)', () => {
+  it('reaching and clearing the capstone opens the checkpoint but does NOT auto-extract by itself', () => {
     const eng = createGameEngine(CFG);
     eng.step([]); // tick 1: floor places
     eng.step([]); // tick 2: player's roomId now matches → activates → its enemy spawns
@@ -223,7 +289,17 @@ describe('ExtractionSystem — dungeon mode checks the floor\'s capstone room, n
     expect(eng.state.phase).not.toBe('gameover'); // enemy still alive — not cleared yet
 
     eng.state.enemies.length = 0; // simulate the boss dying (combat exercised elsewhere)
-    eng.step([]); // tick 3: DoorSystem's hasLiveEnemy falls → ExtractionSystem sees it cleared
+    eng.step([]); // tick 3: DoorSystem's hasLiveEnemy falls → capstone reads as cleared
+    expect(eng.state.phase).not.toBe('gameover'); // still waits on an explicit CONFIRM_EXTRACT
+  });
+
+  it('a CONFIRM_EXTRACT press once the capstone is cleared ends the run as a win (last floor)', () => {
+    const eng = createGameEngine(CFG);
+    eng.step([]); // tick 1: floor places
+    eng.step([]); // tick 2: activates → enemy spawns
+    eng.state.enemies.length = 0; // simulate the boss dying
+    eng.step([]); // tick 3: capstone reads as cleared
+    eng.step([makeCommand({ owner: 0, tick: 4, moveBrad: 0 as Brad, moveMag: 0, buttons: Button.CONFIRM_EXTRACT })]);
     expect(eng.state.phase).toBe('gameover');
     expect(eng.state.winner).toBe(0);
   });

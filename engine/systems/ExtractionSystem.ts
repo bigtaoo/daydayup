@@ -8,17 +8,25 @@
  *
  * The per-floor checkpoint is "this floor's waves are exhausted and no enemies
  * remain" (the same condition WinConditionSystem used to auto-win on when floors
- * are disabled — see its own floorsEnabled guard). At that point:
- *   - the LAST floor has no descend option: reaching it auto-resolves as EXTRACT
- *     (design/05 "the last floor's boss room IS its extraction room" — the boss
- *     fight was the challenge, walking through the portal after is automatic).
- *   - any other floor offers a choice via player 0's explicit portal-popup pick
- *     (single-player only; co-op's shared decision is a Phase 3 concern):
- *     CONFIRM_EXTRACT banks and ends the run, CONFIRM_DESCEND banks and continues.
- *     This replaced an original hold-to-extract/tap-to-descend INTERACT gesture
- *     (design/10 legibility fix, 2026-08-02: a render-side portal + explicit two-
- *     button choice reads far better than "hold E" — ROADMAP.md always flagged the
- *     hold/tap timer as a first-pass placeholder pending exactly this).
+ * are disabled — see its own floorsEnabled guard). At that point the run waits on
+ * player 0's explicit portal-popup pick (single-player only; co-op's shared
+ * decision is a Phase 3 concern) — CONFIRM_EXTRACT banks and ends the run,
+ * CONFIRM_DESCEND banks and continues:
+ *   - the LAST floor has no descend option (design/05 "the last floor's boss room
+ *     IS its extraction room" — the boss fight was the challenge), so a
+ *     CONFIRM_DESCEND press there is simply ignored; CONFIRM_EXTRACT still applies.
+ *     This USED to auto-resolve EXTRACT the instant the capstone cleared, with no
+ *     gesture at all — dropped (2026-08-12, live bug report: the boss's own death
+ *     drops never had a chance to be picked up, since the run ended the same tick
+ *     the boss died, before the player could walk over to them). The portal now
+ *     opens and waits, exactly like every other floor's checkpoint, just without a
+ *     Descend button — "walking through the portal after is automatic" now means
+ *     the player chooses to walk up and confirm, not that the game does it for them.
+ *   - any other floor offers the real choice via the same popup. This replaced an
+ *     original hold-to-extract/tap-to-descend INTERACT gesture (design/10
+ *     legibility fix, 2026-08-02: a render-side portal + explicit two-button choice
+ *     reads far better than "hold E" — ROADMAP.md always flagged the hold/tap timer
+ *     as a first-pass placeholder pending exactly this).
  *
  * Both resolutions bank state.floorMaterials into state.bankedMaterials (design/05
  * "materials so far are locked in" on descend; "keep materials" on extract) — a
@@ -49,19 +57,15 @@ export class ExtractionSystem {
 
     // Last-floor test differs by mode: the flat-`floors` list counts extraFloors; a
     // generated dungeon counts its configured floorCount (design/05 "the last floor's
-    // boss room IS its extraction room" — reaching it auto-resolves EXTRACT either way).
+    // boss room IS its extraction room" — it just has no Descend option, below).
     const isLastFloor = state.dungeonEnabled
       ? state.floorIndex >= state.dungeonConfig!.floorCount - 1
       : state.floorIndex >= state.extraFloors.length;
-    if (isLastFloor) {
-      this.resolveExtract(state);
-      return;
-    }
 
     const p = state.players[0];
     if (!p || !p.alive) return;
     if (p.confirmExtract) this.resolveExtract(state);
-    else if (p.confirmDescend) this.resolveDescend(state);
+    else if (!isLastFloor && p.confirmDescend) this.resolveDescend(state);
   }
 
   /** The floor's capstone (extraction/boss) room — always the LAST entry, since

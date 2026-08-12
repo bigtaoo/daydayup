@@ -2,8 +2,11 @@
  * PortalPrompt (design/10 legibility fix, 2026-08-02) — the exit/continue popup that
  * replaces the old "HOLD [E] to EXTRACT / TAP [E] to DESCEND" text banner (formerly
  * HudView's checkpointPanel/checkpointText, see HudView.test.ts history). `show` is
- * computed by the caller (Game.ts: at a non-last-floor checkpoint AND standing near
- * the portal) — this class only renders it and reads `s` for the pending/floor text.
+ * computed by the caller (GameLoop.ts: at an eligible checkpoint AND standing near the
+ * portal) — this class only renders it and reads `s` for the pending/floor text.
+ * `isLastFloor` (2026-08-12 follow-up, defaults false) hides the Descend button — the
+ * last floor's boss room has no next floor to descend to, but still shows this same
+ * popup instead of auto-resolving EXTRACT with no gesture at all (see ExtractionSystem).
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { createGameState } from '@dd/engine/state/GameState';
@@ -16,8 +19,8 @@ afterEach(() => resetLocaleForTests());
 function privateOf(p: PortalPrompt) {
   return p as unknown as {
     titleText: { text: string; style: { wordWrap: boolean; breakWords: boolean } };
-    extractBtn: { onTap: (() => void) | null };
-    descendBtn: { onTap: (() => void) | null };
+    extractBtn: { onTap: (() => void) | null; view: { visible: boolean } };
+    descendBtn: { onTap: (() => void) | null; view: { visible: boolean } };
   };
 }
 
@@ -53,6 +56,32 @@ describe('PortalPrompt — visibility follows the caller-computed `show` flag', 
     expect(prompt.view.visible).toBe(true);
     prompt.update(s, false);
     expect(prompt.view.visible).toBe(false);
+  });
+});
+
+describe('PortalPrompt — last floor hides Descend (2026-08-12, live bug report follow-up)', () => {
+  it('shows both buttons when isLastFloor is omitted/false', () => {
+    const prompt = new PortalPrompt();
+    const s = createGameState(PVE_CFG);
+    prompt.update(s, true);
+    expect(privateOf(prompt).descendBtn.view.visible).toBe(true);
+  });
+
+  it('hides the Descend button when isLastFloor is true, keeping Extract visible', () => {
+    const prompt = new PortalPrompt();
+    const s = createGameState(PVE_CFG);
+    prompt.update(s, true, true);
+    const p = privateOf(prompt);
+    expect(p.descendBtn.view.visible).toBe(false);
+    expect(p.extractBtn.view.visible).toBe(true);
+  });
+
+  it('re-shows Descend on a later update() once isLastFloor flips back to false', () => {
+    const prompt = new PortalPrompt();
+    const s = createGameState(PVE_CFG);
+    prompt.update(s, true, true);
+    prompt.update(s, true, false);
+    expect(privateOf(prompt).descendBtn.view.visible).toBe(true);
   });
 });
 

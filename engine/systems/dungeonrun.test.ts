@@ -99,6 +99,10 @@ const idle = (tick: number) =>
 // one-shot press, not a held key; resolves the very tick it's pressed.
 const confirmDescend = (tick: number) =>
   makeCommand({ owner: 0, tick, moveBrad: 0 as Brad, moveMag: 0, buttons: Button.CONFIRM_DESCEND });
+// Same shape, EXTRACT half — the last floor needs this explicit press too now (2026-08-12
+// bug fix: it used to auto-resolve the instant the capstone cleared, no gesture at all).
+const confirmExtract = (tick: number) =>
+  makeCommand({ owner: 0, tick, moveBrad: 0 as Brad, moveMag: 0, buttons: Button.CONFIRM_EXTRACT });
 
 /** Directly place player 0 onto `room`'s own authored spawn point 0, offset into the
  * room's placement in the shared floor — a targeted state poke standing in for real
@@ -212,8 +216,8 @@ describe('Dungeon mode — DESCEND generates the next floor', () => {
   });
 });
 
-describe('Dungeon mode — the last floor auto-extracts (no descend option)', () => {
-  it('clearing the deepest floor’s capstone ends the run as a win', () => {
+describe('Dungeon mode — the last floor has no descend option, but still needs an explicit EXTRACT (2026-08-12 bug fix)', () => {
+  it('clearing the deepest floor’s capstone opens the checkpoint; an explicit CONFIRM_EXTRACT ends the run as a win', () => {
     const eng = createGameEngine(DUN_CFG);
     const s = eng.state;
     // Floor 0 → descend to floor 1.
@@ -226,8 +230,11 @@ describe('Dungeon mode — the last floor auto-extracts (no descend option)', ()
     eng.step([idle(5)]); // floor 1 places
     eng.step([idle(6)]); // room 0 activates
     teleportPlayerInto(eng, s.dungeonRooms[1]!);
-    eng.step([idle(7)]); // boss capstone activates (empty) → cleared instantly → auto-extract
+    eng.step([idle(7)]); // boss capstone activates (empty) → cleared, but waits on a gesture
     expect(s.floorIndex).toBe(1);
+    expect(s.phase).not.toBe('gameover'); // no auto-resolve — the run must still wait
+
+    eng.step([confirmExtract(8)]);
     expect(s.phase).toBe('gameover');
     expect(s.winner).toBe(0);
   });
@@ -323,7 +330,10 @@ describe('Dungeon mode — a room with a live enemy holds the checkpoint back', 
     expect(s.dungeonDoors[0]!.locked).toBe(false); // unlocked — now walkable
 
     teleportPlayerInto(eng, s.dungeonRooms[1]!); // walk through the now-open door
-    eng.step([idle(12)]); // boss room activates (empty) → cleared instantly → auto-extract
+    eng.step([idle(12)]); // boss room activates (empty) → cleared, but waits on a gesture
+    expect(s.phase).not.toBe('gameover'); // no auto-resolve — the run must still wait
+
+    eng.step([confirmExtract(13)]);
     expect(s.phase).toBe('gameover');
   });
 });

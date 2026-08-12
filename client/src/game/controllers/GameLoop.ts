@@ -353,17 +353,23 @@ export class GameLoop {
     // Portal popup (design/10 legibility fix, 2026-08-02) — replaces the old E-key
     // text prompt. "Checkpoint eligible" is shared between the portal's own open/
     // closed visual (RoomBuilder) and the popup's proximity gate, computed once here
-    // so neither has to duplicate the other's half of the condition.
+    // so neither has to duplicate the other's half of the condition. The last floor
+    // used to be excluded here entirely (ExtractionSystem auto-resolved EXTRACT the
+    // instant its capstone cleared, with no portal/popup at all) — dropped 2026-08-12
+    // (live bug report: the boss's own death drops never had a chance to be picked up,
+    // since the run ended before the player could walk over to them). The last floor
+    // now opens the SAME portal + popup as any other checkpoint; PortalPrompt just
+    // hides its Descend button when there's no next floor to descend to.
     const floor = s.floorIndex + 1;
     const isLastFloor = floor >= totalFloorCount(s);
-    const checkpointEligible = !s.zoneEnabled && s.phase !== 'gameover' && checkpointReached(s) && !isLastFloor;
+    const checkpointEligible = !s.zoneEnabled && s.phase !== 'gameover' && checkpointReached(s);
     this.deps.roomBuilder.setPortalOpen(checkpointEligible);
 
     const p = s.players[this.host.localOwner];
     const portalPx = this.deps.roomBuilder.portalPx;
     const nearPortal =
       !!p && !!portalPx && Math.hypot(fpToPx(p.gx) - portalPx.x, fpToPx(p.gy) - portalPx.y) <= PORTAL_PROMPT_RADIUS_PX;
-    this.deps.portalPrompt.update(s, checkpointEligible && nearPortal);
+    this.deps.portalPrompt.update(s, checkpointEligible && nearPortal, isLastFloor);
     // Fire is suppressed while EITHER popup is open — a row click on the weapon-pickup
     // panel must not also register as a shot (same WebInput raw-mousedown reasoning as
     // the portal popup's own suppression above).
