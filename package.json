@@ -16,7 +16,8 @@
   "scripts": {
     "test": "npm run test --workspaces --if-present && npx vitest run build/versionManifestPlugin.test.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "check": "npm run typecheck && npm run test",
+    "check:filelength": "npm run check:filelength --workspaces --if-present",
+    "check": "npm run typecheck && npm run check:filelength && npm run test",
     "test:pvp-sim": "npm run test:pvp-sim -w client",
     "dev": "npm run dev -w client",
     "dev:server": "npm run dev -w server",

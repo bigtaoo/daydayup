@@ -8,6 +8,7 @@
   "scripts": {
     "compress": "node compress.mjs",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "check:filelength": "node ../../build/checkFileLength.mjs --ext=.mjs"
   }
 }

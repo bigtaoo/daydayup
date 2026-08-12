@@ -11,7 +11,8 @@
     "pack": "npm run build && electron-builder --dir",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "check:filelength": "node ../../build/checkFileLength.mjs"
   },
   "devDependencies": {
     "@types/node": "^20.14.9",

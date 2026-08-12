@@ -10,7 +10,8 @@
     "matchsvc": "node --import tsx/esm src/matchsvc.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "check:filelength": "node ../build/checkFileLength.mjs"
   },
   "dependencies": {
     "ws": "^8.18.0"

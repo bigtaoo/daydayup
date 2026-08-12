@@ -15,9 +15,8 @@ import { buildTutorialConfig } from './match/tutorialConfig';
 import { totalFloorCount } from './match/floorCount';
 import { LocalPredictor, DEFAULT_PREDICTOR } from './controllers/LocalPredictor';
 import {
-  defaultMetaState, bankMaterials, craft, clearLoadout, selectCharacter,
-  unlockBlueprint, acquireBlueprint, purchasableBlueprints,
-  createAccountSyncMetaStore, pullAccountMeta, type MetaState, type MetaStore,
+  defaultMetaState, bankMaterials, clearLoadout, selectCharacter,
+  unlockBlueprint, createAccountSyncMetaStore, pullAccountMeta, type MetaState, type MetaStore,
 } from '../meta';
 import { getSession } from '../net/session';
 import {
@@ -50,6 +49,8 @@ import { RoomBuilder } from './scene/RoomBuilder';
 import { Backdrop } from './scene/Backdrop';
 import { PortalPrompt } from './ui/PortalPrompt';
 import { RunOutcome } from './controllers/RunOutcome';
+import { ForgeActions } from './controllers/ForgeActions';
+import { ScreenFlow } from './controllers/ScreenFlow';
 import { parseGameQueryParams } from './match/gameQueryParams';
 import { shouldConfirmOnFireEdge } from './screens/confirmEdge';
 import type { Phase } from './phase';
@@ -131,6 +132,11 @@ export class Game {
   private loginScreen!: LoginScreen;
   private settingsScreen = new Settings();
   private pauseMenu = new PauseMenu();
+  // Screen-transition widget orchestration (extracted 2026-08-12, see that file's doc
+  // comment) — constructed in start(), same reason as partyScreen/loginScreen above:
+  // it references settingsBtn (built in buildHud(), called from start()) and both of
+  // those late-constructed screens.
+  private screenFlow!: ScreenFlow;
   private readonly portalPrompt = new PortalPrompt();
   // Settings can be opened from the main menu, the forge, OR the in-run pause menu
   // (design/10); this is which phase the settings screen's BACK button returns to. Set
@@ -151,6 +157,11 @@ export class Game {
   // the post-query-param-override URL — see accountSync.ts's own comment.
   private store: MetaStore = createAccountSyncMetaStore(() => this.matchBaseUrl);
   private meta: MetaState = defaultMetaState();
+  // Craft/cycle-character/acquire/clear/browse actions (extracted 2026-08-12, see that
+  // file's doc comment) — a field initializer is fine here (unlike screenFlow below):
+  // both `forge` and `store` above are already-declared field initializers themselves,
+  // no query-param-override timing dependency.
+  private readonly forgeActions = new ForgeActions(this.forge, this.store);
 
   // Persistent client-side settings (design/10/11: master/SFX/music volume + mute).
   // Reached from the forge outpost only — see openSettings/closeSettings.
@@ -311,6 +322,14 @@ export class Game {
       this.screens.view, this.settingsScreen.view, this.pauseMenu.view,
       this.partyScreen.view, this.loginScreen.view,
     );
+    // Same late-construction reason as partyScreen/loginScreen above — needs
+    // settingsBtn (built by buildHud() just above) and both of those.
+    this.screenFlow = new ScreenFlow({
+      mainMenu: this.mainMenu, modeSelect: this.modeSelect, pvpPreview: this.pvpPreview,
+      matchmaking: this.matchmaking, partyScreen: this.partyScreen, loginScreen: this.loginScreen,
+      forge: this.forge, screens: this.screens, settingsScreen: this.settingsScreen,
+      pauseMenu: this.pauseMenu, settingsBtn: this.settingsBtn, hudView: this.hudView,
+    });
     this.mainMenu.onPlay = () => this.showModeSelect();
     this.mainMenu.onSquad = () => this.showSquad();
     this.mainMenu.onAccount = () => this.showAccount();
@@ -422,11 +441,8 @@ export class Game {
     if (this.phase !== 'forge' && this.phase !== 'menu') return;
     this.settingsReturnPhase = this.phase;
     this.phase = 'settings';
-    this.forge.hide();
-    this.mainMenu.hide();
-    this.settingsBtn.view.visible = false;
     const { w, h } = this.screenSize();
-    this.settingsScreen.show(w, h, this.settings);
+    this.screenFlow.openSettings(w, h, this.settings);
   }
 
   private closeSettings() {
@@ -447,27 +463,25 @@ export class Game {
   private pause() {
     this.phase = 'paused';
     const { w, h } = this.screenSize();
-    this.pauseMenu.show(w, h, this.tutorialActive ? t('tutorial.skip') : undefined);
+    this.screenFlow.pause(w, h, this.tutorialActive ? t('tutorial.skip') : undefined);
   }
 
   private resume() {
-    this.pauseMenu.hide();
+    this.screenFlow.resume();
     this.phase = 'playing';
   }
 
   private openSettingsFromPause() {
     this.settingsReturnPhase = 'paused';
-    this.pauseMenu.hide();
     this.phase = 'settings';
     const { w, h } = this.screenSize();
-    this.settingsScreen.show(w, h, this.settings);
+    this.screenFlow.openSettingsFromPause(w, h, this.settings);
   }
 
   private openPauseFromSettings() {
-    this.settingsScreen.hide();
     this.phase = 'paused';
     const { w, h } = this.screenSize();
-    this.pauseMenu.show(w, h, this.tutorialActive ? t('tutorial.skip') : undefined);
+    this.screenFlow.openPauseFromSettings(w, h, this.tutorialActive ? t('tutorial.skip') : undefined);
   }
 
   // Voluntary quit (design/10) — behaves like a death for the run's own bookkeeping:
@@ -521,7 +535,7 @@ export class Game {
     this.backdrop.resize(w, h);
     this.hud.reposition({ w, h });
     this.portalPrompt.reposition({ w, h });
-    if (this.phase === 'forge') this.settingsBtn.view.position.set(w - 130, h - 50);
+    this.screenFlow.repositionSettingsButtonIfForge(this.phase === 'forge', w, h);
     switch (this.phase) {
       case 'menu': this.mainMenu.show(w, h); break;
       case 'modeSelect': this.modeSelect.show(w, h); break;
@@ -548,18 +562,8 @@ export class Game {
   // SETTINGS reuses the same settings overlay the forge uses.
   private showMenu() {
     this.phase = 'menu';
-    this.hudView.visible = false;
-    this.modeSelect.hide();
-    this.pvpPreview.hide();
-    this.matchmaking.hide();
-    this.forge.hide();
-    this.screens.hide();
-    this.settingsScreen.hide();
-    this.partyScreen.hide();
-    this.loginScreen.hide();
-    this.settingsBtn.view.visible = false;
     const { w, h } = this.screenSize();
-    this.mainMenu.show(w, h);
+    this.screenFlow.showMenu(w, h);
   }
 
   // The mode-select branch point (design/10 screen-flow gap) — PLAY's new destination.
@@ -568,19 +572,8 @@ export class Game {
   // the standalone level (beginTutorialRun).
   private showModeSelect() {
     this.phase = 'modeSelect';
-    this.hudView.visible = false;
-    this.mainMenu.hide();
-    this.forge.hide();
-    this.pvpPreview.hide();
-    this.matchmaking.hide();
-    this.screens.hide();
-    this.settingsScreen.hide();
-    this.partyScreen.hide();
-    this.loginScreen.hide();
-    this.settingsBtn.view.visible = false;
-    this.modeSelect.setRecommendTutorial(!this.meta.hasSeenTutorial);
     const { w, h } = this.screenSize();
-    this.modeSelect.show(w, h);
+    this.screenFlow.showModeSelect(w, h, !this.meta.hasSeenTutorial);
   }
 
   /**
@@ -592,52 +585,24 @@ export class Game {
    */
   private showPvpPreview() {
     this.phase = 'pvpPreview';
-    this.hudView.visible = false;
-    this.mainMenu.hide();
-    this.modeSelect.hide();
-    this.matchmaking.hide();
-    this.forge.hide();
-    this.screens.hide();
-    this.settingsScreen.hide();
-    this.partyScreen.hide();
-    this.loginScreen.hide();
-    this.settingsBtn.view.visible = false;
     const { w, h } = this.screenSize();
-    this.pvpPreview.show(w, h, this.meta.selectedSkin);
+    this.screenFlow.showPvpPreview(w, h, this.meta.selectedSkin);
   }
 
   // The PvP pre-formed-party lobby (design/05/15's squad follow-up). BACK returns to
   // the main menu; a successful `onStartMatch` hands off to beginSquadMatch below.
   private showSquad() {
     this.phase = 'squad';
-    this.hudView.visible = false;
-    this.mainMenu.hide();
-    this.modeSelect.hide();
-    this.pvpPreview.hide();
-    this.matchmaking.hide();
-    this.forge.hide();
-    this.screens.hide();
-    this.settingsScreen.hide();
-    this.loginScreen.hide();
     const { w, h } = this.screenSize();
-    this.partyScreen.show(w, h);
+    this.screenFlow.showSquad(w, h);
   }
 
   // Login/register/logout (design/16-accounts.md — the never-built account front
   // door). BACK returns to the main menu, same shape as showSquad.
   private showAccount() {
     this.phase = 'account';
-    this.hudView.visible = false;
-    this.mainMenu.hide();
-    this.modeSelect.hide();
-    this.pvpPreview.hide();
-    this.matchmaking.hide();
-    this.forge.hide();
-    this.screens.hide();
-    this.settingsScreen.hide();
-    this.partyScreen.hide();
     const { w, h } = this.screenSize();
-    this.loginScreen.show(w, h);
+    this.screenFlow.showAccount(w, h);
   }
 
   /**
@@ -648,17 +613,8 @@ export class Game {
    */
   private showMatchmaking() {
     this.phase = 'matchmaking';
-    this.hudView.visible = false;
-    this.mainMenu.hide();
-    this.modeSelect.hide();
-    this.pvpPreview.hide();
-    this.forge.hide();
-    this.screens.hide();
-    this.settingsScreen.hide();
-    this.partyScreen.hide();
-    this.loginScreen.hide();
     const { w, h } = this.screenSize();
-    this.matchmaking.show(w, h, (signal) => this.connectForMatchmaking(signal));
+    this.screenFlow.showMatchmaking(w, h, (signal) => this.connectForMatchmaking(signal));
   }
 
   /** The Matchmaking screen's injected connect function. */
@@ -738,19 +694,8 @@ export class Game {
   // RUN button descends into a run.
   private showForge() {
     this.phase = 'forge';
-    this.hudView.visible = false;
-    this.mainMenu.hide();
-    this.modeSelect.hide();
-    this.pvpPreview.hide();
-    this.matchmaking.hide();
-    this.screens.hide();
-    this.settingsScreen.hide();
-    this.partyScreen.hide();
-    this.loginScreen.hide();
     const { w, h } = this.screenSize();
-    this.forge.render(this.meta, w, h);
-    this.settingsBtn.view.position.set(w - 130, h - 50);
-    this.settingsBtn.view.visible = true;
+    this.screenFlow.showForge(w, h, this.meta);
   }
 
   /**
@@ -784,6 +729,7 @@ export class Game {
   private onForgeKey(code: string) {
     if (this.phase !== 'forge') return;
     const digit = /^Digit([1-9])$/.exec(code);
+    const { w, h } = this.screenSize();
     if (digit) {
       const i = Number(digit[1]) - 1;
       if (this.forge.order[i]) this.forgeCraftAt(i);
@@ -800,66 +746,28 @@ export class Game {
     } else if (code === 'ArrowUp' || code === 'ArrowDown') {
       // Browse cursor only (design/10 compare card) — never crafts, so it can't be
       // confused with the digit keys'/row taps' immediate craft.
-      this.forge.moveSelection(code === 'ArrowUp' ? -1 : 1);
-      const { w, h } = this.screenSize();
-      this.forge.render(this.meta, w, h);
+      this.forgeActions.moveSelection(this.meta, code === 'ArrowUp' ? -1 : 1, w, h);
     }
   }
 
-  /** Craft blueprint `i` into the loadout (digit key or a Loadout-screen row tap) —
-   * also moves the browse cursor onto it, so the compare card previews what was just
-   * crafted. Silently ignores locked/unaffordable/full, same as before. */
   private forgeCraftAt(i: number) {
-    this.forge.selectedIndex = i;
-    const id = this.forge.order[i];
-    if (id) {
-      const res = craft(this.meta, id);
-      if (res.ok) {
-        this.meta = res.meta;
-        this.store.save(this.meta);
-      }
-    }
     const { w, h } = this.screenSize();
-    this.forge.render(this.meta, w, h);
+    this.meta = this.forgeActions.craftAt(this.meta, i, w, h);
   }
 
   private forgeCycleCharacter() {
-    const next = this.cycleCharacter(this.meta);
-    if (next !== this.meta) {
-      this.meta = next;
-      this.store.save(this.meta);
-      const { w, h } = this.screenSize();
-      this.forge.render(this.meta, w, h);
-    }
+    const { w, h } = this.screenSize();
+    this.meta = this.forgeActions.cycleCharacter(this.meta, w, h);
   }
 
-  /** Acquires the first purchasable blueprint (a real gap this pass closed — the row
-   *  of buyable names in the info text was always display-only; only the `KeyB`
-   *  keyboard shortcut could actually trigger it, unlike every other Forge action).
-   *  `demo: free grant` scaffold (2.4) — real billing is a platform adapter's job. */
   private forgeAcquireBlueprint() {
-    const buyable = purchasableBlueprints(this.meta);
-    if (buyable[0]) {
-      this.meta = acquireBlueprint(this.meta, buyable[0]);
-      this.store.save(this.meta);
-      const { w, h } = this.screenSize();
-      this.forge.render(this.meta, w, h);
-    }
+    const { w, h } = this.screenSize();
+    this.meta = this.forgeActions.acquireBlueprint(this.meta, w, h);
   }
 
   private forgeClear() {
-    this.meta = clearLoadout(this.meta);
-    this.store.save(this.meta);
     const { w, h } = this.screenSize();
-    this.forge.render(this.meta, w, h);
-  }
-
-  /** Advance the chosen character to the next owned one (design/14 roster select). */
-  private cycleCharacter(m: MetaState): MetaState {
-    const owned = m.ownedCharacters.filter((id) => SKIN_DEFS[id]);
-    if (owned.length < 2) return m;
-    const i = owned.indexOf(m.selectedSkin);
-    return selectCharacter(m, owned[(i + 1) % owned.length]!);
+    this.meta = this.forgeActions.clear(this.meta, w, h);
   }
 
   /**
@@ -881,7 +789,7 @@ export class Game {
     this.roomBuilder.clear();
     this.score = 0;
     this.acc = 0;
-    this.settingsBtn.view.visible = false;
+    this.screenFlow.hideSettingsButton();
   }
 
   // Fresh OFFLINE run: reset render state and stand up a new engine (design/10

@@ -1065,6 +1065,73 @@ the ack. `TaoExporter.restoreAnimationData`'s bug is still open.
 
 ---
 
+## File-length convention pass ✅ (2026-08-12)
+
+Ported the sibling project `funny`'s "single file ≤500 lines" convention
+(`claudedocs/server.md`/`claudedocs/client-modules.md`, "单文件 500 行收敛") into this repo,
+scaled down for its smaller codebase: the rule + split-priority order (independent function
+modules → independent classes + composition → linear inheritance chain, fallback only) now
+lives in `CLAUDE.md`; `build/checkFileLength.mjs` (one shared, extension-configurable
+implementation, unlike funny's per-workspace copies) + a `scripts/file-length-baseline.json`
+per workspace enforce it as a baseline-drift gate — `check:filelength` wired into every
+workspace's `package.json` and folded into the root `check` script (after `typecheck`, before
+`test`).
+
+**Then applied it**, per the plan the introduction pass laid out as backlog: `engine` had 4
+files over the limit, all fixed the same day (baseline now empty — 0 tracked exceptions):
+- `engine/config.ts` (567→76): the bulk was `ENGINE_VERSION`'s ever-growing replay-
+  compatibility changelog — a documentation-placement problem, not a code-organization one.
+  First split into a same-shape `.ts` file (`versionHistory.ts`), which itself landed at 505
+  lines; moved the prose to `engine/ENGINE_VERSION_HISTORY.md` instead (checkFileLength only
+  scans `.ts`/`.tsx`, and ~500 lines of changelog prose was never code to begin with).
+- `engine/state/GameState.ts` (528→381): pure type/interface declarations (`EngineConfig`,
+  `PlayerConfig`, `ZoneState`, `ArenaRoomRuntime`, `DungeonRoomRuntime`, `DoorRuntime`, …) split
+  into `GameState.types.ts` — form ①, zero logic, re-exported wholesale so every existing
+  import path is untouched.
+- `engine/content/weaponSpecs.ts` (578→17-line assembly): `WEAPON_SPECS` is a content table
+  with zero shared state between entries — split by the catalog's own pre-existing section
+  comments into `weaponSpecs/{starter,dropOnly,elemental,frameLibrary,frameElemental}.ts`.
+- `engine/world/dungeon.ts` (772→70-line assembly): a batch of pure, side-effect-free
+  functions with no `this`/classes — form ① textbook case. Split into
+  `dungeon/{types,placementConstants,generateFloor,placeFloor,placeFloorGraph2d,
+  placeAuthoredFloor,entranceGeometry,floorGeometry}.ts` by concern (selection vs. each of the
+  three placement strategies vs. geometry stitching), sharing a small leaf helper
+  (`entranceGeometry.ts`) between the two placement functions whose doors can land on any of a
+  room's four walls.
+
+All four were pure code-motion (zero behavior change) verified by `tsc --noEmit` + the full
+engine suite (548 tests) staying green throughout, plus a runtime check that the reassembled
+`WEAPON_SPECS` still has all 25 entries.
+
+`client/src/game/Game.ts` (1348 lines, by far the largest file in the repo) got two real
+composition extractions rather than a full atomization: `controllers/ForgeActions.ts` (craft/
+cycle-character/acquire/clear/browse-cursor — takes `MetaState` + screen size as plain
+parameters, zero callbacks back into Game) and `controllers/ScreenFlow.ts` (the 7 `showX()`
+methods' hide-everything-then-show-one widget mechanics, plus settings/pause — Game keeps
+owning `phase` itself since the main loop/run lifecycle/forge actions all read it equally, so
+`ScreenFlow` never calls back into Game either). Both follow this repo's own established
+host-callback-interface pattern (`RunOutcome.ts`/`EventReactor.ts`) and got real test coverage
+(`ForgeActions.test.ts`, `ScreenFlow.test.ts`, 19 new tests) — using the same fake-canvas
+`DOMAdapter` seam `Forge.test.ts` already established for the `Text.height` layout reads.
+Landed Game.ts at 1256 lines (still over 500, tracked in the client baseline with a detailed
+inline rationale): the remainder (run lifecycle + the main sim/render loop) genuinely fails
+the split-priority order's own cross-call test — nearly every remaining method reads/writes
+`phase`/`engine`/`session`/`meta`/`scene`/`roomBuilder`/`fx` in combination, not a short
+countable list crossing one clean boundary, so forcing a further split now would relocate the
+same coupling through more callback ceremony rather than remove it (CLAUDE.md's own "genuine
+two-way dependency" guidance). `Game.ts` itself still has no dedicated test file (a
+longstanding, user-accepted exemption — constructing it needs a live Pixi `Application`); the
+screen-flow/pause/settings/run-start/quit sequence was instead verified live via
+`window.__game` headless driving (menu → modeSelect → forge → beginRun → pause → resume →
+quitRun → settings open/close), confirming every phase transition and widget-visibility flip
+plus zero console errors.
+
+`npm run check` (typecheck + `check:filelength` + full test suite, all 7 workspaces) is clean
+before and after; `engine`/`server`/`tools/*` all sit at 0 tracked file-length exceptions,
+`client` at 1 (`Game.ts`, documented above).
+
+---
+
 ## Dependency summary
 
 ```
