@@ -1,5 +1,6 @@
 import { Container, Graphics, Text, Rectangle, Sprite, type Texture } from 'pixi.js';
 import { getUiTexture } from '../../render/uiSkins';
+import { estimateMonoWidth } from './textWidth';
 
 // A minimal Pixi widget kit (design/10 "build vs. a tiny in-house layer" — kept small,
 // no framework). Every widget is pure presentation: it takes plain values in `set()`/
@@ -184,29 +185,43 @@ export class Button {
   private label: Text;
   private iconChip: Graphics | null = null;
   private iconSprite: Sprite | null = null;
-  private readonly w: number;
+  private w: number;
   private readonly h: number;
+  private readonly minW: number;
+  private readonly fontSize: number;
+  private readonly color: number;
+  private readonly borderColor: number | undefined;
+  private readonly borderAlpha: number;
+  // `autoWidth` (opt-in): grows the box to fit the current text instead of clipping it
+  // at a fixed pixel width sized for one locale's string. Off by default — every other
+  // call site keeps its exact pre-existing fixed-width look; a caller opts in when its
+  // label text is translated and can outgrow the width picked for English (settings.md
+  // 2026-08-14, Russian "ВКЛЮЧИТЬ ЗВУК"/"УПРАВЛЕНИЕ: ЛЕВША" overflowing their box).
+  private readonly autoWidth: boolean;
   onTap: (() => void) | null = null;
 
   // Border (opt-in, same convention as Panel's — design/10 legibility fix,
   // 2026-08-02): a flat fill alone reads as low-contrast wherever a button sits over
   // a background image darker/lighter than the fill itself (e.g. MainMenu's hub art).
   // A crisp stroke keeps the button legible regardless of what's behind it.
-  constructor(text: string, opts: { w: number; h: number; color?: number; textColor?: number; fontSize?: number; borderColor?: number; borderAlpha?: number }) {
-    const { w, h, color = 0x2a3140, textColor = 0xe2e8f0, fontSize = 15, borderColor, borderAlpha = 0.9 } = opts;
+  constructor(text: string, opts: { w: number; h: number; color?: number; textColor?: number; fontSize?: number; borderColor?: number; borderAlpha?: number; autoWidth?: boolean }) {
+    const { w, h, color = 0x2a3140, textColor = 0xe2e8f0, fontSize = 15, borderColor, borderAlpha = 0.9, autoWidth = false } = opts;
+    this.minW = w;
     this.w = w;
     this.h = h;
-    const radius = Math.min(8, h / 2);
-    this.bg.roundRect(0, 0, w, h, radius).fill({ color, alpha: 1 });
-    if (borderColor !== undefined) this.bg.roundRect(0.5, 0.5, w - 1, h - 1, radius).stroke({ color: borderColor, alpha: borderAlpha, width: 1.5 });
+    this.fontSize = fontSize;
+    this.color = color;
+    this.borderColor = borderColor;
+    this.borderAlpha = borderAlpha;
+    this.autoWidth = autoWidth;
     // `padding` works around a real font-metrics mismatch observed in headless/sandboxed
     // Chromium: Pixi's own text measurement can come in narrower than the canvas's actual
     // paint-time glyph width for bold text, clipping the last character(s) — Pixi's own
     // documented mitigation ("occasionally some fonts are cropped").
     this.label = new Text({ text, style: { fill: textColor, fontSize, fontFamily: 'monospace', fontWeight: 'bold', padding: 14 } });
     this.label.anchor.set(0.5);
-    this.label.position.set(w / 2, h / 2);
     this.view.addChild(this.bg, this.label);
+    this.redraw();
     this.view.eventMode = 'static';
     this.view.cursor = 'pointer';
     this.view.on('pointertap', () => this.onTap?.());
@@ -217,8 +232,32 @@ export class Button {
     this.view.on('pointerdown', (e) => e.stopPropagation());
   }
 
+  /** Redraws `bg` at the current width and re-centers the label — called at
+   * construction and, for `autoWidth` buttons, on every `setText`. Text measurement
+   * uses `estimateMonoWidth` rather than Pixi's `Text.width` (see textWidth.ts): the
+   * label is `fontFamily: 'monospace'`, so the estimate is accurate, and unlike
+   * `Text.width` it needs no real canvas — same convention as StatChip/WeaponCard. */
+  private redraw() {
+    this.w = this.autoWidth
+      ? Math.max(this.minW, estimateMonoWidth(this.label.text, this.fontSize) + 28)
+      : this.minW;
+    const radius = Math.min(8, this.h / 2);
+    this.bg.clear().roundRect(0, 0, this.w, this.h, radius).fill({ color: this.color, alpha: 1 });
+    if (this.borderColor !== undefined) this.bg.roundRect(0.5, 0.5, this.w - 1, this.h - 1, radius).stroke({ color: this.borderColor, alpha: this.borderAlpha, width: 1.5 });
+    this.label.position.set(this.w / 2, this.h / 2);
+  }
+
+  /** Current box width — `minW` for a fixed-width button, or the text-fitted width for
+   * an `autoWidth` one. Callers that center this button under a point (rather than
+   * pinning its left edge) must read this after `setText`, not assume the constructor's
+   * `w` — see Settings.ts's `layoutButtons`. */
+  get width(): number {
+    return this.w;
+  }
+
   setText(text: string) {
     this.label.text = text;
+    if (this.autoWidth) this.redraw();
   }
 
   /** Optional leading icon (Forge row real weapon art — reuses the same textures the

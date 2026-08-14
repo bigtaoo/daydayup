@@ -58,6 +58,15 @@ export class Settings {
     master: 1, sfx: 0.5, music: 0.5, muted: false, locale: 'en', controlLayout: 'standard',
   };
 
+  // Screen-space anchors for the four buttons below, captured by `show()` and reused by
+  // `layoutButtons()` on every locale/state change — `update()` (a mute/language/control
+  // tap) doesn't re-run `show()`, but with `autoWidth` buttons a text change can still
+  // change their width, so it must still re-run the positioning math to stay centered.
+  private cx = 0;
+  private languageY = 0;
+  private controlY = 0;
+  private pairY = 0;
+
   constructor() {
     this.title = new Text({ text: t('settings.title'), style: { fill: 0xf7fafc, fontSize: 30, fontWeight: 'bold', fontFamily: 'sans-serif' } });
     this.title.anchor.set(0.5, 0);
@@ -76,14 +85,18 @@ export class Settings {
     this.sfxSlider.onChange = (v) => this.update({ ...this.state, sfx: v });
     this.musicSlider.onChange = (v) => this.update({ ...this.state, music: v });
 
-    this.muteBtn = new Button('', { w: 120, h: 34 });
+    // `autoWidth: true` on all four below — their labels are translated (design/17-
+    // i18n.md) and a fixed pixel width sized for English overflows once a locale's
+    // string runs longer (e.g. Russian "ВКЛЮЧИТЬ ЗВУК", "УПРАВЛЕНИЕ: ЛЕВША"); the `w`
+    // passed here becomes a minimum, not a fixed size — see widgets.ts's Button.
+    this.muteBtn = new Button('', { w: 120, h: 34, autoWidth: true });
     this.muteBtn.onTap = () => this.update({ ...this.state, muted: !this.state.muted });
 
     // Language cycle button (design/17-i18n.md) — same tappable pattern as muteBtn
     // (design/10 "no DOM widgets"), stepping through `LOCALES` in declared order on
     // each tap; `setLocale` takes effect immediately so this button's own next
     // `syncWidgets()` already reads in the new language.
-    this.languageBtn = new Button('', { w: 160, h: 34 });
+    this.languageBtn = new Button('', { w: 160, h: 34, autoWidth: true });
     this.languageBtn.onTap = () => {
       const next = nextLocale(this.state.locale);
       setLocale(next);
@@ -94,13 +107,13 @@ export class Settings {
     // pattern as languageBtn; only meaningfully affects touch play (TouchControls'
     // stick/button geometry), but lives here rather than being hidden behind a touch-
     // only check, since a desktop player may still be setting this up for later.
-    this.controlLayoutBtn = new Button('', { w: 200, h: 34 });
+    this.controlLayoutBtn = new Button('', { w: 200, h: 34, autoWidth: true });
     this.controlLayoutBtn.onTap = () => {
       const next = nextControlLayout(this.state.controlLayout);
       this.update({ ...this.state, controlLayout: next });
     };
 
-    this.backBtn = new Button(t('settings.back'), { w: 120, h: 34 });
+    this.backBtn = new Button(t('settings.back'), { w: 120, h: 34, autoWidth: true });
     this.backBtn.onTap = () => this.onBack?.();
 
     this.view.addChild(
@@ -138,15 +151,37 @@ export class Settings {
     this.languageBtn.setText(t('settings.language', { name: LOCALE_NAMES[this.state.locale] }));
     const modeKey = this.state.controlLayout === 'mirrored' ? 'settings.controlLayoutMirrored' : 'settings.controlLayoutStandard';
     this.controlLayoutBtn.setText(t('settings.controlLayout', { mode: t(modeKey) }));
+    this.layoutButtons();
+  }
+
+  /** Positions the four `autoWidth` buttons from their current (post-`setText`) widths,
+   * not the fixed-pixel halves this used to be (`cx - 80`, `cx - 100`, `cx - 130`) —
+   * those assumed the English string length and left longer translations off-center or
+   * overflowing their box. Runs after every `syncWidgets()` — the anchors themselves
+   * (`cx`/`languageY`/`controlY`/`pairY`) only change on `show()`, since only a resize
+   * moves the rows, but a locale/mute/control-layout tap changes a label's width without
+   * re-running `show()`. */
+  private layoutButtons() {
+    const cx = this.cx;
+    this.languageBtn.view.position.set(cx - this.languageBtn.width / 2, this.languageY);
+    this.controlLayoutBtn.view.position.set(cx - this.controlLayoutBtn.width / 2, this.controlY);
+    // Mute + Back sit side-by-side as a pair, centered as a unit under `cx` (was
+    // `cx - 130` / `cx + 10`, i.e. two fixed 120px boxes with a 20px gap between them —
+    // reproduced here from each button's actual width instead).
+    const gap = 20;
+    const pairW = this.muteBtn.width + gap + this.backBtn.width;
+    const pairX = cx - pairW / 2;
+    this.muteBtn.view.position.set(pairX, this.pairY);
+    this.backBtn.view.position.set(pairX + this.muteBtn.width + gap, this.pairY);
   }
 
   show(w: number, h: number, s: SettingsState) {
     this.state = s;
     this.panel.layout(w, h);
-    const cx = w / 2;
-    const rowX = cx - 130;
+    this.cx = w / 2;
+    const rowX = this.cx - 130;
     let y = Math.max(40, h * 0.15);
-    this.title.position.set(cx, y);
+    this.title.position.set(this.cx, y);
     y += 70;
     for (const [label, slider] of [
       [this.masterLabel, this.masterSlider] as const,
@@ -157,12 +192,11 @@ export class Settings {
       slider.view.position.set(rowX, y + 30);
       y += 70;
     }
-    this.languageBtn.view.position.set(cx - 80, y + 10);
+    this.languageY = y + 10;
     y += 44;
-    this.controlLayoutBtn.view.position.set(cx - 100, y + 10);
+    this.controlY = y + 10;
     y += 44;
-    this.muteBtn.view.position.set(cx - 130, y + 10);
-    this.backBtn.view.position.set(cx + 10, y + 10);
+    this.pairY = y + 10;
     this.syncWidgets();
     this.view.visible = true;
   }

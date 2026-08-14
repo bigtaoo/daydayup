@@ -9,6 +9,14 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { Settings } from './Settings';
 import { defaultSettingsState, type SettingsState } from '../../settings';
 import { getLocale, setLocale, resetLocaleForTests, LOCALES } from '../../i18n';
+import { estimateMonoWidth } from '../ui/textWidth';
+
+type ButtonInternals = {
+  label: { text: string };
+  onTap: (() => void) | null;
+  width: number;
+  view: { position: { x: number; y: number } };
+};
 
 function privateOf(s: Settings) {
   return s as unknown as {
@@ -19,10 +27,10 @@ function privateOf(s: Settings) {
     masterSlider: { onChange: ((v: number) => void) | null };
     sfxSlider: { onChange: ((v: number) => void) | null };
     musicSlider: { onChange: ((v: number) => void) | null };
-    muteBtn: { label: { text: string }; onTap: (() => void) | null };
-    languageBtn: { label: { text: string }; onTap: (() => void) | null };
-    controlLayoutBtn: { label: { text: string }; onTap: (() => void) | null };
-    backBtn: { label: { text: string }; onTap: (() => void) | null };
+    muteBtn: ButtonInternals;
+    languageBtn: ButtonInternals;
+    controlLayoutBtn: ButtonInternals;
+    backBtn: ButtonInternals;
   };
 }
 
@@ -158,5 +166,107 @@ describe('Settings — control-layout toggle (design/10 open question, left-hand
     expect(privateOf(s).controlLayoutBtn.label.text).toBe('操作布局：标准');
     privateOf(s).controlLayoutBtn.onTap?.();
     expect(privateOf(s).controlLayoutBtn.label.text).toBe('操作布局：左手模式');
+  });
+});
+
+// Regression coverage for the 2026-08-14 Russian-layout report: fixed-pixel-width
+// buttons sized for English overflowed (`ВКЛЮЧИТЬ ЗВУК`) or sat off-center in a box
+// too wide/narrow for the translated string (`ЯЗЫК: Русский`, `УПРАВЛЕНИЕ: ЛЕВША`).
+// The fix made these four buttons `autoWidth` (widgets.ts) and re-centers them off
+// their *current* width (Settings.ts's `layoutButtons`) instead of a value baked in
+// for the English label's length. `Button.width` is a plain number derived from
+// `estimateMonoWidth` — no real canvas needed, so these assertions run under plain
+// vitest same as textWidth.test.ts.
+describe('Settings — button width/centering across locales (autoWidth, 2026-08-14)', () => {
+  const CX = 400; // screen width 800 / 2
+  const PAD = 28; // matches widgets.ts Button.redraw()'s autoWidth padding
+
+  function expectedWidth(text: string, minW: number, fontSize = 15): number {
+    return Math.max(minW, estimateMonoWidth(text, fontSize) + PAD);
+  }
+
+  it('tracks the formula-computed width for the current label at every locale', () => {
+    const s = new Settings();
+    s.show(800, 600, defaultSettingsState());
+    const p = privateOf(s);
+    expect(p.languageBtn.width).toBeCloseTo(expectedWidth('LANGUAGE: English', 160), 6);
+
+    setLocale('ru');
+    s.show(800, 600, { ...defaultSettingsState(), locale: 'ru' });
+    expect(p.languageBtn.label.text).toBe('ЯЗЫК: Русский');
+    expect(p.languageBtn.width).toBeCloseTo(expectedWidth('ЯЗЫК: Русский', 160), 6);
+  });
+
+  it('grows the control-layout button to fit a longer translated label instead of clipping it', () => {
+    setLocale('ru');
+    const s = new Settings();
+    s.show(800, 600, { ...defaultSettingsState(), locale: 'ru' });
+    const btn = privateOf(s).controlLayoutBtn;
+    // "УПРАВЛЕНИЕ: СТАНДАРТ" outgrows the 200px minimum sized for "CONTROLS: STANDARD" —
+    // the box must widen to fit it, not clip it at the old fixed width.
+    expect(btn.label.text).toBe('УПРАВЛЕНИЕ: СТАНДАРТ');
+    expect(btn.width).toBeCloseTo(expectedWidth('УПРАВЛЕНИЕ: СТАНДАРТ', 200), 6);
+    expect(btn.width).toBeGreaterThan(200);
+  });
+
+  it('never shrinks a button below its declared minimum width for a short label', () => {
+    const s = new Settings();
+    s.show(800, 600, defaultSettingsState());
+    // "CONTROLS: STANDARD" easily fits under the 200px minimum given to controlLayoutBtn.
+    expect(privateOf(s).controlLayoutBtn.width).toBeCloseTo(200, 0);
+  });
+
+  it('keeps the language button centered under the panel midpoint at every locale', () => {
+    const s = new Settings();
+    s.show(800, 600, defaultSettingsState());
+    const btn = privateOf(s).languageBtn;
+    const centerOf = () => btn.view.position.x + btn.width / 2;
+    expect(centerOf()).toBeCloseTo(CX, 6);
+
+    btn.onTap?.(); // cycles the live locale one step and re-lays-out in the same tap
+    expect(centerOf()).toBeCloseTo(CX, 6); // still centered even though the box resized
+  });
+
+  it('keeps the control-layout button centered under the panel midpoint at every locale', () => {
+    const s = new Settings();
+    s.show(800, 600, defaultSettingsState());
+    const btn = privateOf(s).controlLayoutBtn;
+    const centerOf = () => btn.view.position.x + btn.width / 2;
+    expect(centerOf()).toBeCloseTo(CX, 6);
+
+    setLocale('ru');
+    s.show(800, 600, { ...defaultSettingsState(), locale: 'ru' });
+    btn.onTap?.();
+    expect(centerOf()).toBeCloseTo(CX, 6);
+  });
+
+  it('lays out mute+back as a fixed-gap pair, centered together, at every width', () => {
+    const s = new Settings();
+    s.show(800, 600, defaultSettingsState());
+    const p = privateOf(s);
+    const GAP = 20;
+
+    const assertPairLayout = () => {
+      // Back sits immediately after mute with exactly GAP between them...
+      expect(p.backBtn.view.position.x).toBeCloseTo(p.muteBtn.view.position.x + p.muteBtn.width + GAP, 6);
+      // ...and the pair as a whole is centered under the panel midpoint.
+      const pairLeft = p.muteBtn.view.position.x;
+      const pairRight = p.backBtn.view.position.x + p.backBtn.width;
+      expect((pairLeft + pairRight) / 2).toBeCloseTo(CX, 6);
+    };
+    assertPairLayout();
+
+    // Toggling to UNMUTE swaps in "ВКЛЮЧИТЬ ЗВУК"-length text (here still English, but
+    // exercises the same resize-then-relayout path) — the pair must stay glued together
+    // and centered even though muteBtn's width just changed.
+    p.muteBtn.onTap?.();
+    assertPairLayout();
+
+    setLocale('ru');
+    s.show(800, 600, { ...defaultSettingsState(), locale: 'ru' });
+    p.muteBtn.onTap?.(); // -> "ВКЛЮЧИТЬ ЗВУК", noticeably longer than "MUTE"/"БЕЗ ЗВУКА"
+    expect(p.muteBtn.label.text).toBe('ВКЛЮЧИТЬ ЗВУК');
+    expect(p.muteBtn.width).toBeGreaterThan(120);
+    assertPairLayout();
   });
 });

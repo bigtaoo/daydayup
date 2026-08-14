@@ -147,6 +147,62 @@ describe('Button', () => {
   });
 });
 
+// `autoWidth` (design/17-i18n.md follow-up, 2026-08-14): a translated label can run
+// longer than the pixel width picked for its English source string (Settings.ts's
+// "LANGUAGE: {name}"/"CONTROLS: {mode}" buttons, e.g. Russian "ВКЛЮЧИТЬ ЗВУК"), and the
+// old fixed-width box let it overflow instead of resizing. Off by default so every
+// other call site (50+ across the app) keeps its exact pre-existing fixed-width look.
+// Widths are read off `bg`'s Graphics bounds, same convention as the "sizes its hit
+// area" test above — no real canvas needed.
+describe('Button — autoWidth', () => {
+  function bgWidth(b: Button): number {
+    return (b.view.children[0] as Graphics).getLocalBounds().width;
+  }
+
+  it('keeps the fixed width when autoWidth is not set, even for text that would overflow it', () => {
+    const b = new Button('A MUCH LONGER LABEL THAN THE BOX', { w: 100, h: 40 });
+    expect(bgWidth(b)).toBeCloseTo(100, 0);
+  });
+
+  it('grows the box to fit longer text once autoWidth is set', () => {
+    const short = new Button('X', { w: 100, h: 40, autoWidth: true });
+    const long = new Button('A MUCH LONGER LABEL THAN THE BOX', { w: 100, h: 40, autoWidth: true });
+    expect(bgWidth(long)).toBeGreaterThan(bgWidth(short));
+    expect(bgWidth(long)).toBeGreaterThan(100);
+  });
+
+  it('never shrinks below the given w — it is a minimum, not a target, for short text', () => {
+    const b = new Button('X', { w: 200, h: 40, autoWidth: true });
+    expect(bgWidth(b)).toBeCloseTo(200, 0);
+  });
+
+  it('re-measures and grows on setText, not just at construction', () => {
+    const b = new Button('X', { w: 100, h: 40, autoWidth: true });
+    const before = bgWidth(b);
+    b.setText('A MUCH LONGER LABEL THAN THE BOX');
+    expect(bgWidth(b)).toBeGreaterThan(before);
+  });
+
+  it('re-centers the label on the new width after a resizing setText', () => {
+    const b = new Button('X', { w: 100, h: 40, autoWidth: true });
+    b.setText('A MUCH LONGER LABEL THAN THE BOX');
+    const label = b.view.children[1] as Text;
+    expect(label.position.x).toBeCloseTo(bgWidth(b) / 2, 0);
+  });
+
+  it('exposes the current width via the `width` getter, matching the drawn box', () => {
+    const b = new Button('A MUCH LONGER LABEL THAN THE BOX', { w: 100, h: 40, autoWidth: true });
+    expect(b.width).toBeCloseTo(bgWidth(b), 0);
+  });
+
+  it('setText on a non-autoWidth button does not resize the box', () => {
+    const b = new Button('X', { w: 100, h: 40 });
+    const before = bgWidth(b);
+    b.setText('A MUCH LONGER LABEL THAN THE BOX');
+    expect(bgWidth(b)).toBeCloseTo(before, 0);
+  });
+});
+
 describe('Slider — drag lifecycle', () => {
   function draggingOf(s: Slider): boolean {
     return (s as unknown as { dragging: boolean }).dragging;
