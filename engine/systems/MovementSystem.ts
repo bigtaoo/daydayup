@@ -5,8 +5,10 @@
  * overlapping actors apart from EACH OTHER (design/07's actor–actor half); clamp
  * players inside the world bounds. Movement is strictly 2D — there is no z axis /
  * gravity (jump was removed; a future dodge is a planar blink, not a hop). Enemies
- * are stationary (vx/vy = 0) but are integrated + resolved uniformly so future
- * moving mobs need no special-casing.
+ * are integrated + resolved through the exact same path as players — AIDecideSystem
+ * (step 2, before this one) is the only system that ever writes an enemy's vx/vy
+ * (ENGINE_VERSION 37: chase-into-range, was always 0 before that), so this system
+ * itself needed no changes to pick up enemy movement.
  *
  * Ports Game.ts updatePlayer() move+clamp, float px → fp. Push-out uses isqrt
  * (design/06 banned Math.sqrt).

@@ -1,10 +1,12 @@
 /**
- * AIDecideSystem.tick() — PvE enemy facing/fire-intent decision (see the module's
- * own doc comment for the no-target early-out and the dungeon room-activation
- * gate's rationale, design/05 "Room & door model", 2026-08-04).
+ * AIDecideSystem.tick() — PvE enemy facing/fire-intent/chase decision (see the
+ * module's own doc comment for the no-target early-out, the chase-to-engage-range
+ * movement, and the dungeon room-activation gate's rationale, design/05 "Room &
+ * door model", 2026-08-04; movement added ENGINE_VERSION 37).
  */
 import { describe, it, expect } from 'vitest';
-import { toFp } from '@dd/engine/math/fixed';
+import { isqrt, toFp } from '@dd/engine/math/fixed';
+import type { Fp } from '@dd/engine/math/fixed';
 import type { Brad } from '@dd/engine/math/trig';
 import { atan2Brad } from '@dd/engine/math/trig';
 import { pxToFp } from '@dd/engine/content/convert';
@@ -12,7 +14,11 @@ import { createGameState } from '@dd/engine/state/GameState';
 import type { GameState } from '@dd/engine/state/GameState';
 import { ENEMY_TEAM_ID, type EnemyActor } from '@dd/engine/state/entities';
 import { freshStatus } from '@dd/engine/content/damage';
-import { BASIC_ENEMY } from '@dd/engine/content/enemies';
+import {
+  BASIC_ENEMY,
+  DEFAULT_ENEMY_ENGAGE_RANGE_FP,
+  DEFAULT_ENEMY_MOVE_SPEED_PER_TICK,
+} from '@dd/engine/content/enemies';
 import { AIDecideSystem } from '@dd/engine/systems/AIDecideSystem';
 import type { DungeonConfig } from '@dd/engine/world/dungeon';
 import type { RoomPiece } from '@dd/engine/content/rooms';
@@ -54,8 +60,12 @@ describe('AIDecideSystem.tick — no-target early-out', () => {
     const s = createGameState({ ...CFG, players: [] });
     const e = addEnemy(s, 900, 700);
     e.firing = true;
+    e.vx = toFp(1);
+    e.vy = toFp(1);
     new AIDecideSystem().tick(s);
     expect(e.firing).toBe(false);
+    expect(e.vx).toBe(toFp(0)); // no target → also stop moving (ENGINE_VERSION 37)
+    expect(e.vy).toBe(toFp(0));
   });
 
   it('sets firing false when the only player is downed (design/07 — ignore a body that cannot fight back)', () => {
@@ -63,19 +73,23 @@ describe('AIDecideSystem.tick — no-target early-out', () => {
     s.players[0]!.downed = true;
     const e = addEnemy(s, 900, 700);
     e.firing = true;
+    e.vx = toFp(1);
     new AIDecideSystem().tick(s);
     expect(e.firing).toBe(false);
+    expect(e.vx).toBe(toFp(0));
   });
 
-  it('skips a dead enemy entirely — leaves its facing/firing untouched', () => {
+  it('skips a dead enemy entirely — leaves its facing/firing/vx/vy untouched', () => {
     const s = createGameState(CFG);
     const e = addEnemy(s, 900, 700);
     e.alive = false;
     e.firing = false;
+    e.vx = toFp(3);
     const facingBefore = e.facing;
     new AIDecideSystem().tick(s);
     expect(e.facing).toBe(facingBefore);
     expect(e.firing).toBe(false);
+    expect(e.vx).toBe(toFp(3));
   });
 
   it('targets the first alive, non-downed player when several exist', () => {
@@ -110,6 +124,80 @@ describe('AIDecideSystem.tick — atan2 facing', () => {
     new AIDecideSystem().tick(s);
     expect(e.facing).not.toBe(firstFacing);
     expect(e.facing).toBe(atan2Brad(target.gy - e.gy, target.gx - e.gx));
+  });
+});
+
+describe('AIDecideSystem.tick — chase toward engage range (ENGINE_VERSION 37)', () => {
+  it('closes distance when farther than engageRangeFp, along the exact direction to the target', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [900, 700] }] });
+    const target = s.players[0]!;
+    const e = addEnemy(s, 400, 400); // well outside the default ~180px engage range
+    new AIDecideSystem().tick(s);
+    expect(e.vx).toBeGreaterThan(0); // target is to the +x, +y side
+    expect(e.vy).toBeGreaterThan(0);
+    // Direction must match facing: vy/vx ratio equals dy/dx (integer truncation aside).
+    const dx = target.gx - e.gx;
+    const dy = target.gy - e.gy;
+    expect(Math.round((e.vy / e.vx) * 100)).toBe(Math.round((dy / dx) * 100));
+  });
+
+  it('moves at (approximately) the configured moveSpeedPerTick magnitude', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [900, 700] }] });
+    const e = addEnemy(s, 400, 400);
+    new AIDecideSystem().tick(s);
+    const speedSq = e.vx * e.vx + e.vy * e.vy;
+    // isqrt truncates twice (direction normalize, then this check) — allow 1fp slack.
+    expect(Math.abs(isqrt(speedSq) - DEFAULT_ENEMY_MOVE_SPEED_PER_TICK)).toBeLessThanOrEqual(1);
+  });
+
+  it('stops (vx=vy=0) once within engageRangeFp of the target', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [400, 400] }] });
+    const e = addEnemy(s, 400, 400); // exactly on top of the target — well inside range
+    new AIDecideSystem().tick(s);
+    expect(e.vx).toBe(toFp(0));
+    expect(e.vy).toBe(toFp(0));
+  });
+
+  it('stops exactly at the boundary (distance === engageRangeFp)', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [400, 400] }] });
+    const e = addEnemy(s, 400, 400);
+    // Place the enemy exactly engageRangeFp away along +x — the boundary is inclusive.
+    e.gx = (s.players[0]!.gx - DEFAULT_ENEMY_ENGAGE_RANGE_FP) as Fp;
+    new AIDecideSystem().tick(s);
+    expect(e.vx).toBe(toFp(0));
+    expect(e.vy).toBe(toFp(0));
+  });
+
+  it('a per-enemy moveSpeedPerTick/engageRangeFp override wins over the shared default', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [900, 700] }] });
+    const e = addEnemy(s, 400, 400);
+    e.moveSpeedPerTick = toFp(50); // far above the default — should dominate
+    e.engageRangeFp = toFp(0); // never satisfied at this distance, so it should keep closing
+    new AIDecideSystem().tick(s);
+    const speed = isqrt(e.vx * e.vx + e.vy * e.vy);
+    // Direction-normalize truncates twice at this magnitude — a loose relative
+    // tolerance, not exact-arithmetic reimplementation.
+    expect(speed).toBeGreaterThan(toFp(50) * 0.95);
+    expect(speed).toBeLessThan(toFp(50) * 1.05);
+  });
+
+  it('a hand-built enemy missing moveSpeedPerTick/engageRangeFp falls back to the shared defaults', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [900, 700] }] });
+    const e = addEnemy(s, 400, 400);
+    expect(e.moveSpeedPerTick).toBeUndefined();
+    expect(e.engageRangeFp).toBeUndefined();
+    new AIDecideSystem().tick(s);
+    expect(isqrt(e.vx * e.vx + e.vy * e.vy)).toBeGreaterThan(0); // moved, using the fallback speed
+  });
+
+  it('in dungeon mode, an unactivated room leaves vx/vy untouched (frozen, same gate as firing)', () => {
+    const s = dungeonState();
+    const e = addEnemy(s, 400, 400, 'nonexistent-room');
+    e.vx = toFp(7);
+    e.vy = toFp(9);
+    new AIDecideSystem().tick(s);
+    expect(e.vx).toBe(toFp(7));
+    expect(e.vy).toBe(toFp(9));
   });
 });
 

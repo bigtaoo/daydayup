@@ -40,7 +40,31 @@ export interface EnemyBlueprint {
   // See EnemyActor's matching fields for the full account; undefined = neither trait.
   enrage?: EnrageSim;
   onDeathSpawn?: { type: string; count: number };
+  // Movement AI (ENGINE_VERSION 37, see EnemyActor's matching fields) — per-type
+  // override; undefined = the shared DEFAULT_ENEMY_* constant below. No blueprint
+  // sets these yet (first-pass numbers, tune per mob once there's real playtesting);
+  // the knob exists so a future rush/melee variant can go faster with a near-zero
+  // range, or a sniper variant can hang back at a much longer one.
+  moveSpeedPerTick?: Fp;
+  engageRangeFp?: Fp;
 }
+
+// ── Movement AI defaults (ENGINE_VERSION 37) ─────────────────────────────────────
+// Every enemy used to be rooted at its spawn point (AIDecideSystem's old header:
+// "Enemies are stationary in the slice") — it faced and shot at the nearest player
+// but never closed distance, which read as "the AI doesn't move" (exactly the
+// reported bug). These are first-pass numbers: slower than the player so committing
+// to running away always opens the gap, and a stop-distance short enough that a mob
+// actually has to cross most of a room's width to reach it (design/09's authored
+// room sizes run ~12-24 grid / 384-768px — deriving the range from the gun's own
+// max travel (bulletSpeed × lifespan, ~30 grid for ENEMY_GUN_SIM) would put the
+// mob's standoff distance beyond most rooms' diagonal, so it would rarely be
+// observed moving at all).
+// Exported so AIDecideSystem can fall back to the SAME numbers for a hand-built
+// EnemyActor that bypasses this factory (most unit tests) — one source of truth,
+// not two constants that could drift apart.
+export const DEFAULT_ENEMY_MOVE_SPEED_PER_TICK = pxToFp(4); // 4 px/tick ≈ 120 px/s, ~63% of PLAYER_BASE.speedPerTick
+export const DEFAULT_ENEMY_ENGAGE_RANGE_FP = pxToFp(180); // ~5.6 grid — stop and shoot once this close
 
 // ── Basic (neutral) ─────────────────────────────────────────────────────────────
 export const BASIC_ENEMY: EnemyBlueprint = {
@@ -232,5 +256,7 @@ export function buildEnemyActor(state: GameState, gx: Fp, gy: Fp, type?: string)
     enrage: bp.enrage,
     enraged: false,
     onDeathSpawn: bp.onDeathSpawn,
+    moveSpeedPerTick: bp.moveSpeedPerTick ?? DEFAULT_ENEMY_MOVE_SPEED_PER_TICK,
+    engageRangeFp: bp.engageRangeFp ?? DEFAULT_ENEMY_ENGAGE_RANGE_FP,
   };
 }

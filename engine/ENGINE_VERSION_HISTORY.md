@@ -504,3 +504,29 @@ exactly 0 — a pure translation, so every relative adjacency it already
 computed is unaffected, only the shared origin moves. `'linear'`/`'branching'`
 (`placeFloor`) only ever walk west→east (+ south-only hub forks) and so never
 produce a negative offset — a deliberate no-op for them, never even reached.
+
+v37: enemies actually move (design/09), fixing a live player report — "the AI
+doesn't move, it just stands there and shoots". `AIDecideSystem` was true to its
+own doc comment ("Enemies are stationary in the slice, so no move intent is
+produced") since Stage B: every enemy/boss turned to face the nearest player and
+fired, but no system ever wrote a non-zero `vx`/`vy` into an enemy, so
+`MovementSystem`'s per-enemy `integrate()` was a correct no-op the whole time —
+not a `MovementSystem` bug, an `AIDecideSystem` gap. Fixed: `AIDecideSystem.chase()`
+now closes the distance toward the target in a straight line (facing computation
+unchanged) until within `EnemyActor.engageRangeFp`, then stops so the mob actually
+uses its gun instead of camping wherever it spawned. `moveSpeedPerTick`/
+`engageRangeFp` are new optional `EnemyBlueprint`/`EnemyActor` fields (`content/
+enemies.ts`'s `buildEnemyActor`, same "copied from the blueprint at spawn"
+convention as `tint`/`resist`) with first-pass shared defaults
+(`DEFAULT_ENEMY_MOVE_SPEED_PER_TICK` about 63% of `PLAYER_BASE.speedPerTick`,
+`DEFAULT_ENEMY_ENGAGE_RANGE_FP` about 5.6 grid — deliberately much shorter than
+the gun's own max bullet travel, since deriving the stop-distance from that would
+put it beyond most rooms' diagonal and the mob would rarely be seen moving at
+all) — undefined on any hand-built `EnemyActor` that bypasses the factory (most
+unit tests) falls back to those same constants, so no existing test needed
+updating. A real simulation-output change for every existing enemy/boss (they
+now occupy different positions tick-over-tick than before), hence the bump — no
+steering/pathfinding/kiting yet, straight-line pursuit only (a mob can stall
+against a concave wall, same caveat `resolveWalls`'s push-out already carries);
+tune the two constants and add kiting/hysteresis as a later, non-bumping content
+change if the numbers alone need adjusting.

@@ -293,6 +293,14 @@ export interface EnemyActor extends Actor {
   // blueprint at spawn; DeathDropsSystem reads it the tick this enemy dies to spawn
   // `count` minions of `type` around its death position. undefined = no adds.
   onDeathSpawn?: { type: string; count: number };
+  // Movement AI (design/09, ENGINE_VERSION 37 — enemies used to stand rooted at spawn,
+  // only ever turning to fire; see AIDecideSystem's module doc). Copied from the
+  // blueprint at spawn like tint/resist above; undefined (any hand-built EnemyActor
+  // that bypasses `buildEnemyActor`, e.g. most unit tests) falls back to
+  // AIDecideSystem's own default constants, same convention as `resist` defaulting
+  // to a neutral multiplier.
+  moveSpeedPerTick?: Fp; // fp displacement per tick while closing distance to its target
+  engageRangeFp?: Fp; // stop closing once within this fp distance of the target
 }
 
 /** A boss's enrage trait (design/09 `traits`, ENGINE_VERSION 27): below `hpThresholdPermille`

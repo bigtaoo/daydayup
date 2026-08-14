@@ -32,29 +32,31 @@ Break one of these and two clients desync — silently, minutes into a match.
   iteration order, a rounding rule, or a hashed field.
 
 Any change that moves outcomes — or moves the replay hash at all — bumps `ENGINE_VERSION`
-(`config.ts`, currently **31**, with a version-history comment recording what each bump was
-for). `replay.ts` refuses to replay a mismatched version rather than produce garbage.
+(`versionHistory.ts`, currently **37**, with the full per-bump history in
+`ENGINE_VERSION_HISTORY.md`). `replay.ts` refuses to replay a mismatched version rather than
+produce garbage.
 
 ## Layout
 
 ```
-index.ts        the public surface — everything below is re-exported from here
-config.ts       ENGINE_VERSION + its version history
-sim.config.ts   TICK_RATE and the sim-wide constants
-GameEngine.ts   the orchestrator: step(commands) in the frozen order, plus the
-                InputSource-driven advance(frame) used by replay and netcode
-replay.ts       headless run + state serialization/hashing, version-guarded
+index.ts             the public surface — everything below is re-exported from here
+versionHistory.ts    ENGINE_VERSION (full per-bump history in ENGINE_VERSION_HISTORY.md)
+config.ts            WORLD/knockback/shield-regen and other cross-cutting sim constants
+sim.config.ts        TICK_RATE and the sim-wide constants
+GameEngine.ts        the orchestrator: step(commands) in the frozen order, plus the
+                     InputSource-driven advance(frame) used by replay and netcode
+replay.ts            headless run + state serialization/hashing, version-guarded
 
-math/           fixed-point, seeded PRNG, brad angles + table trig
-state/          GameState, entities, per-tick PlayerCommand, input quantization, events
-systems/        one file per step (see the order below) + shared helpers
-                (combat.ts, targeting.ts, spatialGrid.ts)
-content/        all gameplay numbers as plain data: weapons, enemies, skins, rooms,
-                arenas, drops, materials, damage types, human-unit conversion
-balance/        the build wall: rarity tiers, run buffs, and the run/arena builders
-                that make it compile-time impossible to leak crafted gear into PvP
-world/          room pieces + seeded floor generation
-net/            the wire protocol, FrameBroadcast (pure relay) and NetInputSource
+math/                fixed-point, seeded PRNG, brad angles + table trig
+state/               GameState, entities, per-tick PlayerCommand, input quantization, events
+systems/             one file per step (see the order below) + shared helpers
+                     (combat.ts, targeting.ts, spatialGrid.ts)
+content/             all gameplay numbers as plain data: weapons, enemies, skins, rooms,
+                     arenas, drops, materials, damage types, human-unit conversion
+balance/             the build wall: rarity tiers, run buffs, and the run/arena builders
+                     that make it compile-time impossible to leak crafted gear into PvP
+world/               room pieces + seeded floor generation
+net/                 the wire protocol, FrameBroadcast (pure relay) and NetInputSource
 ```
 
 ## The step order (`GameEngine.step`)
@@ -77,7 +79,7 @@ anti-cheat checkpoint (`design/15`).
 ## Working on it
 
 ```bash
-npm test -w engine          # vitest, 546 tests
+npm test -w engine          # vitest, 568 tests
 npm run typecheck -w engine # tsc --noEmit, DOM-free
 ```
 

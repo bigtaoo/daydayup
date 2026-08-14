@@ -5,20 +5,27 @@ closed loop the design docs describe, and the running record of how each phase a
 landed. Phases are written top-to-bottom in dependency order; each one keeps its dated
 shipped-notes underneath it, so a phase section is both the plan and the history.
 
-**Current built state (2026-08-12).** `ENGINE_VERSION` **36** (32: ground-weapon pickup is
+**Current built state (2026-08-14).** `ENGINE_VERSION` **37** (32: ground-weapon pickup is
 click-driven; 33: manual aim removed entirely; 34: co-resident PvE room/door model, engine +
 client rendering; 35: fully-realized branching — see the Room & door model section below;
 same-day map-editor door placement, the `layout: 'graph2d'` real-2D-layout follow-up, AND the
 "graph2d content" pass that switches `EMBER_DUNGEON` to it are all additive, no version bump;
 36: two Room & door model bug fixes, `onDeathSpawn` roomId + negative-offset floor bounds —
-see the Room & door model section below); 2684 tests green across all 7 workspace packages
-(engine 548 / client 1138 / server 186 / animator 444 / map-editor 260 / png-pipeline 20 /
-desktop-shell 81 / root build-script 7, `npm run check`, verified 2026-08-12 — client's count
-includes the same-day viewport-fill fix, see the Viewport-fill bug-fix pass section below —
-root
-build-script corrects to its actual count: the prior entry's "14" was itself a stale
-miscount, same class of drift that same prior entry's own note already flagged once for
-desktop-shell/root) after fixing two real bugs found from a live player report ("cleared
+see the Room & door model section below; 37: enemies/bosses actually move now — a live player
+report ("怪物的AI不会移动的吗？目前的怪物和boss只会原地开枪") found that `AIDecideSystem` had
+always been true to its own doc comment ("Enemies are stationary in the slice"): every mob
+turned to face the nearest player and fired, but no system ever wrote a non-zero `vx`/`vy`
+into one, so `MovementSystem`'s per-enemy integration was a correct no-op the whole time — an
+`AIDecideSystem` gap, not a `MovementSystem` bug. Fixed with a first-pass `chase()`: close the
+distance in a straight line until within `EnemyActor.engageRangeFp` (new, defaults to ~5.6
+grid — deliberately much shorter than a gun's own max bullet travel, or the mob would rarely
+be seen moving in a normal-size room), then stop and shoot; `moveSpeedPerTick`/`engageRangeFp`
+are new optional per-blueprint knobs (`content/enemies.ts`) for a future kiting/rush/sniper
+variant, unused by any blueprint yet. No steering/pathfinding/kiting — see
+`ENGINE_VERSION_HISTORY.md`'s v37 entry for the full account); 2740 tests green across all 7
+workspace packages (engine 568 / client 1167 / server 186 / animator 444 / map-editor 260 /
+png-pipeline 20 / desktop-shell 81 / root build-script 14, `npm run check`, verified
+2026-08-14) after fixing two real bugs found from a live player report ("cleared
 the room, door's unlocked, still can't walk through it") — see the Room & door model
 section below for the full account. Before that, closing a real gap the test-coverage audit
 pass had flagged and left open: `onRequestSave` (tools/desktop-shell/src/preload.ts) now
