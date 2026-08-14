@@ -1523,6 +1523,38 @@ result `addFp`/`subFp`, negative-operand `mulFp` truncation direction, zero/nega
 `scaleFp` coefficients, negative `fp`/`fromFp` round-trips, and `negFp`'s `-0` edge case
 — 15 tests total in `fixed.test.ts` (was 6). `tsc --noEmit` clean.
 
+## Forge blueprint grid: icon cards replace the row list (2026-08-14)
+
+User feedback on a screenshot of the Forge outpost: "这里不要用列表的形式，用图标卡的形式进行展示"
+(don't use a list here, show it as icon cards). `Forge.ts`'s blueprint picker was still a
+vertical stack of one-`Button`-per-row text lines (weapon icon + monospace-padded id/cost/
+status columns) — closed the same "still looks like a text list" complaint design/13's
+2026-08-01 art pass first addressed for the row backgrounds, this time for the rows'
+own layout shape.
+
+Shipped: a new `ui/BlueprintCard.ts` widget — weapon art centered on a rarity-bordered
+icon chip, name/cost/status stacked below it, a `[n]` key tag top-left (same shortcut
+digits as before), and a compact `▸×N` staged-count badge top-right. `Forge.ts` now lays
+`PAGE_SIZE` (8) of these out as a 4×2 grid instead of a vertical stack; the browse cursor
+(`selectedIndex`) is a bright accent border on the current card rather than the old
+leading `»` text glyph — a grid has no "line start" for an inline glyph to sit at, so the
+highlight moved to the one thing every card already draws: its own border. Page-nav/
+acquire/clear button x-positions now derive from the grid's own measured half-width
+(`GRID_W / 2`) instead of the hardcoded `cx ± 280` the row list used. Pure presentation:
+no `MetaState`/craft-transaction logic touched, same click-to-craft and keyboard-shortcut
+behavior as before (`Forge.test.ts` updated to read the new card's text getters instead of
+the old `Button.label`).
+
+Browser-verified live via claude-in-chrome (real crafting flow: main menu → mode select →
+forge, pages 1 and 2) — cards render with correct rarity-colored borders, amber "need
+materials"/gray "locked" status coloring, dimmed icons on locked cards, and no overlap
+with the page nav, acquire button, or forger NPC art. New `ui/BlueprintCard.test.ts` (13
+tests) covers text-field updates, icon add/remove based on texture presence, the locked-
+icon dim, the selected-vs-rarity border color (read via `Graphics.context.instructions`,
+the no-renderer technique `Minimap.test.ts` established), and the press-vs-tap contract
+(matches `Button`'s own, `widgets.test.ts`). 1180 client tests (13 new) + `tsc --noEmit` +
+`check:filelength` clean throughout. Render-only, no `ENGINE_VERSION` impact.
+
 ---
 
 ## Dependency summary

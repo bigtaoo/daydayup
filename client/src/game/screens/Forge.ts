@@ -6,6 +6,7 @@ import {
 import type { MetaState } from '../../meta';
 import { bankTotal, canAfford, isUnlocked, purchasableBlueprints } from '../../meta';
 import { Panel, Button } from '../ui/widgets';
+import { BlueprintCard } from '../ui/BlueprintCard';
 import { CompareCard, buildCompareRows, equippedSpecOfKind } from '../ui/compareCard';
 import { pageCount, pageStartForIndex, clampPageStart, wrapIndex } from '../ui/paging';
 import { RARITY_COLORS } from '../theme';
@@ -13,12 +14,19 @@ import { getWeaponTexture } from '../../render/weaponSkins';
 import { getUiTexture } from '../../render/uiSkins';
 import { t } from '../../i18n';
 
-/** Rows shown at once (`BLUEPRINT_CATALOG` has more entries than fit above the fixed
+/** Cards shown at once (`BLUEPRINT_CATALOG` has more entries than fit above the fixed
  * bottom action bar — a real overflow found while wiring up real Buttons, since the old
  * text board just let everything spill past the screen uncorrected). Paged, not
  * scrolled — simpler, and the existing arrow-key browse cursor already gives a
- * keyboard-only way to reach any entry (it flips pages to keep the cursor visible). */
+ * keyboard-only way to reach any entry (it flips pages to keep the cursor visible).
+ * `GRID_COLS` fills PAGE_SIZE into a 4×2 icon-card grid (below), not a vertical list. */
 const PAGE_SIZE = 8;
+const GRID_COLS = 4;
+const GRID_GAP_X = 14;
+const GRID_GAP_Y = 14;
+const GRID_ROWS = Math.ceil(PAGE_SIZE / GRID_COLS);
+const GRID_W = GRID_COLS * BlueprintCard.W + (GRID_COLS - 1) * GRID_GAP_X;
+const GRID_H = GRID_ROWS * BlueprintCard.H + (GRID_ROWS - 1) * GRID_GAP_Y;
 
 /**
  * The forge outpost (design/14, ROADMAP 2.2/2.3) — the between-run hub where the player
@@ -47,10 +55,11 @@ export class Forge {
   private acquireBtn: Button;
   private prevPageBtn: Button;
   private nextPageBtn: Button;
-  /** Fixed pool of PAGE_SIZE row buttons, reused across pages (relabeled + shown/hidden
-   * per render) rather than one button per catalog entry — keeps the widget count
-   * bounded regardless of how many blueprints exist. */
-  private rowBtns: Button[];
+  /** Fixed pool of PAGE_SIZE icon cards, reused across pages (relabeled + shown/hidden
+   * per render) rather than one card per catalog entry — keeps the widget count
+   * bounded regardless of how many blueprints exist. Laid out as a `GRID_COLS`-wide
+   * grid, not a vertical list (design/14 icon-card pass). */
+  private rowCards: BlueprintCard[];
   private compareCard = new CompareCard();
   /** The forger NPC (design/13's "Outpost/hub" NPC gap) — decorative, corner-anchored
    * art, hidden until its texture is generated (uiSkins.ts's non-blocking preload) and
@@ -121,13 +130,13 @@ export class Forge {
     this.nextCharBtn = new Button('›', { w: 32, h: 30, fontSize: 16 });
     this.nextCharBtn.onTap = () => this.onCycleCharacter?.();
 
-    this.rowBtns = Array.from({ length: PAGE_SIZE }, (_, slot) => {
-      const b = new Button('', { w: 560, h: 30, fontSize: 12 });
-      b.onTap = () => {
+    this.rowCards = Array.from({ length: PAGE_SIZE }, (_, slot) => {
+      const c = new BlueprintCard();
+      c.onTap = () => {
         const i = this.pageStart + slot;
         if (this.order[i] !== undefined) this.onCraftAt?.(i);
       };
-      return b;
+      return c;
     });
 
     this.prevPageBtn = new Button(t('forge.pagePrevButton'), { w: 80, h: 26, fontSize: 11 });
@@ -151,7 +160,7 @@ export class Forge {
       this.panel.view, this.npcSprite, this.title, this.backBtn.view,
       this.prevCharBtn.view, this.charText, this.nextCharBtn.view,
       this.infoText, this.acquireBtn.view,
-      ...this.rowBtns.map((b) => b.view),
+      ...this.rowCards.map((c) => c.view),
       this.prevPageBtn.view, this.pageLabel, this.nextPageBtn.view,
       this.clearBtn.view, this.compareCard.view, this.startBtn.view, this.hint,
     );
@@ -216,18 +225,19 @@ export class Forge {
       t('forge.loadoutLine', { loadout, count: m.loadout.length, max: PLAYER_BASE.weaponSlots }) +
       (buyable.length ? '\n' + t('forge.storeLine', { items: buyableText }) : '');
 
-    // Blueprint rows — [n] id  cost  status. A leading '»' marks the browse
-    // cursor (moveSelection / a row tap) — independent of '▸staged', which marks a
-    // crafted slot. Only the current page's slice is shown; unused trailing slots on a
-    // partial last page are hidden.
-    this.rowBtns.forEach((btn, slot) => {
+    // Blueprint cards — icon, name, cost, status. The browse cursor (moveSelection /
+    // a card tap) is a bright border instead of the old leading '»' glyph (design/14
+    // icon-card pass — a grid has no "line start" for an inline glyph to sit at);
+    // '▸staged' is a separate corner badge marking a crafted slot. Only the current
+    // page's slice is shown; unused trailing slots on a partial last page are hidden.
+    this.rowCards.forEach((card, slot) => {
       const i = this.pageStart + slot;
       const id = this.order[i];
       if (id === undefined) {
-        btn.view.visible = false;
+        card.view.visible = false;
         return;
       }
-      btn.view.visible = true;
+      card.view.visible = true;
       const bp = BLUEPRINT_CATALOG[id]!;
       const unlocked = isUnlocked(m, id);
       const staged = m.loadout.filter((x) => x === id).length;
@@ -235,12 +245,15 @@ export class Forge {
       const status = !unlocked
         ? (bp.source === 'drop' ? t('forge.lockedFind') : t('forge.lockedSource', { source: bp.source }))
         : affordable ? t('forge.craftable') : t('forge.needMaterials');
-      const stagedTag = staged > 0 ? t('forge.stagedTag', { count: staged }) : '';
-      const cursor = i === this.selectedIndex ? '»' : ' ';
+      const statusColor = !unlocked ? 0x718096 : affordable ? 0x68d391 : 0xf6ad55;
       const key = i < 9 ? `${i + 1}` : '·'; // only the first 9 have a digit-key shortcut
-      btn.setText(`${cursor}[${key}] ${id.padEnd(11)} ${this.costText(bp.cost).padEnd(14)} ${status}${stagedTag}`);
       const spec = WEAPON_SPECS[bp.weaponId];
-      btn.setIcon(spec && getWeaponTexture(spec.id, spec.kind), spec && RARITY_COLORS[RARITY_TIERS[spec.rarity].colorKey]);
+      const borderColor = spec ? RARITY_COLORS[RARITY_TIERS[spec.rarity].colorKey] : 0x4c566a;
+      card.set({
+        key, name: id, cost: this.costText(bp.cost), status, statusColor, borderColor,
+        selected: i === this.selectedIndex, staged, locked: !unlocked,
+        icon: spec && getWeaponTexture(spec.id, spec.kind),
+      });
     });
     this.pageLabel.text = t('forge.pageLabel', { current: Math.floor(this.pageStart / PAGE_SIZE) + 1, total: pageCount(this.order.length, PAGE_SIZE) });
 
@@ -254,6 +267,7 @@ export class Forge {
     // bug behind the "screen is a mess" report). The compare card now hides itself
     // if there's no longer room for it above the fixed bar, rather than overlapping it.
     const cx = w / 2;
+    const halfGrid = GRID_W / 2;
     let y = Math.max(20, h * 0.05);
     this.title.position.set(cx, y);
     this.backBtn.view.position.set(16, 16);
@@ -266,30 +280,37 @@ export class Forge {
     this.infoText.position.set(cx, y);
     y += this.infoText.height + 14;
     // Acquire button (a real gap this pass closed): only shown when there's actually
-    // something to acquire, right-aligned with the row column below it — reserves its
-    // own row so it never overlaps the first blueprint row.
+    // something to acquire, right-aligned with the grid below it — reserves its own
+    // row so it never overlaps the first blueprint card.
     this.acquireBtn.view.visible = buyable.length > 0;
     if (this.acquireBtn.view.visible) {
-      this.acquireBtn.view.position.set(cx + 280 - 160, y);
+      this.acquireBtn.view.position.set(cx + halfGrid - 160, y);
       y += 36;
     }
-    for (const b of this.rowBtns) {
-      b.view.position.set(cx - 280, y);
-      y += 32;
-    }
-    this.prevPageBtn.view.position.set(cx - 280, y);
+    // Blueprint grid — `GRID_COLS` cards per row, wrapping into `GRID_ROWS` (design/14
+    // icon-card pass, replaces the old one-Button-per-row vertical list).
+    this.rowCards.forEach((card, slot) => {
+      const col = slot % GRID_COLS;
+      const row = Math.floor(slot / GRID_COLS);
+      card.view.position.set(
+        cx - halfGrid + col * (BlueprintCard.W + GRID_GAP_X),
+        y + row * (BlueprintCard.H + GRID_GAP_Y),
+      );
+    });
+    y += GRID_H + 8;
+    this.prevPageBtn.view.position.set(cx - halfGrid, y);
     this.pageLabel.position.set(cx, y + 13);
-    this.nextPageBtn.view.position.set(cx + 200, y);
+    this.nextPageBtn.view.position.set(cx + halfGrid - 80, y);
     y += 40;
 
     const footerY = h - 60;
-    this.clearBtn.view.position.set(cx - 280, footerY + 7);
+    this.clearBtn.view.position.set(cx - halfGrid, footerY + 7);
     this.startBtn.view.position.set(cx - 110, footerY);
     this.hint.position.set(cx, h - 6);
 
-    // Forger NPC — corner decoration, right of the centered cx±280 row column. Only
+    // Forger NPC — corner decoration, right of the centered blueprint grid. Only
     // shown once its art exists AND the viewport is wide enough to fit it without
-    // overlapping the row column (same "hide if no room" shape as the compare card).
+    // overlapping the grid (same "hide if no room" shape as the compare card).
     const npcTex = getUiTexture('npc_forger');
     const npcRightMargin = w - (cx + 300);
     if (npcTex && npcRightMargin > 130) {

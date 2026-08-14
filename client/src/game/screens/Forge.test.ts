@@ -24,6 +24,17 @@ interface TestButton {
   label: { text: string };
 }
 
+// `BlueprintCard`'s own text fields are private too; it exposes the same kind of
+// read-only test getters (`nameLabel`/`costLabel`/`statusLabel`/…) as `WeaponCard`'s.
+interface TestCard {
+  view: { visible: boolean; position: { x: number; y: number } };
+  nameLabel: string;
+  costLabel: string;
+  statusLabel: string;
+  keyLabel: string;
+  stagedLabel: string;
+}
+
 // This suite is the first to call Forge.render(), which reads `Text.height` to flow
 // its layout — that lazily asks Pixi to measure text on a real `<canvas>` 2D context,
 // which doesn't exist under this repo's plain-node vitest environment (no jsdom/canvas
@@ -53,7 +64,7 @@ function privateOf(f: Forge) {
   return f as unknown as {
     title: { text: string };
     infoText: { text: string; style: { wordWrap: boolean; breakWords: boolean } };
-    rowBtns: TestButton[];
+    rowCards: TestCard[];
     clearBtn: TestButton;
     startBtn: TestButton;
     acquireBtn: TestButton;
@@ -144,7 +155,7 @@ describe('Forge — acquire button (a real gap this pass closed: the buyable she
     const f = new Forge();
     f.render(withFewBuyable(2), 1280, 720);
     const p = privateOf(f);
-    expect(p.acquireBtn.view.position.y).toBeLessThan(p.rowBtns[0]!.view.position.y);
+    expect(p.acquireBtn.view.position.y).toBeLessThan(p.rowCards[0]!.view.position.y);
   });
 
   it('reflows the row list up once the button disappears — same instance, not a fresh one', () => {
@@ -159,14 +170,14 @@ describe('Forge — acquire button (a real gap this pass closed: the buyable she
     f.render(m, 1280, 720);
     const p = privateOf(f);
     expect(p.acquireBtn.view.visible).toBe(true);
-    const rowYWithButton = p.rowBtns[0]!.view.position.y;
+    const rowYWithButton = p.rowCards[0]!.view.position.y;
 
     while (purchasableBlueprints(m).length > 0) {
       m = acquireBlueprint(m, purchasableBlueprints(m)[0]!);
     }
     f.render(m, 1280, 720);
     expect(p.acquireBtn.view.visible).toBe(false);
-    const rowYWithoutButton = p.rowBtns[0]!.view.position.y;
+    const rowYWithoutButton = p.rowCards[0]!.view.position.y;
     // The shift is AT LEAST the button's own reserved 36px — dropping the Store info
     // line at the same time also shrinks infoText by one line's height, so the real
     // total delta is bigger than 36 alone; the >=36 floor is what actually pins down
@@ -245,11 +256,11 @@ describe('Forge — i18n (design/17-i18n.md)', () => {
     expect(p.infoText.text).toContain('已拥有角色：3');
   });
 
-  it('a blueprint row still shows the status text translated', () => {
+  it('a blueprint card still shows the status text translated', () => {
     const f = new Forge();
     setLocale('zh');
     f.render(defaultMetaState(), 1280, 720);
-    const text = privateOf(f).rowBtns[0]!.label.text;
+    const text = privateOf(f).rowCards[0]!.statusLabel;
     expect(text).toMatch(/材料不足|可打造|未解锁/);
   });
 
