@@ -1490,6 +1490,32 @@ above — a live user screenshot, circled: a cyan ring around their own characte
    no `ENGINE_VERSION` impact. 1170 client tests green, `tsc --noEmit` and
    `check:filelength` clean.
 
+## `isqrt()` 32-bit-overflow fix + fixed-point math test coverage (2026-08-14)
+
+`engine/math/fixed.ts`'s `isqrt()` (design/06's integer square root, used for every
+distance check in `geom.ts`/`HitResolveSystem.ts`/`MovementSystem.ts`) silently returned
+a wrong, much-too-small result for any input `n >= 2^32` (e.g. `isqrt(5_000_000_000)`
+returned `26552` instead of `70710`). Root cause: the digit-by-digit algorithm's `bit`
+starts at the largest power of 4 ≤ n and can legitimately exceed 2^31 for large n, and
+once `res` picked up that large value the loop's `res >> 1` / `res >>= 1` coerced `res`
+to a 32-bit **signed** integer (JS `>>` semantics) each iteration, silently
+wrapping/corrupting it. Fixed by replacing both `res >> 1` sites with
+`Math.trunc(res / 2)`, matching this module's existing style of using `Math.trunc` for
+integer division elsewhere (`bit`'s own `Math.trunc(bit / 4)` was already safe). No
+`ENGINE_VERSION` bump — every real caller's distance stays within a single dungeon room
+(well under the 2^32 threshold), so this only corrects the previously-broken,
+never-actually-reached large-input range; no shipped-content result changes.
+
+There was no dedicated test file for `isqrt()` before this pass (`fixed.test.ts` existed
+but only covered a 0–10000 sweep, never large n), so the bug had never been caught. Added
+regression coverage: exact values straddling the 2^32 boundary, the reported repro, a
+realistic Fp-squared-distance sweep up to a 10,000-grid room, and perfect-square
+exactness up to `~sqrt(Number.MAX_SAFE_INTEGER)`. Also rounded out the rest of
+`fixed.ts`'s coverage (per the standing "add tests for everything" habit) with negative-
+result `addFp`/`subFp`, negative-operand `mulFp` truncation direction, zero/negative
+`scaleFp` coefficients, negative `fp`/`fromFp` round-trips, and `negFp`'s `-0` edge case
+— 15 tests total in `fixed.test.ts` (was 6). `tsc --noEmit` clean.
+
 ---
 
 ## Dependency summary

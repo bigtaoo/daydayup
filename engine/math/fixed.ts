@@ -107,6 +107,12 @@ export function negFp(a: Fp): Fp {
  * Bit-by-bit ("digit-by-digit") method — O(log n), exact for all safe integers.
  * Input must be a non-negative integer (e.g. dx*dx + dy*dy in fp²); a negative
  * input clamps to 0.
+ *
+ * `res`/`bit` are divided with Math.trunc(x / 2) rather than the `>>` operator:
+ * `bit` starts at the largest power of 4 ≤ n and can legitimately exceed 2^31
+ * for large n, and `>>` coerces its operand to a 32-bit SIGNED integer first —
+ * silently wrapping/corrupting the result for any n ≥ 2^32. Math.trunc has no
+ * such width limit (exact up to Number.MAX_SAFE_INTEGER).
  */
 export function isqrt(n: number): number {
   if (n <= 0) return 0;
@@ -118,9 +124,9 @@ export function isqrt(n: number): number {
   while (bit !== 0) {
     if (rem >= res + bit) {
       rem -= res + bit;
-      res = (res >> 1) + bit;
+      res = Math.trunc(res / 2) + bit;
     } else {
-      res >>= 1;
+      res = Math.trunc(res / 2);
     }
     bit = Math.trunc(bit / 4);
   }
