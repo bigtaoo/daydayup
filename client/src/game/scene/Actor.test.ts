@@ -132,37 +132,20 @@ describe('Actor — floating health bars (design/10 legibility fix, 2026-08-02)'
   });
 });
 
+// The ground ring this describe block used to cover (a full ellipse around the local
+// seat's feet) was dropped 2026-08-14: it shared a cyan-family colour AND on-screen
+// space with EnergyShieldFilter's rim-glow, so a live shield and "this is you" read as
+// the same effect (see Actor.setLocal's doc comment). The health-bar teal outline below
+// is now the marker's only cue — it never overlaps the shield glow's screen area.
 describe('Actor.setLocal — "which one is me" marker (design/10 legibility)', () => {
-  function ringOf(a: Actor): Graphics | undefined {
-    return a.children[4] as Graphics | undefined; // appended after the 4 constructor children
-  }
-
-  it('adds no ring at all until an actor is marked local (enemies never pay for it)', () => {
+  it('never adds a child — the marker is the health-bar outline alone, not a separate view', () => {
     const mob = new Actor('enemy', 12);
     expect(mob.children.length).toBe(4);
     mob.setLocal(false);
     expect(mob.children.length).toBe(4);
-  });
-
-  it('draws a ground ring on the local seat', () => {
     const me = new Actor('player', 12);
     me.setLocal(true);
-    expect(me.children.length).toBe(5);
-    expect(ringOf(me)!.getLocalBounds().width).toBeGreaterThan(0);
-  });
-
-  it('clears the ring when the seat stops being local', () => {
-    const me = new Actor('player', 12);
-    me.setLocal(true);
-    me.setLocal(false);
-    expect(ringOf(me)!.getLocalBounds().width).toBe(0);
-  });
-
-  it('the ring lies flat on the ground plane (wider than it is tall, like the shadow)', () => {
-    const me = new Actor('player', 12);
-    me.setLocal(true);
-    const b = ringOf(me)!.getLocalBounds();
-    expect(b.width).toBeGreaterThan(b.height);
+    expect(me.children.length).toBe(4);
   });
 
   it('re-outlines an already-drawn health bar when the local flag flips', () => {

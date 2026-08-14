@@ -1465,6 +1465,33 @@ and the full client suite green.
 
 ---
 
+## "Which one is me" ground ring dropped, two-report follow-up (2026-08-14)
+
+Same lineage as the 2026-08-02 legibility pass and the 2026-08-12 shield-centring fixes
+above — a live user screenshot, circled: a cyan ring around their own character looking
+"only half drawn." Two rounds:
+
+1. Root cause: `Actor.setLocal`'s ground ring shared the body sprite's own y=0 "feet"
+   origin (see `BODY_LIFT_R`), so its top half sat behind the lifted, opaque body and got
+   painted over — same geometry a shadow uses, but a shadow is supposed to be occluded by
+   its caster and this identity ring is not. Fixed by moving the ring to a zIndex in
+   front of the body instead of behind it, so the full ellipse always renders.
+2. Immediate follow-up report on the now-fully-visible ring: it and `EnergyShieldFilter`'s
+   rim-glow (`01`) are both cyan and both wrap the character, so a live shield pool and
+   "this is you" became visually the same effect — the exact ambiguity the marker exists
+   to prevent, just relocated from "ring vs body" to "ring vs shield." Asked the user how
+   to resolve it (recolour the ring / hide it while shielded / drop it and rely on the
+   health-bar outline alone); picked dropping the ring. `Actor.setLocal` now only flags
+   `isLocal` and forces the health bar to re-outline in `THEME.colors.player` teal
+   (`setHealth`'s existing local-outline branch, unchanged) — that outline never occupies
+   the same screen space as the shield glow, so the two can no longer be confused. `10`
+   updated to match. `Actor.test.ts`'s ring-specific assertions replaced with one covering
+   the new no-extra-child invariant; the health-bar-outline test is untouched. Render-only,
+   no `ENGINE_VERSION` impact. 1170 client tests green, `tsc --noEmit` and
+   `check:filelength` clean.
+
+---
+
 ## Dependency summary
 
 ```

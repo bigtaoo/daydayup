@@ -176,9 +176,11 @@ describe('Scene.positionLocal — moving flag survives the predicted-pose snap',
 });
 
 describe('Scene.reconcile — local-seat marker (design/10 legibility)', () => {
-  function ringWidth(view: unknown): number {
-    return ((view as { children: Array<{ getLocalBounds(): { width: number } }> }).children[4]?.getLocalBounds()
-      .width) ?? 0;
+  // The marker is now the health-bar teal outline alone (Actor.setLocal dropped the
+  // separate ground ring 2026-08-14 — see design/10/ROADMAP), driven by Actor's private
+  // `isLocal` flag; reach into it the same way Actor.test.ts does for other private state.
+  function isLocal(view: unknown): boolean {
+    return (view as { isLocal: boolean }).isLocal;
   }
 
   it('marks only the named local seat, not the other players', () => {
@@ -189,8 +191,8 @@ describe('Scene.reconcile — local-seat marker (design/10 legibility)', () => {
     scene.reconcile(s, me!.id);
 
     const views = (scene as unknown as { views: Map<number, unknown> }).views;
-    expect(ringWidth(views.get(me!.id))).toBeGreaterThan(0);
-    expect(ringWidth(views.get(other!.id))).toBe(0);
+    expect(isLocal(views.get(me!.id))).toBe(true);
+    expect(isLocal(views.get(other!.id))).toBe(false);
   });
 
   it('keeps the single-player default (no localPlayerId) marked across later reconciles', () => {
@@ -201,7 +203,7 @@ describe('Scene.reconcile — local-seat marker (design/10 legibility)', () => {
     scene.reconcile(s); // the sticky-choice path: playerView is already set by now
 
     const views = (scene as unknown as { views: Map<number, unknown> }).views;
-    expect(ringWidth(views.get(s.players[0]!.id))).toBeGreaterThan(0);
+    expect(isLocal(views.get(s.players[0]!.id))).toBe(true);
     expect(scene.player).toBe(views.get(s.players[0]!.id));
   });
 });

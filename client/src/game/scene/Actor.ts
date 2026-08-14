@@ -36,7 +36,6 @@ export class Actor extends Entity {
   private auraMask = 0; // bitmask of the effects currently drawn (skip redraw if same)
   private auraT = 0; // aura pulse clock (render-only, ms)
   private healthBar: Graphics | null = null; // floating hp bar above the head (both factions)
-  private localRing: Graphics | null = null; // "this one is you" ground marker (setLocal)
   private isLocal = false;
   private readonly isBoss: boolean;
   private hpRatio = -1; // last-drawn hp fraction (skip redraw if unchanged)
@@ -186,32 +185,27 @@ export class Actor extends Entity {
    * Every actor got a floating health bar in the 2026-08-02 legibility pass, which had
    * an unintended cost: the player's own bar became indistinguishable from a mob's, so
    * "which one of these is me" stopped being answerable at a glance — the user's own
-   * report, pointing at their character and asking what it was. Two cues fix it without
-   * touching the sim: a teal ground ring at the feet (the player faction's own hue,
-   * THEME.colors.player — the one colour no enemy tint ever takes), and a health bar
-   * outlined in that same teal instead of the default near-black.
+   * report, pointing at their character and asking what it was. Fixed with two cues: a
+   * teal ground ring at the feet, and a health bar outlined in that same teal instead of
+   * the default near-black.
+   *
+   * The ring half was dropped again 2026-08-14 (same user, two more screenshot rounds
+   * later): first report was the ring reading as "only half a shield" (it shared the
+   * body's own y=0 ground origin, so its top half sat behind the lifted body sprite and
+   * got painted over — fixed same day by moving it to a zIndex in FRONT of the body so
+   * the full ellipse always shows), second report was that the now-always-visible ring
+   * and the (correctly, separately fixed) `EnergyShieldFilter` rim-glow are both cyan
+   * and both wrap the character, so a live shield and "this is you" became
+   * indistinguishable at a glance — the exact ambiguity this marker exists to prevent,
+   * just moved from "ring vs body" to "ring vs shield". Asked the user how to resolve
+   * it; chosen fix: drop the ground ring entirely and rely on the health-bar teal
+   * outline alone (setHealth below) — it never occupies the same on-screen space as the
+   * shield glow, so the two can never be confused, at the cost of a slightly less
+   * prominent marker than a full-body ring gave.
    */
   setLocal(local: boolean): void {
     if (local === this.isLocal) return;
     this.isLocal = local;
-    if (local && !this.localRing) {
-      this.localRing = new Graphics();
-      this.localRing.zIndex = -2; // behind the status aura (-1) and the body
-      this.addChild(this.localRing);
-    }
-    if (this.localRing) {
-      // Squashed to the same 0.5 ratio Entity.makeShadow uses, so it reads as lying on
-      // the ground plane rather than as a halo standing up around the body.
-      const r = this.radiusPx * 1.2;
-      this.localRing.clear();
-      if (local) {
-        this.localRing
-          .ellipse(0, 0, r, r * 0.5)
-          .stroke({ color: THEME.colors.player, width: 2, alpha: 0.9 })
-          .ellipse(0, 0, r * 0.7, r * 0.35)
-          .stroke({ color: THEME.colors.player, width: 1, alpha: 0.3 });
-      }
-    }
     this.hpRatio = -1; // force setHealth to redraw the bar in its new outline style
   }
 
@@ -330,8 +324,8 @@ export class Actor extends Entity {
   // Kick off the death-dissolve shader (design/01 milestone 5, `DissolveFilter`) — called
   // once by Scene when this actor's id drops out of the engine's alive list, instead of
   // destroying the view that same tick. Hides everything except the dissolving body
-  // itself (weapon/aura/hp-bar/local-ring are all meaningless on a dead actor and would
-  // otherwise float oddly over a half-dissolved silhouette).
+  // itself (weapon/aura/hp-bar are all meaningless on a dead actor and would otherwise
+  // float oddly over a half-dissolved silhouette).
   startDissolve(): void {
     if (this.dissolveMs >= 0) return; // already dissolving — defensive, shouldn't double-fire
     this.dissolveFilter = new DissolveFilter();
@@ -339,7 +333,6 @@ export class Actor extends Entity {
     this.weaponGfx.visible = false;
     this.statusAura.visible = false;
     if (this.healthBar) this.healthBar.visible = false;
-    if (this.localRing) this.localRing.visible = false;
     this.applySkinFilters();
   }
 
