@@ -5,6 +5,7 @@ import { preloadWeaponSkins } from './render/weaponSkins';
 import { preloadUiArt } from './render/uiSkins';
 import { preloadBiomeTiles } from './render/biomeTiles';
 import { preloadEnvironmentSprites } from './render/environmentSprites';
+import { pinTextMeasurementToPaintCanvas } from './render/textMetrics';
 import { reportWebBootFailure } from './bootError';
 
 // Web entry. The WeChat entry is client/src/main.wechat.ts (loaded by client/wechat/game.js).
@@ -13,6 +14,9 @@ import { reportWebBootFailure } from './bootError';
 // assets is explicitly unverified (design/12's open questions), so that entry
 // stays on the Graphics placeholder until it's tested on-device.
 async function boot() {
+  // Before any Text exists — Pixi caches its measurement canvas on first use (see
+  // render/textMetrics.ts for why the default offscreen one mis-measures Cyrillic).
+  pinTextMeasurementToPaintCanvas();
   const platform = new WebPlatform();
   const app = await platform.createApp();
   const input = platform.createInput(app);

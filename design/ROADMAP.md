@@ -22,8 +22,8 @@ grid — deliberately much shorter than a gun's own max bullet travel, or the mo
 be seen moving in a normal-size room), then stop and shoot; `moveSpeedPerTick`/`engageRangeFp`
 are new optional per-blueprint knobs (`content/enemies.ts`) for a future kiting/rush/sniper
 variant, unused by any blueprint yet. No steering/pathfinding/kiting — see
-`ENGINE_VERSION_HISTORY.md`'s v37 entry for the full account); 2804 tests green across all 7
-workspace packages (engine 577 / client 1229 / server 186 / animator 444 / map-editor 260 /
+`ENGINE_VERSION_HISTORY.md`'s v37 entry for the full account); 2816 tests green across all 7
+workspace packages (engine 577 / client 1241 / server 186 / animator 444 / map-editor 260 /
 png-pipeline 20 / desktop-shell 81 / root build-script 7, `npm run check`, re-measured
 2026-08-15 — the previous snapshot's per-package figures had drifted, including a
 root-build-script count that was never 14) after fixing two real bugs found from a live player report ("cleared
@@ -1689,6 +1689,62 @@ dropped `clipToViewport`) were confirmed to fail the suite.
 suspect the pow2 filter-texture pool and your own UV maths before suspecting Pixi. See
 `01-rendering.md`'s "`vTextureCoord` is NOT 0..1" bullet for the reference write-up.
 Render-only, no `ENGINE_VERSION` impact.
+
+---
+
+## Russian settings labels render outside their buttons — Pixi's measure canvas ≠ its paint canvas (2026-08-15)
+
+A player screenshot of the Russian Settings screen, with an Italian one beside it for
+contrast: `ЯЗЫК: Русский` / `УПРАВЛЕНИЕ: ЛЕВША` / `ВКЛЮЧИТЬ ЗВУК` sat visibly outside — and
+to the LEFT of — their button backgrounds, while every Latin locale looked perfect. Same
+screen as the 2026-08-14 `autoWidth` pass, but a different bug: the boxes were sized
+correctly this time, and text that is *mis-centred* rather than merely overflowing cannot be
+a box-width problem.
+
+**Root cause, one layer below this project's code.** Pixi measures text on an
+`OffscreenCanvas` (`CanvasTextMetrics._canvas` prefers one when the host has it) but
+rasterises it on a DOM canvas (`CanvasTextGenerator` → `CanvasPool` →
+`DOMAdapter.get().createCanvas()`). Chrome does not resolve the CSS generic families
+identically in the two — an `OffscreenCanvas` has no document to read the user's configured
+fixed-width font from. With `bold 15px monospace` on Windows Chrome: `ААААА` measures 85px
+offscreen against 41.2px painted, while `AAAAA` measures 45px against 41.2px. So
+`Text.width` for the language label came back 205px against 107px of real glyphs, and
+`Button`'s `anchor.set(0.5)` centred the 205px phantom — putting the visible text ~49px left
+of its own box. Latin agreeing to within 10% is precisely why English/Italian QA never saw
+it, and why this should be read as "non-Latin scripts", not "Russian".
+
+Diagnosed by painting the same strings on both canvas kinds in the live page and scanning
+`getImageData` alpha for the first and last non-empty column — that immediately separated
+"measured too wide" from "painted too narrow" and ruled out the app's own layout maths
+(`estimateMonoWidth`'s 0.6em assumption was fine; the real advance is 0.55em, so the boxes
+had headroom all along).
+
+**Fix.** New `client/src/render/textMetrics.ts` — `pinTextMeasurementToPaintCanvas()` points
+Pixi's measurement canvas at a `DOMAdapter.get().createCanvas()`, the exact call the paint
+path uses, with Pixi's own `willReadFrequently` context setting, and clears font metrics
+already cached from the offscreen one. Called first thing in `main.ts` and `main.wechat.ts`,
+since Pixi memoises the canvas on first use. Going through `DOMAdapter` rather than
+`document` is what keeps it right on WeChat, where the adapter is weapp-adapter's. Nothing
+in `Settings.ts` / `widgets.ts` / `textWidth.ts` changed.
+
+**Verification.** Live via `claude-in-chrome` against the real dev server: all four Russian
+labels centred inside their boxes, and a scripted sweep of all 8 locales confirming every
+settings label's measured width now fits its box. 12 new tests
+(`client/src/render/textMetrics.test.ts`, client 1229 → 1241): Node has neither canvas kind,
+so both are faked with the real advances above — an unpinned Pixi picks the "offscreen" fake
+exactly as a browser does, which is what makes the without-fix/with-fix pair a real
+difference rather than two names for the same stub. They cover the pinning contract
+(including that Pixi's own `measureText` genuinely routes through the pinned context, so a
+version bump renaming the memoised statics fails loudly instead of silently reverting), the
+label-inside-box geometry with and without the fix, an all-locales sweep over the real
+`Settings` screen, and a `?raw` source check that both entries still call it ahead of
+`new Game(` (neither entry can be imported in a test — importing runs `boot()`). Mutation-
+checked: no-oping the fix fails 8 of 12, deleting the `main.ts` call fails the wiring test.
+One supporting file, `client/src/vite-env.d.ts`, declares `*?raw`, since the workspace
+tsconfigs set `"types": []` and never pull in `vite/client`.
+
+See `01-rendering.md`'s "Text measurement" section for the reference write-up and
+`17-i18n.md` for the i18n-side account. Render-only, no `ENGINE_VERSION` impact.
 
 ---
 

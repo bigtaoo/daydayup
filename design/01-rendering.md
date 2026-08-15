@@ -76,6 +76,58 @@ Otherwise you get the "gun floating on the chest while facing away" artifact.
 
 For this game's scale (rooms, pillars, crates, enemies) these are largely avoidable. If true continuous 3D occlusion is needed → fall back to a Three.js orthographic camera (see the re-evaluation trigger in 00, Decision 1).
 
+## Text measurement (Pixi's measure canvas is NOT its paint canvas)
+
+Every piece of UI text in this project is a Pixi `Text` on a `fontFamily: 'monospace'`
+style. Two independent canvases are involved in drawing one, and **they can resolve the
+same font string to different fonts**:
+
+- **Measuring** — `CanvasTextMetrics._canvas` prefers `new OffscreenCanvas(0, 0)` whenever
+  the host has one, falling back to `DOMAdapter.get().createCanvas()` only if it doesn't.
+- **Painting** — `CanvasTextGenerator` goes through `CanvasPool`, which always uses
+  `DOMAdapter.get().createCanvas()` (a real `document.createElement('canvas')` in a browser).
+
+Chrome does not resolve the CSS generic families (`monospace`, `sans-serif`, `serif`, …)
+identically in those two contexts — an `OffscreenCanvas` has no document/CSS context to
+read the user's configured fixed-width font from, so it falls back to a different family.
+Measured on Windows Chrome 2026-08-15 with `bold 15px monospace`:
+
+| string | DOM canvas (painted) | OffscreenCanvas (measured) |
+| --- | --- | --- |
+| `AAAAA` (Latin) | 41.2px | 45px |
+| `ААААА` (Cyrillic) | 41.2px | 85px |
+
+Both canvases are internally consistent (each *paints* what it *measures*, confirmed by
+scanning `getImageData` alpha for the first and last non-empty column) — the defect is
+purely that Pixi mixes the two. The visible result is a `Text` whose `width` is up to ~2x
+its painted width: `anchor.set(0.5)` then centres the oversized measurement and the glyphs
+land far left of where they belong. That is what produced the reported "Russian settings
+labels sit outside their buttons" bug (`17-i18n.md`), and it silently affects anything else
+sized or wrapped from Pixi's metrics.
+
+**Fix:** `render/textMetrics.ts`'s `pinTextMeasurementToPaintCanvas()` overwrites the
+statics Pixi memoises its measurement canvas into (`CanvasTextMetrics.__canvas` /
+`__context`) with a `DOMAdapter`-created canvas, using Pixi's own `willReadFrequently`
+context setting, and clears any font metrics already cached from the offscreen one. Going
+through `DOMAdapter` rather than `document` directly is what keeps it correct on WeChat,
+where the adapter is weapp-adapter's. Both entries (`main.ts`, `main.wechat.ts`) call it
+before anything else, because the canvas is memoised on first use.
+
+`ui/textWidth.ts`'s `estimateMonoWidth` is unaffected and still the right tool for *sizing*
+a backing box (it needs no canvas at all, so it works under vitest); this is only about the
+measurement Pixi does internally when it lays out and centres the glyphs themselves.
+
+Covered by `render/textMetrics.test.ts`. Node has neither canvas kind, so the test fakes
+both — with the real advances from the table above, so an unpinned Pixi picks the
+"offscreen" fake exactly as it does in a browser and "pinned vs. not" is a real difference
+rather than two names for the same stub. A side effect worth knowing: with a context pinned
+this way, `Text.width` becomes computable under vitest at all, which is what lets those
+tests assert on label-inside-box geometry that otherwise needs a browser.
+
+**General lesson:** when text is *mis-centred* rather than merely mis-sized, and only in
+one script, compare Pixi's measurement canvas against its paint canvas before suspecting
+the app's own layout maths.
+
 ## Fidelity roadmap (by priority)
 
 1. **[verified in demo]** Tilted view + Y-sort + height/shadow + additive-blend FX.

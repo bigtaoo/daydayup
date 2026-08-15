@@ -5,11 +5,16 @@
 import 'pixi.js/unsafe-eval';
 import { Game } from './game/Game';
 import { WeChatPlatform } from './platform/wechat/WeChatPlatform';
+import { pinTextMeasurementToPaintCanvas } from './render/textMetrics';
 import { reportWeChatBootFailure } from './bootError';
 
 // WeChat mini-game entry. It is loaded by client/wechat/game.js, which MUST have
 // already required weapp-adapter so window/document/Image exist before Pixi imports.
 async function boot() {
+  // Same measure-canvas/paint-canvas pinning as the web entry (render/textMetrics.ts) —
+  // a no-op-equivalent here if weapp-adapter exposes no OffscreenCanvas, but the two
+  // entries should not diverge on how text is measured.
+  pinTextMeasurementToPaintCanvas();
   const platform = new WeChatPlatform();
   const app = await platform.createApp();
   const input = platform.createInput(app);
