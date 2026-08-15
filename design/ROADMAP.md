@@ -5,7 +5,7 @@ closed loop the design docs describe, and the running record of how each phase a
 landed. Phases are written top-to-bottom in dependency order; each one keeps its dated
 shipped-notes underneath it, so a phase section is both the plan and the history.
 
-**Current built state (2026-08-14).** `ENGINE_VERSION` **37** (32: ground-weapon pickup is
+**Current built state (2026-08-15).** `ENGINE_VERSION` **37** (32: ground-weapon pickup is
 click-driven; 33: manual aim removed entirely; 34: co-resident PvE room/door model, engine +
 client rendering; 35: fully-realized branching — see the Room & door model section below;
 same-day map-editor door placement, the `layout: 'graph2d'` real-2D-layout follow-up, AND the
@@ -22,10 +22,11 @@ grid — deliberately much shorter than a gun's own max bullet travel, or the mo
 be seen moving in a normal-size room), then stop and shoot; `moveSpeedPerTick`/`engageRangeFp`
 are new optional per-blueprint knobs (`content/enemies.ts`) for a future kiting/rush/sniper
 variant, unused by any blueprint yet. No steering/pathfinding/kiting — see
-`ENGINE_VERSION_HISTORY.md`'s v37 entry for the full account); 2740 tests green across all 7
-workspace packages (engine 568 / client 1167 / server 186 / animator 444 / map-editor 260 /
-png-pipeline 20 / desktop-shell 81 / root build-script 14, `npm run check`, verified
-2026-08-14) after fixing two real bugs found from a live player report ("cleared
+`ENGINE_VERSION_HISTORY.md`'s v37 entry for the full account); 2804 tests green across all 7
+workspace packages (engine 577 / client 1229 / server 186 / animator 444 / map-editor 260 /
+png-pipeline 20 / desktop-shell 81 / root build-script 7, `npm run check`, re-measured
+2026-08-15 — the previous snapshot's per-package figures had drifted, including a
+root-build-script count that was never 14) after fixing two real bugs found from a live player report ("cleared
 the room, door's unlocked, still can't walk through it") — see the Room & door model
 section below for the full account. Before that, closing a real gap the test-coverage audit
 pass had flagged and left open: `onRequestSave` (tools/desktop-shell/src/preload.ts) now
@@ -1596,64 +1597,98 @@ the no-renderer technique `Minimap.test.ts` established), and the press-vs-tap c
 
 ---
 
-## Shield glow corrupts under non-integer camera zoom — root-caused + fixed (2026-08-15)
+## Shield ring renders as a partial crescent — real root cause found, first fix reverted (2026-08-15)
 
-Same lineage as the 2026-08-12 shield-centring fixes (`## Shield-centering follow-up`
-above) — same visual symptom (a lopsided/partial shield ring) but a different root
-cause. User report: correct on floors 1/2, a partial crescent on floor 3, reproducible
-every time on entry; a follow-up report then ruled out every per-actor theory (doesn't
-track aim/movement, and survives starting a brand-new run within the same page — only a
-full reload fixed it), which pointed at something tied to the camera/render pipeline
-itself rather than any specific actor or floor.
+The end of the lineage that runs through `## Shield-centering follow-up` (2026-08-12) and
+the ground-ring removal (2026-08-14): same reported symptom every time — a lopsided or
+partial shield ring — and, it turns out, one cause that all the earlier fixes only ever
+worked around.
 
-Diagnosed without playing through real floors: mirrored `ExtractionSystem
-.resolveDescend()`'s own state mutations from the browser console (bump
-`state.floorIndex`, clear `dungeonRooms`/`dungeonDoors`/`dungeonRoomRuntime`/
-`dungeonRoomRects`/`dungeonRoomIndexById`/`dungeonBaseWalls`, push a `descend` event,
-then a handful of `game['update'](16)` ticks) to jump straight to the reported floor in
-about a second, 100% reproducible on demand. Root cause, confirmed live via
-`claude-in-chrome` (monkey-patching `FxController.updateCamera` to force specific zoom
-values and screenshotting): Pixi v8's `Filter` system visibly corrupts a per-actor custom
-`Filter` (`EnergyShieldFilter`, and `NormalLitFilter` — every actor always carries the
-latter) whenever the filtered node sits under an ancestor with a NON-INTEGER scale.
-`zoom=1`/`2` rendered a clean ring; `zoom=1.5`/`1.32`/`1.818` did not — reproduced with
-both the game's own fixed `filterArea` *and* Pixi's default auto-computed bounds, and
-independent of the outer `layers.world`-level post-fx (vignette/chromatic) or of
-rounding the camera container's own pixel position. `FxController.updateCamera`'s
-cover-fit zoom (`## Camera cover-fit + weapon-slot HUD chip` above) is a non-integer
-factor any time a room's size doesn't divide the viewport evenly — routinely, not a
-rare edge case — so this was never really "floor 3" specifically, just wherever a
-particular room-size roll first landed on a non-1 zoom.
+**The false start (commit `d5c06db`, reverted here).** Live experiments that day
+(monkey-patching `FxController.updateCamera` to force specific zoom values and
+screenshotting via `claude-in-chrome`) showed `zoom=1`/`2` rendering a clean ring while
+`zoom=1.5`/`1.32`/`1.818` did not, seemingly independent of `filterArea`, the outer
+`layers.world` post-fx, and camera pixel-rounding. That was read as "Pixi v8 corrupts a
+per-actor custom `Filter` under a non-integer ancestor scale," and fixed architecturally:
+a new `EntityLayerCompositor` baked `layers.entities` to a `RenderTexture` at a fixed 1:1
+scale once per frame so every filter rendered under an unscaled ancestor. The user's next
+two reports killed it — the ring was **still** partial, and the whole picture had gotten
+*lower*-resolution.
 
-Considered and rejected before landing the fix (reasoned through, not implemented):
-snapping the camera zoom itself to the nearest integer would undo the 2026-08-12
-cover-fit void-elimination work for most rooms that ever zoom at all — rounding down
-reintroduces void on a room whose true zoom sits just above 1, rounding up visibly
-over-zooms one whose true zoom sits just below 2; dropping the shield's shader for a
-plain non-filtered Graphics ring would have sidestepped the bug too, at the cost of the
-shimmer effect — not needed once the real architectural fix panned out.
+**Why the workaround cost image quality.** `RenderTexture.create()` defaults to
+`resolution: 1` with no antialias, while the renderer runs at
+`Math.min(devicePixelRatio, 2)` (`platform/web/WebPlatform.ts`). Baking `layers.entities`
+at 1:1 and then displaying that texture at the camera zoom sampled every actor / bullet /
+pickup / pillar / portal at roughly `1/(2 x zoom)` of the rest of the frame before
+upscaling it — i.e. a third to a fifth of the density of the ground art beside it. Two
+smaller regressions rode along: additive children (status auras, bullets) composited into
+a transparent texture first and so lost their `add` blend against the ground, and every
+frame paid an extra full-room-sized render pass regardless of how much of the room was on
+screen.
 
-**Shipped fix:** a new `EntityLayerCompositor` (`client/src/game/scene/
-EntityLayerCompositor.ts`) bakes `layers.entities` — every Y-sorted actor/bullet/pickup/
-pillar/portal — to a texture at a FIXED 1:1 scale once per frame, driven from
-`FxController.updateCamera` right where `worldSize` is already computed (`attach()` now
-takes the renderer). That texture is displayed via a plain Sprite that `Layers
-.mountEntitiesView` inserts into `layers.world` in `entities`' old paint-order slot
-(ground/shadow/[entities' stand-in]/fx — unchanged from `01-rendering.md`'s layer
-table). Every custom Filter inside now always renders under an UNSCALED ancestor; the
-baked texture is then just a normal Sprite, which (confirmed live, same zoom values)
-renders correctly at any zoom, fractional or not — same as the ground/wall art already
-did. One texture, refreshed once per frame — not one per actor — so the added cost is a
-single extra render pass sized to the room, not `O(actor count)`.
+**The actual root cause — `vTextureCoord` is not 0..1.** Pixi's `defaultFilterVert` emits
+`vTextureCoord = aPosition * (uOutputFrame.zw * uInputSize.zw)`, so the varying spans
+`0 .. (filtered region / allocated texture)`. Filter inputs come from
+`TexturePool.getOptimalTexture`, which rounds **each dimension up to the next power of
+two** — a 130px-wide region is handed a 256px-wide texture and `vTextureCoord.x` never
+exceeds 0.508. Every shader in `fx/filters.ts` that wrote `vTextureCoord - vec2(0.5)` was
+therefore centring on the *pool texture*, not on the sprite. A region's pixel size is
+`filterArea x camera zoom x renderer resolution`, so crossing a pow2 boundary flips the
+effect from correctly centred to almost entirely off-region with no code change at all.
+Worked through with the player's real numbers (16px body radius → a 96px `filterArea`
+square + 2px `NormalLitFilter` padding = 100 world px, at `resolution: 2`):
 
-`Game.ts` (already over its file-length baseline) ended up a single one-line diff
-(`this.fx.attach()` → `this.fx.attach(this.app.renderer)`) — the rest of the wiring
-lives in `FxController`/`Layers`/the new `EntityLayerCompositor`, all well under the
-500-line convention. 9 new tests (`EntityLayerCompositor.test.ts` ×5 covering the
-bake/resize/reuse/clamp behaviour in isolation; `FxController.test.ts` ×4 pinning the
-`attach()`/`updateCamera` wiring itself) plus 2 updated (`layers.test.ts`, now covering
-`mountEntitiesView`). Full client suite green, `tsc --noEmit` clean, `check:filelength`
-clean throughout. Render-only, no `ENGINE_VERSION` impact.
+| zoom | region px | pooled texture | where `0.5` actually landed |
+|------|-----------|----------------|-----------------------------|
+| 1    | 200       | 256            | 0.64 — mildly off, read as "fine" |
+| 1.32 | 264       | 512            | **0.97** — ring almost entirely outside the region |
+| 1.5  | 300       | 512            | **0.85** — badly lopsided |
+| 2    | 400       | 512            | 0.64 — read as "fine" |
+
+That table *is* the "integer zoom works, fractional doesn't" evidence that produced the
+wrong diagnosis. It also explains why the reverted workaround didn't help: baking at
+`resolution: 1` made the region 100px → a 128px texture → centre at 0.64, still visibly
+off. This was never zoom-specific and never a Pixi defect; it is this repo's own UV maths,
+and it had been wrong since the filters were written.
+
+**Shipped fix.** A shared `FRAME_UV` GLSL prelude in `client/src/game/fx/filters.ts`:
+`frameUv()` remaps `vTextureCoord` to a true 0..1 across the filtered region,
+`frameOffset()` converts a region-space displacement back into texcoord space, and
+`clampToFrame()` keeps a displaced sample off the pooled texture's stale neighbouring
+pixels (which hold whatever the last filter to borrow that pool entry left there, not
+transparent black). Applied to `EnergyShieldFilter` (ring centre), `VignetteFilter` /
+`ChromaticAberrationFilter` (screen centre — both were silently off-centre too),
+`DissolveFilter` (cell grid, whose grain had been rescaling with the camera), and
+`HeatHazeFilter` (wobble frequency + amplitude). `OutlineFilter` / `NormalLitFilter`
+deliberately do **not** use it: they only ever step by a single texel, and `uInputSize.zw`
+is already exactly that. `EnergyShieldFilter` additionally sets `clipToViewport: false`,
+because `FilterSystem._calculateFilterBounds` otherwise intersects the region with the
+viewport and would re-introduce a lopsided ring for a shielded actor standing at a screen
+edge — safe only because `filterArea` already bounds that filter to a small fixed square,
+and deliberately not done for the two screen-wide post-fx, which need the clip to size
+themselves to the viewport.
+
+**Verification.** Live via `claude-in-chrome` at forced zooms 1.32 / 1.5 / 1.818 / 2.5 —
+complete, symmetric ring at every one — plus the player jammed into a screen corner
+(ring stays centred, merely cropped by the screen), the burn / hit-flash / dissolve
+shaders exercised in the same frame, and no console errors (a precision mismatch on the
+newly-declared `uOutputFrame` / `uInputClamp` uniforms would fail to link at runtime, so
+the shaders rendering at all is itself the proof they linked). 18 new tests: two pinning
+the upstream Pixi behaviours the fix depends on (the `defaultFilterVert` formula and
+`nextPow2` pooling — neither is public API, so a version bump could change either
+silently); a numeric model of the mechanism built on Pixi's real `nextPow2` that
+reproduces the zoom table above from first principles; shader-source contract tests
+asserting each region-relative filter both *calls* `frameUv` and *carries its definition
+exactly once* (a mutation test proved the weaker "calls it" assertion alone passes happily
+while the shader fails to link at runtime); and a `layers.test.ts` guard that `entities`
+renders live inside `world` with no baked-texture stand-in, so the reverted approach can't
+come back unnoticed. All three injected regressions (old shield UV, stripped prelude,
+dropped `clipToViewport`) were confirmed to fail the suite.
+
+**Lesson worth keeping:** when a filter artifact switches on and off with the camera zoom,
+suspect the pow2 filter-texture pool and your own UV maths before suspecting Pixi. See
+`01-rendering.md`'s "`vTextureCoord` is NOT 0..1" bullet for the reference write-up.
+Render-only, no `ENGINE_VERSION` impact.
 
 ---
 

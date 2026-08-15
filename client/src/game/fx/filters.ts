@@ -11,7 +11,57 @@ import { Filter, GlProgram, UniformGroup, defaultFilterVert } from 'pixi.js';
 // `main.wechat.ts`'s existing `pixi.js/unsafe-eval` import already covers ALL Pixi
 // uniform/shader upload (design/04) — nothing filter-specific is needed for WeChat.
 
-const vignetteFrag = /* glsl */ `
+// Shared GLSL prelude for every filter below that needs a position WITHIN the filtered
+// region (a centre, a cell grid, a UV displacement) rather than just "sample where I am".
+//
+// The trap it exists to close (root-caused 2026-08-15 from a long-running "shield ring
+// renders as a partial/lopsided crescent" report): Pixi v8's default filter vertex shader
+// emits `vTextureCoord = aPosition * (uOutputFrame.zw * uInputSize.zw)`, so it spans
+// 0..(region size / ALLOCATED TEXTURE size) — NOT 0..1. Those two differ almost always,
+// because filter inputs come from `TexturePool.getOptimalTexture`, which rounds each
+// dimension up to the next power of two: a 130px-wide region is handed a 256px-wide
+// texture, and `vTextureCoord` then only ever reaches 0.508. Any shader that treats 0.5
+// as "the middle" is therefore centred on the POOL TEXTURE's middle, which sits at
+// `0.5 * source/frame` in region terms — off the region's own edge entirely once the
+// region's pixel size lands just past a power of two.
+//
+// That is what produced the crescent: the region's pixel size is `filterArea × zoom ×
+// renderer resolution`, so crossing a pow2 boundary flips the glow from centred to gone
+// with no code change — which is exactly why it looked like "integer camera zoom is fine,
+// 1.5/1.32 is broken" and got misdiagnosed (commit d5c06db, reverted) as Pixi corrupting
+// filters under a non-integer ancestor scale. It is neither zoom- nor Pixi-specific: it
+// is this file's own UV math, and it always applied.
+//
+// `OutlineFilter`/`NormalLitFilter` below deliberately do NOT use this — they only ever
+// step by one texel (`uInputSize.zw` IS the correct texel size, since it is the allocated
+// texture's), never by a position, so they were never affected.
+const FRAME_UV = /* glsl */ `
+uniform highp vec4 uInputSize;   // xy = allocated filter texture size, zw = 1/xy
+uniform highp vec4 uOutputFrame; // zw = the filtered region's own size
+uniform highp vec4 uInputClamp;  // xy / zw = min / max texcoord still inside the region
+
+/** \`vTextureCoord\` remapped to a true 0..1 across the filtered REGION. */
+vec2 frameUv(vec2 coord)
+{
+    return coord * uInputSize.xy * (1.0 / uOutputFrame.zw);
+}
+
+/** A region-space (0..1) offset expressed back in texcoord space — the inverse of the
+ *  above, for shaders that displace their sample point rather than just read one. */
+vec2 frameOffset(vec2 delta)
+{
+    return delta * uOutputFrame.zw * uInputSize.zw;
+}
+
+/** Keep a displaced sample inside the region: the pooled texture's area beyond it holds
+ *  whatever the LAST filter to borrow that pool entry left there, not transparent black. */
+vec2 clampToFrame(vec2 coord)
+{
+    return clamp(coord, uInputClamp.xy, uInputClamp.zw);
+}
+`;
+
+const vignetteFrag = FRAME_UV + /* glsl */ `
 in vec2 vTextureCoord;
 out vec4 finalColor;
 
@@ -22,7 +72,7 @@ uniform float uRadius;
 void main(void)
 {
     vec4 color = texture(uTexture, vTextureCoord);
-    vec2 uv = vTextureCoord - vec2(0.5);
+    vec2 uv = frameUv(vTextureCoord) - vec2(0.5);
     float dist = length(uv) * 1.4142135;
     float vig = smoothstep(uRadius, 1.0, dist);
     color.rgb *= (1.0 - vig * uIntensity);
@@ -30,10 +80,10 @@ void main(void)
 }
 `;
 
-/** Darkens the screen edges — a first-pass approximation (`vTextureCoord` is the
- * filtered region's own UV space, not a guaranteed whole-viewport 0..1, so this reads
- * correctly only while `world` roughly fills the viewport, same simplification the
- * chromatic-aberration filter below makes). */
+/** Darkens the screen edges — a first-pass approximation (the filtered region is `world`'s
+ * viewport-clipped bounds, not exactly the viewport, so this reads as "centred on what's
+ * on screen" rather than on a true screen centre; `frameUv` at least makes it centred on
+ * that region instead of on the pool texture, see FRAME_UV above). */
 export class VignetteFilter extends Filter {
   constructor(intensity = 0.35, radius = 0.55) {
     const glProgram = GlProgram.from({ vertex: defaultFilterVert, fragment: vignetteFrag, name: 'vignette-filter' });
@@ -54,7 +104,7 @@ export class VignetteFilter extends Filter {
   set radius(v: number) { this.resources.vignetteUniforms.uniforms.uRadius = v; }
 }
 
-const chromaticFrag = /* glsl */ `
+const chromaticFrag = FRAME_UV + /* glsl */ `
 in vec2 vTextureCoord;
 out vec4 finalColor;
 
@@ -63,10 +113,13 @@ uniform float uAmount;
 
 void main(void)
 {
-    vec2 dir = vTextureCoord - vec2(0.5);
-    float r = texture(uTexture, vTextureCoord - dir * uAmount).r;
+    // Split direction is region-space (outward from the region's centre), but the sample
+    // offset it produces has to be applied in texcoord space — see FRAME_UV above.
+    vec2 dir = frameUv(vTextureCoord) - vec2(0.5);
+    vec2 shift = frameOffset(dir * uAmount);
+    float r = texture(uTexture, clampToFrame(vTextureCoord - shift)).r;
     float g = texture(uTexture, vTextureCoord).g;
-    float b = texture(uTexture, vTextureCoord + dir * uAmount).b;
+    float b = texture(uTexture, clampToFrame(vTextureCoord + shift)).b;
     float a = texture(uTexture, vTextureCoord).a;
     finalColor = vec4(r, g, b, a);
 }
@@ -91,7 +144,7 @@ export class ChromaticAberrationFilter extends Filter {
   set amount(v: number) { this.resources.chromaticUniforms.uniforms.uAmount = v; }
 }
 
-const shieldFrag = /* glsl */ `
+const shieldFrag = FRAME_UV + /* glsl */ `
 in vec2 vTextureCoord;
 out vec4 finalColor;
 
@@ -103,7 +156,11 @@ uniform float uTime;
 void main(void)
 {
     vec4 color = texture(uTexture, vTextureCoord);
-    vec2 uv = vTextureCoord - vec2(0.5);
+    // Region-normalized, NOT raw \`vTextureCoord\` — this ring's centre is the whole point
+    // of the filter and the raw coord's midpoint is the pool texture's, not the actor's.
+    // See FRAME_UV above for the full story (this is the bug that produced the long-
+    // running "shield renders as a partial crescent" report).
+    vec2 uv = frameUv(vTextureCoord) - vec2(0.5);
     float dist = length(uv) * 1.4142135;
     // A band hugging the silhouette's own bounding circle, not the true alpha edge —
     // same UV-distance trick as VignetteFilter above, so it needs no extra per-skin
@@ -130,6 +187,15 @@ export class EnergyShieldFilter extends Filter {
     const glProgram = GlProgram.from({ vertex: defaultFilterVert, fragment: shieldFrag, name: 'energy-shield-filter' });
     super({
       glProgram,
+      // The rim ring is positioned relative to the filtered REGION's centre, so the
+      // region has to stay the full `Actor.filterArea` square. Pixi otherwise intersects
+      // it with the viewport (`FilterSystem._calculateFilterBounds`), which would crop
+      // the square — and therefore move its centre — for any shielded actor standing
+      // near a screen edge, reintroducing the lopsided ring in exactly that spot. Safe
+      // to disable here because `filterArea` already bounds this filter to a small fixed
+      // square (3× body radius); it is NOT safe for the two screen-wide post-fx above,
+      // which rely on the clip to size themselves to the viewport.
+      clipToViewport: false,
       resources: {
         shieldUniforms: new UniformGroup({
           uColor: { value: hexToRgb(color), type: 'vec3<f32>' },
@@ -210,7 +276,7 @@ export class OutlineFilter extends Filter {
   set alpha(v: number) { this.resources.outlineUniforms.uniforms.uAlpha = v; }
 }
 
-const dissolveFrag = /* glsl */ `
+const dissolveFrag = FRAME_UV + /* glsl */ `
 in vec2 vTextureCoord;
 out vec4 finalColor;
 
@@ -226,7 +292,10 @@ float hash(vec2 p)
 void main(void)
 {
     vec4 color = texture(uTexture, vTextureCoord);
-    float n = hash(floor(vTextureCoord * 36.0));
+    // 36 cells across the SILHOUETTE — off the raw coord the cell count would instead
+    // scale with the pooled texture, so the burn grain visibly changed size with the
+    // camera zoom (FRAME_UV above).
+    float n = hash(floor(frameUv(vTextureCoord) * 36.0));
     if (n < uProgress) discard;
     float edge = smoothstep(0.0, 0.14, n - uProgress);
     color.rgb += uColor * (1.0 - edge);
@@ -259,7 +328,7 @@ export class DissolveFilter extends Filter {
   set progress(v: number) { this.resources.dissolveUniforms.uniforms.uProgress = v; }
 }
 
-const heatHazeFrag = /* glsl */ `
+const heatHazeFrag = FRAME_UV + /* glsl */ `
 in vec2 vTextureCoord;
 out vec4 finalColor;
 
@@ -269,9 +338,11 @@ uniform float uTime;
 
 void main(void)
 {
-    vec2 uv = vTextureCoord;
-    float wobble = sin(uv.y * 40.0 + uTime * 0.012) * 0.012 * uIntensity;
-    uv.x += wobble;
+    // Both the wobble's vertical frequency and its horizontal amplitude are meant to be
+    // fractions of the SILHOUETTE, so both are computed in region space (FRAME_UV above)
+    // and the resulting displacement converted back before sampling.
+    float wobble = sin(frameUv(vTextureCoord).y * 40.0 + uTime * 0.012) * 0.012 * uIntensity;
+    vec2 uv = clampToFrame(vTextureCoord + frameOffset(vec2(wobble, 0.0)));
     finalColor = texture(uTexture, uv);
 }
 `;

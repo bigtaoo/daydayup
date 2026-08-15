@@ -1,9 +1,8 @@
-import { BlurFilter, Container, Graphics, type Renderer } from 'pixi.js';
+import { BlurFilter, Container, Graphics } from 'pixi.js';
 import type { Layers } from '../scene/layers';
 import { VignetteFilter, ChromaticAberrationFilter } from './filters';
 import { ParticleSystem } from './Particles';
 import { LightRegistry } from './lighting';
-import { EntityLayerCompositor } from '../scene/EntityLayerCompositor';
 
 const FX_LIFE_MS = 170; // flash/trail lifetime
 const MAX_SHAKE_PX = 14; // camera-shake offset at full trauma (design/01 milestone 3)
@@ -49,23 +48,12 @@ export class FxController {
    *  to convert a screen-space mouse point back to world space (Game.ts reads it
    *  into `cam.zoom`). 1 until the first updateCamera call (no zoom applied yet). */
   zoom = 1;
-  // Bakes `layers.entities` to a texture at a fixed 1:1 scale every frame instead of
-  // letting it sit directly inside the live-zoomed `layers.world` — see its own doc
-  // comment (found 2026-08-15: Pixi's Filter system, e.g. the shield glow, corrupts
-  // under a non-integer camera zoom otherwise). `render()` is driven from `updateCamera`
-  // below, right where this frame's `worldSize` is already computed.
-  private readonly entityCompositor = new EntityLayerCompositor(this.layers.entities);
-  private renderer: Renderer | null = null;
 
   constructor(private readonly layers: Layers) {}
 
-  /** Wire post-processing filters + mount the particle view — call once from
-   *  Game.start(). `renderer` is stashed for the per-frame entity-layer bake in
-   *  updateCamera below (Game.ts hands `app.renderer`). */
-  attach(renderer: Renderer): void {
-    this.renderer = renderer;
+  /** Wire post-processing filters + mount the particle view — call once from Game.start(). */
+  attach(): void {
     this.layers.world.filters = [this.vignette, this.chromatic];
-    this.layers.mountEntitiesView(this.entityCompositor.view);
     // Bloom-lite: a modest blur directly on the ADDITIVE-blended fx layer (muzzle
     // flashes/trails/particles) gives a cheap glow halo without a real multi-pass
     // bright-pass bloom (first-pass approximation, design/01's own "milestone" framing).
@@ -160,12 +148,6 @@ export class FxController {
     this.layers.world.scale.set(zoom);
     this.layers.world.x = cx + shakeX;
     this.layers.world.y = cy + shakeY;
-
-    // Re-bake `entities` at THIS frame's positions (see entityCompositor's own doc
-    // comment) — `zoom` above is exactly the non-integer factor that corrupts a
-    // per-actor custom Filter if `entities` rendered live inside the scaled `world`
-    // instead. `renderer` is only unset in tests that never call `attach()`.
-    if (this.renderer) this.entityCompositor.render(this.renderer, worldW, worldH);
   }
 
   /** Bump camera-shake trauma (clamped to 1) — call from consumeEvents on an impactful moment. */

@@ -25,24 +25,6 @@ Goal: a fixed tilted view (not pure top-down; slightly forward-leaning, like Sou
   before converting it to world space — moot since `10` v33 removed manual aim; the
   camera zoom itself is otherwise unaffected.)
 
-### Entity-layer compositor (2026-08-15)
-
-Cover-fit zoom is a non-integer factor any time a room's size doesn't divide the
-viewport evenly — routinely, not a rare case. Pixi v8's `Filter` system visibly corrupts
-a per-actor custom `Filter` (`EnergyShieldFilter`, `NormalLitFilter` — every actor always
-carries the latter) whenever the filtered node sits under an ancestor with a non-integer
-scale (confirmed live: `zoom=1`/`2` renders cleanly, `zoom=1.5`/`1.32`/`1.818` does not,
-independent of `filterArea`, the outer `world`-level post-fx, or camera pixel-rounding —
-see ROADMAP's dated entry for the full diagnosis). Fix: `EntityLayerCompositor`
-(`client/src/game/scene/EntityLayerCompositor.ts`) bakes the whole `entities` layer to a
-texture at a FIXED 1:1 scale once per frame (driven from `updateCamera`, sized to the
-room's own px extent), then a plain Sprite showing that texture — immune to the bug,
-confirmed live at the same zoom values — is what `Layers.mountEntitiesView` actually
-inserts into `world` in `entities`' paint-order slot. Every custom Filter inside
-`entities` now always renders under an unscaled ancestor. One texture refreshed once per
-frame, not one per actor, so the added cost is a single extra render pass sized to the
-room, not per-actor.
-
 ## Coordinates & height model
 
 Every entity has two Y values:
@@ -71,10 +53,6 @@ Render transform: `screen.x = gx`, `screen.y = gy - z`. A large part of the 3D f
 | entities | characters / enemies / pillars / bullets | **Y-sort (zIndex = gy)** |
 | fx | muzzle flashes, explosions, deflect flashes, per-element bullet trails (additive blend) | overlay |
 | ui | HP, weapon, crosshair | topmost |
-
-`entities` is not actually a direct child of `world` in the paint order above — see
-"Entity-layer compositor" below for why and what stands in its place. The paint-order
-slot and Y-sort behaviour are unchanged either way.
 
 > The lighting layer (lightmap) is later inserted between entities and fx, composited with multiply blend. See the roadmap.
 
@@ -135,15 +113,9 @@ For this game's scale (rooms, pillars, crates, enemies) these are largely avoida
      Fixed by measuring `skin.view.getLocalBounds()` once at a neutral rest pose and
      centring Y on that instead — ROADMAP's 2026-08-12 "Shield-centering follow-up" entry
      has the full account, including why the first fix's own test never caught this (it
-     only ever exercised the Graphics placeholder, not a real loaded rig).
-     **Follow-up (2026-08-15):** a THIRD lopsided-glow report, different root cause again
-     — Pixi's `Filter` system itself corrupts a per-actor custom `Filter` whenever the
-     filtered node sits under an ancestor with a non-integer scale, and the room-zoom
-     feature above (`FxController.updateCamera`'s cover-fit) is routinely non-integer.
-     See "Entity-layer compositor" below and ROADMAP's "Shield glow corrupts under
-     non-integer camera zoom" entry for the full account — the fix lives one layer up
-     from `EnergyShieldFilter` itself (how `entities` gets composited into `world`), not
-     in the shield filter's own math.
+     only ever exercised the Graphics placeholder, not a real loaded rig). A symmetric
+     `filterArea` is necessary but was NOT sufficient — see the `vTextureCoord` gotcha
+     below, which is what finally closed this bug out on 2026-08-15.
    - **`OutlineFilter`** — a REAL alpha-edge-detected silhouette outline (samples the
      actual rendered alpha at 4 neighbour texels via Pixi's auto-bound `uInputSize` filter
      uniform), unlike the shield's approximation — needed because an outline must hug
@@ -176,3 +148,36 @@ For this game's scale (rooms, pillars, crates, enemies) these are largely avoida
      shader has no default and Pixi's own precision header pins it to `mediump`. Any
      future filter that reads `uInputSize` (or another Pixi-auto-bound uniform) in its
      fragment stage needs `uniform highp vec4 uInputSize;`, not a bare `uniform vec4`.
+   - **`vTextureCoord` is NOT 0..1 — the `FRAME_UV` gotcha (root-caused 2026-08-15, the
+     real end of the "lopsided shield ring" saga).** Pixi's default filter vertex shader
+     emits `vTextureCoord = aPosition * (uOutputFrame.zw * uInputSize.zw)`, so it spans
+     `0 .. (filtered region / allocated texture)`. Those two differ almost always: filter
+     inputs come from `TexturePool.getOptimalTexture`, which rounds each dimension up to
+     the next power of two, so a 130px-wide region is handed a 256px-wide texture and
+     `vTextureCoord.x` never exceeds 0.508. Any shader that treats `0.5` as "the middle"
+     is therefore centred on the POOL TEXTURE, not on the sprite — and since a region's
+     pixel size is `filterArea × camera zoom × renderer resolution`, crossing a pow2
+     boundary flips the effect from correctly centred to entirely off-region with no code
+     change. That is what produced the long-reported partial/crescent shield ring, and
+     what made it look like "integer camera zoom is fine, 1.5/1.32 is broken" — which got
+     misdiagnosed (commit `d5c06db`, since reverted) as Pixi corrupting filters under a
+     non-integer ancestor scale, and "fixed" by baking `layers.entities` to a 1:1
+     `RenderTexture` every frame. That workaround left the ring still off-centre and cost
+     real resolution: the bake texture defaulted to `resolution: 1` with no antialias
+     while the renderer runs at `min(devicePixelRatio, 2)`, so every actor/bullet/pillar
+     was sampled at roughly `1/(2 × zoom)` of the rest of the frame, and additive children
+     (status auras, bullets) lost their blend against the ground. Real fix: the shared
+     `FRAME_UV` GLSL prelude in `fx/filters.ts` — `frameUv()` remaps `vTextureCoord` to a
+     true 0..1 across the region, `frameOffset()` converts a region-space displacement
+     back to texcoord space, `clampToFrame()` keeps displaced samples off the pooled
+     texture's stale neighbouring pixels. Used by the shield (ring centre), vignette and
+     chromatic aberration (screen centre), dissolve (cell grid), and heat haze (wobble
+     frequency + amplitude). `OutlineFilter`/`NormalLitFilter` deliberately do NOT use it:
+     they only ever step by one texel, and `uInputSize.zw` is already exactly that.
+     `EnergyShieldFilter` additionally sets `clipToViewport: false`, because Pixi otherwise
+     intersects the region with the viewport (`FilterSystem._calculateFilterBounds`) and
+     would re-introduce a lopsided ring for any shielded actor standing at a screen edge;
+     that is safe only because `filterArea` already bounds it to a small fixed square, and
+     is deliberately NOT done for the two screen-wide post-fx, which need the clip to size
+     themselves to the viewport. General lesson: when a filter's symptom flips on and off
+     with the camera zoom, suspect the pow2 filter-texture pool before suspecting Pixi.
