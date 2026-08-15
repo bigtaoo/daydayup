@@ -11,6 +11,17 @@ vi.mock('./filters', () => ({
   ChromaticAberrationFilter: class { amount: number; constructor(amount = 0) { this.amount = amount; } },
 }));
 
+// Same reason as the `./filters` mock above, for pixi.js's OWN built-in `BlurFilter`
+// (the fx layer's bloom-lite, `attach()`) — it also eagerly builds a real GlProgram at
+// construction. `attach()` was never exercised by any test in this file before the
+// EntityLayerCompositor wiring below needed it (nothing here reads the blur filter
+// itself), so everything else from `pixi.js` (Container, Graphics, …) stays the real
+// thing via `importActual` — only this one GL-needing class is swapped out.
+vi.mock('pixi.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('pixi.js')>();
+  return { ...actual, BlurFilter: class {} };
+});
+
 // updateCamera's zoom-to-fill (design/10 legibility fix, 2026-08-02; cover-fit follow-up
 // 2026-08-12): a room smaller than the viewport is zoomed up so BOTH axes cover it
 // (cover-fit — zoom by whichever axis needs the most zoom), capped so a tiny/degenerate
@@ -109,5 +120,64 @@ describe('FxController.updateCamera', () => {
     expect(layers.world.scale.x).toBeCloseTo(2);
     expect(layers.world.x).toBeCloseTo(0); // effW === vw exactly at this zoom — no horizontal void
     expect(layers.world.y).toBeCloseTo(-200); // effH (800) > vh (400) — panned toward the player, clamped to [-400, 0]
+  });
+
+  it('never calls into a renderer before attach() — updateCamera is safe pre-attach (every test above relies on this)', () => {
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    expect(() => fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 500, h: 500 }, fakePlayer(250, 250))).not.toThrow();
+  });
+});
+
+// The 2026-08-15 non-integer-camera-zoom Filter fix (see EntityLayerCompositor's own
+// doc comment + [[daydayup-engine-conventions]]): `entities` is baked to a texture at a
+// fixed 1:1 scale — driven from `updateCamera`, right where `worldSize` is already
+// computed — instead of sitting directly inside the live-zoomed `layers.world`. Reaches
+// into FxController's own private `entityCompositor` field via bracket access (TS
+// `private` is erased at runtime) since it's an implementation detail, not part of
+// FxController's public surface — these tests exist to pin the WIRING (attach mounts
+// the view, updateCamera drives the bake with the right size/container), not to
+// re-verify EntityLayerCompositor's own behaviour (EntityLayerCompositor.test.ts covers
+// that in isolation).
+describe('FxController + EntityLayerCompositor wiring', () => {
+  function fakeRenderer() {
+    return { render: vi.fn() };
+  }
+
+  it('attach() mounts the compositor\'s view into layers.world, in entities\' old paint-order slot', () => {
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    const view = (fx as unknown as { entityCompositor: { view: unknown } }).entityCompositor.view;
+    expect(layers.world.children).not.toContain(view); // not yet, pre-attach
+    fx.attach(fakeRenderer() as never);
+    expect(layers.world.children).toEqual([layers.ground, layers.shadow, view, layers.fx]);
+  });
+
+  it('updateCamera re-bakes entities into the compositor once attached, sized to worldSize', () => {
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    const renderer = fakeRenderer();
+    fx.attach(renderer as never);
+
+    fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 500, h: 500 }, fakePlayer(250, 250));
+
+    expect(renderer.render).toHaveBeenCalledTimes(1);
+    const call = renderer.render.mock.calls[0]![0] as { container: unknown; target: unknown };
+    expect(call.container).toBe(layers.entities);
+    const view = (fx as unknown as { entityCompositor: { view: { texture: { width: number; height: number } } } })
+      .entityCompositor.view;
+    expect(view.texture.width).toBe(500);
+    expect(view.texture.height).toBe(500);
+  });
+
+  it('updateCamera does NOT bake entities when there is no player (the existing no-op early-return)', () => {
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    const renderer = fakeRenderer();
+    fx.attach(renderer as never);
+
+    fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 500, h: 500 }, null);
+
+    expect(renderer.render).not.toHaveBeenCalled();
   });
 });

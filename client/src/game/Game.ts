@@ -292,7 +292,7 @@ export class Game {
 
     // Post-processing (design/01 milestone 3): vignette + chromatic-aberration live on
     // `world` only — the `ui` layer (HUD/menus) must stay crisp and undistorted.
-    this.fx.attach();
+    this.fx.attach(this.app.renderer);
 
     // Constructed here, not as a field initializer — see the field's own doc comment
     // (needs `this.matchBaseUrl` after the constructor's query-param override).

@@ -1596,6 +1596,67 @@ the no-renderer technique `Minimap.test.ts` established), and the press-vs-tap c
 
 ---
 
+## Shield glow corrupts under non-integer camera zoom — root-caused + fixed (2026-08-15)
+
+Same lineage as the 2026-08-12 shield-centring fixes (`## Shield-centering follow-up`
+above) — same visual symptom (a lopsided/partial shield ring) but a different root
+cause. User report: correct on floors 1/2, a partial crescent on floor 3, reproducible
+every time on entry; a follow-up report then ruled out every per-actor theory (doesn't
+track aim/movement, and survives starting a brand-new run within the same page — only a
+full reload fixed it), which pointed at something tied to the camera/render pipeline
+itself rather than any specific actor or floor.
+
+Diagnosed without playing through real floors: mirrored `ExtractionSystem
+.resolveDescend()`'s own state mutations from the browser console (bump
+`state.floorIndex`, clear `dungeonRooms`/`dungeonDoors`/`dungeonRoomRuntime`/
+`dungeonRoomRects`/`dungeonRoomIndexById`/`dungeonBaseWalls`, push a `descend` event,
+then a handful of `game['update'](16)` ticks) to jump straight to the reported floor in
+about a second, 100% reproducible on demand. Root cause, confirmed live via
+`claude-in-chrome` (monkey-patching `FxController.updateCamera` to force specific zoom
+values and screenshotting): Pixi v8's `Filter` system visibly corrupts a per-actor custom
+`Filter` (`EnergyShieldFilter`, and `NormalLitFilter` — every actor always carries the
+latter) whenever the filtered node sits under an ancestor with a NON-INTEGER scale.
+`zoom=1`/`2` rendered a clean ring; `zoom=1.5`/`1.32`/`1.818` did not — reproduced with
+both the game's own fixed `filterArea` *and* Pixi's default auto-computed bounds, and
+independent of the outer `layers.world`-level post-fx (vignette/chromatic) or of
+rounding the camera container's own pixel position. `FxController.updateCamera`'s
+cover-fit zoom (`## Camera cover-fit + weapon-slot HUD chip` above) is a non-integer
+factor any time a room's size doesn't divide the viewport evenly — routinely, not a
+rare edge case — so this was never really "floor 3" specifically, just wherever a
+particular room-size roll first landed on a non-1 zoom.
+
+Considered and rejected before landing the fix (reasoned through, not implemented):
+snapping the camera zoom itself to the nearest integer would undo the 2026-08-12
+cover-fit void-elimination work for most rooms that ever zoom at all — rounding down
+reintroduces void on a room whose true zoom sits just above 1, rounding up visibly
+over-zooms one whose true zoom sits just below 2; dropping the shield's shader for a
+plain non-filtered Graphics ring would have sidestepped the bug too, at the cost of the
+shimmer effect — not needed once the real architectural fix panned out.
+
+**Shipped fix:** a new `EntityLayerCompositor` (`client/src/game/scene/
+EntityLayerCompositor.ts`) bakes `layers.entities` — every Y-sorted actor/bullet/pickup/
+pillar/portal — to a texture at a FIXED 1:1 scale once per frame, driven from
+`FxController.updateCamera` right where `worldSize` is already computed (`attach()` now
+takes the renderer). That texture is displayed via a plain Sprite that `Layers
+.mountEntitiesView` inserts into `layers.world` in `entities`' old paint-order slot
+(ground/shadow/[entities' stand-in]/fx — unchanged from `01-rendering.md`'s layer
+table). Every custom Filter inside now always renders under an UNSCALED ancestor; the
+baked texture is then just a normal Sprite, which (confirmed live, same zoom values)
+renders correctly at any zoom, fractional or not — same as the ground/wall art already
+did. One texture, refreshed once per frame — not one per actor — so the added cost is a
+single extra render pass sized to the room, not `O(actor count)`.
+
+`Game.ts` (already over its file-length baseline) ended up a single one-line diff
+(`this.fx.attach()` → `this.fx.attach(this.app.renderer)`) — the rest of the wiring
+lives in `FxController`/`Layers`/the new `EntityLayerCompositor`, all well under the
+500-line convention. 9 new tests (`EntityLayerCompositor.test.ts` ×5 covering the
+bake/resize/reuse/clamp behaviour in isolation; `FxController.test.ts` ×4 pinning the
+`attach()`/`updateCamera` wiring itself) plus 2 updated (`layers.test.ts`, now covering
+`mountEntitiesView`). Full client suite green, `tsc --noEmit` clean, `check:filelength`
+clean throughout. Render-only, no `ENGINE_VERSION` impact.
+
+---
+
 ## Dependency summary
 
 ```

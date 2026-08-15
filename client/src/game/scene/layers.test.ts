@@ -1,9 +1,13 @@
 /**
  * Layers — the fixed render-layer wiring (design/01). Pins the exact child order
- * (paint order matters: backdrop behind world behind ui; ground/shadow/entities/fx
- * within world) and the one non-default flag (`entities.sortableChildren`, the
- * Y-sort for top-down depth occlusion).
+ * (paint order matters: backdrop behind world behind ui; ground/shadow/[entities'
+ * stand-in]/fx within world) and the one non-default flag (`entities.sortableChildren`,
+ * the Y-sort for top-down depth occlusion). `entities` itself is deliberately NOT a
+ * child of `world` (see `mountEntitiesView` / EntityLayerCompositor.ts) — it's rendered
+ * to a texture at a fixed 1:1 scale instead, so a proxy view stands in its paint-order
+ * slot.
  */
+import { Container } from 'pixi.js';
 import { describe, it, expect } from 'vitest';
 import { Layers } from './layers';
 
@@ -13,9 +17,17 @@ describe('Layers', () => {
     expect(layers.root.children).toEqual([layers.backdrop, layers.world, layers.ui]);
   });
 
-  it('world contains ground, shadow, entities, fx in that paint order', () => {
+  it('world contains ground, shadow, fx in that paint order — entities absent until mounted', () => {
     const layers = new Layers();
-    expect(layers.world.children).toEqual([layers.ground, layers.shadow, layers.entities, layers.fx]);
+    expect(layers.world.children).toEqual([layers.ground, layers.shadow, layers.fx]);
+    expect(layers.world.children).not.toContain(layers.entities);
+  });
+
+  it('mountEntitiesView inserts the given view between shadow and fx', () => {
+    const layers = new Layers();
+    const view = new Container();
+    layers.mountEntitiesView(view);
+    expect(layers.world.children).toEqual([layers.ground, layers.shadow, view, layers.fx]);
   });
 
   it('only entities is sortable (Y-sort by zIndex) — ground/shadow/fx/ui/backdrop stay insertion order', () => {
