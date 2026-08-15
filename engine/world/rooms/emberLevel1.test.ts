@@ -1,0 +1,329 @@
+/**
+ * Level 1's content gate — holds `world/dungeons/ember/`'s JSON to the level spec
+ * (5 floors of 5/6/7/6/5 rooms, every room 15x15..20x20, enemy count ramping with
+ * cell count from 15 to 30) and, most importantly, proves every door is PHYSICALLY
+ * PASSABLE.
+ *
+ * "Passable" is deliberately checked the expensive way. `tools/map-editor`'s
+ * `validateDungeonFloorMap` already covers the structural half (no overlaps, doors
+ * on a real shared wall, every room reachable through the door GRAPH, capstone
+ * last), but a door can satisfy all of that and still be unwalkable — it can open
+ * onto an interior solid, or be carved so that only one of the two abutting
+ * perimeter walls is actually cut. So the traversability suite below runs the REAL
+ * engine path (`placeAuthoredFloor` → `buildFloorGeometry`, the same two calls
+ * `SpawnSystem.generateAndPlaceFloor` makes), rasterises the resulting Fp wall list
+ * back onto the grid, and flood-fills from the spawn room. Every room's entrance
+ * and every authored spawn point has to come out reachable.
+ *
+ * These files are meant to be tuned in the map editor, so this suite is the safety
+ * net for that tuning: drag a room out of alignment or nudge a door off its wall
+ * and it fails here rather than in a run.
+ */
+import { describe, expect, it } from 'vitest';
+import { EMBER_L1_FLOORS, EMBER_L1_ROOMS } from './emberLevel1';
+import { EMBER_DUNGEON } from './ember';
+import { buildFloorGeometry, placeAuthoredFloor, type DungeonFloorMap } from '../dungeon';
+import type { RoomPiece } from '../../content/rooms';
+import { FP_SCALE } from '../../math/fixed';
+
+const FLOOR_INDICES = [0, 1, 2, 3, 4] as const;
+const EXPECTED_ROOM_COUNTS = [5, 6, 7, 6, 5];
+const MIN_SIDE = 15;
+const MAX_SIDE = 20;
+const MIN_ENEMIES = 15;
+const MAX_ENEMIES = 30;
+
+const floorAt = (i: number): DungeonFloorMap => {
+  const map = EMBER_L1_FLOORS[i];
+  if (!map) throw new Error(`no authored floor at index ${i}`);
+  return map;
+};
+const pieceById = new Map(EMBER_L1_ROOMS.map((p) => [p.id, p] as const));
+const pieceFor = (id: string): RoomPiece => {
+  const piece = pieceById.get(id);
+  if (!piece) throw new Error(`unknown pieceId '${id}'`);
+  return piece;
+};
+
+describe('EMBER_DUNGEON is the authored 5-floor level 1', () => {
+  it('declares 5 floors and carries an authored map for every one of them', () => {
+    expect(EMBER_DUNGEON.floorCount).toBe(5);
+    expect(Object.keys(EMBER_DUNGEON.floorMaps ?? {}).sort()).toEqual(['0', '1', '2', '3', '4']);
+    // Every floor authored ⇒ SpawnSystem never reaches generateFloor for a real run,
+    // so a run costs zero roomgenPrng draws on layout.
+    for (const i of FLOOR_INDICES) expect(EMBER_DUNGEON.floorMaps?.[i]).toBe(floorAt(i));
+  });
+
+  it('resolves its capstone piece ids against the level-1 library, not the legacy ember pool', () => {
+    expect(pieceFor(EMBER_DUNGEON.extractionPieceId).role).toBe('extraction');
+    expect(pieceFor(EMBER_DUNGEON.bossPieceId).role).toBe('boss');
+  });
+
+  it('keeps the same enemy-HP ceiling as the old 3-floor curve now that there are 5 floors', () => {
+    const { base, perFloor } = EMBER_DUNGEON.difficultyCurve;
+    expect(base + perFloor * (EMBER_DUNGEON.floorCount - 1)).toBe(3);
+  });
+});
+
+describe('level 1 floor shape', () => {
+  it('has 5 / 6 / 7 / 6 / 5 rooms', () => {
+    expect(FLOOR_INDICES.map((i) => floorAt(i).rooms.length)).toEqual(EXPECTED_ROOM_COUNTS);
+  });
+
+  it('caps floors 0-3 with the extraction room and floor 4 with the boss room', () => {
+    for (const i of FLOOR_INDICES) {
+      const rooms = floorAt(i).rooms;
+      const last = pieceFor(rooms[rooms.length - 1]!.pieceId);
+      expect(last.role).toBe(i === 4 ? 'boss' : 'extraction');
+      // Only the capstone may carry a role — a mid-floor extraction portal would
+      // give the floor two exits (ExtractionSystem reads placement order, not role).
+      for (const r of rooms.slice(0, -1)) expect(pieceFor(r.pieceId).role).toBeUndefined();
+    }
+  });
+
+  it('never repeats a piece within a floor', () => {
+    for (const i of FLOOR_INDICES) {
+      const ids = floorAt(i).rooms.map((r) => r.pieceId);
+      expect(new Set(ids).size).toBe(ids.length);
+    }
+  });
+
+  it('references only pieces that exist in the shipped library', () => {
+    for (const i of FLOOR_INDICES) {
+      for (const room of floorAt(i).rooms) expect(() => pieceFor(room.pieceId)).not.toThrow();
+    }
+  });
+});
+
+describe('level 1 room pieces', () => {
+  it('every room is between 15x15 and 20x20 grid cells', () => {
+    for (const piece of EMBER_L1_ROOMS) {
+      expect(piece.sizeGrid.w).toBeGreaterThanOrEqual(MIN_SIDE);
+      expect(piece.sizeGrid.h).toBeGreaterThanOrEqual(MIN_SIDE);
+      expect(piece.sizeGrid.w).toBeLessThanOrEqual(MAX_SIDE);
+      expect(piece.sizeGrid.h).toBeLessThanOrEqual(MAX_SIDE);
+    }
+  });
+
+  it('enemy count scales with cell count, 15 at 15x15 up to 30 at 20x20', () => {
+    for (const piece of EMBER_L1_ROOMS) {
+      if (piece.role === 'extraction') continue; // the checkpoint room is deliberately empty
+      const area = piece.sizeGrid.w * piece.sizeGrid.h;
+      const expected = Math.max(MIN_ENEMIES, Math.min(MAX_ENEMIES, Math.round(15 + (15 * (area - 225)) / 175)));
+      expect(piece.spawns.enemy.length, piece.id).toBe(expected);
+    }
+  });
+
+  it('the enemy count is monotonic in cell count — a bigger room is never a lighter fight', () => {
+    const fights = EMBER_L1_ROOMS.filter((p) => p.role !== 'extraction')
+      .map((p) => ({ area: p.sizeGrid.w * p.sizeGrid.h, n: p.spawns.enemy.length }))
+      .sort((a, b) => a.area - b.area);
+    for (let i = 1; i < fights.length; i++) expect(fights[i]!.n).toBeGreaterThanOrEqual(fights[i - 1]!.n);
+  });
+
+  it('the extraction capstone stays enemy-free — it is the checkpoint, not a second boss fight', () => {
+    expect(pieceFor('ember_l1_extraction').spawns.enemy).toEqual([]);
+  });
+
+  it('the boss room opens with the blightlord at spawn point 0', () => {
+    expect(pieceFor('ember_l1_boss').spawns.enemy[0]?.type).toBe('blightlord');
+  });
+
+  it('every piece authors at least two player spawns (a co-op run seats two) and all four exits', () => {
+    for (const piece of EMBER_L1_ROOMS) {
+      expect(piece.spawns.player.length, piece.id).toBeGreaterThanOrEqual(2);
+      expect(new Set(piece.exits.map((e) => e.edge))).toEqual(new Set(['north', 'south', 'east', 'west']));
+    }
+  });
+
+  it('has no `encounter` script anywhere — an absent one is the engine\'s "all spawn points at tick 0" default, which is what makes a room genuinely cleared the moment it is empty (DoorSystem\'s unlock rule)', () => {
+    for (const piece of EMBER_L1_ROOMS) expect(piece.encounter, piece.id).toBeUndefined();
+  });
+});
+
+// ── Door passability ────────────────────────────────────────────────────────────
+
+/** Rooms may share a wall but must never overlap — every downstream room-membership
+ * test (`EnvironmentSystem`'s point-in-rect roomId lookup) assumes disjoint rects. */
+function overlapping(map: DungeonFloorMap): string[] {
+  const rects = map.rooms.map((r) => ({
+    id: r.id,
+    x: r.offsetXGrid,
+    y: r.offsetYGrid,
+    w: pieceFor(r.pieceId).sizeGrid.w,
+    h: pieceFor(r.pieceId).sizeGrid.h,
+  }));
+  const bad: string[] = [];
+  for (let i = 0; i < rects.length; i++) {
+    for (let j = i + 1; j < rects.length; j++) {
+      const a = rects[i]!;
+      const b = rects[j]!;
+      if (a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h) bad.push(`${a.id}/${b.id}`);
+    }
+  }
+  return bad;
+}
+
+/**
+ * The real thing: run the engine's own placement + geometry stitching, rasterise
+ * the stitched (already door-carved) Fp wall list back onto a 1-cell grid, and
+ * flood-fill from the spawn room's first player spawn. Anything a player must be
+ * able to stand on — every room's `entranceGrid` (DoorSystem's force-regroup
+ * landing point), every player spawn, every enemy spawn — has to be in the
+ * reachable set. A door that opens into a solid, or that only cut one of the two
+ * abutting perimeter walls, fails here.
+ */
+function traversability(map: DungeonFloorMap) {
+  const { placed, doors } = placeAuthoredFloor(map, EMBER_L1_ROOMS);
+  const geo = buildFloorGeometry(placed, doors);
+  const W = Math.round(geo.worldW / FP_SCALE);
+  const H = Math.round(geo.worldH / FP_SCALE);
+
+  // Start solid everywhere (outside the rooms IS solid), open each room's footprint,
+  // then stamp the stitched wall list back on. `buildFloorGeometry` has already
+  // carved the door gaps out of that list, so the openings appear for free.
+  const solid = new Uint8Array(W * H).fill(1);
+  const at = (x: number, y: number) => y * W + x;
+  for (const room of placed) {
+    for (let y = 0; y < room.piece.sizeGrid.h; y++) {
+      for (let x = 0; x < room.piece.sizeGrid.w; x++) solid[at(room.offsetXGrid + x, room.offsetYGrid + y)] = 0;
+    }
+  }
+  for (const wall of geo.walls) {
+    const x0 = Math.round(wall.x / FP_SCALE);
+    const y0 = Math.round(wall.y / FP_SCALE);
+    const x1 = Math.round((wall.x + wall.w) / FP_SCALE);
+    const y1 = Math.round((wall.y + wall.h) / FP_SCALE);
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) if (x >= 0 && y >= 0 && x < W && y < H) solid[at(x, y)] = 1;
+  }
+  for (const o of geo.obstacles) {
+    const cx = o.gx / FP_SCALE;
+    const cy = o.gy / FP_SCALE;
+    const r = o.radius / FP_SCALE;
+    for (let y = Math.floor(cy - r); y <= Math.ceil(cy + r); y++) {
+      for (let x = Math.floor(cx - r); x <= Math.ceil(cx + r); x++) {
+        if (x >= 0 && y >= 0 && x < W && y < H && Math.hypot(x + 0.5 - cx, y + 0.5 - cy) <= r + 0.5) solid[at(x, y)] = 1;
+      }
+    }
+  }
+
+  const first = placed[0]!;
+  const startPt = first.piece.spawns.player[0]!;
+  const start = at(Math.floor(first.offsetXGrid + startPt.x), Math.floor(first.offsetYGrid + startPt.y));
+  const seen = new Uint8Array(W * H);
+  const stack = [start];
+  seen[start] = 1;
+  while (stack.length > 0) {
+    const cur = stack.pop()!;
+    const cx = cur % W;
+    const cy = (cur - cx) / W;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const nx = cx + dx;
+      const ny = cy + dy;
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+      const n = at(nx, ny);
+      if (seen[n] || solid[n]) continue;
+      seen[n] = 1;
+      stack.push(n);
+    }
+  }
+
+  const unreachable: string[] = [];
+  const check = (label: string, x: number, y: number) => {
+    if (!seen[at(Math.floor(x), Math.floor(y))]) unreachable.push(`${label} @ (${x}, ${y})`);
+  };
+  for (const room of placed) {
+    check(`${room.id} entrance`, room.entranceGrid.x, room.entranceGrid.y);
+    room.piece.spawns.player.forEach((p, i) => check(`${room.id} player spawn ${i}`, room.offsetXGrid + p.x, room.offsetYGrid + p.y));
+    room.piece.spawns.enemy.forEach((p, i) => check(`${room.id} enemy spawn ${i}`, room.offsetXGrid + p.x, room.offsetYGrid + p.y));
+  }
+
+  // Which rooms the flood fill actually walked into — a door that is topologically
+  // declared but physically sealed shows up as a room with zero reached cells.
+  const roomsEntered = placed.filter((room) =>
+    Array.from({ length: room.piece.sizeGrid.h }, (_, y) =>
+      Array.from({ length: room.piece.sizeGrid.w }, (_, x) => seen[at(room.offsetXGrid + x, room.offsetYGrid + y)]),
+    )
+      .flat()
+      .some(Boolean),
+  ).length;
+
+  return { unreachable, roomsEntered, roomCount: placed.length, doorCount: doors.length, W, H };
+}
+
+describe.each(FLOOR_INDICES)('floor %i door passability', (index) => {
+  const map = floorAt(index);
+
+  it('no two rooms overlap', () => {
+    expect(overlapping(map)).toEqual([]);
+  });
+
+  it('every door sits on a real shared wall between the two rooms it names', () => {
+    const rect = (id: string) => {
+      const room = map.rooms.find((r) => r.id === id);
+      if (!room) throw new Error(`door references unknown room '${id}'`);
+      const piece = pieceFor(room.pieceId);
+      return { x: room.offsetXGrid, y: room.offsetYGrid, w: piece.sizeGrid.w, h: piece.sizeGrid.h };
+    };
+    for (const door of map.doors) {
+      expect(door.roomA).not.toBe(door.roomB);
+      const a = rect(door.roomA);
+      const b = rect(door.roomB);
+      const p = door.passageGrid;
+      const vertical = a.x + a.w === b.x || b.x + b.w === a.x;
+      const horizontal = a.y + a.h === b.y || b.y + b.h === a.y;
+      expect(vertical || horizontal, `${door.roomA}/${door.roomB} do not touch`).toBe(true);
+      if (vertical) {
+        const boundary = a.x + a.w === b.x ? b.x : a.x;
+        // 2 deep, straddling the boundary — cuts BOTH rooms' 1-thick perimeter walls.
+        expect(p.w).toBe(2);
+        expect(p.x).toBe(boundary - 1);
+        expect(p.y).toBeGreaterThanOrEqual(Math.max(a.y, b.y));
+        expect(p.y + p.h).toBeLessThanOrEqual(Math.min(a.y + a.h, b.y + b.h));
+      } else {
+        const boundary = a.y + a.h === b.y ? b.y : a.y;
+        expect(p.h).toBe(2);
+        expect(p.y).toBe(boundary - 1);
+        expect(p.x).toBeGreaterThanOrEqual(Math.max(a.x, b.x));
+        expect(p.x + p.w).toBeLessThanOrEqual(Math.min(a.x + a.w, b.x + b.w));
+      }
+    }
+  });
+
+  it('every room is reachable through the door graph from the spawn room', () => {
+    const adjacency = new Map<string, string[]>(map.rooms.map((r) => [r.id, []]));
+    for (const door of map.doors) {
+      adjacency.get(door.roomA)?.push(door.roomB);
+      adjacency.get(door.roomB)?.push(door.roomA);
+    }
+    const reached = new Set([map.rooms[0]!.id]);
+    const queue = [map.rooms[0]!.id];
+    while (queue.length > 0) {
+      for (const next of adjacency.get(queue.shift()!) ?? []) {
+        if (!reached.has(next)) {
+          reached.add(next);
+          queue.push(next);
+        }
+      }
+    }
+    expect([...map.rooms.map((r) => r.id)].filter((id) => !reached.has(id))).toEqual([]);
+  });
+
+  it('every entrance and every spawn point is physically walkable from the spawn room', () => {
+    const { unreachable } = traversability(map);
+    expect(unreachable).toEqual([]);
+  });
+
+  it('the flood fill physically walks into every room — no door is declared but sealed', () => {
+    const { roomsEntered, roomCount } = traversability(map);
+    expect(roomsEntered).toBe(roomCount);
+  });
+
+  it('the floor stays inside a sane world extent, starting at the origin', () => {
+    expect(Math.min(...map.rooms.map((r) => r.offsetXGrid))).toBe(0);
+    expect(Math.min(...map.rooms.map((r) => r.offsetYGrid))).toBe(0);
+    const { W, H } = traversability(map);
+    expect(W).toBeGreaterThan(0);
+    expect(H).toBeGreaterThan(0);
+  });
+});

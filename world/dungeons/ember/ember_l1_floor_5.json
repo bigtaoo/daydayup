@@ -1,0 +1,77 @@
+{
+  "id": "ember_l1_floor_5",
+  "rooms": [
+    {
+      "id": "r1_court",
+      "pieceId": "ember_l1_court",
+      "offsetXGrid": 59,
+      "offsetYGrid": 20
+    },
+    {
+      "id": "r2_crucible",
+      "pieceId": "ember_l1_crucible",
+      "offsetXGrid": 40,
+      "offsetYGrid": 20
+    },
+    {
+      "id": "r3_rampart",
+      "pieceId": "ember_l1_rampart",
+      "offsetXGrid": 20,
+      "offsetYGrid": 20
+    },
+    {
+      "id": "r4_caldera",
+      "pieceId": "ember_l1_caldera",
+      "offsetXGrid": 0,
+      "offsetYGrid": 20
+    },
+    {
+      "id": "r5_boss",
+      "pieceId": "ember_l1_boss",
+      "offsetXGrid": 0,
+      "offsetYGrid": 0
+    }
+  ],
+  "doors": [
+    {
+      "roomA": "r1_court",
+      "roomB": "r2_crucible",
+      "passageGrid": {
+        "x": 58,
+        "y": 30,
+        "w": 2,
+        "h": 4
+      }
+    },
+    {
+      "roomA": "r2_crucible",
+      "roomB": "r3_rampart",
+      "passageGrid": {
+        "x": 39,
+        "y": 33.5,
+        "w": 2,
+        "h": 4
+      }
+    },
+    {
+      "roomA": "r3_rampart",
+      "roomB": "r4_caldera",
+      "passageGrid": {
+        "x": 19,
+        "y": 33.5,
+        "w": 2,
+        "h": 4
+      }
+    },
+    {
+      "roomA": "r4_caldera",
+      "roomB": "r5_boss",
+      "passageGrid": {
+        "x": 14.5,
+        "y": 19,
+        "w": 4,
+        "h": 2
+      }
+    }
+  ]
+}

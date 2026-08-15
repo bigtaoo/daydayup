@@ -1,0 +1,212 @@
+{
+  "id": "ember_l1_boss",
+  "role": "boss",
+  "sizeGrid": {
+    "w": 20,
+    "h": 20
+  },
+  "solids": [
+    {
+      "x": 0,
+      "y": 0,
+      "w": 20,
+      "h": 1
+    },
+    {
+      "x": 0,
+      "y": 19,
+      "w": 20,
+      "h": 1
+    },
+    {
+      "x": 0,
+      "y": 1,
+      "w": 1,
+      "h": 18
+    },
+    {
+      "x": 19,
+      "y": 1,
+      "w": 1,
+      "h": 18
+    }
+  ],
+  "spawns": {
+    "player": [
+      {
+        "x": 2.5,
+        "y": 8
+      },
+      {
+        "x": 2.5,
+        "y": 12
+      }
+    ],
+    "enemy": [
+      {
+        "x": 2.5,
+        "y": 2.5,
+        "type": "blightlord"
+      },
+      {
+        "x": 4.5,
+        "y": 2.5,
+        "type": "ironclad"
+      },
+      {
+        "x": 8.5,
+        "y": 2.5,
+        "type": "galvanist"
+      },
+      {
+        "x": 12.5,
+        "y": 2.5,
+        "type": "brute"
+      },
+      {
+        "x": 16.5,
+        "y": 2.5,
+        "type": "ironclad"
+      },
+      {
+        "x": 4.5,
+        "y": 4.5,
+        "type": "galvanist"
+      },
+      {
+        "x": 8.5,
+        "y": 4.5,
+        "type": "brute"
+      },
+      {
+        "x": 10.5,
+        "y": 4.5,
+        "type": "ironclad"
+      },
+      {
+        "x": 14.5,
+        "y": 4.5,
+        "type": "galvanist"
+      },
+      {
+        "x": 6.5,
+        "y": 6.5,
+        "type": "brute"
+      },
+      {
+        "x": 10.5,
+        "y": 6.5,
+        "type": "ironclad"
+      },
+      {
+        "x": 14.5,
+        "y": 6.5,
+        "type": "galvanist"
+      },
+      {
+        "x": 6.5,
+        "y": 8.5,
+        "type": "brute"
+      },
+      {
+        "x": 8.5,
+        "y": 8.5,
+        "type": "ironclad"
+      },
+      {
+        "x": 12.5,
+        "y": 8.5,
+        "type": "galvanist"
+      },
+      {
+        "x": 16.5,
+        "y": 8.5,
+        "type": "brute"
+      },
+      {
+        "x": 8.5,
+        "y": 10.5,
+        "type": "ironclad"
+      },
+      {
+        "x": 12.5,
+        "y": 10.5,
+        "type": "galvanist"
+      },
+      {
+        "x": 16.5,
+        "y": 10.5,
+        "type": "brute"
+      },
+      {
+        "x": 6.5,
+        "y": 12.5,
+        "type": "ironclad"
+      },
+      {
+        "x": 10.5,
+        "y": 12.5,
+        "type": "galvanist"
+      },
+      {
+        "x": 14.5,
+        "y": 12.5,
+        "type": "brute"
+      },
+      {
+        "x": 4.5,
+        "y": 14.5,
+        "type": "ironclad"
+      },
+      {
+        "x": 8.5,
+        "y": 14.5,
+        "type": "galvanist"
+      },
+      {
+        "x": 12.5,
+        "y": 14.5,
+        "type": "brute"
+      },
+      {
+        "x": 14.5,
+        "y": 14.5,
+        "type": "ironclad"
+      },
+      {
+        "x": 2.5,
+        "y": 16.5,
+        "type": "galvanist"
+      },
+      {
+        "x": 6.5,
+        "y": 16.5,
+        "type": "brute"
+      },
+      {
+        "x": 10.5,
+        "y": 16.5,
+        "type": "ironclad"
+      },
+      {
+        "x": 14.5,
+        "y": 16.5,
+        "type": "galvanist"
+      }
+    ]
+  },
+  "exits": [
+    {
+      "edge": "west"
+    },
+    {
+      "edge": "east"
+    },
+    {
+      "edge": "north"
+    },
+    {
+      "edge": "south"
+    }
+  ]
+}

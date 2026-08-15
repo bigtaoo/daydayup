@@ -5,7 +5,7 @@ closed loop the design docs describe, and the running record of how each phase a
 landed. Phases are written top-to-bottom in dependency order; each one keeps its dated
 shipped-notes underneath it, so a phase section is both the plan and the history.
 
-**Current built state (2026-08-15).** `ENGINE_VERSION` **37** (32: ground-weapon pickup is
+**Current built state (2026-08-15).** `ENGINE_VERSION` **38** (32: ground-weapon pickup is
 click-driven; 33: manual aim removed entirely; 34: co-resident PvE room/door model, engine +
 client rendering; 35: fully-realized branching — see the Room & door model section below;
 same-day map-editor door placement, the `layout: 'graph2d'` real-2D-layout follow-up, AND the
@@ -22,9 +22,14 @@ grid — deliberately much shorter than a gun's own max bullet travel, or the mo
 be seen moving in a normal-size room), then stop and shoot; `moveSpeedPerTick`/`engageRangeFp`
 are new optional per-blueprint knobs (`content/enemies.ts`) for a future kiting/rush/sniper
 variant, unused by any blueprint yet. No steering/pathfinding/kiting — see
-`ENGINE_VERSION_HISTORY.md`'s v37 entry for the full account); 2816 tests green across all 7
-workspace packages (engine 577 / client 1241 / server 186 / animator 444 / map-editor 260 /
-png-pipeline 20 / desktop-shell 81 / root build-script 7, `npm run check`, re-measured
+`ENGINE_VERSION_HISTORY.md`'s v37 entry for the full account; 38: level 1 is now a fully
+hand-authored 5-floor descent — 5/6/7/6/5 rooms, every room 15x15..20x20 with 15-30 enemies
+scaled by cell count, all five floors present in `EMBER_DUNGEON.floorMaps` so a run costs zero
+`roomgenPrng` layout draws, content as editor-tunable JSON under `world/dungeons/ember/`; see
+the "Level 1 is now fully hand-authored" entry under Room & door model below, and design/05's
+matching subsection); 2930 tests green across all 7
+workspace packages (engine 621 / client 1278 / server 186 / animator 444 / map-editor 280 /
+png-pipeline 20 / desktop-shell 81 / root build-script 20, `npm run check`, re-measured
 2026-08-15 — the previous snapshot's per-package figures had drifted, including a
 root-build-script count that was never 14) after fixing two real bugs found from a live player report ("cleared
 the room, door's unlocked, still can't walk through it") — see the Room & door model
@@ -132,7 +137,7 @@ The core PvE loop (floors → extraction → bank) is fully designed (05/09) and
 - **1.2 ✅ RoomState collision geometry** (07/09) — DONE, additive (no `ENGINE_VERSION` bump). AABB tile/wall solids (`state.walls`, `MovementSystem`/`ProjectileStepSystem`) + the `RoomPiece` schema + `roomGeometry()` converter (`content/rooms.ts`).
 - **1.3 ✅ Seeded dungeon assembly** (05/09) — DONE, additive (no `ENGINE_VERSION` bump). `world/dungeon.ts DungeonConfig` + pure `generateFloor()` (floors × rooms via `roomgenPrng`, `layout:'linear'`|`'branching'`) + a first hand-authored `RoomPiece` library (`world/rooms/ember.ts`, 5 normal + 1 extraction + 1 boss
 — the 5th normal piece, `ember_atrium`, and the extraction/boss pieces' full 4-exit symmetry were
-added 2026-08-05's "graph2d content" pass, Room & door model section below). **Wired into a live, traversable run** (2026-07-24, same day, commits `4d05555`/`aac5829`/`7a611e4`): `EngineConfig.dungeon = {config, library}` opts a run in; `SpawnSystem.tickDungeon` calls `generateFloor` per floor and `loadRoom` per room (swaps `state.walls`/`state.obstacles` via `roomGeometry()`, rebuilds the spatial index, repositions players, loads the room's `WaveScript`), `ExtractionSystem.resolveDescend` resets the room cursor so the next floor regenerates lazily, and `expandEncounter`/`dispatchDueSpawns` interpret `WaveScript`'s `atTick`/`spacingTicks` timing (shared with the PvP arena spawn path). Branching layout picks the next room by aim direction. Covered end-to-end by `dungeonrun.test.ts` (room load/advance/descend/branching/determinism/a full Ember-biome run) driven through `createGameEngine`, not just `dungeon.test.ts`'s pure-function unit tests. The real client (`Game.ts`) already builds every single-player/co-op/online run with `EngineConfig.dungeon: {config: EMBER_DUNGEON, library: EMBER_ROOMS}` — this is the live path, not a demo fallback.
+added 2026-08-05's "graph2d content" pass, Room & door model section below). **Wired into a live, traversable run** (2026-07-24, same day, commits `4d05555`/`aac5829`/`7a611e4`): `EngineConfig.dungeon = {config, library}` opts a run in; `SpawnSystem.tickDungeon` calls `generateFloor` per floor and `loadRoom` per room (swaps `state.walls`/`state.obstacles` via `roomGeometry()`, rebuilds the spatial index, repositions players, loads the room's `WaveScript`), `ExtractionSystem.resolveDescend` resets the room cursor so the next floor regenerates lazily, and `expandEncounter`/`dispatchDueSpawns` interpret `WaveScript`'s `atTick`/`spacingTicks` timing (shared with the PvP arena spawn path). Branching layout picks the next room by aim direction. Covered end-to-end by `dungeonrun.test.ts` (room load/advance/descend/branching/determinism/a full Ember-biome run) driven through `createGameEngine`, not just `dungeon.test.ts`'s pure-function unit tests. The real client (`Game.ts`) already builds every single-player/co-op/online run with `EngineConfig.dungeon: {config: EMBER_DUNGEON, library: ...}` — this is the live path, not a demo fallback. **Superseded as the live level 2026-08-15** ("Level 1 is now fully hand-authored", Room & door model section below): `EMBER_DUNGEON` is now 5 hand-authored floors paired with `EMBER_L1_ROOMS`, so a real run takes `placeAuthoredFloor` and never reaches `generateFloor` at all. Everything above still describes the machinery accurately — it is just the fallback path now, driven by the `EMBER_PROCEDURAL_DUNGEON` + `EMBER_ROOMS` pair the tests keep pointed at it.
 - **1.4 ✅ Extraction rooms** (05) — DONE. `EngineConfig.floors?` (the flat, non-dungeon mode — same single arena reused every floor, still supported for configs that opt into it) OR `EngineConfig.dungeon` (the room-generated mode, see 1.3) opts a run into the checkpoint loop; `ExtractionSystem` (step 12) resolves the per-floor checkpoint (`wavesExhausted && enemies.length===0`) into `EXTRACT` or `DESCEND` (in dungeon mode, regenerates the next floor's rooms; in flat mode, reloads the next floor's flat wave list). Death forfeits the floor buffer for free (a run-ending death simply never reaches the bank step). The last floor has no `DESCEND` option, but otherwise resolves the same explicit-gesture way as any other floor (design/05 "the boss room IS its extraction room" — see the Live-play bug-fix pass entries below for why the original no-gesture auto-resolve was dropped 2026-08-12). **The gesture itself was rewritten 2026-08-02** (see that entry below): originally a sustained-INTERACT hold=EXTRACT/tap=DESCEND (mirroring the revive channel), now two explicit one-shot `Button.CONFIRM_EXTRACT`/`CONFIRM_DESCEND` presses driven by a world-space portal + popup, `ENGINE_VERSION` 31.
 - **1.5 ✅ Materials carry-out** (05/09) — DONE, additive. `state.floorMaterials` (this floor's un-banked buffer, filled by `PickupSystem`) merges into `state.bankedMaterials` (the run's only carry-out) on every `EXTRACT`/`DESCEND`. `rollDrop` gained an optional depth `tier` param (`DeathDropsSystem` passes `state.floorIndex`) so a material pickup/event carries a rolled instance tier — first-pass "material quality shift per floor" (a straight `tier = floorIndex` identity curve; `DungeonConfig.materialTierByDepth` remains an unused schema field for a future non-identity curve).
 
@@ -916,6 +921,35 @@ private methods directly" technique (see design/05's matching entry for the
 full reasoning) — `DungeonFloorCanvas.test.ts`, 28 tests. 49 new tests total (11
 engine, 38 map-editor), 1623 total across all 7 workspaces, `tsc --noEmit`
 clean.
+
+**Level 1 is now fully hand-authored ✅ (2026-08-15)** — closes the "Map-editor door
+placement" entry's own open end ("No shipped biome uses `floorMaps` yet — authoring
+one is a content task"). `EMBER_DUNGEON`, the one config every PvE run is built from,
+goes from 3 procedurally-drawn floors of 2–3 rooms to **5 authored floors of 5 / 6 /
+7 / 6 / 5 rooms** (29 rooms, 581 enemies). Every room is 15x15–20x20 grid cells and
+its enemy count ramps with cell count — 15 at 225 cells up to 30 at 400 — so a bigger
+room is always the bigger fight; the extraction capstone stays at 0 enemies on
+purpose, since `DoorSystem`/`ExtractionSystem` both gate the floor on "capstone
+cleared" and garrisoning it would make every checkpoint a second boss fight.
+`difficultyCurve` drops to `perFloor: 0.5` in the same change so the deepest floor
+keeps its old x3 maxHp ceiling instead of drifting to x5 purely from having more
+floors. The content is **JSON under `world/dungeons/ember/`** — 14 `RoomPiece` files
+plus 5 `DungeonFloorMap` files, in exactly the shapes `tools/map-editor` reads and
+writes, so the level is tuned in the editor rather than in a source literal
+(`engine/world/rooms/emberLevel1.ts` is a pure loader; same precedent PvP set with
+`world/arenas/arena_prototype_60.json`). Doors are checked for PHYSICAL passability,
+not just declared adjacency: `emberLevel1.test.ts` runs the real
+`placeAuthoredFloor`→`buildFloorGeometry` path, rasterises the door-carved wall list
+back onto the grid and flood-fills from the spawn room, requiring every entrance and
+every spawn point to be walkable and the fill to physically enter every room —
+`validateDungeonFloorMap`'s graph reachability alone cannot catch a door that opens
+onto a solid. The old procedural pair is kept, not deleted: `EMBER_ROOMS` plus a new
+`EMBER_PROCEDURAL_DUNGEON` export is what the graph2d seed sweeps and exhaustive pool
+enumeration still drive. `ENGINE_VERSION` 38 (see `ENGINE_VERSION_HISTORY.md` for the
+three independent reasons a v37 stream diverges). 64 new tests (44 engine, 20
+map-editor), `tsc --noEmit` clean. Deliberately left for editor tuning: no loop doors
+(every floor is a spanning tree), per-piece rather than per-floor enemy mixes, and
+whole-garrison-at-tick-0 spawning. See design/05's matching subsection.
 
 **Real 2D graph layout ✅ (2026-08-05, same day) — closes the last deliberate scope
 cut from this section's original 2026-08-04 entry** ("a west→east spine placement

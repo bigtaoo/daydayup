@@ -1,4 +1,4 @@
-import { EMBER_DUNGEON, EMBER_ROOMS, type EngineConfig } from '@dd/engine';
+import { EMBER_DUNGEON, EMBER_L1_ROOMS, type EngineConfig } from '@dd/engine';
 import { toFpGrid } from '@dd/engine/content/convert';
 import { ARENA_CATALOG } from './arenaCatalog';
 import { fpToPx } from '../coords';
@@ -27,7 +27,7 @@ export function buildDungeonRunConfig(opts: {
     ...(opts.coop
       ? { players: [opts.localSeat, { skinId: opts.allySkinId }] }
       : { skinId: opts.localSeat.skinId, loadout: opts.localSeat.loadout }),
-    dungeon: { config: EMBER_DUNGEON, library: EMBER_ROOMS },
+    dungeon: { config: EMBER_DUNGEON, library: EMBER_L1_ROOMS },
   };
 }
 

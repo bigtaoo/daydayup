@@ -1,0 +1,209 @@
+{
+  "id": "ember_l1_court",
+  "tags": [
+    "ember_l1"
+  ],
+  "sizeGrid": {
+    "w": 18,
+    "h": 18
+  },
+  "solids": [
+    {
+      "x": 0,
+      "y": 0,
+      "w": 18,
+      "h": 1
+    },
+    {
+      "x": 0,
+      "y": 17,
+      "w": 18,
+      "h": 1
+    },
+    {
+      "x": 0,
+      "y": 1,
+      "w": 1,
+      "h": 16
+    },
+    {
+      "x": 17,
+      "y": 1,
+      "w": 1,
+      "h": 16
+    }
+  ],
+  "pillars": [
+    {
+      "center": {
+        "x": 5,
+        "y": 5
+      },
+      "radius": 1
+    },
+    {
+      "center": {
+        "x": 13,
+        "y": 5
+      },
+      "radius": 1
+    },
+    {
+      "center": {
+        "x": 5,
+        "y": 13
+      },
+      "radius": 1
+    },
+    {
+      "center": {
+        "x": 13,
+        "y": 13
+      },
+      "radius": 1
+    }
+  ],
+  "spawns": {
+    "player": [
+      {
+        "x": 2.5,
+        "y": 7
+      },
+      {
+        "x": 2.5,
+        "y": 11
+      }
+    ],
+    "enemy": [
+      {
+        "x": 2.5,
+        "y": 2.5,
+        "type": "basic"
+      },
+      {
+        "x": 4.5,
+        "y": 2.5,
+        "type": "brute"
+      },
+      {
+        "x": 6.5,
+        "y": 2.5,
+        "type": "emberling"
+      },
+      {
+        "x": 8.5,
+        "y": 2.5,
+        "type": "floater"
+      },
+      {
+        "x": 12.5,
+        "y": 2.5,
+        "type": "basic"
+      },
+      {
+        "x": 14.5,
+        "y": 2.5,
+        "type": "brute"
+      },
+      {
+        "x": 8.5,
+        "y": 4.5,
+        "type": "emberling"
+      },
+      {
+        "x": 6.5,
+        "y": 6.5,
+        "type": "floater"
+      },
+      {
+        "x": 8.5,
+        "y": 6.5,
+        "type": "basic"
+      },
+      {
+        "x": 10.5,
+        "y": 6.5,
+        "type": "brute"
+      },
+      {
+        "x": 6.5,
+        "y": 8.5,
+        "type": "emberling"
+      },
+      {
+        "x": 8.5,
+        "y": 8.5,
+        "type": "floater"
+      },
+      {
+        "x": 10.5,
+        "y": 8.5,
+        "type": "basic"
+      },
+      {
+        "x": 12.5,
+        "y": 8.5,
+        "type": "brute"
+      },
+      {
+        "x": 6.5,
+        "y": 10.5,
+        "type": "emberling"
+      },
+      {
+        "x": 8.5,
+        "y": 10.5,
+        "type": "floater"
+      },
+      {
+        "x": 10.5,
+        "y": 10.5,
+        "type": "basic"
+      },
+      {
+        "x": 14.5,
+        "y": 10.5,
+        "type": "brute"
+      },
+      {
+        "x": 8.5,
+        "y": 12.5,
+        "type": "emberling"
+      },
+      {
+        "x": 10.5,
+        "y": 12.5,
+        "type": "floater"
+      },
+      {
+        "x": 6.5,
+        "y": 14.5,
+        "type": "basic"
+      },
+      {
+        "x": 8.5,
+        "y": 14.5,
+        "type": "brute"
+      },
+      {
+        "x": 10.5,
+        "y": 14.5,
+        "type": "emberling"
+      }
+    ]
+  },
+  "exits": [
+    {
+      "edge": "west"
+    },
+    {
+      "edge": "east"
+    },
+    {
+      "edge": "north"
+    },
+    {
+      "edge": "south"
+    }
+  ]
+}

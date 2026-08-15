@@ -343,6 +343,67 @@ and `onWheel`/pan/`fitView`'s exact camera math (cosmetic view-fitting, not auth
 correctness). 28 new map-editor tests (64, was 36) — 1623 total across all 7 workspaces,
 `tsc --noEmit` clean.
 
+### Level 1 is now fully hand-authored ✅ (2026-08-15)
+
+Closes the previous subsection's own open end — "No shipped biome uses `floorMaps` yet
+(`EMBER_DUNGEON` is untouched) — authoring one is a content task". That content task is
+this one, for the whole level rather than a single floor. `ENGINE_VERSION` 38.
+
+- **Shape: 5 floors, 5 / 6 / 7 / 6 / 5 rooms** (the capstone counts as one of them —
+  29 rooms total). Floors 0-3 are capped by `ember_l1_extraction`, floor 4 by
+  `ember_l1_boss`. A per-floor room count is something `roomsPerFloor`'s `{min, max}`
+  range structurally cannot express, which is a large part of why the level is
+  authored rather than drawn; the range left on `EMBER_DUNGEON` now describes only the
+  procedural fallback a floor would take if its authored map were removed.
+- **Room sizes 15x15 to 20x20 grid cells; enemy count ramps with cell count**, 15 at
+  225 cells up to 30 at 400 (`enemyCountForArea`), so a bigger room is always the
+  bigger fight. 581 enemies across the level. The extraction capstone is the one
+  deliberate exception at 0 enemies: `DoorSystem`/`ExtractionSystem` both treat
+  "capstone cleared" as the floor's gate, so garrisoning it would turn every
+  checkpoint into a second boss fight.
+- **`difficultyCurve` drops to `perFloor: 0.5`.** `curveAt` is a plain
+  `base + perFloor * floorIndex` multiplier on enemy maxHp, so leaving it at 1 would
+  have taken the deepest floor from x3 to x5 purely as a side effect of going 3 floors
+  to 5. x0.5 keeps the same x3 ceiling over five floors instead of three.
+- **The content is JSON under `world/dungeons/ember/`, not TypeScript** — 14
+  `RoomPiece` files plus 5 `DungeonFloorMap` files, in exactly the two shapes
+  `tools/map-editor` reads and writes, so the level is tuned in the editor rather than
+  in a source literal. `engine/world/rooms/emberLevel1.ts` is a pure loader over them.
+  Same precedent PvP set for its 60-room arena (`world/arenas/arena_prototype_60.json`
+  loaded by `arenaCatalog.ts`): content under `world/`, code only points at it. Seeded
+  once by `tools/map-editor/scripts/genEmberLevel1.mjs`, deliberately not wired into
+  any npm script — re-running it overwrites editor tweaks, and the JSON is the source
+  of truth from the moment it lands.
+- **Doors are validated for physical passability, not just declared adjacency.**
+  `validateDungeonFloorMap` (the editor's save gate) already covers the structural
+  half — no overlaps, doors on a real shared wall, reachability through the door
+  GRAPH, capstone last — but a door can satisfy all of that and still be unwalkable:
+  it can open onto an interior solid, or cut only one of the two abutting perimeter
+  walls. So `engine/world/rooms/emberLevel1.test.ts` runs the real engine path
+  (`placeAuthoredFloor` → `buildFloorGeometry`, the same two calls `SpawnSystem`
+  makes), rasterises the resulting door-carved Fp wall list back onto the grid, and
+  flood-fills from the spawn room — every room's `entranceGrid` and every authored
+  spawn point has to come out reachable, and the fill has to physically enter every
+  room. `tools/map-editor/src/emberLevel1Content.test.ts` is the matching authoring-side
+  gate: the shipped files must pass the editor's OWN validators, or the first
+  tweak-and-save would be blocked on a problem the content shipped with. The authoring
+  rule that makes the geometry check pass is a 4-cell decor margin off every
+  perimeter, so a door carved anywhere along a wall always opens onto clear floor.
+- **The old procedural pair is kept, not deleted.** `EMBER_ROOMS` plus a new
+  `EMBER_PROCEDURAL_DUNGEON` export (the exact descriptor `EMBER_DUNGEON` was before
+  this change) is what `world/dungeon.test.ts`'s graph2d seed sweeps and exhaustive
+  pool enumeration still drive — that coverage is the reason those seven pieces' exit
+  topology is what it is (the "found NOT by inspection" paragraph above). Nothing in a
+  shipped run reads the procedural pair now.
+- **Open, deliberately left for editor tuning**: the floors are spanning trees (rooms
+  connect in a chain, extra loop doors only appear where rooms happen to end up
+  flush — none did on this pass), so no floor currently has an alternate route; enemy
+  type mixes are per-piece rather than per-floor, so the same piece fights the same way
+  wherever it appears; and every room still spawns its whole garrison at tick 0 (an
+  absent `encounter` is the engine's hand-authored default, and it is what makes a room
+  genuinely cleared the moment it is empty — a staggered script would let a player
+  leave through a door that unlocked between waves).
+
 ## Survivability model (HP + shield)
 
 Every actor has **two defensive pools**; the character (skin, `02`) contributes *only* these plus one break-passive — all offensive depth is the weapon.

@@ -6,8 +6,11 @@
  * `blightlord` finale, content/enemies.ts). Grid units, human-authored
  * (design/09); `content/rooms.ts roomGeometry` converts once at placement.
  *
- * Wired live (ROADMAP 1.3): pair EMBER_ROOMS with EMBER_DUNGEON (below) as
- * `EngineConfig.dungeon` and SpawnSystem generates + traverses floors from them.
+ * **No longer the shipped level's pool.** `EMBER_DUNGEON` (below) is now a fully
+ * hand-authored 5-floor level whose content is the separate `'ember_l1'` library in
+ * ./emberLevel1.ts. These seven pieces stay exported and tested: they are the
+ * fixtures `world/dungeon.test.ts` drives `generateFloor`/`placeFloorGraph2d` with,
+ * and everything the rest of this comment records was found by those sweeps.
  *
  * `'graph2d'` content (design/05, 2026-08-05 follow-up): `EMBER_DUNGEON.layout`
  * switched from `'linear'` to `'graph2d'` this pass, so a generated Ember floor
@@ -73,6 +76,7 @@
  */
 import type { AabbGrid, RoomPiece } from '../../content/rooms';
 import type { DungeonConfig } from '../dungeon';
+import { EMBER_L1_FLOORS } from './emberLevel1';
 
 // Perimeter walls (design/10 legibility fix, 2026-08-02; door gaps moved to generic
 // placement-time carving, design/05 "Room & door model" 2026-08-04): every piece used
@@ -174,23 +178,69 @@ export const EMBER_ROOMS: readonly RoomPiece[] = [
 ];
 
 /**
- * The Ember biome's dungeon descriptor (design/05/09, ROADMAP 1.3) — pair with
- * EMBER_ROOMS as `EngineConfig.dungeon`. Three floors of 2–3 rooms drawn from the
- * 'ember'-tagged pool, each capped by `ember_extraction` (the checkpoint) except the
- * deepest, capped by `ember_boss` (the blightlord finale, which doubles as its own
- * extraction). The difficulty curve is the first-pass linear ramp (world/dungeon.ts
- * curveAt) — final tuning is design/05's open work.
+ * The Ember biome's dungeon descriptor (design/05/09, ROADMAP 1.3) — the game's
+ * level 1, and the one `EngineConfig.dungeon` config every PvE run (offline and
+ * online) is built from.
+ *
+ * **Now a fully hand-authored level (design/05 "Hand-authored PvE floors").** All
+ * five floor indices are present in `floorMaps`, so `SpawnSystem` takes the
+ * `placeAuthoredFloor` path for every floor of a real run and the procedural
+ * `generateFloor`/`placeFloorGraph2d` pair costs zero `roomgenPrng` draws. The
+ * content itself — 14 `RoomPiece`s and 5 `DungeonFloorMap`s — is JSON under
+ * `world/dungeons/ember/`, loaded by `./emberLevel1.ts`, and is meant to be tuned
+ * in `tools/map-editor` rather than here. Pair this config with `EMBER_L1_ROOMS`
+ * (NOT `EMBER_ROOMS`) as the library: that is where every `pieceId` the floor maps
+ * reference lives.
+ *
+ * Floors 0-3 are capped by `ember_l1_extraction` (the checkpoint), floor 4 by
+ * `ember_l1_boss` (the blightlord finale, which doubles as its own extraction).
+ * Room counts run 5 / 6 / 7 / 6 / 5 — a shape `roomsPerFloor`'s min/max range
+ * structurally cannot express, which is exactly why the floors are authored rather
+ * than drawn; the range below describes only the procedural FALLBACK a floor would
+ * take if its authored map were ever removed.
+ *
+ * `difficultyCurve` drops to `perFloor: 0.5` alongside the floor count going 3 → 5:
+ * `curveAt` is a plain `base + perFloor * floorIndex` multiplier on enemy maxHp
+ * (`content/enemies.ts`), so the previous `perFloor: 1` would have taken the
+ * deepest floor from ×3 to ×5 purely as a side effect of adding floors. ×0.5 keeps
+ * the same ×3 ceiling, now reached over five floors instead of three.
  *
  * `layout: 'graph2d'` (design/05, 2026-08-05 follow-up; was `'linear'`) — the
- * module doc above lists which pieces actually make a floor bend now.
- * `generateFloor`'s stage-selection stream is byte-identical to `'linear'`
- * (module doc, `world/dungeon.ts`), so this is placement-only: every past
- * seed's ROOM SEQUENCE is unchanged, only which piece lands where in 2D space
- * (and, for a west/east-only sequence, that's unchanged too). `'branching'`
- * stays unused by this config — no two normal pieces share a width (by design,
- * see `ember_atrium`'s doc comment above).
+ * module doc above lists which pieces actually make a floor bend now. Only the
+ * fallback path reads it at all, since every floor here is authored.
+ *
+ * `EMBER_ROOMS` above is no longer this config's pool (it is now the `'ember_l1'`
+ * pool in `./emberLevel1.ts`). The seven original pieces stay exported and tested:
+ * they are the fixtures `world/dungeon.test.ts`'s placement/seed-sweep suites drive
+ * `placeFloorGraph2d` with, and the module doc above records what those sweeps
+ * found — deleting them would delete that coverage, not just the content.
  */
 export const EMBER_DUNGEON: DungeonConfig = {
+  biomeId: 'ember',
+  nameKey: 'biome.ember',
+  floorCount: 5,
+  roomsPerFloor: { min: 5, max: 7 }, // fallback-only — the authored floors are 5/6/7/6/5
+  pieceTags: ['ember_l1'],
+  layout: 'graph2d',
+  extractionPieceId: 'ember_l1_extraction',
+  bossPieceId: 'ember_l1_boss',
+  difficultyCurve: { base: 1, perFloor: 0.5 },
+  floorMaps: EMBER_L1_FLOORS,
+};
+
+/**
+ * The procedural descriptor the `EMBER_ROOMS` pool above was built for — three
+ * floors of 2–3 rooms drawn from the `'ember'` tag, no authored floor maps.
+ *
+ * This is what `EMBER_DUNGEON` was before level 1 became hand-authored. It is kept
+ * as a first-class export rather than deleted because it is half of a matched pair:
+ * `EMBER_ROOMS`'s exit topology (this module's long doc comment above — the
+ * dead-end and fold-back fixes, and the exhaustive enumeration that found them) is
+ * only meaningful against THIS config's room count and tag pool. `world/dungeon.test.ts`
+ * and `systems/dungeonrun.test.ts` drive `generateFloor`/`placeFloorGraph2d` with the
+ * pair; nothing in a shipped run reads it.
+ */
+export const EMBER_PROCEDURAL_DUNGEON: DungeonConfig = {
   biomeId: 'ember',
   nameKey: 'biome.ember',
   floorCount: 3,

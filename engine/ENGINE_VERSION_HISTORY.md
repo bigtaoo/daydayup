@@ -530,3 +530,34 @@ steering/pathfinding/kiting yet, straight-line pursuit only (a mob can stall
 against a concave wall, same caveat `resolveWalls`'s push-out already carries);
 tune the two constants and add kiting/hysteresis as a later, non-bumping content
 change if the numbers alone need adjusting.
+
+v38: level 1 becomes a hand-authored 5-floor descent (design/05 "Hand-authored
+PvE floors"). `EMBER_DUNGEON` — the one `EngineConfig.dungeon` config every PvE
+run is built from — goes from 3 procedurally-drawn floors of 2-3 rooms to 5
+authored floors of 5 / 6 / 7 / 6 / 5 rooms, every one of them present in
+`floorMaps`, so `SpawnSystem.generateAndPlaceFloor` takes the
+`placeAuthoredFloor` branch for the whole run and `generateFloor`/
+`placeFloorGraph2d` are never reached. A real simulation-output change on three
+independent axes, hence the bump: (1) the floor geometry itself is different
+content (14 new `RoomPiece`s, 15x15..20x20 each, loaded from
+`world/dungeons/ember/`'s JSON by `world/rooms/emberLevel1.ts`); (2) the
+`roomgenPrng` draw count for a run drops to ZERO on layout — an authored floor
+costs no draws at all, where a generated one cost one per stage plus one per
+door — so any v37 stream's PRNG stream position diverges the instant a floor
+places; (3) enemy counts per room now ramp with the room's cell count (15 at
+15x15 up to 30 at 20x20, `enemyCountForArea`), against the 1-2 spawn points every
+old `EMBER_ROOMS` piece authored, so `aiPrng`'s fire-phase-jitter draw count per
+room changes too.
+
+`difficultyCurve` also drops from `perFloor: 1` to `perFloor: 0.5` in the same
+change: `curveAt` is a plain `base + perFloor * floorIndex` multiplier on enemy
+maxHp (`content/enemies.ts`), so leaving it alone would have taken the deepest
+floor from x3 to x5 purely as a side effect of going 3 floors to 5. x0.5 keeps
+the same x3 ceiling, now reached over five floors instead of three.
+
+The old procedural pair is NOT deleted — `EMBER_ROOMS` plus the new
+`EMBER_PROCEDURAL_DUNGEON` export (`world/rooms/ember.ts`, the exact descriptor
+`EMBER_DUNGEON` was before this change) is what `world/dungeon.test.ts`'s
+graph2d seed sweeps and exhaustive pool enumeration still drive, and that
+coverage is the reason those seven pieces' exit topology is what it is (see that
+module's own doc). Nothing in a shipped run reads the procedural pair now.

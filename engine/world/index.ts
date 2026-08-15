@@ -3,3 +3,4 @@
 // floors when a config opts into `dungeon` — see world/dungeon.ts's module doc.
 export * from './dungeon';
 export * from './rooms/ember';
+export * from './rooms/emberLevel1';

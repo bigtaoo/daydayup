@@ -1,4 +1,4 @@
-import { SKIN_DEFS, EMBER_DUNGEON, EMBER_ROOMS, type EngineConfig, type MatchStart } from '@dd/engine';
+import { SKIN_DEFS, EMBER_DUNGEON, EMBER_L1_ROOMS, type EngineConfig, type MatchStart } from '@dd/engine';
 import { buildPvpEngineConfig } from './pvpConfig';
 
 // Ignored once `dungeon`/`arena` is set (each mode's own geometry defines the bounds) —
@@ -29,6 +29,6 @@ export function buildOnlineConfig(m: MatchStart): EngineConfig {
     worldH: PLACEHOLDER_WORLD,
     waves: [],
     players: Array.from({ length: m.playerCount }, (_, i) => ({ skinId: ids[i % ids.length]! })),
-    dungeon: { config: EMBER_DUNGEON, library: EMBER_ROOMS },
+    dungeon: { config: EMBER_DUNGEON, library: EMBER_L1_ROOMS },
   };
 }

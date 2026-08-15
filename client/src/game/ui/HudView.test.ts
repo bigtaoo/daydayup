@@ -161,7 +161,9 @@ describe('HudView — stat chips (design/10, replaced the monospace info line)',
 
     hud.update(s, 16, CTX);
 
-    expect(hud.chips.get('floor')!.valueText).toBe('2/3');
+    // "/5" is level 1's floor count (EMBER_DUNGEON, world/rooms/ember.ts) — the chip
+    // reads the live config via `totalFloorCount`, so this tracks the shipped level.
+    expect(hud.chips.get('floor')!.valueText).toBe('2/5');
     expect(hud.chips.get('room')!.valueText).toBe('3/4');
   });
 

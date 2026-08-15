@@ -26,7 +26,8 @@ import type { Brad } from '@dd/engine/math/trig';
 import { toFpGrid } from '@dd/engine/content/convert';
 import type { RoomPiece } from '@dd/engine/content/rooms';
 import type { DungeonConfig, DungeonFloorMap } from '@dd/engine/world/dungeon';
-import { EMBER_DUNGEON, EMBER_ROOMS } from '@dd/engine/world/rooms/ember';
+import { EMBER_DUNGEON, EMBER_PROCEDURAL_DUNGEON, EMBER_ROOMS } from '@dd/engine/world/rooms/ember';
+import { EMBER_L1_ROOMS } from '@dd/engine/world/rooms/emberLevel1';
 
 // A tiny, fully-controlled library. Two normal pieces (distinct geometry, NO enemies →
 // their room activates with an empty schedule and never locks), an empty extraction
@@ -584,14 +585,18 @@ describe('Dungeon mode — a real fork places real sibling rooms end-to-end (des
 });
 
 describe('Dungeon mode — the real Ember biome runs end-to-end', () => {
-  it('generates + places EMBER_DUNGEON floors without throwing; bounds are set once and stay stable', () => {
+  it('places the shipped level 1 (authored floor 0) without throwing; bounds are set once and stay stable', () => {
     const eng = createGameEngine({
       seed: 0xda1d, worldW: 1600, worldH: 1200, waves: [],
-      dungeon: { config: EMBER_DUNGEON, library: EMBER_ROOMS },
+      dungeon: { config: EMBER_DUNGEON, library: EMBER_L1_ROOMS },
     });
     const s = eng.state;
     eng.step([idle(1)]); // first Ember floor places
-    expect(s.dungeonRooms.length).toBeGreaterThanOrEqual(EMBER_DUNGEON.roomsPerFloor.min);
+    // Level 1's floor 0 is hand-authored (world/dungeons/ember/ember_l1_floor_1.json):
+    // exactly 5 rooms, not a `roomsPerFloor` draw. The room/door SHAPE of every floor
+    // is `world/rooms/emberLevel1.test.ts`'s job — this asserts the live engine walks
+    // the authored path and stitches it into one stable world.
+    expect(s.dungeonRooms.length).toBe(5);
     expect(s.dungeonDoors.length).toBe(s.dungeonRooms.length - 1);
     const worldWAtPlacement = s.worldW;
     const worldHAtPlacement = s.worldH;
@@ -619,7 +624,12 @@ describe('Dungeon mode — the real Ember biome runs end-to-end', () => {
     return false;
   }
 
-  it("a bending seed places the real Ember biome via placeFloorGraph2d end-to-end, doors and all (design/05, 2026-08-05 'graph2d' content follow-up)", () => {
+  // The PROCEDURAL Ember pair (world/rooms/ember.ts `EMBER_PROCEDURAL_DUNGEON` +
+  // `EMBER_ROOMS`): the shipped `EMBER_DUNGEON` authors every floor now, so it never
+  // reaches `placeFloorGraph2d`. This test's whole point is that a BENT generated
+  // floor survives the full live pipeline, so it keeps driving the pair that
+  // actually generates.
+  it("a bending seed places the procedural Ember pair via placeFloorGraph2d end-to-end, doors and all (design/05, 2026-08-05 'graph2d' content follow-up)", () => {
     // Found by a live search here (rather than pinning dungeon.test.ts's own found
     // seed, which searches at the pure-function level) so this exact seed is
     // checked through the FULL live pipeline (buildFloorGeometry's door-gap
@@ -628,7 +638,7 @@ describe('Dungeon mode — the real Ember biome runs end-to-end', () => {
     for (let seed = 1; seed <= 200; seed++) {
       const eng = createGameEngine({
         seed, worldW: 1600, worldH: 1200, waves: [],
-        dungeon: { config: EMBER_DUNGEON, library: EMBER_ROOMS },
+        dungeon: { config: EMBER_PROCEDURAL_DUNGEON, library: EMBER_ROOMS },
       });
       eng.step([idle(1)]);
       if (tookVerticalHop(eng.state.dungeonRooms)) {
@@ -640,7 +650,7 @@ describe('Dungeon mode — the real Ember biome runs end-to-end', () => {
 
     const eng = createGameEngine({
       seed: bendingSeed, worldW: 1600, worldH: 1200, waves: [],
-      dungeon: { config: EMBER_DUNGEON, library: EMBER_ROOMS },
+      dungeon: { config: EMBER_PROCEDURAL_DUNGEON, library: EMBER_ROOMS },
     });
     const s = eng.state;
     eng.step([idle(1)]);

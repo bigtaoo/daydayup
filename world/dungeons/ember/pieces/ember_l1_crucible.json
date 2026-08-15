@@ -1,0 +1,229 @@
+{
+  "id": "ember_l1_crucible",
+  "tags": [
+    "ember_l1"
+  ],
+  "sizeGrid": {
+    "w": 19,
+    "h": 19
+  },
+  "solids": [
+    {
+      "x": 0,
+      "y": 0,
+      "w": 19,
+      "h": 1
+    },
+    {
+      "x": 0,
+      "y": 18,
+      "w": 19,
+      "h": 1
+    },
+    {
+      "x": 0,
+      "y": 1,
+      "w": 1,
+      "h": 17
+    },
+    {
+      "x": 18,
+      "y": 1,
+      "w": 1,
+      "h": 17
+    }
+  ],
+  "pillars": [
+    {
+      "center": {
+        "x": 5,
+        "y": 5
+      },
+      "radius": 1
+    },
+    {
+      "center": {
+        "x": 14,
+        "y": 5
+      },
+      "radius": 1
+    },
+    {
+      "center": {
+        "x": 5,
+        "y": 14
+      },
+      "radius": 1
+    },
+    {
+      "center": {
+        "x": 14,
+        "y": 14
+      },
+      "radius": 1
+    }
+  ],
+  "spawns": {
+    "player": [
+      {
+        "x": 2.5,
+        "y": 7
+      },
+      {
+        "x": 2.5,
+        "y": 11
+      }
+    ],
+    "enemy": [
+      {
+        "x": 2.5,
+        "y": 2.5,
+        "type": "basic"
+      },
+      {
+        "x": 4.5,
+        "y": 2.5,
+        "type": "galvanist"
+      },
+      {
+        "x": 8.5,
+        "y": 2.5,
+        "type": "frostling"
+      },
+      {
+        "x": 12.5,
+        "y": 2.5,
+        "type": "floater"
+      },
+      {
+        "x": 14.5,
+        "y": 2.5,
+        "type": "basic"
+      },
+      {
+        "x": 8.5,
+        "y": 4.5,
+        "type": "galvanist"
+      },
+      {
+        "x": 16.5,
+        "y": 4.5,
+        "type": "frostling"
+      },
+      {
+        "x": 6.5,
+        "y": 6.5,
+        "type": "floater"
+      },
+      {
+        "x": 10.5,
+        "y": 6.5,
+        "type": "basic"
+      },
+      {
+        "x": 16.5,
+        "y": 6.5,
+        "type": "galvanist"
+      },
+      {
+        "x": 6.5,
+        "y": 8.5,
+        "type": "frostling"
+      },
+      {
+        "x": 10.5,
+        "y": 8.5,
+        "type": "floater"
+      },
+      {
+        "x": 14.5,
+        "y": 8.5,
+        "type": "basic"
+      },
+      {
+        "x": 16.5,
+        "y": 8.5,
+        "type": "galvanist"
+      },
+      {
+        "x": 8.5,
+        "y": 10.5,
+        "type": "frostling"
+      },
+      {
+        "x": 12.5,
+        "y": 10.5,
+        "type": "floater"
+      },
+      {
+        "x": 14.5,
+        "y": 10.5,
+        "type": "basic"
+      },
+      {
+        "x": 6.5,
+        "y": 12.5,
+        "type": "galvanist"
+      },
+      {
+        "x": 10.5,
+        "y": 12.5,
+        "type": "frostling"
+      },
+      {
+        "x": 12.5,
+        "y": 12.5,
+        "type": "floater"
+      },
+      {
+        "x": 2.5,
+        "y": 14.5,
+        "type": "basic"
+      },
+      {
+        "x": 10.5,
+        "y": 14.5,
+        "type": "galvanist"
+      },
+      {
+        "x": 16.5,
+        "y": 14.5,
+        "type": "frostling"
+      },
+      {
+        "x": 4.5,
+        "y": 16.5,
+        "type": "floater"
+      },
+      {
+        "x": 8.5,
+        "y": 16.5,
+        "type": "basic"
+      },
+      {
+        "x": 10.5,
+        "y": 16.5,
+        "type": "galvanist"
+      },
+      {
+        "x": 14.5,
+        "y": 16.5,
+        "type": "frostling"
+      }
+    ]
+  },
+  "exits": [
+    {
+      "edge": "west"
+    },
+    {
+      "edge": "east"
+    },
+    {
+      "edge": "north"
+    },
+    {
+      "edge": "south"
+    }
+  ]
+}

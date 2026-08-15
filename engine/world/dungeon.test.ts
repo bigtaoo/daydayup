@@ -18,7 +18,7 @@ import {
   type DungeonConfig,
   type DungeonFloorMap,
 } from '@dd/engine/world/dungeon';
-import { EMBER_DUNGEON, EMBER_ROOMS } from '@dd/engine/world/rooms/ember';
+import { EMBER_DUNGEON, EMBER_PROCEDURAL_DUNGEON, EMBER_ROOMS } from '@dd/engine/world/rooms/ember';
 import { roomGeometry, type RoomPiece } from '@dd/engine/content/rooms';
 import { toFpGrid } from '@dd/engine/content/convert';
 import { fp } from '@dd/engine/math/fixed';
@@ -251,8 +251,15 @@ describe('EMBER_ROOMS library shape', () => {
   });
 });
 
-describe("EMBER_DUNGEON ships with layout: 'graph2d' — the shipped biome actually bends (design/05, 2026-08-05 follow-up)", () => {
-  it("EMBER_DUNGEON.layout is 'graph2d'", () => {
+// Drives `EMBER_PROCEDURAL_DUNGEON`, not `EMBER_DUNGEON`: level 1 is now fully
+// hand-authored (every floor index has a `floorMaps` entry), so the shipped config
+// no longer reaches `generateFloor` at all. The pair under test here is the
+// procedural descriptor and the `EMBER_ROOMS` pool it was built for — see
+// `world/rooms/ember.ts`'s module doc for what these sweeps originally found, which
+// is exactly the coverage this suite exists to keep.
+describe("the procedural Ember pair ships with layout: 'graph2d' — a generated floor actually bends (design/05, 2026-08-05 follow-up)", () => {
+  it("both Ember configs use 'graph2d'", () => {
+    expect(EMBER_PROCEDURAL_DUNGEON.layout).toBe('graph2d');
     expect(EMBER_DUNGEON.layout).toBe('graph2d');
   });
 
@@ -284,7 +291,7 @@ describe("EMBER_DUNGEON ships with layout: 'graph2d' — the shipped biome actua
     let bent = false;
     for (let seed = 1; seed <= 200 && !bent; seed++) {
       const prng = new Prng(seed);
-      const layout = generateFloor(EMBER_DUNGEON, 0, prng, EMBER_ROOMS);
+      const layout = generateFloor(EMBER_PROCEDURAL_DUNGEON, 0, prng, EMBER_ROOMS);
       const { placed } = placeFloorGraph2d(layout.rooms, prng);
       for (let i = 1; i < placed.length; i++) {
         if (isVerticalHop(placed[i - 1]!, placed[i]!)) bent = true;
@@ -297,7 +304,7 @@ describe("EMBER_DUNGEON ships with layout: 'graph2d' — the shipped biome actua
     let straight = false;
     for (let seed = 1; seed <= 200 && !straight; seed++) {
       const prng = new Prng(seed);
-      const layout = generateFloor(EMBER_DUNGEON, 0, prng, EMBER_ROOMS);
+      const layout = generateFloor(EMBER_PROCEDURAL_DUNGEON, 0, prng, EMBER_ROOMS);
       const { placed } = placeFloorGraph2d(layout.rooms, prng);
       const allHorizontal = Array.from({ length: placed.length - 1 }, (_, i) => i + 1).every(
         (i) => !isVerticalHop(placed[i - 1]!, placed[i]!),
@@ -307,7 +314,7 @@ describe("EMBER_DUNGEON ships with layout: 'graph2d' — the shipped biome actua
     expect(straight).toBe(true);
   });
 
-  // Exhaustive, not sampled: `EMBER_DUNGEON.roomsPerFloor` caps a floor at 3
+  // Exhaustive, not sampled: `EMBER_PROCEDURAL_DUNGEON.roomsPerFloor` caps a floor at 3
   // rooms (2 normal + capstone), and `generateFloor`'s stage draws are IID over
   // the pool — so "every seed" reduces to a small, fully enumerable space:
   // every (normal1, normal2, capstone) triple the real pool can produce, times
