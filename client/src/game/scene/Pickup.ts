@@ -19,27 +19,55 @@ const PICKUP_GLOW: Record<PickupKind, number> = {
   bandage: THEME.colors.pickupHeal, // no dedicated bandage art yet — falls into the same crystal fallback shape below as 'material'
 };
 
+// Ambient hover, deliberately in the same band as the scene's other idle loops —
+// Portal's alpha pulse (0.003 rad/ms) and Actor's status aura (0.008). The original
+// 0.12 rad/ms was ~19 Hz, i.e. 2.0 rad of phase per 60fps frame: close enough to the
+// Nyquist limit (π) that the "bob" aliased into a strobe whose apparent rate changed
+// with the display's refresh rate instead of reading as a float.
+const BOB_PERIOD_MS = 2000; // one unhurried hover cycle every 2s (0.5 Hz)
+const BOB_RATE = (Math.PI * 2) / BOB_PERIOD_MS; // rad/ms
+const BOB_REST_Z = 9; // hover height the bob oscillates around (px)
+const BOB_AMPLITUDE = 4; // px either side of rest — bigger than before; slow travel needs the reach to read
+
+// Golden angle: spacing successive drops' start phase by it keeps a whole floor's worth
+// of loot from bobbing in lockstep (which is what made the field read as one flicker),
+// with no Math.random — same determinism rule the rest of this render layer follows.
+const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+
+// The glow's fill alpha is the value at the TOP of the hover; the breathe below only ever
+// scales it DOWN (Pixi clamps alpha at 1, so modulating above the fill would silently
+// flatten the bright half of the cycle into a plateau).
+const GLOW_ALPHA_PEAK = 0.34;
+const GLOW_BREATHE = 0.36; // how much dimmer the bottom of the arc is, as a fraction of peak
+
 // Pickup view — an in-run drop (health / coin / weapon). Pure presentation:
 // the engine owns the drop roll and collection; the hover bob here is render-only
 // eye candy (it is NOT part of the sim, which is why PickupItem has no z). Position
 // lerps like any other view; z is the local bob. Each kind gets a distinct silhouette
 // so a player reads "new gun" (chevron) vs "heal" (plus) at a glance.
 export class Pickup extends Entity {
-  private bob = 0;
+  private bob: number;
+  private readonly glow: Graphics;
   readonly kind: PickupKind;
 
-  constructor(kind: PickupKind, weaponId?: string) {
+  /** `id` is the engine entity id, used only to spread the hover's start phase (see
+   *  GOLDEN_ANGLE) — the view stays a pure function of it, so two clients drawing the
+   *  same drop still agree frame-for-frame. Defaults to an in-phase 0 for callers that
+   *  don't care (tests, one-off previews). */
+  constructor(kind: PickupKind, weaponId?: string, id = 0) {
     super();
     this.kind = kind;
+    this.bob = id * GOLDEN_ANGLE;
     // A soft additive glow behind the shape (design/10 legibility fix, 2026-08-02): a
     // flat-filled ~14px silhouette reads as a plain dot against a dark/busy floor —
     // the glow gives every pickup a bit of "pop" at a glance without new art. A
     // separate Graphics (not the crisp shape below) so only the glow itself blends
     // additively — the shape on top stays a normal, non-washed-out fill.
     const glow = new Graphics();
-    glow.circle(0, 0, 13).fill({ color: PICKUP_GLOW[kind], alpha: 0.28 });
+    glow.circle(0, 0, 13).fill({ color: PICKUP_GLOW[kind], alpha: GLOW_ALPHA_PEAK });
     glow.blendMode = 'add';
     this.addChild(glow);
+    this.glow = glow;
 
     const gfx = new Graphics();
     if (kind === 'heal') {
@@ -88,8 +116,14 @@ export class Pickup extends Entity {
   }
 
   override interpolate(alpha: number, frameDt: number): void {
-    this.bob += frameDt * 0.12;
-    const z = 8 + Math.sin(this.bob) * 3;
+    this.bob += frameDt * BOB_RATE;
+    const swing = Math.sin(this.bob);
+    // The glow breathes with the hover rather than on its own clock: one slow cue
+    // instead of two competing ones, and it keeps the drop's "pop" now that the motion
+    // alone is too gentle to catch the eye. Scaling the Graphics' alpha (not refilling
+    // it) keeps this a per-frame property write, no geometry rebuild.
+    this.glow.alpha = 1 - (GLOW_BREATHE * (1 - swing)) / 2;
+    const z = BOB_REST_Z + swing * BOB_AMPLITUDE;
     this.applyTransform(
       this.prevX + (this.curX - this.prevX) * alpha,
       this.prevY + (this.curY - this.prevY) * alpha,

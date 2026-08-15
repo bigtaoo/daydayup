@@ -20,6 +20,7 @@ import { Layers } from './layers';
 import { bradToRad } from '../coords';
 import { LightRegistry } from '../fx/lighting';
 import type { Actor } from './Actor';
+import type { Entity } from './Entity';
 
 function litFilterOf(a: Actor): { dirX: number; dirY: number; intensity: number } {
   return (a as unknown as { litFilter: { dirX: number; dirY: number; intensity: number } }).litFilter;
@@ -444,5 +445,26 @@ describe('Scene.reconcile — weapon pickup id passthrough (design/03)', () => {
 
     const views = (scene as unknown as { views: Map<number, { children: unknown[] }> }).views;
     expect(views.get(it.id)!.children.length).toBe(2); // glow + chevron, no icon sprite
+  });
+});
+
+describe('Scene.reconcile — pickup hover phase passthrough (strobe fix, 2026-08-15)', () => {
+  // Pickup derives its hover's start phase from the engine id it is handed, so a pile of
+  // drops doesn't rise and fall in lockstep (which is what made a whole floor of loot read
+  // as one flicker). That only works if reconcile actually passes the id down — forgetting
+  // it silently defaults every view to phase 0, i.e. right back to lockstep.
+  it('gives drops reconciled from the same state different hover phases', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const items = [addPickup(s, 300, 300), addPickup(s, 340, 300), addPickup(s, 380, 300)];
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+
+    const views = (scene as unknown as { views: Map<number, Entity> }).views;
+    const heights = items.map((it) => {
+      const v = views.get(it.id)!;
+      v.interpolate(1, 16);
+      return Math.round((v.curY - v.y) * 100) / 100; // hover height (Entity writes y = groundY - z)
+    });
+    expect(new Set(heights).size).toBe(heights.length);
   });
 });

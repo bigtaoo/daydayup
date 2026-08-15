@@ -1748,6 +1748,53 @@ See `01-rendering.md`'s "Text measurement" section for the reference write-up an
 
 ---
 
+## Ground drops flicker instead of hovering — an idle loop running at 19 Hz (2026-08-15)
+
+User report: "掉落的物品和道具在地图上闪烁的频率太高了" — the drops and items on the floor
+blink far too fast. Not a tuning miss; the hover was aliasing.
+
+**Root cause.** `scene/Pickup.ts` advanced its bob clock by `frameDt * 0.12` with `frameDt`
+in milliseconds — **19.1 Hz, 2.0 rad of phase per 60fps frame**, against a Nyquist limit of
+π. It was never rendering as a bob: what reached the screen was a beat between the animation
+and the refresh rate, so the apparent flicker rate differed per monitor. For scale, the
+scene's other two idle loops are 0.48 Hz (`Portal`) and 1.27 Hz (`Actor`'s status aura) —
+this was 15–40× faster than anything else on screen. Compounding it, every `Pickup` started
+at phase 0 and advanced identically, so a floor's worth of loot pulsed in exact unison and
+read as a single sheet of flicker rather than many separate objects.
+
+**Fix (render-only, no `ENGINE_VERSION` impact).** Three parts, all in `scene/Pickup.ts`
+plus one argument in `scene/Scene.ts`:
+
+1. **A period constant, not a rate constant** — `BOB_PERIOD_MS = 2000` (0.5 Hz) with the
+   rad/ms rate derived from it, landing the hover in the same band as `Portal`/`Actor`. A
+   bare `0.12` is exactly the kind of number that survives review because nobody converts it
+   in their head; `2000` is self-checking. Travel widened ±3px → ±4px, since slow motion
+   needs more reach to read at all.
+2. **Per-drop phase offset** — the start phase is the golden angle times the pickup's engine
+   entity id (passed down by `Scene.reconcile`), so neighbouring drops never bob in lockstep.
+   Derived from the id rather than `Math.random`, keeping this layer's determinism (`06`).
+3. **The glow breathes with the hover** (brightest at the top, `1.0 → 0.64` alpha) to replace
+   the "pop" the strobe was accidentally providing — one slow cue instead of two competing
+   clocks. The peak is anchored at alpha 1 because Pixi clamps there, and modulating above it
+   would flatten the bright half of every cycle into a plateau.
+
+**Verification.** Unit tests plus a live measurement against the real dev server, driving
+`window.__game.update(16)` and sampling the view's transform: period exactly 2000 ms across
+two consecutive cycles, 8.0 px peak-to-peak, 0.20 px maximum single-frame movement, glow
+sweeping 0.64→1.0, and four adjacent drops sitting at four different heights. No console
+errors. 16 new tests (client `Pickup.test.ts` 5 → 20, `Scene.test.ts` +1) covering the rate,
+the exact period, per-id phase spread, purity of the animation in `(id, clock)`, the alpha
+clamp, the height band, frame-rate independence (30fps vs 144fps agreeing after the same
+second), smoothness at 30fps, every `PickupKind` animating, ground-position lerp being
+untouched, the shadow drifting rather than strobing, `zIndex` staying on ground y, and the
+breathe reaching only the glow and never the item art. Mutation-checked: restoring `0.12`
+and phase 0 fails 6 of them, each for a different reason.
+
+See `01-rendering.md`'s new "Ambient animation rates" section for the reference table and
+the two rules this produced.
+
+---
+
 ## Dependency summary
 
 ```

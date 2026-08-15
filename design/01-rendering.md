@@ -76,6 +76,43 @@ Otherwise you get the "gun floating on the chest while facing away" artifact.
 
 For this game's scale (rooms, pillars, crates, enemies) these are largely avoidable. If true continuous 3D occlusion is needed → fall back to a Three.js orthographic camera (see the re-evaluation trigger in 00, Decision 1).
 
+## Ambient animation rates (idle loops have a Nyquist floor)
+
+Every idle loop in this layer is a sine driven by an accumulated `frameDt` clock in
+**milliseconds** — `t += frameDt`, then `sin(t * k)`. The rate constant `k` is therefore in
+**rad/ms**, and the frequency it produces is `k * 1000 / 2π` Hz. Getting this wrong by a
+decimal place does not look like "a bit fast": once the per-frame phase step `k * 16.7`
+approaches π, the loop crosses the display's Nyquist limit and **aliases**, so what renders
+is a beat frequency between the animation and the refresh rate — jitter whose apparent speed
+changes with the player's monitor, not the motion that was authored.
+
+Keep every ambient loop in the band the scene already uses. Current inhabitants:
+
+| Loop | Rate (rad/ms) | Frequency | Phase per 60fps frame |
+|---|---|---|---|
+| `Portal` alpha pulse | 0.003 | 0.48 Hz | 0.05 rad |
+| `Pickup` hover + glow breathe | `2π/2000` | 0.50 Hz | 0.052 rad |
+| `Actor` status aura | 0.008 | 1.27 Hz | 0.13 rad |
+| *(Nyquist limit at 60fps)* | 0.188 | 30 Hz | π |
+
+`Pickup`'s hover shipped at `0.12` (19.1 Hz, 2.0 rad/frame) and reached a player as "the
+items on the ground flicker far too fast" — it had never been a bob at all. Two rules came
+out of it:
+
+- **Prefer a period constant to a rate constant.** `BOB_PERIOD_MS = 2000` with the rate
+  derived from it states the intent in a unit a human can sanity-check; a bare `0.12` does
+  not, which is how it survived review.
+- **Give co-located instances different start phases.** Every pickup started at phase 0 and
+  advanced identically, so a whole floor of loot rose and fell in unison and read as one
+  synchronised flash rather than many objects. `Pickup` now offsets its start phase by the
+  golden angle times its engine entity id — deterministic (no `Math.random`, per `06`), so
+  two clients still draw the same drop identically.
+
+Note that a bob is visible on more surfaces than the sprite: `z` also drives the shadow's
+scale/alpha (see Shadows above), so a strobing height strobes the shadow too. `zIndex` is
+the exception and must stay on **ground y** — routing it through screen y would make a
+hovering object flicker in and out of the Y-sort against everything near it.
+
 ## Text measurement (Pixi's measure canvas is NOT its paint canvas)
 
 Every piece of UI text in this project is a Pixi `Text` on a `fontFamily: 'monospace'`
