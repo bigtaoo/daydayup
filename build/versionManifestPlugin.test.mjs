@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { versionManifestPlugin } from './versionManifestPlugin.mjs';
@@ -76,7 +76,6 @@ describe('versionManifestPlugin', () => {
     const cwd = process.cwd();
     process.chdir(dir);
     try {
-      const { mkdir } = await import('node:fs/promises');
       await mkdir('dist', { recursive: true });
       const plugin = versionManifestPlugin();
       await plugin.writeBundle({}, bundleOf([['a.js', 1]]));
@@ -85,5 +84,74 @@ describe('versionManifestPlugin', () => {
     } finally {
       process.chdir(cwd);
     }
+  });
+
+  // publicDir participates in the hash so an art-only deploy (the game client ships its
+  // skins/tiles as static public/ files, untouched by the JS bundle) still counts as a new build.
+  describe('publicDir', () => {
+    /** Write `files` ({ relPath: byteLength }) into a fresh public dir and hash them with `bundle`. */
+    async function runWithPublic(files, bundle, config) {
+      const publicDir = await mkdtemp(path.join(tmpdir(), 'dd-public-'));
+      for (const [rel, size] of Object.entries(files)) {
+        const abs = path.join(publicDir, rel);
+        await mkdir(path.dirname(abs), { recursive: true });
+        await writeFile(abs, 'x'.repeat(size));
+      }
+      const plugin = versionManifestPlugin();
+      plugin.configResolved({ publicDir, ...config });
+      await plugin.writeBundle({ dir }, bundle);
+      await rm(publicDir, { recursive: true, force: true });
+      return JSON.parse(await readFile(path.join(dir, 'version.json'), 'utf8'));
+    }
+
+    it('changes hash when a nested public file changes size', async () => {
+      const bundle = bundleOf([['a.js', 10]]);
+      const before = await runWithPublic({ 'skins/orb-core.png': 100 }, bundle);
+      const after = await runWithPublic({ 'skins/orb-core.png': 101 }, bundle);
+
+      expect(after.hash).not.toBe(before.hash);
+    });
+
+    it('changes hash when a public file is added', async () => {
+      const bundle = bundleOf([['a.js', 10]]);
+      const before = await runWithPublic({ 'ui/hud.png': 50 }, bundle);
+      const after = await runWithPublic({ 'ui/hud.png': 50, 'ui/extra.png': 50 }, bundle);
+
+      expect(after.hash).not.toBe(before.hash);
+    });
+
+    it('is stable across runs for identical public contents', async () => {
+      const bundle = bundleOf([['a.js', 10]]);
+      const files = { 'ui/hud.png': 50, 'skins/orb-core.png': 100 };
+
+      expect((await runWithPublic(files, bundle)).hash).toBe((await runWithPublic(files, bundle)).hash);
+    });
+
+    it('ignores publicDir when copyPublicDir is false (those files never reach outDir)', async () => {
+      const bundle = bundleOf([['a.js', 10]]);
+      const off = { build: { copyPublicDir: false } };
+      const a = await runWithPublic({ 'ui/hud.png': 50 }, bundle, off);
+      const b = await runWithPublic({ 'ui/hud.png': 999 }, bundle, off);
+
+      expect(a.hash).toBe(b.hash);
+    });
+
+    it('still hashes the bundle when configResolved never ran or publicDir is disabled', async () => {
+      const plugin = versionManifestPlugin();
+      plugin.configResolved({ publicDir: '' });
+      await plugin.writeBundle({ dir }, bundleOf([['a.js', 10]]));
+      const manifest = JSON.parse(await readFile(path.join(dir, 'version.json'), 'utf8'));
+
+      expect(manifest.hash).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    it('treats a missing publicDir as empty rather than failing the build', async () => {
+      const plugin = versionManifestPlugin();
+      plugin.configResolved({ publicDir: path.join(dir, 'does-not-exist') });
+      await plugin.writeBundle({ dir }, bundleOf([['a.js', 10]]));
+      const manifest = JSON.parse(await readFile(path.join(dir, 'version.json'), 'utf8'));
+
+      expect(manifest.hash).toMatch(/^[0-9a-f]{64}$/);
+    });
   });
 });

@@ -1,6 +1,17 @@
-// Ambient declarations for Vite's own import suffixes. The workspace tsconfigs set
-// `"types": []` (tsconfig.base.json) and never pull in `vite/client`, so the one suffix
-// this codebase uses has to be declared here.
+// Ambient declarations for the bits of Vite's own runtime API this codebase uses. The
+// workspace tsconfigs set `"types": []` (tsconfig.base.json) and never pull in
+// `vite/client`, so each one has to be declared here.
+
+/** `import.meta.env` — Vite statically replaces these at build time. Only the flags this
+ * codebase actually reads are declared; see autoReload.ts for PROD's use. */
+interface ImportMetaEnv {
+  readonly PROD: boolean;
+  readonly DEV: boolean;
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}
 
 /** `import source from './file.ts?raw'` — Vite hands back the file's text unparsed.
  * Used by textMetrics.test.ts to assert an entry point still calls a boot-order-critical

@@ -1795,6 +1795,59 @@ the two rules this produced.
 
 ---
 
+## Web client auto-reloads on deploy — ported from `funny` (2026-08-15)
+
+A tab left open across a deploy keeps running the old JS indefinitely. The sibling
+project `funny` already solved this (`funny/client/src/entries/web.ts`); the ask was to bring
+the same behaviour here. Half the machinery was already in this repo and simply never wired
+to the game client: `build/versionManifestPlugin.mjs` (added 2026-08-04 for the desktop
+shell's `contentUpdatePoller`) emits `version.json` for both authoring tools, but
+`client/vite.config.js` never used it, so `b.gamestao.com` had no version endpoint at all.
+
+**Shipped.** The plugin is now enabled for the client build, and
+`client/src/platform/web/autoReload.ts` re-fetches `/version.json` on every return to the
+foreground (`visibilitychange` → `visible`), reloading when the hash no longer matches the
+one the page booted with. `client/public/_headers` marks `index.html`/`version.json`
+`no-cache` and `/assets/*` (Rollup content-hashed) `immutable`, without which Cloudflare's
+edge would keep serving the pre-deploy hash and make the whole check inert. Web entry only —
+`main.wechat.ts` is untouched, and the whole thing is gated on `import.meta.env.PROD`, so the
+dev server (which emits no `version.json`, the plugin being `apply: 'build'`) keeps using
+Vite HMR. Render/tooling-only, no `ENGINE_VERSION` impact.
+
+**Three deliberate deviations from `funny`'s version**, each forced by a real difference:
+
+1. **The baseline is fetched, not baked in.** `funny` compares against a compile-time
+   `NW_BUILD_VERSION` string. Our hash is computed *after* bundling, so it cannot be a
+   compile-time constant; instead the watcher fetches once at boot to establish its baseline,
+   the same shape as `contentUpdatePoller.confirmBaseline()`. Until that first fetch succeeds
+   there is nothing to compare against and the watcher stays quiet — it never reloads on the
+   fetch that establishes the baseline, which is what a naive version would do on every cold
+   start after a deploy.
+2. **`publicDir` is folded into the hash.** `funny`'s version number moves whenever a human
+   bumps it, so this never came up there; ours is derived from build output, and this game
+   ships most of its art as static `client/public/` files. A skin/tile/UI-art-only deploy
+   changes nothing in the JS bundle, so hashing the bundle alone would have silently missed
+   exactly the deploys the art pipeline produces most often. The **source** `publicDir` is
+   read rather than the copied output, so the hash does not depend on when Vite runs its
+   public-dir copy relative to `writeBundle`.
+3. **A reload veto.** `funny` reloads unconditionally, which is safe there because its state
+   is server-persisted. A run here is client-side state a reload would throw away, so
+   `installAutoReload` takes a predicate; `main.ts` holds the update back during
+   `playing`/`paused`/`matchmaking` or any online session. The update is deferred, not
+   dropped — the baseline is left untouched so the next foreground return re-checks and
+   applies it once the phase allows.
+
+**Verification.** 24 new tests (11 client, 13 root build-script) plus a live end-to-end drive
+of the real production build under `vite preview`: boot fetches the baseline; an unchanged
+hash does not reload; a changed hash at the menu **does**; a changed hash while
+`getPhase() === 'playing'` is **deferred and the run survives**; and `quitRun()` followed by
+the next check **applies the deferred reload**. Zero console errors. Also confirmed at the
+build level that two identical builds produce a byte-identical hash while a single added
+`public/` file changes it. A `client-preview` entry was added to `.claude/launch.json`, since
+the feature is production-gated and `client-dev` cannot exercise it.
+
+---
+
 ## Dependency summary
 
 ```

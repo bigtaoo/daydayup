@@ -69,6 +69,16 @@ npm run build -w client
 npx wrangler deploy -c wrangler/client.jsonc
 ```
 
+An already-open tab picks up a deploy on its own. The client build emits
+`dist/version.json` (`build/versionManifestPlugin.mjs` — a hash over the bundle *and*
+`client/public/`, so an art-only deploy counts too), and
+`client/src/platform/web/autoReload.ts` re-checks it whenever the player returns to the tab,
+reloading when it no longer matches the hash the page booted with — held back while a run or
+an online session is live, then applied on the next return. `client/public/_headers` keeps
+`index.html`/`version.json` uncached at the edge, which is what makes the check meaningful;
+don't drop it. Production builds only — the dev server keeps using Vite HMR. Ported from
+`funny`'s equivalent; see `design/ROADMAP.md`'s 2026-08-15 entry for how the two differ.
+
 The two authoring tools have the same setup — `wrangler/animator.jsonc` /
 `wrangler/map-editor.jsonc` + `.github/workflows/animator-deploy.yml` /
 `map-editor-deploy.yml`, gated behind `ANIMATOR_DEPLOY_ENABLED` /

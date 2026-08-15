@@ -1,5 +1,7 @@
 import { Game } from './game/Game';
+import type { Phase } from './game/phase';
 import { WebPlatform } from './platform/web/WebPlatform';
+import { installAutoReload } from './platform/web/autoReload';
 import { preloadRigSkin } from './render/skinRegistry';
 import { preloadWeaponSkins } from './render/weaponSkins';
 import { preloadUiArt } from './render/uiSkins';
@@ -55,6 +57,12 @@ async function boot() {
   const game = new Game(app, input, audio);
   game.start();
   document.getElementById('boot-loading')?.remove();
+
+  // Pick up a new deploy when the player tabs back in (production builds only). Held back
+  // while a run or a network session is live — those phases hold state a reload would throw
+  // away; the check simply runs again on the next foreground return.
+  const RELOAD_UNSAFE_PHASES: ReadonlySet<Phase> = new Set<Phase>(['playing', 'paused', 'matchmaking']);
+  installAutoReload(() => !RELOAD_UNSAFE_PHASES.has(game.getPhase()) && !game.isOnline());
 
   // Expose for debugging
   (globalThis as unknown as { __game: Game }).__game = game;

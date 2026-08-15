@@ -8,6 +8,15 @@
       "port": 5173
     },
     {
+      // Serves the built client/dist. Needed to exercise anything gated on a production
+      // build — notably the version.json foreground auto-reload (src/platform/web/autoReload.ts),
+      // which is inert under `client-dev`. Run `npm run build -w client` first.
+      "name": "client-preview",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "preview", "--prefix", "client"],
+      "port": 4173
+    },
+    {
       "name": "map-editor-dev",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--prefix", "tools/map-editor"],
