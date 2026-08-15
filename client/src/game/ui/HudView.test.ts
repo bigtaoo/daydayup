@@ -6,7 +6,7 @@ import type { PlacedRoom } from '@dd/engine/world/dungeon';
 import { Layers } from '../scene/layers';
 import { HudView, type HudContext } from './HudView';
 import { StatChip } from './StatChip';
-import { setLocale, resetLocaleForTests } from '../../i18n';
+import { setLocale, resetLocaleForTests, tName } from '../../i18n';
 
 afterEach(() => resetLocaleForTests());
 
@@ -203,7 +203,10 @@ describe('HudView — weapon card', () => {
 
     hud.update(s, 16, CTX);
 
-    expect(hud.weaponCard.nameText).toBe(spec.name);
+    // Translated display name (tName(spec.nameKey)), not the raw catalog id (spec.name,
+    // which is now the render/texture-lookup key only) — the fix this test now guards.
+    expect(hud.weaponCard.nameText).toBe(tName(spec.nameKey));
+    expect(hud.weaponCard.nameText).not.toBe(spec.name);
     expect(hud.weaponCard.damageText).toContain(String(spec.damage));
     expect(hud.weaponCard.subText).toContain(spec.damageType);
   });
@@ -259,10 +262,10 @@ describe('HudView — idle weapon slot chip (design/10 HUD follow-up, 2026-08-12
 });
 
 describe('HudView — player card', () => {
-  it('titles the card with the selected character', () => {
+  it('titles the card with the selected character\'s translated name', () => {
     const hud = newHud();
     hud.update(pveState(), 16, CTX);
-    expect(hud.playerCard.displayName).toBe('SKIRMISHER');
+    expect(hud.playerCard.displayName).toBe('Skirmisher');
   });
 });
 
@@ -480,7 +483,7 @@ describe('HudView — degenerate states', () => {
     const s = pveState();
     for (let i = 0; i < 200; i++) hud.update(s, 16, { ...CTX, score: 0 });
     expect(hud.chips.get('score')!.valueText).toBe('0');
-    expect(hud.playerCard.displayName).toBe('SKIRMISHER');
+    expect(hud.playerCard.displayName).toBe('Skirmisher');
   });
 });
 
@@ -516,7 +519,8 @@ describe('HudView — i18n (design/17-i18n.md)', () => {
     const ally = s.players[1]!;
 
     hud.update(s, 16, { ...CTX, showAlly: true, allySkinId: 'juggernaut' });
-    expect(hud.allyRow.nameText).toBe('队友·juggernaut');
+    // Translated character name (skin.juggernaut.name), not the raw skin id.
+    expect(hud.allyRow.nameText).toBe('队友·重装兵');
     expect(hud.allyRow.statusText).toBe('');
 
     ally.downed = true;

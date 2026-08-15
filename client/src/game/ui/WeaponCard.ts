@@ -1,36 +1,11 @@
 import { Container, Graphics, Sprite, Text } from 'pixi.js';
-import type { DamageType, RarityTier, WeaponSimSpec } from '@dd/engine';
+import type { WeaponSimSpec } from '@dd/engine';
 import { getWeaponTexture } from '../../render/weaponSkins';
 import { elementColor, rarityColor } from '../theme';
 import { Bar } from './widgets';
 import { estimateMonoWidth } from './textWidth';
-import { getLocale, t, type TranslationKey } from '../../i18n';
-
-// Explicit key maps rather than a `hud.rarity.${tier}` template cast: the whole point of
-// `TranslationKey` being a compile-time union (design/17-i18n) is that a renamed or
-// missing key is a build error, and a template literal cast throws that away. `satisfies`
-// also makes a new engine-side rarity tier / damage type fail the build here until it has
-// a HUD label, instead of silently rendering the raw key at runtime.
-const RARITY_KEY = {
-  common: 'hud.rarity.common',
-  fine: 'hud.rarity.fine',
-  epic: 'hud.rarity.epic',
-  legend: 'hud.rarity.legend',
-  legendary: 'hud.rarity.legendary',
-} as const satisfies Record<RarityTier, TranslationKey>;
-
-const KIND_KEY = {
-  ranged: 'hud.kind.ranged',
-  melee: 'hud.kind.melee',
-} as const satisfies Record<WeaponSimSpec['kind'], TranslationKey>;
-
-const ELEMENT_KEY = {
-  physical: 'hud.element.physical',
-  fire: 'hud.element.fire',
-  ice: 'hud.element.ice',
-  lightning: 'hud.element.lightning',
-  poison: 'hud.element.poison',
-} as const satisfies Record<DamageType, TranslationKey>;
+import { getLocale, t, tName } from '../../i18n';
+import { RARITY_KEY, KIND_KEY, ELEMENT_KEY } from '../../i18n/contentKeys';
 
 /**
  * The equipped weapon, as an item card (design/10 HUD, design/14's border-not-hue
@@ -89,7 +64,7 @@ export class WeaponCard {
     // language change has to invalidate the cache even though the weapon didn't move.
     // (The unarmed state carries a real key too — `''` was the uninitialized value, so
     // starting a run with no weapon would otherwise never draw its own fallback card.)
-    const key = `${getLocale()}|${spec ? `${spec.name}|${spec.rarity}|${spec.damageType}|${spec.damage}` : 'unarmed'}`;
+    const key = `${getLocale()}|${spec ? `${spec.nameKey}|${spec.rarity}|${spec.damageType}|${spec.damage}` : 'unarmed'}`;
     if (key !== this.lastKey) {
       this.lastKey = key;
       this.redraw(spec);
@@ -132,7 +107,7 @@ export class WeaponCard {
       .roundRect(0.5, 2.5, box - 1, box - 1, 7)
       .stroke({ color: border, alpha: 0.85, width: 1.5 });
 
-    this.name.text = spec ? spec.name : t('hud.weapon.none');
+    this.name.text = spec ? tName(spec.nameKey) : t('hud.weapon.none');
     this.name.style.fill = border;
     this.sub.text = spec
       ? t('hud.weapon.sub', {

@@ -72,6 +72,13 @@ export function detectBrowserLocale(languages: readonly string[]): Locale {
 function lookup(key: TranslationKey, locale: Locale): string {
   let node: unknown = MESSAGES[locale];
   for (const part of key.split('.')) {
+    // A `t()` call can never hit this branch — `TranslationKey` guarantees every
+    // segment resolves to a nested object until the final string leaf. `tName()`
+    // (a plain runtime string, not compile-checked) can: an uncatalogued content id
+    // walks off the end of a real namespace mid-path (e.g. `weapon.<unknown-id>.name`
+    // stops at `undefined` after the second segment) — bail out to the same "return
+    // the raw key" miss behavior instead of throwing on `undefined['name']`.
+    if (node === undefined || node === null) break;
     node = (node as Record<string, unknown>)[part];
   }
   return typeof node === 'string' ? node : key;
@@ -84,4 +91,22 @@ export function t(key: TranslationKey, vars?: Record<string, string | number>): 
   const template = lookup(key, currentLocale);
   if (!vars) return template;
   return template.replace(/\{(\w+)\}/g, (whole, name: string) => (name in vars ? String(vars[name]) : whole));
+}
+
+/**
+ * Translate a data-driven CONTENT nameKey — a `WeaponSpec`/`SkinDef`/`MaterialDef`/
+ * `RunBuffDef`'s own `nameKey` field (design/09: "engine data carries only string
+ * keys, never display text"). Unlike `t()`, `key` here is a plain runtime `string`,
+ * not a compile-time-checked `TranslationKey` — content catalogs are open-ended data
+ * (new weapons/skins keep getting added), not a fixed set of UI labels, so forcing
+ * every content id through the same closed union would mean hand-maintaining a second
+ * static map that just mirrors the engine's own `nameKey` values.
+ *
+ * Falls back to `key` itself on a miss (same as `t()`'s internal `lookup()`), so a
+ * content id missing its translation renders as its own raw id/key rather than
+ * crashing or going blank. `i18n/contentNames.test.ts`'s parity test is the test-time
+ * safety net standing in for the compile-time exhaustiveness `t()` gets for free.
+ */
+export function tName(nameKey: string, vars?: Record<string, string | number>): string {
+  return t(nameKey as TranslationKey, vars);
 }

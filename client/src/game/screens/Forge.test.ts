@@ -69,7 +69,12 @@ function privateOf(f: Forge) {
     startBtn: TestButton;
     acquireBtn: TestButton;
     hint: { position: { x: number; y: number }; text: string };
-    compareCard: { view: { visible: boolean; position: { x: number; y: number }; height: number } };
+    charText: { text: string };
+    compareCard: {
+      view: { visible: boolean; position: { x: number; y: number }; height: number };
+      leftName: { text: string };
+      rightName: { text: string };
+    };
   };
 }
 
@@ -238,6 +243,56 @@ describe('Forge — compare card no-room hide', () => {
     // And the action bar itself must still be exactly where a taller render would put
     // it relative to `h` — hiding the card must not be achieved by moving the bar.
     expect(p.startBtn.view.position.y).toBe(380 - 60);
+  });
+});
+
+describe('Forge — content display names (tName(), not raw catalog ids)', () => {
+  it('shows the blueprint card\'s WEAPON display name, not its raw catalog id', () => {
+    const f = new Forge();
+    f.render(defaultMetaState(), 1280, 720);
+    // order[0] is 'repeater' (blueprints.ts's first entry) — its own translated name.
+    expect(privateOf(f).rowCards[0]!.nameLabel).toBe('Repeater');
+  });
+
+  it('shows the selected character\'s translated name in the char-stats line', () => {
+    const f = new Forge();
+    f.render(defaultMetaState(), 1280, 720);
+    // defaultMetaState() selects DEFAULT_SKIN_ID ('vanguard').
+    expect(privateOf(f).charText.text).toContain('Vanguard');
+  });
+
+  it('shows translated weapon names in the compare-card equipped/candidate headers', () => {
+    const f = new Forge();
+    f.render(defaultMetaState(), 1280, 900); // tall enough that the card isn't hidden
+    const p = privateOf(f);
+    // Empty loadout falls back to PLAYER_BASE.startWeapons (Blaster); the browse
+    // cursor starts on order[0] (Repeater), the same kind (ranged) so they compare.
+    expect(p.compareCard.leftName.text).toBe('Equipped: Blaster');
+    expect(p.compareCard.rightName.text).toBe('Candidate: Repeater');
+  });
+
+  it('translates all three under zh', () => {
+    const f = new Forge();
+    setLocale('zh');
+    f.render(defaultMetaState(), 1280, 900);
+    const p = privateOf(f);
+    expect(p.rowCards[0]!.nameLabel).toBe('连发枪');
+    expect(p.charText.text).toContain('先锋');
+    expect(p.compareCard.leftName.text).toBe('当前装备：爆能枪');
+    expect(p.compareCard.rightName.text).toBe('候选：连发枪');
+  });
+
+  it('uses the translated compact element codes for the material bank line and blueprint cost, not the old English-derived slice()', () => {
+    const f = new Forge();
+    f.render(defaultMetaState(), 1280, 720);
+    const p = privateOf(f);
+    expect(p.infoText.text).toMatch(/PHY \d+.*FIR \d+.*ICE \d+.*LIG \d+.*POI \d+/s);
+    expect(p.rowCards[0]!.costLabel).toBe('PHY×3'); // repeater: 3 physical
+
+    setLocale('zh');
+    f.render(defaultMetaState(), 1280, 720);
+    expect(privateOf(f).infoText.text).toMatch(/物 \d+.*火 \d+.*冰 \d+.*雷 \d+.*毒 \d+/s);
+    expect(privateOf(f).rowCards[0]!.costLabel).toBe('物×3');
   });
 });
 

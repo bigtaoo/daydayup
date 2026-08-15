@@ -1,7 +1,7 @@
 import { Container, Sprite, Text } from 'pixi.js';
 import {
   BLUEPRINT_CATALOG, SKIN_DEFS, DAMAGE_TYPES, PLAYER_BASE, WEAPON_SPECS, RARITY_TIERS,
-  type WeaponBlueprint, type DamageType,
+  type WeaponBlueprint,
 } from '@dd/engine';
 import type { MetaState } from '../../meta';
 import { bankTotal, canAfford, isUnlocked, purchasableBlueprints } from '../../meta';
@@ -12,7 +12,8 @@ import { pageCount, pageStartForIndex, clampPageStart, wrapIndex } from '../ui/p
 import { RARITY_COLORS } from '../theme';
 import { getWeaponTexture } from '../../render/weaponSkins';
 import { getUiTexture } from '../../render/uiSkins';
-import { t } from '../../i18n';
+import { t, tName } from '../../i18n';
+import { ELEMENT_SHORT_KEY } from '../../i18n/contentKeys';
 
 /** Cards shown at once (`BLUEPRINT_CATALOG` has more entries than fit above the fixed
  * bottom action bar — a real overflow found while wiring up real Buttons, since the old
@@ -182,7 +183,7 @@ export class Forge {
   private costText(cost: readonly WeaponBlueprint['cost'][number][]): string {
     // Show the tier gate when a cost demands it (design/14): FIR×2≥t2 = two fire mats of
     // tier ≥ 2. Un-gated costs (minTier 0/absent) read as before.
-    return cost.map((c) => `${short(c.element)}×${c.qty}${c.minTier ? `≥t${c.minTier}` : ''}`).join(' ');
+    return cost.map((c) => `${t(ELEMENT_SHORT_KEY[c.element])}×${c.qty}${c.minTier ? `≥t${c.minTier}` : ''}`).join(' ');
   }
 
   render(m: MetaState, w: number, h: number) {
@@ -203,10 +204,10 @@ export class Forge {
     this.acquireBtn.setText(t('forge.acquireButton'));
 
     // Material bank — the five elemental kinds (design/14), summed across every rolled tier.
-    const bank = DAMAGE_TYPES.map((e) => `${short(e)} ${bankTotal(m, e)}`).join('   ');
+    const bank = DAMAGE_TYPES.map((e) => `${t(ELEMENT_SHORT_KEY[e])} ${bankTotal(m, e)}`).join('   ');
 
     const skin = SKIN_DEFS[m.selectedSkin];
-    this.charText.text = skin ? t('forge.charStats', { skin: m.selectedSkin, hp: skin.maxHp, sh: skin.maxShield }) : m.selectedSkin;
+    this.charText.text = skin ? t('forge.charStats', { skin: tName(skin.nameKey), hp: skin.maxHp, sh: skin.maxShield }) : m.selectedSkin;
 
     const loadout = m.loadout.length ? m.loadout.join(', ') : t('forge.noneAutoPistol');
     const buyable = purchasableBlueprints(m);
@@ -250,7 +251,7 @@ export class Forge {
       const spec = WEAPON_SPECS[bp.weaponId];
       const borderColor = spec ? RARITY_COLORS[RARITY_TIERS[spec.rarity].colorKey] : 0x4c566a;
       card.set({
-        key, name: id, cost: this.costText(bp.cost), status, statusColor, borderColor,
+        key, name: spec ? tName(spec.nameKey) : id, cost: this.costText(bp.cost), status, statusColor, borderColor,
         selected: i === this.selectedIndex, staged, locked: !unlocked,
         icon: spec && getWeaponTexture(spec.id, spec.kind),
       });
@@ -347,9 +348,9 @@ export class Forge {
     }
     this.compareCard.set({
       w: Math.min(420, cx * 2 - 48),
-      leftName: t('forge.equippedHeader', { id: equipped.id }),
+      leftName: t('forge.equippedHeader', { id: tName(equipped.nameKey) }),
       leftColor: RARITY_COLORS[RARITY_TIERS[equipped.rarity].colorKey],
-      rightName: t('forge.candidateHeader', { id: candidate.id }),
+      rightName: t('forge.candidateHeader', { id: tName(candidate.nameKey) }),
       rightColor: RARITY_COLORS[RARITY_TIERS[candidate.rarity].colorKey],
       rows,
     });
@@ -360,9 +361,4 @@ export class Forge {
   hide() {
     this.view.visible = false;
   }
-}
-
-/** Short element tag for the material board (physical→PHY, fire→FIR, …). */
-function short(e: DamageType): string {
-  return e.slice(0, 3).toUpperCase();
 }

@@ -5,7 +5,7 @@ import { THEME } from '../theme';
 import { Bar } from './widgets';
 import { drawHudIcon } from './hudIcons';
 import { estimateMonoWidth } from './textWidth';
-import { t } from '../../i18n';
+import { t, tName } from '../../i18n';
 
 /** The bone slot every playable rig skin binds its main body art to (client/public/
  *  skins/<name>/frames.json) — reused here as a portrait instead of commissioning a
@@ -56,7 +56,12 @@ export class PlayerCard {
   set(skinId: string, hp: number, maxHp: number, shield: number, maxShield: number): void {
     if (skinId !== this.lastSkinId) {
       this.lastSkinId = skinId;
-      this.name.text = skinId.toUpperCase();
+      // Deliberately NOT `resolveSkin()` (which forward-compat-falls back to the
+      // DEFAULT character for an unknown id) — that's right for gameplay-critical stat
+      // resolution, but wrong here: an unrecognized id should echo itself back (same as
+      // before this translation pass), not silently relabel the card as Vanguard.
+      const def = SKIN_DEFS[skinId];
+      this.name.text = def ? tName(def.nameKey) : skinId.toUpperCase();
       this.bindPortrait(skinId);
     }
     this.hpBar.set(Math.max(0, hp), maxHp);
@@ -143,7 +148,9 @@ export class AllyRow {
    *  actually progressing, bleedout is paused (frozen, not counting down), so showing
    *  the channel's own percentage reads truer than a stalled countdown would. */
   set(skinId: string, hp: number, maxHp: number, downed: boolean, bleedoutSeconds: number, reviveProgressTicks = 0): void {
-    this.name.text = t('hud.ally.tag', { skin: skinId });
+    // Same "echo unknown ids back raw" reasoning as PlayerCard.set() above.
+    const def = SKIN_DEFS[skinId];
+    this.name.text = t('hud.ally.tag', { skin: def ? tName(def.nameKey) : skinId });
     this.hpBar.set(downed ? 0 : Math.max(0, hp), maxHp);
     if (downed && reviveProgressTicks > 0) {
       this.status.text = t('hud.ally.reviving', { pct: Math.round((reviveProgressTicks / REVIVE_CHANNEL_TICKS) * 100) });

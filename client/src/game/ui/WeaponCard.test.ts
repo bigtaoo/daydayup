@@ -10,7 +10,7 @@ import type { WeaponSimSpec } from '@dd/engine';
 import { WEAPON_SIM_BY_ID } from '@dd/engine';
 import { WeaponCard } from './WeaponCard';
 import { rarityColor } from '../theme';
-import { setLocale, resetLocaleForTests } from '../../i18n';
+import { setLocale, resetLocaleForTests, tName } from '../../i18n';
 
 afterEach(() => resetLocaleForTests());
 
@@ -25,7 +25,10 @@ describe('WeaponCard — equipped weapon', () => {
   it('names the weapon and states rarity, kind and element in the subtitle', () => {
     const card = new WeaponCard();
     card.set(BLASTER, 0, 10);
-    expect(card.nameText).toBe(BLASTER.name);
+    // Translated display name (tName(nameKey)), not the raw catalog id (.name is now
+    // the render/texture-lookup key only).
+    expect(card.nameText).toBe(tName(BLASTER.nameKey));
+    expect(card.nameText).not.toBe(BLASTER.name);
     expect(card.subText).toContain(BLASTER.rarity);
     expect(card.subText).toContain(BLASTER.kind);
     expect(card.subText).toContain(BLASTER.damageType);
@@ -48,7 +51,7 @@ describe('WeaponCard — equipped weapon', () => {
     const card = new WeaponCard();
     card.set(BLASTER, 0, 10);
     card.set(SABER, 0, 10);
-    expect(card.nameText).toBe(SABER.name);
+    expect(card.nameText).toBe(tName(SABER.nameKey));
     expect(card.subText).toContain('melee');
   });
 
@@ -82,7 +85,7 @@ describe('WeaponCard — equipped weapon', () => {
     const width = card.estimatedWidth();
     for (let t = 0; t <= 10; t++) card.set(BLASTER, t, 10);
     expect(card.estimatedWidth()).toBe(width);
-    expect(card.nameText).toBe(BLASTER.name);
+    expect(card.nameText).toBe(tName(BLASTER.nameKey));
   });
 });
 
@@ -105,7 +108,7 @@ describe('WeaponCard — unarmed fallback', () => {
     const card = new WeaponCard();
     card.set(null, 0, 1);
     card.set(BLASTER, 0, 10);
-    expect(card.nameText).toBe(BLASTER.name);
+    expect(card.nameText).toBe(tName(BLASTER.nameKey));
     card.set(null, 0, 1);
     expect(card.nameText).toBe('NO WEAPON');
     expect(card.damageText).toBe('');
@@ -173,15 +176,19 @@ describe('WeaponCard — i18n', () => {
 describe('WeaponCard — layout width', () => {
   it('never reports narrower than the cooldown bar it draws', () => {
     const card = new WeaponCard();
-    card.set(variant(BLASTER, { name: 'x' }), 0, 10);
+    // `nameKey`, not `name` — the card displays `tName(spec.nameKey)`; `.name` is now
+    // the render/texture-lookup id only (see WeaponCard.ts). An uncatalogued nameKey
+    // (no dot, matches nothing) falls back to being echoed back raw by `tName()`,
+    // same as this test's old `.name` override used to be echoed directly.
+    card.set(variant(BLASTER, { nameKey: 'x' }), 0, 10);
     expect(card.estimatedWidth()).toBeGreaterThanOrEqual(150);
   });
 
   it('grows for a name long enough to push the damage badge past the bar', () => {
     const card = new WeaponCard();
-    card.set(variant(BLASTER, { name: 'x' }), 0, 10);
+    card.set(variant(BLASTER, { nameKey: 'x' }), 0, 10);
     const narrow = card.estimatedWidth();
-    card.set(variant(BLASTER, { name: 'a-truly-preposterous-weapon-name' }), 0, 10);
+    card.set(variant(BLASTER, { nameKey: 'a-truly-preposterous-weapon-name' }), 0, 10);
     expect(card.estimatedWidth()).toBeGreaterThan(narrow);
   });
 });

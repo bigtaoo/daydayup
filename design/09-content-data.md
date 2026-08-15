@@ -148,7 +148,10 @@ Skins are content too, and `02`'s "animation data separate from texture" is a da
 
 ```
 SkinDef = {
-  id, atlasKey            // texture atlas to swap (02)
+  id, nameKey             // i18n key only (added 2026-08-15, matching every other
+                          //   content type's own nameKey — see design/17-i18n.md);
+                          //   this schema originally had no display-name field at all
+  atlasKey                // texture atlas to swap (02)
   animRef: AnimId         // shared animation-data reference (frame timing, events)
   maxHp                   // integer hard-floor HP (05); recovered only by heal items
   maxShield               // integer soft buffer, absorbed before HP; auto-regens (05/07)

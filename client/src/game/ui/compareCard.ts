@@ -3,6 +3,7 @@ import type { WeaponSpec } from '@dd/engine';
 import { applyQuality, WEAPON_SPECS } from '@dd/engine';
 import { Panel } from './widgets';
 import { t } from '../../i18n';
+import { ELEMENT_KEY } from '../../i18n/contentKeys';
 
 // The compare card (design/03 "ground compare card" + design/10's open loadout-detail
 // question). One widget, two call sites: the forge loadout screen passes a full stat
@@ -28,7 +29,7 @@ export interface CompareRow {
 export function buildCompareRows(a: WeaponSpec, b: WeaponSpec): CompareRow[] | null {
   if (a.kind !== b.kind) return null;
   const dmg = (s: WeaponSpec) => String(applyQuality(s.damage, s.rarity));
-  const type = (s: WeaponSpec) => s.damageType ?? 'physical';
+  const type = (s: WeaponSpec) => t(ELEMENT_KEY[s.damageType ?? 'physical']);
   const rows: CompareRow[] = [
     { label: t('compareCard.damage'), left: dmg(a), right: dmg(b) },
     { label: t('compareCard.type'), left: type(a), right: type(b) },

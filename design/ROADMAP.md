@@ -537,6 +537,38 @@ only be verified live — Pixi text layout needs a real canvas — but a test ca
 the config so a future edit can't silently drop `breakWords` unnoticed). 593 client
 tests (was 582), `tsc --noEmit` clean. See design/17-i18n.md for the full account.
 
+**Update (2026-08-15): weapon/character/material/buff DISPLAY NAMES are now translated
+too — the "rarity/blueprint/character ids deliberately left untranslated" line above is
+superseded, not still accurate.** A player screenshot of the Forge screen showed weapon
+names, the character name, and material short codes rendering as raw English tokens
+under `zh`. Turned out to be finishing an already-half-built feature, not a new one:
+`design/09-content-data.md` had long required a `nameKey: string` field on every content
+type for exactly this, and every catalog already carried one (`'weapon.repeater.name'`,
+etc.) — it was pure write-only scaffolding, never read by any client code, and no locale
+file had a matching namespace. Added `tName()` alongside `t()` (`i18n/index.ts`) — a
+deliberate second entry point for dynamic content ids (`t()`'s `TranslationKey` stays a
+closed compile-time union, right for a fixed UI-label set but wrong for an open-ended,
+ever-growing content catalog), backed by a new parity test
+(`i18n/contentNames.test.ts`) that walks the real catalogs and stands in for the
+compile-time exhaustiveness `t()` gets for free. New namespaces across all 8 locales:
+`weapon.<id>.name` (25), `skin.<id>.name` (3 — `SkinDef` gained a `nameKey` field, the
+one type design/09 never gave one), `buff.<id>.name` (4 — the same untranslated-id bug
+existed in the buff pickup toast, fixed alongside), `material.<element>.name` (5), and
+`hud.elementShort.<element>` (5, replacing `Forge.ts`'s old `e.slice(0,3).toUpperCase()`
+— English values unchanged). Fixed call sites: `Forge.ts`, `compareCard.ts`,
+`WeaponCard.ts` (also fixed a real cache-invalidation bug this exposed — the redraw-skip
+key was still tracking the render-only id, not the new display-name key), `PlayerCard.ts`/
+`AllyRow`, `EventReactor.ts`'s pickup toasts. 1205 client tests (was 1205 — net flat;
+existing raw-id assertions in `WeaponCard.test.ts`/`PlayerCard.test.ts`/`HudView.test.ts`/
+`PvpPreview.test.ts` were updated to expect translated names rather than growing the
+count), 577 engine tests, `tsc --noEmit` clean both workspaces, verified live (English↔
+中文) via a real Chrome screenshot. `WeaponBlueprint.nameKey` deliberately stayed
+unwired — every blueprint id already equals its `weaponId`, so Forge shows the crafted
+WEAPON's own translated name for a blueprint row rather than authoring the identical
+string twice per locale. One adjacent gap found but left out of scope: `forge.
+lockedSource`'s `{source}` (`'purchase'`/`'event'`) still interpolates raw English —
+flagged as its own follow-up. See design/17-i18n.md's own dated entry for the full account.
+
 ---
 
 ## Client hardening pass ✅ (2026-08-04)

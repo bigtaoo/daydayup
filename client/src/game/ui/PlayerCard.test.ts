@@ -21,17 +21,17 @@ function shieldBarOf(card: PlayerCard): Container {
 }
 
 describe('PlayerCard — identity', () => {
-  it('titles the card with the character id, upper-cased', () => {
+  it('titles the card with the character\'s translated display name', () => {
     const card = new PlayerCard();
     card.set('juggernaut', 11, 11, 0, 0);
-    expect(card.displayName).toBe('JUGGERNAUT');
+    expect(card.displayName).toBe('Juggernaut');
   });
 
   it('re-titles when the character changes between runs', () => {
     const card = new PlayerCard();
     card.set('juggernaut', 11, 11, 0, 0);
     card.set('skirmisher', 6, 6, 5, 5);
-    expect(card.displayName).toBe('SKIRMISHER');
+    expect(card.displayName).toBe('Skirmisher');
   });
 
   it('survives a skin id with no registered art (portrait is best-effort)', () => {
@@ -93,11 +93,17 @@ describe('PlayerCard — layout width', () => {
 });
 
 describe('AllyRow', () => {
-  it('names the teammate', () => {
+  it('names the teammate with their translated character name', () => {
     const row = new AllyRow();
     row.set('vanguard', 8, 10, false, 0);
-    expect(row.nameText).toBe('ALLY · vanguard');
+    expect(row.nameText).toBe('ALLY · Vanguard');
     expect(row.statusText).toBe('');
+  });
+
+  it('echoes back an unrecognized skin id raw, rather than falling back to a default character', () => {
+    const row = new AllyRow();
+    row.set('not-a-real-skin', 8, 10, false, 0);
+    expect(row.nameText).toBe('ALLY · not-a-real-skin');
   });
 
   it('shows the bleedout countdown while downed', () => {
@@ -117,7 +123,7 @@ describe('AllyRow', () => {
     setLocale('zh');
     const row = new AllyRow();
     row.set('vanguard', 8, 10, false, 0);
-    expect(row.nameText).toBe('队友·vanguard');
+    expect(row.nameText).toBe('队友·先锋');
     row.set('vanguard', 0, 10, true, 2);
     expect(row.statusText).toBe('倒地 2秒');
   });

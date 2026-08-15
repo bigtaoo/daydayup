@@ -31,7 +31,13 @@ export interface MaterialCost {
 
 export interface WeaponBlueprint {
   weaponId: string; // key into WEAPON_SPECS — the weapon this blueprint crafts
-  nameKey: string; // i18n key (design/09 — no display strings in engine data)
+  // i18n key (design/09 — no display strings in engine data). Currently vestigial: the
+  // client displays a blueprint row under the WEAPON's own nameKey (WEAPON_SPECS[weaponId]
+  // .nameKey) rather than this one, since weaponId ≡ this record's own key for every
+  // entry today — translating this field too would mean authoring the identical string
+  // twice per locale. Kept (not removed) so a future blueprint that names a DIFFERENT
+  // display name than its underlying weapon (e.g. a themed variant) has somewhere to put it.
+  nameKey: string;
   cost: readonly MaterialCost[];
   source: BlueprintSource;
 }

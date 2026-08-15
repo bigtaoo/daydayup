@@ -66,7 +66,8 @@ export function isHostile(a: Teamed, b: Teamed): boolean {
 
 export interface RangedSimSpec {
   kind: 'ranged';
-  name: string;
+  name: string; // render/asset id (weaponSkins.ts texture key) — NOT display text
+  nameKey: string; // i18n KEY for the player-facing name (design/09); client resolves via tName()
   rarity: RarityTier; // intrinsic tier (design/14); render reads it for the compare-card colour, the sim never does
   fireRateTicks: number; // cooldown between shots, whole ticks
   // Emission (design/03 "orthogonal to ballistic") — pellets per trigger + the cone
@@ -111,7 +112,8 @@ export interface RangedSimSpec {
 
 export interface MeleeSimSpec {
   kind: 'melee';
-  name: string;
+  name: string; // render/asset id (weaponSkins.ts texture key) — NOT display text
+  nameKey: string; // i18n KEY for the player-facing name (design/09); client resolves via tName()
   rarity: RarityTier; // intrinsic tier (design/14); render reads it for the compare-card colour, the sim never does
   swingCooldownTicks: number; // recovery between swings
   damage: number; // integer, per enemy in arc, once per swing

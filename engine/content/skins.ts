@@ -32,6 +32,7 @@ export type ShieldBreakPassive = AoeBreak | KnockBreak;
 
 export interface SkinDef {
   id: SkinId;
+  nameKey: string; // i18n KEY only, never display text (design/09) — client resolves via tName()
   atlasKey: string; // render-only texture atlas key (sim never reads it)
   animRef: string; // render-only animation set
   maxHp: number;
@@ -62,6 +63,7 @@ export const SKIN_DEFS: Record<string, SkinDef> = {
   // (StatusEffectSystem.ts) now clamps to maxShield instead of always `+1`-ing past it.
   vanguard: {
     id: 'vanguard',
+    nameKey: 'skin.vanguard.name',
     atlasKey: 'char_vanguard',
     animRef: 'humanoid',
     maxHp: 6,
@@ -81,6 +83,7 @@ export const SKIN_DEFS: Record<string, SkinDef> = {
   // in the roster). Re-tune again once real playtesting data exists (design/15).
   skirmisher: {
     id: 'skirmisher',
+    nameKey: 'skin.skirmisher.name',
     atlasKey: 'char_skirmisher',
     animRef: 'humanoid',
     maxHp: 3,
@@ -101,6 +104,7 @@ export const SKIN_DEFS: Record<string, SkinDef> = {
   // other two.
   juggernaut: {
     id: 'juggernaut',
+    nameKey: 'skin.juggernaut.name',
     atlasKey: 'char_juggernaut',
     animRef: 'humanoid',
     maxHp: 11,

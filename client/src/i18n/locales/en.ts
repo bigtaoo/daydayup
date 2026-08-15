@@ -95,6 +95,17 @@ export const en = {
       lightning: 'lightning',
       poison: 'poison',
     },
+    // Compact material-bank/cost-line abbreviation (Forge.ts) — a separate namespace
+    // from `element` above (the full noun) since a short code isn't the same string as
+    // the full word in every language. Values here match Forge.ts's old hardcoded
+    // `e.slice(0,3).toUpperCase()` output byte-for-byte, so English is unchanged.
+    elementShort: {
+      physical: 'PHY',
+      fire: 'FIR',
+      ice: 'ICE',
+      lightning: 'LIG',
+      poison: 'POI',
+    },
     ally: {
       tag: 'ALLY · {skin}',
       downed: 'DOWNED {seconds}s',
@@ -220,5 +231,56 @@ export const en = {
     yes: 'yes',
     no: 'no',
     vs: 'vs',
+  },
+  // Content display names (design/09's `nameKey` scaffolding, resolved via `tName()`
+  // rather than `t()` — see i18n/index.ts's doc comment). One leaf per catalog id in
+  // engine/content/weaponSpecs/*.ts, skins.ts, materials.ts, balance/runbuffs.ts —
+  // `i18n/contentNames.test.ts` asserts every real catalog id resolves here in every
+  // locale (the test-time parity check standing in for `TranslationKey`'s compile-time
+  // one, which doesn't apply to these dynamic ids).
+  weapon: {
+    blaster: { name: 'Blaster' },
+    saber: { name: 'Saber' },
+    repeater: { name: 'Repeater' },
+    cannon: { name: 'Cannon' },
+    enemygun: { name: 'Raider Rifle' },
+    flamer: { name: 'Flamethrower' },
+    cryobolt: { name: 'Cryobolt' },
+    teslagun: { name: 'Tesla Gun' },
+    venomspit: { name: 'Venom Spitter' },
+    emberblade: { name: 'Ember Blade' },
+    frostbrand: { name: 'Frostbrand' },
+    stormglaive: { name: 'Storm Glaive' },
+    scattergun: { name: 'Scattergun' },
+    seeker: { name: 'Seeker' },
+    mortar: { name: 'Mortar' },
+    lasercutter: { name: 'Laser Cutter' },
+    tomahawk: { name: 'Tomahawk' },
+    hammer: { name: 'Hammer' },
+    spear: { name: 'Spear' },
+    novaburst: { name: 'Nova Burst' },
+    gyre: { name: 'Gyre' },
+    carom: { name: 'Carom' },
+    leech: { name: 'Leech' },
+    cinderscatter: { name: 'Cinder Scatter' },
+    frostseeker: { name: 'Frost Seeker' },
+  },
+  skin: {
+    vanguard: { name: 'Vanguard' },
+    skirmisher: { name: 'Skirmisher' },
+    juggernaut: { name: 'Juggernaut' },
+  },
+  buff: {
+    dmg_up: { name: 'Damage Up' },
+    rof_up: { name: 'Fire Rate Up' },
+    vit_up: { name: 'Vitality Up' },
+    crit_up: { name: 'Crit Chance Up' },
+  },
+  material: {
+    physical: { name: 'Physical' },
+    fire: { name: 'Fire' },
+    ice: { name: 'Ice' },
+    lightning: { name: 'Lightning' },
+    poison: { name: 'Poison' },
   },
 } as const;

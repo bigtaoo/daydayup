@@ -4,9 +4,9 @@
  * plain-vitest, no-renderer convention as ModeSelect.test.ts/Settings.test.ts.
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { buildArenaSpecs, PVP_SCALE_FACTOR, DEFAULT_SKIN_ID } from '@dd/engine';
+import { buildArenaSpecs, PVP_SCALE_FACTOR, DEFAULT_SKIN_ID, SKIN_DEFS } from '@dd/engine';
 import { PvpPreview } from './PvpPreview';
-import { setLocale, resetLocaleForTests } from '../../i18n';
+import { setLocale, resetLocaleForTests, tName } from '../../i18n';
 
 function privateOf(p: PvpPreview) {
   return p as unknown as {
@@ -63,8 +63,8 @@ describe('PvpPreview — PvP-scaled build preview', () => {
     p.show(800, 600, DEFAULT_SKIN_ID);
     const built = buildArenaSpecs('landing_basic', DEFAULT_SKIN_ID);
 
-    expect(privateOf(p).playerCard.displayName).toBe(DEFAULT_SKIN_ID.toUpperCase());
-    expect(privateOf(p).weaponCard.nameText).toBe(built.weapons[0]!.spec.name);
+    expect(privateOf(p).playerCard.displayName).toBe(tName(SKIN_DEFS[DEFAULT_SKIN_ID]!.nameKey));
+    expect(privateOf(p).weaponCard.nameText).toBe(tName(built.weapons[0]!.spec.nameKey));
     expect(privateOf(p).weaponCard.damageText).toContain(String(built.weapons[0]!.spec.damage));
   });
 
@@ -77,9 +77,9 @@ describe('PvpPreview — PvP-scaled build preview', () => {
   it('re-shows cleanly for a different character', () => {
     const p = new PvpPreview();
     p.show(800, 600, 'skirmisher');
-    expect(privateOf(p).playerCard.displayName).toBe('SKIRMISHER');
+    expect(privateOf(p).playerCard.displayName).toBe('Skirmisher');
     p.show(800, 600, 'juggernaut');
-    expect(privateOf(p).playerCard.displayName).toBe('JUGGERNAUT');
+    expect(privateOf(p).playerCard.displayName).toBe('Juggernaut');
   });
 
   // buildArenaSpecs/resolveSkin fall back to the default character for an unknown id

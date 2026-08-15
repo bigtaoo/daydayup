@@ -65,13 +65,25 @@ describe('EventReactor — pickup toasts', () => {
     expect(toast).toHaveBeenCalledWith('+1 HP', expect.anything());
   });
 
+  it('a recognized weapon pickup toasts its translated display name', () => {
+    const { reactor, toast } = newReactor();
+    reactor.consume([{ ...PICKUP_BASE, kind: 'weapon', weaponId: 'repeater' }] as GameEvent[]);
+    expect(toast).toHaveBeenCalledWith('Repeater', expect.anything());
+  });
+
   it('an unrecognized weapon id falls back to "New weapon"', () => {
     const { reactor, toast } = newReactor();
     reactor.consume([{ ...PICKUP_BASE, kind: 'weapon', weaponId: 'no-such-weapon' }] as GameEvent[]);
     expect(toast).toHaveBeenCalledWith('New weapon', expect.anything());
   });
 
-  it('a named buff toasts "Buff: {id}"; an unnamed one toasts the generic label', () => {
+  it('a recognized buff toasts "Buff: {translated name}"', () => {
+    const { reactor, toast } = newReactor();
+    reactor.consume([{ ...PICKUP_BASE, kind: 'buff', buffId: 'dmg_up' }] as GameEvent[]);
+    expect(toast).toHaveBeenCalledWith('Buff: Damage Up', expect.anything());
+  });
+
+  it('an uncatalogued buff id falls back to echoing the raw id; an absent one toasts the generic label', () => {
     const { reactor, toast } = newReactor();
     reactor.consume([{ ...PICKUP_BASE, kind: 'buff', buffId: 'crit_surge' }] as GameEvent[]);
     expect(toast).toHaveBeenCalledWith('Buff: crit_surge', expect.anything());
@@ -80,7 +92,13 @@ describe('EventReactor — pickup toasts', () => {
     expect(toast).toHaveBeenCalledWith('Buff', expect.anything());
   });
 
-  it('a material pickup toasts "+{qty} {materialId}", defaulting qty to 1 and the id to "material"', () => {
+  it('a recognized material pickup toasts "+{qty} {translated material name}"', () => {
+    const { reactor, toast } = newReactor();
+    reactor.consume([{ ...PICKUP_BASE, kind: 'material', materialId: 'mat_fire', qty: 3 }] as GameEvent[]);
+    expect(toast).toHaveBeenCalledWith('+3 Fire', expect.anything());
+  });
+
+  it('an uncatalogued material id falls back to echoing the raw id; an absent one toasts the generic label', () => {
     const { reactor, toast } = newReactor();
     reactor.consume([{ ...PICKUP_BASE, kind: 'material', materialId: 'fire', qty: 3 }] as GameEvent[]);
     expect(toast).toHaveBeenCalledWith('+3 fire', expect.anything());
@@ -102,6 +120,19 @@ describe('EventReactor — pickup toasts, i18n (design/17-i18n.md)', () => {
     toast.mockClear();
     reactor.consume([{ ...PICKUP_BASE, kind: 'material' }] as GameEvent[]);
     expect(toast).toHaveBeenCalledWith('+1 材料', expect.anything());
+  });
+
+  it('translates a recognized weapon/buff/material name, not just the generic templates', () => {
+    setLocale('zh');
+    const { reactor, toast } = newReactor();
+    reactor.consume([{ ...PICKUP_BASE, kind: 'weapon', weaponId: 'repeater' }] as GameEvent[]);
+    expect(toast).toHaveBeenCalledWith('连发枪', expect.anything());
+    toast.mockClear();
+    reactor.consume([{ ...PICKUP_BASE, kind: 'buff', buffId: 'dmg_up' }] as GameEvent[]);
+    expect(toast).toHaveBeenCalledWith('增益：伤害提升', expect.anything());
+    toast.mockClear();
+    reactor.consume([{ ...PICKUP_BASE, kind: 'material', materialId: 'mat_fire', qty: 3 }] as GameEvent[]);
+    expect(toast).toHaveBeenCalledWith('+3 火', expect.anything());
   });
 });
 

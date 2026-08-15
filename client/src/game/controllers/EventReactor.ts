@@ -1,11 +1,11 @@
-import { WEAPON_SIM_BY_ID, BLUEPRINT_CATALOG, type GameEvent, type GameState } from '@dd/engine';
+import { WEAPON_SIM_BY_ID, BLUEPRINT_CATALOG, MATERIAL_DEFS, RUN_BUFFS, type GameEvent, type GameState } from '@dd/engine';
 import { THEME, rarityColor } from '../theme';
 import { SCORE } from '../score';
 import { fpToPx, bradToRad } from '../coords';
 import type { FxController } from '../fx/FxController';
 import type { HudView } from '../ui/HudView';
 import type { AudioBus, AudioCue } from '../../platform/types';
-import { t } from '../../i18n';
+import { t, tName } from '../../i18n';
 
 /** The bits of Game an EventReactor reaction needs to reach back into — score/meta/
  *  room-rebuild are Game-owned state, so this stays a callback interface rather than
@@ -140,7 +140,7 @@ export class EventReactor {
               const c = spec ? rarityColor(spec) : THEME.colors.pickupWeapon;
               this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), c, 24);
               cues.add('pickup.weapon');
-              this.hud.toast(spec ? spec.name : t('toast.newWeapon'), c);
+              this.hud.toast(spec ? tName(spec.nameKey) : t('toast.newWeapon'), c);
               // Finding a catalogued weapon permanently unlocks its forge blueprint
               // (design/14 "2–3 common blueprints drop from runs") — first-pass: any
               // catalogued pickup grants it. Meta is separate from the sim, so this
@@ -151,13 +151,26 @@ export class EventReactor {
             case 'buff':
               this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), THEME.colors.pickupBuff, 22);
               cues.add('pickup.buff');
-              this.hud.toast(e.buffId ? t('toast.buffNamed', { id: e.buffId }) : t('toast.buffGeneric'), THEME.colors.pickupBuff);
+              {
+                const buff = e.buffId ? RUN_BUFFS[e.buffId] : undefined;
+                // Falls back to the raw id only if `buffId` names something outside the
+                // catalogue (shouldn't happen for a real drop) — same defensive shape as
+                // the material/weapon lookups below.
+                const label = buff ? tName(buff.nameKey) : e.buffId;
+                this.hud.toast(label ? t('toast.buffNamed', { id: label }) : t('toast.buffGeneric'), THEME.colors.pickupBuff);
+              }
               break;
-            default: // material
+            default: { // material
               this.host.addScore(SCORE.material);
               this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), THEME.colors.pickupMaterial, 16);
               cues.add('pickup.material');
-              this.hud.toast(t('toast.materialQty', { qty: e.qty ?? 1, material: e.materialId ?? t('toast.materialFallback') }), THEME.colors.pickupMaterial);
+              const mat = e.materialId ? MATERIAL_DEFS[e.materialId] : undefined;
+              // Translated fallback only triggers when `materialId` itself is absent —
+              // an id present but uncatalogued falls back to the raw id, same shape as
+              // the buff toast above.
+              const materialName = mat ? tName(mat.nameKey) : e.materialId ?? t('toast.materialFallback');
+              this.hud.toast(t('toast.materialQty', { qty: e.qty ?? 1, material: materialName }), THEME.colors.pickupMaterial);
+            }
           }
           break;
         case 'wave_clear':

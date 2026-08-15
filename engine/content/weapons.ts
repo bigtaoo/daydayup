@@ -49,6 +49,7 @@ export function toSimSpec(spec: WeaponSpec): WeaponSimSpec {
     const sim: RangedSimSpec = {
       kind: 'ranged',
       name: spec.id,
+      nameKey: spec.nameKey,
       rarity: spec.rarity,
       fireRateTicks: toTicks(spec.cooldownSec),
       bullets: spec.bullets,
@@ -84,6 +85,7 @@ export function toSimSpec(spec: WeaponSpec): WeaponSimSpec {
   const sim: MeleeSimSpec = {
     kind: 'melee',
     name: spec.id,
+    nameKey: spec.nameKey,
     rarity: spec.rarity,
     swingCooldownTicks: toTicks(spec.cooldownSec),
     damage: applyQuality(spec.damage, spec.rarity),
