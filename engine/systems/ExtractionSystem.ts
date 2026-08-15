@@ -106,6 +106,35 @@ export class ExtractionSystem {
       state.dungeonRoomRects.length = 0;
       state.dungeonRoomIndexById.clear();
       state.dungeonBaseWalls.length = 0;
+      // Stranded enemies leave with the floor too (ENGINE_VERSION 39). In the
+      // co-resident room model the checkpoint only asks that the CAPSTONE room be
+      // cleared (`capstoneCleared` above) — every OTHER room can still be full of live
+      // enemies when this runs (a room whose `WaveScript` has a late `atTick` entry
+      // re-populates itself long after the player cleared it and walked on, and the
+      // checkpoint never asks where the player is standing). Keeping them dragged every
+      // one into the next floor still holding a `roomId` for a room that no longer
+      // exists and a grid position measured against geometry that has just been torn
+      // down — they'd surface embedded in the newly stitched floor's walls. Exactly the
+      // reasoning behind clearing the room/door arrays above and `pickups` below: the
+      // geometry it stood on is gone. Narrow back when a floor was 2-3 rooms of 1-2
+      // enemies; v38's hand-authored level 1 (5 floors of 5/6/7/6/5 rooms at 15-30
+      // enemies each, `world/rooms/emberLevel1.ts`) is what makes it ~100 stranded
+      // enemies per floor for a player who beelines the capstone.
+      //
+      // Deliberately a silent discard, NOT a mass death. Routing them through
+      // DeathDropsSystem instead would roll dropPrng once per stranded enemy (shifting
+      // every later drop in the run), hand the player a floor's worth of materials for
+      // kills they never made, and let a stranded boss's `onDeathSpawn` litter the fresh
+      // floor with minions. The player chose to leave them behind; they get nothing for
+      // it. Removal draws no PRNG and pushes no event, so the only observable change is
+      // the enemies' absence.
+      state.enemies.length = 0;
+      // Their bullets go with them. A projectile's position is fp-in-this-floor's-
+      // geometry like any actor's, and a shot fired in a room the player never entered
+      // has no business landing on them at the next floor's spawn point. Dungeon-only on
+      // purpose: a flat `floors` descend keeps the SAME arena geometry (only the wave
+      // list is swapped), so a bullet still in flight there remains perfectly valid.
+      state.projectiles.length = 0;
     } else {
       state.waves = state.extraFloors[state.floorIndex - 1]!;
     }

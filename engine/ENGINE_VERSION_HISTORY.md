@@ -561,3 +561,37 @@ The old procedural pair is NOT deleted — `EMBER_ROOMS` plus the new
 graph2d seed sweeps and exhaustive pool enumeration still drive, and that
 coverage is the reason those seven pieces' exit topology is what it is (see that
 module's own doc). Nothing in a shipped run reads the procedural pair now.
+
+v39: a DESCEND no longer carries the floor's stranded enemies (and their bullets)
+into the next floor — `ExtractionSystem.resolveDescend`'s `dungeonEnabled` branch
+now clears `state.enemies` and `state.projectiles` alongside the room/door/rect
+arrays it already wiped. Under the co-resident room model (v34) the checkpoint
+only requires the CAPSTONE room to be cleared (`capstoneCleared`), and never asks
+where the player is standing — so every other room on the floor may still be fully
+populated the tick DESCEND resolves. A room whose `WaveScript` carries a late
+`atTick` entry re-populates itself long after the player cleared it and walked on,
+and `DoorSystem`'s force-regroup drags the player back into it without ever taking
+the checkpoint away. Those enemies survived into the next floor holding a `roomId`
+for a room that no longer existed and a grid position measured against geometry
+that had just been torn down, i.e. embedded in the newly stitched floor's walls.
+This was narrow while `EMBER_DUNGEON` was 3 procedural floors of 2-3 rooms holding
+1-2 enemies each. v38 (directly above) is what makes it matter: level 1 is now 5
+authored floors of 5 / 6 / 7 / 6 / 5 rooms at 15-30 enemies per room
+(`enemyCountForArea`), so a player who beelines the capstone can strand on the
+order of a hundred enemies per floor and drag every one of them into the next. The
+count scales directly with rooms-per-floor and per-room density, which is exactly
+the axis v38 moved. Same "the geometry it stood on is gone" reasoning that already
+cleared `pickups`.
+
+The discard is SILENT — no `death` events, no `DeathDropsSystem` pass —
+deliberately: rolling the drop table once per stranded enemy would shift every
+subsequent `dropPrng` draw in the run, pay the player a floor's worth of materials
+for kills they never made, and let a stranded boss's `onDeathSpawn` litter the
+fresh floor with minions. Removal itself draws no PRNG, so the only observable
+change is the enemies'/projectiles' absence (render already reconciles actors from
+`state.enemies` per frame, so a vanished id simply plays its death-dissolve; the
+`death` event only ever drove score and FX). Both clears sit inside the dungeon
+branch: a flat `floors` descend keeps the same arena geometry (only the wave list
+swaps) and already requires every enemy dead, so that path is byte-identical to
+v38. Any v38 dungeon stream that descended with a non-capstone room still
+populated diverges immediately.

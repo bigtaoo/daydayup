@@ -86,6 +86,23 @@ describe('ExtractionSystem — DESCEND (explicit confirmDescend press)', () => {
     new ExtractionSystem().tick(s);
     expect(s.pickups).toHaveLength(0);
   });
+
+  it('keeps in-flight bullets — the enemy/projectile wipe is dungeon-only (ENGINE_VERSION 39)', () => {
+    // A flat `floors` descend swaps the wave LIST and nothing else: the arena geometry
+    // the bullet was fired into is still standing, so it is not stale the way a dungeon
+    // floor's leftovers are. (`enemies` is necessarily already empty here — this mode's
+    // checkpoint requires it — so only the projectile half is observable.)
+    const s = createGameState(FLOORS_CFG);
+    atCheckpoint(s);
+    s.projectiles.push({
+      id: s.nextId(), faction: 'player', teamId: 0,
+      gx: toFp(1), gy: toFp(1), z: toFp(0), vx: toFp(0.5), vy: toFp(0),
+      radius: toFp(0.15), damage: 1, damageType: 'physical', lifeTicks: 90, alive: true,
+    });
+    s.players[0]!.confirmDescend = true;
+    new ExtractionSystem().tick(s);
+    expect(s.projectiles).toHaveLength(1);
+  });
 });
 
 describe('ExtractionSystem — EXTRACT (explicit confirmExtract press)', () => {

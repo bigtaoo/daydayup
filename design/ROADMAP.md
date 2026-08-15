@@ -27,9 +27,14 @@ hand-authored 5-floor descent — 5/6/7/6/5 rooms, every room 15x15..20x20 with 
 scaled by cell count, all five floors present in `EMBER_DUNGEON.floorMaps` so a run costs zero
 `roomgenPrng` layout draws, content as editor-tunable JSON under `world/dungeons/ember/`; see
 the "Level 1 is now fully hand-authored" entry under Room & door model below, and design/05's
-matching subsection); 2930 tests green across all 7
-workspace packages (engine 621 / client 1278 / server 186 / animator 444 / map-editor 280 /
-png-pipeline 20 / desktop-shell 81 / root build-script 20, `npm run check`, re-measured
+matching subsection; 39: a DESCEND no longer carries the floor's stranded enemies and their
+in-flight bullets into the next floor — the co-resident model's checkpoint only requires the
+*capstone* room to be cleared, so anything still alive elsewhere used to ride along holding a
+`roomId` for a room that no longer existed and a position measured against geometry that had
+just been torn down. Narrow before 38; with 38's floor sizes a beeline to the capstone can
+strand ~100 enemies per floor. See the Stranded-enemy section below); 2931 tests green across all 7
+workspace packages (engine 629 / client 1278 / server 186 / animator 444 / map-editor 280 /
+png-pipeline 20 / desktop-shell 81 / root build-script 13, `npm run check`, re-measured
 2026-08-15 — the previous snapshot's per-package figures had drifted, including a
 root-build-script count that was never 14) after fixing two real bugs found from a live player report ("cleared
 the room, door's unlocked, still can't walk through it") — see the Room & door model
@@ -1882,6 +1887,67 @@ the feature is production-gated and `client-dev` cannot exercise it.
 
 ---
 
+## Stranded enemies rode the DESCEND into the next floor (2026-08-15, `ENGINE_VERSION` 38→39)
+
+Found by inspection of `ExtractionSystem.resolveDescend`, not from a play report — but it is
+a real simulation bug, and one the co-resident room/door model (v34) created without anyone
+noticing at the time.
+
+**Root cause.** `resolveDescend`'s `dungeonEnabled` branch tore down the whole floor —
+`dungeonRooms`, `dungeonDoors`, `dungeonRoomRuntime`, `dungeonRoomRects`,
+`dungeonRoomIndexById`, `dungeonBaseWalls`, and (outside the branch) `pickups` — and left
+`state.enemies` and `state.projectiles` standing. That was harmless under the *old*
+one-room-at-a-time model, where reaching the checkpoint meant the floor was empty by
+construction. Under the co-resident model it isn't: `capstoneCleared` asks only that the
+LAST room be activated-and-clear, and `tick()` never asks where the player is standing, so
+any enemy still alive anywhere else on the floor survived into the next one carrying a
+`roomId` that `dungeonRoomIndexById` no longer knew and a grid position measured against
+geometry that had just been torn down — i.e. surfacing embedded in the newly stitched floor's
+walls.
+
+Two routes get a floor into that state, both reachable today:
+
+1. **A room re-populating behind you.** A `WaveScript` with a late `atTick` entry spawns
+   after the player cleared that room and walked on. `DoorSystem` force-regroups the player
+   back into it — but that does not retract the checkpoint, so a DESCEND press still resolves
+   with the room full.
+2. **An enemy no room owns.** `DoorSystem`'s scan skips any enemy with `roomId === undefined`,
+   so a mob in genuinely un-owned space (a `branching` floor's siblings sit `BRANCH_GAP_GRID`
+   apart, and v37's `chase()` will walk one into the gap) locks no door and sets no
+   `hasLiveEnemy` — invisible to every guard the floor has.
+
+**Fix.** `state.enemies.length = 0` and `state.projectiles.length = 0`, inside the
+`dungeonEnabled` branch, on the same "the geometry it stood on is gone" reasoning that
+already cleared the room arrays and `pickups`. Deliberately a **silent discard, not a mass
+death**: routing them through `DeathDropsSystem` would roll `dropPrng` once per stranded
+enemy (shifting every later drop in the run), pay out a floor's worth of materials for kills
+that never happened, and let a stranded boss's `onDeathSpawn` litter the fresh floor with
+minions. Removal draws no PRNG and pushes no event, so the only observable change is their
+absence — render already reconciles actors from `state.enemies` per frame (`Scene.reconcile`),
+so a vanished id just plays its death-dissolve, and the `death` event only ever drove score
+and FX (`EventReactor`). Both clears are scoped to the dungeon branch on purpose: a flat
+`EngineConfig.floors` descend keeps the same arena geometry (only the wave list swaps) and
+already requires every enemy dead, so that path stays byte-identical to v37.
+
+**Scale note.** This was a handful of ghosts back when `EMBER_DUNGEON` was 3 procedural
+floors of 2–3 rooms holding 1–2 enemies. The hand-authored level 1 that shipped the same day
+(`ENGINE_VERSION` 38, directly above) is what makes it matter: 5 floors of 5/6/7/6/5 rooms at
+15–30 enemies per room, so beelining the capstone can strand on the order of a hundred
+enemies per floor — rooms-per-floor × per-room density is exactly the axis 38 moved.
+
+**Tests.** 8 new (engine 621 → 629): 7 in `dungeonrun.test.ts` — enemies dropped with no
+drop rolls and no `death` events; the next floor populated only by its own rooms (no stale
+`roomId` survives); in-flight bullets cleared; a `roomId === undefined` straggler taken too,
+with its "held nothing back" pre-condition asserted first; EXTRACT at the same checkpoint
+leaving them alone (the wipe is DESCEND-only); the player and their banked materials carrying
+through untouched; and two engines on one seed staying hash-equal straight through the wipe
+into floor 1's generation — plus 1 in `extraction.test.ts` pinning the flat-`floors` path's
+bullets as untouched. Mutation-checked: commenting out the two clears fails 5 of the 8, each
+for a different reason (the other 3 are the scoping/over-reach guards, which correctly pass
+either way).
+
+---
+
 ## Dependency summary
 
 ```
@@ -1895,7 +1961,7 @@ Phase 3 (co-op/net)     ALL DONE (✅). 3.2 revive/downed engine-side; 3.1 net l
 Phase 4 (PvP)           COMPLETELY DONE (✅ 4.1 through 4.6, design/15, no open items). 8p solo BR decided; team/hostility (ENGINE_VERSION 18) + multi-room broadphase/stitching + zone/EnvironmentSystem + placement win condition + in-arena loot/AI + anti-cheat checkpoints (ENGINE_VERSION 19) + sparse net sync + matchsvc ladder rating all shipped and tested. End-to-end match assembly wired (2026-07-26): mode:'coop'|'pvp' threaded through Matchmaker/ticket/MatchRoom/matchsvc, client ?pvp=1 -> arena EngineConfig (teamId per seat) -> placement gameover screens -> CoopSession.reportResult actually fires (was dead code for coop too) -> checkpoint/ladder settlement. The real ~60-room ArenaMap (arena_prototype_60.json, a concurrent session) is wired into ARENA_CATALOG. buildArenaSpecs' HP-scale/loadout preset is now called from GameState.buildSeat too (ENGINE_VERSION 19->20) — a PvP seat's weapons/maxHp/maxShield come from the scaled arena preset, never the PvE loadout. All browser-verified two-tab, byte-identical. 2026-07-29: the 4.1 "squads/revive reserved interface" is now built too (ENGINE_VERSION 29->30) — pre-formed party invite (server/src/PartyService.ts) + squad-chunked Matchmaker/teamId + squad placement/gated bandage revive + a PartyScreen lobby UI; see the Phase 4 update above. 2026-08-04: fixed a real squad-win scoring bug (RunOutcome compared seat identity instead of team membership, so most of a winning squad saw a DEFEAT screen) — see the Phase 4 update above.
 Phase 5 (presentation)  parallelizable throughout
 Client hardening pass   DONE (✅ 2026-08-04) — full client/src code review (182 files), fixed in place: PartyScreen/LoginScreen staleness guards, weaponSkins preload/fallback resilience, net/transport.ts dead-socket + swallowed-handler-exception fixes, TextInputOverlay blur teardown, Slider pointercancel, Rig bone-order validation, main.ts/main.wechat.ts boot() error boundary, meta/store.ts materialBank validation, auth.ts non-JSON error guard, theme.ts English-policy fix. See the Client hardening pass section above.
-Room & door model       DONE (✅ 2026-08-04/05, ENGINE_VERSION 34→35) — PvE floors co-resident + door-connected (placeFloor/carveDoorGaps/buildFloorGeometry, new DoorSystem: activation/lock-unlock/force-regroup), replacing the old one-room swap. HudView.ts fixed to compile against the new schema. Client room rendering shipped same day: door_{locked,open}_raw.png loaded and wired onto RoomBuilder's per-door Sprite (reactive lock/unlock in place via updateDoors(), no full rebuild), EventReactor reacts to force_regroup with a local-player camera snap. Fully-realized branching shipped 2026-08-05 (ENGINE_VERSION 35) — a real fork-and-reconverge diamond of sibling rooms, needing zero client changes (DoorSystem/RoomBuilder/EventReactor already topology-agnostic). PvE minimap adapter shipped same day — FloorProgress deleted, PvE now shares PvP's own Minimap widget via dungeonToArenaMap/dungeonRoomStatus (minimapLayout.ts). Map-editor door placement shipped same day (no engine version bump) — DungeonFloorMap/placeAuthoredFloor/DungeonConfig.floorMaps + a third tools/map-editor mode ("PvE Dungeon Floor") + validateDungeonFloorMap, closing the last item of the original three-item follow-up list. "全部加测试" follow-up added DungeonFloorCanvas.test.ts (28 tests, previously zero coverage on the tool's most complex new file). Real 2D graph layout (`layout: 'graph2d'`, `placeFloorGraph2d`) shipped same day too — a generated floor can place in real 2D instead of a forced west→east spine. "graph2d content" pass shipped 2026-08-05 (same day): `EMBER_DUNGEON` switches to `'graph2d'` (a new `ember_atrium` piece + wider exit authoring on `ember_pillars`/`ember_extraction`/`ember_boss`), and `placeFloorGraph2d` gains a direction-retry fallback for fold-back overlaps — both found necessary by testing the real content, not by inspection. `'branching'` still stays unused by any shipped config. **Bug fix pass shipped 2026-08-12 (ENGINE_VERSION 35→36):** two real bugs found from a live player report (door unlocked but still physically impassable) — `DeathDropsSystem`'s `onDeathSpawn` boss-adds now inherit the dying boss's own `roomId` (was `undefined`, so `DoorSystem` briefly saw the room as cleared and force-regrouped the player back), and `placeFloorGraph2d` now shifts a floor's whole coordinate space so a north/west hop off the origin-pinned spawn room never leaves a room (and its door) at a negative, physically-unreachable offset. See the Room & door model section above.
+Room & door model       DONE (✅ 2026-08-04/05, ENGINE_VERSION 34→35) — PvE floors co-resident + door-connected (placeFloor/carveDoorGaps/buildFloorGeometry, new DoorSystem: activation/lock-unlock/force-regroup), replacing the old one-room swap. HudView.ts fixed to compile against the new schema. Client room rendering shipped same day: door_{locked,open}_raw.png loaded and wired onto RoomBuilder's per-door Sprite (reactive lock/unlock in place via updateDoors(), no full rebuild), EventReactor reacts to force_regroup with a local-player camera snap. Fully-realized branching shipped 2026-08-05 (ENGINE_VERSION 35) — a real fork-and-reconverge diamond of sibling rooms, needing zero client changes (DoorSystem/RoomBuilder/EventReactor already topology-agnostic). PvE minimap adapter shipped same day — FloorProgress deleted, PvE now shares PvP's own Minimap widget via dungeonToArenaMap/dungeonRoomStatus (minimapLayout.ts). Map-editor door placement shipped same day (no engine version bump) — DungeonFloorMap/placeAuthoredFloor/DungeonConfig.floorMaps + a third tools/map-editor mode ("PvE Dungeon Floor") + validateDungeonFloorMap, closing the last item of the original three-item follow-up list. "全部加测试" follow-up added DungeonFloorCanvas.test.ts (28 tests, previously zero coverage on the tool's most complex new file). Real 2D graph layout (`layout: 'graph2d'`, `placeFloorGraph2d`) shipped same day too — a generated floor can place in real 2D instead of a forced west→east spine. "graph2d content" pass shipped 2026-08-05 (same day): `EMBER_DUNGEON` switches to `'graph2d'` (a new `ember_atrium` piece + wider exit authoring on `ember_pillars`/`ember_extraction`/`ember_boss`), and `placeFloorGraph2d` gains a direction-retry fallback for fold-back overlaps — both found necessary by testing the real content, not by inspection. `'branching'` still stays unused by any shipped config. **Bug fix pass shipped 2026-08-12 (ENGINE_VERSION 35→36):** two real bugs found from a live player report (door unlocked but still physically impassable) — `DeathDropsSystem`'s `onDeathSpawn` boss-adds now inherit the dying boss's own `roomId` (was `undefined`, so `DoorSystem` briefly saw the room as cleared and force-regrouped the player back), and `placeFloorGraph2d` now shifts a floor's whole coordinate space so a north/west hop off the origin-pinned spawn room never leaves a room (and its door) at a negative, physically-unreachable offset. See the Room & door model section above. **Stranded-enemy fix shipped 2026-08-15 (ENGINE_VERSION 38→39):** the third consequence of this same model — the checkpoint only requires the *capstone* room to be cleared, so a DESCEND could carry every enemy still alive elsewhere on the floor (plus their in-flight bullets) into the next one, holding a dead `roomId` and a position in geometry that had just been torn down; `resolveDescend` now clears `state.enemies`/`state.projectiles` alongside the room arrays it already wiped. See the Stranded-enemy section above.
 Phase 6 (accounts)      DONE (✅) — real username/password login (SQLite via node:sqlite), never required to play. Bound to PvP ladder rating (accountId in the signed ticket -> MatchRoom.seatAccounts -> ladderReport, guest/bot fallback preserved) and Forge MetaState (best-effort /account/meta sync). Independent of Phases 1-5; third-party OAuth reserved, not built.
 Phase 7 (i18n)          DONE (✅) — client/src/i18n/: en.ts canonical + zh.ts translation, both compile-time key-checked (Translations<typeof en>, TranslationKey). Every screen migrated to t(); Settings gained a language toggle backed by SettingsState.locale. Independent of Phases 1-6; enum/data-driven values (damage type, weapon kind, rarity/ids) deliberately left untranslated.
 Documentation           DONE (✅ 2026-08-02) — all 19 design docs + every README audited against the code; stale top-of-file Status blocks rewritten (12/10/client/art READMEs and this file's own header), design/README index completed, engine/README written, art/ UUID filenames + duplicate files cleaned up. Docs-only, no code change.

@@ -23,7 +23,10 @@ import type { EngineConfig } from '@dd/engine/state/GameState';
 import { Button } from '@dd/engine/state/commands';
 import { makeCommand } from '@dd/engine/state/input';
 import type { Brad } from '@dd/engine/math/trig';
+import { toFp } from '@dd/engine/math/fixed';
 import { toFpGrid } from '@dd/engine/content/convert';
+import { buildEnemyActor } from '@dd/engine/content/enemies';
+import { ENEMY_TEAM_ID, type Projectile } from '@dd/engine/state/entities';
 import type { RoomPiece } from '@dd/engine/content/rooms';
 import type { DungeonConfig, DungeonFloorMap } from '@dd/engine/world/dungeon';
 import { EMBER_DUNGEON, EMBER_PROCEDURAL_DUNGEON, EMBER_ROOMS } from '@dd/engine/world/rooms/ember';
@@ -214,6 +217,227 @@ describe('Dungeon mode — DESCEND generates the next floor', () => {
     eng.step([idle(5)]); // SpawnSystem generates + places floor 1
     expect(s.dungeonRooms.length).toBe(2);
     expect(s.dungeonRooms[1]!.piece.role).toBe('boss'); // floor 1 is the last → boss capstone
+  });
+});
+
+describe('Dungeon mode — DESCEND leaves the floor’s stranded enemies behind (ENGINE_VERSION 39)', () => {
+  // The checkpoint only asks that the CAPSTONE room be cleared (`capstoneCleared`), and
+  // never asks where the player is standing — so a floor can absolutely still be holding
+  // live enemies elsewhere the tick DESCEND resolves. The realistic route (no impossible
+  // walk through a locked door needed): room 0's encounter trickles in, the player kills
+  // the first entry, the door unlocks, they walk on and clear the capstone — and only
+  // THEN does room 0's late `atTick` entry fire, re-populating a room they already left.
+  // Before this fix those enemies rode into the next floor carrying room 0's `roomId` and
+  // their old grid positions, i.e. embedded in geometry that had just been torn down.
+  const STRAND_LIB: RoomPiece[] = [
+    {
+      id: 'sd_room', tags: ['sd'], sizeGrid: { w: 20, h: 16 }, solids: [],
+      spawns: { player: [{ x: 2, y: 8 }], enemy: [{ x: 16, y: 4 }, { x: 16, y: 12 }] },
+      exits: [{ edge: 'east' }],
+      encounter: {
+        entries: [
+          { atTick: 0, enemyType: 'basic', spawnPoint: 0, count: 1 }, // killed on the way through
+          { atTick: 8, enemyType: 'basic', spawnPoint: 1, count: 2 }, // fires long after the player left
+        ],
+      },
+    },
+    {
+      id: 'sd_extract', role: 'extraction', sizeGrid: { w: 10, h: 10 }, solids: [],
+      spawns: { player: [{ x: 5, y: 8 }], enemy: [] }, exits: [{ edge: 'west' }],
+    },
+    {
+      id: 'sd_boss', role: 'boss', sizeGrid: { w: 20, h: 16 }, solids: [],
+      spawns: { player: [{ x: 2, y: 8 }], enemy: [] }, exits: [{ edge: 'west' }],
+    },
+  ];
+  const STRAND_CFG: EngineConfig = {
+    seed: 13, worldW: 640, worldH: 640, waves: [],
+    dungeon: {
+      config: {
+        biomeId: 'sd', nameKey: 'sd', floorCount: 2, roomsPerFloor: { min: 2, max: 2 },
+        pieceTags: ['sd'], layout: 'linear', extractionPieceId: 'sd_extract', bossPieceId: 'sd_boss',
+        difficultyCurve: { base: 1, perFloor: 0 },
+      },
+      library: STRAND_LIB,
+    },
+  };
+
+  /** Drive floor 0 up to "capstone cleared, room 0 re-populated behind me" — the exact
+   * state the bug needs. Returns the engine at tick 10, ready for a DESCEND press. */
+  function runToStrandedCheckpoint(eng: ReturnType<typeof createGameEngine>): void {
+    const s = eng.state;
+    eng.step([idle(1)]); // floor 0 places
+    eng.step([idle(2)]); // room 0 activates — the atTick-0 entry spawns, its door locks
+    expect(s.enemies.length).toBe(1);
+    expect(s.dungeonDoors[0]!.locked).toBe(true);
+
+    s.enemies.length = 0; // the player kills it (real combat is exercised elsewhere)
+    eng.step([idle(3)]); // DoorSystem sees an empty room → unlocks
+    expect(s.dungeonDoors[0]!.locked).toBe(false);
+
+    teleportPlayerInto(eng, s.dungeonRooms[1]!); // walk through the now-open door
+    eng.step([idle(4)]); // capstone activates (empty) → cleared; checkpoint is open
+
+    for (let t = 5; t <= 10; t++) eng.step([idle(t)]); // → room-tick 8: room 0's late entry
+    expect(s.enemies.length).toBe(2); // room 0 is live again, well behind the player
+    expect(s.enemies.every((e) => e.roomId === s.dungeonRooms[0]!.id)).toBe(true);
+    expect(s.dungeonRoomRuntime[1]!.activated).toBe(true);
+    expect(s.dungeonRoomRuntime[1]!.hasLiveEnemy).toBe(false); // capstone still cleared
+  }
+
+  it('drops every enemy left alive on the floor instead of carrying them into the next one', () => {
+    const eng = createGameEngine(STRAND_CFG);
+    const s = eng.state;
+    runToStrandedCheckpoint(eng);
+    const dropPrngBefore = s.dropPrng.peek();
+    const deathsBefore = s.events.filter((e) => e.type === 'death').length;
+
+    eng.step([confirmDescend(11)]);
+    expect(s.floorIndex).toBe(1);
+    expect(s.enemies.length).toBe(0); // left behind with the floor they stood on
+    // A silent discard, not a mass death: no drop rolls (which would shift every later
+    // dropPrng draw in the run and pay out materials for kills that never happened), and
+    // no `death` events for render/score to react to.
+    expect(s.dropPrng.peek()).toBe(dropPrngBefore);
+    expect(s.events.filter((e) => e.type === 'death').length).toBe(deathsBefore);
+    expect(s.pickups.length).toBe(0);
+  });
+
+  it('leaves the next floor populated only by its OWN rooms — no stale roomId survives', () => {
+    const eng = createGameEngine(STRAND_CFG);
+    const s = eng.state;
+    runToStrandedCheckpoint(eng);
+    eng.step([confirmDescend(11)]);
+
+    eng.step([idle(12)]); // SpawnSystem generates + places floor 1
+    expect(s.dungeonRooms.length).toBe(2);
+    expect(s.enemies.length).toBe(0); // floor 1's rooms haven't been entered yet
+
+    eng.step([idle(13)]); // floor 1's room 0 activates — its own atTick-0 entry spawns
+    expect(s.enemies.length).toBe(1);
+    // Every live enemy belongs to a room of the CURRENT floor. Pre-fix this failed with
+    // 3: floor 0's two strays kept an id that `dungeonRoomIndexById` no longer knows.
+    expect(s.enemies.every((e) => e.roomId !== undefined && s.dungeonRoomIndexById.has(e.roomId))).toBe(true);
+  });
+
+  it('takes the in-flight bullets with them — nothing shot on the old floor lands on the new one', () => {
+    const eng = createGameEngine(STRAND_CFG);
+    const s = eng.state;
+    runToStrandedCheckpoint(eng);
+    // A targeted poke rather than waiting for the stranded mob's own gun, so the
+    // assertion never depends on AI/weapon timing. Parked (zero velocity) deep inside
+    // room 0, well clear of the player, so nothing but the descend can remove it.
+    const room0 = s.dungeonRooms[0]!;
+    const bullet: Projectile = {
+      id: s.nextId(), faction: 'enemy', teamId: ENEMY_TEAM_ID,
+      gx: toFpGrid(room0.offsetXGrid + 10), gy: toFpGrid(room0.offsetYGrid + 2), z: toFp(0),
+      vx: toFp(0), vy: toFp(0), radius: toFp(0.15), damage: 1, damageType: 'physical',
+      lifeTicks: 90, alive: true,
+    };
+    s.projectiles.push(bullet);
+
+    eng.step([idle(11)]); // an ordinary tick leaves it flying — the assertion below isn't vacuous
+    expect(s.projectiles).toHaveLength(1);
+
+    eng.step([confirmDescend(12)]);
+    expect(s.projectiles).toHaveLength(0);
+  });
+
+  it('takes an enemy NO room owns with it — a `roomId === undefined` straggler held nothing back', () => {
+    // The quieter second route into the same bug. `DoorSystem`'s scan skips any enemy
+    // with `roomId === undefined` (so it locks no door and sets no `hasLiveEnemy`), and
+    // `capstoneCleared` reads only that flag — a mob in the un-owned space between rooms
+    // is therefore invisible to every guard the floor has, and rode into the next floor
+    // with nothing having so much as noticed it. Real on a `branching`/`graph2d` floor,
+    // whose siblings sit BRANCH_GAP_GRID apart with genuinely un-owned space between them
+    // (and v37's chase will walk a mob straight into it); poked in directly here rather
+    // than building a whole fork floor just to herd one there. STRAND_CFG's own un-owned
+    // pocket is the space south of the 10x10 capstone, past the 20x16 first room's height.
+    const eng = createGameEngine(STRAND_CFG);
+    const s = eng.state;
+    eng.step([idle(1)]); // floor 0 places
+    eng.step([idle(2)]); // room 0 activates — its atTick-0 entry spawns
+    s.enemies.length = 0; // the player kills it
+    eng.step([idle(3)]); // door unlocks
+    teleportPlayerInto(eng, s.dungeonRooms[1]!);
+    eng.step([idle(4)]); // capstone activates (empty) → cleared; checkpoint open
+
+    const stray = buildEnemyActor(s, toFpGrid(25), toFpGrid(13.5), 'basic');
+    s.enemies.push(stray); // `roomId` deliberately left unset — no rect will claim it
+    eng.step([idle(5)]);
+    expect(stray.alive).toBe(true);
+    expect(stray.roomId).toBeUndefined(); // EnvironmentSystem re-checks every tick, still nothing
+    expect(s.dungeonRoomRuntime.every((rt) => !rt.hasLiveEnemy)).toBe(true);
+    expect(s.dungeonDoors.every((d) => !d.locked)).toBe(true); // it holds nothing back at all
+
+    eng.step([confirmDescend(6)]);
+    expect(s.enemies).toHaveLength(0); // cleared wholesale, never by a roomId lookup
+  });
+
+  it('an EXTRACT at the same checkpoint leaves them alone — the wipe is DESCEND-only', () => {
+    // Nothing to go stale: the run ends here, there is no next floor's geometry for a
+    // leftover to be measured against, and `resolveExtract` is a different method for a
+    // reason. A guard against someone later hoisting the clear up into `tick()`.
+    const eng = createGameEngine(STRAND_CFG);
+    const s = eng.state;
+    runToStrandedCheckpoint(eng);
+
+    eng.step([confirmExtract(11)]);
+    expect(s.phase).toBe('gameover');
+    expect(s.winner).toBe(0);
+    expect(s.enemies).toHaveLength(2);
+  });
+
+  it('wipes only the floor’s leftovers — the player and their run carry straight through', () => {
+    // The other half of the over-reach guard: `state.enemies`/`state.projectiles` are the
+    // only actor arrays the descend touches. `players` is a different array with a
+    // different lifetime — the run IS the player.
+    const eng = createGameEngine(STRAND_CFG);
+    const s = eng.state;
+    s.floorMaterials.mat_fire = 4;
+    runToStrandedCheckpoint(eng);
+    const p = s.players[0]!;
+    const weaponBefore = p.weapon?.spec.name;
+    const maxHpBefore = p.maxHp;
+
+    eng.step([confirmDescend(11)]);
+    expect(s.players).toHaveLength(1);
+    expect(s.players[0]).toBe(p); // the same object, not a rebuilt one
+    expect(p.alive).toBe(true);
+    expect(p.hp).toBeGreaterThan(0); // (exact hp is combat's business — the stranded pair shoots)
+    expect(p.maxHp).toBe(maxHpBefore);
+    expect(p.weapon?.spec.name).toBe(weaponBefore);
+    expect(s.bankedMaterials.mat_fire).toBe(4); // the floor buffer still banks normally
+  });
+
+  it('stays byte-identical across two engines on the same seed, wipe and all', () => {
+    // The wipe is a simulation-output change (hence ENGINE_VERSION 39), so it has to be
+    // replay-stable like everything else: it draws no PRNG, so floor 1's generation on
+    // the far side of it must still land in lockstep.
+    const a = createGameEngine(STRAND_CFG);
+    const b = createGameEngine(STRAND_CFG);
+    const both = (cmds: Parameters<typeof a.step>[0]): void => {
+      a.step(cmds);
+      b.step(cmds);
+      expect(hashState(b.state)).toBe(hashState(a.state));
+    };
+
+    both([idle(1)]);
+    both([idle(2)]);
+    a.state.enemies.length = 0; // the same "player kills the first entry" poke, both sides
+    b.state.enemies.length = 0;
+    both([idle(3)]);
+    teleportPlayerInto(a, a.state.dungeonRooms[1]!);
+    teleportPlayerInto(b, b.state.dungeonRooms[1]!);
+    both([idle(4)]);
+    for (let t = 5; t <= 10; t++) both([idle(t)]);
+    expect(a.state.enemies).toHaveLength(2); // stranded, on both
+
+    both([confirmDescend(11)]); // the wipe itself
+    expect(a.state.enemies).toHaveLength(0);
+    both([idle(12)]); // floor 1 generates + places — roomgenPrng still in lockstep
+    both([idle(13)]);
+    expect(a.state.dungeonRooms.map((r) => r.id)).toEqual(b.state.dungeonRooms.map((r) => r.id));
   });
 });
 
