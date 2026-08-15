@@ -106,6 +106,10 @@ export const ru: Translations<typeof en> = {
       lightning: 'МОЛ',
       poison: 'ЯД',
     },
+    source: {
+      purchase: 'покупка',
+      event: 'событие',
+    },
     ally: {
       tag: 'СОЮЗНИК · {skin}',
       downed: 'СБИТ {seconds}с',

@@ -13,7 +13,7 @@ import { RARITY_COLORS } from '../theme';
 import { getWeaponTexture } from '../../render/weaponSkins';
 import { getUiTexture } from '../../render/uiSkins';
 import { t, tName } from '../../i18n';
-import { ELEMENT_SHORT_KEY } from '../../i18n/contentKeys';
+import { ELEMENT_SHORT_KEY, SOURCE_KEY } from '../../i18n/contentKeys';
 
 /** Cards shown at once (`BLUEPRINT_CATALOG` has more entries than fit above the fixed
  * bottom action bar — a real overflow found while wiring up real Buttons, since the old
@@ -244,7 +244,7 @@ export class Forge {
       const staged = m.loadout.filter((x) => x === id).length;
       const affordable = canAfford(m, bp);
       const status = !unlocked
-        ? (bp.source === 'drop' ? t('forge.lockedFind') : t('forge.lockedSource', { source: bp.source }))
+        ? (bp.source === 'drop' ? t('forge.lockedFind') : t('forge.lockedSource', { source: t(SOURCE_KEY[bp.source]) }))
         : affordable ? t('forge.craftable') : t('forge.needMaterials');
       const statusColor = !unlocked ? 0x718096 : affordable ? 0x68d391 : 0xf6ad55;
       const key = i < 9 ? `${i + 1}` : '·'; // only the first 9 have a digit-key shortcut

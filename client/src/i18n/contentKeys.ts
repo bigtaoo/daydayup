@@ -11,7 +11,7 @@
  * engine-side rarity tier / damage type fail the build here until it has a label, instead
  * of silently rendering the raw key at runtime.
  */
-import type { DamageType, RarityTier, WeaponSimSpec } from '@dd/engine';
+import type { BlueprintSource, DamageType, RarityTier, WeaponSimSpec } from '@dd/engine';
 import type { TranslationKey } from '.';
 
 export const RARITY_KEY = {
@@ -46,3 +46,13 @@ export const ELEMENT_SHORT_KEY = {
   lightning: 'hud.elementShort.lightning',
   poison: 'hud.elementShort.poison',
 } as const satisfies Record<DamageType, TranslationKey>;
+
+/** `Forge.ts`'s `lockedSource` interpolation — the raw `BlueprintSource` enum value
+ * used to read straight into the `{source}` placeholder untranslated (e.g. zh rendering
+ * "未解锁（purchase）" instead of "未解锁（购买）"). `'drop'` is deliberately excluded:
+ * that case already has its own dedicated `forge.lockedFind` string and never reaches
+ * this map. */
+export const SOURCE_KEY = {
+  purchase: 'hud.source.purchase',
+  event: 'hud.source.event',
+} as const satisfies Record<Exclude<BlueprintSource, 'drop'>, TranslationKey>;

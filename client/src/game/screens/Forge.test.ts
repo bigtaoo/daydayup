@@ -319,6 +319,29 @@ describe('Forge — i18n (design/17-i18n.md)', () => {
     expect(text).toMatch(/材料不足|可打造|未解锁/);
   });
 
+  it('translates the blueprint unlock-source word instead of leaking the raw BlueprintSource enum value', () => {
+    const f = new Forge();
+    setLocale('zh');
+    f.render(defaultMetaState(), 1280, 720);
+    const p = privateOf(f);
+    // order[2] = cryobolt (source: 'purchase'), order[6] = emberblade (source:
+    // 'event') — both locked by default since only 'drop' blueprints are
+    // pre-unlocked (defaultMetaState/STARTER_BLUEPRINTS). Regression test: this
+    // used to interpolate the raw enum value untranslated ("未解锁（purchase）")
+    // instead of the localized noun ("未解锁（购买）"); covers both non-'drop'
+    // source values, since a fix scoped to only one could still leak the other.
+    expect(p.rowCards[2]!.statusLabel).toBe('未解锁（购买）');
+    expect(p.rowCards[6]!.statusLabel).toBe('未解锁（活动）');
+  });
+
+  it('also translates the unlock-source word under the source-of-truth English locale', () => {
+    const f = new Forge();
+    f.render(defaultMetaState(), 1280, 720); // en is the default locale
+    const p = privateOf(f);
+    expect(p.rowCards[2]!.statusLabel).toBe('locked (purchase)');
+    expect(p.rowCards[6]!.statusLabel).toBe('locked (event)');
+  });
+
   it('switching back to English on a later render() fully reverts', () => {
     const f = new Forge();
     setLocale('zh');

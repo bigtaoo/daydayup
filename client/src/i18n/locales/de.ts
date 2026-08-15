@@ -101,6 +101,10 @@ export const de: Translations<typeof en> = {
       lightning: 'BLI',
       poison: 'GFT',
     },
+    source: {
+      purchase: 'Kauf',
+      event: 'Event',
+    },
     ally: {
       tag: 'VERBÜNDETER · {skin}',
       downed: 'AM BODEN {seconds}s',

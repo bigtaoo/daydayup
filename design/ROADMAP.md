@@ -569,6 +569,13 @@ string twice per locale. One adjacent gap found but left out of scope: `forge.
 lockedSource`'s `{source}` (`'purchase'`/`'event'`) still interpolates raw English —
 flagged as its own follow-up. See design/17-i18n.md's own dated entry for the full account.
 
+**Follow-up, same day: the `lockedSource` gap above is now closed.** `contentKeys.ts`
+gained `SOURCE_KEY` (same `Record<Enum, TranslationKey>` pattern as `RARITY_KEY`/
+`KIND_KEY`/`ELEMENT_KEY`/`ELEMENT_SHORT_KEY`, `'drop'` excluded since it already renders
+via its own `forge.lockedFind` string), all 8 locales gained `hud.source.purchase`/
+`hud.source.event`, and `Forge.ts`'s `lockedSource` interpolation now reads
+`t(SOURCE_KEY[bp.source])`. See design/17-i18n.md's own dated entry for the full account.
+
 ---
 
 ## Client hardening pass ✅ (2026-08-04)

@@ -106,6 +106,12 @@ export const en = {
       lightning: 'LIG',
       poison: 'POI',
     },
+    // Blueprint unlock source (Forge.ts's lockedSource line) — 'drop' isn't listed
+    // here, it has its own dedicated `forge.lockedFind` string instead.
+    source: {
+      purchase: 'purchase',
+      event: 'event',
+    },
     ally: {
       tag: 'ALLY · {skin}',
       downed: 'DOWNED {seconds}s',

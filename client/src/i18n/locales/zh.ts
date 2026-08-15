@@ -101,6 +101,10 @@ export const zh: Translations<typeof en> = {
       lightning: '雷',
       poison: '毒',
     },
+    source: {
+      purchase: '购买',
+      event: '活动',
+    },
     ally: {
       tag: '队友·{skin}',
       downed: '倒地 {seconds}秒',

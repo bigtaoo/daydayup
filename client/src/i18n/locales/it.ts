@@ -101,6 +101,10 @@ export const it: Translations<typeof en> = {
       lightning: 'FUL',
       poison: 'VEL',
     },
+    source: {
+      purchase: 'acquisto',
+      event: 'evento',
+    },
     ally: {
       tag: 'ALLEATO · {skin}',
       downed: 'A TERRA {seconds}s',
