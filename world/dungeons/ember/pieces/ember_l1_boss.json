@@ -44,53 +44,23 @@
     ],
     "enemy": [
       {
-        "x": 2.5,
+        "x": 6.5,
         "y": 2.5,
         "type": "blightlord"
       },
       {
-        "x": 4.5,
-        "y": 2.5,
-        "type": "ironclad"
-      },
-      {
-        "x": 8.5,
-        "y": 2.5,
-        "type": "galvanist"
-      },
-      {
         "x": 12.5,
         "y": 2.5,
-        "type": "brute"
-      },
-      {
-        "x": 16.5,
-        "y": 2.5,
         "type": "ironclad"
-      },
-      {
-        "x": 4.5,
-        "y": 4.5,
-        "type": "galvanist"
       },
       {
         "x": 8.5,
         "y": 4.5,
-        "type": "brute"
-      },
-      {
-        "x": 10.5,
-        "y": 4.5,
-        "type": "ironclad"
+        "type": "galvanist"
       },
       {
         "x": 14.5,
         "y": 4.5,
-        "type": "galvanist"
-      },
-      {
-        "x": 6.5,
-        "y": 6.5,
         "type": "brute"
       },
       {
@@ -99,27 +69,12 @@
         "type": "ironclad"
       },
       {
-        "x": 14.5,
+        "x": 16.5,
         "y": 6.5,
         "type": "galvanist"
       },
       {
-        "x": 6.5,
-        "y": 8.5,
-        "type": "brute"
-      },
-      {
-        "x": 8.5,
-        "y": 8.5,
-        "type": "ironclad"
-      },
-      {
         "x": 12.5,
-        "y": 8.5,
-        "type": "galvanist"
-      },
-      {
-        "x": 16.5,
         "y": 8.5,
         "type": "brute"
       },
@@ -129,53 +84,23 @@
         "type": "ironclad"
       },
       {
-        "x": 12.5,
+        "x": 14.5,
         "y": 10.5,
         "type": "galvanist"
+      },
+      {
+        "x": 10.5,
+        "y": 12.5,
+        "type": "brute"
       },
       {
         "x": 16.5,
-        "y": 10.5,
-        "type": "brute"
-      },
-      {
-        "x": 6.5,
         "y": 12.5,
         "type": "ironclad"
-      },
-      {
-        "x": 10.5,
-        "y": 12.5,
-        "type": "galvanist"
-      },
-      {
-        "x": 14.5,
-        "y": 12.5,
-        "type": "brute"
-      },
-      {
-        "x": 4.5,
-        "y": 14.5,
-        "type": "ironclad"
-      },
-      {
-        "x": 8.5,
-        "y": 14.5,
-        "type": "galvanist"
       },
       {
         "x": 12.5,
         "y": 14.5,
-        "type": "brute"
-      },
-      {
-        "x": 14.5,
-        "y": 14.5,
-        "type": "ironclad"
-      },
-      {
-        "x": 2.5,
-        "y": 16.5,
         "type": "galvanist"
       },
       {
@@ -184,14 +109,9 @@
         "type": "brute"
       },
       {
-        "x": 10.5,
+        "x": 12.5,
         "y": 16.5,
         "type": "ironclad"
-      },
-      {
-        "x": 14.5,
-        "y": 16.5,
-        "type": "galvanist"
       }
     ]
   },

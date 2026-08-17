@@ -356,9 +356,11 @@ this one, for the whole level rather than a single floor. `ENGINE_VERSION` 38.
   range structurally cannot express, which is a large part of why the level is
   authored rather than drawn; the range left on `EMBER_DUNGEON` now describes only the
   procedural fallback a floor would take if its authored map were removed.
-- **Room sizes 15x15 to 20x20 grid cells; enemy count ramps with cell count**, 15 at
-  225 cells up to 30 at 400 (`enemyCountForArea`), so a bigger room is always the
-  bigger fight. 581 enemies across the level. The extraction capstone is the one
+- **Room sizes 15x15 to 20x20 grid cells; enemy count ramps with cell count**, 8 at
+  225 cells up to 14 at 400 (`enemyCountForArea`), so a bigger room is always the
+  bigger fight. 285 enemies across the level. (This shipped at 15→30 / 581 enemies and
+  was halved on 2026-08-17 — see "Room encounter budget" below for the measurements
+  that forced it.) The extraction capstone is the one
   deliberate exception at 0 enemies: `DoorSystem`/`ExtractionSystem` both treat
   "capstone cleared" as the floor's gate, so garrisoning it would turn every
   checkpoint into a second boss fight.
@@ -404,6 +406,70 @@ this one, for the whole level rather than a single floor. `ENGINE_VERSION` 38.
   absent `encounter` is the engine's hand-authored default, and it is what makes a room
   genuinely cleared the moment it is empty — a staggered script would let a player
   leave through a door that unlocked between waves).
+
+### Room encounter budget ✅ (2026-08-17, `ENGINE_VERSION` 41)
+
+The third and final round of one live report — *"一进游戏就被集火秒杀"* (I get focus-fired
+down the moment I enter). `ENGINE_VERSION` 37 (mobs chase) and 40 (mobs only fire once
+inside their own `engageRangeFp`) were both aimed at it and both diagnosed by reasoning
+alone; each bought about half a second, because a room's garrison simply CLOSED to
+engage range as one blob and opened up together.
+
+**What settled it was building the measurement first.** `client/sim/pveLevelSim.sim.ts`
+(`npm run test:pve-sim`) plays the shipped level with `PveBotController` at two skill
+profiles and reports, per room: garrison size, reaction window (activation → first
+damage taken), peak simultaneous shooters, damage taken, clear rate. On the shipped v40
+build it read: **14 of 15 mobs firing on the same tick, first hit 0.6s after the room
+woke, worst 1-second window 10 damage against a starter character's 9.2 effective HP,
+and death in the entrance room in 100% of runs at both profiles.** No per-enemy number
+can fix that shape — 15 mobs each firing a 1-damage shot every 1.5s is 10 damage/second
+however reasonable each individual mob is.
+
+So the budget is a property of the **room**, the same unit aggro already lives on:
+
+- **`ROOM_FIRE_BUDGET` = 2** (`engine/balance/encounter.ts`). At most 2 mobs per room may
+  have `firing` set on any tick, awarded to the NEAREST contenders; the rest hold
+  position inside engage range and take a slot when a shooter dies or the player moves
+  and reorders the queue. A room may hold a crowd; it may not alpha-strike.
+- **Staggered wake-up** — `noticeDelayTicks(id)` = 18 + `id % 30` ticks (0.6-1.6s) after
+  activation, during which a mob may move but not fire. Derived from the enemy id, not
+  an `aiPrng` draw: reproducible with no new PRNG draw site and no new field to
+  serialize. Per-enemy rather than flat, or the whole simultaneous volley would just
+  arrive later.
+- **Garrisons halved** — `enemyCountForArea` 15→30 becomes 8→14 (content, no version
+  bump). This half is about CLEAR TIME, not incoming damage: the starter blaster does 5
+  damage/second, so 15 mobs averaging 3.5 HP is ~11 seconds of uninterrupted shooting
+  per room, 29 rooms deep.
+- **Authored player-spawn clearance 3 → 6 grid.** `ember_l1_cell` put its nearest mob 3.2
+  grid from the spawn point, i.e. inside the 5.6-grid engage range before the run began.
+  A room that opens pre-aimed is something no engine-side pacing can undo.
+- **`SHIELD_REGEN_INTERVAL` 300 → 60 ticks** (~10s → ~2s per +1). The shield was
+  effectively single-use in a run: refilling 3.2 shield took ~32s of taking no damage,
+  while a room takes ~8s to clear and the next is seconds away — so a player entered a
+  37-enemy floor with one 9.2-point pool and no way to get any of it back except heal
+  drops. This makes the two-pool split mean what "Survivability model" below says it
+  means (shield renewable, HP permanent), and makes disengaging between rooms a real
+  tactic. Re-checked against `npm run test:pvp-sim`: arena win rates moved within noise.
+
+**Difficulty target, chosen 2026-08-17: hard overall.** Floor 1 passable by careful play,
+a full 5-floor extraction uncommon. After the changes the sim's careful bot clears the
+entrance room in 100% of runs, descends off floor 0 in ~37%, and dies spread across
+floors 0-3; the aggressive profile (walks into the mob's face, never rests) dies on floor
+0. Both directions are gated in the sim so a later tuning pass can fail for being too
+lethal *or* for overshooting into a walkover. Read the bot as a LOWER bound on a human —
+it never swaps to the saber (2 damage, hits everything in the arc, parries bullets) and
+never dodges a shot on purpose.
+
+**A second, worse bug fell out of the same sim run: a real softlock.** The tick a player's
+step across a threshold activates a room, their body is still in the doorway;
+`EnvironmentSystem` had already re-tagged `p.roomId`, so `DoorSystem.forceRegroup`'s
+"skip whoever is already inside" test skipped them, and then the restored passage wall
+pushed them out — often back the way they came. The room stays in combat behind a
+permanently locked door, the floor can never be cleared, and the run can only end in
+death. Fixed by `inLockingDoorway`: a player physically overlapping a passage that is
+about to lock gets pulled onto the room's entrance like everyone else, which is what "the
+door locks you in the fight" was always meant to mean. It wedged 7 of 8 bot runs before
+the fix; the sim's no-stall gate is its regression check.
 
 ## Survivability model (HP + shield)
 

@@ -1,7 +1,7 @@
 /**
  * Level 1's content gate — holds `world/dungeons/ember/`'s JSON to the level spec
  * (5 floors of 5/6/7/6/5 rooms, every room 15x15..20x20, enemy count ramping with
- * cell count from 15 to 30) and, most importantly, proves every door is PHYSICALLY
+ * cell count from 8 to 14) and, most importantly, proves every door is PHYSICALLY
  * PASSABLE.
  *
  * "Passable" is deliberately checked the expensive way. `tools/map-editor`'s
@@ -30,8 +30,8 @@ const FLOOR_INDICES = [0, 1, 2, 3, 4] as const;
 const EXPECTED_ROOM_COUNTS = [5, 6, 7, 6, 5];
 const MIN_SIDE = 15;
 const MAX_SIDE = 20;
-const MIN_ENEMIES = 15;
-const MAX_ENEMIES = 30;
+const MIN_ENEMIES = 8;
+const MAX_ENEMIES = 14;
 
 const floorAt = (i: number): DungeonFloorMap => {
   const map = EMBER_L1_FLOORS[i];
@@ -105,11 +105,11 @@ describe('level 1 room pieces', () => {
     }
   });
 
-  it('enemy count scales with cell count, 15 at 15x15 up to 30 at 20x20', () => {
+  it('enemy count scales with cell count, 8 at 15x15 up to 14 at 20x20', () => {
     for (const piece of EMBER_L1_ROOMS) {
       if (piece.role === 'extraction') continue; // the checkpoint room is deliberately empty
       const area = piece.sizeGrid.w * piece.sizeGrid.h;
-      const expected = Math.max(MIN_ENEMIES, Math.min(MAX_ENEMIES, Math.round(15 + (15 * (area - 225)) / 175)));
+      const expected = Math.max(MIN_ENEMIES, Math.min(MAX_ENEMIES, Math.round(8 + (6 * (area - 225)) / 175)));
       expect(piece.spawns.enemy.length, piece.id).toBe(expected);
     }
   });
@@ -119,6 +119,23 @@ describe('level 1 room pieces', () => {
       .map((p) => ({ area: p.sizeGrid.w * p.sizeGrid.h, n: p.spawns.enemy.length }))
       .sort((a, b) => a.area - b.area);
     for (let i = 1; i < fights.length; i++) expect(fights[i]!.n).toBeGreaterThanOrEqual(fights[i - 1]!.n);
+  });
+
+  it('no enemy spawns inside its own room’s player-spawn clearance — the entrance room can’t open pre-aimed', () => {
+    // Must stay above DEFAULT_ENEMY_ENGAGE_RANGE_FP (5.6 grid — content/enemies.ts,
+    // the distance a mob stops and shoots from), or a room places mobs already in
+    // firing position on the tick the player appears there, which the engine-side
+    // notice delay + fire budget (balance/encounter.ts) can only soften, never undo.
+    // Level 1's first pass authored 3 grid and `ember_l1_cell` duly put its nearest
+    // mob 3.2 grid from the spawn point; the generator now uses 6.
+    for (const piece of EMBER_L1_ROOMS) {
+      for (const e of piece.spawns.enemy) {
+        for (const p of piece.spawns.player) {
+          const d = Math.hypot(e.x - p.x, e.y - p.y);
+          expect(d, `${piece.id}: enemy (${e.x},${e.y}) vs player spawn (${p.x},${p.y})`).toBeGreaterThan(6);
+        }
+      }
+    }
   });
 
   it('the extraction capstone stays enemy-free — it is the checkpoint, not a second boss fight', () => {

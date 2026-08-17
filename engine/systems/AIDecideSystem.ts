@@ -29,6 +29,26 @@
  * stop closing) — "stop and shoot" is now literal instead of "shoot from
  * anywhere and also stop once close".
  *
+ * Room fire budget (ENGINE_VERSION 41, design/05 "Room encounter budget"): the
+ * v40 fix above turned out to buy only about half a second. `client/sim/
+ * pveLevelSim.sim.ts` — a bot-driven level simulator written specifically to put
+ * a number on the same recurring report — measured 14 of a 15-enemy room's mobs
+ * firing on the same tick, a first hit 0.6s after activation, and death in ~2s
+ * in 100% of runs at both bot skill profiles: enemies simply CLOSED to engage
+ * range as one blob and opened up together, which the range gate does nothing
+ * about. Two additions, both per-ROOM rather than per-mob, since the room is
+ * already this game's aggro unit (design/05):
+ *   - `grantFireSlots` — at most `ROOM_FIRE_BUDGET` (balance/encounter.ts) mobs
+ *     per room may have `firing` set on a tick, awarded to the NEAREST
+ *     contenders. The rest hold position in range with `firing` false, taking a
+ *     slot as soon as a shooter dies or the player moves and reorders the queue.
+ *   - `hasNoticed` — a freshly-activated room's mobs may move immediately but
+ *     hold fire for a per-enemy staggered delay (`noticeDelayTicks`, derived
+ *     from the enemy id, no PRNG draw), so entering a room is never an instant
+ *     volley from whichever mobs were authored nearest the door.
+ * `chaseAndEngage` no longer sets `firing` at all — it reports "in range" and
+ * `grantFireSlots` is the single writer of `firing = true`.
+ *
  * Room activation gate (design/05 "Room & door model", 2026-08-04): in dungeon
  * mode, an enemy whose room hasn't activated yet (no player has ever reached it)
  * runs NO decision logic at all — `firing`/`vx`/`vy` are simply left at whatever
@@ -40,13 +60,29 @@ import { isqrt } from '../math/fixed';
 import type { Fp } from '../math/fixed';
 import { atan2Brad } from '../math/trig';
 import { DEFAULT_ENEMY_MOVE_SPEED_PER_TICK, DEFAULT_ENEMY_ENGAGE_RANGE_FP } from '../content/enemies';
+import { ROOM_FIRE_BUDGET, noticeDelayTicks } from '../balance/encounter';
 import type { GameState } from '../state/GameState';
 import type { EnemyActor } from '../state/entities';
+
+/** A mob that is in range, has noticed the player, and is therefore competing for
+ *  one of its room's fire slots. `distSq` is what the slots are awarded by. */
+interface FireContender {
+  e: EnemyActor;
+  distSq: number;
+}
+
+/** Bucket key for a mob with no `roomId` (a flat `waves`/tutorial config, or the
+ *  one tick before EnvironmentSystem assigns one) — such mobs share a single
+ *  budget, since "the room" is the whole arena for them. */
+const NO_ROOM = '#unroomed';
 
 export class AIDecideSystem {
   tick(state: GameState): void {
     // Enemies ignore downed players (design/07, 3.2) — no camping a body that can't fight back.
     const target = state.players.find((p) => p.alive && !p.downed) ?? null;
+    // Insertion-ordered (spawn order) — see grantFireSlots' determinism note.
+    const contenders = new Map<string, FireContender[]>();
+
     for (const e of state.enemies) {
       if (!e.alive) continue;
       if (state.dungeonEnabled && !this.isActivated(state, e.roomId)) continue;
@@ -59,39 +95,91 @@ export class AIDecideSystem {
       const dx = target.gx - e.gx;
       const dy = target.gy - e.gy;
       e.facing = atan2Brad(dy, dx);
-      this.chaseAndEngage(e, dx, dy);
+      const distSq = this.chaseAndEngage(e, dx, dy);
+      // In range (chaseAndEngage stopped it and left `firing` false) and past its
+      // notice delay → it wants to shoot, pending a slot.
+      if (distSq !== null && this.hasNoticed(state, e)) {
+        const key = e.roomId ?? NO_ROOM;
+        const list = contenders.get(key);
+        if (list) list.push({ e, distSq });
+        else contenders.set(key, [{ e, distSq }]);
+      }
     }
+
+    this.grantFireSlots(contenders);
   }
 
   /**
-   * Close the distance to the target until within the mob's engage range, then
-   * stop AND fire (v37 first pass for the movement half — no hysteresis/kiting/
-   * steering yet, see the module's matching content/enemies.ts default constants
-   * for the tuning rationale; v40 added the firing gate, see the module doc
-   * comment's "Fire-range gate" section). A straight-line pursuit, same as
-   * everything else here: MovementSystem's push-out keeps a chasing mob from
-   * clipping through a wall or another actor, it just doesn't route AROUND one —
-   * a mob can stall against a concave wall.
+   * Close the distance to the target until within the mob's engage range, then stop
+   * (v37 first pass for the movement half — no hysteresis/kiting/steering yet, see
+   * the module's matching content/enemies.ts default constants for the tuning
+   * rationale; v40 added the firing gate, v41 the room budget — see the module doc
+   * comment). A straight-line pursuit, same as everything else here: MovementSystem's
+   * push-out keeps a chasing mob from clipping through a wall or another actor, it
+   * just doesn't route AROUND one — a mob can stall against a concave wall.
+   *
+   * Returns the squared distance to the target when the mob is in range and holding
+   * still (i.e. eligible to fire, if it gets a slot), else null. `firing` is left
+   * false here in every case; only `grantFireSlots` ever sets it true.
    */
-  private chaseAndEngage(e: EnemyActor, dx: number, dy: number): void {
+  private chaseAndEngage(e: EnemyActor, dx: number, dy: number): number | null {
     const range = e.engageRangeFp ?? DEFAULT_ENEMY_ENGAGE_RANGE_FP;
     const distSq = dx * dx + dy * dy;
+    e.firing = false;
     if (distSq <= range * range) {
-      e.firing = true;
       e.vx = 0 as Fp;
       e.vy = 0 as Fp;
-      return;
+      return distSq;
     }
-    e.firing = false; // still out of engage range — close the distance, don't shoot yet
-    const dist = isqrt(distSq);
+    const dist = isqrt(distSq); // still out of engage range — close the distance
     if (dist === 0) {
       e.vx = 0 as Fp;
       e.vy = 0 as Fp;
-      return;
+      return null;
     }
     const speed = e.moveSpeedPerTick ?? DEFAULT_ENEMY_MOVE_SPEED_PER_TICK;
     e.vx = Math.trunc((dx * speed) / dist) as Fp;
     e.vy = Math.trunc((dy * speed) / dist) as Fp;
+    return null;
+  }
+
+  /**
+   * Hand each room's `ROOM_FIRE_BUDGET` fire slots to its NEAREST contenders
+   * (balance/encounter.ts — the anti-alpha-strike rule). Everyone else stays in
+   * range with `firing` false: present, closing off nothing, waiting for a slot to
+   * free up when a shooter dies or the player moves and reorders the queue.
+   *
+   * Determinism (design/06): the bucket Map is keyed by roomId in first-seen =
+   * spawn order, and `Array.prototype.sort` is specified stable, so equal-distance
+   * mobs keep `state.enemies` order — the same array-order tie-break convention the
+   * rest of the engine uses. Distances are exact integer products of Fp, never
+   * floats.
+   */
+  private grantFireSlots(contenders: Map<string, FireContender[]>): void {
+    for (const list of contenders.values()) {
+      if (list.length > ROOM_FIRE_BUDGET) list.sort((a, b) => a.distSq - b.distSq);
+      const slots = Math.min(ROOM_FIRE_BUDGET, list.length);
+      for (let i = 0; i < slots; i++) list[i]!.e.firing = true;
+    }
+  }
+
+  /**
+   * Has this mob finished noticing the player? A freshly-activated room's garrison
+   * moves at once but holds fire for a per-enemy stagger (balance/encounter.ts), so
+   * the player gets a reaction window on entry instead of an instant volley from
+   * whichever mobs happened to be authored close to the door.
+   *
+   * Dungeon mode only: `roomTick` (ticks since activation) is the clock this measures
+   * against, and a flat `waves`/tutorial config has no room runtime at all. Those
+   * configs keep v40 behaviour for the delay (they still get the fire budget) —
+   * their enemies stream in mid-fight rather than sitting pre-placed in a room the
+   * player walks into, so there is no "walked into an ambush" moment to soften.
+   */
+  private hasNoticed(state: GameState, e: EnemyActor): boolean {
+    if (!state.dungeonEnabled || e.roomId === undefined) return true;
+    const idx = state.dungeonRoomIndexById.get(e.roomId);
+    const rt = idx === undefined ? undefined : state.dungeonRoomRuntime[idx];
+    return rt === undefined || rt.roomTick >= noticeDelayTicks(e.id);
   }
 
   private isActivated(state: GameState, roomId: string | undefined): boolean {

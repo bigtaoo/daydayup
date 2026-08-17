@@ -19,6 +19,7 @@
     "check:filelength": "npm run check:filelength --workspaces --if-present",
     "check": "npm run typecheck && npm run check:filelength && npm run test",
     "test:pvp-sim": "npm run test:pvp-sim -w client",
+    "test:pve-sim": "npm run test:pve-sim -w client",
     "dev": "npm run dev -w client",
     "dev:server": "npm run dev -w server",
     "dev:matchsvc": "npm run matchsvc -w server",

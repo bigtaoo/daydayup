@@ -138,6 +138,185 @@ describe('DoorSystem — a locked door is a REAL physical blocker, not just a fl
   });
 });
 
+/**
+ * ENGINE_VERSION 41's softlock fix (`DoorSystem.inLockingDoorway`). Found by
+ * `client/sim/pveLevelSim.sim.ts` on the shipped level 1 — 7 of 8 bot runs wedged
+ * forever right after clearing the entrance room, and a human crossing a threshold
+ * hits the same geometry: the tick your step across the line activates the room, your
+ * body is still in the doorway. `p.roomId` had already been re-tagged to the new room
+ * (EnvironmentSystem, step 8b, runs before DoorSystem at 11.5), so the old
+ * `p.roomId === room.id` skip left you un-regrouped, then the restored passage wall
+ * pushed you out — frequently back the way you came. The room stays in combat, its
+ * door stays locked, and the floor becomes uncompletable.
+ */
+describe('DoorSystem — a room activating under a player who is still in its doorway pulls them in (ENGINE_VERSION 41)', () => {
+  const START: RoomPiece = {
+    id: 'dw_start', tags: ['dw'], sizeGrid: { w: 20, h: 16 }, solids: [],
+    spawns: { player: [{ x: 2, y: 8 }], enemy: [] }, exits: [{ edge: 'east' }],
+  };
+  const GUARDED_CAPSTONE: RoomPiece = {
+    id: 'dw_guarded', role: 'boss', sizeGrid: { w: 20, h: 16 }, solids: [],
+    spawns: { player: [{ x: 2, y: 8 }], enemy: [{ x: 16, y: 8, type: 'basic' }] }, exits: [{ edge: 'west' }],
+  };
+  const DW_DUN: DungeonConfig = {
+    biomeId: 'dw', nameKey: 'dw', floorCount: 1, roomsPerFloor: { min: 2, max: 2 },
+    pieceTags: ['dw'], layout: 'linear', extractionPieceId: 'dw_guarded', bossPieceId: 'dw_guarded',
+    difficultyCurve: { base: 1, perFloor: 0 },
+  };
+  const DW_CFG: EngineConfig = { seed: 21, worldW: 640, worldH: 640, waves: [], dungeon: { config: DW_DUN, library: [START, GUARDED_CAPSTONE] } };
+
+  /** Stand the player in the door passage, nudged `grid` units off its centre toward
+   *  `room`'s middle — i.e. body in the doorway, centre already over the threshold,
+   *  which is exactly the state that used to escape the force-regroup. */
+  const standInDoorway = (s: typeof eng.state, roomIdx: number, grid: number) => {
+    const pass = s.dungeonDoors[0]!.passageAabb;
+    const room = s.dungeonRooms[roomIdx]!;
+    const cx = pass.x + pass.w / 2;
+    const cy = pass.y + pass.h / 2;
+    const tx = toFpGrid(room.offsetXGrid + room.piece.sizeGrid.w / 2);
+    const ty = toFpGrid(room.offsetYGrid + room.piece.sizeGrid.h / 2);
+    const len = Math.hypot(tx - cx, ty - cy) || 1;
+    s.players[0]!.gx = (cx + ((tx - cx) / len) * toFpGrid(grid)) as Fp;
+    s.players[0]!.gy = (cy + ((ty - cy) / len) * toFpGrid(grid)) as Fp;
+  };
+  let eng = createGameEngine(DW_CFG);
+
+  it('regroups them onto the entrance instead of leaving them to be shoved out of the closing door', () => {
+    eng = createGameEngine(DW_CFG);
+    const s = eng.state;
+    eng.step([idle(0, 1)]); // floor places
+    eng.step([idle(0, 2)]); // start room activates (enemy-free → no lock)
+    expect(s.dungeonRoomRuntime[1]!.activated).toBe(false);
+
+    const capstone = s.dungeonRooms[1]!;
+    standInDoorway(s, 1, 0.6);
+    const events = eng.step([idle(0, 3)]); // roomId flips to the capstone → it activates → door locks
+
+    expect(s.dungeonRoomRuntime[1]!.activated).toBe(true);
+    expect(s.dungeonDoors[0]!.locked).toBe(true);
+    // Placed at the entrance, INSIDE the room whose door just locked — so the fight is
+    // winnable. Before the fix this player stayed in the doorway and got pushed out.
+    expect(s.players[0]!.gx).toBe(toFpGrid(capstone.entranceGrid.x));
+    expect(s.players[0]!.gy).toBe(toFpGrid(capstone.entranceGrid.y));
+    expect(s.players[0]!.roomId).toBe(capstone.id);
+    expect(events.some((e) => e.type === 'force_regroup' && e.roomId === capstone.id)).toBe(true);
+  });
+
+  // Invariant follow-through rather than a second regression catcher: whether the
+  // push-out sent the old code backwards or forwards depended on which side of the
+  // passage the body sat, so only the assertion above reliably goes red without the
+  // fix (checked by re-introducing the old condition). The end-to-end proof is the
+  // level sim's no-stall gate — before the fix it wedged 7 of 8 careful runs.
+  it('the room stays reachable afterwards — the run can still be finished, which is the actual bug', () => {
+    eng = createGameEngine(DW_CFG);
+    const s = eng.state;
+    eng.step([idle(0, 1)]);
+    eng.step([idle(0, 2)]);
+    standInDoorway(s, 1, 0.6);
+    eng.step([idle(0, 3)]);
+
+    // Whatever the geometry does over the following ticks, the player must remain
+    // inside the locked room (not sealed out of the only room that can be cleared).
+    for (let t = 4; t <= 30; t++) eng.step([idle(0, t)]);
+    expect(s.players[0]!.roomId).toBe(s.dungeonRooms[1]!.id);
+    expect(s.dungeonDoors[0]!.locked).toBe(true);
+
+    s.enemies.length = 0; // clear it → checkpoint opens, i.e. the floor was completable
+    eng.step([idle(0, 31)]);
+    expect(s.dungeonRoomRuntime[1]!.hasLiveEnemy).toBe(false);
+    expect(s.dungeonDoors[0]!.locked).toBe(false);
+  });
+
+  it('still leaves a DOWNED player in the doorway exactly where they are', () => {
+    // design/05: a downed teammate is never yanked, full stop — the revive comes to
+    // them. That outranks the doorway rule, and it is not a softlock: the door unlocks
+    // when the room is cleared, so a reviver can reach them then. Pinned here because
+    // the doorway fix deliberately did NOT touch the downed guard above it.
+    eng = createGameEngine(DW_CFG);
+    const s = eng.state;
+    eng.step([idle(0, 1)]);
+    eng.step([idle(0, 2)]);
+    standInDoorway(s, 1, 0.6);
+    s.players[0]!.downed = true;
+    s.players[0]!.hp = 0;
+    const at = { gx: s.players[0]!.gx, gy: s.players[0]!.gy };
+    const events = eng.step([idle(0, 3)]);
+
+    expect(s.players[0]!.gx).toBe(at.gx);
+    expect(s.players[0]!.gy).toBe(at.gy);
+    expect(events.some((e) => e.type === 'force_regroup')).toBe(false);
+  });
+
+  it('checks every doorway of the activating room, not just the first', () => {
+    // `inLockingDoorway` iterates the room's doors, so a player in the SECOND one has to
+    // be caught too — a capstone is single-door, but a mid-floor room is not.
+    // One normal piece (guarded) drawn twice plus an enemy-free capstone referenced by
+    // id, so the MIDDLE room is guaranteed to be both guarded and two-doored — the
+    // shape a single-door capstone fixture can't produce.
+    const GUARDED: RoomPiece = {
+      id: 'dw_mid', tags: ['dw2'], sizeGrid: { w: 20, h: 16 }, solids: [],
+      spawns: { player: [{ x: 2, y: 8 }], enemy: [{ x: 16, y: 8, type: 'basic' }] },
+      exits: [{ edge: 'east' }, { edge: 'west' }],
+    };
+    const HUB: RoomPiece = {
+      id: 'dw_hub', role: 'boss', sizeGrid: { w: 20, h: 16 }, solids: [],
+      spawns: { player: [{ x: 2, y: 8 }], enemy: [] }, exits: [{ edge: 'east' }, { edge: 'west' }],
+    };
+    const THREE: DungeonConfig = {
+      biomeId: 'dw2', nameKey: 'dw2', floorCount: 1, roomsPerFloor: { min: 3, max: 3 },
+      pieceTags: ['dw2'], layout: 'linear', extractionPieceId: 'dw_hub', bossPieceId: 'dw_hub',
+      difficultyCurve: { base: 1, perFloor: 0 },
+    };
+    const engine = createGameEngine({ seed: 5, worldW: 640, worldH: 640, waves: [], dungeon: { config: THREE, library: [GUARDED, HUB] } });
+    const s = engine.state;
+    engine.step([idle(0, 1)]);
+    engine.step([idle(0, 2)]);
+
+    // The room that has yet to activate, still holds a garrison, and has two doors.
+    const guardedIdx = s.dungeonRooms.findIndex(
+      (r, i) =>
+        !s.dungeonRoomRuntime[i]!.activated &&
+        r.piece.spawns.enemy.length > 0 &&
+        s.dungeonDoors.filter((d) => d.door.roomA === r.id || d.door.roomB === r.id).length >= 2,
+    );
+    expect(guardedIdx).toBeGreaterThanOrEqual(0); // the case under test actually exists
+    const guarded = s.dungeonRooms[guardedIdx]!;
+    const doors = s.dungeonDoors.filter((d) => d.door.roomA === guarded.id || d.door.roomB === guarded.id);
+
+    const pass = doors[doors.length - 1]!.passageAabb; // the LAST one, not the first
+    const cx = pass.x + pass.w / 2;
+    const cy = pass.y + pass.h / 2;
+    const tx = toFpGrid(guarded.offsetXGrid + guarded.piece.sizeGrid.w / 2);
+    const ty = toFpGrid(guarded.offsetYGrid + guarded.piece.sizeGrid.h / 2);
+    const len = Math.hypot(tx - cx, ty - cy) || 1;
+    s.players[0]!.gx = (cx + ((tx - cx) / len) * toFpGrid(0.6)) as Fp;
+    s.players[0]!.gy = (cy + ((ty - cy) / len) * toFpGrid(0.6)) as Fp;
+    const events = engine.step([idle(0, 3)]);
+
+    expect(s.dungeonRoomRuntime[guardedIdx]!.activated).toBe(true);
+    expect(s.players[0]!.gx).toBe(toFpGrid(guarded.entranceGrid.x));
+    expect(events.some((e) => e.type === 'force_regroup' && e.roomId === guarded.id)).toBe(true);
+  });
+
+  it('leaves a player who is genuinely inside the room alone — no gratuitous teleport on activation', () => {
+    eng = createGameEngine(DW_CFG);
+    const s = eng.state;
+    eng.step([idle(0, 1)]);
+    eng.step([idle(0, 2)]);
+    // Well clear of the doorway: the room's own centre.
+    const capstone = s.dungeonRooms[1]!;
+    s.players[0]!.gx = toFpGrid(capstone.offsetXGrid + capstone.piece.sizeGrid.w / 2) as Fp;
+    s.players[0]!.gy = toFpGrid(capstone.offsetYGrid + capstone.piece.sizeGrid.h / 2) as Fp;
+    const at = { gx: s.players[0]!.gx, gy: s.players[0]!.gy };
+    const events = eng.step([idle(0, 3)]);
+
+    expect(s.dungeonRoomRuntime[1]!.activated).toBe(true);
+    expect(s.players[0]!.gx).toBe(at.gx); // exactly where they walked to
+    expect(s.players[0]!.gy).toBe(at.gy);
+    expect(events.some((e) => e.type === 'force_regroup')).toBe(false);
+  });
+});
+
 describe('DoorSystem — a dying boss\'s onDeathSpawn adds never open a walk-back-out window', () => {
   // Regression for the bug report: a cleared boss room's door briefly unlocked (then
   // slammed shut + force-regrouped the player back) because DeathDropsSystem's

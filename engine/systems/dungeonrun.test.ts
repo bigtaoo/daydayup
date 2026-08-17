@@ -26,6 +26,7 @@ import type { Brad } from '@dd/engine/math/trig';
 import { toFp } from '@dd/engine/math/fixed';
 import { toFpGrid } from '@dd/engine/content/convert';
 import { buildEnemyActor } from '@dd/engine/content/enemies';
+import { NOTICE_DELAY_TICKS, NOTICE_SPREAD_TICKS } from '@dd/engine/balance/encounter';
 import { ENEMY_TEAM_ID, type Projectile } from '@dd/engine/state/entities';
 import type { RoomPiece } from '@dd/engine/content/rooms';
 import type { DungeonConfig, DungeonFloorMap } from '@dd/engine/world/dungeon';
@@ -696,7 +697,7 @@ describe('Dungeon mode — a room\'s far-side enemies do not alpha-strike on act
     },
   };
 
-  it('the room-wide-far enemy is not firing the tick after the room activates, unlike the near one', () => {
+  it('neither enemy fires during the notice window, then only the near one does (ENGINE_VERSION 40 + 41)', () => {
     const eng = createGameEngine(FAR_CFG);
     const s = eng.state;
     eng.step([idle(1)]); // floor places
@@ -710,8 +711,18 @@ describe('Dungeon mode — a room\'s far-side enemies do not alpha-strike on act
     // Identify by position rather than assuming dispatch order.
     const far = s.enemies.reduce((a, b) => (a.gx > b.gx ? a : b));
     const near = s.enemies.reduce((a, b) => (a.gx < b.gx ? a : b));
+    // v41: even the mob standing right next to the spawn holds fire through its own
+    // staggered notice delay — this is the reaction window on room entry, and it is
+    // why walking in is no longer an instant volley from whatever spawned nearest.
+    expect(near.firing).toBe(false);
+    expect(far.firing).toBe(false);
+
+    // Step past the longest possible notice delay; the far mob is ~26 grid out and
+    // closes only ~4px/tick, so it is still nowhere near engage range afterwards.
+    let t = 4;
+    for (; t <= 3 + NOTICE_DELAY_TICKS + NOTICE_SPREAD_TICKS; t++) eng.step([idle(t)]);
     expect(far.firing).toBe(false); // the whole point of ENGINE_VERSION 40
-    expect(near.firing).toBe(true); // a genuinely close threat still engages immediately
+    expect(near.firing).toBe(true); // a genuinely close threat engages, just not instantly
   });
 
   it('the far enemy still has not fired a single bullet after several more ticks — it has to close the distance first', () => {

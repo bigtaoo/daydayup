@@ -58,47 +58,32 @@
     ],
     "enemy": [
       {
-        "x": 4.5,
+        "x": 8.5,
         "y": 2.5,
         "type": "basic"
       },
       {
-        "x": 6.5,
+        "x": 10.5,
         "y": 2.5,
         "type": "emberling"
       },
       {
-        "x": 8.5,
+        "x": 12.5,
         "y": 2.5,
         "type": "floater"
       },
       {
         "x": 10.5,
-        "y": 2.5,
-        "type": "basic"
-      },
-      {
-        "x": 12.5,
-        "y": 2.5,
-        "type": "emberling"
-      },
-      {
-        "x": 8.5,
-        "y": 4.5,
-        "type": "floater"
-      },
-      {
-        "x": 12.5,
         "y": 4.5,
         "type": "basic"
       },
       {
-        "x": 8.5,
-        "y": 6.5,
+        "x": 12.5,
+        "y": 4.5,
         "type": "emberling"
       },
       {
-        "x": 10.5,
+        "x": 8.5,
         "y": 6.5,
         "type": "floater"
       },
@@ -108,34 +93,14 @@
         "type": "basic"
       },
       {
-        "x": 6.5,
-        "y": 8.5,
-        "type": "emberling"
-      },
-      {
-        "x": 2.5,
-        "y": 12.5,
-        "type": "floater"
-      },
-      {
-        "x": 4.5,
-        "y": 12.5,
-        "type": "basic"
-      },
-      {
-        "x": 6.5,
-        "y": 12.5,
-        "type": "emberling"
-      },
-      {
         "x": 8.5,
         "y": 12.5,
-        "type": "floater"
+        "type": "emberling"
       },
       {
         "x": 10.5,
         "y": 12.5,
-        "type": "basic"
+        "type": "floater"
       }
     ]
   },

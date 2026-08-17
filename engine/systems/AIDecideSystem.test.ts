@@ -20,6 +20,13 @@ import {
   DEFAULT_ENEMY_MOVE_SPEED_PER_TICK,
 } from '@dd/engine/content/enemies';
 import { AIDecideSystem } from '@dd/engine/systems/AIDecideSystem';
+import {
+  NOTICE_DELAY_TICKS,
+  NOTICE_SPREAD_TICKS,
+  ROOM_FIRE_BUDGET,
+  noticeDelayTicks,
+} from '@dd/engine/balance/encounter';
+import type { DungeonRoomRuntime } from '@dd/engine/state/GameState.types';
 import type { DungeonConfig } from '@dd/engine/world/dungeon';
 import type { RoomPiece } from '@dd/engine/content/rooms';
 
@@ -53,6 +60,23 @@ const DUMMY_DUNGEON: DungeonConfig = {
 
 function dungeonState(): GameState {
   return createGameState({ ...CFG, dungeon: { config: DUMMY_DUNGEON, library: [DUMMY_ROOM] } });
+}
+
+/** Register `roomId` as an activated room whose garrison has already noticed the
+ *  player (`roomTick` past every possible `noticeDelayTicks`, v41), so a test that is
+ *  about something else isn't silently gated by the notice window. Returns the runtime
+ *  row for tests that do want to drive `roomTick` themselves. */
+function activateRoom(s: GameState, roomId: string): DungeonRoomRuntime {
+  const rt: DungeonRoomRuntime = {
+    activated: true,
+    roomTick: NOTICE_DELAY_TICKS + NOTICE_SPREAD_TICKS,
+    schedule: [],
+    cursor: 0,
+    hasLiveEnemy: false,
+  };
+  s.dungeonRoomIndexById.set(roomId, s.dungeonRoomRuntime.length);
+  s.dungeonRoomRuntime.push(rt);
+  return rt;
 }
 
 describe('AIDecideSystem.tick — no-target early-out', () => {
@@ -276,11 +300,99 @@ describe('AIDecideSystem.tick — dungeon room-activation gate (design/05, 2026-
   it('in dungeon mode, an activated room decides normally', () => {
     const s = dungeonState();
     const target = s.players[0]!; // default seat, world centre (800,600px)
-    s.dungeonRoomIndexById.set('r0', 0);
-    s.dungeonRoomRuntime.push({ activated: true, roomTick: 0, schedule: [], cursor: 0, hasLiveEnemy: false });
+    activateRoom(s, 'r0');
     const e = addEnemy(s, 750, 550, 'r0'); // within engage range of the world-centre spawn
     new AIDecideSystem().tick(s);
     expect(e.facing).toBe(atan2Brad(target.gy - e.gy, target.gx - e.gx));
     expect(e.firing).toBe(true);
+  });
+});
+
+/**
+ * The room encounter budget (ENGINE_VERSION 41, balance/encounter.ts) — the fix for
+ * the third and final round of the same live report ("一进游戏就被集火秒杀"), after
+ * v37's chase and v40's fire-range gate each only moved the volley later. Both halves
+ * are per-ROOM, so they are tested against a room's worth of mobs rather than one.
+ */
+describe('AIDecideSystem.tick — per-room fire budget + staggered notice (ENGINE_VERSION 41)', () => {
+  /** `n` mobs all inside engage range of the world-centre player, spread along a line
+   *  so their distances are strictly increasing — nearest first, by construction. */
+  function crowd(s: GameState, n: number, roomId = 'r0'): EnemyActor[] {
+    const out: EnemyActor[] = [];
+    for (let i = 0; i < n; i++) out.push(addEnemy(s, 800 - 20 - i * 10, 600, roomId));
+    return out;
+  }
+
+  it('caps a room at ROOM_FIRE_BUDGET simultaneous shooters however many mobs are in range', () => {
+    const s = dungeonState();
+    activateRoom(s, 'r0');
+    const mobs = crowd(s, 10);
+    new AIDecideSystem().tick(s);
+    expect(mobs.filter((e) => e.firing).length).toBe(ROOM_FIRE_BUDGET);
+  });
+
+  it('awards the slots to the NEAREST mobs — the threat comes from what is closest, not from array order', () => {
+    const s = dungeonState();
+    activateRoom(s, 'r0');
+    const mobs = crowd(s, 8); // index 0 nearest, distance increasing with index
+    new AIDecideSystem().tick(s);
+    expect(mobs.map((e) => e.firing)).toEqual(mobs.map((_, i) => i < ROOM_FIRE_BUDGET));
+  });
+
+  it('budgets each room independently — a second room in combat is not starved by the first', () => {
+    const s = dungeonState();
+    activateRoom(s, 'r0');
+    activateRoom(s, 'r1');
+    const a = crowd(s, 5, 'r0');
+    const b = crowd(s, 5, 'r1');
+    new AIDecideSystem().tick(s);
+    expect(a.filter((e) => e.firing).length).toBe(ROOM_FIRE_BUDGET);
+    expect(b.filter((e) => e.firing).length).toBe(ROOM_FIRE_BUDGET);
+  });
+
+  it('frees a slot when a shooter dies — the queue advances instead of the room going quiet', () => {
+    const s = dungeonState();
+    activateRoom(s, 'r0');
+    const mobs = crowd(s, 5);
+    new AIDecideSystem().tick(s);
+    for (const e of mobs.slice(0, ROOM_FIRE_BUDGET)) e.alive = false;
+    new AIDecideSystem().tick(s);
+    const firing = mobs.filter((e) => e.alive && e.firing);
+    expect(firing.length).toBe(ROOM_FIRE_BUDGET);
+    expect(firing[0]).toBe(mobs[ROOM_FIRE_BUDGET]); // the next-nearest survivor took over
+  });
+
+  it('holds fire until each mob’s own notice delay has elapsed, staggered by id', () => {
+    const s = dungeonState();
+    const rt = activateRoom(s, 'r0');
+    // One mob only, so the budget can never be what is withholding fire.
+    const e = addEnemy(s, 780, 600, 'r0');
+    const delay = noticeDelayTicks(e.id);
+    expect(delay).toBeGreaterThanOrEqual(NOTICE_DELAY_TICKS);
+
+    rt.roomTick = delay - 1;
+    new AIDecideSystem().tick(s);
+    expect(e.firing).toBe(false);
+
+    rt.roomTick = delay;
+    new AIDecideSystem().tick(s);
+    expect(e.firing).toBe(true);
+  });
+
+  it('a mob still holding fire during its notice window keeps CLOSING — the room wakes visibly, it just does not shoot', () => {
+    const s = dungeonState();
+    activateRoom(s, 'r0'); // roomTick 0 → nobody has noticed yet
+    const e = addEnemy(s, 200, 600, 'r0'); // far out of engage range
+    new AIDecideSystem().tick(s);
+    expect(e.firing).toBe(false);
+    expect(e.vx).toBeGreaterThan(0); // moving toward the world-centre player
+  });
+
+  it('a flat (non-dungeon) config still gets the budget, and its roomId-less mobs share one', () => {
+    const s = createGameState(CFG); // no dungeon → dungeonEnabled false, no room runtime
+    const mobs: EnemyActor[] = [];
+    for (let i = 0; i < 6; i++) mobs.push(addEnemy(s, 800 - 20 - i * 10, 600));
+    new AIDecideSystem().tick(s);
+    expect(mobs.filter((e) => e.firing).length).toBe(ROOM_FIRE_BUDGET);
   });
 });

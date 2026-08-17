@@ -42,7 +42,9 @@
 import { toFpGrid } from '../content/convert';
 import { toFp } from '../math/fixed';
 import type { GameState } from '../state/GameState';
+import type { PlayerActor } from '../state/entities';
 import type { PlacedRoom } from '../world/dungeon';
+import { circleOverlapsAabb } from './geom';
 
 export class DoorSystem {
   tick(state: GameState): void {
@@ -84,14 +86,16 @@ export class DoorSystem {
   /** Instantly move every OTHER online, non-downed player onto `room`'s entrance —
    * not a walk, a direct position/velocity/roomId set. The room's own trigger
    * (whoever's already inside — player or freshly-spawned enemy) is excluded via
-   * the `roomId` check, not re-teleported onto themselves. */
+   * the `roomId` check, not re-teleported onto themselves — unless they are
+   * standing in a doorway (`inLockingDoorway`), in which case they are pulled in
+   * with everyone else. */
   private forceRegroup(state: GameState, room: PlacedRoom): void {
     const regrouped: number[] = [];
     const entranceX = toFpGrid(room.entranceGrid.x);
     const entranceY = toFpGrid(room.entranceGrid.y);
     for (const p of state.players) {
       if (!p.alive || p.downed) continue;
-      if (p.roomId === room.id) continue;
+      if (p.roomId === room.id && !this.inLockingDoorway(state, room.id, p)) continue;
       p.gx = entranceX;
       p.gy = entranceY;
       p.vx = toFp(0);
@@ -104,6 +108,35 @@ export class DoorSystem {
     if (regrouped.length > 0) {
       state.events.push({ type: 'force_regroup', roomId: room.id, playerIds: regrouped });
     }
+  }
+
+  /**
+   * Is this player physically standing in one of `roomId`'s door passages — the
+   * rects this tick's lock is about to turn back into walls (ENGINE_VERSION 41)?
+   *
+   * A softlock bug, found by `client/sim/pveLevelSim.sim.ts` on the shipped level 1
+   * and reproducible for a human just as easily: a player whose body is still in the
+   * doorway when their own step across the threshold activates the room passed the
+   * `p.roomId === room.id` test above (their centre had just entered the room rect,
+   * so `EnvironmentSystem` had already re-tagged them), was therefore NOT regrouped,
+   * and then got shoved out of the restored wall by `MovementSystem`'s push-out —
+   * which resolves to whichever side is nearer, i.e. quite often back the way they
+   * came. That leaves a room permanently in combat behind a permanently locked door,
+   * with the player outside it: the floor can never be cleared, the capstone never
+   * reached, and the run can only end by dying. Pulling such a player onto the
+   * room's entrance instead is the same treatment every other player already gets,
+   * and it is what "the door locks you IN the fight" (design/05) was always meant to
+   * mean.
+   *
+   * Uses `footprintRadius` (the feet circle solids actually push out, design/07),
+   * not `radius` — the test has to match the thing that would displace them.
+   */
+  private inLockingDoorway(state: GameState, roomId: string, p: PlayerActor): boolean {
+    for (const dr of state.dungeonDoors) {
+      if (dr.door.roomA !== roomId && dr.door.roomB !== roomId) continue;
+      if (circleOverlapsAabb(p.gx, p.gy, p.footprintRadius, dr.passageAabb)) return true;
+    }
+    return false;
   }
 
   /** Rebuild `state.walls` from the floor's fully-open base plus every currently-

@@ -76,139 +76,69 @@
     ],
     "enemy": [
       {
-        "x": 2.5,
+        "x": 6.5,
         "y": 2.5,
         "type": "basic"
       },
       {
-        "x": 4.5,
+        "x": 10.5,
         "y": 2.5,
         "type": "galvanist"
       },
       {
-        "x": 8.5,
+        "x": 16.5,
         "y": 2.5,
         "type": "frostling"
-      },
-      {
-        "x": 12.5,
-        "y": 2.5,
-        "type": "floater"
-      },
-      {
-        "x": 14.5,
-        "y": 2.5,
-        "type": "basic"
-      },
-      {
-        "x": 8.5,
-        "y": 4.5,
-        "type": "galvanist"
       },
       {
         "x": 16.5,
         "y": 4.5,
-        "type": "frostling"
-      },
-      {
-        "x": 6.5,
-        "y": 6.5,
         "type": "floater"
       },
       {
-        "x": 10.5,
+        "x": 12.5,
         "y": 6.5,
         "type": "basic"
       },
       {
-        "x": 16.5,
-        "y": 6.5,
+        "x": 8.5,
+        "y": 8.5,
         "type": "galvanist"
-      },
-      {
-        "x": 6.5,
-        "y": 8.5,
-        "type": "frostling"
-      },
-      {
-        "x": 10.5,
-        "y": 8.5,
-        "type": "floater"
       },
       {
         "x": 14.5,
         "y": 8.5,
-        "type": "basic"
+        "type": "frostling"
+      },
+      {
+        "x": 10.5,
+        "y": 10.5,
+        "type": "floater"
       },
       {
         "x": 16.5,
-        "y": 8.5,
+        "y": 10.5,
+        "type": "basic"
+      },
+      {
+        "x": 10.5,
+        "y": 12.5,
         "type": "galvanist"
       },
       {
         "x": 8.5,
-        "y": 10.5,
+        "y": 14.5,
         "type": "frostling"
-      },
-      {
-        "x": 12.5,
-        "y": 10.5,
-        "type": "floater"
-      },
-      {
-        "x": 14.5,
-        "y": 10.5,
-        "type": "basic"
       },
       {
         "x": 6.5,
-        "y": 12.5,
-        "type": "galvanist"
-      },
-      {
-        "x": 10.5,
-        "y": 12.5,
-        "type": "frostling"
+        "y": 16.5,
+        "type": "floater"
       },
       {
         "x": 12.5,
-        "y": 12.5,
-        "type": "floater"
-      },
-      {
-        "x": 2.5,
-        "y": 14.5,
-        "type": "basic"
-      },
-      {
-        "x": 10.5,
-        "y": 14.5,
-        "type": "galvanist"
-      },
-      {
-        "x": 16.5,
-        "y": 14.5,
-        "type": "frostling"
-      },
-      {
-        "x": 4.5,
-        "y": 16.5,
-        "type": "floater"
-      },
-      {
-        "x": 8.5,
         "y": 16.5,
         "type": "basic"
-      },
-      {
-        "x": 10.5,
-        "y": 16.5,
-        "type": "galvanist"
-      },
-      {
-        "x": 14.5,
-        "y": 16.5,
-        "type": "frostling"
       }
     ]
   },

@@ -1984,6 +1984,77 @@ either way).
 
 ---
 
+## PvE level simulator + the level-1 rebalance it forced (2026-08-17, `ENGINE_VERSION` 40->41)
+
+**Report, for the third time.** *"我还是一进游戏就被集火秒杀了。你可以写个模拟器试试。而且我们
+本身也需要一个关卡模拟器来平衡难度。"* — the same focus-fire death `ENGINE_VERSION` 37 (mobs
+chase) and 40 (mobs only fire once inside their own `engageRangeFp`) had each already been
+"fixed" by reasoning about the code. The user's own prescription is the important part of this
+entry: build the measurement, then tune.
+
+**Built: `client/sim/pveLevelSim.sim.ts` + `client/sim/pve/`** (`npm run test:pve-sim`, root or
+`-w client`) — the PvE sibling of `pvpBalanceSim.sim.ts`, same separate-config/out-of-the-default-
+glob arrangement.
+
+- `pve/PveBotController.ts` — a bot that plays a level start to finish, which neither existing
+  bot (`AllyController`, `PvpBotController`) has ever had to do: it navigates the room graph
+  (BFS over `dungeonDoors`, door passage then room centre as waypoints), kites at a profile
+  standoff, seeks heal drops, rests for shield regen between rooms, circles a target when
+  nothing has died for a while (a mob behind a pillar otherwise soaks bullets forever), and
+  presses the portal's DESCEND/EXTRACT. Two profiles — `careful` (holds outside the mobs'
+  5.6-grid engage range, rests) and `aggressive` (closes to 4 grid, never rests) — because a
+  balance number that only holds for a perfect kiter is not a balance number.
+- `pve/levelSim.ts` — one real `createGameEngine` run over the real content via
+  `buildDungeonRunConfig` (the same function `Game.beginRun` calls, so no second config path),
+  recording per room: garrison, **reaction window** (activation → first damage), **peak
+  simultaneous shooters**, damage taken, clear rate; per run: worst 1-second damage window
+  against the character's own effective HP, kills, outcome, and the room the run ended in.
+- `pve/report.ts` + 5 balance GATES in the `.sim.ts` (entrance-room reaction ≥ 1s; worst 1s
+  burst < effective HP; entrance room always cleared; floor 1 passable *and* not a walkover;
+  and no run ever ends in a stall).
+
+**What it measured on the shipped build, immediately:** 14 of 15 mobs firing on the same tick,
+first hit 0.6s after the room woke, worst 1s window **10 damage vs 9.2 effective HP**, death in
+the entrance room in **100%** of runs at both profiles. v40's range gate did nothing because the
+garrison closes as one blob and fires together.
+
+**The rebalance** (`ENGINE_VERSION` 41; full account in `design/05` "Room encounter budget"):
+per-room `ROOM_FIRE_BUDGET` = 2 concurrent shooters awarded to the nearest mobs, a per-enemy
+staggered `noticeDelayTicks` (18 + `id % 30`, derived from the id so it adds no PRNG draw site),
+garrisons halved (`enemyCountForArea` 15→30 becomes 8→14, 581 → 285 enemies), authored
+player-spawn clearance 3 → 6 grid, and `SHIELD_REGEN_INTERVAL` 300 → 60 ticks so the shield pool
+is actually renewable across a floor. Difficulty target chosen with the user: **hard overall** —
+after the change the careful bot clears the entrance room in 100% of runs, descends off floor 0
+in ~37%, and deaths spread across floors 0-3.
+
+**A softlock the sim found on the way**, worse than the original complaint: a room activating
+while the player's body is still in its doorway skipped them in `DoorSystem.forceRegroup` (their
+`roomId` had already flipped), then the restored passage wall pushed them back out — a room
+permanently in combat behind a permanently locked door, floor uncompletable. Fixed by
+`inLockingDoorway`. It had wedged 7 of 8 bot runs.
+
+**Verification.** **+91 tests in the default suite** (engine 635 -> 656: 7 `balance/encounter.test.ts`,
+7 AI budget/notice, 5 door softlock/edge cases, 1 shield-renewability invariant, 1 authored
+spawn-clearance; plus 70 across the four new `sim/pve/` modules), and 5 balance gates in the sim
+itself. `tsc --noEmit` clean, file-length check clean, `npm run test:pvp-sim` re-run to confirm the
+shield-regen change left arena win rates within noise (vanguard 84 / juggernaut 43 / skirmisher 50
+vs 84 / 45 / 44 — vanguard's pre-existing skew is untouched by this pass), and the fix confirmed in
+the real client via `claude-in-chrome`: entrance room 8 mobs, exactly 2 firing, first damage at tick
+37, full HP at the moment the room wakes, and a player who does nothing at all survives 6+ seconds
+where they used to die in 2.
+
+**Two mutation checks were run rather than assumed** (the standing habit from the `FRAME_UV` pass):
+restoring the old `p.roomId === room.id` condition makes the door-softlock test go red, and reverting
+`SHIELD_REGEN_INTERVAL` to 300 makes the new renewability invariant go red. That invariant closed a
+real coverage gap the follow-up audit found: `shield.test.ts` had always tested the regen MECHANISM
+against the constants themselves (`idle(SHIELD_REGEN_INTERVAL)` -> +1), so it passed at any value —
+the design intent ("shield is the renewable half") was pinned nowhere, and is now derived from
+`SKIN_DEFS`' largest pool so a fatter shield re-checks the claim instead of silently invalidating it.
+General shape worth watching for: *a test that reads its expectation from the same constant it is
+guarding proves the arithmetic, not the intent.*
+
+---
+
 ## Dependency summary
 
 ```

@@ -14,8 +14,8 @@
  * Design constraints it encodes (the level-1 spec):
  *   - 5 floors, room counts 5 / 6 / 7 / 6 / 5 (capstone included in each count).
  *   - Every room is between 15x15 and 20x20 grid cells.
- *   - Enemy count per room scales with the room's cell count, 15 cells²→15 enemies
- *     up to 20x20→30 enemies (`enemyCountForArea`). The extraction capstone is the
+ *   - Enemy count per room scales with the room's cell count, 15x15→8 enemies
+ *     up to 20x20→14 enemies (`enemyCountForArea`). The extraction capstone is the
  *     one deliberate exception (0 enemies — it is the checkpoint/portal room).
  *   - Every door is validated for real, physical passability before anything is
  *     written: shared-wall geometry, then a flood fill over the rasterised floor
@@ -47,6 +47,15 @@ const ENTRANCE_INSET_GRID = 1.5;
 const DECOR_MARGIN = 4;
 /** How far a spawn point stays off a wall, and off any decor. */
 const SPAWN_MARGIN = 2.5;
+/**
+ * How far every enemy spawn point stays from every player spawn point. Must exceed
+ * `DEFAULT_ENEMY_ENGAGE_RANGE_FP` (engine/content/enemies.ts — 5.6 grid, the range a
+ * mob stops and shoots from), or the entrance room places mobs already in firing
+ * position on the tick the player appears, which no amount of engine-side aggro
+ * pacing can undo. Was 3 in the level's first pass: `r1_cell` put its nearest mob 3.2
+ * grid from the spawn point, i.e. inside engage range before the run began.
+ */
+const PLAYER_SPAWN_CLEARANCE = 6;
 
 // ── Deterministic PRNG (local to this script — NOT the engine's Prng) ────────────
 function makeRng(seed) {
@@ -60,11 +69,27 @@ const pick = (rng, arr) => arr[Math.floor(rng() * arr.length) % arr.length];
 
 // ── Piece catalogue ─────────────────────────────────────────────────────────────
 
-/** The spec's size→enemy-count ramp: 15x15 (225 cells) → 15, 20x20 (400) → 30,
- * linear in between and clamped at both ends. */
+/**
+ * The spec's size→enemy-count ramp: 15x15 (225 cells) → 8, 20x20 (400) → 14, linear
+ * in between and clamped at both ends.
+ *
+ * Was 15→30 in the level's first pass (2026-08-16), which `client/sim/
+ * pveLevelSim.sim.ts` then measured as unsurvivable at any skill level: 15 mobs at
+ * one 1-damage shot per 1.5s each is 10 damage/second against a starter character's
+ * 9.2 effective HP, and the bot died in the entrance room in 100% of runs. Halving
+ * the ramp is the content half of that rebalance; the engine half is the per-room
+ * concurrent-fire budget (engine/balance/encounter.ts, ENGINE_VERSION 41), which is
+ * what actually caps incoming damage. This half is about CLEAR TIME instead: with the
+ * starter blaster at 5 damage/second, 15 mobs averaging 3.5 HP is ~11 seconds of
+ * uninterrupted shooting per room, 29 rooms deep — a slog, not a fight.
+ *
+ * Re-run `npm run test:pve-sim` after changing this: its balance gates are what hold
+ * the ramp honest, and difficulty is intentionally tuned to the harder end (floor 1
+ * clearable by careful play, full 5-floor extraction uncommon).
+ */
 function enemyCountForArea(area) {
   const t = (area - 225) / (400 - 225);
-  return Math.max(15, Math.min(30, Math.round(15 + 15 * t)));
+  return Math.max(8, Math.min(14, Math.round(8 + 6 * t)));
 }
 
 /** Interior decor generators. Every shape is authored inside
@@ -154,7 +179,7 @@ function scatterSpawns(w, h, count, decor, playerSpawns, mix) {
     for (let x = SPAWN_MARGIN; x <= w - SPAWN_MARGIN; x += 2) {
       if (pointInRects(x, y, decor.solids, 0.75)) continue;
       if (pointInCircles(x, y, decor.pillars, 0.75)) continue;
-      if (playerSpawns.some((p) => Math.hypot(x - p.x, y - p.y) < 3)) continue;
+      if (playerSpawns.some((p) => Math.hypot(x - p.x, y - p.y) < PLAYER_SPAWN_CLEARANCE)) continue;
       candidates.push({ x, y });
     }
   }

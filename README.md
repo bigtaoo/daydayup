@@ -49,6 +49,7 @@ npm run dev        # client dev server, http://localhost:5173
 | `npm run dev:animator` / `npm run dev:map-editor` | The two authoring tools |
 | `npm run dev:desktop-shell` | The Electron shell hosting both authoring tools (run the two `dev:` commands above first, in separate terminals) |
 | `npm run test:pvp-sim` | The offline PvP balance harness (`client/sim/`, kept out of the default test glob — ~6s) |
+| `npm run test:pve-sim` | The PvE level simulator — bot-driven real runs of level 1, per-room reaction window / peak shooters / clear rate, plus the difficulty gates (`client/sim/`, also out of the default glob) |
 
 ## Deployment
 
@@ -100,4 +101,5 @@ workflow deploys until that's turned on. Once live they'd serve at
 - [x] Accounts (Phase 6, `design/16-accounts.md`): real username/password login (SQLite via `node:sqlite`), never required to play — bound to PvP ladder rating and Forge blueprints/materials/loadout; third-party OAuth reserved, not built
 - [x] Internationalization (Phase 7, `design/17-i18n.md`): English-canonical `t()` system with compile-time key checking, 8 locales (中文/Deutsch/Français/Español/Polski/Русский/Italiano), every screen migrated, a language-cycle Settings control, first-boot browser-language auto-detection — enum/data-driven values (damage type, weapon kind, rarity) deliberately left untranslated
 - [x] Screen-flow completion (design/10 follow-up, 2026-08-03): a boot loading screen; a menu-driven Mode Select (solo PvE / co-op / PvP solo queue / tutorial) replacing PLAY's direct jump into Forge — co-op/PvP were previously boot-flag-only; a real Matchmaking screen (connecting/error/cancel/retry), fixing a latent bug where a dropped connection hung forever with no feedback; a standalone, always-skippable tutorial level (move/aim/fire → weapon-swap → melee-deflect → the extract-vs-descend checkpoint decision)
+- [x] Level 1 balance pass (2026-08-17, `ENGINE_VERSION` 41): a headless PvE level simulator (`npm run test:pve-sim`) — bot-driven real runs reporting per-room reaction window / peak simultaneous shooters / clear rate, with difficulty gates — and the rebalance it measured out: a per-room concurrent-fire budget, staggered room wake-up, halved garrisons, renewable shield regen, plus a door-lock softlock it caught. See `design/05` "Room encounter budget"
 - [ ] WeChat mini-game adaptation (run in WeChat DevTools, see `design/04-wechat.md`)

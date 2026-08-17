@@ -623,3 +623,50 @@ simulation-output change (fewer/later bullets, and every downstream
 time relative to before), hence the bump. No content numbers changed —
 `DEFAULT_ENEMY_ENGAGE_RANGE_FP`/per-blueprint overrides are untouched, only
 which tick each one first qualifies to fire.
+
+v41: a room's garrison gets a per-ROOM concurrent-fire budget and a staggered
+wake-up, because v40's fire-range gate turned out to buy only about half a
+second against the same recurring report ("一进游戏就被集火秒杀" — I get
+focus-fired down the moment I enter). What finally settled it was measurement
+rather than another round of reasoning: `client/sim/pveLevelSim.sim.ts`, a
+bot-driven headless level simulator added in the same pass, plays the shipped
+level 1 and records per-room reaction window, peak simultaneous shooters, and
+worst one-second damage window. On v40 it reported 14 of the entrance room's 15
+mobs firing on the same tick, first hit 0.6s after the room activated, worst 1s
+window 10 damage against a starter character's 9.2 effective HP, and death in
+the entrance room in 100% of runs at BOTH bot skill profiles — the range gate
+does nothing about a garrison that simply closes to engage range as one blob and
+opens up together.
+
+Two changes in `AIDecideSystem`, both keyed to the room rather than the mob,
+since design/05 already makes the room the aggro unit:
+  - `grantFireSlots` — at most `ROOM_FIRE_BUDGET` (balance/encounter.ts, 3) mobs
+    per room may have `firing` set on any one tick, awarded to the NEAREST
+    contenders (stable sort on exact integer Fp squared distances, so equal
+    distances keep `state.enemies` order — the same array-order tie-break
+    convention used elsewhere). The rest hold position inside engage range with
+    `firing` false and take a slot the moment a shooter dies or the player moves
+    and reorders the queue. `chaseAndEngage` no longer writes `firing` at all
+    (it returns "in range, holding still" instead); `grantFireSlots` is the
+    single writer of `firing = true`.
+  - `hasNoticed` — a freshly-activated room's mobs may move immediately but hold
+    fire for `noticeDelayTicks(id)` ticks after activation (18 + id % 30, i.e.
+    0.6-1.6s), measured against the room runtime's existing `roomTick`. Derived
+    from the enemy id rather than an `aiPrng` draw deliberately: ids are assigned
+    in deterministic spawn order, so the stagger is reproducible without adding a
+    PRNG draw site or a new per-enemy field to serialize. Per-enemy rather than
+    flat, or the whole simultaneous volley would just arrive later.
+
+Replay impact: a real simulation-output change — fewer and later bullets, and
+every downstream `combatPrng` draw a fired shot triggers (spread jitter, crit
+rolls) shifts in time relative to v40. Any v40 stream with two or more mobs in
+one room diverges. The fire budget applies in every mode (a flat `waves`/tutorial
+config buckets its roomId-less mobs under one shared budget); the notice delay is
+dungeon-mode only, since a flat config's enemies stream in mid-fight and have no
+"walked into an ambush" moment to soften. PvP arenas are unaffected in practice —
+they have no `EnemyActor`s at all.
+
+Shipped alongside the content half of the same rebalance (no version bump of its
+own — spawn-point data, not engine logic): `world/dungeons/ember/` room garrisons
+15-30 -> 8-14, and the authored player-spawn clearance widened 3 -> 6 grid so the
+entrance room can't place a mob inside engage range of the spawn point.

@@ -3,6 +3,7 @@ import { createGameState, type GameState } from '@dd/engine/state/GameState';
 import { StatusEffectSystem } from '@dd/engine/systems';
 import { SHIELD_REGEN_DELAY, SHIELD_REGEN_INTERVAL } from '@dd/engine/config';
 import { BURN_DURATION } from '@dd/engine/content/damage';
+import { SKIN_DEFS } from '@dd/engine/content/skins';
 import { takeDamage } from './combat';
 
 const CFG = { seed: 3, worldW: 800, worldH: 800, waves: [] as const };
@@ -86,6 +87,28 @@ describe('two-pool health — idle shield regen (design/07)', () => {
     idle(sys, s, SHIELD_REGEN_DELAY * 2);
     expect(p.shield).toBe(0); // never regenerated while burning
     expect(p.ticksSinceHit).toBeLessThan(SHIELD_REGEN_DELAY); // kept below the threshold
+  });
+
+  it('INVARIANT: a full shield pool refills inside a plausible between-rooms pause (ENGINE_VERSION 41)', () => {
+    // Everything above tests the regen MECHANISM against whatever the constants happen
+    // to be, so it passes at any interval — including the ~10s one that made the shield
+    // effectively single-use across a PvE run (design/05 "Room encounter budget": a
+    // character refilled 3.2 shield in ~32s while a room takes ~8s to clear and the next
+    // is seconds away, so a 37-enemy floor was fought on one 9.2-point pool). This pins
+    // the DESIGN INTENT instead — shield is the renewable half of the two-pool split
+    // (design/07) — and it is derived from content, so a character gaining a bigger
+    // shield pool re-checks the claim rather than silently invalidating it.
+    const BETWEEN_ROOMS_TICKS = 30 * 15; // 15s: clear a room, walk to the next door
+    const biggestPool = Math.max(...Object.values(SKIN_DEFS).map((d) => d.maxShield));
+    const ticksToFull = SHIELD_REGEN_DELAY + SHIELD_REGEN_INTERVAL * Math.ceil(biggestPool - 1);
+    expect(ticksToFull, `${ticksToFull} ticks to refill ${biggestPool} shield`).toBeLessThanOrEqual(BETWEEN_ROOMS_TICKS);
+
+    // And prove it end-to-end for the real starter character, not just arithmetically.
+    const s = createGameState(CFG);
+    const p = s.players[0]!;
+    p.shield = 0;
+    idle(sys, s, BETWEEN_ROOMS_TICKS);
+    expect(p.shield).toBe(p.maxShield);
   });
 
   it('a DoT tick is absorbed shield-first (a shield soaks a burn)', () => {
