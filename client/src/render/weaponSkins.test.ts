@@ -13,6 +13,7 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import {
   preloadWeaponSkins, getWeaponTexture, getWeaponAnchor, getWeaponScale, getWeaponRotationOffset,
+  KIND_DEFAULTS, WEAPON_DEFS, MODULE_SCALE,
 } from './weaponSkins';
 
 describe('preloadWeaponSkins — best-effort, never rejects (missing/unreachable art must not block boot)', () => {
@@ -47,5 +48,24 @@ describe('preloadWeaponSkins — best-effort, never rejects (missing/unreachable
     expect(getWeaponAnchor('scattergun', 'ranged')).toEqual(kindAnchor);
     expect(getWeaponScale('scattergun', 'ranged')).toBe(kindScale);
     expect(getWeaponRotationOffset('scattergun', 'ranged')).toBe(kindRotation);
+  });
+
+  // The measured per-texture `scale` normalizes that PNG's pixel size into rig authoring-px;
+  // MODULE_SCALE on top of it is the separate proportion decision (2026-08-17: the mounted
+  // module was ~2x the concept's module-to-core ratio and covered the hero's eye). Pinned as
+  // a relationship, not a magic number, so retuning the factor doesn't churn this test —
+  // but a module rendering at its raw measured size again would fail it.
+  it('every module renders below its raw measured size (the core-proportion factor is applied)', () => {
+    // Asserted against the table's OWN values rather than a copied literal — the previous
+    // version of this test hardcoded `104/1536`, which quietly became a wrong number the
+    // moment that stale divisor was fixed. Whether the resulting proportion is sane at all
+    // is checked in rigComposition.test.ts, against each texture's real pixel width.
+    expect(MODULE_SCALE).toBeLessThan(1);
+    expect(getWeaponScale(undefined, 'ranged')).toBeCloseTo(KIND_DEFAULTS.ranged.scale * MODULE_SCALE, 12);
+    expect(getWeaponScale(undefined, 'melee')).toBeCloseTo(KIND_DEFAULTS.melee.scale * MODULE_SCALE, 12);
+    // Uniform: a per-weapon exception would break the "one coherent unit" rule resolve() has.
+    expect(getWeaponScale('repeater', 'ranged')).toBeCloseTo(
+      (WEAPON_DEFS.repeater?.scale ?? 0) * MODULE_SCALE, 12,
+    );
   });
 });

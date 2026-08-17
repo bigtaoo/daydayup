@@ -8,7 +8,7 @@ The game's **visual identity and the fiction that wraps it** — the setting tha
 
 ### The protagonist — a floating orb-core, not a humanoid
 
-The hero is a **small hovering spherical core**: one rounded shell, **no arms, no legs**, a single large expressive eye, a transparent belly chamber that fills with glowing crystal, and **two weapon modules that orbit it** on glowing energy tethers. It floats (bob + lean into travel; squash-stretch on accel) — there is no walk cycle.
+The hero is a **small hovering spherical core**: one rounded shell, **no arms, no legs**, a single large expressive eye, a transparent belly chamber that fills with glowing crystal, and **two weapon modules that orbit it** on glowing energy tethers. It floats (bob + lean into travel; squash-stretch on accel) — there is no walk cycle. *(The tether is **drawn**, not authored art — a glowing arc from a bone's pivot to its tip, opt-in per bone; the assembly of all of the above shipped visibly broken until 2026-08-17, see `12`'s update log.)*
 
 This body plan was chosen because it wins on all four production constraints at once:
 

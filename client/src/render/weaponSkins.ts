@@ -16,7 +16,7 @@ import { Assets, Texture } from 'pixi.js';
 
 export type WeaponVisualKind = 'ranged' | 'melee';
 
-interface WeaponVisualDef {
+export interface WeaponVisualDef {
   path: string;
   // Anchor = the socket-connector point in THIS texture's own bounding box (0..1
   // fraction of its width/height) — where the sprite pivots and where it's placed onto
@@ -38,6 +38,19 @@ interface WeaponVisualDef {
 
 const deg = (d: number): number => (d * Math.PI) / 180;
 
+// Every `scale` below is that texture's own pixel-size normalization into rig authoring-px
+// (measured per texture, see the table's comments). This factor is the separate, deliberate
+// PROPORTION decision on top of it: how big a mounted module reads against the core it
+// orbits. The measured scales put a gun at ~90 authoring-px against an 80-px core — about
+// 2x the ratio in the concept art (`art/concept/02_weapon_mount_ranged.png`, where a module
+// is roughly half the core's diameter), which at a 40-px on-screen body left the gun
+// covering the hero's eye entirely (user report, 2026-08-17). Set to 0.75 rather than the
+// concept's ~0.5: chosen by the user as the explicit middle of "match the concept" vs "keep
+// every weapon frame's silhouette readable at gameplay scale" — it clears the face without
+// shrinking the frames to indistinguishable nubs. Tune HERE, not in the table, so the
+// per-texture measurements stay untouched.
+export const MODULE_SCALE = 0.75;
+
 // KIND_DEFAULTS' anchors are still the original first-pass eyeball (not yet
 // re-measured live). WEAPON_DEFS' `rotationOffsetRad` values ARE measured, not
 // eyeballed: a page-side script loaded each PNG into a canvas, took the alpha-
@@ -45,12 +58,25 @@ const deg = (d: number): number => (d * Math.PI) / 180;
 // baked angle from actual pixel data — see the session that added this table.
 // Anchor fractions themselves are still first-pass eyeball, good enough since the
 // rotation offset is what actually determines pointing direction.
+// `scale`'s divisor is the SOURCE TEXTURE's own width, so it has to be re-derived whenever
+// that art is resized. Both of these were left at `/1536` after their PNGs were downsampled
+// to 320px (every WEAPON_DEFS sibling below correctly divides by 320) — so the fallback
+// silhouette rendered at ~22 authoring-px against an 80-px core, ~0.2x the body, a nub
+// instead of a weapon. Found 2026-08-17 by `rigComposition.test.ts`'s module-proportion
+// band, not by eye: this is the never-invisible FALLBACK path (`resolve()` below), so it
+// only shows up for a weapon id with no entry of its own or after a texture load fails —
+// rare enough to have gone unnoticed, and exactly what that fallback exists to prevent.
+// 90/320 matches `repeater`/`cannon`'s generic housing, mid-range among the real entries.
 const KIND_DEFAULTS: Record<WeaponVisualKind, WeaponVisualDef> = {
-  ranged: { path: '/weapons/gun_default.png', anchor: { x: 0.25, y: 0.44 }, scale: 104 / 1536 },
-  melee: { path: '/weapons/sword_default.png', anchor: { x: 0.2, y: 0.455 }, scale: 104 / 1536 },
+  ranged: { path: '/weapons/gun_default.png', anchor: { x: 0.25, y: 0.44 }, scale: 90 / 320 },
+  melee: { path: '/weapons/sword_default.png', anchor: { x: 0.2, y: 0.455 }, scale: 90 / 320 },
 };
 
-const WEAPON_DEFS: Partial<Record<string, WeaponVisualDef>> = {
+// Both tables are exported for `rigComposition.test.ts`, which multiplies each `scale` by
+// its texture's REAL on-disk pixel width to check the module actually reads as a module
+// against the core it mounts on (the check that caught KIND_DEFAULTS' stale divisor above).
+export { KIND_DEFAULTS };
+export const WEAPON_DEFS: Partial<Record<string, WeaponVisualDef>> = {
   scattergun: { path: '/weapons/gun_scattergun.png', anchor: { x: 0.875, y: 0.245 }, scale: 80 / 320, rotationOffsetRad: deg(-156.8) },
   seeker: { path: '/weapons/gun_seeker.png', anchor: { x: 0.922, y: 0.278 }, scale: 78 / 320, rotationOffsetRad: deg(-161.3) },
   mortar: { path: '/weapons/gun_mortar.png', anchor: { x: 0.938, y: 0.628 }, scale: 85 / 320, rotationOffsetRad: deg(165.5) },
@@ -143,7 +169,7 @@ export function getWeaponAnchor(name: string | undefined, kind: WeaponVisualKind
 }
 
 export function getWeaponScale(name: string | undefined, kind: WeaponVisualKind): number {
-  return resolve(name, kind).def.scale;
+  return resolve(name, kind).def.scale * MODULE_SCALE;
 }
 
 export function getWeaponRotationOffset(name: string | undefined, kind: WeaponVisualKind): number {

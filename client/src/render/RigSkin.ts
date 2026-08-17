@@ -1,7 +1,7 @@
-import { Container, Sprite } from 'pixi.js';
+import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
 import type { Rig } from './Rig';
 import type { RigSkinBundle } from './taoBundle';
-import type { AnimationClip, ResolvedBoneTransform, WorldPose } from './types';
+import type { AnimationClip, ResolvedBoneTransform, WorldPose, WorldPositions } from './types';
 import { sampleClip } from './interpolate';
 import { facingFromAngle } from './facing';
 import { getWeaponAnchor, getWeaponRotationOffset, getWeaponScale, getWeaponTexture, type WeaponVisualKind } from './weaponSkins';
@@ -11,11 +11,51 @@ import { getWeaponAnchor, getWeaponRotationOffset, getWeaponScale, getWeaponText
 // this socket for its recoil kick, so mounting here keeps the two in sync). Both
 // sockets still track aim rotation below; only this one shows a weapon module.
 const ACTIVE_WEAPON_SOCKET = 'socket_r';
-const SOCKET_IDS = new Set(['socket_l', 'socket_r']);
+// The other arm carries a module too (design/13's "TWO weapon modules that orbit it", and
+// the concept turnaround draws both) — same art, purely decorative: `03`'s model is one
+// ACTIVE weapon at a time, so this one never fires, takes no recoil, and is not what
+// `updateWeaponSprite` aims. It points OUTWARD along its own tether instead of at the
+// reticle, which is both how the concept draws the relaxed pose and what keeps its barrel
+// from crossing the core whenever the hero shoots toward that side.
+const IDLE_WEAPON_SOCKET = 'socket_l';
+// Only the ACTIVE socket's ring tracks aim; the idle one turns with its own module so ring
+// and module read as one assembly.
+const SOCKET_IDS = new Set([ACTIVE_WEAPON_SOCKET]);
+
+// The glowing energy tether every orbiting bone hangs off (design/13's "two weapon
+// modules that orbit it on glowing energy tethers", design/12's "each of the two
+// sockets orbits the core on a tether"). Drawn — not authored as art — because the
+// tether's length and angle are pure rig geometry: it spans a bone's pivot (the core's
+// centre) to its tip (where that bone's module sprite sits), so it has to follow FK
+// every frame. A bone opts in by declaring the `outerW`/`innerW` stroke widths the
+// editor's own skeleton view already uses for a tubular bone (orb-core's socket_l/
+// socket_r, boss-core's ring_a/ring_b); every other bone (shell/eye/belly, an enemy's
+// single body bone) leaves them undefined and draws no tether.
+const TETHER_COLOR = 0x8fe9ff;
+/** Perpendicular sag of the tether's arc, as a fraction of its length — the concept
+ *  turnaround draws it as a slack curve bowing away from the core, not a straight rod. */
+const TETHER_SAG = 0.22;
 
 // The game-side .tao runtime renderer (design/12): bone FK + sprite binding +
 // animation playback, ported from tools/animator/src/rendering/Renderer.ts's
 // `updateSprites` (rewritten for Pixi v8's API — the editor is still on v7).
+//
+// Placement model (fixed 2026-08-17 — the port originally drew every sprite at its
+// bone's PIVOT, unrotated-by-nothing, which visibly disassembled the character):
+//   - A bone's art is centred on its TIP (`pose.ex/ey`), not its pivot — the tip is
+//     where the rig itself puts that bone's `bodyR` body circle (the editor's own
+//     skeleton view draws it there), so it's the point the art was sized against. It
+//     matters because every rig here hangs its body off a pivot at the actor's feet
+//     via one upward body bone (`shell`/`body`/`core`, `len` = hover height): drawing
+//     at the pivot put the body a full body-length BELOW its own children, so
+//     orb-core's eye/belly/both weapon sockets piled up in one spot above the shell's
+//     head instead of sitting on the shell.
+//   - Rotation is the bone's angle RELATIVE TO ITS REST ANGLE (`pose.wa - rwa`), so
+//     art authored the way it reads on screen (shell upright, belly upright) stays
+//     upright, and only animation/aim actually turns it. Drawing at the raw world
+//     angle instead rotated every one of these rigs by its body bone's rest angle
+//     (-90°, since it points up) — the hero's crystal spikes pointed left, and every
+//     critter/boss body was 90° off too.
 //
 // Facing model (design/12 "Facing model (twin-stick 360° aim)"), extended with an
 // upper/lower body split: a 2D bone rig gives L/R flip + part rotation, not a true
@@ -26,9 +66,9 @@ const SOCKET_IDS = new Set(['socket_l', 'socket_r']);
 //     horizontal sign (`view.scale.x`), and aiming toward the top of the screen
 //     (dy < 0, away from the camera) swaps in each slot's 'back' variant where one
 //     exists (today: only `eye` has one — the concept turnaround's eye/vent swap).
-//   - Aim-tracking socket rotation: socket_l/socket_r's WORLD rotation is overridden
+//   - Aim-tracking socket rotation: the ACTIVE socket's WORLD rotation is overridden
 //     every frame to the live AIM angle (`setAim`, design/03/12/13 "following that
-//     socket's aim rotation every frame") instead of playing only their authored
+//     socket's aim rotation every frame") instead of playing only its authored
 //     clip — independently of the body flip above, so the gun can point at the
 //     shot direction while the legs face movement. The rig is authored assuming it
 //     faces right (rest pose `wa`/binding.rotation are canonical, unflipped); when
@@ -38,6 +78,9 @@ const SOCKET_IDS = new Set(['socket_l', 'socket_r']);
 export class RigSkin {
   readonly view = new Container();
   private readonly sprites = new Map<string, Sprite>();
+  private readonly tethers: Graphics | null;
+  private tetherGeometry = ''; // last-drawn endpoint signature (skip the rebuild if unchanged)
+  private tetherTint = 0xffffff;
   private clip: AnimationClip | null = null;
   private clipT = 0;
   private showBack = false;
@@ -45,13 +88,22 @@ export class RigSkin {
   private aimRad = 0;
   private weaponKind: WeaponVisualKind | null = null;
   private weaponName: string | undefined = undefined;
-  private weaponSprite: Sprite | null = null;
+  private weaponSprite: Sprite | null = null; // the ACTIVE socket's module (aim-tracking)
+  private idleModuleSprite: Sprite | null = null; // the other arm's decorative module
   private weaponTint = 0xffffff;
 
   constructor(
     private readonly rig: Rig,
     private readonly bundle: RigSkinBundle,
   ) {
+    // Tethers paint behind every bone sprite: they run from the core's centre out to a
+    // module, so the half nearest the core belongs UNDER the body, not across it.
+    this.tethers = rig.boneDefs.some(b => b.outerW && b.innerW) ? new Graphics() : null;
+    if (this.tethers) {
+      this.tethers.zIndex = -1;
+      this.view.addChild(this.tethers);
+    }
+
     for (const boneId of rig.drawOrder) {
       const binding = bundle.bindings.get(boneId);
       const texture = bundle.textures.get(boneId);
@@ -98,6 +150,10 @@ export class RigSkin {
     this.sprites.forEach(sprite => {
       sprite.tint = color;
     });
+    // The tether is part of the body, so it takes the variant tint too (a corrupted
+    // boss core's shard-ring tethers read in its own hue, not the hero's cyan).
+    this.tetherTint = color;
+    if (this.tethers) this.tethers.tint = color;
   }
 
   /** Which weapon module (if any) the active socket (`ACTIVE_WEAPON_SOCKET`) mounts —
@@ -115,6 +171,7 @@ export class RigSkin {
   setWeaponTint(color: number): void {
     this.weaponTint = color;
     if (this.weaponSprite) this.weaponSprite.tint = color;
+    if (this.idleModuleSprite) this.idleModuleSprite.tint = color;
   }
 
   /** The canonical (pre-mirror) local rotation, in RADIANS, that renders as the true
@@ -140,10 +197,13 @@ export class RigSkin {
       sprite.texture = backTexture ?? this.bundle.textures.get(boneId)!;
 
       const transform = transforms.get(boneId);
-      sprite.x = pose.sx + (transform?.translateX ?? 0);
-      sprite.y = pose.sy + (transform?.translateY ?? 0);
-      const worldAngleDeg = SOCKET_IDS.has(boneId) ? canonicalSocketDeg : pose.wa;
-      sprite.rotation = ((worldAngleDeg + binding.rotation + (transform?.rotation ?? 0)) * Math.PI) / 180;
+      sprite.x = pose.ex + (transform?.translateX ?? 0);
+      sprite.y = pose.ey + (transform?.translateY ?? 0);
+      // `pose.wa` already carries the clip's own rotation for this bone (Rig.computeFK
+      // folds it in), so it is NOT added a second time here.
+      const restAngleDeg = this.rig.boneMap.get(boneId)?.rwa ?? 0;
+      const angleDeg = SOCKET_IDS.has(boneId) ? canonicalSocketDeg : pose.wa - restAngleDeg;
+      sprite.rotation = ((angleDeg + binding.rotation) * Math.PI) / 180;
       sprite.scale.set(
         (binding.flipX ? -1 : 1) * (transform?.scaleX ?? 1) * binding.scaleX,
         (transform?.scaleY ?? 1) * binding.scaleY,
@@ -151,38 +211,114 @@ export class RigSkin {
       sprite.alpha = transform?.alpha ?? 1;
     });
 
-    this.updateWeaponSprite(worldPose.get(ACTIVE_WEAPON_SOCKET));
+    this.drawTethers(worldPose, transforms);
+    this.updateWeaponSprites(worldPose);
   }
 
-  /** Mount/move/hide the equipped weapon's business-end sprite on the active socket's
-   *  world transform (design/03 universal mount — render-only, never touches the sim). */
-  private updateWeaponSprite(socketPose: WorldPose | undefined): void {
-    if (!this.weaponKind || !socketPose) {
-      if (this.weaponSprite) this.weaponSprite.visible = false;
-      return;
+  /** Repaint the glowing tether of every orbiting bone (see TETHER_COLOR above): an arc
+   *  from the bone's pivot on the core out to the module sitting at its tip. Geometry is
+   *  static in body space unless a clip actually moves those bones, so the endpoints are
+   *  signed and the rebuild skipped when nothing moved — a hovering idle costs one
+   *  string compare per frame, not two curve rebuilds. */
+  private drawTethers(worldPose: WorldPositions, transforms: Map<string, ResolvedBoneTransform>): void {
+    const g = this.tethers;
+    if (!g) return;
+
+    const arcs: Array<{ pose: WorldPose; outerW: number; innerW: number; alpha: number }> = [];
+    let signature = '';
+    for (const bone of this.rig.boneDefs) {
+      if (!bone.outerW || !bone.innerW) continue;
+      const pose = worldPose.get(bone.id);
+      if (!pose) continue;
+      const alpha = transforms.get(bone.id)?.alpha ?? 1;
+      arcs.push({ pose, outerW: bone.outerW, innerW: bone.innerW, alpha });
+      signature += `${pose.sx.toFixed(1)},${pose.sy.toFixed(1)},${pose.ex.toFixed(1)},${pose.ey.toFixed(1)},${alpha.toFixed(2)};`;
     }
-    const texture = getWeaponTexture(this.weaponName, this.weaponKind);
+    if (signature === this.tetherGeometry) return;
+    this.tetherGeometry = signature;
+
+    g.clear();
+    for (const { pose, outerW, innerW, alpha } of arcs) {
+      if (alpha <= 0) continue;
+      const dx = pose.ex - pose.sx;
+      const dy = pose.ey - pose.sy;
+      const len = Math.hypot(dx, dy);
+      if (len < 1) continue;
+      // Control point: the midpoint pushed along the segment's normal, so the tether
+      // bows out to one consistent side (down, in the rig's own y-down space) whichever
+      // way the bone points — the whole rig mirrors as a unit, so the sag mirrors with it.
+      const nx = -dy / len;
+      const ny = dx / len;
+      const bow = (ny >= 0 ? 1 : -1) * len * TETHER_SAG;
+      const cx = pose.sx + dx / 2 + nx * bow;
+      const cy = pose.sy + dy / 2 + ny * bow;
+      // Two passes over the same curve: a wide soft halo, then the bright core line.
+      g.moveTo(pose.sx, pose.sy).quadraticCurveTo(cx, cy, pose.ex, pose.ey)
+        .stroke({ color: TETHER_COLOR, width: outerW, alpha: 0.3 * alpha, cap: 'round' });
+      g.moveTo(pose.sx, pose.sy).quadraticCurveTo(cx, cy, pose.ex, pose.ey)
+        .stroke({ color: TETHER_COLOR, width: innerW, alpha: 0.9 * alpha, cap: 'round' });
+    }
+    g.tint = this.tetherTint;
+  }
+
+  /** Mount/move/hide both orbiting weapon modules (design/03 universal mount — render-only,
+   *  never touches the sim): the ACTIVE one, which tracks the live aim, and the decorative
+   *  IDLE one on the other arm, which points outward along its own tether (see the socket
+   *  constants at the top of this file). Each sits on its socket bone's TIP — that's where
+   *  the module orbits; the pivot is the core's own centre. */
+  private updateWeaponSprites(worldPose: WorldPositions): void {
+    const activePose = worldPose.get(ACTIVE_WEAPON_SOCKET);
+    const idlePose = worldPose.get(IDLE_WEAPON_SOCKET);
+    const texture = this.weaponKind ? getWeaponTexture(this.weaponName, this.weaponKind) : undefined;
     if (!texture) {
       if (this.weaponSprite) this.weaponSprite.visible = false;
+      if (this.idleModuleSprite) this.idleModuleSprite.visible = false;
       return;
     }
 
-    if (!this.weaponSprite) {
-      this.weaponSprite = new Sprite(texture);
-      this.weaponSprite.zIndex = (this.bundle.bindings.get(ACTIVE_WEAPON_SOCKET)?.zOrder ?? 0) + 1;
-      this.weaponSprite.tint = this.weaponTint;
-      this.view.addChild(this.weaponSprite);
+    const rotationOffset = getWeaponRotationOffset(this.weaponName, this.weaponKind!);
+    this.weaponSprite = this.mountModule(
+      this.weaponSprite, ACTIVE_WEAPON_SOCKET, activePose, texture,
+      this.canonicalSocketAngleRad() + rotationOffset,
+    );
+    // The idle module turns with its own bone (rest angle 180° = away from the core), not
+    // with the reticle — computed pre-mirror like every other local angle here, so the
+    // whole-rig flip keeps it pointing outward on whichever side it ends up.
+    this.idleModuleSprite = this.mountModule(
+      this.idleModuleSprite, IDLE_WEAPON_SOCKET, idlePose, texture,
+      idlePose ? (idlePose.wa * Math.PI) / 180 + rotationOffset : 0,
+    );
+  }
+
+  /** Place one module sprite (creating it on first use) on a socket bone's tip at the given
+   *  local rotation; hides it when that bone isn't posed. Returns the sprite so the caller
+   *  can keep its lazily-created reference. */
+  private mountModule(
+    sprite: Sprite | null,
+    socketId: string,
+    pose: WorldPose | undefined,
+    texture: Texture,
+    rotation: number,
+  ): Sprite | null {
+    if (!pose) {
+      if (sprite) sprite.visible = false;
+      return sprite;
+    }
+    if (!sprite) {
+      sprite = new Sprite(texture);
+      sprite.zIndex = (this.bundle.bindings.get(socketId)?.zOrder ?? 0) + 1;
+      sprite.tint = this.weaponTint;
+      this.view.addChild(sprite);
       this.view.sortableChildren = true;
     }
-    const anchor = getWeaponAnchor(this.weaponName, this.weaponKind);
-    const scale = getWeaponScale(this.weaponName, this.weaponKind);
-    const rotationOffset = getWeaponRotationOffset(this.weaponName, this.weaponKind);
-    this.weaponSprite.texture = texture;
-    this.weaponSprite.anchor.set(anchor.x, anchor.y);
-    this.weaponSprite.scale.set(scale);
-    this.weaponSprite.visible = true;
-    this.weaponSprite.x = socketPose.sx;
-    this.weaponSprite.y = socketPose.sy;
-    this.weaponSprite.rotation = this.canonicalSocketAngleRad() + rotationOffset;
+    const anchor = getWeaponAnchor(this.weaponName, this.weaponKind!);
+    sprite.texture = texture;
+    sprite.anchor.set(anchor.x, anchor.y);
+    sprite.scale.set(getWeaponScale(this.weaponName, this.weaponKind!));
+    sprite.visible = true;
+    sprite.x = pose.ex;
+    sprite.y = pose.ey;
+    sprite.rotation = rotation;
+    return sprite;
   }
 }

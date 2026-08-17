@@ -13,18 +13,18 @@ import type { AnimationClip, BoneKeyframe, SpriteBinding } from './types';
 
 interface SerializedBoneKeyframe extends BoneKeyframe {}
 
-interface SerializedKeyframe {
+export interface SerializedKeyframe {
   time: number;
   bones: Record<string, SerializedBoneKeyframe>;
 }
 
-interface SerializedClip {
+export interface SerializedClip {
   duration: number;
   loop: boolean;
   keyframes: SerializedKeyframe[];
 }
 
-interface AnimationJson {
+export interface AnimationJson {
   version: number;
   bindings: Record<string, SpriteBinding>;
   animations: Record<string, SerializedClip>;
@@ -39,7 +39,9 @@ export interface RigSkinBundle {
   textures: Map<string, Texture>;
 }
 
-function deserializeClip(s: SerializedClip): AnimationClip {
+/** Exported for `rigComposition.test.ts`, which loads the shipped `animation.json` files
+ *  straight off disk and needs them in the exact runtime shape this loader produces. */
+export function deserializeClip(s: SerializedClip): AnimationClip {
   return {
     duration: s.duration,
     loop: s.loop,

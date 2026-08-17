@@ -150,6 +150,7 @@ export class App {
       renderer.draw({
         worldPose,
         boneTransforms:      frame,
+        bones:               rig.boneMap,
         bindings:            state.boneBindings,
         getTexture:          (boneId: string) => imageCtrl.getTexture(boneId),
         attachmentPoints:    state.attachmentPoints,

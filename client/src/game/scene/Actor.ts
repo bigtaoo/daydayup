@@ -11,6 +11,11 @@ export type WeaponKind = 'ranged' | 'melee';
 
 // How far (× body radius) to lift the sprite so the ground anchor sits at the feet.
 // Bigger → more of the body rises above the anchor → more it can overlap a pillar.
+// Applies to the Graphics PLACEHOLDER only: a real rig already encodes its own hover
+// height in its body bone's length (orb-core's `shell` is 46 authoring-px of "floats
+// this far above the ground point", design/12/13's "it floats, there is no walk cycle"),
+// and RigSkin draws that bone's art on its tip — lifting it a second time here would
+// double-count and leave the body visibly detached from its own shadow.
 const BODY_LIFT_R = 0.7;
 
 const HIT_FLASH_MS = 160; // outline "you were just hit" flash duration (Actor.hitFlash)
@@ -136,11 +141,16 @@ export class Actor extends Entity {
     // Lift the body + weapon so the container origin (gx,gy — where the shadow and
     // the engine's collision footprint sit) lands near the feet rather than the
     // torso. The sprite then rises above the ground point, so via Y-sort it draws
-    // over a pillar it stands against (design/01 fake-3D depth).
-    const lift = radiusPx * BODY_LIFT_R;
+    // over a pillar it stands against (design/01 fake-3D depth). A rig skin needs no
+    // lift of its own — its body bone already stands the art off the ground point (see
+    // BODY_LIFT_R) — so for those the lift is 0 and the body's real on-screen centre is
+    // the measured one, which is also what the aura/health bar anchor to below (they
+    // wrap the BODY, not the ground point).
+    const lift = this.skin.hasRig ? 0 : radiusPx * BODY_LIFT_R;
+    const bodyCenterY = -lift + (this.skin.hasRig ? filterCenterY : 0);
     this.skin.view.y = -lift;
     this.weaponGfx.y = -lift;
-    this.statusAura.y = -lift;
+    this.statusAura.y = bodyCenterY;
 
     // Every actor carries a floating health bar above its head (design/10 legibility
     // fix, 2026-08-02 for enemies: previously boss-only, so a regular mob's damage
@@ -149,7 +159,7 @@ export class Actor extends Entity {
     // HUD). A boss's is drawn bigger/further out (setHealth) so it still reads as the
     // more prominent threat.
     this.healthBar = new Graphics();
-    this.healthBar.y = -lift - radiusPx * (boss ? 1.7 : 1.3);
+    this.healthBar.y = bodyCenterY - radiusPx * (boss ? 1.7 : 1.3);
     this.addChild(this.healthBar);
 
     // litFilter is always on (unlike the four conditionally-active shaders below, whose

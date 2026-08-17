@@ -269,6 +269,42 @@ describe('Actor — skin filterArea is a fixed square centred on the skin\'s own
   });
 });
 
+// A rig's body bone already stands its art off the ground point (orb-core's `shell` is
+// 46 authoring-px of hover height, and RigSkin draws that bone's art on its tip), so
+// Actor's own BODY_LIFT_R lift applies to the Graphics placeholder only — applying both
+// double-counts and detaches the body from its shadow. The aura and health bar wrap the
+// BODY, so they anchor to its real measured centre rather than to `-lift`.
+describe('Actor — vertical anchoring: the placeholder is lifted, a rig carries its own hover height', () => {
+  afterEach(() => {
+    skinRegistryMocks.loaded = undefined;
+  });
+
+  const skinYOf = (a: Actor) => (a as unknown as { skin: { view: { y: number } } }).skin.view.y;
+  const auraYOf = (a: Actor) => (a as unknown as { statusAura: { y: number } }).statusAura.y;
+
+  it('the placeholder skin is lifted off the ground anchor', () => {
+    const a = new Actor('player', 20);
+    expect(skinYOf(a)).toBeCloseTo(-20 * 0.7); // radiusPx * BODY_LIFT_R
+    expect(auraYOf(a)).toBeCloseTo(skinYOf(a)); // no rig → aura rides the lift itself
+  });
+
+  it('a rig skin is NOT lifted again — the rig\'s own body bone is the hover height', () => {
+    skinRegistryMocks.loaded = loadedOrbCoreRig();
+    const a = new Actor('player', 20, undefined, false, 'char_vanguard');
+    expect(skinYOf(a)).toBe(0);
+  });
+
+  it('a rig actor\'s aura and health bar still wrap the body, not the ground point', () => {
+    skinRegistryMocks.loaded = loadedOrbCoreRig();
+    const a = new Actor('player', 20, undefined, false, 'char_vanguard');
+    const bounds = skinViewOf(a).getLocalBounds();
+    const bodyCenterY = bounds.y + bounds.height / 2;
+    expect(bodyCenterY).toBeLessThan(-1); // the rig really does sit above the anchor
+    expect(auraYOf(a)).toBeCloseTo(bodyCenterY);
+    expect(healthBarOf(a).y).toBeCloseTo(bodyCenterY - 20 * 1.3);
+  });
+});
+
 describe('Actor.setShield — energy-shield shader (design/01 fidelity roadmap milestone 5)', () => {
   it('is a no-op with no shield pool (maxShield <= 0) — most enemies never pay for a filter', () => {
     const mob = new Actor('enemy', 12);

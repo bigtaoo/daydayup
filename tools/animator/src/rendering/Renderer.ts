@@ -4,6 +4,7 @@ import type {
   ResolvedBoneTransform,
   SpriteBinding,
   AttachmentPoint,
+  BoneDef,
 } from '../core/types';
 import type { Rig } from '../skeleton/Rig';
 
@@ -36,6 +37,9 @@ function shadowTexture(): PIXI.Texture {
 export interface RenderData {
   worldPose:    WorldPositions;
   boneTransforms: Map<string, ResolvedBoneTransform>;
+  /** The rig's own bone defs — the sprite layer needs each bone's REST angle to draw
+   *  its art in the orientation it was authored in (see updateSprites). */
+  bones:        ReadonlyMap<string, BoneDef>;
 
   // Sprite resources — texture looked up by boneId directly (1 image per bone)
   bindings:   ReadonlyMap<string, SpriteBinding>;
@@ -214,9 +218,17 @@ export class Renderer {
 
         sprite.texture  = texture;
         sprite.anchor.set(binding.anchorX, binding.anchorY);
-        sprite.x        = pose.sx + (transform?.translateX ?? 0);
-        sprite.y        = pose.sy + (transform?.translateY ?? 0);
-        sprite.rotation = ((pose.wa + (binding.rotation ?? 0)) * Math.PI) / 180;
+        // A bone's art is centred on its TIP (where the rig draws that bone's bodyR
+        // circle) and rotated by its angle RELATIVE to its rest angle, so art authored
+        // the way it reads on screen stays upright and only animation turns it. Kept
+        // byte-for-byte in step with the game's own renderer (client/src/render/
+        // RigSkin.ts's "Placement model" — that's where the full rationale lives);
+        // the editor previewing a different layout than the game ships is exactly how
+        // a disassembled character got authored and shipped once already.
+        sprite.x        = pose.ex + (transform?.translateX ?? 0);
+        sprite.y        = pose.ey + (transform?.translateY ?? 0);
+        const restAngle = data.bones.get(boneId)?.rwa ?? 0;
+        sprite.rotation = ((pose.wa - restAngle + (binding.rotation ?? 0)) * Math.PI) / 180;
         sprite.scale.set(
           (binding.flipX ? -1 : 1) * (transform?.scaleX ?? 1) * (binding.scaleX ?? 1),
           (transform?.scaleY ?? 1) * (binding.scaleY ?? 1),
@@ -395,14 +407,16 @@ export class Renderer {
       const transform = data.boneTransforms.get(boneId);
       if (!pose) return;
 
-      const ax = pose.sx + (transform?.translateX ?? 0);
-      const ay = pose.sy + (transform?.translateY ?? 0);
+      // Same tip-centred placement as updateSprites above, so the overlay marks where
+      // the sprite actually is.
+      const ax = pose.ex + (transform?.translateX ?? 0);
+      const ay = pose.ey + (transform?.translateY ?? 0);
       const isSelected = boneId === data.selectedBone;
 
-      // Line from bone pivot to anchor (visible when offset is non-zero)
-      if (Math.hypot(ax - pose.sx, ay - pose.sy) > 1) {
+      // Line from bone tip to anchor (visible when a clip translates the bone)
+      if (Math.hypot(ax - pose.ex, ay - pose.ey) > 1) {
         this.selGfx.lineStyle({ width: 1, color: 0xff4444, alpha: 0.4 });
-        this.selGfx.moveTo(pose.sx, pose.sy);
+        this.selGfx.moveTo(pose.ex, pose.ey);
         this.selGfx.lineTo(ax, ay);
       }
 

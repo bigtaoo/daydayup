@@ -15,7 +15,13 @@ How pixels get onto the screen: **skins** (the `02` appearance layer made concre
 > lighting (shipped as a shader-derived approximation, no normal-map asset needed) and the
 > four fidelity-roadmap custom shaders. What remains open is only `04` (WeChat device
 > verification, blocked on hardware) and real authored SFX/music (`11`, a sourcing/licensing
-> task, unrelated to this pipeline).
+> task, unrelated to this pipeline). **Update (2026-08-17): the runtime was assembling that
+> art wrong** — bone sprites drawn at each bone's pivot instead of its tip, and rotated by the
+> bone's raw world angle — which disassembled every rigged character on screen (the hero read
+> as a bare ball with a gun on its head) while every individual asset was fine. Fixed, plus the
+> energy tether is now actually drawn; see the dated update at the bottom of this doc. What
+> remains is a proportion call, not a defect: the mounted weapon module is roughly 2x the
+> concept's module-to-core size ratio.
 
 ## The decisions (locked)
 
@@ -111,6 +117,63 @@ Authoring rules so 2D art produces the fake-3D feel and doesn't hit `01`'s known
 > **Update (2026-07-28): per-weapon-id art superseded the "one sprite per KIND" placeholder above.** `client/src/render/weaponSkins.ts` now keys business-end art by `WeaponSimSpec.name` (falling back to the `ranged`/`melee` kind default for the two ids without dedicated art) — 9 of 11 weapon ids (`scattergun`/`seeker`/`mortar`/`lasercutter`/`tomahawk`/`novaburst`/`gyre`/`hammer`/`spear`) ship their own AI-placeholder sprite (alpha-trimmed, box-downsampled, hand-rolled-PNG-codec-encoded — no image lib on the Node side). Because most of this art was composed "socket on the right" rather than `gun_default`/`sword_default`'s own "socket upper-left" convention, each texture carries a measured (not eyeballed) `rotationOffsetRad` that cancels its own baked pointing direction so `RigSkin`'s aim-tracking rotation still points the mounted sprite at the reticle. `blaster`/`repeater`/`cannon`/`enemygun`/`saber`/`emberblade`/`frostbrand`/`stormglaive`/`carom`/`leech` still share the generic housing (no mechanically distinct silhouette to justify unique art). True texture-atlas packing was deliberately not built — loose per-weapon PNGs match the existing skinRegistry convention, and 9 icon-sized sprites don't justify a hand-rolled packer.
 >
 > **Update (2026-07-27, later still): critter-core wired into the real game render, closing the gap above.** `client/src/render/critterCoreRig.ts` ports the rig into the client bundle (mirrors `orbCoreRig.ts`'s pattern, its own `CRITTER_CORE_REFERENCE_RADIUS`); `Skin.ts`/`skinRegistry.ts` were generalized to carry a per-rig reference radius instead of one hardcoded orb-core constant, and `RigSkin` gained `setTint()` — a Pixi multiply-tint over every bone sprite, the actual mechanism for "one neutral-grey critter body, re-tinted per elemental variant at runtime" (`13`) rather than one art file per variant. `Actor.ts` passes an enemy's already-resolved blueprint tint straight through. Enemies keep their old Graphics gun-barrel/blade weapon indicator regardless (critter-core has no socket bones to mount a weapon sprite on — that's still Graphics-only, not a rig gap). `enemy_critter.png` turned out to have the same opaque-magenta-background/no-alpha-channel bug as orb-core's original art (real-art-production work, not a code gap) — critters render at the correct size and tint, just with a visible matte patch until that's regenerated with transparency.
+
+> **Update (2026-08-17): the assembled character was wrong on screen for three weeks — a
+> two-line placement bug in the runtime, not an art problem.** User report: "角色的形象实际
+> 看起来和最初的设计不符" (the character doesn't look like the original design), pointing at a
+> plain white ball with a gun stuck to the top of its head, with no eye, no crystal belly and
+> none of `13`'s two orbiting weapon modules on tethers. Every piece of art was correct and
+> loaded; `RigSkin.update()` placed it wrong in two compounding ways. **(1) Sprites were drawn
+> at each bone's PIVOT instead of its TIP.** Every rig here hangs its body off a pivot at the
+> actor's feet via one upward body bone whose `len` IS the hover height (`shell` 46, critter
+> `body` 40, boss `core` 60) and whose `bodyR` body circle sits at the tip — which is also
+> where the editor's own skeleton view draws it. Drawing at the pivot put the shell a full
+> body-length below its own children, so `eye`/`belly`/`socket_l`/`socket_r` (all parented to
+> `shell`, all measured from its tip) landed on ONE point above the shell's head: four sprites
+> plus the mounted weapon stacked on each other, the shell's painted eye socket left empty,
+> and the two 52-px socket orbits collapsed to zero separation. **(2) Rotation used the bone's
+> raw world angle**, so every body bone's rest angle leaked into its art — the body bones point
+> up (`rwa -90`), so the hero's crystal spikes pointed left and every critter/boss body was 90°
+> off too. Fixed: art centres on `pose.ex/ey` and rotates by `pose.wa - rwa` (the delta from
+> rest), so art authored the way it reads on screen stays upright and only animation/aim turns
+> it. Two smaller things came out of the same pass: a bone's animated `rotation` was applied
+> TWICE (once folded in by `Rig.computeFK`, once again in `update()`), and `Actor`'s own
+> `BODY_LIFT_R` lift is now placeholder-only — a rig already carries its hover height in that
+> body bone, so lifting again double-counted; the status aura and floating health bar moved
+> onto the body's measured centre accordingly. The **energy tether** is now drawn (it never
+> was): any bone declaring the `outerW`/`innerW` widths the editor already uses for a tubular
+> bone gets a two-pass glowing arc from its pivot to its tip, which covers orb-core's two
+> sockets and boss-core's two shard rings without either being special-cased. `tools/animator`
+> got the identical placement change (`rendering/Renderer.ts` + a `bones` field on
+> `RenderData`) — the editor previewing a different layout than the game ships is exactly how
+> this got authored and shipped in the first place. The mounted module was ~2x the concept's
+> module-to-core ratio (`art/concept/02_weapon_mount_ranged.png`) and covered the eye — now
+> `weaponSkins.ts`'s single `MODULE_SCALE = 0.75` factor (the user's explicit middle between
+> matching the concept and keeping every weapon frame's silhouette readable), applied in
+> `getWeaponScale` so the per-texture measured sizes stay untouched — and the idle arm carries
+> a decorative second module pointing outward along its own tether, so the silhouette finally
+> matches the concept's two-armed read.
+>
+> **The testing law this establishes** (asked for directly: "之前好像也是这么反馈的，结果没修好。
+> 你能加上测试保证正确吗" — and fair, because the 2026-08-12 shield-centring pass had this bug's
+> own symptom in a comment and read it as the rig's design). A placement/assembly claim is only
+> pinned when it is checked against the **real shipped bundle**, as a **relationship** rather
+> than a restated coordinate, for **every** rig — `rigComposition.test.ts` (85 cases) loads
+> `client/public/skins/*/animation.json` + `frames.json` + each PNG's real IHDR width, resolves
+> skin → rig exactly as the game does (`skinRegistry.RIG_DEFS` × the preload pairs parsed from
+> `main.ts`, so a new character cannot skip it), runs the real `RigSkin`, and asserts: body on
+> its own hover height; every sprite upright at rest; **rendered footprint == 2 × that bone's
+> `bodyR`** (every shipped binding satisfies this exactly — treat it as the authoring law when
+> re-exporting art, and it's the guard against the ~15.7x scale class of bug); decorative parts
+> contained by the body vs orbiting modules clear of it; no two parts co-located; one shared
+> orbit radius; a tether per orbiting bone; and all of it re-checked across every shipped clip
+> at 12 samples (this FK model doesn't cascade translate to children, so a body-only hover bob
+> would tear the character apart). Every check is mutation-verified: reverting tip placement
+> fails 22, reverting rest-relative rotation fails 10, reverting `MODULE_SCALE` fails 14 — while
+> the pre-existing 1272-test suite passed straight through the original bug. That band also
+> immediately caught a **second real bug**: `KIND_DEFAULTS`' `104/1536` scale divisor was stale
+> after its art was downsampled to 320px, so the never-invisible fallback silhouette rendered at
+> ~0.2x the core (a nub); fixed to `90/320`.
 
 ## Open questions
 

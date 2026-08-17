@@ -31,7 +31,11 @@ const bossCoreRig = new Rig(BOSS_CORE_RIG);
 // radius — only the bound art + each skin's own binding.scaleX/Y (client/public/skins/
 // <name>/animation.json) differ, exactly like the 3 orb-core characters above share
 // one Rig. `content/enemies.ts`'s BRUTE/FLOATER blueprints pick these via `bodyRig`.
-const RIG_DEFS: Record<string, { rig: Rig; referenceRadius: number }> = {
+// Exported for `rigComposition.test.ts`, which checks every SHIPPED bundle's real
+// animation.json against the rig it will actually be rendered with — it has to resolve
+// skin name → rig the same way the game does, not from a hand-copied table that could
+// drift away from this one.
+export const RIG_DEFS: Record<string, { rig: Rig; referenceRadius: number }> = {
   char_vanguard: { rig: orbCoreRig, referenceRadius: ORB_CORE_REFERENCE_RADIUS },
   char_skirmisher: { rig: orbCoreRig, referenceRadius: ORB_CORE_REFERENCE_RADIUS },
   char_juggernaut: { rig: orbCoreRig, referenceRadius: ORB_CORE_REFERENCE_RADIUS },
