@@ -69,7 +69,7 @@ function showEverything(w: ScreenFlowWidgets) {
   w.partyScreen.show(800, 600);
   w.loginScreen.show(800, 600);
   w.forge.hide(); // Forge has no show(); render() doesn't flip visible — start hidden like `showX()`'s pre-state assumes
-  w.screens.show(800, 600, true, 'title', [], 'hint');
+  w.screens.show(800, 600, true, 'title', []);
   w.settingsScreen.show(800, 600, defaultSettingsState());
   w.pauseMenu.show(800, 600);
   w.hudView.visible = true;

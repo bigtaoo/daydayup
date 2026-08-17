@@ -99,15 +99,18 @@ describe('AIDecideSystem.tick — no-target early-out', () => {
     new AIDecideSystem().tick(s);
     const target = s.players[1]!;
     expect(e.facing).toBe(atan2Brad(target.gy - e.gy, target.gx - e.gx));
-    expect(e.firing).toBe(true);
+    // Correctly targets seat 1 (not the downed seat 0), but it's far outside engage
+    // range, so it must not be firing yet (ENGINE_VERSION 40) — facing and firing
+    // are independent now.
+    expect(e.firing).toBe(false);
   });
 });
 
 describe('AIDecideSystem.tick — atan2 facing', () => {
-  it('faces exactly toward the target via atan2Brad(dy, dx) and sets firing true', () => {
+  it('faces exactly toward the target via atan2Brad(dy, dx) and sets firing true once in range', () => {
     const s = createGameState({ ...CFG, players: [{ start: [900, 700] }] });
     const target = s.players[0]!;
-    const e = addEnemy(s, 400, 400);
+    const e = addEnemy(s, 850, 650); // within the default ~180px engage range, off-axis
     new AIDecideSystem().tick(s);
     expect(e.facing).toBe(atan2Brad(target.gy - e.gy, target.gx - e.gx));
     expect(e.firing).toBe(true);
@@ -141,6 +144,14 @@ describe('AIDecideSystem.tick — chase toward engage range (ENGINE_VERSION 37)'
     expect(Math.round((e.vy / e.vx) * 100)).toBe(Math.round((dy / dx) * 100));
   });
 
+  it('does NOT fire while still out of engage range (ENGINE_VERSION 40 — no more room-wide alpha strike)', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [900, 700] }] });
+    const e = addEnemy(s, 400, 400); // well outside the default ~180px engage range
+    e.firing = true; // pre-set true to prove the gate actually flips it off
+    new AIDecideSystem().tick(s);
+    expect(e.firing).toBe(false);
+  });
+
   it('moves at (approximately) the configured moveSpeedPerTick magnitude', () => {
     const s = createGameState({ ...CFG, players: [{ start: [900, 700] }] });
     const e = addEnemy(s, 400, 400);
@@ -150,15 +161,16 @@ describe('AIDecideSystem.tick — chase toward engage range (ENGINE_VERSION 37)'
     expect(Math.abs(isqrt(speedSq) - DEFAULT_ENEMY_MOVE_SPEED_PER_TICK)).toBeLessThanOrEqual(1);
   });
 
-  it('stops (vx=vy=0) once within engageRangeFp of the target', () => {
+  it('stops (vx=vy=0) and fires once within engageRangeFp of the target (ENGINE_VERSION 40)', () => {
     const s = createGameState({ ...CFG, players: [{ start: [400, 400] }] });
     const e = addEnemy(s, 400, 400); // exactly on top of the target — well inside range
     new AIDecideSystem().tick(s);
     expect(e.vx).toBe(toFp(0));
     expect(e.vy).toBe(toFp(0));
+    expect(e.firing).toBe(true);
   });
 
-  it('stops exactly at the boundary (distance === engageRangeFp)', () => {
+  it('stops and fires exactly at the boundary (distance === engageRangeFp)', () => {
     const s = createGameState({ ...CFG, players: [{ start: [400, 400] }] });
     const e = addEnemy(s, 400, 400);
     // Place the enemy exactly engageRangeFp away along +x — the boundary is inclusive.
@@ -166,6 +178,17 @@ describe('AIDecideSystem.tick — chase toward engage range (ENGINE_VERSION 37)'
     new AIDecideSystem().tick(s);
     expect(e.vx).toBe(toFp(0));
     expect(e.vy).toBe(toFp(0));
+    expect(e.firing).toBe(true);
+  });
+
+  it('does NOT fire one fp past the boundary (distance === engageRangeFp + 1)', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [400, 400] }] });
+    const e = addEnemy(s, 400, 400);
+    e.gx = (s.players[0]!.gx - DEFAULT_ENEMY_ENGAGE_RANGE_FP - toFp(1)) as Fp;
+    e.firing = true; // pre-set true to prove the gate actually flips it off, not just leaves it
+    new AIDecideSystem().tick(s);
+    expect(e.vx).not.toBe(toFp(0)); // still closing the last 1fp
+    expect(e.firing).toBe(false);
   });
 
   it('a per-enemy moveSpeedPerTick/engageRangeFp override wins over the shared default', () => {
@@ -179,6 +202,17 @@ describe('AIDecideSystem.tick — chase toward engage range (ENGINE_VERSION 37)'
     // tolerance, not exact-arithmetic reimplementation.
     expect(speed).toBeGreaterThan(toFp(50) * 0.95);
     expect(speed).toBeLessThan(toFp(50) * 1.05);
+    expect(e.firing).toBe(false); // 0fp range never satisfied at this distance
+  });
+
+  it('a per-enemy engageRangeFp override drives the FIRING gate too, not just the movement stop (ENGINE_VERSION 40)', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [900, 700] }] });
+    const e = addEnemy(s, 400, 400); // ~583px away — well beyond the ~180px default range
+    e.engageRangeFp = pxToFp(700); // a sniper-style override, wider than the default
+    new AIDecideSystem().tick(s);
+    expect(e.vx).toBe(toFp(0)); // already "in range" under the wider override — stopped
+    expect(e.vy).toBe(toFp(0));
+    expect(e.firing).toBe(true); // and firing, at a distance the DEFAULT range would reject
   });
 
   it('a hand-built enemy missing moveSpeedPerTick/engageRangeFp falls back to the shared defaults', () => {
@@ -188,6 +222,7 @@ describe('AIDecideSystem.tick — chase toward engage range (ENGINE_VERSION 37)'
     expect(e.engageRangeFp).toBeUndefined();
     new AIDecideSystem().tick(s);
     expect(isqrt(e.vx * e.vx + e.vy * e.vy)).toBeGreaterThan(0); // moved, using the fallback speed
+    expect(e.firing).toBe(false); // ~583px away, well beyond the fallback ~180px default range
   });
 
   it('in dungeon mode, an unactivated room leaves vx/vy untouched (frozen, same gate as firing)', () => {
@@ -205,7 +240,7 @@ describe('AIDecideSystem.tick — dungeon room-activation gate (design/05, 2026-
   it('outside dungeon mode, an enemy with no roomId still decides normally', () => {
     const s = createGameState({ ...CFG, players: [{ start: [900, 700] }] });
     expect(s.dungeonEnabled).toBe(false);
-    const e = addEnemy(s, 400, 400); // roomId undefined
+    const e = addEnemy(s, 850, 650); // roomId undefined, within engage range
     new AIDecideSystem().tick(s);
     expect(e.firing).toBe(true);
   });
@@ -240,10 +275,10 @@ describe('AIDecideSystem.tick — dungeon room-activation gate (design/05, 2026-
 
   it('in dungeon mode, an activated room decides normally', () => {
     const s = dungeonState();
-    const target = s.players[0]!; // default seat, world centre
+    const target = s.players[0]!; // default seat, world centre (800,600px)
     s.dungeonRoomIndexById.set('r0', 0);
     s.dungeonRoomRuntime.push({ activated: true, roomTick: 0, schedule: [], cursor: 0, hasLiveEnemy: false });
-    const e = addEnemy(s, 400, 400, 'r0');
+    const e = addEnemy(s, 750, 550, 'r0'); // within engage range of the world-centre spawn
     new AIDecideSystem().tick(s);
     expect(e.facing).toBe(atan2Brad(target.gy - e.gy, target.gx - e.gx));
     expect(e.firing).toBe(true);

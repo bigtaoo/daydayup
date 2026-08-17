@@ -655,6 +655,83 @@ describe('Dungeon mode — WaveScript timing (atTick / spacingTicks), room-local
   });
 });
 
+describe('Dungeon mode — a room\'s far-side enemies do not alpha-strike on activation (ENGINE_VERSION 40)', () => {
+  // The end-to-end regression for the reported bug ("一进入地图就被几十个怪物集火，瞬间就死了"):
+  // a wide room whose whole garrison spawns at tick 0 (SpawnSystem's hand-authored
+  // default, same as every real level-1 room) — one enemy right next to the player
+  // spawn (well inside engageRangeFp), one clear across the room (well outside it).
+  // Both are in the SAME activated room, spawned the SAME tick, driven through the
+  // real createGameEngine pipeline (AIDecideSystem → WeaponFireSystem → Movement, not
+  // a hand-rolled subset) — this is the actual whole-room alpha strike the unit-level
+  // AIDecideSystem/enemyChase tests can't see, since they never spawn two enemies at
+  // once through a real room activation.
+  const FAR_LIB: RoomPiece[] = [
+    {
+      id: 'far_hall', tags: ['far'], sizeGrid: { w: 30, h: 10 }, solids: [],
+      // x=4 is ~2 grid (~64px) from the player spawn at x=2 — inside the default
+      // ~5.6 grid engage range. x=28 is ~26 grid (~832px) away — nowhere close.
+      spawns: { player: [{ x: 2, y: 5 }], enemy: [{ x: 4, y: 5 }, { x: 28, y: 5 }] },
+      exits: [{ edge: 'east' }],
+      encounter: {
+        entries: [
+          { atTick: 0, enemyType: 'basic', spawnPoint: 0, count: 1 }, // near
+          { atTick: 0, enemyType: 'basic', spawnPoint: 1, count: 1 }, // far
+        ],
+      },
+    },
+    {
+      id: 'far_boss', role: 'boss', sizeGrid: { w: 20, h: 16 }, solids: [],
+      spawns: { player: [{ x: 2, y: 8 }], enemy: [] }, exits: [{ edge: 'west' }],
+    },
+  ];
+  const FAR_CFG: EngineConfig = {
+    seed: 13, worldW: 640, worldH: 640, waves: [],
+    dungeon: {
+      config: {
+        biomeId: 'far', nameKey: 'far', floorCount: 1, roomsPerFloor: { min: 2, max: 2 },
+        pieceTags: ['far'], layout: 'linear', extractionPieceId: 'far_boss', bossPieceId: 'far_boss',
+        difficultyCurve: { base: 1, perFloor: 0 },
+      },
+      library: FAR_LIB,
+    },
+  };
+
+  it('the room-wide-far enemy is not firing the tick after the room activates, unlike the near one', () => {
+    const eng = createGameEngine(FAR_CFG);
+    const s = eng.state;
+    eng.step([idle(1)]); // floor places
+    eng.step([idle(2)]); // room 0 activates — both atTick:0 entries spawn this same tick
+    expect(s.enemies.length).toBe(2);
+    // AIDecideSystem (step 2) runs before SpawnSystem (later) in a tick's own order, so
+    // a freshly-spawned enemy gets its first real AI decision the tick AFTER it spawns
+    // — same one-tick lag `room_enter`/`activated` itself already has (see the
+    // "activates the tick AFTER placement" test above).
+    eng.step([idle(3)]);
+    // Identify by position rather than assuming dispatch order.
+    const far = s.enemies.reduce((a, b) => (a.gx > b.gx ? a : b));
+    const near = s.enemies.reduce((a, b) => (a.gx < b.gx ? a : b));
+    expect(far.firing).toBe(false); // the whole point of ENGINE_VERSION 40
+    expect(near.firing).toBe(true); // a genuinely close threat still engages immediately
+  });
+
+  it('the far enemy still has not fired a single bullet after several more ticks — it has to close the distance first', () => {
+    const eng = createGameEngine(FAR_CFG);
+    const s = eng.state;
+    eng.step([idle(1)]);
+    eng.step([idle(2)]); // activation
+    for (let t = 3; t <= 15; t++) eng.step([idle(t)]); // 13 more ticks — nowhere near enough to close ~770px
+    const far = s.enemies.reduce((a, b) => (a.gx > b.gx ? a : b));
+    expect(far.gx).toBeGreaterThan(toFpGrid(20)); // confirms it's still the far one, not some other actor
+    expect(far.firing).toBe(false);
+    // Every live projectile so far belongs to the near enemy (or the player, if any) —
+    // none originated from the far one, i.e. no bullet crossed the room on activation.
+    for (const p of s.projectiles) {
+      if (!p.alive) continue;
+      expect(p.ownerId).not.toBe(far.id);
+    }
+  });
+});
+
 describe('Dungeon mode — branching layout resolves at generation time, not via player input', () => {
   // design/05 (2026-08-04, updated 2026-08-05 "fully-realized branching"): the old
   // chooseBranch read player facing "at the moment of arrival" — that moment no

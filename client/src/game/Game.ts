@@ -921,7 +921,7 @@ export class Game {
 
   showOutcomeScreen(won: boolean, title: string, lines: readonly string[]): void {
     const { w, h } = this.screenSize();
-    this.screens.show(w, h, won, title, lines, t('results.confirmHint'));
+    this.screens.show(w, h, won, title, lines);
   }
 
   /**

@@ -595,3 +595,31 @@ branch: a flat `floors` descend keeps the same arena geometry (only the wave lis
 swaps) and already requires every enemy dead, so that path is byte-identical to
 v38. Any v38 dungeon stream that descended with a non-capstone room still
 populated diverges immediately.
+
+v40: enemies only open fire once actually within their own `engageRangeFp`,
+fixing a live player report — "the instant I walk into a room, dozens of
+enemies gun me down before I can react" — that surfaced right after v38 gave
+level 1's rooms 15-30 enemies each. `AIDecideSystem.tick()` used to set
+`firing = true` for every enemy in an activated room unconditionally, the same
+tick the room activated, regardless of the enemy's actual distance from the
+player; `engageRangeFp` (v37) only ever gated `chase()`'s decision to stop
+closing distance, never whether the mob was allowed to shoot at all. Since
+`ENEMY_GUN_SIM`'s bullet travel (~30 grid) comfortably outranges a 20x20 room's
+diagonal, every enemy in the room could and did land shots from wherever it
+happened to spawn, the same tick the player first stepped in — a whole-room
+alpha strike with no reaction time, regardless of how many of those 15-30
+enemies were actually anywhere near the player. Fixed:
+`AIDecideSystem.chaseAndEngage()` (renamed from `chase()`) now sets
+`e.firing = true` only on the same branch that already stops the enemy's
+movement (`distSq <= engageRangeFp²`), and explicitly to `false` while still
+closing distance. This is the room-vs-individual aggro split most twin-stick
+roguelites (Soul Knight, Enter the Gungeon) use: a room's whole enemy roster
+still wakes up and starts closing in the instant the room activates (unchanged
+— that's the existing room-activation gate, design/05), but only the ones
+already within gun range actually shoot; the rest have to visibly cross the
+room first, which is exactly the reaction window the report was missing. A real
+simulation-output change (fewer/later bullets, and every downstream
+`combatPrng` draw — spread jitter, crit rolls — a fired shot triggers shifts in
+time relative to before), hence the bump. No content numbers changed —
+`DEFAULT_ENEMY_ENGAGE_RANGE_FP`/per-blueprint overrides are untouched, only
+which tick each one first qualifies to fire.

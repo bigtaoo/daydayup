@@ -5,7 +5,6 @@ import type { Phase } from '../phase';
 import { fpToPx, bradToRad } from '../coords';
 import { ELEMENT_COLORS } from '../theme';
 import { totalFloorCount, checkpointReached } from '../match/floorCount';
-import { shouldConfirmOnFireEdge } from '../screens/confirmEdge';
 import { LocalPredictor, DEFAULT_PREDICTOR } from './LocalPredictor';
 import type { CommandBuilder } from './CommandBuilder';
 import type { AllyController } from './AllyController';
@@ -84,15 +83,18 @@ export interface GameLoopHost {
  * three branches (playing/paused/idle), the offline fixed-step loop (`advanceSim`/
  * `stepSim`) and its online counterpart (`advanceOnline`, latency-hiding local-player
  * prediction), plus the render-side adapters they share (`spawnBulletTrails`/
- * `updateFx`/`updateCamera`/`updateHud`/`pollConfirm`). Owns the accumulator (`acc`),
- * the rising-edge confirm latch (`prevFire`), and the online local-player predictor
- * (`predictor`/`predLastTick`) as its own private state — none of those are read
- * anywhere outside these methods, unlike `phase`/`engine`/`session`/`meta` (which stay
- * on Game, see `GameLoopHost`'s own doc comment).
+ * `updateFx`/`updateCamera`/`updateHud`). Owns the accumulator (`acc`) and the online
+ * local-player predictor (`predictor`/`predLastTick`) as its own private state — none
+ * of those are read anywhere outside these methods, unlike `phase`/`engine`/`session`/
+ * `meta` (which stay on Game, see `GameLoopHost`'s own doc comment). Result-screen
+ * confirm used to be polled here too (a raw fire-button rising edge, `confirmEdge.ts`)
+ * — removed 2026-08-17 in favor of `Screens.ts`'s own explicit CONFIRM button, the
+ * same "driven exclusively by its own Buttons" rule every other screen already
+ * followed (see that file's doc comment for why the raw-input path was a real bug
+ * source, not just a redundancy).
  */
 export class GameLoop {
   private acc = 0; // accumulated real time (ms) not yet consumed by a sim step
-  private prevFire = false; // rising-edge confirm on menus
 
   // Online local-player prediction (design/06): the render layer draws the local seat's own
   // movement/aim ahead of the confirmed frame stream to hide RTT, then eases to the
@@ -139,12 +141,12 @@ export class GameLoop {
       this.updateFx(dt);
       this.deps.scene.interpolate(1, dt);
     } else {
-      // Menu / result / squad lobby: freeze the last frame, keep fx fading, poll for
-      // confirm. `partyScreen.update` no-ops when hidden, so it's safe to call
+      // Menu / result / squad lobby: freeze the last frame, keep fx fading. Confirm is
+      // now driven entirely by Screens.ts's own Button taps (Game.ts wires them), not
+      // polled here. `partyScreen.update` no-ops when hidden, so it's safe to call
       // unconditionally rather than gating on `phase === 'squad'` here too.
       this.updateFx(dt);
       this.deps.scene.interpolate(1, dt);
-      this.pollConfirm();
       this.deps.partyScreen.update(dt);
     }
   }
@@ -176,9 +178,6 @@ export class GameLoop {
     if (this.host.getPhase() === 'playing') {
       this.updateHud(dt);
       this.deps.touchControlsView.update(this.deps.input.getTouchVisual());
-      // Keep the confirm edge fresh so arriving on a result screen with fire still
-      // held doesn't instantly restart (the press must be released and re-issued).
-      this.prevFire = this.deps.input.read().firing;
     }
   }
 
@@ -275,7 +274,6 @@ export class GameLoop {
     this.updateCamera(1);
     this.updateHud(dt);
     this.deps.touchControlsView.update(this.deps.input.getTouchVisual());
-    this.prevFire = this.deps.input.read().firing;
 
     if (s.phase === 'gameover') {
       // Report the local end-of-match hash (+ placements, for a PvP result) so the
@@ -294,7 +292,7 @@ export class GameLoop {
     this.deps.events.consume(events);
   }
 
-  // ---- fx / camera (FxController does the actual work — see that file) ----
+  // ---- fx / camera / hud (FxController/HudView do the actual work — see those files) ----
 
   // Per-element bullet trails (design/03/07). Once per sim tick, drop a fading
   // element-coloured dot at each live elemental bullet's position; the fx fade
@@ -374,16 +372,5 @@ export class GameLoop {
     // panel must not also register as a shot (same WebInput raw-mousedown reasoning as
     // the portal popup's own suppression above).
     this.deps.builder.suppressFire(this.deps.portalPrompt.isOpen || this.deps.hud.weaponPickupPrompt.isOpen);
-  }
-
-  // Rising-edge fire → confirm, on the RESULT screens only — see confirmEdge.ts for
-  // why every other screen must be driven by its own Buttons instead.
-  private pollConfirm(): void {
-    const firing = this.deps.input.read().firing;
-    if (shouldConfirmOnFireEdge(this.host.getPhase(), firing, this.prevFire)) this.host.confirm();
-    // Tracked on every screen, not just the eligible ones, so arriving on a result
-    // screen with fire already held doesn't instantly confirm — the press has to be
-    // released and re-issued (same reason advanceSim keeps it fresh during play).
-    this.prevFire = firing;
   }
 }

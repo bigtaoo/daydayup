@@ -195,7 +195,7 @@ export const zh: Translations<typeof en> = {
     defeatTitle: '战败',
     victoryTitle: '大吉大利',
     eliminatedTitle: '已淘汰',
-    confirmHint: '按开火键返回装备界面',
+    confirmButton: '确定',
     timeLine: '用时 {m}:{ss}',
     floorLine: '楼层 {floor}/{floorCount}',
     materialsBanked: '已存入材料：{count}',

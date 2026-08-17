@@ -195,7 +195,7 @@ export const it: Translations<typeof en> = {
     defeatTitle: 'SCONFITTA',
     victoryTitle: 'VITTORIA ROYALE',
     eliminatedTitle: 'ELIMINATO',
-    confirmHint: "Premi Fuoco — torna all'equipaggiamento",
+    confirmButton: 'CONFERMA',
     timeLine: 'Tempo {m}:{ss}',
     floorLine: 'Piano {floor}/{floorCount}',
     materialsBanked: 'Materiali depositati: {count}',

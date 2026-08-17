@@ -7,23 +7,36 @@ import { t } from '../../i18n';
 // (design/10 screen flow). It is pure presentation — it reads nothing from the
 // engine and only calls back `onConfirm` (start/restart) / `onMenu` (exit to the main
 // menu). Lives in the fixed `ui` layer, on top of the HUD.
+//
+// Confirm is a single explicit button, not tap-anywhere-on-the-panel (changed
+// ENGINE_VERSION-independent, render-only, 2026-08-17): a player report — "swarmed
+// and killed almost instantly, then the screen just seemed to vanish" — traced to
+// this screen accepting a pointerdown ANYWHERE on the panel, plus a raw fire-button
+// rising edge (`confirmEdge.ts`, now deleted), as "confirm". A player who just died
+// mid-fight is often still moving the mouse or holding fire from the fight itself,
+// so the very first stray click/press after the swarm kill could dismiss this
+// screen before it was even read — reading as "the level just exited on its own"
+// even though a real confirm technically fired. `confirmBtn` is now the ONE way to
+// leave this screen (mirroring `menuBtn`'s secondary exit) — deliberate, not
+// incidental.
 export class Screens {
   readonly view = new Container();
   private panel = new Panel({ alpha: 0.72, background: 'hub' });
   private title: Text;
   private sub: Text;
-  private hint: Text;
+  private confirmBtn: Button;
   private menuBtn: Button;
   /** Win/loss badge above the title (`RunOutcome.ts`'s titles: EXTRACTED/VICTORY
    * ROYALE = win, DEFEAT/ELIMINATED = loss). Hidden until its art is generated
    * (uiSkins.ts's non-blocking preload) — a missing texture just means no badge. */
   private resultIcon = new Sprite();
 
-  // Called when the player confirms (pointer tap or fire/jump edge — wired in Game).
+  // Called when the player taps `confirmBtn` (start/restart — re-enters the loadout
+  // screen to gear up for the next run).
   onConfirm: (() => void) | null = null;
-  // Secondary exit — a small link, not the primary confirm action (design/10 decided
-  // result-screen content: confirm still re-enters the loadout screen to gear up for
-  // the next run; this is for a player who wants to fully back out instead).
+  // Secondary exit — a smaller button, not the primary confirm action (design/10
+  // decided result-screen content: confirm still re-enters the loadout screen; this
+  // is for a player who wants to fully back out to the main menu instead).
   onMenu: (() => void) | null = null;
 
   constructor() {
@@ -39,24 +52,21 @@ export class Screens {
       text: '',
       style: { fill: 0xcbd5e0, fontSize: 19, fontFamily: 'monospace', align: 'center', lineHeight: 26, padding: 26 },
     });
-    this.hint = new Text({
-      text: '',
-      style: { fill: 0x90cdf4, fontSize: 17, fontFamily: 'monospace', padding: 20 },
-    });
-    for (const t of [this.title, this.sub, this.hint]) t.anchor.set(0.5);
+    this.title.anchor.set(0.5);
+    this.sub.anchor.set(0.5);
 
+    // Primary action — same green "go" styling as MainMenu's PLAY / ModeSelect's
+    // SOLO / PartyScreen's START MATCHING (widgets.ts's established convention for
+    // "the button this screen wants you to press").
+    this.confirmBtn = new Button(t('results.confirmButton'), { w: 220, h: 44, fontSize: 17, color: 0x2f855a, borderColor: 0x68d391 });
+    this.confirmBtn.onTap = () => this.onConfirm?.();
     this.menuBtn = new Button(t('results.mainMenuButton'), { w: 150, h: 32, fontSize: 13 });
     this.menuBtn.onTap = () => this.onMenu?.();
 
     this.resultIcon.anchor.set(0.5);
     this.resultIcon.visible = false;
 
-    this.view.addChild(this.panel.view, this.resultIcon, this.title, this.sub, this.hint, this.menuBtn.view);
-    // Full-panel is clickable/tappable on web; the fire/jump fallback covers WeChat.
-    // `menuBtn` stops its own pointerdown from bubbling here (widgets.ts's Button), so
-    // tapping it doesn't ALSO trigger the full-panel confirm.
-    this.view.eventMode = 'static';
-    this.view.on('pointerdown', () => this.onConfirm?.());
+    this.view.addChild(this.panel.view, this.resultIcon, this.title, this.sub, this.confirmBtn.view, this.menuBtn.view);
     this.view.visible = false;
   }
 
@@ -67,15 +77,17 @@ export class Screens {
     this.resultIcon.position.set(cx, cy - 168);
     this.title.position.set(cx, cy - 120);
     this.sub.position.set(cx, cy);
-    this.hint.position.set(cx, cy + 96);
-    this.menuBtn.view.position.set(cx - 75, cy + 128);
+    this.confirmBtn.view.position.set(cx - 110, cy + 92);
+    this.menuBtn.view.position.set(cx - 75, cy + 152);
   }
 
-  show(w: number, h: number, won: boolean, title: string, lines: readonly string[], hint: string) {
-    this.menuBtn.setText(t('results.mainMenuButton')); // retext on show (design/17-i18n.md)
+  show(w: number, h: number, won: boolean, title: string, lines: readonly string[]) {
+    // Retext on show (design/17-i18n.md) so a language change takes effect next time
+    // this screen opens, same convention as MainMenu.ts's `retext()`.
+    this.confirmBtn.setText(t('results.confirmButton'));
+    this.menuBtn.setText(t('results.mainMenuButton'));
     this.title.text = title;
     this.sub.text = lines.join('\n');
-    this.hint.text = hint;
     const tex = getUiTexture(won ? 'icon_result_extract' : 'icon_result_wiped');
     if (tex) {
       this.resultIcon.texture = tex;

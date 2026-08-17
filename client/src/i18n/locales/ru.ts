@@ -200,7 +200,7 @@ export const ru: Translations<typeof en> = {
     defeatTitle: 'ПОРАЖЕНИЕ',
     victoryTitle: 'ПОБЕДА РОЯЛЬ',
     eliminatedTitle: 'ВЫБЫЛ',
-    confirmHint: 'Нажмите Огонь — вернуться к снаряжению',
+    confirmButton: 'ПОДТВЕРДИТЬ',
     timeLine: 'Время {m}:{ss}',
     floorLine: 'Этаж {floor}/{floorCount}',
     materialsBanked: 'Сохранено материалов: {count}',

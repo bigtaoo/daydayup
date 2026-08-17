@@ -5,7 +5,7 @@ closed loop the design docs describe, and the running record of how each phase a
 landed. Phases are written top-to-bottom in dependency order; each one keeps its dated
 shipped-notes underneath it, so a phase section is both the plan and the history.
 
-**Current built state (2026-08-15).** `ENGINE_VERSION` **38** (32: ground-weapon pickup is
+**Current built state (2026-08-17).** `ENGINE_VERSION` **40** (32: ground-weapon pickup is
 click-driven; 33: manual aim removed entirely; 34: co-resident PvE room/door model, engine +
 client rendering; 35: fully-realized branching — see the Room & door model section below;
 same-day map-editor door placement, the `layout: 'graph2d'` real-2D-layout follow-up, AND the
@@ -32,8 +32,44 @@ in-flight bullets into the next floor — the co-resident model's checkpoint onl
 *capstone* room to be cleared, so anything still alive elsewhere used to ride along holding a
 `roomId` for a room that no longer existed and a position measured against geometry that had
 just been torn down. Narrow before 38; with 38's floor sizes a beeline to the capstone can
-strand ~100 enemies per floor. See the Stranded-enemy section below); 2931 tests green across all 7
-workspace packages (engine 629 / client 1278 / server 186 / animator 444 / map-editor 280 /
+strand ~100 enemies per floor. See the Stranded-enemy section below); 40: enemies only open
+fire once actually within their own `engageRangeFp`, fixing a live player report ("现在增加
+了怪物之后，我一进入地图就被几十个怪物集火，瞬间就死了" — the instant I enter the map, dozens
+of monsters focus-fire me and I die instantly). `AIDecideSystem` set `firing = true` for every
+enemy in an activated room unconditionally, the same tick the room activated, regardless of
+distance — `engageRangeFp` (37) only ever gated `chase()`'s stop-moving decision, never
+whether a mob was allowed to shoot at all. With 38's 15-30-enemies-per-room floors and
+`ENEMY_GUN_SIM`'s ~30-grid bullet travel comfortably outranging a room's diagonal, that was a
+whole-room alpha strike on tick 1 with zero reaction time. Fixed the same way Soul Knight/Enter
+the Gungeon split room-wide aggro from per-enemy attack range: a room's enemies still all wake
+up and start closing distance the instant the room activates (unchanged — the room stays the
+aggro unit), but only the ones already within `engageRangeFp` actually fire; the rest must
+visibly cross the room first. See `ENGINE_VERSION_HISTORY.md`'s v40 entry for the full account.
+Same-day, render-only follow-up (no `ENGINE_VERSION` bump — 🟢): the DEFEAT/VICTORY result
+screen's confirm gesture changed from tap-anywhere-on-the-panel (plus a raw fire-button
+rising edge, `confirmEdge.ts`, now deleted) to a single explicit CONFIRM `Button` — the same
+player report that flagged the alpha-strike above also read the almost-instant swarm death
+as "the level just exited on its own," which traced to a stray click/held-fire from the fight
+itself being able to dismiss the results screen before it was ever read. `Screens.ts` now has
+no full-panel pointerdown handler at all; `GameLoop.ts`'s `pollConfirm`/`prevFire` rising-edge
+poll is gone with it — every screen, including this one, is now "driven exclusively by its own
+Buttons," closing the one holdout `confirmEdge.ts`'s own doc comment already named. New
+`results.confirmButton` i18n key across all 8 locales, `results.confirmHint` retired (no
+remaining callers). Followed same-day by a "加测试" pass closing real gaps a first
+pass left open — not just re-asserting the same behavior: an off-by-one boundary check
+(one fp past `engageRangeFp` must NOT fire, complementing the existing "exactly at the
+boundary DOES fire" case), a per-enemy `engageRangeFp` override proven to drive the
+firing gate too (not just the movement-stop it already drove), a `WeaponFireSystem`
+composition test (cooldown ticks down every tick regardless of `firing`, so an
+approaching enemy's gun is already re-armed the instant it crosses into range — no
+extra wait on top of travel time), a `Screens.ts` layout-regression test for the new
+buttons' actual pixel offsets, and — the one genuinely new coverage surface, not
+reachable from any unit test — a full `createGameEngine` end-to-end regression in
+`dungeonrun.test.ts` reproducing the reported bug shape directly: one room, two
+real spawned enemies (one beside the player, one clear across the room), driven
+through the real tick order, confirming the near one engages immediately while the
+far one fires zero bullets until it closes the distance. 2931 tests green across all 7
+workspace packages (engine 635 / client 1272 / server 186 / animator 444 / map-editor 280 /
 png-pipeline 20 / desktop-shell 81 / root build-script 13, `npm run check`, re-measured
 2026-08-15 — the previous snapshot's per-package figures had drifted, including a
 root-build-script count that was never 14) after fixing two real bugs found from a live player report ("cleared

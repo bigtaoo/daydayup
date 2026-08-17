@@ -1,13 +1,33 @@
 /**
  * Step 2 — AI decide (PvE only). Each enemy sets its own intent from state +
- * aiPrng: face the (first alive) player, request fire, and close the distance
- * toward it until within gun range; the weapon cooldown gates the actual shot in
- * WeaponFire. Enemies used to be fully stationary in the slice (turn + shoot only,
- * see ENGINE_VERSION_HISTORY.md v37) — reported as "the AI doesn't move".
+ * aiPrng: face the (first alive) player, close the distance toward it until
+ * within gun range, then fire once actually in range; the weapon cooldown gates
+ * the actual shot in WeaponFire. Enemies used to be fully stationary in the
+ * slice (turn + shoot only, see ENGINE_VERSION_HISTORY.md v37) — reported as
+ * "the AI doesn't move".
  *
  * Ports client/src/game/Enemy.ts tick() (atan2 facing + fire request), radians →
  * brad. The demo's `gx % 1` fire-phase jitter is replaced by an aiPrng-seeded
  * initial cooldown set in SpawnSystem — a real determinism fix.
+ *
+ * Fire-range gate (ENGINE_VERSION 40, design/05): a live player report — "the
+ * instant I walk into a room, dozens of enemies gun me down before I can react"
+ * — traced to `firing` being set unconditionally true the moment a room
+ * activates, regardless of how far the enemy actually was from the player;
+ * `engageRangeFp` only ever gated `chase()`'s stop-moving decision (v37), never
+ * whether the mob was allowed to shoot. With level 1's hand-authored rooms
+ * holding 15-30 enemies each (v38) and `ENEMY_GUN_SIM`'s bullet travel (~30
+ * grid) comfortably covering a room's full diagonal, that meant every enemy in
+ * an activated room opened fire on tick 1 no matter where it spawned — a
+ * whole-room alpha strike with zero reaction time, the opposite of how a room
+ * full of enemies plays in Soul Knight/Enter the Gungeon: enemies notice you
+ * across the whole room (the room stays the aggro unit, unchanged), but only
+ * the ones already close enough actually shoot; the rest have to visibly close
+ * distance first, which is exactly the reaction window the report was missing.
+ * Fixed: `firing` is now true only once the enemy is within its own
+ * `engageRangeFp` (the same distance `chase()` already used to decide when to
+ * stop closing) — "stop and shoot" is now literal instead of "shoot from
+ * anywhere and also stop once close".
  *
  * Room activation gate (design/05 "Room & door model", 2026-08-04): in dungeon
  * mode, an enemy whose room hasn't activated yet (no player has ever reached it)
@@ -39,27 +59,30 @@ export class AIDecideSystem {
       const dx = target.gx - e.gx;
       const dy = target.gy - e.gy;
       e.facing = atan2Brad(dy, dx);
-      e.firing = true;
-      this.chase(e, dx, dy);
+      this.chaseAndEngage(e, dx, dy);
     }
   }
 
   /**
    * Close the distance to the target until within the mob's engage range, then
-   * stop (v37 first pass — no hysteresis/kiting/steering yet, see the module's
-   * matching content/enemies.ts default constants for the tuning rationale). A
-   * straight-line pursuit, same as everything else here: MovementSystem's
-   * push-out keeps a chasing mob from clipping through a wall or another actor,
-   * it just doesn't route AROUND one — a mob can stall against a concave wall.
+   * stop AND fire (v37 first pass for the movement half — no hysteresis/kiting/
+   * steering yet, see the module's matching content/enemies.ts default constants
+   * for the tuning rationale; v40 added the firing gate, see the module doc
+   * comment's "Fire-range gate" section). A straight-line pursuit, same as
+   * everything else here: MovementSystem's push-out keeps a chasing mob from
+   * clipping through a wall or another actor, it just doesn't route AROUND one —
+   * a mob can stall against a concave wall.
    */
-  private chase(e: EnemyActor, dx: number, dy: number): void {
+  private chaseAndEngage(e: EnemyActor, dx: number, dy: number): void {
     const range = e.engageRangeFp ?? DEFAULT_ENEMY_ENGAGE_RANGE_FP;
     const distSq = dx * dx + dy * dy;
     if (distSq <= range * range) {
+      e.firing = true;
       e.vx = 0 as Fp;
       e.vy = 0 as Fp;
       return;
     }
+    e.firing = false; // still out of engage range — close the distance, don't shoot yet
     const dist = isqrt(distSq);
     if (dist === 0) {
       e.vx = 0 as Fp;

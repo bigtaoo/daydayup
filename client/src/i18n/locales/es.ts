@@ -195,7 +195,7 @@ export const es: Translations<typeof en> = {
     defeatTitle: 'DERROTA',
     victoryTitle: 'VICTORIA REAL',
     eliminatedTitle: 'ELIMINADO',
-    confirmHint: 'Pulsa Disparar — volver al equipo',
+    confirmButton: 'CONFIRMAR',
     timeLine: 'Tiempo {m}:{ss}',
     floorLine: 'Piso {floor}/{floorCount}',
     materialsBanked: 'Materiales guardados: {count}',

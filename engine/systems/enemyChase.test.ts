@@ -12,8 +12,8 @@ import { createGameState } from '@dd/engine/state/GameState';
 import type { GameState } from '@dd/engine/state/GameState';
 import { buildEnemyActor } from '@dd/engine/content/enemies';
 import { PLAYER_BASE } from '@dd/engine/content/players';
-import type { EnemyActor } from '@dd/engine/state/entities';
-import { AIDecideSystem, MovementSystem } from '@dd/engine/systems';
+import type { EnemyActor, RangedSimSpec } from '@dd/engine/state/entities';
+import { AIDecideSystem, MovementSystem, WeaponFireSystem } from '@dd/engine/systems';
 import { pxToFp } from '@dd/engine/content/convert';
 import type { Fp } from '@dd/engine/math/fixed';
 
@@ -57,18 +57,25 @@ describe('enemy chase integration (AIDecideSystem + MovementSystem, ENGINE_VERSI
     expect(dist(boss, target)).toBeLessThanOrEqual(boss.engageRangeFp! + 1);
   });
 
-  it('keeps firing throughout the approach, not just once it stops', () => {
+  it('only fires once within engage range, not while still closing the distance (ENGINE_VERSION 40)', () => {
     const s = createGameState({ ...CFG, players: [{ start: [400, 300] }] });
+    const target = s.players[0]!;
     const e = buildEnemyActor(s, pxToFp(400 + 500), pxToFp(300), 'basic');
     s.enemies.push(e);
 
     const ai = new AIDecideSystem();
     const mv = new MovementSystem();
+    let everFiredWhileOutOfRange = false;
+    let firedOnceInRange = false;
     for (let i = 0; i < 150; i++) {
       ai.tick(s);
-      expect(e.firing).toBe(true); // every tick, whether still closing or already stopped
+      const inRange = dist(e, target) <= e.engageRangeFp! + 1;
+      if (e.firing && !inRange) everFiredWhileOutOfRange = true;
+      if (e.firing && inRange) firedOnceInRange = true;
       mv.tick(s);
     }
+    expect(everFiredWhileOutOfRange).toBe(false); // no more room-wide alpha strike
+    expect(firedOnceInRange).toBe(true); // but it does actually engage once close enough
   });
 
   it('a player that keeps outrunning it is never caught (enemy is slower by design)', () => {
@@ -113,5 +120,41 @@ describe('enemy chase integration (AIDecideSystem + MovementSystem, ENGINE_VERSI
     // target's (west) side, no matter how many ticks it keeps trying to close in.
     expect(e.gx).toBeGreaterThanOrEqual(wall.x);
     expect(e.gx).toBeGreaterThan(target.gx);
+    // The wall pins it ~240px from the target — outside engageRangeFp (~180px) — so
+    // it never gets to fire either (ENGINE_VERSION 40): a mob stalled by geometry is
+    // "aware" but harmless, not a bullet source through the wall it's stuck against.
+    expect(dist(e, target)).toBeGreaterThan(e.engageRangeFp!);
+    expect(e.firing).toBe(false);
+  });
+
+  it('an approaching enemy already has a spent cooldown by the time it enters range, so it fires the SAME tick it arrives (ENGINE_VERSION 40 — WeaponFireSystem composition)', () => {
+    // WeaponFireSystem.actor() decrements cooldownTicks every tick a weapon exists,
+    // regardless of `firing` — before this fix that never mattered (firing was
+    // ~always true), but now an enemy spends most of its approach with firing=false
+    // while its gun's cooldown quietly counts down anyway. Confirms it composes as
+    // intended: no extra "re-arm" wait is paid on arrival on top of the travel time.
+    const s = createGameState({ ...CFG, players: [{ start: [400, 300] }] });
+    const e = buildEnemyActor(s, pxToFp(400 + 500), pxToFp(300 + 300), 'basic'); // ~580px away
+    const fireRateTicks = (e.weapon!.spec as RangedSimSpec).fireRateTicks;
+    e.weapon!.cooldownTicks = fireRateTicks; // start on a full cooldown, worst case
+    s.enemies.push(e);
+
+    const ai = new AIDecideSystem();
+    const wf = new WeaponFireSystem();
+    const mv = new MovementSystem();
+    let enteredRangeTick = -1;
+    let firedTick = -1;
+    for (let i = 0; i < 200 && firedTick === -1; i++) {
+      ai.tick(s);
+      if (e.firing && enteredRangeTick === -1) enteredRangeTick = i;
+      wf.tick(s);
+      if (s.projectiles.length > 0 && firedTick === -1) firedTick = i;
+      mv.tick(s);
+    }
+    // Closing ~400px of the ~580px gap at ~4px/tick takes well over fireRateTicks
+    // (45 ticks at the enemygun's 1.5s cooldown) — so cooldown is already spent
+    // before arrival, and the two ticks must coincide exactly.
+    expect(enteredRangeTick).toBeGreaterThan(fireRateTicks);
+    expect(firedTick).toBe(enteredRangeTick);
   });
 });

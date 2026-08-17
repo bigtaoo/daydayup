@@ -130,28 +130,20 @@ describe('GameLoop.update — top-level phase dispatch', () => {
     expect(submitSpy).not.toHaveBeenCalled();
   });
 
-  it('idle (menu): keeps fx fading and polls confirm, but menu never accepts a fire-edge confirm', () => {
+  it('idle (menu/victory/etc.): keeps fx fading and updates partyScreen, but never polls confirm itself', () => {
+    // Confirm is driven entirely by Screens.ts's own CONFIRM/MAIN MENU Button taps now
+    // (2026-08-17, see GameLoop's class doc comment) — GameLoop's idle branch has no
+    // raw-input confirm path left to test; holding fire here must do nothing.
     const { deps, input, partyScreen } = buildDeps();
-    const host = buildHost({ getPhase: () => 'menu' });
-    const loop = new GameLoop(deps, host);
-
-    input.state.firing = true;
-    loop.update(16);
-
-    expect(partyScreen.update).toHaveBeenCalledWith(16);
-    expect(host.confirm).not.toHaveBeenCalled(); // 'menu' doesn't accept fire-confirm (confirmEdge.ts)
-  });
-
-  it('idle (victory): a rising fire edge confirms exactly once, not on the held frame after', () => {
-    const { deps, input } = buildDeps();
     const host = buildHost({ getPhase: () => 'victory' });
     const loop = new GameLoop(deps, host);
 
     input.state.firing = true;
-    loop.update(16); // rising edge: false -> true
-    loop.update(16); // still held: true -> true, no new edge
+    loop.update(16);
+    loop.update(16);
 
-    expect(host.confirm).toHaveBeenCalledTimes(1);
+    expect(partyScreen.update).toHaveBeenCalledWith(16);
+    expect(host.confirm).not.toHaveBeenCalled();
   });
 
   it('playing + online routes to the online path (session-driven), never touching engine.submit', () => {

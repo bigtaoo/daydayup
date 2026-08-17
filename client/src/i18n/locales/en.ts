@@ -202,7 +202,7 @@ export const en = {
     defeatTitle: 'DEFEAT',
     victoryTitle: 'VICTORY ROYALE',
     eliminatedTitle: 'ELIMINATED',
-    confirmHint: 'Press Fire — back to the loadout',
+    confirmButton: 'CONFIRM',
     timeLine: 'Time {m}:{ss}',
     floorLine: 'Floor {floor}/{floorCount}',
     materialsBanked: 'Materials banked: {count}',
