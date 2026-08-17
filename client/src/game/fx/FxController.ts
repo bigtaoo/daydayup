@@ -17,13 +17,39 @@ const MAX_SHAKE_PX = 14; // camera-shake offset at full trauma (design/01 milest
 // the VOID ITSELF by the cover-fit switch below (2026-08-12 follow-up) — this cap now
 // only guards against a truly tiny/degenerate room forcing an absurd zoom, not against
 // letterboxing (cover-fit has none).
-const MAX_ZOOM = 2.5;
+// Raised again 2026-08-17 (2.5 -> 4.5) when the fit target became the current ROOM
+// rather than the whole floor: level 1's authored rooms are ~470-560 px square, so
+// cover-fitting one into a 1920x911 viewport wants ~3.4-4.1x and the old 2.5 cap bound
+// in every single room — the room rendered ~1170 px wide inside a 1920 px viewport and
+// the neighbours on either side stayed on screen, which is exactly what the fit change
+// was for. At 4x the hero reads about a seventh of the screen height, in line with the
+// genre. This remains a guard against a degenerate/tiny room, not a framing dial.
+const MAX_ZOOM = 4.5;
+// How much of the frame the camera looks ABOVE the follow target's ground point, as a
+// fraction of the viewport height (user report, 2026-08-17: "镜头往下一些 … 给角色最好
+// 的展示"). Every entity reports its GROUND position — the point at its feet, where its
+// shadow and collision footprint sit (Entity.applyTransform) — so a camera centred on
+// it puts the character's feet dead centre and its whole body in the upper half of the
+// screen, with a band of empty floor below. Biasing the look-at point upward in world
+// space slides the rendered world DOWN, which is what re-centres the character in the
+// frame. 8% of the viewport, not a fixed pixel count, so it scales with the window and
+// with the zoom the frame-fit picks.
+const CAMERA_BODY_BIAS_R = 0.08;
 
 /** Something that can report its interpolated ground position — the local player's
  *  Actor view, duck-typed so FxController never needs to import game/Actor.ts. */
 export interface CameraTarget {
   interpGroundX(alpha: number): number;
   interpGroundY(alpha: number): number;
+}
+
+/** A world-px rect for the camera to fill — the room the local player is standing in
+ *  (`GameLoop.updateCamera` resolves it), falling back to the whole floor. */
+export interface CameraFrame {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
 }
 
 /**
@@ -117,29 +143,56 @@ export class FxController {
     this.shakeTrauma = Math.max(0, this.shakeTrauma - dt * 0.0025);
   }
 
-  /** Follow `player`, pin the camera inside the room, then add screen-shake on top.
+  /** Follow `player`, pin the camera inside the world, then add screen-shake on top.
+   *
    *  Cover-fit zoom (design/10, 2026-08-12 follow-up — replaced the original contain-
    *  fit): zoom by whichever axis needs the MOST zoom to fill the viewport, so both
    *  axes always cover it — no letterbox void on either axis, ever, capped at MAX_ZOOM
    *  so a tiny/degenerate room doesn't blow sprites up into blocks. The tradeoff (the
-   *  room is now routinely bigger than the viewport on the axis that didn't need the
-   *  zoom) is exactly what the existing clamp-to-room-bounds branch below was already
-   *  built to handle — a room edge or door can scroll off-screen while the player is
-   *  elsewhere in the room, back into view as they approach it, same as any camera-
-   *  follow game. A big room/arena that already covers the viewport at 1x on both axes
-   *  is untouched (zoom floors at 1, never shrinks). No-op (leaves layers.world
-   *  untouched) if there's no player yet. */
-  updateCamera(alpha: number, viewport: { vw: number; vh: number }, worldSize: { w: number; h: number } | null, player: CameraTarget | null): void {
+   *  fitted rect is now routinely bigger than the viewport on the axis that didn't need
+   *  the zoom) is exactly what the clamp branch below was already built to handle — an
+   *  edge or door can scroll off-screen while the player is elsewhere, back into view as
+   *  they approach it, same as any camera-follow game.
+   *
+   *  What it fits, though, is `frame` — the ROOM the player is standing in — not the
+   *  whole floor (user report, 2026-08-17: "尽量视口内只有当前房间"). A dungeon floor is
+   *  co-resident: every room of it is stitched into one world (`world/dungeon`'s
+   *  `buildFloorGeometry`), so fitting `worldSize` meant fitting the whole floor, which
+   *  is far wider than any viewport — cover-fit therefore resolved to zoom 1 and the
+   *  player saw several rooms at once, each one small. Fitting the current room instead
+   *  puts that room (and essentially only it) on screen. `frame` is null in a mode with
+   *  no room model, or in the tick before the player's room is resolved; the whole floor
+   *  is then the fallback, i.e. exactly the previous behaviour.
+   *
+   *  Panning still clamps to the WORLD, never to `frame`: clamping to the room would
+   *  hard-stop the camera at a doorway, cutting off the corridor the player is about to
+   *  walk into. A room whose fitted zoom leaves it larger than the viewport keeps the
+   *  pan; one smaller than the viewport just shows a little of its neighbours at the
+   *  edges, which reads as depth rather than as a mistake.
+   *
+   *  No-op (leaves layers.world untouched) if there's no player yet. */
+  updateCamera(
+    alpha: number,
+    viewport: { vw: number; vh: number },
+    worldSize: { w: number; h: number } | null,
+    player: CameraTarget | null,
+    frame: CameraFrame | null = null,
+  ): void {
     if (!player) return;
     const { vw, vh } = viewport;
     const worldW = worldSize ? worldSize.w : vw;
     const worldH = worldSize ? worldSize.h : vh;
-    const zoom = Math.min(MAX_ZOOM, Math.max(1, vw / worldW, vh / worldH));
+    const fitW = frame ? frame.w : worldW;
+    const fitH = frame ? frame.h : worldH;
+    const zoom = Math.min(MAX_ZOOM, Math.max(1, vw / fitW, vh / fitH));
     this.zoom = zoom;
     const effW = worldW * zoom;
     const effH = worldH * zoom;
+    // Look slightly ABOVE the follow target's feet so the character sits in the middle
+    // of the frame rather than in its top half — see CAMERA_BODY_BIAS_R.
+    const targetY = player.interpGroundY(alpha) - (vh * CAMERA_BODY_BIAS_R) / zoom;
     const cx = effW <= vw ? (vw - effW) / 2 : clamp(vw / 2 - player.interpGroundX(alpha) * zoom, vw - effW, 0);
-    const cy = effH <= vh ? (vh - effH) / 2 : clamp(vh / 2 - player.interpGroundY(alpha) * zoom, vh - effH, 0);
+    const cy = effH <= vh ? (vh - effH) / 2 : clamp(vh / 2 - targetY * zoom, vh - effH, 0);
 
     const shakeMag = this.shakeTrauma * this.shakeTrauma * MAX_SHAKE_PX;
     const shakeX = shakeMag > 0.05 ? (Math.random() * 2 - 1) * shakeMag : 0;

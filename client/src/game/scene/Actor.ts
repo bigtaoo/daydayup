@@ -380,6 +380,22 @@ export class Actor extends Entity {
     }
   }
 
+  /**
+   * The mounted weapon's business end in the same space `Entity.x/y` live in — i.e.
+   * ready to hand straight to another Entity's `place()`. See `RigSkin.muzzleLocal` for
+   * why this exists (bullets visibly leaving mid-gun instead of the muzzle) and what it
+   * is used for; null whenever this actor has no rig-mounted module, which is every
+   * enemy. Reads the pose `interpolate` last laid out, so call it after that (which is
+   * where `Scene` sits in the frame anyway).
+   */
+  muzzlePos(): { x: number; y: number } | null {
+    const local = this.skin.muzzleAnchor();
+    if (!local) return null;
+    // `skin.view.y` is the placeholder-only body lift (0 for a rig, see the constructor),
+    // included rather than assumed so this stays correct if that ever changes.
+    return { x: this.x + local.x, y: this.y + this.skin.view.y + local.y };
+  }
+
   override interpolate(alpha: number, frameDt: number): void {
     super.interpolate(alpha, frameDt);
     // Cheap idle/move clip pick straight from Entity's own interpolation buffers —

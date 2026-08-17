@@ -71,7 +71,7 @@ function addEnemy(s: GameState, xpx: number, ypx: number, facing: Brad): EnemyAc
     facing, hp: BASIC_ENEMY.maxHp, maxHp: BASIC_ENEMY.maxHp,
     shield: 0, maxShield: 0, ticksSinceHit: 0,
     radius: BASIC_ENEMY.radius, footprintRadius: BASIC_ENEMY.footprintRadius,
-    alive: true, weapon: null, firing: false, status: freshStatus(), enraged: false,
+    alive: true, weapon: null, firing: false, status: freshStatus(), enraged: false, aggroed: false,
   };
   s.enemies.push(e);
   return e;
@@ -316,6 +316,53 @@ describe('Scene.reconcile — death-dissolve lingering view (design/01 fidelity 
     expect(views.has(bullet.id)).toBe(false);
     const dying = (scene as unknown as { dying: unknown[] }).dying;
     expect(dying.length).toBe(0); // gone outright, not queued to dissolve
+  });
+
+  it('a new bullet is DRAWN leaving the shooter\'s muzzle, easing onto the engine position', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const p = s.players[0]!;
+    const scene = new Scene(new Layers());
+    scene.reconcile(s, p.id); // the shooter's view has to exist before its bullet does
+    // The placeholder skin these tests build has no rig-mounted module, so stub the
+    // muzzle the way a preloaded weapon texture would report it: 30px right of and 8px
+    // above where the engine spawns the round.
+    scene.actorAt(p.id)!.muzzlePos = () => ({ x: 330, y: 292 });
+
+    const bullet = addBullet(s, 300, 300); // z 0, so the drawn sim position is (300, 300)
+    bullet.ownerId = p.id;
+    scene.reconcile(s, p.id);
+    const view = (scene as unknown as { views: Map<number, Entity> }).views.get(bullet.id)!;
+
+    // The engine's own position is untouched — only the drawn one is corrected.
+    expect(view.curX).toBe(300);
+    expect(view.curY).toBe(300);
+
+    scene.interpolate(1, 0); // first drawn frame: fully at the muzzle
+    expect(view.x).toBeCloseTo(330, 5);
+    expect(view.y).toBeCloseTo(292, 5);
+
+    scene.interpolate(1, 60); // halfway through the 120ms ease: 0.5^2 of the offset left
+    expect(view.x).toBeCloseTo(300 + 30 * 0.25, 5);
+    expect(view.y).toBeCloseTo(300 - 8 * 0.25, 5);
+
+    scene.interpolate(1, 120); // past it: exactly the engine position from here on
+    expect(view.x).toBeCloseTo(300, 5);
+    expect(view.y).toBeCloseTo(300, 5);
+  });
+
+  it('a bullet whose shooter reports no muzzle is drawn at the engine position from frame one (every enemy)', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const enemy = addEnemy(s, 200, 200, 0 as Brad);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+    const bullet = addBullet(s, 300, 300);
+    bullet.ownerId = enemy.id; // a critter-core enemy: muzzlePos() is null for it
+    scene.reconcile(s);
+
+    const view = (scene as unknown as { views: Map<number, Entity> }).views.get(bullet.id)!;
+    scene.interpolate(1, 0);
+    expect(view.x).toBe(300);
+    expect(view.y).toBe(300);
   });
 
   it('a collected pickup is destroyed immediately — no dissolve for non-Actor views', () => {

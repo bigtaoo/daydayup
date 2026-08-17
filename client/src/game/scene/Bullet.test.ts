@@ -89,3 +89,83 @@ describe('Bullet redraw — glow-halo branch', () => {
     expect(glowOf(b).getLocalBounds().width).toBe(0);
   });
 });
+
+// setMuzzleOrigin (2026-08-17) — the render-only correction that makes a shot leave the
+// shooter's drawn barrel tip instead of the engine's ground-plane muzzle point. See the
+// method's own doc for the geometry; Scene.test.ts covers the wiring, this covers the
+// curve itself.
+describe('Bullet.setMuzzleOrigin — easing from the barrel tip onto the sim line', () => {
+  /** A bullet parked at a fixed sim position, so every drawn offset below is the ease. */
+  function parked(x = 100, y = 200, z = 0): Bullet {
+    const b = new Bullet(4);
+    b.place(x, y, z);
+    return b;
+  }
+
+  it('draws exactly at the sim position when no origin was ever set (every enemy)', () => {
+    const b = parked();
+    b.interpolate(1, 16);
+    expect(b.x).toBe(100);
+    expect(b.y).toBe(200);
+  });
+
+  it('starts fully at the muzzle and lands exactly on the sim position once spent', () => {
+    const b = parked();
+    b.setMuzzleOrigin(30, -18);
+
+    b.interpolate(1, 0); // first drawn frame, nothing elapsed
+    expect(b.x).toBeCloseTo(130, 6);
+    expect(b.y).toBeCloseTo(182, 6);
+
+    b.interpolate(1, 120); // the whole 120ms ease in one frame
+    expect(b.x).toBeCloseTo(100, 6);
+    expect(b.y).toBeCloseTo(200, 6);
+  });
+
+  it('decays monotonically, front-loaded (ease-out) rather than linearly', () => {
+    const b = parked();
+    b.setMuzzleOrigin(120, 0);
+    const offsets: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      b.interpolate(1, 30); // 4 x 30ms = the full 120ms
+      offsets.push(b.x - 100);
+    }
+    // Strictly shrinking...
+    for (let i = 1; i < offsets.length; i++) expect(offsets[i]!).toBeLessThan(offsets[i - 1]!);
+    // ...and past halfway in time, well past halfway in distance (k² not k).
+    expect(offsets[1]!).toBeLessThan(120 * 0.5);
+    expect(offsets[offsets.length - 1]!).toBe(0);
+  });
+
+  it('never overshoots past the sim position, however long the frame', () => {
+    const b = parked();
+    b.setMuzzleOrigin(30, -18);
+    b.interpolate(1, 5000); // a tab that was backgrounded, or a debugger pause
+    expect(b.x).toBe(100);
+    expect(b.y).toBe(200);
+  });
+
+  it('offsets only the sprite — the shadow stays on the bullet\'s real ground point', () => {
+    const b = parked(100, 200, 40); // lifted, so shadow.y and b.y already differ
+    b.setMuzzleOrigin(30, -18);
+    b.interpolate(1, 0);
+    expect(b.x).toBeCloseTo(130, 6); // sprite pulled to the muzzle
+    expect(b.shadow!.x).toBe(100); // shadow marks where the bullet actually IS
+    expect(b.shadow!.y).toBe(200);
+  });
+
+  it('keeps easing across the tick boundary, not just within one tick\'s interpolation', () => {
+    // The correction outlives a single pushState: the offset is time-based, so a bullet
+    // that gets a fresh sim position mid-ease keeps the remainder of its curve.
+    const b = parked();
+    b.setMuzzleOrigin(60, 0);
+    b.interpolate(1, 30);
+    const midEase = b.x - 100;
+    expect(midEase).toBeGreaterThan(0);
+
+    b.pushState(140, 200, 0, 0); // next sim tick — the bullet has flown on
+    b.interpolate(1, 30);
+    expect(b.x - 140).toBeGreaterThan(0); // still offset from the NEW sim position...
+    expect(b.x - 140).toBeLessThan(midEase); // ...but by less than before
+  });
+});

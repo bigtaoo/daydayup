@@ -167,7 +167,16 @@ void main(void)
     // wiring to read correctly against both the Graphics placeholder body and a real
     // .tao rig sprite.
     float rim = smoothstep(0.30, 0.5, dist) * (1.0 - smoothstep(0.5, 0.66, dist));
-    float shimmer = 0.6 + 0.4 * sin(uTime * 0.006 + dist * 18.0);
+    // Shimmer: a slow breathing pulse, not a flicker (user report, 2026-08-17: "护盾的
+    // 闪烁频率降低"). Was \`0.6 + 0.4 * sin(uTime * 0.006 + dist * 18.0)\` — 0.006 rad/ms
+    // is ~0.95 Hz, and with the ring's own 18-cycle radial banding scrolling through it
+    // the combined effect read as a strobe on the character's silhouette rather than as
+    // energy. Two changes: the temporal rate drops to ~0.29 Hz (one pulse per ~3.4s),
+    // and the swing narrows from ±0.4 to ±0.25 around a brighter base, so the shield
+    // stays continuously readable instead of dimming to 0.6x every cycle. The radial
+    // term is halved too — it is what turns a slow pulse back into visible ripple
+    // banding as the wave crosses the rim.
+    float shimmer = 0.75 + 0.25 * sin(uTime * 0.0018 + dist * 9.0);
     float glow = rim * shimmer * uIntensity;
     color.rgb += uColor * glow;
     color.a = max(color.a, glow * 0.85);

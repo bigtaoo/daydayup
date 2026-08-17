@@ -113,7 +113,26 @@ export class Scene {
       let v = this.views.get(b.id) as Bullet | undefined;
       if (!v) {
         v = new Bullet(fpToPx(b.radius));
-        this.spawn(b.id, v, fpToPx(b.gx), fpToPx(b.gy), fpToPx(b.z), 0);
+        const bx = fpToPx(b.gx);
+        const by = fpToPx(b.gy);
+        const bz = fpToPx(b.z);
+        this.spawn(b.id, v, bx, by, bz, 0);
+        // Draw the shot leaving the shooter's actual barrel tip: the engine's spawn
+        // point (`RangedSimSpec.muzzleOffset` along the aim ray on the ground plane,
+        // lifted by `bulletZ`) is not where the rig draws the gun, so bullets read as
+        // coming out of the body rather than the muzzle (user report, 2026-08-17: "子弹
+        // 要从枪口打出"). `Bullet.setMuzzleOrigin` eases the difference out over its first
+        // few ticks — see there for the geometry and for why this is corrected on the
+        // view instead of by moving the sim's own muzzle (which stays authoritative for
+        // hit detection, and which a player standing flush against a wall could
+        // otherwise push through to the far side).
+        //
+        // `muzzlePos()` is null for anything with no rig-mounted module — every enemy,
+        // whose placeholder barrel already ends within a pixel of its own sim muzzle —
+        // and for the frames before a weapon texture finishes preloading. Both leave the
+        // bullet exactly where the engine put it, as before.
+        const muzzle = b.ownerId === undefined ? null : this.actorAt(b.ownerId)?.muzzlePos();
+        if (muzzle) v.setMuzzleOrigin(muzzle.x - bx, muzzle.y - (by - bz));
       } else {
         v.pushState(fpToPx(b.gx), fpToPx(b.gy), fpToPx(b.z), 0);
       }

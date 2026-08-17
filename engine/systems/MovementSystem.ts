@@ -154,11 +154,18 @@ export class MovementSystem {
    * (`footprintRadius`, feet — same convention as actor↔solid, not the body
    * `radius`) vs circle, half the penetration to each side (funny's `subFp(subFp(
    * other − rOther), (self + rSelf))` mapped onto two movers instead of one mover
-   * + a static solid). Player-vs-player and player-vs-enemy pairs still push apart
-   * unconditionally ("same-plane pair" in the design doc). Enemy-vs-enemy pairs are
-   * SKIPPED (design/07's own "Open questions" recommendation — packed rooms read
-   * better with enemies leaning overlap rather than jostling each other) — this is
-   * the one documented faction exception, not a general faction gate.
+   * + a static solid). EVERY alive pair pushes apart, with no faction exception.
+   *
+   * Enemy-vs-enemy used to be skipped, on design/07's own "Open questions"
+   * recommendation that packed rooms read better with mobs leaning overlap rather than
+   * jostling each other. Reverted 2026-08-17 (ENGINE_VERSION 42, live play report:
+   * "怪物之间要有碰撞"): what that actually produced was a garrison converging into one
+   * spot and stacking into a single blob of overlapping sprites — several mobs sharing
+   * one silhouette, so the player could neither count the threat nor tell what they
+   * were shooting at. The same-plane push that already keeps players and enemies from
+   * interpenetrating is what makes a crowd read as a crowd. It also composes with the
+   * v42 perception radius above: mobs now arrive in waves rather than as one column, so
+   * there is much less sustained mutual pushing to pay for.
    *
    * All-pairs over every alive actor: a room/arena today holds a handful of
    * players + enemies (the existing obstacle/wall resolvers' own "costs nothing at
@@ -182,8 +189,6 @@ export class MovementSystem {
       const a = actors[i]!;
       for (let j = i + 1; j < actors.length; j++) {
         const b = actors[j]!;
-        if (a.faction === 'enemy' && b.faction === 'enemy') continue; // see class doc
-
         const dx = a.gx - b.gx;
         const dy = a.gy - b.gy;
         const minDist = a.footprintRadius + b.footprintRadius;

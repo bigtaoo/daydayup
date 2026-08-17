@@ -451,6 +451,45 @@ So the budget is a property of the **room**, the same unit aggro already lives o
   means (shield renewable, HP permanent), and makes disengaging between rooms a real
   tactic. Re-checked against `npm run test:pvp-sim`: arena win rates moved within noise.
 
+### Room feel pass ✅ (2026-08-17, `ENGINE_VERSION` 42)
+
+A separate live report the same day, about how a room full of mobs *reads* rather than how
+hard it hits: *"怪物之间要有碰撞。怪物的感知范围弄小一些，移动速度调低."* Three changes,
+all in the PvE enemy path (full account in `engine/ENGINE_VERSION_HISTORY.md` v42):
+
+- **Enemy↔enemy push-out re-enabled** (`MovementSystem.resolveActorPairs`). That pair was
+  this engine's one documented faction exception, skipped on `07`'s own "Open questions"
+  recommendation that packed rooms read better with mobs leaning overlap. In practice a
+  garrison converging on the player stacked into a single blob of overlapping sprites, so
+  the player could neither count the threat nor tell what they were shooting. There is no
+  longer any faction branch in that loop.
+- **Perception radius** — `DEFAULT_ENEMY_AGGRO_RANGE_FP` = 320 px (10 grid),
+  `AIDecideSystem.hasAggro`. Room activation stays the OUTER aggro gate and is unchanged;
+  this is a new inner one. Opening a door used to set the room's whole garrison walking at
+  the player from wherever it was authored, so a room read as one converging blob instead
+  of a space with pockets of threat in it. An un-noticed mob is fully inert — no movement,
+  no fire, and no turning to face. Wider than the 180 px engage range, so a mob that
+  notices the player still has ~4 grid to close before it may fire and v40's reaction
+  window survives. `EnemyActor.aggroed` latches one-way, like `enraged`: the radius is a
+  wake-up trigger, never a leash, and a boundary-straddling mob can't oscillate.
+- **Enemy move speed 4 → 2.6 px/tick** (~63% → ~41% of the player's). v37's claim that a
+  slower mob means "committing to running away always opens the gap" didn't survive
+  contact — the player also has to aim and dodge.
+
+**This made level 1 substantially easier and the sim says so:** the careful bot's average
+deepest floor went 0.1 → 1.9 and its worst 1-second damage window 5 → 4 against the same
+9.2 effective HP. The `test:pve-sim` gates below still pass, but the "hard overall" target
+they encode is now met with much more headroom — a garrison re-tightening pass is open
+work, and `ROOM_FIRE_BUDGET` / garrison size are where it should happen, not by undoing
+the perception radius.
+
+*Two sim-bot fixes shipped alongside, both the same bug class and neither an engine
+change:* `PveBotController.nearestEnemy` and `healToSeek` are now bounded by the bot's own
+room rather than by a scan radius. A room's doors are combat-locked while it holds a live
+enemy, so a mob or a heal outside the room is unreachable, and with mobs no longer walking
+over on their own the bot found no target, fell through to `travel`, and bounced off the
+locked door until the run timed out. That is the sim's no-stall gate doing its job.
+
 **Difficulty target, chosen 2026-08-17: hard overall.** Floor 1 passable by careful play,
 a full 5-floor extraction uncommon. After the changes the sim's careful bot clears the
 entrance room in 100% of runs, descends off floor 0 in ~37%, and dies spread across

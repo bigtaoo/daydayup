@@ -433,3 +433,102 @@ describe('GameLoop — portal/checkpoint eligibility (dungeon mode, 2026-08-12 s
     expect(deps.portalPrompt.update).toHaveBeenCalledWith(s, expect.any(Boolean), true);
   });
 });
+
+// `cameraFrame` (2026-08-17) — which rect `FxController.updateCamera` is told to FILL.
+// A dungeon floor is co-resident, so fitting `worldSize` fitted the WHOLE FLOOR and the
+// player saw several rooms at once; the fit target is now the room they're standing in.
+// See design/01 "Framing the current room" for the why, and FxController.test.ts for
+// what updateCamera then DOES with the rect — this block only covers the lookup.
+describe('GameLoop.updateCamera — the frame rect handed to FxController', () => {
+  // The engine converts px -> Fp at construction, so a rect authored in px comes back
+  // through fpToPx with the same value; these expectations are in px throughout.
+  function stateWithRoomRects(): ReturnType<typeof createGameState> {
+    const s = createGameState({ seed: 1, worldW: 2000, worldH: 1000, waves: [], players: [{ start: [100, 100] }] });
+    s.dungeonRoomRects.push(
+      { id: 'r1', rect: { x: toFp(0), y: toFp(0), w: toFp(15), h: toFp(15) } },
+      { id: 'r2', rect: { x: toFp(20), y: toFp(0), w: toFp(10), h: toFp(20) } },
+    );
+    return s;
+  }
+
+  /** The 5th argument of the last updateCamera call — `undefined` if it was never called. */
+  function lastFrame(fx: { updateCamera: { mock: { calls: unknown[][] } } }) {
+    const calls = fx.updateCamera.mock.calls;
+    return calls.length === 0 ? undefined : calls[calls.length - 1]![4];
+  }
+
+  it("passes the rect of the room the local player is standing in", () => {
+    const { deps, fx } = buildDeps();
+    const s = stateWithRoomRects();
+    s.players[0]!.roomId = 'r2';
+    const loop = new GameLoop(deps, buildHost({ activeState: () => s }));
+
+    loop.update(16);
+
+    // 20/0/10/20 grid units at 32 px per grid.
+    expect(lastFrame(fx)).toEqual({ x: 640, y: 0, w: 320, h: 640 });
+  });
+
+  it("follows the LOCAL seat's room in co-op, not whichever player is first", () => {
+    const { deps, fx } = buildDeps();
+    const s = createGameState({
+      seed: 1, worldW: 2000, worldH: 1000, waves: [],
+      players: [{ start: [100, 100] }, { start: [900, 100] }],
+    });
+    s.dungeonRoomRects.push(
+      { id: 'r1', rect: { x: toFp(0), y: toFp(0), w: toFp(15), h: toFp(15) } },
+      { id: 'r2', rect: { x: toFp(20), y: toFp(0), w: toFp(10), h: toFp(20) } },
+    );
+    s.players[0]!.roomId = 'r1';
+    s.players[1]!.roomId = 'r2';
+    const loop = new GameLoop(deps, buildHost({ activeState: () => s, localOwner: 1 }));
+
+    loop.update(16);
+
+    expect(lastFrame(fx)).toEqual({ x: 640, y: 0, w: 320, h: 640 });
+  });
+
+  it('falls back to the arena room list when there are no dungeon rooms (PvP)', () => {
+    const { deps, fx } = buildDeps();
+    const s = createGameState({ seed: 1, worldW: 2000, worldH: 1000, waves: [], players: [{ start: [100, 100] }] });
+    s.arenaRoomRects.push({ id: 'a1', rect: { x: toFp(1), y: toFp(2), w: toFp(8), h: toFp(6) } });
+    s.players[0]!.roomId = 'a1';
+    const loop = new GameLoop(deps, buildHost({ activeState: () => s }));
+
+    loop.update(16);
+
+    expect(lastFrame(fx)).toEqual({ x: 32, y: 64, w: 256, h: 192 });
+  });
+
+  it('passes null while the player is in a doorway (roomId cleared) — the camera keeps the whole floor', () => {
+    const { deps, fx } = buildDeps();
+    const s = stateWithRoomRects();
+    s.players[0]!.roomId = undefined; // EnvironmentSystem clears it between rooms
+    const loop = new GameLoop(deps, buildHost({ activeState: () => s }));
+
+    loop.update(16);
+
+    expect(lastFrame(fx)).toBeNull();
+  });
+
+  it('passes null for a roomId with no rect, rather than throwing (content-bug tolerance)', () => {
+    const { deps, fx } = buildDeps();
+    const s = stateWithRoomRects();
+    s.players[0]!.roomId = 'r_does_not_exist';
+    const loop = new GameLoop(deps, buildHost({ activeState: () => s }));
+
+    expect(() => loop.update(16)).not.toThrow();
+    expect(lastFrame(fx)).toBeNull();
+  });
+
+  it('passes null with no state at all — the camera path must tolerate a run that has not started', () => {
+    const { deps, fx } = buildDeps();
+    // `playing` with a null state is the one-frame window between beginRun and the
+    // engine existing; `menu`/`paused` freeze the last frame and never re-aim the
+    // camera at all, so they can't exercise this.
+    const loop = new GameLoop(deps, buildHost({ getPhase: () => 'playing', activeState: () => null }));
+
+    expect(() => loop.update(16)).not.toThrow();
+    expect(lastFrame(fx)).toBeNull();
+  });
+});

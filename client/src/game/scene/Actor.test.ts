@@ -615,3 +615,48 @@ describe('Actor.interpolate — movingOverride (idle/move clip selection survive
     expect(spy).toHaveBeenLastCalledWith(0, 0, 16, 'idle'); // falls back to the (stationary) buffer delta
   });
 });
+
+// muzzlePos (2026-08-17) — Actor's slice of the "bullets leave the barrel tip" fix: it
+// lifts `Skin.muzzleAnchor`'s skin-local point into the space `Entity.x/y` live in, so
+// `Scene` can hand it straight to a Bullet. Skin.test.ts covers the rig -> skin scale
+// and RigSkin.test.ts the socket/texture geometry; this is only the last hop.
+describe('Actor.muzzlePos — the drawn barrel tip, in Entity coordinates', () => {
+  afterEach(() => {
+    skinRegistryMocks.loaded = undefined;
+  });
+
+  const stubMuzzle = (a: Actor, local: { x: number; y: number } | null) => {
+    (a as unknown as { skin: { muzzleAnchor: () => { x: number; y: number } | null } }).skin.muzzleAnchor =
+      () => local;
+  };
+
+  it('is null when the skin reports no mounted module — every enemy, and any preload gap', () => {
+    const mob = new Actor('enemy', 12);
+    expect(mob.muzzlePos()).toBeNull();
+  });
+
+  it('offsets the skin-local point by the actor\'s own drawn position', () => {
+    skinRegistryMocks.loaded = loadedOrbCoreRig();
+    const a = new Actor('player', 20, undefined, false, 'char_vanguard');
+    a.place(500, 300, 0);
+    stubMuzzle(a, { x: 30, y: -18 });
+    expect(a.muzzlePos()).toEqual({ x: 530, y: 282 });
+  });
+
+  it('tracks the DRAWN position, so a lifted (z > 0) actor\'s muzzle rises with its sprite', () => {
+    skinRegistryMocks.loaded = loadedOrbCoreRig();
+    const a = new Actor('player', 20, undefined, false, 'char_vanguard');
+    a.place(500, 300, 40); // Entity.applyTransform puts the container at y = gy - z
+    stubMuzzle(a, { x: 30, y: -18 });
+    expect(a.muzzlePos()).toEqual({ x: 530, y: 300 - 40 - 18 });
+  });
+
+  it('includes the placeholder body lift, so it stays right if a placeholder ever mounts one', () => {
+    // `skin.view.y` is 0 for a rig and -radius*BODY_LIFT_R for the placeholder; muzzlePos
+    // reads it rather than assuming 0, which is what this pins down.
+    const a = new Actor('player', 20); // placeholder: lift = -14
+    a.place(0, 0, 0);
+    stubMuzzle(a, { x: 10, y: -5 });
+    expect(a.muzzlePos()).toEqual({ x: 10, y: -14 - 5 });
+  });
+});

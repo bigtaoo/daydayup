@@ -32,14 +32,28 @@ function dist(a: { gx: number; gy: number }, b: { gx: number; gy: number }): num
   return Math.hypot(a.gx - b.gx, a.gy - b.gy);
 }
 
+/**
+ * A mob placed at a room-scale distance that has ALREADY noticed the player — the
+ * `aggroed` latch v42 added, pre-set so these chase tests stay about the chase. Every
+ * distance here is deliberately outside `DEFAULT_ENEMY_AGGRO_RANGE_FP` (320px), which
+ * is exactly the state the latch models: the mob saw the player up close, the player
+ * backed off, and the mob is still coming. The gate itself is covered separately below
+ * and in AIDecideSystem.test.ts.
+ */
+function spawnAwareEnemy(s: GameState, xpx: number, ypx: number, type: string): EnemyActor {
+  const e = buildEnemyActor(s, pxToFp(xpx), pxToFp(ypx), type);
+  e.aggroed = true;
+  s.enemies.push(e);
+  return e;
+}
+
 describe('enemy chase integration (AIDecideSystem + MovementSystem, ENGINE_VERSION 37)', () => {
   it('a basic mob converges from a room-scale distance into its engage range and stays there', () => {
     const s = createGameState({ ...CFG, players: [{ start: [400, 300] }] });
     const target = s.players[0]!;
-    const e = buildEnemyActor(s, pxToFp(400 + 500), pxToFp(300 + 300), 'basic'); // ~580px away
-    s.enemies.push(e);
+    const e = spawnAwareEnemy(s, 400 + 500, 300 + 300, 'basic'); // ~580px away
 
-    run(s, 200);
+    run(s, 300);
     expect(dist(e, target)).toBeLessThanOrEqual(e.engageRangeFp! + 1); // +1fp truncation slack
 
     // Stable once there: further ticks don't drift back out (no oscillation).
@@ -50,24 +64,22 @@ describe('enemy chase integration (AIDecideSystem + MovementSystem, ENGINE_VERSI
   it('a boss converges the same way as a basic mob (no distinct kiting behavior yet)', () => {
     const s = createGameState({ ...CFG, players: [{ start: [400, 300] }] });
     const target = s.players[0]!;
-    const boss = buildEnemyActor(s, pxToFp(400 + 500), pxToFp(300 + 300), 'blightlord');
-    s.enemies.push(boss);
+    const boss = spawnAwareEnemy(s, 400 + 500, 300 + 300, 'blightlord');
 
-    run(s, 200);
+    run(s, 300);
     expect(dist(boss, target)).toBeLessThanOrEqual(boss.engageRangeFp! + 1);
   });
 
   it('only fires once within engage range, not while still closing the distance (ENGINE_VERSION 40)', () => {
     const s = createGameState({ ...CFG, players: [{ start: [400, 300] }] });
     const target = s.players[0]!;
-    const e = buildEnemyActor(s, pxToFp(400 + 500), pxToFp(300), 'basic');
-    s.enemies.push(e);
+    const e = spawnAwareEnemy(s, 400 + 500, 300, 'basic');
 
     const ai = new AIDecideSystem();
     const mv = new MovementSystem();
     let everFiredWhileOutOfRange = false;
     let firedOnceInRange = false;
-    for (let i = 0; i < 150; i++) {
+    for (let i = 0; i < 250; i++) {
       ai.tick(s);
       const inRange = dist(e, target) <= e.engageRangeFp! + 1;
       if (e.firing && !inRange) everFiredWhileOutOfRange = true;
@@ -78,6 +90,22 @@ describe('enemy chase integration (AIDecideSystem + MovementSystem, ENGINE_VERSI
     expect(firedOnceInRange).toBe(true); // but it does actually engage once close enough
   });
 
+  it('a mob that has NOT noticed the player holds its ground, then chases once they walk into its perception radius (ENGINE_VERSION 42)', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [400, 300] }] });
+    const target = s.players[0]!;
+    const e = buildEnemyActor(s, pxToFp(400 + 500), pxToFp(300), 'basic'); // ~500px — outside the 320px radius
+    s.enemies.push(e);
+    const startX = e.gx;
+
+    run(s, 120);
+    expect(e.gx).toBe(startX); // never took a step
+
+    target.gx = pxToFp(400 + 500 - 200); // the player closes to 200px — inside the radius
+    run(s, 120);
+    expect(e.gx).toBeLessThan(startX); // now it's coming
+    expect(dist(e, target)).toBeLessThanOrEqual(e.engageRangeFp! + 1);
+  });
+
   it('a player that keeps outrunning it is never caught (enemy is slower by design)', () => {
     // A wide world + plenty of westward runway (unlike the other tests here) so the
     // fleeing player never hits the world-bounds clamp mid-test, which would pin it
@@ -85,8 +113,7 @@ describe('enemy chase integration (AIDecideSystem + MovementSystem, ENGINE_VERSI
     // the chase logic itself.
     const s = createGameState({ ...CFG, worldW: 6000, players: [{ start: [3000, 300] }] });
     const target = s.players[0]!;
-    const e = buildEnemyActor(s, pxToFp(3000 + 500), pxToFp(300), 'basic');
-    s.enemies.push(e);
+    const e = spawnAwareEnemy(s, 3000 + 500, 300, 'basic');
     const startDist = dist(e, target);
 
     const ai = new AIDecideSystem();
@@ -109,10 +136,9 @@ describe('enemy chase integration (AIDecideSystem + MovementSystem, ENGINE_VERSI
       walls: [[600, 200, 40, 200]] as const, // a thin wall directly between enemy (east) and target (west)
     });
     const target = s.players[0]!;
-    const e: EnemyActor = buildEnemyActor(s, pxToFp(900), pxToFp(300), 'basic'); // far outside engage range, beyond the wall
-    s.enemies.push(e);
+    const e: EnemyActor = spawnAwareEnemy(s, 900, 300, 'basic'); // far outside engage range, beyond the wall
 
-    run(s, 200);
+    run(s, 300);
 
     const wall = s.walls[0]!;
     // Approaching from +x, MovementSystem.resolveWalls pushes it back out to the
@@ -134,24 +160,23 @@ describe('enemy chase integration (AIDecideSystem + MovementSystem, ENGINE_VERSI
     // while its gun's cooldown quietly counts down anyway. Confirms it composes as
     // intended: no extra "re-arm" wait is paid on arrival on top of the travel time.
     const s = createGameState({ ...CFG, players: [{ start: [400, 300] }] });
-    const e = buildEnemyActor(s, pxToFp(400 + 500), pxToFp(300 + 300), 'basic'); // ~580px away
+    const e = spawnAwareEnemy(s, 400 + 500, 300 + 300, 'basic'); // ~580px away
     const fireRateTicks = (e.weapon!.spec as RangedSimSpec).fireRateTicks;
     e.weapon!.cooldownTicks = fireRateTicks; // start on a full cooldown, worst case
-    s.enemies.push(e);
 
     const ai = new AIDecideSystem();
     const wf = new WeaponFireSystem();
     const mv = new MovementSystem();
     let enteredRangeTick = -1;
     let firedTick = -1;
-    for (let i = 0; i < 200 && firedTick === -1; i++) {
+    for (let i = 0; i < 300 && firedTick === -1; i++) {
       ai.tick(s);
       if (e.firing && enteredRangeTick === -1) enteredRangeTick = i;
       wf.tick(s);
       if (s.projectiles.length > 0 && firedTick === -1) firedTick = i;
       mv.tick(s);
     }
-    // Closing ~400px of the ~580px gap at ~4px/tick takes well over fireRateTicks
+    // Closing ~400px of the ~580px gap at ~2.6px/tick takes well over fireRateTicks
     // (45 ticks at the enemygun's 1.5s cooldown) — so cooldown is already spent
     // before arrival, and the two ticks must coincide exactly.
     expect(enteredRangeTick).toBeGreaterThan(fireRateTicks);

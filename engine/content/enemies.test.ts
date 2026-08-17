@@ -15,9 +15,11 @@ import {
   BLIGHTLORD,
   DEFAULT_ENEMY_MOVE_SPEED_PER_TICK,
   DEFAULT_ENEMY_ENGAGE_RANGE_FP,
+  DEFAULT_ENEMY_AGGRO_RANGE_FP,
 } from '@dd/engine/content/enemies';
 import { toFp } from '@dd/engine/math/fixed';
 import { pxToFp } from '@dd/engine/content/convert';
+import { PLAYER_BASE } from '@dd/engine/content/players';
 
 const CFG = { seed: 3, worldW: 1600, worldH: 1200, waves: [] as const };
 const state = (): GameState => createGameState(CFG);
@@ -61,5 +63,46 @@ describe('buildEnemyActor — movement AI fields (ENGINE_VERSION 37)', () => {
     } finally {
       delete ENEMY_BLUEPRINTS[TEST_TYPE]; // don't leak a fake registry entry into other test files
     }
+  });
+});
+
+// Perception radius (ENGINE_VERSION 42) — the third knob in the same family, wired
+// through the same `??` fallback. `AIDecideSystem.test.ts` covers what the radius DOES;
+// this file covers only that a mob is built carrying it.
+describe('buildEnemyActor — perception radius (ENGINE_VERSION 42)', () => {
+  it('a fresh mob starts un-aggroed and carries the shared default radius', () => {
+    const e = buildEnemyActor(state(), pxToFp(400), pxToFp(400), 'basic');
+    expect(e.aggroed).toBe(false); // nothing has noticed the player yet
+    expect(e.aggroRangeFp).toBe(DEFAULT_ENEMY_AGGRO_RANGE_FP);
+    expect(BASIC_ENEMY.aggroRangeFp).toBeUndefined(); // really took the fallback branch
+  });
+
+  it('every shipped blueprint uses the shared radius — no per-mob perception authored yet', () => {
+    for (const [type, bp] of Object.entries(ENEMY_BLUEPRINTS)) {
+      expect(bp.aggroRangeFp, `${type} authors its own aggroRangeFp`).toBeUndefined();
+      expect(buildEnemyActor(state(), pxToFp(400), pxToFp(400), type).aggroRangeFp)
+        .toBe(DEFAULT_ENEMY_AGGRO_RANGE_FP);
+    }
+  });
+
+  it('a blueprint-level override wins over the shared default', () => {
+    const TEST_TYPE = '__test_short_sighted';
+    ENEMY_BLUEPRINTS[TEST_TYPE] = { ...BASIC_ENEMY, type: TEST_TYPE, aggroRangeFp: toFp(2) };
+    try {
+      expect(buildEnemyActor(state(), pxToFp(400), pxToFp(400), TEST_TYPE).aggroRangeFp).toBe(toFp(2));
+    } finally {
+      delete ENEMY_BLUEPRINTS[TEST_TYPE];
+    }
+  });
+
+  it("the perception radius is WIDER than the engage range, so v40's reaction window survives", () => {
+    // A mob that notices the player must still have ground to cover before it may fire.
+    // Invert these two and a mob would wake up already in range — the alpha-strike shape
+    // v40/v41 exist to prevent.
+    expect(DEFAULT_ENEMY_AGGRO_RANGE_FP).toBeGreaterThan(DEFAULT_ENEMY_ENGAGE_RANGE_FP);
+  });
+
+  it('a mob is slower than the player, so backing off always opens the gap', () => {
+    expect(DEFAULT_ENEMY_MOVE_SPEED_PER_TICK).toBeLessThan(PLAYER_BASE.speedPerTick);
   });
 });

@@ -49,6 +49,15 @@
  * `chaseAndEngage` no longer sets `firing` at all — it reports "in range" and
  * `grantFireSlots` is the single writer of `firing = true`.
  *
+ * Perception radius (ENGINE_VERSION 42, live play report 2026-08-17 — "怪物的感知
+ * 范围弄小一些"): room activation is the OUTER aggro gate and stays exactly as it was,
+ * but a woken room's mobs now only react once the player is within their own
+ * `aggroRangeFp` (`hasAggro`). Before this, activating a room set its entire garrison
+ * — up to 14 mobs on level 1 — walking at the player from wherever they were authored,
+ * so a room read as one converging blob rather than as a space with pockets of threat
+ * in it. An un-noticed mob is fully inert: it does not move, fire, OR turn to face the
+ * player. The flag is a one-way latch, so this is a wake-up trigger and never a leash.
+ *
  * Room activation gate (design/05 "Room & door model", 2026-08-04): in dungeon
  * mode, an enemy whose room hasn't activated yet (no player has ever reached it)
  * runs NO decision logic at all — `firing`/`vx`/`vy` are simply left at whatever
@@ -59,7 +68,11 @@
 import { isqrt } from '../math/fixed';
 import type { Fp } from '../math/fixed';
 import { atan2Brad } from '../math/trig';
-import { DEFAULT_ENEMY_MOVE_SPEED_PER_TICK, DEFAULT_ENEMY_ENGAGE_RANGE_FP } from '../content/enemies';
+import {
+  DEFAULT_ENEMY_MOVE_SPEED_PER_TICK,
+  DEFAULT_ENEMY_ENGAGE_RANGE_FP,
+  DEFAULT_ENEMY_AGGRO_RANGE_FP,
+} from '../content/enemies';
 import { ROOM_FIRE_BUDGET, noticeDelayTicks } from '../balance/encounter';
 import type { GameState } from '../state/GameState';
 import type { EnemyActor } from '../state/entities';
@@ -94,6 +107,16 @@ export class AIDecideSystem {
       }
       const dx = target.gx - e.gx;
       const dy = target.gy - e.gy;
+      if (!this.hasAggro(e, dx, dy)) {
+        // Hasn't noticed the player yet: fully inert, and deliberately NOT turned to
+        // face them either — a mob that tracks you with its gun barrel from across the
+        // room while standing still reads as "aware but passive", which is the opposite
+        // of what the perception radius is for.
+        e.firing = false;
+        e.vx = 0 as Fp;
+        e.vy = 0 as Fp;
+        continue;
+      }
       e.facing = atan2Brad(dy, dx);
       const distSq = this.chaseAndEngage(e, dx, dy);
       // In range (chaseAndEngage stopped it and left `firing` false) and past its
@@ -107,6 +130,25 @@ export class AIDecideSystem {
     }
 
     this.grantFireSlots(contenders);
+  }
+
+  /**
+   * Has this mob noticed the player (ENGINE_VERSION 42)? The INNER aggro gate, inside
+   * design/05's room-as-the-aggro-unit outer one: a woken room's far side stays idle
+   * until the player is within `aggroRangeFp`, instead of the entire garrison marching
+   * across the room the tick the door opens (live play report, 2026-08-17).
+   *
+   * One-way latch (`e.aggroed`): a mob at the exact boundary would otherwise flip
+   * between chasing and idling every tick, since chasing carries it back inside the
+   * radius and idling leaves it outside. Latched means the radius is a wake-up trigger,
+   * not a leash — nothing here ever puts a mob back to sleep.
+   */
+  private hasAggro(e: EnemyActor, dx: number, dy: number): boolean {
+    if (e.aggroed) return true;
+    const range = e.aggroRangeFp ?? DEFAULT_ENEMY_AGGRO_RANGE_FP;
+    if (dx * dx + dy * dy > range * range) return false;
+    e.aggroed = true;
+    return true;
   }
 
   /**

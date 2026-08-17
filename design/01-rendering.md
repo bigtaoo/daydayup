@@ -7,10 +7,11 @@ Goal: a fixed tilted view (not pure top-down; slightly forward-leaning, like Sou
 - **Tilted (3/4) view:** walls, pillars, and characters show a small "front face" instead of a pure top face, so height and volume read. This is the basis of the 3D feel.
 - The camera has a fixed angle and never rotates; it may pan to follow the player.
 - **Room zoom-to-cover** (legibility fix, 2026-08-02; cap raised 1.8→2.5 2026-08-12;
-  contain-fit → cover-fit 2026-08-12, same day, follow-up): a room smaller than the
-  viewport on either axis is scaled up so BOTH axes cover the viewport (cover-fit — zoom
-  by whichever axis needs MORE zoom, capped at 2.5x so a tiny/degenerate room doesn't
-  blow sprites into blocks) — `FxController.updateCamera`
+  contain-fit → cover-fit 2026-08-12, same day, follow-up; fit target changed from the
+  whole floor to the CURRENT ROOM + cap 2.5→4.5 2026-08-17, see "Framing the current
+  room" below): the fitted rect is scaled up so BOTH axes cover the viewport (cover-fit —
+  zoom by whichever axis needs MORE zoom, capped at 4.5x so a tiny/degenerate room
+  doesn't blow sprites into blocks) — `FxController.updateCamera`
   (`client/src/game/fx/FxController.ts`). Originally contain-fit (zoom by whichever axis
   is TIGHTER), which left a real dark `Backdrop`-filled void on the other axis whenever
   the room's aspect ratio didn't match the viewport's — raising the cap (2026-08-12,
@@ -24,6 +25,27 @@ Goal: a fixed tilted view (not pure top-down; slightly forward-leaning, like Sou
   (`CommandBuilder` used to divide a screen-space mouse aim point by this same zoom
   before converting it to world space — moot since `10` v33 removed manual aim; the
   camera zoom itself is otherwise unaffected.)
+- **Framing the current room** (2026-08-17, live report: *"镜头往下一些，尽量视口内只有当前
+  房间，或者说给角色最好的展示"*). Two changes to the same function:
+  - **The fit target is the player's current ROOM, not the whole floor.** A dungeon floor
+    is co-resident — every room stitched into one world by `buildFloorGeometry` — so
+    fitting `worldSize` meant fitting a ~2000 px floor into a 1920 px viewport, i.e.
+    cover-fit resolved to zoom 1 and the player saw several rooms at once, each small.
+    `GameLoop.cameraFrame` now looks the player's cached `roomId` up in
+    `dungeonRoomRects`/`arenaRoomRects` and passes that rect as `updateCamera`'s `frame`;
+    the whole floor stays the fallback for a mode with no room model. Level 1's rooms are
+    ~480 px square, so this lands at ~4x and the room fills the viewport — which is what
+    forced the `MAX_ZOOM` raise, since 2.5 bound in literally every room.
+  - **The look-at point is biased above the player's feet** (`CAMERA_BODY_BIAS_R`, 8% of
+    viewport height). Every entity reports its GROUND position, so a camera centred on it
+    put the character's feet at screen centre and its whole body in the upper half, above
+    a band of empty floor. Biasing the look-at point up in world space slides the rendered
+    world DOWN and centres the character.
+  - **Panning still clamps to the WORLD, not to `frame`.** Clamping to the room would hard-
+    stop the camera at a doorway and cut off the corridor the player is walking into. The
+    cost is that the room only fills the viewport exactly when the player is near its
+    centre; standing off-centre shows a strip of the neighbouring room. A true one-room-
+    per-screen lock would mean a jump-cut at every door, which is a separate design call.
 
 ## Coordinates & height model
 
@@ -33,6 +55,21 @@ Every entity has two Y values:
 - **Height `z`** — visual lift for flying bullets / elevated cosmetics (render only). Actors stay grounded (`z=0`) — there is no jump, and `z` never gates gameplay (`07`).
 
 Render transform: `screen.x = gx`, `screen.y = gy - z`. A large part of the 3D feel comes from objects being able to leave the ground.
+
+**Bullets are drawn leaving the barrel tip, not the sim's muzzle point** (2026-08-17, live
+report: *"子弹要从枪口打出"*). The two are not the same place, and can't be: the engine puts
+a bullet `muzzleOffset` along the aim ray **on the ground plane** and then lifts it by
+`bulletZ`, while the rig rotates the gun **in screen space** at its socket bone's own
+height — so aiming downward slides the sim's spawn point south across the floor while the
+drawn barrel swings down the screen, leaving the two on visibly *parallel* lines (~16 world
+px apart, and this camera zooms 4x). `RigSkin.muzzleLocal` reports the mounted module's
+business end (socket-bone tip + a ray/rect measure of how far the texture reaches from its
+anchor in its own baked direction), `Actor.muzzlePos` lifts that into world space, and
+`Bullet.setMuzzleOrigin` eases the difference out over the first ~120 ms of flight. Fixed
+on the VIEW, not by moving the sim's own muzzle: the sim position stays authoritative for
+hit detection, and a longer sim muzzle would let a player standing flush against a wall
+spawn shots on its far side. Null for anything with no rig-mounted module — every enemy,
+whose placeholder barrel already ends within a pixel of its own sim muzzle.
 
 ## Depth sorting (Y-sort)
 

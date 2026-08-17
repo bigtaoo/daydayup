@@ -37,7 +37,7 @@ function addEnemy(s: GameState, xpx: number, ypx: number, hp: number = BASIC_ENE
     facing: 0 as Brad, hp, maxHp: BASIC_ENEMY.maxHp, shield: 0, maxShield: 0,
     ticksSinceHit: 0, radius: BASIC_ENEMY.radius,
     footprintRadius: BASIC_ENEMY.footprintRadius,
-    alive: true, weapon: null, firing: false, status: freshStatus(), enraged: false,
+    alive: true, weapon: null, firing: false, status: freshStatus(), enraged: false, aggroed: false,
   };
   s.enemies.push(e);
   return e;
@@ -115,14 +115,18 @@ describe('MovementSystem (step 4)', () => {
     expect(Math.abs(dist - minDist)).toBeLessThanOrEqual(2);
   });
 
-  it('does NOT push two overlapping enemies apart (enemy-enemy leans overlap, design/07)', () => {
+  it('pushes two overlapping enemies apart too — no faction exception left (ENGINE_VERSION 42)', () => {
     const s = state();
     const a = addEnemy(s, 100, 100);
     const b = addEnemy(s, 105, 100); // well inside their combined footprint
+    const startMid = (a.gx + b.gx) / 2;
     new MovementSystem().tick(s);
-    expect(a.gx).toBe(pxToFp(100));
+    const dist = isqrt((a.gx - b.gx) * (a.gx - b.gx) + (a.gy - b.gy) * (a.gy - b.gy));
+    const minDist = (a.footprintRadius + b.footprintRadius) as number;
+    expect(Math.abs(dist - minDist)).toBeLessThanOrEqual(2);
+    expect(b.gx).toBeGreaterThan(a.gx); // sign preserved — neither one teleports past the other
+    expect(Math.abs((a.gx + b.gx) / 2 - startMid)).toBeLessThanOrEqual(2); // split evenly
     expect(a.gy).toBe(pxToFp(100));
-    expect(b.gx).toBe(pxToFp(105));
     expect(b.gy).toBe(pxToFp(100));
   });
 

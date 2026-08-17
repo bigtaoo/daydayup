@@ -133,12 +133,12 @@ export class PveBotController {
     const target = this.nearestEnemy(s, self, here);
     if (target) {
       this.restedTicks = 0;
-      return this.fight(s, self, owner, tick, target);
+      return this.fight(s, self, owner, tick, target, here);
     }
     // Nothing left to fight here: top the shield off before opening the next room,
     // unless there is a heal on the floor worth walking to first (`fight` handles
     // that case; here the room is quiet, so seek it directly).
-    const heal = this.healToSeek(s, self);
+    const heal = this.healToSeek(s, self, here);
     if (heal) return this.withUnstick(owner, tick, self, quantizeMove(heal.x - self.x, heal.y - self.y), 0);
     if (this.shouldRest(self)) {
       this.restedTicks++;
@@ -150,8 +150,8 @@ export class PveBotController {
 
   // ── Combat ───────────────────────────────────────────────────────────────────
 
-  private fight(s: GameState, me: Self, owner: number, tick: number, target: Vec): PlayerCommand {
-    const heal = this.healToSeek(s, me);
+  private fight(s: GameState, me: Self, owner: number, tick: number, target: Vec, room: string | undefined): PlayerCommand {
+    const heal = this.healToSeek(s, me, room);
     const dx = target.x - me.x;
     const dy = target.y - me.y;
     const dist = Math.hypot(dx, dy);
@@ -203,9 +203,19 @@ export class PveBotController {
    * 7 of 8 careful runs stalled forever after clearing the entrance room). While
    * standing in a door passage (`room === undefined`) it falls back to a plain radius
    * scan, which is also the correct behaviour there — both rooms are open to it.
+   *
+   * Inside its own room there is deliberately NO distance cap (ENGINE_VERSION 42): the
+   * room's walls already are the bound, and the enemy perception radius means a mob on
+   * the far side of a big room no longer walks over on its own — someone has to close
+   * the distance, and it is the player. Capped, the bot would find no target, fall
+   * through to `travel`, and bounce off the combat-locked door until the run timed out
+   * (which is exactly what the sim reported on the r5 rooms the tick v42 landed).
+   * `fight` already handles the approach: `spacingMove` closes while outside the
+   * standoff band and `fireRangeFp` still gates the trigger, so this widens who the bot
+   * WALKS toward, never who it shoots at from out of range.
    */
   private nearestEnemy(s: GameState, me: Vec, room: string | undefined): Vec | null {
-    let best = ENGAGE_SCAN_FP * ENGAGE_SCAN_FP;
+    let best = room !== undefined ? Infinity : ENGAGE_SCAN_FP * ENGAGE_SCAN_FP;
     let found: Vec | null = null;
     for (const e of s.enemies) {
       if (!e.alive) continue;
@@ -221,13 +231,24 @@ export class PveBotController {
     return found;
   }
 
-  private healToSeek(s: GameState, me: Self): Vec | null {
+  /**
+   * A heal drop worth walking to, restricted to the bot's OWN room for the same reason
+   * `nearestEnemy` is: while a room still holds a live enemy its doors are combat-locked
+   * (`DoorSystem`), so a heal left behind in the room next door is not reachable at all,
+   * and heal-seeking outranks every other move in `fight`. Unrestricted, a hurt bot in a
+   * room whose last mob is still alive would walk at that unreachable heal, into a locked
+   * door, until the run timed out — which is exactly what the sim reported on
+   * `careful/seed=404/r5_court`. Standing in a door passage (`room === undefined`) falls
+   * back to a plain radius scan, same convention as `nearestEnemy`.
+   */
+  private healToSeek(s: GameState, me: Self, room: string | undefined): Vec | null {
     const frac = (me.hp + me.shield) / Math.max(1, me.maxHp + me.maxShield);
     if (frac > this.profile.healSeekFrac) return null;
     let best = HEAL_SCAN_FP * HEAL_SCAN_FP;
     let found: Vec | null = null;
     for (const item of s.pickups) {
       if (!item.alive || item.kind !== 'heal') continue;
+      if (room !== undefined && roomIdAt(s, item.gx, item.gy) !== room) continue;
       const dx = item.gx - me.x;
       const dy = item.gy - me.y;
       const d2 = dx * dx + dy * dy;

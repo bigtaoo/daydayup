@@ -14,6 +14,7 @@ export class Skin {
   readonly view = new Container();
   private front?: Graphics;
   private rig?: RigSkin;
+  private rigScale = 1; // the wrapper's authoring-px -> gameplay-radius factor (see below)
   private clock = 0;
 
   // `rigTint` is a Pixi multiply-tint applied to the rig's sprites (design/13's
@@ -30,7 +31,8 @@ export class Skin {
       // (facingFromAim), so scaling that same node here would get overwritten
       // (sign-only) every time setAim() runs, silently un-sizing the sprite.
       const wrapper = new Container();
-      wrapper.scale.set(radius / loaded.referenceRadius);
+      this.rigScale = radius / loaded.referenceRadius;
+      wrapper.scale.set(this.rigScale);
       wrapper.addChild(this.rig.view);
       this.view.addChild(wrapper);
     } else {
@@ -74,6 +76,21 @@ export class Skin {
   // Hand anchor (in actor-local coords). Fixed in the demo; later driven by animation frames.
   handAnchor(): { x: number; y: number } {
     return { x: 0, y: 2 };
+  }
+
+  /** The mounted weapon's business end in `view`-local coords (see `RigSkin.muzzleLocal`
+   *  for why this exists and how the point is derived). Null on the Graphics placeholder
+   *  and on any rig with no weapon module mounted — the placeholder's own barrel already
+   *  ends at `radiusPx * 1.3`, which is within a pixel of the enemy gun's sim muzzle
+   *  offset, so those bullets never needed correcting. Only valid after `setFacing` has
+   *  laid the rig out for this frame. */
+  muzzleAnchor(): { x: number; y: number } | null {
+    const local = this.rig?.muzzleLocal();
+    if (!local) return null;
+    // `wrapper` (the constructor's authoring-px -> gameplay-radius normalization) sits
+    // between the rig and `view`, so its uniform scale still has to be applied.
+    const s = this.rigScale;
+    return { x: local.x * s, y: local.y * s };
   }
 
   /** Whether a real `.tao` rig is active (vs. the Graphics placeholder) — lets Actor

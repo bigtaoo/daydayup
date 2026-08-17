@@ -303,6 +303,17 @@ export interface EnemyActor extends Actor {
   // to a neutral multiplier.
   moveSpeedPerTick?: Fp; // fp displacement per tick while closing distance to its target
   engageRangeFp?: Fp; // stop closing once within this fp distance of the target
+  // Perception radius (ENGINE_VERSION 42): how close the target has to get before this
+  // mob reacts AT ALL. Room activation (design/05's room-as-the-aggro-unit) is still the
+  // outer gate — this is the inner one, so an activated room's far side stays idle until
+  // the player actually comes near instead of the whole garrison marching at once.
+  // Undefined falls back to DEFAULT_ENEMY_AGGRO_RANGE_FP, same convention as the two above.
+  aggroRangeFp?: Fp;
+  // Latched the tick the target first enters `aggroRangeFp` — one-way, like `enraged`.
+  // Without the latch a mob sitting exactly at the boundary would flip between chasing
+  // and idling every tick as its own movement carried it back and forth across it.
+  // Required (not optional) so the field always has a stable false default.
+  aggroed: boolean;
 }
 
 /** A boss's enrage trait (design/09 `traits`, ENGINE_VERSION 27): below `hpThresholdPermille`

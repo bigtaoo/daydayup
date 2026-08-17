@@ -670,3 +670,47 @@ Shipped alongside the content half of the same rebalance (no version bump of its
 own — spawn-point data, not engine logic): `world/dungeons/ember/` room garrisons
 15-30 -> 8-14, and the authored player-spawn clearance widened 3 -> 6 grid so the
 entrance room can't place a mob inside engage range of the spawn point.
+
+v42: a game-feel pass on how a room full of mobs behaves, from a live play
+report (2026-08-17): "怪物之间要有碰撞。怪物的感知范围弄小一些，移动速度调低."
+Three changes to the deterministic core, all in the PvE enemy path:
+
+  - **Enemy↔enemy push-out re-enabled** (`MovementSystem.resolveActorPairs`).
+    That pair was the one documented faction exception, skipped on design/07's
+    own "Open questions" recommendation that packed rooms read better with mobs
+    leaning overlap. In practice a garrison converging on the player stacked
+    into a single blob of overlapping sprites — several mobs sharing one
+    silhouette, so the player could neither count the threat nor tell what they
+    were shooting. Every alive pair now pushes apart through the same
+    half-penetration-each resolver players already used; there is no longer any
+    faction branch in that loop.
+
+  - **Perception radius** (`AIDecideSystem.hasAggro`, `EnemyActor.aggroRangeFp`
+    / `aggroed`, `DEFAULT_ENEMY_AGGRO_RANGE_FP` = 320 px = 10 grid). Room
+    activation (design/05's room-as-the-aggro-unit) is unchanged and remains the
+    OUTER gate; this is a new inner one. A woken room's mobs are now fully inert
+    — no movement, no fire, and no turning to face — until the player comes
+    within their own radius. Before this, opening a door set the room's entire
+    garrison walking at the player from wherever it was authored, so a room read
+    as one converging blob instead of a space with pockets of threat in it. The
+    radius is wider than `DEFAULT_ENEMY_ENGAGE_RANGE_FP` (180 px), so a mob that
+    notices the player still has ~4 grid to close before it may fire and v40's
+    reaction window survives intact. `aggroed` is a one-way latch, like
+    `enraged`: a mob sitting exactly on the boundary would otherwise flip
+    between chasing and idling every tick, and the radius is meant as a wake-up
+    trigger, never a leash.
+
+  - **Enemy move speed 4 → 2.6 px/tick** (`DEFAULT_ENEMY_MOVE_SPEED_PER_TICK`),
+    i.e. ~63% → ~41% of `PLAYER_BASE.speedPerTick`. v37's claim that a slower
+    mob means "committing to running away always opens the gap" did not survive
+    contact: the player also has to aim and dodge, so the effective gap-opening
+    rate is far below the raw speed ratio, and a garrison that had noticed the
+    player stayed glued to them.
+
+Replay impact: a real simulation-output change on all three counts — enemy
+positions differ from the first tick two mobs touch, from the first tick a
+distant mob would have started walking, and from every tick any mob moves at
+all. Downstream `combatPrng` draws shift in time with the shots they gate. Any
+v41 PvE stream with more than one enemy diverges. PvP arenas are unaffected in
+practice: they carry no `EnemyActor`s, and the push-out change only removes an
+enemy-only exception.

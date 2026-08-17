@@ -138,3 +138,44 @@ describe('Skin — real .tao rig branch', () => {
     expect(setWeaponTint).toHaveBeenCalledWith(0x00ff00);
   });
 });
+
+// muzzleAnchor (2026-08-17) — the one piece of geometry Skin adds on top of
+// `RigSkin.muzzleLocal`: the wrapper scale that normalizes the rig's authoring-px
+// space down to this actor's gameplay radius. `Actor.muzzlePos` then lifts the result
+// into world space; `RigSkin.test.ts` covers where the point comes from inside the rig.
+describe('Skin.muzzleAnchor — rig authoring-px scaled to the actor', () => {
+  it('is null on the placeholder — its own barrel already ends at the sim muzzle', () => {
+    mocks.loaded = undefined;
+    const s = new Skin(0x123456, 0xabcdef, 20);
+    expect(s.muzzleAnchor()).toBeNull();
+  });
+
+  it('is null on a rig with no weapon module mounted', () => {
+    mocks.loaded = loadedRig();
+    const s = new Skin(0x123456, 0xabcdef, 20, 'char_vanguard');
+    s.setFacing(0, 0, 0, 'idle');
+    expect(s.muzzleAnchor()).toBeNull();
+  });
+
+  it('scales the rig-local muzzle by radius / referenceRadius', () => {
+    mocks.loaded = loadedRig();
+    const s = new Skin(0x123456, 0xabcdef, 20, 'char_vanguard'); // 20 / 40 = 0.5x
+    s.setFacing(0, 0, 0, 'idle');
+    const rig = internals(s).rig!;
+    // Stub the rig's own answer so this test covers ONLY the scale composition, not the
+    // socket/texture geometry RigSkin.test.ts already pins down.
+    rig.muzzleLocal = () => ({ x: 60, y: -46 });
+    expect(s.muzzleAnchor()).toEqual({ x: 30, y: -23 });
+  });
+
+  it('a bigger actor scales the SAME rig-local point further out — the gun grows with the body', () => {
+    mocks.loaded = loadedRig();
+    const small = new Skin(0, 0, 20, 'char_vanguard');
+    const big = new Skin(0, 0, 40, 'char_vanguard'); // 40 / 40 = 1x
+    for (const s of [small, big]) s.setFacing(0, 0, 0, 'idle');
+    internals(small).rig!.muzzleLocal = () => ({ x: 60, y: -46 });
+    internals(big).rig!.muzzleLocal = () => ({ x: 60, y: -46 });
+    expect(small.muzzleAnchor()).toEqual({ x: 30, y: -23 });
+    expect(big.muzzleAnchor()).toEqual({ x: 60, y: -46 });
+  });
+});

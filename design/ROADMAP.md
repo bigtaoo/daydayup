@@ -5,7 +5,7 @@ closed loop the design docs describe, and the running record of how each phase a
 landed. Phases are written top-to-bottom in dependency order; each one keeps its dated
 shipped-notes underneath it, so a phase section is both the plan and the history.
 
-**Current built state (2026-08-17).** `ENGINE_VERSION` **40** (32: ground-weapon pickup is
+**Current built state (2026-08-17).** `ENGINE_VERSION` **42** (32: ground-weapon pickup is
 click-driven; 33: manual aim removed entirely; 34: co-resident PvE room/door model, engine +
 client rendering; 35: fully-realized branching — see the Room & door model section below;
 same-day map-editor door placement, the `layout: 'graph2d'` real-2D-layout follow-up, AND the
@@ -44,7 +44,16 @@ whole-room alpha strike on tick 1 with zero reaction time. Fixed the same way So
 the Gungeon split room-wide aggro from per-enemy attack range: a room's enemies still all wake
 up and start closing distance the instant the room activates (unchanged — the room stays the
 aggro unit), but only the ones already within `engageRangeFp` actually fire; the rest must
-visibly cross the room first. See `ENGINE_VERSION_HISTORY.md`'s v40 entry for the full account.
+visibly cross the room first. See `ENGINE_VERSION_HISTORY.md`'s v40 entry for the full account;
+41: a per-ROOM concurrent-fire budget + staggered room wake-up, because v40 turned out to buy
+only about half a second — a garrison simply closes to engage range as one blob and opens up
+together, which no per-enemy number can fix. Measured, not reasoned about, by a purpose-built
+PvE level simulator; see the "PvE level simulator" section below; 42: the room *feel* pass —
+enemy↔enemy push-out re-enabled (the one faction exception in `resolveActorPairs`, which in
+practice let a converging garrison stack into a single unreadable blob of sprites), a new
+per-mob perception radius INSIDE the existing room-activation gate (an un-noticed mob doesn't
+move, fire, or even turn), and enemy move speed 4 → 2.6 px/tick. See the "Room feel pass"
+section below and `ENGINE_VERSION_HISTORY.md`'s v42 entry.
 Same-day, render-only follow-up (no `ENGINE_VERSION` bump — 🟢): the DEFEAT/VICTORY result
 screen's confirm gesture changed from tap-anywhere-on-the-panel (plus a raw fire-button
 rising edge, `confirmEdge.ts`, now deleted) to a single explicit CONFIRM `Button` — the same
@@ -2147,6 +2156,102 @@ the design intent ("shield is the renewable half") was pinned nowhere, and is no
 `SKIN_DEFS`' largest pool so a fatter shield re-checks the claim instead of silently invalidating it.
 General shape worth watching for: *a test that reads its expectation from the same constant it is
 guarding proves the arithmetic, not the intent.*
+
+---
+
+## Room feel pass — how a crowded room reads (2026-08-17, `ENGINE_VERSION` 41->42)
+
+A live report the same day as the rebalance above, but about a different axis: not how hard
+a room hits, how it *reads*. *"1，镜头往下一些，尽量视口内只有当前房间，或者说给角色最好的
+展示。2，子弹要从枪口打出。3，怪物之间要有碰撞。4，怪物的感知范围弄小一些，移动速度调低。
+5，护盾的闪烁频率降低。"* Five items, three engine and two render.
+
+**Engine (`ENGINE_VERSION` 42 — full account in `ENGINE_VERSION_HISTORY.md`, design shape in
+design/05 "Room feel pass" and design/07's Open questions):**
+
+- **Enemy↔enemy push-out re-enabled.** `resolveActorPairs` had exactly one faction exception,
+  taken on design/07's own recommendation that packed rooms read better with mobs leaning
+  overlap. What it produced in practice was a garrison converging into one spot and stacking
+  into a single blob of overlapping sprites — the player could neither count the threat nor
+  tell what they were shooting at. The faction branch is gone; there is no exception left.
+- **Perception radius** (`DEFAULT_ENEMY_AGGRO_RANGE_FP` = 320 px, `AIDecideSystem.hasAggro`,
+  `EnemyActor.aggroRangeFp`/`aggroed`). Room activation stays the OUTER aggro gate, unchanged;
+  this is a new inner one. Opening a door used to set a room's whole garrison walking at the
+  player from wherever it was authored. An un-noticed mob is fully inert — no movement, no
+  fire, and no turning to face, since a mob tracking you with its barrel from across the room
+  reads as "aware but passive," the opposite of the point. Deliberately WIDER than the 180 px
+  engage range so v40's reaction window survives intact, and latched one-way (like `enraged`)
+  so it is a wake-up trigger rather than a leash, and so a mob on the boundary can't oscillate.
+- **Enemy move speed 4 → 2.6 px/tick** (~63% → ~41% of the player's). v37's claim that a slower
+  mob means "committing to running away always opens the gap" didn't survive contact — the
+  player also has to aim and dodge, so the effective gap-opening rate is far below the ratio.
+
+**Render (no version bump — 🟢):**
+
+- **The camera fits the current ROOM, not the whole floor** (`GameLoop.cameraFrame` →
+  `FxController.updateCamera`'s new `frame`; `MAX_ZOOM` 2.5 → 4.5). A dungeon floor is
+  co-resident, so fitting `worldSize` meant fitting a ~2000 px floor into a 1920 px viewport —
+  cover-fit resolved to zoom 1 and several rooms shared the screen, each small. Level 1's rooms
+  are ~480 px square, so per-room fitting lands at ~4x, which is what forced the cap raise (2.5
+  bound in literally every room). The look-at point is also biased 8% of viewport height above
+  the player's GROUND position, so the character sits centred instead of hovering in the upper
+  half over a band of empty floor. Panning still clamps to the WORLD, not the room —
+  room-clamping would hard-stop the camera at a doorway; the cost is that a player standing
+  off-centre still sees a strip of the neighbouring room, and a true one-room-per-screen lock
+  would mean a jump-cut at every door. Flagged to the user as the remaining option, not taken.
+- **Bullets leave the drawn barrel tip** (`RigSkin.muzzleLocal` → `Actor.muzzlePos` →
+  `Bullet.setMuzzleOrigin`). The sim's muzzle and the drawn one are on *parallel* lines, not
+  merely offset at their origins: the engine puts a bullet `muzzleOffset` along the aim ray on
+  the GROUND plane and lifts it by `bulletZ`, while the rig rotates the gun in SCREEN space at
+  its socket bone's height — aim downward and the two diverge by ~16 world px, which this
+  camera now magnifies 4x. Corrected on the view (eased out over the first ~120 ms of flight)
+  rather than by moving the sim's own muzzle, which stays authoritative for hit detection and
+  which, pushed out to the barrel tip, would let a player standing flush against a wall spawn
+  shots on its far side. `muzzleLocal` measures the module texture's reach from its anchor by
+  ray/rect intersection along the direction `WEAPON_DEFS`' own measured `rotationOffsetRad`
+  encodes, so it needs no new authored per-weapon data. Null for every enemy (socket-less
+  `critter-core`), whose placeholder barrel already ends within a pixel of its own sim muzzle.
+- **Shield shimmer slowed** ~0.95 Hz → ~0.29 Hz, swing narrowed ±0.4 → ±0.25 around a brighter
+  base, radial banding halved (18 → 9 cycles, or the slowed pulse reads as travelling ripple
+  instead — the same complaint by another route).
+
+**This made level 1 substantially easier and the sim said so**, which is exactly what the
+simulator exists for: the careful bot's average deepest floor went 0.1 → 1.9 and its worst
+1-second damage window 5 → 4 against the same 9.2 effective HP. All five gates still pass, but
+the "hard overall" target is now met with much more headroom — a garrison re-tightening pass is
+**open work**, and `ROOM_FIRE_BUDGET`/garrison size are where it belongs, not by undoing the
+perception radius the user asked for.
+
+**Two sim-bot bugs the change exposed, both the same shape and neither an engine change.**
+`PveBotController`'s enemy and heal scans were bounded by a scan RADIUS as well as by the bot's
+room. That was invisible while every woken mob walked over on its own; once mobs stopped doing
+that, the bot found no target, fell through to `travel`, and bounced off its room's
+combat-locked door until the run timed out (4 of 8 careful runs). A heal left in the previous
+room is unreachable for the same reason, and heal-seeking outranks every other move in `fight`.
+Both scans are now bounded by the room itself — its walls already are a bound, and its doors
+are locked anyway. The sim's own no-stall gate is what caught this.
+
+**Verification. +34 tests in the default suite** (3140 → 3174), every one of them
+mutation-checked rather than assumed — 14 reverts of the shipped behaviour, 14 reds:
+`FxController` frame-fit + body bias, `GameLoop.cameraFrame`'s room lookup (co-op local seat,
+arena fallback, and the three null paths), `RigSkin.muzzleLocal`/`barrelReach`,
+`Skin.muzzleAnchor`, `Actor.muzzlePos`, `Bullet.setMuzzleOrigin`'s ease curve and its
+shadow-stays-on-the-ground contract, `Scene`'s wiring, shield shimmer as a derived FREQUENCY
+band rather than a pinned constant, the `aggroRangeFp` blueprint wiring plus two invariants
+(perception must exceed engage range; a mob must be slower than the player), and the bot's
+room-scoped scans. Confirmed live in the real client via `claude-in-chrome` — per-room framing
+at 4x, a magenta debug marker proving `muzzlePos` lands on the drawn barrel tip, and a bullet
+visibly emerging from the muzzle. `npm run check` green across all 7 workspaces;
+`npm run test:pve-sim` green on all 5 gates.
+
+**Two things worth reusing.** The shield shimmer test was GREEN when first written and should
+not have been: it scanned the shader source for `sin(uTime * K` and matched the *old* constant
+quoted inside the fix's own explanatory comment. Any test that reads a value out of source text
+must strip comments first. And the sim-bot passage test was green under an over-correction
+mutation, because both the correct and incorrect paths produce "doesn't fire" at that distance —
+it needed a movement-DIRECTION discriminator, not a trigger one. Both are the same lesson the
+`SHIELD_REGEN_INTERVAL` note above records: a test can pass for a reason that has nothing to do
+with the thing it names.
 
 ---
 

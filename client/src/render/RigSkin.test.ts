@@ -12,7 +12,7 @@ import { Container, Texture } from 'pixi.js';
 import { Rig } from './Rig';
 import { ORB_CORE_RIG } from './orbCoreRig';
 import { CRITTER_CORE_RIG } from './critterCoreRig';
-import { RigSkin } from './RigSkin';
+import { RigSkin, barrelReach } from './RigSkin';
 import type { RigSkinBundle } from './taoBundle';
 import type { AnimationClip, SpriteBinding } from './types';
 
@@ -241,6 +241,69 @@ describe('RigSkin — two orbiting weapon modules, one active, one idle', () => 
     const m = modulesOf(skin);
     expect(m.weaponSprite!.visible).toBe(false);
     expect(m.idleModuleSprite!.visible).toBe(false);
+  });
+
+  // muzzleLocal (2026-08-17): where the bullet view is spawned so shots leave the barrel
+  // tip rather than mid-housing. The mocked weaponSkins above give a 1x1 Texture.WHITE at
+  // anchor.x 0.2, scale 0.25 and rotationOffset 0 — so the reach past the socket tip is
+  // (1 - 0.2) * 1 * 0.25 = 0.2 authoring-px. Small, but it is the same arithmetic the
+  // real 320px textures go through, and `barrelReach` is covered on its own below.
+  it('the muzzle sits past the ACTIVE socket tip, along the aim direction', () => {
+    const skin = armed();
+    skin.setAim(0);
+    skin.update();
+    expect(skin.muzzleLocal()).toEqual({ x: expect.closeTo(52.2, 6), y: expect.closeTo(-46, 6) });
+
+    skin.setAim(Math.PI / 2); // straight down-screen: the reach goes into +y, not +x
+    skin.update();
+    expect(skin.muzzleLocal()).toEqual({ x: expect.closeTo(52, 6), y: expect.closeTo(-45.8, 6) });
+  });
+
+  it('mirrors with the rig — a left-facing body puts the muzzle on the left, still ahead of the socket', () => {
+    const skin = armed();
+    skin.setBodyFacing(Math.PI);
+    skin.setAim(Math.PI);
+    skin.update();
+    const m = skin.muzzleLocal()!;
+    expect(skin.view.scale.x).toBe(-1);
+    expect(m.x).toBeCloseTo(-52.2, 6); // past the socket tip on the mirrored side
+    expect(m.y).toBeCloseTo(-46, 6);
+  });
+
+  it('is null with no module mounted — nothing for a caller to correct toward', () => {
+    const skin = armed();
+    skin.setWeaponKind(null);
+    skin.update();
+    expect(skin.muzzleLocal()).toBeNull();
+  });
+
+  it('is null on a socket-less rig (critter-core: every enemy)', () => {
+    const skin = makeSkin(CRITTER_CORE_RIG);
+    skin.setWeaponKind('ranged', 'enemygun');
+    skin.update();
+    expect(skin.muzzleLocal()).toBeNull();
+  });
+});
+
+describe('barrelReach — how far a weapon texture extends from its anchor', () => {
+  const anchor = { x: 0.25, y: 0.5 };
+
+  it('measures to the far edge for canonical art (socket left, business end right)', () => {
+    // rotationOffset 0 = already pointing +x, so the ray leaves through the right edge.
+    expect(barrelReach(320, 160, anchor, 0)).toBeCloseTo(240, 6); // (1 - 0.25) * 320
+  });
+
+  it('measures the OTHER way for art baked pointing backwards', () => {
+    // A 180° offset is what cancels art drawn "socket right, business end trailing left"
+    // (the GPT Image 2 composition habit weaponSkins.ts documents) — the reach is then
+    // the anchor's own short side, not the long one.
+    expect(barrelReach(320, 160, anchor, Math.PI)).toBeCloseTo(80, 6); // 0.25 * 320
+  });
+
+  it('leaves through whichever edge the ray hits first, not always a horizontal one', () => {
+    // Straight up in texture space: the vertical edge is much nearer than either
+    // horizontal one, so a naive "(1 - anchor.x) * width" would overshoot ~3x.
+    expect(barrelReach(320, 160, anchor, Math.PI / 2)).toBeCloseTo(80, 6); // 0.5 * 160
   });
 });
 

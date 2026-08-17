@@ -66,11 +66,11 @@ describe('FxController.updateCamera', () => {
   it('zooms a small room up to cover both axes, capped at MAX_ZOOM', () => {
     const layers = new Layers();
     const fx = new FxController(layers);
-    // zoomX = 800/200 = 4, zoomY = 600/200 = 3 — cover-fit picks the max (4), past the cap (2.5).
-    fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 200, h: 200 }, fakePlayer(100, 100));
-    expect(layers.world.scale.x).toBeCloseTo(2.5);
-    expect(layers.world.scale.y).toBeCloseTo(2.5);
-    expect(fx.zoom).toBeCloseTo(2.5);
+    // zoomX = 800/100 = 8, zoomY = 600/100 = 6 — cover-fit picks the max (8), past the cap (4.5).
+    fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 100, h: 100 }, fakePlayer(50, 50));
+    expect(layers.world.scale.x).toBeCloseTo(4.5);
+    expect(layers.world.scale.y).toBeCloseTo(4.5);
+    expect(fx.zoom).toBeCloseTo(4.5);
   });
 
   it('zooms by the uncapped cover-fit ratio when under MAX_ZOOM', () => {
@@ -108,6 +108,56 @@ describe('FxController.updateCamera', () => {
     fx.updateCamera(1, { vw: 800, vh: 400 }, { w: 400, h: 400 }, fakePlayer(200, 200));
     expect(layers.world.scale.x).toBeCloseTo(2);
     expect(layers.world.x).toBeCloseTo(0); // effW === vw exactly at this zoom — no horizontal void
-    expect(layers.world.y).toBeCloseTo(-200); // effH (800) > vh (400) — panned toward the player, clamped to [-400, 0]
+    // effH (800) > vh (400) — panned toward the player, clamped to [-400, 0]. The look-at
+    // point is CAMERA_BODY_BIAS_R (8% of vh = 32 screen px, 16 world px at this zoom)
+    // above the player's ground point, so the world sits 32px lower than a feet-centred
+    // camera's -200 would put it.
+    expect(layers.world.y).toBeCloseTo(-168);
+  });
+
+  it('centres the character rather than its feet — the look-at point is biased above the ground position', () => {
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    // Same setup on both axes so the vertical bias is the ONLY asymmetry: a world twice
+    // the viewport on each axis, player dead centre, so neither clamp bound is hit.
+    fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 1600, h: 1200 }, fakePlayer(800, 600));
+    expect(fx.zoom).toBe(1);
+    expect(layers.world.x).toBeCloseTo(-400); // 800/2 - 800 — exactly centred horizontally
+    // 600/2 - (600 - 600*0.08) = 300 - 552. The +48 vs a feet-centred -300 is the bias:
+    // the rendered world moves DOWN the screen, which lifts the character off the
+    // bottom-heavy framing a feet-centred camera gives it.
+    expect(layers.world.y).toBeCloseTo(-252);
+  });
+
+  it('fits the FRAME rect (the current room) when given one, not the whole floor', () => {
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    // The floor is 4000x3000 — far bigger than the viewport, so fitting IT floors the
+    // zoom at 1 and the player sees several rooms at once. The room they're standing in
+    // is 400x400: cover-fit on that picks 800/400 = 2.
+    const world = { w: 4000, h: 3000 };
+    const player = fakePlayer(2000, 1500);
+    fx.updateCamera(1, { vw: 800, vh: 600 }, world, player);
+    expect(fx.zoom).toBe(1); // no frame: the old whole-floor behaviour, unchanged
+
+    fx.updateCamera(1, { vw: 800, vh: 600 }, world, player, { x: 1800, y: 1300, w: 400, h: 400 });
+    expect(fx.zoom).toBeCloseTo(2);
+  });
+
+  it('still clamps panning to the WORLD, not to the frame — a doorway must not hard-stop the camera', () => {
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    // Player at the far-east edge of a small room at the far-east edge of the floor. The
+    // clamp bound has to come from the floor's own width (2000*2 = 4000 effective, so
+    // x floors at 800-4000 = -3200), not from the room's.
+    fx.updateCamera(
+      1,
+      { vw: 800, vh: 600 },
+      { w: 2000, h: 2000 },
+      fakePlayer(1990, 1000),
+      { x: 1600, y: 800, w: 400, h: 400 },
+    );
+    expect(fx.zoom).toBeCloseTo(2);
+    expect(layers.world.x).toBeCloseTo(-3200); // hit the WORLD's east bound, not the room's
   });
 });

@@ -321,4 +321,76 @@ export class RigSkin {
     sprite.rotation = rotation;
     return sprite;
   }
+
+  /**
+   * Where the mounted weapon's business end actually is, in this rig's PARENT space
+   * (i.e. `view`'s own scale.x flip already applied, the wrapper's uniform scale not
+   * yet — `Skin.muzzleAnchor` finishes the job). Null when nothing is mounted, which
+   * covers every socket-less rig (`critter-core`'s enemies) and the frames before the
+   * weapon texture finishes preloading.
+   *
+   * Exists because the bullet spawns at the SIM's muzzle — `RangedSimSpec.muzzleOffset`,
+   * a flat distance along the aim ray from the actor's centre — and the drawn gun's
+   * barrel tip is somewhere else entirely: the module hangs off a socket bone that
+   * orbits the core (52 authoring-px out on `orb-core`) and then extends its own texture
+   * beyond that again, so the sim's 30px landed roughly mid-gun and shots visibly left
+   * the middle of the housing rather than the muzzle (user report, 2026-08-17: "子弹要从
+   * 枪口打出"). `Scene` uses this as the bullet view's FIRST position and lets the normal
+   * interpolation carry it to the authoritative sim position over that tick — the sim is
+   * untouched, so nothing here can affect hit detection or determinism, and deliberately
+   * so: pushing the sim's spawn point out to the barrel tip instead would let a player
+   * standing flush against a wall spawn bullets on the far side of it.
+   *
+   * The geometry, all in the rig's own authoring-px space:
+   *   - the socket bone's TIP (`worldPose.ex/ey`) is where the module is mounted;
+   *   - the barrel points along `canonicalSocketAngleRad()` — the sprite's rotation is
+   *     that angle PLUS the texture's `rotationOffsetRad`, and the offset exists exactly
+   *     to cancel each texture's own baked pointing direction, so the two cancel and the
+   *     business end lies along the canonical aim angle;
+   *   - its distance is how far the texture's own rect reaches from its anchor in that
+   *     baked direction (`barrelReach`), scaled by the sprite's scale.
+   */
+  muzzleLocal(): { x: number; y: number } | null {
+    const sprite = this.weaponSprite;
+    if (!sprite || !sprite.visible || !this.weaponKind) return null;
+    const angle = this.canonicalSocketAngleRad();
+    const reach = barrelReach(
+      sprite.texture.width,
+      sprite.texture.height,
+      getWeaponAnchor(this.weaponName, this.weaponKind),
+      getWeaponRotationOffset(this.weaponName, this.weaponKind),
+    ) * getWeaponScale(this.weaponName, this.weaponKind);
+    return {
+      x: this.flipX * (sprite.x + Math.cos(angle) * reach),
+      y: sprite.y + Math.sin(angle) * reach,
+    };
+  }
+}
+
+/**
+ * How far a weapon texture reaches from its anchor toward its own baked business end, in
+ * unscaled texture px. A ray/rect intersection: the anchor is the ray origin (it is the
+ * sprite's own local origin once `anchor` is set), the direction is the texture's baked
+ * tip direction — `-rotationOffsetRad`, since that offset is what gets ADDED to rotate
+ * the baked direction onto the live aim angle — and the rect is the texture's bounds
+ * around the anchor. Assumes the art reaches its own canvas edge in that direction, which
+ * is what `WEAPON_DEFS`' measured `rotationOffsetRad` values were derived from (the
+ * alpha-farthest pixel from the anchor); the failure mode for a padded texture is a
+ * muzzle a few px too far out, not a wrong direction. Exported for `RigSkin.test.ts`.
+ */
+export function barrelReach(
+  texW: number,
+  texH: number,
+  anchor: { x: number; y: number },
+  rotationOffsetRad: number,
+): number {
+  const dx = Math.cos(-rotationOffsetRad);
+  const dy = Math.sin(-rotationOffsetRad);
+  const right = (1 - anchor.x) * texW;
+  const left = -anchor.x * texW;
+  const bottom = (1 - anchor.y) * texH;
+  const top = -anchor.y * texH;
+  const tx = dx > 1e-6 ? right / dx : dx < -1e-6 ? left / dx : Infinity;
+  const ty = dy > 1e-6 ? bottom / dy : dy < -1e-6 ? top / dy : Infinity;
+  return Math.min(tx, ty);
 }

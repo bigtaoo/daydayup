@@ -47,6 +47,9 @@ export interface EnemyBlueprint {
   // range, or a sniper variant can hang back at a much longer one.
   moveSpeedPerTick?: Fp;
   engageRangeFp?: Fp;
+  // Perception radius (ENGINE_VERSION 42) — how close the player has to get before this
+  // mob reacts at all. Undefined = DEFAULT_ENEMY_AGGRO_RANGE_FP below.
+  aggroRangeFp?: Fp;
 }
 
 // ── Movement AI defaults (ENGINE_VERSION 37) ─────────────────────────────────────
@@ -63,8 +66,24 @@ export interface EnemyBlueprint {
 // Exported so AIDecideSystem can fall back to the SAME numbers for a hand-built
 // EnemyActor that bypasses this factory (most unit tests) — one source of truth,
 // not two constants that could drift apart.
-export const DEFAULT_ENEMY_MOVE_SPEED_PER_TICK = pxToFp(4); // 4 px/tick ≈ 120 px/s, ~63% of PLAYER_BASE.speedPerTick
+// Retuned 2026-08-17 (ENGINE_VERSION 42, live play report: "怪物的感知范围弄小一些，移动
+// 速度调低"). Was 4 px/tick, i.e. ~63% of the player's — close enough that a garrison that
+// had noticed you stayed glued to you, and backing off never actually opened a gap the way
+// the v37 note claimed it would (the player also has to aim and dodge, so the effective
+// gap-opening rate is far below the raw speed ratio). 2.6 px/tick ≈ 78 px/s is ~41% of
+// PLAYER_BASE.speedPerTick: retreating now visibly outruns them, and a mob crossing a room
+// to reach you reads as a threat approaching rather than a rush.
+export const DEFAULT_ENEMY_MOVE_SPEED_PER_TICK = pxToFp(2.6); // ≈78 px/s, ~41% of PLAYER_BASE.speedPerTick
 export const DEFAULT_ENEMY_ENGAGE_RANGE_FP = pxToFp(180); // ~5.6 grid — stop and shoot once this close
+// Perception radius (ENGINE_VERSION 42): the INNER aggro gate, inside design/05's
+// room-as-the-aggro-unit outer one. Room activation still wakes the room; this decides
+// which of its mobs have actually noticed you. 320 px = 10 grid, wider than
+// DEFAULT_ENEMY_ENGAGE_RANGE_FP (so a mob that notices you still has ~4 grid to close
+// before it may shoot — the reaction window is preserved) but well under the 12-24 grid
+// span of level 1's authored rooms (`world/dungeons/ember/`), so walking into a room no
+// longer sets its whole garrison marching at you at once. Latched via `EnemyActor.aggroed`
+// — once a mob has noticed you it stays awake, so this is a wake-up trigger, not a leash.
+export const DEFAULT_ENEMY_AGGRO_RANGE_FP = pxToFp(320); // 10 grid
 
 // ── Basic (neutral) ─────────────────────────────────────────────────────────────
 export const BASIC_ENEMY: EnemyBlueprint = {
@@ -255,8 +274,10 @@ export function buildEnemyActor(state: GameState, gx: Fp, gy: Fp, type?: string)
     boss: bp.boss,
     enrage: bp.enrage,
     enraged: false,
+    aggroed: false,
     onDeathSpawn: bp.onDeathSpawn,
     moveSpeedPerTick: bp.moveSpeedPerTick ?? DEFAULT_ENEMY_MOVE_SPEED_PER_TICK,
     engageRangeFp: bp.engageRangeFp ?? DEFAULT_ENEMY_ENGAGE_RANGE_FP,
+    aggroRangeFp: bp.aggroRangeFp ?? DEFAULT_ENEMY_AGGRO_RANGE_FP,
   };
 }

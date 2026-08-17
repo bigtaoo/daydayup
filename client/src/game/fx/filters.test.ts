@@ -278,3 +278,56 @@ describe('EnergyShieldFilter.tick', () => {
     expect(f.resources.shieldUniforms.uniforms.uTime).toBe(32);
   });
 });
+
+// Shimmer PACE (2026-08-17, live report: "护盾的闪烁频率降低"). Another shader-source
+// contract test, for the same reason as the `frameUv` block above — no GL context under
+// vitest — but asserted as a derived FREQUENCY rather than as the literal constant, so
+// it guards the intent ("a slow breathing pulse, not a strobe on the character's
+// silhouette") instead of pinning a number nobody may retune.
+describe('EnergyShieldFilter shimmer pace', () => {
+  /**
+   * GLSL with its comments removed. Necessary, not incidental: the shield shader's own
+   * comment quotes the PREVIOUS shimmer expression verbatim to explain what was wrong
+   * with it, so a naive source scan matches the old constants and reports the bug it is
+   * supposed to catch. (Written after doing exactly that.) Anything scanning shader text
+   * for a value should strip comments the same way.
+   */
+  const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*/g, '');
+
+  /** The `sin(uTime * K + ...)` coefficient, in radians per millisecond. */
+  function timeCoefficient(src: string): number {
+    const m = /sin\(uTime \* ([0-9.]+)/.exec(code(src));
+    if (!m) throw new Error('shield shader no longer has a `sin(uTime * K` shimmer term');
+    return Number(m[1]);
+  }
+
+  /** The `+ dist * K` radial-banding coefficient inside the same sin(). */
+  function radialCoefficient(src: string): number {
+    const m = /sin\(uTime \* [0-9.]+ \+ dist \* ([0-9.]+)\)/.exec(code(src));
+    if (!m) throw new Error('shield shader no longer has a `+ dist * K` radial term');
+    return Number(m[1]);
+  }
+
+  it('pulses well under 0.5 Hz — a breath, not a flicker', () => {
+    const hz = (timeCoefficient(new EnergyShieldFilter().glProgram.fragment!) * 1000) / (2 * Math.PI);
+    expect(hz).toBeGreaterThan(0); // still animated at all
+    expect(hz).toBeLessThan(0.5); // was ~0.95 Hz, which read as a strobe
+  });
+
+  it('never dims the ring below 50% of its peak — a live shield stays readable throughout', () => {
+    // `shimmer = base + swing * sin(...)`, so the trough is base - swing.
+    const src = new EnergyShieldFilter().glProgram.fragment!;
+    const m = /float shimmer = ([0-9.]+) \+ ([0-9.]+) \* sin\(/.exec(code(src));
+    expect(m).not.toBeNull();
+    const [base, swing] = [Number(m![1]), Number(m![2])];
+    expect(base + swing).toBeCloseTo(1, 6); // peak is full brightness
+    expect(base - swing).toBeGreaterThanOrEqual(0.5);
+  });
+
+  it('keeps the radial banding coarse enough that a slow pulse does not read as ripple', () => {
+    // The `dist * K` term makes K concentric bands across the rim; scroll enough of them
+    // past and a slowed-down pulse turns back into visible travelling ripple, which is
+    // the same complaint by another route.
+    expect(radialCoefficient(new EnergyShieldFilter().glProgram.fragment!)).toBeLessThanOrEqual(12);
+  });
+});

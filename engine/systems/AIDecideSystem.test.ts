@@ -32,14 +32,24 @@ import type { RoomPiece } from '@dd/engine/content/rooms';
 
 const CFG = { seed: 29, worldW: 1600, worldH: 1200, waves: [] as const };
 
+/** Adds a mob that has ALREADY noticed the player (`aggroed`, v42's perception-radius
+ *  latch) — same "don't silently gate a test that is about something else" intent as
+ *  `activateRoom` below. The perception radius has its own describe block, which builds
+ *  its mobs with `aggroed: false` explicitly. */
 function addEnemy(s: GameState, xpx: number, ypx: number, roomId?: string): EnemyActor {
+  const e = addUnawareEnemy(s, xpx, ypx, roomId);
+  e.aggroed = true;
+  return e;
+}
+
+function addUnawareEnemy(s: GameState, xpx: number, ypx: number, roomId?: string): EnemyActor {
   const e: EnemyActor = {
     id: s.nextId(), faction: 'enemy', teamId: ENEMY_TEAM_ID,
     gx: pxToFp(xpx), gy: pxToFp(ypx), z: toFp(0), vx: toFp(0), vy: toFp(0),
     knockVx: toFp(0), knockVy: toFp(0),
     facing: 0 as Brad, hp: BASIC_ENEMY.maxHp, maxHp: BASIC_ENEMY.maxHp, shield: 0, maxShield: 0,
     ticksSinceHit: 0, radius: BASIC_ENEMY.radius, footprintRadius: BASIC_ENEMY.footprintRadius,
-    alive: true, weapon: null, firing: false, status: freshStatus(), enraged: false, roomId,
+    alive: true, weapon: null, firing: false, status: freshStatus(), enraged: false, aggroed: false, roomId,
   };
   s.enemies.push(e);
   return e;
@@ -162,10 +172,13 @@ describe('AIDecideSystem.tick — chase toward engage range (ENGINE_VERSION 37)'
     new AIDecideSystem().tick(s);
     expect(e.vx).toBeGreaterThan(0); // target is to the +x, +y side
     expect(e.vy).toBeGreaterThan(0);
-    // Direction must match facing: vy/vx ratio equals dy/dx (integer truncation aside).
+    // Direction must match facing. Asserted as an ANGLE within ~1°, not as an exact
+    // vy/vx ratio: vx/vy are truncated integer fp, so the shorter the velocity vector
+    // the coarser the direction it can encode, and v42's slower default speed (4 -> 2.6
+    // px/tick) made that quantization visible in the ratio's second decimal.
     const dx = target.gx - e.gx;
     const dy = target.gy - e.gy;
-    expect(Math.round((e.vy / e.vx) * 100)).toBe(Math.round((dy / dx) * 100));
+    expect(Math.abs(Math.atan2(e.vy, e.vx) - Math.atan2(dy, dx))).toBeLessThan(0.02);
   });
 
   it('does NOT fire while still out of engage range (ENGINE_VERSION 40 — no more room-wide alpha strike)', () => {
@@ -257,6 +270,66 @@ describe('AIDecideSystem.tick — chase toward engage range (ENGINE_VERSION 37)'
     new AIDecideSystem().tick(s);
     expect(e.vx).toBe(toFp(7));
     expect(e.vy).toBe(toFp(9));
+  });
+});
+
+describe('AIDecideSystem.tick — perception radius (ENGINE_VERSION 42)', () => {
+  const AGGRO_PX = 320; // DEFAULT_ENEMY_AGGRO_RANGE_FP, in px
+
+  it('a mob farther away than its aggro range is fully inert — no move, no fire, no turn', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [400, 400] }] });
+    const e = addUnawareEnemy(s, 400 + AGGRO_PX + 40, 400);
+    e.facing = 12345 as Brad; // an arbitrary starting facing the system must NOT overwrite
+    new AIDecideSystem().tick(s);
+    expect(e.aggroed).toBe(false);
+    expect(e.firing).toBe(false);
+    expect(e.vx).toBe(toFp(0));
+    expect(e.vy).toBe(toFp(0));
+    expect(e.facing).toBe(12345);
+  });
+
+  it('a mob inside its aggro range latches `aggroed` and chases, even though it is still well outside engage range', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [400, 400] }] });
+    const e = addUnawareEnemy(s, 400 + AGGRO_PX - 40, 400);
+    new AIDecideSystem().tick(s);
+    expect(e.aggroed).toBe(true);
+    expect(e.vx).toBeLessThan(0); // closing westward, toward the player
+    expect(e.firing).toBe(false); // aggro range is wider than engage range — still closing
+  });
+
+  it('the latch is one-way: a mob that noticed the player keeps chasing after they run back out of range', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [400, 400] }] });
+    const e = addUnawareEnemy(s, 400 + AGGRO_PX - 40, 400);
+    new AIDecideSystem().tick(s);
+    expect(e.aggroed).toBe(true);
+
+    s.players[0]!.gx = pxToFp(400 - AGGRO_PX * 3); // sprint far away
+    new AIDecideSystem().tick(s);
+    expect(e.aggroed).toBe(true);
+    expect(e.vx).toBeLessThan(0); // still coming
+  });
+
+  it('a per-blueprint aggroRangeFp override wins over the shared default', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [400, 400] }] });
+    const near = addUnawareEnemy(s, 400 + AGGRO_PX - 40, 400);
+    near.aggroRangeFp = pxToFp(100); // a short-sighted mob: the same spot no longer wakes it
+    const far = addUnawareEnemy(s, 400 + AGGRO_PX + 200, 400);
+    far.aggroRangeFp = pxToFp(1000); // a long-sighted one: awake from much farther out
+    new AIDecideSystem().tick(s);
+    expect(near.aggroed).toBe(false);
+    expect(far.aggroed).toBe(true);
+  });
+
+  it('the perception radius is INSIDE the room-activation gate, not a replacement for it', () => {
+    const s = dungeonState();
+    s.players[0]!.gx = pxToFp(400);
+    s.players[0]!.gy = pxToFp(400);
+    activateRoom(s, 'awake');
+    const inAwakeRoom = addUnawareEnemy(s, 420, 400, 'awake'); // point-blank, room woken
+    const inSleepingRoom = addUnawareEnemy(s, 420, 400, 'asleep'); // point-blank, room NOT woken
+    new AIDecideSystem().tick(s);
+    expect(inAwakeRoom.aggroed).toBe(true);
+    expect(inSleepingRoom.aggroed).toBe(false);
   });
 });
 

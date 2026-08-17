@@ -334,7 +334,26 @@ export class GameLoop {
     const s = this.host.activeState();
     const worldSize = s ? { w: fpToPx(s.worldW), h: fpToPx(s.worldH) } : null;
     const { w: vw, h: vh } = this.host.screenSize();
-    this.deps.fx.updateCamera(alpha, { vw, vh }, worldSize, this.deps.scene.player);
+    this.deps.fx.updateCamera(alpha, { vw, vh }, worldSize, this.deps.scene.player, this.cameraFrame(s));
+  }
+
+  /**
+   * The rect the camera should FILL: the local player's current room, in world px
+   * (`FxController.updateCamera`'s `frame` — see its doc for why the whole floor is the
+   * wrong thing to fit). Both co-resident room models expose the same pre-converted
+   * `{id, rect}` list and the engine already caches which one each actor is standing in
+   * (`EnvironmentSystem` refreshes `Actor.roomId` every tick), so this is a lookup, not
+   * a geometry test. Null whenever there is no room to frame — a flat `waves`/tutorial
+   * config, or the tick before the player's `roomId` resolves (standing in a door
+   * passage clears it) — and `updateCamera` falls back to the whole world for those.
+   */
+  private cameraFrame(s: GameState | null): { x: number; y: number; w: number; h: number } | null {
+    const roomId = s?.players[this.host.localOwner]?.roomId;
+    if (!s || roomId === undefined) return null;
+    const rects = s.dungeonRoomRects.length > 0 ? s.dungeonRoomRects : s.arenaRoomRects;
+    const hit = rects.find((r) => r.id === roomId);
+    if (!hit) return null;
+    return { x: fpToPx(hit.rect.x), y: fpToPx(hit.rect.y), w: fpToPx(hit.rect.w), h: fpToPx(hit.rect.h) };
   }
 
   private updateHud(dt: number): void {

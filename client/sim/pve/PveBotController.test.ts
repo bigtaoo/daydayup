@@ -379,3 +379,114 @@ describe('PveBotController — stuck handling', () => {
     expect(delta).toBeGreaterThan(8192); // meaningfully off the original heading
   });
 });
+
+/**
+ * Room-scoped target and heal search (2026-08-17). Both scans used to be bounded by a
+ * scan RADIUS as well as by the bot's room. That was fine while every woken mob walked
+ * over on its own; once `ENGINE_VERSION` 42 gave enemies a perception radius, a mob on
+ * the far side of a big room just stood there, the bot found no target inside its scan
+ * radius, fell through to `travel`, and bounced off the room's combat-locked door until
+ * the run timed out. The heal scan had the same shape for a different reason: a heal in
+ * the room next door is behind that same locked door, and heal-seeking outranks every
+ * other move in `fight`.
+ *
+ * The rule both now follow: while unambiguously inside a room, that ROOM is the bound —
+ * its walls already are one, and its doors are locked anyway. Standing in a passage
+ * (`roomIdAt` → undefined, both rooms open to the bot) keeps the plain radius scan.
+ */
+describe('PveBotController — the room, not a scan radius, is what bounds the search', () => {
+  // One room far wider than ENGAGE_SCAN_FP (14 grid) / HEAL_SCAN_FP (12 grid), so
+  // "inside my room" and "inside my scan radius" are genuinely different sets. Room `b`
+  // stays the unactivated capstone, as in TWO_ROOMS.
+  const BIG_ROOM: NonNullable<FixtureOpts['rooms']> = [
+    { id: 'a', x: 0, y: 0, w: g(40), h: g(10), hasLiveEnemy: true },
+    { id: 'b', x: g(40), y: 0, w: g(10), h: g(10), activated: false },
+  ];
+  const BIG_DOOR: NonNullable<FixtureOpts['doors']> = [['a', 'b', { x: g(39.5), y: g(4), w: g(1), h: g(2) }]];
+
+  it('walks toward the last mob in its own room even when it is far past the scan radius', () => {
+    // 33 grid away — more than twice ENGAGE_SCAN_FP. Nothing else will close this gap:
+    // the mob has not noticed the player and will not move (v42).
+    const s = fixture({ playerAt: [2, 5], rooms: BIG_ROOM, doors: BIG_DOOR, enemies: [[35, 5, 'a']] });
+    const cmd = bot().build(s, 0, 501);
+    expect(dir(cmd.moveBrad).x).toBeGreaterThan(0.9); // heading east, at the mob
+    expect(cmd.buttons & Button.FIRE).toBe(0); // still far outside fire range
+  });
+
+  it('does not mistake that for a reason to walk at the door instead', () => {
+    // The failure mode this replaced: no target found → travel(nextObjectiveRoom) →
+    // the door at x 39.5, y 5. Both head east, so distinguish them on the y axis by
+    // putting the mob well off the door's line.
+    const s = fixture({ playerAt: [2, 5], rooms: BIG_ROOM, doors: BIG_DOOR, enemies: [[35, 9, 'a']] });
+    expect(dir(bot().build(s, 0, 501).moveBrad).y).toBeGreaterThan(0.1); // toward the mob (+y)
+  });
+
+  it('still ignores a far mob in ANOTHER room — the room bound is a bound, not a removal', () => {
+    const s = fixture({
+      playerAt: [2, 5],
+      rooms: [
+        { id: 'a', x: 0, y: 0, w: g(40), h: g(10) },
+        { id: 'b', x: g(40), y: 0, w: g(10), h: g(10), activated: false },
+      ],
+      doors: BIG_DOOR,
+      enemies: [[45, 5, 'b']],
+    });
+    expect(bot().build(s, 0, 501).buttons & Button.FIRE).toBe(0);
+  });
+
+  it('keeps the radius bound while standing in a passage, where no room owns the bot', () => {
+    // A real gap between the two rooms, so the seat can be inside neither. Both rooms
+    // are open to it there, and a plain radius scan is the correct behaviour.
+    const gapped: NonNullable<FixtureOpts['rooms']> = [
+      { id: 'a', x: 0, y: 0, w: g(10), h: g(10), hasLiveEnemy: true },
+      { id: 'b', x: g(12), y: 0, w: g(40), h: g(10), activated: false },
+    ];
+    const doors: NonNullable<FixtureOpts['doors']> = [['a', 'b', { x: g(10), y: g(4), w: g(2), h: g(2) }]];
+
+    // The far mob sits OFF the travel line (y 9 vs the door/room-centre line at y 5), so
+    // "ignored it and travelled" and "targeted it" are distinguishable on the y axis —
+    // both head east otherwise, and both hold fire at 34 grid, so neither the x
+    // component nor the trigger can tell them apart.
+    const far = fixture({ playerAt: [11, 5], rooms: gapped, doors, enemies: [[45, 9, 'b']] });
+    const cmd = bot().build(far, 0, 501);
+    expect(Math.abs(dir(cmd.moveBrad).y)).toBeLessThan(0.1); // travelling, not chasing
+    expect(cmd.buttons & Button.FIRE).toBe(0);
+
+    const near = fixture({ playerAt: [11, 5], rooms: gapped, doors, enemies: [[18, 5, 'b']] });
+    expect(bot().build(near, 0, 501).buttons & Button.FIRE).toBe(Button.FIRE); // 7 grid: engaged
+  });
+
+  it('ignores a heal in the next room while its own still holds a live enemy — that door is locked', () => {
+    // Hurt enough to want the heal, and it is well inside HEAL_SCAN_FP (4 grid away).
+    // Unbounded, `fight` would walk WEST at it, into the locked door, forever.
+    const s = fixture({
+      playerAt: [12, 5],
+      hp: 2,
+      shield: 0,
+      rooms: [
+        { id: 'a', x: g(10), y: 0, w: g(20), h: g(10), hasLiveEnemy: true },
+        { id: 'b', x: 0, y: 0, w: g(10), h: g(10), activated: false },
+      ],
+      doors: [['a', 'b', { x: g(9.5), y: g(4), w: g(1), h: g(2) }]],
+      enemies: [[20, 5, 'a']],
+      heals: [[8, 5]], // in room `b`, behind the door
+    });
+    expect(dir(bot().build(s, 0, 501).moveBrad).x).toBeGreaterThan(0); // east, at the mob
+  });
+
+  it('still takes a heal that IS in its own room — the filter must not block the normal case', () => {
+    const s = fixture({
+      playerAt: [12, 5],
+      hp: 2,
+      shield: 0,
+      rooms: [
+        { id: 'a', x: g(10), y: 0, w: g(20), h: g(10), hasLiveEnemy: true },
+        { id: 'b', x: 0, y: 0, w: g(10), h: g(10), activated: false },
+      ],
+      doors: [['a', 'b', { x: g(9.5), y: g(4), w: g(1), h: g(2) }]],
+      enemies: [[20, 5, 'a']],
+      heals: [[12, 9]], // same room, due south
+    });
+    expect(dir(bot().build(s, 0, 501).moveBrad).y).toBeGreaterThan(0.9);
+  });
+});
