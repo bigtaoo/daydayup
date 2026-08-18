@@ -16,6 +16,7 @@ import type { InputSource, InputState, TouchVisual } from '../../platform/types'
 import { CommandBuilder } from './CommandBuilder';
 import { AllyController } from './AllyController';
 import { GameLoop, type GameLoopDeps, type GameLoopHost } from './GameLoop';
+import { WALL_HEIGHT } from '../scene/wallGeometry';
 
 const CFG = { seed: 3, worldW: 1600, worldH: 1200, waves: [] as const };
 // A single sim tick's worth of render dt (matches GameLoop's own internal SIM_DT_MS,
@@ -439,6 +440,10 @@ describe('GameLoop — portal/checkpoint eligibility (dungeon mode, 2026-08-12 s
 // player saw several rooms at once; the fit target is now the room they're standing in.
 // See design/01 "Framing the current room" for the why, and FxController.test.ts for
 // what updateCamera then DOES with the rect — this block only covers the lookup.
+//
+// Every expectation here is the room rect GROWN UPWARD by WALL_HEIGHT (2026-08-18): the
+// room's walls now stand instead of lying flat (scene/wallGeometry.ts), so its north wall
+// is drawn that far above the rect's own top edge and has to be inside the fitted frame.
 describe('GameLoop.updateCamera — the frame rect handed to FxController', () => {
   // The engine converts px -> Fp at construction, so a rect authored in px comes back
   // through fpToPx with the same value; these expectations are in px throughout.
@@ -466,7 +471,7 @@ describe('GameLoop.updateCamera — the frame rect handed to FxController', () =
     loop.update(16);
 
     // 20/0/10/20 grid units at 32 px per grid.
-    expect(lastFrame(fx)).toEqual({ x: 640, y: 0, w: 320, h: 640 });
+    expect(lastFrame(fx)).toEqual({ x: 640, y: -WALL_HEIGHT, w: 320, h: 640 + WALL_HEIGHT });
   });
 
   it("follows the LOCAL seat's room in co-op, not whichever player is first", () => {
@@ -485,7 +490,7 @@ describe('GameLoop.updateCamera — the frame rect handed to FxController', () =
 
     loop.update(16);
 
-    expect(lastFrame(fx)).toEqual({ x: 640, y: 0, w: 320, h: 640 });
+    expect(lastFrame(fx)).toEqual({ x: 640, y: -WALL_HEIGHT, w: 320, h: 640 + WALL_HEIGHT });
   });
 
   it('falls back to the arena room list when there are no dungeon rooms (PvP)', () => {
@@ -497,7 +502,25 @@ describe('GameLoop.updateCamera — the frame rect handed to FxController', () =
 
     loop.update(16);
 
-    expect(lastFrame(fx)).toEqual({ x: 32, y: 64, w: 256, h: 192 });
+    expect(lastFrame(fx)).toEqual({ x: 32, y: 64 - WALL_HEIGHT, w: 256, h: 192 + WALL_HEIGHT });
+  });
+
+  it('grows the room rect upward by exactly one wall height, and only upward', () => {
+    const { deps, fx } = buildDeps();
+    const s = stateWithRoomRects();
+    s.players[0]!.roomId = 'r1';
+    const loop = new GameLoop(deps, buildHost({ activeState: () => s }));
+
+    loop.update(16);
+
+    // r1 is 0/0/15/15 grid = 0/0/480/480 px. x and w are untouched (a standing wall never
+    // widens); y moves up by WALL_HEIGHT and h absorbs exactly that much, so the rect's
+    // BOTTOM edge stays put — growing downward instead would push the player off-centre.
+    const frame = lastFrame(fx) as { x: number; y: number; w: number; h: number };
+    expect(frame.x).toBe(0);
+    expect(frame.w).toBe(480);
+    expect(frame.y).toBe(-WALL_HEIGHT);
+    expect(frame.y + frame.h).toBe(480);
   });
 
   it('passes null while the player is in a doorway (roomId cleared) — the camera keeps the whole floor', () => {

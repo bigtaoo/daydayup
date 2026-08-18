@@ -36,6 +36,28 @@ const TETHER_COLOR = 0x8fe9ff;
  *  turnaround draws it as a slack curve bowing away from the core, not a straight rod. */
 const TETHER_SAG = 0.22;
 
+// Eye tracking (2026-08-18). A 2D rig can't turn a head, and the two-hemisphere billboard
+// (`facingFromAngle`) only has four states — L/R flip × front/back — so a 360° aim used to
+// read as four discrete poses. For a body plan that is mostly one big eye (design/13),
+// the direction cue nobody has to be taught is where the eye is LOOKING: the eye slot
+// slides inside the shell along the aim direction, which turns those four states into a
+// continuous read using the art that already ships. Free of new assets by construction.
+const EYE_BONE_ID = 'eye';
+/** How far the eye slides from its authored rest position, in rig authoring px. The shell's
+ *  own `bodyR` is 40 and the eye's is 16 (`orbCoreRig`), so 14 keeps it inside the shell
+ *  with a margin rather than riding the rim. */
+const EYE_TRACK_R = 14;
+/** The vertical half of that slide is squashed: this is a tilted view (design/01), so a
+ *  sphere's surface covers less screen distance vertically than horizontally. */
+const EYE_TRACK_SQUASH = 0.45;
+/** How much the eye shrinks as the aim turns away from the camera — a little perspective
+ *  on top of the front/back texture swap, so crossing the hemisphere isn't a hard cut. */
+const EYE_AWAY_SHRINK = 0.15;
+/** zIndex for a weapon module that should sit BEHIND the body (design/01 "per-weapon local
+ *  z-order": facing away, the module is on the far side of the core). Below every bone
+ *  binding's zOrder (0..4 for orb-core) and below the tether's own -1. */
+const MODULE_Z_BEHIND = -2;
+
 // The game-side .tao runtime renderer (design/12): bone FK + sprite binding +
 // animation playback, ported from tools/animator/src/rendering/Renderer.ts's
 // `updateSprites` (rewritten for Pixi v8's API — the editor is still on v7).
@@ -204,9 +226,20 @@ export class RigSkin {
       const restAngleDeg = this.rig.boneMap.get(boneId)?.rwa ?? 0;
       const angleDeg = SOCKET_IDS.has(boneId) ? canonicalSocketDeg : pose.wa - restAngleDeg;
       sprite.rotation = ((angleDeg + binding.rotation) * Math.PI) / 180;
+      let scaleMul = 1;
+      if (boneId === EYE_BONE_ID) {
+        // Canonical (pre-mirror) angle, like the sockets: `view.scale.x` mirrors the whole
+        // rig, so an offset computed here in canonical space lands on the correct side of
+        // the shell after the flip. cos(π−a) = −cos(a) unflips to +cos(a); sin is unchanged,
+        // which is exactly right — the vertical component must not mirror.
+        const a = this.canonicalSocketAngleRad();
+        sprite.x += Math.cos(a) * EYE_TRACK_R;
+        sprite.y += Math.sin(a) * EYE_TRACK_R * EYE_TRACK_SQUASH;
+        scaleMul = 1 - EYE_AWAY_SHRINK * Math.max(0, -Math.sin(this.aimRad));
+      }
       sprite.scale.set(
-        (binding.flipX ? -1 : 1) * (transform?.scaleX ?? 1) * binding.scaleX,
-        (transform?.scaleY ?? 1) * binding.scaleY,
+        (binding.flipX ? -1 : 1) * (transform?.scaleX ?? 1) * binding.scaleX * scaleMul,
+        (transform?.scaleY ?? 1) * binding.scaleY * scaleMul,
       );
       sprite.alpha = transform?.alpha ?? 1;
     });
@@ -306,11 +339,16 @@ export class RigSkin {
     }
     if (!sprite) {
       sprite = new Sprite(texture);
-      sprite.zIndex = (this.bundle.bindings.get(socketId)?.zOrder ?? 0) + 1;
       sprite.tint = this.weaponTint;
       this.view.addChild(sprite);
       this.view.sortableChildren = true;
     }
+    // design/01's "Per-weapon local z-order" rule, implemented 2026-08-18 (it had been
+    // documented, and pinned to in-front, since the rig renderer shipped): aiming away from
+    // the camera puts the module on the far side of the core, so it has to draw BEHIND the
+    // body — otherwise it reads as a gun stuck on the hero's back/chest. Re-evaluated every
+    // frame, not just on creation, since `showBack` flips during play.
+    sprite.zIndex = this.showBack ? MODULE_Z_BEHIND : (this.bundle.bindings.get(socketId)?.zOrder ?? 0) + 1;
     const anchor = getWeaponAnchor(this.weaponName, this.weaponKind!);
     sprite.texture = texture;
     sprite.anchor.set(anchor.x, anchor.y);

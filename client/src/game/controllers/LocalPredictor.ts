@@ -36,7 +36,11 @@ export interface PredictorConfig {
 export interface Pose {
   x: number;
   y: number;
-  bodyFacing: number; // radians — movement direction (body/legs), held while idle
+  // Radians — predicted movement direction, held while idle. NOTE: since 2026-08-18 this
+  // no longer drives the rendered body facing (the orb-core turns toward its AIM instead,
+  // see render/facing.ts); `Scene.positionLocal` ignores it and only takes the position.
+  // Kept because it is a correct, tested output of the dead-reckoner.
+  bodyFacing: number;
   /** Was this frame's predicted movement nonzero? `Scene.positionLocal`'s snap collapses
    *  the interpolation buffer every frame, so the render layer can't derive idle/move
    *  from position deltas the way it does for every confirmed (non-predicted) entity —

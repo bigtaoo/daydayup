@@ -112,7 +112,87 @@ tooling change — see the 5.3 update below), so what remains in Phase 5 is real
 music, and 5.5 WeChat device verification (blocked on hardware). A repo structure pass (bottom
 of this doc) made the engine its own DOM-free package and the repo an npm workspace. Per-item
 detail, including what each phase deliberately did *not* build, is in the sections below; the
-`## Dependency summary` at the end is the one-screen version.
+`## Standing walls + a body that faces what it shoots (2026-08-18, render-only)
+
+A returning-to-art-direction pass: with the game fully playable, the user asked what was
+still unresolved from the original 2D-vs-3D选型 discussion. The audit's answer was that the
+*selection* needs no revisiting — `00`'s Decision 3 ladder (lighting, post-fx, particles,
+four custom shaders) is fully climbed, so the Three.js-orthographic escape hatch has no
+cheaper step left in front of it — but two things the docs claimed were true of the 2D fake-3D
+layer simply were not built. Both shipped here. **Render-only, no `ENGINE_VERSION` impact.**
+
+**1. Walls were flat.** `01` opens with "walls, pillars and characters show a small front
+face"; in fact `RoomBuilder` drew every wall as its own collision footprint on the `ground`
+layer — no height, no face, no Y-sort participation, so a character could never be occluded
+by a wall and a room's whole sense of volume rested on the ≤2 pillars a level-1 room happens
+to contain. Walls now draw as extruded blocks on the `entities` layer (front face + top cap,
+`zIndex` = the segment's south edge). New pure module `scene/wallGeometry.ts` owns the rule
+for *which* walls stand — an east-west run that is not its room's south perimeter — and both
+exclusions came from looking at the render, not from theory: a north-south run projects
+correctly but reads as a defect (32 px wide, 400+ px long, so all you see is its cap band
+sitting 70 px off its footprint), and a room's own south wall would stand between the camera
+and the player it is framing. `GameLoop.cameraFrame` grows the framed room rect upward by
+`WALL_HEIGHT` to match, or the north wall's face lands off-screen. Art: 4 new front-elevation
+swatches (`client/public/biome/wallface_*.png`), with the pre-existing `wall_*` top-down
+swatch reused unchanged as the cap — prompts + the two mechanical import fixes they needed
+are archived in `art/biome/prompts.md`.
+
+**2. The character had four facing states, driven by the wrong angle.** `Scene.reconcile` fed
+`setBodyFacing` the movement vector, on a humanoid upper/lower-body split inherited from
+`funny` — but the orb-core has no lower body, so strafing left while firing right pointed its
+one eye away from the target, and standing still held whatever direction the player last
+walked. Three fixes: the body now **turns toward the aim**, rate-limited (`render/facing.ts`'s
+`turnToward`, 0.27 rad/tick — auto-aim makes the aim angle jump, and snapping to it read as a
+twitch); the **eye slides continuously inside the shell** along that aim on a squashed ellipse,
+shrinking as it turns away, which converts four discrete poses into a 360° continuum **using
+the art that already ships**; and `01`'s **per-weapon front/back z-order** rule — written when
+that doc was written, never implemented — now recomputes every frame from `showBack` instead
+of pinning the module in front forever.
+
+**Verification. +28 tests (3174 → 3202), all mutation-checked** — 10 reverts of the shipped
+behaviour, 10 reds: `wallRises`'s two guards, the body's aim-driven source, `positionLocal`'s
+carry-forward, the camera frame growth, both axes of the eye slide, its canonical-space
+mirroring, its away-shrink, and the module z flip. New `wallGeometry.test.ts` (8) and
+`RoomBuilder.test.ts`'s standing-wall block cover layer/zIndex/face-and-cap geometry, the
+no-art Graphics fallback, and rebuild/clear teardown (wall segments live on the `entities`
+layer, which `build()`/`clear()` never sweep wholesale). `npm run check` green across all 7
+workspaces. Confirmed live in the real client: 10 standing wall segments with the north wall
+at `zIndex` 32 and its face/cap at exactly `-70`/`-102` local, the eye sweeping 14 → 9.9 → 0
+px across aim 0°→45°→90° and mirroring correctly at 180°, the module z flipping +5 → -2
+across the hemisphere, the body converging 0.799 → 1.069 → 1.339 → 1.571 in 0.27 steps, zero
+console errors.
+
+**Two verification lessons worth keeping.** (a) Restoring a mutation-checked file with
+`mv file.bak file` rewinds its **mtime**, and Vite then keeps serving the *mutated* transform
+from cache — a live probe reported the old behaviour while the file on disk was correct.
+Touch the file after restoring. (b) Neither screenshot path could judge this work (the
+sandboxed Browser pane can't composite frames; the real-Chrome tab is throttled to a stale
+frame when not OS-foreground, and pulling the extracted frame out as base64 is blocked). What
+worked was composing the room **offline** from the actual shipped textures at the actual
+scales the renderer uses, and reading that image — which is what caught both art problems
+(the face squashed ~9 brick courses into 70 px, half the floor's stone scale; and the
+stray lit coping bar that made north-south runs look broken).
+
+**Parked here by the user's own request, for a dedicated session each — not started:**
+
+- **WeChat cannot load any real art at all.** `WeChatAdapter.fetch` still rejects
+  unconditionally ("the slice loads no remote assets") and `main.wechat.ts` has no preload,
+  so the mini-game target renders the Graphics placeholders only. This is the single locked
+  platform premise (`00` Decision 1: "single engine = smallest WeChat adaptation surface")
+  that has never been cashed.
+- **No atlas packing and no bundle boundaries.** `client/public` is 14 MB of 78 loose PNGs
+  and `main.ts` `await`s every rig bundle before the game starts, versus WeChat's 4 MB main
+  package. `12`'s "bundle boundaries" + lazy per-biome bundles are still To-design.
+- **`13`'s rarity-overlay spec** (白→蓝→紫→橙→金 without colliding with the five reserved
+  element hues) — the last purely-art-direction blank.
+- **One-room-per-screen**: whether to hard-lock the camera to the room, accepting a jump-cut
+  at every door. Flagged 2026-08-17, still the user's call.
+- **The back set beyond the eye** (`shell__back`, belly treatment) — 1–2 PNGs per character,
+  zero code; deliberately deferred until the tracking eye above has been played with.
+
+---
+
+## Dependency summary` at the end is the one-screen version.
 
 **Historical snapshot (2026-07-24), kept for context:** floors → checkpoint → extract-or-descend → bank, on a single-arena/wave geometry — menu/victory/defeat shell, waves, pickups, damage + elemental status + resist, deflect, one boss, plus the placeholder audio seam. Deterministic engine (fp/brad/PRNG/InputSource/replay) is in place. **Phase 0 (design↔code sync) is done through 0.7** — the engine matches the locked design: no affixes, intrinsic weapon rarity, run-buffs, two-pool shield health + regen + shield-break, characters = SkinDef (side-grade roster), and the design/09 pickup vocabulary (`heal`/`material`/`weapon`/`buff`). **Phase 1 (1.1–1.5) is done**: `spread`/`homing`/`lob`/`beam`/`boomerang` ballistics + melee `hammer`/`spear`; AABB tile/wall solids + the `RoomPiece` schema + seeded `generateFloor` (neither yet wired into a live floor transition — see the Phase 1 status note below); and a live, tested `EngineConfig.floors` → `ExtractionSystem` → materials-banking loop using the existing single-arena infrastructure. **`ENGINE_VERSION` is 17** (bumped for the orbit/radial frame finish, then for co-op downed/revive; every other Phase 1–2 item shipped additively — see `config.ts`'s version-history comment). **Phase 2 (meta loop) is done through 2.4** — forge, tier-gated crafting, the 3-character roster + balance suite, and monetization grant-scaffolding all ship. **Phase 3 (co-op & netcode) is done**: 3.2 (revive/downed + team-wipe) engine-side; **3.1 (the net layer) now spawns the 2nd player** (`EngineConfig.players`) + ships the frame-broadcast netcode (`@dd/engine/net` + the `server/` package + the client `CoopSession`), proven byte-for-byte by loopback tests; and **3.3 (the matchmaking/deployment control plane)** — a `matchsvc` HTTP service that pools players and issues **signed HMAC tickets** the gameserver verifies at `/ws`, plus a client `?online=1` path (matchmaking → ticket → `CoopSession`) browser-verified two-tab (two independent tabs matchmade into one room, byte-identical lockstep to a shared gameover tick). And **local-player prediction/reconcile smoothing shipped too** — a render-layer `LocalPredictor` (movement/aim, snap-vs-lerp) that hides RTT without touching the sim, browser-verified under a `?lag=` harness. All additive (no `ENGINE_VERSION` bump; still 17). **Phase 3 is fully closed** — no deferred co-op items remain (only local *firing* prediction is a documented non-goal, as it would need sim rollback design/06 rejects for casual/WeChat).
 

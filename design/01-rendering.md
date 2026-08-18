@@ -71,6 +71,42 @@ hit detection, and a longer sim muzzle would let a player standing flush against
 spawn shots on its far side. Null for anything with no rig-mounted module — every enemy,
 whose placeholder barrel already ends within a pixel of its own sim muzzle.
 
+## Standing walls (2026-08-18)
+
+For most of this project's life the "walls show a small front face" line above was **only
+true of pillars**. Every wall was drawn as its own collision footprint, flat, on the
+`ground` layer (`RoomBuilder`) — no height, no face, no participation in the Y-sort — so a
+room's entire sense of volume rested on the ≤2 round pillars a level-1 room happens to
+have, and a character could never be occluded by a wall. Fixed by drawing a wall as an
+extruded block on the `entities` layer:
+
+- **Geometry is forced by `screen.y = gy - z`.** The segment's container sits on the wall's
+  **south edge**, so `Entity.place` gives it `zIndex = that edge` and it Y-sorts against
+  actors as one object standing on that line. The **front face** then occupies local
+  `-WALL_HEIGHT .. 0` and the **top cap** the footprint depth above that. Union: the
+  footprint plus `WALL_HEIGHT` px of intrusion northward, which is exactly what makes a
+  wall look like a wall.
+- **Two assets, both already per-biome.** `wallface_<element>.png` is the front elevation
+  (new, `art/biome/prompts.md`); `wall_<element>.png` — the pre-existing top-down swatch —
+  is reused unchanged as the cap. The face tiles **horizontally only**, at a uniform
+  `tileScale = WALL_HEIGHT / texture height`, because its top rows are a lit coping and its
+  bottom rows a dark base. A missing swatch falls back to Graphics banding and still stands.
+- **Which walls stand is a rule, not a flag** (`scene/wallGeometry.ts`'s `wallRises`, and
+  see its doc for the full reasoning): an east-west run that is **not** its room's south
+  perimeter. The two exclusions are both things that looked wrong on screen, not in theory.
+  A **north-south run** (a room's east/west side) projects correctly but reads as a defect —
+  it is 32 px wide and 400+ px long, so nearly all you see is its cap band sitting 70 px off
+  its own footprint. A room's own **south wall** would stand between the camera and the
+  player it is framing. What's left standing: north walls, and interior east-west stubs
+  (`ember_hall`'s north jetty, `ember_cross`'s side jetties), which then occlude what is
+  behind them exactly as a pillar does.
+- **The camera frame grew with it.** `GameLoop.cameraFrame` now returns the room rect
+  extended `WALL_HEIGHT` px upward (bottom edge unchanged), or the north wall's face would
+  sit off the top of the viewport — the one thing this whole pass exists to show.
+
+Wall height is `WALL_HEIGHT` (70 px), deliberately the same constant the pillars use, so
+everything standing in a room agrees on how tall "tall" is.
+
 ## Depth sorting (Y-sort)
 
 - The entity layer sets `sortableChildren = true`; each frame we set `entity.zIndex = entity.gy`.
@@ -97,11 +133,18 @@ whose placeholder barrel already ends within a pixel of its own sim muzzle.
 
 A weapon is attached to one of the character's orbiting weapon sockets (`02`/`13`) and rendered separately, and must switch front/back by facing:
 
-- Facing up (dy < 0): weapon renders **behind** the body (weapon.zIndex = -1 inside the actor container).
-- Facing down / sideways: weapon renders **in front** (weapon.zIndex = +1).
+- Facing up (dy < 0): weapon renders **behind** the body.
+- Facing down / sideways: weapon renders **in front**.
 - The actor container itself has `sortableChildren = true`, with body.zIndex = 0.
 
 Otherwise you get the "gun floating on the chest while facing away" artifact.
+
+> **Implemented 2026-08-18** — this rule was written here when the doc was, but the rig
+> renderer never honoured it: `RigSkin.mountModule` pinned the module to `socket zOrder + 1`
+> (always in front), and set it once at sprite-creation time rather than per frame, so even
+> a correct initial value would not have survived the player turning around. Now recomputed
+> every frame from `showBack`: `MODULE_Z_BEHIND` (-2, below every bone binding **and** below
+> the tether's own -1) when facing away, `socket zOrder + 1` otherwise.
 
 ## Limits of fake 3D (honest note)
 

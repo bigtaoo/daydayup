@@ -123,7 +123,10 @@ describe('RigSkin — a bone\'s art sits on its TIP, in its authored orientation
     skin.update();
     const s = spritesOf(skin);
     const at = (id: string) => [s.get(id)!.x, s.get(id)!.y].map(n => Math.round(n));
-    expect(at('eye')).toEqual([0, -46]); // centred on the shell
+    // The eye is centred on the shell (-46) but slid along the default aim (east, so
+    // +EYE_TRACK_R in x and nothing in y) by the eye-tracking pass — see its own describe
+    // block below. Every other bone sits exactly on its bone tip.
+    expect(at('eye')).toEqual([14, -46]);
     expect(at('belly')).toEqual([0, -26]); // 20 down from centre → the shell's lower half
     expect(at('socket_l')).toEqual([-52, -46]); // orbiting left of the core...
     expect(at('socket_r')).toEqual([52, -46]); // ...and right — 104 apart, not co-located
@@ -313,5 +316,121 @@ describe('RigSkin — front/back hemisphere follows body facing, not aim', () =>
     skin.setBodyFacing(-Math.PI / 2); // body facing away from camera (up-screen)
     skin.setAim(Math.PI / 2); // aiming toward the camera — would flip showBack if aim drove it
     expect((skin as unknown as { showBack: boolean }).showBack).toBe(true);
+  });
+});
+
+// Eye tracking (2026-08-18): the two-hemisphere billboard gives four discrete body poses,
+// which is not enough direction read for a body plan that is mostly one eye (design/13).
+// The eye slot slides inside the shell along the aim, turning those four into a continuum
+// — with no new art, which is the whole point.
+describe('RigSkin — the eye slides inside the shell along the aim', () => {
+  function eyePos(skin: RigSkin): { x: number; y: number } {
+    skin.update();
+    const s = spritesOf(skin).get('eye')!;
+    return { x: s.x, y: s.y };
+  }
+
+  it('moves right when aiming right and left when aiming left, around the same rest point', () => {
+    const skin = makeSkin();
+    skin.setBodyFacing(0); // unflipped, so canonical space IS screen space
+    skin.setAim(0);
+    const right = eyePos(skin);
+    skin.setAim(Math.PI);
+    const left = eyePos(skin);
+    expect(right.x).toBeGreaterThan(left.x);
+    // Symmetric about the authored rest position — no net drift in either direction.
+    expect((right.x + left.x) / 2).toBeCloseTo(0, 5);
+  });
+
+  it('moves DOWN (toward the camera) when aiming down, by a squashed amount — this is a tilted view', () => {
+    const skin = makeSkin();
+    skin.setBodyFacing(0);
+    skin.setAim(Math.PI / 2); // straight down-screen
+    const down = eyePos(skin);
+    skin.setAim(-Math.PI / 2); // straight up-screen
+    const up = eyePos(skin);
+    expect(down.y).toBeGreaterThan(up.y);
+    // The vertical TRAVEL (up↔down) is deliberately smaller than the horizontal one.
+    skin.setAim(0);
+    const right = eyePos(skin);
+    skin.setAim(Math.PI);
+    const left = eyePos(skin);
+    expect(down.y - up.y).toBeLessThan(right.x - left.x);
+  });
+
+  it('mirrors with the rig: a flipped body aiming left still looks left on screen', () => {
+    const flipped = makeSkin();
+    flipped.setBodyFacing(Math.PI); // body faces left → view.scale.x = -1
+    flipped.setAim(Math.PI); // aiming left
+    const local = eyePos(flipped);
+    // Local +x renders as screen -x under the flip, so the local offset must be POSITIVE
+    // for the eye to appear on the left. (Computing it in screen space instead would put
+    // the eye on the wrong side of the shell for every left-facing pose.)
+    expect(local.x).toBeGreaterThan(0);
+    expect(flipped.view.scale.x).toBe(-1);
+  });
+
+  it('shrinks the eye as the aim turns away from the camera, and not when it turns toward it', () => {
+    const skin = makeSkin();
+    const scaleOf = (aim: number): number => {
+      skin.setAim(aim);
+      skin.update();
+      return (spritesOf(skin).get('eye') as unknown as { scale: { x: number } }).scale.x;
+    };
+    const toward = scaleOf(Math.PI / 2); // aiming at the camera
+    const away = scaleOf(-Math.PI / 2); // aiming away
+    const side = scaleOf(0);
+    expect(away).toBeLessThan(side);
+    expect(toward).toBeCloseTo(side, 5); // no growth on the near side, only shrink on the far
+  });
+
+  it('leaves every other bone on its authored position (only the eye tracks)', () => {
+    const skin = makeSkin();
+    skin.setBodyFacing(0);
+    skin.setAim(0);
+    skin.update();
+    const b = spritesOf(skin).get('belly')!;
+    const bellyRight = { x: b.x, y: b.y }; // read the accessors; spreading a Pixi Sprite copies neither
+    skin.setAim(Math.PI);
+    skin.update();
+    const bellyLeft = spritesOf(skin).get('belly')!;
+    expect(bellyLeft.x).toBeCloseTo(bellyRight.x, 5);
+    expect(bellyLeft.y).toBeCloseTo(bellyRight.y, 5);
+  });
+});
+
+// design/01's "Per-weapon local z-order" — documented since the rendering doc was written,
+// but the mounted module was pinned in front until 2026-08-18.
+describe('RigSkin — the mounted module draws behind the body when facing away', () => {
+  function moduleZ(skin: RigSkin): number {
+    skin.update();
+    return (skin as unknown as { weaponSprite: { zIndex: number } }).weaponSprite.zIndex;
+  }
+
+  it('is in front while facing the camera and behind while facing away', () => {
+    const skin = makeSkin();
+    skin.setWeaponKind('ranged', 'blaster');
+    skin.setBodyFacing(Math.PI / 2); // toward the camera
+    expect(moduleZ(skin)).toBeGreaterThan(0);
+    skin.setBodyFacing(-Math.PI / 2); // away from the camera
+    expect(moduleZ(skin)).toBeLessThan(0);
+  });
+
+  it('re-evaluates every frame, so turning around mid-play actually restacks it', () => {
+    const skin = makeSkin();
+    skin.setWeaponKind('ranged', 'blaster');
+    skin.setBodyFacing(-Math.PI / 2);
+    const behind = moduleZ(skin); // sprite is CREATED while facing away
+    skin.setBodyFacing(Math.PI / 2);
+    expect(moduleZ(skin)).toBeGreaterThan(behind); // and moves back in front on the next update
+  });
+
+  it('puts it behind the tether too, not between tether and body', () => {
+    const skin = makeSkin();
+    skin.setWeaponKind('ranged', 'blaster');
+    skin.setBodyFacing(-Math.PI / 2);
+    const tethers = (skin as unknown as { tethers: Container | null }).tethers;
+    expect(tethers).not.toBeNull();
+    expect(moduleZ(skin)).toBeLessThan(tethers!.zIndex);
   });
 });

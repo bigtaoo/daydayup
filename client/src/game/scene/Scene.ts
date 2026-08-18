@@ -13,6 +13,7 @@ import { Enemy } from './Enemy';
 import { Bullet } from './Bullet';
 import { Pickup } from './Pickup';
 import { fpToPx, bradToRad } from '../coords';
+import { turnToward, BODY_TURN_PER_TICK } from '../../render/facing';
 
 export class Scene {
   private views = new Map<number, Entity>();
@@ -62,12 +63,11 @@ export class Scene {
       if (!p.alive) continue;
       let v = this.views.get(p.id) as Actor | undefined;
       const aimRad = bradToRad(p.facing);
-      // Body/legs face the movement direction, not the aim (upper/lower body split) —
-      // held at its last value while idle, same "no snap-to-zero" convention as the
-      // aim stick (CommandBuilder.lastAim). A fresh spawn has no last value yet, so it
-      // starts facing its aim direction.
-      const moving = p.vx !== 0 || p.vy !== 0;
-      const bodyFacingRad = moving ? Math.atan2(p.vy, p.vx) : (v?.bodyFacingRad ?? aimRad);
+      // The body turns to face the AIM, rate-limited (render/facing.ts — see its header
+      // for why this is the aim and not the movement vector: the orb-core is an eye, and
+      // an eye looks at what it is shooting). A fresh spawn has no previous angle to turn
+      // from, so it starts already facing its aim.
+      const bodyFacingRad = v ? turnToward(v.bodyFacingRad, aimRad, BODY_TURN_PER_TICK) : aimRad;
       if (!v) {
         v = new Actor('player', fpToPx(p.radius), undefined, false, p.atlasKey);
         this.spawn(p.id, v, fpToPx(p.gx), fpToPx(p.gy), fpToPx(p.z), aimRad, bodyFacingRad);
@@ -213,9 +213,15 @@ export class Scene {
    * explicit substitute (`Entity.movingOverride`), fixing what was otherwise a local
    * player whose walk animation never played under prediction.
    */
-  positionLocal(x: number, y: number, z: number, facingRad: number, bodyFacingRad: number = facingRad, moving = false): void {
+  positionLocal(x: number, y: number, z: number, facingRad: number, moving = false): void {
     if (!this.playerView) return;
-    this.playerView.pushState(x, y, z, facingRad, bodyFacingRad);
+    // Body facing is deliberately NOT taken from the caller (it used to be
+    // `LocalPredictor.pose.bodyFacing`, the predicted movement direction): since
+    // 2026-08-18 the body turns toward the AIM, and `reconcile` above already advanced it
+    // one rate-limited step this tick. Re-deriving it here — at render rate, from movement
+    // — would both double the turn speed and reintroduce the movement-driven facing this
+    // change removed. Carry the value the view already holds.
+    this.playerView.pushState(x, y, z, facingRad, this.playerView.bodyFacingRad);
     this.playerView.snap(); // prev == cur → no lerp; interpolate() draws it exactly here
     this.playerView.movingOverride = moving;
   }

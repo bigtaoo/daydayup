@@ -13,6 +13,7 @@ import type { RunOutcome } from './RunOutcome';
 import type { TutorialHintController } from './TutorialHintController';
 import type { Scene } from '../scene/Scene';
 import type { RoomBuilder } from '../scene/RoomBuilder';
+import { WALL_HEIGHT } from '../scene/wallGeometry';
 import type { FxController } from '../fx/FxController';
 import type { HudView } from '../ui/HudView';
 import type { TouchControlsView } from '../ui/TouchControlsView';
@@ -265,7 +266,7 @@ export class GameLoop {
     // Draw the local seat from the predictor (camera follows it too); remote seats confirmed.
     if (predicting && p && this.predictor.isActive) {
       const pose = this.predictor.pose;
-      this.deps.scene.positionLocal(pose.x, pose.y, fpToPx(p.z), bradToRad(p.facing), pose.bodyFacing, pose.moving);
+      this.deps.scene.positionLocal(pose.x, pose.y, fpToPx(p.z), bradToRad(p.facing), pose.moving);
     }
     this.spawnBulletTrails(s);
     this.consumeEvents(events);
@@ -353,7 +354,16 @@ export class GameLoop {
     const rects = s.dungeonRoomRects.length > 0 ? s.dungeonRoomRects : s.arenaRoomRects;
     const hit = rects.find((r) => r.id === roomId);
     if (!hit) return null;
-    return { x: fpToPx(hit.rect.x), y: fpToPx(hit.rect.y), w: fpToPx(hit.rect.w), h: fpToPx(hit.rect.h) };
+    // Grown upward by one wall height (2026-08-18): the room's walls now STAND rather than
+    // lie flat (design/01, `scene/wallGeometry.ts`), so its north wall is drawn WALL_HEIGHT
+    // px above the room rect's own top edge. Fitting the bare rect would push that face off
+    // the top of the viewport — the one thing the standing-wall pass exists to show.
+    return {
+      x: fpToPx(hit.rect.x),
+      y: fpToPx(hit.rect.y) - WALL_HEIGHT,
+      w: fpToPx(hit.rect.w),
+      h: fpToPx(hit.rect.h) + WALL_HEIGHT,
+    };
   }
 
   private updateHud(dt: number): void {

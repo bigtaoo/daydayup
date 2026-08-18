@@ -15,6 +15,8 @@ import type { GameState, DoorRuntime } from '@dd/engine/state/GameState';
 import { pxToFp } from '@dd/engine/content/convert';
 import { Layers } from './layers';
 import { RoomBuilder } from './RoomBuilder';
+import { WALL_HEIGHT } from './wallGeometry';
+import { Entity } from './Entity';
 import { Backdrop } from './Backdrop';
 
 function makeRoomBuilder(layers = new Layers()): RoomBuilder {
@@ -28,6 +30,7 @@ function doorSprites(rb: RoomBuilder): Sprite[] {
 const mocks = vi.hoisted(() => ({
   floorTex: undefined as Texture | undefined,
   wallTex: undefined as Texture | undefined,
+  wallFaceTex: undefined as Texture | undefined,
   doorLockedTex: undefined as Texture | undefined,
   doorOpenTex: undefined as Texture | undefined,
 }));
@@ -35,6 +38,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../../render/biomeTiles', () => ({
   getFloorTexture: () => mocks.floorTex,
   getWallTexture: () => mocks.wallTex,
+  getWallFaceTexture: () => mocks.wallFaceTex,
 }));
 
 vi.mock('../../render/environmentSprites', () => ({
@@ -117,6 +121,115 @@ describe('RoomBuilder — biome art registered for this element', () => {
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(stateWithOneWall(undefined)); // undefined biomeId -> 'neutral' element
     expect(layers.ground.children.some((c) => c instanceof TilingSprite)).toBe(false);
+  });
+});
+
+// Standing walls (2026-08-18, design/01's "walls show a small front face"). `wallRises`
+// owns WHICH walls stand (wallGeometry.test.ts); this block covers what RoomBuilder then
+// draws — the layer it goes on, the zIndex it sorts by, and the face/cap geometry.
+describe('RoomBuilder — standing walls', () => {
+  /** One east-west wall spanning the north edge of a single 480×480 room at the origin. */
+  function stateWithNorthWall(): GameState {
+    const s = createGameState({
+      seed: 1, worldW: 480, worldH: 480, waves: [],
+      walls: [[0, 0, 480, 32]],
+      obstacles: [],
+    });
+    s.dungeonRoomRects.push({ id: 'r1', rect: { x: pxToFp(0), y: pxToFp(0), w: pxToFp(480), h: pxToFp(480) } });
+    (s as unknown as { dungeonConfig?: { biomeId: string } }).dungeonConfig = { biomeId: 'ember' };
+    return s;
+  }
+
+  function wallEntities(rb: RoomBuilder): Entity[] {
+    return (rb as unknown as { wallEntities: Entity[] }).wallEntities;
+  }
+
+  it('puts it on the Y-sortable entities layer, not the ground layer, sorted by its SOUTH edge', () => {
+    mocks.wallTex = fakeTexture(256, 256);
+    mocks.wallFaceTex = fakeTexture(256, 128);
+    const rb = makeRoomBuilder();
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    rb.build(stateWithNorthWall());
+
+    expect(wallEntities(rb).length).toBe(1);
+    const seg = wallEntities(rb)[0]!;
+    expect(layers.entities.children).toContain(seg);
+    expect(layers.ground.children).not.toContain(seg);
+    // The wall footprint is y 0..32, so it stands on the line y=32 and an actor at any
+    // larger gy (i.e. deeper into the room) draws in front of it.
+    expect(seg.x).toBe(0);
+    expect(seg.y).toBe(32);
+    expect(seg.zIndex).toBe(32);
+  });
+
+  it('draws the face one WALL_HEIGHT tall ending at the south edge, with the cap stacked above it', () => {
+    mocks.wallTex = fakeTexture(256, 256);
+    mocks.wallFaceTex = fakeTexture(256, 128);
+    const rb = makeRoomBuilder();
+    rb.build(stateWithNorthWall());
+    const [face, cap] = wallEntities(rb)[0]!.children as [TilingSprite, TilingSprite];
+
+    expect(face.texture).toBe(mocks.wallFaceTex);
+    expect(face.height).toBe(WALL_HEIGHT);
+    expect(face.y).toBe(-WALL_HEIGHT); // local origin is the south edge; the face rises from it
+    // Uniform tile scale — the face art is used at exactly one height and must not stretch.
+    expect(face.tileScale.y).toBeCloseTo(WALL_HEIGHT / 128, 5);
+    expect(face.tileScale.x).toBeCloseTo(face.tileScale.y, 5);
+
+    expect(cap.texture).toBe(mocks.wallTex);
+    expect(cap.height).toBe(32); // the footprint's own depth, lifted to the top of the face
+    expect(cap.y).toBe(-WALL_HEIGHT - 32);
+  });
+
+  it('still stands the wall up with no face art, using Graphics (a missing swatch never flattens it)', () => {
+    mocks.wallTex = undefined;
+    mocks.wallFaceTex = undefined;
+    const rb = makeRoomBuilder();
+    rb.build(stateWithNorthWall());
+    const seg = wallEntities(rb)[0]!;
+    expect(seg.zIndex).toBe(32);
+    expect(seg.children.every((c) => c instanceof Graphics)).toBe(true);
+    expect(seg.children.some((c) => c instanceof TilingSprite)).toBe(false);
+  });
+
+  it('a rebuild and a clear() both destroy the previous segments (they outlive the ground sweep)', () => {
+    mocks.wallTex = fakeTexture(256, 256);
+    mocks.wallFaceTex = fakeTexture(256, 128);
+    const rb = makeRoomBuilder();
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    rb.build(stateWithNorthWall());
+    const first = wallEntities(rb)[0]!;
+
+    rb.build(stateWithNorthWall());
+    expect(first.destroyed).toBe(true);
+    expect(wallEntities(rb).length).toBe(1);
+    expect(layers.entities.children).not.toContain(first);
+
+    const second = wallEntities(rb)[0]!;
+    rb.clear();
+    expect(second.destroyed).toBe(true);
+    expect(wallEntities(rb).length).toBe(0);
+  });
+
+  it('leaves the room\'s south wall flat on the ground layer', () => {
+    mocks.wallTex = fakeTexture(256, 256);
+    mocks.wallFaceTex = fakeTexture(256, 128);
+    const s = createGameState({
+      seed: 1, worldW: 480, worldH: 480, waves: [],
+      walls: [[0, 448, 480, 32]],
+      obstacles: [],
+    });
+    s.dungeonRoomRects.push({ id: 'r1', rect: { x: pxToFp(0), y: pxToFp(0), w: pxToFp(480), h: pxToFp(480) } });
+    (s as unknown as { dungeonConfig?: { biomeId: string } }).dungeonConfig = { biomeId: 'ember' };
+
+    const rb = makeRoomBuilder();
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    rb.build(s);
+
+    expect(wallEntities(rb).length).toBe(0);
+    const flat = layers.ground.children.find((c) => c instanceof TilingSprite && c.texture === mocks.wallTex);
+    expect(flat).toBeDefined();
+    expect((flat as TilingSprite).position.y).toBeCloseTo(448); // on its own footprint, unlifted
   });
 });
 

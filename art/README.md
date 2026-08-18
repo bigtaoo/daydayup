@@ -8,13 +8,13 @@
 > no longer Graphics-only. This directory holds the **source** art (full-resolution
 > generator output, `.xcf` edits, rejected attempts kept for reference); what the game
 > actually ships is the alpha-trimmed, downsampled, re-encoded copy under `client/public/`.
-> Nothing in `art/` is loaded at runtime. **Update (2026-08-04):** every shipped PNG under
-> `client/public/` (76 files) was decoded and its alpha channel audited
+> Nothing in `art/` is loaded at runtime. **Update (2026-08-04, recounted 2026-08-18):** every
+> shipped PNG under `client/public/` (**82 files**) was decoded and its alpha channel audited
 > (`tools/png-pipeline/alpha-audit.mjs`) — no opaque-matte-background bug and no
 > translucent-haze bug found. All sprite art (characters/weapons/icons/NPC) is clean bimodal
-> alpha; the only fully-opaque files are the ones meant to be (`ui/hub_bg.png` and the 8
-> `biome/floor_*`/`wall_*` tiles, which are full-bleed backgrounds/tileables with no
-> transparency by design). This closes the last open caveat below.
+> alpha; the only fully-opaque files are the ones meant to be (`ui/hub_bg.png` and the **12**
+> `biome/floor_*`/`wall_*`/`wallface_*` tiles, which are full-bleed backgrounds/tileables with
+> no transparency by design). This closes the last open caveat below.
 
 ## Layout
 
@@ -23,7 +23,7 @@
 | `concept/` | Direction/exploration pieces, named after the `prompts.md` prompt that produced them (`01_…`–`05_…`, plus the `retired_…` first direction) | — (reference only) |
 | `units/` | Every character and enemy part: the three orb-cores (`shell`/`belly`/`eye_front`/`eye_back`, prefixed `skirmisher_`/`juggernaut_`, unprefixed = the default vanguard), the boss (`boss.png` is an orphaned early attempt, unwired — see `prompts.md` for the real `core`/`ring` pair still needed), and the enemy bodies (`enemy_critter`/`enemy_brute`/`enemy_floater`) + `prompts.md` | `client/public/skins/*/` |
 | `weapon/` | Per-weapon-id business-end sprites (`<weaponId>_raw.png`) + `prompts.md` + `leftover/` (picked-over duplicate generations, incl. two rejected grip-pistol ice attempts). All 6 elemental ids now shipped (`flamer`/`teslagun`/`venomspit`/`cinderscatter`/`cryobolt`/`frostseeker`) | `client/public/weapons/` |
-| `biome/` | Floor/wall tiles per element + `prompts.md` | `client/public/biome/` |
+| `biome/` | Per element: the top-down floor tile, the top-down wall tile (also reused as a standing wall's top cap), and the wall's front elevation (`wallface_*`, 2026-08-18) + `prompts.md` | `client/public/biome/` |
 | `ui/` | Hub background, button icons, result badges + `prompts.md` | `client/public/ui/` |
 | `npc/` | Outpost NPCs (the Forger) + `prompts.md` | `client/public/ui/npc_forger.png` |
 | `map/` | The rejected painterly-isometric room backgrounds (`room_*_painterly_rejected`) — kept only as a record of the approach that did not work; the biome look that shipped is the tile art in `biome/` | — (nothing bound) |

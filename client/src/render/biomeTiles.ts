@@ -21,6 +21,15 @@ const BIOME_TILE_ASSETS: Readonly<Record<string, string>> = {
   wall_ice: '/biome/wall_ice.png',
   wall_lightning: '/biome/wall_lightning.png',
   wall_neutral: '/biome/wall_neutral.png',
+  // Front ELEVATION of a wall, for the standing-wall pass (design/01, 2026-08-18) —
+  // a separate asset from `wall_*` above, which is the top-down surface and is now
+  // reused as the raised wall's top cap. Tiles horizontally only: its top rows are a
+  // lit coping edge and its bottom rows a dark base, so it is used at exactly one
+  // height (WALL_HEIGHT) and never repeated vertically.
+  wallface_fire: '/biome/wallface_fire.png',
+  wallface_ice: '/biome/wallface_ice.png',
+  wallface_lightning: '/biome/wallface_lightning.png',
+  wallface_neutral: '/biome/wallface_neutral.png',
 };
 
 const textures = new Map<string, Texture>();
@@ -54,4 +63,11 @@ export function getFloorTexture(element: BiomeElement): Texture | undefined {
 
 export function getWallTexture(element: BiomeElement): Texture | undefined {
   return textures.get(`wall_${element}`);
+}
+
+/** The wall's front elevation (see `wallface_*` above). Undefined leaves RoomBuilder on
+ *  its Graphics fallback for the standing face — the wall still stands, it just isn't
+ *  textured, same contract as every other swatch here. */
+export function getWallFaceTexture(element: BiomeElement): Texture | undefined {
+  return textures.get(`wallface_${element}`);
 }

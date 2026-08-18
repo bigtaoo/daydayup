@@ -1,10 +1,11 @@
 /**
- * Scene.reconcile — the render-side mirror of engine state. Covers the upper/lower
- * body split it now computes for the player view: `bodyFacingRad` (legs/body) tracks
- * the player's own velocity, held at its last value while idle (same "no snap-to-zero"
- * convention CommandBuilder already used for the aim stick), while `facingRad` (the
- * weapon) stays exactly the engine's aim-derived `PlayerActor.facing`, unaffected by
- * movement. Enemies/bullets are unaffected — they keep a single facing.
+ * Scene.reconcile — the render-side mirror of engine state. Covers the two facing angles
+ * it computes for the player view: `facingRad` (the weapon) is exactly the engine's
+ * aim-derived `PlayerActor.facing`, and `bodyFacingRad` (the body/eye) TURNS TOWARD that
+ * same aim at a bounded rate (`render/facing.ts`'s `turnToward`). It used to track the
+ * player's velocity instead — a humanoid upper/lower-body split, replaced 2026-08-18
+ * because the orb-core has no lower body. Enemies/bullets are unaffected — they keep a
+ * single facing.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { createGameState } from '@dd/engine/state/GameState';
@@ -18,6 +19,7 @@ import { ENEMY_TEAM_ID, type EnemyActor, type Projectile, type PickupItem } from
 import { Scene } from './Scene';
 import { Layers } from './layers';
 import { bradToRad } from '../coords';
+import { BODY_TURN_PER_TICK } from '../../render/facing';
 import { LightRegistry } from '../fx/lighting';
 import type { Actor } from './Actor';
 import type { Entity } from './Entity';
@@ -96,8 +98,11 @@ function addPickup(s: GameState, xpx: number, ypx: number): PickupItem {
   return it;
 }
 
-describe('Scene.reconcile — player body/aim facing split', () => {
-  it('body faces the movement direction while moving; aim stays the manual facing', () => {
+// The body used to face the MOVEMENT vector (a humanoid upper/lower split). Since
+// 2026-08-18 it turns toward the AIM, rate-limited — the orb-core is an eye, and an eye
+// looks at what it shoots (design/12/13, render/facing.ts's header).
+describe('Scene.reconcile — body turns toward the aim', () => {
+  it('faces the aim, not the movement direction', () => {
     const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
     const p = s.players[0]!;
     p.facing = 0 as Brad; // aim east
@@ -107,34 +112,34 @@ describe('Scene.reconcile — player body/aim facing split', () => {
     scene.reconcile(s, p.id);
     const view = scene.player!;
     expect(view.facingRad).toBeCloseTo(0, 5);
-    expect(view.bodyFacingRad).toBeCloseTo(Math.atan2(p.vy, p.vx), 5);
+    expect(view.bodyFacingRad).toBeCloseTo(0, 5); // the aim, NOT atan2(vy, vx) = -PI/2
   });
 
-  it('holds the last body facing while idle instead of resetting (no snap-to-zero)', () => {
+  it('a fresh spawn starts already facing its aim (nothing to turn from)', () => {
     const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
     const p = s.players[0]!;
+    p.facing = 16384 as Brad; // aim north
     const scene = new Scene(new Layers());
-
-    p.facing = 0 as Brad; // aim east
-    p.vx = toFp(1);
-    p.vy = toFp(0); // moving east
     scene.reconcile(s, p.id);
-    const bodyWhileMoving = scene.player!.bodyFacingRad;
-
-    p.facing = 32768 as Brad; // aim flips to west, but movement stops
-    p.vx = toFp(0);
-    p.vy = toFp(0);
-    scene.reconcile(s, p.id);
-    expect(scene.player!.facingRad).toBeCloseTo(Math.PI, 5); // aim followed the flip
-    expect(scene.player!.bodyFacingRad).toBeCloseTo(bodyWhileMoving, 5); // body held its last direction
+    expect(scene.player!.bodyFacingRad).toBeCloseTo(bradToRad(16384), 5);
   });
 
-  it('a fresh spawn with no movement yet starts body-facing its aim direction', () => {
+  it('turns by at most BODY_TURN_PER_TICK per tick, and arrives after enough of them', () => {
     const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
     const p = s.players[0]!;
-    p.facing = 16384 as Brad; // aim north, never moved
+    p.facing = 0 as Brad; // spawn aiming east
     const scene = new Scene(new Layers());
     scene.reconcile(s, p.id);
+    expect(scene.player!.bodyFacingRad).toBeCloseTo(0, 5);
+
+    p.facing = 16384 as Brad; // aim snaps 90° north (auto-aim switching target)
+    scene.reconcile(s, p.id);
+    // One tick moves exactly one step — NOT the whole 90°, which is the twitch this fixes.
+    expect(Math.abs(scene.player!.bodyFacingRad)).toBeCloseTo(BODY_TURN_PER_TICK, 5);
+    expect(scene.player!.facingRad).toBeCloseTo(bradToRad(16384), 5); // the weapon aim did snap
+
+    // PI/2 / 0.27 ≈ 5.8 steps; 6 more ticks is comfortably enough to land exactly.
+    for (let i = 0; i < 6; i++) scene.reconcile(s, p.id);
     expect(scene.player!.bodyFacingRad).toBeCloseTo(bradToRad(16384), 5);
   });
 });
@@ -149,13 +154,13 @@ describe('Scene.positionLocal — moving flag survives the predicted-pose snap',
     const scene = new Scene(new Layers());
     scene.reconcile(s, s.players[0]!.id);
 
-    scene.positionLocal(10, 10, 0, 0, 0, true);
+    scene.positionLocal(10, 10, 0, 0, true);
     expect(scene.player!.movingOverride).toBe(true);
 
-    scene.positionLocal(10, 10, 0, 0, 0, false);
+    scene.positionLocal(10, 10, 0, 0, false);
     expect(scene.player!.movingOverride).toBe(false);
 
-    scene.positionLocal(10, 10, 0, 0, 0);
+    scene.positionLocal(10, 10, 0, 0);
     expect(scene.player!.movingOverride).toBe(false); // omitted → defaults to idle, not "derive from buffer"
   });
 
@@ -163,16 +168,33 @@ describe('Scene.positionLocal — moving flag survives the predicted-pose snap',
     const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
     const scene = new Scene(new Layers());
     scene.reconcile(s, s.players[0]!.id);
-    scene.positionLocal(10, 10, 0, 0, 0, true);
+    scene.positionLocal(10, 10, 0, 0, true);
     expect(scene.player!.movingOverride).toBe(true);
 
     scene.reconcile(s, s.players[0]!.id); // e.g. prediction deactivated — back to the confirmed path
     expect(scene.player!.movingOverride).toBeNull();
   });
 
+  // The predicted-pose path runs at RENDER rate, so it must not re-derive body facing —
+  // that would turn the body twice as fast as `reconcile`'s per-tick step (and, before
+  // 2026-08-18, is where the predictor's movement direction leaked back in).
+  it('carries the body facing reconcile() already set, instead of resetting it to the aim', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const p = s.players[0]!;
+    p.facing = 0 as Brad;
+    const scene = new Scene(new Layers());
+    scene.reconcile(s, p.id); // spawns body-facing east
+    p.facing = 16384 as Brad; // aim jumps north
+    scene.reconcile(s, p.id); // one step of turn
+    const afterOneStep = scene.player!.bodyFacingRad;
+
+    scene.positionLocal(10, 10, 0, bradToRad(16384), true);
+    expect(scene.player!.bodyFacingRad).toBeCloseTo(afterOneStep, 5); // NOT the aim
+  });
+
   it('is a no-op before the local view exists (no crash)', () => {
     const scene = new Scene(new Layers());
-    expect(() => scene.positionLocal(0, 0, 0, 0, 0, true)).not.toThrow();
+    expect(() => scene.positionLocal(0, 0, 0, 0, true)).not.toThrow();
   });
 });
 

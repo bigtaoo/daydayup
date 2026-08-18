@@ -4,8 +4,9 @@ import type { Layers } from './layers';
 import { Entity } from './Entity';
 import { biomePalette, biomeElementOf, type BiomePalette } from '../theme';
 import { fpToPx } from '../coords';
-import { getFloorTexture, getWallTexture } from '../../render/biomeTiles';
+import { getFloorTexture, getWallTexture, getWallFaceTexture } from '../../render/biomeTiles';
 import { getDoorTexture } from '../../render/environmentSprites';
+import { wallRises, WALL_HEIGHT, type RectPx } from './wallGeometry';
 import type { Backdrop } from './Backdrop';
 import { Portal } from './Portal';
 
@@ -18,6 +19,10 @@ import { Portal } from './Portal';
  */
 export class RoomBuilder {
   private readonly pillars: Entity[] = [];
+  // Standing wall segments (design/01's front face) — Entities on the Y-sortable
+  // `entities` layer, so they must be destroyed explicitly like `pillars`; the flat
+  // walls they replace lived on `ground`, which `build()` clears wholesale.
+  private readonly wallEntities: Entity[] = [];
   // Index-aligned with `state.dungeonDoors` (design/05 "Room & door model") — a real
   // fixture per door, never a bare gap / never folded into the generic wall fill.
   // `updateDoors()` swaps textures on these in place on door_locked/door_unlocked
@@ -39,6 +44,7 @@ export class RoomBuilder {
     const h = fpToPx(s.worldH);
 
     for (const c of [...this.layers.ground.children]) c.destroy();
+    this.clearWalls();
 
     // design/13 "per-biome background palette" — derived from the run's dungeon
     // biomeId (undefined outside dungeon mode, e.g. flat EngineConfig.floors/PvP
@@ -76,29 +82,116 @@ export class RoomBuilder {
     // object, never a copy) so this skip is exact and free for non-dungeon modes
     // (`dungeonDoors` is empty there).
     const doorAabbs = new Set(s.dungeonDoors.map((dr) => dr.passageAabb));
+    const rooms = this.roomRectsPx(s, w, h);
     for (const wall of s.walls) {
       if (doorAabbs.has(wall)) continue;
-      const wx = fpToPx(wall.x);
-      const wy = fpToPx(wall.y);
-      const ww = fpToPx(wall.w);
-      const wh = fpToPx(wall.h);
-      if (wallTex) {
-        const wallSprite = new TilingSprite({ texture: wallTex, width: ww, height: wh });
-        wallSprite.position.set(wx, wy);
-        this.layers.ground.addChild(wallSprite);
-        const edge = new Graphics();
-        edge.rect(wx, wy, ww, wh).stroke({ color: palette.wallEdge, width: 2 });
-        this.layers.ground.addChild(edge);
-      } else {
-        const wallG = new Graphics();
-        wallG.rect(wx, wy, ww, wh).fill({ color: palette.wall }).stroke({ color: palette.wallEdge, width: 2 });
-        this.layers.ground.addChild(wallG);
-      }
+      const rect: RectPx = { x: fpToPx(wall.x), y: fpToPx(wall.y), w: fpToPx(wall.w), h: fpToPx(wall.h) };
+      if (wallRises(rect, rooms)) this.buildStandingWall(rect, palette, wallTex, getWallFaceTexture(element));
+      else this.buildFlatWall(rect, palette, wallTex);
     }
 
     this.buildPillars(s, palette);
     this.buildDoors(s);
     this.buildPortal(s, w, h);
+  }
+
+  /** The floor's room footprints in world px, for `wallRises`. Dungeon floors and the PvP
+   *  arena each keep their own list; a flat `EngineConfig.floors` run populates neither, so
+   *  the world itself stands in as the single room (identical answer for a one-room world). */
+  private roomRectsPx(s: GameState, w: number, h: number): RectPx[] {
+    const src = s.dungeonRoomRects.length > 0 ? s.dungeonRoomRects : s.arenaRoomRects;
+    if (src.length === 0) return [{ x: 0, y: 0, w, h }];
+    return src.map(({ rect }) => ({
+      x: fpToPx(rect.x),
+      y: fpToPx(rect.y),
+      w: fpToPx(rect.w),
+      h: fpToPx(rect.h),
+    }));
+  }
+
+  /** A wall drawn flat on its own footprint — the pre-2026-08-18 look, still correct for
+   *  a room's south perimeter (see `wallGeometry.wallRises` for why that one must not
+   *  stand up) and for every wall while `wall_*` art is missing. */
+  private buildFlatWall(r: RectPx, palette: BiomePalette, wallTex: Texture | undefined): void {
+    if (wallTex) {
+      const wallSprite = new TilingSprite({ texture: wallTex, width: r.w, height: r.h });
+      wallSprite.position.set(r.x, r.y);
+      this.layers.ground.addChild(wallSprite);
+      const edge = new Graphics();
+      edge.rect(r.x, r.y, r.w, r.h).stroke({ color: palette.wallEdge, width: 2 });
+      this.layers.ground.addChild(edge);
+    } else {
+      const wallG = new Graphics();
+      wallG.rect(r.x, r.y, r.w, r.h).fill({ color: palette.wall }).stroke({ color: palette.wallEdge, width: 2 });
+      this.layers.ground.addChild(wallG);
+    }
+  }
+
+  /**
+   * A wall drawn STANDING (design/01's "small front face"), which is what carries the
+   * tilted view's sense of volume — before this, every wall was a flat footprint on the
+   * ground layer and only the pillars had any height at all.
+   *
+   * Geometry, all of it forced by `screen.y = gy - z`: the container sits on the wall's
+   * SOUTH edge, so `Entity.place` gives it `zIndex = south edge` and it Y-sorts against
+   * actors as one object standing on that line. The front face then occupies local
+   * `-WALL_HEIGHT .. 0` (the wall's south side, rising toward the camera-facing edge) and
+   * the top cap the `h` px above that (the footprint, lifted by the wall's height). The
+   * face texture is used at exactly one height and tiled horizontally only — its own top
+   * rows are a lit coping and its bottom rows a dark base, so `tileScale` is uniform
+   * (WALL_HEIGHT / texture height) and never stretched to fit.
+   */
+  private buildStandingWall(
+    r: RectPx,
+    palette: BiomePalette,
+    capTex: Texture | undefined,
+    faceTex: Texture | undefined,
+  ): void {
+    const seg = new Entity();
+
+    if (faceTex) {
+      const face = new TilingSprite({ texture: faceTex, width: r.w, height: WALL_HEIGHT });
+      face.position.set(0, -WALL_HEIGHT);
+      face.tileScale.set(WALL_HEIGHT / faceTex.height);
+      seg.addChild(face);
+    } else {
+      // Same lit-from-upper-left banding the pillars use, so a missing swatch still reads
+      // as a standing surface rather than a flat rectangle.
+      const g = new Graphics();
+      g.rect(0, -WALL_HEIGHT, r.w, WALL_HEIGHT).fill({ color: palette.wall });
+      g.rect(0, -WALL_HEIGHT, r.w, WALL_HEIGHT * 0.22).fill({ color: 0xffffff, alpha: 0.08 });
+      g.rect(0, -WALL_HEIGHT * 0.3, r.w, WALL_HEIGHT * 0.3).fill({ color: 0x000000, alpha: 0.22 });
+      seg.addChild(g);
+    }
+
+    if (capTex) {
+      const cap = new TilingSprite({ texture: capTex, width: r.w, height: r.h });
+      cap.position.set(0, -WALL_HEIGHT - r.h);
+      seg.addChild(cap);
+    } else {
+      const g = new Graphics();
+      g.rect(0, -WALL_HEIGHT - r.h, r.w, r.h).fill({ color: palette.pillarTop });
+      seg.addChild(g);
+    }
+
+    // A dark outline around the whole block — the flat-cel silhouette design/13 asks for,
+    // and the cue that separates one standing wall from the one behind it. No lit rim line
+    // at the cap/face joint: the face art carries its own lit coping course there, and a
+    // second highlight on top of it read as a stray bright bar.
+    const edge = new Graphics();
+    edge.rect(0, -WALL_HEIGHT - r.h, r.w, WALL_HEIGHT + r.h).stroke({ color: palette.wallEdge, width: 2 });
+    seg.addChild(edge);
+
+    this.layers.entities.addChild(seg);
+    this.wallEntities.push(seg);
+    seg.place(r.x, r.y + r.h);
+  }
+
+  /** Destroy the standing wall segments (they live on the Y-sorted `entities` layer, which
+   *  `build()`/`clear()` never sweep wholesale — actors live there too). */
+  private clearWalls(): void {
+    for (const e of this.wallEntities) e.destroy();
+    this.wallEntities.length = 0;
   }
 
   /** One sprite per dungeon door (design/05: "always-present physical fixtures with
@@ -195,7 +288,7 @@ export class RoomBuilder {
     for (const o of s.obstacles) {
       const rad = fpToPx(o.radius);
       const bodyW = rad * 2 + 16; // visual body a touch wider than the footprint
-      const height = 70;
+      const height = WALL_HEIGHT; // one height for every standing thing in a room
       const p = new Entity();
       const body = new Graphics();
       body.roundRect(-bodyW / 2, -height, bodyW, height + 10, 6).fill({ color: palette.pillar });
@@ -222,6 +315,7 @@ export class RoomBuilder {
   clear(): void {
     for (const c of [...this.layers.ground.children]) c.destroy(); // also destroys door sprites (ground children)
     this.doorSprites.length = 0;
+    this.clearWalls();
     for (const p of this.pillars) {
       p.shadow?.destroy();
       p.destroy();

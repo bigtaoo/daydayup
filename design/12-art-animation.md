@@ -19,9 +19,15 @@ How pixels get onto the screen: **skins** (the `02` appearance layer made concre
 > art wrong** — bone sprites drawn at each bone's pivot instead of its tip, and rotated by the
 > bone's raw world angle — which disassembled every rigged character on screen (the hero read
 > as a bare ball with a gun on its head) while every individual asset was fine. Fixed, plus the
-> energy tether is now actually drawn; see the dated update at the bottom of this doc. What
-> remains is a proportion call, not a defect: the mounted weapon module is roughly 2x the
-> concept's module-to-core size ratio.
+> energy tether is now actually drawn; see the dated update at the bottom of this doc. The
+> module-proportion call that used to be listed here as remaining was settled the same day —
+> `MODULE_SCALE = 0.75` (`render/weaponSkins.ts`), the user's own pick between matching the
+> concept's ~0.5 ratio and keeping every weapon frame's silhouette readable at gameplay
+> scale. **Update (2026-08-18): the facing model got two real corrections** (aim-driven body
+> + continuously-tracking eye, see "Facing model" below) and `01`'s per-weapon front/back
+> z-order rule — documented since `01` was written, never implemented — now actually runs.
+> The one art gap left in this pipeline is the **back set beyond the eye**: `shell__back` and
+> the belly's back treatment, 1–2 PNGs per character, no code.
 
 ## The decisions (locked)
 
@@ -47,7 +53,37 @@ How pixels get onto the screen: **skins** (the `02` appearance layer made concre
 
 ### Facing model (twin-stick 360° aim)
 
-funny is a lane auto-battler (units only face left/right); DayDayUp aims in **360°**, and a 2D bone rig gives L/R flip + part rotation, **not** a true 3D turn. Chosen model — **two-hemisphere billboard + aim-driven sockets**. The orb-core makes this cheap: it is radially-ish symmetric, so the front/back sets nearly collapse.
+funny is a lane auto-battler (units only face left/right); DayDayUp aims in **360°**, and a 2D bone rig gives L/R flip + part rotation, **not** a true 3D turn. Chosen model — **two-hemisphere billboard + aim-driven sockets + a continuously-tracking eye**. The orb-core makes this cheap: it is radially-ish symmetric, so the front/back sets nearly collapse.
+
+> **Two corrections shipped 2026-08-18, both from the same root cause: the billboard's four
+> discrete states (L/R flip × front/back) were carrying the whole 360° read, and they were
+> being driven by the wrong angle.**
+>
+> 1. **The body follows AIM, not movement.** The implementation had put `setBodyFacing` on
+>    the movement vector, as a humanoid "upper body aims, lower body walks" split inherited
+>    from funny. The orb-core has no lower body, so there was nothing for that split to
+>    describe: strafing left while firing right pointed the eye away from the target, and
+>    standing still held whatever direction the player last walked. `Scene.reconcile` now
+>    turns the body toward the aim through `render/facing.ts`'s `turnToward`, rate-limited to
+>    `BODY_TURN_PER_TICK` (0.27 rad/tick ≈ a 0.4 s about-face) — the limit matters because
+>    auto-aim-to-nearest (`10`) makes the aim angle jump the instant a closer enemy appears,
+>    and snapping the body to it read as a twitch. `Scene.positionLocal` (the co-op predicted
+>    -pose path, which runs at render rate) deliberately carries the value forward instead of
+>    re-deriving it, or the body would turn at double speed.
+> 2. **The eye tracks continuously, with no new art.** For a body plan that is mostly one big
+>    eye (`13`), the direction cue nobody has to be taught is where the eye is *looking*, so
+>    the `eye` slot now slides inside the shell along the aim on an ellipse (`EYE_TRACK_R` =
+>    14 authoring px, vertical travel squashed to 45% because this is a tilted view, `01`),
+>    shrinking up to 15% as the aim turns away from the camera. Computed in **canonical
+>    (pre-mirror) space** like the sockets, so it lands on the correct side of the shell after
+>    `view.scale.x` flips the rig. That turns four poses into a continuum using `eye.png`
+>    exactly as it already ships.
+>
+> Still open, and the only part of this that would need new art: when the back set is showing,
+> only the eye swaps (to `eye__back`) — `shell` and the front-facing transparent `belly`
+> chamber are unchanged, so a character facing away still shows its belly. Fixing that is 1–2
+> PNGs per character (`shell__back`, and either `belly__back` or simply hiding the belly), and
+> zero code: the `${boneId}__back` variant lookup already handles any bone.
 
 - Body plays its hover/idle authored facing the camera; **L/R mirror** by the horizontal sign of the aim/move vector.
 - A **front and a back body set**: aim toward the bottom of the screen (toward camera) draws the front (the eye), toward the top (away) draws the back (a lens/vent where the eye would be — the concept turnaround). Picked by the aim vector's **vertical hemisphere**, so all 360° reads correctly. For the orb this back set is a **single swapped part** (eye→vent), not a whole second body.
