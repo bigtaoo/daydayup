@@ -3,7 +3,7 @@ import type { DamageType, StatusState } from '@dd/engine';
 import { THEME, ELEMENT_COLORS } from '../theme';
 import { EnergyShieldFilter, OutlineFilter, DissolveFilter, HeatHazeFilter, NormalLitFilter } from '../fx/filters';
 import type { LightHit } from '../fx/lighting';
-import { Entity } from './Entity';
+import { Entity, SHADOW_SQUASH } from './Entity';
 import { Skin } from './Skin';
 
 export type Faction = 'player' | 'enemy';
@@ -17,6 +17,37 @@ export type WeaponKind = 'ranged' | 'melee';
 // and RigSkin draws that bone's art on its tip — lifting it a second time here would
 // double-count and leave the body visibly detached from its own shadow.
 const BODY_LIFT_R = 0.7;
+
+/**
+ * Idle hover, in world px of render-only height (`Entity.visualZ`), per body archetype
+ * (2026-08-18 depth pass, user report *"希望能再强化一下立体效果"*).
+ *
+ * design/13's hero and its floating enemy forms do not walk — "it floats, there is no walk
+ * cycle" — and their rigs' `idle` clips already bob the ART (orb-core's shell/eye/belly all
+ * translate -6 authoring px, `public/skins/orb-core/animation.json`). What that clip
+ * *cannot* do is move the SHADOW, because a clip only knows about bones: the body rose and
+ * its shadow stayed exactly as wide and as dark as when it was on the floor, which reads as
+ * a sprite sliding up and down a flat backdrop rather than a body leaving the ground. This
+ * lifts the whole entity instead, so `Entity.applyTransform` shrinks, fades and slides the
+ * shadow with it. The two stack deliberately: the clip animates the body's own parts, this
+ * animates the body's height.
+ *
+ * `base` is a constant lift (a floater rests off the floor), `amp` the swing around it —
+ * both kept small, since the camera zooms ~4x in a room and these are world px. A grounded
+ * archetype (critter-core, brute-core) gets no entry and never leaves the floor.
+ */
+const HOVER: Readonly<Record<string, { base: number; amp: number; periodMs: number }>> = {
+  char_vanguard: { base: 3.5, amp: 2.5, periodMs: 2400 },
+  char_skirmisher: { base: 3.5, amp: 2.5, periodMs: 2100 },
+  char_juggernaut: { base: 3, amp: 2, periodMs: 2900 },
+  'floater-core': { base: 5, amp: 3, periodMs: 2000 },
+  'boss-core': { base: 4.5, amp: 3.5, periodMs: 3200 },
+};
+
+/** Spreads hover phase across actors so a room full of floaters doesn't pulse in lockstep.
+ *  Render-only and deliberately construction-ORDER dependent, not state-derived — nothing
+ *  in the sim can see it (design/08 "render only reads"). */
+let hoverPhaseSeq = 0;
 
 const HIT_FLASH_MS = 160; // outline "you were just hit" flash duration (Actor.hitFlash)
 const DISSOLVE_MS = 700; // death-dissolve shader duration (Actor.startDissolve)
@@ -62,6 +93,10 @@ export class Actor extends Entity {
   private weaponElement: DamageType | undefined = undefined;
   private radiusPx: number;
   private readonly faction: Faction;
+  // Idle hover (see HOVER above) — null for a grounded archetype, in which case `visualZ`
+  // is never written and this actor behaves exactly as it did before the depth pass.
+  private readonly hover: { base: number; amp: number; periodMs: number } | null;
+  private hoverT: number;
 
   constructor(faction: Faction, radiusPx: number, tint?: number, boss = false, atlasKey?: string) {
     super();
@@ -91,11 +126,15 @@ export class Actor extends Entity {
     // registry entry while reusing the same tint mechanism. Falls back to the Graphics
     // placeholder like any skin that hasn't (or never will) preload.
     const resolvedTint = tint ?? body;
+    const rigName = faction === 'player' ? (atlasKey ?? 'char_vanguard') : (atlasKey ?? 'critter-core');
+    this.hover = HOVER[rigName] ?? null;
+    this.hoverT = this.hover ? (hoverPhaseSeq++ * 0.37) * this.hover.periodMs : 0;
+    if (this.hover) this.visualZ = this.hover.base;
     this.skin = new Skin(
       resolvedTint,
       front,
       radiusPx,
-      faction === 'player' ? (atlasKey ?? 'char_vanguard') : (atlasKey ?? 'critter-core'),
+      rigName,
       faction === 'enemy' ? resolvedTint : undefined,
     );
     this.addChild(this.skin.view);
@@ -262,7 +301,11 @@ export class Actor extends Entity {
       for (const a of AURAS) {
         if (!(mask & a.bit)) continue;
         const rad = r * (1.15 + ring * 0.22);
-        g.circle(0, 0, rad).stroke({ color: a.color, width: 3, alpha: 0.55 });
+        // An ellipse, not a circle (2026-08-18 depth pass): an aura wraps the body in a
+        // TILTED view, so it foreshortens vertically exactly like the ground shadow and the
+        // shield ring. A true circle is the single loudest "this is a flat decal" cue a
+        // round overlay can give, which is what the shield's own report was about.
+        g.ellipse(0, 0, rad, rad * SHADOW_SQUASH).stroke({ color: a.color, width: 3, alpha: 0.55 });
         ring++;
       }
     }
@@ -397,6 +440,11 @@ export class Actor extends Entity {
   }
 
   override interpolate(alpha: number, frameDt: number): void {
+    // Written BEFORE super, which is what consumes `visualZ` (Entity.applyTransform).
+    if (this.hover) {
+      this.hoverT += frameDt;
+      this.visualZ = this.hover.base + this.hover.amp * Math.sin((this.hoverT / this.hover.periodMs) * Math.PI * 2);
+    }
     super.interpolate(alpha, frameDt);
     // Cheap idle/move clip pick straight from Entity's own interpolation buffers —
     // attack/hurt/death need real GameState signals Actor doesn't receive yet. A caller

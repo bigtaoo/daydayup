@@ -5,6 +5,7 @@ import type { AnimationClip, ResolvedBoneTransform, WorldPose, WorldPositions } 
 import { sampleClip } from './interpolate';
 import { facingFromAngle } from './facing';
 import { getWeaponAnchor, getWeaponRotationOffset, getWeaponScale, getWeaponTexture, type WeaponVisualKind } from './weaponSkins';
+import { MODULE_BEHIND_SCALE, MODULE_BEHIND_SHADE, SHADE_MIN_BODY_R, drawSphereShading, shadeHex } from './rigShading';
 
 // The socket that visibly carries the mounted weapon sprite (design/03 "swapping the
 // active slot swaps which socket fires" — the demo's `attack` clip already privileges
@@ -101,6 +102,10 @@ export class RigSkin {
   readonly view = new Container();
   private readonly sprites = new Map<string, Sprite>();
   private readonly tethers: Graphics | null;
+  // Sphere shading over the body bone (see rigShading.ts), plus which bone it tracks. Null
+  // for a rig whose body is too small to shade, or one with no bound body art at all.
+  private readonly sphereShade: Graphics | null;
+  private readonly shadeBoneId: string | null;
   private tetherGeometry = ''; // last-drawn endpoint signature (skip the rebuild if unchanged)
   private tetherTint = 0xffffff;
   private clip: AnimationClip | null = null;
@@ -137,6 +142,26 @@ export class RigSkin {
       this.sprites.set(boneId, sprite);
       this.view.addChild(sprite);
     }
+
+    // Sphere shading goes on the rig's BODY bone — the first bone in draw order with a
+    // bodyR big enough to be worth shading, which is `shell` (orb-core), `body`
+    // (critter-core and the brute/floater that share its rig) and `core` (boss-core).
+    // Placed at that bone's own zOrder + 0.5, i.e. immediately over its art and under
+    // everything drawn later (an orb-core's belly/eye/modules keep their own reads).
+    this.shadeBoneId =
+      rig.drawOrder.find(id => {
+        const r = rig.boneMap.get(id)?.bodyR ?? 0;
+        return r >= SHADE_MIN_BODY_R && bundle.bindings.has(id) && bundle.textures.has(id);
+      }) ?? null;
+    if (this.shadeBoneId) {
+      const bodyR = rig.boneMap.get(this.shadeBoneId)!.bodyR!;
+      this.sphereShade = drawSphereShading(bodyR);
+      this.sphereShade.zIndex = (bundle.bindings.get(this.shadeBoneId)?.zOrder ?? 0) + 0.5;
+      this.view.addChild(this.sphereShade);
+    } else {
+      this.sphereShade = null;
+    }
+
     this.view.sortableChildren = true;
   }
 
@@ -156,6 +181,11 @@ export class RigSkin {
     this.view.scale.x = flipX;
     this.showBack = showBack;
     this.flipX = flipX;
+    // The key light is fixed in SCREEN space, so the shading must not mirror with the body:
+    // counter-flipping cancels `view.scale.x` exactly, leaving the highlight on the
+    // upper-left and the terminator on the lower-right whichever way the character faces.
+    // (Every other child here is body-space art and SHOULD mirror.)
+    if (this.sphereShade) this.sphereShade.scale.x = flipX;
   }
 
   /** Aim/shot direction (radians) — drives ONLY the weapon-socket aim-tracking
@@ -243,6 +273,22 @@ export class RigSkin {
       );
       sprite.alpha = transform?.alpha ?? 1;
     });
+
+    // Sphere shading rides the body bone's drawn position — same tip-not-pivot convention
+    // as the art itself, and re-read every frame because the idle clip translates that bone
+    // (the hover bob). Geometry is static in body space, so only x/y move here.
+    if (this.sphereShade && this.shadeBoneId) {
+      const bodyPose = worldPose.get(this.shadeBoneId);
+      const bodyTransform = transforms.get(this.shadeBoneId);
+      if (bodyPose) {
+        this.sphereShade.visible = true;
+        this.sphereShade.x = bodyPose.ex + (bodyTransform?.translateX ?? 0);
+        this.sphereShade.y = bodyPose.ey + (bodyTransform?.translateY ?? 0);
+        this.sphereShade.alpha = bodyTransform?.alpha ?? 1;
+      } else {
+        this.sphereShade.visible = false;
+      }
+    }
 
     this.drawTethers(worldPose, transforms);
     this.updateWeaponSprites(worldPose);
@@ -348,11 +394,18 @@ export class RigSkin {
     // the camera puts the module on the far side of the core, so it has to draw BEHIND the
     // body — otherwise it reads as a gun stuck on the hero's back/chest. Re-evaluated every
     // frame, not just on creation, since `showBack` flips during play.
-    sprite.zIndex = this.showBack ? MODULE_Z_BEHIND : (this.bundle.bindings.get(socketId)?.zOrder ?? 0) + 1;
+    // ...and, since 2026-08-18, two more depth cues on the same edge (MODULE_BEHIND_*): the
+    // far-side module is drawn smaller and darker, so crossing the hemisphere reads as an
+    // orbit around a sphere rather than a layer swap. Applied here, not in `setWeaponTint`,
+    // because it has to be recomputed against the CURRENT `showBack` every frame — the tint
+    // setter only knows the element colour.
+    const behind = this.showBack;
+    sprite.zIndex = behind ? MODULE_Z_BEHIND : (this.bundle.bindings.get(socketId)?.zOrder ?? 0) + 1;
+    sprite.tint = behind ? shadeHex(this.weaponTint, MODULE_BEHIND_SHADE) : this.weaponTint;
     const anchor = getWeaponAnchor(this.weaponName, this.weaponKind!);
     sprite.texture = texture;
     sprite.anchor.set(anchor.x, anchor.y);
-    sprite.scale.set(getWeaponScale(this.weaponName, this.weaponKind!));
+    sprite.scale.set(getWeaponScale(this.weaponName, this.weaponKind!) * (behind ? MODULE_BEHIND_SCALE : 1));
     sprite.visible = true;
     sprite.x = pose.ex;
     sprite.y = pose.ey;
@@ -416,6 +469,7 @@ export class RigSkin {
  * alpha-farthest pixel from the anchor); the failure mode for a padded texture is a
  * muzzle a few px too far out, not a wrong direction. Exported for `RigSkin.test.ts`.
  */
+
 export function barrelReach(
   texW: number,
   texH: number,

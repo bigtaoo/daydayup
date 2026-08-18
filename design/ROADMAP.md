@@ -112,7 +112,9 @@ tooling change — see the 5.3 update below), so what remains in Phase 5 is real
 music, and 5.5 WeChat device verification (blocked on hardware). A repo structure pass (bottom
 of this doc) made the engine its own DOM-free package and the repo an npm workspace. Per-item
 detail, including what each phase deliberately did *not* build, is in the sections below; the
-`## Standing walls + a body that faces what it shoots (2026-08-18, render-only)
+`## Dependency summary` at the end is the one-screen version.
+
+## Standing walls + a body that faces what it shoots (2026-08-18, render-only)
 
 A returning-to-art-direction pass: with the game fully playable, the user asked what was
 still unresolved from the original 2D-vs-3D选型 discussion. The audit's answer was that the
@@ -189,10 +191,120 @@ stray lit coping bar that made north-south runs look broken).
   at every door. Flagged 2026-08-17, still the user's call.
 - **The back set beyond the eye** (`shell__back`, belly treatment) — 1–2 PNGs per character,
   zero code; deliberately deferred until the tracking eye above has been played with.
+- **`LIT_WALLS` on a real phone.** The stone-relief filter is one render-target pass per wall
+  segment (~10-25 per room). Fine on desktop, unmeasured on WeChat/mobile — `RoomBuilder`'s
+  `LIT_WALLS` constant exists so this can be answered with a flag flip once 5.5's hardware
+  verification is unblocked. The hand-authored cap/face/side tints carry the volume without it.
+- **The biome palette's non-fallback uses.** `13`'s note now says the palette is the no-art
+  fallback, and pillars were moved off it — but `palette.ground`/`gridLine`/`void` are still
+  live for the backdrop and the grid, and their ember hues are the same pre-art mauve. Nothing
+  looks wrong today (the floor swatch covers `ground`, and `void` is meant to be off-key), so
+  this is a consistency item, not a bug.
 
 ---
 
-## Dependency summary` at the end is the one-screen version.
+
+## Volume: walls that read as solid, a body that reads as round (2026-08-18, render-only)
+
+The user's reply to the pass above, in the same session: the character now had direction —
+*"眼睛和手能按方向变化了"* — but not form (*"我希望能再强化一下立体效果"*), and the walls were
+still *"没有高度感，就像一张图贴在地上"*. Both were fair, and both had the same shape of cause:
+that pass built the *geometry* of a fake-3D layer and almost none of the *shading* that makes
+geometry read as volume. **Render-only, no `ENGINE_VERSION` impact.**
+
+**Walls: the height rule was the bug.** `wallRises` only stood up an east-west run that was
+not its room's south perimeter, and that exclusion turned out to disqualify almost all of the
+shipped content: `ember_l1_gallery`'s east and west sides are 1×16 grid runs, and
+`ember_l1_kiln`'s four interior solids are 2×2 **squares**, so `w <= h` holds for every one of
+them. In a real level-1 room exactly one segment stood up — the north edge — which is why the
+walls still read as flat after a pass whose entire subject was standing walls. It is replaced
+by `wallTier`/`wallHeight`: **every** wall stands, at one of three heights (perimeter 104,
+interior 70, and a 22 px kerb for the room's own south edge, which cannot be tall without
+hiding the player it frames — provably safe, since a wall is 32 px thick and the player cannot
+overlap it). Height *variety* is itself a cue the old single 70 could not give. A live room went
+from 1 standing segment to 32 (22 perimeter / 4 interior / 6 kerb).
+
+**Walls: four missing cues, all found by rendering, not by reading.** New `scene/wallRender.ts`
+owns the drawing (RoomBuilder was near the 500-line limit and this is a separate concern):
+three-way tonal separation between cap/face/side — the two swatches start from very different
+values, so the first attempt's 0.72 face still left a deep block reading as a pale slab with a
+dark hem; an **inset** dark east band, because a block's sides project to exactly zero width
+under `screen.y = gy - z`; a real ground **cast shadow** per wall (swept-footprint convex hull,
+two passes plus a contact hug, all on one shared `Graphics`), which walls had never had at all
+despite `01` calling it "the cheapest 3D cheat"; and a **dark** silhouette instead of
+`palette.wallEdge`, a light salmon authored for a wall lying flat that magnified into a bright
+wireframe box over the art. Plus an optional per-stone `NormalLitFilter` tuned for stone rather
+than for a character (`WALL_LIT_*` — gentler gradient gain, and an ambient above `1 − key` so
+the cap brightens instead of the wall going darker than its own floor), behind a single
+`LIT_WALLS` switch.
+
+**Pillars, twice.** Once the walls read as stone, the pillars were the worst thing in the frame:
+flat fills from `palette.pillar`/`palette.pillarTop`, which are pre-real-art **fallback** hues —
+the ember palette blends the element's warm hue into slate and lands on a pale mauve, nothing
+like the charcoal-navy stone every shipped swatch is. Attempt 1 (texture them from the wall
+swatches, masked to a cylinder) was *worse*: a ~35 px cap ellipse windows one arbitrary dark
+patch of a 256 px swatch, and with the brick elevation on the shaft they read as open-topped
+wells. Attempt 2 is hand-toned stone with the shaft shaded across its curve in
+**colour-interpolated** bands — stacked translucent bands step in opacity, not in tone, and a 4×
+render showed nine hard vertical seams. `design/13` now records that the biome palette is the
+no-art fallback, not the shipped look.
+
+**The character: lighting and grounding, no new art.** `render/rigShading.ts` draws a fixed
+specular highlight and a curved terminator over the rig's body bone, counter-flipped against
+`view.scale.x` so the key light stays put while the body mirrors — eye travelling while the
+highlight does not is what reads as a sphere turning under a fixed light. A far-side weapon
+module now also shrinks and darkens rather than only changing layer. `Entity.visualZ` lifts a
+hovering archetype as a whole so its **shadow** shrinks, fades and slides with it (the `idle`
+clips already bobbed the art, but a clip only knows about bones, so the shadow never moved —
+that missing half is why the bob read as a sprite sliding on a backdrop). Shadows are now nine
+faint nested ellipses rather than one disc, and displaced away from the key light in proportion
+to lift; every round overlay in the view — ground shadow, status auras, and the shield rim glow,
+which was a perfect screen-space circle — shares one 0.62 foreshortening.
+
+**Two files split to stay under the 500-line convention**, both form ① (independent modules, no
+inheritance): `game/fx/filters.ts` (493 lines) → `filters/{shaderPrelude,screenFx,skinFx,litFx}.ts`
+behind a re-export shell, and `render/RigSkin.ts` → `render/rigShading.ts`.
+
+**Verification. +117 tests (3202 → 3319), every one of 38 mutations caught.** New
+`wallRender.test.ts` (31) and `rigShading.test.ts` (15); `wallGeometry.test.ts` rewritten for the
+tier model, keeping the old north-south and square-block cases **inverted** as the regression
+guard in the other direction; `Entity.test.ts` grew from 3 tests to 15, since Entity is where the
+lift-to-shadow relationship lives and every actor/bullet/pillar/wall inherits it from there.
+
+What made this testable at all is that Pixi's retained `Graphics` instruction list is readable:
+`instruction.data.style.{color,alpha,width}` and `instruction.data.path.instructions` give the
+exact fills, strokes, ellipse radii and arc angles back. So the shading assertions are not bounds
+proxies — they check the things that actually carry the look, and that a hand-tuned constant can
+silently invert:
+
+- **The key light has one direction, and the two marks oppose it.** The highlight's ellipse
+  centres are upper-left and the terminator's arc mid-angles lower-right, with a unit dot product
+  of exactly −1. A sign flip in `SHADE_KEY_ANGLE` would stack the highlight and the shadow on the
+  same side — a smudge, not a lit form — and nothing else would have noticed.
+- **Every sphere-shading mark stays strictly inside the body radius.** That is precisely what lets
+  the whole thing work with no mask.
+- **The pillar shaft's luminance ramps monotonically** west-to-east, its cap is the brightest
+  surface on the object, and none of its tones is `palette.pillar`/`pillarTop`. The last one is the
+  regression guard that matters, because re-deriving from the palette is exactly the "fix" someone
+  would reach for again.
+- **`Entity`'s lift never reaches `zIndex`.** If it did, a hovering actor would flicker in front of
+  and behind a wall it stands beside, once per hover cycle.
+- **The split kept every symbol reachable from `game/fx/filters`**, no fragment source got
+  duplicated across the four new modules, and `FRAME_UV` is still one shared copy rather than
+  pasted per module — the specific way a 4-way file split goes wrong.
+
+`npm run check` green across all 7 workspaces.
+
+**Verification lesson worth keeping: this pass could not have been done from the code.** Every
+one of the six things fixed above was invisible in the source and obvious in a render — the
+disqualifying `w <= h`, the salmon outline, the too-shallow face tint, the invisible shadow on a
+near-black floor, the mauve pillars, the banded rings under the character. The Browser pane
+cannot screenshot in this sandbox (it needs to be displayed to composite), so the loop used was
+`renderer.extract.canvas()` on `layers.world` → downscale → JPEG → base64, pulled out through
+the tool-result overflow file and read back as an image. That gives a whole-floor view at any
+resolution with no camera ambiguity, and it is a better diagnostic than a viewport screenshot
+would have been.
+
 
 **Historical snapshot (2026-07-24), kept for context:** floors → checkpoint → extract-or-descend → bank, on a single-arena/wave geometry — menu/victory/defeat shell, waves, pickups, damage + elemental status + resist, deflect, one boss, plus the placeholder audio seam. Deterministic engine (fp/brad/PRNG/InputSource/replay) is in place. **Phase 0 (design↔code sync) is done through 0.7** — the engine matches the locked design: no affixes, intrinsic weapon rarity, run-buffs, two-pool shield health + regen + shield-break, characters = SkinDef (side-grade roster), and the design/09 pickup vocabulary (`heal`/`material`/`weapon`/`buff`). **Phase 1 (1.1–1.5) is done**: `spread`/`homing`/`lob`/`beam`/`boomerang` ballistics + melee `hammer`/`spear`; AABB tile/wall solids + the `RoomPiece` schema + seeded `generateFloor` (neither yet wired into a live floor transition — see the Phase 1 status note below); and a live, tested `EngineConfig.floors` → `ExtractionSystem` → materials-banking loop using the existing single-arena infrastructure. **`ENGINE_VERSION` is 17** (bumped for the orbit/radial frame finish, then for co-op downed/revive; every other Phase 1–2 item shipped additively — see `config.ts`'s version-history comment). **Phase 2 (meta loop) is done through 2.4** — forge, tier-gated crafting, the 3-character roster + balance suite, and monetization grant-scaffolding all ship. **Phase 3 (co-op & netcode) is done**: 3.2 (revive/downed + team-wipe) engine-side; **3.1 (the net layer) now spawns the 2nd player** (`EngineConfig.players`) + ships the frame-broadcast netcode (`@dd/engine/net` + the `server/` package + the client `CoopSession`), proven byte-for-byte by loopback tests; and **3.3 (the matchmaking/deployment control plane)** — a `matchsvc` HTTP service that pools players and issues **signed HMAC tickets** the gameserver verifies at `/ws`, plus a client `?online=1` path (matchmaking → ticket → `CoopSession`) browser-verified two-tab (two independent tabs matchmade into one room, byte-identical lockstep to a shared gameover tick). And **local-player prediction/reconcile smoothing shipped too** — a render-layer `LocalPredictor` (movement/aim, snap-vs-lerp) that hides RTT without touching the sim, browser-verified under a `?lag=` harness. All additive (no `ENGINE_VERSION` bump; still 17). **Phase 3 is fully closed** — no deferred co-op items remain (only local *firing* prediction is a documented non-goal, as it would need sim rollback design/06 rejects for casual/WeChat).
 

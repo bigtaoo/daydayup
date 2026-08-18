@@ -13,7 +13,7 @@ import type { RunOutcome } from './RunOutcome';
 import type { TutorialHintController } from './TutorialHintController';
 import type { Scene } from '../scene/Scene';
 import type { RoomBuilder } from '../scene/RoomBuilder';
-import { WALL_HEIGHT } from '../scene/wallGeometry';
+import { MAX_WALL_HEIGHT } from '../scene/wallGeometry';
 import type { FxController } from '../fx/FxController';
 import type { HudView } from '../ui/HudView';
 import type { TouchControlsView } from '../ui/TouchControlsView';
@@ -354,15 +354,17 @@ export class GameLoop {
     const rects = s.dungeonRoomRects.length > 0 ? s.dungeonRoomRects : s.arenaRoomRects;
     const hit = rects.find((r) => r.id === roomId);
     if (!hit) return null;
-    // Grown upward by one wall height (2026-08-18): the room's walls now STAND rather than
-    // lie flat (design/01, `scene/wallGeometry.ts`), so its north wall is drawn WALL_HEIGHT
-    // px above the room rect's own top edge. Fitting the bare rect would push that face off
-    // the top of the viewport — the one thing the standing-wall pass exists to show.
+    // Grown upward by the TALLEST a wall can be (2026-08-18): the room's walls STAND rather
+    // than lie flat (design/01, `scene/wallGeometry.ts`), so its north wall is drawn up to
+    // MAX_WALL_HEIGHT px above the room rect's own top edge. Fitting the bare rect would push
+    // that face off the top of the viewport — the one thing the standing walls exist to show.
+    // This has to track the MAXIMUM, not the typical: a room's perimeter walls are taller
+    // than its interior blocks (`wallHeight`), and the perimeter is what borders this rect.
     return {
       x: fpToPx(hit.rect.x),
-      y: fpToPx(hit.rect.y) - WALL_HEIGHT,
+      y: fpToPx(hit.rect.y) - MAX_WALL_HEIGHT,
       w: fpToPx(hit.rect.w),
-      h: fpToPx(hit.rect.h) + WALL_HEIGHT,
+      h: fpToPx(hit.rect.h) + MAX_WALL_HEIGHT,
     };
   }
 

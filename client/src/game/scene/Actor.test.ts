@@ -2,6 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { Texture, type Graphics, type Rectangle } from 'pixi.js';
 import { freshStatus } from '@dd/engine/content/damage';
 import { Actor } from './Actor';
+import { SHADOW_SQUASH } from './Entity';
 import { Rig } from '../../render/Rig';
 import { ORB_CORE_RIG, ORB_CORE_REFERENCE_RADIUS } from '../../render/orbCoreRig';
 import type { RigSkinBundle } from '../../render/taoBundle';
@@ -640,7 +641,10 @@ describe('Actor.muzzlePos — the drawn barrel tip, in Entity coordinates', () =
     const a = new Actor('player', 20, undefined, false, 'char_vanguard');
     a.place(500, 300, 0);
     stubMuzzle(a, { x: 30, y: -18 });
-    expect(a.muzzlePos()).toEqual({ x: 530, y: 282 });
+    // Stated against the DRAWN baseline (`a.y`) rather than the ground y, because a hovering
+    // archetype's `visualZ` is folded into the transform (2026-08-18) — which is exactly the
+    // contract this pins down: muzzlePos is wherever the barrel is actually drawn.
+    expect(a.muzzlePos()).toEqual({ x: 530, y: a.y - 18 });
   });
 
   it('tracks the DRAWN position, so a lifted (z > 0) actor\'s muzzle rises with its sprite', () => {
@@ -648,7 +652,9 @@ describe('Actor.muzzlePos — the drawn barrel tip, in Entity coordinates', () =
     const a = new Actor('player', 20, undefined, false, 'char_vanguard');
     a.place(500, 300, 40); // Entity.applyTransform puts the container at y = gy - z
     stubMuzzle(a, { x: 30, y: -18 });
-    expect(a.muzzlePos()).toEqual({ x: 530, y: 300 - 40 - 18 });
+    const hover = 300 - a.y - 40; // the hover baseline this archetype rests at
+    expect(hover).toBeGreaterThan(0);
+    expect(a.muzzlePos()).toEqual({ x: 530, y: 300 - 40 - hover - 18 });
   });
 
   it('includes the placeholder body lift, so it stays right if a placeholder ever mounts one', () => {
@@ -657,6 +663,162 @@ describe('Actor.muzzlePos — the drawn barrel tip, in Entity coordinates', () =
     const a = new Actor('player', 20); // placeholder: lift = -14
     a.place(0, 0, 0);
     stubMuzzle(a, { x: 10, y: -5 });
-    expect(a.muzzlePos()).toEqual({ x: 10, y: -14 - 5 });
+    // -14 placeholder body lift, -5 local point, and the hover baseline in `a.y`.
+    expect(a.muzzlePos()).toEqual({ x: 10, y: a.y - 14 - 5 });
+  });
+});
+
+// Idle hover (2026-08-18 depth pass, user report "希望能再强化一下立体效果"). The rigs' own
+// `idle` clips already bobbed the ART; what they could not do is move the SHADOW, because a
+// clip only knows about bones. `Entity.visualZ` lifts the whole entity instead, so the shadow
+// shrinks, fades and slides with it — which is the cue that says the body left the floor.
+describe('Actor — idle hover', () => {
+  it('rests a hovering archetype off the floor, and a grounded one on it', () => {
+    const orb = new Actor('player', 20, undefined, false, 'char_vanguard');
+    orb.place(100, 200, 0);
+    expect(orb.y).toBeLessThan(200); // drawn above its own ground point
+
+    const critter = new Actor('enemy', 14, undefined, false, 'critter-core');
+    critter.place(100, 200, 0);
+    expect(critter.y).toBe(200); // design/13's ground critters do not float
+  });
+
+  it('leaves the Y-sort key on the GROUND coordinate, so hovering can never reorder anything', () => {
+    const a = new Actor('player', 20, undefined, false, 'char_vanguard');
+    a.pushState(100, 250, 0, 0);
+    a.snap();
+    a.interpolate(1, 600);
+    const first = a.zIndex;
+    a.interpolate(1, 600); // a different point in the hover cycle
+    expect(a.y).not.toBe(first); // the sprite really did move...
+    expect(a.zIndex).toBe(250); // ...and the sort key really did not
+  });
+
+  it('oscillates within a small band, never drifting off into the air', () => {
+    const a = new Actor('player', 20, undefined, false, 'char_vanguard');
+    a.pushState(0, 0, 0, 0);
+    a.snap();
+    const lifts: number[] = [];
+    for (let i = 0; i < 40; i++) {
+      a.interpolate(1, 120);
+      lifts.push(-a.y); // ground y is 0, so the drawn y IS the negated lift
+    }
+    const lo = Math.min(...lifts);
+    const hi = Math.max(...lifts);
+    expect(lo).toBeGreaterThan(0); // always at least a little off the floor
+    expect(hi).toBeLessThan(12); // a hover, not a jump — these are world px at ~4x zoom
+    expect(hi - lo).toBeGreaterThan(2); // and it genuinely moves
+  });
+
+  it('slides and shrinks the shadow with the lift, not just scales it', () => {
+    // The offset is the half the clip could never produce. Without it a hover only ever
+    // breathed the shadow in place, which reads as the shadow pulsing rather than the body
+    // rising — the exact complaint about the character looking flat.
+    const a = new Actor('player', 20, undefined, false, 'char_vanguard');
+    a.pushState(300, 400, 0, 0);
+    a.snap();
+    a.interpolate(1, 0);
+    expect(a.shadow!.x).toBeGreaterThan(300); // displaced away from the upper-left key light
+    expect(a.shadow!.y).toBeGreaterThan(400);
+    expect(a.shadow!.scale.x).toBeLessThan(1); // and lifted off it, so smaller and fainter
+    expect(a.shadow!.alpha).toBeLessThan(1);
+  });
+
+  it('spreads phase across actors so a room full of floaters does not pulse in lockstep', () => {
+    const a = new Actor('enemy', 14, undefined, false, 'floater-core');
+    const b = new Actor('enemy', 14, undefined, false, 'floater-core');
+    for (const e of [a, b]) {
+      e.pushState(0, 0, 0, 0);
+      e.snap();
+      e.interpolate(1, 0);
+    }
+    expect(a.y).not.toBeCloseTo(b.y, 3);
+  });
+
+  it('builds the ground shadow as nested ellipses, not one flat disc', () => {
+    // A single uniform ellipse reads as a die-cut sticker under the character; stacking a
+    // wide faint ring down to a small dark core fakes a penumbra with no blur filter.
+    const a = new Actor('player', 20, undefined, false, 'char_vanguard');
+    const b = a.shadow!.bounds;
+    expect(b.width).toBeGreaterThan(b.height); // vertically foreshortened for the tilted view
+    expect(b.height / b.width).toBeCloseTo(SHADOW_SQUASH, 1);
+  });
+});
+
+describe('Actor — hover is per body archetype, not per faction', () => {
+  it('floats the archetypes design/13 says float, and leaves the walkers alone', () => {
+    const lift = (faction: 'player' | 'enemy', key?: string) => {
+      const a = new Actor(faction, 16, undefined, false, key);
+      a.place(0, 500, 0);
+      return 500 - a.y;
+    };
+    // Hovering: the hero roster and the floating ranged enemy form.
+    expect(lift('player', 'char_vanguard')).toBeGreaterThan(0);
+    expect(lift('player', 'char_skirmisher')).toBeGreaterThan(0);
+    expect(lift('player', 'char_juggernaut')).toBeGreaterThan(0);
+    expect(lift('enemy', 'floater-core')).toBeGreaterThan(0);
+    expect(lift('enemy', 'boss-core')).toBeGreaterThan(0);
+    // Grounded: the squat crystal critter and the heavy brute both walk.
+    expect(lift('enemy', 'critter-core')).toBe(0);
+    expect(lift('enemy', 'brute-core')).toBe(0);
+  });
+
+  it('leaves an unknown skin key grounded rather than guessing', () => {
+    // Forward-compat: a new blueprint pointing at a rig with no HOVER entry must not float by
+    // accident. `atlasKey` comes from content data, so this is reachable without a code change.
+    const a = new Actor('enemy', 16, undefined, false, 'some-future-rig');
+    a.place(0, 500, 0);
+    expect(a.y).toBe(500);
+  });
+
+  it('defaults a player with no key at all to the hovering hero, and an enemy to a walker', () => {
+    const p = new Actor('player', 16);
+    p.place(0, 500, 0);
+    expect(p.y).toBeLessThan(500);
+    const e = new Actor('enemy', 16);
+    e.place(0, 500, 0);
+    expect(e.y).toBe(500);
+  });
+
+  it('never advances the hover clock for a grounded actor', () => {
+    const mob = new Actor('enemy', 16, undefined, false, 'critter-core');
+    mob.pushState(0, 300, 0, 0);
+    mob.snap();
+    for (let i = 0; i < 10; i++) mob.interpolate(1, 100);
+    expect(mob.y).toBe(300); // still flat on the floor after a second of frames
+  });
+});
+
+describe('Actor.setStatus — the aura wraps a body in a tilted view', () => {
+  function auraOf(a: Actor): Graphics {
+    return a.children[Child.StatusAura] as Graphics;
+  }
+
+  it('draws each ring as a foreshortened ellipse, not a screen-space circle', () => {
+    // A true circle is the loudest "flat decal" cue a round overlay can give — the same problem
+    // the shield ring had. All three (shadow, aura, shield) now share one squash constant.
+    const a = new Actor('enemy', 20);
+    a.setStatus({ ...freshStatus(), burnTicks: 5 });
+    // Read the ellipse's own radii rather than the Graphics bounds, which are inflated by the
+    // 3 px stroke — and inflated asymmetrically, since a constant is being added to a squashed
+    // axis and an unsquashed one.
+    const instrs = auraOf(a).context.instructions as Array<{
+      data: { path?: { instructions: Array<{ action: string; data: number[] }> } };
+    }>;
+    const ellipses = instrs.flatMap((i) =>
+      (i.data.path?.instructions ?? []).filter((pi) => pi.action === 'ellipse').map((pi) => pi.data),
+    );
+    expect(ellipses).toHaveLength(1);
+    const [, , rx, ry] = ellipses[0]!;
+    expect(ry! / rx!).toBeCloseTo(SHADOW_SQUASH, 6);
+  });
+
+  it('still nests one ring per active effect, each wider than the last', () => {
+    const one = new Actor('enemy', 20);
+    one.setStatus({ ...freshStatus(), burnTicks: 5 });
+    const three = new Actor('enemy', 20);
+    three.setStatus({ ...freshStatus(), burnTicks: 5, chillTicks: 5, poison: [{ ticks: 5, dmg: 1 }] as never });
+    expect(three.children[Child.StatusAura].getLocalBounds().width)
+      .toBeGreaterThan(one.children[Child.StatusAura].getLocalBounds().width);
   });
 });

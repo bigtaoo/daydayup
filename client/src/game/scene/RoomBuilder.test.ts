@@ -15,8 +15,9 @@ import type { GameState, DoorRuntime } from '@dd/engine/state/GameState';
 import { pxToFp } from '@dd/engine/content/convert';
 import { Layers } from './layers';
 import { RoomBuilder } from './RoomBuilder';
-import { WALL_HEIGHT } from './wallGeometry';
-import { Entity } from './Entity';
+import { WALL_H_PERIMETER, WALL_H_INTERIOR, WALL_H_KERB } from './wallGeometry';
+import { WALL_LIT_AMBIENT, WALL_LIT_GRADIENT, WALL_LIT_KEY_INTENSITY } from '../fx/filters';
+import { Entity, SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
 import { Backdrop } from './Backdrop';
 
 function makeRoomBuilder(layers = new Layers()): RoomBuilder {
@@ -43,6 +44,22 @@ vi.mock('../../render/biomeTiles', () => ({
 
 vi.mock('../../render/environmentSprites', () => ({
   getDoorTexture: (locked: boolean) => (locked ? mocks.doorLockedTex : mocks.doorOpenTex),
+}));
+
+// `NormalLitFilter` builds a real WebGL GlProgram at construction time — unavailable under
+// plain vitest (no `document`/canvas) — and since the 2026-08-18 depth pass RoomBuilder builds
+// one per standing wall. Same bare-class stub Actor.test.ts/FxController.test.ts already use;
+// the tuning constants are re-exported for real so the wall/actor look assertions below are
+// checked against the shipped numbers rather than against fixtures.
+vi.mock('../fx/filters', async () => ({
+  ...(await vi.importActual<typeof import('../fx/filters')>('../fx/filters')),
+  NormalLitFilter: class {
+    constructor(
+      public keyColor?: number,
+      public keyIntensity?: number,
+      public opts?: { ambient?: number; gradient?: number },
+    ) {}
+  },
 }));
 
 /** A `DoorRuntime`-shaped fixture (design/05 DoorSystem) at a given px rect. Pushing
@@ -73,7 +90,7 @@ function stateWithOneWall(biomeId: string | undefined): GameState {
 }
 
 describe('RoomBuilder — no biome art registered (fallback)', () => {
-  it('fills the ground and each wall with flat Graphics, not a TilingSprite', () => {
+  it('fills the ground with flat Graphics, not a TilingSprite', () => {
     mocks.floorTex = undefined;
     mocks.wallTex = undefined;
     const rb = makeRoomBuilder();
@@ -82,6 +99,17 @@ describe('RoomBuilder — no biome art registered (fallback)', () => {
     const ground = layers.ground.children;
     expect(ground.some((c) => c instanceof TilingSprite)).toBe(false);
     expect(ground.some((c) => c instanceof Graphics)).toBe(true);
+  });
+
+  it('still builds every wall as a standing block — a missing swatch never flattens one', () => {
+    // Pre-2026-08-18 a wall with no art was drawn flat on the GROUND layer. Now only the ART
+    // falls back, never the geometry: the block stands either way (wallRender.ts).
+    mocks.floorTex = undefined;
+    mocks.wallTex = undefined;
+    mocks.wallFaceTex = undefined;
+    const rb = makeRoomBuilder();
+    rb.build(stateWithOneWall('ember'));
+    expect((rb as unknown as { wallEntities: Entity[] }).wallEntities).toHaveLength(1);
   });
 });
 
@@ -98,25 +126,31 @@ describe('RoomBuilder — biome art registered for this element', () => {
     expect(floor!.texture).toBe(mocks.floorTex);
   });
 
-  it('uses a TilingSprite for each wall, positioned at the wall rect, plus its outline', () => {
+  it('uses the wall swatch as each standing block\'s top CAP, at the wall rect', () => {
+    // Since 2026-08-18 `wall_<element>.png` is the raised cap, not a flat ground footprint —
+    // the block itself sits on the entities layer, so the swatch is found there.
     mocks.floorTex = undefined;
     mocks.wallTex = fakeTexture(32, 32);
+    mocks.wallFaceTex = undefined;
     const rb = makeRoomBuilder();
-    const layers = (rb as unknown as { layers: Layers }).layers;
+    const rect = { x: 100, y: 100, w: 64, h: 64 };
     rb.build(stateWithOneWall('ember'));
-    const wallSprite = layers.ground.children.find((c) => c instanceof TilingSprite) as TilingSprite | undefined;
-    expect(wallSprite).toBeDefined();
-    expect(wallSprite!.texture).toBe(mocks.wallTex);
-    // Config is given in px, converted to fp and back — a round trip, not a rescale.
-    expect(wallSprite!.position.x).toBeCloseTo(100);
-    expect(wallSprite!.position.y).toBeCloseTo(100);
-    // The stroke outline still renders on top, same as the flat-fill path.
-    expect(layers.ground.children.some((c) => c instanceof Graphics)).toBe(true);
+    const seg = (rb as unknown as { wallEntities: Entity[] }).wallEntities[0]!;
+    const cap = seg.children.find((c) => c instanceof TilingSprite) as TilingSprite | undefined;
+    expect(cap).toBeDefined();
+    expect(cap!.texture).toBe(mocks.wallTex);
+    // Config is given in px, converted to fp and back — a round trip, not a rescale. The
+    // block's own container carries the position; the cap is local, lifted by the height.
+    expect(seg.x).toBeCloseTo(rect.x);
+    expect(seg.y).toBeCloseTo(rect.y + rect.h);
+    // The silhouette outline still renders on top, same as before.
+    expect(seg.children.some((c) => c instanceof Graphics)).toBe(true);
   });
 
   it('falls back to Graphics for an element with no swatch registered (e.g. neutral/poison), even with other elements loaded', () => {
     mocks.floorTex = undefined; // simulates: this call's element has no registered swatch
     mocks.wallTex = undefined;
+    mocks.wallFaceTex = undefined;
     const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(stateWithOneWall(undefined)); // undefined biomeId -> 'neutral' element
@@ -144,6 +178,12 @@ describe('RoomBuilder — standing walls', () => {
     return (rb as unknown as { wallEntities: Entity[] }).wallEntities;
   }
 
+  /** The shared wall-shadow Graphics. Read off the private field rather than found by type on
+   *  `layers.shadow`, which also carries the portal's and every actor's own shadow. */
+  function wallShadows(rb: RoomBuilder): Graphics | null {
+    return (rb as unknown as { wallShadows: Graphics | null }).wallShadows;
+  }
+
   it('puts it on the Y-sortable entities layer, not the ground layer, sorted by its SOUTH edge', () => {
     mocks.wallTex = fakeTexture(256, 256);
     mocks.wallFaceTex = fakeTexture(256, 128);
@@ -162,7 +202,7 @@ describe('RoomBuilder — standing walls', () => {
     expect(seg.zIndex).toBe(32);
   });
 
-  it('draws the face one WALL_HEIGHT tall ending at the south edge, with the cap stacked above it', () => {
+  it('draws the face one PERIMETER height tall ending at the south edge, cap stacked above it', () => {
     mocks.wallTex = fakeTexture(256, 256);
     mocks.wallFaceTex = fakeTexture(256, 128);
     const rb = makeRoomBuilder();
@@ -170,15 +210,69 @@ describe('RoomBuilder — standing walls', () => {
     const [face, cap] = wallEntities(rb)[0]!.children as [TilingSprite, TilingSprite];
 
     expect(face.texture).toBe(mocks.wallFaceTex);
-    expect(face.height).toBe(WALL_HEIGHT);
-    expect(face.y).toBe(-WALL_HEIGHT); // local origin is the south edge; the face rises from it
+    expect(face.height).toBe(WALL_H_PERIMETER); // a north wall is a room boundary → tallest tier
+    expect(face.y).toBe(-WALL_H_PERIMETER); // local origin is the south edge; the face rises from it
     // Uniform tile scale — the face art is used at exactly one height and must not stretch.
-    expect(face.tileScale.y).toBeCloseTo(WALL_HEIGHT / 128, 5);
+    expect(face.tileScale.y).toBeCloseTo(WALL_H_PERIMETER / 128, 5);
     expect(face.tileScale.x).toBeCloseTo(face.tileScale.y, 5);
 
     expect(cap.texture).toBe(mocks.wallTex);
     expect(cap.height).toBe(32); // the footprint's own depth, lifted to the top of the face
-    expect(cap.y).toBe(-WALL_HEIGHT - 32);
+    expect(cap.y).toBe(-WALL_H_PERIMETER - 32);
+  });
+
+  it('casts every wall\'s ground shadow onto ONE shared Graphics on the shadow layer', () => {
+    // Standing walls threw no shadow at all before 2026-08-18 — the one tall thing in a room
+    // not using design/01's "cheapest 3D cheat", and the main reason they read as printed on.
+    mocks.wallTex = fakeTexture(256, 256);
+    mocks.wallFaceTex = fakeTexture(256, 128);
+    const rb = makeRoomBuilder();
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    rb.build(stateWithNorthWall());
+
+    const shadows = wallShadows(rb)!;
+    expect(shadows).toBeDefined();
+    expect(layers.shadow.children).toContain(shadows);
+    // Reaches past the footprint's own south-east corner, i.e. away from the key light.
+    expect(shadows.bounds.maxX).toBeGreaterThan(480);
+    expect(shadows.bounds.maxY).toBeGreaterThan(32);
+  });
+
+  it('destroys the shared shadow Graphics on rebuild and on clear()', () => {
+    // It lives on `layers.shadow`, which build()/clear() never sweep wholesale (actor and
+    // portal shadows live there too), so it has to be torn down explicitly like the wall
+    // entities themselves.
+    mocks.wallTex = fakeTexture(256, 256);
+    mocks.wallFaceTex = fakeTexture(256, 128);
+    const rb = makeRoomBuilder();
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    rb.build(stateWithNorthWall());
+    const first = wallShadows(rb)!;
+
+    rb.build(stateWithNorthWall());
+    expect(first.destroyed).toBe(true);
+    expect(layers.shadow.children).not.toContain(first);
+
+    const second = wallShadows(rb)!;
+    expect(second).not.toBe(first);
+    rb.clear();
+    expect(second.destroyed).toBe(true);
+    expect(wallShadows(rb)).toBeNull();
+  });
+
+  it('gives every standing wall the stone-tuned lighting filter, not the actor tuning', () => {
+    // A wall's ambient sits ABOVE 1 − key so its cap genuinely brightens; an actor's sits
+    // below 1 so its unlit side darkens. Getting these the wrong way round would make every
+    // wall darker than the floor it stands on.
+    mocks.wallTex = fakeTexture(256, 256);
+    mocks.wallFaceTex = fakeTexture(256, 128);
+    const rb = makeRoomBuilder();
+    rb.build(stateWithNorthWall());
+    const seg = wallEntities(rb)[0]!;
+    const lit = (seg.filters as unknown as Array<{ opts?: { ambient?: number; gradient?: number } }>)[0]!;
+    expect(lit.opts?.ambient).toBe(WALL_LIT_AMBIENT);
+    expect(lit.opts?.gradient).toBe(WALL_LIT_GRADIENT);
+    expect(WALL_LIT_AMBIENT + WALL_LIT_KEY_INTENSITY).toBeGreaterThan(1);
   });
 
   it('still stands the wall up with no face art, using Graphics (a missing swatch never flattens it)', () => {
@@ -211,7 +305,10 @@ describe('RoomBuilder — standing walls', () => {
     expect(wallEntities(rb).length).toBe(0);
   });
 
-  it('leaves the room\'s south wall flat on the ground layer', () => {
+  it('stands the room\'s south wall up too, but only as a low kerb', () => {
+    // It used to stay dead flat on the ground layer: standing it at full height would put a
+    // metre of stone between the camera and the player it is framing. A kerb is short enough
+    // that the player's own collision radius keeps them well clear of it, and it still casts.
     mocks.wallTex = fakeTexture(256, 256);
     mocks.wallFaceTex = fakeTexture(256, 128);
     const s = createGameState({
@@ -226,10 +323,33 @@ describe('RoomBuilder — standing walls', () => {
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(s);
 
-    expect(wallEntities(rb).length).toBe(0);
-    const flat = layers.ground.children.find((c) => c instanceof TilingSprite && c.texture === mocks.wallTex);
-    expect(flat).toBeDefined();
-    expect((flat as TilingSprite).position.y).toBeCloseTo(448); // on its own footprint, unlifted
+    expect(wallEntities(rb).length).toBe(1);
+    const seg = wallEntities(rb)[0]!;
+    const face = seg.children.find((c) => c instanceof TilingSprite) as TilingSprite;
+    expect(face.height).toBe(WALL_H_KERB);
+    expect(face.height).toBeLessThan(WALL_H_PERIMETER);
+    expect(layers.ground.children.some((c) => c instanceof TilingSprite && c.texture === mocks.wallTex)).toBe(false);
+  });
+
+  it('gives an interior block a shorter height than the room\'s own boundary', () => {
+    // Height variety, from one build: without it every vertical surface in the room is the
+    // same size and the eye has no relative measure to read depth from.
+    mocks.wallTex = fakeTexture(256, 256);
+    mocks.wallFaceTex = fakeTexture(256, 128);
+    const s = createGameState({
+      seed: 1, worldW: 480, worldH: 480, waves: [],
+      walls: [[0, 0, 480, 32], [128, 128, 64, 64]], // north perimeter + a kiln-style 2×2 block
+      obstacles: [],
+    });
+    s.dungeonRoomRects.push({ id: 'r1', rect: { x: pxToFp(0), y: pxToFp(0), w: pxToFp(480), h: pxToFp(480) } });
+    (s as unknown as { dungeonConfig?: { biomeId: string } }).dungeonConfig = { biomeId: 'ember' };
+
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    const heights = wallEntities(rb).map(
+      (seg) => (seg.children.find((c) => c instanceof TilingSprite) as TilingSprite).height,
+    );
+    expect(heights).toEqual([WALL_H_PERIMETER, WALL_H_INTERIOR]);
   });
 });
 
@@ -275,8 +395,23 @@ describe('RoomBuilder — pillars (design/10 legibility fix, 2026-08-02: faux-sh
     const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(stateWithOneObstacle());
-    // The pillar's shadow plus the portal's own (Portal.ts also calls makeShadow()).
-    expect(layers.shadow.children.length).toBe(2);
+    // The pillar's shadow, the portal's own (Portal.ts also calls makeShadow()), and the
+    // shared wall-shadow Graphics (empty here — this fixture has no walls — but still added).
+    expect(layers.shadow.children.length).toBe(3);
+  });
+
+  it('displaces the pillar\'s shadow away from the key light by its own drawn height', () => {
+    // A pillar is drawn UPWARD from a grounded origin rather than lifted by the transform, so
+    // Entity's own height-driven shadow offset sees z = 0 and RoomBuilder has to supply it —
+    // otherwise a 70 px pillar casts straight down while a 70 px wall beside it casts sideways.
+    const rb = makeRoomBuilder();
+    rb.build(stateWithOneObstacle());
+    const pillar = (rb as unknown as { pillars: Entity[] }).pillars[0]!;
+    expect(pillar.shadowOffsetX).toBeCloseTo(WALL_H_INTERIOR * SHADOW_SLANT_X, 5);
+    expect(pillar.shadowOffsetY).toBeCloseTo(WALL_H_INTERIOR * SHADOW_SLANT_Y, 5);
+    // ...and it actually lands there, not just on the field. (Precision 1: the pillar's own
+    // x is a px→fp→px round trip of 150, so it lands at 150.016.)
+    expect(pillar.shadow!.x).toBeCloseTo(150 + WALL_H_INTERIOR * SHADOW_SLANT_X, 1);
   });
 
   it('rebuilds pillars fresh on a second build() call, not appended', () => {
@@ -305,9 +440,10 @@ describe('RoomBuilder — grid overlay and rebuild', () => {
     const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(stateWithOneWall('ember'));
-    // ground fill (TilingSprite) + grid (Graphics) + wall (TilingSprite) + wall edge
-    // (Graphics) — at least one Graphics survives as the grid even with both textures set.
-    expect(layers.ground.children.filter((c) => c instanceof Graphics).length).toBeGreaterThanOrEqual(2);
+    // ground fill (TilingSprite) + grid (Graphics). Since 2026-08-18 the walls have left the
+    // ground layer entirely (they are standing blocks on `entities`), so the grid is the ONLY
+    // Graphics here — which makes this a tighter check than the old >= 2.
+    expect(layers.ground.children.filter((c) => c instanceof Graphics)).toHaveLength(1);
   });
 
   it('clears the previous room contents on a second build() call', () => {
@@ -330,10 +466,11 @@ describe('RoomBuilder — doors (design/05 "Room & door model", 2026-08-04)', ()
     const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(s);
-    // Ground fill + grid overlay + the ONE real wall's fill+stroke Graphics node — if
-    // the locked door's passageAabb (also present in s.walls, mirroring DoorSystem)
-    // weren't excluded, it would draw a 4th "generic wall" Graphics here.
-    expect(layers.ground.children.filter((c) => c instanceof Graphics).length).toBe(3);
+    // Ground fill + grid overlay are the only ground Graphics now; the real wall is a standing
+    // block on `entities`. If the locked door's passageAabb (also present in s.walls, mirroring
+    // DoorSystem) weren't excluded, it would be built as a SECOND standing block here.
+    expect(layers.ground.children.filter((c) => c instanceof Graphics).length).toBe(2);
+    expect((rb as unknown as { wallEntities: Entity[] }).wallEntities).toHaveLength(1);
     expect(doorSprites(rb)).toHaveLength(1);
   });
 
@@ -490,5 +627,100 @@ describe('RoomBuilder — portal placement (2026-08-12 fix: capstone room, not t
     rb.build(s);
     expect(rb.portalPx!.x).toBeCloseTo(100, 0);
     expect(rb.portalPx!.y).toBeCloseTo(50, 0);
+  });
+});
+
+describe('RoomBuilder — the floor grid steps back', () => {
+  it('draws the grid faintly, not at full strength', () => {
+    // A full-strength regular lattice across the whole floor is the loudest "this is a top-down
+    // blueprint" cue available, and it fought every depth cue the 2026-08-18 pass added. It is
+    // still drawn (it helps judge distance) but it must not assert that the world is flat.
+    mocks.floorTex = undefined;
+    mocks.wallTex = undefined;
+    const rb = makeRoomBuilder();
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    rb.build(stateWithOneWall('ember'));
+    const strokes = layers.ground.children
+      .filter((c): c is Graphics => c instanceof Graphics)
+      .flatMap((g) => (g.context.instructions as Array<{ action: string; data: { style: { alpha: number } } }>))
+      .filter((i) => i.action === 'stroke');
+    expect(strokes).toHaveLength(1); // the grid is the only stroked thing left on `ground`
+    expect(strokes[0]!.data.style.alpha).toBeLessThan(0.2);
+    expect(strokes[0]!.data.style.alpha).toBeGreaterThan(0); // still drawn, not deleted
+  });
+});
+
+describe('RoomBuilder — a whole room of walls', () => {
+  /** A room with one wall of each tier plus an interior block, i.e. every branch at once. */
+  function stateWithFullPerimeter(): GameState {
+    const s = createGameState({
+      seed: 1, worldW: 480, worldH: 480, waves: [],
+      walls: [
+        [0, 0, 480, 32], // north  -> perimeter
+        [0, 448, 480, 32], // south  -> kerb
+        [0, 32, 32, 416], // west   -> perimeter
+        [448, 32, 32, 416], // east   -> perimeter
+        [128, 128, 64, 64], // block  -> interior
+      ],
+      obstacles: [],
+    });
+    s.dungeonRoomRects.push({ id: 'r1', rect: { x: pxToFp(0), y: pxToFp(0), w: pxToFp(480), h: pxToFp(480) } });
+    (s as unknown as { dungeonConfig?: { biomeId: string } }).dungeonConfig = { biomeId: 'ember' };
+    return s;
+  }
+
+  it('stands every segment up, including the north-south sides the old rule flattened', () => {
+    // The regression this whole pass exists for: with `wallRises`, this room produced ONE
+    // standing segment (the north wall). Every other wall — both 1-cell-wide side runs and the
+    // square interior block — failed `w > h` and was drawn flat on the ground.
+    mocks.wallTex = fakeTexture(256, 256);
+    mocks.wallFaceTex = fakeTexture(256, 128);
+    const rb = makeRoomBuilder();
+    rb.build(stateWithFullPerimeter());
+    expect((rb as unknown as { wallEntities: Entity[] }).wallEntities).toHaveLength(5);
+  });
+
+  it('assigns the three tiers by position, in one build', () => {
+    mocks.wallTex = fakeTexture(256, 256);
+    mocks.wallFaceTex = fakeTexture(256, 128);
+    const rb = makeRoomBuilder();
+    rb.build(stateWithFullPerimeter());
+    const heights = (rb as unknown as { wallEntities: Entity[] }).wallEntities.map(
+      (seg) => (seg.children.find((c) => c instanceof TilingSprite) as TilingSprite).height,
+    );
+    expect(heights).toEqual([
+      WALL_H_PERIMETER, // north
+      WALL_H_KERB, // south — cannot be tall without hiding the player
+      WALL_H_PERIMETER, // west
+      WALL_H_PERIMETER, // east
+      WALL_H_INTERIOR, // the block inside
+    ]);
+  });
+
+  it('accumulates every wall\'s shadow into the ONE shared Graphics', () => {
+    mocks.wallTex = fakeTexture(256, 256);
+    mocks.wallFaceTex = fakeTexture(256, 128);
+    const rb = makeRoomBuilder();
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    rb.build(stateWithFullPerimeter());
+    const shadows = (rb as unknown as { wallShadows: Graphics | null }).wallShadows!;
+    // Still exactly one display object for the whole room, and it spans the whole room.
+    expect(layers.shadow.children.filter((c) => c === shadows)).toHaveLength(1);
+    expect(shadows.bounds.minX).toBeLessThanOrEqual(0);
+    expect(shadows.bounds.maxX).toBeGreaterThan(480); // past the east wall, away from the light
+    expect(shadows.bounds.maxY).toBeGreaterThan(480);
+  });
+
+  it('sorts each segment by its own south edge, so an actor can stand between two of them', () => {
+    // The whole reason the blocks are on the Y-sorted layer: a player between the north wall and
+    // an interior block must draw in front of the first and behind the second.
+    mocks.wallTex = fakeTexture(256, 256);
+    mocks.wallFaceTex = fakeTexture(256, 128);
+    const rb = makeRoomBuilder();
+    rb.build(stateWithFullPerimeter());
+    const ents = (rb as unknown as { wallEntities: Entity[] }).wallEntities;
+    expect(ents[0]!.zIndex).toBe(32); // north wall's south edge
+    expect(ents[4]!.zIndex).toBe(192); // the interior block's
+    expect(ents[1]!.zIndex).toBe(480); // the south kerb's — furthest forward
   });
 });

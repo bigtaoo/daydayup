@@ -78,31 +78,131 @@ true of pillars**. Every wall was drawn as its own collision footprint, flat, on
 `ground` layer (`RoomBuilder`) — no height, no face, no participation in the Y-sort — so a
 room's entire sense of volume rested on the ≤2 round pillars a level-1 room happens to
 have, and a character could never be occluded by a wall. Fixed by drawing a wall as an
-extruded block on the `entities` layer:
+extruded block on the `entities` layer — `scene/wallRender.ts` owns the drawing,
+`scene/wallGeometry.ts` the height rule:
 
 - **Geometry is forced by `screen.y = gy - z`.** The segment's container sits on the wall's
   **south edge**, so `Entity.place` gives it `zIndex = that edge` and it Y-sorts against
   actors as one object standing on that line. The **front face** then occupies local
-  `-WALL_HEIGHT .. 0` and the **top cap** the footprint depth above that. Union: the
-  footprint plus `WALL_HEIGHT` px of intrusion northward, which is exactly what makes a
-  wall look like a wall.
+  `-height .. 0` and the **top cap** the footprint depth above that. Union: the footprint
+  plus one wall height of intrusion northward, which is exactly what makes a wall look like
+  a wall.
 - **Two assets, both already per-biome.** `wallface_<element>.png` is the front elevation
-  (new, `art/biome/prompts.md`); `wall_<element>.png` — the pre-existing top-down swatch —
-  is reused unchanged as the cap. The face tiles **horizontally only**, at a uniform
-  `tileScale = WALL_HEIGHT / texture height`, because its top rows are a lit coping and its
+  (`art/biome/prompts.md`); `wall_<element>.png` — the pre-existing top-down swatch — is
+  reused as the cap. The face tiles **horizontally only**, at a uniform
+  `tileScale = height / texture height`, because its top rows are a lit coping and its
   bottom rows a dark base. A missing swatch falls back to Graphics banding and still stands.
-- **Which walls stand is a rule, not a flag** (`scene/wallGeometry.ts`'s `wallRises`, and
-  see its doc for the full reasoning): an east-west run that is **not** its room's south
-  perimeter. The two exclusions are both things that looked wrong on screen, not in theory.
-  A **north-south run** (a room's east/west side) projects correctly but reads as a defect —
-  it is 32 px wide and 400+ px long, so nearly all you see is its cap band sitting 70 px off
-  its own footprint. A room's own **south wall** would stand between the camera and the
-  player it is framing. What's left standing: north walls, and interior east-west stubs
-  (`ember_hall`'s north jetty, `ember_cross`'s side jetties), which then occlude what is
-  behind them exactly as a pillar does.
-- **The camera frame grew with it.** `GameLoop.cameraFrame` now returns the room rect
-  extended `WALL_HEIGHT` px upward (bottom edge unchanged), or the north wall's face would
-  sit off the top of the viewport — the one thing this whole pass exists to show.
+- **Every wall stands, at one of three heights** (`wallGeometry.wallTier`/`wallHeight`). A
+  room's boundary (`WALL_H_PERIMETER`, 104) towers over the blocks inside it
+  (`WALL_H_INTERIOR`, 70 — deliberately the pillars' height, so everything standing in a
+  room agrees on how tall "tall" is), and the room's own **south** boundary drops to a low
+  lip (`WALL_H_KERB`, 22) because a full-height wall there would stand between the camera
+  and the player it is framing. A kerb is provably safe: a wall is 32 px thick and the
+  player cannot overlap it, so their ground point is always at least that far north of the
+  south edge. Height *variety* is itself the cue — a room where everything vertical is the
+  same size gives the eye no relative measure.
+  - **This replaced an orientation rule, and that is the whole point** (superseded
+    2026-08-18, same day, after the user reported the walls *still* reading as
+    *"一张图贴在地上"*). The first version of this pass only stood up an **east-west run that
+    was not its room's south perimeter**, on the grounds that a long north-south run "reads
+    as a defect — nearly all you see is its cap band sitting 70 px off its own footprint".
+    That exclusion is what kept rooms looking painted on: level 1's shipped content is
+    almost entirely disqualified by it (`ember_l1_gallery`'s east and west sides are 1×16
+    grid runs; `ember_l1_kiln`'s four interior solids are 2×2 **squares**, so `w <= h` for
+    every one of them), and a player could cross a whole room seeing nothing stand up but
+    its north edge. The fix was not to hide those walls but to draw the volume properly —
+    see the next bullet. Orientation now changes nothing about how tall a wall is.
+- **Three surfaces, a faked side, a cast shadow and a dark silhouette** (`wallRender.ts`) —
+  four cues whose absence, not the geometry, is what made a standing wall look printed on:
+  - **Tonal separation.** The cap keeps ~95% of the swatch's own value; the face drops to
+    ~50%; the east side band is 50% black over both. The two swatches do not start from the
+    same value (light grey stone vs dark charcoal brick), so a shallow face tint left a deep
+    block — level 1's are up to 6 grid cells deep, i.e. ~70% cap by area — reading as a pale
+    slab with a thin dark hem.
+  - **A faked side.** A block's east/west sides project to exactly **zero** width under
+    `screen.y = gy - z` (this projection has no horizontal skew), so the east side is drawn
+    as an **inset** dark band — inset, not extruded, so it can never cross into the
+    neighbouring segment of the same perimeter run.
+  - **A ground shadow.** Each wall sweeps its footprint down-right by
+    `height × SHADOW_SLANT_*` and fills the convex hull of the two rects, twice, plus a
+    tight contact pass at the footprint itself. One shared `Graphics` on `layers.shadow`
+    carries a whole room's set. Walls were the one tall thing in a room *not* using what
+    this doc already calls "the cheapest 3D cheat". The alphas are higher than they look
+    like they should be because the ember floor is near-black: what a shadow has to modulate
+    on that biome is the floor's lava cracks, the only bright thing on the ground.
+  - **A dark silhouette.** The outline was `palette.wallEdge` — a light salmon/steel,
+    authored as the highlight edge of a wall lying **flat**, where a light rim is right. On a
+    standing block, magnified by the room camera, it read as a bright wireframe box drawn
+    over the art, and in the first live render it was the loudest thing in the frame.
+    design/13 asks for a flat-cel silhouette, and a silhouette is dark.
+- **The camera frame grew with it.** `GameLoop.cameraFrame` returns the room rect extended
+  `MAX_WALL_HEIGHT` px upward (bottom edge unchanged), or the north wall's face would sit
+  off the top of the viewport — the one thing this whole pass exists to show. It has to track
+  the **maximum** tier, since the perimeter is both the tallest and the thing bordering that
+  rect.
+- **Optional per-stone relief.** Each block also carries a `NormalLitFilter` tuned for stone
+  (`WALL_LIT_*`: a much gentler gradient gain than an actor's, since tiled masonry is nothing
+  but luminance edges, and an ambient above `1 − key` so the cap genuinely brightens instead
+  of the whole wall going darker than the floor it stands on). One render-target pass per
+  segment, ~10-25 per room — `RoomBuilder`'s `LIT_WALLS` is the single switch that turns the
+  whole thing off for a low-end target (design/04's WeChat build).
+- **Pillars follow the same language** (`wallRender.buildPillarBody`). They were flat fills
+  from `palette.pillar`/`palette.pillarTop`, which are **pre-art fallback hues** — the ember
+  palette mixes the element's warm hue into a slate base and lands on a pale mauve, nothing
+  like the charcoal-navy stone every shipped swatch actually is. Once the walls read as
+  stone, four pale-mauve cylinders were the worst thing left in the frame. Texturing them
+  from the wall swatches was tried and was worse (a ~35 px cap ellipse windows one arbitrary
+  dark patch of a 256 px swatch — no legible pattern, and with the brick elevation on the
+  shaft the whole thing read as an open-topped well). What works is hand-toned charcoal-navy
+  stone with the shaft shaded across its curve in **colour-interpolated** bands (stacked
+  translucent bands step in opacity, not in tone, and showed hard vertical seams at 4×), plus
+  the same base crease and the same dark silhouette. The biome palette is back to being only
+  what it was meant to be: the no-art-loaded fallback.
+- **The floor grid stepped back.** A full-strength 64 px lattice across the whole floor is
+  the loudest "this is a top-down blueprint" cue available, and it fought every depth cue
+  above; it is still drawn (distance judging) but at `GRID_ALPHA`.
+
+## Grounding the character (2026-08-18)
+
+Same pass, same report (*"希望能再强化一下立体效果"*): the character had just gained a 360°
+facing continuum, but nothing said it was a **volume standing in a space**.
+
+- **Actors hover, and the shadow knows.** The rigs' `idle` clips already bobbed the art
+  (orb-core's bones translate -6 authoring px), but a clip only knows about bones, so the
+  shadow stayed exactly as wide and as dark as when the body was on the floor — which reads
+  as a sprite sliding up and down a flat backdrop, not as a body leaving the ground.
+  `Entity.visualZ` lifts the whole entity instead (render-only; `zIndex` still comes from the
+  ground coordinate, so lifting can never reorder anything). `Actor`'s `HOVER` table gives
+  the hero and the floating enemy forms a small constant lift plus a slow swing and leaves
+  design/13's ground critters alone; phase is spread across actors so a room of floaters
+  doesn't pulse in lockstep. The clip and the hover stack deliberately — one animates the
+  body's parts, the other the body's height.
+- **Shadows displace with height.** `shadow.x/y += lift × SHADOW_SLANT_*` — a body at head
+  height does not cast straight down. This is the half of the cue a clip could never produce,
+  and it is shared by actors, bullets, pillars (which need it supplied by hand: a pillar is
+  drawn upward from a grounded origin, so its `z` is 0) and walls.
+- **Shadows are a penumbra, not a disc.** Nine faint nested ellipses stepping from 1.45× to
+  0.4× the body radius, all at the same low alpha, so total darkness ramps smoothly to a
+  definite contact core. Four rings at graduated alphas — the first attempt — showed four
+  visible concentric edges at 7× and read as a targeting reticle.
+- **Everything round shares one 0.62 foreshortening.** The ground shadow, the status auras
+  and `EnergyShieldFilter`'s rim glow. The shield ring in particular was a perfect
+  screen-space circle (a raw UV distance), which is the loudest "this is a decal pasted on"
+  cue a round overlay can give in a tilted view.
+- **The body is shaded as a sphere** (`render/rigShading.ts`). A fixed specular highlight
+  toward the key light and a curved terminator falling away from it — drawn, not authored,
+  because they must stay pinned to the light's **screen-space** direction while the body they
+  sit on mirrors and the eye beside them travels. Eye moving while the highlight does not is
+  precisely what reads as a sphere turning under a fixed light. Every mark is an ellipse or
+  arc strictly inside the body radius, so no mask is needed and nothing can spill past the
+  silhouette (a mask per actor would be 30 stencil passes in a busy room). `RigSkin`
+  counter-flips it against `view.scale.x` so the light never mirrors with the body. The
+  alphas are roughly double what they were first set to: design/13's shells are near-white
+  flat-cel art, and a fifth-opacity black arc over white is nothing.
+- **A far-side module is smaller and darker, not just behind.** The per-weapon z-order flip
+  (shipped earlier the same day) reads on its own as "it changed layer"; adding a depth scale
+  and a depth tint turns it into an orbit around a sphere.
+
 
 Wall height is `WALL_HEIGHT` (70 px), deliberately the same constant the pillars use, so
 everything standing in a room agrees on how tall "tall" is.
@@ -114,8 +214,10 @@ everything standing in a room agrees on how tall "tall" is.
 
 ## Shadows
 
-- When lifted, a soft shadow is drawn at the **ground coordinates** (`shadow.gy = gy`, unaffected by z).
-- The shadow shrinks, fades, and offsets slightly as `z` grows → reinforces the sense of height. This is the cheapest "3D cheat".
+- A soft shadow is drawn from the **ground coordinates** (`shadow.gy = gy`), so it stays on the floor no matter how high the body is.
+- It shrinks, fades, **and slides away from the fixed upper-left key light** as the lift grows → reinforces the sense of height. This is the cheapest "3D cheat". `Entity.SHADOW_SLANT_X/Y` are the one place the slant is defined; actors, bullets, pillars and walls all use them, so nothing in a room disagrees about where the light is.
+- Static tall objects (pillars) are drawn *upward* from a grounded origin rather than lifted by the transform, so their `z` is 0 and the displacement has to be supplied by hand (`Entity.shadowOffsetX/Y`).
+- See "Grounding the character" above for the shape of the shadow itself (nested ellipses, not one disc) and for the 0.62 foreshortening every round thing in this view shares.
 
 ## Layers (bottom to top)
 

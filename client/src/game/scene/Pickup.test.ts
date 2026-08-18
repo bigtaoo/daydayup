@@ -211,8 +211,11 @@ describe('Pickup — ambient hover (strobe fix, 2026-08-15)', () => {
     // second surface the bob shows up on — it strobed right along with the sprite before.
     expect(top.scale).toBeLessThan(p.shadow!.scale.x);
     expect(top.alpha).toBeLessThan(p.shadow!.alpha);
-    // ...but gently: a whole half-cycle only moves it a few percent of its size.
-    expect(Math.abs(top.scale - p.shadow!.scale.x)).toBeLessThan(0.1);
+    // ...but gently: a whole half-cycle only moves it by a fraction of its size. Bound
+    // widened from 0.1 on 2026-08-18, when SHADOW_LIFT_FALLOFF went 0.012 -> 0.022 so that
+    // an ACTOR's 4-7 px hover produces a visible response at all (at 0.012 it was k = 0.95,
+    // i.e. nothing). Still a slow breathe, not the ~19 Hz strobe this test was written for.
+    expect(Math.abs(top.scale - p.shadow!.scale.x)).toBeLessThan(0.2);
   });
 });
 

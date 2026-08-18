@@ -8,10 +8,11 @@
  * Screens.test.ts made), so no real texture asset is needed, just `Texture.WHITE`.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { Container, Texture } from 'pixi.js';
-import { Rig } from './Rig';
+import { Container, Graphics, Texture } from 'pixi.js';
+import { Rig, type RigDef } from './Rig';
 import { ORB_CORE_RIG } from './orbCoreRig';
 import { CRITTER_CORE_RIG } from './critterCoreRig';
+import { BOSS_CORE_RIG } from './bossCoreRig';
 import { RigSkin, barrelReach } from './RigSkin';
 import type { RigSkinBundle } from './taoBundle';
 import type { AnimationClip, SpriteBinding } from './types';
@@ -432,5 +433,187 @@ describe('RigSkin — the mounted module draws behind the body when facing away'
     const tethers = (skin as unknown as { tethers: Container | null }).tethers;
     expect(tethers).not.toBeNull();
     expect(moduleZ(skin)).toBeLessThan(tethers!.zIndex);
+  });
+});
+
+// Sphere shading (2026-08-18 depth pass). `rigShading.test.ts` covers the marks themselves;
+// this block covers how RigSkin wires them onto a rig — which bone, which z, and the one
+// thing that is easy to get backwards: the key light must NOT mirror with the body.
+describe('RigSkin — sphere shading over the body bone', () => {
+  function shadeOf(skin: RigSkin): Graphics | null {
+    return (skin as unknown as { sphereShade: Graphics | null }).sphereShade;
+  }
+  function shadeBoneOf(skin: RigSkin): string | null {
+    return (skin as unknown as { shadeBoneId: string | null }).shadeBoneId;
+  }
+
+  it('picks the rig\'s body bone, not a decorative one', () => {
+    // orb-core: shell (bodyR 40) is shaded; eye (16) and the sockets (13) are not.
+    expect(shadeBoneOf(makeSkin(ORB_CORE_RIG))).toBe('shell');
+    expect(shadeOf(makeSkin(ORB_CORE_RIG))).not.toBeNull();
+  });
+
+  it('shades a one-bone enemy body too — the whole roster gets the same light', () => {
+    const skin = makeSkin(CRITTER_CORE_RIG);
+    expect(shadeBoneOf(skin)).toBe('body');
+    expect(shadeOf(skin)).not.toBeNull();
+  });
+
+  it('rides the body bone\'s drawn position, including whatever the clip translates it to', () => {
+    // The idle clip bobs this bone; the shading has to follow it or it detaches from the art.
+    const clips = new Map<string, AnimationClip>([
+      ['bob', {
+        duration: 1,
+        loop: false,
+        keyframes: [{ time: 0, bones: new Map([['shell', { translateY: -20 }]]) }],
+      }],
+    ]);
+    const skin = makeSkin(ORB_CORE_RIG, clips);
+    skin.update();
+    const rest = shadeOf(skin)!.y;
+    skin.playClip('bob', 0);
+    skin.update();
+    expect(shadeOf(skin)!.y).toBeCloseTo(rest - 20, 5);
+  });
+
+  it('sits immediately over the body art and under everything drawn after it', () => {
+    const rig = new Rig(ORB_CORE_RIG);
+    const bundle = fakeBundle(rig);
+    // Give the bones distinct zOrders, as a real animation.json does (orb-core: 0..4).
+    let z = 0;
+    for (const boneId of rig.drawOrder) bundle.bindings.get(boneId)!.zOrder = z++;
+    const skin = new RigSkin(rig, bundle);
+    const shade = (skin as unknown as { sphereShade: Graphics }).sphereShade;
+    expect(shade.zIndex).toBeGreaterThan(bundle.bindings.get('shell')!.zOrder);
+    expect(shade.zIndex).toBeLessThan(bundle.bindings.get('belly')!.zOrder);
+  });
+
+  it('counter-flips so the key light stays put while the body mirrors', () => {
+    // The single thing this could get wrong: the light is fixed in SCREEN space. If the
+    // shading mirrored with the rig, the highlight would jump sides every time the player
+    // turned around — which reads as the light source teleporting, not as a body turning.
+    const skin = makeSkin(ORB_CORE_RIG);
+    skin.setBodyFacing(0); // facing right, no flip
+    expect(skin.view.scale.x * shadeOf(skin)!.scale.x).toBe(1);
+    skin.setBodyFacing(Math.PI); // facing left, whole rig flips
+    expect(skin.view.scale.x).toBe(-1);
+    expect(skin.view.scale.x * shadeOf(skin)!.scale.x).toBe(1); // net transform unchanged
+  });
+});
+
+// The far-side depth cues stacked on top of the z-flip covered above (2026-08-18).
+describe('RigSkin — a far-side module is drawn smaller and darker, not just behind', () => {
+  function activeModule(skin: RigSkin): { scale: { x: number }; tint: number; zIndex: number } {
+    skin.update();
+    return (skin as unknown as { weaponSprite: { scale: { x: number }; tint: number; zIndex: number } }).weaponSprite;
+  }
+
+  it('shrinks and darkens it when the body faces away, and restores both when it turns back', () => {
+    const skin = makeSkin();
+    skin.setWeaponKind('ranged', 'blaster');
+    skin.setBodyFacing(Math.PI / 2); // toward the camera
+    const front = { scale: activeModule(skin).scale.x, tint: activeModule(skin).tint };
+
+    skin.setBodyFacing(-Math.PI / 2); // away
+    expect(activeModule(skin).scale.x).toBeLessThan(front.scale);
+    expect(activeModule(skin).tint).toBeLessThan(front.tint);
+
+    skin.setBodyFacing(Math.PI / 2);
+    expect(activeModule(skin).scale.x).toBeCloseTo(front.scale, 6);
+    expect(activeModule(skin).tint).toBe(front.tint);
+  });
+
+  it('re-derives the depth tint from the CURRENT element colour, not a stale one', () => {
+    // setWeaponTint only knows the element hue; the depth shade has to be recombined with it
+    // every frame, or swapping to a fire weapon while aiming north keeps the old colour.
+    const skin = makeSkin();
+    skin.setWeaponKind('ranged', 'blaster');
+    skin.setBodyFacing(-Math.PI / 2); // away — the shaded branch
+    skin.setWeaponTint(0xffffff);
+    const light = activeModule(skin).tint;
+    skin.setWeaponTint(0x808080);
+    expect(activeModule(skin).tint).toBeLessThan(light);
+  });
+
+  it('applies the same treatment to the decorative idle module, so the pair reads as one assembly', () => {
+    const skin = makeSkin();
+    skin.setWeaponKind('ranged', 'blaster');
+    skin.setBodyFacing(Math.PI / 2);
+    skin.update();
+    const idle = (skin as unknown as { idleModuleSprite: { scale: { x: number }; tint: number } }).idleModuleSprite;
+    const frontScale = idle.scale.x;
+    skin.setBodyFacing(-Math.PI / 2);
+    skin.update();
+    expect(idle.scale.x).toBeLessThan(frontScale);
+  });
+});
+
+describe('RigSkin — rigs that get no sphere shading, and rigs whose body moves', () => {
+  function shadeOf(skin: RigSkin): Graphics | null {
+    return (skin as unknown as { sphereShade: Graphics | null }).sphereShade;
+  }
+
+  it('skips a rig whose largest body is only a decorative nub, and still updates cleanly', () => {
+    // Below SHADE_MIN_BODY_R the marks would be sub-pixel noise on screen. The important half of
+    // this is the second assertion: `update()` reads `sphereShade`/`shadeBoneId` every frame, so
+    // the null path has to be exercised, not just constructed.
+    const tinyRig: RigDef = {
+      id: 'tiny',
+      label: 'Tiny',
+      bones: [
+        { id: 'root', parent: null, len: 0, rwa: 0, label: 'Root' },
+        { id: 'body', parent: 'root', len: 10, rwa: -90, bodyR: 8, label: 'Body' },
+      ],
+      drawOrder: ['body'],
+    };
+    const skin = makeSkin(tinyRig);
+    expect(shadeOf(skin)).toBeNull();
+    expect(() => skin.update()).not.toThrow();
+    expect(() => skin.setBodyFacing(Math.PI)).not.toThrow(); // the counter-flip path too
+  });
+
+  it('skips a body bone with no bound art, since there is nothing to shade', () => {
+    const rig = new Rig(ORB_CORE_RIG);
+    const bundle = fakeBundle(rig);
+    bundle.textures.delete('shell');
+    bundle.bindings.delete('shell');
+    const skin = new RigSkin(rig, bundle);
+    expect(shadeOf(skin)).toBeNull();
+    expect(() => skin.update()).not.toThrow();
+  });
+
+  it('shades the boss core too — the whole roster shares one light', () => {
+    const skin = makeSkin(BOSS_CORE_RIG);
+    expect((skin as unknown as { shadeBoneId: string | null }).shadeBoneId).toBe('core');
+    expect(shadeOf(skin)).not.toBeNull();
+  });
+
+  it('scales the marks to each rig\'s own body radius', () => {
+    // orb-core's shell is 40 authoring px, boss-core's core is 70; the shading is drawn in the
+    // rig's own space, so it has to be sized per rig rather than from one constant.
+    const orb = shadeOf(makeSkin(ORB_CORE_RIG))!;
+    const boss = shadeOf(makeSkin(BOSS_CORE_RIG))!;
+    expect(boss.bounds.width / orb.bounds.width).toBeCloseTo(70 / 40, 1);
+  });
+
+  it('follows the body bone\'s clip alpha, so it fades out with the body it sits on', () => {
+    const clips = new Map<string, AnimationClip>([
+      ['fade', { duration: 1, loop: false, keyframes: [{ time: 0, bones: new Map([['shell', { alpha: 0.25 }]]) }] }],
+    ]);
+    const skin = makeSkin(ORB_CORE_RIG, clips);
+    skin.playClip('fade', 0);
+    skin.update();
+    expect(shadeOf(skin)!.alpha).toBeCloseTo(0.25, 6);
+  });
+
+  it('hides itself when the body bone has no pose at all', () => {
+    const skin = makeSkin(ORB_CORE_RIG);
+    skin.update();
+    expect(shadeOf(skin)!.visible).toBe(true);
+    // Force the FK result to omit the shaded bone, the way a malformed clip/rig pair could.
+    const rig = (skin as unknown as { rig: { computeFK: unknown } }).rig;
+    rig.computeFK = () => new Map();
+    skin.update();
+    expect(shadeOf(skin)!.visible).toBe(false);
   });
 });

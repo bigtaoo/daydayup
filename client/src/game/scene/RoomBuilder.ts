@@ -6,9 +6,34 @@ import { biomePalette, biomeElementOf, type BiomePalette } from '../theme';
 import { fpToPx } from '../coords';
 import { getFloorTexture, getWallTexture, getWallFaceTexture } from '../../render/biomeTiles';
 import { getDoorTexture } from '../../render/environmentSprites';
-import { wallRises, WALL_HEIGHT, type RectPx } from './wallGeometry';
+import { wallTier, wallHeight, WALL_HEIGHT, type RectPx } from './wallGeometry';
+import { buildWallBlock, drawWallShadow, buildPillarBody } from './wallRender';
+import { NormalLitFilter, WALL_LIT_AMBIENT, WALL_LIT_GRADIENT, WALL_LIT_KEY_INTENSITY } from '../fx/filters';
+import { SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
 import type { Backdrop } from './Backdrop';
 import { Portal } from './Portal';
+
+/** Opacity of the 64 px floor grid. See `build()` for why it is this low now. */
+const GRID_ALPHA = 0.12;
+
+/** Whether standing walls take the directional-lighting filter on top of their hand-authored
+ *  cap/face/side tints (2026-08-18). It adds per-stone relief — the difference between carved
+ *  rock and a printed swatch — at the cost of one render-target pass per wall segment, which
+ *  is the most expensive single thing in this pass. A room has ~10-25 segments. Kept as one
+ *  switch so it can be turned off wholesale for a low-end target (design/04's WeChat build)
+ *  without unpicking the rest of the shading. */
+const LIT_WALLS = true;
+
+/** A `NormalLitFilter` tuned for stone rather than for a character — see `WALL_LIT_*`
+ *  (`fx/filters/litFx.ts`) for why a wall needs the opposite ambient bias from an actor.
+ *  One instance per segment: filters carry per-instance uniform state, and Pixi does not
+ *  support sharing one Filter across display objects with different bounds. */
+function wallLitFilter(): NormalLitFilter {
+  return new NormalLitFilter(0xfff2e0, WALL_LIT_KEY_INTENSITY, {
+    ambient: WALL_LIT_AMBIENT,
+    gradient: WALL_LIT_GRADIENT,
+  });
+}
 
 /**
  * Render-side mirror of the engine's dungeon/arena room geometry (design/08 "render
@@ -23,6 +48,10 @@ export class RoomBuilder {
   // `entities` layer, so they must be destroyed explicitly like `pillars`; the flat
   // walls they replace lived on `ground`, which `build()` clears wholesale.
   private readonly wallEntities: Entity[] = [];
+  // One shared Graphics carrying EVERY wall's ground shadow for the current room
+  // (`wallRender.drawWallShadow`), on `layers.shadow`. A room has up to a couple of dozen
+  // segments and their shadows never move, so one static display object beats one per wall.
+  private wallShadows: Graphics | null = null;
   // Index-aligned with `state.dungeonDoors` (design/05 "Room & door model") — a real
   // fixture per door, never a bare gap / never folded into the generic wall fill.
   // `updateDoors()` swaps textures on these in place on door_locked/door_unlocked
@@ -66,12 +95,16 @@ export class RoomBuilder {
       this.layers.ground.addChild(groundG);
     }
 
-    // Grid overlay — always drawn (readability aid, independent of ground art).
+    // Grid overlay — always drawn (readability aid, independent of ground art), but only
+    // just (2026-08-18): a regular full-strength lattice across the whole floor is the
+    // loudest "this is a top-down blueprint" cue in the frame, and it fought every depth
+    // cue this pass adds. Dropped to GRID_ALPHA so it still helps judge distance without
+    // asserting that the world is flat.
     const grid = new Graphics();
     const step = 64;
     for (let x = 0; x <= w; x += step) grid.moveTo(x, 0).lineTo(x, h);
     for (let y = 0; y <= h; y += step) grid.moveTo(0, y).lineTo(w, y);
-    grid.stroke({ color: palette.gridLine, width: 1 });
+    grid.stroke({ color: palette.gridLine, width: 1, alpha: GRID_ALPHA });
     this.layers.ground.addChild(grid);
 
     // AABB walls (ROADMAP 1.2 — finally drawn): a tiled swatch + outline once wall art
@@ -83,12 +116,24 @@ export class RoomBuilder {
     // (`dungeonDoors` is empty there).
     const doorAabbs = new Set(s.dungeonDoors.map((dr) => dr.passageAabb));
     const rooms = this.roomRectsPx(s, w, h);
+    // Every wall now stands (2026-08-18 — see `wallGeometry.wallTier` for why the old
+    // "east-west runs only" rule was what made a room read flat), at one of three heights.
+    // Shadows all land on one shared Graphics, added to `layers.shadow` before the blocks so
+    // it paints under both them and the actors.
+    const shadows = new Graphics();
+    const faceTex = getWallFaceTexture(element);
     for (const wall of s.walls) {
       if (doorAabbs.has(wall)) continue;
       const rect: RectPx = { x: fpToPx(wall.x), y: fpToPx(wall.y), w: fpToPx(wall.w), h: fpToPx(wall.h) };
-      if (wallRises(rect, rooms)) this.buildStandingWall(rect, palette, wallTex, getWallFaceTexture(element));
-      else this.buildFlatWall(rect, palette, wallTex);
+      const height = wallHeight(wallTier(rect, rooms));
+      drawWallShadow(shadows, rect, height);
+      const seg = buildWallBlock(rect, height, { palette, cap: wallTex, face: faceTex });
+      if (LIT_WALLS) seg.filters = [wallLitFilter()];
+      this.layers.entities.addChild(seg);
+      this.wallEntities.push(seg);
     }
+    this.layers.shadow.addChild(shadows);
+    this.wallShadows = shadows;
 
     this.buildPillars(s, palette);
     this.buildDoors(s);
@@ -109,89 +154,14 @@ export class RoomBuilder {
     }));
   }
 
-  /** A wall drawn flat on its own footprint — the pre-2026-08-18 look, still correct for
-   *  a room's south perimeter (see `wallGeometry.wallRises` for why that one must not
-   *  stand up) and for every wall while `wall_*` art is missing. */
-  private buildFlatWall(r: RectPx, palette: BiomePalette, wallTex: Texture | undefined): void {
-    if (wallTex) {
-      const wallSprite = new TilingSprite({ texture: wallTex, width: r.w, height: r.h });
-      wallSprite.position.set(r.x, r.y);
-      this.layers.ground.addChild(wallSprite);
-      const edge = new Graphics();
-      edge.rect(r.x, r.y, r.w, r.h).stroke({ color: palette.wallEdge, width: 2 });
-      this.layers.ground.addChild(edge);
-    } else {
-      const wallG = new Graphics();
-      wallG.rect(r.x, r.y, r.w, r.h).fill({ color: palette.wall }).stroke({ color: palette.wallEdge, width: 2 });
-      this.layers.ground.addChild(wallG);
-    }
-  }
-
-  /**
-   * A wall drawn STANDING (design/01's "small front face"), which is what carries the
-   * tilted view's sense of volume — before this, every wall was a flat footprint on the
-   * ground layer and only the pillars had any height at all.
-   *
-   * Geometry, all of it forced by `screen.y = gy - z`: the container sits on the wall's
-   * SOUTH edge, so `Entity.place` gives it `zIndex = south edge` and it Y-sorts against
-   * actors as one object standing on that line. The front face then occupies local
-   * `-WALL_HEIGHT .. 0` (the wall's south side, rising toward the camera-facing edge) and
-   * the top cap the `h` px above that (the footprint, lifted by the wall's height). The
-   * face texture is used at exactly one height and tiled horizontally only — its own top
-   * rows are a lit coping and its bottom rows a dark base, so `tileScale` is uniform
-   * (WALL_HEIGHT / texture height) and never stretched to fit.
-   */
-  private buildStandingWall(
-    r: RectPx,
-    palette: BiomePalette,
-    capTex: Texture | undefined,
-    faceTex: Texture | undefined,
-  ): void {
-    const seg = new Entity();
-
-    if (faceTex) {
-      const face = new TilingSprite({ texture: faceTex, width: r.w, height: WALL_HEIGHT });
-      face.position.set(0, -WALL_HEIGHT);
-      face.tileScale.set(WALL_HEIGHT / faceTex.height);
-      seg.addChild(face);
-    } else {
-      // Same lit-from-upper-left banding the pillars use, so a missing swatch still reads
-      // as a standing surface rather than a flat rectangle.
-      const g = new Graphics();
-      g.rect(0, -WALL_HEIGHT, r.w, WALL_HEIGHT).fill({ color: palette.wall });
-      g.rect(0, -WALL_HEIGHT, r.w, WALL_HEIGHT * 0.22).fill({ color: 0xffffff, alpha: 0.08 });
-      g.rect(0, -WALL_HEIGHT * 0.3, r.w, WALL_HEIGHT * 0.3).fill({ color: 0x000000, alpha: 0.22 });
-      seg.addChild(g);
-    }
-
-    if (capTex) {
-      const cap = new TilingSprite({ texture: capTex, width: r.w, height: r.h });
-      cap.position.set(0, -WALL_HEIGHT - r.h);
-      seg.addChild(cap);
-    } else {
-      const g = new Graphics();
-      g.rect(0, -WALL_HEIGHT - r.h, r.w, r.h).fill({ color: palette.pillarTop });
-      seg.addChild(g);
-    }
-
-    // A dark outline around the whole block — the flat-cel silhouette design/13 asks for,
-    // and the cue that separates one standing wall from the one behind it. No lit rim line
-    // at the cap/face joint: the face art carries its own lit coping course there, and a
-    // second highlight on top of it read as a stray bright bar.
-    const edge = new Graphics();
-    edge.rect(0, -WALL_HEIGHT - r.h, r.w, WALL_HEIGHT + r.h).stroke({ color: palette.wallEdge, width: 2 });
-    seg.addChild(edge);
-
-    this.layers.entities.addChild(seg);
-    this.wallEntities.push(seg);
-    seg.place(r.x, r.y + r.h);
-  }
-
   /** Destroy the standing wall segments (they live on the Y-sorted `entities` layer, which
-   *  `build()`/`clear()` never sweep wholesale — actors live there too). */
+   *  `build()`/`clear()` never sweep wholesale — actors live there too), plus the shared
+   *  Graphics holding their ground shadows (`layers.shadow`, likewise never swept). */
   private clearWalls(): void {
     for (const e of this.wallEntities) e.destroy();
     this.wallEntities.length = 0;
+    this.wallShadows?.destroy();
+    this.wallShadows = null;
   }
 
   /** One sprite per dungeon door (design/05: "always-present physical fixtures with
@@ -290,19 +260,18 @@ export class RoomBuilder {
       const bodyW = rad * 2 + 16; // visual body a touch wider than the footprint
       const height = WALL_HEIGHT; // one height for every standing thing in a room
       const p = new Entity();
-      const body = new Graphics();
-      body.roundRect(-bodyW / 2, -height, bodyW, height + 10, 6).fill({ color: palette.pillar });
-      // Cheap faux-volumetric shading (design/10 legibility fix, 2026-08-02): the flat
-      // single-colour fill above read as a placeholder cylinder next to the textured
-      // floor/walls — a lit-from-upper-left highlight band + an opposite shadow band,
-      // plus a dark rim stroke, fake enough depth without needing new pillar art.
-      body.roundRect(-bodyW / 2, -height, bodyW * 0.32, height + 10, 6).fill({ color: 0xffffff, alpha: 0.1 });
-      body.roundRect(bodyW * 0.18, -height, bodyW * 0.32, height + 10, 6).fill({ color: 0x000000, alpha: 0.22 });
-      body.roundRect(-bodyW / 2, -height, bodyW, height + 10, 6).stroke({ color: 0x000000, alpha: 0.35, width: 2 });
-      body.ellipse(0, -height, bodyW / 2 + 2, 12).fill({ color: palette.pillarTop });
-      body.ellipse(0, -height, bodyW / 2 + 2, 12).stroke({ color: 0xffffff, alpha: 0.25, width: 1.5 });
-      p.addChild(body);
+      // A round wall block, from the same two swatches and the same three-surface tints
+      // (`wallRender.buildPillarBody`, 2026-08-18 — see its doc for why the old
+      // palette-derived flat fill had to go once the walls read as real stone).
+      p.addChild(buildPillarBody(bodyW, height, palette));
+      // A pillar's shadow has to be displaced by hand (2026-08-18): the height that throws
+      // it is the DRAWN body's, and a pillar is drawn upward from a grounded origin rather
+      // than lifted by the transform, so `Entity`'s own height-driven offset sees z = 0.
+      // Same slant constants as an actor's hover shadow and a wall's cast shadow, so all
+      // three agree on where the key light is.
       p.makeShadow(rad + 12);
+      p.shadowOffsetX = height * SHADOW_SLANT_X;
+      p.shadowOffsetY = height * SHADOW_SLANT_Y;
       this.layers.entities.addChild(p);
       this.layers.shadow.addChild(p.shadow!);
       this.pillars.push(p);

@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import type { Graphics } from 'pixi.js';
 import { THEME } from '../theme';
 import { Bullet } from './Bullet';
+import { SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
 
 const enum Child { Glow, Core }
 function glowOf(b: Bullet): Graphics {
@@ -145,13 +146,17 @@ describe('Bullet.setMuzzleOrigin — easing from the barrel tip onto the sim lin
     expect(b.y).toBe(200);
   });
 
-  it('offsets only the sprite — the shadow stays on the bullet\'s real ground point', () => {
+  it('offsets only the sprite — the muzzle correction never moves the shadow', () => {
     const b = parked(100, 200, 40); // lifted, so shadow.y and b.y already differ
     b.setMuzzleOrigin(30, -18);
     b.interpolate(1, 0);
     expect(b.x).toBeCloseTo(130, 6); // sprite pulled to the muzzle
-    expect(b.shadow!.x).toBe(100); // shadow marks where the bullet actually IS
-    expect(b.shadow!.y).toBe(200);
+    // The shadow tracks the bullet's real ground point, displaced only by its own HEIGHT
+    // (2026-08-18: every shadow now slides away from the fixed upper-left key light in
+    // proportion to lift, `Entity.SHADOW_SLANT_*`). The muzzle correction contributes
+    // nothing to it — which is what this test is really about.
+    expect(b.shadow!.x).toBeCloseTo(100 + 40 * SHADOW_SLANT_X, 6);
+    expect(b.shadow!.y).toBeCloseTo(200 + 40 * SHADOW_SLANT_Y, 6);
   });
 
   it('keeps easing across the tick boundary, not just within one tick\'s interpolation', () => {

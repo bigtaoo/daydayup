@@ -73,7 +73,7 @@ export function elementColor(damageType: DamageType): number {
 // 'ember' exists, content/world/rooms/ember.ts) to the stable element vocabulary
 // ELEMENT_COLORS already uses, so a future biome only needs one new entry there, not a
 // parallel colour table. No new art — this is what "per-biome palette" asks for.
-function mixHex(base: number, tint: number, amount: number): number {
+export function mixHex(base: number, tint: number, amount: number): number {
   const br = (base >> 16) & 0xff, bg = (base >> 8) & 0xff, bb = base & 0xff;
   const tr = (tint >> 16) & 0xff, tg = (tint >> 8) & 0xff, tb = tint & 0xff;
   const mix = (b: number, t: number) => Math.round(b + (t - b) * amount);

@@ -85,6 +85,29 @@ funny is a lane auto-battler (units only face left/right); DayDayUp aims in **36
 > PNGs per character (`shell__back`, and either `belly__back` or simply hiding the belly), and
 > zero code: the `${boneId}__back` variant lookup already handles any bone.
 
+> **Update (2026-08-18, later the same day): a *volume* pass on top of the facing pass.** The
+> user's reply to the above was that the character did now read as having direction — *"眼睛和手
+> 能按方向变化了"* — but still not as having **form**: *"我希望能再强化一下立体效果"*. The facing
+> model was doing its job; what was missing was lighting and grounding, neither of which any
+> amount of facing work produces. Three additions, all render-only and all free of new art:
+>
+> 1. **Sphere shading** (`render/rigShading.ts`) — a fixed specular highlight and a curved
+>    terminator over the rig's body bone, pinned to the key light's *screen-space* direction so
+>    they do **not** mirror with `view.scale.x`. This is the mark that makes a flat-cel shell
+>    read as a sphere: the eye travels, the highlight does not. Applied to any rig whose body
+>    bone has a `bodyR` worth shading, so enemy and boss bodies get it too. Every mark is an
+>    ellipse or arc strictly inside `bodyR`, which is what lets it work with no mask (a mask per
+>    actor would be 30 stencil passes in a busy room) — `rigShading.test.ts` pins that
+>    invariant, since it is the one a tuning change could silently break.
+> 2. **Far-side depth cues on the modules** — the per-weapon z-order flip (item 2's sibling,
+>    shipped hours earlier) reads on its own as "the module changed layer". A depth scale and a
+>    depth tint on top of it read as an orbit around a sphere. Recomputed against the current
+>    `showBack` every frame, not in `setWeaponTint`, which only knows the element hue.
+> 3. **Hover + a shadow that responds to it** — see `01` "Grounding the character". Worth
+>    noting *here* because it is the one place an authored clip and the runtime overlap: the
+>    `idle` clips already bob the body's bones, but a clip cannot move the shadow, so the
+>    height half of the hover now lives in `Entity.visualZ` and the two stack.
+
 - Body plays its hover/idle authored facing the camera; **L/R mirror** by the horizontal sign of the aim/move vector.
 - A **front and a back body set**: aim toward the bottom of the screen (toward camera) draws the front (the eye), toward the top (away) draws the back (a lens/vent where the eye would be — the concept turnaround). Picked by the aim vector's **vertical hemisphere**, so all 360° reads correctly. For the orb this back set is a **single swapped part** (eye→vent), not a whole second body.
 - The **two orbiting socket bones rotate to the exact aim angle**; the mounted weapon module follows, so the muzzle (or the blade's sweep) always points at the reticle.

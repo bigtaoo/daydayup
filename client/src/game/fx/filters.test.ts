@@ -26,7 +26,14 @@ import {
   DissolveFilter,
   HeatHazeFilter,
   NormalLitFilter,
+  SHIELD_SQUASH,
+  FRAME_UV,
+  hexToRgb,
+  WALL_LIT_AMBIENT,
+  WALL_LIT_GRADIENT,
+  WALL_LIT_KEY_INTENSITY,
 } from './filters';
+import { SHADOW_SQUASH } from '../scene/Entity';
 
 describe('VignetteFilter', () => {
   it('constructs with the documented defaults', () => {
@@ -329,5 +336,128 @@ describe('EnergyShieldFilter shimmer pace', () => {
     // past and a slowed-down pulse turns back into visible travelling ripple, which is
     // the same complaint by another route.
     expect(radialCoefficient(new EnergyShieldFilter().glProgram.fragment!)).toBeLessThanOrEqual(12);
+  });
+});
+
+// 2026-08-18 depth pass, user report *"希望能再强化一下立体效果"* / *"墙看起来还是没有高度感"*.
+describe('EnergyShieldFilter ring shape', () => {
+  it('is a vertically foreshortened ellipse, not a screen-space circle', () => {
+    // A perfect circle was the loudest "this is a decal pasted on" cue in the frame — a
+    // shield WRAPS a body, and design/01's view is tilted, so its silhouette is an ellipse.
+    const f = new EnergyShieldFilter();
+    expect(f.squash).toBe(SHIELD_SQUASH);
+    expect(f.squash).toBeGreaterThan(0);
+    expect(f.squash).toBeLessThan(1);
+  });
+
+  it('agrees with the ground shadow and the status auras on how much the tilt compresses', () => {
+    // Three different mechanisms (a shader, a Graphics ellipse, a stroked aura) drawing
+    // round things around the same body — they have to share one number or the character
+    // reads as sitting in three different projections at once.
+    expect(SHIELD_SQUASH).toBe(SHADOW_SQUASH);
+  });
+
+  it('divides the vertical component rather than the horizontal, so the ring widens not narrows', () => {
+    // `uv.y /= uSquash` with squash < 1 shortens the ring's vertical reach. Getting this
+    // backwards (dividing x) would produce a TALL ellipse, i.e. the wrong projection.
+    expect(new EnergyShieldFilter().glProgram.fragment).toContain('uv.y /= uSquash');
+  });
+});
+
+describe('NormalLitFilter per-call-site look', () => {
+  it('defaults to the actor tuning, so every existing call site is unchanged', () => {
+    const f = new NormalLitFilter();
+    expect(f.ambient).toBeCloseTo(0.55, 6); // the value this filter shipped with in 2026-08-03
+    expect(f.gradient).toBeCloseTo(7.0, 6);
+  });
+
+  it('takes a wall tuning whose lit side BRIGHTENS instead of darkening', () => {
+    // The bias has to invert for level geometry. An actor's ambient sits below 1 so its
+    // unlit side darkens; a wall's sits above 1 − key so its cap goes past 1.0 and genuinely
+    // lights up. With the actor tuning a wall would come out darker than the floor it stands
+    // on, which is worse than not lighting it at all.
+    const f = new NormalLitFilter(0xfff2e0, WALL_LIT_KEY_INTENSITY, {
+      ambient: WALL_LIT_AMBIENT,
+      gradient: WALL_LIT_GRADIENT,
+    });
+    expect(f.ambient).toBeCloseTo(WALL_LIT_AMBIENT, 6);
+    expect(f.gradient).toBeCloseTo(WALL_LIT_GRADIENT, 6);
+    expect(WALL_LIT_AMBIENT + WALL_LIT_KEY_INTENSITY).toBeGreaterThan(1);
+  });
+
+  it('gives stone a much gentler fake-normal gain than a character sprite', () => {
+    // A stone swatch's own mortar lines emboss into corrugation at the actor's 7.0 — the
+    // gradient is a luminance derivative, and tiled masonry is nothing but luminance edges.
+    expect(WALL_LIT_GRADIENT).toBeLessThan(new NormalLitFilter().gradient / 2);
+  });
+
+  it('drives both from uniforms, so the two looks share one compiled program', () => {
+    const src = new NormalLitFilter().glProgram.fragment!;
+    expect(src).toContain('uniform float uAmbient;');
+    expect(src).toContain('uniform float uGradient;');
+    expect(src).not.toContain('GRADIENT_STRENGTH'); // the old hardcoded constant is gone
+  });
+});
+
+// The 4-way split of this file (2026-08-18, 500-line convention) has exactly one regression mode:
+// a symbol that stops being reachable from the original import path. Every caller in the codebase
+// imports `game/fx/filters`, so the shell is the contract.
+describe('game/fx/filters — the assembly shell after the split', () => {
+  it('still exports every filter class from the original path', () => {
+    for (const cls of [
+      VignetteFilter,
+      ChromaticAberrationFilter,
+      EnergyShieldFilter,
+      OutlineFilter,
+      DissolveFilter,
+      HeatHazeFilter,
+      NormalLitFilter,
+    ]) {
+      expect(typeof cls).toBe('function');
+    }
+  });
+
+  it('re-exports the shared GLSL prelude and the colour helper', () => {
+    // `FRAME_UV` was file-private before the split and had to become an export for the sibling
+    // modules to share it; the shell keeps it reachable so nothing outside has to know it moved.
+    expect(FRAME_UV).toContain('vec2 frameUv(vec2 coord)');
+    expect(hexToRgb(0xff8000)).toEqual([1, 128 / 255, 0]);
+  });
+
+  it('re-exports the tuning constants the split moved into sibling modules', () => {
+    // These are the values RoomBuilder and this file's own look assertions read. A split that
+    // dropped them would fail at import time in the app but could easily pass a narrower test.
+    for (const n of [SHIELD_SQUASH, WALL_LIT_AMBIENT, WALL_LIT_GRADIENT, WALL_LIT_KEY_INTENSITY]) {
+      expect(typeof n).toBe('number');
+      expect(Number.isFinite(n)).toBe(true);
+    }
+  });
+
+  it('gives every filter its own distinct shader — the split copied nothing', () => {
+    // Moving seven fragment sources across four new files is exactly the kind of edit that
+    // duplicates one and drops another; two classes ending up on the same source would be
+    // invisible at runtime until the wrong effect appeared on screen.
+    const sources = [
+      new VignetteFilter().glProgram.fragment,
+      new ChromaticAberrationFilter().glProgram.fragment,
+      new EnergyShieldFilter().glProgram.fragment,
+      new OutlineFilter().glProgram.fragment,
+      new DissolveFilter().glProgram.fragment,
+      new HeatHazeFilter().glProgram.fragment,
+      new NormalLitFilter().glProgram.fragment,
+    ];
+    for (const s of sources) expect(s).toBeTruthy();
+    expect(new Set(sources).size).toBe(sources.length);
+  });
+
+  it('shares ONE copy of the prelude — the split did not fork FRAME_UV per module', () => {
+    // `screenFx.ts` and `skinFx.ts` both need it. Pasting it into each is the tempting shortcut
+    // and would let the two drift, which is how the original crescent bug got its long life.
+    const withPrelude = [
+      new VignetteFilter().glProgram.fragment!, // screenFx
+      new EnergyShieldFilter().glProgram.fragment!, // skinFx
+    ];
+    // A substring check, not a prefix one: Pixi prepends its own version/precision header.
+    for (const src of withPrelude) expect(src).toContain(FRAME_UV.trim());
   });
 });
