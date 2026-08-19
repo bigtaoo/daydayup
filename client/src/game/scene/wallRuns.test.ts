@@ -11,8 +11,10 @@
  * bug the kerb exists to prevent).
  */
 import { describe, it, expect } from 'vitest';
-import { joinRects, mergeWallRuns, type WallRun } from './wallRuns';
+import { joinRects, mergeWallRuns, unjoinedSpans, wallJoins, type WallRun } from './wallRuns';
 import type { RectPx } from './wallGeometry';
+import { FACE_CROWN_FRACTION_MIN, faceCrownFraction } from './wallTone';
+import { WALL_H_INTERIOR, WALL_H_PERIMETER } from './wallGeometry';
 
 const r = (x: number, y: number, w: number, h: number): RectPx => ({ x, y, w, h });
 const run = (rect: RectPx, tier: WallRun['tier'] = 'perimeter'): WallRun => ({ rect, tier });
@@ -103,5 +105,143 @@ describe('mergeWallRuns — over a whole room, to a fixed point', () => {
     const merged = mergeWallRuns([run(r(184, 8, 4, 27)), run(r(188, 8, 4, 27))]);
     const area = merged.reduce((a, m) => a + m.rect.w * m.rect.h, 0);
     expect(area).toBe(2 * 4 * 27);
+  });
+});
+
+describe('wallJoins — which edges are buried in an L or T corner', () => {
+  // The shape from level 1's start room, in world px: a 992-wide east-west perimeter wall at
+  // y 32..64, and the north-south run at x 1504..1568 hanging off its south edge, y 64..288.
+  // `mergeWallRuns` cannot merge them (an L's union is not a rectangle), so they are two blocks —
+  // and each was drawing its own "I end here" cues right in the middle of one continuous top.
+  const NS = run(r(1504, 64, 64, 224));
+  const EW = run(r(1024, 32, 992, 32));
+
+  it('marks the north-south run\'s NORTH edge as buried, in its own local x', () => {
+    const [ns] = wallJoins([NS, EW]);
+    expect(ns!.north).toEqual([[0, 64]]); // its whole width butts the east-west wall
+    expect(ns!.south).toEqual([]); // its south end is the exposed one
+  });
+
+  it('routes the east-west wall\'s SOUTH slice to `tuckedSouth`, since the run tucks', () => {
+    // A tucked neighbour stops at this wall's south edge, so this wall's own fold there is REAL:
+    // it gets a contact crease instead of the mask a merged corner would get. The two lists are
+    // exclusive by construction — see `WallJoins`.
+    const [, ew] = wallJoins([NS, EW]);
+    expect(ew!.tuckedSouth).toEqual([[480, 544]]); // 1504..1568 in the block's own local x
+    expect(ew!.south).toEqual([]);
+    expect(ew!.north).toEqual([]); // the room's outer face — genuinely exposed
+  });
+
+  it('tucks a DEEP run whose north edge is buried along its whole width', () => {
+    const [ns] = wallJoins([NS, EW]);
+    expect(ns!.tuckNorth).toBe(true);
+  });
+
+  it('lets a tucked run reach north as far as the far wall\'s crown, and no further', () => {
+    // Neither of the two answers that were tried and rejected: not a full wall height (the overlap
+    // that broke the back wall's crown line) and not zero (stopping at its foot).
+    const [ns] = wallJoins([NS, EW]);
+    expect(ns!.tuckLiftPx).toBeCloseTo(WALL_H_PERIMETER * (1 - FACE_CROWN_FRACTION_MIN), 6);
+    expect(ns!.tuckLiftPx).toBeGreaterThan(0);
+    expect(ns!.tuckLiftPx).toBeLessThan(WALL_H_PERIMETER);
+    // ...and the crown line is per-ELEMENT, so passing a room's own fraction changes the lift. The
+    // shipped swatches disagree (ice's coping band is a third shorter than fire's), and a single
+    // constant would have sliced through an ice room's crown on every corner.
+    const ice = wallJoins([NS, EW], faceCrownFraction('ice'))[0]!;
+    const fire = wallJoins([NS, EW], faceCrownFraction('fire'))[0]!;
+    expect(faceCrownFraction('ice')).not.toBeCloseTo(faceCrownFraction('fire'), 3);
+    expect(ice.tuckLiftPx).toBeGreaterThan(fire.tuckLiftPx); // a shallower crown lets it reach further
+    expect(ice.crownFraction).toBeCloseTo(faceCrownFraction('ice'), 6);
+    // An element with no swatch of its own falls back to the shallowest measured crown, which can
+    // never cross a deeper one.
+    expect(faceCrownFraction('poison')).toBe(FACE_CROWN_FRACTION_MIN);
+  });
+
+  it('takes the lift from the SHORTEST northern neighbour, whose crown has to survive', () => {
+    // Two walls of different heights along one run's north edge: the run may only reach as far as
+    // the LOWER crown, or it would break that wall's line while clearing the other's. An interior
+    // run (70) with a perimeter wall (104) over half its north edge and another interior wall over
+    // the rest — both qualify to bury it, and the interior one sets the limit.
+    const inner = run(r(1504, 64, 64, 224), 'interior');
+    const tall = run(r(1504, 32, 32, 32), 'perimeter');
+    const equal = run(r(1536, 32, 32, 32), 'interior');
+    const [ns] = wallJoins([inner, tall, equal]);
+    expect(ns!.tuckNorth).toBe(true);
+    expect(ns!.tuckLiftPx).toBeCloseTo(WALL_H_INTERIOR * (1 - FACE_CROWN_FRACTION_MIN), 6);
+    expect(ns!.tuckLiftPx).toBeLessThan(WALL_H_PERIMETER * (1 - FACE_CROWN_FRACTION_MIN));
+  });
+
+  it('reports no lift at all when nothing tucks', () => {
+    const [, ew] = wallJoins([NS, EW]);
+    expect(ew!.tuckLiftPx).toBe(0);
+  });
+
+  it('refuses the tuck for a block no deeper than it is tall', () => {
+    // Two parallel east-west walls stacked north-south are one mass whose top is drawn by the
+    // northern one's cap — clipping the southern one's art at its own footprint would leave a hole
+    // where its cap and most of its face should be. Only a run with a cap to spare may tuck.
+    const shallow = run(r(1024, 64, 992, 32));
+    const [s2, ew] = wallJoins([shallow, EW]);
+    expect(s2!.north).toEqual([[0, 992]]); // still a merged corner...
+    expect(s2!.tuckNorth).toBe(false); // ...but never a tucked one
+    expect(ew!.south).toEqual([[0, 992]]);
+    expect(ew!.tuckedSouth).toEqual([]);
+  });
+
+  it('refuses the tuck when only part of the run\'s width is buried', () => {
+    const short = run(r(1504, 32, 32, 32)); // covers half of a 64-wide run's north edge
+    const wide = run(r(1504, 64, 64, 224));
+    const [, w2] = wallJoins([short, wide]);
+    expect(w2!.north).toEqual([[0, 32]]);
+    expect(w2!.tuckNorth).toBe(false);
+  });
+
+  it('ignores a SHORTER neighbour, because that leaves a real step', () => {
+    // A room's south boundary is a 22 px kerb; the room beyond it sees a 104 px perimeter wall.
+    // The perimeter wall's cap really does end above the kerb, so its coping and its depth
+    // gradient have to stay — this is the same tier asymmetry `mergeWallRuns` refuses to merge.
+    const kerb = run(r(1504, 288, 64, 32), 'kerb');
+    const [ns] = wallJoins([NS, kerb]);
+    expect(ns!.south).toEqual([]);
+    // ...and from the kerb's side the tall neighbour DOES bury its north edge.
+    const [, k] = wallJoins([NS, kerb]);
+    expect(k!.north).toEqual([[0, 64]]);
+    // ...and it tucks, which is SAFE for any block: the clip only ever removes the band
+    // `[r.y - height, r.y]`, and the neighbour that authorised the tuck is by definition at least
+    // that tall, so its own art always covers exactly that band. A kerb is 32 deep and 22 tall, so
+    // it qualifies as "deep" — it simply stops intruding over the run standing north of it.
+    expect(k!.tuckNorth).toBe(true);
+  });
+
+  it('coalesces two neighbours that meet, so a masked stroke has no hairline gap', () => {
+    const a = run(r(1504, 64, 32, 224));
+    const b = run(r(1536, 64, 32, 224));
+    const [, , ew] = wallJoins([a, b, EW]);
+    expect(ew!.tuckedSouth).toEqual([[480, 544]]);
+  });
+
+  it('finds nothing when the two rects do not actually touch', () => {
+    const gap = run(r(1504, 96, 64, 224)); // 32 px south of the east-west wall
+    const [ns, ew] = wallJoins([gap, EW]);
+    expect(ns!.north).toEqual([]);
+    expect(ns!.tuckNorth).toBe(false);
+    expect(ew!.south).toEqual([]);
+    expect(ew!.tuckedSouth).toEqual([]);
+  });
+});
+
+describe('unjoinedSpans — the parts of an edge that still get an edge cue', () => {
+  it('is the complement of the joins', () => {
+    expect(unjoinedSpans(992, [[480, 544]])).toEqual([[0, 480], [544, 992]]);
+  });
+
+  it('is the whole edge when nothing joins it', () => {
+    expect(unjoinedSpans(64, [])).toEqual([[0, 64]]);
+  });
+
+  it('is EMPTY when the whole edge is buried — the north-south run at a corner', () => {
+    // This is the case that has to produce no stroke at all, not a zero-length one: a coping
+    // highlight drawn across a continuous stone top is what made the run look pasted on.
+    expect(unjoinedSpans(64, [[0, 64]])).toEqual([]);
   });
 });

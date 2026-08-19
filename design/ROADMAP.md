@@ -2651,6 +2651,90 @@ now what the test asserts, entering deliberately off-centre.
 
 ---
 
+## One wall, four reports: the corner of a north-south run (2026-08-19, client-only)
+
+A screenshot with a red circle round `ember_l1_cell`'s west perimeter run — *"我圈起来的那段墙体看起来
+很奇怪啊"* — and then three more reports on the same wall, each rejecting the previous fix. No engine
+change; everything here is `client/src/game/scene/wall*.ts`. Full write-up in `design/01-rendering.md`
+("A north-south run is not an east-west wall" and "...and the corner again: a deep run TUCKS").
+
+**The one sentence that explains all four rounds: every tonal constant had been measured on an
+EAST-WEST wall, where the cap is a 32 px band under a lit coping — and then applied unchanged to a
+north-south run, where the cap is 100% of what you see of the wall** (224 px deep on the wall
+reported). Diagnosed by A/B-ing the live scene layer by layer rather than editing and reloading:
+`roomBuilder.wallEntities` is a flat list whose children are `[face, cap, capLight, shading, edge]`,
+so hiding one child index across every wall and re-extracting isolates exactly one cue per frame.
+
+- **Round 1 — a pale concrete beam.** Three defects, all measured. (a) The cap's key light was a flat
+  additive constant, which hits its target luma and destroys the swatch's contrast *ratio* — +47 on a
+  30..60 stone is 77..107, i.e. 2:1 becomes 1.4:1. Pixi tints only multiply *down*; the fix is to draw
+  the cap swatch a **second time in `add` mode**, which is `value × (1 + alpha)` and keeps the ratio
+  exactly. (b) The cap tiled from each block's own origin, so a 64 px-wide run always windowed the same
+  left quarter of a 256 px swatch — on ember, one large stone, no pattern at all — and an L corner met
+  at a mismatched seam; now tiled in world space. (c) The east band and west chamfer spanned the whole
+  art, which on a 224 px run is a hard-edged flat grey panel painted down the wall's top; now bounded
+  to one wall thickness of cap plus a taper (`SIDE_CAP_SOLID_PX`), with a narrow bevel along the rest.
+- **Round 2 — *"竖着的墙，直接盖在了横着的墙上面"*.** `mergeWallRuns` merges only pairs whose union is a
+  rectangle, so an L/T corner is always two blocks — and each drew its full "this is where I end" set
+  in the middle of one continuous stone top (measured 66 → 79 with a highlight line on it). New
+  `wallRuns.wallJoins` reports, per block, which edges are buried; `WallJoins` masks the coping, the
+  silhouette, the cap gradient and the fold out of them.
+- **Round 3 — *"应该是中间的墙要看起来到横着的墙的底部"*.** Seamless was never the ask. A block's art
+  intrudes one wall HEIGHT north of its own footprint, so a deep run climbs the far wall's brick face
+  and interrupts the surface the eye reads as the room's back wall. A deep run (`rect.h > its own
+  height`) whose north edge is fully buried now TUCKS. **A deliberate stylisation, not a correction** —
+  the run's stone really is nearer the camera, and rounds 1-2's depth arithmetic was right.
+- **Round 4 — a rectangle drawn on the brick, *"应该要覆盖到我标记的区域"*.** Measuring the annotation
+  into world coordinates put its top edge at y −10; a row-luma scan of the swatch put the **crown
+  course**'s mortar line at −14.6. Not "cover more" — *that line*. The crown is the longest unbroken
+  horizontal in a room, so it is what the eye identifies a back wall by; every brick course below it is
+  fair game. Three clip positions were tried in order and only the third is right: full overlap
+  (breaks the crown), the wall's foot (hides brick the run may stand in front of), just under the
+  crown. The junction is then a re-entrant corner and gets a crease on both surfaces (`TUCK_*`).
+
+**Then "可以加测试吗", and the answer was a third test file rather than more cases in the two that
+existed.** `client/src/game/scene/wallComposition.test.ts` (17 tests) is the wall twin of
+`render/rigComposition.test.ts`: the real level-1 floors through the real sequence
+(`placeAuthoredFloor` → `buildFloorGeometry` → `wallTier` → `mergeWallRuns` → `wallJoins`), asserting
+relationships between blocks — every floor produces deep runs *and* tucks them (the `w > h`-guard
+regression class this repo has already shipped once), a clip never opens a hole, no run crosses its
+neighbour's crown, each join lands in exactly one bucket, a join only exists where a tall-enough
+neighbour touches, and RoomBuilder is actually *wired* to the per-element lookup (read from source,
+since `wallJoins` has a safe default a forgotten argument would silently degrade).
+
+**It found a real bug on its first run.** The crown line had shipped for one round as a single constant
+measured off `wallface_fire.png`. Decoding all four shipped face swatches (zlib inflate + unfilter, in
+the test) put ice's mortar line at row **17** where the constant said 31 — fire and lightning at 27 of
+127, neutral at 25 of 125, **ice's coping band a third shorter than the others'**. Two biomes out of
+four were being clipped straight through the crown, invisibly, on content no render of the ember floor
+could have shown. `FACE_CROWN_ROWS` is now a measured per-element table and the fraction rides on
+`WallJoins` so the crease that follows a join is sized by the number that placed it.
+
+**Measured, before → after** (luma 0-255, `renderer.extract` on `layers.world`, sample rects derived
+from the renderer's own sprites): north-south cap **89 → 78** and reading as stone rather than
+concrete, east-west cap 78 → 70, floor 45 → 41, wall crown at a corner 48 → **36** where the run
+arrives under it, brick at a corner contact 33 → **22**. The junction step that read as a pasted
+rectangle (66 → 79 with a highlight line) is gone; what remains across it is 85 → 74, against the
+swatch's own 50 → 45 for those two rows — i.e. the stone's pattern and nothing artificial.
+
+**Mutation counts.** `wallRender.test.ts` + `wallRuns.test.ts` (67 tests): world-space tiling **1**,
+the side band's bound **1**, the multiplicative key light **4**, the cap bevel **1**, buried-north-edge
+mask **1**, buried-south-edge mask **1**, corner crease **1**, neighbour-height filter **1**, interval
+coalescing **1**, the tuck itself **4**, the cap crease **1**, the crown crease **1**, the
+`h > height` guard **1**, the whole-width guard **1**, the `south`/`tuckedSouth` split **2**,
+re-locking the tile offset after the clip **1**, the crown lift **2**, shortest-neighbour lift **1**.
+`wallComposition.test.ts` alone (17 tests): the tuck **3**, the crown lift **2** applied / **2**
+computed, fire's row **1**, ice's row **1**, the height filter **2**, RoomBuilder's wiring **1**.
+
+**The generalisable lessons**, all four rounds' worth, now in `design/01-rendering.md` and memory: a
+constant tuned on one orientation of one asset is a special case, not a constant; at an L/T corner half
+of a block's edge cues are false; "physically correct" is not the acceptance criterion for a 2.5D
+cheat, and arguing depth maths against a readability ask wastes a round; a crease spent on an
+already-black band does nothing (9 vs 13, invisible — check what value the surface still *has*); and a
+user's drawn annotation is data to measure, not a vague gesture.
+
+---
+
 ## Dependency summary
 
 ```

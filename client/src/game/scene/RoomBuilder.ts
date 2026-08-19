@@ -9,7 +9,8 @@ import { getDoorTexture } from '../../render/environmentSprites';
 import { wallTier, wallHeight, WALL_HEIGHT, type RectPx } from './wallGeometry';
 import { buildWallBlock, drawWallShadow } from './wallRender';
 import { buildPillarBody } from './pillarRender';
-import { mergeWallRuns, type WallRun } from './wallRuns';
+import { mergeWallRuns, wallJoins, type WallRun } from './wallRuns';
+import { faceCrownFraction } from './wallTone';
 import { drawRoomLight } from './roomLight';
 import { NormalLitFilter, WALL_LIT_AMBIENT, WALL_LIT_GRADIENT, WALL_LIT_KEY_INTENSITY } from '../fx/filters';
 import { SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
@@ -154,10 +155,17 @@ export class RoomBuilder {
       const rect: RectPx = { x: fpToPx(wall.x), y: fpToPx(wall.y), w: fpToPx(wall.w), h: fpToPx(wall.h) };
       runs.push({ rect, tier: wallTier(rect, roomsPx) });
     }
-    for (const run of mergeWallRuns(runs)) {
+    // ...then, on the merged set, work out which edges are buried in an L/T corner. An L cannot
+    // be merged (its union is not a rectangle), so without this every corner drew two blocks'
+    // worth of "I end here" cues across one continuous stone top — see `wallJoins`.
+    const merged = mergeWallRuns(runs);
+    // The crown line a corner stops under is per-ELEMENT: the shipped face swatches disagree, ice
+    // most of all (see `FACE_CROWN_ROWS`), so this has to come from the room's own biome.
+    const joins = wallJoins(merged, faceCrownFraction(element));
+    for (const [i, run] of merged.entries()) {
       const height = wallHeight(run.tier);
       drawWallShadow(shadows, run.rect, height);
-      const seg = buildWallBlock(run.rect, height, { palette, cap: wallTex, face: faceTex });
+      const seg = buildWallBlock(run.rect, height, { palette, cap: wallTex, face: faceTex }, joins[i]);
       if (LIT_WALLS) seg.filters = [wallLitFilter()];
       this.layers.entities.addChild(seg);
       this.wallEntities.push(seg);
