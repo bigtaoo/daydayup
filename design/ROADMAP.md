@@ -5,7 +5,7 @@ closed loop the design docs describe, and the running record of how each phase a
 landed. Phases are written top-to-bottom in dependency order; each one keeps its dated
 shipped-notes underneath it, so a phase section is both the plan and the history.
 
-**Current built state (2026-08-17).** `ENGINE_VERSION` **42** (32: ground-weapon pickup is
+**Current built state (2026-08-19).** `ENGINE_VERSION` **43** (32: ground-weapon pickup is
 click-driven; 33: manual aim removed entirely; 34: co-resident PvE room/door model, engine +
 client rendering; 35: fully-realized branching — see the Room & door model section below;
 same-day map-editor door placement, the `layout: 'graph2d'` real-2D-layout follow-up, AND the
@@ -53,7 +53,10 @@ enemy↔enemy push-out re-enabled (the one faction exception in `resolveActorPai
 practice let a converging garrison stack into a single unreadable blob of sprites), a new
 per-mob perception radius INSIDE the existing room-activation gate (an un-noticed mob doesn't
 move, fire, or even turn), and enemy move speed 4 → 2.6 px/tick. See the "Room feel pass"
-section below and `ENGINE_VERSION_HISTORY.md`'s v42 entry.
+section below and `ENGINE_VERSION_HISTORY.md`'s v42 entry; 43: the player stops at its own
+body radius against a wall or a pillar (`Actor.solidRadius`, split off `footprintRadius`,
+which keeps its old job and value for actor↔actor push-out) — see the "Sunk into the wall"
+section below and `ENGINE_VERSION_HISTORY.md`'s v43 entry.
 Same-day, render-only follow-up (no `ENGINE_VERSION` bump — 🟢): the DEFEAT/VICTORY result
 screen's confirm gesture changed from tap-anywhere-on-the-panel (plus a raw fire-button
 rising edge, `confirmEdge.ts`, now deleted) to a single explicit CONFIRM `Button` — the same
@@ -2444,6 +2447,67 @@ mutation, because both the correct and incorrect paths produce "doesn't fire" at
 it needed a movement-DIRECTION discriminator, not a trigger one. Both are the same lesson the
 `SHIELD_REGEN_INTERVAL` note above records: a test can pass for a reason that has nothing to do
 with the thing it names.
+
+---
+
+## Sunk into the wall: the player's clearance against a solid (2026-08-19, `ENGINE_VERSION` 42->43)
+
+A live play report with two screenshots attached — the character wedged into a wall corner, and
+a second frame of how it should look: *"目前角色走到墙角的时候，太靠墙了，感觉陷进去了。接近墙，
+但别陷进去"*.
+
+**Not a rendering bug — a collision radius that predated the art it was tuned for.**
+`Actor.footprintRadius` (7 px for a character, vs a 16 px body `radius`) exists so a tall sprite
+may overlap what it stands against, which `01`/`07` call the cheapest fake-3D depth cue. That
+reasoning holds between two BODIES and it still does: overlapping sprites in a crowd read as a
+crowd. It does not hold against stone. The shipped rig is normalized so the rendered body is
+exactly `radius` × 2 = 32 px wide (`12`), so hugging a wall's east or west face buried 9 px of a
+16 px silhouette inside the wall's own art — and since the standing-wall pass gave every wall a
+dark front face and an inset side band to sit against, the character read as embedded in the
+stone instead of beside it.
+
+**The fix is a second radius, not a bigger one.** New `Actor.solidRadius`, used by
+`MovementSystem.resolveWalls`/`resolveObstacles`; `footprintRadius` keeps its old value
+everywhere and now means only "the feet, for actor↔actor push-out". `PLAYER_BASE.solidRadius` is
+the body radius (16 px), which lands the silhouette tangent to the wall — still "against it",
+which is what the report asked for. Every enemy's is its own `footprintRadius`, so no mob path
+moves and the level-1 garrisons stay measured against the same geometry
+(`client/sim/pveLevelSim.sim.ts` re-run: all five gates still pass, including the softlock gate).
+The depth cue is untouched on a wall's north/south sides regardless — the body floats 4–36 px
+above its ground point (the rig's own hover, `13`), so a character standing south of a wall still
+overlaps most of that wall's standing face at the wider clearance. Verified as a real frame out
+of the running client, not from the source: at 7 px the silhouette crosses the wall edge, at
+16 px it stops a few px short of it, on both the east and west faces.
+
+**Tests (33 new, across four layers).** They pin the DISTINCTION rather than the number, and each
+one also asserts what the pre-v43 feet-circle answer would have been, so reverting the fix fails
+loudly instead of silently re-shipping the report. Mutation counts: reverting the resolvers to
+`footprintRadius` fails **13**, dropping `PLAYER_BASE.solidRadius` back to 7 px fails **12 engine
++ 3 client**, and letting enemies opt in to the wider clearance fails **3**.
+
+- `engine/systems/rooms.test.ts` — the resolver's behaviour, not just a resting coordinate: all
+  four wall faces; no jitter for a body standing still against one over 30 ticks; the report's own
+  inside-CORNER case (clear of *both* arms of an L); a 2-grid door walked through; knockback that
+  would overshoot a wall; and the actor↔actor push that runs *after* the solid resolvers, whose
+  wall intrusion is bounded rather than assumed away. Plus the `solidRadius vs footprintRadius`
+  block: enemies held to their unchanged clearance, actor↔actor held to the feet circle.
+- `engine/content/players.test.ts` (new) — the content invariants as relationships, not three
+  literals: the clearance IS the body radius, the feet circle did NOT move, and the clearance
+  still fits a 2-grid door.
+- `engine/content/enemies.test.ts` — the opt-out, over *every* shipped blueprint, so a new mob
+  can't quietly inherit the player's number.
+- `engine/state/GameState.test.ts` — `buildSeat` carries the clearance on both paths, PvE and the
+  arena/PvP one that re-derives most seat stats.
+- `client/src/render/rigComposition.test.ts` — the cross-layer invariant this bug actually lived
+  in: the drawn body's half-width, computed from the real shipped bundle at the scale `Skin.ts`
+  applies, must not exceed `PLAYER_BASE.solidRadius` (and must not fall far short of it either — a
+  clearance well past the silhouette is the opposite complaint). Both halves looked plausible in
+  their own file for weeks; nothing compared them until now.
+
+One test was written from a wrong guess and corrected by the run: a 1-grid (32 px) gap was
+expected to be too narrow for a now-32 px-wide player. It isn't — both resolvers bail on tangency
+(`distSq >= r * r`), so the body squeezes through and the two walls centre it on the way. That is
+now what the test asserts, entering deliberately off-centre.
 
 ---
 

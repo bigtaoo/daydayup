@@ -12,8 +12,9 @@ import type { GameState } from '@dd/engine/state/GameState';
 import { pxToFp } from '@dd/engine/content/convert';
 import { circleOverlapsAabb } from '@dd/engine/systems/geom';
 import { roomGeometry, type RoomPiece } from '@dd/engine/content/rooms';
+import { buildEnemyActor } from '@dd/engine/content/enemies';
 import { MovementSystem, ProjectileStepSystem } from '@dd/engine/systems';
-import { ENEMY_TEAM_ID, type Faction, type Projectile } from '@dd/engine/state/entities';
+import { ENEMY_TEAM_ID, type AABB, type Faction, type Projectile } from '@dd/engine/state/entities';
 
 const CFG = { seed: 1, worldW: 1600, worldH: 1200, waves: [] as const };
 
@@ -36,13 +37,13 @@ describe('circleOverlapsAabb (geom)', () => {
 
 describe('MovementSystem — AABB wall push-out', () => {
   it('pushes a player out along the normal when approaching from outside (right edge)', () => {
-    // Wall's right edge sits just inside the player's small footprint radius
-    // (~7px) — player spawns at world centre (800,600px); wall right edge = 795px.
+    // Wall's right edge sits inside the player's solid clearance (16px) — player
+    // spawns at world centre (800,600px); wall right edge = 795px.
     const s = createGameState({ ...CFG, walls: [[780, 590, 15, 20]] as const }); // px x,y,w,h
     const p = s.players[0]!;
     new MovementSystem().tick(s);
     const wallRight = addFp(pxToFp(780), pxToFp(15));
-    expect(p.gx).toBe(addFp(wallRight, p.footprintRadius)); // pushed to just touching the edge
+    expect(p.gx).toBe(addFp(wallRight, p.solidRadius)); // pushed to just touching the edge
     expect(p.gy).toBe(pxToFp(600)); // untouched — the push was purely along x
   });
 
@@ -54,7 +55,7 @@ describe('MovementSystem — AABB wall push-out', () => {
     const p = s.players[0]!;
     new MovementSystem().tick(s);
     const wallRight = addFp(pxToFp(784), pxToFp(32));
-    expect(p.gx).toBe(addFp(wallRight, p.footprintRadius)); // pushed out the +x edge
+    expect(p.gx).toBe(addFp(wallRight, p.solidRadius)); // pushed out the +x edge
     expect(p.gy).toBe(pxToFp(600)); // y untouched — the resolved axis was x
   });
 
@@ -131,3 +132,210 @@ describe('Additive, no-bump (design/09 "unknown field ignored" precedent)', () =
   });
 });
 
+
+/**
+ * `Actor.solidRadius` — the radius an actor stops at against a STATIC solid, split
+ * off `footprintRadius` in ENGINE_VERSION 43 (live report: *"角色走到墙角的时候，太靠墙
+ * 了，感觉陷进去了"*). These pin the DISTINCTION, not just the number: each one also
+ * asserts what the pre-v43 feet-circle answer would have been, so reverting the
+ * resolvers to `footprintRadius` fails here rather than silently re-shipping the bug.
+ */
+describe('MovementSystem — solidRadius vs footprintRadius against a solid (v43)', () => {
+  it('a player rests at its BODY radius from a wall face, not at its feet circle', () => {
+    // The character's rendered body is exactly `radius` × 2 wide (design/12's rig
+    // normalization), so this clearance is what puts its silhouette tangent to the
+    // wall instead of 9 px inside it.
+    const s = createGameState({ ...CFG, walls: [[780, 590, 15, 20]] as const }); // right edge 795px
+    const p = s.players[0]!;
+    expect(p.solidRadius).toBe(p.radius); // premise: the body radius IS the clearance
+    expect(p.solidRadius).toBeGreaterThan(p.footprintRadius); // and it is not the feet circle
+    new MovementSystem().tick(s);
+    const wallRight = addFp(pxToFp(780), pxToFp(15));
+    expect(p.gx).toBe(addFp(wallRight, p.solidRadius));
+    expect(p.gx).not.toBe(addFp(wallRight, p.footprintRadius)); // the pre-v43 resting place
+  });
+
+  it('a player rests at its body radius from a round pillar too — walls and pillars agree', () => {
+    const s = createGameState({ ...CFG, obstacles: [[790, 600, 30]] as const });
+    const p = s.players[0]!;
+    new MovementSystem().tick(s);
+    const dx = (p.gx - pxToFp(790)) as number;
+    expect(Math.abs(dx - ((p.solidRadius + pxToFp(30)) as number))).toBeLessThanOrEqual(2);
+    // Clear of the pre-v43 answer by the full 9 px the report was about.
+    expect(dx - ((p.footprintRadius + pxToFp(30)) as number)).toBeGreaterThan(pxToFp(8));
+  });
+
+  it('an ENEMY still rests at its feet circle — mob paths along a wall are unchanged from v42', () => {
+    const s = createGameState({ ...CFG, walls: [[780, 590, 15, 20]] as const });
+    s.players[0]!.gx = pxToFp(200); // out of the way — an actor↔actor push would mask the wall's
+    const e = buildEnemyActor(s, pxToFp(800), pxToFp(600));
+    s.enemies.push(e);
+    expect(e.solidRadius).toBe(e.footprintRadius); // premise: enemies opted out of the widening
+    new MovementSystem().tick(s);
+    const wallRight = addFp(pxToFp(780), pxToFp(15));
+    expect(e.gx).toBe(addFp(wallRight, e.footprintRadius));
+  });
+
+  it('actor↔actor push-out still uses the feet circle — a crowd is judged by feet, a wall by the body', () => {
+    // The whole point of the split: bodies overlapping each other is a crowd (kept),
+    // a body overlapping stone is a body sunk into it (fixed).
+    const s = createGameState(CFG);
+    const p = s.players[0]!;
+    const e = buildEnemyActor(s, addFp(p.gx, pxToFp(5)), p.gy);
+    s.enemies.push(e);
+    new MovementSystem().tick(s);
+    const dist = (e.gx - p.gx) as number;
+    expect(Math.abs(dist - ((p.footprintRadius + e.footprintRadius) as number))).toBeLessThanOrEqual(2);
+    expect(dist).toBeLessThan((p.solidRadius + e.solidRadius) as number); // NOT pushed to solid clearance
+  });
+});
+
+/**
+ * True when the actor's clearance circle actually PENETRATES the rect, as opposed to
+ * resting tangent to it. `circleOverlapsAabb` compares `<=`, so a circle touching a face
+ * counts as overlapping there — and tangent is exactly where the resolver leaves a body
+ * (`resolveWalls` bails on `distSq >= r * r`), which is why these assertions shave one
+ * fixed-point unit off the radius instead of asking for no overlap at all.
+ */
+function penetrates(gx: Fp, gy: Fp, r: Fp, rect: AABB): boolean {
+  return circleOverlapsAabb(gx, gy, (r - 1) as Fp, rect);
+}
+
+/**
+ * The same clearance, exercised as BEHAVIOUR rather than as a resting coordinate: every
+ * face of a wall, the corner the report was actually about, a door the player still has to
+ * fit through, and the two ways a body can be shoved at a wall by something other than its
+ * own input (knockback, and another actor). All of these were reachable before v43 and none
+ * had a test — the widened clearance is only safe if it holds on every side and wedges
+ * nothing shut.
+ */
+describe('MovementSystem — solid clearance, all four faces (v43)', () => {
+  // One 3x3-grid block in the middle of the world; the player starts 2 px inside each face
+  // in turn, which is deep enough to overlap at either clearance, so each case would pass
+  // at the old 7 px too — what it pins is WHERE the actor comes to rest.
+  const BLOCK = [[700, 500, 96, 96]] as const; // px: x 700..796, y 500..596
+  const faces = [
+    { name: 'east face (approached from the right)', from: [798, 548], axis: 'x', rest: 796 + 16 },
+    { name: 'west face (approached from the left)', from: [698, 548], axis: 'x', rest: 700 - 16 },
+    { name: 'south face (approached from below)', from: [748, 598], axis: 'y', rest: 596 + 16 },
+    { name: 'north face (approached from above)', from: [748, 498], axis: 'y', rest: 500 - 16 },
+  ] as const;
+
+  for (const f of faces) {
+    it(`rests exactly one body radius off the ${f.name}`, () => {
+      const s = createGameState({ ...CFG, walls: BLOCK });
+      const p = s.players[0]!;
+      p.gx = pxToFp(f.from[0]);
+      p.gy = pxToFp(f.from[1]);
+      new MovementSystem().tick(s);
+      const moved = f.axis === 'x' ? p.gx : p.gy;
+      const still = f.axis === 'x' ? p.gy : p.gx;
+      expect(moved).toBe(pxToFp(f.rest));
+      expect(still).toBe(pxToFp(f.axis === 'x' ? f.from[1] : f.from[0])); // push was purely along one axis
+      // And the resting circle really is out of the wall, by the geometry the sim's own
+      // overlap test uses — not just at the number this test computed.
+      expect(penetrates(p.gx, p.gy, p.solidRadius, s.walls[0]!)).toBe(false);
+    });
+  }
+
+  it('leaves an actor already resting at its clearance untouched — no jitter against a wall', () => {
+    // A resting player is re-resolved every tick forever; a resolver that overshoots by a
+    // fixed-point rounding unit would creep along the wall for as long as you stand there.
+    const s = createGameState({ ...CFG, walls: BLOCK });
+    const p = s.players[0]!;
+    p.gx = pxToFp(796 + 16);
+    p.gy = pxToFp(548);
+    const mv = new MovementSystem();
+    for (let i = 0; i < 30; i++) mv.tick(s);
+    expect(p.gx).toBe(pxToFp(796 + 16));
+    expect(p.gy).toBe(pxToFp(548));
+  });
+
+  it('a diagonal shove into an inside CORNER ends clear of both walls — the reported case', () => {
+    // Two walls meeting in an L, player driven at the corner point itself. This is the
+    // configuration in the 2026-08-19 report's screenshot (a wall's end, a floor, and the
+    // character wedged into the join), and the case where a single-axis resolver would leave
+    // the body inside the other wall.
+    const s = createGameState({
+      ...CFG,
+      walls: [[700, 500, 96, 300], [700, 500, 300, 96]] as const, // vertical + horizontal arm
+    });
+    const p = s.players[0]!;
+    p.gx = pxToFp(800); // just outside the corner point (796, 596), diagonally
+    p.gy = pxToFp(600);
+    const mv = new MovementSystem();
+    for (let i = 0; i < 5; i++) mv.tick(s); // let both resolvers settle
+    for (const w of s.walls) {
+      expect(penetrates(p.gx, p.gy, p.solidRadius, w)).toBe(false);
+    }
+  });
+
+  it('still fits through a 2-grid door gap at the wider clearance (no wedged level)', () => {
+    // Level 1's narrowest authored passage is 2 grid = 64 px (every `world/dungeons/ember/`
+    // door). The player is 32 px wide against walls after v43, so this is the navigational
+    // guard the whole change rides on — walk one through, don't just measure it.
+    const s = createGameState({
+      ...CFG,
+      walls: [[0, 600, 780, 32], [844, 600, 756, 32]] as const, // gap: x 780..844 (64 px)
+    });
+    const p = s.players[0]!;
+    p.gx = pxToFp(812); // gap centre
+    p.gy = pxToFp(560); // north of the wall
+    const mv = new MovementSystem();
+    for (let i = 0; i < 40; i++) {
+      p.vy = pxToFp(4) as Fp; // a steady walk south, re-applied each tick (no ApplyInput here)
+      mv.tick(s);
+    }
+    expect(p.gy).toBeGreaterThan(pxToFp(632 + 16)); // through, and clear of the far side
+    expect(p.gx).toBe(pxToFp(812)); // straight through the middle — never squeezed sideways
+  });
+
+  it('even a 1-grid gap still passes — squeezed onto its centre line, not wedged shut', () => {
+    // The tightest gap the change could plausibly have closed: 32 px of gap against a
+    // now-32 px-wide player. It still passes, because both resolvers bail on tangency
+    // (`distSq >= r * r`) — and the two walls push the body onto the gap's centre line on
+    // the way through, which is the property worth pinning: entering OFF-centre does not
+    // stick. Written after the run disagreed with the guess that this would wedge.
+    const s = createGameState({
+      ...CFG,
+      walls: [[0, 600, 796, 32], [828, 600, 772, 32]] as const, // gap: x 796..828 (32 px)
+    });
+    const p = s.players[0]!;
+    p.gx = pxToFp(800); // deliberately 12 px off the centre line
+    p.gy = pxToFp(560);
+    const mv = new MovementSystem();
+    for (let i = 0; i < 40; i++) {
+      p.vy = pxToFp(4) as Fp;
+      mv.tick(s);
+    }
+    expect(p.gy).toBeGreaterThan(pxToFp(632 + 16)); // through
+    expect(p.gx).toBe(pxToFp(812)); // and centred by the two walls, from an off-centre entry
+  });
+
+  it('knockback cannot shove a body inside a wall — the push-out runs after the impulse', () => {
+    const s = createGameState({ ...CFG, walls: [[810, 500, 96, 200]] as const });
+    const p = s.players[0]!;
+    p.gx = pxToFp(780);
+    p.gy = pxToFp(560);
+    p.knockVx = pxToFp(60) as Fp; // far more than the gap to the wall
+    new MovementSystem().tick(s);
+    expect(p.gx).toBe(pxToFp(810 - 16));
+    expect(penetrates(p.gx, p.gy, p.solidRadius, s.walls[0]!)).toBe(false);
+  });
+
+  it('an actor↔actor push cannot leave a player inside a wall either (order of resolvers)', () => {
+    // Actor pairs resolve AFTER solids, so a mob pressing a player into a wall can end the
+    // tick with the player overlapping stone. Pinned as the CURRENT behaviour with the
+    // amount bounded: at worst half the pair's penetration, never a free pass through.
+    const s = createGameState({ ...CFG, walls: [[810, 500, 96, 200]] as const });
+    const p = s.players[0]!;
+    p.gx = pxToFp(810 - 16); // already resting against the wall
+    p.gy = pxToFp(560);
+    const e = buildEnemyActor(s, pxToFp(810 - 16 - 5), pxToFp(560)); // shoving from the west
+    s.enemies.push(e);
+    new MovementSystem().tick(s);
+    const intrusion = (p.gx - pxToFp(810 - 16)) as number;
+    expect(intrusion).toBeGreaterThanOrEqual(0); // pushed east, into the wall's direction
+    expect(intrusion).toBeLessThan(p.solidRadius as number); // but never past its own clearance
+  });
+});

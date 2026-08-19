@@ -28,6 +28,8 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { Texture } from 'pixi.js';
+import { PLAYER_BASE } from '@dd/engine';
+import { fpToPx } from '../game/coords';
 import { RIG_DEFS } from './skinRegistry';
 import { RigSkin } from './RigSkin';
 import { deserializeClip, type AnimationJson } from './taoBundle';
@@ -263,5 +265,42 @@ describe('rig composition — a mounted weapon module reads as a module against 
   it('the proportion factor is applied uniformly — no per-weapon exception can drift in', () => {
     expect(MODULE_SCALE).toBeGreaterThan(0);
     expect(MODULE_SCALE).toBeLessThanOrEqual(1);
+  });
+});
+
+/**
+ * The cross-layer invariant the 2026-08-19 report was actually about: the sim's wall
+ * clearance has to be at least as wide as the body the renderer draws, or the character's
+ * silhouette ends up inside the wall it is standing against (`ENGINE_VERSION` 43,
+ * `Actor.solidRadius`). Every other check in this file compares the rig against itself;
+ * this one compares the shipped rig against a number that lives in the ENGINE, which is the
+ * seam the bug actually lived in — the 7 px feet circle was authored before the real 32 px
+ * art existed and stayed plausible-looking in both files separately for weeks.
+ *
+ * Failing here means one of two edits happened without the other: the rig art (or its
+ * reference radius) grew, or the clearance shrank.
+ */
+describe('rig composition — the drawn body fits inside the sim\'s wall clearance (v43)', () => {
+  const CHARACTERS = BUNDLES.filter(b => b.name.startsWith('char_'));
+
+  it('every playable character bundle is covered here', () => {
+    expect(CHARACTERS.length).toBeGreaterThanOrEqual(3); // vanguard / skirmisher / juggernaut
+  });
+
+  it.each(CHARACTERS)('$name\'s body half-width never exceeds PLAYER_BASE.solidRadius', ({ name, dir }) => {
+    const a = load(name, dir);
+    // What Skin.ts does: normalize the rig's authoring px to the actor's gameplay radius
+    // (`rigScale = radius / referenceRadius`), so this is the body's real on-screen half
+    // width in WORLD px — the same unit the engine's radii are in once out of fixed point.
+    const bodyPx = fpToPx(PLAYER_BASE.radius);
+    const halfWidthWorldPx = a.bodyR * (bodyPx / RIG_DEFS[name].referenceRadius);
+    expect(halfWidthWorldPx).toBeLessThanOrEqual(fpToPx(PLAYER_BASE.solidRadius));
+  });
+
+  it('and the clearance is not wastefully wider than the body either', () => {
+    // The other direction is a real failure mode too: a clearance well past the silhouette
+    // reads as the character being held off the wall by an invisible cushion, which is the
+    // opposite complaint. Tangent is the target — one body radius, no more.
+    expect(fpToPx(PLAYER_BASE.solidRadius)).toBeLessThanOrEqual(fpToPx(PLAYER_BASE.radius) * 1.1);
   });
 });

@@ -343,6 +343,7 @@ export class GameState {
       ticksSinceHit: 0,
       radius: PLAYER_BASE.radius,
       footprintRadius: PLAYER_BASE.footprintRadius,
+      solidRadius: PLAYER_BASE.solidRadius,
       alive: true,
       weapon: weapons[0] ?? null, // active pointer = weapons[activeSlot]
       weapons,

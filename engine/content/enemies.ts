@@ -264,6 +264,13 @@ export function buildEnemyActor(state: GameState, gx: Fp, gy: Fp, type?: string)
     ticksSinceHit: 0,
     radius: bp.radius,
     footprintRadius: bp.footprintRadius,
+    // Enemies keep the feet circle against solids too — deliberately NOT the body
+    // radius the player now uses (PLAYER_BASE.solidRadius). Widening a mob's wall
+    // clearance moves every chase path that hugs a wall, which is a balance change
+    // to a level whose garrisons were measured against the current paths
+    // (`client/sim/pveLevelSim.sim.ts`), and no report has ever been about a mob
+    // looking sunk into stone — the player's own body is the one the camera sits on.
+    solidRadius: bp.footprintRadius,
     alive: true,
     weapon,
     firing: false,

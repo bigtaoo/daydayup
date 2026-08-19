@@ -18,7 +18,7 @@ function enemyOnPlayer(s: GameState, over: Partial<EnemyActor> = {}): EnemyActor
     knockVx: toFp(0), knockVy: toFp(0),
     facing: 0 as Brad, hp: BASIC_ENEMY.maxHp, maxHp: BASIC_ENEMY.maxHp,
     shield: 0, maxShield: 0, ticksSinceHit: 0,
-    radius: BASIC_ENEMY.radius, footprintRadius: BASIC_ENEMY.footprintRadius,
+    radius: BASIC_ENEMY.radius, footprintRadius: BASIC_ENEMY.footprintRadius, solidRadius: BASIC_ENEMY.footprintRadius,
     alive: true, weapon: null, firing: false, status: freshStatus(), enraged: false, aggroed: false,
     ...over,
   };

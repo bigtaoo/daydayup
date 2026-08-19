@@ -186,11 +186,17 @@ export interface Actor {
   // takeDamage. Gates shield regen: refill only after SHIELD_REGEN_DELAY idle ticks.
   ticksSinceHit: number;
   radius: Fp; // body circle — bullet/melee hit target and sprite size
-  // Ground-plane collision footprint (feet), used only for actor↔solid push-out
-  // (MovementSystem). Smaller than `radius` so the tall sprite can overlap a solid
-  // it stands against — the fake-3D depth trick (design/01/07). Bullets/melee still
-  // use `radius`, so being shot still targets the whole visible body.
+  // Ground-plane collision footprint (feet), used for actor↔ACTOR push-out
+  // (MovementSystem). Smaller than `radius` so two bodies may visually overlap
+  // where their feet don't — the fake-3D depth trick (design/01/07). Bullets/melee
+  // still use `radius`, so being shot still targets the whole visible body.
   footprintRadius: Fp;
+  // Ground-plane radius used against STATIC solids only — walls and pillars
+  // (MovementSystem.resolveWalls/resolveObstacles). Separate from `footprintRadius`
+  // because the two overlaps read differently on screen: a body overlapping another
+  // body is a crowd, while a body overlapping a wall is a body sunk INTO the wall.
+  // See PLAYER_BASE.solidRadius (content/players.ts) for the full account.
+  solidRadius: Fp;
   alive: boolean;
   weapon: WeaponState | null;
   firing: boolean; // intent this tick (ApplyInput / AIDecide → WeaponFire)

@@ -4,6 +4,7 @@ import { pxToFp } from '@dd/engine/content/convert';
 import { PVP_SCALE_FACTOR } from '@dd/engine/balance/build';
 import { BLASTER_SIM } from '@dd/engine/content/weapons';
 import { SKIN_DEFS, DEFAULT_SKIN_ID } from '@dd/engine/content/skins';
+import { PLAYER_BASE } from '@dd/engine/content/players';
 import type { ArenaMap } from '@dd/engine/content/arenas';
 
 const CONFIG = {
@@ -23,6 +24,13 @@ describe('GameState (plain data, design/08 schema)', () => {
     expect(s.players[0]!.gy).toBe(pxToFp(600));
     expect(s.players[0]!.weapon?.spec.kind).toBe('ranged');
     expect(s.enemies).toHaveLength(0);
+  });
+
+  it('the spawned player carries all three PLAYER_BASE radii (ENGINE_VERSION 43)', () => {
+    const p = createGameState(CONFIG).players[0]!;
+    expect(p.radius).toBe(PLAYER_BASE.radius);
+    expect(p.footprintRadius).toBe(PLAYER_BASE.footprintRadius);
+    expect(p.solidRadius).toBe(PLAYER_BASE.solidRadius); // the wall clearance, not the feet circle
   });
 
   it('nextId() is state-local and monotonic (no module global)', () => {
@@ -80,6 +88,20 @@ describe('GameState.buildSeat — buildArenaSpecs wiring (design/15, ROADMAP 4.2
     });
     const juggernaut = SKIN_DEFS['juggernaut']!;
     expect(s.players[0]!.maxHp).toBe(Math.round(juggernaut.maxHp * PVP_SCALE_FACTOR));
+  });
+
+  it('an arena seat carries PLAYER_BASE.solidRadius too — PvP walls are hugged like PvE ones', () => {
+    // buildSeat is the ONLY place a PlayerActor is constructed, for both modes, but an
+    // arena seat re-derives most of its stats through buildArenaSpecs — this pins that the
+    // v43 clearance rides the shared path rather than the PvE-only branch.
+    const s = createGameState({
+      seed: 1, worldW: 0, worldH: 0, waves: [], arena: MINI_MAP,
+      players: [{ teamId: 0 }, { teamId: 1 }],
+    });
+    for (const p of s.players) {
+      expect(p.solidRadius).toBe(PLAYER_BASE.solidRadius);
+      expect(p.footprintRadius).toBe(PLAYER_BASE.footprintRadius); // and the feet circle is untouched
+    }
   });
 
   it('a non-arena config is completely unaffected — plain unscaled SkinDef stats + real loadout', () => {

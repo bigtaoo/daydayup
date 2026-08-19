@@ -36,7 +36,7 @@ function addEnemy(s: GameState, xpx: number, ypx: number, hp: number = BASIC_ENE
     knockVx: toFp(0), knockVy: toFp(0),
     facing: 0 as Brad, hp, maxHp: BASIC_ENEMY.maxHp, shield: 0, maxShield: 0,
     ticksSinceHit: 0, radius: BASIC_ENEMY.radius,
-    footprintRadius: BASIC_ENEMY.footprintRadius,
+    footprintRadius: BASIC_ENEMY.footprintRadius, solidRadius: BASIC_ENEMY.footprintRadius,
     alive: true, weapon: null, firing: false, status: freshStatus(), enraged: false, aggroed: false,
   };
   s.enemies.push(e);
@@ -71,7 +71,7 @@ describe('MovementSystem (step 4)', () => {
     new MovementSystem().tick(s);
     const dx = p.gx - pxToFp(790);
     const dy = p.gy - pxToFp(600);
-    const minDist = (p.footprintRadius + pxToFp(30)) as number; // feet, not body radius
+    const minDist = (p.solidRadius + pxToFp(30)) as number; // solid clearance (v43), not the feet circle
     // Pushed out along +x (away from the solid centre) to just-touching (±rounding).
     expect(dx).toBeGreaterThan(0);
     expect(Math.abs(dy)).toBeLessThan(2);
@@ -82,7 +82,7 @@ describe('MovementSystem (step 4)', () => {
     const s = createGameState({ ...CFG, obstacles: [[800, 600, 30]] as const });
     const p = s.players[0]!; // spawns exactly on the solid centre
     new MovementSystem().tick(s);
-    expect(p.gx).toBe(addFp(pxToFp(800), (p.footprintRadius + pxToFp(30)) as Fp));
+    expect(p.gx).toBe(addFp(pxToFp(800), (p.solidRadius + pxToFp(30)) as Fp));
     expect(p.gy).toBe(pxToFp(600));
   });
 

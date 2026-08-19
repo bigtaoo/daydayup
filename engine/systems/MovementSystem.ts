@@ -83,12 +83,13 @@ export class MovementSystem {
    * Iterated in fixed array order — deterministic when solids overlap.
    */
   private resolveObstacles(state: GameState, a: Actor): void {
-    for (const idx of state.spatialIndex.queryObstacles(a.gx, a.gy, a.footprintRadius)) {
+    for (const idx of state.spatialIndex.queryObstacles(a.gx, a.gy, a.solidRadius)) {
       const o = state.obstacles[idx]!;
       const dx = a.gx - o.gx;
       const dy = a.gy - o.gy;
-      // Feet footprint, not the full body — lets the tall sprite overlap the solid.
-      const minDist = a.footprintRadius + o.radius;
+      // `solidRadius`, not the feet circle — see Actor.solidRadius (v43): overlapping
+      // a solid reads as sinking into it, where overlapping another body reads as a crowd.
+      const minDist = a.solidRadius + o.radius;
       const distSq = dx * dx + dy * dy;
       if (distSq >= minDist * minDist) continue; // no overlap
       const dist = isqrt(distSq);
@@ -106,7 +107,7 @@ export class MovementSystem {
   }
 
   /**
-   * Push the actor's feet footprint out of any overlapping AABB wall (design/07/09,
+   * Push the actor's `solidRadius` circle out of any overlapping AABB wall (design/07/09,
    * ROADMAP 1.2 — the "axis-separation push" deferred alongside RoomState). Two
    * cases, matching standard circle-vs-rect resolution:
    *   - centre outside the rect: push along the normal to the nearest edge point,
@@ -117,9 +118,9 @@ export class MovementSystem {
    *     client picks the same edge (mirrors the round-pillar concentric-overlap rule).
    */
   private resolveWalls(state: GameState, a: Actor): void {
-    for (const idx of state.spatialIndex.queryWalls(a.gx, a.gy, a.footprintRadius)) {
+    for (const idx of state.spatialIndex.queryWalls(a.gx, a.gy, a.solidRadius)) {
       const w = state.walls[idx]!;
-      const r = a.footprintRadius;
+      const r = a.solidRadius;
       const right = (w.x + w.w) as Fp;
       const bottom = (w.y + w.h) as Fp;
       const closestX = Math.max(w.x, Math.min(a.gx, right)) as Fp;
@@ -151,8 +152,10 @@ export class MovementSystem {
   /**
    * Push overlapping actors apart from EACH OTHER (design/07 step 4.3, the
    * "still deferred" half — every actor↔solid case above shipped earlier). Circle
-   * (`footprintRadius`, feet — same convention as actor↔solid, not the body
-   * `radius`) vs circle, half the penetration to each side (funny's `subFp(subFp(
+   * (`footprintRadius`, the feet — deliberately NOT the `solidRadius` the two
+   * resolvers above use, and not the body `radius`; see Actor.solidRadius for why
+   * the two overlaps are judged differently) vs circle, half the penetration to
+   * each side (funny's `subFp(subFp(
    * other − rOther), (self + rSelf))` mapped onto two movers instead of one mover
    * + a static solid). EVERY alive pair pushes apart, with no faction exception.
    *

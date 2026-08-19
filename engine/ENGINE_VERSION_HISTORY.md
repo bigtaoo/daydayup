@@ -714,3 +714,47 @@ all. Downstream `combatPrng` draws shift in time with the shots they gate. Any
 v41 PvE stream with more than one enemy diverges. PvP arenas are unaffected in
 practice: they carry no `EnemyActor`s, and the push-out change only removes an
 enemy-only exception.
+
+v43: the player stops at its own body radius against a wall or a pillar, from a
+live play report with two screenshots attached (2026-08-19): "目前角色走到墙角的
+时候，太靠墙了，感觉陷进去了" — walk into a corner and the character reads as
+embedded in the stone rather than standing beside it.
+
+  - **`Actor.solidRadius`** (new field), used by `MovementSystem.resolveWalls`
+    and `resolveObstacles` in place of `footprintRadius`. `footprintRadius`
+    keeps its old job — actor↔ACTOR push-out — and its old value everywhere.
+    `PLAYER_BASE.solidRadius` is 16 px (the body radius, `PLAYER_BASE.radius`);
+    every enemy's is its own `footprintRadius`, i.e. mobs are byte-identical to
+    v42 in isolation.
+
+    Why the split rather than one radius: the feet circle exists so a tall
+    sprite may overlap what it stands against, which is a real depth cue between
+    two BODIES and reads as a crowd. Against a standing wall it reads as the
+    opposite — the rendered body is exactly 32 px wide (`radius` x 2; the rig is
+    normalized to that, design/12), so a 7 px feet circle let 9 px of the
+    silhouette sit inside the wall's own art. Matching the body radius puts the
+    silhouette tangent to the wall: still "against it", never inside it. The
+    depth cue survives on the north/south sides regardless, because the body
+    floats 4-36 px above its ground point (the rig's own hover) and still
+    overlaps most of a standing wall face at this clearance.
+
+    Level-1 geometry has room for it: every door passage is 2 grid (64 px) wide
+    and every authored interior block stands clear of its neighbours, against a
+    player diameter that goes 14 -> 32 px.
+
+Coverage: 33 tests across four layers (`engine/systems/rooms.test.ts` for the
+resolvers' behaviour on every wall face + the corner/door/knockback cases,
+`engine/content/players.test.ts` + `enemies.test.ts` for the content invariants
+and the enemy opt-out over every blueprint, `engine/state/GameState.test.ts` for
+both seat-construction paths, and `client/src/render/rigComposition.test.ts` for
+the cross-layer invariant the bug lived in — the drawn body's half-width, from
+the real shipped bundle, against `PLAYER_BASE.solidRadius`). Mutation counts:
+reverting the resolvers fails 13, reverting the 16 px value fails 12 engine + 3
+client, letting enemies opt in fails 3.
+
+Replay impact: any v42 stream where a player touched a wall or a pillar
+diverges from that tick — the resting position against a solid moves out by 9 px
+— and every downstream `combatPrng` draw shifts with the shots it gates. A
+stream where no player ever touched a solid is unaffected in principle, but
+`ReplayInputSource` refuses the version outright either way. Enemy-only
+behaviour is unchanged, as is actor-vs-actor push-out for every faction.

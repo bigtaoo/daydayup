@@ -38,7 +38,7 @@ function addPlayer(s: GameState, xpx: number, ypx: number): PlayerActor {
     gx: pxToFp(xpx), gy: pxToFp(ypx), z: toFp(0), vx: toFp(0), vy: toFp(0),
     knockVx: toFp(0), knockVy: toFp(0),
     facing: 0 as Brad, hp: 6, maxHp: 6, shield: 0, maxShield: 0, ticksSinceHit: 0,
-    radius: PLAYER_BASE.radius, footprintRadius: PLAYER_BASE.footprintRadius,
+    radius: PLAYER_BASE.radius, footprintRadius: PLAYER_BASE.footprintRadius, solidRadius: PLAYER_BASE.solidRadius,
     alive: true, weapon: w, weapons: [w], activeSlot: 0, buffs: [],
     firing: false, interacting: false, pickupTargetId: 0, confirmExtract: false, confirmDescend: false,
     downed: false, bleedoutTicks: 0, reviveProgressTicks: 0,
@@ -55,7 +55,7 @@ function addEnemy(s: GameState, xpx: number, ypx: number): EnemyActor {
     knockVx: toFp(0), knockVy: toFp(0),
     facing: 0 as Brad, hp: BASIC_ENEMY.maxHp, maxHp: BASIC_ENEMY.maxHp,
     shield: 0, maxShield: 0, ticksSinceHit: 0,
-    radius: BASIC_ENEMY.radius, footprintRadius: BASIC_ENEMY.footprintRadius,
+    radius: BASIC_ENEMY.radius, footprintRadius: BASIC_ENEMY.footprintRadius, solidRadius: BASIC_ENEMY.footprintRadius,
     alive: true, weapon: null, firing: false, status: freshStatus(), enraged: false, aggroed: false,
   };
   s.enemies.push(e);
