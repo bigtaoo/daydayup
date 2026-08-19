@@ -194,10 +194,14 @@ stray lit coping bar that made north-south runs look broken).
   at every door. Flagged 2026-08-17, still the user's call.
 - **The back set beyond the eye** (`shell__back`, belly treatment) — 1–2 PNGs per character,
   zero code; deliberately deferred until the tracking eye above has been played with.
-- **`LIT_WALLS` on a real phone.** The stone-relief filter is one render-target pass per wall
-  segment (~10-25 per room). Fine on desktop, unmeasured on WeChat/mobile — `RoomBuilder`'s
-  `LIT_WALLS` constant exists so this can be answered with a flag flip once 5.5's hardware
-  verification is unblocked. The hand-authored cap/face/side tints carry the volume without it.
+- ~~**`LIT_WALLS` on a real phone.**~~ **Answered 2026-08-19, and not the way this expected:** the
+  question was whether mobile could afford the stone-relief filter's render-target pass per wall
+  segment. Measured on DESKTOP first, it turns out to be *invisible* — a whole-frame A/B with every
+  wall filter stripped differs by a mean of 0.06% — so there is nothing to afford. `LIT_WALLS` is
+  false everywhere and the device question is moot. What remains open is a different one: whether
+  `WALL_LIT_*` can be re-tuned to a visible amplitude that does not also make a wall darker than its
+  own floor (the constraint that flattened it in the first place). The relief the walls have now is
+  free, from `wallTone.ts`.
 - **The biome palette's non-fallback uses.** `13`'s note now says the palette is the no-art
   fallback, and pillars were moved off it — but `palette.ground`/`gridLine`/`void` are still
   live for the backdrop and the grid, and their ember hues are the same pre-art mauve. Nothing
@@ -239,7 +243,8 @@ despite `01` calling it "the cheapest 3D cheat"; and a **dark** silhouette inste
 wireframe box over the art. Plus an optional per-stone `NormalLitFilter` tuned for stone rather
 than for a character (`WALL_LIT_*` — gentler gradient gain, and an ambient above `1 − key` so
 the cap brightens instead of the wall going darker than its own floor), behind a single
-`LIT_WALLS` switch.
+`LIT_WALLS` switch — **turned off 2026-08-19 after measuring it at a 0.06% mean frame difference**;
+see the entry below.
 
 **Pillars, twice.** Once the walls read as stone, the pillars were the worst thing in the frame:
 flat fills from `palette.pillar`/`palette.pillarTop`, which are pre-real-art **fallback** hues —
@@ -308,6 +313,141 @@ the tool-result overflow file and read back as an image. That gives a whole-floo
 resolution with no camera ambiguity, and it is a better diagnostic than a viewport screenshot
 would have been.
 
+
+## Volume, measured: the numbers behind the two passes above (2026-08-19, render-only)
+
+The user asked how the art plan was doing and what optimization space was left in the two areas
+the passes above had touched — *"现在角色和墙的立体感出来了，后期加点细微的优化应该差不多了。你看看
+这两方面还有哪些优化空间"* — then, on the answer, *"全部改"*. **Render-only, no `ENGINE_VERSION`
+impact.**
+
+**The method is the finding.** Both passes above were tuned by looking at renders, and both left
+real defects that looking cannot catch. This one started by *measuring* a frame:
+`renderer.extract` on `layers.world` at zoom 1, then sampling per wall entity using the geometry
+the renderer itself had just used (the cap/face sprites' own y and height) rather than coordinates
+guessed from the level data — a first attempt that guessed them produced confidently wrong readings
+for half an hour, because a block's cap sits `height + depth` px above its own footprint and the
+extract canvas's origin is the world container's *bounds*, which start at negative y precisely
+because the walls now stand. With honest numbers, the headline was one line long:
+
+| surface                | was | now   |
+|------------------------|-----|-------|
+| pillar top             | 105 | 92    |
+| wall cap               |  44 | 76-88 |
+| **floor**              |  53 | 39-49 |
+| wall face, upper       |  23 | 31-41 |
+| wall face, at the base |  14 | 14-25 |
+| east side band         | 4-6 | 20-28 |
+
+**A surface raised 104 px above the ground was measurably darker than the ground it stands on.**
+Every cue the previous pass added — the silhouette, the faked side, the cast shadow — was arguing
+against the single most basic reading anyone has for height, and losing. It also explains why a
+north-south run was always the worst case: 100% of what you see of one IS its cap, so a run was a
+floor-value ribbon on a floor-value floor. The previous tuning got there honestly, from a belief
+measurement removed — that the cap swatch is "light grey stone" and the face swatch "dark charcoal
+brick", so all of its effort went into separating the two from *each other* (cap 0.95, face 0.5).
+In fact both swatches sit near 46, and the pair was being separated around the wrong midpoint.
+
+**Walls.** Tuning moved to its own `scene/wallTone.ts` (numbers only — no Pixi, no geometry — so
+`wallRender.ts` and the newly-split `pillarRender.ts` can share it without importing each other,
+which would be a cycle). The cap's key light is **additive**, not a white wash: a wash reaches the
+same value but is a lerp toward white, so it also compresses the swatch's own contrast by its alpha
+— and at play scale a wall cap is nothing *but* that contrast, so the first version measured on
+target and looked like brushed concrete. The face swatch's own lit **coping course** measured as
+bright as the cap above it (a vertical surface out-shining the horizontal one it meets, which puts
+the wall's brightest band halfway down its front and stops the fold reading), and a uniform tint
+cannot fix that — the art's internal range is ~5:1, so any multiply that tames the coping crushes
+the brick — so it takes a local ramp over the top 22%. The cap's depth gradient is now bounded to
+90 px of the fold, since a north-south run's cap *depth is its length* and spreading the ramp over
+450 px turned it into a gradient painted down a beam. `LIT_WALLS` went **false**: an A/B of the
+live frame with every wall filter stripped differs by a mean of **0.48 out of 765 (0.06%)**, max
+5%, with 0.05% of pixels moving more than 5/255 — 10-32 render-target passes per room for nothing.
+And `GameLoop.cameraFrame`'s `MAX_WALL_HEIGHT` extension turned out to have been **silently
+cancelled since the day it shipped**: `updateCamera` clamped the vertical pan to an upper bound of
+`0`, the world's own top edge, while a wall on the floor's northern boundary draws its cap at
+*negative* world y. Confirmed live (`layers.world.y === 0`, the room's north wall showing face
+only, no cap) and fixed by letting the frame set the bound.
+
+**One wall drawn twice.** A luminance scan across what looks like one thick wall crossed **two**
+32 px segments, each with its own lit west edge and dark east band — a bright/dark seam down the
+middle of a single stone mass, and one of the reasons a room still read as printed. The cause is
+content, not rendering: adjacent rooms each author their own perimeter wall, so a boundary is two
+parallel rects. New pure module `scene/wallRuns.ts` merges any two whose union is *exactly* a
+rectangle, iterating to a fixed point (33 raw walls → 28 blocks on level 1), **same-tier only** —
+a room's south kerb and its neighbour's north perimeter wall are stacked adjacent rects of
+different tiers, and merging those would hand the kerb the taller height, reintroducing exactly the
+bug the kerb exists to prevent. `s.walls` is untouched, so collision is unaffected.
+
+**A room now has a centre and corners.** The floor measured 39-53 *everywhere* — every room, corner
+and centre alike — which is both why a floor of five rooms read as one sheet and why a black cast
+shadow on the near-black ember floor could only modulate it by 5%. `scene/roomLight.ts` is the
+cheap static half of design/01's parked lightmap milestone: concentric stroked rects fading in from
+each room's own bounds, on the ground layer, no light sources and no second render target.
+
+**The character had two numbers sized against art that had changed** — the same cross-layer shape
+as the `footprintRadius` bug fixed two days earlier, and neither visible in the source of either
+file. A bone's `bodyR` is a *declared* radius; decoding the shipped PNGs' alpha bounding boxes shows
+they paint **0.68-1.00** of it. Nothing in the rig is masked (deliberately — a mask per actor would
+be 30 stencil passes in a busy room), so the sphere shading, sized to `bodyR`, painted a hard-edged
+dark **disc** onto the background around `critter-core` (0.70) and a fainter halo outside the hero's
+white shell (0.81). An earlier session looked straight at that disc and wrote it down as an
+over-large ground shadow. Meanwhile the ground shadow itself was `radiusPx * 0.7`, one uniform fudge
+across a roster whose art fills between 0.68 and 1.00 — acceptable-looking on the hero, ~45% wider
+than the crystal on an enemy, which is what made it read as a black dinner plate. The measurement
+is now `skinRegistry.BODY_FILL`, and `rigComposition.test.ts` **re-decodes the real PNGs every run**
+(via the repo's own `tools/png-pipeline/pngCodec.mjs`) and fails if a number drifts from the pixels.
+
+**And the shading itself was rebuilt.** The four-arc terminator put its darkest band on the rim with
+hard angular cut-offs at each arc's ends — a smudge, not a turning surface — and its white specular
+was arithmetically a no-op over near-white flat-cel art. It is now a smooth chord-band ramp across
+the whole body with a **reflected-light rollback** keeping the outermost sliver brighter than the
+shadow core (the single change that most restores design/13's crisp silhouette), a warm wash for the
+lit side because hue is the only channel white art leaves available, an underside occlusion, and
+contact shades seating each orbiting module against the core. Every ramp in the pass — cap gradient,
+coping suppression, side shading, base crease, sphere ramp, room falloff, shadow rings — is built
+from **non-overlapping bands whose count follows from the largest alpha step the eye may not see**;
+stacked translucent shapes step in opacity and compound, which is what showed as five hard stripes
+across the coping when it borrowed the side shading's band count. The hover rose 3.5 → 6 px, since
+`3.5 x SHADOW_SLANT` is (1.5, 0.8) world px — under one screen pixel, i.e. the cue the hover table
+exists for was arithmetically invisible however carefully it was tuned. And
+`EnergyShieldFilter`'s rim band peaked **2.1 body radii** out, blanketing the floor around a
+shielded actor's feet with opaque cyan and hiding the shadow the rest of this work produces; pulled
+in to 1.2.
+
+**+129 tests (3319 → 3448), every one of them mutation-verified: 26 reverts of the shipped
+behaviour, 26 reds.** Three new pure modules with their own files (`wallRuns`, `roomLight`,
+`wallTone`) plus two splits under the 500-line convention (`pillarRender.ts` out of `wallRender.ts`,
+`rigTethers.ts` out of `RigSkin.ts` to make room), each with its own suite.
+
+The tests pin the things a hand-tuned constant can silently break, and several of them exist because
+writing them found something:
+
+- **The measured tonal ordering, asserted on the COMPOSITE** rather than on a tint — the cap's value
+  now comes from a tint *and* an additive term, so a test that reads only the tint would have gone
+  on passing through the whole inversion.
+- **Every mark's distance from the body centre, not its `bounds`.** Bounds are an axis-aligned box
+  and the shading ramp runs diagonally, so its extreme points sit at 45° where the box never
+  reaches: a first version of the containment test passed happily with the safety margin removed.
+  That was the one mutation that initially survived, and fixing the test is what closed it.
+- **Both directions of the tether memoization.** Counting strokes cannot tell "skipped the redraw"
+  from "cleared and rebuilt to the same count" — it takes a marker stroke left on the Graphics,
+  which `clear()` would remove.
+- **The kerb/perimeter merge that must never happen**, both as a `mergeWallRuns` unit and end-to-end
+  through `RoomBuilder.build`, plus area conservation on the merge that must.
+- **The hover producing an offset larger than a pixel at all** — the invariant the old 3.5 px value
+  failed on arithmetic rather than on taste.
+- **The shield ring's radius in BODY RADII**, derived from the shader source and `Actor`'s filter
+  area, so the number that ballooned to 2.1 cannot drift back silently.
+- **`BODY_FILL` against real decoded pixels**, which is what makes re-cropping a body texture a
+  test failure rather than a stale shadow.
+
+Writing them also turned up two real defects of its own: `updateModuleContacts` read a socket's pose
+without adding the clip's own `translate` (so a module the attack clip recoils would have left its
+contact shade behind — `computeFK` folds rotation into a bone's tip but not translation), and the
+shading's own margin was unpinned. `npm run check` green across all 7 workspaces; confirmed live in
+the real client over four render-look-fix rounds (28 wall blocks from 33 rects, 0 filters, a hero
+`bodyDrawnR` of 12.96 against a 16 px collision radius, the north wall's cap on screen for the first
+time, zero console errors).
 
 **Historical snapshot (2026-07-24), kept for context:** floors → checkpoint → extract-or-descend → bank, on a single-arena/wave geometry — menu/victory/defeat shell, waves, pickups, damage + elemental status + resist, deflect, one boss, plus the placeholder audio seam. Deterministic engine (fp/brad/PRNG/InputSource/replay) is in place. **Phase 0 (design↔code sync) is done through 0.7** — the engine matches the locked design: no affixes, intrinsic weapon rarity, run-buffs, two-pool shield health + regen + shield-break, characters = SkinDef (side-grade roster), and the design/09 pickup vocabulary (`heal`/`material`/`weapon`/`buff`). **Phase 1 (1.1–1.5) is done**: `spread`/`homing`/`lob`/`beam`/`boomerang` ballistics + melee `hammer`/`spear`; AABB tile/wall solids + the `RoomPiece` schema + seeded `generateFloor` (neither yet wired into a live floor transition — see the Phase 1 status note below); and a live, tested `EngineConfig.floors` → `ExtractionSystem` → materials-banking loop using the existing single-arena infrastructure. **`ENGINE_VERSION` is 17** (bumped for the orbit/radial frame finish, then for co-op downed/revive; every other Phase 1–2 item shipped additively — see `config.ts`'s version-history comment). **Phase 2 (meta loop) is done through 2.4** — forge, tier-gated crafting, the 3-character roster + balance suite, and monetization grant-scaffolding all ship. **Phase 3 (co-op & netcode) is done**: 3.2 (revive/downed + team-wipe) engine-side; **3.1 (the net layer) now spawns the 2nd player** (`EngineConfig.players`) + ships the frame-broadcast netcode (`@dd/engine/net` + the `server/` package + the client `CoopSession`), proven byte-for-byte by loopback tests; and **3.3 (the matchmaking/deployment control plane)** — a `matchsvc` HTTP service that pools players and issues **signed HMAC tickets** the gameserver verifies at `/ws`, plus a client `?online=1` path (matchmaking → ticket → `CoopSession`) browser-verified two-tab (two independent tabs matchmade into one room, byte-identical lockstep to a shared gameover tick). And **local-player prediction/reconcile smoothing shipped too** — a render-layer `LocalPredictor` (movement/aim, snap-vs-lerp) that hides RTT without touching the sim, browser-verified under a `?lag=` harness. All additive (no `ENGINE_VERSION` bump; still 17). **Phase 3 is fully closed** — no deferred co-op items remain (only local *firing* prediction is a documented non-goal, as it would need sim rollback design/06 rejects for casual/WeChat).
 

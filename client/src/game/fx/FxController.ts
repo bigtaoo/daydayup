@@ -191,8 +191,20 @@ export class FxController {
     // Look slightly ABOVE the follow target's feet so the character sits in the middle
     // of the frame rather than in its top half — see CAMERA_BODY_BIAS_R.
     const targetY = player.interpGroundY(alpha) - (vh * CAMERA_BODY_BIAS_R) / zoom;
+    // How far ABOVE world y=0 the camera may reveal (2026-08-19). `cy`'s upper bound used to
+    // be a flat 0 — the world's own top edge — which silently cancelled the whole reason
+    // `GameLoop.cameraFrame` extends its rect upward by MAX_WALL_HEIGHT: a standing wall on the
+    // FLOOR's northern boundary draws its cap and the top of its face at NEGATIVE world y, so
+    // the clamp pinned exactly that band off the top of the screen. Confirmed in a live frame
+    // (`layers.world.y === 0`, the room's north wall showing face only, no cap, top of the face
+    // cut) — the tallest wall in the room, and the player never saw where it ended. The frame is
+    // the authority on how much overscan it asked for, so this reads it back off `frame.y`
+    // rather than importing the wall height.
+    const overscanTop = frame ? Math.max(0, -frame.y) * zoom : 0;
     const cx = effW <= vw ? (vw - effW) / 2 : clamp(vw / 2 - player.interpGroundX(alpha) * zoom, vw - effW, 0);
-    const cy = effH <= vh ? (vh - effH) / 2 : clamp(vh / 2 - targetY * zoom, vh - effH, 0);
+    const cy = effH <= vh
+      ? (vh - effH) / 2
+      : clamp(vh / 2 - targetY * zoom, vh - effH, overscanTop);
 
     const shakeMag = this.shakeTrauma * this.shakeTrauma * MAX_SHAKE_PX;
     const shakeX = shakeMag > 0.05 ? (Math.random() * 2 - 1) * shakeMag : 0;

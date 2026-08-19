@@ -29,9 +29,15 @@ function fakeOrbCoreBundle(rig: Rig): RigSkinBundle {
   return { bindings, clips: new Map(), textures };
 }
 
+/** char_vanguard's measured body fill (`skinRegistry.BODY_FILL`) — the fraction of its
+ *  declared bodyR that the shell PNG actually paints. Restated here rather than imported
+ *  because this file MOCKS skinRegistry wholesale; `rigComposition.test.ts` is what pins the
+ *  real table against the real art. */
+const ORB_CORE_BODY_FILL = 0.81;
+
 function loadedOrbCoreRig(): LoadedRigSkin {
   const rig = new Rig(ORB_CORE_RIG);
-  return { rig, bundle: fakeOrbCoreBundle(rig), referenceRadius: ORB_CORE_REFERENCE_RADIUS };
+  return { rig, bundle: fakeOrbCoreBundle(rig), referenceRadius: ORB_CORE_REFERENCE_RADIUS, bodyFill: ORB_CORE_BODY_FILL };
 }
 
 // EnergyShieldFilter/OutlineFilter/DissolveFilter all build a real WebGL GlProgram at
@@ -820,5 +826,101 @@ describe('Actor.setStatus — the aura wraps a body in a tilted view', () => {
     three.setStatus({ ...freshStatus(), burnTicks: 5, chillTicks: 5, poison: [{ ticks: 5, dmg: 1 }] as never });
     expect(three.children[Child.StatusAura].getLocalBounds().width)
       .toBeGreaterThan(one.children[Child.StatusAura].getLocalBounds().width);
+  });
+});
+
+// The ground shadow's SIZE (2026-08-19 volume pass). It used to be `radiusPx * 0.7`, and both
+// halves of that were wrong at once: every rig's `referenceRadius` IS its body bone's `bodyR`,
+// so the gameplay radius already equals the rig's declared body radius — and the PNG bound to
+// that bone paints as little as 0.68 of it, differing per bundle. One uniform 0.7 across a
+// roster like that looked acceptable on the hero and made an enemy's shadow ~45% wider than the
+// crystal standing in it, which is why it read as a black dinner plate. Same class of
+// cross-layer mismatch as the `footprintRadius` bug fixed two days earlier: a number sized
+// against art that has since changed, invisible in the source of either file.
+describe('Actor — the ground shadow is sized from the DRAWN body, not the collision radius', () => {
+  /** The shadow's outermost ellipse radius, in world px. */
+  function shadowReach(a: Actor): number {
+    return a.shadow!.getLocalBounds().width / 2;
+  }
+
+  it('shrinks with the art\'s fill, not with the gameplay radius', () => {
+    // Two actors of the SAME collision radius whose bundles paint different shares of it must
+    // get different shadows. If this ever ties again, the number is back to describing a box.
+    skinRegistryMocks.loaded = { ...loadedOrbCoreRig(), bodyFill: 1 };
+    const full = shadowReach(new Actor('player', 20, undefined, false, 'char_vanguard'));
+    skinRegistryMocks.loaded = { ...loadedOrbCoreRig(), bodyFill: 0.7 };
+    const partial = shadowReach(new Actor('player', 20, undefined, false, 'char_vanguard'));
+    expect(partial).toBeLessThan(full);
+    expect(partial / full).toBeCloseTo(0.7, 2);
+  });
+
+  it('never lets the shadow run away from the silhouette it belongs to', () => {
+    // The plate. A shadow may reach a little past the body (a penumbra does) but not half again
+    // as far — measured, the old sizing put an enemy's at ~1.45x its own crystal.
+    for (const fill of [1, 0.81, 0.7, 0.68]) {
+      skinRegistryMocks.loaded = { ...loadedOrbCoreRig(), bodyFill: fill };
+      const a = new Actor('enemy', 20, undefined, false, 'char_vanguard');
+      const drawn = 20 * fill;
+      expect(shadowReach(a)).toBeLessThan(drawn * 1.4);
+      expect(shadowReach(a)).toBeGreaterThan(drawn * 0.8); // ...and it must still be a shadow
+    }
+  });
+
+  it('falls back to the full radius for the Graphics placeholder', () => {
+    skinRegistryMocks.loaded = undefined;
+    const a = new Actor('player', 20);
+    expect(shadowReach(a)).toBeGreaterThan(20); // the capsule IS one radius wide; a penumbra exceeds it
+    expect(shadowReach(a)).toBeLessThan(20 * 1.4);
+  });
+
+  it('keeps the project\'s one foreshortening, whatever the size', () => {
+    skinRegistryMocks.loaded = { ...loadedOrbCoreRig(), bodyFill: 0.7 };
+    const b = new Actor('player', 20, undefined, false, 'char_vanguard').shadow!.getLocalBounds();
+    expect(b.height / b.width).toBeCloseTo(SHADOW_SQUASH, 6);
+  });
+});
+
+describe('Actor — the hover has to be big enough to actually produce its own cue', () => {
+  it('displaces the shadow by more than a screen pixel at rest', () => {
+    // The lesson this pins: at the original base of 3.5 world px the offset was
+    // `3.5 x SHADOW_SLANT` = (1.5, 0.8) world px, i.e. under one screen pixel at a normal zoom.
+    // The whole HOVER table existed to make a shadow separate from its body and could not,
+    // however carefully its numbers were tuned — an arithmetic dead end, not a look problem.
+    skinRegistryMocks.loaded = { ...loadedOrbCoreRig(), bodyFill: 0.81 };
+    const a = new Actor('player', 20, undefined, false, 'char_vanguard');
+    a.pushState(500, 500, 0, 0);
+    a.snap();
+    a.interpolate(1, 0);
+    expect(a.shadow!.x - 500).toBeGreaterThan(2);
+    expect(a.shadow!.y - 500).toBeGreaterThan(1);
+  });
+
+  it('and by visibly more at the top of the bob than the bottom', () => {
+    skinRegistryMocks.loaded = { ...loadedOrbCoreRig(), bodyFill: 0.81 };
+    const a = new Actor('player', 20, undefined, false, 'char_vanguard');
+    a.pushState(0, 0, 0, 0);
+    a.snap();
+    const offsets: number[] = [];
+    const scales: number[] = [];
+    for (let i = 0; i < 40; i++) {
+      a.interpolate(1, 120);
+      offsets.push(a.shadow!.x);
+      scales.push(a.shadow!.scale.x);
+    }
+    // The offset and the size have to disagree across the cycle: rising slides the shadow out
+    // AND tightens it. One without the other reads as the shadow pulsing in place.
+    expect(Math.max(...offsets) - Math.min(...offsets)).toBeGreaterThan(1);
+    expect(Math.max(...scales) - Math.min(...scales)).toBeGreaterThan(0.05);
+  });
+
+  it('still keeps a grounded archetype flat on the floor, shadow undisplaced', () => {
+    skinRegistryMocks.loaded = undefined;
+    const critter = new Actor('enemy', 14, undefined, false, 'critter-core');
+    critter.pushState(300, 300, 0, 0);
+    critter.snap();
+    critter.interpolate(1, 250);
+    expect(critter.shadow!.x).toBe(300);
+    expect(critter.shadow!.y).toBe(300);
+    expect(critter.shadow!.scale.x).toBe(1);
   });
 });

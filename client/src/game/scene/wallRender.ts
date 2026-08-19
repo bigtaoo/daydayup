@@ -1,7 +1,9 @@
 // Split out of RoomBuilder (2026-08-18, 500-line convention + separation of concerns): how a
-// standing wall is DRAWN. `wallGeometry.ts` decides how tall each segment is; this file turns
-// one footprint + height into the extruded block Entity and the shadow it throws on the
-// floor. Free functions over a Graphics/Entity — no scene state, no room model.
+// standing wall is DRAWN. `wallGeometry.ts` decides how tall each segment is, `wallRuns.ts`
+// which footprints are one mass; this file turns one footprint + height into the extruded
+// block Entity and the shadow it throws on the floor. Free functions over a Graphics/Entity —
+// no scene state, no room model. Pillars live in the sibling `pillarRender.ts`; both read their
+// tones from `wallTone.ts`, so everything standing in a room agrees on where the light is.
 //
 // This is the pass that answers the user's report *"墙看起来还是没有高度感，就像一张图贴在地
 // 上"*. Standing walls already existed; what was missing was every cue that says a solid
@@ -13,83 +15,87 @@
 //   2. **Cap and face were the same brightness.** The cap reused `wall_<element>.png` — the
 //      same top-down swatch a FLAT wall is drawn with — at tint 0xffffff, so a surface
 //      raised 70 px and a surface lying on the ground were pixel-for-pixel equally lit.
-//      A volume needs its three surfaces separated: top brightest, front mid, side darkest.
 //   3. **No side thickness.** A block's east/west sides project to exactly zero width under
 //      `screen.y = gy - z` (there is no horizontal skew in this projection), so a
 //      north-south run showed only a cap and a small end face. The east side is now drawn
-//      as an inset dark band — a deliberate cheat, inset rather than extruded so it can
+//      as an INSET dark band — a deliberate cheat, inset rather than extruded so it can
 //      never overlap the neighbouring segment of the same run.
 import { Graphics, TilingSprite, type Texture } from 'pixi.js';
 import { Entity } from './Entity';
 import { SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
-import { mixHex, type BiomePalette } from '../theme';
+import type { BiomePalette } from '../theme';
 import type { RectPx } from './wallGeometry';
+import {
+  BASE_AO_BANDS,
+  BASE_AO_FRACTION,
+  BASE_AO_MAX,
+  CAP_GRADIENT_BANDS,
+  CAP_GRADIENT_MAX,
+  CAP_GRADIENT_REACH_PX,
+  CAP_LIGHT,
+  CAP_LIGHT_BLEND,
+  CAP_TINT,
+  COPING_ALPHA,
+  EDGE_ALPHA,
+  EDGE_COLOR,
+  EDGE_WIDTH,
+  FACE_COPING_BANDS,
+  FACE_COPING_FRACTION,
+  FACE_COPING_SUPPRESS,
+  FACE_TINT,
+  FOLD_ALPHA,
+  FOLD_WIDTH,
+  LIT_EDGE_ALPHA,
+  LIT_EDGE_COLOR,
+  LIT_EDGE_PX,
+  SIDE_ALPHA,
+  SIDE_BAND_MAX_FRACTION,
+  SIDE_BAND_PX,
+  SIDE_COLOR,
+  SIDE_STEPS,
+} from './wallTone';
+
 
 /**
- * Multiply tint per surface. These three numbers ARE the volume — everything else here is
- * supporting detail.
+ * Cast-shadow passes: `[slant multiplier, alpha]`, widest/faintest first. Four graduated
+ * passes rather than two (2026-08-19): the two-pass version had visibly straight polygon
+ * edges — its convex hulls are hard-edged quads and at two alphas you see both of them, which
+ * reads as a flat grey shape laid on the floor rather than as a shadow. Both slant by the fixed
+ * key-light direction every shadow in this project uses (`Entity`'s SHADOW_SLANT_*).
  *
- * Tuned against a live render (2026-08-18) rather than picked on paper, and the live render
- * changed the answer twice. The first attempt was cap 1.0 / face 0.72, which looked wrong for
- * a reason that only shows up on real art: the two swatches do not start from the same value.
- * `wall_<element>.png` (the cap) is a LIGHT grey stone — it was authored as a top-down surface
- * that had to stand out against a near-black floor — while `wallface_<element>.png` is dark
- * charcoal brick. A 0.72 face on top of that gap was not far enough for the fold between the
- * two surfaces to read as one solid turning a corner, and a deep north-south block (level 1's
- * blocks are up to 6 grid cells deep, so ~70% of what you see of one is its cap) came out as
- * a pale slab with a thin dark hem. Pulling the face down hard — and leaving the cap bright,
- * which is what a top surface under an upper-left key light should be — is what makes the two
- * read as top-and-front of the same block.
+ * Alphas per pass are lower than the old two, but they composite over the same region, so the
+ * region nearest the wall still ends up around 0.45 — measured east of a run as floor luma
+ * 40 -> 26, which is the one place the old version already worked.
  */
-const CAP_TINT = 0xf2f4f8; // ~0.95 — barely off the swatch's own value; the top IS the lit face
-const FACE_TINT = 0x7f869a; // ~0.5 — a vertical surface catches far less of an overhead light
-const SIDE_SHADE = 0.5; // east side band, as an alpha of black over cap+face
-
-/** The block's silhouette outline. Was `palette.wallEdge` until 2026-08-18, which is a LIGHT
- *  salmon/steel for every biome — authored to be the highlight edge of a wall lying FLAT on
- *  the floor, where a light rim is right. On a standing block, stroked 2 px and then magnified
- *  by the room camera, it read as a bright wireframe box drawn over the art: in the live render
- *  it was the single loudest thing in the frame, louder than any of the shading. design/13 asks
- *  for a flat-cel silhouette, and a silhouette is DARK. */
-const EDGE_COLOR = 0x0a0c12;
-const EDGE_ALPHA = 0.62;
-const EDGE_WIDTH = 1.5;
-
-/** A 1 px lit coping along the cap's far (north) edge — the one place a bright rim belongs,
- *  since that edge is the block's top corner turning away from the camera into the light. */
-const COPING_ALPHA = 0.22;
-
-/** Width of the faked east-side band and the lit west edge, in world px, capped at a share of
- *  the wall's own width so a thin stub isn't entirely side. */
-const SIDE_BAND_PX = 13;
-const SIDE_BAND_MAX_FRACTION = 0.34;
-const LIT_EDGE_PX = 4;
-
-/** The dark contact band at the very bottom of the front face, where the wall meets the
- *  floor: `[height fraction of the wall, alpha]`, widest/faintest first. Ambient occlusion —
- *  the crease a vertical surface makes with a horizontal one is the darkest place in any
- *  room, and its absence is why a wall face can look like a poster. */
-const BASE_AO: ReadonlyArray<readonly [number, number]> = [
-  [0.3, 0.14],
-  [0.16, 0.18],
-  [0.07, 0.22],
-];
-
-/** Cast-shadow passes: `[slant multiplier, alpha]`. The far pass is the penumbra, the near
- *  one darkens the region closest to the base. Both slant by the same fixed key-light
- *  direction every shadow in this project uses (`Entity`'s SHADOW_SLANT_*). */
-// Alphas raised from 0.20/0.16/0.26 on 2026-08-18 after looking at the live render: the ember
-// floor is near-black charcoal, so a 20%-black quad over it is genuinely imperceptible. What
-// the shadow actually has to modulate on this biome is the floor's LAVA CRACKS — the only
-// bright thing on the ground — and dimming those needs real opacity. On a light-floor biome
-// this will read as an ordinary soft shadow.
 const CAST_PASSES: ReadonlyArray<readonly [number, number]> = [
-  [1, 0.34],
-  [0.45, 0.26],
+  [1, 0.14],
+  [0.72, 0.13],
+  [0.45, 0.13],
+  [0.22, 0.12],
 ];
-/** A tight dark hug right at the footprint, independent of height — the contact shadow. */
-const CONTACT_GROW_PX = 3;
-const CONTACT_ALPHA = 0.4;
+
+/**
+ * Ambient occlusion hugging the OUTSIDE of the footprint: `[outset px, alpha]`, drawn as
+ * strokes so the bands never overlap. New 2026-08-19, and it replaces a contact pass that
+ * could never be seen.
+ *
+ * The old contact shadow filled the footprint itself — but a block's art spans
+ * `south - height - depth .. south`, which covers its whole footprint and then intrudes one
+ * wall height north of it, so every pixel of that fill was behind the block that cast it. Only
+ * the 3 px `CONTACT_GROW_PX` rim showed. Painting the crease OUTSIDE the footprint instead is
+ * both visible and physically the right place for it: a tall mass darkens the floor all the way
+ * around its base, not only down-light of it. On a north-south run — where the cast shadow lies
+ * entirely to the east and the run's own face is a small patch at its south end — this is the
+ * cue that plants the mass on the floor at all.
+ */
+const BASE_HUG: ReadonlyArray<readonly [number, number]> = [
+  [1.5, 0.34],
+  [4, 0.26],
+  [7, 0.19],
+  [10.5, 0.12],
+  [14, 0.06],
+];
+const HUG_WIDTH = 3;
 const SHADOW_COLOR = 0x000000;
 
 /** Textures + colours one wall block is drawn from. `cap` is the top-down swatch
@@ -142,15 +148,24 @@ export function buildWallBlock(r: RectPx, height: number, skin: WallSkin): Entit
     seg.addChild(g);
   }
 
+  // The cap's key light, additive so the stone keeps its own contrast (see `CAP_LIGHT`). Its own
+  // child rather than part of `drawBlockShading`, because a blend mode is per display object and
+  // everything else here composites normally.
+  const capLight = new Graphics();
+  capLight.rect(0, capTop, r.w, r.h).fill({ color: CAP_LIGHT });
+  capLight.blendMode = CAP_LIGHT_BLEND;
+  seg.addChild(capLight);
+
   seg.addChild(drawBlockShading(r, height));
 
   // The flat-cel silhouette design/13 asks for, and the cue that separates one standing wall
-  // from the one behind it. Dark, not `palette.wallEdge` — see EDGE_COLOR. No lit rim line at
-  // the cap/face joint either: the face art carries its own lit coping course there, and a
-  // second highlight on top of it read as a stray bright bar.
+  // from the one behind it. Dark, not `palette.wallEdge` — see EDGE_COLOR. The lit coping runs
+  // along the cap's north AND west edges (the two facing the key light); there is deliberately
+  // none at the cap/face joint, which gets the dark fold line in `drawBlockShading` instead.
   const edge = new Graphics();
   edge.rect(0, capTop, r.w, height + r.h).stroke({ color: EDGE_COLOR, width: EDGE_WIDTH, alpha: EDGE_ALPHA });
   edge.moveTo(0, capTop).lineTo(r.w, capTop).stroke({ color: 0xffffff, width: 1, alpha: COPING_ALPHA });
+  edge.moveTo(0, capTop).lineTo(0, -height).stroke({ color: 0xffffff, width: 1, alpha: COPING_ALPHA });
   seg.addChild(edge);
 
   seg.place(r.x, r.y + r.h);
@@ -158,9 +173,12 @@ export function buildWallBlock(r: RectPx, height: number, skin: WallSkin): Entit
 }
 
 /**
- * The shading that turns cap + face into a solid: a lit west edge, a dark inset east side
- * band standing in for the block's own thickness, and the ambient-occlusion crease where the
- * face meets the floor. Local coords, same space as `buildWallBlock`. Exported for tests.
+ * The shading that turns cap + face into a solid: the cap's depth gradient, the correction that
+ * stops the face art's coping course out-shining the cap above it, a lit west chamfer, a dark
+ * inset east band standing in for the block's own thickness, the hard cap/face fold, and the
+ * crease where the face meets the floor. The cap's additive key light is NOT here — a blend mode
+ * is per display object, see `buildWallBlock`. Local coords, same space as `buildWallBlock`.
+ * Exported for tests.
  */
 export function drawBlockShading(r: RectPx, height: number): Graphics {
   const g = new Graphics();
@@ -168,14 +186,49 @@ export function drawBlockShading(r: RectPx, height: number): Graphics {
   const band = Math.min(SIDE_BAND_PX, r.w * SIDE_BAND_MAX_FRACTION);
   const litEdge = Math.min(LIT_EDGE_PX, r.w * SIDE_BAND_MAX_FRACTION);
 
-  // West edge catches the key light: a thin bright strip down the whole block.
-  g.rect(0, capTop, litEdge, height + r.h).fill({ color: 0xffffff, alpha: 0.1 });
-  // East side in shadow, inset so it never crosses into the next segment of the same run.
-  g.rect(r.w - band, capTop, band, height + r.h).fill({ color: 0x000000, alpha: SIDE_SHADE });
+  // Cap depth gradient, falling from the far edge toward the fold and bounded to
+  // CAP_GRADIENT_REACH_PX of it (a north-south run's cap depth is its whole LENGTH).
+  const capReach = Math.min(r.h, CAP_GRADIENT_REACH_PX);
+  const capStep = capReach / CAP_GRADIENT_BANDS;
+  for (let i = 0; i < CAP_GRADIENT_BANDS; i++) {
+    const t = (i + 0.5) / CAP_GRADIENT_BANDS;
+    g.rect(0, -height - capReach + i * capStep, r.w, capStep)
+      .fill({ color: 0x000000, alpha: t * CAP_GRADIENT_MAX });
+  }
+
+  // The face swatch's own coping course, pulled back under the cap's value — see
+  // FACE_COPING_SUPPRESS for why the art needs this and a uniform tint cannot do it.
+  const copingH = height * FACE_COPING_FRACTION;
+  const copingStep = copingH / FACE_COPING_BANDS;
+  for (let i = 0; i < FACE_COPING_BANDS; i++) {
+    const t = (i + 0.5) / FACE_COPING_BANDS; // 0 at the fold → 1 at the band's lower edge
+    g.rect(0, -height + i * copingStep, r.w, copingStep)
+      .fill({ color: 0x000000, alpha: (1 - t) * FACE_COPING_SUPPRESS });
+  }
+
+  // West chamfer catches the key light, east side turns away from it. Both stepped across their
+  // width rather than drawn as one flat rect: a single alpha reads as a translucent panel laid
+  // over the art, a ramp reads as a surface curving away. Strongest at the block's outer edge in
+  // both cases, since that is where each surface has turned furthest.
+  const chamferStep = litEdge / SIDE_STEPS;
+  const sideStep = band / SIDE_STEPS;
+  for (let i = 0; i < SIDE_STEPS; i++) {
+    const t = (i + 0.5) / SIDE_STEPS; // 0 at the outer edge → 1 at the inner one
+    g.rect(0 + i * chamferStep, capTop, chamferStep, height + r.h)
+      .fill({ color: LIT_EDGE_COLOR, alpha: (1 - t) * LIT_EDGE_ALPHA });
+    g.rect(r.w - band + i * sideStep, capTop, sideStep, height + r.h)
+      .fill({ color: SIDE_COLOR, alpha: (0.45 + 0.55 * t) * SIDE_ALPHA });
+  }
+
+  // The cap/face fold.
+  g.moveTo(0, -height).lineTo(r.w, -height).stroke({ color: EDGE_COLOR, width: FOLD_WIDTH, alpha: FOLD_ALPHA });
+
   // Contact crease along the base of the front face.
-  for (const [hFrac, alpha] of BASE_AO) {
-    const bandH = height * hFrac;
-    g.rect(0, -bandH, r.w, bandH).fill({ color: 0x000000, alpha });
+  const aoH = height * BASE_AO_FRACTION;
+  const aoStep = aoH / BASE_AO_BANDS;
+  for (let i = 0; i < BASE_AO_BANDS; i++) {
+    const t = (i + 0.5) / BASE_AO_BANDS;
+    g.rect(0, -aoH + i * aoStep, r.w, aoStep).fill({ color: 0x000000, alpha: t * BASE_AO_MAX });
   }
   return g;
 }
@@ -186,9 +239,9 @@ export function drawBlockShading(r: RectPx, height: number): Graphics {
  *
  * A box of height `height` lit from the upper left throws its footprint down-right by
  * `height * SHADOW_SLANT_*`; the union of the footprint and that displaced copy is a hexagon
- * (the two rects' convex hull), which is what each pass fills. The near pass reuses the same
- * hull at a shorter slant so the region closest to the wall ends up darker — a penumbra
- * without a blur filter.
+ * (the two rects' convex hull), which is what each pass fills, at four graduated slants so the
+ * result ramps instead of showing its own polygon edges. Then `BASE_HUG` darkens the floor all
+ * the way around the footprint — see its doc for why the old contact pass was invisible.
  */
 export function drawWallShadow(g: Graphics, r: RectPx, height: number): void {
   for (const [mul, alpha] of CAST_PASSES) {
@@ -196,103 +249,10 @@ export function drawWallShadow(g: Graphics, r: RectPx, height: number): void {
     const dy = height * SHADOW_SLANT_Y * mul;
     g.poly(sweptHull(r, dx, dy)).fill({ color: SHADOW_COLOR, alpha });
   }
-  const c = CONTACT_GROW_PX;
-  g.rect(r.x - c, r.y - c, r.w + c * 2, r.h + c * 2).fill({ color: SHADOW_COLOR, alpha: CONTACT_ALPHA });
-}
-
-/** Cylinder proportions: how deep the top ellipse is relative to the shaft's width, how far
- *  it overhangs, how far the base extends past the ground point, and how round the shaft's
- *  bottom corners are (small — a cylinder's sides are straight; only the base curves). */
-const PILLAR_CAP_RY_FRACTION = 0.22;
-const PILLAR_CAP_OVERHANG_PX = 2;
-const PILLAR_BASE_PX = 10;
-const PILLAR_CORNER_FRACTION = 0.12;
-
-/**
- * Stone tones for a pillar, charcoal-navy per `art/biome/prompts.md`. Explicit rather than
- * derived, for the reason `buildPillarBody` documents: the biome palette's own pillar hues are
- * pre-art fallbacks that no longer describe the shipped swatches, and the swatches themselves
- * are too coarse to sample at pillar scale. `PILLAR_BIOME_MIX` folds a little of the biome's
- * wall colour back in so ice/lightning/fire rooms still differ from each other.
- */
-const PILLAR_LIT = 0x5c6470; // west limb, catching the key light
-const PILLAR_MID = 0x424954; // the shaft's own local colour
-const PILLAR_DARK = 0x1e222a; // east limb, turned away
-const PILLAR_TOP = 0x69727f; // the top surface — the most exposed plane on the object
-const PILLAR_BIOME_MIX = 0.16;
-/** Bands across the shaft. Each is filled with an INTERPOLATED COLOUR rather than stacked as an
- *  alpha overlay: a 4x render of the first attempt (9 alpha bands) showed nine hard vertical
- *  seams, because overlapping translucent rects step in opacity, not in tone. Interpolating the
- *  fill instead makes the step invisible at this count while staying pure Graphics — no
- *  gradient-fill API, no per-pillar filter. */
-const PILLAR_RAMP_STEPS = 22;
-/** Where across the shaft the terminator sits (0 = west limb, 1 = east limb). */
-const PILLAR_TERMINATOR = 0.36;
-
-/**
- * A pillar as a stone cylinder in the same tonal language as a standing wall — a lit top
- * ellipse, a shaft shaded across its curve, a base contact crease, and the same dark
- * silhouette. Local coords with the origin at the pillar's ground point, so `bodyW`/`height`
- * are what `RoomBuilder` already computes.
- *
- * Lives here rather than in RoomBuilder (2026-08-18) because of what the live renders of this
- * pass showed, over three attempts:
- *
- *   1. **The original was pale mauve.** Pillars were flat `Graphics` filled from
- *      `palette.pillar`/`palette.pillarTop`, which mix the biome's ELEMENT hue into a slate
- *      base — on ember that lands on `0x564850`. Those are code-only FALLBACK hues chosen
- *      before any real biome art existed, and every shipped swatch is charcoal-navy stone. Once
- *      the walls read as real stone, four pale-mauve cylinders read as placeholder props
- *      someone forgot to replace: the worst thing left in the frame.
- *   2. **Texturing them from the wall swatches was worse.** A pillar's cap is a ~35 px ellipse
- *      and its shaft ~80 px, so a `TilingSprite` window that small lands on one arbitrary dark
- *      patch of a 256 px swatch — no legible stone pattern, just a dark blob, and with the
- *      brick elevation on the shaft the whole thing read as an open-topped well.
- *   3. **Hand-toned shading, drawn as a real cylinder, is what works** — and needs no mask, no
- *      texture and no filter. This is that.
- */
-export function buildPillarBody(bodyW: number, height: number, palette: BiomePalette): Graphics {
-  const g = new Graphics();
-  const capRy = Math.max(8, bodyW * PILLAR_CAP_RY_FRACTION);
-  const capRx = bodyW / 2 + PILLAR_CAP_OVERHANG_PX;
-  const corner = bodyW * PILLAR_CORNER_FRACTION;
-  const bodyH = height + PILLAR_BASE_PX;
-  const stone = (base: number) => mixHex(base, palette.wall, PILLAR_BIOME_MIX);
-  const lit = stone(PILLAR_LIT);
-  const mid = stone(PILLAR_MID);
-  const dark = stone(PILLAR_DARK);
-
-  // Shaft, band by band across the curve. The bands are drawn on top of one solid rounded body
-  // so the bottom corners stay round without a clip: each band is inset vertically by nothing
-  // but its own overlap, and the rounded fill underneath is what the silhouette follows.
-  g.roundRect(-bodyW / 2, -height, bodyW, bodyH, corner).fill({ color: mid });
-  for (let i = 0; i < PILLAR_RAMP_STEPS; i++) {
-    const t = (i + 0.5) / PILLAR_RAMP_STEPS;
-    const color = t <= PILLAR_TERMINATOR
-      ? mixHex(lit, mid, t / PILLAR_TERMINATOR)
-      : mixHex(mid, dark, (t - PILLAR_TERMINATOR) / (1 - PILLAR_TERMINATOR));
-    const x = -bodyW / 2 + bodyW * (i / PILLAR_RAMP_STEPS);
-    const w = bodyW / PILLAR_RAMP_STEPS + 0.5; // overlap so no seam shows between bands
-    // Inset from the very top/bottom so the rounded corners of the fill above stay visible.
-    g.rect(x, -height + corner * 0.5, w, bodyH - corner).fill({ color });
+  for (const [out, alpha] of BASE_HUG) {
+    g.rect(r.x - out, r.y - out, r.w + out * 2, r.h + out * 2)
+      .stroke({ color: SHADOW_COLOR, width: HUG_WIDTH, alpha });
   }
-
-  // Base contact crease, same shape and strength a wall's gets.
-  for (const [hFrac, alpha] of BASE_AO) {
-    const h = height * hFrac;
-    g.roundRect(-bodyW / 2, -h, bodyW, h + PILLAR_BASE_PX, corner).fill({ color: 0x000000, alpha });
-  }
-
-  // Silhouette, then the top surface over it (the cap's near half is in front of the shaft),
-  // then its lit coping.
-  g.roundRect(-bodyW / 2, -height, bodyW, bodyH, corner)
-    .stroke({ color: EDGE_COLOR, width: EDGE_WIDTH, alpha: EDGE_ALPHA });
-  g.ellipse(0, -height, capRx, capRy).fill({ color: stone(PILLAR_TOP) });
-  g.ellipse(0, -height, capRx, capRy)
-    .stroke({ color: EDGE_COLOR, width: EDGE_WIDTH, alpha: EDGE_ALPHA });
-  g.ellipse(0, -height, capRx * 0.94, capRy * 0.9)
-    .stroke({ color: 0xffffff, width: 1.5, alpha: COPING_ALPHA });
-  return g;
 }
 
 /**

@@ -15,6 +15,12 @@ export class Skin {
   private front?: Graphics;
   private rig?: RigSkin;
   private rigScale = 1; // the wrapper's authoring-px -> gameplay-radius factor (see below)
+  /** Half-width of the DRAWN body in world px — the gameplay radius scaled by how much of its
+   *  declared radius this bundle's art actually paints (`skinRegistry.BODY_FILL`). This, not
+   *  the collision radius, is what anything sized against the character's silhouette has to
+   *  use; `Actor` sizes its ground shadow from it. Equals `radius` for the Graphics
+   *  placeholder, whose capsule really is one radius wide. */
+  readonly bodyDrawnR: number;
   private clock = 0;
 
   // `rigTint` is a Pixi multiply-tint applied to the rig's sprites (design/13's
@@ -22,9 +28,10 @@ export class Skin {
   // never used for a character skin, which already carries its own real colours).
   constructor(bodyColor: number, frontColor: number, radius: number, skinName?: string, rigTint?: number) {
     const loaded = skinName ? getRigSkin(skinName) : undefined;
+    this.bodyDrawnR = radius * (loaded?.bodyFill ?? 1);
 
     if (loaded) {
-      this.rig = new RigSkin(loaded.rig, loaded.bundle);
+      this.rig = new RigSkin(loaded.rig, loaded.bundle, loaded.bodyFill);
       if (rigTint !== undefined) this.rig.setTint(rigTint);
       // Normalize the rig's authoring-px footprint to this actor's gameplay radius
       // on a separate wrapper — RigSkin.view's own scale.x is its L/R flip toggle

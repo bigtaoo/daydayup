@@ -91,14 +91,23 @@ funny is a lane auto-battler (units only face left/right); DayDayUp aims in **36
 > model was doing its job; what was missing was lighting and grounding, neither of which any
 > amount of facing work produces. Three additions, all render-only and all free of new art:
 >
-> 1. **Sphere shading** (`render/rigShading.ts`) — a fixed specular highlight and a curved
->    terminator over the rig's body bone, pinned to the key light's *screen-space* direction so
->    they do **not** mirror with `view.scale.x`. This is the mark that makes a flat-cel shell
->    read as a sphere: the eye travels, the highlight does not. Applied to any rig whose body
->    bone has a `bodyR` worth shading, so enemy and boss bodies get it too. Every mark is an
->    ellipse or arc strictly inside `bodyR`, which is what lets it work with no mask (a mask per
->    actor would be 30 stencil passes in a busy room) — `rigShading.test.ts` pins that
->    invariant, since it is the one a tuning change could silently break.
+> 1. **Sphere shading** (`render/rigShading.ts`) — marks over the rig's body bone, pinned to the
+>    key light's *screen-space* direction so they do **not** mirror with `view.scale.x`. This is
+>    what makes a flat-cel shell read as a sphere: the eye travels, the light does not. Applied to
+>    any rig whose body bone has a `bodyR` worth shading, so enemy and boss bodies get it too.
+>    Nothing is masked (a mask per actor would be 30 stencil passes in a busy room), so every mark
+>    has to stay inside the body — `rigShading.test.ts` pins that invariant, since it is the one a
+>    tuning change could silently break.
+>
+>    **Both halves of this were wrong and were rebuilt 2026-08-19** (see `01` "Volume, measured").
+>    The marks were a white specular plus four concentric dark arcs: measured, the specular is
+>    arithmetically a no-op over design/13's near-white shells and the arcs put their darkest band
+>    on the rim with hard angular cut-offs, reading as dirt rather than as a turning surface. They
+>    are now a smooth chord-band ramp with a reflected-light rollback, plus a warm wash for the lit
+>    side (hue is the only channel white art leaves available). And "strictly inside `bodyR`" was
+>    the wrong bound: `bodyR` is a *declared* radius, the art paints 0.68-1.00 of it, so the marks
+>    were spilling onto the transparent background — see "A bone's `bodyR` is a declared radius"
+>    below.
 > 2. **Far-side depth cues on the modules** — the per-weapon z-order flip (item 2's sibling,
 >    shipped hours earlier) reads on its own as "the module changed layer". A depth scale and a
 >    depth tint on top of it read as an orbit around a sphere. Recomputed against the current
@@ -233,6 +242,42 @@ Authoring rules so 2D art produces the fake-3D feel and doesn't hit `01`'s known
 > immediately caught a **second real bug**: `KIND_DEFAULTS`' `104/1536` scale divisor was stale
 > after its art was downsampled to 320px, so the never-invisible fallback silhouette rendered at
 > ~0.2x the core (a nub); fixed to `90/320`.
+
+## A bone's `bodyR` is a declared radius, not what the art paints (2026-08-19)
+
+`rigComposition.test.ts`'s **rendered footprint == 2 x bodyR** law above is about the *sprite box*,
+and every shipped binding satisfies it exactly. What it deliberately does not say is how much of
+that box is opaque — and decoding the shipped PNGs' alpha bounding boxes shows the answer varies a
+lot per bundle:
+
+| skin | opaque half-width / `bodyR` |
+|------|-----------------------------|
+| `char_juggernaut` | 0.87 |
+| `char_vanguard` | 0.81 |
+| `char_skirmisher` | 0.69 |
+| `critter-core` | 0.70 |
+| `brute-core` | 1.00 |
+| `floater-core` | 1.00 |
+| `boss-core` | 0.68 |
+
+So `bodyR` (and the gameplay radius, which equals it for every rig here since every
+`referenceRadius` IS the body bone's `bodyR`) can be up to ~45% wider than the creature inside it.
+**Anything sized against the character's silhouette has to use the opaque extent instead**, and two
+things were silently getting this wrong until it was measured: the sphere shading painted a
+hard-edged dark disc onto the background around `critter-core`, and every ground shadow was scaled
+to the box rather than to the art (see `design/01`'s "Volume, measured"). Neither is visible in the
+source of either file.
+
+The measurement is recorded as `skinRegistry.BODY_FILL`, one entry per preloaded skin, and
+`rigComposition.test.ts` **re-decodes the real PNGs on every run** (via the repo's own
+`tools/png-pipeline/pngCodec.mjs`) and fails if a recorded number drifts from the pixels —
+mutation-verified by falsifying one entry (`critter-core` 0.70 → 1.00) and watching it go red. The
+plumbing is pinned separately (`skinRegistry.test.ts`: the three orb-core characters share a Rig but
+must NOT share a fill, since their shells paint 0.81, 0.69 and 0.87 of the same declared radius), so
+a silent fallback to 1.0 fails too. That is
+the same shape of guard as the assembly invariants above, applied to the same class of failure:
+**when art changes, every hand-tuned number that was sized against the OLD art is now wrong and
+nothing in either file shows it.** Re-cropping or replacing a body texture must move the table.
 
 ## Open questions
 

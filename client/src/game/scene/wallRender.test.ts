@@ -9,7 +9,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { Graphics, TilingSprite, Texture, TextureSource } from 'pixi.js';
-import { buildPillarBody, buildWallBlock, drawBlockShading, drawWallShadow, sweptHull, type WallSkin } from './wallRender';
+import { buildWallBlock, drawBlockShading, drawWallShadow, sweptHull, type WallSkin } from './wallRender';
+import { CAP_LIGHT, CAP_LIGHT_BLEND, CAP_TINT, EDGE_WIDTH, FACE_COPING_SUPPRESS, FACE_TINT } from './wallTone';
 import { SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
 import { biomePalette } from '../theme';
 import type { RectPx } from './wallGeometry';
@@ -27,6 +28,16 @@ function skin(withArt: boolean): WallSkin {
     cap: withArt ? tex() : undefined,
     face: withArt ? tex() : undefined,
   };
+}
+
+/** A multiply tint's factor, taken off its red channel (every tint here is near-neutral). */
+function mulOf(tint: number): number {
+  return ((tint >> 16) & 0xff) / 0xff;
+}
+
+/** Perceived brightness of a colour — for an additive overlay this IS how much it adds. */
+function lumaOf(hex: number): number {
+  return 0.299 * ((hex >> 16) & 0xff) + 0.587 * ((hex >> 8) & 0xff) + 0.114 * (hex & 0xff);
 }
 
 describe('buildWallBlock — the extruded block', () => {
@@ -58,19 +69,49 @@ describe('buildWallBlock — the extruded block', () => {
     expect(face.tileScale.y).toBeCloseTo(HEIGHT / t.height, 6);
   });
 
-  it('separates the surfaces by brightness — cap near-full, face far darker', () => {
-    // The volume IS this contrast. Before the depth pass the cap reused the top-down swatch at
-    // full brightness AND the face was untinted too, so a surface raised 104 px and one lying
-    // on the floor were pixel-for-pixel equally lit. The gap also has to be LARGE, not just
-    // present: the two swatches start from very different values (the cap swatch is light grey
-    // stone, the face dark charcoal brick), and a shallow face tint left a deep block reading
-    // as a pale slab with a thin dark hem. Asserted as a ratio per channel, not as literals,
-    // so the numbers stay tunable.
+  it('puts the cap ABOVE the floor in value and the face below it — the measured hierarchy', () => {
+    // The volume IS this ordering, and getting it backwards is what "像一张图贴在地上" measures
+    // as: on 2026-08-19 a live frame had cap 44, floor 53, face 23, i.e. a surface raised 104 px
+    // was DARKER than the ground under it. Tint alone cannot fix that (Pixi tints only multiply,
+    // and both swatches sit near 46), so the cap takes an ADDITIVE key light — which means this
+    // has to be asserted on the COMPOSITE. `SWATCH` is the shipped stone's own measured value and
+    // `FLOOR` the shipped floor's.
+    const SWATCH = 46;
+    const FLOOR = 53;
+    const capValue = SWATCH * mulOf(CAP_TINT) + lumaOf(CAP_LIGHT);
+    const faceValue = SWATCH * mulOf(FACE_TINT);
+    expect(capValue).toBeGreaterThan(FLOOR * 1.4); // a lit top plane, unmistakably raised
+    expect(faceValue).toBeLessThan(FLOOR); // a vertical plane catches less than a horizontal one
+    expect(capValue).toBeGreaterThan(faceValue * 2); // ...and the fold between them still reads
+  });
+
+  it('lights the cap ADDITIVELY, so the stone keeps its own contrast', () => {
+    // A translucent white wash reaches the same value but is a lerp toward white, so it also
+    // compresses the swatch's mortar-to-stone amplitude by its own alpha — and at play scale a
+    // wall cap is nothing but that amplitude. The wash version measured on target and looked like
+    // brushed concrete. An additive term adds a constant and leaves the range intact.
     const seg = buildWallBlock(RECT, HEIGHT, skin(true));
-    const [face, cap] = seg.children.filter((c): c is TilingSprite => c instanceof TilingSprite);
-    const red = (tint: number) => (tint >> 16) & 0xff;
-    expect(red(cap!.tint)).toBeGreaterThan(0.9 * 0xff); // the top IS the lit plane
-    expect(red(face!.tint)).toBeLessThan(0.6 * red(cap!.tint));
+    const lit = seg.children.filter((c): c is Graphics => c instanceof Graphics)
+      .find((g) => g.blendMode === CAP_LIGHT_BLEND)!;
+    expect(lit).toBeDefined();
+    expect(lit.blendMode).toBe('add');
+    // ...and it covers exactly the cap, never the face: an additive band over brick would wash
+    // the one surface that has to stay the darker of the two.
+    const cap = seg.children.filter((c): c is TilingSprite => c instanceof TilingSprite)[1]!;
+    expect(lit.bounds.minY).toBeCloseTo(cap.y, 3);
+    expect(lit.bounds.maxY).toBeCloseTo(cap.y + RECT.h, 3);
+  });
+
+  it("stops the face art's own coping course out-shining the cap above it", () => {
+    // `wallface_<element>.png` is a whole elevation: a bright coping course at the top, brick
+    // below, dark base at the bottom, used once at the wall's full height. Measured, that coping
+    // lands at luma ~80 after FACE_TINT — as bright as the cap, so the wall's brightest band
+    // ended up halfway down its FRONT and the fold stopped reading. A vertical surface cannot
+    // out-shine the horizontal one it meets.
+    const CODING_RAW = 230; // the swatch's own coping value, measured
+    const suppressed = CODING_RAW * mulOf(FACE_TINT) * (1 - FACE_COPING_SUPPRESS);
+    const capValue = 46 * mulOf(CAP_TINT) + lumaOf(CAP_LIGHT);
+    expect(suppressed).toBeLessThan(capValue);
   });
 
   it('scales every surface with the height it is given, so the three tiers really differ', () => {
@@ -85,16 +126,17 @@ describe('buildWallBlock — the extruded block', () => {
   it('still stands (face + cap + shading + outline) when no swatch has loaded', () => {
     const seg = buildWallBlock(RECT, HEIGHT, skin(false));
     expect(seg.children.filter((c) => c instanceof TilingSprite)).toHaveLength(0);
-    // face fallback, cap fallback, shading, outline — all Graphics.
-    expect(seg.children.filter((c) => c instanceof Graphics)).toHaveLength(4);
+    // face fallback, cap fallback, additive cap light, shading, outline — all Graphics.
+    expect(seg.children.filter((c) => c instanceof Graphics)).toHaveLength(5);
   });
 
   it('adds shading and an outline on top of the art, in that order', () => {
     const seg = buildWallBlock(RECT, HEIGHT, skin(true));
-    // face, cap (TilingSprites), then shading, then the silhouette outline.
-    expect(seg.children).toHaveLength(4);
+    // face, cap (TilingSprites), then the additive cap light, the shading, and the silhouette.
+    expect(seg.children).toHaveLength(5);
     expect(seg.children[2]).toBeInstanceOf(Graphics);
     expect(seg.children[3]).toBeInstanceOf(Graphics);
+    expect(seg.children[4]).toBeInstanceOf(Graphics);
   });
 });
 
@@ -110,15 +152,17 @@ describe('drawBlockShading — the side thickness a zero-skew projection cannot 
     // its own width, so a narrow block still reads as a block rather than as a dark sliver.
     const stub: RectPx = { x: 0, y: 0, w: 20, h: 32 };
     const g = drawBlockShading(stub, HEIGHT);
-    expect(g.bounds.width).toBeLessThanOrEqual(stub.w);
+    // Half a stroke width of slack: the cap/face fold is a line ACROSS the block, so it is
+    // centred on the edge and reaches EDGE_WIDTH/2 past it. Every fill stays strictly inside.
+    expect(g.bounds.width).toBeLessThanOrEqual(stub.w + EDGE_WIDTH);
   });
 
   it('keeps all of its geometry inside the block\'s own footprint width', () => {
     // The east side band is INSET, not extruded, precisely so it can never cross into the
     // adjacent segment of the same perimeter run.
     const g = drawBlockShading(RECT, HEIGHT);
-    expect(g.bounds.minX).toBeGreaterThanOrEqual(0);
-    expect(g.bounds.maxX).toBeLessThanOrEqual(RECT.w);
+    expect(g.bounds.minX).toBeGreaterThanOrEqual(-EDGE_WIDTH / 2);
+    expect(g.bounds.maxX).toBeLessThanOrEqual(RECT.w + EDGE_WIDTH / 2);
   });
 });
 
@@ -189,58 +233,9 @@ describe('drawWallShadow — the cue that says the wall sits ON the floor', () =
   });
 });
 
-describe('buildPillarBody — a stone cylinder in the wall\'s tonal language', () => {
-  const palette = biomePalette('ember');
-
-  it('draws a shaft plus a top ellipse that overhangs it', () => {
-    const g = buildPillarBody(64, 70, palette);
-    // The cap overhangs the shaft by a couple of px on each side, and the whole thing rises
-    // from the ground origin (y = 0) up past the cap's own top half.
-    expect(g.bounds.width).toBeGreaterThan(64);
-    expect(g.bounds.minY).toBeLessThan(-70);
-    expect(g.bounds.maxY).toBeGreaterThan(0); // the base extends a little past the ground point
-  });
-
-  it('shades across the cylinder\'s curve rather than in two flat bands', () => {
-    // The first attempt drew nine translucent bands and a 4x render showed nine hard vertical
-    // seams: stacked alpha steps in opacity, it does not interpolate. These are colour-lerped
-    // instead, and there have to be enough of them for the step to disappear.
-    const g = buildPillarBody(64, 70, palette);
-    const bands = g.context.instructions.filter((i) => i.action === 'fill').length;
-    expect(bands).toBeGreaterThan(12);
-  });
-
-  it('takes its stone from explicit charcoal-navy tones, not the biome\'s pillar hue', () => {
-    // `palette.pillar` is a pre-art fallback: the ember palette mixes the element's warm hue
-    // into a slate base and lands on a pale mauve, which is nothing like the shipped swatches.
-    // A pillar must not be reachable from it — this pins the regression, since re-deriving from
-    // the palette is exactly the "fix" someone would reach for again.
-    const ember = buildPillarBody(64, 70, biomePalette('ember'));
-    const neutral = buildPillarBody(64, 70, biomePalette(undefined));
-    // Both are drawn (the palette still mixes in for biome flavour, so they are not identical
-    // objects) but neither is the mauve fallback: the biome mix is a minority share.
-    expect(ember.bounds.width).toBe(neutral.bounds.width);
-    expect(palette.pillar).not.toBe(palette.wall); // the fallback hue still exists, just unused here
-  });
-
-  it('scales its whole silhouette with the height and width it is given', () => {
-    const small = buildPillarBody(40, 40, palette);
-    const big = buildPillarBody(80, 100, palette);
-    expect(big.bounds.width).toBeGreaterThan(small.bounds.width);
-    expect(big.bounds.height).toBeGreaterThan(small.bounds.height);
-  });
-});
-
 interface Instr {
   action: string;
   data: { style?: { color: number; alpha: number; width?: number }; path?: { instructions: Array<{ action: string; data: number[] }> } };
-}
-
-/** Opaque (alpha 1) fill colours drawn into `g`, in draw order. */
-function opaqueFills(g: Graphics): number[] {
-  return (g.context.instructions as Instr[])
-    .filter((i) => i.action === 'fill' && i.data.style!.alpha === 1)
-    .map((i) => i.data.style!.color);
 }
 
 function strokes(g: Graphics): Array<{ color: number; alpha: number }> {
@@ -274,9 +269,9 @@ describe('buildWallBlock — the three height tiers, and per-surface art fallbac
     expect(capOnly.children.filter((c) => c instanceof TilingSprite)).toHaveLength(1);
     const faceOnly = buildWallBlock(RECT, HEIGHT, { palette: biomePalette(undefined), cap: undefined, face: t });
     expect(faceOnly.children.filter((c) => c instanceof TilingSprite)).toHaveLength(1);
-    // Either way the block is still face + cap + shading + outline.
-    expect(capOnly.children).toHaveLength(4);
-    expect(faceOnly.children).toHaveLength(4);
+    // Either way the block is still face + cap + cap light + shading + outline.
+    expect(capOnly.children).toHaveLength(5);
+    expect(faceOnly.children).toHaveLength(5);
   });
 
   it('outlines the block DARK, and never in the palette\'s light wall-edge colour', () => {
@@ -285,73 +280,22 @@ describe('buildWallBlock — the three height tiers, and per-surface art fallbac
     // camera it read as a bright wireframe box over the art: the loudest thing in the frame.
     const palette = biomePalette('ember');
     const seg = buildWallBlock(RECT, HEIGHT, { palette, cap: tex(), face: tex() });
-    const edge = seg.children[3] as Graphics;
+    const edge = seg.children[4] as Graphics;
     const silhouette = strokes(edge).find((s) => s.color !== 0xffffff)!;
     expect(silhouette.color).not.toBe(palette.wallEdge);
     expect(luma(silhouette.color)).toBeLessThan(luma(palette.wallEdge) / 3);
     expect(luma(silhouette.color)).toBeLessThan(32);
   });
 
-  it('adds exactly one LIGHT stroke — the cap\'s far coping, the only place a bright rim belongs', () => {
+  it("adds LIGHT strokes only along the cap's two lit edges, never at the cap/face joint", () => {
+    // North and west: the two edges of a top surface that turn toward an upper-left key light.
+    // The joint where cap meets face gets the DARK fold line instead (`drawBlockShading`) — the
+    // face art carries its own coping course there, and a second highlight on top of it read as
+    // a stray bright bar.
     const seg = buildWallBlock(RECT, HEIGHT, skin(true));
-    const edge = seg.children[3] as Graphics;
+    const edge = seg.children[4] as Graphics;
     const light = strokes(edge).filter((s) => s.color === 0xffffff);
-    expect(light).toHaveLength(1);
-    expect(light[0]!.alpha).toBeLessThan(0.4); // a rim, not a highlight bar
-  });
-});
-
-describe('buildPillarBody — the shaft is shaded by COLOUR, across the curve', () => {
-  const palette = biomePalette('ember');
-
-  it('ramps luminance monotonically from a lit west limb to a dark east one', () => {
-    // A cylinder has no flat side, so the gradual falloff across its curve is the only thing
-    // separating it from a rounded rectangle. Monotonic is the property; the exact tones are not.
-    const bands = opaqueFills(buildPillarBody(64, 70, palette)).slice(1, -1); // drop base fill + cap
-    expect(bands.length).toBeGreaterThan(12);
-    for (let i = 1; i < bands.length; i++) {
-      expect(luma(bands[i]!)).toBeLessThanOrEqual(luma(bands[i - 1]!));
-    }
-    expect(luma(bands[0]!)).toBeGreaterThan(luma(bands[bands.length - 1]!) * 1.8); // a real range
-  });
-
-  it('makes the top surface the brightest thing on the object', () => {
-    // The most exposed plane under an overhead key light. If the cap were not clearly the
-    // lightest, the pillar reads as an open-topped well — which is exactly how the
-    // texture-mapped attempt came out.
-    const fills = opaqueFills(buildPillarBody(64, 70, palette));
-    const cap = fills[fills.length - 1]!; // drawn last, over the silhouette
-    for (const f of fills.slice(0, -1)) expect(luma(cap)).toBeGreaterThan(luma(f));
-  });
-
-  it('never uses the biome palette\'s own pillar hues — they are pre-art fallbacks', () => {
-    // `palette.pillar`/`pillarTop` blend the element's warm hue into slate; on ember that is a
-    // pale mauve, nothing like the charcoal-navy stone every shipped swatch is. Reaching for
-    // them again is exactly the "fix" this guards against.
-    const fills = opaqueFills(buildPillarBody(64, 70, palette));
-    expect(fills).not.toContain(palette.pillar);
-    expect(fills).not.toContain(palette.pillarTop);
-  });
-
-  it('is charcoal-navy: every stone tone is blue-leaning, never warm', () => {
-    // The one objective test of "matches the art rather than the palette" — the swatches are
-    // dark charcoal-NAVY (`art/biome/prompts.md`), so blue must never fall below red.
-    for (const f of opaqueFills(buildPillarBody(64, 70, palette))) {
-      expect(f & 0xff).toBeGreaterThan((f >> 16) & 0xff);
-    }
-  });
-
-  it('still shifts with the biome, so ice and fire rooms are not identical', () => {
-    const emberFills = opaqueFills(buildPillarBody(64, 70, biomePalette('ember')));
-    const neutralFills = opaqueFills(buildPillarBody(64, 70, biomePalette(undefined)));
-    expect(emberFills).not.toEqual(neutralFills);
-  });
-
-  it('shares the wall\'s dark silhouette rather than inventing its own', () => {
-    const wall = buildWallBlock(RECT, HEIGHT, skin(true));
-    const wallEdge = strokes(wall.children[3] as Graphics).find((s) => s.color !== 0xffffff)!;
-    const pillarEdge = strokes(buildPillarBody(64, 70, palette)).find((s) => s.color !== 0xffffff)!;
-    expect(pillarEdge.color).toBe(wallEdge.color);
-    expect(pillarEdge.alpha).toBe(wallEdge.alpha);
+    expect(light).toHaveLength(2);
+    for (const l of light) expect(l.alpha).toBeLessThan(0.4); // a rim, not a highlight bar
   });
 });

@@ -37,12 +37,19 @@ const BODY_LIFT_R = 0.7;
  * archetype (critter-core, brute-core) gets no entry and never leaves the floor.
  */
 const HOVER: Readonly<Record<string, { base: number; amp: number; periodMs: number }>> = {
-  char_vanguard: { base: 3.5, amp: 2.5, periodMs: 2400 },
-  char_skirmisher: { base: 3.5, amp: 2.5, periodMs: 2100 },
-  char_juggernaut: { base: 3, amp: 2, periodMs: 2900 },
-  'floater-core': { base: 5, amp: 3, periodMs: 2000 },
-  'boss-core': { base: 4.5, amp: 3.5, periodMs: 3200 },
+  char_vanguard: { base: 6, amp: 3.5, periodMs: 2400 },
+  char_skirmisher: { base: 6, amp: 3.5, periodMs: 2100 },
+  char_juggernaut: { base: 5.5, amp: 3, periodMs: 2900 },
+  'floater-core': { base: 8, amp: 4, periodMs: 2000 },
+  'boss-core': { base: 7, amp: 4, periodMs: 3200 },
 };
+// Roughly doubled 2026-08-19 (volume pass, measured). At base 3.5 the height-driven shadow
+// OFFSET is `3.5 * SHADOW_SLANT` = (1.5, 0.8) world px — under one screen pixel at a normal
+// zoom, so the cue this table exists to produce was arithmetically invisible however carefully
+// it was tuned. At base 6 / peak 9.5 it is (2.5, 1.3) to (4.0, 2.1), which at this camera's
+// ~4x room zoom is 10-16 screen px of separation between a body and its own shadow. Deliberately
+// not raised further: past ~10 px the character stops reading as hovering and starts reading as
+// flying, so the rest of the readability comes from `SHADOW_LIFT_FALLOFF` instead.
 
 /** Spreads hover phase across actors so a room full of floaters doesn't pulse in lockstep.
  *  Render-only and deliberately construction-ORDER dependent, not state-derived — nothing
@@ -175,7 +182,17 @@ export class Actor extends Entity {
 
     this.weaponGfx.zIndex = 1;
     this.addChild(this.weaponGfx);
-    this.makeShadow(radiusPx * 0.7);
+    // Sized from the DRAWN body, not from the collision radius (2026-08-19 volume pass).
+    // It used to be `radiusPx * 0.7`, and measuring a live frame showed both halves of that
+    // being wrong at once: every rig's `referenceRadius` IS its body bone's `bodyR`, so the
+    // gameplay radius already equals the rig's declared body radius — but the PNG bound to
+    // that bone paints as little as 0.68 of it (`skinRegistry.BODY_FILL`), so an enemy's
+    // shadow came out ~45% wider than the crystal standing in it and read as a black plate.
+    // The 0.7 factor was a hand-tuned fudge in the same direction, applied uniformly, which
+    // is why it happened to look acceptable on the hero and not on the roster. Same class of
+    // bug as the `footprintRadius` mismatch fixed the same week: a number sized against art
+    // that has since changed, with nothing in either file showing it.
+    this.makeShadow(this.skin.bodyDrawnR);
 
     // Lift the body + weapon so the container origin (gx,gy — where the shadow and
     // the engine's collision footprint sit) lands near the feet rather than the

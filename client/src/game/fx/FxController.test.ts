@@ -144,6 +144,38 @@ describe('FxController.updateCamera', () => {
     expect(fx.zoom).toBeCloseTo(2);
   });
 
+  it("lets the frame pull the camera ABOVE world y=0, so a north wall's top stays on screen", () => {
+    // 2026-08-19. `GameLoop.cameraFrame` extends its rect upward by MAX_WALL_HEIGHT because a
+    // standing wall draws its cap and the top of its face at NEGATIVE world y — but `cy`'s upper
+    // clamp bound was a flat 0, the world's own top edge, which pinned exactly that band off the
+    // top of the screen and silently cancelled the whole extension. Confirmed live before the
+    // fix: `layers.world.y === 0` with the room's north wall showing face only, no cap.
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    // A player standing at the north edge of a north-boundary room: without the overscan the
+    // clamp pins y at 0.
+    fx.updateCamera(
+      1,
+      { vw: 800, vh: 600 },
+      { w: 2000, h: 2000 },
+      fakePlayer(1000, 20),
+      { x: 800, y: -104, w: 400, h: 504 },
+    );
+    expect(layers.world.y).toBeGreaterThan(0);
+    expect(layers.world.y).toBeCloseTo(104 * fx.zoom); // exactly the overscan the frame asked for
+  });
+
+  it('grants no overscan at all when the frame asks for none, or when there is no frame', () => {
+    // The floor's own interior rooms have frame.y >= 0, and a mode with no room model passes
+    // null — neither may start revealing the void above the world.
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 2000, h: 2000 }, fakePlayer(1000, 20), { x: 800, y: 400, w: 400, h: 400 });
+    expect(layers.world.y).toBe(0);
+    fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 2000, h: 2000 }, fakePlayer(1000, 20));
+    expect(layers.world.y).toBe(0);
+  });
+
   it('still clamps panning to the WORLD, not to the frame — a doorway must not hard-stop the camera', () => {
     const layers = new Layers();
     const fx = new FxController(layers);

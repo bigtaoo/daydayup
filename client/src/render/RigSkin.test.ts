@@ -617,3 +617,183 @@ describe('RigSkin — rigs that get no sphere shading, and rigs whose body moves
     expect(shadeOf(skin)!.visible).toBe(false);
   });
 });
+
+// The 2026-08-19 volume pass. Two things landed here, and both are the kind of relationship
+// that reads as fine in the source of either file on its own:
+//
+//   1. Everything drawn ON the body — the sphere shading, the module contacts — must be sized
+//      against what the ART PAINTS, not against the bone's declared `bodyR`. Nothing in this
+//      renderer is masked (deliberately: a mask per actor would be 30 stencil passes in a busy
+//      room), so a mark sized to a radius the art does not reach paints straight onto the
+//      transparent background. That is what put a hard-edged dark disc around `critter-core`,
+//      whose art fills 0.70 of its bodyR.
+//   2. The orbiting modules had nothing seating them against the core, so at play scale they
+//      read as decals floating in front of the body.
+describe('RigSkin — the body art\'s drawn radius, not its declared one', () => {
+  function shadeOf(skin: RigSkin): Graphics {
+    return (skin as unknown as { sphereShade: Graphics }).sphereShade;
+  }
+  function makeFilled(fill: number, def = ORB_CORE_RIG): RigSkin {
+    const rig = new Rig(def);
+    return new RigSkin(rig, fakeBundle(rig), fill);
+  }
+  /** The shading's own reach from the body centre, in authoring px. */
+  function reach(skin: RigSkin): number {
+    const b = shadeOf(skin).bounds;
+    return Math.max(-b.minX, b.maxX, -b.minY, b.maxY);
+  }
+
+  it('defaults to 1, so a caller that knows nothing about fill behaves as before', () => {
+    const rig = new Rig(ORB_CORE_RIG);
+    const withDefault = new RigSkin(rig, fakeBundle(rig));
+    const withExplicitOne = makeFilled(1);
+    expect(reach(withDefault)).toBeCloseTo(reach(withExplicitOne), 6);
+  });
+
+  it('scales the shading marks by the fill, so they land ON the art', () => {
+    // orb-core's shell declares bodyR 40; `char_vanguard`'s shell PNG paints 0.81 of it. Strictly
+    // INSIDE, not flush: none of this art is a circle (`critter-core`'s crystal cluster is 35 wide
+    // by 38 tall with gaps at its corners), so a ramp sized flush to the painted half-width still
+    // shows an arc of shading on the background diagonally out from it.
+    expect(reach(makeFilled(0.81))).toBeLessThan(40 * 0.81);
+    expect(reach(makeFilled(0.7, CRITTER_CORE_RIG))).toBeLessThan(50 * 0.7);
+  });
+
+  it('keeps NOTHING outside the painted radius — the defect this fixes', () => {
+    // `critter-core` at 0.70 is the worst case in the shipped roster: at fill 1 the ramp
+    // reached 35 authoring px past its own crystal and painted a dark disc on the background.
+    const painted = 50 * 0.7;
+    expect(reach(makeFilled(0.7, CRITTER_CORE_RIG))).toBeLessThan(painted);
+    expect(reach(makeFilled(1, CRITTER_CORE_RIG))).toBeGreaterThan(painted); // ...and would again
+  });
+
+  it('is proportional, so the whole roster gets the same treatment', () => {
+    expect(reach(makeFilled(0.5)) / reach(makeFilled(1))).toBeCloseTo(0.5, 6);
+  });
+});
+
+describe('RigSkin — contact shades seat an orbiting module against the core', () => {
+  function aoOf(skin: RigSkin): Graphics | null {
+    return (skin as unknown as { moduleAO: Graphics | null }).moduleAO;
+  }
+  function fillCount(g: Graphics): number {
+    return (g.context.instructions as Array<{ action: string }>).filter((i) => i.action === 'fill').length;
+  }
+
+  it('exists for a rig with orbiting modules, and not for a rig without them', () => {
+    // orb-core has two tethered sockets; critter-core is one bone with no module at all, so
+    // there is nothing to seat and no Graphics to pay for.
+    expect(aoOf(makeSkin(ORB_CORE_RIG))).not.toBeNull();
+    expect(aoOf(makeSkin(CRITTER_CORE_RIG))).toBeNull();
+  });
+
+  it('sits over the body art and the shading, and UNDER the module it belongs to', () => {
+    // If it drew over the module, it would be a dark smear on the gun rather than a shade
+    // under it. orb-core's real zOrders are shell 0, belly 1, eye 2, sockets 3/4.
+    const rig = new Rig(ORB_CORE_RIG);
+    const bundle = fakeBundle(rig);
+    let z = 0;
+    for (const boneId of rig.drawOrder) bundle.bindings.get(boneId)!.zOrder = z++;
+    const skin = new RigSkin(rig, bundle);
+    const ao = aoOf(skin)!;
+    const shade = (skin as unknown as { sphereShade: Graphics }).sphereShade;
+    expect(ao.zIndex).toBeGreaterThan(shade.zIndex);
+    expect(ao.zIndex).toBeLessThan(bundle.bindings.get('socket_l')!.zOrder);
+    expect(ao.zIndex).toBeLessThan(bundle.bindings.get('socket_r')!.zOrder);
+  });
+
+  it('draws one contact per orbiting module, positioned on the body bone\'s tip', () => {
+    const skin = makeSkin(ORB_CORE_RIG);
+    skin.update();
+    const ao = aoOf(skin)!;
+    const shade = (skin as unknown as { sphereShade: Graphics }).sphereShade;
+    expect(ao.x).toBeCloseTo(shade.x, 6); // same origin as the shading it sits on
+    expect(ao.y).toBeCloseTo(shade.y, 6);
+    expect(fillCount(ao)).toBeGreaterThanOrEqual(2); // socket_l and socket_r, nested passes each
+  });
+
+  it('clears before redrawing, so a per-frame repaint cannot accumulate', () => {
+    // It IS repainted every frame (the mounts orbit), which makes this the difference between
+    // a contact shade and an ever-darkening blob.
+    const skin = makeSkin(ORB_CORE_RIG);
+    skin.update();
+    const first = fillCount(aoOf(skin)!);
+    for (let i = 0; i < 5; i++) skin.update();
+    expect(fillCount(aoOf(skin)!)).toBe(first);
+  });
+
+  it('stays inside the painted body, wherever the socket tip actually is', () => {
+    // The socket bones are LONGER than the shell's radius (orb-core: len 52 vs bodyR 40), so an
+    // unclamped contact would sit mostly on transparent background — a dark smudge beside the
+    // character instead of a shade on it. This is the same invariant the shading holds.
+    for (const fill of [1, 0.81, 0.5]) {
+      const rig = new Rig(ORB_CORE_RIG);
+      const skin = new RigSkin(rig, fakeBundle(rig), fill);
+      skin.update();
+      const b = aoOf(skin)!.bounds;
+      const painted = 40 * fill;
+      expect(Math.max(-b.minX, b.maxX, -b.minY, b.maxY)).toBeLessThanOrEqual(painted);
+    }
+  });
+
+  it('follows the body bone\'s clip alpha, so it fades with the body it sits on', () => {
+    const clips = new Map<string, AnimationClip>([
+      ['fade', { duration: 1, loop: false, keyframes: [{ time: 0, bones: new Map([['shell', { alpha: 0.25 }]]) }] }],
+    ]);
+    const skin = makeSkin(ORB_CORE_RIG, clips);
+    skin.playClip('fade', 0);
+    skin.update();
+    expect(aoOf(skin)!.alpha).toBeCloseTo(0.25, 5);
+  });
+
+  it('hides itself when the body bone has no pose at all', () => {
+    const skin = makeSkin(ORB_CORE_RIG);
+    skin.update();
+    expect(aoOf(skin)!.visible).toBe(true);
+    // Force the FK result to omit the body bone, the way a malformed clip/rig pair could —
+    // same trick the sphere-shading suite above uses for the same branch.
+    const rig = (skin as unknown as { rig: { computeFK: unknown } }).rig;
+    rig.computeFK = () => new Map();
+    skin.update();
+    expect(aoOf(skin)!.visible).toBe(false);
+  });
+
+  it('tracks a module the clip TRANSLATES, not only one it rotates', () => {
+    // `computeFK` folds a clip's rotation into a bone's tip but not its translation — the sprite
+    // loop adds that separately. A contact that read only the pose would sit still while the
+    // module recoiled away from it, which is precisely the "decal floating in front" look this
+    // whole mark exists to remove.
+    const clips = new Map<string, AnimationClip>([
+      // -44 pulls the module's tip in from 52 to 8 authoring px, i.e. INSIDE the contact's own
+      // clamp radius, which is where a distance change is observable at all: past the clamp every
+      // mount lands on the same circle by construction (see `drawModuleContacts`).
+      ['kick', { duration: 1, loop: false, keyframes: [{ time: 0, bones: new Map([['socket_r', { translateX: -44 }]]) }] }],
+    ]);
+    const skin = makeSkin(ORB_CORE_RIG, clips);
+    const centres = (): number[] => (aoOf(skin)!.context.instructions as Array<{ action: string; data: { path?: { instructions: Array<{ action: string; data: number[] }> } } }>)
+      .flatMap((i) => (i.data.path?.instructions ?? []).filter((pi) => pi.action === 'ellipse').map((pi) => pi.data[0]!));
+    skin.update();
+    const rest = centres();
+    skin.playClip('kick', 0);
+    skin.update();
+    expect(centres()).not.toEqual(rest);
+  });
+
+  it('re-derives the mounts every frame, so a module that orbits drags its contact along', () => {
+    const clips = new Map<string, AnimationClip>([
+      ['swing', { duration: 1, loop: false, keyframes: [{ time: 0, bones: new Map([['socket_r', { rotation: 90 }]]) }] }],
+    ]);
+    const skin = makeSkin(ORB_CORE_RIG, clips);
+    // Snapshot the NUMBERS, not the Bounds object — Pixi mutates one instance in place, so
+    // holding the reference across a redraw would compare it against itself and pass on nothing.
+    const snap = (): number[] => {
+      const b = aoOf(skin)!.bounds;
+      return [b.minX, b.minY, b.maxX, b.maxY];
+    };
+    skin.update();
+    const before = snap();
+    skin.playClip('swing', 0);
+    skin.update();
+    expect(snap()).not.toEqual(before);
+  });
+});

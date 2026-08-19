@@ -2,18 +2,31 @@ import { Container, Graphics } from 'pixi.js';
 import { THEME } from '../theme';
 
 /** Nested-ellipse ground shadow (see `makeShadow`): `SHADOW_RINGS` ellipses stepping evenly
- *  from `SHADOW_R_OUTER` down to `SHADOW_R_INNER` times the body radius, each at the SAME low
- *  alpha. Because they composite, the total darkness ramps smoothly from ~`SHADOW_RING_ALPHA`
- *  at the outer edge to ~1-(1-a)^n at the core.
+ *  from `SHADOW_R_OUTER` down to `SHADOW_R_INNER` times the body radius. Because they
+ *  composite, the total darkness ramps up toward the core.
  *
  *  Count raised from 4 and the per-ring alpha cut on 2026-08-18 after looking at a 7x live
  *  render: four rings at 0.08/0.12/0.16/0.22 left four VISIBLE concentric edges under the
  *  character, which reads as a ripple or a targeting reticle rather than as a penumbra. Many
- *  faint rings is the same trick at a step size small enough to disappear. */
-const SHADOW_RINGS = 9;
-const SHADOW_R_OUTER = 1.45;
-const SHADOW_R_INNER = 0.4;
-const SHADOW_RING_ALPHA = 0.075;
+ *  faint rings is the same trick at a step size small enough to disappear.
+ *
+ *  Retuned again 2026-08-19 (measured pass) for the enemy shadows, which read as black
+ *  DINNER PLATES the crystals sat in: 12 rings over a narrower 1.3..0.3 span, and the alpha
+ *  RAMPED across the rings instead of held flat, so the outer edge (`SHADOW_ALPHA_OUTER`) is
+ *  nearly invisible while the contact core still lands around 0.48. A flat per-ring alpha
+ *  makes the outermost ring itself a visible hard edge, which is most of what made a shadow
+ *  read as a disc rather than as a penumbra — the other half was its SIZE, see `makeShadow`. */
+const SHADOW_RINGS = 12;
+const SHADOW_R_OUTER = 1.15;
+const SHADOW_R_INNER = 0.3;
+const SHADOW_ALPHA_OUTER = 0.015;
+const SHADOW_ALPHA_INNER = 0.1;
+/** Exponent on the alpha ramp. Linear still spread the darkness fairly evenly across the whole
+ *  disc, so a shadow read as a flat dark plate with a soft rim rather than as a pool with a
+ *  contact point — visible in a 4x render of a grounded enemy, whose art sits ABOVE the ground
+ *  point so the shadow's near half is the part you actually see. Squaring concentrates the
+ *  darkness into the inner third and leaves the outer half nearly transparent. */
+const SHADOW_ALPHA_CURVE = 2;
 
 /** Vertical foreshortening of everything round that lies on the ground plane or wraps a
  *  body in this tilted view (design/01). Shared with `EnergyShieldFilter`'s SHIELD_SQUASH
@@ -29,10 +42,12 @@ export const SHADOW_SLANT_Y = 0.22;
 
 /** How fast a shadow shrinks/fades with height. Raised from 0.012 (2026-08-18): that value
  *  was tuned for a bullet's tens-of-px `z` and left the 4-7 px of an actor's hover at
- *  k = 0.95, i.e. invisible — which is the whole cue the hover exists to produce. Kept
- *  moderate rather than doubled again because the height-driven OFFSET above now carries
- *  most of that information; this only has to keep the two consistent. */
-const SHADOW_LIFT_FALLOFF = 0.022;
+ *  k = 0.95, i.e. invisible — which is the whole cue the hover exists to produce. Raised
+ *  again 0.022 -> 0.04 (2026-08-19) alongside `Actor`'s bigger hover: over a 2.5..9.5 px bob
+ *  that is now k = 0.91 down to 0.72, i.e. the shadow visibly tightens and fades as the body
+ *  rises. The alternative — lifting the body further still — reads as flying rather than
+ *  hovering, so the readability is bought here instead. */
+const SHADOW_LIFT_FALLOFF = 0.04;
 
 // Base view for all world objects. Stage D: this is a PURE view — it owns no
 // gameplay state and decides no outcomes. The engine is authoritative; the render
@@ -89,15 +104,22 @@ export class Entity extends Container {
   shadowOffsetX = 0;
   shadowOffsetY = 0;
 
-  // Create an elliptical soft shadow, added to the shadow layer by the caller.
-  //
-  // Nested ellipses rather than one flat fill (2026-08-18 depth pass, user report
-  // "希望能再强化一下立体效果"): a single uniform ellipse at alpha 0.35 reads as a die-cut disc
-  // lying under the character, which is the opposite of the intended cue. Stacking many faint
-  // rings from wide to small approximates a penumbra — the contact point reads dark and
-  // definite while the outer edge falls off — using nothing but Graphics (a real blur would
-  // mean a filter per actor, and a busy room has 30 of them). 0.62 vertical squash is this
-  // project's one foreshortening constant, shared with the shield ring and the status auras.
+  /**
+   * Create an elliptical soft shadow, added to the shadow layer by the caller.
+   *
+   * `radius` is the DRAWN body's half-width in world px, not a collision radius — see
+   * `Actor`'s call site for why that distinction is the whole fix. Everything below is a
+   * fraction of it, so a body whose art fills less of its rig than another's gets a
+   * proportionally smaller shadow for free.
+   *
+   * Nested ellipses rather than one flat fill (2026-08-18 depth pass, user report
+   * "希望能再强化一下立体效果"): a single uniform ellipse at alpha 0.35 reads as a die-cut disc
+   * lying under the character, which is the opposite of the intended cue. Stacking many faint
+   * rings from wide to small approximates a penumbra — the contact point reads dark and
+   * definite while the outer edge falls off — using nothing but Graphics (a real blur would
+   * mean a filter per actor, and a busy room has 30 of them). 0.62 vertical squash is this
+   * project's one foreshortening constant, shared with the shield ring and the status auras.
+   */
   makeShadow(radius: number): Graphics {
     const s = new Graphics();
     for (let i = 0; i < SHADOW_RINGS; i++) {
@@ -105,7 +127,7 @@ export class Entity extends Container {
       const scale = SHADOW_R_OUTER + (SHADOW_R_INNER - SHADOW_R_OUTER) * t;
       s.ellipse(0, 0, radius * scale, radius * scale * SHADOW_SQUASH).fill({
         color: THEME.colors.shadow,
-        alpha: SHADOW_RING_ALPHA,
+        alpha: SHADOW_ALPHA_OUTER + (SHADOW_ALPHA_INNER - SHADOW_ALPHA_OUTER) * t ** SHADOW_ALPHA_CURVE,
       });
     }
     this.shadow = s;

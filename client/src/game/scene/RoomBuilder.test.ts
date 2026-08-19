@@ -260,19 +260,20 @@ describe('RoomBuilder — standing walls', () => {
     expect(wallShadows(rb)).toBeNull();
   });
 
-  it('gives every standing wall the stone-tuned lighting filter, not the actor tuning', () => {
-    // A wall's ambient sits ABOVE 1 − key so its cap genuinely brightens; an actor's sits
-    // below 1 so its unlit side darkens. Getting these the wrong way round would make every
-    // wall darker than the floor it stands on.
+  it('attaches NO per-segment filter — a room of walls costs zero render targets', () => {
+    // `LIT_WALLS` went false on 2026-08-19 after an A/B of the live frame measured the filter
+    // at a 0.06% mean difference (0.05% of pixels moving more than 5/255) for one render-target
+    // pass per segment, up to 32 per room. This is the cheapest possible guard on that decision
+    // being real: if something re-attaches a filter per wall, the cost is back.
     mocks.wallTex = fakeTexture(256, 256);
     mocks.wallFaceTex = fakeTexture(256, 128);
     const rb = makeRoomBuilder();
     rb.build(stateWithNorthWall());
-    const seg = wallEntities(rb)[0]!;
-    const lit = (seg.filters as unknown as Array<{ opts?: { ambient?: number; gradient?: number } }>)[0]!;
-    expect(lit.opts?.ambient).toBe(WALL_LIT_AMBIENT);
-    expect(lit.opts?.gradient).toBe(WALL_LIT_GRADIENT);
+    for (const seg of wallEntities(rb)) expect(seg.filters ?? []).toEqual([]);
+    // The stone tuning itself is kept (the constants and shader still exist, see LIT_WALLS):
+    // a wall's ambient sits ABOVE 1 − key so its cap brightens, where an actor's sits below 1.
     expect(WALL_LIT_AMBIENT + WALL_LIT_KEY_INTENSITY).toBeGreaterThan(1);
+    expect(WALL_LIT_GRADIENT).toBeGreaterThan(0);
   });
 
   it('still stands the wall up with no face art, using Graphics (a missing swatch never flattens it)', () => {
@@ -440,10 +441,10 @@ describe('RoomBuilder — grid overlay and rebuild', () => {
     const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(stateWithOneWall('ember'));
-    // ground fill (TilingSprite) + grid (Graphics). Since 2026-08-18 the walls have left the
-    // ground layer entirely (they are standing blocks on `entities`), so the grid is the ONLY
-    // Graphics here — which makes this a tighter check than the old >= 2.
-    expect(layers.ground.children.filter((c) => c instanceof Graphics)).toHaveLength(1);
+    // ground fill (TilingSprite) + grid + the per-room light pool (both Graphics). Since
+    // 2026-08-18 the walls have left the ground layer entirely (they are standing blocks on
+    // `entities`), so those two are the only Graphics here.
+    expect(layers.ground.children.filter((c) => c instanceof Graphics)).toHaveLength(2);
   });
 
   it('clears the previous room contents on a second build() call', () => {
@@ -466,10 +467,11 @@ describe('RoomBuilder — doors (design/05 "Room & door model", 2026-08-04)', ()
     const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(s);
-    // Ground fill + grid overlay are the only ground Graphics now; the real wall is a standing
-    // block on `entities`. If the locked door's passageAabb (also present in s.walls, mirroring
-    // DoorSystem) weren't excluded, it would be built as a SECOND standing block here.
-    expect(layers.ground.children.filter((c) => c instanceof Graphics).length).toBe(2);
+    // Ground fill + grid overlay + the per-room light pool are the only ground Graphics now;
+    // the real wall is a standing block on `entities`. If the locked door's passageAabb (also
+    // present in s.walls, mirroring DoorSystem) weren't excluded, it would be built as a SECOND
+    // standing block on `entities` — which is what the wallEntities count below catches.
+    expect(layers.ground.children.filter((c) => c instanceof Graphics).length).toBe(3);
     expect((rb as unknown as { wallEntities: Entity[] }).wallEntities).toHaveLength(1);
     expect(doorSprites(rb)).toHaveLength(1);
   });
@@ -640,11 +642,15 @@ describe('RoomBuilder — the floor grid steps back', () => {
     const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(stateWithOneWall('ember'));
-    const strokes = layers.ground.children
+    // One stroke instruction carries the whole lattice, which is what identifies the grid among
+    // the ground Graphics — the palette floor fill has none, and the per-room light pool added
+    // after it (see `roomLight.ts`) strokes one band per step.
+    const strokeLists = layers.ground.children
       .filter((c): c is Graphics => c instanceof Graphics)
-      .flatMap((g) => (g.context.instructions as Array<{ action: string; data: { style: { alpha: number } } }>))
-      .filter((i) => i.action === 'stroke');
-    expect(strokes).toHaveLength(1); // the grid is the only stroked thing left on `ground`
+      .map((g) => (g.context.instructions as Array<{ action: string; data: { style: { alpha: number } } }>)
+        .filter((i) => i.action === 'stroke'));
+    const strokes = strokeLists.find((l) => l.length === 1)!;
+    expect(strokes).toHaveLength(1);
     expect(strokes[0]!.data.style.alpha).toBeLessThan(0.2);
     expect(strokes[0]!.data.style.alpha).toBeGreaterThan(0); // still drawn, not deleted
   });
@@ -723,4 +729,157 @@ describe('RoomBuilder — a whole room of walls', () => {
     expect(ents[4]!.zIndex).toBe(192); // the interior block's
     expect(ents[1]!.zIndex).toBe(480); // the south kerb's — furthest forward
   });
+});
+
+// 2026-08-19 volume pass, end-to-end through `build()`. Both of these are pure modules with their
+// own unit tests (`wallRuns.test.ts`, `roomLight.test.ts`); what these cover is the wiring —
+// specifically that the tier is decided BEFORE the merge and that the room rects the light pool
+// uses are the same ones the tiering uses, which is where a plausible-looking refactor would go
+// wrong without either unit suite noticing.
+describe('RoomBuilder — one boundary drawn twice becomes one block', () => {
+  const wallEntities = (rb: RoomBuilder): Entity[] => (rb as unknown as { wallEntities: Entity[] }).wallEntities;
+
+  /** Two rooms side by side, each authoring its own wall on the shared boundary — the shipped
+   *  shape (`ember_l1_gallery` has five such pairs), and the source of the lit-edge/dark-band
+   *  seam down the middle of what looks like one thick wall. */
+  function stateWithDoubledBoundary(): GameState {
+    const s = createGameState({
+      seed: 1, worldW: 960, worldH: 480, waves: [],
+      walls: [
+        [448, 32, 32, 416], // room A's east side
+        [480, 32, 32, 416], // room B's west side — flush against it
+      ],
+      obstacles: [],
+    });
+    s.dungeonRoomRects.push(
+      { id: 'a', rect: { x: pxToFp(0), y: pxToFp(0), w: pxToFp(480), h: pxToFp(480) } },
+      { id: 'b', rect: { x: pxToFp(480), y: pxToFp(0), w: pxToFp(480), h: pxToFp(480) } },
+    );
+    (s as unknown as { dungeonConfig?: { biomeId: string } }).dungeonConfig = { biomeId: 'ember' };
+    return s;
+  }
+
+  it('merges the pair into a single block of their combined width', () => {
+    mocks.wallTex = fakeTexture(256, 256);
+    mocks.wallFaceTex = fakeTexture(256, 128);
+    const rb = makeRoomBuilder();
+    rb.build(stateWithDoubledBoundary());
+    const ents = wallEntities(rb);
+    expect(ents).toHaveLength(1); // two rects in, one block out
+    const cap = ents[0]!.children.filter((c): c is TilingSprite => c instanceof TilingSprite)[1]!;
+    expect(cap.width).toBe(64); // and it is as wide as both, so no stone is lost or invented
+  });
+
+  it('leaves the engine\'s own wall list alone — this is a drawing change, not a collision one', () => {
+    mocks.wallTex = fakeTexture(256, 256);
+    const s = stateWithDoubledBoundary();
+    const before = s.walls.length;
+    makeRoomBuilder().build(s);
+    expect(s.walls).toHaveLength(before);
+  });
+
+  it('does NOT merge a room\'s south kerb into its neighbour\'s north perimeter wall', () => {
+    // The one merge that must never happen: those two are stacked adjacent rects of different
+    // tiers, and one block cannot be both 22 px and 104 px tall. Merging them would stand a
+    // full-height wall where the kerb deliberately does not, i.e. between the camera and the
+    // player the room is framing.
+    const s = createGameState({
+      seed: 1, worldW: 480, worldH: 960, waves: [],
+      walls: [
+        [0, 448, 480, 32], // room A's south -> kerb
+        [0, 480, 480, 32], // room B's north -> perimeter, flush against it
+      ],
+      obstacles: [],
+    });
+    s.dungeonRoomRects.push(
+      { id: 'a', rect: { x: pxToFp(0), y: pxToFp(0), w: pxToFp(480), h: pxToFp(480) } },
+      { id: 'b', rect: { x: pxToFp(0), y: pxToFp(480), w: pxToFp(480), h: pxToFp(480) } },
+    );
+    (s as unknown as { dungeonConfig?: { biomeId: string } }).dungeonConfig = { biomeId: 'ember' };
+    mocks.wallTex = fakeTexture(256, 256);
+    mocks.wallFaceTex = fakeTexture(256, 128);
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    const heights = wallEntities(rb).map(
+      (seg) => (seg.children.find((c) => c instanceof TilingSprite) as TilingSprite).height,
+    );
+    expect(heights).toHaveLength(2);
+    expect(heights).toContain(WALL_H_KERB);
+    expect(heights).toContain(WALL_H_PERIMETER);
+  });
+
+  it('rebuilds from scratch on a second build(), never accumulating merged blocks', () => {
+    mocks.wallTex = fakeTexture(256, 256);
+    const rb = makeRoomBuilder();
+    rb.build(stateWithDoubledBoundary());
+    rb.build(stateWithDoubledBoundary());
+    expect(wallEntities(rb)).toHaveLength(1);
+  });
+});
+
+describe('RoomBuilder — the per-room light pool', () => {
+  /** The light pool is the LAST Graphics added to `ground` by `build()` (floor fill, grid, light —
+   *  doors are Sprites), and it is the only one that strokes more than once. */
+  function lightPool(rb: RoomBuilder): Graphics {
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    const graphics = layers.ground.children.filter((c): c is Graphics => c instanceof Graphics);
+    return graphics[graphics.length - 1]!;
+  }
+  function strokeCount(g: Graphics): number {
+    return (g.context.instructions as Array<{ action: string }>).filter((i) => i.action === 'stroke').length;
+  }
+
+  it('paints one falloff per room, all onto a single shared display object', () => {
+    mocks.floorTex = undefined;
+    mocks.wallTex = undefined;
+    const rb = makeRoomBuilder();
+    const oneRoom = (() => {
+      rb.build(stateWithOneRoom(480, 480));
+      return strokeCount(lightPool(rb));
+    })();
+    const rb2 = makeRoomBuilder();
+    rb2.build(stateWithTwoRooms());
+    expect(strokeCount(lightPool(rb2))).toBe(oneRoom * 2);
+    // ...and still exactly one Graphics carrying both.
+    const layers = (rb2 as unknown as { layers: Layers }).layers;
+    expect(layers.ground.children.filter((c) => c instanceof Graphics)).toHaveLength(3); // floor + grid + light
+  });
+
+  it('spans both rooms, so neither is left unlit', () => {
+    mocks.floorTex = undefined;
+    mocks.wallTex = undefined;
+    const rb = makeRoomBuilder();
+    rb.build(stateWithTwoRooms());
+    const b = lightPool(rb).bounds;
+    expect(b.minX).toBeLessThan(480);
+    expect(b.maxX).toBeGreaterThan(480); // reaches into the second room
+  });
+
+  it('falls back to the whole world as one room in a mode with no room model', () => {
+    // A flat `EngineConfig.floors` run and the PvP arena populate neither rect list; the world
+    // itself stands in, exactly as it does for the wall-tier lookup.
+    mocks.floorTex = undefined;
+    mocks.wallTex = undefined;
+    const s = createGameState({ seed: 1, worldW: 600, worldH: 600, waves: [], walls: [], obstacles: [] });
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    expect(strokeCount(lightPool(rb))).toBeGreaterThan(0);
+    // Inside the world, to within a stroke's own antialiasing slack.
+    expect(lightPool(rb).bounds.maxX).toBeLessThanOrEqual(600.5);
+  });
+
+  function stateWithOneRoom(w: number, h: number): GameState {
+    const s = createGameState({ seed: 1, worldW: w, worldH: h, waves: [], walls: [], obstacles: [] });
+    s.dungeonRoomRects.push({ id: 'r1', rect: { x: pxToFp(0), y: pxToFp(0), w: pxToFp(w), h: pxToFp(h) } });
+    return s;
+  }
+
+  function stateWithTwoRooms(): GameState {
+    const s = createGameState({ seed: 1, worldW: 960, worldH: 480, waves: [], walls: [], obstacles: [] });
+    s.dungeonRoomRects.push(
+      { id: 'a', rect: { x: pxToFp(0), y: pxToFp(0), w: pxToFp(480), h: pxToFp(480) } },
+      { id: 'b', rect: { x: pxToFp(480), y: pxToFp(0), w: pxToFp(480), h: pxToFp(480) } },
+    );
+    return s;
+  }
 });

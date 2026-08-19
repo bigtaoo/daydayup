@@ -7,7 +7,10 @@ import { fpToPx } from '../coords';
 import { getFloorTexture, getWallTexture, getWallFaceTexture } from '../../render/biomeTiles';
 import { getDoorTexture } from '../../render/environmentSprites';
 import { wallTier, wallHeight, WALL_HEIGHT, type RectPx } from './wallGeometry';
-import { buildWallBlock, drawWallShadow, buildPillarBody } from './wallRender';
+import { buildWallBlock, drawWallShadow } from './wallRender';
+import { buildPillarBody } from './pillarRender';
+import { mergeWallRuns, type WallRun } from './wallRuns';
+import { drawRoomLight } from './roomLight';
 import { NormalLitFilter, WALL_LIT_AMBIENT, WALL_LIT_GRADIENT, WALL_LIT_KEY_INTENSITY } from '../fx/filters';
 import { SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
 import type { Backdrop } from './Backdrop';
@@ -17,12 +20,21 @@ import { Portal } from './Portal';
 const GRID_ALPHA = 0.12;
 
 /** Whether standing walls take the directional-lighting filter on top of their hand-authored
- *  cap/face/side tints (2026-08-18). It adds per-stone relief — the difference between carved
- *  rock and a printed swatch — at the cost of one render-target pass per wall segment, which
- *  is the most expensive single thing in this pass. A room has ~10-25 segments. Kept as one
- *  switch so it can be turned off wholesale for a low-end target (design/04's WeChat build)
- *  without unpicking the rest of the shading. */
-const LIT_WALLS = true;
+ *  cap/face/side tints (2026-08-18). One render-target pass per wall segment, and a room has
+ *  ~10-32 of them, so this is by far the most expensive thing in the wall pass.
+ *
+ *  **Off since 2026-08-19, because it was measured to do nothing.** An A/B of the live frame
+ *  with every wall filter stripped differs by a MEAN of 0.48 out of 765 (0.06%), a maximum of
+ *  5%, and only 0.05% of pixels move by more than 5/255 — the four probe points (cap, face,
+ *  north-south cap, adjacent floor) come out 13/13, 62/62, 26/25, 40/40. The intent was
+ *  per-stone relief; the tuning that made it safe (`WALL_LIT_AMBIENT` above `1 - key`, a much
+ *  gentler gradient gain than an actor's, both needed to stop a wall going darker than its own
+ *  floor) is also what left it with no visible amplitude. The relief the walls actually have
+ *  now comes from `wallTone.ts` — cap wash, cap depth gradient, face ramp, fold line — which is
+ *  free. Kept as a switch rather than deleted so the experiment is repeatable: the constants
+ *  and the shader are still in `fx/filters/litFx.ts`, and re-tuning them is the open question,
+ *  not whether to re-enable this as it stands. */
+const LIT_WALLS = false;
 
 /** A `NormalLitFilter` tuned for stone rather than for a character — see `WALL_LIT_*`
  *  (`fx/filters/litFx.ts`) for why a wall needs the opposite ambient bias from an actor.
@@ -107,6 +119,16 @@ export class RoomBuilder {
     grid.stroke({ color: palette.gridLine, width: 1, alpha: GRID_ALPHA });
     this.layers.ground.addChild(grid);
 
+    // Per-room light pool (`roomLight.ts`) — the cheap static half of design/01's parked
+    // lightmap milestone. Every room on this floor measured the same flat 39-53 luma before
+    // this, which is both why a floor of rooms read as one sheet and why a black cast shadow
+    // on a near-black floor had nothing to be darker than. Painted after the grid so the
+    // lattice fades toward the walls with everything else.
+    const roomsPx = this.roomRectsPx(s, w, h);
+    const light = new Graphics();
+    for (const room of roomsPx) drawRoomLight(light, room);
+    this.layers.ground.addChild(light);
+
     // AABB walls (ROADMAP 1.2 — finally drawn): a tiled swatch + outline once wall art
     // exists for this element, else the same flat fill + outline as before. A
     // currently-locked door's passage rect lives in `s.walls` too (DoorSystem folds it
@@ -115,19 +137,27 @@ export class RoomBuilder {
     // object, never a copy) so this skip is exact and free for non-dungeon modes
     // (`dungeonDoors` is empty there).
     const doorAabbs = new Set(s.dungeonDoors.map((dr) => dr.passageAabb));
-    const rooms = this.roomRectsPx(s, w, h);
     // Every wall now stands (2026-08-18 — see `wallGeometry.wallTier` for why the old
     // "east-west runs only" rule was what made a room read flat), at one of three heights.
     // Shadows all land on one shared Graphics, added to `layers.shadow` before the blocks so
     // it paints under both them and the actors.
     const shadows = new Graphics();
     const faceTex = getWallFaceTexture(element);
+    // Tier FIRST, then merge same-tier neighbours into one mass (`wallRuns.ts`): adjacent rooms
+    // each author their own perimeter wall, so a room boundary is two parallel 32 px rects and
+    // drawing each as its own block put a lit-edge/dark-band seam down the middle of one stone
+    // mass. Tier before merge, never after — see `mergeWallRuns` for why same-tier-only is
+    // load-bearing rather than caution.
+    const runs: WallRun[] = [];
     for (const wall of s.walls) {
       if (doorAabbs.has(wall)) continue;
       const rect: RectPx = { x: fpToPx(wall.x), y: fpToPx(wall.y), w: fpToPx(wall.w), h: fpToPx(wall.h) };
-      const height = wallHeight(wallTier(rect, rooms));
-      drawWallShadow(shadows, rect, height);
-      const seg = buildWallBlock(rect, height, { palette, cap: wallTex, face: faceTex });
+      runs.push({ rect, tier: wallTier(rect, roomsPx) });
+    }
+    for (const run of mergeWallRuns(runs)) {
+      const height = wallHeight(run.tier);
+      drawWallShadow(shadows, run.rect, height);
+      const seg = buildWallBlock(run.rect, height, { palette, cap: wallTex, face: faceTex });
       if (LIT_WALLS) seg.filters = [wallLitFilter()];
       this.layers.entities.addChild(seg);
       this.wallEntities.push(seg);

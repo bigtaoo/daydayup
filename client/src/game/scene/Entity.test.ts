@@ -93,16 +93,32 @@ describe('Entity — visualZ, the render-only hover lift', () => {
 describe('Entity.makeShadow — a penumbra, not a die-cut disc', () => {
   it('stacks many faint ellipses rather than one opaque fill', () => {
     // Four graduated rings (the first attempt) showed four visible concentric edges at 7x and
-    // read as a targeting reticle. Many rings at ONE low alpha is the same trick at a step size
-    // small enough to disappear, so both the count and the uniformity matter.
+    // read as a targeting reticle. Many faint rings is the same trick at a step size small
+    // enough to disappear, so the count matters and so does every ring staying faint.
     const e = new Entity();
     const s = e.makeShadow(20);
     const fills = (s.context.instructions as Array<{ action: string; data: { style: { alpha: number } } }>)
       .filter((i) => i.action === 'fill');
-    expect(fills.length).toBeGreaterThanOrEqual(8);
-    const alphas = new Set(fills.map((f) => f.data.style.alpha));
-    expect(alphas.size).toBe(1); // one alpha for every ring
-    expect([...alphas][0]!).toBeLessThan(0.12); // and a faint one, so the stack ramps smoothly
+    expect(fills.length).toBeGreaterThanOrEqual(10);
+    for (const f of fills) expect(f.data.style.alpha).toBeLessThan(0.12);
+  });
+
+  it('ramps the per-ring alpha outward-faint to inward-strong, so the outer edge is not an edge', () => {
+    // Retuned 2026-08-19: a FLAT per-ring alpha makes the outermost ring a visible hard rim at
+    // that alpha, and an enemy's shadow read as a black plate it was sitting in. Ramping means
+    // the outermost ring is nearly transparent (a penumbra's edge) while the contact core still
+    // composites to something definite.
+    const e = new Entity();
+    const s = e.makeShadow(20);
+    const alphas = (s.context.instructions as Array<{ action: string; data: { style: { alpha: number } } }>)
+      .filter((i) => i.action === 'fill')
+      .map((f) => f.data.style.alpha);
+    for (let i = 1; i < alphas.length; i++) expect(alphas[i]).toBeGreaterThan(alphas[i - 1]!);
+    expect(alphas[0]!).toBeLessThan(0.04); // outermost: all but invisible on its own
+    // Composited darkness at the core — what the player actually sees under a body.
+    const core = 1 - alphas.reduce((acc, a) => acc * (1 - a), 1);
+    expect(core).toBeGreaterThan(0.4);
+    expect(core).toBeLessThan(0.6);
   });
 
   it('steps monotonically inward from wider-than-the-body to a small core', () => {

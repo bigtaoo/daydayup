@@ -341,6 +341,10 @@ describe('EnergyShieldFilter shimmer pace', () => {
 
 // 2026-08-18 depth pass, user report *"希望能再强化一下立体效果"* / *"墙看起来还是没有高度感"*.
 describe('EnergyShieldFilter ring shape', () => {
+  /** Shader source with comments stripped, so a number quoted in a comment cannot satisfy a
+   *  regex meant to read the real code (same helper the shimmer suite above uses). */
+  const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*/g, '');
+
   it('is a vertically foreshortened ellipse, not a screen-space circle', () => {
     // A perfect circle was the loudest "this is a decal pasted on" cue in the frame — a
     // shield WRAPS a body, and design/01's view is tilted, so its silhouette is an ellipse.
@@ -361,6 +365,39 @@ describe('EnergyShieldFilter ring shape', () => {
     // `uv.y /= uSquash` with squash < 1 shortens the ring's vertical reach. Getting this
     // backwards (dividing x) would produce a TALL ellipse, i.e. the wrong projection.
     expect(new EnergyShieldFilter().glProgram.fragment).toContain('uv.y /= uSquash');
+  });
+
+  // 2026-08-19 volume pass. The ring's SIZE, expressed in the only unit that means anything to
+  // a player: body radii. `Actor` pins this filter's area to a square `radiusPx * 3` per side,
+  // so `uv` (region-normalized, minus 0.5) spans ±0.5 across 6 body radii, and
+  // `dist = length(uv) * sqrt(2)`. A `dist` of D therefore sits `D * 6 / sqrt(2)` body radii out.
+  it('hugs the body at ~1.2 body radii instead of ballooning past 2', () => {
+    // Measured before the fix: the band peaked at dist 0.5, i.e. **2.1 body radii** — the ring was
+    // more than twice the size of the character it wrapped, and it blanketed the floor around a
+    // shielded actor's feet with opaque cyan, hiding the ground shadow entirely. That is the whole
+    // grounding cue of the volume pass, lost whenever a shield was up.
+    const src = code(new EnergyShieldFilter().glProgram.fragment!);
+    const m = /smoothstep\(([0-9.]+), ([0-9.]+), dist\) \* \(1\.0 - smoothstep\(([0-9.]+), ([0-9.]+), dist\)\)/.exec(src);
+    if (!m) throw new Error('shield shader no longer has a two-smoothstep rim band over `dist`');
+    const [inner, peak, peak2, outer] = m.slice(1, 5).map(Number);
+    const radii = (dist: number): number => (dist * 6) / Math.SQRT2;
+    expect(peak).toBe(peak2); // one band, not two overlapping ramps
+    expect(radii(peak!)).toBeGreaterThan(1); // outside the silhouette — it is a shield, not a skin
+    expect(radii(peak!)).toBeLessThan(1.45); // ...and not a pool on the floor
+    expect(inner!).toBeLessThan(peak!);
+    expect(outer!).toBeGreaterThan(peak!);
+    expect(radii(outer!)).toBeLessThan(1.8); // even the band's faint outer edge stays off the feet
+  });
+
+  it('paints itself onto transparent background at well under full opacity', () => {
+    // `color.a = max(color.a, glow * K)` is what draws the ring OUTSIDE the body's own alpha, so
+    // K is also the knob deciding how much floor a shielded actor hides. 1.0 would be a solid
+    // cyan disc over the shadow.
+    const src = code(new EnergyShieldFilter().glProgram.fragment!);
+    const m = /color\.a = max\(color\.a, glow \* ([0-9.]+)\)/.exec(src);
+    if (!m) throw new Error('shield shader no longer writes `color.a = max(color.a, glow * K)`');
+    expect(Number(m[1])).toBeLessThanOrEqual(0.75);
+    expect(Number(m[1])).toBeGreaterThan(0.4); // still a visible ring, not a hint
   });
 });
 

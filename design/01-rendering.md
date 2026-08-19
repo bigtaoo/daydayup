@@ -114,39 +114,56 @@ extruded block on the `entities` layer — `scene/wallRender.ts` owns the drawin
     see the next bullet. Orientation now changes nothing about how tall a wall is.
 - **Three surfaces, a faked side, a cast shadow and a dark silhouette** (`wallRender.ts`) —
   four cues whose absence, not the geometry, is what made a standing wall look printed on:
-  - **Tonal separation.** The cap keeps ~95% of the swatch's own value; the face drops to
-    ~50%; the east side band is 50% black over both. The two swatches do not start from the
-    same value (light grey stone vs dark charcoal brick), so a shallow face tint left a deep
-    block — level 1's are up to 6 grid cells deep, i.e. ~70% cap by area — reading as a pale
-    slab with a thin dark hem.
+  - **Tonal separation** — *retuned 2026-08-19 against a measured frame; see "Volume, measured"
+    below for the numbers that replaced these.* The first version kept the cap at ~95% of the
+    swatch's own value, dropped the face to ~50%, and put 50% black over both for the east
+    band, on the belief that the two swatches start from very different values (light grey
+    stone vs dark charcoal brick). Measured, they start from almost the same value (~46), and
+    separating the pair around that midpoint left BOTH of them darker than the floor.
   - **A faked side.** A block's east/west sides project to exactly **zero** width under
     `screen.y = gy - z` (this projection has no horizontal skew), so the east side is drawn
     as an **inset** dark band — inset, not extruded, so it can never cross into the
     neighbouring segment of the same perimeter run.
   - **A ground shadow.** Each wall sweeps its footprint down-right by
-    `height × SHADOW_SLANT_*` and fills the convex hull of the two rects, twice, plus a
-    tight contact pass at the footprint itself. One shared `Graphics` on `layers.shadow`
-    carries a whole room's set. Walls were the one tall thing in a room *not* using what
-    this doc already calls "the cheapest 3D cheat". The alphas are higher than they look
-    like they should be because the ember floor is near-black: what a shadow has to modulate
-    on that biome is the floor's lava cracks, the only bright thing on the ground.
+    `height × SHADOW_SLANT_*` and fills the convex hull of the two rects — four graduated
+    passes since 2026-08-19, two before that, because two alphas over hard-edged quads let you
+    see both quads. One shared `Graphics` on `layers.shadow` carries a whole room's set. Walls
+    were the one tall thing in a room *not* using what this doc already calls "the cheapest 3D
+    cheat". The alphas are higher than they look like they should be because the ember floor is
+    near-black: what a shadow has to modulate on that biome is the floor's lava cracks, the only
+    bright thing on the ground. The original also filled a **contact pass at the footprint
+    itself**, which could never be seen — a block's art covers its whole footprint and then
+    intrudes a wall height north of it, so every pixel of that fill was behind the block casting
+    it. Replaced 2026-08-19 by an ambient-occlusion band hugging the footprint from the
+    **outside**, which is both visible and where the crease physically belongs.
   - **A dark silhouette.** The outline was `palette.wallEdge` — a light salmon/steel,
     authored as the highlight edge of a wall lying **flat**, where a light rim is right. On a
     standing block, magnified by the room camera, it read as a bright wireframe box drawn
     over the art, and in the first live render it was the loudest thing in the frame.
     design/13 asks for a flat-cel silhouette, and a silhouette is dark.
-- **The camera frame grew with it.** `GameLoop.cameraFrame` returns the room rect extended
-  `MAX_WALL_HEIGHT` px upward (bottom edge unchanged), or the north wall's face would sit
-  off the top of the viewport — the one thing this whole pass exists to show. It has to track
-  the **maximum** tier, since the perimeter is both the tallest and the thing bordering that
-  rect.
-- **Optional per-stone relief.** Each block also carries a `NormalLitFilter` tuned for stone
-  (`WALL_LIT_*`: a much gentler gradient gain than an actor's, since tiled masonry is nothing
-  but luminance edges, and an ambient above `1 − key` so the cap genuinely brightens instead
-  of the whole wall going darker than the floor it stands on). One render-target pass per
-  segment, ~10-25 per room — `RoomBuilder`'s `LIT_WALLS` is the single switch that turns the
-  whole thing off for a low-end target (design/04's WeChat build).
-- **Pillars follow the same language** (`wallRender.buildPillarBody`). They were flat fills
+- **The camera frame grew with it, and its CLAMP had to open too.** `GameLoop.cameraFrame`
+  returns the room rect extended `MAX_WALL_HEIGHT` px upward (bottom edge unchanged), or the
+  north wall's face would sit off the top of the viewport — the one thing this whole pass exists
+  to show. It has to track the **maximum** tier, since the perimeter is both the tallest and the
+  thing bordering that rect. That extension was **silently cancelled until 2026-08-19**:
+  `updateCamera`'s vertical pan clamped to `[vh − effH, 0]`, an upper bound of the world's own
+  top edge, while a wall on the floor's northern boundary draws its cap and the top of its face
+  at *negative* world y. Confirmed live — `layers.world.y === 0`, the room's north wall showing
+  face only, no cap, top of the face cut. The bound is now `overscanTop = max(0, −frame.y) × zoom`,
+  i.e. the frame is the authority on how much above the world it asked to see, and a frame that
+  asks for none (an interior room, or no frame at all) still gets exactly zero.
+- **Per-stone relief was tried and measured out** (`LIT_WALLS`, **false since 2026-08-19**).
+  Each block used to carry a `NormalLitFilter` tuned for stone (`WALL_LIT_*`: a much gentler
+  gradient gain than an actor's, since tiled masonry is nothing but luminance edges, and an
+  ambient above `1 − key` so the cap brightens instead of the whole wall going darker than its
+  own floor) at one render-target pass per segment, 10-32 per room. An A/B of the live frame
+  with every wall filter stripped differs by a **mean of 0.48 out of 765 (0.06%)**, a maximum of
+  5%, and only 0.05% of pixels move more than 5/255 — the tuning that made it safe is also what
+  left it with no visible amplitude. The switch, the constants and the shader all stay
+  (`fx/filters/litFx.ts`); re-tuning them is the open question, not re-enabling it as it stands.
+  The relief the walls actually have now is free and comes from `wallTone.ts`.
+- **Pillars follow the same language** (`pillarRender.buildPillarBody`, split out of
+  `wallRender.ts` 2026-08-19). They were flat fills
   from `palette.pillar`/`palette.pillarTop`, which are **pre-art fallback hues** — the ember
   palette mixes the element's warm hue into a slate base and lands on a pale mauve, nothing
   like the charcoal-navy stone every shipped swatch actually is. Once the walls read as
@@ -181,10 +198,14 @@ facing continuum, but nothing said it was a **volume standing in a space**.
   height does not cast straight down. This is the half of the cue a clip could never produce,
   and it is shared by actors, bullets, pillars (which need it supplied by hand: a pillar is
   drawn upward from a grounded origin, so its `z` is 0) and walls.
-- **Shadows are a penumbra, not a disc.** Nine faint nested ellipses stepping from 1.45× to
-  0.4× the body radius, all at the same low alpha, so total darkness ramps smoothly to a
-  definite contact core. Four rings at graduated alphas — the first attempt — showed four
-  visible concentric edges at 7× and read as a targeting reticle.
+- **Shadows are a penumbra, not a disc.** Twelve faint nested ellipses stepping from 1.15× to
+  0.3× the body radius, so total darkness ramps smoothly to a definite contact core. Four rings at
+  graduated alphas — the first attempt — showed four visible concentric edges at 7× and read as a
+  targeting reticle. *Retuned 2026-08-19: it was nine rings from 1.45× at ONE flat alpha, which
+  makes the outermost ring itself a visible hard rim — most of what made an enemy's shadow read as
+  a black plate it was sitting in. The alpha now ramps (squared) across the rings, so the edge is
+  nearly transparent while the core still composites to ~0.45. The other half of that fix was its
+  SIZE — see "Volume, measured".*
 - **Everything round shares one 0.62 foreshortening.** The ground shadow, the status auras
   and `EnergyShieldFilter`'s rim glow. The shield ring in particular was a perfect
   screen-space circle (a raw UV distance), which is the loudest "this is a decal pasted on"
@@ -207,6 +228,136 @@ facing continuum, but nothing said it was a **volume standing in a space**.
 Wall height is `WALL_HEIGHT` (70 px), deliberately the same constant the pillars use, so
 everything standing in a room agrees on how tall "tall" is.
 
+## Volume, measured (2026-08-19)
+
+The two passes above were built by *looking*. This one was built by **measuring the frame they
+produced** — `renderer.extract` on `layers.world` at zoom 1, sampled per wall entity using the
+geometry the renderer itself had just used (cap sprite y/height, face sprite y/height) rather than
+coordinates guessed from the level data. That is what turned five look notes into numbers, and the
+numbers said something none of the look notes had:
+
+| surface                | was | now   |
+|------------------------|-----|-------|
+| pillar top             | 105 | 92    |
+| wall cap               |  44 | 76-88 |
+| **floor**              |  53 | 39-49 |
+| wall face, upper       |  23 | 31-41 |
+| wall face, at the base |  14 | 14-25 |
+| east side band         | 4-6 | 20-28 |
+
+**A top surface raised 104 px above the ground was darker than the ground it stands on.** That one
+inversion is the physical cause of *"就像一张图贴在地上"*, and it explains why a north-south run was
+the worst case: 100% of what you see of one IS its cap (its face only shows at the run's south
+end), so a run was a floor-value ribbon lying on a floor-value floor. Everything below follows from
+fixing the ordering. Tuning lives in `scene/wallTone.ts` — numbers only, no Pixi, no geometry, so
+`wallRender.ts` (blocks) and `pillarRender.ts` (cylinders) can share it without importing each
+other.
+
+- **The cap's key light is ADDITIVE, not a wash.** Pixi tints only multiply, so a cap cannot be
+  lifted above its swatch's own value by tinting at all. A translucent white wash reaches the
+  target value but is a lerp toward white, so it compresses the swatch's own contrast by its
+  alpha — and at play scale a wall cap is nothing *but* that contrast, so the first version came
+  out as smooth brushed concrete. An additive warm term adds a constant instead and leaves the
+  mortar-to-stone amplitude intact.
+- **The face art's own coping course had to be pulled back under the cap.**
+  `wallface_<element>.png` is a whole elevation — bright coping at the top, brick, dark base —
+  used once at the wall's full height, and that coping measured as bright as the cap above it. A
+  vertical surface cannot out-shine the horizontal one it meets, and when it does, the wall's
+  brightest band sits halfway down its front and the fold stops reading. A uniform tint cannot fix
+  it (the art's internal range is ~5:1, so any multiply that tames the coping crushes the brick),
+  hence a local ramp over the top 22% of the face.
+- **Every ramp is built from NON-OVERLAPPING bands, and the band count follows from the largest
+  alpha step the eye may not see.** Stacked translucent shapes step in *opacity*, so their steps
+  compound; non-overlapping bands make each band's alpha exactly its ramp value. The count then
+  depends on how bright the surface underneath is: 12 bands is fine for the base crease, 5 is fine
+  for the side shading, and the same 5 over the (much brighter) coping showed as five hard
+  horizontal stripes at 3x — that one needs 18.
+- **The cap's depth gradient is bounded to `CAP_GRADIENT_REACH_PX` of the fold.** A north-south
+  run's cap *depth is its length*, so spreading the ramp over its whole 450 px turned it into a
+  gradient painted down a beam. The physical cue is local to the fold anyway.
+- **Adjacent rooms author the same boundary twice, and it has to be drawn once**
+  (`scene/wallRuns.ts`). A horizontal luminance scan across what looks like one thick wall crossed
+  **two** 32 px segments, each with its own lit west edge and dark east band, i.e. a bright/dark
+  seam down the middle of one stone mass. The cause is content, not rendering: each room authors
+  its own perimeter wall, so a boundary is two parallel rects (`[184,8,4,27]` and `[188,8,4,27]` in
+  grid units, plus four more pairs on that floor). `mergeWallRuns` joins any two rects whose union
+  is *exactly* a rectangle, iterating to a fixed point — 33 raw walls become 28 blocks on level 1.
+  Render-only: `s.walls` is untouched, so collision is unaffected. **Same-tier only**, and that
+  restriction is load-bearing rather than cautious: a room's south kerb and its southern
+  neighbour's north perimeter wall are stacked adjacent rects of different tiers, and merging them
+  would give the kerb the taller height — reintroducing exactly the bug the kerb exists to prevent.
+- **A room now has a centre and corners** (`scene/roomLight.ts`). Measured, the floor was 39-53
+  *everywhere* — every room, corner and centre alike. Two consequences no per-object shading can
+  fix: a floor of five rooms reads as one flat sheet, and a black cast shadow has nothing brighter
+  to be dark against (which is why a wall's shadow measured a 5% modulation on the near-black ember
+  floor). This is the cheap static half of the lightmap milestone below — concentric stroked rects
+  fading in from each room's own bounds, no light sources, no second render target. The dynamic
+  half stays parked.
+
+### The character, same treatment
+
+- **The sphere shading was sized against a radius the art does not reach.** `RigSkin` passed the
+  body bone's declared `bodyR`; decoding the shipped PNGs' alpha bounding boxes shows they paint
+  **0.68-1.00** of it (`skinRegistry.BODY_FILL`). Nothing here is masked — that is deliberate, a
+  mask per actor would be 30 stencil passes in a busy room — so for `critter-core` (0.70) every
+  band outside 0.70 landed on transparent background and painted a hard-edged dark **disc** around
+  the crystal. An earlier session looked straight at that disc and recorded it as an over-large
+  ground shadow. The hero's 0.81 put a fainter halo just outside its white shell the same way.
+  Fixed by passing the drawn radius (`bodyR x bodyFill`); `rigComposition.test.ts` re-measures the
+  real pixels every run, so re-cropping a body texture cannot leave the number stale.
+- **The ground shadow was sized off the sim radius too**, via a hand-tuned `radiusPx * 0.7`. Every
+  rig's `referenceRadius` IS its body bone's `bodyR`, so the gameplay radius already equals the
+  rig's declared body radius, and the 0.7 was one uniform fudge across a roster whose art fills
+  between 0.68 and 1.00 — which is why it looked acceptable on the hero and made an enemy's shadow
+  ~45% wider than the crystal standing in it. `Actor` now sizes it from `Skin.bodyDrawnR`. Its
+  per-ring alpha also **ramps** (squared) instead of being flat: a flat alpha makes the outermost
+  ring a visible hard rim, which is most of what made a shadow read as a plate.
+- **The terminator was rebuilt as a full ramp** (`render/rigShading.ts`). Four concentric arcs put
+  the darkest band on the rim with hard angular cut-offs at each arc's ends, so the shadow side
+  read as dirt rather than as a turning surface. It is now a smooth chord-band ramp across the
+  whole body with a **reflected-light rollback** that keeps the outermost sliver brighter than the
+  shadow core — the single change that most restores design/13's crisp flat-cel silhouette.
+  Pixi 8's `FillGradient` would be the obvious tool and cannot be used: it calls
+  `DOMAdapter.createCanvas()` at `fill()` time, which throws in this repo's canvas-free tests, and
+  reading the retained instruction list is exactly how the look is machine-checked here.
+- **The light mark is a HUE, not a value.** design/13's shells are near-white — the lit cap of the
+  hero's shell measures 255 before any shading — so the old white specular was arithmetically a
+  no-op, and the first warm wash at 0.17 alpha was imperceptible for the same reason one step
+  further out. At 0.28 it actually tints, and it does real work on the dark re-tinted enemy bodies
+  the same code shades.
+- **A hover of 3.5 px could not produce the cue it exists for.** `3.5 x SHADOW_SLANT` is
+  (1.5, 0.8) world px of shadow offset — under one screen pixel. Raised to 6 (peak 9.5), with the
+  rest of the readability bought from a steeper `SHADOW_LIFT_FALLOFF` rather than from lifting the
+  body further, because past ~10 px a character stops reading as hovering and starts reading as
+  flying.
+- **The modules are seated against the core** (`drawModuleContacts`) — nested contact shades at
+  each socket bone's tip, clamped so the whole ellipse stays inside the drawn body. A socket tip is
+  *outside* the shell (orb-core: len 52 vs bodyR 40), so an unclamped blob would have painted a
+  dark smudge beside the character instead of a contact shade on it.
+- **A shielded actor lost its grounding entirely.** `EnergyShieldFilter`'s rim band peaked at
+  `dist 0.5` of a filter area six body radii wide, i.e. **2.1 body radii** from the actor's centre:
+  the ring was more than twice the size of the character it wrapped and blanketed the floor around
+  its feet with opaque cyan, hiding the shadow the rest of this work exists to produce. Pulled in
+  to peak at 1.2 body radii, with the glow's own alpha over transparent background cut from 0.85
+  to 0.7.
+
+**Two of this pass's tests are worth knowing about, because their obvious form does not work.**
+Containment of the sphere shading cannot be checked against a Graphics' `bounds`: the ramp runs
+diagonally, so its extreme points sit at 45° where an axis-aligned box never reaches, and a bounds
+assertion passes with the safety margin deleted. It has to measure each mark's own distance from the
+body centre. And the tether repaint's memoization cannot be checked by counting strokes, because
+"skipped the redraw" and "cleared and rebuilt to the same count" produce identical counts — it takes
+a marker stroke left on the Graphics that `clear()` would remove. Both are the same trap: an
+assertion that is true of the fix but *also* true of its absence.
+
+**What is still deliberately unfixed.** A north-south run's visible cast shadow is only
+`height x SHADOW_SLANT_Y` ~ 23 px of hem to the south, because the block's own art covers the rest
+of the hull; lengthening it for walls alone would break the one thing every shadow in this project
+agrees on (`Entity.SHADOW_SLANT_*` — actors, bullets, pillars and walls share one light). The base
+hug carries that job instead. And the pillars remain the smoothest objects in a room: they are
+hand-toned because texturing them from the wall swatches was tried and was worse, and mottling is
+all the surface noise they get without real pillar art.
+
 ## Depth sorting (Y-sort)
 
 - The entity layer sets `sortableChildren = true`; each frame we set `entity.zIndex = entity.gy`.
@@ -218,6 +369,7 @@ everything standing in a room agrees on how tall "tall" is.
 - It shrinks, fades, **and slides away from the fixed upper-left key light** as the lift grows → reinforces the sense of height. This is the cheapest "3D cheat". `Entity.SHADOW_SLANT_X/Y` are the one place the slant is defined; actors, bullets, pillars and walls all use them, so nothing in a room disagrees about where the light is.
 - Static tall objects (pillars) are drawn *upward* from a grounded origin rather than lifted by the transform, so their `z` is 0 and the displacement has to be supplied by hand (`Entity.shadowOffsetX/Y`).
 - See "Grounding the character" above for the shape of the shadow itself (nested ellipses, not one disc) and for the 0.62 foreshortening every round thing in this view shares.
+- **Its radius comes from the DRAWN body, not from a collision radius** (`Skin.bodyDrawnR`, 2026-08-19) — see "Volume, measured" for why a number sized off the rig's declared radius made an enemy's shadow ~45% wider than the enemy.
 
 ## Layers (bottom to top)
 
@@ -229,7 +381,7 @@ everything standing in a room agrees on how tall "tall" is.
 | fx | muzzle flashes, explosions, deflect flashes, per-element bullet trails (additive blend) | overlay |
 | ui | HP, weapon, crosshair | topmost |
 
-> The lighting layer (lightmap) is later inserted between entities and fx, composited with multiply blend. See the roadmap.
+> The lighting layer (lightmap) is later inserted between entities and fx, composited with multiply blend. See the roadmap. Its cheap static half — a per-room falloff painted on `ground` (`scene/roomLight.ts`) — landed 2026-08-19; the dynamic half is still parked.
 
 ## Per-weapon local z-order
 

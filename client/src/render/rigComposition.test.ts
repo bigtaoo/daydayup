@@ -30,7 +30,7 @@ import { readFileSync } from 'node:fs';
 import { Texture } from 'pixi.js';
 import { PLAYER_BASE } from '@dd/engine';
 import { fpToPx } from '../game/coords';
-import { RIG_DEFS } from './skinRegistry';
+import { BODY_FILL, BODY_FILL_DEFAULT, RIG_DEFS } from './skinRegistry';
 import { RigSkin } from './RigSkin';
 import { deserializeClip, type AnimationJson } from './taoBundle';
 import { KIND_DEFAULTS, WEAPON_DEFS, MODULE_SCALE, type WeaponVisualDef } from './weaponSkins';
@@ -302,5 +302,71 @@ describe('rig composition — the drawn body fits inside the sim\'s wall clearan
     // reads as the character being held off the wall by an invisible cushion, which is the
     // opposite complaint. Tangent is the target — one body radius, no more.
     expect(fpToPx(PLAYER_BASE.solidRadius)).toBeLessThanOrEqual(fpToPx(PLAYER_BASE.radius) * 1.1);
+  });
+});
+
+/**
+ * `skinRegistry.BODY_FILL` against the real pixels (2026-08-19 volume pass).
+ *
+ * A bone's `bodyR` is the rig's DECLARED body radius; the PNG bound to it is a square canvas
+ * whose creature may paint far less of it — measured, between 0.68 and 1.00 of the radius,
+ * differing per bundle rather than per rig (`brute-core` fills its canvas edge to edge,
+ * `critter-core`'s crystal paints 0.70). Anything sized off `bodyR` is therefore sized off a box
+ * up to 45% wider than the art inside it, which is exactly what made an enemy's ground shadow
+ * read as a black dinner plate it was sitting in.
+ *
+ * `BODY_FILL` records the measurement so `Actor` can size its shadow from the art. This is what
+ * keeps it honest: re-cropping, rescaling or replacing a body texture changes the number these
+ * tests measure, and the table has to move with it. Same class of cross-layer failure as the
+ * `footprintRadius` mismatch fixed the same week — a hand-tuned number sized against art that
+ * has since changed, with nothing in either file showing it.
+ *
+ * Decoding is real PNG decoding (`tools/png-pipeline/pngCodec.mjs`, the repo's own codec — the
+ * alternative would be a second decoder in test code), so this deliberately reads whole images
+ * rather than an IHDR header like its siblings above.
+ */
+describe('BODY_FILL — the recorded body art fill matches the shipped pixels', () => {
+  /** `alpha > 8` rather than `> 0`: a chroma-keyed PNG carries a rim of near-zero antialiasing
+   *  alpha that is invisible on screen and would inflate every measurement. */
+  const ALPHA_FLOOR = 8;
+
+  async function opaqueHalfWidth(dir: string, boneId: string, scaleX: number): Promise<number> {
+    // @ts-expect-error — the repo's PNG codec is a plain .mjs tool module with no type surface.
+    const { decodePNG } = await import('../../../tools/png-pipeline/pngCodec.mjs');
+    const img = decodePNG(read(`skins/${dir}/${boneId}.png`)) as { width: number; height: number; data: Uint8Array };
+    let minX = img.width;
+    let maxX = -1;
+    for (let y = 0; y < img.height; y++) {
+      for (let x = 0; x < img.width; x++) {
+        if (img.data[(y * img.width + x) * 4 + 3]! <= ALPHA_FLOOR) continue;
+        if (x < minX) minX = x;
+        if (x > maxX) maxX = x;
+      }
+    }
+    expect(maxX, `${dir}/${boneId}.png has no opaque pixels at all`).toBeGreaterThanOrEqual(0);
+    return ((maxX - minX + 1) * scaleX) / 2;
+  }
+
+  it('has an entry for every skin the game preloads — a missing one silently means 1.0', () => {
+    for (const { name } of BUNDLES) expect(BODY_FILL[name], `BODY_FILL['${name}']`).toBeDefined();
+  });
+
+  it.each(BUNDLES)('$name\'s recorded fill is what its body PNG actually paints', async ({ name, dir }) => {
+    const a = load(name, dir);
+    const animation = readJson<AnimationJson>(`skins/${dir}/animation.json`);
+    const binding = animation.bindings[a.bodyBone.id]!;
+    const halfWidth = await opaqueHalfWidth(dir, a.bodyBone.id, binding.scaleX);
+    // Within 0.02 — the table is rounded to two places, and a real art change moves it far more.
+    expect(halfWidth / a.bodyR).toBeCloseTo(BODY_FILL[name]!, 2);
+  });
+
+  it('never records more than 1.0 — art wider than its own bodyR is a rig bug, not a fill', () => {
+    for (const { name } of BUNDLES) expect(BODY_FILL[name]!).toBeLessThanOrEqual(1);
+  });
+
+  it('defaults to 1.0, the conservative direction, for an unregistered skin', () => {
+    // A shadow slightly too big is a look note; a missing one is a character that floats.
+    expect(BODY_FILL_DEFAULT).toBe(1);
+    expect(BODY_FILL['not-a-skin']).toBeUndefined();
   });
 });

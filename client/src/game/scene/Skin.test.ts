@@ -33,9 +33,15 @@ function fakeBundle(rig: Rig): RigSkinBundle {
   return { bindings, clips: new Map(), textures };
 }
 
+/** char_vanguard's measured body fill (`skinRegistry.BODY_FILL`) — the fraction of its
+ *  declared bodyR that the shell PNG actually paints. Restated here rather than imported
+ *  because this file MOCKS skinRegistry wholesale; `rigComposition.test.ts` is what pins the
+ *  real table against the real art. */
+const ORB_CORE_BODY_FILL = 0.81;
+
 function loadedRig(): LoadedRigSkin {
   const rig = new Rig(ORB_CORE_RIG);
-  return { rig, bundle: fakeBundle(rig), referenceRadius: ORB_CORE_REFERENCE_RADIUS };
+  return { rig, bundle: fakeBundle(rig), referenceRadius: ORB_CORE_REFERENCE_RADIUS, bodyFill: ORB_CORE_BODY_FILL };
 }
 
 function internals(s: Skin) {
@@ -177,5 +183,37 @@ describe('Skin.muzzleAnchor — rig authoring-px scaled to the actor', () => {
     internals(big).rig!.muzzleLocal = () => ({ x: 60, y: -46 });
     expect(small.muzzleAnchor()).toEqual({ x: 30, y: -23 });
     expect(big.muzzleAnchor()).toEqual({ x: 60, y: -46 });
+  });
+});
+
+// `bodyDrawnR` (2026-08-19 volume pass). A bone's `bodyR` — and the gameplay radius, which
+// equals it for every rig here since every `referenceRadius` IS the body bone's `bodyR` — is a
+// DECLARED radius; the PNG bound to it paints between 0.68 and 1.00 of that
+// (`skinRegistry.BODY_FILL`, measured from the shipped files). Anything sized against the
+// character's silhouette has to use this instead, and `Actor` sizes its ground shadow from it.
+describe('Skin.bodyDrawnR — the drawn half-width, not the collision radius', () => {
+  it('is the gameplay radius scaled by how much of it this bundle\'s art paints', () => {
+    mocks.loaded = loadedRig();
+    expect(new Skin(0x111111, 0x222222, 40, 'char_vanguard').bodyDrawnR)
+      .toBeCloseTo(40 * ORB_CORE_BODY_FILL, 6);
+  });
+
+  it('scales linearly with the actor, so a bigger character has a proportionally bigger body', () => {
+    mocks.loaded = loadedRig();
+    const small = new Skin(0x111111, 0x222222, 20, 'char_vanguard').bodyDrawnR;
+    const big = new Skin(0x111111, 0x222222, 60, 'char_vanguard').bodyDrawnR;
+    expect(big / small).toBeCloseTo(3, 6);
+  });
+
+  it('is the full radius on the Graphics placeholder, whose capsule really is one radius wide', () => {
+    mocks.loaded = undefined;
+    expect(new Skin(0x111111, 0x222222, 40).bodyDrawnR).toBe(40);
+  });
+
+  it('is strictly smaller than the collision radius for every partly-filled bundle', () => {
+    // The whole point: if these were ever equal for a bundle whose art does not fill its radius,
+    // the number would be back to describing a box rather than a creature.
+    mocks.loaded = loadedRig();
+    expect(new Skin(0x111111, 0x222222, 40, 'char_vanguard').bodyDrawnR).toBeLessThan(40);
   });
 });

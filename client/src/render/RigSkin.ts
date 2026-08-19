@@ -5,7 +5,8 @@ import type { AnimationClip, ResolvedBoneTransform, WorldPose, WorldPositions } 
 import { sampleClip } from './interpolate';
 import { facingFromAngle } from './facing';
 import { getWeaponAnchor, getWeaponRotationOffset, getWeaponScale, getWeaponTexture, type WeaponVisualKind } from './weaponSkins';
-import { MODULE_BEHIND_SCALE, MODULE_BEHIND_SHADE, SHADE_MIN_BODY_R, drawSphereShading, shadeHex } from './rigShading';
+import { MODULE_BEHIND_SCALE, MODULE_BEHIND_SHADE, SHADE_MIN_BODY_R, drawModuleContacts, drawSphereShading, shadeHex } from './rigShading';
+import { drawTethers, hasTetheredBone } from './rigTethers';
 
 // The socket that visibly carries the mounted weapon sprite (design/03 "swapping the
 // active slot swaps which socket fires" — the demo's `attack` clip already privileges
@@ -22,20 +23,6 @@ const IDLE_WEAPON_SOCKET = 'socket_l';
 // Only the ACTIVE socket's ring tracks aim; the idle one turns with its own module so ring
 // and module read as one assembly.
 const SOCKET_IDS = new Set([ACTIVE_WEAPON_SOCKET]);
-
-// The glowing energy tether every orbiting bone hangs off (design/13's "two weapon
-// modules that orbit it on glowing energy tethers", design/12's "each of the two
-// sockets orbits the core on a tether"). Drawn — not authored as art — because the
-// tether's length and angle are pure rig geometry: it spans a bone's pivot (the core's
-// centre) to its tip (where that bone's module sprite sits), so it has to follow FK
-// every frame. A bone opts in by declaring the `outerW`/`innerW` stroke widths the
-// editor's own skeleton view already uses for a tubular bone (orb-core's socket_l/
-// socket_r, boss-core's ring_a/ring_b); every other bone (shell/eye/belly, an enemy's
-// single body bone) leaves them undefined and draws no tether.
-const TETHER_COLOR = 0x8fe9ff;
-/** Perpendicular sag of the tether's arc, as a fraction of its length — the concept
- *  turnaround draws it as a slack curve bowing away from the core, not a straight rod. */
-const TETHER_SAG = 0.22;
 
 // Eye tracking (2026-08-18). A 2D rig can't turn a head, and the two-hemisphere billboard
 // (`facingFromAngle`) only has four states — L/R flip × front/back — so a 360° aim used to
@@ -105,9 +92,14 @@ export class RigSkin {
   // Sphere shading over the body bone (see rigShading.ts), plus which bone it tracks. Null
   // for a rig whose body is too small to shade, or one with no bound body art at all.
   private readonly sphereShade: Graphics | null;
+  /** Contact shade where each orbiting module meets the core (`rigShading.drawModuleContacts`,
+   *  2026-08-19). Allocated only for a rig that HAS orbiting modules, i.e. the same tethered
+   *  bones the tether Graphics is drawn from, and only when that rig's body is big enough to
+   *  shade at all — an enemy with one body bone gets neither. */
+  private readonly moduleAO: Graphics | null;
   private readonly shadeBoneId: string | null;
   private tetherGeometry = ''; // last-drawn endpoint signature (skip the rebuild if unchanged)
-  private tetherTint = 0xffffff;
+  private tetherTint = 0xffffff; // multiply-tint over the tether hue; white = as authored
   private clip: AnimationClip | null = null;
   private clipT = 0;
   private showBack = false;
@@ -119,13 +111,20 @@ export class RigSkin {
   private idleModuleSprite: Sprite | null = null; // the other arm's decorative module
   private weaponTint = 0xffffff;
 
+  /** `bodyFill` is how much of the body bone's declared `bodyR` this bundle's art actually
+   *  paints (`skinRegistry.BODY_FILL`, measured from the shipped PNGs). Everything drawn ON the
+   *  body rather than as part of it — the sphere shading, the module contact shades — must be
+   *  sized against that, not against `bodyR`: nothing here is masked, so a mark sized to a
+   *  radius the art does not reach paints straight onto the transparent background. Defaults to
+   *  1 (assume the art fills its radius) so a fake bundle in a test behaves as before. */
   constructor(
     private readonly rig: Rig,
     private readonly bundle: RigSkinBundle,
+    private readonly bodyFill = 1,
   ) {
     // Tethers paint behind every bone sprite: they run from the core's centre out to a
     // module, so the half nearest the core belongs UNDER the body, not across it.
-    this.tethers = rig.boneDefs.some(b => b.outerW && b.innerW) ? new Graphics() : null;
+    this.tethers = hasTetheredBone(rig.boneDefs) ? new Graphics() : null;
     if (this.tethers) {
       this.tethers.zIndex = -1;
       this.view.addChild(this.tethers);
@@ -154,12 +153,19 @@ export class RigSkin {
         return r >= SHADE_MIN_BODY_R && bundle.bindings.has(id) && bundle.textures.has(id);
       }) ?? null;
     if (this.shadeBoneId) {
-      const bodyR = rig.boneMap.get(this.shadeBoneId)!.bodyR!;
-      this.sphereShade = drawSphereShading(bodyR);
+      this.sphereShade = drawSphereShading(this.drawnBodyR());
       this.sphereShade.zIndex = (bundle.bindings.get(this.shadeBoneId)?.zOrder ?? 0) + 0.5;
       this.view.addChild(this.sphereShade);
     } else {
       this.sphereShade = null;
+    }
+
+    // Just above the sphere shade and still below every decorative bone (orb-core: belly 1,
+    // eye 2, sockets 3/4), so a module's own art always draws over its contact shade.
+    this.moduleAO = this.shadeBoneId && this.tethers ? new Graphics() : null;
+    if (this.moduleAO) {
+      this.moduleAO.zIndex = (bundle.bindings.get(this.shadeBoneId!)?.zOrder ?? 0) + 0.6;
+      this.view.addChild(this.moduleAO);
     }
 
     this.view.sortableChildren = true;
@@ -290,54 +296,50 @@ export class RigSkin {
       }
     }
 
-    this.drawTethers(worldPose, transforms);
+    if (this.tethers) {
+      this.tetherGeometry = drawTethers(
+        this.tethers, this.rig.boneDefs, worldPose, transforms, this.tetherGeometry, this.tetherTint,
+      );
+    }
+    this.updateModuleContacts(worldPose, transforms);
     this.updateWeaponSprites(worldPose);
   }
 
-  /** Repaint the glowing tether of every orbiting bone (see TETHER_COLOR above): an arc
-   *  from the bone's pivot on the core out to the module sitting at its tip. Geometry is
-   *  static in body space unless a clip actually moves those bones, so the endpoints are
-   *  signed and the rebuild skipped when nothing moved — a hovering idle costs one
-   *  string compare per frame, not two curve rebuilds. */
-  private drawTethers(worldPose: WorldPositions, transforms: Map<string, ResolvedBoneTransform>): void {
-    const g = this.tethers;
-    if (!g) return;
-
-    const arcs: Array<{ pose: WorldPose; outerW: number; innerW: number; alpha: number }> = [];
-    let signature = '';
+  /** Repaint the module contact shades from this frame's socket-bone tips, in the body
+   *  bone's own space (the same space `drawSphereShading` draws in), so the whole overlay
+   *  rides the body's hover bob exactly as the shading does. */
+  private updateModuleContacts(worldPose: WorldPositions, transforms: Map<string, ResolvedBoneTransform>): void {
+    const g = this.moduleAO;
+    if (!g || !this.shadeBoneId) return;
+    const body = worldPose.get(this.shadeBoneId);
+    if (!body) {
+      g.visible = false;
+      return;
+    }
+    const bodyTransform = transforms.get(this.shadeBoneId);
+    const bx = body.ex + (bodyTransform?.translateX ?? 0);
+    const by = body.ey + (bodyTransform?.translateY ?? 0);
+    const mounts: Array<{ x: number; y: number }> = [];
     for (const bone of this.rig.boneDefs) {
       if (!bone.outerW || !bone.innerW) continue;
       const pose = worldPose.get(bone.id);
-      if (!pose) continue;
-      const alpha = transforms.get(bone.id)?.alpha ?? 1;
-      arcs.push({ pose, outerW: bone.outerW, innerW: bone.innerW, alpha });
-      signature += `${pose.sx.toFixed(1)},${pose.sy.toFixed(1)},${pose.ex.toFixed(1)},${pose.ey.toFixed(1)},${alpha.toFixed(2)};`;
+      const t = transforms.get(bone.id);
+      if (!pose || (t?.alpha ?? 1) <= 0) continue;
+      // `+ translate` for the same reason the sprite loop above does it: `computeFK` folds a
+      // clip's ROTATION into a bone's tip but not its translation, so a module the clip slides
+      // (the attack clip's recoil kick) would otherwise leave its contact shade behind.
+      mounts.push({ x: pose.ex + (t?.translateX ?? 0) - bx, y: pose.ey + (t?.translateY ?? 0) - by });
     }
-    if (signature === this.tetherGeometry) return;
-    this.tetherGeometry = signature;
+    g.visible = true;
+    g.position.set(bx, by);
+    g.alpha = bodyTransform?.alpha ?? 1;
+    drawModuleContacts(g, mounts, this.drawnBodyR());
+  }
 
-    g.clear();
-    for (const { pose, outerW, innerW, alpha } of arcs) {
-      if (alpha <= 0) continue;
-      const dx = pose.ex - pose.sx;
-      const dy = pose.ey - pose.sy;
-      const len = Math.hypot(dx, dy);
-      if (len < 1) continue;
-      // Control point: the midpoint pushed along the segment's normal, so the tether
-      // bows out to one consistent side (down, in the rig's own y-down space) whichever
-      // way the bone points — the whole rig mirrors as a unit, so the sag mirrors with it.
-      const nx = -dy / len;
-      const ny = dx / len;
-      const bow = (ny >= 0 ? 1 : -1) * len * TETHER_SAG;
-      const cx = pose.sx + dx / 2 + nx * bow;
-      const cy = pose.sy + dy / 2 + ny * bow;
-      // Two passes over the same curve: a wide soft halo, then the bright core line.
-      g.moveTo(pose.sx, pose.sy).quadraticCurveTo(cx, cy, pose.ex, pose.ey)
-        .stroke({ color: TETHER_COLOR, width: outerW, alpha: 0.3 * alpha, cap: 'round' });
-      g.moveTo(pose.sx, pose.sy).quadraticCurveTo(cx, cy, pose.ex, pose.ey)
-        .stroke({ color: TETHER_COLOR, width: innerW, alpha: 0.9 * alpha, cap: 'round' });
-    }
-    g.tint = this.tetherTint;
+  /** The body art's real drawn radius in authoring px — the shade bone's declared `bodyR` times
+   *  this bundle's measured `bodyFill`. Only valid once `shadeBoneId` has resolved. */
+  private drawnBodyR(): number {
+    return this.rig.boneMap.get(this.shadeBoneId!)!.bodyR! * this.bodyFill;
   }
 
   /** Mount/move/hide both orbiting weapon modules (design/03 universal mount — render-only,

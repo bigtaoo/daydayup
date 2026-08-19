@@ -41,7 +41,13 @@ void main(void)
     // same UV-distance trick as VignetteFilter above, so it needs no extra per-skin
     // wiring to read correctly against both the Graphics placeholder body and a real
     // .tao rig sprite.
-    float rim = smoothstep(0.30, 0.5, dist) * (1.0 - smoothstep(0.5, 0.66, dist));
+    // Band radius (2026-08-19 volume pass). \`uv\` spans ±0.5 across a filterArea 6 body radii
+    // wide, so \`dist\` 0.5 sits 2.1 BODY RADII from the actor's centre — the ring was more than
+    // twice the size of the character it wrapped, and blanketed the floor all round its feet
+    // with opaque cyan. Measured consequence: a shielded actor lost its ground shadow entirely,
+    // and with it every grounding cue the volume pass added. Pulled in to peak at 0.283, i.e.
+    // 1.2 body radii, which hugs the silhouette the way a shield should.
+    float rim = smoothstep(0.17, 0.283, dist) * (1.0 - smoothstep(0.283, 0.40, dist));
     // Shimmer: a slow breathing pulse, not a flicker (user report, 2026-08-17: "护盾的
     // 闪烁频率降低"). Was \`0.6 + 0.4 * sin(uTime * 0.006 + dist * 18.0)\` — 0.006 rad/ms
     // is ~0.95 Hz, and with the ring's own 18-cycle radial banding scrolling through it
@@ -54,7 +60,9 @@ void main(void)
     float shimmer = 0.75 + 0.25 * sin(uTime * 0.0018 + dist * 9.0);
     float glow = rim * shimmer * uIntensity;
     color.rgb += uColor * glow;
-    color.a = max(color.a, glow * 0.85);
+    // 0.85 -> 0.7: what this line does is paint the glow onto TRANSPARENT background outside
+    // the body, so it is also the knob that decides how much floor the shield hides.
+    color.a = max(color.a, glow * 0.7);
     finalColor = color;
 }
 `;
