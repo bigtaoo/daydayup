@@ -68,6 +68,27 @@ const PILLAR_MOTTLE: ReadonlyArray<readonly [number, number, number, number]> = 
   [0.36, 0.12, 0.06, 0.07],
 ];
 
+/** The top ellipse's radii, for a shaft `bodyW` px wide. Shared with `pillarArtExtent` so the
+ *  occlusion x-ray measures the same overhang the cap is actually drawn at. */
+function pillarCapRadii(bodyW: number): { capRx: number; capRy: number } {
+  return {
+    capRx: bodyW / 2 + PILLAR_CAP_OVERHANG_PX,
+    capRy: Math.max(8, bodyW * PILLAR_CAP_RY_FRACTION),
+  };
+}
+
+/**
+ * How far a pillar's art reaches from its own ground point, in local px: `halfW` to either side
+ * and `top` northward (negative). Like a wall block, a pillar is drawn UPWARD from a grounded
+ * origin, so its art covers a full `height` of walkable floor north of the footprint plus the
+ * cap ellipse's own depth — that band is what `RoomBuilder` hands the occlusion x-ray
+ * (`occlusion.Occluder`).
+ */
+export function pillarArtExtent(bodyW: number, height: number): { halfW: number; top: number } {
+  const { capRx, capRy } = pillarCapRadii(bodyW);
+  return { halfW: capRx, top: -(height + capRy) };
+}
+
 /**
  * A pillar as a stone cylinder in the same tonal language as a standing wall — a lit top
  * ellipse, a shaft shaded across its curve, faint mottling, a base contact crease, and the same
@@ -91,8 +112,7 @@ const PILLAR_MOTTLE: ReadonlyArray<readonly [number, number, number, number]> = 
  */
 export function buildPillarBody(bodyW: number, height: number, palette: BiomePalette): Graphics {
   const g = new Graphics();
-  const capRy = Math.max(8, bodyW * PILLAR_CAP_RY_FRACTION);
-  const capRx = bodyW / 2 + PILLAR_CAP_OVERHANG_PX;
+  const { capRx, capRy } = pillarCapRadii(bodyW);
   const corner = bodyW * PILLAR_CORNER_FRACTION;
   const bodyH = height + PILLAR_BASE_PX;
   const stone = (base: number) => mixHex(base, palette.wall, PILLAR_BIOME_MIX);

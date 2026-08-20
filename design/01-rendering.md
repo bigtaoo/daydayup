@@ -585,10 +585,131 @@ and re-running `renderer.extract` isolates exactly one cue per frame, three call
 no rebuild. That is how "the flat additive is the problem" and "the grey stripe is the shading
 layer" were each settled in one frame instead of a guess-and-check loop.
 
+## The occlusion x-ray: the character is never lost behind a block (2026-08-20)
+
+Live report, with the wall circled: *"角色跑到墙下面去了"* — the character walked to the north
+side of one of `ember_l1_alcove`'s interior blocks and was **gone**. Not clipped, not half
+hidden: measured on the extracted frame, the rect where the body should be read luma **78.4**
+while the cap stone right beside it read **77.1**. The character was arithmetically
+indistinguishable from the wall.
+
+**Nothing was drawing wrongly.** Every layer was individually correct, and their combination
+hides the player:
+
+- A block's art spans `south - height - depth .. south`, i.e. it intrudes one full wall height
+  north of its own footprint (the section above says exactly this, and it is what makes a wall
+  look like a wall).
+- That intrusion lands on **walkable floor**, and the block sorts on its south edge, so it is
+  drawn in front of anybody standing there.
+- The player's own wall clearance (`PLAYER_BASE.solidRadius`, 16 px) puts them 16 px north of
+  the footprint at closest approach, so the cap reaches `70 - 16 = 54` px above their feet —
+  and the drawn body is **32** px tall. Fully covered, with 22 px to spare.
+- 2D sorting is per-object, so "mostly behind" is not available: the whole character goes.
+
+In real geometry the head would poke over a wall this tall by a few px; the fake-3D
+approximation eats that margin, and this doc's own "Limits of fake 3D" section is where this
+case had been parked. **Being hidden is not the bug — being hidden with no way to tell is.**
+
+**The fix is an x-ray, not a geometry change** (`scene/occlusion.ts`, driven per render frame
+from `GameLoop.updateFx` alongside the dynamic lighting, which already has the local player and
+this frame's dt). Any standing block currently drawing over the local player fades to
+`XRAY_FADE` (0.34) over 90 ms and back over 220 ms — slower back, so walking along a block
+cannot strobe. What was rejected and why:
+
+- **Lowering the interior tier** so the head clears the cap. Physically consistent and needs no
+  per-frame state, but it only ever buys back the top few px of the body, and it breaks the
+  deliberate `WALL_H_INTERIOR == pillar height` agreement that lets a room's verticals be read
+  against each other.
+- **Drawing the player OVER the block.** Always visible, but it reads as standing on top of the
+  wall — the same spatial confusion, inverted, and it permanently costs the occlusion cue.
+- **Growing the collision footprint** so the blind band is unreachable. Invisible walls, and it
+  eats a wall height of floor around every block in the room.
+
+**Only the CAP fades — and where that is not enough, the face follows.** Measured both ways on a
+live frame: fading the whole block loses the stone and the block reads as a hole in the room, so
+the default pass moves the cap layers only (`occlusion.xrayLayers`, tagged in `buildWallBlock`) and
+leaves the face, the shading and the silhouette at full strength, with the cast shadow never moving
+at all. The result reads as a glass-topped block on a solid brick elevation, which still says "you
+are behind this". Layers are tagged by label, not child index, and each layer's authored alpha is
+*scaled* rather than replaced, so the cap's additive key light stays proportional on the way down.
+
+For an interior block that is the whole story: 70 px of art over a 64 px footprint means the
+engine's own clearance keeps the body's feet 10 px *above* the cap/face fold, so the face never
+covers any of the character. It is not the whole story for a **tall wall on a shallow footprint** —
+which needs `depth + clearance + bodyH <= height`, and which every 104 px room boundary over a
+32 px footprint satisfies. There the body can sit entirely below the fold and fading the cap
+achieves *literally nothing*. `occlusion.needsDeepFade` is a second pass for exactly that: when the
+FACE alone covers as much of the body as it takes to trigger the x-ray at all (the same
+`MIN_COVER_FRACTION`, deliberately not a second number), the face and its shading go too. It costs
+something real — dropping a face reveals what is *behind* the wall, and at a room boundary that is
+the next wall's own bright cap showing through as a pale band — which is why it is a fallback and
+not the default. Swept over the shipped floors it fires on **1.3%** of the standable floor. The two
+passes stage naturally as you walk into a wall: the cap goes first, and the face only once the cap
+has stopped being the thing in the way.
+
+**A pillar gets the same treatment, and it has no cap/face split at all.** A pillar is
+drawn upward from its own ground point, so the surface a character disappears into is its
+70 px **shaft**, not the little ellipse on top — its whole body fades. This doc used to call
+being hidden behind a pillar intended (see "Depth sorting" below); a body that vanishes
+completely is not, whatever shape the thing hiding it is. A pillar is also a *narrower* target,
+so the player brushes past its blind side more often, not less.
+
+**What deliberately does NOT trigger it: the south kerb.** A 22 px lip reaches 6 px above the feet
+of a player standing flush against it — the character was never hidden, and fading the whole
+southern lip of the room every time the player walks along it would be a bigger artifact than the
+6 px it fixes. `MIN_COVER_FRACTION` (0.45 of the drawn body height) is what draws that line, and
+the *drawn* body is the denominator on purpose: an absolute px threshold is exactly the kind of
+number that goes stale the next time the art grows.
+
+**A perimeter run DOES trigger it, and the first version of this section claimed otherwise.** The
+claim was that a room's boundary covers floor on the far side of itself, so a player inside the
+room is always south of its sort line. True of a room's north wall, false in general — and
+`occlusionCoverage.test.ts` found both counterexamples in the shipped content:
+
+- **A long north-south run whose north END is open floor** (a door passage between two rooms). The
+  run's art spills one wall height past its own footprint onto ground the player walks over once
+  that door unlocks, and standing there they are half swallowed by its cap.
+- **A wall between two vertically stacked rooms** — much the bigger case. `wallTier` classifies a
+  merged run by the room its CENTRE lands in, so the wall along room A's south edge is room B's
+  *north* perimeter: 104 px tall, not the 22 px kerb the "nothing tall between the camera and the
+  player it is framing" rule intends. Its art covers the bottom ~90 px of room A's floor, and a
+  player standing there was **completely invisible** before this pass. **The kerb rule is defeated
+  for any shared boundary**, which is worth knowing independently of the x-ray.
+
+What does still hold — and is what stops a boundary fading while you walk along it — is the
+geometry: a perimeter run can only ever fire from **north of its own footprint**, never from the
+room floor it borders.
+
+**Measured, before → after** (`renderer.extract`, luma 0-255, the body's own rect derived from the
+player view's global position): the character behind the block **78.4 → 105.7**, against **125.8**
+standing on open floor — so the x-ray recovers 84% of the body's own value, where before it
+recovered none of it (78.4 vs the 77.1 of the stone next to it). The block's face measures 33.8
+either way and the floor 39.8 either way: nothing outside the cap moved.
+
+**And measured over the whole of level 1, which is what sized the fix.**
+`client/src/game/scene/occlusionCoverage.test.ts` sweeps every position the player can legally
+stand at on all five shipped floors — 97,803 samples at 8 px — scoring each against an independent
+oracle (rectangle overlap between a block's drawn art and the drawn body, never calling the rule
+under test):
+
+| | share of standable floor |
+|---|---|
+| at least half the character hidden, before | **8.5%** |
+| character **completely** invisible, before | **5.5%** |
+| still more than half hidden, after | **none** (worst case 43.8%) |
+| needs the deep pass | 1.3% |
+
+Two things came out of that sweep that no hand-written fixture was going to produce: the
+perimeter-run cases above, and the fact that a cap-only fade left **148 samples 100% hidden** and
+another 561 at 75% — which is what the deep pass exists for. It also caught a bad fixture in
+`RoomBuilder.test.ts`, whose "player standing behind the block" position was actually inside the
+stone.
+
 ## Depth sorting (Y-sort)
 
 - The entity layer sets `sortableChildren = true`; each frame we set `entity.zIndex = entity.gy`.
 - Lower on screen (larger gy) draws later → occludes objects above it. A character walking behind a pillar is hidden; in front, it hides the pillar.
+- **Hidden, but never LOST**: since 2026-08-20 any standing block that is drawing over the local player x-rays out of the way (see "The occlusion x-ray" above). The sort itself is unchanged — the character really is behind the stone, and the stone is what goes translucent.
 
 ## Shadows
 
@@ -632,6 +753,7 @@ Otherwise you get the "gun floating on the chest while facing away" artifact.
 2D sorting is per-object, not per-pixel. The following cases break and must be avoided or accepted as approximations:
 
 - One large sprite partially in front of and partially behind a tall object (crossing a thick pillar) → judged wholly front or back, artifact at the seam. Mitigation: split tall objects into segments, tune anchors carefully.
+- A character standing in the band a standing block's art intrudes over (one wall height north of its footprint) is judged wholly BEHIND it, and a 70 px block is taller than the 32 px body — so "partly hidden" is not available and the player simply disappeared. **Reported live 2026-08-20 and now mitigated by the occlusion x-ray above**, which is a stylisation, not a fix to the sort: the case itself is still a limit of the projection.
 - Complex multi-layer occlusion → sorting rules must be refined.
 - Continuous slopes / height transitions → approximation only.
 

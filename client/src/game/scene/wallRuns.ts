@@ -278,3 +278,20 @@ export function unjoinedSpans(
   if (width - cursor > JOIN_TOLERANCE) out.push([cursor, width]);
   return out;
 }
+
+/**
+ * Local y of the top (north) edge of a block's cap — the highest row its art paints, and so both
+ * where every cap layer starts and how far north of its own footprint the block reaches (which is
+ * what `RoomBuilder` hands the occlusion x-ray as `Occluder.top`). Lives here rather than in
+ * `wallRender` because the clip it applies is a JOIN property — the whole rule is about what the
+ * neighbouring mass is holding — and because three call sites read it, which is two more than the
+ * inlined copies it replaced.
+ *
+ * A tucked run reaches only `tuckLiftPx` north of its own footprint edge (local `-r.h`) instead of
+ * a full wall height, which leaves the wall it runs into holding its crown course. `tuckNorth` is
+ * only ever set when `r.h > height`, which is exactly the condition under which that clip still
+ * leaves a cap — see `WallJoins`. `Math.min` is belt-and-braces: the cap can never cross its fold.
+ */
+export function blockCapTop(r: RectPx, height: number, joins: WallJoins = NO_JOINS): number {
+  return joins.tuckNorth ? Math.min(-height, -r.h - joins.tuckLiftPx) : -height - r.h;
+}

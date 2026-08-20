@@ -364,6 +364,12 @@ export class Actor extends Entity {
     this.setShieldActive(true);
   }
 
+  /** The DRAWN body's half-width and height in world px (`Skin.silhouette`) — what the
+   *  occlusion x-ray measures a standing block's art against (`scene/occlusion.ts`). */
+  get bodySilhouette(): { halfW: number; bodyH: number } {
+    return this.skin.silhouette;
+  }
+
   /** Apply this frame's strongest nearby point light (design/01 milestone 2) — called
    *  once per render frame by Scene.applyLighting, `null` when nothing is close enough
    *  to matter (the filter's fixed key light still shades in that case). */

@@ -63,7 +63,8 @@ import { Entity } from './Entity';
 import { SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
 import type { BiomePalette } from '../theme';
 import type { RectPx } from './wallGeometry';
-import { NO_JOINS, unjoinedSpans, type WallJoins } from './wallRuns';
+import { blockCapTop, NO_JOINS, unjoinedSpans, type WallJoins } from './wallRuns';
+import { XRAY_DEEP_LABEL, XRAY_LABEL } from './occlusion';
 import {
   BASE_AO_BANDS,
   BASE_AO_FRACTION,
@@ -184,13 +185,7 @@ export function buildWallBlock(
   joins: WallJoins = NO_JOINS,
 ): Entity {
   const seg = new Entity();
-  // A tucked run reaches only `tuckLiftPx` north of its own footprint edge (local `-r.h`) instead of
-  // a full wall height, which leaves the wall it runs into holding its crown course. `tuckNorth` is
-  // only ever set when `r.h > height`, which is exactly the condition under which that clip still
-  // leaves a cap — see `WallJoins`. `Math.min` is belt-and-braces: the cap can never cross its fold.
-  const capTop = joins.tuckNorth
-    ? Math.min(-height, -r.h - joins.tuckLiftPx)
-    : -height - r.h;
+  const capTop = blockCapTop(r, height, joins);
   const capH = -height - capTop;
 
   if (skin.face) {
@@ -209,6 +204,13 @@ export function buildWallBlock(
     seg.addChild(g);
   }
 
+  // Every layer added between here and `drawBlockShading` is a CAP layer, and the cap is what a
+  // character standing behind this block normally disappears into — so each is tagged for the
+  // occlusion x-ray to fade (`occlusion.xrayLayers`). The face and the shading over it are tagged
+  // separately (`XRAY_DEEP_LABEL`, applied below): they only move in the rarer case where the
+  // body sits entirely below the cap/face fold and a cap fade would achieve nothing. The
+  // silhouette is in neither group and never fades.
+  const capFrom = seg.children.length;
   if (skin.cap) {
     // `tilePosition` puts the swatch in WORLD space rather than at each block's own origin. Two
     // reasons, both visible on the level-1 start room: an L corner is two independent blocks, and
@@ -232,8 +234,14 @@ export function buildWallBlock(
     capLight.blendMode = CAP_LIGHT_BLEND;
     seg.addChild(capLight);
   }
+  for (let i = capFrom; i < seg.children.length; i++) seg.children[i]!.label = XRAY_LABEL;
+  // Everything drawn BEFORE the cap is the front face (one branch or the other above), and the
+  // shading laid over both comes next — the deep group is those two.
+  for (let i = 0; i < capFrom; i++) seg.children[i]!.label = XRAY_DEEP_LABEL;
 
-  seg.addChild(drawBlockShading(r, height, joins));
+  const shading = drawBlockShading(r, height, joins);
+  shading.label = XRAY_DEEP_LABEL;
+  seg.addChild(shading);
 
   // The flat-cel silhouette design/13 asks for, and the cue that separates one standing wall
   // from the one behind it. Dark, not `palette.wallEdge` — see EDGE_COLOR. The lit coping runs
@@ -295,10 +303,8 @@ function capTile(
 export function drawBlockShading(r: RectPx, height: number, joins: WallJoins = NO_JOINS): Graphics {
   const g = new Graphics();
   // Everything on the cap is measured against its VISIBLE depth, which a tucked run's clip
-  // shortens — see `buildWallBlock`. `capDepth` is `r.h` for every other block.
-  const capTop = joins.tuckNorth
-    ? Math.min(-height, -r.h - joins.tuckLiftPx)
-    : -height - r.h;
+  // shortens — see `blockCapTop`. `capDepth` is `r.h` for every other block.
+  const capTop = blockCapTop(r, height, joins);
   const capDepth = -height - capTop;
   const band = Math.min(SIDE_BAND_PX, r.w * SIDE_BAND_MAX_FRACTION);
   const litEdge = Math.min(LIT_EDGE_PX, r.w * SIDE_BAND_MAX_FRACTION);

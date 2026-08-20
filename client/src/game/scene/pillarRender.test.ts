@@ -9,7 +9,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { Graphics, Texture, TextureSource } from 'pixi.js';
-import { buildPillarBody } from './pillarRender';
+import { buildPillarBody, pillarArtExtent } from './pillarRender';
 import { buildWallBlock, type WallSkin } from './wallRender';
 import { biomePalette } from '../theme';
 import type { RectPx } from './wallGeometry';
@@ -180,5 +180,42 @@ describe('buildPillarBody — the retune that stopped it being the brightest thi
     const a = opaqueFills(buildPillarBody(64, 70, palette));
     const b = opaqueFills(buildPillarBody(64, 70, palette));
     expect(a).toEqual(b);
+  });
+});
+
+describe('pillarArtExtent — what the occlusion x-ray is told a pillar covers', () => {
+  const palette = biomePalette('ember');
+
+  it('reports the same top the cap ellipse is actually drawn at', () => {
+    // The x-ray asks how far north of its own ground point a block's art reaches; for a pillar
+    // that is the shaft height PLUS the overhanging top ellipse. Read back off the real
+    // instruction list rather than restated, so re-proportioning the cap cannot silently leave
+    // the x-ray measuring the old shape (`occlusion.Occluder.top`).
+    const bodyW = 80;
+    const height = 70;
+    const g = buildPillarBody(bodyW, height, palette);
+    const ellipses = (g.context.instructions as Instr[])
+      .flatMap((i) => i.data.path?.instructions ?? [])
+      .filter((pi) => pi.action === 'ellipse');
+    expect(ellipses.length).toBeGreaterThan(0);
+    // ellipse data is [cx, cy, rx, ry]; the cap's is the one centred on -height.
+    const cap = ellipses.find((e) => e.data[1] === -height && (e.data[3] ?? 0) > 8);
+    expect(cap).toBeDefined();
+    const drawnTop = cap!.data[1]! - cap!.data[3]!;
+    const drawnHalfW = cap!.data[2]!;
+
+    const extent = pillarArtExtent(bodyW, height);
+    expect(extent.top).toBeCloseTo(drawnTop, 6);
+    expect(extent.halfW).toBeCloseTo(drawnHalfW, 6);
+  });
+
+  it('always reaches at least a full wall height north of the ground point', () => {
+    // The property the x-ray depends on, independent of the cap's proportions: a pillar is drawn
+    // UPWARD from a grounded origin, so it covers its whole height of walkable floor to its
+    // north — which is why a character standing behind one vanishes exactly as they do behind a
+    // wall block, and why `RoomBuilder` gives both the same treatment.
+    for (const [bodyW, height] of [[40, 70], [80, 70], [120, 104]] as const) {
+      expect(pillarArtExtent(bodyW, height).top).toBeLessThanOrEqual(-height);
+    }
   });
 });

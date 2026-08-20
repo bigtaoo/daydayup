@@ -924,3 +924,45 @@ describe('Actor — the hover has to be big enough to actually produce its own c
     expect(critter.shadow!.scale.x).toBe(1);
   });
 });
+
+describe('Actor.bodySilhouette — what the occlusion x-ray measures a wall against', () => {
+  afterEach(() => {
+    skinRegistryMocks.loaded = undefined;
+  });
+
+  const PLAYER_R = 16; // the shipped player's gameplay radius in world px (fpToPx(PLAYER_BASE.radius))
+
+  it('reports the DRAWN body, not the collision radius', () => {
+    // Same distinction the ground shadow already makes (`Skin.bodyDrawnR`): a rig paints as
+    // little as 0.68 of its declared radius, and the x-ray's question — does stone land on
+    // pixels of the character — is about the silhouette, not about the collision circle.
+    skinRegistryMocks.loaded = loadedOrbCoreRig();
+    const a = new Actor('player', PLAYER_R, undefined, false, 'char_vanguard');
+    expect(a.bodySilhouette.halfW).toBeCloseTo(PLAYER_R * ORB_CORE_BODY_FILL, 5);
+    expect(a.bodySilhouette.halfW).toBeLessThan(PLAYER_R);
+  });
+
+  it('measures the height off the skin\'s own rest bounds', () => {
+    skinRegistryMocks.loaded = loadedOrbCoreRig();
+    const a = new Actor('player', PLAYER_R, undefined, false, 'char_vanguard');
+    expect(a.bodySilhouette.bodyH).toBeCloseTo(skinViewOf(a).getLocalBounds().height, 5);
+  });
+
+  it('lands inside the band occlusion.test.ts asserts its geometry over, rig or placeholder', () => {
+    // The seam between the two files. `occlusion.test.ts` proves an interior wall block covers
+    // any body between 20 and 48 px tall (and a kerb covers none of them); this is what keeps
+    // that band tied to the character actually shipped — if the art grows past it, the geometry
+    // claims over there are no longer about this game and this test says so. (The shipped rig
+    // measures 32 and the placeholder 39; the faked bundle here binds 1x1 textures, so it comes
+    // out at the low end of the band rather than at the real art's value.)
+    skinRegistryMocks.loaded = loadedOrbCoreRig();
+    const rig = new Actor('player', PLAYER_R, undefined, false, 'char_vanguard');
+    skinRegistryMocks.loaded = undefined;
+    const placeholder = new Actor('player', PLAYER_R);
+    for (const a of [rig, placeholder]) {
+      expect(a.bodySilhouette.bodyH).toBeGreaterThanOrEqual(20);
+      expect(a.bodySilhouette.bodyH).toBeLessThanOrEqual(48);
+      expect(a.bodySilhouette.halfW).toBeLessThanOrEqual(16);
+    }
+  });
+});

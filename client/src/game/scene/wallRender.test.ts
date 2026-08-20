@@ -10,8 +10,9 @@
 import { describe, it, expect } from 'vitest';
 import { Graphics, TilingSprite, Texture, TextureSource } from 'pixi.js';
 import { buildWallBlock, drawBlockShading, drawWallShadow, sweptHull, type WallSkin } from './wallRender';
+import { XRAY_LABEL } from './occlusion';
 import type { Entity } from './Entity';
-import { NO_JOINS, type WallJoins } from './wallRuns';
+import { blockCapTop, NO_JOINS, type WallJoins } from './wallRuns';
 import {
   CAP_BOOST_ALPHA,
   CAP_BOOST_TINT,
@@ -596,5 +597,72 @@ describe('buildWallBlock — a deep run TUCKS behind the wall it runs into', () 
     // the arithmetic that makes it nonsense.
     expect(EW.h).toBeLessThan(HEIGHT);
     expect(NS.h).toBeGreaterThan(HEIGHT);
+  });
+});
+
+/** Topmost local row a block layer paints, in the BLOCK's coords. `getLocalBounds()` excludes
+ *  the object's own transform, and the two kinds of cap layer split the offset differently: the
+ *  textured cap is a positioned TilingSprite, the fallback a Graphics drawing at cap coords from
+ *  an origin of 0. */
+function layerTop(c: { y: number; getLocalBounds(): { minY: number } }): number {
+  return c.y + c.getLocalBounds().minY;
+}
+
+describe('buildWallBlock — what the occlusion x-ray is allowed to fade', () => {
+  // The x-ray goes translucent to stop the character being lost behind a block (live report
+  // *"角色跑到墙下面去了"*), and it fades the CAP ONLY: the cap is the surface drawn over a
+  // character standing north of the block, while the face, the shading and the silhouette are
+  // what keep a faded block reading as architecture rather than as a hole in the room. Tagging
+  // is by label rather than child index so re-ordering the layers cannot silently re-point it.
+  it('tags exactly the cap layers, art or fallback', () => {
+    for (const withArt of [true, false]) {
+      const seg = buildWallBlock(RECT, HEIGHT, skin(withArt));
+      const tagged = seg.children.filter((c) => c.label === XRAY_LABEL);
+      expect(tagged).toHaveLength(2); // the cap surface + its key light
+      // ...and they are the two layers sitting at the cap, not at the face.
+      const capTop = blockCapTop(RECT, HEIGHT);
+      for (const c of tagged) expect(layerTop(c)).toBeCloseTo(capTop, 6);
+    }
+  });
+
+  it('leaves the face, the shading and the silhouette untagged', () => {
+    const seg = buildWallBlock(RECT, HEIGHT, skin(true));
+    const untagged = seg.children.filter((c) => c.label !== XRAY_LABEL);
+    expect(untagged).toHaveLength(3); // face, shading, silhouette
+    const face = untagged[0]!;
+    expect(layerTop(face)).toBeCloseTo(-HEIGHT, 6); // the front elevation, not the cap
+  });
+
+  it('tags the cap of a TUCKED run at its clipped top, not its nominal one', () => {
+    // A tucked run's cap is clipped short (`WallJoins.tuckNorth`); the x-ray has to measure the
+    // stone that is actually there, or it fades a block for a character it never covered.
+    const deep: RectPx = { x: 320, y: 640, w: 32, h: 224 };
+    const joins: WallJoins = { ...NO_JOINS, tuckNorth: true, tuckLiftPx: 12 };
+    const seg = buildWallBlock(deep, HEIGHT, skin(true), joins);
+    const tagged = seg.children.filter((c) => c.label === XRAY_LABEL);
+    const capTop = blockCapTop(deep, HEIGHT, joins);
+    expect(capTop).toBeGreaterThan(-HEIGHT - deep.h); // genuinely clipped
+    for (const c of tagged) expect(layerTop(c)).toBeCloseTo(capTop, 6);
+  });
+});
+
+describe('blockCapTop — one definition of how far north a block reaches', () => {
+  it('is a full height plus the footprint depth for an ordinary block', () => {
+    expect(blockCapTop(RECT, HEIGHT)).toBeCloseTo(-HEIGHT - RECT.h, 6);
+  });
+
+  it('agrees with where the cap sprite is actually drawn', () => {
+    // Three call sites read this (the cap layers, the cap shading, and `RoomBuilder`'s occluder
+    // box); it used to be inlined at two of them, which is how a clip could land in one and not
+    // the other.
+    const seg = buildWallBlock(RECT, HEIGHT, skin(true));
+    const cap = seg.children.find((c) => c.label === XRAY_LABEL)!;
+    expect(layerTop(cap)).toBeCloseTo(blockCapTop(RECT, HEIGHT), 6);
+  });
+
+  it('never lets a tucked cap cross its own fold', () => {
+    const deep: RectPx = { x: 0, y: 0, w: 32, h: 224 };
+    const joins: WallJoins = { ...NO_JOINS, tuckNorth: true, tuckLiftPx: 10_000 };
+    expect(blockCapTop(deep, HEIGHT, joins)).toBeLessThanOrEqual(-HEIGHT);
   });
 });

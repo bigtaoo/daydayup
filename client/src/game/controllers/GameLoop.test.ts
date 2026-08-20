@@ -42,7 +42,9 @@ function fakeInput(initial: Partial<InputState> = {}): InputSource & { state: In
 
 function fakeScene() {
   return {
-    player: undefined as { curX: number; curY: number } | undefined,
+    player: undefined as
+      | { curX: number; curY: number; bodySilhouette: { halfW: number; bodyH: number } }
+      | undefined,
     interpolate: vi.fn(),
     reconcile: vi.fn(),
     positionLocal: vi.fn(),
@@ -65,7 +67,11 @@ function fakeHud() {
 }
 
 function fakeRoomBuilder() {
-  return { setPortalOpen: vi.fn(), portalPx: null as { x: number; y: number } | null };
+  return {
+    setPortalOpen: vi.fn(),
+    updateOcclusion: vi.fn(),
+    portalPx: null as { x: number; y: number } | null,
+  };
 }
 
 function fakePortalPrompt() {
@@ -555,5 +561,59 @@ describe('GameLoop.updateCamera — the frame rect handed to FxController', () =
 
     expect(() => loop.update(16)).not.toThrow();
     expect(lastFrame(fx)).toBeNull();
+  });
+});
+
+describe('GameLoop — the occlusion x-ray is driven every render frame', () => {
+  // The wiring nothing else can see: `scene/occlusion.ts` and `RoomBuilder` are both covered by
+  // their own tests, and both stay green if this call is deleted — only a live look would notice.
+  // It rides `updateFx` deliberately, because that wrapper is already called from every render
+  // path (playing / paused / menu / offline / online) and already holds the local player.
+  const silhouette = { halfW: 12.96, bodyH: 32 };
+
+  it('passes the local player\'s ground point and DRAWN silhouette, with this frame\'s dt', () => {
+    const { deps, scene, roomBuilder } = buildDeps();
+    scene.player = { curX: 1200, curY: 140.8, bodySilhouette: silhouette };
+    const loop = new GameLoop(deps, buildHost({ getPhase: () => 'playing' }));
+
+    loop.update(16);
+
+    expect(roomBuilder.updateOcclusion).toHaveBeenCalledWith(
+      { x: 1200, y: 140.8, halfW: 12.96, bodyH: 32 },
+      16,
+    );
+  });
+
+  it('passes null with no local player, so a block cannot freeze mid-x-ray on a menu', () => {
+    const { deps, scene, roomBuilder } = buildDeps();
+    scene.player = undefined;
+    const loop = new GameLoop(deps, buildHost({ getPhase: () => 'victory' }));
+
+    loop.update(16);
+
+    expect(roomBuilder.updateOcclusion).toHaveBeenCalledWith(null, 16);
+  });
+
+  it('keeps running while PAUSED — a frozen frame still has to show the character', () => {
+    const { deps, scene, roomBuilder } = buildDeps();
+    scene.player = { curX: 10, curY: 20, bodySilhouette: silhouette };
+    const loop = new GameLoop(deps, buildHost({ getPhase: () => 'paused' }));
+
+    loop.update(16);
+
+    expect(roomBuilder.updateOcclusion).toHaveBeenCalledTimes(1);
+  });
+
+  it('runs once per RENDER frame, not once per sim tick', () => {
+    // A fade measured in ms has to advance on frames where no sim tick happened at all, or it
+    // steps in 33 ms jumps at 60 fps and reads as a stutter rather than a fade.
+    const { deps, scene, roomBuilder } = buildDeps();
+    const engine = createGameEngine(CFG);
+    scene.player = { curX: 0, curY: 0, bodySilhouette: silhouette };
+    const loop = new GameLoop(deps, buildHost({ getEngine: () => engine }));
+
+    loop.update(8); // well under one sim tick
+    loop.update(8);
+    expect(roomBuilder.updateOcclusion).toHaveBeenCalledTimes(2);
   });
 });

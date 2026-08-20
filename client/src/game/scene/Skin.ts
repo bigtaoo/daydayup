@@ -21,6 +21,13 @@ export class Skin {
    *  use; `Actor` sizes its ground shadow from it. Equals `radius` for the Graphics
    *  placeholder, whose capsule really is one radius wide. */
   readonly bodyDrawnR: number;
+  /** Height of the DRAWN body in world px, measured off the assembled skin at its rest pose.
+   *  Sibling of `bodyDrawnR` and used the same way: the occlusion x-ray asks what FRACTION of
+   *  the character a standing block is covering (`scene/occlusion.ts`), and the body's own
+   *  height is the only honest denominator for that. Measured rather than derived from
+   *  `radius` — a rig's decorative bones hang off its body bone's tip, so the assembled
+   *  silhouette is taller than the shell alone. */
+  readonly bodyDrawnH: number;
   private clock = 0;
 
   // `rigTint` is a Pixi multiply-tint applied to the rig's sprites (design/13's
@@ -58,6 +65,17 @@ export class Skin {
       this.view.addChild(body, this.front);
     }
     this.view.zIndex = 0;
+    // Lay the rig out at rest before measuring (a no-op for the placeholder), same reason
+    // `Actor` does before reading its own filter bounds: an unposed rig reports nothing.
+    this.setFacing(0, 0, 0, 'idle');
+    const rest = this.view.getLocalBounds();
+    this.bodyDrawnH = rest.height > 0 ? rest.height : radius * 2;
+  }
+
+  /** Half-width and height of the DRAWN body in world px — the character's silhouette, not its
+   *  collision circle. See `bodyDrawnR`/`bodyDrawnH`. */
+  get silhouette(): { halfW: number; bodyH: number } {
+    return { halfW: this.bodyDrawnR, bodyH: this.bodyDrawnH };
   }
 
   // `bodyRad` is the body/legs orientation (world-space radians, movement direction

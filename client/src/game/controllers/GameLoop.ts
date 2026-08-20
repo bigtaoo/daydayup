@@ -329,6 +329,16 @@ export class GameLoop {
     if (player) this.deps.fx.lights.addPersistent('local', { x: player.curX, y: player.curY, color: 0xfff4d6, radius: 140, intensity: 0.35 });
     else this.deps.fx.lights.removePersistent('local');
     this.deps.scene.applyLighting(this.deps.fx.lights);
+
+    // Occlusion x-ray (design/01 "Limits of fake 3D"): a standing wall block or pillar that is
+    // currently drawing over the local player goes translucent so the character can never be
+    // lost behind it. Piggy-backs on this wrapper for exactly the reason the lighting above
+    // does — it is already called from every render path (playing/paused/menu/offline/online),
+    // and it already has the local player's view and this frame's dt.
+    this.deps.roomBuilder.updateOcclusion(
+      player ? { x: player.curX, y: player.curY, ...player.bodySilhouette } : null,
+      dt,
+    );
   }
 
   private updateCamera(alpha: number): void {

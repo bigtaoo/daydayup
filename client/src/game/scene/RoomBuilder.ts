@@ -8,8 +8,16 @@ import { getFloorTexture, getWallTexture, getWallFaceTexture } from '../../rende
 import { getDoorTexture } from '../../render/environmentSprites';
 import { wallTier, wallHeight, WALL_HEIGHT, type RectPx } from './wallGeometry';
 import { buildWallBlock, drawWallShadow } from './wallRender';
-import { buildPillarBody } from './pillarRender';
-import { mergeWallRuns, wallJoins, type WallRun } from './wallRuns';
+import { buildPillarBody, pillarArtExtent } from './pillarRender';
+import {
+  deepXrayLayers,
+  fadeableBlock,
+  updateOcclusion,
+  xrayLayers,
+  type FadeableOccluder,
+  type OcclusionFocus,
+} from './occlusion';
+import { blockCapTop, mergeWallRuns, wallJoins, type WallRun } from './wallRuns';
 import { faceCrownFraction } from './wallTone';
 import { drawRoomLight } from './roomLight';
 import { NormalLitFilter, WALL_LIT_AMBIENT, WALL_LIT_GRADIENT, WALL_LIT_KEY_INTENSITY } from '../fx/filters';
@@ -65,6 +73,10 @@ export class RoomBuilder {
   // (`wallRender.drawWallShadow`), on `layers.shadow`. A room has up to a couple of dozen
   // segments and their shadows never move, so one static display object beats one per wall.
   private wallShadows: Graphics | null = null;
+  // Every standing block in the current room — wall segments AND pillars — paired with the band
+  // of floor its art covers, for the occlusion x-ray (`updateOcclusion`). Rebuilt with the room;
+  // one flat list because the fade rule does not care which kind of block it is looking at.
+  private occluders: FadeableOccluder[] = [];
   // Index-aligned with `state.dungeonDoors` (design/05 "Room & door model") — a real
   // fixture per door, never a bare gap / never folded into the generic wall fill.
   // `updateDoors()` swaps textures on these in place on door_locked/door_unlocked
@@ -87,6 +99,9 @@ export class RoomBuilder {
 
     for (const c of [...this.layers.ground.children]) c.destroy();
     this.clearWalls();
+    // Dropped here rather than inside `clearWalls`, because pillars contribute to this list too
+    // and `buildPillars` refills it further down this same method.
+    this.occluders.length = 0;
 
     // design/13 "per-biome background palette" — derived from the run's dungeon
     // biomeId (undefined outside dungeon mode, e.g. flat EngineConfig.floors/PvP
@@ -169,6 +184,22 @@ export class RoomBuilder {
       if (LIT_WALLS) seg.filters = [wallLitFilter()];
       this.layers.entities.addChild(seg);
       this.wallEntities.push(seg);
+      // The block sorts on its south edge and paints upward from there, so the floor it covers
+      // runs from its cap's north edge down to its own footprint — see `occlusion.Occluder`.
+      const sortY = run.rect.y + run.rect.h;
+      this.occluders.push(
+        fadeableBlock(
+          {
+            left: run.rect.x,
+            right: run.rect.x + run.rect.w,
+            top: sortY + blockCapTop(run.rect, height, joins[i]),
+            sortY,
+            foldY: sortY - height, // the cap/face joint: below it, only a deep fade reaches
+          },
+          xrayLayers(seg.children),
+          deepXrayLayers(seg.children),
+        ),
+      );
     }
     this.layers.shadow.addChild(shadows);
     this.wallShadows = shadows;
@@ -176,6 +207,20 @@ export class RoomBuilder {
     this.buildPillars(s, palette);
     this.buildDoors(s);
     this.buildPortal(s, w, h);
+  }
+
+  /**
+   * The occlusion x-ray, one render frame (design/01 "Limits of fake 3D", live report
+   * *"角色跑到墙下面去了"*): any standing block that is currently drawing over the character
+   * fades toward `XRAY_FADE` and back once it isn't.
+   *
+   * Called from `GameLoop.updateFx` at render rate — the same cadence and the same
+   * local-player-only focus point the dynamic lighting already uses. `focus` is null whenever
+   * there is no local player view (menus, between spawns), which fades every block back to
+   * solid rather than freezing one mid-x-ray.
+   */
+  updateOcclusion(focus: OcclusionFocus | null, dtMs: number): void {
+    updateOcclusion(this.occluders, focus, dtMs);
   }
 
   /** The floor's room footprints in world px, for `wallRises`. Dungeon floors and the PvP
@@ -313,7 +358,23 @@ export class RoomBuilder {
       this.layers.entities.addChild(p);
       this.layers.shadow.addChild(p.shadow!);
       this.pillars.push(p);
-      p.place(fpToPx(o.gx), fpToPx(o.gy));
+      const gx = fpToPx(o.gx);
+      const gy = fpToPx(o.gy);
+      p.place(gx, gy);
+      // A pillar hides the character exactly the way a wall block does — it is drawn upward from
+      // its ground point over the same `height` of walkable floor to its north, and it is a
+      // NARROWER target, so the player brushes past its blind side more often, not less. Same
+      // x-ray. (design/01 used to call being hidden behind a pillar intended; a body that
+      // vanishes completely is not, whatever shape the thing hiding it is.)
+      const art = pillarArtExtent(bodyW, height);
+      this.occluders.push(
+        fadeableBlock(
+          // `foldY: gy` — a pillar's whole body is one Graphics and fades together, so it has no
+          // opaque remainder for a deep fade to reach and never asks for one.
+          { left: gx - art.halfW, right: gx + art.halfW, top: gy + art.top, sortY: gy, foldY: gy },
+          p.children,
+        ),
+      );
     }
   }
 
@@ -323,6 +384,7 @@ export class RoomBuilder {
     for (const c of [...this.layers.ground.children]) c.destroy(); // also destroys door sprites (ground children)
     this.doorSprites.length = 0;
     this.clearWalls();
+    this.occluders.length = 0;
     for (const p of this.pillars) {
       p.shadow?.destroy();
       p.destroy();

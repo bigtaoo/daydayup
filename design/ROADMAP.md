@@ -5,7 +5,7 @@ closed loop the design docs describe, and the running record of how each phase a
 landed. Phases are written top-to-bottom in dependency order; each one keeps its dated
 shipped-notes underneath it, so a phase section is both the plan and the history.
 
-**Current built state (2026-08-19).** `ENGINE_VERSION` **43** (32: ground-weapon pickup is
+**Current built state (2026-08-20).** `ENGINE_VERSION` **43** (32: ground-weapon pickup is
 click-driven; 33: manual aim removed entirely; 34: co-resident PvE room/door model, engine +
 client rendering; 35: fully-realized branching — see the Room & door model section below;
 same-day map-editor door placement, the `layout: 'graph2d'` real-2D-layout follow-up, AND the
@@ -57,7 +57,13 @@ section below and `ENGINE_VERSION_HISTORY.md`'s v42 entry; 43: the player stops 
 body radius against a wall or a pillar (`Actor.solidRadius`, split off `footprintRadius`,
 which keeps its old job and value for actor↔actor push-out) — see the "Sunk into the wall"
 section below and `ENGINE_VERSION_HISTORY.md`'s v43 entry.
-Same-day, render-only follow-up (no `ENGINE_VERSION` bump — 🟢): the DEFEAT/VICTORY result
+Render-only since (no `ENGINE_VERSION` bump — 🟢): 2026-08-19's four-report wall-corner pass, and
+2026-08-20's occlusion x-ray — a standing block or pillar drawing over the local player fades out
+of the way, from a report that the character *"跑到墙下面去了"*; the coverage sweep it produced
+(`occlusionCoverage.test.ts`) measured 5.5% of level 1's standable floor as having made the player
+*completely* invisible, and none of it leaves more than half hidden now. See "The character
+disappeared behind a wall" below.
+Earlier, also render-only (no `ENGINE_VERSION` bump — 🟢): the DEFEAT/VICTORY result
 screen's confirm gesture changed from tap-anywhere-on-the-panel (plus a raw fire-button
 rising edge, `confirmEdge.ts`, now deleted) to a single explicit CONFIRM `Button` — the same
 player report that flagged the alpha-strike above also read the almost-instant swarm death
@@ -80,11 +86,10 @@ reachable from any unit test — a full `createGameEngine` end-to-end regression
 `dungeonrun.test.ts` reproducing the reported bug shape directly: one room, two
 real spawned enemies (one beside the player, one clear across the room), driven
 through the real tick order, confirming the near one engages immediately while the
-far one fires zero bullets until it closes the distance. 2931 tests green across all 7
-workspace packages (engine 635 / client 1272 / server 186 / animator 444 / map-editor 280 /
+far one fires zero bullets until it closes the distance. 3557 tests green across all 7
+workspace packages (engine 690 / client 1843 / server 186 / animator 444 / map-editor 280 /
 png-pipeline 20 / desktop-shell 81 / root build-script 13, `npm run check`, re-measured
-2026-08-15 — the previous snapshot's per-package figures had drifted, including a
-root-build-script count that was never 14) after fixing two real bugs found from a live player report ("cleared
+2026-08-20 — this snapshot has drifted twice now, so re-measure it rather than trusting it) after fixing two real bugs found from a live player report ("cleared
 the room, door's unlocked, still can't walk through it") — see the Room & door model
 section below for the full account. Before that, closing a real gap the test-coverage audit
 pass had flagged and left open: `onRequestSave` (tools/desktop-shell/src/preload.ts) now
@@ -2732,6 +2737,123 @@ of a block's edge cues are false; "physically correct" is not the acceptance cri
 cheat, and arguing depth maths against a readability ask wastes a round; a crease spent on an
 already-black band does nothing (9 vs 13, invisible — check what value the surface still *has*); and a
 user's drawn annotation is data to measure, not a vague gesture.
+
+---
+
+## The character disappeared behind a wall (2026-08-20, client-only)
+
+A screenshot with the block circled — *"角色跑到墙下面去了"* — the character standing on the north
+side of one of `ember_l1_alcove`'s 3x2 interior blocks and simply not on screen. No engine change;
+the fix is the new `client/src/game/scene/occlusion.ts` plus wiring. Full write-up in
+`design/01-rendering.md` ("The occlusion x-ray").
+
+**Reproduced and measured before anything was written**, driven headlessly through `window.__game`
+(teleport the player, hand-step `update(16.67)`, `renderer.extract` the viewport): the rect where the
+body should be read luma **78.4** while the cap stone beside it read **77.1**. Not "hard to see" —
+arithmetically indistinguishable from the wall.
+
+**No layer was wrong; their combination hides the player.** A block's art intrudes one wall HEIGHT
+north of its own footprint (that intrusion is what makes a wall look like a wall) and it sorts on its
+south edge, so it draws over anyone standing in that band — which is walkable floor. The player's
+clearance (`PLAYER_BASE.solidRadius`, 16 px) puts them at most 16 px into it, so the cap reaches 54 px
+above their feet against a **32 px** drawn body, and per-object sorting has no "partly hidden" to
+offer. Three layers, each individually correct: the engine's clearance, the renderer's wall height,
+the rig's drawn size. This is the same cross-layer shape as the `footprintRadius` bug the week before.
+
+**Fixed as an x-ray, in two passes.** Any standing block currently drawing over the local player
+fades to 0.34 over 90 ms and back over 220 ms (slower back, so walking along a block cannot strobe),
+driven from `GameLoop.updateFx` — the one wrapper that already runs on every render path and already
+holds the local player and this frame's dt. The default pass fades the block's **CAP only**: fading
+the whole block was tried on the live frame first and loses the stone entirely, so the face, the
+shading, the silhouette and the ground shadow all stay at full strength and the result reads as a
+glass-topped block on a solid brick elevation. Layers are tagged by label, not child index, and each
+layer's authored alpha is scaled rather than replaced (the cap's additive key light would otherwise
+brighten on the way down). Three alternatives were rejected and are recorded in design/01: a shorter
+interior tier (buys back only the top few px, and breaks the deliberate "interior wall == pillar
+height" agreement), drawing the player over the block (reads as standing on top of it), and growing
+the collision footprint (invisible walls, eats a wall height of floor around every block).
+
+A **second pass** (`occlusion.needsDeepFade`) takes the face too, and exists only because the
+coverage sweep below proved it had to. A tall wall on a shallow footprint — every 104 px room
+boundary over a 32 px one — can put the whole body below the cap/face fold, where fading the cap
+achieves literally nothing. The trigger is the same `MIN_COVER_FRACTION` asked about the face alone,
+deliberately not a second number. It costs something real (dropping a face reveals what is *behind*
+the wall, which at a room boundary is the next wall's own bright cap, as a pale band), so it stays a
+fallback: 1.3% of the standable floor. Walking into a wall the two stage naturally — cap first, face
+only once the cap has stopped being the thing in the way.
+
+**Pillars are in, and they have no cap/face split.** A pillar is drawn upward from its own ground
+point, so what a character vanishes into is its 70 px shaft, not the ellipse on top — the whole body
+fades. design/01 used to call being hidden behind a pillar intended; a body that vanishes completely
+is not, whatever shape the thing hiding it is.
+
+**Then "加测试", and the answer was a fourth test file rather than more cases in the three that
+existed.** `client/src/game/scene/occlusionCoverage.test.ts` (13 tests) is the occlusion twin of
+`wallComposition.test.ts`: the real level-1 floors through the real pipeline, then **every position
+the player can legally stand at on all five floors** — 97,803 samples at 8 px — scored against an
+**independent oracle** (rectangle overlap between a block's drawn art and the drawn body, which
+never calls the rule under test; restating `occludes` as the oracle would have made the file a
+tautology).
+
+**It immediately falsified two claims this session had already written into design/01.**
+
+- *"A perimeter wall never triggers it — its blind band is on the far side of itself."* True of a
+  room's north wall, false in general. 4,626 samples fire one: a long north-south run whose north
+  END is an open door passage, and — the bigger case — **a wall between two vertically stacked
+  rooms**. `wallTier` classifies a merged run by the room its CENTRE lands in, so the wall on room
+  A's south edge is room B's *north* perimeter at 104 px, not the 22 px kerb the "nothing tall
+  between the camera and the player" rule intends. Its art covers the bottom ~90 px of room A's
+  floor, where the player was **completely invisible**. The kerb rule is defeated for any shared
+  boundary — worth knowing independently of the x-ray.
+- *"The face never covers the player — their clearance keeps them out of its band."* True for an
+  interior block (64 + 16 + 32 > 70), false for a 104 px boundary over a 32 px footprint. A
+  cap-only fade left **148 samples 100% hidden** and another 561 at 75%: the whole reason the deep
+  pass exists. Without it, 7 tests in this file fail.
+
+It also caught a bad fixture in my own `RoomBuilder.test.ts` — the "player standing behind the
+block" position was actually *inside* the stone, and passed anyway until the sweep started
+generating only legal positions.
+
+**Measured, before → after.** On the reported block (luma 0-255, the body's rect derived from the
+player view's own global position): character behind the block **78.4 → 105.7**, against **125.8**
+on open floor — 84% of the body's own value recovered, where before none of it was. Block face 33.8
+either way, floor 39.8 either way: nothing outside the cap moved. And over the whole of level 1:
+
+| | share of standable floor |
+|---|---|
+| at least half the character hidden, before | **8.5%** |
+| character **completely** invisible, before | **5.5%** |
+| still more than half hidden, after | **none** (worst case 43.8%) |
+| needs the deep pass | 1.3% |
+
+**Tests: 63 new across seven files.** `scene/occlusion.test.ts` (26) covers the rule and asserts the
+three-layer geometry with all three numbers *imported*, never restated, over a 20..48 px band of
+drawn body heights; `Actor.test.ts` (3) pins the real measurements into that band (shipped rig 32,
+placeholder 39), which is the seam that keeps those claims about *this* game as the art changes;
+`occlusionCoverage.test.ts` (13) is the sweep above; `RoomBuilder.test.ts` (9) covers the wiring a
+pure test cannot see, including the deep pass end to end; `GameLoop.test.ts` (4) pins the per-frame
+call itself — every other file stays green if it is deleted, and only a live look would notice;
+`wallRender.test.ts` (6) pins the labelling and `blockCapTop`, now one shared definition in
+`wallRuns.ts` instead of the same expression inlined at three call sites; `pillarRender.test.ts` (2)
+checks `pillarArtExtent` against the ellipse the pillar actually draws.
+
+**Mutation counts** (836 tests in `src/game/scene` + `src/render` + `src/game/controllers`): the
+x-ray never fires **18**, the deep pass removed **7**, the deep pass always on **6**, the
+minimum-cover gate dropped **7**, the deep group never stepped **2**, the per-frame call deleted
+**4**, a wall reporting no fold **1**, deep layers never handed over **1**, cap layers left
+untagged **3**, `blockCapTop` ignoring the tuck clip **4**, `pillarArtExtent` forgetting its cap
+overhang **1**, flattening the authored alphas **2**.
+
+**Follow-up worth a separate look**, both found by the sweep and neither touched here: the kerb
+rule being defeated for a shared room boundary (above), and four **16 px-deep** wall runs in the
+shipped level-1 content where every other wall is a full 32.
+
+**Housekeeping**, both forced by the 500-line gate and both landing where the code belonged anyway:
+the drawn-body measurement went to `Skin.ts` next to `bodyDrawnR` (`Skin` already owns the
+silhouette numbers) rather than staying in `Actor.ts`, which is now at exactly 500 lines — the next
+feature that needs a line there has to split it. And `blockCapTop` went to `wallRuns.ts` rather than
+`wallRender.ts`, which had crossed to 503: the clip it applies is a JOIN property (the whole rule is
+about what the neighbouring mass is holding), so `wallRuns` owns it and `wallRender` is back to 489.
 
 ---
 

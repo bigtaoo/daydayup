@@ -13,9 +13,12 @@ import { Graphics, Sprite, TilingSprite, Texture, TextureSource } from 'pixi.js'
 import { createGameState } from '@dd/engine/state/GameState';
 import type { GameState, DoorRuntime } from '@dd/engine/state/GameState';
 import { pxToFp } from '@dd/engine/content/convert';
+import { PLAYER_BASE } from '@dd/engine';
 import { Layers } from './layers';
 import { RoomBuilder } from './RoomBuilder';
 import { WALL_H_PERIMETER, WALL_H_INTERIOR, WALL_H_KERB } from './wallGeometry';
+import { XRAY_LABEL } from './occlusion';
+import { fpToPx } from '../coords';
 import { WALL_LIT_AMBIENT, WALL_LIT_GRADIENT, WALL_LIT_KEY_INTENSITY } from '../fx/filters';
 import { Entity, SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
 import { Backdrop } from './Backdrop';
@@ -882,4 +885,168 @@ describe('RoomBuilder — the per-room light pool', () => {
     );
     return s;
   }
+});
+
+/**
+ * The occlusion x-ray, end to end (live report *"角色跑到墙下面去了"* — the character walked to the
+ * north side of an interior block and was drawn entirely behind it). `occlusion.test.ts` owns the
+ * rule and the geometry invariants; these pin the WIRING, which is the half a pure unit test
+ * cannot see: that a built room hands the fader the block's real footprint and reach, that the
+ * pillars are in the list too, and that what actually changes on screen is the cap and nothing
+ * else.
+ */
+describe('RoomBuilder.updateOcclusion — a block that would hide the player gets out of the way', () => {
+  const ROOM = 480;
+
+  /** One room with a 2x2-grid interior block in the middle of it, plus a north perimeter run. */
+  function stateWithInteriorBlock(): GameState {
+    mocks.wallTex = fakeTexture(256, 256);
+    mocks.wallFaceTex = fakeTexture(256, 128);
+    const s = createGameState({
+      seed: 1, worldW: ROOM, worldH: ROOM, waves: [],
+      walls: [[0, 0, ROOM, 32], [128, 128, 64, 64]],
+      obstacles: [],
+    });
+    s.dungeonRoomRects.push({ id: 'r1', rect: { x: pxToFp(0), y: pxToFp(0), w: pxToFp(ROOM), h: pxToFp(ROOM) } });
+    (s as unknown as { dungeonConfig?: { biomeId: string } }).dungeonConfig = { biomeId: 'ember' };
+    return s;
+  }
+
+  function blocks(rb: RoomBuilder): Entity[] {
+    return (rb as unknown as { wallEntities: Entity[] }).wallEntities;
+  }
+
+  interface Occ {
+    cap: { fade: number };
+    deep: { fade: number };
+    box: { left: number; right: number; top: number; sortY: number; foldY: number };
+  }
+
+  function occluders(rb: RoomBuilder): Occ[] {
+    return (rb as unknown as { occluders: Occ[] }).occluders;
+  }
+
+  /** The player standing as far north of the interior block as the engine lets them. The block's
+   *  footprint is y 128..192, so this is its NORTH edge minus one clearance — not `192 - r`, which
+   *  is a point inside the stone (an earlier version of this fixture had exactly that bug, and it
+   *  passed until `occlusionCoverage.test.ts` started sweeping only legal positions). */
+  const behindBlock = { x: 160, y: 128 - fpToPx(PLAYER_BASE.solidRadius), halfW: 13, bodyH: 32 };
+  const settle = (rb: RoomBuilder, focus: typeof behindBlock | null): void => {
+    for (let i = 0; i < 30; i++) rb.updateOcclusion(focus, 16.67);
+  };
+
+  it('registers one occluder per standing block, walls and pillars alike', () => {
+    const rb = makeRoomBuilder();
+    const s = stateWithInteriorBlock();
+    s.obstacles.push({ gx: pxToFp(300), gy: pxToFp(300), radius: pxToFp(20) });
+    rb.build(s);
+    expect(occluders(rb)).toHaveLength(blocks(rb).length + 1);
+  });
+
+  it('gives the interior block a box matching the art it actually draws', () => {
+    const rb = makeRoomBuilder();
+    rb.build(stateWithInteriorBlock());
+    const box = occluders(rb).find((o) => o.box.sortY === 192)!.box;
+    expect(box.left).toBeCloseTo(128, 1);
+    expect(box.right).toBeCloseTo(192, 1);
+    // A block paints from its cap's north edge down to its own south edge: one wall height plus
+    // its footprint depth above `sortY`.
+    expect(box.top).toBeCloseTo(192 - WALL_H_INTERIOR - 64, 1);
+  });
+
+  it('fades the interior block\'s CAP, and leaves its face and silhouette alone', () => {
+    const rb = makeRoomBuilder();
+    rb.build(stateWithInteriorBlock());
+    const seg = blocks(rb).find((e) => e.zIndex === 192)!;
+    const cap = seg.children.filter((c) => c.label === XRAY_LABEL);
+    const rest = seg.children.filter((c) => c.label !== XRAY_LABEL);
+    const restBefore = rest.map((c) => c.alpha);
+
+    settle(rb, behindBlock);
+    for (const c of cap) expect(c.alpha).toBeLessThan(0.5);
+    expect(rest.map((c) => c.alpha)).toEqual(restBefore);
+  });
+
+  it('leaves every OTHER block in the room solid', () => {
+    const rb = makeRoomBuilder();
+    rb.build(stateWithInteriorBlock());
+    settle(rb, behindBlock);
+    const others = occluders(rb).filter((o) => o.box.sortY !== 192);
+    expect(others.length).toBeGreaterThan(0);
+    for (const o of others) expect(o.cap.fade).toBe(1);
+  });
+
+  it('and puts it back once the player steps out from behind it', () => {
+    const rb = makeRoomBuilder();
+    rb.build(stateWithInteriorBlock());
+    const seg = blocks(rb).find((e) => e.zIndex === 192)!;
+    const cap = seg.children.filter((c) => c.label === XRAY_LABEL);
+    const before = cap.map((c) => c.alpha);
+    settle(rb, behindBlock);
+    settle(rb, { ...behindBlock, y: 300 }); // south of the block — the Y-sort has it covered
+    expect(cap.map((c) => c.alpha)).toEqual(before);
+  });
+
+  it('takes the FACE too where a tall boundary run buries the whole body', () => {
+    // The other half of the rule, wired end to end: a 104 px perimeter run over a 32 px footprint
+    // can put the character entirely below its cap/face fold, where fading the cap alone changes
+    // nothing on screen. `occlusionCoverage.test.ts` is what found this on the shipped floors;
+    // this is the check that RoomBuilder actually hands the fader the layers it needs for it.
+    mocks.wallTex = fakeTexture(256, 256);
+    mocks.wallFaceTex = fakeTexture(256, 128);
+    const s = createGameState({
+      seed: 1, worldW: ROOM, worldH: ROOM * 2, waves: [],
+      // one room with a full-width north boundary, and a second room below it, so the wall
+      // between them is a PERIMETER run (104 tall) rather than either room's kerb
+      walls: [[0, 0, ROOM, 32], [0, ROOM, ROOM, 32]],
+      obstacles: [],
+    });
+    s.dungeonRoomRects.push({ id: 'r1', rect: { x: pxToFp(0), y: pxToFp(0), w: pxToFp(ROOM), h: pxToFp(ROOM) } });
+    s.dungeonRoomRects.push({ id: 'r2', rect: { x: pxToFp(0), y: pxToFp(ROOM), w: pxToFp(ROOM), h: pxToFp(ROOM) } });
+    (s as unknown as { dungeonConfig?: { biomeId: string } }).dungeonConfig = { biomeId: 'ember' };
+    const rb = makeRoomBuilder();
+    rb.build(s);
+
+    const boundary = occluders(rb).find((o) => o.box.sortY === ROOM + 32)!;
+    expect(boundary.box.sortY - boundary.box.foldY).toBe(WALL_H_PERIMETER); // it really is the tall tier
+    const seg = blocks(rb).find((e) => e.zIndex === ROOM + 32)!;
+    const deepLayers = seg.children.filter((c) => c.label === 'xray-deep');
+    expect(deepLayers.length).toBe(2); // the face and the shading over it
+    const silhouette = seg.children.filter((c) => c.label !== 'xray' && c.label !== 'xray-deep');
+    const silBefore = silhouette.map((c) => c.alpha);
+
+    // stand one clearance north of the run's footprint: the whole body is below the fold
+    settle(rb, { x: 200, y: ROOM - fpToPx(PLAYER_BASE.solidRadius), halfW: 13, bodyH: 32 });
+    expect(boundary.cap.fade).toBeLessThan(0.5);
+    expect(boundary.deep.fade).toBeLessThan(0.5);
+    for (const c of deepLayers) expect(c.alpha).toBeLessThan(0.5);
+    // ...and the silhouette still never moves, in either pass
+    expect(silhouette.map((c) => c.alpha)).toEqual(silBefore);
+  });
+
+  it('fades a pillar the player is standing behind, body and all', () => {
+    // A pillar's occluder is its SHAFT, not a cap: it is drawn upward from its own ground point,
+    // so the whole body goes translucent rather than one layer of it.
+    const rb = makeRoomBuilder();
+    rb.build(stateWithOneObstacle());
+    const pillar = (rb as unknown as { pillars: Entity[] }).pillars[0]!;
+    const body = pillar.children[0]!;
+    settle(rb, { x: 150, y: 120 - 20 - fpToPx(PLAYER_BASE.solidRadius), halfW: 13, bodyH: 32 });
+    expect(body.alpha).toBeLessThan(0.5);
+  });
+
+  it('drops the previous room\'s occluders on rebuild rather than appending', () => {
+    const rb = makeRoomBuilder();
+    rb.build(stateWithInteriorBlock());
+    const first = occluders(rb).length;
+    rb.build(stateWithInteriorBlock());
+    expect(occluders(rb)).toHaveLength(first);
+    rb.clear();
+    expect(occluders(rb)).toHaveLength(0);
+  });
+
+  it('is a safe no-op before any room is built', () => {
+    const rb = makeRoomBuilder();
+    expect(() => rb.updateOcclusion(behindBlock, 16.67)).not.toThrow();
+  });
 });
