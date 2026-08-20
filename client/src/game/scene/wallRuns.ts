@@ -320,13 +320,42 @@ export function unjoinedSpans(
  * leaves a cap — see `WallJoins`. `Math.min` is belt-and-braces: the cap can never cross its fold.
  *
  * `doorClip` (`bordersDoorNorth`) clips the same way but to ZERO lift — a door has no crown of
- * its own to leave standing, so nothing may spill past its threshold at all — and only when
- * `r.h > height` for the same reason `tuckNorth` is gated on it: a run no deeper than it is tall
- * has no cap left once the spill is removed (its whole "north reach" IS the cap), so a shallow
- * run next to a door still spills. That case is the general occlusion problem doors don't yet
- * have an x-ray for (design/01), not this clip's to solve.
+ * its own to leave standing, so nothing may spill past its threshold at all — PROVIDED `height`
+ * here is already `effectiveWallHeight`'s result, not the tier's raw height. See that function:
+ * a `doorClip`ped run's CAP alone is not always the whole spill, and `Math.min(-height, ...)`
+ * below only ever protects this function's own output from crossing its own fold — it has no way
+ * to know whether `height` itself is already too tall for `r.h` to justify.
  */
 export function blockCapTop(r: RectPx, height: number, joins: WallJoins = NO_JOINS): number {
   const base = joins.tuckNorth ? Math.min(-height, -r.h - joins.tuckLiftPx) : -height - r.h;
-  return joins.doorClip && r.h > height ? Math.max(base, -r.h) : base;
+  return joins.doorClip ? Math.min(-height, Math.max(base, -r.h)) : base;
+}
+
+/**
+ * The wall height actually used to draw a block — ordinarily just the tier's own `height`, with
+ * one exception measured in 2026-08-20 (`doorSpillCoverage.test.ts`, 12 real cases across the
+ * five shipped floors, not the hypothetical edge case an earlier version of `blockCapTop`'s own
+ * comment assumed it was):
+ *
+ * A block's FACE is drawn at a fixed `height` regardless of its own footprint depth `r.h`
+ * (`wallRender.buildWallBlock`) — that mismatch is exactly what lets a wall "stand" at all, since
+ * every wall's footprint (its collision thickness) is far shallower than the height it's drawn
+ * at. But it means that whenever `r.h < height`, the FACE ALONE already reaches `height - r.h` px
+ * north of the block's own footprint edge, with no cap involved — `blockCapTop`'s `doorClip`
+ * clamp only ever touches the CAP, so clipping it to zero (as it correctly does) left the face's
+ * own reach untouched and still spilling onto the door. Measured: a 32 px-deep PERIMETER stub
+ * beside a door span 72 px of pure face over it with the cap-only clip already in place.
+ *
+ * The fix is to shrink the HEIGHT itself, not add a second clip: capping `height` to `r.h` for a
+ * `doorClip`ped run makes both the face (drawn at this returned height) and the cap
+ * (`blockCapTop`, fed this same returned height) stop exactly at the block's own footprint edge —
+ * `blockCapTop`'s own `doorClip` branch always resolves to exactly `-r.h` once `height <= r.h`,
+ * so the two functions agree by construction rather than by coincidence. A genuinely DEEP run
+ * (`r.h > height`, the case this whole feature first shipped for) is a no-op here — `Math.min`
+ * returns the tier height unchanged, exactly as before. `RoomBuilder` is the only caller, and
+ * feeds this SAME returned value to `buildWallBlock`, `drawWallShadow`, and the occluder's
+ * `foldY`/`top`, so nothing downstream can disagree about how tall this block actually stood.
+ */
+export function effectiveWallHeight(r: RectPx, height: number, joins: WallJoins = NO_JOINS): number {
+  return joins.doorClip ? Math.min(height, r.h) : height;
 }

@@ -160,3 +160,16 @@ export function wallHeight(tier: WallTier): number {
       return WALL_H_KERB;
   }
 }
+
+/** A local-x band clipped to `0..width`, or null if nothing of it survives. Shared by every
+ *  wall-shading pass (`wallShadingSurfaces.ts`/`wallShadingJoins.ts`) that INSETS a cue rather
+ *  than extruding it, so a cue sitting at the very end of a run can never paint over the next
+ *  block along it — same reasoning as the east band's own bound. Lives here rather than in
+ *  `wallRender.ts` so both that file and its shading siblings can import it without either
+ *  depending on the other (CLAUDE.md's "never the shell importing a sibling that imports the
+ *  shell back" cycle rule). */
+export function clampSpan(x: number, w: number, width: number): [number, number] | null {
+  const a = Math.max(0, x);
+  const b = Math.min(width, x + w);
+  return b - a > 0 ? [a, b - a] : null;
+}

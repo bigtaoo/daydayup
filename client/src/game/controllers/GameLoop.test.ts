@@ -648,4 +648,41 @@ describe('GameLoop — the occlusion x-ray is driven every render frame', () => 
     loop.update(8);
     expect(roomBuilder.updateOcclusion).toHaveBeenCalledTimes(2);
   });
+
+  it('reuses its scratch array across frames without leaking a stale focus when the count shrinks then grows back', () => {
+    // `GameLoop.occlusionFociScratch` is written into in place and only truncated (never
+    // reallocated) each frame — the same shape of optimization as `Scene.seenScratch` — so the
+    // failure mode worth pinning down is specifically a shrink-then-regrow: does a frame with
+    // fewer foci than the last one actually drop the extra slots (`foci.length = n`), and does a
+    // later frame that grows again get FRESH values rather than whatever a dropped slot's
+    // reused object last held?
+    const { deps, scene, roomBuilder } = buildDeps();
+    scene.player = { curX: 1200, curY: 140.8, bodySilhouette: silhouette };
+    scene.enemies = [{ curX: 40, curY: 60, bodySilhouette: silhouette }];
+    // Phase 'victory' (not 'playing'): three repeated calls just need updateFx wired every
+    // frame, not a real sim to step — same reason the "empty list with no local player" test
+    // above picks a non-'playing' phase.
+    const loop = new GameLoop(deps, buildHost({ getPhase: () => 'victory' }));
+
+    loop.update(16); // 2 foci: one enemy + the player
+    expect(roomBuilder.updateOcclusion).toHaveBeenLastCalledWith(
+      [
+        { x: 40, y: 60, halfW: 12.96, bodyH: 32 },
+        { x: 1200, y: 140.8, halfW: 12.96, bodyH: 32 },
+      ],
+      16,
+    );
+
+    scene.player = undefined;
+    scene.enemies = [];
+    loop.update(16); // shrinks to 0 — must not still report either frame-1 object
+    expect(roomBuilder.updateOcclusion).toHaveBeenLastCalledWith([], 16);
+
+    scene.enemies = [{ curX: 5, curY: 6, bodySilhouette: silhouette }];
+    loop.update(16); // grows back to 1 — must be this frame's data, not a stale reused slot
+    expect(roomBuilder.updateOcclusion).toHaveBeenLastCalledWith(
+      [{ x: 5, y: 6, halfW: 12.96, bodyH: 32 }],
+      16,
+    );
+  });
 });

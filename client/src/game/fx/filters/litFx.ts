@@ -1,7 +1,9 @@
 // Split out of fx/filters.ts (2026-08-18, 500-line convention): the directional-lighting
-// filter (design/01 fidelity-roadmap milestone 2). Its own file because it is the one
-// filter attached to BOTH actors and level geometry (RoomBuilder's standing walls), and
-// the only one that takes a per-call-site look (ambient/gradient) rather than one tuning.
+// filter (design/01 fidelity-roadmap milestone 2), the only one that takes a per-call-site
+// look (ambient/gradient) rather than one tuning. It briefly also shaded level geometry
+// (RoomBuilder's standing walls, `WALL_LIT_*`) — removed 2026-08-20 after being measured to
+// do nothing visible (see RoomBuilder.ts's git history for the numbers); this file now has
+// exactly one call site again, the actor-facing `ACTOR_*` look below.
 import { Filter, GlProgram, UniformGroup, defaultFilterVert } from 'pixi.js';
 import { hexToRgb } from './shaderPrelude';
 
@@ -64,19 +66,7 @@ void main(void)
 const ACTOR_AMBIENT = 0.55;
 const ACTOR_GRADIENT = 7.0;
 
-/** Ambient floor + gain for LEVEL GEOMETRY (`RoomBuilder`'s standing walls, 2026-08-18).
- *  A wall needs the OPPOSITE bias from an actor. Its cap/face/side tints are already
- *  hand-authored (`scene/wallRender.ts`), so this pass only has to add the per-stone
- *  relief that separates carved rock from a printed swatch — hence the much gentler
- *  gradient gain (a stone texture's own mortar lines would emboss into corrugation at
- *  7.0). And its ambient sits ABOVE `1 − key`, so the lit side goes past 1.0 and the
- *  cap genuinely brightens instead of the whole wall going darker than the floor it
- *  stands on. */
-export const WALL_LIT_AMBIENT = 0.86;
-export const WALL_LIT_GRADIENT = 2.6;
-export const WALL_LIT_KEY_INTENSITY = 0.3;
-
-/** Per-call-site look for `NormalLitFilter` (2026-08-18) — see `ACTOR_*`/`WALL_LIT_*`. */
+/** Per-call-site look for `NormalLitFilter` (2026-08-18) — see `ACTOR_*` above. */
 export interface NormalLitOptions {
   /** Shading floor: what an entirely unlit texel is multiplied by. */
   ambient?: number;
@@ -118,9 +108,10 @@ export class NormalLitFilter extends Filter {
     });
   }
 
-  /** The unlit floor of the shading term — exposed for tests (a wall's look is defined by
-   *  ambient > 1 − key, i.e. its lit side BRIGHTENS; an actor's by ambient < 1, i.e. its
-   *  unlit side darkens). */
+  /** The unlit floor of the shading term — exposed for tests (an actor's `ACTOR_AMBIENT < 1`
+   *  means its unlit side darkens; a future non-actor look with `ambient > 1 − key` would
+   *  brighten its lit side instead, the way `WALL_LIT_AMBIENT` briefly did before it was
+   *  removed as visually inert — see this file's header). */
   get ambient(): number { return this.resources.normalLitUniforms.uniforms.uAmbient; }
   get gradient(): number { return this.resources.normalLitUniforms.uniforms.uGradient; }
 

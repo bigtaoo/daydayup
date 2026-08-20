@@ -3108,6 +3108,66 @@ impact (client-render-only).
 
 ---
 
+## A review pass on character/wall rendering — allocation, file size, a real door-spill bug, a dead filter (2026-08-20, client-only)
+
+Asked for a look at whether the character/wall rendering code (which had just been through many
+tuning rounds, above) still had room for improvement. Four findings, all fixed rather than just
+logged, because the second and third turned out not to be cosmetic:
+
+1. **`GameLoop.updateFx` allocated a fresh occlusion-foci array of fresh objects every RENDER
+   frame** (not just every sim tick) — `Scene.enemies` built a new array from its `views` Map on
+   every call, then `.map()` spread a new `{x,y,halfW,bodyH}` per enemy. Harmless at today's scale,
+   but needless churn in a room with any real number of mobs, and this repo already has the
+   established fix for exactly this shape of problem (`Scene.seenScratch`, reused every
+   `reconcile()` instead of a fresh `Set`). `Scene.enemies` now refills a private `enemiesScratch`
+   array in place; `GameLoop` reuses a persistent `occlusionFociScratch` array of mutable focus
+   objects, writing into existing slots and truncating only the tail that grew stale. Both are
+   read-and-discard within the same synchronous call by every consumer, so reuse is safe — no
+   holder ever keeps a reference across frames.
+2. **`wallRender.ts` was at 489/500 lines**, not yet a baseline-check violation but one shading pass
+   away from becoming one. `drawBlockShading`'s ~140 lines were nine independent Graphics-drawing
+   passes sharing nothing but the block's own geometry — a textbook CLAUDE.md form ① case. Split
+   into `wallShadingSurfaces.ts` (cues a block draws from its own geometry alone: cap gradient, face
+   coping suppression, side/chamfer bands, cap edge bevel, fold, base contact crease) and
+   `wallShadingJoins.ts` (cues that exist only because of a specific neighbouring mass: tuck cap
+   crease, tuck face crown crease, corner AO). `clampSpan` moved to `wallGeometry.ts` (Pixi-free,
+   importable by both siblings without either depending on the other). `wallRender.ts` is now 332
+   lines; `drawBlockShading` is a 9-line orchestrator calling both files in the exact original
+   order (load-bearing — Pixi paints fills in call order). Zero test changes needed: all 202
+   wall-area tests passed unchanged, confirming the split changed no output.
+3. **The door-spill fix from the entry above only ever clipped the CAP, and a SHALLOW run was left
+   spilling anyway** — recorded there as an open question ("that residual case is... not this
+   clip's to solve") rather than measured. `doorSpillCoverage.test.ts` swept the real pipeline
+   (`placeAuthoredFloor` → `buildFloorGeometry` → `wallTier` → `mergeWallRuns`, `bordersDoorNorth`)
+   over all five shipped floors and found the shallow shape firing **12 times** — and it is in fact
+   the MORE common shape, since an ordinary wall's thickness is almost always shallower than its
+   tier height; the deep run the original fix targeted is the unusual case. Root cause was one
+   layer deeper than the cap: a block's FACE is drawn at a fixed tier height regardless of its own
+   footprint depth (the whole reason a wall can "stand" taller than its own collision thickness),
+   so for a shallow footprint the face ALONE already reaches past the run's own north edge with no
+   cap involved — measured, a 32 px-deep PERIMETER stub spilled 72 px of pure face with the
+   cap-only clip already in place. Fixed by `wallRuns.effectiveWallHeight`, which shrinks the
+   height fed to BOTH the face and the cap for a `doorClip`ped shallow run (a genuinely deep run is
+   untouched — `Math.min` returns its tier height unchanged), so `blockCapTop`'s own doorClip
+   branch always resolves to exactly `-r.h` once fed this result — face and cap agree on the same
+   flush edge by construction. See `design/01-rendering.md`'s door-passage entry for the numbers.
+4. **`LIT_WALLS` was dead code that still cost real render targets the one time it was ever
+   flipped on** — a per-segment `NormalLitFilter`, off since 2026-08-19 after being measured at a
+   0.06% mean frame difference, kept switched-off "so the experiment is repeatable" rather than
+   deleted. Re-tuning it needs a live look-and-measure loop this session had no way to run
+   blind, and a permanently-false switch that nobody had a re-tune actually queued up for is just
+   dead weight — removed outright (`RoomBuilder.ts`'s wall-specific call site, `WALL_LIT_*` out of
+   `fx/filters/litFx.ts`/`filters.ts`'s re-export). `NormalLitFilter` itself and its actor-facing
+   `ACTOR_*` look are unaffected.
+
+1876 client tests green (8 new: `effectiveWallHeight` unit tests, the shallow-run `RoomBuilder`
+pair, `doorSpillCoverage.test.ts`, and a `GameLoop` test that mutation-checks the scratch-array
+truncation itself — shrink to zero foci then grow back, confirming no stale focus survives a
+dropped slot), `tsc --noEmit` clean, `check:filelength` clean, no `ENGINE_VERSION` impact
+(client-render-only).
+
+---
+
 ## Dependency summary
 
 ```

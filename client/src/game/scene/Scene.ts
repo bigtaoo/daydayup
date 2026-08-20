@@ -26,6 +26,11 @@ export class Scene {
   // Reused every reconcile() instead of a fresh Set per tick — cleared and refilled
   // each call, never read across ticks.
   private readonly seenScratch = new Set<number>();
+  // Same pattern for `enemies` below: it runs at RENDER rate (GameLoop.updateFx, every
+  // frame, not just once a sim tick), so a fresh array every call is needless churn in
+  // a room with any real number of mobs. Cleared and refilled each call, never read
+  // across calls, and never returned by reference to anything that outlives the call.
+  private readonly enemiesScratch: Actor[] = [];
 
   constructor(private readonly layers: Layers) {}
 
@@ -49,9 +54,9 @@ export class Scene {
    *  itself — it's already fading out, not something the x-ray needs to keep legible. Order is
    *  whatever the underlying Map iterates in, not meaningful. */
   get enemies(): readonly Actor[] {
-    const list: Actor[] = [];
-    for (const v of this.views.values()) if (v instanceof Enemy) list.push(v);
-    return list;
+    this.enemiesScratch.length = 0;
+    for (const v of this.views.values()) if (v instanceof Enemy) this.enemiesScratch.push(v);
+    return this.enemiesScratch;
   }
 
   /** Drop every view — called on a fresh run before a new engine is created. */

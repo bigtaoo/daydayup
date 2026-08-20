@@ -169,16 +169,20 @@ extruded block on the `entities` layer — `scene/wallRender.ts` owns the drawin
   face only, no cap, top of the face cut. The bound is now `overscanTop = max(0, −frame.y) × zoom`,
   i.e. the frame is the authority on how much above the world it asked to see, and a frame that
   asks for none (an interior room, or no frame at all) still gets exactly zero.
-- **Per-stone relief was tried and measured out** (`LIT_WALLS`, **false since 2026-08-19**).
-  Each block used to carry a `NormalLitFilter` tuned for stone (`WALL_LIT_*`: a much gentler
-  gradient gain than an actor's, since tiled masonry is nothing but luminance edges, and an
-  ambient above `1 − key` so the cap brightens instead of the whole wall going darker than its
-  own floor) at one render-target pass per segment, 10-32 per room. An A/B of the live frame
-  with every wall filter stripped differs by a **mean of 0.48 out of 765 (0.06%)**, a maximum of
-  5%, and only 0.05% of pixels move more than 5/255 — the tuning that made it safe is also what
-  left it with no visible amplitude. The switch, the constants and the shader all stay
-  (`fx/filters/litFx.ts`); re-tuning them is the open question, not re-enabling it as it stands.
-  The relief the walls actually have now is free and comes from `wallTone.ts`.
+- **Per-stone relief was tried, measured out, and removed** (`LIT_WALLS`, false since 2026-08-19,
+  **deleted 2026-08-20**). Each block used to carry a `NormalLitFilter` tuned for stone
+  (`WALL_LIT_*`: a much gentler gradient gain than an actor's, since tiled masonry is nothing but
+  luminance edges, and an ambient above `1 − key` so the cap brightens instead of the whole wall
+  going darker than its own floor) at one render-target pass per segment, 10-32 per room. An A/B
+  of the live frame with every wall filter stripped differs by a **mean of 0.48 out of 765
+  (0.06%)**, a maximum of 5%, and only 0.05% of pixels move more than 5/255 — the tuning that made
+  it safe is also what left it with no visible amplitude. Originally left switched off rather than
+  deleted "so the experiment is repeatable," which in practice meant a permanently-false switch,
+  an un-scheduled re-tune, and the single most expensive pass in wall rendering surviving in the
+  codebase for no visible benefit; removed outright once nobody had a re-tune actually queued up.
+  `NormalLitFilter` itself and its actor-facing `ACTOR_*` look (`fx/filters/litFx.ts`) are
+  unaffected — only the wall-specific look and its `RoomBuilder` call site are gone. The relief
+  the walls actually have now is free and comes from `wallTone.ts`.
 - **Pillars follow the same language** (`pillarRender.buildPillarBody`, split out of
   `wallRender.ts` 2026-08-19). They were flat fills
   from `palette.pillar`/`palette.pillarTop`, which are **pre-art fallback hues** — the ember
@@ -722,10 +726,23 @@ room is always south of its sort line. True of a room's north wall, false in gen
   isn't one. `wallRuns.bordersDoorNorth` finds a run whose north edge meets a door passage's south
   edge, and `blockCapTop` clips that run's cap to stop at its own footprint (`doorClip`, zero
   lift) instead of spilling past it — the same clip `tuckNorth` already applies against a
-  neighbouring wall's crown, just with nothing left to reveal underneath. Same guard as
-  `tuckNorth` too: only a run deeper than it is tall (`r.h > height`) has a cap left once the
-  spill is removed, so a SHALLOW run beside a door still spills — that residual case is the
-  general "doors have no x-ray" problem above, not this clip's to solve.
+  neighbouring wall's crown, just with nothing left to reveal underneath.
+
+  **The cap-only clip left a SHALLOW run still spilling, and this was recorded as an open
+  question rather than measured** — the note here used to read "a SHALLOW run beside a door
+  still spills; that residual case is the general doors-have-no-x-ray problem above, not this
+  clip's to solve." `doorSpillCoverage.test.ts` (2026-08-20) swept the real pipeline instead of
+  guessing and found the shallow shape firing **12 times across all five shipped floors** — not
+  hypothetical, and in fact the MORE common shape (`carveDoorGaps`'s ordinary-thickness stub
+  walls flanking a door opening are almost all shallower than their tier height; the deep run
+  above is the unusual case). Root cause was one layer deeper than the cap: a block's FACE is
+  drawn at a fixed tier height regardless of its own footprint depth, which is exactly what lets
+  a wall "stand" taller than its own collision thickness — but it means that whenever the
+  footprint is shallower than that height, the FACE ALONE already reaches past the run's own
+  north edge, with no cap involved at all (measured: a 32 px-deep PERIMETER stub spilled 72 px of
+  pure face with the cap-only clip already in place). `wallRuns.effectiveWallHeight` closes it by
+  shrinking the height fed to BOTH the face and the cap for a `doorClip`ped shallow run — a
+  genuinely deep run is unaffected, `Math.min` returns its tier height unchanged.
 - **A wall between two vertically stacked rooms** — much the bigger case, and **since 2026-08-20
   it is fixed at the tier instead of covered up by the x-ray**. Measured on a live frame at floor 0's
   `r4_forge`/`r5_extraction` boundary (vertical luma scan down world x=350, fix stashed and

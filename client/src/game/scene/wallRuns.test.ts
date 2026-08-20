@@ -14,6 +14,7 @@ import { describe, it, expect } from 'vitest';
 import {
   blockCapTop,
   bordersDoorNorth,
+  effectiveWallHeight,
   joinRects,
   mergeWallRuns,
   NO_JOINS,
@@ -288,10 +289,12 @@ describe('blockCapTop — doorClip', () => {
     expect(blockCapTop(rect, height)).toBeLessThan(-rect.h); // unclipped, it would spill past it
   });
 
-  it('leaves a SHALLOW run unclipped — there is no cap left to clip without erasing it', () => {
+  it('clips a SHALLOW run to ZERO cap rather than leaving it unclipped (doorSpillCoverage.test.ts '
+    + 'found this firing 12 times across the shipped floors, not a hypothetical case)', () => {
     const rect = r(0, 0, 32, 32); // shallower than it is tall: an ordinary wall thickness
     const height = WALL_H_PERIMETER;
-    expect(blockCapTop(rect, height, DOOR)).toBe(blockCapTop(rect, height, NO_JOINS));
+    expect(blockCapTop(rect, height, DOOR)).toBe(-height); // exactly at the fold: no cap band left
+    expect(blockCapTop(rect, height, DOOR)).toBeGreaterThan(blockCapTop(rect, height, NO_JOINS));
   });
 
   it('composes with tuckNorth by taking whichever clip spills less', () => {
@@ -300,5 +303,34 @@ describe('blockCapTop — doorClip', () => {
     const tuckedAndDoored: WallJoins = { ...NO_JOINS, tuckNorth: true, tuckLiftPx: 10, doorClip: true };
     // doorClip (lift 0) is the tighter of the two, so it wins over the tuck's lift-10 reach.
     expect(blockCapTop(rect, height, tuckedAndDoored)).toBe(-rect.h);
+  });
+});
+
+describe('effectiveWallHeight — the FACE half of the doorClip fix (doorSpillCoverage.test.ts)', () => {
+  const DOOR: WallJoins = { ...NO_JOINS, doorClip: true };
+
+  it('shrinks a SHALLOW run\'s height to its own footprint depth, so the face stops spilling too', () => {
+    const rect = r(0, 0, 32, 32); // shallower than PERIMETER: an ordinary wall thickness
+    expect(effectiveWallHeight(rect, WALL_H_PERIMETER, DOOR)).toBe(32);
+  });
+
+  it('leaves a DEEP run\'s height unchanged — the face never spilled for it in the first place', () => {
+    const rect = r(0, 0, 32, 200);
+    expect(effectiveWallHeight(rect, WALL_H_PERIMETER, DOOR)).toBe(WALL_H_PERIMETER);
+  });
+
+  it('is a no-op with no doorClip at all, regardless of depth', () => {
+    const shallow = r(0, 0, 32, 32);
+    expect(effectiveWallHeight(shallow, WALL_H_PERIMETER, NO_JOINS)).toBe(WALL_H_PERIMETER);
+    expect(effectiveWallHeight(shallow, WALL_H_PERIMETER)).toBe(WALL_H_PERIMETER); // default param
+  });
+
+  it('composes with blockCapTop so the cap always resolves to exactly the footprint\'s own edge', () => {
+    // Once `height` is this function's own result, `blockCapTop`'s doorClip branch must always
+    // land on `-r.h` — face and cap agreeing on the same flush edge, not by coincidence.
+    for (const rect of [r(0, 0, 32, 32), r(0, 0, 32, 96), r(0, 0, 32, 200)]) {
+      const height = effectiveWallHeight(rect, WALL_H_PERIMETER, DOOR);
+      expect(blockCapTop(rect, height, DOOR)).toBe(-rect.h);
+    }
   });
 });

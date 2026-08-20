@@ -19,7 +19,6 @@ import { RoomBuilder } from './RoomBuilder';
 import { WALL_H_PERIMETER, WALL_H_INTERIOR, WALL_H_KERB } from './wallGeometry';
 import { XRAY_LABEL } from './occlusion';
 import { fpToPx } from '../coords';
-import { WALL_LIT_AMBIENT, WALL_LIT_GRADIENT, WALL_LIT_KEY_INTENSITY } from '../fx/filters';
 import { Entity, SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
 import { Backdrop } from './Backdrop';
 
@@ -264,19 +263,17 @@ describe('RoomBuilder — standing walls', () => {
   });
 
   it('attaches NO per-segment filter — a room of walls costs zero render targets', () => {
-    // `LIT_WALLS` went false on 2026-08-19 after an A/B of the live frame measured the filter
-    // at a 0.06% mean difference (0.05% of pixels moving more than 5/255) for one render-target
-    // pass per segment, up to 32 per room. This is the cheapest possible guard on that decision
-    // being real: if something re-attaches a filter per wall, the cost is back.
+    // The per-segment `NormalLitFilter` this once optionally attached (`LIT_WALLS`) was
+    // measured on 2026-08-19 at a 0.06% mean difference (0.05% of pixels moving more than
+    // 5/255) for one render-target pass per segment, up to 32 per room, and removed entirely
+    // 2026-08-20 (see RoomBuilder.ts's git history) rather than kept as a permanently-off
+    // switch. This is the cheapest possible guard on that decision staying real: if something
+    // re-attaches a filter per wall, the cost is back.
     mocks.wallTex = fakeTexture(256, 256);
     mocks.wallFaceTex = fakeTexture(256, 128);
     const rb = makeRoomBuilder();
     rb.build(stateWithNorthWall());
     for (const seg of wallEntities(rb)) expect(seg.filters ?? []).toEqual([]);
-    // The stone tuning itself is kept (the constants and shader still exist, see LIT_WALLS):
-    // a wall's ambient sits ABOVE 1 − key so its cap brightens, where an actor's sits below 1.
-    expect(WALL_LIT_AMBIENT + WALL_LIT_KEY_INTENSITY).toBeGreaterThan(1);
-    expect(WALL_LIT_GRADIENT).toBeGreaterThan(0);
   });
 
   it('still stands the wall up with no face art, using Graphics (a missing swatch never flattens it)', () => {
@@ -603,6 +600,44 @@ describe('RoomBuilder — doors (design/05 "Room & door model", 2026-08-04)', ()
     rb.build(s);
     const box = (rb as unknown as { occluders: { box: { top: number; sortY: number } }[] })
       .occluders.find((o) => o.box.sortY === 264)!.box;
+    expect(box.top).toBeCloseTo(64 - WALL_H_PERIMETER, 1);
+  });
+
+  // `doorSpillCoverage.test.ts` measured this SHALLOW shape — not the deep run above — as the
+  // one that actually occurs on the shipped floors (12 times across all five). Clipping the cap
+  // alone (`blockCapTop`'s own fix) was not enough here: a 32 px-deep footprint's FACE is drawn
+  // at the full tier height regardless, so it alone reached WALL_H_PERIMETER - 32 = 72 px past
+  // the run's own edge with nothing left for a cap-only clip to touch. `effectiveWallHeight`
+  // shrinks the height fed to the face too — see its own doc comment.
+  it('clips a SHALLOW run flush with its own footprint at a door too, not just a deep one', () => {
+    const s = createGameState({
+      seed: 1, worldW: 800, worldH: 600, waves: [],
+      walls: [[0, 64, 32, 32]], // an ordinary-thickness perimeter stub, not a merged deep run
+      obstacles: [],
+    });
+    pushDoor(s, false, [0, 32, 32, 32]); // south edge (y=64) flush with the run's north edge
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    const box = (rb as unknown as { occluders: { box: { top: number; sortY: number } }[] })
+      .occluders.find((o) => o.box.sortY === 96)!.box;
+    expect(box.top).toBeCloseTo(64, 1); // the run's own north edge — zero spill onto the door
+  });
+
+  it('the same shallow run spills 72px of pure FACE past its footprint with no door there', () => {
+    // Confirms the fixture above actually exercises the fix, rather than one that never
+    // spilled in the first place — the cap alone (already fixed) contributes none of this: a
+    // 32 px-deep block's cap-only clip already zeroes the cap, so if this regressed to only the
+    // cap-only fix, `box.top` would read 64 (flush) here too even with no door, silently masking
+    // the face's own reach going untested.
+    const s = createGameState({
+      seed: 1, worldW: 800, worldH: 600, waves: [],
+      walls: [[0, 64, 32, 32]],
+      obstacles: [],
+    });
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    const box = (rb as unknown as { occluders: { box: { top: number; sortY: number } }[] })
+      .occluders.find((o) => o.box.sortY === 96)!.box;
     expect(box.top).toBeCloseTo(64 - WALL_H_PERIMETER, 1);
   });
 });

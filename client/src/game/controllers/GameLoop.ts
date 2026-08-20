@@ -14,6 +14,7 @@ import type { TutorialHintController } from './TutorialHintController';
 import type { Scene } from '../scene/Scene';
 import type { RoomBuilder } from '../scene/RoomBuilder';
 import { MAX_WALL_HEIGHT } from '../scene/wallGeometry';
+import type { OcclusionFocus } from '../scene/occlusion';
 import type { FxController } from '../fx/FxController';
 import type { HudView } from '../ui/HudView';
 import type { TouchControlsView } from '../ui/TouchControlsView';
@@ -109,6 +110,14 @@ export class GameLoop {
     ...DEFAULT_PREDICTOR,
   });
   private predLastTick = -1;
+
+  // Reused every `updateFx` call instead of a fresh array of fresh objects per render frame
+  // (`Scene.enemiesScratch` is the same idea one layer down) — occlusion runs at render rate
+  // for every live actor, and `.map()`-ing a new `{x,y,halfW,bodyH}` per enemy every frame is
+  // needless churn in a room with any real number of mobs. Cleared and refilled in place each
+  // call; safe because `RoomBuilder.updateOcclusion` only ever reads it synchronously within
+  // the same call, never stores or diffs it across frames.
+  private readonly occlusionFociScratch: OcclusionFocus[] = [];
 
   constructor(
     private readonly deps: GameLoopDeps,
@@ -336,8 +345,19 @@ export class GameLoop {
     // x-ray at all when it, rather than the player, stood in the hidden band). Piggy-backs on
     // this wrapper for exactly the reason the lighting above does — it is already called from
     // every render path (playing/paused/menu/offline/online), and it already has this frame's dt.
-    const foci = this.deps.scene.enemies.map((e) => ({ x: e.curX, y: e.curY, ...e.bodySilhouette }));
-    if (player) foci.push({ x: player.curX, y: player.curY, ...player.bodySilhouette });
+    const foci = this.occlusionFociScratch;
+    let n = 0;
+    const putFocus = (x: number, y: number, sil: { halfW: number; bodyH: number }): void => {
+      // Reuse the object already sitting at this slot from a previous frame — only a slot
+      // beyond last frame's count (the array was truncated to it below) is actually new.
+      let f = foci[n];
+      if (!f) foci[n] = f = { x: 0, y: 0, halfW: 0, bodyH: 0 };
+      f.x = x; f.y = y; f.halfW = sil.halfW; f.bodyH = sil.bodyH;
+      n++;
+    };
+    for (const e of this.deps.scene.enemies) putFocus(e.curX, e.curY, e.bodySilhouette);
+    if (player) putFocus(player.curX, player.curY, player.bodySilhouette);
+    foci.length = n; // drop any stale slots left over from a frame with more foci than this one
     this.deps.roomBuilder.updateOcclusion(foci, dt);
   }
 

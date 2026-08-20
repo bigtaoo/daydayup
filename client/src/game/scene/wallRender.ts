@@ -66,54 +66,25 @@ import type { RectPx } from './wallGeometry';
 import { blockCapTop, NO_JOINS, unjoinedSpans, type WallJoins } from './wallRuns';
 import { XRAY_DEEP_LABEL, XRAY_LABEL } from './occlusion';
 import {
-  BASE_AO_BANDS,
-  BASE_AO_FRACTION,
-  BASE_AO_MAX,
+  drawBaseContactCrease,
+  drawCapDepthGradient,
+  drawCapEdgeBevel,
+  drawCapFold,
+  drawFaceCopingSuppress,
+  drawSideBands,
+} from './wallShadingSurfaces';
+import { drawCornerAO, drawTuckCapCrease, drawTuckFaceCrease } from './wallShadingJoins';
+import {
   CAP_BOOST_ALPHA,
   CAP_BOOST_TINT,
-  CAP_EDGE_ALPHA,
-  CAP_EDGE_MAX_FRACTION,
-  CAP_EDGE_PX,
-  CAP_EDGE_STEPS,
-  CAP_EDGE_WEST_SCALE,
-  CAP_GRADIENT_BANDS,
-  CAP_GRADIENT_MAX,
-  CAP_GRADIENT_REACH_PX,
   CAP_LIGHT,
   CAP_LIGHT_BLEND,
   CAP_TINT,
   COPING_ALPHA,
-  CORNER_AO_ALPHA,
-  CORNER_AO_BANDS,
-  CORNER_AO_PX,
-  CORNER_AO_WEST_SCALE,
   EDGE_ALPHA,
   EDGE_COLOR,
   EDGE_WIDTH,
-  FACE_COPING_BANDS,
-  FACE_COPING_FRACTION,
-  FACE_COPING_SUPPRESS,
   FACE_TINT,
-  FOLD_ALPHA,
-  FOLD_WIDTH,
-  LIT_EDGE_ALPHA,
-  LIT_EDGE_COLOR,
-  LIT_EDGE_PX,
-  SIDE_ALPHA,
-  SIDE_BAND_MAX_FRACTION,
-  SIDE_BAND_PX,
-  SIDE_CAP_SOLID_PX,
-  SIDE_CAP_TAPER_PX,
-  SIDE_COLOR,
-  SIDE_REACH_TAPER,
-  SIDE_STEPS,
-  TUCK_CAP_ALPHA,
-  TUCK_CAP_BANDS,
-  TUCK_CAP_PX,
-  TUCK_FACE_ALPHA,
-  TUCK_FACE_BANDS,
-  TUCK_FACE_SPILL_PX,
-  TUCK_FACE_TOP_SCALE,
 } from './wallTone';
 
 
@@ -296,157 +267,29 @@ function capTile(
  * stops the face art's coping course out-shining the cap above it, a lit west chamfer, a dark
  * inset east band standing in for the block's own thickness (bounded so it cannot become a
  * painted stripe down a long run's top), a narrow bevel along the cap's own long edges, the hard
- * cap/face fold, and the crease where the face meets the floor. The cap's additive key light is NOT here — a blend mode
+ * cap/face fold, the re-entrant corner a tuck makes with its neighbours on both sides, and the
+ * crease where the face meets the floor. The cap's additive key light is NOT here — a blend mode
  * is per display object, see `buildWallBlock`. Local coords, same space as `buildWallBlock`.
- * Exported for tests.
+ *
+ * Each pass is its own function — `wallShadingSurfaces.ts` for the cues a block draws from its
+ * own geometry alone, `wallShadingJoins.ts` for the ones that only exist because of a specific
+ * neighbouring mass (split out 2026-08-20, 500-line convention: CLAUDE.md form ① — a batch of
+ * independent Graphics-drawing functions with no shared private state beyond `g` itself). Order
+ * here is load-bearing: Pixi paints fills in call order, and this is the same sequence the
+ * `wallTone.ts` numbers were measured against. Exported for tests.
  */
 export function drawBlockShading(r: RectPx, height: number, joins: WallJoins = NO_JOINS): Graphics {
   const g = new Graphics();
-  // Everything on the cap is measured against its VISIBLE depth, which a tucked run's clip
-  // shortens — see `blockCapTop`. `capDepth` is `r.h` for every other block.
-  const capTop = blockCapTop(r, height, joins);
-  const capDepth = -height - capTop;
-  const band = Math.min(SIDE_BAND_PX, r.w * SIDE_BAND_MAX_FRACTION);
-  const litEdge = Math.min(LIT_EDGE_PX, r.w * SIDE_BAND_MAX_FRACTION);
-
-  // Cap depth gradient, falling from the far edge toward the fold and bounded to
-  // CAP_GRADIENT_REACH_PX of it (a north-south run's cap depth is its whole LENGTH).
-  // Masked out over `joins.south`: there the cap does not approach a fold at all, it continues
-  // into the neighbouring mass's cap, and shading it toward a fold that isn't there is what put a
-  // measured 66 -> 79 luma step down the middle of one continuous stone top.
-  const openSouth = unjoinedSpans(r.w, joins.south);
-  const capReach = Math.min(capDepth, CAP_GRADIENT_REACH_PX);
-  const capStep = capReach / CAP_GRADIENT_BANDS;
-  for (let i = 0; i < CAP_GRADIENT_BANDS; i++) {
-    const t = (i + 0.5) / CAP_GRADIENT_BANDS;
-    for (const [a, b] of openSouth) {
-      g.rect(a, -height - capReach + i * capStep, b - a, capStep)
-        .fill({ color: 0x000000, alpha: t * CAP_GRADIENT_MAX });
-    }
-  }
-
-  // The face swatch's own coping course, pulled back under the cap's value — see
-  // FACE_COPING_SUPPRESS for why the art needs this and a uniform tint cannot do it.
-  const copingH = height * FACE_COPING_FRACTION;
-  const copingStep = copingH / FACE_COPING_BANDS;
-  for (let i = 0; i < FACE_COPING_BANDS; i++) {
-    const t = (i + 0.5) / FACE_COPING_BANDS; // 0 at the fold → 1 at the band's lower edge
-    g.rect(0, -height + i * copingStep, r.w, copingStep)
-      .fill({ color: 0x000000, alpha: (1 - t) * FACE_COPING_SUPPRESS });
-  }
-
-  // West chamfer catches the key light, east side turns away from it. Both stepped across their
-  // width rather than drawn as one flat rect: a single alpha reads as a translucent panel laid
-  // over the art, a ramp reads as a surface curving away. Strongest at the block's outer edge in
-  // both cases, since that is where each surface has turned furthest.
-  //
-  // Over the FACE and one wall thickness of cap they run at full strength, then fade out over
-  // `SIDE_CAP_TAPER_PX` more — see `SIDE_CAP_SOLID_PX`: on a deep north-south run the un-bounded
-  // version was a hard-edged grey panel painted down the whole length of the wall's top. An
-  // east-west wall's cap is one thickness deep, so this leaves that case unchanged.
-  const chamferStep = litEdge / SIDE_STEPS;
-  const sideStep = band / SIDE_STEPS;
-  const solid = Math.min(capDepth, SIDE_CAP_SOLID_PX);
-  // `[y, height, alpha multiplier]` bands down the block's east/west edges, fold-ward first.
-  const lengthBands: Array<readonly [number, number, number]> = [[-height - solid, height + solid, 1]];
-  const taperStep = Math.min(capDepth - solid, SIDE_CAP_TAPER_PX) / SIDE_REACH_TAPER.length;
-  SIDE_REACH_TAPER.forEach((k, i) => {
-    if (taperStep > 0) lengthBands.push([-height - solid - taperStep * (i + 1), taperStep, k]);
-  });
-  for (let i = 0; i < SIDE_STEPS; i++) {
-    const t = (i + 0.5) / SIDE_STEPS; // 0 at the outer edge → 1 at the inner one
-    for (const [y, h, k] of lengthBands) {
-      g.rect(0 + i * chamferStep, y, chamferStep, h)
-        .fill({ color: LIT_EDGE_COLOR, alpha: (1 - t) * LIT_EDGE_ALPHA * k });
-      g.rect(r.w - band + i * sideStep, y, sideStep, h)
-        .fill({ color: SIDE_COLOR, alpha: (0.45 + 0.55 * t) * SIDE_ALPHA * k });
-    }
-  }
-
-  // ...and the cap's own long edges get a narrow dark bevel along their FULL depth, which is what
-  // still separates a north-south run's top from the floor once the band above has stopped.
-  const capEdge = Math.min(CAP_EDGE_PX, r.w * CAP_EDGE_MAX_FRACTION);
-  const capEdgeStep = capEdge / CAP_EDGE_STEPS;
-  for (let i = 0; i < CAP_EDGE_STEPS; i++) {
-    const t = (i + 0.5) / CAP_EDGE_STEPS; // 0 at the west edge → 1 at the east one
-    g.rect(r.w - capEdge + i * capEdgeStep, capTop, capEdgeStep, capDepth)
-      .fill({ color: 0x000000, alpha: t * CAP_EDGE_ALPHA });
-    g.rect(i * capEdgeStep, capTop, capEdgeStep, capDepth)
-      .fill({ color: 0x000000, alpha: (1 - t) * CAP_EDGE_ALPHA * CAP_EDGE_WEST_SCALE });
-  }
-
-  // The cap/face fold — same mask: no fold where the block's south edge is buried in a corner.
-  if (openSouth.length > 0) {
-    for (const [a, b] of openSouth) g.moveTo(a, -height).lineTo(b, -height);
-    g.stroke({ color: EDGE_COLOR, width: FOLD_WIDTH, alpha: FOLD_ALPHA });
-  }
-
-  // The re-entrant corner a tucked run makes with the wall it runs into: an inside corner on the
-  // run's own cap, ramping north into the wall. See `TUCK_CAP_PX` — this is the *"相交的部分进行
-  // 立体化处理"* half, and without it the clipped cap just stops dead at the brick.
-  if (joins.tuckNorth) {
-    const tuckReach = Math.min(capDepth, TUCK_CAP_PX);
-    const tuckStep = tuckReach / TUCK_CAP_BANDS;
-    for (let i = 0; i < TUCK_CAP_BANDS; i++) {
-      const t = (i + 0.5) / TUCK_CAP_BANDS; // 0 at the wall → 1 at the crease's south end
-      g.rect(0, capTop + i * tuckStep, r.w, tuckStep)
-        .fill({ color: 0x000000, alpha: (1 - t) * TUCK_CAP_ALPHA });
-    }
-  }
-
-  // ...and the other half of that corner, on THIS block's CROWN, where a tucked run arrives just
-  // under it. Only the crown is left to shade — the run's own cap covers every brick course below
-  // it — and the crown is also the brightest band on the wall, so this is the one band where the
-  // alpha is visible at all. Darkest at the crown's underside, where the contact is.
-  const crownH = height * joins.crownFraction;
-  const crownStep = crownH / TUCK_FACE_BANDS;
-  for (const [a, b] of joins.tuckedSouth) {
-    for (let i = 0; i < TUCK_FACE_BANDS; i++) {
-      const t = (i + 0.5) / TUCK_FACE_BANDS; // 0 at the wall's top → 1 at the crown's underside
-      const alpha = (TUCK_FACE_TOP_SCALE + (1 - TUCK_FACE_TOP_SCALE) * t) * TUCK_FACE_ALPHA;
-      const core = clampSpan(a - TUCK_FACE_SPILL_PX * 0.5, b - a + TUCK_FACE_SPILL_PX * 1.5, r.w);
-      if (core) {
-        g.rect(core[0], -height + i * crownStep, core[1], crownStep)
-          .fill({ color: 0x000000, alpha });
-      }
-    }
-  }
-
-  // The crease a corner casts on THIS wall's face, where another run stands in front of it. Only
-  // the parts of the face flanking a join are exposed at all (the join itself is behind that run's
-  // cap), so this is drawn outward from each interval's ends — see `CORNER_AO_PX`.
-  const cornerStep = CORNER_AO_PX / CORNER_AO_BANDS;
-  for (const [a, b] of joins.south) {
-    for (let i = 0; i < CORNER_AO_BANDS; i++) {
-      const t = (i + 0.5) / CORNER_AO_BANDS; // 0 at the contact → 1 at the crease's outer end
-      const alpha = (1 - t) * CORNER_AO_ALPHA;
-      // Clamped to the block's own width: like the east band, this is INSET, never extruded, so a
-      // join sitting at the very end of a wall cannot paint over the next block along the run.
-      const east = clampSpan(b + i * cornerStep, cornerStep, r.w);
-      if (east) g.rect(east[0], -height, east[1], height).fill({ color: 0x000000, alpha });
-      const west = clampSpan(a - (i + 1) * cornerStep, cornerStep, r.w);
-      if (west) {
-        g.rect(west[0], -height, west[1], height)
-          .fill({ color: 0x000000, alpha: alpha * CORNER_AO_WEST_SCALE });
-      }
-    }
-  }
-
-  // Contact crease along the base of the front face.
-  const aoH = height * BASE_AO_FRACTION;
-  const aoStep = aoH / BASE_AO_BANDS;
-  for (let i = 0; i < BASE_AO_BANDS; i++) {
-    const t = (i + 0.5) / BASE_AO_BANDS;
-    g.rect(0, -aoH + i * aoStep, r.w, aoStep).fill({ color: 0x000000, alpha: t * BASE_AO_MAX });
-  }
+  drawCapDepthGradient(g, r, height, joins);
+  drawFaceCopingSuppress(g, r, height);
+  drawSideBands(g, r, height, joins);
+  drawCapEdgeBevel(g, r, height, joins);
+  drawCapFold(g, r, height, joins);
+  drawTuckCapCrease(g, r, height, joins);
+  drawTuckFaceCrease(g, r, height, joins);
+  drawCornerAO(g, r, height, joins);
+  drawBaseContactCrease(g, r, height);
   return g;
-}
-
-/** A local-x band clipped to `0..width`, or null if nothing of it survives. */
-function clampSpan(x: number, w: number, width: number): [number, number] | null {
-  const a = Math.max(0, x);
-  const b = Math.min(width, x + w);
-  return b - a > 0 ? [a, b - a] : null;
 }
 
 /**

@@ -17,10 +17,16 @@ import {
   type FadeableOccluder,
   type OcclusionFocus,
 } from './occlusion';
-import { blockCapTop, bordersDoorNorth, mergeWallRuns, wallJoins, type WallRun } from './wallRuns';
+import {
+  blockCapTop,
+  bordersDoorNorth,
+  effectiveWallHeight,
+  mergeWallRuns,
+  wallJoins,
+  type WallRun,
+} from './wallRuns';
 import { faceCrownFraction } from './wallTone';
 import { drawRoomLight } from './roomLight';
-import { NormalLitFilter, WALL_LIT_AMBIENT, WALL_LIT_GRADIENT, WALL_LIT_KEY_INTENSITY } from '../fx/filters';
 import { SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
 import type { Backdrop } from './Backdrop';
 import { Portal } from './Portal';
@@ -28,33 +34,20 @@ import { Portal } from './Portal';
 /** Opacity of the 64 px floor grid. See `build()` for why it is this low now. */
 const GRID_ALPHA = 0.12;
 
-/** Whether standing walls take the directional-lighting filter on top of their hand-authored
- *  cap/face/side tints (2026-08-18). One render-target pass per wall segment, and a room has
- *  ~10-32 of them, so this is by far the most expensive thing in the wall pass.
- *
- *  **Off since 2026-08-19, because it was measured to do nothing.** An A/B of the live frame
- *  with every wall filter stripped differs by a MEAN of 0.48 out of 765 (0.06%), a maximum of
- *  5%, and only 0.05% of pixels move by more than 5/255 — the four probe points (cap, face,
- *  north-south cap, adjacent floor) come out 13/13, 62/62, 26/25, 40/40. The intent was
- *  per-stone relief; the tuning that made it safe (`WALL_LIT_AMBIENT` above `1 - key`, a much
- *  gentler gradient gain than an actor's, both needed to stop a wall going darker than its own
- *  floor) is also what left it with no visible amplitude. The relief the walls actually have
- *  now comes from `wallTone.ts` — cap wash, cap depth gradient, face ramp, fold line — which is
- *  free. Kept as a switch rather than deleted so the experiment is repeatable: the constants
- *  and the shader are still in `fx/filters/litFx.ts`, and re-tuning them is the open question,
- *  not whether to re-enable this as it stands. */
-const LIT_WALLS = false;
-
-/** A `NormalLitFilter` tuned for stone rather than for a character — see `WALL_LIT_*`
- *  (`fx/filters/litFx.ts`) for why a wall needs the opposite ambient bias from an actor.
- *  One instance per segment: filters carry per-instance uniform state, and Pixi does not
- *  support sharing one Filter across display objects with different bounds. */
-function wallLitFilter(): NormalLitFilter {
-  return new NormalLitFilter(0xfff2e0, WALL_LIT_KEY_INTENSITY, {
-    ambient: WALL_LIT_AMBIENT,
-    gradient: WALL_LIT_GRADIENT,
-  });
-}
+// Standing walls used to optionally take a per-segment `NormalLitFilter` on top of their
+// hand-authored cap/face/side tints (2026-08-18 — one render-target pass per segment, up to 32
+// per room, by far the most expensive thing in the wall pass), gated behind a `LIT_WALLS`
+// switch that had been off since 2026-08-19: an A/B of the live frame with the filter stripped
+// differed by a MEAN of 0.48 out of 765 (0.06%), max 5%, only 0.05% of pixels moving more than
+// 5/255. The tuning that made it safe (`WALL_LIT_AMBIENT` above `1 - key`, a much gentler
+// gradient gain than an actor's — both needed to stop a wall going darker than its own floor)
+// is also what left it with no visible amplitude, and the relief walls actually have now comes
+// free from `wallTone.ts` (cap wash, cap depth gradient, face ramp, fold line). Removed
+// entirely 2026-08-20 rather than left as a permanently-off switch: a re-tune was never
+// scheduled, "kept for the experiment" had become "dead code nobody revisits," and the switch
+// was still costing a render target per wall the one time it was ever flipped on. The shader
+// itself (`NormalLitFilter`) and its actor-facing tuning (`ACTOR_*`) are unaffected — this only
+// removes the wall-specific `WALL_LIT_*` look and its call site.
 
 /**
  * Render-side mirror of the engine's dungeon/arena room geometry (design/08 "render
@@ -192,10 +185,13 @@ export class RoomBuilder {
       if (bordersDoorNorth(run.rect, doorRectsPx)) joins[i] = { ...joins[i]!, doorClip: true };
     }
     for (const [i, run] of merged.entries()) {
-      const height = wallHeight(run.tier);
+      // `doorClip`ped run whose OWN footprint is shallower than its tier: shrink the height
+      // itself, not just the cap — see `effectiveWallHeight` for why a cap-only clip still let
+      // the FACE spill onto the door (measured: 72 px of pure face, on a 32 px-deep stub). A
+      // no-op for every other run, tier height unchanged.
+      const height = effectiveWallHeight(run.rect, wallHeight(run.tier), joins[i]!);
       drawWallShadow(shadows, run.rect, height);
       const seg = buildWallBlock(run.rect, height, { palette, cap: wallTex, face: faceTex }, joins[i]);
-      if (LIT_WALLS) seg.filters = [wallLitFilter()];
       this.layers.entities.addChild(seg);
       this.wallEntities.push(seg);
       // The block sorts on its south edge and paints upward from there, so the floor it covers

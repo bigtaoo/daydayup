@@ -29,9 +29,6 @@ import {
   SHIELD_SQUASH,
   FRAME_UV,
   hexToRgb,
-  WALL_LIT_AMBIENT,
-  WALL_LIT_GRADIENT,
-  WALL_LIT_KEY_INTENSITY,
 } from './filters';
 import { SHADOW_SQUASH } from '../scene/Entity';
 
@@ -408,27 +405,19 @@ describe('NormalLitFilter per-call-site look', () => {
     expect(f.gradient).toBeCloseTo(7.0, 6);
   });
 
-  it('takes a wall tuning whose lit side BRIGHTENS instead of darkening', () => {
-    // The bias has to invert for level geometry. An actor's ambient sits below 1 so its
-    // unlit side darkens; a wall's sits above 1 − key so its cap goes past 1.0 and genuinely
-    // lights up. With the actor tuning a wall would come out darker than the floor it stands
-    // on, which is worse than not lighting it at all.
-    const f = new NormalLitFilter(0xfff2e0, WALL_LIT_KEY_INTENSITY, {
-      ambient: WALL_LIT_AMBIENT,
-      gradient: WALL_LIT_GRADIENT,
-    });
-    expect(f.ambient).toBeCloseTo(WALL_LIT_AMBIENT, 6);
-    expect(f.gradient).toBeCloseTo(WALL_LIT_GRADIENT, 6);
-    expect(WALL_LIT_AMBIENT + WALL_LIT_KEY_INTENSITY).toBeGreaterThan(1);
+  it('accepts a per-call-site ambient/gradient override, brighter-side included', () => {
+    // The one non-default look this used to ship with was RoomBuilder's wall tuning
+    // (`WALL_LIT_*`, removed 2026-08-20 after being measured to do nothing visible — see
+    // RoomBuilder.ts's git history). `NormalLitOptions` itself is unaffected: any future
+    // call site can still invert the bias the same way a wall briefly did — ambient above
+    // `1 − key` brightens the lit side instead of darkening the unlit one.
+    const f = new NormalLitFilter(0xfff2e0, 0.3, { ambient: 0.86, gradient: 2.6 });
+    expect(f.ambient).toBeCloseTo(0.86, 6);
+    expect(f.gradient).toBeCloseTo(2.6, 6);
+    expect(0.86 + 0.3).toBeGreaterThan(1);
   });
 
-  it('gives stone a much gentler fake-normal gain than a character sprite', () => {
-    // A stone swatch's own mortar lines emboss into corrugation at the actor's 7.0 — the
-    // gradient is a luminance derivative, and tiled masonry is nothing but luminance edges.
-    expect(WALL_LIT_GRADIENT).toBeLessThan(new NormalLitFilter().gradient / 2);
-  });
-
-  it('drives both from uniforms, so the two looks share one compiled program', () => {
+  it('drives both from uniforms, so every look shares one compiled program', () => {
     const src = new NormalLitFilter().glProgram.fragment!;
     expect(src).toContain('uniform float uAmbient;');
     expect(src).toContain('uniform float uGradient;');
@@ -462,12 +451,10 @@ describe('game/fx/filters — the assembly shell after the split', () => {
   });
 
   it('re-exports the tuning constants the split moved into sibling modules', () => {
-    // These are the values RoomBuilder and this file's own look assertions read. A split that
-    // dropped them would fail at import time in the app but could easily pass a narrower test.
-    for (const n of [SHIELD_SQUASH, WALL_LIT_AMBIENT, WALL_LIT_GRADIENT, WALL_LIT_KEY_INTENSITY]) {
-      expect(typeof n).toBe('number');
-      expect(Number.isFinite(n)).toBe(true);
-    }
+    // The value this file's own look assertions read. A split that dropped it would fail at
+    // import time in the app but could easily pass a narrower test.
+    expect(typeof SHIELD_SQUASH).toBe('number');
+    expect(Number.isFinite(SHIELD_SQUASH)).toBe(true);
   });
 
   it('gives every filter its own distinct shader — the split copied nothing', () => {
