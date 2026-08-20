@@ -795,6 +795,135 @@ wall runs that were its worst case.)
 It also caught a bad fixture in `RoomBuilder.test.ts`, whose "player standing behind the block"
 position was actually inside the stone.
 
+## A door is a wall block whose face is an opening (2026-08-20)
+
+Every standing thing in a room had been through the volume passes above — walls, pillars, the
+character — and the one fixture the player most needs to read at a glance had not: a door was a
+flat `Sprite` on `layers.ground`, stretched to its `passageAabb`.
+
+**The art was never a floor decal.** `door_{locked,open}_raw.png` are front ELEVATIONS: a portrait
+stone frame around a hazard-striped slab, and the same frame as an empty arch with a transparent
+middle. That is the identical mistake `13` records for the wall swatches before 2026-08-18 ("they
+were being laid flat on the wall's own footprint, so the tilted view's promised small front face
+existed on pillars and nowhere else"), still live for doors two days later. Measured on a live
+full-floor extract of level 1: 221x320 of portrait art squeezed into a 64x128 rect for an
+east-west passage — and into a 128x64 **landscape** rect for a north-south one — so the locked
+door read as a red rug lying on the floor between two 104 px stone masses and the open one as a
+mangled hoop. The two files also carried ~33 px of transparent margin on every side (the leaf
+covered 67% of its own width) and, worse, DIFFERENT margins from each other, so the two states
+were not even registered against one another. Both are now trimmed to their alpha bbox by the
+repo's own `tools/png-pipeline/compress.mjs` — 221x320 → 147x217 and 215x320 → 156x224 — rather
+than corrected with a fudge factor in the renderer.
+
+**The geometry needs no orientation branch, which is the good part.** A door's passage rect is a
+hole in a wall: its short axis is the wall's own thickness, its long axis the gap. Under
+`screen.y = gy - z` the mass ABOVE a doorway therefore lands exactly where a wall block's CAP
+lands (the footprint displaced one height north) and the opening lands exactly where that block's
+FACE goes. So `scene/doorRender.ts` builds a door as a wall block whose face is an opening, from
+the same shell as `wallRender.ts` (`addWallFace`, `addCapLayers`, `drawBlockShading`,
+`addBlockEdge`, `drawWallShadow` — all now shared rather than re-implemented), and one
+construction covers both orientations:
+
+- **cap** — the wall over the lintel, tiled from the same world-aligned swatch as the runs either
+  side, so a room's crown line runs unbroken THROUGH the doorway.
+- **face** — the wall's own elevation across the full height, darkened by a recess ramp
+  (`RECESS_*`), then the leaf. The first version filled the opening with flat near-black instead
+  and that was wrong twice: on a 22 px kerb door it WAS the whole fixture (a black rectangle
+  punched in the room), and stone in deep shade reads as a passage where a void reads as a bug.
+  Measured after: the open arch's interior sits at luma 19 against a 37 floor and a 75 cap — half
+  the floor's value, which is what makes it read as a hole.
+- **leaf** — the elevation, fit by WIDTH, bottom-anchored, overflow cropped off the top via a
+  source frame (`doorLeafFrame`). Never scaled to fit both axes: an opening is 64x104 on a
+  perimeter wall and 128x22 on a kerb, and fitting both would squash the kerb case 8:1. A tall
+  door shows the whole leaf under a band of lintel stone; a kerb door shows the leaf's own base —
+  frame feet and the bottom hazard stripe — at the same stone scale as everything else in the room.
+- **hazard bloom** (locked only, additive) — nine graduated ellipse rings on the floor plus a wash
+  over the leaf. Five rings still showed three of their own edges; the pool is worth having, and
+  measurably so: A/B'd against the same frame with the layer hidden it moves a 200x90 px region by
+  a mean of **+4.0** luma (max +27, 41% of pixels past 3/255) — unlike `LIT_WALLS`, which was
+  measured at 0.06% and deleted.
+
+**A door stands exactly as tall as the wall it interrupts** (`wallRuns.doorFlankTier` — the
+SHORTEST run abutting the passage along the gap, then `wallHeight`). This is the rule that keeps
+the fix from re-opening a bug the wall passes already closed twice: nearly half the doors in the
+shipped game (11 of 24, swept in `doorStandCoverage.test.ts`) are cut into a KERB, the low
+boundary between two vertically stacked rooms, which is low precisely because a room's floor lies
+immediately north of it and anything tall there stands between the camera and the player. A
+doorway is no more entitled to that space than the wall is, so it inherits the shorter flank and
+gets its legibility from the hazard bloom instead of from height. The other 13 stand at
+`WALL_H_PERIMETER`. Taking the shortest also means a door can never out-top the mass it is set
+into. Doors additionally get their own `wallJoins` pass (against the walls, not folded into the
+walls' own pass — every wall tone was measured with doors absent from that list), so a doorway's
+cap runs into the flanking caps without either side drawing an "I end here" coping across one
+continuous stone top.
+
+**And a door is now an x-ray occluder like everything else that stands** (`occlusion.ts`). It has
+to be: the passage floor is entirely inside the fixture's own art, so a character walking through
+a doorway is behind it by construction — while a door lived on `layers.ground` it could not
+participate at all, which is what forced the separate `bordersDoorNorth` cap clip for the walls
+around it (that clip stays: a run south of a door still sorts in front of it). Verified live on
+all four doors of level 1's first floor: a focus standing in the doorway takes the fixture to
+`XRAY_FADE` 0.34 and it returns to 1 when the focus leaves. The kerb door correctly fades its cap
+only — a 22 px opening puts the body above the cap/face fold, where `needsDeepFade` is false.
+
+## The floor stops at its rooms (2026-08-20)
+
+The floor was one `TilingSprite` of a 256 px swatch over the world, and measured on a live
+full-floor extract of level 1 that had two separate defects in it.
+
+**One: 29-56% of it was painted where no room exists.** `worldW/worldH` are the bounding box of a
+floor's co-resident rooms, and a `graph2d` layout's rooms do not fill their own bounding box —
+across the five shipped floors the box is 1.41-2.26x the rooms' area (`floorCoverage.test.ts`). On
+floor 0 that surplus is a single featureless 1500x430 field with no walls, no room light and no
+decals in it, which the eye reads as one enormous room the level happens to have wall-lines drawn
+across. Everything outside a room now belongs to the backdrop, and the frame reads as five rooms
+connected by doors instead.
+
+That is only safe because a PvE floor's rooms *are* its walkable space, which is asserted rather
+than assumed: `floorCoverage.test.ts` flood-fills each shipped floor's grid from every room centre
+through non-wall cells and requires every reachable cell to be inside a room rect (0 outside, all
+five floors). "Not inside a wall" would have been the wrong test — a floor's bounding box contains
+large enclosed regions that no room occupies and nothing walls off; they are simply unreachable.
+**A PvP arena is the opposite case and deliberately keeps the whole-world floor**: the same sweep
+over the shipped `arena_prototype_60` finds 5240 of its 11,524 non-wall cells (45%) reachable and
+outside every room rect *and* every door passage, so a per-room floor there would leave a player
+walking over the backdrop. `groundLayer.floorRegionsPx` is that branch, and the arena's 60 rooms
+still get their own wash/mottle/light on top of the continuous floor.
+
+**Two: the floor had no variation at all.** Three 256x256 patches of open floor, 512 px apart, in
+three DIFFERENT rooms, came back with identical statistics (mean 38.6, sd 4.6, min 21, max 105) and
+97% of their bytes equal — the 3% that differed was `roomLight.ts`'s corner falloff, not the floor.
+An exact 8-grid-cell period, the same in every room, on every floor, from a swatch whose own
+contrast is sd 5.2. `floorRender.ts` adds four layers, and the order they are listed in is the order
+of how much they actually did:
+
+| layer | what it does | measured |
+|---|---|---|
+| per-room floor (above) | the floor stops at the rooms | 29-56% of the old floor was surplus |
+| per-room wash | one warm-or-cool multiply per room, hashed from its world position | room floor means now span **40.6-54.2** luma; they were identical |
+| mottle | dark and additive blobs at 1.4-3.6 tiles across, deliberately incommensurate with the tile grid | 64 px patch-mean sd **2.69 → 4.23**, spread 10.7 → 14.9 (A/B on one frame) |
+| stamp | one Sprite per tile, mirrored from a hash of its grid position | two rooms' patches went from 97% byte-identical to 57% of bytes differing |
+| wear | stains, rubble specks lit from the same upper-left key light, and a worn patch across each doorway along its travel axis | — |
+
+Three things this pass got wrong first, all of them found by looking at a 2x crop rather than by
+reasoning:
+
+- **A per-tile tint paints the tile grid.** The stamp originally dimmed each tile by a hashed
+  0.93..1.0, and a 7% step between two adjacent 256 px squares is a *flat rectangle*: the floor came
+  out as a visible checkerboard of slightly different greys, i.e. more legible as a grid than the
+  repeated cobble ever was. Removed. Value variation belongs at a scale unrelated to the tiles.
+- **Mirrors only, never rotations.** A seamless tile stays seamless mirrored (its left edge equals
+  its right edge, so a mirrored copy still matches its neighbour) and does not rotated, where the
+  other axis's edges arrive at the seam. `tileVariant` therefore offers flips and nothing else, and
+  a test says so, because "add a rotation for more variety" is the obvious next idea.
+- **A blob at one alpha shows its own rim.** Three mottle bands at a flat alpha drew visible arcs on
+  the floor; five with the alpha ramped by band index do not. Same lesson as `CAST_PASSES` and the
+  door bloom's nine rings, for the third time in this document.
+
+Everything here is hashed, never `Math.random` — a room must draw the identical floor on every visit
+and on every client (design/06's rule applied to the render layer, as with `Pickup`'s golden-angle
+bob phase).
+
 ## Depth sorting (Y-sort)
 
 - The entity layer sets `sortableChildren = true`; each frame we set `entity.zIndex = entity.gy`.
@@ -813,9 +942,9 @@ position was actually inside the stone.
 
 | Layer | Contents | Sorting |
 |-------|----------|---------|
-| ground | floor, ground decals | fixed |
+| ground | floor (stamped per room), its wash/mottle/wear decals, the 64 px grid, the per-room light pool | fixed |
 | shadow | all cast shadows | fixed (below entities) |
-| entities | characters / enemies / pillars / bullets | **Y-sort (zIndex = gy)** |
+| entities | characters / enemies / pillars / bullets / **standing wall blocks + door fixtures** | **Y-sort (zIndex = gy)** |
 | fx | muzzle flashes, explosions, deflect flashes, per-element bullet trails (additive blend) | overlay |
 | ui | HP, weapon, crosshair | topmost |
 

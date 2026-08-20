@@ -21,13 +21,51 @@ import { XRAY_LABEL } from './occlusion';
 import { fpToPx } from '../coords';
 import { Entity, SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
 import { Backdrop } from './Backdrop';
+import type { DoorFixture } from './doorRender';
 
 function makeRoomBuilder(layers = new Layers()): RoomBuilder {
   return new RoomBuilder(layers, new Backdrop(layers));
 }
 
-function doorSprites(rb: RoomBuilder): Sprite[] {
-  return (rb as unknown as { doorSprites: Sprite[] }).doorSprites;
+interface Occ {
+  cap: { fade: number };
+  deep: { fade: number };
+  box: { left: number; right: number; top: number; sortY: number; foldY: number };
+}
+
+/** The x-ray occluder list RoomBuilder registers every standing block into — walls, pillars and
+ *  (since 2026-08-20) doors. Module-scope because both the door tests and the x-ray tests read it. */
+function occluders(rb: RoomBuilder): Occ[] {
+  return (rb as unknown as { occluders: Occ[] }).occluders;
+}
+
+function doorFixtures(rb: RoomBuilder): DoorFixture[] {
+  return (rb as unknown as { doorFixtures: DoorFixture[] }).doorFixtures;
+}
+
+/** The leaf sprite of door `i` — the one plain Sprite child of a fixture (its stone is
+ *  TilingSprites, its recess/glow/shading Graphics). */
+function leafOf(rb: RoomBuilder, i: number): Sprite {
+  const kid = doorFixtures(rb)[i]!.view.children.find(
+    (c) => c instanceof Sprite && !(c instanceof TilingSprite),
+  );
+  return kid as Sprite;
+}
+
+/** The hazard bloom of door `i` — the only additively-blended child. */
+function glowOf(rb: RoomBuilder, i: number): Graphics {
+  const kid = doorFixtures(rb)[i]!.view.children.find(
+    (c) => c instanceof Graphics && c.blendMode === 'add',
+  );
+  return kid as Graphics;
+}
+
+/** How tall door `i` was built — read back off its occluder's cap/face fold rather than from a
+ *  private field, so the assertion is on geometry that actually reached the screen. */
+function doorHeightOf(rb: RoomBuilder, i: number): number {
+  const view = doorFixtures(rb)[i]!.view;
+  const box = occluders(rb).find((o) => o.box.sortY === view.y)!.box;
+  return box.sortY - box.foldY;
 }
 
 const mocks = vi.hoisted(() => ({
@@ -116,16 +154,67 @@ describe('RoomBuilder — no biome art registered (fallback)', () => {
 });
 
 describe('RoomBuilder — biome art registered for this element', () => {
-  it('uses a TilingSprite for the ground fill, sized to the room', () => {
+  // Since 2026-08-20 the ground fill is STAMPED (`floorRender.stampFloor`), not tiled: one Sprite
+  // per tile of a world-aligned grid, so each can be mirrored independently. A single
+  // `TilingSprite` gave the whole game one 256 px period, identical in every room.
+  // The change that mattered most in the 2026-08-20 floor pass, and the one a mutation battery
+  // caught as untested: the floor STOPS AT THE ROOMS. `worldW/worldH` are the bounding box of a
+  // floor's co-resident rooms, which on a `graph2d` layout is 1.4-2.3x their own area
+  // (`floorCoverage.test.ts`), and everything painted in between belonged to the backdrop.
+  it('stamps the floor only where the rooms are, not over the whole world bounding box', () => {
     mocks.floorTex = fakeTexture(64, 64);
     mocks.wallTex = undefined;
     const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
-    const s = stateWithOneWall('ember');
+    const s = createGameState({ seed: 1, worldW: 1000, worldH: 1000, waves: [], walls: [], obstacles: [] });
+    // One 256x256 room in a 1000x1000 world: 6.5% of the bounding box.
+    s.dungeonRoomRects.push({ id: 'r', rect: { x: pxToFp(128), y: pxToFp(128), w: pxToFp(256), h: pxToFp(256) } });
     rb.build(s);
-    const floor = layers.ground.children.find((c) => c instanceof TilingSprite) as TilingSprite | undefined;
-    expect(floor).toBeDefined();
-    expect(floor!.texture).toBe(mocks.floorTex);
+    const tiles = layers.ground.children.filter((c) => c instanceof Sprite && !(c instanceof TilingSprite)) as Sprite[];
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, area = 0;
+    for (const t of tiles) {
+      const w = Math.abs(t.width);
+      const h = Math.abs(t.height);
+      const x0 = t.x - w * t.anchor.x;
+      const y0 = t.y - h * t.anchor.y;
+      minX = Math.min(minX, x0); minY = Math.min(minY, y0);
+      maxX = Math.max(maxX, x0 + w); maxY = Math.max(maxY, y0 + h);
+      area += w * h;
+    }
+    expect(minX).toBeCloseTo(128, 3);
+    expect(minY).toBeCloseTo(128, 3);
+    expect(maxX).toBeCloseTo(384, 3);
+    expect(maxY).toBeCloseTo(384, 3);
+    expect(area).toBeCloseTo(256 * 256, 3); // exactly the room, no gap and no overhang
+  });
+
+  // ...but an ARENA's rooms are not a partition of its walkable space (`floorCoverage.test.ts`
+  // measures 5240 reachable cells outside them on the shipped 60-room map), so it keeps the
+  // whole-world floor. A per-room floor there would leave a player walking over the backdrop.
+  it('keeps the whole-world floor when there are no dungeon rooms (arena / flat modes)', () => {
+    mocks.floorTex = fakeTexture(64, 64);
+    mocks.wallTex = undefined;
+    const rb = makeRoomBuilder();
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    const s = createGameState({ seed: 1, worldW: 640, worldH: 320, waves: [], walls: [], obstacles: [] });
+    s.arenaRoomRects.push({ id: 'a', rect: { x: pxToFp(0), y: pxToFp(0), w: pxToFp(128), h: pxToFp(128) } });
+    rb.build(s);
+    const tiles = layers.ground.children.filter((c) => c instanceof Sprite && !(c instanceof TilingSprite)) as Sprite[];
+    const area = tiles.reduce((a, t) => a + Math.abs(t.width) * Math.abs(t.height), 0);
+    expect(area).toBeCloseTo(640 * 320, 3); // the whole world, NOT the one 128x128 arena room
+  });
+
+  it('stamps the ground fill as one Sprite per tile, all from the floor swatch', () => {
+    mocks.floorTex = fakeTexture(64, 64);
+    mocks.wallTex = undefined;
+    const rb = makeRoomBuilder();
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    const s = stateWithOneWall('ember'); // 800x600 world, no dungeon rooms -> one region
+    rb.build(s);
+    const tiles = layers.ground.children.filter((c) => c instanceof Sprite && !(c instanceof TilingSprite)) as Sprite[];
+    expect(tiles.length).toBe(Math.ceil(800 / 64) * Math.ceil(600 / 64));
+    expect(tiles.every((t) => t.texture.source === mocks.floorTex!.source)).toBe(true);
+    expect(layers.ground.children.some((c) => c instanceof TilingSprite)).toBe(false);
   });
 
   it('uses the wall swatch as each standing block\'s top CAP, at the wall rect', () => {
@@ -441,10 +530,10 @@ describe('RoomBuilder — grid overlay and rebuild', () => {
     const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(stateWithOneWall('ember'));
-    // ground fill (TilingSprite) + grid + the per-room light pool (both Graphics). Since
-    // 2026-08-18 the walls have left the ground layer entirely (they are standing blocks on
-    // `entities`), so those two are the only Graphics here.
-    expect(layers.ground.children.filter((c) => c instanceof Graphics)).toHaveLength(2);
+    // The ground fill is Sprites (stamped tiles), so the Graphics here are exactly the four
+    // overlays: the floor's own dark and additive variation layers (`floorRender`), the grid, and
+    // the per-room light pool. Since 2026-08-18 the walls have left this layer entirely.
+    expect(layers.ground.children.filter((c) => c instanceof Graphics)).toHaveLength(4);
   });
 
   it('clears the previous room contents on a second build() call', () => {
@@ -459,58 +548,99 @@ describe('RoomBuilder — grid overlay and rebuild', () => {
   });
 });
 
-describe('RoomBuilder — doors (design/05 "Room & door model", 2026-08-04)', () => {
-  it('excludes a locked door\'s passage rect from the generic wall loop', () => {
+describe('RoomBuilder — doors (design/05 "Room & door model", 2026-08-04; standing 2026-08-20)', () => {
+  it("excludes a locked door's passage rect from the generic wall loop", () => {
     mocks.wallTex = undefined;
     const s = stateWithOneWall('ember'); // one real wall at [100,100,64,64]
     pushDoor(s, true, [300, 100, 20, 64]);
     const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(s);
-    // Ground fill + grid overlay + the per-room light pool are the only ground Graphics now;
-    // the real wall is a standing block on `entities`. If the locked door's passageAabb (also
-    // present in s.walls, mirroring DoorSystem) weren't excluded, it would be built as a SECOND
-    // standing block on `entities` — which is what the wallEntities count below catches.
-    expect(layers.ground.children.filter((c) => c instanceof Graphics).length).toBe(3);
+    // With no floor swatch loaded: the flat palette fill + the floor's two variation layers +
+    // grid + the per-room light pool are the only ground Graphics now; the real wall is a standing
+    // block on `entities`. If the locked door's passageAabb (also present in s.walls, mirroring
+    // DoorSystem) weren't excluded, it would be built as a SECOND standing block on `entities` —
+    // which is what the wallEntities count below catches.
+    expect(layers.ground.children.filter((c) => c instanceof Graphics).length).toBe(5);
     expect((rb as unknown as { wallEntities: Entity[] }).wallEntities).toHaveLength(1);
-    expect(doorSprites(rb)).toHaveLength(1);
+    expect(doorFixtures(rb)).toHaveLength(1);
   });
 
-  it('renders one Sprite per dungeon door, sized/positioned to its passageAabb', () => {
+  // The whole point of the 2026-08-20 pass: a door is a STANDING fixture on the Y-sorted
+  // `entities` layer, placed on its passage's south edge exactly like a wall block — not a flat
+  // sprite stretched over the passage rect on `layers.ground`, which is what made a front
+  // elevation read as a rug lying on the floor.
+  it('builds one standing fixture per door on the entities layer, on the passage south edge', () => {
     const s = stateWithOneWall('ember');
     pushDoor(s, true, [300, 100, 20, 64]);
     const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(s);
-    const sprite = doorSprites(rb)[0]!;
-    expect(layers.ground.children).toContain(sprite);
-    expect(sprite.position.x).toBeCloseTo(300);
-    expect(sprite.position.y).toBeCloseTo(100);
-    expect(sprite.width).toBeCloseTo(20);
-    expect(sprite.height).toBeCloseTo(64);
+    const view = doorFixtures(rb)[0]!.view;
+    expect(layers.entities.children).toContain(view);
+    expect(layers.ground.children).not.toContain(view);
+    expect(view.x).toBeCloseTo(300);
+    expect(view.y).toBeCloseTo(164); // passage y + h — the ground line it Y-sorts on
+    expect(view.zIndex).toBeCloseTo(164);
   });
 
-  it('a locked door uses the locked texture when loaded, tinted white', () => {
+  // `doorFlankTier`: a door stands as tall as the wall it interrupts, and the KERB case is the
+  // one that matters — a door in a boundary between two vertically stacked rooms must not
+  // inherit a perimeter height, or the fixture stands in exactly the band `WALL_H_KERB` exists
+  // to keep clear of the camera. Both directions asserted, because a rule that only ever
+  // returns one of its two answers is indistinguishable from a constant.
+  it('stands at the height of the wall it is cut into — perimeter beside a perimeter run', () => {
+    const s = createGameState({
+      seed: 1, worldW: 800, worldH: 600, waves: [],
+      // Two stubs of a north-south perimeter run (they touch the world's west edge) with a
+      // 64 px gap between them; the door fills the gap.
+      walls: [[0, 0, 32, 64], [0, 128, 32, 64]],
+      obstacles: [],
+    });
+    pushDoor(s, false, [0, 64, 32, 64]);
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    expect(doorHeightOf(rb, 0)).toBeCloseTo(WALL_H_PERIMETER);
+  });
+
+  it('...and only kerb-high where a kerb flanks it, so a doorway never stands in front of the player', () => {
+    const s = createGameState({
+      seed: 1, worldW: 800, worldH: 600, waves: [],
+      // An east-west wall on a room's own south boundary is a kerb (`framesFloorFromSouth`),
+      // with a 64 px door gap in it.
+      walls: [[0, 224, 96, 32], [160, 224, 96, 32]],
+      obstacles: [],
+    });
+    s.dungeonRoomRects.push({
+      id: 'r',
+      rect: { x: pxToFp(0), y: pxToFp(0), w: pxToFp(256), h: pxToFp(256) },
+    });
+    pushDoor(s, false, [96, 224, 64, 32]);
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    expect(doorHeightOf(rb, 0)).toBeCloseTo(WALL_H_KERB);
+  });
+
+  it('a locked door uses the locked leaf texture when loaded, untinted', () => {
     mocks.doorLockedTex = fakeTexture(32, 32);
     mocks.doorOpenTex = fakeTexture(32, 32);
     const s = stateWithOneWall('ember');
     pushDoor(s, true, [300, 100, 20, 64]);
     const rb = makeRoomBuilder();
     rb.build(s);
-    const sprite = doorSprites(rb)[0]!;
-    expect(sprite.texture).toBe(mocks.doorLockedTex);
-    expect(sprite.tint).toBe(0xffffff);
+    const leaf = leafOf(rb, 0);
+    expect(leaf.texture.source).toBe(mocks.doorLockedTex!.source);
+    expect(leaf.tint).toBe(0xffffff);
   });
 
-  it('an unlocked door renders the open texture, not folded into s.walls at all', () => {
+  it('an unlocked door renders the open leaf, not folded into s.walls at all', () => {
     mocks.doorLockedTex = fakeTexture(32, 32);
     mocks.doorOpenTex = fakeTexture(32, 32);
     const s = stateWithOneWall('ember');
     pushDoor(s, false, [300, 100, 20, 64]); // unlocked: never added to s.walls
     const rb = makeRoomBuilder();
     rb.build(s);
-    const sprite = doorSprites(rb)[0]!;
-    expect(sprite.texture).toBe(mocks.doorOpenTex);
+    expect(leafOf(rb, 0).texture.source).toBe(mocks.doorOpenTex!.source);
   });
 
   it('falls back to a tinted rect (hazard-red locked / grey open) when no door art is loaded', () => {
@@ -520,50 +650,103 @@ describe('RoomBuilder — doors (design/05 "Room & door model", 2026-08-04)', ()
     pushDoor(s, true, [300, 100, 20, 64]);
     const rb = makeRoomBuilder();
     rb.build(s);
-    const sprite = doorSprites(rb)[0]!;
-    expect(sprite.texture).toBe(Texture.WHITE);
-    expect(sprite.tint).toBe(0xe53e3e);
+    const leaf = leafOf(rb, 0);
+    expect(leaf.texture).toBe(Texture.WHITE);
+    expect(leaf.tint).toBe(0xe53e3e);
   });
 
-  it('updateDoors() swaps texture/tint in place on a lock-state flip, without touching child count', () => {
+  it('updateDoors() swaps the leaf and the hazard bloom in place, without rebuilding the fixture', () => {
     mocks.doorLockedTex = fakeTexture(32, 32);
     mocks.doorOpenTex = fakeTexture(32, 32);
     const s = stateWithOneWall('ember');
     pushDoor(s, true, [300, 100, 20, 64]);
     const rb = makeRoomBuilder();
-    const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(s);
-    const sprite = doorSprites(rb)[0]!;
-    const countBefore = layers.ground.children.length;
-    expect(sprite.texture).toBe(mocks.doorLockedTex);
+    const fixture = doorFixtures(rb)[0]!;
+    const childCount = fixture.view.children.length;
+    expect(leafOf(rb, 0).texture.source).toBe(mocks.doorLockedTex!.source);
+    expect(glowOf(rb, 0).visible).toBe(true);
 
     // Mirror DoorSystem: the door unlocks, its passageAabb drops out of s.walls.
     s.dungeonDoors[0]!.locked = false;
     s.walls.length = 0;
     rb.updateDoors(s);
 
-    expect(doorSprites(rb)[0]).toBe(sprite); // same sprite instance, not rebuilt
-    expect(layers.ground.children.length).toBe(countBefore);
-    expect(sprite.texture).toBe(mocks.doorOpenTex);
+    expect(doorFixtures(rb)[0]).toBe(fixture); // same fixture instance, not rebuilt
+    expect(fixture.view.children.length).toBe(childCount);
+    expect(leafOf(rb, 0).texture.source).toBe(mocks.doorOpenTex!.source);
+    expect(glowOf(rb, 0).visible).toBe(false);
   });
 
-  it('updateDoors() is a no-op before any build() has populated doorSprites', () => {
+  it('updateDoors() is a no-op before any build() has populated the fixtures', () => {
     const s = stateWithOneWall('ember');
     pushDoor(s, true, [300, 100, 20, 64]);
     const rb = makeRoomBuilder();
     expect(() => rb.updateDoors(s)).not.toThrow();
-    expect(doorSprites(rb)).toHaveLength(0);
+    expect(doorFixtures(rb)).toHaveLength(0);
   });
 
-  it('clear() removes door sprites along with the rest of the room', () => {
+  it('clear() destroys the standing door fixtures along with the rest of the room', () => {
     const s = stateWithOneWall('ember');
     pushDoor(s, true, [300, 100, 20, 64]);
     const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(s);
+    const view = doorFixtures(rb)[0]!.view;
     rb.clear();
-    expect(doorSprites(rb)).toHaveLength(0);
+    expect(doorFixtures(rb)).toHaveLength(0);
     expect(layers.ground.children.length).toBe(0);
+    expect(layers.entities.children).not.toContain(view);
+    expect(view.destroyed).toBe(true);
+  });
+
+  // A rebuild must not leak: doors live on `entities`, which `build()` never sweeps wholesale
+  // (actors live there too), so the fixtures have to be destroyed by hand — the same bug class
+  // `clearWalls` exists for.
+  it('rebuilding the room replaces the fixtures rather than stacking a second set', () => {
+    const s = stateWithOneWall('ember');
+    pushDoor(s, true, [300, 100, 20, 64]);
+    const rb = makeRoomBuilder();
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    rb.build(s);
+    const first = doorFixtures(rb)[0]!.view;
+    rb.build(s);
+    expect(doorFixtures(rb)).toHaveLength(1);
+    expect(first.destroyed).toBe(true);
+    expect(layers.entities.children.filter((c) => c === first)).toHaveLength(0);
+  });
+
+  // A door is a piece of the wall it is cut into, so the mass above its lintel throws the same
+  // ground shadow a wall block does — onto the SAME shared Graphics, since a room's shadows are one
+  // display object. Untested until a mutation battery deleted the call and nothing went red.
+  it("throws the fixture's own cast shadow onto the shared wall-shadow Graphics", () => {
+    mocks.floorTex = undefined;
+    mocks.wallTex = undefined;
+    const s = createGameState({ seed: 1, worldW: 800, worldH: 600, waves: [], walls: [], obstacles: [] });
+    pushDoor(s, true, [300, 100, 20, 64]); // the ONLY fixture in the room: no wall to borrow from
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    const shadows = (rb as unknown as { wallShadows: Graphics | null }).wallShadows!;
+    expect(shadows.context.instructions.length).toBeGreaterThan(0);
+  });
+
+  // A character walking through a doorway stands inside the fixture's own art (the passage floor
+  // is entirely within it), so a door has to be an x-ray occluder like every other standing
+  // block — before this pass doors lived on `layers.ground` and could not participate at all.
+  it('registers the door with the occlusion x-ray, with the same box a wall block gets', () => {
+    const s = stateWithOneWall('ember');
+    pushDoor(s, false, [300, 100, 20, 64]);
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    // By `left`, not by `sortY`: the room's own wall at [100,100,64,64] shares this door's
+    // ground line, and picking the first match would silently assert against the wall instead.
+    const box = occluders(rb).find((o) => o.box.left === 300)!.box;
+    expect(box.sortY).toBeCloseTo(164);
+    expect(box.right).toBeCloseTo(320);
+    // This fixture's passage abuts no wall at all, so the height is the `wallTier` fallback —
+    // interior, since the passage sits in the middle of the (single, world-sized) room.
+    expect(box.foldY).toBeCloseTo(164 - WALL_H_INTERIOR);
+    expect(box.top).toBeLessThan(box.foldY); // its cap reaches north of the fold, like a wall's
   });
 
   // Live report, screenshot attached: *"门不能被高墙挡住了。门应该是随时清晰可见的"* (a door must
@@ -945,7 +1128,8 @@ describe('RoomBuilder — the per-room light pool', () => {
     expect(strokeCount(lightPool(rb2))).toBe(oneRoom * 2);
     // ...and still exactly one Graphics carrying both.
     const layers = (rb2 as unknown as { layers: Layers }).layers;
-    expect(layers.ground.children.filter((c) => c instanceof Graphics)).toHaveLength(3); // floor + grid + light
+    // floor fill + the floor's dark/additive variation layers + grid + light
+    expect(layers.ground.children.filter((c) => c instanceof Graphics)).toHaveLength(5);
   });
 
   it('spans both rooms, so neither is left unlit', () => {
@@ -1014,16 +1198,6 @@ describe('RoomBuilder.updateOcclusion — a block that would hide the player get
 
   function blocks(rb: RoomBuilder): Entity[] {
     return (rb as unknown as { wallEntities: Entity[] }).wallEntities;
-  }
-
-  interface Occ {
-    cap: { fade: number };
-    deep: { fade: number };
-    box: { left: number; right: number; top: number; sortY: number; foldY: number };
-  }
-
-  function occluders(rb: RoomBuilder): Occ[] {
-    return (rb as unknown as { occluders: Occ[] }).occluders;
   }
 
   /** The player standing as far north of the interior block as the engine lets them. The block's

@@ -159,6 +159,35 @@ export function buildWallBlock(
   const capTop = blockCapTop(r, height, joins);
   const capH = -height - capTop;
 
+  addWallFace(seg, r, height, skin);
+
+  const capFrom = seg.children.length;
+  addCapLayers(seg, r, capTop, capH, skin);
+  // Everything drawn BEFORE the cap is the front face (one branch or the other above), and the
+  // shading laid over both comes next — the deep group is those two.
+  for (let i = 0; i < capFrom; i++) seg.children[i]!.label = XRAY_DEEP_LABEL;
+
+  const shading = drawBlockShading(r, height, joins);
+  shading.label = XRAY_DEEP_LABEL;
+  seg.addChild(shading);
+
+  addBlockEdge(seg, r, height, capTop, joins);
+
+  seg.place(r.x, r.y + r.h);
+  return seg;
+}
+
+/**
+ * The block's front face: the wall's own elevation swatch, used at exactly one height and tiled
+ * horizontally only (its top rows are a lit coping and its bottom rows a dark base), so
+ * `tileScale` stays uniform and the art is never stretched to fit.
+ *
+ * Shared with `doorRender.buildDoorBlock` (2026-08-20): a doorway's stone above the lintel, and
+ * the passage walls seen in shadow behind the leaf, are the same elevation as the runs either
+ * side of the opening — a door drawing its own darker rectangle there is what made an opening
+ * read as a hole punched in the room rather than as stone in shade.
+ */
+export function addWallFace(seg: Entity, r: RectPx, height: number, skin: WallSkin): void {
   if (skin.face) {
     const face = new TilingSprite({ texture: skin.face, width: r.w, height });
     face.position.set(0, -height);
@@ -174,14 +203,25 @@ export function buildWallBlock(
     g.rect(0, -height * 0.3, r.w, height * 0.3).fill({ color: 0x000000, alpha: 0.22 });
     seg.addChild(g);
   }
+}
 
-  // Every layer added between here and `drawBlockShading` is a CAP layer, and the cap is what a
-  // character standing behind this block normally disappears into — so each is tagged for the
-  // occlusion x-ray to fade (`occlusion.xrayLayers`). The face and the shading over it are tagged
-  // separately (`XRAY_DEEP_LABEL`, applied below): they only move in the rarer case where the
-  // body sits entirely below the cap/face fold and a cap fade would achieve nothing. The
-  // silhouette is in neither group and never fades.
-  const capFrom = seg.children.length;
+/**
+ * The cap: the top-down swatch over the footprint plus its additive key light, tagged for the
+ * occlusion x-ray to fade.
+ *
+ * The cap is what a character standing behind a block normally disappears into, so each layer
+ * added here is tagged `XRAY_LABEL` (`occlusion.xrayLayers`). The face and the shading over it are
+ * tagged separately by the caller (`XRAY_DEEP_LABEL`): they only move in the case where the body
+ * sits below the cap/face fold and a cap fade would achieve nothing. The silhouette
+ * (`addBlockEdge`) is in neither group and never fades.
+ *
+ * Shared with `doorRender.buildDoorBlock` (2026-08-20), which is a block whose FACE is an opening
+ * — its stone above the lintel has to be the same continuous quarry as the runs either side of it,
+ * which means the same swatch, the same world-space tiling and the same key light, not a
+ * second copy of these numbers.
+ */
+export function addCapLayers(seg: Entity, r: RectPx, capTop: number, capH: number, skin: WallSkin): void {
+  const from = seg.children.length;
   if (skin.cap) {
     // `tilePosition` puts the swatch in WORLD space rather than at each block's own origin. Two
     // reasons, both visible on the level-1 start room: an L corner is two independent blocks, and
@@ -205,23 +245,20 @@ export function buildWallBlock(
     capLight.blendMode = CAP_LIGHT_BLEND;
     seg.addChild(capLight);
   }
-  for (let i = capFrom; i < seg.children.length; i++) seg.children[i]!.label = XRAY_LABEL;
-  // Everything drawn BEFORE the cap is the front face (one branch or the other above), and the
-  // shading laid over both comes next — the deep group is those two.
-  for (let i = 0; i < capFrom; i++) seg.children[i]!.label = XRAY_DEEP_LABEL;
+  for (let i = from; i < seg.children.length; i++) seg.children[i]!.label = XRAY_LABEL;
+}
 
-  const shading = drawBlockShading(r, height, joins);
-  shading.label = XRAY_DEEP_LABEL;
-  seg.addChild(shading);
-
-  // The flat-cel silhouette design/13 asks for, and the cue that separates one standing wall
-  // from the one behind it. Dark, not `palette.wallEdge` — see EDGE_COLOR. The lit coping runs
-  // along the cap's north AND west edges (the two facing the key light); there is deliberately
-  // none at the cap/face joint, which gets the dark fold line in `drawBlockShading` instead.
-  //
-  // Drawn as four explicit sides rather than one `rect` stroke, because the NORTH side is the one
-  // that may not exist: where the block butts a mass of at least its own height, its cap runs
-  // straight on into that mass's cap and an outline there is a line drawn across one surface.
+/**
+ * The flat-cel silhouette design/13 asks for, and the cue that separates one standing wall from
+ * the one behind it. Dark, not `palette.wallEdge` — see EDGE_COLOR. The lit coping runs along the
+ * cap's north AND west edges (the two facing the key light); there is deliberately none at the
+ * cap/face joint, which gets the dark fold line in `drawBlockShading` instead.
+ *
+ * Drawn as four explicit sides rather than one `rect` stroke, because the NORTH side is the one
+ * that may not exist: where the block butts a mass of at least its own height, its cap runs
+ * straight on into that mass's cap and an outline there is a line drawn across one surface.
+ */
+export function addBlockEdge(seg: Entity, r: RectPx, height: number, capTop: number, joins: WallJoins): void {
   const edge = new Graphics();
   const openNorth = unjoinedSpans(r.w, joins.north);
   for (const [a, b] of openNorth) edge.moveTo(a, capTop).lineTo(b, capTop);
@@ -233,9 +270,6 @@ export function buildWallBlock(
   }
   edge.moveTo(0, capTop).lineTo(0, -height).stroke({ color: 0xffffff, width: 1, alpha: COPING_ALPHA });
   seg.addChild(edge);
-
-  seg.place(r.x, r.y + r.h);
-  return seg;
 }
 
 /** One layer of the cap: the top-down swatch over the footprint, tiled in WORLD space so

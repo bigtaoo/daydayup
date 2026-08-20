@@ -3168,6 +3168,149 @@ dropped slot), `tsc --noEmit` clean, `check:filelength` clean, no `ENGINE_VERSIO
 
 ---
 
+## Doors that stand, and a floor that stops at its rooms (2026-08-20, client-only)
+
+*"关于游戏场景的优化，之前重点放在角色和墙上面了，其他的现在开始做"* — the scene passes so far had
+all gone into the character and the walls; start on everything else. So the first job was to find
+out what "everything else" actually is, by measurement rather than by reading the renderer. A
+full-floor `renderer.extract` of level 1 plus luma sampling found three things, in this order:
+
+1. **Doors were flat sprites on `layers.ground`**, stretched to the passage AABB — while every wall
+   around them stood 22-104 px. `door_{locked,open}_raw.png` are front ELEVATIONS, so this is
+   exactly the mistake `design/13` records for the wall swatches before 2026-08-18, still live for
+   the one fixture a player has to read at a glance. Two days of wall work had also made it worse
+   in relative terms: the walls now read as stone masses and the door read as a red rug between
+   them. **Fixed this pass.**
+2. **The floor is one 256 px stamp with no variation at all** — three 48x48 samples 512 px apart,
+   in three different rooms, came back byte-identical (mean 38.3, min 22, max 91). Every room in
+   the game has the same floor, and it repeats on an exact 8-cell period. **Fixed this pass too**
+   (part two, below), and the bigger half of that fix turned out to be something this measurement
+   had not even asked about: 29-56% of the floor was painted where no room exists at all.
+3. **Pillars read as smooth cans next to the walls** — their cap is a flat gradient where a wall
+   cap is a real swatch with an additive key light, and their face samples the wall elevation at a
+   scale that comes out as blurred blobs. Not fixed this pass — next in this queue.
+
+### What shipped: `scene/doorRender.ts`
+
+A door is now built as a **wall block whose face is an opening**. The full account, with the
+measurements, is in `design/01-rendering.md`'s new "A door is a wall block whose face is an
+opening" section; the parts worth repeating here:
+
+- **One construction, no orientation branch.** A passage rect is a hole in a wall, so the mass
+  above a doorway lands where a wall block's cap lands and the opening lands where its face goes.
+  `wallRender.ts` grew three exported shell functions (`addWallFace`, `addCapLayers`,
+  `addBlockEdge`) that both files now share, so a doorway's stone is the same swatch, the same
+  world-space tiling, the same key light and the same `drawBlockShading` as the runs either side of
+  it — nothing was re-tuned for doors.
+- **A door stands as tall as the wall it interrupts**, never taller (`wallRuns.doorFlankTier`).
+  This is the load-bearing rule: 11 of the 24 doors on the five shipped floors are cut into a
+  22 px KERB — the boundary between two vertically stacked rooms, kept low so it cannot stand
+  between the camera and the player — and a doorway there gets its legibility from the hazard
+  bloom, not from height.
+- **The leaf is fit by width and cropped, never squashed.** Fitting both axes would compress the
+  kerb case 8:1. The two PNGs were also re-run through `tools/png-pipeline/compress.mjs`: they
+  carried ~33 px of transparent margin per side (the leaf covered 67% of its own opening) and the
+  two states' margins differed, so they were not even registered against each other.
+- **Doors are x-ray occluders now.** The passage floor is entirely inside the fixture's art, so a
+  character in a doorway is behind it by construction. Verified live on all four doors of floor 0:
+  a focus in the doorway takes the fixture to `XRAY_FADE` 0.34 and back to 1 on leaving.
+
+Three render-look-fix rounds, as the memory of previous art passes says to budget for, and each
+round's fix exposed the next thing: (1) the leaf covered 60% of its opening → trim the art; (2) the
+opening was flat near-black → paint the wall's own elevation across the whole face and *darken* it
+instead, which is what a passage looks like; (3) the hazard pool was one flat ellipse and read as a
+painted rug → nine graduated rings. The pool was then A/B-measured against the same frame with the
+layer hidden (mean +4.0 luma over a 200x90 region, max +27) rather than trusted, since this project
+has already shipped two carefully-tuned features that did literally nothing.
+
+### What shipped, part two: `scene/floorRender.ts` + `scene/groundLayer.ts`
+
+The full account is in `design/01-rendering.md`'s new "The floor stops at its rooms"; the shape of
+it, and the part that was a surprise:
+
+- **The biggest win was not variation, it was COVERAGE.** `worldW/worldH` is the bounding box of a
+  floor's co-resident rooms, and a `graph2d` layout's rooms do not fill it: the box is 1.41-2.26x
+  their own area across the five shipped floors, so 29-56% of the old floor stood where no room
+  exists. On floor 0 that surplus is one featureless 1500x430 field with no walls and no room light
+  in it — the eye reads it as an enormous room with wall-lines drawn across it. The floor now stops
+  at the rooms and the void shows between them.
+- **That needed proving, not assuming.** `floorCoverage.test.ts` flood-fills every shipped floor's
+  grid from every room's centre through non-wall cells and requires each reachable cell to be inside
+  a room rect (0 outside, all five floors). "Not inside a wall" would have been the wrong test: a
+  floor's bounding box contains big enclosed regions that no room occupies and nothing walls off.
+  The same sweep is why the **PvP arena deliberately keeps the whole-world floor** — 5240 of
+  `arena_prototype_60`'s 11,524 non-wall cells (45%) are reachable AND outside every room rect and
+  every door passage, so a per-room floor there would put a player on the backdrop.
+- **Then the variation, in measured order of what it achieved**: per-room wash (room floor means now
+  span 40.6-54.2 luma; they were identical), mottle at a scale incommensurate with the tile grid
+  (64 px patch-mean sd 2.69 → 4.23 on an A/B of one frame), the mirrored per-tile stamp (two rooms'
+  patches went from 97% byte-identical to 57% of bytes differing), and wear — stains, rubble lit
+  from the same upper-left key light as everything else, and a worn patch across each doorway along
+  its travel axis.
+- **Two of the three first attempts were wrong in ways only a 2x crop showed**: a hashed per-tile
+  TINT painted the tile grid onto the floor as a checkerboard of flat rectangles (removed — a 7%
+  step between two adjacent 256 px squares is a rectangle, not texture), and mottle bands at a flat
+  alpha drew visible arcs (five bands with the alpha ramped by index instead). Mirrors are used and
+  rotations are not, with a test saying so: a seamless tile stays seamless mirrored and does not
+  rotated, where the other axis's edges arrive at the seam.
+- **`RoomBuilder.ts` crossed 500 lines doing this**, so the whole ground stage moved to
+  `groundLayer.ts` (CLAUDE.md form ① — independent functions over rects, no shared state), taking
+  `roomRectsPx`/`floorRegionsPx` with it. 539 → 424 lines, zero behaviour change (suite green before
+  and after the move).
+
+### Tests, and the coverage audit that followed (*"有测试可以加吗"*)
+
+1941 client tests green (+65), `tsc --noEmit` clean, `check:filelength` clean, no `ENGINE_VERSION`
+impact (client-render-only). New files: `doorRender.test.ts` (16), `doorStandCoverage.test.ts` (3 —
+the real five floors through the real pipeline: every door flanked, zero fallbacks, never taller than
+its shortest flank, and BOTH tiers occurring in the shipped content), `floorRender.test.ts` (21 —
+exact region coverage, the world-space lattice, mirrors-only, per-band ramps, determinism),
+`floorCoverage.test.ts` (3 — the reachability sweep above, including the arena's failure of it),
+`groundLayer.test.ts` (10 — the stack's order, the additive half, per-room seeding, the
+identity-vs-coverage split), plus `doorFlankTier` units in `wallRuns.test.ts` (5) and the rewritten
+door/ground halves of `RoomBuilder.test.ts`.
+
+**The mutation battery is the part worth recording.** The pass shipped with a 12-mutant battery,
+three of which passed on their first run. Asked afterwards whether more tests could be added, the
+honest way to answer was to widen the battery rather than to guess: a scripted 21-mutant sweep over
+every branch and constant in the new code (`revert one, run `src/game/scene`, restore`) came back
+with **16 survivors** — i.e. the tests written alongside the code, careful ones with measurements in
+their comments, covered about a quarter of the decisions the code actually makes. The survivors, all
+now dead:
+
+| what was reverted | why it matters |
+|---|---|
+| the recess removed entirely, or flattened to one alpha | it IS the "opening is a hole, not a panel" cue (measured: arch interior 19 vs floor 37) |
+| the sill hairline | the only cue that the passage floor is a step |
+| the hazard wash over the leaf | without it a locked door sits in a puddle of light instead of emitting it |
+| nine glow rings → one | one ellipse at one alpha shows its own edge; this is the third time that lesson recurs |
+| the door's cast shadow | a doorway is a piece of the wall and throws the same shadow |
+| a cropped tile ignoring its source offset | duplicates the swatch's left edge along every room's east/south edge |
+| mottle bands at a flat alpha | draws visible arcs on the floor |
+| mottle's additive half | Pixi fills only multiply down, so the floor could only ever lose its mean |
+| one wash colour for every room | room identity collapses to "brighter or darker" |
+| a constant wash alpha, one stain per room, a fixed rubble count | the variation stops scaling with room size |
+| door wear as one hard ellipse | a rug, not wear |
+| the rubble highlight on the wrong side | a floor lit from the opposite side to its own walls |
+| the grid mounted UNDER the floor | invisible, and every "what does the grid draw" test still passed |
+| the floor-light layer not additive | the light half silently darkens instead |
+| the per-room seed replaced by an array index | the first room of every floor looks identical |
+| the door wear dropped from the ground stage | — |
+
+Two of those needed a second attempt at the TEST, which is its own lesson: an assembly assertion of
+the form "the fixture contains this geometry" passes trivially when the geometry is empty (a no-op
+sill matches an empty child — so assert the expectation is non-empty first), and a "these two rooms
+differ" assertion has to compare shapes RELATIVE to each room's origin *filtered to the shapes
+themselves* — Pixi emits its own `moveTo(0, 0)` before each one, and those absolute zeros made the
+two lists differ for a reason unrelated to the seed.
+
+Four times now this repo has caught an unmeasured decision with a mutant rather than with a review.
+The rule that follows: a mutation battery is not a closing formality on the half that felt risky, it
+is the coverage measurement — script it over every constant and branch the change introduces, and
+expect most of them to survive the first time.
+
+---
+
 ## Dependency summary
 
 ```

@@ -1,4 +1,4 @@
-import { Graphics, Sprite, Texture, TilingSprite } from 'pixi.js';
+import { Graphics, Texture } from 'pixi.js';
 import type { GameState } from '@dd/engine';
 import type { Layers } from './layers';
 import { Entity } from './Entity';
@@ -20,19 +20,18 @@ import {
 import {
   blockCapTop,
   bordersDoorNorth,
+  doorFlankTier,
   effectiveWallHeight,
   mergeWallRuns,
   wallJoins,
   type WallRun,
 } from './wallRuns';
+import { buildDoorBlock, type DoorFixture } from './doorRender';
+import { buildGroundLayer, floorRegionsPx, roomRectsPx } from './groundLayer';
 import { faceCrownFraction } from './wallTone';
-import { drawRoomLight } from './roomLight';
 import { SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
 import type { Backdrop } from './Backdrop';
 import { Portal } from './Portal';
-
-/** Opacity of the 64 px floor grid. See `build()` for why it is this low now. */
-const GRID_ALPHA = 0.12;
 
 // Standing walls used to optionally take a per-segment `NormalLitFilter` on top of their
 // hand-authored cap/face/side tints (2026-08-18 — one render-target pass per segment, up to 32
@@ -72,9 +71,12 @@ export class RoomBuilder {
   private occluders: FadeableOccluder[] = [];
   // Index-aligned with `state.dungeonDoors` (design/05 "Room & door model") — a real
   // fixture per door, never a bare gap / never folded into the generic wall fill.
-  // `updateDoors()` swaps textures on these in place on door_locked/door_unlocked
-  // (DoorSystem), so a lock-state flip doesn't need a full room rebuild.
-  private readonly doorSprites: Sprite[] = [];
+  // `updateDoors()` swaps the leaf texture on these in place on door_locked/door_unlocked
+  // (DoorSystem), so a lock-state flip doesn't need a full room rebuild. STANDING fixtures
+  // since 2026-08-20 (`doorRender.ts`) and therefore on the Y-sorted `entities` layer, which
+  // means they must be destroyed explicitly like `wallEntities` — `build()`'s wholesale sweep
+  // of `layers.ground` no longer covers them.
+  private readonly doorFixtures: DoorFixture[] = [];
   private portal: Portal | null = null;
   // World-px position of the current room's portal (its center), or null before the
   // first room ever loads. Game reads this to gate the popup's proximity check.
@@ -105,38 +107,11 @@ export class RoomBuilder {
     const wallTex = getWallTexture(element);
     this.backdrop.setPalette(palette);
 
-    // Ground fill — a real tileable swatch (render/biomeTiles.ts) once one's been
-    // generated for this element, else the same flat palette-colour fill as before.
-    if (floorTex) {
-      const floor = new TilingSprite({ texture: floorTex, width: w, height: h });
-      this.layers.ground.addChild(floor);
-    } else {
-      const groundG = new Graphics();
-      groundG.rect(0, 0, w, h).fill({ color: palette.ground });
-      this.layers.ground.addChild(groundG);
-    }
-
-    // Grid overlay — always drawn (readability aid, independent of ground art), but only
-    // just (2026-08-18): a regular full-strength lattice across the whole floor is the
-    // loudest "this is a top-down blueprint" cue in the frame, and it fought every depth
-    // cue this pass adds. Dropped to GRID_ALPHA so it still helps judge distance without
-    // asserting that the world is flat.
-    const grid = new Graphics();
-    const step = 64;
-    for (let x = 0; x <= w; x += step) grid.moveTo(x, 0).lineTo(x, h);
-    for (let y = 0; y <= h; y += step) grid.moveTo(0, y).lineTo(w, y);
-    grid.stroke({ color: palette.gridLine, width: 1, alpha: GRID_ALPHA });
-    this.layers.ground.addChild(grid);
-
-    // Per-room light pool (`roomLight.ts`) — the cheap static half of design/01's parked
-    // lightmap milestone. Every room on this floor measured the same flat 39-53 luma before
-    // this, which is both why a floor of rooms read as one sheet and why a black cast shadow
-    // on a near-black floor had nothing to be darker than. Painted after the grid so the
-    // lattice fades toward the walls with everything else.
-    const roomsPx = this.roomRectsPx(s, w, h);
-    const light = new Graphics();
-    for (const room of roomsPx) drawRoomLight(light, room);
-    this.layers.ground.addChild(light);
+    // The ground layer — floor, its variation, the grid, the room light — is `groundLayer.ts`
+    // (split out 2026-08-20, 500-line convention). It is painted AFTER the wall/door geometry below
+    // is worked out, because the decals need the merged wall footprints (rubble must not sit on a
+    // wall's own footprint) and the door rects (the worn patch across a doorway).
+    const roomsPx = roomRectsPx(s, w, h);
 
     // AABB walls (ROADMAP 1.2 — finally drawn): a tiled swatch + outline once wall art
     // exists for this element, else the same flat fill + outline as before. A
@@ -211,11 +186,22 @@ export class RoomBuilder {
         ),
       );
     }
+    buildGroundLayer(this.layers.ground, {
+      rooms: roomsPx,
+      floorRegions: floorRegionsPx(s, w, h),
+      wallRects: merged.map((run) => run.rect),
+      doorRects: doorRectsPx,
+      palette,
+      floorTex,
+    });
+
+    // Doors before the shadow Graphics is mounted, because a door is a piece of the wall it is
+    // cut into and throws its own cast shadow onto the same shared Graphics.
+    this.buildDoors(s, merged, doorRectsPx, roomsPx, { palette, cap: wallTex, face: faceTex }, shadows, element);
     this.layers.shadow.addChild(shadows);
     this.wallShadows = shadows;
 
     this.buildPillars(s, palette);
-    this.buildDoors(s);
     this.buildPortal(s, w, h);
   }
 
@@ -232,20 +218,6 @@ export class RoomBuilder {
     updateOcclusion(this.occluders, foci, dtMs);
   }
 
-  /** The floor's room footprints in world px, for `wallRises`. Dungeon floors and the PvP
-   *  arena each keep their own list; a flat `EngineConfig.floors` run populates neither, so
-   *  the world itself stands in as the single room (identical answer for a one-room world). */
-  private roomRectsPx(s: GameState, w: number, h: number): RectPx[] {
-    const src = s.dungeonRoomRects.length > 0 ? s.dungeonRoomRects : s.arenaRoomRects;
-    if (src.length === 0) return [{ x: 0, y: 0, w, h }];
-    return src.map(({ rect }) => ({
-      x: fpToPx(rect.x),
-      y: fpToPx(rect.y),
-      w: fpToPx(rect.w),
-      h: fpToPx(rect.h),
-    }));
-  }
-
   /** Destroy the standing wall segments (they live on the Y-sorted `entities` layer, which
    *  `build()`/`clear()` never sweep wholesale — actors live there too), plus the shared
    *  Graphics holding their ground shadows (`layers.shadow`, likewise never swept). */
@@ -256,46 +228,91 @@ export class RoomBuilder {
     this.wallShadows = null;
   }
 
-  /** One sprite per dungeon door (design/05: "always-present physical fixtures with
-   *  exactly two visual states, locked/open — never a bare gap"), sized to its own
-   *  `passageAabb`. Rebuilt fresh each `build()`; `updateDoors()` is the cheap
-   *  in-place path for a lock-state flip alone (same sprite, texture/tint swapped).
-   *  Door sprites live on `layers.ground` alongside the walls, so `build()`'s own
-   *  "destroy every ground child" sweep above already tore down the previous set —
-   *  this only needs to drop the stale array references, not destroy again. */
-  private buildDoors(s: GameState): void {
-    this.doorSprites.length = 0;
+  /**
+   * One STANDING fixture per dungeon door (design/05: "always-present physical fixtures with
+   * exactly two visual states, locked/open — never a bare gap"), on its own `passageAabb`.
+   *
+   * Standing since 2026-08-20 (`doorRender.ts`): the two door swatches are front ELEVATIONS and
+   * were being stretched flat over the passage rect on `layers.ground`, so the one fixture the
+   * player has to read at a glance was the only thing in the room still painted on the floor.
+   * A door now builds as a wall block whose face is an opening, at the tier of the wall it is
+   * cut into (`doorFlankTier` over the MERGED runs — merged, so a boundary authored as two
+   * parallel rects votes once per side rather than twice), and registers with the occlusion
+   * x-ray like any other standing block: the passage floor is entirely inside the fixture's own
+   * art, so a character walking through a doorway is behind it by construction.
+   *
+   * Rebuilt fresh each `build()`; `updateDoors()` is the cheap in-place path for a lock-state
+   * flip alone. `doorRects` is index-aligned with `s.dungeonDoors` (built by the caller for
+   * `bordersDoorNorth`), reused here rather than converted a second time.
+   */
+  private buildDoors(
+    s: GameState,
+    runs: readonly WallRun[],
+    doorRects: readonly RectPx[],
+    roomsPx: readonly RectPx[],
+    skin: { palette: BiomePalette; cap: Texture | undefined; face: Texture | undefined },
+    shadows: Graphics,
+    element: string,
+  ): void {
+    this.clearDoors();
+    // A door stands at the tier of the wall it interrupts (`doorFlankTier`), or — with nothing
+    // abutting the passage at all (a mode with no wall model, a passage authored clear of its own
+    // wall) — at whatever tier the passage rect itself would stand at, the same question asked of
+    // the same room rects.
+    const doorRuns: WallRun[] = doorRects.map((rect) => ({
+      rect,
+      tier: doorFlankTier(rect, runs) ?? wallTier(rect, roomsPx),
+    }));
+    // The doors' own joins, computed against the walls AND each other. Deliberately a SECOND
+    // `wallJoins` pass rather than one combined list: a door has to know that its cap runs into
+    // the flanking runs' caps (else it draws a lit coping and a dark silhouette straight across
+    // one continuous stone top, which is the artifact `wallJoins` exists for), but feeding doors
+    // back into the WALLS' joins would re-tier cues on every run beside a doorway — including
+    // making a deep run `tuckNorth` under a door — and every one of those numbers was measured
+    // without doors in that list. Doors see walls; walls see only walls and their own `doorClip`.
+    const doorJoins = wallJoins([...runs, ...doorRuns], faceCrownFraction(element)).slice(runs.length);
 
-    for (const dr of s.dungeonDoors) {
-      const sprite = new Sprite();
-      sprite.position.set(fpToPx(dr.passageAabb.x), fpToPx(dr.passageAabb.y));
-      sprite.width = fpToPx(dr.passageAabb.w);
-      sprite.height = fpToPx(dr.passageAabb.h);
-      this.applyDoorTexture(sprite, dr.locked);
-      this.layers.ground.addChild(sprite);
-      this.doorSprites.push(sprite);
+    for (const [i, dr] of s.dungeonDoors.entries()) {
+      const rect = doorRects[i]!;
+      const height = wallHeight(doorRuns[i]!.tier);
+      const joins = doorJoins[i]!;
+      const fixture = buildDoorBlock(rect, height, { ...skin, leaf: getDoorTexture(dr.locked) }, dr.locked, joins);
+      drawWallShadow(shadows, rect, height);
+      this.layers.entities.addChild(fixture.view);
+      this.doorFixtures.push(fixture);
+      const sortY = rect.y + rect.h;
+      this.occluders.push(
+        fadeableBlock(
+          {
+            left: rect.x,
+            right: rect.x + rect.w,
+            top: sortY + blockCapTop(rect, height, joins),
+            sortY,
+            foldY: sortY - height,
+          },
+          fixture.capLayers,
+          fixture.deepLayers,
+        ),
+      );
     }
   }
 
-  /** `environmentSprites.getDoorTexture` once loaded; otherwise Pixi's built-in white
-   *  texture tinted hazard-red (locked) / neutral grey (open) — `13`'s "hazard-
-   *  saturated glowing barrier / desaturated inert frame" read without the real art
-   *  yet, same texture-or-fallback convention as the floor/wall loop above. Tint (not
-   *  a second Graphics branch) is what lets `updateDoors` restyle the SAME sprite. */
-  private applyDoorTexture(sprite: Sprite, locked: boolean): void {
-    const tex = getDoorTexture(locked);
-    sprite.texture = tex ?? Texture.WHITE;
-    sprite.tint = tex ? 0xffffff : locked ? 0xe53e3e : 0x4c566a;
-  }
-
-  /** Cheap reaction to `door_locked`/`door_unlocked` (DoorSystem) — swap each door's
-   *  texture/tint in place, no destroy/rebuild of the room. No-op if called before
-   *  any `build()` has run for this floor (index mismatch). */
+  /** Cheap reaction to `door_locked`/`door_unlocked` (DoorSystem) — swap each door's leaf
+   *  texture and its hazard bloom in place, no destroy/rebuild of the room. No-op if called
+   *  before any `build()` has run for this floor (index mismatch). */
   updateDoors(s: GameState): void {
-    if (this.doorSprites.length !== s.dungeonDoors.length) return;
+    if (this.doorFixtures.length !== s.dungeonDoors.length) return;
     for (let i = 0; i < s.dungeonDoors.length; i++) {
-      this.applyDoorTexture(this.doorSprites[i]!, s.dungeonDoors[i]!.locked);
+      const locked = s.dungeonDoors[i]!.locked;
+      this.doorFixtures[i]!.setLocked(locked, getDoorTexture(locked));
     }
+  }
+
+  /** Destroy the standing door fixtures — like `wallEntities`, they live on the Y-sorted
+   *  `entities` layer, which `build()`/`clear()` never sweep wholesale. */
+  private clearDoors(): void {
+    for (const d of this.doorFixtures) d.view.destroy();
+    this.doorFixtures.length = 0;
   }
 
   /** Hidden until `setPortalOpen(true)` (Game, gated on the same checkpoint condition
@@ -390,8 +407,8 @@ export class RoomBuilder {
   /** Tear down the current room's ground + pillars (beginRun) so a restart doesn't
    *  leak the previous run's geometry. */
   clear(): void {
-    for (const c of [...this.layers.ground.children]) c.destroy(); // also destroys door sprites (ground children)
-    this.doorSprites.length = 0;
+    for (const c of [...this.layers.ground.children]) c.destroy();
+    this.clearDoors();
     this.clearWalls();
     this.occluders.length = 0;
     for (const p of this.pillars) {
