@@ -3188,7 +3188,9 @@ full-floor `renderer.extract` of level 1 plus luma sampling found three things, 
    had not even asked about: 29-56% of the floor was painted where no room exists at all.
 3. **Pillars read as smooth cans next to the walls** — their cap is a flat gradient where a wall
    cap is a real swatch with an additive key light, and their face samples the wall elevation at a
-   scale that comes out as blurred blobs. Not fixed this pass — next in this queue.
+   scale that comes out as blurred blobs. Not fixed this pass — next in this queue. **Fixed
+   2026-08-20, same day, by generating art for the object itself — see "Pillars get real art"
+   below.**
 
 ### What shipped: `scene/doorRender.ts`
 
@@ -3308,6 +3310,146 @@ Four times now this repo has caught an unmeasured decision with a mutant rather 
 The rule that follows: a mutation battery is not a closing formality on the half that felt risky, it
 is the coverage measurement — script it over every constant and branch the change introduces, and
 expect most of them to survive the first time.
+
+## Pillars get real art — the last item on the scene queue (2026-08-20, client-only)
+
+The previous entry's measurement list had three items; doors and the floor were fixed there, and the
+third was recorded as *"pillars read as smooth cans next to the walls — their cap is a flat gradient
+where a wall cap is a real swatch with an additive key light, and their face samples the wall
+elevation at a scale that comes out as blurred blobs. Not fixed this pass — next in this queue."*
+This is that pass, prompted by *"之前讨论的关于场景和角色的优化，尤其是3d效果相关的，全部完成了吗"* and
+then *"给我出图prompt"* → *"看看图能用吗"*.
+
+**Render-only, no `ENGINE_VERSION` impact.** 1968 client tests green (+27) and 30 in `png-pipeline`
+(+10, the new tool), `tsc --noEmit` clean,
+`check:filelength` clean, repo-wide `npm run check` green.
+
+### The decision: one sprite, not four swatches
+
+`pillarRender.ts` already recorded an attempt at texturing pillars FROM the wall swatches (2026-08-18)
+that came out worse — a ~35 px cap window onto a 256 px swatch lands on one arbitrary dark patch, and
+the brick elevation on the shaft read as an open-topped well. So the asset had to be art authored AT
+pillar scale, which for a fixed-size object (`radius: 1` in every shipped room, drawn 84x98) means one
+whole-object SPRITE. And one file for every biome rather than one per element: `pillarTint(palette)`
+multiplies `PILLAR_BIOME_MIX` of the biome's wall colour over it, which is where the hand-toned body
+already got its hue. `getPillarTexture` resolves `pillar_<element>` first, so a per-element file is
+still a file-drop away. Full account in design/01's "A pillar is a sprite now".
+
+### Seven generations, six rejected — and the rejects are the interesting part
+
+All measured rather than judged by eye (`art/biome/prompts.md` has the table and the prompt):
+
+- **Five of the six were generated at exactly 84x98** — the size the game draws. `FxController`'s
+  `MAX_ZOOM` is 4.5 and the renderer runs at up to 2x device pixel ratio, and level 1's gallery room
+  actually renders at **zoom 4**: the sprite is MAGNIFIED in real play, not minified. Art at game
+  size is a blurred pillar, and this is the one defect that cannot be fixed at import — it is why the
+  accepted prompt states an output resolution (768x896) and why the shipped file is compressed to a
+  384 long axis rather than the 256 every swatch in that directory uses.
+- **One read as an open-topped barrel** — the exact drift the prompt's own negative constraint names
+  ("not a well, not a hollow tube, not an urn"), which happened anyway.
+- **One had a top surface at luma 125**, the brightest thing in the room by a wide margin: a repeat of
+  the defect the 2026-08-19 "Volume, measured" pass fixed (a surface raised above the ground reading
+  brighter than anything else in frame).
+- **One was the real near-miss, and killed the idea of per-element art.** `pillar_fire_alt.png`
+  followed the canvas, margin and aspect spec exactly, but its course joints came back **straight**
+  (centre-vs-edge sag −2 px against the accepted file's +53) and its top surface occupies 21% of the
+  object's height against the accepted file's 30%. Two files shipping side by side would read as two
+  different camera angles, in a game with one fixed camera. Its only real content difference was 1.8%
+  of pixels being warm joint lines — which a tint gets for free.
+
+### Two import steps the prompt could not remove
+
+1. **The accepted generation came back with a painted transparency CHECKERBOARD** — 1664x2080, 3.46M
+   opaque pixels, **zero** transparent ones, with the grey-and-white "this is transparent" pattern
+   drawn as real pixels. This is the standing memory rule ("opaque and genuinely transparent
+   backgrounds look identical by eye — decode the alpha") in a new costume: the file did not merely
+   lack alpha, it *depicted* alpha. Keyed by luma (background 233-255 against an object whose
+   brightest plane is 101), one erosion pass over light pixels bordering transparency, flood-filled
+   from the border to prove **0 interior holes**, then cropped (1307x1541, aspect 0.848 vs the 0.857
+   asked for).
+2. **Its shaft was twice as bright as the wall face beside it.** Measured live: lit limb 71.6 against
+   wall faces of 27.3-27.5, while its top was already on target at 87.3 against wall caps of 72-81.
+   A uniform multiply cannot fix that — darkening the shaft drags the top down with it. New
+   `tools/png-pipeline/lumaCurve.mjs` scales RGB by a gain chosen from each pixel's OWN luma
+   (`--lo=85 --hi=95 --lo-gain=0.68 --hi-gain=1`): the top surface is untouched, the three shaft
+   bands go 84/59/30 → 57/40/20. This is the same fold between a bright top and a much darker face
+   that `wallTone.ts` builds for the walls, applied once offline instead of as a per-object filter.
+
+**Measured live, before → after** (`renderer.extract` on the real gallery room at zoom 1, sample rects
+derived from the sprite's own `getBounds()`, UI and actors hidden): top **87.3 → 87.3**, lit limb
+**71.6 → 50.4**, mid band **52.4 → 35.8**, dark limb **25.1 → 16.7**, foot **36.7 → 25.0**, against
+wall caps 72-81, wall faces 27.3-27.5 and a floor of 48.5 in the same frame. A pillar and a wall now
+read as the same stone under the same light.
+
+### Wiring, and the two bug classes it deliberately avoided
+
+`buildPillarSprite` (sibling of the surviving `buildPillarBody` fallback) mounts a bottom-anchored
+Sprite at the pillar's ground point plus the base contact crease — and nothing else, because the top
+ellipse, the three bands, the curved joints and the silhouette are all in the file now. Two things
+that would have been silent bugs:
+
+- **The occluder box is measured off the sprite** (`pillarArtExtent(bodyW, height, tex)`), not off the
+  hand-toned ellipse maths. The x-ray reads that box; describing the other body's shape would fade a
+  pillar for a character it does not cover, or leave one solid over a character it does.
+- **The sprite key loads with `autoGenerateMipmaps: true` and WITHOUT `addressMode: 'repeat'`.**
+  A 326 px source drawn at 84 px at zoom 1 is a 4:1 minification — the exact shape of the 2026-08-12
+  rig-art colour-noise bug, which also proved the flag has to be set at load time. `repeat` is right
+  for a TilingSprite and wrong for a lone object, whose silhouette would sample its own far side.
+  Confirmed live: `mipLevelCount` 9 after upload, `addressMode` `clamp-to-edge`.
+
+### Tests, and a mutation battery that came back 18/21
+
+New: `pillarArt.test.ts` (6 — it decodes the SHIPPED PNG and measures it: real alpha with transparent
+corners, resolution headroom, the aspect the `WALL_HEIGHT` agreement depends on, a top that is the
+brightest plane, a shaft in the wall face's family, no baked base darkening) and `biomeTilesLoad.test.ts`
+(4 — the mipmap/`addressMode` split, via a stubbed `Assets.load`; kept in its own file because the mock
+populates the registry its sibling asserts stays empty), plus new describes in `pillarRender.test.ts`
+(10) and `RoomBuilder.test.ts` (6), and a pillar-key assertion in `biomeTiles.test.ts`.
+
+**The battery is the coverage measurement, again.** A scripted 21-mutant sweep — 18 over the code, 3
+over the shipped ASSET (revert `lumaCurve`, apply it uniformly, compress to game size) — came back with
+**3 survivors**, all real gaps:
+
+| survivor | why nothing caught it |
+|---|---|
+| `s.tint = 0xffffff` (no tint at all) | `pillarTint` was unit-tested in isolation; nothing asserted the sprite ever received it |
+| `new Sprite()` (no texture) | an empty sprite still measures the right box, so every geometry assertion stayed green |
+| art compressed to 84x98 | the art test measured tone and aspect, never resolution — i.e. it would not have caught the defect that got five of the six rejects rejected |
+
+All three closed; 21/21 killed on the re-run. That is the fourth time a mutant, not a review, has found
+an unmeasured decision here — and the first time the mutants had to cover a *binary asset* rather than
+code, which turned out to be where the most valuable one was.
+
+### A second battery, asked for afterwards (*"有测试可以加吗"*) — 18 mutants, 11 survivors
+
+Same answer as the last time this question was asked: widen the battery instead of guessing. The first
+one covered the decisions the pass *introduced*; this one covered the ones it left alone, plus the new
+tool. **11 of 18 survived**, in three clusters:
+
+- **The crease's geometry was completely untested** (5 mutants). Every assertion about it read the
+  fills' *alphas*, so its shape was invisible: mounting it UNDER the sprite (the floor pass's
+  "grid under the floor" mutant, again), sizing it off the ART's height instead of the room's, losing
+  its corner rounding under a round object, stopping short of the foot, or covering the whole shaft —
+  all green. Fixed by reading the `roundRect` path data (filtering out the `moveTo(0, 0)` Pixi emits
+  before each path) and asserting the band positions, width and radius.
+- **The biome could be dropped silently** (2 mutants): `getPillarTexture('neutral')` hardcoded, or the
+  sprite tinted from `biomePalette(undefined)`. With one file shared by every biome, the tint is the
+  *only* thing that distinguishes an ember room's pillar from an ice room's — and nothing asserted the
+  renderer asked for the room's own element or applied its own palette. The `RoomBuilder` mock now
+  records the element it was asked for. (An eighth: `makeShadow(rad + 12)` predates this pass and was
+  never covered either — a shadow narrower than the body it belongs to reads as hovering.)
+- **Three `lumaCurve` mutants survived tests written specifically for those properties**, because the
+  FIXTURE made the mutation equivalent: a *bright* transparent pixel is skipped by the `gain === 1`
+  short-circuit whether or not the alpha guard exists; a hard step at `lo` still comes out monotonic
+  (88/90/92 pass straight through at `hiGain: 1`), so "increasing" proved nothing; and two pixels
+  whose red channel and luma fall on the SAME side of the band cannot tell a luma-keyed gain from a
+  channel-keyed one. Fixed by choosing fixtures where the mutation diverges — a dark transparent
+  pixel, exact interpolated values, and pure red (luma 76, red channel 250).
+
+18/18 killed on the re-run, and the first battery re-run stayed at 21/21. New: `lumaCurve.test.mjs`
+(10 — the tool had none, and `applyLumaCurve` was extracted from the CLI so it could be tested
+directly; two of the ten drive the real CLI through `execFileSync`, because the entry-point gate that
+decides whether the pipeline step does anything at all is itself a decision).
 
 ---
 

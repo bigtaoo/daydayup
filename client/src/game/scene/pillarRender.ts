@@ -2,7 +2,7 @@
 // in the same tonal language a standing wall is drawn in. Sibling of `wallRender.ts` — neither
 // imports the other; both take their shared silhouette/crease/coping numbers from `wallTone.ts`,
 // which is what keeps the split acyclic.
-import { Graphics } from 'pixi.js';
+import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
 import { mixHex, type BiomePalette } from '../theme';
 import {
   BASE_AO_BANDS,
@@ -78,15 +78,104 @@ function pillarCapRadii(bodyW: number): { capRx: number; capRy: number } {
 }
 
 /**
+ * The biome's hue as a Sprite tint, for the textured pillar below. The hand-toned body mixes
+ * `PILLAR_BIOME_MIX` of `palette.wall` into each of its own stone tones; a sprite cannot mix,
+ * only multiply, so the same amount is mixed into WHITE instead and multiplied over the art —
+ * which lands in the same place, because `palette.wall` is a dark near-neutral either way.
+ * It also does the level correction the art happens to need: the shipped sprite's top surface
+ * measures 101 and design/01's tonal hierarchy wants ~92, which is what this ~0.87 multiply
+ * gets to, so the tint and the level fix are one operation rather than a baked-in edit.
+ */
+export function pillarTint(palette: BiomePalette): number {
+  return mixHex(0xffffff, palette.wall, PILLAR_BIOME_MIX);
+}
+
+/**
+ * The on-screen box of the pillar SPRITE, scaled by WIDTH: a pillar's width is the thing its
+ * footprint has to agree with, and the art's own aspect ratio then sets how tall it stands.
+ * Keyed off the texture rather than a constant on purpose — regenerating the art at a different
+ * aspect must move the occluder box with it, not leave the x-ray testing a boundary that is no
+ * longer where the stone is. `pillarSpriteHeight`'s agreement with `WALL_HEIGHT` is asserted in
+ * `pillarRender.test.ts` instead of assumed here.
+ */
+export function pillarSpriteMetrics(bodyW: number, tex: Texture): { w: number; h: number } {
+  const w = bodyW + PILLAR_CAP_OVERHANG_PX * 2;
+  return { w, h: w * (tex.height / tex.width) };
+}
+
+/**
  * How far a pillar's art reaches from its own ground point, in local px: `halfW` to either side
  * and `top` northward (negative). Like a wall block, a pillar is drawn UPWARD from a grounded
  * origin, so its art covers a full `height` of walkable floor north of the footprint plus the
  * cap ellipse's own depth — that band is what `RoomBuilder` hands the occlusion x-ray
  * (`occlusion.Occluder`).
+ *
+ * With a texture, the same band is measured off the sprite's real drawn size instead of the
+ * ellipse maths — the two paths draw different shapes, and an extent that described the other
+ * one would fade the pillar for a character it does not actually cover (or worse, not fade it
+ * for one it does).
  */
-export function pillarArtExtent(bodyW: number, height: number): { halfW: number; top: number } {
+export function pillarArtExtent(
+  bodyW: number,
+  height: number,
+  tex?: Texture,
+): { halfW: number; top: number } {
+  if (tex) {
+    const { w, h } = pillarSpriteMetrics(bodyW, tex);
+    return { halfW: w / 2, top: PILLAR_BASE_PX - h };
+  }
   const { capRx, capRy } = pillarCapRadii(bodyW);
   return { halfW: capRx, top: -(height + capRy) };
+}
+
+/**
+ * A pillar drawn from real art (`biome/pillar_neutral.png`, 2026-08-20) — the shape the
+ * hand-toned cylinder below was standing in for. Bottom-anchored at the ground point and
+ * scaled by width, so it occupies exactly the box `pillarArtExtent` reports.
+ *
+ * Two cues the art deliberately does NOT carry, and this function does not re-add:
+ * a cast shadow (`RoomBuilder` throws it on `layers.shadow`, at the same slant as every other
+ * object) and any base darkening — the art measures the same value at its foot as up its shaft,
+ * so the contact crease below is the only thing grounding it. Everything the art DOES carry —
+ * the closed top ellipse, the three shading bands, the curved course joints, the silhouette —
+ * is left to the art: drawing the Graphics version's mottle or coping highlight over it would
+ * double up cues that were measured on a frame where nothing else was drawing them.
+ */
+export function buildPillarSprite(
+  bodyW: number,
+  height: number,
+  palette: BiomePalette,
+  tex: Texture,
+): Container {
+  const c = new Container();
+  const { w, h } = pillarSpriteMetrics(bodyW, tex);
+  const s = new Sprite(tex);
+  s.anchor.set(0.5, 1);
+  s.setSize(w, h);
+  s.y = PILLAR_BASE_PX;
+  s.tint = pillarTint(palette);
+  c.addChild(s);
+  c.addChild(buildPillarBaseCrease(bodyW, height));
+  return c;
+}
+
+/** The base contact crease, shared by both bodies: the same smooth ramp a wall face gets, at
+ *  the same constants, so a pillar and a wall meet the floor the same way. */
+function buildPillarBaseCrease(bodyW: number, height: number): Graphics {
+  return drawPillarBaseCrease(new Graphics(), bodyW, height);
+}
+
+function drawPillarBaseCrease(g: Graphics, bodyW: number, height: number): Graphics {
+  const corner = bodyW * PILLAR_CORNER_FRACTION;
+  const aoH = height * BASE_AO_FRACTION;
+  const aoStep = aoH / BASE_AO_BANDS;
+  for (let i = 0; i < BASE_AO_BANDS; i++) {
+    const t = (i + 0.5) / BASE_AO_BANDS;
+    const last = i === BASE_AO_BANDS - 1 ? PILLAR_BASE_PX : 0;
+    g.roundRect(-bodyW / 2, -aoH + i * aoStep, bodyW, aoStep + last, corner)
+      .fill({ color: 0x000000, alpha: t * BASE_AO_MAX });
+  }
+  return g;
 }
 
 /**
@@ -109,6 +198,11 @@ export function pillarArtExtent(bodyW: number, height: number): { halfW: number;
  *      brick elevation on the shaft the whole thing read as an open-topped well.
  *   3. **Hand-toned shading, drawn as a real cylinder, is what works** — and needs no mask, no
  *      texture and no filter. This is that.
+ *   4. **Real pillar art, generated for this object (2026-08-20), is what finally beats it** —
+ *      `buildPillarSprite` above. Not a contradiction of ②: what failed there was sampling a
+ *      256 px WALL swatch through a pillar-sized window, and what works is art authored at
+ *      pillar scale. This function stays as the fallback for a missing texture, exactly like
+ *      every other biome swatch in `render/biomeTiles.ts`.
  */
 export function buildPillarBody(bodyW: number, height: number, palette: BiomePalette): Graphics {
   const g = new Graphics();
@@ -141,14 +235,9 @@ export function buildPillarBody(bodyW: number, height: number, palette: BiomePal
       .fill({ color: 0x000000, alpha });
   }
 
-  // Base contact crease — the same smooth ramp a wall face gets, same constants.
-  const aoH = height * BASE_AO_FRACTION;
-  const aoStep = aoH / BASE_AO_BANDS;
-  for (let i = 0; i < BASE_AO_BANDS; i++) {
-    const t = (i + 0.5) / BASE_AO_BANDS;
-    g.roundRect(-bodyW / 2, -aoH + i * aoStep, bodyW, aoStep + PILLAR_BASE_PX * (i === BASE_AO_BANDS - 1 ? 1 : 0), corner)
-      .fill({ color: 0x000000, alpha: t * BASE_AO_MAX });
-  }
+  // Base contact crease — the same smooth ramp a wall face gets, same constants, and the same
+  // one the textured body above uses.
+  drawPillarBaseCrease(g, bodyW, height);
 
   // Silhouette, then the top surface over it (the cap's near half is in front of the shaft),
   // then its lit coping.

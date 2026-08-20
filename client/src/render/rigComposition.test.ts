@@ -331,7 +331,8 @@ describe('BODY_FILL — the recorded body art fill matches the shipped pixels', 
   const ALPHA_FLOOR = 8;
 
   async function opaqueHalfWidth(dir: string, boneId: string, scaleX: number): Promise<number> {
-    // @ts-expect-error — the repo's PNG codec is a plain .mjs tool module with no type surface.
+    // The repo's PNG codec is a plain .mjs tool module; `pngCodec.d.mts` (added 2026-08-20 for
+    // `scene/pillarArt.test.ts`) is what gives it a type surface here.
     const { decodePNG } = await import('../../../tools/png-pipeline/pngCodec.mjs');
     const img = decodePNG(read(`skins/${dir}/${boneId}.png`)) as { width: number; height: number; data: Uint8Array };
     let minX = img.width;

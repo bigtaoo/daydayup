@@ -1,4 +1,4 @@
-# Biome floor/wall swatch prompts (archive)
+# Biome art prompts (archive) — floor/wall swatches, and the pillar sprite
 
 `design/13`'s still-open "other biomes' looks" — the room ground/walls were a code-only
 palette tint (`game/theme.ts`'s `biomePalette()`) until now. This batch is the first real
@@ -143,6 +143,116 @@ one-time boundary step, not a new dependency) and archived as `wallface_*_raw.pn
 `poison` has no floor/wall swatch yet — `design/13` already flags poison as not-floor-1 and
 still without a dedicated enemy critter either, so it stays on the code-only palette tint
 (`RoomBuilder.ts`'s existing fallback) until a poison biome is actually scheduled.
+
+## Pillar SPRITE (1) — the pillar pass, 2026-08-20
+
+A third kind of asset in this file: not a swatch at all, but one whole OBJECT. `design/ROADMAP`'s
+"pillars read as smooth cans next to the walls" item — their cap was a flat hand-toned gradient
+where a wall cap is a real swatch, and `pillarRender.ts` records an earlier attempt at texturing
+them FROM the wall swatches that came out worse (a ~35 px cap window onto a 256 px swatch lands on
+one arbitrary dark patch; the brick elevation on the shaft read as an open-topped well).
+
+**One file for every biome, not one per element.** A pillar is a fixed-size object (`radius: 1` in
+every shipped room, drawn 84x98), so the fix is art authored AT pillar scale; the biome's hue
+arrives as a `Sprite.tint` (`pillarRender.pillarTint`), which is also how the hand-toned version
+got it. `pillar_fire_alt.png` is a real per-element attempt that was NOT taken — see the rejects
+below.
+
+### The accepted prompt
+
+> A single game SPRITE of one short round stone PILLAR (a squat stone column drum), drawn as a
+> standalone object on a fully TRANSPARENT background. Output the image at 768 x 896 pixels. Leave
+> a 4-pixel fully transparent margin on all four sides — no part of the pillar may touch the image
+> edge, and the top ellipse must not be cut flat by the frame.
+>
+> This is NOT a scene, NOT a room, NOT isometric, NOT a texture swatch and NOT a tileable pattern.
+> There is no floor or ground under it, no other objects, no characters, no background of any kind,
+> and NO cast shadow on the ground — the game draws the shadow itself on a separate layer, so a
+> baked shadow would double up.
+>
+> Camera: fixed, looking slightly down at the pillar from the FRONT. The top of the pillar is a
+> shallow ellipse whose height is about 42% of its width; the shaft is seen straight-on below it.
+> No perspective convergence, no vanishing point, no rotation, no tilt.
+>
+> Proportions, which matter because the game draws this at a fixed size: the whole object is about
+> 0.86 as wide as it is tall. The top ellipse spans the full width of the object and occupies the
+> top 36% of its height. The shaft runs from the middle of that ellipse straight down to the bottom
+> of the object, with straight vertical sides all the way — no taper.
+>
+> Construction: a squat round stone drum of THREE courses of stone, each course separated by a
+> single joint line, and every joint line must CURVE downward following the same ellipse as the top
+> surface — never a straight horizontal line, because a straight line makes a cylinder read as a
+> flat board. Nothing is carved or ornamented on it; no capital, no fluting, no runes, no cracks.
+>
+> IMPORTANT — the top is a SOLID CLOSED disc of stone. This is not a well, not a hollow tube, not a
+> barrel, not a drum you could open, not an urn, vase, jar, pot, cauldron or basin. There is no
+> opening, no hole, no inner rim and no lip on top. The top surface must stay the BRIGHTEST plane in
+> the whole image, clearly brighter than any part of the shaft, because it is the surface facing the
+> sky; if any part of the shaft out-shines it, the object reads as an open-topped well instead of a
+> solid column.
+>
+> Lighting: one consistent light from the UPPER LEFT, baked in as flat cel-shaded bands, in this
+> order from the left edge of the shaft: a lit band at approximately #4E555F ending about 36% of the
+> way across, a mid band at approximately #424954 out to about 74%, and a dark limb at approximately
+> #141720 for the remaining right-hand strip. The top surface sits at approximately #5B6472. Keep
+> those relationships — a top clearly brighter than the lit band, and a dark right limb doing the
+> work of the curve.
+>
+> Do NOT put a white or light-grey rim highlight anywhere on the top edge or the silhouette: a
+> bright rim reads as polished metal or chrome, and this is dull, unpolished dungeon stone. Do NOT
+> add a base plinth, a wider flared foot, or a darkened band at the very bottom — the game draws the
+> pillar's ground contact itself.
+>
+> Style: flat cel-shaded 2D mobile-game art, bold clean thin dark outline on the object's silhouette
+> and on the stone joints only, flat solid colour fills, minimal gradient. Dark charcoal-navy stone
+> throughout, desaturated — this is the same stone as a dark dungeon wall, not concrete, not marble,
+> not sandstone, and not grey. COARSE detail only: three courses on the whole shaft and no fine
+> speckle, grain or noise, because the sprite is displayed at about 84 x 98 pixels in game and any
+> fine pattern turns to colour mush at that size.
+>
+> No element tint at all in this version — plain dark charcoal-navy stone. This is the default,
+> un-themed pillar.
+
+### What the accepted generation needed on top of the prompt
+
+`pillar_neutral_raw.png` is the KEYED result, not the generator's own bytes — the two mechanical
+steps below were both necessary, and neither is visible by looking at the image:
+
+1. **It came back with a painted transparency CHECKERBOARD.** 1664x2080, 3.46M opaque pixels,
+   **zero** transparent ones: the generator drew the grey-and-white "this is transparent" pattern as
+   real pixels. Keyed out by luma (background 233-255 against an object whose brightest plane is
+   101 — a huge gap), then one erosion pass over light pixels bordering transparency (972 px), then
+   cropped to the object (1307x1541, aspect 0.848 against the 0.857 asked for). Verified with a
+   flood fill from the border: **0 interior holes**, and `alpha-audit.mjs` reports the shipped file
+   as the only clean PNG in `client/public/biome`.
+2. **Its SHAFT was twice as bright as the wall face beside it** — measured live in level 1's gallery
+   room at zoom 1: lit limb 71.6 against a wall face's 27.3-27.5, while its top surface was already
+   on target (87.3 against wall caps of 72-81). A pillar and a wall are the same stone under the
+   same light, and a uniform multiply could not fix it: darkening the shaft would drag the top down
+   with it. `tools/png-pipeline/lumaCurve.mjs` (new, and the reason it exists) scales RGB by a factor
+   keyed off each pixel's own luma — `--lo=85 --hi=95 --lo-gain=0.68 --hi-gain=1` leaves the top
+   surface untouched and pulls the three shaft bands from 84/59/30 down to 57/40/20. On screen after
+   `pillarTint`'s own ~0.887 multiply: top **87.3**, lit limb **50.4**, mid **35.8**, dark limb
+   **16.7**, foot **25.0**, against a floor of 48.5. **Redo this step if the art is regenerated** —
+   `client/src/game/scene/pillarArt.test.ts` measures the shipped file and fails if it is skipped.
+
+Pipeline, in order: `art/biome/pillar_neutral_raw.png` (keyed source of truth, untouched by the
+curve) → copy to `client/public/biome/pillar_neutral.png` → `lumaCurve.mjs` → `compress.mjs
+--long-axis=384` (326x384 shipped). 384 rather than 256 because `FxController.MAX_ZOOM` is 4.5 and
+the renderer runs at up to 2x device pixel ratio: level 1's gallery room actually renders at zoom 4,
+so the sprite is MAGNIFIED, not minified, in real play.
+
+### The rejects, and what each one cost
+
+Seven generations, six rejected — all six kept as `pillar_*_alt*.png`. Measured, not judged by eye:
+
+| file | why it was rejected |
+|---|---|
+| `pillar_neutral_alt.png`, `pillar_neutral_alt2.png`, `pillar_fire_alt2.png`, `pillar_ice_alt.png`, `pillar_lightning_alt.png` | **all generated at exactly 84x98** — the game size, so zero headroom against a 4x camera zoom. This is why the accepted prompt states an output resolution. |
+| `pillar_lightning_alt.png` | reads as an **open-topped barrel** — the exact drift the prompt's negative constraint is aimed at, and it still happened at 84x98. |
+| `pillar_ice_alt.png` | top surface at luma **125**, the brightest thing in the room by a wide margin — a repeat of the defect design/01's "Volume, measured" pass fixed on 2026-08-19. |
+| `pillar_fire_alt2.png` | no warm tint at all (R−B = −14.9 against the neutral's −18.5, i.e. inside the noise), cap only 23% of the height, and the art touched all four frame edges. |
+| `pillar_fire_alt.png` | the one real near-miss, and the reason there is no per-element pillar art: it followed the canvas/margin/aspect spec exactly, but its course joints came back **straight** (centre-vs-edge sag of −2 px against the accepted file's +53) and its top surface occupies **21%** of the height against the accepted file's 30% — two files that would ship as two different camera angles. A `Sprite.tint` gets the warmth without either defect. |
 
 ## Workflow reminder
 

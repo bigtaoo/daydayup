@@ -30,7 +30,22 @@ const BIOME_TILE_ASSETS: Readonly<Record<string, string>> = {
   wallface_ice: '/biome/wallface_ice.png',
   wallface_lightning: '/biome/wallface_lightning.png',
   wallface_neutral: '/biome/wallface_neutral.png',
+  // A whole pillar, as one SPRITE — not a swatch (2026-08-20). Unlike everything above
+  // it is never tiled and never repeated: a pillar is a fixed-size round object, and
+  // sampling a 256 px wall swatch through a ~35 px cap window was tried in 2026-08-18
+  // and read as a dark blob (see pillarRender.ts). One file covers every biome; the
+  // biome's hue arrives as a tint (`pillarTint`), which is also how the hand-toned
+  // version got it. A per-element `pillar_<element>` file drops in by adding a key here.
+  pillar_neutral: '/biome/pillar_neutral.png',
 };
+
+/** Keys that are whole objects rather than tileable swatches: they must NOT get the
+ *  `repeat` address mode, and they DO need a mip chain, because a sprite is minified
+ *  (a 326 px source drawn at ~84 px) where a swatch is drawn about 1:1. Un-mipmapped
+ *  minification is what turned the rig art into colour noise in 2026-08-12, and the
+ *  chain has to be requested at load time — flipping the flag on an already-uploaded
+ *  texture does nothing. */
+const SPRITE_KEYS: ReadonlySet<string> = new Set(['pillar_neutral']);
 
 const textures = new Map<string, Texture>();
 
@@ -44,10 +59,15 @@ export async function preloadBiomeTiles(): Promise<void> {
   await Promise.all(
     Object.entries(BIOME_TILE_ASSETS).map(async ([key, path]) => {
       try {
-        const tex = await Assets.load<Texture>(path);
+        const isSprite = SPRITE_KEYS.has(key);
+        const tex = isSprite
+          ? await Assets.load<Texture>({ src: path, data: { autoGenerateMipmaps: true } })
+          : await Assets.load<Texture>(path);
         // Tiling textures must wrap, not clamp-to-edge (Pixi's default) — otherwise a
         // TilingSprite repeats the same clamped border pixel instead of the swatch.
-        tex.source.addressMode = 'repeat';
+        // A sprite key keeps the default clamp: wrapping a lone object's edge would
+        // fetch the opposite side of the pillar at its own silhouette.
+        if (!isSprite) tex.source.addressMode = 'repeat';
         textures.set(key, tex);
       } catch {
         // Not generated yet (or failed to fetch) — fine, RoomBuilder's flat-colour
@@ -63,6 +83,15 @@ export function getFloorTexture(element: BiomeElement): Texture | undefined {
 
 export function getWallTexture(element: BiomeElement): Texture | undefined {
   return textures.get(`wall_${element}`);
+}
+
+/** The pillar sprite (see `pillar_*` above). Falls back to the element-agnostic
+ *  `pillar_neutral` when no per-element file has been generated, which today is every
+ *  element — the biome difference is a tint, not a second file. Undefined leaves
+ *  RoomBuilder on its hand-toned Graphics cylinder, same contract as every other
+ *  swatch here. */
+export function getPillarTexture(element: BiomeElement): Texture | undefined {
+  return textures.get(`pillar_${element}`) ?? textures.get('pillar_neutral');
 }
 
 /** The wall's front elevation (see `wallface_*` above). Undefined leaves RoomBuilder on

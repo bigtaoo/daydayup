@@ -195,7 +195,10 @@ extruded block on the `entities` layer — `scene/wallRender.ts` owns the drawin
   stone with the shaft shaded across its curve in **colour-interpolated** bands (stacked
   translucent bands step in opacity, not in tone, and showed hard vertical seams at 4×), plus
   the same base crease and the same dark silhouette. The biome palette is back to being only
-  what it was meant to be: the no-art-loaded fallback.
+  what it was meant to be: the no-art-loaded fallback. **Superseded 2026-08-20** — this body is
+  now the FALLBACK for a missing texture, not what ships; see "A pillar is a sprite now" below.
+  Its account of why sampling the WALL swatches failed still holds, and is exactly why the art
+  that replaced it had to be authored at pillar scale.
 - **The floor grid stepped back.** A full-strength 64 px lattice across the whole floor is
   the loudest "this is a top-down blueprint" cue available, and it fought every depth cue
   above; it is still drawn (distance judging) but at `GRID_ALPHA`.
@@ -383,9 +386,9 @@ worth one more lie of the same kind.
 `height x SHADOW_SLANT_Y` ~ 23 px of hem to the south, because the block's own art covers the rest
 of the hull; lengthening it for walls alone would break the one thing every shadow in this project
 agrees on (`Entity.SHADOW_SLANT_*` — actors, bullets, pillars and walls share one light). The base
-hug carries that job instead. And the pillars remain the smoothest objects in a room: they are
-hand-toned because texturing them from the wall swatches was tried and was worse, and mottling is
-all the surface noise they get without real pillar art.
+hug carries that job instead. (The other half of this paragraph — "the pillars remain the
+smoothest objects in a room... without real pillar art" — was closed on 2026-08-20 by generating
+real pillar art; see "A pillar is a sprite now" below.)
 
 ## A north-south run is not an east-west wall (2026-08-19)
 
@@ -923,6 +926,64 @@ reasoning:
 Everything here is hashed, never `Math.random` — a room must draw the identical floor on every visit
 and on every client (design/06's rule applied to the render layer, as with `Pickup`'s golden-angle
 bob phase).
+
+## A pillar is a sprite now (2026-08-20)
+
+The last item on the scene queue: *"pillars read as smooth cans next to the walls"* — their cap was
+a hand-toned gradient where a wall cap is a real swatch under an additive key light, and their shaft
+a mathematically perfect colour ramp with seven fixed mottle blobs on it. Closed by generating art
+for the object itself (`art/biome/prompts.md`'s "Pillar SPRITE" section has the prompt, the rejects
+and the two import steps) and drawing it with `pillarRender.buildPillarSprite`. `buildPillarBody`
+stays as the fallback for a missing texture, the same contract every other biome swatch has.
+
+- **One file, every biome.** A pillar is a fixed-size object — `radius: 1` in every shipped room,
+  drawn 84x98 — so unlike the walls it needs no tileable swatch, and unlike the walls it does not
+  need one file per element: `pillarTint(palette)` mixes `PILLAR_BIOME_MIX` of the biome's wall
+  colour into WHITE and multiplies, which is where the hand-toned body already got its biome hue.
+  `getPillarTexture` still resolves `pillar_<element>` first, so a per-element file remains a
+  file-drop away.
+- **Scaled by WIDTH; the art's aspect sets how tall a pillar stands.** Width is the axis the
+  footprint has to agree with, so `pillarSpriteMetrics` fits the sprite to `bodyW + 2 x overhang`
+  and lets `tex.height / tex.width` decide the rest. That leaves one thing to the file: `WALL_HEIGHT`
+  is what every standing thing in a room agrees on, and the shipped art's 0.849 aspect happens to
+  land within 4 px of the hand-toned cylinder's own top. Both `pillarRender.test.ts` and
+  `pillarArt.test.ts` assert that bound rather than trust it.
+- **The occluder box is measured off the sprite, not off the ellipse maths.** The x-ray reads
+  `pillarArtExtent`, and the two bodies draw different shapes: an extent describing the other one
+  would fade a pillar for a character it does not cover, or leave one solid over a character it
+  does. With a texture the extent is `halfW = w/2`, `top = PILLAR_BASE_PX - h` — the sprite's own
+  box, bottom-anchored at the ground point.
+- **Mipmaps at load time, and no `repeat`.** A 326 px source drawn at 84 px is a ~4:1 minification
+  when the camera sits at zoom 1, which is the exact shape of the 2026-08-12 rig-art bug (bilinear
+  filtering with no mip chain reads a 2x2 texel neighbourhood and returns colour noise). The sprite
+  key in `render/biomeTiles.ts` therefore loads with `data: { autoGenerateMipmaps: true }` —
+  confirmed live, `mipLevelCount` 9 after upload — and skips the `addressMode: 'repeat'` every
+  tiling swatch gets, which on a lone object would sample the far side of its own silhouette.
+- **Nothing the art carries is drawn twice.** The closed top ellipse, the three shading bands, the
+  curved course joints and the silhouette are all in the file; the sprite body adds only the base
+  contact crease, because the art measures the same value at its foot as up its shaft (58 vs 59) and
+  the crease is the only thing grounding it. The hand-toned body's mottle table and white coping
+  stroke are deliberately absent from the textured path.
+
+**Measured, in a live frame** (`renderer.extract` over the real level 1 gallery room at zoom 1, UI
+and actors hidden, sample rects derived from the sprite's own `getBounds()`):
+
+| surface | hand-toned | first accepted file | shipped |
+|---|---|---|---|
+| top | ~92 | 87.3 | **87.3** |
+| lit limb | ~73 | 71.6 | **50.4** |
+| mid band | ~62 | 52.4 | **35.8** |
+| dark limb | ~19 | 25.1 | **16.7** |
+| foot | — | 36.7 | **25.0** |
+| in the same frame | | wall caps 72-81, wall faces 27.3-27.5, floor 48.5 | |
+
+The middle column is why `tools/png-pipeline/lumaCurve.mjs` exists. **A generated sprite can be
+right on one surface and wrong on another, and a uniform multiply cannot fix that**: the file's top
+surface already landed on design/01's target while its shaft ran at roughly twice the wall face
+beside it — the same stone, the same key light, one of them reading as a different material. A
+luma-keyed curve (`--lo=85 --hi=95 --lo-gain=0.68 --hi-gain=1`) leaves the top alone and pulls the
+shaft down, which is the same fold between a bright top and a much darker face that `wallTone.ts`
+already builds for the walls, applied once offline instead of as a per-object filter.
 
 ## Depth sorting (Y-sort)
 

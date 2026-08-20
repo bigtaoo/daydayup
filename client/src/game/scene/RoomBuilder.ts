@@ -2,13 +2,13 @@ import { Graphics, Texture } from 'pixi.js';
 import type { GameState } from '@dd/engine';
 import type { Layers } from './layers';
 import { Entity } from './Entity';
-import { biomePalette, biomeElementOf, type BiomePalette } from '../theme';
+import { biomePalette, biomeElementOf, type BiomeElement, type BiomePalette } from '../theme';
 import { fpToPx } from '../coords';
-import { getFloorTexture, getWallTexture, getWallFaceTexture } from '../../render/biomeTiles';
+import { getFloorTexture, getWallTexture, getWallFaceTexture, getPillarTexture } from '../../render/biomeTiles';
 import { getDoorTexture } from '../../render/environmentSprites';
 import { wallTier, wallHeight, WALL_HEIGHT, type RectPx } from './wallGeometry';
 import { buildWallBlock, drawWallShadow } from './wallRender';
-import { buildPillarBody, pillarArtExtent } from './pillarRender';
+import { buildPillarBody, buildPillarSprite, pillarArtExtent } from './pillarRender';
 import {
   deepXrayLayers,
   fadeableBlock,
@@ -201,7 +201,7 @@ export class RoomBuilder {
     this.layers.shadow.addChild(shadows);
     this.wallShadows = shadows;
 
-    this.buildPillars(s, palette);
+    this.buildPillars(s, palette, element);
     this.buildPortal(s, w, h);
   }
 
@@ -357,22 +357,28 @@ export class RoomBuilder {
   /** Round pillars for the current room, from the engine's obstacle solids. Tall
    *  Y-sortable objects (occlusion + collision). Rebuilt per room; the drawn body is a
    *  little wider than the collision footprint so the player can stand against it. */
-  private buildPillars(s: GameState, palette: BiomePalette): void {
+  private buildPillars(s: GameState, palette: BiomePalette, element: BiomeElement): void {
     for (const p of this.pillars) {
       p.shadow?.destroy();
       p.destroy();
     }
     this.pillars.length = 0;
 
+    const pillarTex = getPillarTexture(element);
     for (const o of s.obstacles) {
       const rad = fpToPx(o.radius);
       const bodyW = rad * 2 + 16; // visual body a touch wider than the footprint
       const height = WALL_HEIGHT; // one height for every standing thing in a room
       const p = new Entity();
-      // A round wall block, from the same two swatches and the same three-surface tints
-      // (`wallRender.buildPillarBody`, 2026-08-18 — see its doc for why the old
-      // palette-derived flat fill had to go once the walls read as real stone).
-      p.addChild(buildPillarBody(bodyW, height, palette));
+      // Real pillar art where it exists (`biome/pillar_neutral.png`, 2026-08-20), else the
+      // hand-toned cylinder that stood in for it — see `pillarRender.buildPillarBody`'s doc
+      // for the four attempts behind that choice, including why sampling the WALL swatches
+      // at pillar scale was tried and was worse.
+      p.addChild(
+        pillarTex
+          ? buildPillarSprite(bodyW, height, palette, pillarTex)
+          : buildPillarBody(bodyW, height, palette),
+      );
       // A pillar's shadow has to be displaced by hand (2026-08-18): the height that throws
       // it is the DRAWN body's, and a pillar is drawn upward from a grounded origin rather
       // than lifted by the transform, so `Entity`'s own height-driven offset sees z = 0.
@@ -392,7 +398,7 @@ export class RoomBuilder {
       // NARROWER target, so the player brushes past its blind side more often, not less. Same
       // x-ray. (design/01 used to call being hidden behind a pillar intended; a body that
       // vanishes completely is not, whatever shape the thing hiding it is.)
-      const art = pillarArtExtent(bodyW, height);
+      const art = pillarArtExtent(bodyW, height, pillarTex);
       this.occluders.push(
         fadeableBlock(
           // `foldY: gy` — a pillar's whole body is one Graphics and fades together, so it has no

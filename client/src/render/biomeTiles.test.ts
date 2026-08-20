@@ -18,6 +18,16 @@ describe('biomeTiles — asset registry', () => {
     }
   });
 
+  it('has the pillar SPRITE key — one file for every biome, the hue arriving as a tint', () => {
+    // Not one per element like the swatches above: a pillar is a fixed-size object drawn from
+    // art authored at pillar scale, and `pillarRender.pillarTint` is what makes an ember room's
+    // pillar differ from a neutral one. A per-element file drops in by adding a key.
+    expect(BIOME_TILE_ASSET_KEYS).toContain('pillar_neutral');
+    for (const el of ELEMENTS.filter((e) => e !== 'neutral')) {
+      expect(BIOME_TILE_ASSET_KEYS).not.toContain(`pillar_${el}`);
+    }
+  });
+
   it('deliberately has no poison swatch yet (design/13: poison is not floor 1)', () => {
     expect(BIOME_TILE_ASSET_KEYS).not.toContain('floor_poison');
     expect(BIOME_TILE_ASSET_KEYS).not.toContain('wall_poison');

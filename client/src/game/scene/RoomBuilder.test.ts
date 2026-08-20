@@ -8,7 +8,7 @@
  * rather than exercised for real — biomeTiles.test.ts already covers its own registry/
  * preload contract.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { Graphics, Sprite, TilingSprite, Texture, TextureSource } from 'pixi.js';
 import { createGameState } from '@dd/engine/state/GameState';
 import type { GameState, DoorRuntime } from '@dd/engine/state/GameState';
@@ -21,6 +21,8 @@ import { XRAY_LABEL } from './occlusion';
 import { fpToPx } from '../coords';
 import { Entity, SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
 import { Backdrop } from './Backdrop';
+import { pillarTint } from './pillarRender';
+import { biomePalette } from '../theme';
 import type { DoorFixture } from './doorRender';
 
 function makeRoomBuilder(layers = new Layers()): RoomBuilder {
@@ -72,6 +74,8 @@ const mocks = vi.hoisted(() => ({
   floorTex: undefined as Texture | undefined,
   wallTex: undefined as Texture | undefined,
   wallFaceTex: undefined as Texture | undefined,
+  pillarTex: undefined as Texture | undefined,
+  pillarTexElement: undefined as string | undefined,
   doorLockedTex: undefined as Texture | undefined,
   doorOpenTex: undefined as Texture | undefined,
 }));
@@ -80,6 +84,10 @@ vi.mock('../../render/biomeTiles', () => ({
   getFloorTexture: () => mocks.floorTex,
   getWallTexture: () => mocks.wallTex,
   getWallFaceTexture: () => mocks.wallFaceTex,
+  getPillarTexture: (el: string) => {
+    mocks.pillarTexElement = el;
+    return mocks.pillarTex;
+  },
 }));
 
 vi.mock('../../render/environmentSprites', () => ({
@@ -1338,5 +1346,101 @@ describe('RoomBuilder.updateOcclusion — a block that would hide the player get
   it('is a safe no-op before any room is built', () => {
     const rb = makeRoomBuilder();
     expect(() => rb.updateOcclusion([behindBlock], 16.67)).not.toThrow();
+  });
+});
+
+/**
+ * The textured pillar, end to end (2026-08-20). `pillarRender.test.ts` proves the sprite's own
+ * geometry; what only RoomBuilder can prove is that the occluder it registers follows the body it
+ * actually mounted — the x-ray reads that box and nothing else, so a sprite drawn to one shape
+ * with an occluder describing the other is exactly the bug class this pass exists to avoid.
+ */
+describe('RoomBuilder — pillars from real art', () => {
+  afterEach(() => {
+    mocks.pillarTex = undefined;
+  });
+
+  it('mounts a Sprite body when the art is registered, and the Graphics cylinder when it is not', () => {
+    mocks.pillarTex = fakeTexture(326, 384);
+    const withArt = makeRoomBuilder();
+    withArt.build(stateWithOneObstacle());
+    const textured = (withArt as unknown as { pillars: Entity[] }).pillars[0]!;
+    expect(textured.children[0]!.children.some((c) => c instanceof Sprite)).toBe(true);
+
+    mocks.pillarTex = undefined;
+    const noArt = makeRoomBuilder();
+    noArt.build(stateWithOneObstacle());
+    const fallback = (noArt as unknown as { pillars: Entity[] }).pillars[0]!;
+    expect(fallback.children[0]).toBeInstanceOf(Graphics);
+  });
+
+  it('registers an occluder box that matches the sprite it actually drew', () => {
+    mocks.pillarTex = fakeTexture(326, 384);
+    const rb = makeRoomBuilder();
+    rb.build(stateWithOneObstacle());
+    const pillar = (rb as unknown as { pillars: Entity[] }).pillars[0]!;
+    const sprite = pillar.children[0]!.children.find((c) => c instanceof Sprite) as Sprite;
+    // This fixture has one obstacle and no walls, so the pillar is the only occluder.
+    expect(occluders(rb)).toHaveLength(1);
+    const occ = occluders(rb)[0]!;
+    // The sprite is bottom-anchored at `PILLAR_BASE_PX` below the ground point, so its top edge
+    // in world space is the occluder's `top`, and its half-width the occluder's own.
+    expect(occ.box.top).toBeCloseTo(pillar.y + 10 - sprite.height, 1);
+    expect(occ.box.right - occ.box.left).toBeCloseTo(sprite.width, 1);
+  });
+
+  it('a taller-than-shipped art file moves the occluder with it, rather than lying about the box', () => {
+    // The regression this guards: hardcoding the extent off the hand-toned ellipse maths. Swap in
+    // art twice as tall per unit width and the registered box has to grow — otherwise the x-ray
+    // keeps testing a boundary the stone no longer stops at.
+    mocks.pillarTex = fakeTexture(326, 384);
+    const shipped = makeRoomBuilder();
+    shipped.build(stateWithOneObstacle());
+    const shippedTop = occluders(shipped)[0]!.box.top;
+
+    mocks.pillarTex = fakeTexture(326, 768);
+    const tall = makeRoomBuilder();
+    tall.build(stateWithOneObstacle());
+    expect(occluders(tall)[0]!.box.top).toBeLessThan(shippedTop - 50);
+  });
+
+  it("asks for the art and the tint of the room's OWN biome, not the neutral fallback", () => {
+    // Two battery survivors in one: `getPillarTexture('neutral')` hardcoded, and the sprite tinted
+    // from `biomePalette(undefined)`. Both leave every geometry assertion green and quietly drop
+    // the biome — the one channel that distinguishes an ember room's pillar from an ice room's,
+    // now that all four share a single file.
+    mocks.pillarTex = fakeTexture(326, 384);
+    mocks.pillarTexElement = undefined;
+    const rb = makeRoomBuilder();
+    rb.build(stateWithOneObstacle()); // fixture's dungeonConfig.biomeId is 'ember'
+    expect(mocks.pillarTexElement).toBe('fire');
+    const pillar = (rb as unknown as { pillars: Entity[] }).pillars[0]!;
+    const sprite = pillar.children[0]!.children.find((c) => c instanceof Sprite) as Sprite;
+    expect(sprite.tint).toBe(pillarTint(biomePalette('ember')));
+    expect(sprite.tint).not.toBe(pillarTint(biomePalette(undefined)));
+  });
+
+  it('keeps the ground shadow at least as wide as the body standing on it', () => {
+    // `makeShadow(rad + 12)` predates this pass but was never covered, and the drawn body got a
+    // little wider with the art: a shadow narrower than the object it belongs to reads as the
+    // pillar hovering. Measured off the drawn objects rather than restating the +12.
+    mocks.pillarTex = fakeTexture(326, 384);
+    const rb = makeRoomBuilder();
+    rb.build(stateWithOneObstacle());
+    const pillar = (rb as unknown as { pillars: Entity[] }).pillars[0]!;
+    const sprite = pillar.children[0]!.children.find((c) => c instanceof Sprite) as Sprite;
+    expect(pillar.shadow!.width).toBeGreaterThanOrEqual(sprite.width);
+  });
+
+  it('still throws the same cast shadow as the wall beside it', () => {
+    // The shadow is displaced by WALL_HEIGHT, not by the art's own height — a pillar and a 70 px
+    // interior wall share one key light (`Entity.SHADOW_SLANT_*`), which is the agreement the
+    // whole volume pass rests on.
+    mocks.pillarTex = fakeTexture(326, 384);
+    const rb = makeRoomBuilder();
+    rb.build(stateWithOneObstacle());
+    const pillar = (rb as unknown as { pillars: Entity[] }).pillars[0]!;
+    expect(pillar.shadowOffsetX).toBeCloseTo(WALL_H_INTERIOR * SHADOW_SLANT_X, 5);
+    expect(pillar.shadowOffsetY).toBeCloseTo(WALL_H_INTERIOR * SHADOW_SLANT_Y, 5);
   });
 });
