@@ -95,12 +95,29 @@ extruded block on the `entities` layer — `scene/wallRender.ts` owns the drawin
 - **Every wall stands, at one of three heights** (`wallGeometry.wallTier`/`wallHeight`). A
   room's boundary (`WALL_H_PERIMETER`, 104) towers over the blocks inside it
   (`WALL_H_INTERIOR`, 70 — deliberately the pillars' height, so everything standing in a
-  room agrees on how tall "tall" is), and the room's own **south** boundary drops to a low
-  lip (`WALL_H_KERB`, 22) because a full-height wall there would stand between the camera
-  and the player it is framing. A kerb is provably safe: a wall is 32 px thick and the
-  player cannot overlap it, so their ground point is always at least that far north of the
-  south edge. Height *variety* is itself the cue — a room where everything vertical is the
-  same size gives the eye no relative measure.
+  room agrees on how tall "tall" is), and a wall with a room's **floor immediately north of
+  it** drops to a low lip (`WALL_H_KERB`, 22) because a full-height wall there would stand
+  between the camera and the player it is framing. A kerb is provably safe: a wall is 32 px
+  thick and the player cannot overlap it, so their ground point is always at least that far
+  north of the south edge. Height *variety* is itself the cue — a room where everything
+  vertical is the same size gives the eye no relative measure.
+  - **The kerb rule is about where a wall STANDS, not about whose wall it is** (generalized
+    2026-08-20). It used to read "the room's own **south** boundary", resolved against the one
+    room the wall's centre falls in — and where two rooms stack vertically the boundary between
+    them is *two* walls, one grid row apart, authored by two different rooms. The upper room's
+    own south wall kerbed correctly; the lower room's north wall answered "I am my room's north
+    edge" and stood at 104 px, one row south of the exact floor the kerb exists to keep clear.
+    A block's art rises from its own north edge, so it reached a measured **72 px into the room
+    above** — 22 runs of it, on all five shipped floors, and the single biggest source of "the
+    player is invisible" in the level (see "The occlusion x-ray" below, which is what measured
+    it). `wallTier` now asks *"does any room's floor lie immediately north of me"*, which is one
+    predicate covering both halves of a shared boundary and strictly generalizes the old test.
+    Nothing has to be split apart afterwards: every room authors its own four perimeter walls,
+    so a boundary arrives as two rects that are tiered independently, and `RoomBuilder` tiers
+    **before** it merges — a collinear north boundary shared by two side-by-side rooms, only one
+    of which has a room above it, therefore keeps its tall half (floor 2's `r5_bastion` beside
+    `r4_furnace`; under the old rule those were one 32-cell perimeter run). Across level 1,
+    19 runs moved from perimeter to kerb: 105 → 86 perimeter, 37 → 53 kerb.
   - **This replaced an orientation rule, and that is the whole point** (superseded
     2026-08-18, same day, after the user reported the walls *still* reading as
     *"一张图贴在地上"*). The first version of this pass only stood up an **east-west run that
@@ -281,11 +298,13 @@ other.
   seam down the middle of one stone mass. The cause is content, not rendering: each room authors
   its own perimeter wall, so a boundary is two parallel rects (`[184,8,4,27]` and `[188,8,4,27]` in
   grid units, plus four more pairs on that floor). `mergeWallRuns` joins any two rects whose union
-  is *exactly* a rectangle, iterating to a fixed point — 33 raw walls become 28 blocks on level 1.
-  Render-only: `s.walls` is untouched, so collision is unaffected. **Same-tier only**, and that
-  restriction is load-bearing rather than cautious: a room's south kerb and its southern
-  neighbour's north perimeter wall are stacked adjacent rects of different tiers, and merging them
-  would give the kerb the taller height — reintroducing exactly the bug the kerb exists to prevent.
+  is *exactly* a rectangle, iterating to a fixed point — 32 raw walls become 27 blocks on level 1's
+  first floor. Render-only: `s.walls` is untouched, so collision is unaffected. **Same-tier only**,
+  and that restriction is load-bearing rather than cautious: adjacent rects of different tiers are
+  everywhere (a north perimeter wall with an interior solid flush beneath it; a stacked-room kerb
+  against the lower room's east/west perimeter wall, 22 such pairs on the shipped floors), and one
+  block cannot be two heights at once. It is also what makes tiering **before** the merge work as
+  a splitting mechanism rather than needing one — see the kerb rule above.
 - **A room now has a centre and corners** (`scene/roomLight.ts`). Measured, the floor was 39-53
   *everywhere* — every room, corner and centre alike. Two consequences no per-object shading can
   fix: a floor of five rooms reads as one flat sheet, and a black cast shadow has nothing brighter
@@ -554,8 +573,22 @@ relationships between blocks rather than restated coordinates:
   clip removed, checked against real geometry instead of proved on paper;
 - no tucked run crosses its neighbour's crown, measured against that neighbour's **own** height;
 - every south-edge join lands in exactly one of `south` / `tuckedSouth`, never both;
-- a join only ever exists where a tall-enough neighbour really touches — and floor 1's
-  kerb-north-of-perimeter-wall pairing proves the height filter is load-bearing, not defensive;
+- a join only ever exists where a tall-enough neighbour really touches — and the shipped
+  kerb-north-of-perimeter-wall pairing (22 of them: a stacked-room boundary sitting directly north
+  of the lower room's east or west wall) proves the height filter is load-bearing, not defensive;
+- **nothing along a stacked-room boundary reaches further into the room above than one kerb's
+  worth** — stated as art geometry against `WALL_H_KERB` rather than as a tier name, so any tier
+  whose art clears the floor passes and both `interior` (70) and `perimeter` (104) fail. The
+  boundaries are enumerated from the **room rects**, not from the runs, and that detail is the
+  whole test: keyed off the runs, the three boundaries whose two halves merge into one 64 px-deep
+  kerb (floor 2 `r5_bastion`, floor 3 `r3_crucible`, floor 4 `r5_boss`) matched no run at all and
+  were silently skipped — it passed on the other eight and looked green. Rooms cannot merge, so
+  the count (11, pinned) cannot fall because the drawing changed. Excluded on purpose, with the
+  reason written down: a block starting one row further south is the lower room's east/west wall,
+  whose art also pokes 40 px into the room above over a 32 px strip at the corner — a north-south
+  run spilling past its own end, which no tier rule can fix and which the occlusion sweep owns;
+- its counterweight: a north wall the room above only *partly* covers must keep the uncovered half
+  tall (the check that would catch a future move of tiering to after the merge);
 - `FACE_CROWN_ROWS` matches the real PNGs: it decodes each `wallface_*.png` (zlib inflate +
   unfilter — ~40 lines, and the alternative is trusting a recorded number, which is the failure mode
   the file exists for), asserts the recorded row IS the darkest row of the swatch's top third, that
@@ -643,7 +676,7 @@ FACE alone covers as much of the body as it takes to trigger the x-ray at all (t
 `MIN_COVER_FRACTION`, deliberately not a second number), the face and its shading go too. It costs
 something real — dropping a face reveals what is *behind* the wall, and at a room boundary that is
 the next wall's own bright cap showing through as a pale band — which is why it is a fallback and
-not the default. Swept over the shipped floors it fires on **1.3%** of the standable floor. The two
+not the default. Swept over the shipped floors it fires on **0.2%** of the standable floor (1.2% before the kerb tier fix below). The two
 passes stage naturally as you walk into a wall: the cap goes first, and the face only once the cap
 has stopped being the thing in the way.
 
@@ -669,16 +702,25 @@ room is always south of its sort line. True of a room's north wall, false in gen
 - **A long north-south run whose north END is open floor** (a door passage between two rooms). The
   run's art spills one wall height past its own footprint onto ground the player walks over once
   that door unlocks, and standing there they are half swallowed by its cap.
-- **A wall between two vertically stacked rooms** — much the bigger case. `wallTier` classifies a
-  merged run by the room its CENTRE lands in, so the wall along room A's south edge is room B's
-  *north* perimeter: 104 px tall, not the 22 px kerb the "nothing tall between the camera and the
-  player it is framing" rule intends. Its art covers the bottom ~90 px of room A's floor, and a
-  player standing there was **completely invisible** before this pass. **The kerb rule is defeated
-  for any shared boundary**, which is worth knowing independently of the x-ray.
+- **A wall between two vertically stacked rooms** — much the bigger case, and **since 2026-08-20
+  it is fixed at the tier instead of covered up by the x-ray**. Measured on a live frame at floor 0's
+  `r4_forge`/`r5_extraction` boundary (vertical luma scan down world x=350, fix stashed and
+  unstashed at identical framing): stone used to start at world y **440** — `544 − 104`, the
+  perimeter art top — and now starts at **492**, `512 − 22`, the kerb's. 50 px of the room above
+  goes back to being floor. `wallTier` classified a wall by
+  the one room its centre falls in, so the lower room's north wall stood at 104 px one grid row
+  south of the upper room's floor, its art covering a measured 72 px of it; a player standing
+  there was **completely invisible** before the x-ray existed, and the x-ray then had to dissolve
+  a room boundary on every one of the five floors to keep them visible. Both halves of a shared
+  boundary are kerbs now (see "Every wall stands, at one of three heights" above), which removed
+  a third of the blind floor on level 1 and two thirds of the deep-fade cases. What the x-ray was
+  doing here was real work on a wall that should never have been that tall.
 
 What does still hold — and is what stops a boundary fading while you walk along it — is the
 geometry: a perimeter run can only ever fire from **north of its own footprint**, never from the
-room floor it borders.
+room floor it borders. Every remaining case measures at most one wall thickness wide (32 or 64 px)
+— a north-south run or a door-carved fragment of one; the room-width east-west runs that used to
+appear here were the stacked boundaries, and they are gone.
 
 **Measured, before → after** (`renderer.extract`, luma 0-255, the body's own rect derived from the
 player view's global position): the character behind the block **78.4 → 105.7**, against **125.8**
@@ -692,18 +734,25 @@ stand at on all five shipped floors — 97,803 samples at 8 px — scoring each 
 oracle (rectangle overlap between a block's drawn art and the drawn body, never calling the rule
 under test):
 
-| | share of standable floor |
-|---|---|
-| at least half the character hidden, before | **8.5%** |
-| character **completely** invisible, before | **5.5%** |
-| still more than half hidden, after | **none** (worst case 43.8%) |
-| needs the deep pass | 1.3% |
+The right-hand column is the level as it ships today; the middle column is the same sweep before
+the 2026-08-20 kerb fix, i.e. how much of this the x-ray was carrying alone.
+
+| | with the tier bug | as shipped |
+|---|---|---|
+| at least half the character hidden, before the x-ray | 8.5% | **5.4%** |
+| character **completely** invisible, before the x-ray | 5.5% | **3.3%** |
+| still more than half hidden, after | **none** (worst case 43.8%) | **none** (worst case 43.8%) |
+| needs the deep pass | 1.2% | **0.2%** |
+| samples where a *perimeter* run fires | 4,626 | **1,574** |
 
 Two things came out of that sweep that no hand-written fixture was going to produce: the
-perimeter-run cases above, and the fact that a cap-only fade left **148 samples 100% hidden** and
-another 561 at 75% — which is what the deep pass exists for. It also caught a bad fixture in
-`RoomBuilder.test.ts`, whose "player standing behind the block" position was actually inside the
-stone.
+perimeter-run cases above, and the fact that a cap-only fade left **88 samples 100% hidden** and
+another 40 at 75% — which is what the deep pass exists for. (That second number was 561 before the
+kerb fix; the 88 did not move, so the deep pass is sized by geometry the tier fix does not reach —
+it came down from 148 with the door-alignment fix of the same day, which removed the four 16 px-deep
+wall runs that were its worst case.)
+It also caught a bad fixture in `RoomBuilder.test.ts`, whose "player standing behind the block"
+position was actually inside the stone.
 
 ## Depth sorting (Y-sort)
 

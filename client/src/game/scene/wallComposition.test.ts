@@ -41,7 +41,7 @@ import {
   type RoomPiece,
 } from '@dd/engine';
 import { fpToPx } from '../coords';
-import { wallHeight, wallTier, type RectPx } from './wallGeometry';
+import { WALL_H_KERB, wallHeight, wallTier, type RectPx } from './wallGeometry';
 import { mergeWallRuns, wallJoins, type WallJoins, type WallRun } from './wallRuns';
 import { FACE_CROWN_FRACTION_MIN, FACE_CROWN_ROWS, faceCrownFraction } from './wallTone';
 
@@ -50,6 +50,9 @@ interface Floor {
   index: number;
   runs: WallRun[];
   joins: WallJoins[];
+  /** The floor's room rects, the same ones `wallTier` was given — needed by the checks that ask
+   *  where a run stands relative to the rooms around it, not just to its neighbouring blocks. */
+  rooms: RectPx[];
 }
 
 const FLOOR_INDICES = Object.keys(EMBER_L1_FLOORS).map(Number);
@@ -73,7 +76,7 @@ function buildFloor(index: number): Floor {
   // Level 1 is the ember biome, so its corners are placed with fire's crown line — the same
   // per-element lookup `RoomBuilder` does. Passing the default here would test a floor the
   // game never draws.
-  return { index, runs, joins: wallJoins(runs, faceCrownFraction('fire')) };
+  return { index, runs, joins: wallJoins(runs, faceCrownFraction('fire')), rooms: roomsPx };
 }
 
 const FLOORS: Floor[] = FLOOR_INDICES.map(buildFloor);
@@ -248,6 +251,127 @@ describe('shipped level-1 walls — every block agrees with its neighbours', () 
       expect(kerbs.length, `floor ${f.index} has kerbs`).toBeGreaterThan(0);
       for (const k of kerbs) expect(wallHeight(k.tier)).toBeLessThan(wallHeight('perimeter'));
     }
+  });
+});
+
+describe('shipped level-1 walls — nothing tall stands on the floor of the room to its north', () => {
+  /** One boundary between two vertically stacked rooms: `above`'s south bound IS `below`'s north
+   *  bound, and the two overlap horizontally. */
+  interface Boundary {
+    above: RectPx;
+    below: RectPx;
+    /** World y of the shared bound — `above.y + above.h`. */
+    at: number;
+    /** The x range the two rooms share, which is the only part of the boundary either owns. */
+    x0: number;
+    x1: number;
+  }
+
+  /**
+   * Every stacked-room boundary on this floor, enumerated from the ROOM RECTS.
+   *
+   * Deriving it from the rooms rather than from the runs is the whole point, and the first
+   * version of this file got it wrong: keyed off "a run whose north edge is a room's south
+   * bound", the three boundaries whose two halves MERGE into one 64 px-deep kerb (floor 2
+   * `r5_bastion`, floor 3 `r3_crucible`, floor 4 `r5_boss`) matched no run at all and were
+   * silently skipped — the check passed on the other four and looked green. Rooms cannot merge,
+   * so a boundary counted here cannot disappear because the drawing changed.
+   */
+  function boundaries(f: Floor): Boundary[] {
+    const out: Boundary[] = [];
+    for (const above of f.rooms) {
+      for (const below of f.rooms) {
+        if (above === below) continue;
+        if (Math.abs(above.y + above.h - below.y) > 0.75) continue;
+        const x0 = Math.max(above.x, below.x);
+        const x1 = Math.min(above.x + above.w, below.x + below.w);
+        if (x1 - x0 <= 0.75) continue; // side by side, touching at a corner only
+        out.push({ above, below, at: above.y + above.h, x0, x1 });
+      }
+    }
+    return out;
+  }
+
+  /** Where `room`'s walkable floor stops, read out of the content: the north edge of whatever
+   *  the floor actually draws along that room's south bound. Never assumed to be one grid row: as
+   *  of `ENGINE_VERSION` 44 every wall in the shipped content is a full 32 px deep, but four of them
+   *  were 16 until that day (see ROADMAP "The 16 px wall runs"), and a hand-authored piece can put
+   *  a shallower solid on a room's south edge without anything here noticing. */
+  function floorLimit(f: Floor, b: Boundary): number {
+    const band = f.runs.filter((r) =>
+      Math.min(r.rect.x + r.rect.w, b.x1) - Math.max(r.rect.x, b.x0) > 0.75
+      && r.rect.y < b.at - 0.75 && r.rect.y + r.rect.h > b.at - 0.75);
+    expect(band.length, `floor ${f.index} boundary at ${b.at} has stone along it`).toBeGreaterThan(0);
+    return Math.max(...band.map((r) => r.rect.y));
+  }
+
+  it('keeps a stacked room boundary CLEAR of the floor above it — the tier bug, swept', () => {
+    // What `wallTier` got wrong until 2026-08-20, stated as the invariant rather than as a tier
+    // name: the south half of a shared boundary is authored by the lower room and answers "I am
+    // my room's north edge", which used to stand it at `WALL_H_PERIMETER`. Its art rises from its
+    // own north edge, so at that height it reached a measured 72 px past the upper room's south
+    // wall and onto the floor the kerb exists to keep clear — 22 runs of it, on all five floors.
+    // Nothing here names a height: any tier whose art clears the floor above passes.
+    let checked = 0;
+    for (const f of FLOORS) {
+      for (const b of boundaries(f)) {
+        const limit = floorLimit(f, b);
+        // Every block standing IN the boundary band — the upper room's own south wall, the lower
+        // room's north wall, or the single merged mass when the two are the same tier. Bounded at
+        // the lower room's north bound on purpose: a block starting a row further south is the
+        // lower room's east/west wall, whose art also pokes into the room above (measured 40 px
+        // over a 32 px-wide strip at the corner) but for a different reason — a north-south run
+        // spilling past its own end, which no tier rule can fix and which
+        // `occlusionCoverage.test.ts` covers under "a PERIMETER run fires only from BEYOND its
+        // own end". Folding it in here would make this check about the x-ray instead of the tier.
+        const band = f.runs.filter((r) =>
+          Math.min(r.rect.x + r.rect.w, b.x1) - Math.max(r.rect.x, b.x0) > 0.75
+          && r.rect.y >= limit - 0.75 && r.rect.y <= b.below.y + 0.75);
+        expect(band.length, `floor ${f.index} boundary at ${b.at} has blocks`).toBeGreaterThan(0);
+        for (const run of band) {
+          // The bound is ONE KERB's worth of intrusion, not zero: a kerb standing on the upper
+          // room's own south edge already reaches `WALL_H_KERB` px onto its floor, and that is
+          // the case design/01 calls provably safe (the player's clearance keeps their ground
+          // point a full wall thickness north of it). What must never happen is a block along
+          // this boundary reaching FURTHER in than that — which is exactly what an `interior`
+          // (70) or `perimeter` (104) tier here would do. No literal heights: the tiers are
+          // compared through the one constant that defines "as low as a boundary gets".
+          const [top] = artBand(run, f.joins[f.runs.indexOf(run)]!);
+          expect(top, `floor ${f.index} boundary at ${b.at}, run ${run.rect.x},${run.rect.y} (${run.tier})`)
+            .toBeGreaterThanOrEqual(limit - WALL_H_KERB - 0.001);
+          checked++;
+        }
+      }
+    }
+    // Mutation guards. The count is pinned rather than merely non-zero because it is derived
+    // from the ROOMS: 11 stacked pairs across the five floors (1 / 3 / 4 / 2 / 1), and every one
+    // of them has stone along it. If a room moves, this number moving is the notification.
+    // Zero would mean the pipeline broke, not that the level got better.
+    expect(FLOORS.flatMap(boundaries).length, 'stacked-room boundaries in the content').toBe(11);
+    expect(checked, 'blocks checked along them').toBeGreaterThan(15);
+  });
+
+  it('has NOT flattened a north wall the room above only partly covers', () => {
+    // The cost this rule could have had, and the reason it needs no splitting pass. On floor 2
+    // `r5_bastion` and `r4_furnace` sit side by side and author one collinear north boundary, but
+    // only `r4_furnace` has a room (`r3_court`) above it. `wallTier` runs per authored rect and
+    // `RoomBuilder` tiers BEFORE it merges, so the two halves get different answers and then
+    // refuse to merge — where under the old rule they were one 32-cell perimeter run. If a future
+    // change moved tiering after the merge, or widened the overlap test to "touches", this pair
+    // would collapse to one height and a 20-cell room boundary would silently drop to 22 px.
+    const collinear = FLOORS.flatMap((f) =>
+      f.runs.filter((a) => a.tier === 'perimeter').filter((a) =>
+        f.runs.some((b) => b.tier === 'kerb'
+          && Math.abs(b.rect.y - a.rect.y) <= 0.75
+          && Math.abs(b.rect.h - a.rect.h) <= 0.75
+          && (Math.abs(b.rect.x - (a.rect.x + a.rect.w)) <= 0.75 || Math.abs(a.rect.x - (b.rect.x + b.rect.w)) <= 0.75))),
+    );
+    expect(collinear.length, 'perimeter runs standing beside a kerb on the same boundary').toBeGreaterThan(0);
+    // ...and the floors are still mostly tall walls, not a plain of kerbs.
+    const all = FLOORS.flatMap((f) => f.runs);
+    const kerbs = all.filter((r) => r.tier === 'kerb').length;
+    expect(kerbs).toBeGreaterThan(40); // measured 53, up from 37 before the fix
+    expect(kerbs).toBeLessThan(all.length / 2);
   });
 });
 

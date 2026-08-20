@@ -132,8 +132,10 @@ describe('occludes — the three-layer geometry that produced the bug', () => {
   it('a PERIMETER wall never triggers it either — its blind band is outside the room', () => {
     // A room's own boundary is the tallest thing in it, but the floor its art covers is on the
     // far side of itself: a player inside the room is always SOUTH of a north wall's sort line,
-    // and the strip north of it is not floor at all. Which is why the x-ray, in practice, only
-    // ever touches the blocks standing INSIDE a room.
+    // and the strip north of it is not floor at all. True of THIS shape and not in general —
+    // `occlusionCoverage.test.ts` found the counterexample on real content (a north-south run
+    // whose north end is an open door passage) and holds the general claim instead: a perimeter
+    // run can only ever fire from north of its own footprint, never from the room it bounds.
     const northWall = block(64, WALL_H_PERIMETER, 32); // footprint y 32..64, room floor below
     for (const y of [64 + CLEARANCE, 100, 300]) {
       expect(occludes(northWall, focus(1, y))).toBe(false);

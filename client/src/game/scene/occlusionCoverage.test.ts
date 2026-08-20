@@ -306,13 +306,14 @@ describe('occlusion coverage — the shipped level-1 floors, swept', () => {
   it('a PERIMETER run fires only from BEYOND its own end — never from inside the room it bounds', () => {
     // This one corrected a claim I had already written into design/01: "a perimeter wall never
     // triggers it, its blind band is on the far side of itself." True of a room's north wall, and
-    // false in general — the sweep found 4,626 samples where one does fire, all of them on the
-    // same shape: a long north-south run whose NORTH END is open floor (a door passage between two
-    // rooms), where the run's art spills one wall height past its own footprint onto ground the
-    // player walks over once that door unlocks. Firing there is right — the player standing in
-    // that passage is half swallowed by the run's cap. What has to stay true is the geometry: a
-    // perimeter run can only ever fire from north of its own footprint, never from the room floor
-    // it borders, which is what stops a room's own boundary fading while you walk along it.
+    // false in general — the sweep found 1,574 samples where one does fire (4,626 before the tier
+    // fix of 2026-08-20; see `wallGeometry.wallTier`), all of them on the same shape: a long
+    // north-south run whose NORTH END is open floor (a door passage between two rooms), where the
+    // run's art spills one wall height past its own footprint onto ground the player walks over
+    // once that door unlocks. Firing there is right — the player standing in that passage is half
+    // swallowed by the run's cap. What has to stay true is the geometry: a perimeter run can only
+    // ever fire from north of its own footprint, never from the room floor it borders, which is
+    // what stops a room's own boundary fading while you walk along it.
     const hits = SWEPT.flatMap(({ floor, samples }) =>
       samples.flatMap((s) =>
         s.fired.filter((b) => b.tier === 'perimeter').map((b) => ({ floor: floor.index, s, b })),
@@ -323,8 +324,11 @@ describe('occlusion coverage — the shipped level-1 floors, swept', () => {
       .filter((h) => h.s.gy >= h.b.rect.y)
       .map((h) => `floor ${h.floor} at (${h.s.gx}, ${h.s.gy})`);
     expect(insideFootprint).toEqual([]);
-    // Every one of them is a north-south run: a wide east-west perimeter wall's blind band lies
-    // outside the floor entirely, which is the case my original claim was actually about.
+    // Every one of them is at most one wall thickness wide (measured: 32 or 64 px) — a
+    // north-south run, or a door-carved fragment of one. The room-width east-west runs that used
+    // to appear here were the stacked-room boundaries `wallTier` now kerbs, and their blind band
+    // was inside the room ABOVE them; a north wall with no room above it has its blind band off
+    // the floor entirely, which is the case my original claim was actually about.
   });
 
   it('fades at most a couple of blocks at once, so a room never dissolves', () => {
@@ -358,7 +362,7 @@ describe('occlusion coverage — how much of the character is left buried afterw
     // the fix faded a block's cap only, which is measurably the better look — and this sweep is
     // what found the 0.15% of floor where it achieved nothing at all, because the whole body sat
     // below the cap/face fold and what was covering it was the front FACE. `needsDeepFade` is the
-    // second pass that closes those; without it, 148 samples here stay 100% hidden.
+    // second pass that closes those; without it, 88 samples here stay 100% hidden.
     const worst = ALL.filter((s) => s.hiddenAfter > 0.5)
       .slice(0, 8)
       .map((s) => `floor ${s.f} at (${s.gx}, ${s.gy}) still ${(s.hiddenAfter * 100) | 0}% hidden`);
@@ -382,18 +386,21 @@ describe('occlusion coverage — how much of the character is left buried afterw
       s.fired.some((b) => needsDeepFade(b.box, { x: s.gx, y: s.gy, halfW: HALF_W, bodyH: BODY_H })),
     );
     expect(deep.length).toBeGreaterThan(0); // it is reachable content, not dead code
-    expect(deep.length / ALL.length).toBeLessThan(0.02); // measured 1.3%
+    expect(deep.length / ALL.length).toBeLessThan(0.02); // measured 0.2%, down from 1.2%: the
+    // stacked-room boundaries that used to need it are kerbs now (`wallGeometry.wallTier`).
   });
 });
 
 describe('occlusion coverage — where the blind spots actually are', () => {
   it('reports the measured extent, as the record of what this pass is worth', () => {
     // The number this whole pass is judged by, kept in the suite rather than only in a commit
-    // message: across 97,803 standable samples on the five shipped floors, 8.5% left the player
-    // at least half hidden and 5.5% left them COMPLETELY invisible before the x-ray. Bounded
-    // loosely on both sides — zero would mean the content no longer has the problem (and the
-    // x-ray has become dead weight), a large fraction would mean the sweep is wrong rather than
-    // the level.
+    // message: across 97,803 standable samples on the five shipped floors, 5.4% leave the player
+    // at least half hidden and 3.3% leave them COMPLETELY invisible before the x-ray. Those were
+    // 8.5% and 5.5% until the tier fix of 2026-08-20 — a third of the blind floor was one wall
+    // standing at the wrong height, not something the x-ray had to exist for (see
+    // `wallGeometry.wallTier`). Bounded loosely on both sides — zero would mean the content no
+    // longer has the problem (and the x-ray has become dead weight), a large fraction would mean
+    // the sweep is wrong rather than the level.
     const all = SWEPT.flatMap(({ samples }) => samples);
     const half = all.filter((s) => s.covered >= HIDDEN_FRACTION).length / all.length;
     const full = all.filter((s) => s.covered >= 1).length / all.length;

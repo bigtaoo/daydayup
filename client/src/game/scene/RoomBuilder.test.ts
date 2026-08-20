@@ -781,16 +781,18 @@ describe('RoomBuilder — one boundary drawn twice becomes one block', () => {
     expect(s.walls).toHaveLength(before);
   });
 
-  it('does NOT merge a room\'s south kerb into its neighbour\'s north perimeter wall', () => {
-    // The one merge that must never happen: those two are stacked adjacent rects of different
-    // tiers, and one block cannot be both 22 px and 104 px tall. Merging them would stand a
-    // full-height wall where the kerb deliberately does not, i.e. between the camera and the
-    // player the room is framing.
+  it('draws a boundary between VERTICALLY stacked rooms as one low mass, not a kerb under a wall', () => {
+    // Reversed 2026-08-20. This used to assert two blocks, 22 px and 104 px: the upper room's
+    // south wall kerbed, the lower room's north wall standing at full height one grid row
+    // further south. The second one is the bug — it stands on exactly the ground the kerb
+    // leaves clear, and its art reached 72 px into the upper room's floor. `wallTier` now asks
+    // "is a room's floor immediately north of me" of every room, so BOTH halves kerb, and
+    // being the same tier they merge into one 64 px-deep mass with no seam down it.
     const s = createGameState({
       seed: 1, worldW: 480, worldH: 960, waves: [],
       walls: [
-        [0, 448, 480, 32], // room A's south -> kerb
-        [0, 480, 480, 32], // room B's north -> perimeter, flush against it
+        [0, 448, 480, 32], // room A's south
+        [0, 480, 480, 32], // room B's north, flush against it
       ],
       obstacles: [],
     });
@@ -803,12 +805,38 @@ describe('RoomBuilder — one boundary drawn twice becomes one block', () => {
     mocks.wallFaceTex = fakeTexture(256, 128);
     const rb = makeRoomBuilder();
     rb.build(s);
+    const ents = wallEntities(rb);
+    expect(ents).toHaveLength(1);
+    const sprites = ents[0]!.children.filter((c): c is TilingSprite => c instanceof TilingSprite);
+    expect(sprites[0]!.height).toBe(WALL_H_KERB); // the face, and nothing taller anywhere
+    expect(sprites[1]!.height).toBe(64); // the cap covers both rows, so no stone is invented
+  });
+
+  it('still refuses to merge across tiers, so no block is ever two heights at once', () => {
+    // The guard that made the case above two blocks for the right reason, kept on a pair that
+    // really is cross-tier: a north perimeter wall with an interior block flush beneath it, same
+    // x and width, so their union IS a rectangle and `mergeWallRuns`' tier check is the only
+    // thing standing between them. One block cannot be both 104 px and 70 px tall.
+    const s = createGameState({
+      seed: 1, worldW: 480, worldH: 480, waves: [],
+      walls: [
+        [64, 0, 128, 32], // on the room's north edge -> perimeter
+        [64, 32, 128, 32], // flush beneath it, touching no edge -> interior
+      ],
+      obstacles: [],
+    });
+    s.dungeonRoomRects.push({ id: 'a', rect: { x: pxToFp(0), y: pxToFp(0), w: pxToFp(480), h: pxToFp(480) } });
+    (s as unknown as { dungeonConfig?: { biomeId: string } }).dungeonConfig = { biomeId: 'ember' };
+    mocks.wallTex = fakeTexture(256, 256);
+    mocks.wallFaceTex = fakeTexture(256, 128);
+    const rb = makeRoomBuilder();
+    rb.build(s);
     const heights = wallEntities(rb).map(
       (seg) => (seg.children.find((c) => c instanceof TilingSprite) as TilingSprite).height,
     );
     expect(heights).toHaveLength(2);
-    expect(heights).toContain(WALL_H_KERB);
     expect(heights).toContain(WALL_H_PERIMETER);
+    expect(heights).toContain(WALL_H_INTERIOR);
   });
 
   it('rebuilds from scratch on a second build(), never accumulating merged blocks', () => {
@@ -995,28 +1023,30 @@ describe('RoomBuilder.updateOcclusion — a block that would hide the player get
     mocks.wallTex = fakeTexture(256, 256);
     mocks.wallFaceTex = fakeTexture(256, 128);
     const s = createGameState({
-      seed: 1, worldW: ROOM, worldH: ROOM * 2, waves: [],
-      // one room with a full-width north boundary, and a second room below it, so the wall
-      // between them is a PERIMETER run (104 tall) rather than either room's kerb
-      walls: [[0, 0, ROOM, 32], [0, ROOM, ROOM, 32]],
+      seed: 1, worldW: ROOM, worldH: ROOM, waves: [],
+      // A stub jutting east from the room's west wall — `ember_cross`'s own shape (a 5x2 grid
+      // solid off the west edge). Touching an edge makes it a PERIMETER run, so it stands 104 px
+      // over a 32 px footprint with open floor to its north for the player to stand on. Two
+      // stacked rooms used to serve as this fixture, until the boundary between them became a
+      // kerb on both sides (2026-08-20) and stopped being a tall run at all.
+      walls: [[0, 200, 96, 32]],
       obstacles: [],
     });
     s.dungeonRoomRects.push({ id: 'r1', rect: { x: pxToFp(0), y: pxToFp(0), w: pxToFp(ROOM), h: pxToFp(ROOM) } });
-    s.dungeonRoomRects.push({ id: 'r2', rect: { x: pxToFp(0), y: pxToFp(ROOM), w: pxToFp(ROOM), h: pxToFp(ROOM) } });
     (s as unknown as { dungeonConfig?: { biomeId: string } }).dungeonConfig = { biomeId: 'ember' };
     const rb = makeRoomBuilder();
     rb.build(s);
 
-    const boundary = occluders(rb).find((o) => o.box.sortY === ROOM + 32)!;
+    const boundary = occluders(rb).find((o) => o.box.sortY === 232)!;
     expect(boundary.box.sortY - boundary.box.foldY).toBe(WALL_H_PERIMETER); // it really is the tall tier
-    const seg = blocks(rb).find((e) => e.zIndex === ROOM + 32)!;
+    const seg = blocks(rb).find((e) => e.zIndex === 232)!;
     const deepLayers = seg.children.filter((c) => c.label === 'xray-deep');
     expect(deepLayers.length).toBe(2); // the face and the shading over it
     const silhouette = seg.children.filter((c) => c.label !== 'xray' && c.label !== 'xray-deep');
     const silBefore = silhouette.map((c) => c.alpha);
 
     // stand one clearance north of the run's footprint: the whole body is below the fold
-    settle(rb, { x: 200, y: ROOM - fpToPx(PLAYER_BASE.solidRadius), halfW: 13, bodyH: 32 });
+    settle(rb, { x: 48, y: 200 - fpToPx(PLAYER_BASE.solidRadius), halfW: 13, bodyH: 32 });
     expect(boundary.cap.fade).toBeLessThan(0.5);
     expect(boundary.deep.fade).toBeLessThan(0.5);
     for (const c of deepLayers) expect(c.alpha).toBeLessThan(0.5);

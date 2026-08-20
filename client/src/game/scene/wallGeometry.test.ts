@@ -66,13 +66,47 @@ describe('wallTier', () => {
     expect(wallTier({ x: 0, y: 0, w: 128, h: 32 }, [])).toBe('perimeter');
   });
 
-  it('picks the containing room out of several, so one room\'s south edge does not kerb another\'s north wall', () => {
+  it('kerbs the north wall of a room that has another room STACKED ABOVE it', () => {
+    // Reversed 2026-08-20, and the reversal is what this pass is. The case used to assert
+    // 'perimeter' on the grounds that the wall belongs to the SOUTH room and is that room's
+    // own north edge. Both halves of that are true and it is still the wrong answer: the wall
+    // stands one grid row south of the NORTH room's floor, which is exactly the ground the
+    // kerb tier exists to keep clear, and at `WALL_H_PERIMETER` its art rose 72 px into it.
+    // Whose wall it is does not change where it stands.
     const north: RectPx = { x: 0, y: 0, w: 480, h: 480 }; // rooms stacked vertically
     const south: RectPx = { x: 0, y: 480, w: 480, h: 480 };
-    // The south room's north wall sits at y=480..512 — which is exactly the NORTH room's
-    // south edge. Resolved against its own room (the south one) it is a full-height
-    // perimeter; against the wrong one it would drop to a kerb.
-    expect(wallTier({ x: 0, y: 480, w: 480, h: 32 }, [north, south])).toBe('perimeter');
+    expect(wallTier({ x: 0, y: 480, w: 480, h: 32 }, [north, south])).toBe('kerb');
+    // ...and the north room's own south wall, the other half of the same boundary, still
+    // kerbs for the original reason. A shared boundary is low on both sides or on neither.
+    expect(wallTier({ x: 0, y: 448, w: 480, h: 32 }, [north, south])).toBe('kerb');
+  });
+
+  it('leaves a north wall at FULL height when the room above does not overlap it', () => {
+    // The other side of the same rule, and what stops it flattening the content wholesale:
+    // "a room's floor is immediately north of me" means a real horizontal overlap, not a
+    // shared corner. Rooms sit edge to edge on these floors, and a plan where every north
+    // wall dropped to 22 px would be the flat-room report all over again.
+    const room: RectPx = { x: 0, y: 480, w: 480, h: 480 };
+    const northEast: RectPx = { x: 480, y: 0, w: 480, h: 480 }; // above the room NEXT DOOR
+    expect(wallTier({ x: 0, y: 480, w: 480, h: 32 }, [northEast, room])).toBe('perimeter');
+    // A room BELOW cannot kerb anything either — the rule is about floor to the NORTH only.
+    const below: RectPx = { x: 0, y: 960, w: 480, h: 480 };
+    expect(wallTier({ x: 0, y: 480, w: 480, h: 32 }, [room, below])).toBe('perimeter');
+  });
+
+  it('allows the same slack on a boundary abutted from the SOUTH', () => {
+    // Clause (b) of the kerb rule is an EQUALITY between two independently converted numbers —
+    // the wall's own y and the room's south bound — so it needs the same fixed-point slack every
+    // other edge test here gets. A strict equality would work on this content (whole grid cells
+    // throughout) and break the first time a piece is authored at a fractional offset, which is
+    // exactly the class of failure `EDGE_TOLERANCE` exists for.
+    const above: RectPx = { x: 0, y: 0, w: 480, h: 477 }; // south bound 3 px shy of the wall
+    const below: RectPx = { x: 0, y: 480, w: 480, h: 480 };
+    expect(wallTier({ x: 0, y: 480, w: 480, h: 32 }, [above, below])).toBe('kerb');
+    // ...and a full grid cell of separation is a real gap, not slack: there is a corridor between
+    // these two rooms, so the lower room's north wall is a proper boundary again.
+    const farAbove: RectPx = { x: 0, y: 0, w: 480, h: 448 };
+    expect(wallTier({ x: 0, y: 480, w: 480, h: 32 }, [farAbove, below])).toBe('perimeter');
   });
 
   it('allows a grid cell of slack at every edge, for the fixed-point → px conversion', () => {

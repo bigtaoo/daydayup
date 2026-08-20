@@ -2853,8 +2853,10 @@ untagged **3**, `blockCapTop` ignoring the tuck clip **4**, `pillarArtExtent` fo
 overhang **1**, flattening the authored alphas **2**.
 
 **Follow-up worth a separate look**, both found by the sweep and neither touched here: the kerb
-rule being defeated for a shared room boundary (above), and four **16 px-deep** wall runs in the
-shipped level-1 content where every other wall is a full 32.
+rule being defeated for a shared room boundary (above) — **closed the same day, see "The wall
+between two rooms was standing on the wrong floor" below** — and four **16 px-deep** wall runs in
+the shipped level-1 content where every other wall is a full 32 — **both closed the same day**, the
+second by the door-alignment pass immediately below.
 
 **The 16 px wall runs: fixed 2026-08-20** (`ENGINE_VERSION` 43 -> 44). Neither an art bug nor a
 `mergeWallRuns` artifact — they are born in `buildFloorGeometry`, and `carveDoorGaps` is doing
@@ -2914,6 +2916,115 @@ silhouette numbers) rather than staying in `Actor.ts`, which is now at exactly 5
 feature that needs a line there has to split it. And `blockCapTop` went to `wallRuns.ts` rather than
 `wallRender.ts`, which had crossed to 503: the clip it applies is a JOIN property (the whole rule is
 about what the neighbouring mass is holding), so `wallRuns` owns it and `wallRender` is back to 489.
+
+---
+
+## The wall between two rooms was standing on the wrong floor (2026-08-20, client-only)
+
+Closing the follow-up the previous entry left open. `wallGeometry.wallTier` decided a wall's height
+from the one room the wall's **centre** falls in, so "am I a south boundary?" could only ever be
+asked about that one room. Where two rooms stack vertically the boundary between them is *two*
+walls, one grid row apart, authored by two different rooms: the upper room's own south wall kerbed
+correctly at 22 px, and the lower room's north wall answered *"I am my room's north edge"* and stood
+at the full 104 px — one row south of the exact floor the kerb tier exists to keep clear. A block's
+art rises from its own north edge, so it reached a measured **72 px into the room above**. 22 runs
+of it, on all five shipped floors, including every extraction room's approach.
+
+**The premise the report came in with was half wrong, and checking it first changed the fix.** The
+report said `mergeWallRuns` was merging the two halves into one run whose centre lands in the lower
+room. It is not: tiering runs per authored rect and *before* the merge, and on floor 0 the two
+halves reach `RoomBuilder` as a correctly-kerbed `r4_forge` south wall and a wrongly-perimeter
+`r5_extraction` north wall — two runs, never merged, because a cross-tier merge is already refused.
+So there was nothing to split. The bug was entirely in the predicate, and the ordering the report
+flagged as the obstacle is what makes the fix work without a splitting pass.
+
+**The rule now states what the design intent always meant**: a wall is a kerb when a room's FLOOR
+lies immediately north of it, whoever authored the wall (`framesFloorFromSouth`). That is one
+predicate covering both halves of a shared boundary and it strictly generalizes the old test — a
+room's own south wall is the case where the room to the north is the wall's own room. Two shapes
+qualify: the wall sits inside a room with its south edge on the room's, or the wall's north edge IS
+a room's south bound. Horizontal overlap has to be a real overlap and not a shared corner, or every
+north wall on a floor of edge-to-edge rooms would flatten.
+
+**Per-rect granularity is what makes splitting unnecessary.** Every room authors its own four
+perimeter walls, so a boundary arrives as two independently-tiered rects, and different tiers never
+merge. Floor 2's `r5_bastion` and `r4_furnace` sit side by side and author one collinear north
+boundary, but only `r4_furnace` has a room above it — the tall half survives, where under the old
+rule the two were a single 32-cell perimeter run. What stays approximate is a rect only *partly*
+covered by the room above (`r2_kiln`'s north wall overhangs `r1_alcove` by one cell at each end):
+the whole rect drops. Splitting that would put a 104 px stub beside a 22 px kerb at a join already
+buried in the room's own west/east corner — a worse artifact than the uniform low run, for 32 px of
+wall.
+
+**Measured over level 1** (`occlusionCoverage.test.ts`, the same 97,803-sample sweep that found the
+bug, re-run with the fix stashed and unstashed):
+
+| | with the tier bug | as shipped |
+|---|---|---|
+| at least half the character hidden, before the x-ray | 8.5% | **5.4%** |
+| character **completely** invisible, before the x-ray | 5.5% | **3.3%** |
+| needs the deep fade pass | 1.2% | **0.2%** |
+| samples where a *perimeter* run fires the x-ray | 4,626 | **1,574** |
+| runs by tier, all five floors | 105 / 34 / 37 | **86 / 34 / 53** |
+
+A third of the blind floor on level 1 and two thirds of the deep-fade cases were one wall standing
+at the wrong height. The x-ray still earns its place — it is what makes the remaining 5.4% visible,
+and it is what found this — but it was doing work a correct tier does not need done. The worst-case
+residual (43.8% hidden) and the 88 samples that need the deep pass did **not** move: those come
+from north-south runs whose north end is an open door passage, which the tier rule does not reach.
+(88, not the 148 the previous entry recorded — the door-alignment fix that landed on `main` the same
+day removed the four 16 px-deep runs that were the deep pass's worst case. Every number in this
+entry is measured on the content AFTER that fix, both columns.)
+
+**Measured on a live frame, not only in the sweep.** Floor 0, the `r4_forge`/`r5_extraction`
+boundary, player teleported to world (350, 496) — one clearance north of the upper room's own
+kerb — and a vertical luma scan down world x=350 through `extract.canvas({target: layers.world})`,
+with the fix stashed and unstashed at identical framing:
+
+| world y | with the tier bug | as shipped |
+|---|---|---|
+| 420–436 | 39 (floor) | 39 (floor) |
+| 440 | **94 — stone starts** (544 − 104, the perimeter art top) | 35 (still floor) |
+| 460–488 | 54–75 (stone, x-rayed) | 37–45 (floor and the body over it) |
+| 492 | 61 | **79 — stone starts** (512 − 22, the kerb art top) |
+
+50 px of the upper room's floor at that x goes back to being floor, and the block the character was
+standing inside is a lip they stand clearly above. The before-frame is also the visual signature of
+the x-ray carrying a tier bug: the character reads as being behind glass, because a room boundary is
+being dissolved every time the player walks up to it.
+
+**PvP is untouched, and worth writing down so nobody re-checks it.** `buildArenaGeometry` derives
+walls only from each room's `solids`, and every room in `arena_prototype_60` has `solids: []` — the
+60-room arena is pillars and floor, zero wall runs. Its rows are also 2 grid cells apart rather than
+flush, so even if it grew walls, clause (b) would not fire on them.
+
+**Tests: 5 changed, 3 new, all mutation-verified.** Two `wallGeometry.test.ts` cases replace the one
+that asserted the old answer (the reversal, plus the over-firing guard: a room *above the room next
+door* must not kerb anything). Two in `RoomBuilder.test.ts` — the stacked boundary now draws as one
+low 64 px-deep mass, and the cross-tier merge refusal moved to a pair that really is cross-tier (a
+north perimeter wall with an interior solid flush beneath it), because the old fixture's pair is
+now same-tier by design. One more in `wallGeometry.test.ts` for clause (b)'s
+fixed-point slack, because that clause is an equality between two independently converted numbers
+and a strict version would work on this content (whole grid cells throughout) and break on the
+first fractional offset. Two new sweeps in `wallComposition.test.ts`: nothing along a stacked-room
+boundary reaches further into the room above than one kerb's worth — stated against `WALL_H_KERB`
+with no literal heights, and with the room's floor limit read out of the content rather than
+assumed to be one grid row; and its counterweight, that a north wall the room above only partly
+covers keeps its uncovered half tall.
+
+**The first version of that sweep had the bug it was written to catch.** Keyed off "a run whose
+north edge is a room's south bound", it never matched the three boundaries whose two halves MERGE
+into one 64 px-deep kerb (floor 2 `r5_bastion`, floor 3 `r3_crucible`, floor 4 `r5_boss`) — those
+were skipped in silence while the other eight passed, which is the same shape as every bug in the
+previous entry: a check that looks green because it is not looking. Rewritten to enumerate the
+boundaries from the **room rects** (11 of them, pinned as a count, with every one required to have
+stone along it), so a merge cannot make coverage vanish. Proof it now reaches them: letting
+`mergeWallRuns` merge across tiers fails at floor 3's boundary at y=608 — a merged one.
+
+Mutations caught: the fix reverted **5**, clause (b) alone removed **5**, the x-overlap guard
+dropped **3**, `EDGE_TOLERANCE` set to 0 **2**, a cross-tier merge allowed **1**, a shared corner
+counting as an overlap **1**, the "wall is flush with the room's south bound" test loosened back to
+one-sided **1**.
 
 ---
 

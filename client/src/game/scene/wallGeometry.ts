@@ -24,11 +24,16 @@ export interface RectPx {
  * - `WALL_H_INTERIOR` — a free-standing block or stub inside the room. Deliberately still
  *   the number the pillars use (`RoomBuilder.buildPillars`), so a block and a pillar
  *   standing side by side agree on how tall "tall" is.
- * - `WALL_H_KERB` — the room's SOUTH boundary only. It cannot have a real height: it sits
- *   between the camera and the player it is framing, and anything tall there hides the
- *   character. A low kerb still reads as a raised lip and still casts a shadow, and is
- *   provably safe — the player's own collision radius keeps their ground point at least a
- *   wall thickness north of the south edge, so a kerb this short can never reach them.
+ * - `WALL_H_KERB` — a wall with a room's FLOOR immediately north of it. It cannot have a real
+ *   height: it sits between the camera and the player it is framing, and anything tall there
+ *   hides the character. A low kerb still reads as a raised lip and still casts a shadow, and
+ *   is provably safe, and the operative number is the CLEARANCE rather than the wall's depth:
+ *   the player cannot overlap the wall, so their ground point stays `PLAYER_BASE.solidRadius`
+ *   (16 px) north of the kerb's own north edge, and a 22 px lip therefore reaches at most 6 px
+ *   up a body drawn 20-48 px tall — under the fraction `occlusion.ts` fades on, whatever the
+ *   wall's thickness happens to be (`occlusion.test.ts` pins that arithmetic). Note
+ *   this is not "the room's south boundary": where two rooms stack vertically the boundary is
+ *   two walls, authored by two rooms, and BOTH are kerbs — see `wallTier`.
  */
 export const WALL_H_PERIMETER = 104;
 export const WALL_H_INTERIOR = 70;
@@ -66,8 +71,31 @@ export type WallTier = 'perimeter' | 'interior' | 'kerb';
  * `rooms` is the floor's room rects (`GameState.dungeonRoomRects`/`arenaRoomRects`,
  * converted to px). Modes that populate neither (flat `EngineConfig.floors`) pass the world
  * rect as the single room, which gives the identical answer for a one-room world.
+ *
+ * **The kerb test runs over EVERY room, not just the one this wall stands in** (2026-08-20).
+ * Until then the whole function keyed off the single room the wall's CENTRE fell in, so
+ * "am I a south boundary?" could only ever be asked about that one room — and on a floor
+ * with two vertically stacked rooms, the wall a player looks south across is not one wall
+ * but two: the upper room's own south wall (its last grid row) and, one row further south,
+ * the lower room's north wall. The first was correctly a kerb; the second answered "I am my
+ * room's north edge" and stood at full `WALL_H_PERIMETER`, one row south of the exact floor
+ * the kerb exists to keep clear. Its art rises `WALL_H_PERIMETER` px above its own north
+ * edge, so it covered a measured 72 px of the upper room's floor — on all five shipped
+ * floors, 24 runs of it (`occlusionCoverage.test.ts` swept it out). `occlusion.ts`'s x-ray
+ * then had to dissolve it to keep the player visible, which is work a correct tier does not
+ * need doing.
+ *
+ * So the rule is now stated the way the design intent always meant it: a wall is a kerb when
+ * a room's FLOOR lies immediately north of it, whoever authored the wall — see
+ * `framesFloorFromSouth`. That is one predicate covering both halves of a shared boundary,
+ * and it strictly generalizes the old `onSouth` check (a room's own south wall is the case
+ * where the room north of the wall is the wall's own room).
  */
 export function wallTier(wall: RectPx, rooms: readonly RectPx[]): WallTier {
+  // Kerb first, and over every room: the answer must not depend on which room claims the
+  // wall's centre, because a shared boundary's two halves fall in two different rooms.
+  if (rooms.some((room) => framesFloorFromSouth(wall, room))) return 'kerb';
+
   const cx = wall.x + wall.w / 2;
   const cy = wall.y + wall.h / 2;
   const room = rooms.find((r) => cx >= r.x && cx <= r.x + r.w && cy >= r.y && cy <= r.y + r.h);
@@ -76,13 +104,49 @@ export function wallTier(wall: RectPx, rooms: readonly RectPx[]): WallTier {
   // corridor IS a boundary on both sides, and it is never the thing the camera is framing.
   if (!room) return 'perimeter';
 
-  const onSouth = wall.y + wall.h >= room.y + room.h - EDGE_TOLERANCE;
-  if (onSouth) return 'kerb';
-
   const onNorth = wall.y <= room.y + EDGE_TOLERANCE;
   const onWest = wall.x <= room.x + EDGE_TOLERANCE;
   const onEast = wall.x + wall.w >= room.x + room.w - EDGE_TOLERANCE;
   return onNorth || onWest || onEast ? 'perimeter' : 'interior';
+}
+
+/**
+ * Does `room`'s floor lie immediately north of this wall — i.e. would anything tall here
+ * stand between the camera and a player standing on that floor?
+ *
+ * Two shapes qualify, and they are the two halves of a boundary between vertically adjacent
+ * rooms (`ember_l1` floor 0's `r4_forge`/`r5_extraction`, and six more pairs across the five
+ * shipped floors):
+ *
+ *   (a) the wall IS that room's own south boundary — it sits inside the room with its south
+ *       edge on the room's, which is the case the original `onSouth` check covered;
+ *   (b) the wall ABUTS that boundary from the far side — its NORTH edge is the room's south
+ *       bound, so the only thing between it and that room's floor is the room's own south
+ *       wall, one grid row thick. `WALL_H_KERB + one row` still clears the floor; nothing
+ *       taller does.
+ *
+ * Horizontal overlap has to be a real overlap, not a shared corner: two rooms side by side
+ * touch along a whole edge, and a room's east wall must not be dropped to a kerb because the
+ * room beyond it happens to end at that wall's north edge.
+ *
+ * Granularity is per authored rect, which is why nothing has to be split apart afterwards:
+ * every room authors its own four perimeter walls (`world/rooms/ember.ts perimeterWalls`), so
+ * a boundary reaches this function as two rects that get their own answers, and `RoomBuilder`
+ * tiers before it merges — two different tiers simply never merge (`mergeWallRuns`). On floor
+ * 3 that is what keeps `r1_furnace`'s north wall at full height while `r2_bastion`'s, which
+ * really does have `r3_crucible` above it, drops: under the old rule the two had merged into
+ * one 24-cell perimeter run. What stays approximate is a single rect only PARTLY covered by
+ * the room above (`r2_kiln`'s north wall overhangs `r1_alcove` by one cell at each end): the
+ * whole rect drops. Splitting it would put a 104 px stub beside a 22 px kerb at a join that is
+ * already buried in the room's own west/east corner — a worse artifact than the uniform low
+ * run, for 32 px of wall.
+ */
+function framesFloorFromSouth(wall: RectPx, room: RectPx): boolean {
+  const overlapX = Math.min(wall.x + wall.w, room.x + room.w) - Math.max(wall.x, room.x);
+  if (overlapX <= EDGE_TOLERANCE) return false;
+  const south = room.y + room.h;
+  if (wall.y >= room.y - EDGE_TOLERANCE && Math.abs(wall.y + wall.h - south) <= EDGE_TOLERANCE) return true;
+  return Math.abs(wall.y - south) <= EDGE_TOLERANCE;
 }
 
 /** World-px height for a tier. */
