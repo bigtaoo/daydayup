@@ -49,7 +49,7 @@
       "roomA": "r1_gallery",
       "roomB": "r2_kiln",
       "passageGrid": {
-        "x": 48.5,
+        "x": 48,
         "y": 17,
         "w": 4,
         "h": 2
@@ -69,7 +69,7 @@
       "roomA": "r3_court",
       "roomB": "r4_furnace",
       "passageGrid": {
-        "x": 32.5,
+        "x": 32,
         "y": 34,
         "w": 4,
         "h": 2

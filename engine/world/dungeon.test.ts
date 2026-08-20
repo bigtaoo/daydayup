@@ -442,6 +442,42 @@ describe('placeFloor', () => {
     expect(seenY.size).toBeGreaterThan(1);
   });
 
+  /**
+   * Every field of a drawn passage lands on a whole grid cell (`ENGINE_VERSION` 44).
+   * This is not cosmetic. `DOOR_EDGE_MARGIN_GRID` is 1.5 and the anchor step is
+   * `span / 4`, so an unsnapped anchor can land on a HALF or a QUARTER cell —
+   * `carveDoorGaps` then cuts a correspondingly misaligned hole, and whatever is
+   * left of the wall run past it inherits the offset as its own depth. That is how
+   * shipped level-1 content ended up with four 32x16 wall runs where every other
+   * wall on all five floors is a full 32x32 (see
+   * `world/rooms/emberLevel1.test.ts`'s "no wall run is thinner than one grid
+   * cell"). Swept over both placement paths and every direction `placeFloorGraph2d`
+   * can hop in, because the two used to carry separate copies of this math.
+   */
+  it("a drawn door's passageGrid lands on whole grid cells, on both placement paths", () => {
+    const seeds = [1, 100000, 5000000, 999999999, 123456789, 555555555, 42, 7, 88888, 314159265];
+    const offenders: string[] = [];
+    for (const seed of seeds) {
+      const linear = new Prng(seed);
+      linear.nextInt(1000); // same warmup convention as the spread test above
+      const graph = new Prng(seed);
+      graph.nextInt(1000);
+      const drawn = [
+        ...placeFloor([HALL, NARROW, EXTRACTION], linear).doors,
+        // CROSS carries all four exits, so this chain exercises north/south hops
+        // (band = X overlap) as well as the east/west ones placeFloor covers.
+        ...placeFloorGraph2d([HALL, CROSS, NARROW, EXTRACTION], graph).doors,
+      ];
+      expect(drawn.length).toBeGreaterThan(0);
+      for (const door of drawn) {
+        for (const [field, value] of Object.entries(door.passageGrid)) {
+          if (!Number.isInteger(value)) offenders.push(`seed ${seed}: passageGrid.${field} = ${value}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+
   it('is deterministic for a given seed', () => {
     const a = placeFloor([HALL, CROSS, NARROW], new Prng(9));
     const b = placeFloor([HALL, CROSS, NARROW], new Prng(9));
@@ -995,6 +1031,39 @@ describe('buildFloorGeometry', () => {
     const geo = buildFloorGeometry(placed, doors);
     expect(geo.worldW).toBe(toFpGrid(HALL.sizeGrid.w + NARROW.sizeGrid.w));
     expect(geo.worldH).toBe(toFpGrid(Math.max(HALL.sizeGrid.h, NARROW.sizeGrid.h)));
+  });
+
+  /**
+   * The authored-floor twin of this lives in `world/rooms/emberLevel1.test.ts` and
+   * is the gate the four 16 px-deep wall runs actually needed. This is the same
+   * property on the GENERATED path, asserted on the stitched output rather than on
+   * the passage rects that feed it: integral passages are the mechanism, but "no
+   * wall run comes out thinner than one grid cell" is the thing the standing-wall
+   * art depends on, and it can also be broken from the other side — a fractional
+   * `solids` rect or a half-cell room offset would land here too.
+   */
+  it('no wall run out of a generated floor is thinner than one grid cell, or lands off-grid', () => {
+    const offenders: string[] = [];
+    for (const seed of [1, 100000, 5000000, 999999999, 123456789, 555555555, 42, 7, 88888, 314159265]) {
+      const linear = new Prng(seed);
+      linear.nextInt(1000);
+      const graph = new Prng(seed);
+      graph.nextInt(1000);
+      for (const [label, placement] of [
+        ['placeFloor', placeFloor([HALL, NARROW, EXTRACTION], linear)],
+        ['placeFloorGraph2d', placeFloorGraph2d([HALL, CROSS, NARROW, EXTRACTION], graph)],
+      ] as const) {
+        const { walls } = buildFloorGeometry(placement.placed, placement.doors);
+        expect(walls.length).toBeGreaterThan(0);
+        const cell = toFpGrid(1);
+        for (const w of walls) {
+          if (w.w < cell || w.h < cell || [w.x, w.y, w.w, w.h].some((v) => v % cell !== 0)) {
+            offenders.push(`${label} seed ${seed}: ${w.w / cell}x${w.h / cell} @ (${w.x / cell}, ${w.y / cell})`);
+          }
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
   });
 
   it('a carved door is a real, walkable hole — open at its own center, still solid elsewhere along the same wall', () => {

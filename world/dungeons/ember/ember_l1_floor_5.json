@@ -48,7 +48,7 @@
       "roomB": "r3_rampart",
       "passageGrid": {
         "x": 39,
-        "y": 33.5,
+        "y": 33,
         "w": 2,
         "h": 4
       }
@@ -58,7 +58,7 @@
       "roomB": "r4_caldera",
       "passageGrid": {
         "x": 19,
-        "y": 33.5,
+        "y": 33,
         "w": 2,
         "h": 4
       }
@@ -67,7 +67,7 @@
       "roomA": "r4_caldera",
       "roomB": "r5_boss",
       "passageGrid": {
-        "x": 14.5,
+        "x": 14,
         "y": 19,
         "w": 4,
         "h": 2

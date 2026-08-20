@@ -7,7 +7,8 @@ import type { Prng } from '../../math/prng';
 import type { AabbGrid } from '../../content/rooms';
 import type { Door, RoomId } from '../../content/arenas';
 import type { FloorStage, PlacedRoom } from './types';
-import { BRANCH_GAP_GRID, DOOR_ANCHOR_COUNT, DOOR_EDGE_MARGIN_GRID, DOOR_WIDTH_GRID, ENTRANCE_INSET_GRID } from './placementConstants';
+import { BRANCH_GAP_GRID, DOOR_WIDTH_GRID, ENTRANCE_INSET_GRID } from './placementConstants';
+import { pickPassageStartGrid } from './doorAnchor';
 
 /**
  * Place a floor's already-resolved stage sequence (`generateFloor`'s output)
@@ -121,8 +122,9 @@ export function placeFloor(
 
 /** Draw one door's `passageGrid` between two directly-adjacent rooms (`b` sits
  * immediately east of `a`, same shared boundary X). The candidate band is both
- * rooms' vertical overlap, inset by `DOOR_EDGE_MARGIN_GRID`; `DOOR_ANCHOR_COUNT`
- * evenly-spaced centers are offered and one is drawn — never the band's own
+ * rooms' vertical overlap; `pickPassageStartGrid` insets it, offers
+ * `DOOR_ANCHOR_COUNT` evenly-spaced anchors, draws one, and snaps it to a whole
+ * grid cell (see its own doc for why the snap matters) — never the band's own
  * center outright, so the result is not wall-centered by construction (design/05
  * "~5 positions per wall... a snapping aid, not a constraint baked into the data
  * shape"). The rect spans 1 grid unit into each room (`w: 2`, centered on the
@@ -132,15 +134,11 @@ export function placeFloor(
  * a silent clamp. */
 function pickDoorAnchor(a: PlacedRoom, b: PlacedRoom, roomgenPrng: Prng): AabbGrid {
   const boundaryXGrid = a.offsetXGrid + a.piece.sizeGrid.w; // === b.offsetXGrid
-  const bandLo = Math.max(a.offsetYGrid, b.offsetYGrid) + DOOR_EDGE_MARGIN_GRID;
-  const bandHi = Math.min(a.offsetYGrid + a.piece.sizeGrid.h, b.offsetYGrid + b.piece.sizeGrid.h) - DOOR_EDGE_MARGIN_GRID;
-  const span = bandHi - bandLo - DOOR_WIDTH_GRID;
-  if (span < 0) {
+  const overlapLo = Math.max(a.offsetYGrid, b.offsetYGrid);
+  const overlapHi = Math.min(a.offsetYGrid + a.piece.sizeGrid.h, b.offsetYGrid + b.piece.sizeGrid.h);
+  const startYGrid = pickPassageStartGrid(overlapLo, overlapHi, roomgenPrng);
+  if (startYGrid === null) {
     throw new Error(`placeFloor: rooms '${a.id}'/'${b.id}' are too small/mismatched to fit a door`);
   }
-  const candidateCount = span === 0 ? 1 : DOOR_ANCHOR_COUNT;
-  const step = candidateCount > 1 ? span / (candidateCount - 1) : 0;
-  const chosen = roomgenPrng.nextInt(candidateCount); // the ONE draw this door costs
-  const centerYGrid = bandLo + DOOR_WIDTH_GRID / 2 + step * chosen;
-  return { x: boundaryXGrid - 1, y: centerYGrid - DOOR_WIDTH_GRID / 2, w: 2, h: DOOR_WIDTH_GRID };
+  return { x: boundaryXGrid - 1, y: startYGrid, w: 2, h: DOOR_WIDTH_GRID };
 }

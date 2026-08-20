@@ -83,7 +83,7 @@
       "roomA": "r5_caldera",
       "roomB": "r6_extraction",
       "passageGrid": {
-        "x": 12.5,
+        "x": 12,
         "y": 19,
         "w": 4,
         "h": 2

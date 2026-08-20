@@ -218,6 +218,26 @@ describe('validateDungeonFloorMap (design/05 "Hand-authored PvE floors", 2026-08
     expect(issues.some((i) => i.message.includes('does not sit on a real shared wall'))).toBe(true);
   });
 
+  // A half-cell passage is not a cosmetic slip: `carveDoorGaps` cuts a
+  // correspondingly misaligned hole and the tail of the wall run past it inherits
+  // the offset as its own DEPTH. Four wall runs in shipped level-1 content stood
+  // 16 px deep that way, under a 104 px-tall perimeter run, before
+  // `ENGINE_VERSION` 44. The door tool only ever produces whole cells; this is the
+  // gate on a value typed into the Inspector's numeric passageGrid fields by hand.
+  it('rejects a door whose passageGrid lands on a half cell', () => {
+    const map = makeFloor({ doors: [{ roomA: 'a', roomB: 'b', passageGrid: { x: 10, y: 3.5, w: 1, h: 4 } }] });
+    const issues = validateDungeonFloorMap(map, FLOOR_LIB);
+    expect(issues.some((i) => i.message.includes('off the grid'))).toBe(true);
+  });
+
+  it('rejects a door whose passageGrid has a zero or fractional extent', () => {
+    for (const bad of [{ w: 0, h: 4 }, { w: 1.5, h: 4 }, { w: 1, h: 0 }]) {
+      const map = makeFloor({ doors: [{ roomA: 'a', roomB: 'b', passageGrid: { x: 10, y: 3, ...bad } }] });
+      const issues = validateDungeonFloorMap(map, FLOOR_LIB);
+      expect(issues.some((i) => i.message.includes('off the grid')), JSON.stringify(bad)).toBe(true);
+    }
+  });
+
   it('rejects a room unreachable from the entrance room (rooms[0]) via the door graph', () => {
     const map = makeFloor({
       rooms: [

@@ -287,6 +287,12 @@ describe.each(FLOOR_INDICES)('floor %i door passability', (index) => {
       const a = rect(door.roomA);
       const b = rect(door.roomB);
       const p = door.passageGrid;
+      // Whole cells, not half ones. Nine authored passages carried a `.5` until
+      // `ENGINE_VERSION` 44 — see the "no wall run is thinner than one grid cell"
+      // test below for what that actually cost.
+      for (const [field, value] of Object.entries(p)) {
+        expect(Number.isInteger(value), `${door.roomA}/${door.roomB} passageGrid.${field} = ${value}`).toBe(true);
+      }
       const vertical = a.x + a.w === b.x || b.x + b.w === a.x;
       const horizontal = a.y + a.h === b.y || b.y + b.h === a.y;
       expect(vertical || horizontal, `${door.roomA}/${door.roomB} do not touch`).toBe(true);
@@ -324,6 +330,33 @@ describe.each(FLOOR_INDICES)('floor %i door passability', (index) => {
       }
     }
     expect([...map.rooms.map((r) => r.id)].filter((id) => !reached.has(id))).toEqual([]);
+  });
+
+  /**
+   * The gate the four 16 px-deep wall runs actually needed (`ENGINE_VERSION` 44).
+   * Every check above passed while they shipped: the pieces' own `solids` are all
+   * whole cells, every door sat on a real shared wall, and every room stayed
+   * reachable — the sub-cell walls were BORN in `buildFloorGeometry`, where
+   * `carveDoorGaps` cut a half-cell-misaligned hole and the tail of the wall run
+   * past it came out 0.5 cells deep.
+   *
+   * So this asserts the property on the stitched output rather than on any input,
+   * and asserts the CLASS (no wall thinner than one cell, none off-grid) rather
+   * than the four instances — a hole misaligned some other way, or by some other
+   * amount, fails here too. Why it matters past tidiness: a 16 px footprint under
+   * a 104 px-tall perimeter run puts a cap band on a third of the depth every wall
+   * tone was measured on (design/01-rendering.md "A north-south run is not an
+   * east-west wall"), and it is the geometry that made the occlusion x-ray need
+   * its second, face-fading pass at all.
+   */
+  it('no wall run in the stitched geometry is thinner than one grid cell, or lands off-grid', () => {
+    const { placed, doors } = placeAuthoredFloor(map, EMBER_L1_ROOMS as readonly RoomPiece[]);
+    const { walls } = buildFloorGeometry(placed, doors);
+    const offenders = walls
+      .filter((w) => w.w < FP_SCALE || w.h < FP_SCALE || [w.x, w.y, w.w, w.h].some((v) => v % FP_SCALE !== 0))
+      .map((w) => `${w.w / FP_SCALE}x${w.h / FP_SCALE} @ (${w.x / FP_SCALE}, ${w.y / FP_SCALE})`);
+    expect(offenders).toEqual([]);
+    expect(walls.length).toBeGreaterThan(0); // the filter is only meaningful over real content
   });
 
   it('every entrance and every spawn point is physically walkable from the spawn room', () => {

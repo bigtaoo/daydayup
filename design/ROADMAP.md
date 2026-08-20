@@ -56,13 +56,21 @@ move, fire, or even turn), and enemy move speed 4 → 2.6 px/tick. See the "Room
 section below and `ENGINE_VERSION_HISTORY.md`'s v42 entry; 43: the player stops at its own
 body radius against a wall or a pillar (`Actor.solidRadius`, split off `footprintRadius`,
 which keeps its old job and value for actor↔actor push-out) — see the "Sunk into the wall"
-section below and `ENGINE_VERSION_HISTORY.md`'s v43 entry.
-Render-only since (no `ENGINE_VERSION` bump — 🟢): 2026-08-19's four-report wall-corner pass, and
-2026-08-20's occlusion x-ray — a standing block or pillar drawing over the local player fades out
-of the way, from a report that the character *"跑到墙下面去了"*; the coverage sweep it produced
+section below and `ENGINE_VERSION_HISTORY.md`'s v43 entry; 44: a door's passage rect lands on a
+whole grid cell. `DOOR_EDGE_MARGIN_GRID` is 1.5 and the anchor step is `span / 4`, so a drawn
+passage could sit on a HALF or a QUARTER cell; `carveDoorGaps` cuts exactly what the rect says, so
+whatever was left of the wall run past the gap inherited the offset as its own DEPTH. That is why
+four runs in shipped level-1 content stood 16 px deep where every other wall on all five floors is
+a full 32 — the worst case for the standing-wall tones, and the geometry that made the occlusion
+x-ray need its face-fading pass. The snap now lives in one shared `world/dungeon/doorAnchor.ts`
+instead of a verbatim copy in each of the two placement functions. See "The 16 px wall runs" below
+and `ENGINE_VERSION_HISTORY.md`'s v44 entry.
+Render-only in between (no `ENGINE_VERSION` bump — 🟢): 2026-08-19's four-report wall-corner pass,
+and 2026-08-20's occlusion x-ray — a standing block or pillar drawing over the local player fades
+out of the way, from a report that the character *"跑到墙下面去了"*; the coverage sweep it produced
 (`occlusionCoverage.test.ts`) measured 5.5% of level 1's standable floor as having made the player
 *completely* invisible, and none of it leaves more than half hidden now. See "The character
-disappeared behind a wall" below.
+disappeared behind a wall" below. That sweep is also what turned up v44's four wall runs.
 Earlier, also render-only (no `ENGINE_VERSION` bump — 🟢): the DEFEAT/VICTORY result
 screen's confirm gesture changed from tap-anywhere-on-the-panel (plus a raw fire-button
 rising edge, `confirmEdge.ts`, now deleted) to a single explicit CONFIRM `Button` — the same
@@ -2847,6 +2855,58 @@ overhang **1**, flattening the authored alphas **2**.
 **Follow-up worth a separate look**, both found by the sweep and neither touched here: the kerb
 rule being defeated for a shared room boundary (above), and four **16 px-deep** wall runs in the
 shipped level-1 content where every other wall is a full 32.
+
+**The 16 px wall runs: fixed 2026-08-20** (`ENGINE_VERSION` 43 -> 44). Neither an art bug nor a
+`mergeWallRuns` artifact — they are born in `buildFloorGeometry`, and `carveDoorGaps` is doing
+exactly the right rect-difference against a hole that is misaligned by half a cell. `DOOR_EDGE_
+MARGIN_GRID` is 1.5, so the anchor band's own bounds are half-integers and the anchor step
+(`span / 4`) is a quarter-integer; nothing downstream ever snapped the result, so a passage rect
+could land on a half or even a QUARTER cell, and whatever was left of the wall run past the gap
+inherited the offset as its own depth. Nine of level-1's 24 authored doors carried a `.5` (the seed
+generator's `Math.round` on the centre was undone by a clamp back to `bandHi - 2`, itself a
+half-integer); the procedural path had no rounding at all and was worse — 33 fractional passages
+across a 10-seed sweep, quarter-cells included.
+
+Fixed in three places, because one of them alone would have left the hole open: the drawn anchor is
+snapped in a new shared `world/dungeon/doorAnchor.ts` (the copy of this math that `pickDoorAnchor`
+and `pickDoorAnchor2d` each carried verbatim is now the one thing they share, so a fix cannot land
+on one path and miss the other); the nine authored values are floored to whole cells as DATA, which
+is what actually removes the four runs from a real run (a level-1 floor is placed by
+`placeAuthoredFloor` and draws nothing, so the engine half is inert for it); and the map editor's
+save gate now rejects a hand-typed fractional `passageGrid`, which it never did even while it held
+`solids` to whole cells. `DOOR_EDGE_MARGIN_GRID` itself stays 1.5 — it is the fit threshold, and no
+integer value satisfies both halves of what the tests already pin (a 6-cell shared band must still
+fail to fit a door, an 8-cell one must still offer more than one anchor). Snapping the output needs
+no such trade: rounding outward spends at most half the margin, leaving a full cell — the perimeter
+wall's own thickness — between the gap and the corner block.
+
+**Gates**, all of the class rather than the four instances. `emberLevel1.test.ts` asserts no wall in
+any floor's stitched geometry is thinner than one grid cell or lands off-grid — asserted on the
+OUTPUT, since every existing content check passed while these shipped (the pieces' own `solids` are
+all whole cells, every door sat on a real shared wall, every room stayed reachable);
+`dungeon.test.ts` sweeps both placement paths over ten seeds for the drawn `passageGrid` AND for the
+same no-sub-cell-wall property on the geometry those doors carve, which is also reachable from the
+other side (a fractional `solids` rect or room offset lands there too); and `doorAnchor.test.ts` (8)
+sweeps the module itself over every band length 7..48 x every anchor index x five band origins for
+the claim its doc comment makes and nothing else checked — whole cell, inside the band, a full cell
+of stone clear of BOTH corner blocks — plus the draw count, purity, monotonicity in the anchor
+index, and that the candidate set still reaches both ends of the band.
+
+That last one is worth its own line: it is the only assertion in the set that catches a wrong step
+divisor (`span / DOOR_ANCHOR_COUNT` instead of `span / (DOOR_ANCHOR_COUNT - 1)`), which otherwise
+yields five distinct whole-cell positions with legal clearance — every other test passing — while
+clustering every door toward the near corner.
+
+Mutation counts: deleting the snap fails 3 (with 33 fractional passages across the seed sweep,
+quarter-cells included); the wrong step divisor fails 1; putting a single `.5` back into one floor
+JSON fails 2; the editor gate has its own 2. The two margin mutations are the interesting ones,
+because they are what makes the "no integer margin works" claim above a tested fact rather than an
+assertion: `DOOR_EDGE_MARGIN_GRID = 1` fails 5 (the fit threshold, the two `too small/mismatched`
+fail-loud tests, the draw count, the minimal-band collapse) and `= 2` fails 6 (the threshold again,
+the clearance sweep, monotonicity, and both anchor-variety tests on `placeFloor` and
+`placeFloorGraph2d`).
+
+**Still open**: the kerb rule for a shared room boundary.
 
 **Housekeeping**, both forced by the 500-line gate and both landing where the code belonged anyway:
 the drawn-body measurement went to `Skin.ts` next to `bodyDrawnR` (`Skin` already owns the

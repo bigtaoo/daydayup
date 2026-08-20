@@ -13,7 +13,15 @@ export const DOOR_WIDTH_GRID = 4;
 /** How far a door's center must stay from a room's own top/bottom edge, so a
  * carved gap never lands in (or beside) the corner a room's north/south wall
  * claims. A generic layout margin — this module does not need to know any
- * particular content piece's own wall-authoring convention. */
+ * particular content piece's own wall-authoring convention.
+ *
+ * Deliberately still a HALF cell (`ENGINE_VERSION` 44, 2026-08-20): it is the
+ * fit threshold ("is this shared wall long enough for a door at all"), and
+ * changing it would make room pairs that connect today stop connecting. The
+ * half never reaches the geometry any more — `doorAnchor.ts` snaps the drawn
+ * anchor to a whole grid cell, which is what keeps `carveDoorGaps` from leaving
+ * half-cell wall stubs. Do NOT reintroduce this value into a passage rect
+ * without going back through that snap. */
 export const DOOR_EDGE_MARGIN_GRID = 1.5;
 /** "~5 positions per wall" (design/05) — evenly-spaced candidate anchors a door's
  * center is drawn from, so placement is never wall-centered but also never

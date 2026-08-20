@@ -758,3 +758,64 @@ diverges from that tick — the resting position against a solid moves out by 9 
 stream where no player ever touched a solid is unaffected in principle, but
 `ReplayInputSource` refuses the version outright either way. Enemy-only
 behaviour is unchanged, as is actor-vs-actor push-out for every faction.
+
+v44: a door's passage rect lands on a whole grid cell, from a geometry audit of
+the shipped level-1 content (2026-08-20): four wall runs on floors 2 and 5 came
+out 16 px deep where every other wall on all five floors is a full 32.
+
+  - **`doorAnchor.ts pickPassageStartGrid`** (new module), replacing the anchor
+    draw that `placeFloor.pickDoorAnchor` and `placeFloorGraph2d
+    .pickDoorAnchor2d` each had its own verbatim copy of. Same band, same
+    `DOOR_ANCHOR_COUNT` candidates, same single `roomgenPrng` draw, same
+    fail-loud threshold — the one change is `Math.round` on the drawn anchor.
+
+    Why it was ever fractional: `DOOR_EDGE_MARGIN_GRID` is 1.5, so `bandLo` is a
+    half-integer, and `span / (DOOR_ANCHOR_COUNT - 1)` is a quarter-integer. An
+    unsnapped anchor could therefore land on a half OR a quarter cell, and
+    `carveDoorGaps` — which is doing exactly the right rect-difference — cuts a
+    correspondingly misaligned hole. What is left of the wall run past the hole
+    inherits the offset: a north-south run whose tail ran 0.5 cells past the gap
+    became a 32x16 AABB. Not a clamp anywhere, and not a `mergeWallRuns`
+    artifact; it is born in `buildFloorGeometry`.
+
+    Why it matters past tidiness: a 16 px-deep footprint under a 104 px-tall
+    perimeter run is the worst case for the standing-wall art — a cap band a
+    third of the depth every wall tone was measured on (`design/01-rendering.md`
+    "A north-south run is not an east-west wall") — and it is the geometry that
+    made the occlusion x-ray need its second, face-fading pass at all.
+
+    Why `DOOR_EDGE_MARGIN_GRID` itself stays 1.5: it is the fit threshold, and
+    no integer value satisfies both halves of what the existing tests already
+    pin — a 6-cell shared band must still fail to fit a door (so the margin must
+    exceed 1) and an 8-cell one must still offer more than one distinct anchor
+    (so it must not reach 2). Snapping the OUTPUT needs no such trade: rounding
+    outward spends at most half the margin, which still leaves a full cell — the
+    perimeter wall's own thickness — between the gap and the corner block.
+
+    Determinism: every input to the `Math.round` is a sum of integers, halves and
+    quarters, all exact in binary, so there is no platform-dependent tie-break
+    (design/06). The draw count per door is unchanged at exactly one.
+
+    Shipped content was fixed in the same pass, as data: the nine authored
+    `passageGrid` values in `world/dungeons/ember/ember_l1_floor_{2,3,4,5}.json`
+    that carried a `.5` are floored to whole cells. Those came from the seed
+    generator's own clamp (`genEmberLevel1.mjs doorRect` pulled a rounded centre
+    back to `bandHi - 2`, itself a half-integer), which is fixed to use the same
+    snap. Authored floors cost zero `roomgenPrng` draws, so that half is inert
+    for replay on its own.
+
+Coverage: `engine/world/dungeon.test.ts` sweeps both placement paths across ten
+spread-out seeds and asserts every drawn `passageGrid` field is an integer;
+`engine/world/rooms/emberLevel1.test.ts` asserts the same of every authored door
+AND — the class-level gate rather than these four instances — that no wall in any
+floor's stitched geometry is thinner than one grid cell or lands off-grid, which
+is what actually failed before this pass. `tools/map-editor/src/validate.ts`
+rejects a non-integer `passageGrid` typed into the editor's own Inspector.
+
+Replay impact: any v43 PvE stream on a PROCEDURALLY generated floor diverges from
+placement onward — a door can move up to half a cell, which moves the carved gap,
+the wall geometry, and every enemy path around it. A real level-1 run is driven by
+`EMBER_L1_FLOORS` through `placeAuthoredFloor`, which draws nothing, so its
+placement is unchanged by the engine half of this bump; its GEOMETRY still changes
+where the nine content values moved. PvP arenas are unaffected — they never call
+either placement function.

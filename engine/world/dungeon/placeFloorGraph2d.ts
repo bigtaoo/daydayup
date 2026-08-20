@@ -7,7 +7,8 @@ import type { Prng } from '../../math/prng';
 import type { AabbGrid, RoomEdge, RoomPiece } from '../../content/rooms';
 import type { Door } from '../../content/arenas';
 import type { PlacedRoom } from './types';
-import { DOOR_ANCHOR_COUNT, DOOR_EDGE_MARGIN_GRID, DOOR_WIDTH_GRID, ENTRANCE_INSET_GRID } from './placementConstants';
+import { DOOR_WIDTH_GRID, ENTRANCE_INSET_GRID } from './placementConstants';
+import { pickPassageStartGrid } from './doorAnchor';
 import { entranceFromDoor } from './entranceGeometry';
 
 const OPPOSITE_EDGE: Record<RoomEdge, RoomEdge> = { north: 'south', south: 'north', east: 'west', west: 'east' };
@@ -41,24 +42,20 @@ function placeAdjacent2d(
  * `pickDoorAnchor` exactly for `direction === 'east'`); north/south share a
  * horizontal one (band = X overlap). Kept as its own function rather than folded
  * into `pickDoorAnchor` itself (a sibling, not a variant — same precedent as
- * `placeFloorGraph2d` vs. `placeFloor`) so the already-shipped, replay-critical
- * `'linear'`/`'branching'` path never changes a single line. */
+ * `placeFloorGraph2d` vs. `placeFloor`); the anchor draw both of them agreed on
+ * verbatim is the one thing that IS shared, in `doorAnchor.ts`, so a fix to it
+ * (like `ENGINE_VERSION` 44's grid snap) cannot land on one path and miss the
+ * other — which is exactly how the two copies drifted apart before. */
 function pickDoorAnchor2d(a: PlacedRoom, b: PlacedRoom, direction: RoomEdge, roomgenPrng: Prng): AabbGrid {
   const vertical = direction === 'east' || direction === 'west'; // shared boundary runs vertically (a north/south wall's own gap is horizontal)
   const aLo = vertical ? a.offsetYGrid : a.offsetXGrid;
   const aHi = aLo + (vertical ? a.piece.sizeGrid.h : a.piece.sizeGrid.w);
   const bLo = vertical ? b.offsetYGrid : b.offsetXGrid;
   const bHi = bLo + (vertical ? b.piece.sizeGrid.h : b.piece.sizeGrid.w);
-  const bandLo = Math.max(aLo, bLo) + DOOR_EDGE_MARGIN_GRID;
-  const bandHi = Math.min(aHi, bHi) - DOOR_EDGE_MARGIN_GRID;
-  const span = bandHi - bandLo - DOOR_WIDTH_GRID;
-  if (span < 0) {
+  const start = pickPassageStartGrid(Math.max(aLo, bLo), Math.min(aHi, bHi), roomgenPrng);
+  if (start === null) {
     throw new Error(`placeFloorGraph2d: rooms '${a.id}'/'${b.id}' are too small/mismatched to fit a door`);
   }
-  const candidateCount = span === 0 ? 1 : DOOR_ANCHOR_COUNT;
-  const step = candidateCount > 1 ? span / (candidateCount - 1) : 0;
-  const chosen = roomgenPrng.nextInt(candidateCount); // the ONE draw this door costs
-  const center = bandLo + DOOR_WIDTH_GRID / 2 + step * chosen;
 
   const boundary =
     direction === 'east' ? a.offsetXGrid + a.piece.sizeGrid.w
@@ -66,8 +63,8 @@ function pickDoorAnchor2d(a: PlacedRoom, b: PlacedRoom, direction: RoomEdge, roo
     : direction === 'south' ? a.offsetYGrid + a.piece.sizeGrid.h
     : a.offsetYGrid; // 'north'
   return vertical
-    ? { x: boundary - 1, y: center - DOOR_WIDTH_GRID / 2, w: 2, h: DOOR_WIDTH_GRID }
-    : { x: center - DOOR_WIDTH_GRID / 2, y: boundary - 1, w: DOOR_WIDTH_GRID, h: 2 };
+    ? { x: boundary - 1, y: start, w: 2, h: DOOR_WIDTH_GRID }
+    : { x: start, y: boundary - 1, w: DOOR_WIDTH_GRID, h: 2 };
 }
 
 /** Returns the first already-placed room `room` spatially overlaps, or `undefined`

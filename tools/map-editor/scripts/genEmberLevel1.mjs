@@ -286,17 +286,26 @@ function sharedBand(a, b) {
 
 /** An authored door rect on the shared wall — same shape the editor's door tool and
  * `pickDoorAnchor2d` both produce: 2 deep (spanning BOTH rooms' 1-thick perimeter
- * walls) by DOOR_WIDTH_GRID wide, and never dead-centre on the wall (design/05). */
+ * walls) by DOOR_WIDTH_GRID wide, and never dead-centre on the wall (design/05).
+ *
+ * The passage START is what gets rounded, mirroring `engine/world/dungeon/
+ * doorAnchor.ts pickPassageStartGrid` (`ENGINE_VERSION` 44). The old version here
+ * rounded the CENTRE and then clamped it into `[bandLo + 2, bandHi - 2]` — and
+ * since `DOOR_EDGE_MARGIN_GRID` is 1.5 those bounds are half-integers, so the
+ * clamp handed the half straight back. That is where the nine `.5` passage values
+ * in the shipped floor JSON came from, and with them four 16 px-deep wall runs
+ * once `carveDoorGaps` cut a half-cell-misaligned hole. No clamp is needed at all:
+ * an anchor drawn inside the band cannot leave it, and rounding it can spend at
+ * most half the 1.5 margin. */
 function doorRect(band, rng) {
   const span = band.bandHi - band.bandLo - DOOR_WIDTH_GRID;
   const step = span / (DOOR_ANCHOR_COUNT - 1);
   const anchors = [0, 1, 3, 4]; // deliberately excludes the centre anchor (index 2)
   const idx = span < 1 ? 2 : pick(rng, anchors);
-  const centre = Math.round(band.bandLo + DOOR_WIDTH_GRID / 2 + step * idx);
-  const clamped = Math.max(band.bandLo + DOOR_WIDTH_GRID / 2, Math.min(band.bandHi - DOOR_WIDTH_GRID / 2, centre));
+  const start = Math.round(band.bandLo + step * idx);
   return band.vertical
-    ? { x: band.boundary - 1, y: clamped - DOOR_WIDTH_GRID / 2, w: 2, h: DOOR_WIDTH_GRID }
-    : { x: clamped - DOOR_WIDTH_GRID / 2, y: band.boundary - 1, w: DOOR_WIDTH_GRID, h: 2 };
+    ? { x: band.boundary - 1, y: start, w: 2, h: DOOR_WIDTH_GRID }
+    : { x: start, y: band.boundary - 1, w: DOOR_WIDTH_GRID, h: 2 };
 }
 
 /**

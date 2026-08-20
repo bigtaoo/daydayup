@@ -14,6 +14,19 @@ function isPositiveInt(n: number): boolean {
   return Number.isInteger(n) && n > 0;
 }
 
+/** A passage rect must land on whole grid cells. `solids` and `sizeGrid` have been
+ * held to this since the first validator; a `passageGrid` never was, and a
+ * half-cell one is not a cosmetic slip: `carveDoorGaps` cuts a correspondingly
+ * misaligned hole and whatever is left of the wall run past it inherits the
+ * offset. Four wall runs in shipped level-1 content stood 16 px deep that way
+ * (`ENGINE_VERSION` 44) — the worst case for the standing-wall art, since a cap
+ * band lands on a third of the depth every wall tone was measured on. The door
+ * tool itself only ever produces whole cells; this catches a value typed into the
+ * Inspector's numeric `passageGrid` fields by hand. */
+function isGridAlignedRect(r: { x: number; y: number; w: number; h: number }): boolean {
+  return Number.isInteger(r.x) && Number.isInteger(r.y) && isPositiveInt(r.w) && isPositiveInt(r.h);
+}
+
 function rectsOverlap(
   a: { x: number; y: number; w: number; h: number },
   b: { x: number; y: number; w: number; h: number },
@@ -185,6 +198,9 @@ export function validateDungeonFloorMap(map: DungeonFloorMap, library: readonly 
     if (!seenIds.has(door.roomA)) issues.push({ message: `Door references unknown room "${door.roomA}".` });
     if (!seenIds.has(door.roomB)) issues.push({ message: `Door references unknown room "${door.roomB}".` });
     if (door.roomA === door.roomB) issues.push({ message: `Door cannot connect room "${door.roomA}" to itself.` });
+    if (!isGridAlignedRect(door.passageGrid)) {
+      issues.push({ message: `Door between "${door.roomA}" and "${door.roomB}" has a passageGrid off the grid — x/y must be whole cells and w/h positive whole cells.` });
+    }
     const a = rects.get(door.roomA);
     const b = rects.get(door.roomB);
     if (a && b && !doorSitsOnSharedBoundary(a, b, door.passageGrid)) {
