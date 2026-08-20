@@ -245,6 +245,51 @@ describe('Scene.reconcile — enemies keep a single facing (no body/aim split)',
   });
 });
 
+describe('Scene.enemies — every live enemy view (occlusion x-ray, GameLoop.updateFx)', () => {
+  it('returns every live enemy, and excludes the player', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const e1 = addEnemy(s, 300, 300, 0 as Brad);
+    const e2 = addEnemy(s, 400, 400, 0 as Brad);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+
+    expect(scene.enemies.length).toBe(2);
+    expect(scene.enemies).not.toContain(scene.player);
+    // Order isn't meaningful, so compare against the actual views rather than array identity.
+    expect(scene.enemies).toContain(scene.actorAt(e1.id));
+    expect(scene.enemies).toContain(scene.actorAt(e2.id));
+  });
+
+  it('is empty when the room has no enemies', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+    expect(scene.enemies).toEqual([]);
+  });
+
+  it('excludes bullets and pickups — only Actor (player/enemy) views count', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    addEnemy(s, 300, 300, 0 as Brad);
+    addBullet(s, 50, 50);
+    addPickup(s, 60, 60);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+    expect(scene.enemies.length).toBe(1);
+  });
+
+  it('drops an enemy the tick it dies — a dissolving view is not a live one to protect', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const enemy = addEnemy(s, 300, 300, 0 as Brad);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+    expect(scene.enemies.length).toBe(1);
+
+    enemy.alive = false;
+    scene.reconcile(s);
+    expect(scene.enemies).toEqual([]);
+  });
+});
+
 describe('Scene.actorAt — actor-lookup by id (EventReactor hit-flash, design/01 milestone 5)', () => {
   it('resolves a live enemy/player id to its Actor view', () => {
     const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });

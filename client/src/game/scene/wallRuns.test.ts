@@ -11,7 +11,17 @@
  * bug the kerb exists to prevent).
  */
 import { describe, it, expect } from 'vitest';
-import { joinRects, mergeWallRuns, unjoinedSpans, wallJoins, type WallRun } from './wallRuns';
+import {
+  blockCapTop,
+  bordersDoorNorth,
+  joinRects,
+  mergeWallRuns,
+  NO_JOINS,
+  unjoinedSpans,
+  wallJoins,
+  type WallJoins,
+  type WallRun,
+} from './wallRuns';
 import type { RectPx } from './wallGeometry';
 import { FACE_CROWN_FRACTION_MIN, faceCrownFraction } from './wallTone';
 import { WALL_H_INTERIOR, WALL_H_PERIMETER } from './wallGeometry';
@@ -243,5 +253,52 @@ describe('unjoinedSpans — the parts of an edge that still get an edge cue', ()
     // This is the case that has to produce no stroke at all, not a zero-length one: a coping
     // highlight drawn across a continuous stone top is what made the run look pasted on.
     expect(unjoinedSpans(64, [[0, 64]])).toEqual([]);
+  });
+});
+
+describe('bordersDoorNorth — a run whose north end is a door passage, not open floor', () => {
+  // Live report: a door "应该是随时清晰可见" (should be clearly visible at all times) sitting
+  // at the north end of a deep north-south run was half swallowed by that run's cap — exactly
+  // the "door passage between two rooms" case design/01 already named without fixing.
+  it('is true when a door rect sits flush against the run\'s north edge with any x-overlap', () => {
+    expect(bordersDoorNorth(r(0, 64, 32, 96), [r(0, 0, 32, 64)])).toBe(true);
+    // Partial x-overlap is enough — unlike a corner join, a door is a discrete fixture, not
+    // another wall course whose crown must read as one continuous line.
+    expect(bordersDoorNorth(r(0, 64, 32, 96), [r(16, 0, 32, 64)])).toBe(true);
+  });
+
+  it('is false when the door is elsewhere: south of the run, or not touching its north edge', () => {
+    expect(bordersDoorNorth(r(0, 64, 32, 96), [r(0, 160, 32, 64)])).toBe(false); // south, not north
+    expect(bordersDoorNorth(r(0, 64, 32, 96), [r(0, 0, 32, 60)])).toBe(false); // 4 px short — a gap
+    expect(bordersDoorNorth(r(0, 64, 32, 96), [r(64, 0, 32, 64)])).toBe(false); // no x-overlap at all
+  });
+
+  it('is false with no doors in the room at all', () => {
+    expect(bordersDoorNorth(r(0, 64, 32, 96), [])).toBe(false);
+  });
+});
+
+describe('blockCapTop — doorClip', () => {
+  const DOOR: WallJoins = { ...NO_JOINS, doorClip: true };
+
+  it('clips a DEEP run\'s cap to its own footprint edge, spilling nothing onto the door', () => {
+    const rect = r(0, 0, 32, 200); // deep: 200 px footprint depth, well past any wall height
+    const height = WALL_H_PERIMETER;
+    expect(blockCapTop(rect, height, DOOR)).toBe(-rect.h); // -200: the run's own north edge
+    expect(blockCapTop(rect, height)).toBeLessThan(-rect.h); // unclipped, it would spill past it
+  });
+
+  it('leaves a SHALLOW run unclipped — there is no cap left to clip without erasing it', () => {
+    const rect = r(0, 0, 32, 32); // shallower than it is tall: an ordinary wall thickness
+    const height = WALL_H_PERIMETER;
+    expect(blockCapTop(rect, height, DOOR)).toBe(blockCapTop(rect, height, NO_JOINS));
+  });
+
+  it('composes with tuckNorth by taking whichever clip spills less', () => {
+    const rect = r(0, 0, 32, 200);
+    const height = WALL_H_PERIMETER;
+    const tuckedAndDoored: WallJoins = { ...NO_JOINS, tuckNorth: true, tuckLiftPx: 10, doorClip: true };
+    // doorClip (lift 0) is the tighter of the two, so it wins over the tuck's lift-10 reach.
+    expect(blockCapTop(rect, height, tuckedAndDoored)).toBe(-rect.h);
   });
 });

@@ -3028,6 +3028,86 @@ one-sided **1**.
 
 ---
 
+## A door could be blocked by a tall wall (2026-08-20, client-only)
+
+Live report, screenshot attached, a run circled: *"门不能被高墙挡住了。门应该是随时清晰可见的"* — a
+door must not be blocked by a tall wall, it should be clearly visible at all times. The screenshot
+is the exact case the previous two entries' own design doc already named and left unfixed
+(`design/01-rendering.md`, "A long north-south run whose north END is open floor"): a deep
+north-south run standing immediately south of a door passage paints its cap one wall height past
+its own footprint, straight onto the door sitting there.
+
+That case had only ever been discussed in terms of the **player** standing in the spilled area and
+needing the occlusion x-ray to stay visible. A door standing there permanently is worse off than the
+player ever was: doors render as a plain `Sprite` on `layers.ground` (`RoomBuilder.buildDoors`),
+the one layer Pixi always paints strictly before the Y-sorted `entities` layer the wall run stands
+on — so no amount of Y-sort ever helps it, and the x-ray couldn't either even if it tried, since it
+only ever fades a block relative to the local player's/an enemy's silhouette (`OcclusionFocus`), not
+a door. A door had zero defense against this, structurally, not partially.
+
+**Fixed at the geometry instead of by fading anything.** `wallRuns.bordersDoorNorth(rect, doorRects)`
+finds a run whose north edge meets a door passage's south edge with any x-overlap (deliberately
+looser than the corner-join rule: a door is a discrete fixture, not another wall course whose crown
+must read as one continuous line, so partial overlap is still a real overlap). `RoomBuilder.build`
+marks the affected run's `WallJoins.doorClip`, and `blockCapTop` reads it the same way it already
+reads `tuckNorth` — clip the cap back so it stops at the run's own footprint, except with zero lift
+instead of `tuckLiftPx`, since a door has no crown of its own to leave standing underneath. Same
+guard as `tuckNorth` too: only a run deeper than it is tall (`r.h > height`) has a cap left once the
+spill is removed — a SHALLOW run beside a door still spills, which is the general "doors have no
+x-ray" gap above, not this clip's to close. `blockCapTop`/`drawBlockShading` are the single place
+that reads the clipped value, so the cap texture, its depth gradient, and every other cap-only shading
+pass all shrink together — nothing to keep in sync by hand.
+
+Tests: `wallRuns.test.ts` covers `bordersDoorNorth` (flush + partial x-overlap true; south-of-the-run,
+a real gap, and no x-overlap all false) and `blockCapTop`'s guard (deep run clips to its own
+footprint edge; shallow run unchanged; composes with `tuckNorth` by taking whichever clip spills
+less). `RoomBuilder.test.ts` adds an end-to-end pair reading the registered occluder's `box.top` —
+the exact world-y a run's art reaches up to — for a deep run with and without a door at its north
+edge, so the fixture is proven to have actually spilled before the fix is proven to have stopped it.
+
+**And a sweep, same discipline as `occlusionCoverage.test.ts` (that file swept every place the
+PLAYER can stand; a door needed its own, since it isn't a place anyone stands, it's a fixture that
+sits in one spot forever with no x-ray to fall back on).** New `doorOcclusionCoverage.test.ts` runs
+all five shipped floors through the real `placeAuthoredFloor` → `buildFloorGeometry` → `wallTier` →
+`mergeWallRuns` → `wallJoins`(+`doorClip`) pipeline and checks every one of the 24 real doors
+against every real wall run's rendered box, via plain rectangle overlap — an oracle independent of
+`bordersDoorNorth` itself. **Zero DEEP runs cover a door**, on any of the 24; the fix's own stated
+gap (a run no deeper than it is tall has no cap left to clip) still hits 12 times across the five
+floors, measured and bounded rather than asserted to zero — general "doors have no x-ray" coverage
+stays open backlog, not silently declared done.
+
+1869 client tests green, `tsc --noEmit` clean, no `ENGINE_VERSION` impact (client-render-only).
+
+---
+
+## A monster hidden behind a wall was invisible, not just half-hidden (2026-08-20, client-only)
+
+Live report, screenshot circling a monster gone behind an interior wall block: *"如果只有怪物在墙下面
+的话，就看不到怪物了"* — if only a monster is under the wall, you can't see the monster at all. The
+occlusion x-ray (`design/01-rendering.md`, "The occlusion x-ray") had already fixed exactly this
+failure for the local player earlier the same day, but `GameLoop.updateFx` only ever built a single
+`OcclusionFocus` from `scene.player` — a monster standing in the identical hidden band a wall block's
+art intrudes over got no x-ray at all and rendered fully swallowed by the stone.
+
+**Fixed by generalizing the x-ray from one focus to a list.** `occlusion.updateOcclusion` now takes
+`readonly OcclusionFocus[]` instead of `OcclusionFocus | null`; a block fades if it hides ANY focus in
+the list, and takes the deep (face) fade if ANY focus needs it — both an OR across the whole list, not
+"whichever focus is checked first." `Scene.enemies` is a new accessor enumerating every live enemy
+view (excludes a dying/dissolving one, same as the rest of `Scene`); `GameLoop.updateFx` now builds
+the focus list from the local player plus every live enemy and hands the whole thing to
+`RoomBuilder.updateOcclusion`.
+
+Tests: `occlusion.test.ts` covers a monster-only focus (no player at all), a hidden focus alongside a
+clear one (block still fades), and two foci at different depths behind the same wall (the deep-fade
+decision is also an OR, not decided by whichever focus is checked first). `RoomBuilder.test.ts` adds
+the same "player elsewhere, monster hidden" case wired through real built-room geometry.
+`GameLoop.test.ts` asserts the actual call arguments for an enemy-only frame and a player+enemy frame.
+`Scene.test.ts` adds a dedicated `Scene.enemies` block (excludes the player, excludes bullets/pickups,
+drops an enemy the tick it dies). 1866 client tests green, `tsc --noEmit` clean, no `ENGINE_VERSION`
+impact (client-render-only).
+
+---
+
 ## Dependency summary
 
 ```

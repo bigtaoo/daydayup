@@ -568,6 +568,43 @@ describe('RoomBuilder — doors (design/05 "Room & door model", 2026-08-04)', ()
     expect(doorSprites(rb)).toHaveLength(0);
     expect(layers.ground.children.length).toBe(0);
   });
+
+  // Live report, screenshot attached: *"门不能被高墙挡住了。门应该是随时清晰可见的"* (a door must
+  // not be blocked by a tall wall — it should be clearly visible at all times). Root cause was
+  // exactly design/01's long-called-out, never-fixed case: a deep north-south run whose north
+  // end is a door passage spills its cap one wall height past its own footprint, straight onto
+  // the door sprite sitting there — and since doors live on `layers.ground` (always behind the
+  // Y-sorted `entities` the run stands on), the run wins unconditionally, regardless of Y-order.
+  // `occluders(rb)`'s `box.top` is the exact world-y the run's art reaches up to, so it doubles
+  // as an end-to-end probe for the clip without needing a real GL context to sample pixels.
+  it('clips a deep run\'s cap at a door directly north of it, instead of spilling onto it', () => {
+    const s = createGameState({
+      seed: 1, worldW: 800, worldH: 600, waves: [],
+      walls: [[0, 64, 32, 200]], // a deep north-south run, tier 'perimeter' (touches the west edge)
+      obstacles: [],
+    });
+    pushDoor(s, false, [0, 0, 32, 64]); // south edge (y=64) flush with the run's north edge
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    const box = (rb as unknown as { occluders: { box: { top: number; sortY: number } }[] })
+      .occluders.find((o) => o.box.sortY === 264)!.box;
+    expect(box.top).toBeCloseTo(64, 1); // the run's own north edge — zero spill onto the door
+  });
+
+  it('the same run spills WALL_H_PERIMETER px past its footprint with no door there', () => {
+    // Confirms the fixture above actually exercises the clip, rather than one that never
+    // spilled in the first place.
+    const s = createGameState({
+      seed: 1, worldW: 800, worldH: 600, waves: [],
+      walls: [[0, 64, 32, 200]],
+      obstacles: [],
+    });
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    const box = (rb as unknown as { occluders: { box: { top: number; sortY: number } }[] })
+      .occluders.find((o) => o.box.sortY === 264)!.box;
+    expect(box.top).toBeCloseTo(64 - WALL_H_PERIMETER, 1);
+  });
 });
 
 describe('RoomBuilder — portal placement (2026-08-12 fix: capstone room, not the floor bbox)', () => {
@@ -960,7 +997,7 @@ describe('RoomBuilder.updateOcclusion — a block that would hide the player get
    *  passed until `occlusionCoverage.test.ts` started sweeping only legal positions). */
   const behindBlock = { x: 160, y: 128 - fpToPx(PLAYER_BASE.solidRadius), halfW: 13, bodyH: 32 };
   const settle = (rb: RoomBuilder, focus: typeof behindBlock | null): void => {
-    for (let i = 0; i < 30; i++) rb.updateOcclusion(focus, 16.67);
+    for (let i = 0; i < 30; i++) rb.updateOcclusion(focus ? [focus] : [], 16.67);
   };
 
   it('registers one occluder per standing block, walls and pillars alike', () => {
@@ -1002,6 +1039,20 @@ describe('RoomBuilder.updateOcclusion — a block that would hide the player get
     const others = occluders(rb).filter((o) => o.box.sortY !== 192);
     expect(others.length).toBeGreaterThan(0);
     for (const o of others) expect(o.cap.fade).toBe(1);
+  });
+
+  it('fades the block for a SECOND focus (a monster) even while the first (the player) stands clear of it — live report *"如果只有怪物在墙下面的话，就看不到怪物了"*', () => {
+    // Wired end to end through the real footprint/geometry: `GameLoop.updateFx` now hands this
+    // call the player AND every live enemy, and a block must fade if it hides ANY of them, not
+    // just whichever focus happens to be first in the list.
+    const rb = makeRoomBuilder();
+    rb.build(stateWithInteriorBlock());
+    const seg = blocks(rb).find((e) => e.zIndex === 192)!;
+    const cap = seg.children.filter((c) => c.label === XRAY_LABEL);
+    const playerElsewhere = { x: 400, y: 400, halfW: 13, bodyH: 32 }; // nowhere near the block
+
+    for (let i = 0; i < 30; i++) rb.updateOcclusion([playerElsewhere, behindBlock], 16.67);
+    for (const c of cap) expect(c.alpha).toBeLessThan(0.5);
   });
 
   it('and puts it back once the player steps out from behind it', () => {
@@ -1077,6 +1128,6 @@ describe('RoomBuilder.updateOcclusion — a block that would hide the player get
 
   it('is a safe no-op before any room is built', () => {
     const rb = makeRoomBuilder();
-    expect(() => rb.updateOcclusion(behindBlock, 16.67)).not.toThrow();
+    expect(() => rb.updateOcclusion([behindBlock], 16.67)).not.toThrow();
   });
 });

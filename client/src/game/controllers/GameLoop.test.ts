@@ -45,6 +45,7 @@ function fakeScene() {
     player: undefined as
       | { curX: number; curY: number; bodySilhouette: { halfW: number; bodyH: number } }
       | undefined,
+    enemies: [] as ReadonlyArray<{ curX: number; curY: number; bodySilhouette: { halfW: number; bodyH: number } }>,
     interpolate: vi.fn(),
     reconcile: vi.fn(),
     positionLocal: vi.fn(),
@@ -579,19 +580,50 @@ describe('GameLoop — the occlusion x-ray is driven every render frame', () => 
     loop.update(16);
 
     expect(roomBuilder.updateOcclusion).toHaveBeenCalledWith(
-      { x: 1200, y: 140.8, halfW: 12.96, bodyH: 32 },
+      [{ x: 1200, y: 140.8, halfW: 12.96, bodyH: 32 }],
       16,
     );
   });
 
-  it('passes null with no local player, so a block cannot freeze mid-x-ray on a menu', () => {
+  it('passes an empty list with no local player, so a block cannot freeze mid-x-ray on a menu', () => {
     const { deps, scene, roomBuilder } = buildDeps();
     scene.player = undefined;
     const loop = new GameLoop(deps, buildHost({ getPhase: () => 'victory' }));
 
     loop.update(16);
 
-    expect(roomBuilder.updateOcclusion).toHaveBeenCalledWith(null, 16);
+    expect(roomBuilder.updateOcclusion).toHaveBeenCalledWith([], 16);
+  });
+
+  it('includes every live enemy, so one gets its own x-ray even with no player in the room at all (live report *"如果只有怪物在墙下面的话，就看不到怪物了"*)', () => {
+    const { deps, scene, roomBuilder } = buildDeps();
+    scene.player = undefined;
+    scene.enemies = [{ curX: 40, curY: 60, bodySilhouette: silhouette }];
+    const loop = new GameLoop(deps, buildHost({ getPhase: () => 'playing' }));
+
+    loop.update(16);
+
+    expect(roomBuilder.updateOcclusion).toHaveBeenCalledWith(
+      [{ x: 40, y: 60, halfW: 12.96, bodyH: 32 }],
+      16,
+    );
+  });
+
+  it('passes both the player and every enemy together', () => {
+    const { deps, scene, roomBuilder } = buildDeps();
+    scene.player = { curX: 1200, curY: 140.8, bodySilhouette: silhouette };
+    scene.enemies = [{ curX: 40, curY: 60, bodySilhouette: silhouette }];
+    const loop = new GameLoop(deps, buildHost({ getPhase: () => 'playing' }));
+
+    loop.update(16);
+
+    expect(roomBuilder.updateOcclusion).toHaveBeenCalledWith(
+      [
+        { x: 40, y: 60, halfW: 12.96, bodyH: 32 },
+        { x: 1200, y: 140.8, halfW: 12.96, bodyH: 32 },
+      ],
+      16,
+    );
   });
 
   it('keeps running while PAUSED — a frozen frame still has to show the character', () => {

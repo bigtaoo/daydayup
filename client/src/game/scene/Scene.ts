@@ -42,6 +42,18 @@ export class Scene {
     return v instanceof Actor ? v : undefined;
   }
 
+  /** Every currently live enemy view, for a render pass that must consider every mob rather
+   *  than just the local player — the occlusion x-ray (`GameLoop.updateFx`) is the reason this
+   *  exists: a wall block used to fade only against `player`, so a monster standing in the same
+   *  hidden band got no x-ray at all. A dying (dissolving) enemy is excluded, same as `views`
+   *  itself — it's already fading out, not something the x-ray needs to keep legible. Order is
+   *  whatever the underlying Map iterates in, not meaningful. */
+  get enemies(): readonly Actor[] {
+    const list: Actor[] = [];
+    for (const v of this.views.values()) if (v instanceof Enemy) list.push(v);
+    return list;
+  }
+
   /** Drop every view — called on a fresh run before a new engine is created. */
   clear(): void {
     for (const v of this.views.values()) v.destroy();

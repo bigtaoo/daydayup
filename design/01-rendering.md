@@ -658,6 +658,17 @@ cannot strobe. What was rejected and why:
 - **Growing the collision footprint** so the blind band is unreachable. Invisible walls, and it
   eats a wall height of floor around every block in the room.
 
+**Since 2026-08-20 this also covers every live enemy, not just the local player** — live report
+with a screenshot circling a monster gone behind a wall: *"如果只有怪物在墙下面的话，就看不到怪物了"*
+(if only a monster is under the wall, you can't see the monster at all). The x-ray used to take a
+single `OcclusionFocus` (`GameLoop.updateFx` built it from `scene.player` alone), so a monster
+standing in the exact hidden band the fix above closes for the player got no x-ray at all and
+rendered fully swallowed by the wall — the very failure this section exists to remove, just for a
+different actor. `occlusion.updateOcclusion` now takes a LIST of foci (`Scene.enemies` enumerates
+every live enemy view alongside `scene.player`), and a block fades if it hides ANY of them — the
+cap and deep-fade decisions are each an OR across the whole list, not "whichever focus happens to
+be checked first."
+
 **Only the CAP fades — and where that is not enough, the face follows.** Measured both ways on a
 live frame: fading the whole block loses the stone and the block reads as a hole in the room, so
 the default pass moves the cap layers only (`occlusion.xrayLayers`, tagged in `buildWallBlock`) and
@@ -701,7 +712,20 @@ room is always south of its sort line. True of a room's north wall, false in gen
 
 - **A long north-south run whose north END is open floor** (a door passage between two rooms). The
   run's art spills one wall height past its own footprint onto ground the player walks over once
-  that door unlocks, and standing there they are half swallowed by its cap.
+  that door unlocks, and standing there they are half swallowed by its cap. **Fixed at the
+  geometry, same day, once it turned out to swallow the DOOR too, not just a player who happens
+  to stand there** — live report with a screenshot circling the door: *"门不能被高墙挡住了。门应该
+  是随时清晰可见的"* (a door must not be blocked by a tall wall — it should be clearly visible at
+  all times). The door sprite lives on `layers.ground` (`RoomBuilder.buildDoors`), always behind
+  the Y-sorted `entities` the run stands on, so no amount of Y-sort or x-ray fading could ever
+  help it — the x-ray only ever protects the local player's silhouette (see below), and a door
+  isn't one. `wallRuns.bordersDoorNorth` finds a run whose north edge meets a door passage's south
+  edge, and `blockCapTop` clips that run's cap to stop at its own footprint (`doorClip`, zero
+  lift) instead of spilling past it — the same clip `tuckNorth` already applies against a
+  neighbouring wall's crown, just with nothing left to reveal underneath. Same guard as
+  `tuckNorth` too: only a run deeper than it is tall (`r.h > height`) has a cap left once the
+  spill is removed, so a SHALLOW run beside a door still spills — that residual case is the
+  general "doors have no x-ray" problem above, not this clip's to solve.
 - **A wall between two vertically stacked rooms** — much the bigger case, and **since 2026-08-20
   it is fixed at the tier instead of covered up by the x-ray**. Measured on a live frame at floor 0's
   `r4_forge`/`r5_extraction` boundary (vertical luma scan down world x=350, fix stashed and
@@ -758,7 +782,7 @@ position was actually inside the stone.
 
 - The entity layer sets `sortableChildren = true`; each frame we set `entity.zIndex = entity.gy`.
 - Lower on screen (larger gy) draws later → occludes objects above it. A character walking behind a pillar is hidden; in front, it hides the pillar.
-- **Hidden, but never LOST**: since 2026-08-20 any standing block that is drawing over the local player x-rays out of the way (see "The occlusion x-ray" above). The sort itself is unchanged — the character really is behind the stone, and the stone is what goes translucent.
+- **Hidden, but never LOST**: since 2026-08-20 any standing block that is drawing over the local player OR a live enemy x-rays out of the way (see "The occlusion x-ray" above). The sort itself is unchanged — the character really is behind the stone, and the stone is what goes translucent.
 
 ## Shadows
 

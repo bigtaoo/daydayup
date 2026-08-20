@@ -17,7 +17,7 @@ import {
   type FadeableOccluder,
   type OcclusionFocus,
 } from './occlusion';
-import { blockCapTop, mergeWallRuns, wallJoins, type WallRun } from './wallRuns';
+import { blockCapTop, bordersDoorNorth, mergeWallRuns, wallJoins, type WallRun } from './wallRuns';
 import { faceCrownFraction } from './wallTone';
 import { drawRoomLight } from './roomLight';
 import { NormalLitFilter, WALL_LIT_AMBIENT, WALL_LIT_GRADIENT, WALL_LIT_KEY_INTENSITY } from '../fx/filters';
@@ -153,6 +153,17 @@ export class RoomBuilder {
     // object, never a copy) so this skip is exact and free for non-dungeon modes
     // (`dungeonDoors` is empty there).
     const doorAabbs = new Set(s.dungeonDoors.map((dr) => dr.passageAabb));
+    // Px-space rects of every door passage, for `bordersDoorNorth` below — a door is never a
+    // wall (it's skipped from `runs` just above), but it's a fixture standing in the room all
+    // the same, and a run's cap must not be allowed to spill onto it (live report: the door
+    // "随时清晰可见" — always clearly visible — was half swallowed by a run's cap standing south
+    // of it, the exact "door passage between two rooms" case design/01 already called out).
+    const doorRectsPx: RectPx[] = s.dungeonDoors.map((dr) => ({
+      x: fpToPx(dr.passageAabb.x),
+      y: fpToPx(dr.passageAabb.y),
+      w: fpToPx(dr.passageAabb.w),
+      h: fpToPx(dr.passageAabb.h),
+    }));
     // Every wall now stands (2026-08-18 — see `wallGeometry.wallTier` for why the old
     // "east-west runs only" rule was what made a room read flat), at one of three heights.
     // Shadows all land on one shared Graphics, added to `layers.shadow` before the blocks so
@@ -177,6 +188,9 @@ export class RoomBuilder {
     // The crown line a corner stops under is per-ELEMENT: the shipped face swatches disagree, ice
     // most of all (see `FACE_CROWN_ROWS`), so this has to come from the room's own biome.
     const joins = wallJoins(merged, faceCrownFraction(element));
+    for (const [i, run] of merged.entries()) {
+      if (bordersDoorNorth(run.rect, doorRectsPx)) joins[i] = { ...joins[i]!, doorClip: true };
+    }
     for (const [i, run] of merged.entries()) {
       const height = wallHeight(run.tier);
       drawWallShadow(shadows, run.rect, height);
@@ -214,13 +228,12 @@ export class RoomBuilder {
    * *"角色跑到墙下面去了"*): any standing block that is currently drawing over the character
    * fades toward `XRAY_FADE` and back once it isn't.
    *
-   * Called from `GameLoop.updateFx` at render rate — the same cadence and the same
-   * local-player-only focus point the dynamic lighting already uses. `focus` is null whenever
-   * there is no local player view (menus, between spawns), which fades every block back to
-   * solid rather than freezing one mid-x-ray.
+   * Called from `GameLoop.updateFx` at render rate. `foci` is the local player plus every live
+   * enemy (an empty list whenever there is no local view at all — menus, between spawns), which
+   * fades every block back to solid rather than freezing one mid-x-ray.
    */
-  updateOcclusion(focus: OcclusionFocus | null, dtMs: number): void {
-    updateOcclusion(this.occluders, focus, dtMs);
+  updateOcclusion(foci: readonly OcclusionFocus[], dtMs: number): void {
+    updateOcclusion(this.occluders, foci, dtMs);
   }
 
   /** The floor's room footprints in world px, for `wallRises`. Dungeon floors and the PvP

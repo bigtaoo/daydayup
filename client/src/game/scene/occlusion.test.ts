@@ -217,7 +217,28 @@ describe('updateOcclusion', () => {
 
   it('fades only the block that is actually covering the character', () => {
     const s = scene();
-    for (let i = 0; i < 20; i++) updateOcclusion(s.occluders, focus(50, 150), 16.67);
+    for (let i = 0; i < 20; i++) updateOcclusion(s.occluders, [focus(50, 150)], 16.67);
+    expect(s.hiding.alpha).toBe(XRAY_FADE);
+    expect(s.clear.alpha).toBe(1);
+  });
+
+  it('fades a block for a monster hidden behind it even with no player anywhere near (live report *"如果只有怪物在墙下面的话，就看不到怪物了"*)', () => {
+    // The bug this closes: `updateOcclusion` used to take one `focus` — the local player only —
+    // so a monster standing in the exact band `c8fd4fa` fixed for the player got no x-ray at all
+    // and rendered fully swallowed by the wall. A focus list with only an enemy in it, nowhere
+    // near the player's own position, must still uncover the block that's hiding that enemy.
+    const s = scene();
+    const monster = focus(50, 150); // stands where `hiding`'s block covers it; no player focus at all
+    for (let i = 0; i < 20; i++) updateOcclusion(s.occluders, [monster], 16.67);
+    expect(s.hiding.alpha).toBe(XRAY_FADE);
+    expect(s.clear.alpha).toBe(1);
+  });
+
+  it('uncovers a block if it hides ANY focus, even while a second focus stands clear of it', () => {
+    const s = scene();
+    const hiddenMonster = focus(50, 150); // behind `hiding`'s block
+    const clearPlayer = focus(450, 300); // south of both blocks — not hidden by anything
+    for (let i = 0; i < 20; i++) updateOcclusion(s.occluders, [hiddenMonster, clearPlayer], 16.67);
     expect(s.hiding.alpha).toBe(XRAY_FADE);
     expect(s.clear.alpha).toBe(1);
   });
@@ -228,7 +249,7 @@ describe('updateOcclusion', () => {
     // standing in front of it has its own bright cap, and that is what shows through.
     const s = deepScene();
     const partly = focus(50, s.box.foldY + 8); // feet below the fold, head above it
-    for (let i = 0; i < 40; i++) updateOcclusion(s.occluders, partly, 16.67);
+    for (let i = 0; i < 40; i++) updateOcclusion(s.occluders, [partly], 16.67);
     expect(s.cap.alpha).toBe(XRAY_FADE);
     expect(s.face.alpha).toBe(1);
   });
@@ -236,15 +257,27 @@ describe('updateOcclusion', () => {
   it('takes the face too when the whole body is below the fold and a cap fade would do nothing', () => {
     const s = deepScene();
     const buried = focus(50, s.box.foldY + BODY_H_MIN); // body top exactly at the fold
-    for (let i = 0; i < 40; i++) updateOcclusion(s.occluders, buried, 16.67);
+    for (let i = 0; i < 40; i++) updateOcclusion(s.occluders, [buried], 16.67);
+    expect(s.cap.alpha).toBe(XRAY_FADE);
+    expect(s.face.alpha).toBe(XRAY_FADE);
+  });
+
+  it('takes the face for the whole block if ANY focus needs it, even while another only needs the cap', () => {
+    // Two characters behind the same tall boundary run, at different depths: neither on its own
+    // should decide for the other — one focus buried below the fold is enough to drop the face,
+    // even though a SECOND focus standing higher up would have settled for the cap alone.
+    const s = deepScene();
+    const shallow = focus(20, s.box.foldY + 8); // head still above the fold — cap-only case
+    const buried = focus(70, s.box.foldY + BODY_H_MIN); // body top at the fold — needs the face too
+    for (let i = 0; i < 40; i++) updateOcclusion(s.occluders, [shallow, buried], 16.67);
     expect(s.cap.alpha).toBe(XRAY_FADE);
     expect(s.face.alpha).toBe(XRAY_FADE);
   });
 
   it('puts the face back before the cap when the character steps back up', () => {
     const s = deepScene();
-    for (let i = 0; i < 40; i++) updateOcclusion(s.occluders, focus(50, s.box.foldY + BODY_H_MIN), 16.67);
-    for (let i = 0; i < 40; i++) updateOcclusion(s.occluders, focus(50, s.box.foldY + 8), 16.67);
+    for (let i = 0; i < 40; i++) updateOcclusion(s.occluders, [focus(50, s.box.foldY + BODY_H_MIN)], 16.67);
+    for (let i = 0; i < 40; i++) updateOcclusion(s.occluders, [focus(50, s.box.foldY + 8)], 16.67);
     expect(s.face.alpha).toBe(1);
     expect(s.cap.alpha).toBe(XRAY_FADE); // still hidden, still x-rayed — only the depth changed
   });
@@ -254,21 +287,21 @@ describe('updateOcclusion', () => {
     // fade that assigned `alpha = fade` would brighten the key light on the way down.
     const base = layer(0.4);
     const occluders = [fadeableBlock(block(224, WALL_H_INTERIOR, 64), [base])];
-    for (let i = 0; i < 20; i++) updateOcclusion(occluders, focus(50, 150), 16.67);
+    for (let i = 0; i < 20; i++) updateOcclusion(occluders, [focus(50, 150)], 16.67);
     expect(base.alpha).toBeCloseTo(0.4 * XRAY_FADE, 6);
   });
 
   it('restores everything to solid once the character steps clear', () => {
     const s = scene();
-    for (let i = 0; i < 20; i++) updateOcclusion(s.occluders, focus(50, 150), 16.67);
-    for (let i = 0; i < 40; i++) updateOcclusion(s.occluders, focus(50, 300), 16.67);
+    for (let i = 0; i < 20; i++) updateOcclusion(s.occluders, [focus(50, 150)], 16.67);
+    for (let i = 0; i < 40; i++) updateOcclusion(s.occluders, [focus(50, 300)], 16.67);
     expect(s.hiding.alpha).toBe(1);
   });
 
-  it('restores everything to solid on a null focus (menu, between spawns)', () => {
+  it('restores everything to solid on an empty focus list (menu, between spawns)', () => {
     const s = scene();
-    for (let i = 0; i < 20; i++) updateOcclusion(s.occluders, focus(50, 150), 16.67);
-    for (let i = 0; i < 40; i++) updateOcclusion(s.occluders, null, 16.67);
+    for (let i = 0; i < 20; i++) updateOcclusion(s.occluders, [focus(50, 150)], 16.67);
+    for (let i = 0; i < 40; i++) updateOcclusion(s.occluders, [], 16.67);
     expect(s.hiding.alpha).toBe(1);
     expect(s.occluders.every((o) => o.cap.fade === 1 && o.deep.fade === 1)).toBe(true);
   });
@@ -284,9 +317,9 @@ describe('updateOcclusion', () => {
         apply(f: number) { writes++; o.cap.apply(f); },
       },
     }));
-    for (let i = 0; i < 20; i++) updateOcclusion(counted, focus(50, 150), 16.67);
+    for (let i = 0; i < 20; i++) updateOcclusion(counted, [focus(50, 150)], 16.67);
     const settled = writes;
-    for (let i = 0; i < 20; i++) updateOcclusion(counted, focus(50, 150), 16.67);
+    for (let i = 0; i < 20; i++) updateOcclusion(counted, [focus(50, 150)], 16.67);
     expect(writes).toBe(settled);
   });
 });

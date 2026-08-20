@@ -147,21 +147,36 @@ export interface FadeableOccluder {
 }
 
 /**
- * Advance every block's fade one render frame. `focus` is the character that must stay visible
- * (null between spawns / on a menu, which fades everything back to solid).
+ * Advance every block's fade one render frame. `foci` is every character that must stay visible
+ * — the local player AND every live enemy (live report *"如果只有怪物在墙下面的话，就看不到怪物了"*:
+ * a block used to be judged against the local player alone, so a monster standing in the exact
+ * band the player was fixed out of in `c8fd4fa` got no x-ray at all). Empty between spawns / on a
+ * menu, which fades everything back to solid.
+ *
+ * A block hides if it hides ANY focus, and takes the deep fade if it needs one for any focus that
+ * is hiding — both an OR across the list, not "the first focus decides for everyone".
  *
  * `apply` is called only on a frame where the value actually moved — a room has a couple of
  * dozen blocks and all but one of them are at rest on any given frame.
  */
 export function updateOcclusion(
   occluders: readonly FadeableOccluder[],
-  focus: OcclusionFocus | null,
+  foci: readonly OcclusionFocus[],
   dtMs: number,
 ): void {
   for (const o of occluders) {
-    const hiding = focus !== null && occludes(o.box, focus);
+    let hiding = false;
+    let deep = false;
+    for (const f of foci) {
+      if (!occludes(o.box, f)) continue;
+      hiding = true;
+      if (needsDeepFade(o.box, f)) {
+        deep = true;
+        break; // nothing stronger than "deep" to find from another focus
+      }
+    }
     stepGroup(o.cap, hiding, dtMs);
-    stepGroup(o.deep, hiding && needsDeepFade(o.box, focus!), dtMs);
+    stepGroup(o.deep, deep, dtMs);
   }
 }
 

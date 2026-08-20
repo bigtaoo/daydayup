@@ -166,12 +166,18 @@ export interface WallJoins {
    *  Carried so the crease that follows from a join is sized by the SAME number that placed it —
    *  the swatches disagree per element, so a second lookup downstream could disagree too. */
   crownFraction: number;
+  /** True when a door passage (design/05: an always-present fixture, never a bare gap) sits
+   *  directly north of this run — see `bordersDoorNorth`. Unlike `tuckNorth` this is never
+   *  computed BY `wallJoins` itself (doors are not walls, so this file stays door-blind); the
+   *  caller that knows about `s.dungeonDoors` (`RoomBuilder`) sets it after the fact. Read only
+   *  by `blockCapTop`, and only on a run deep enough to have a cap left once clipped — see there. */
+  doorClip: boolean;
 }
 
 /** No joins at all — the default for callers that have no neighbour set (tests, flat modes). */
 export const NO_JOINS: WallJoins = {
   north: [], south: [], tuckNorth: false, tuckLiftPx: 0, tuckedSouth: [],
-  crownFraction: FACE_CROWN_FRACTION_MIN,
+  crownFraction: FACE_CROWN_FRACTION_MIN, doorClip: false,
 };
 
 /** Merge touching/overlapping intervals so a masked stroke never restarts mid-join. */
@@ -260,8 +266,29 @@ export function wallJoins(
       tuckLiftPx: lift[i]!,
       tuckedSouth: coalesce(tuckedSouth),
       crownFraction,
+      doorClip: false,
     };
   });
+}
+
+/**
+ * Whether a door passage sits directly north of `rect` — the door's south edge meets `rect`'s
+ * north edge with at least some x-overlap (design/01 "door passage between two rooms" case: a
+ * long north-south run's cap "spills one wall height past its own footprint onto ground [...]
+ * standing there they are half swallowed by its cap" — a door fixture standing on that same
+ * ground gets swallowed the same way, permanently rather than only while a character stands
+ * there, since a door has no x-ray to fade the block back). Unlike `tucks()`, this does NOT
+ * require whole-width coverage: a door is a discrete fixture, not another wall course whose
+ * crown must stay one continuous line, so any overlap is a real overlap worth clipping for.
+ */
+export function bordersDoorNorth(rect: RectPx, doorRects: readonly RectPx[]): boolean {
+  for (const d of doorRects) {
+    if (!near(d.y + d.h, rect.y)) continue;
+    const x0 = Math.max(rect.x, d.x);
+    const x1 = Math.min(rect.x + rect.w, d.x + d.w);
+    if (x1 - x0 > JOIN_TOLERANCE) return true;
+  }
+  return false;
 }
 
 /** The parts of `0..width` that `spans` does NOT cover — where an edge cue still belongs. */
@@ -291,7 +318,15 @@ export function unjoinedSpans(
  * a full wall height, which leaves the wall it runs into holding its crown course. `tuckNorth` is
  * only ever set when `r.h > height`, which is exactly the condition under which that clip still
  * leaves a cap — see `WallJoins`. `Math.min` is belt-and-braces: the cap can never cross its fold.
+ *
+ * `doorClip` (`bordersDoorNorth`) clips the same way but to ZERO lift — a door has no crown of
+ * its own to leave standing, so nothing may spill past its threshold at all — and only when
+ * `r.h > height` for the same reason `tuckNorth` is gated on it: a run no deeper than it is tall
+ * has no cap left once the spill is removed (its whole "north reach" IS the cap), so a shallow
+ * run next to a door still spills. That case is the general occlusion problem doors don't yet
+ * have an x-ray for (design/01), not this clip's to solve.
  */
 export function blockCapTop(r: RectPx, height: number, joins: WallJoins = NO_JOINS): number {
-  return joins.tuckNorth ? Math.min(-height, -r.h - joins.tuckLiftPx) : -height - r.h;
+  const base = joins.tuckNorth ? Math.min(-height, -r.h - joins.tuckLiftPx) : -height - r.h;
+  return joins.doorClip && r.h > height ? Math.max(base, -r.h) : base;
 }

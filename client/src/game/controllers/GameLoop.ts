@@ -331,14 +331,14 @@ export class GameLoop {
     this.deps.scene.applyLighting(this.deps.fx.lights);
 
     // Occlusion x-ray (design/01 "Limits of fake 3D"): a standing wall block or pillar that is
-    // currently drawing over the local player goes translucent so the character can never be
-    // lost behind it. Piggy-backs on this wrapper for exactly the reason the lighting above
-    // does — it is already called from every render path (playing/paused/menu/offline/online),
-    // and it already has the local player's view and this frame's dt.
-    this.deps.roomBuilder.updateOcclusion(
-      player ? { x: player.curX, y: player.curY, ...player.bodySilhouette } : null,
-      dt,
-    );
+    // currently drawing over the local player OR any live enemy goes translucent so nobody can
+    // be lost behind it (live report *"如果只有怪物在墙下面的话，就看不到怪物了"* — a monster got no
+    // x-ray at all when it, rather than the player, stood in the hidden band). Piggy-backs on
+    // this wrapper for exactly the reason the lighting above does — it is already called from
+    // every render path (playing/paused/menu/offline/online), and it already has this frame's dt.
+    const foci = this.deps.scene.enemies.map((e) => ({ x: e.curX, y: e.curY, ...e.bodySilhouette }));
+    if (player) foci.push({ x: player.curX, y: player.curY, ...player.bodySilhouette });
+    this.deps.roomBuilder.updateOcclusion(foci, dt);
   }
 
   private updateCamera(alpha: number): void {
