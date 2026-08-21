@@ -34,6 +34,18 @@ function makeSkin(def = ORB_CORE_RIG, clips?: Map<string, AnimationClip>): RigSk
   return new RigSkin(rig, bundle);
 }
 
+/** Like `makeSkin`, but with an explicit `bodyFill` — the fraction of its declared `bodyR` a
+ *  bundle's art actually paints. `makeSkin` leaves it at the default of 1, which makes
+ *  `bodyR * bodyFill` and `bodyR` indistinguishable; the held mount is defined in terms of the
+ *  former, so a fill of exactly 1 cannot tell the two apart (the mutation battery walked
+ *  through a `drawnBodyR()` -> `bodyR` edit for precisely that reason). */
+function makeSkinWithFill(def: RigDef, bodyFill: number, clips?: Map<string, AnimationClip>): RigSkin {
+  const rig = new Rig(def);
+  const bundle = fakeBundle(rig);
+  if (clips) for (const [name, clip] of clips) bundle.clips.set(name, clip);
+  return new RigSkin(rig, bundle, bodyFill);
+}
+
 function spritesOf(skin: RigSkin): Map<string, { x: number; y: number; rotation: number }> {
   return (skin as unknown as { sprites: Map<string, { x: number; y: number; rotation: number }> }).sprites;
 }
@@ -281,11 +293,113 @@ describe('RigSkin — two orbiting weapon modules, one active, one idle', () => 
     expect(skin.muzzleLocal()).toBeNull();
   });
 
-  it('is null on a socket-less rig (critter-core: every enemy)', () => {
-    const skin = makeSkin(CRITTER_CORE_RIG);
+  it("is null on a rig that mounts nothing at all (boss-core's weaponMount: 'none')", () => {
+    const skin = makeSkin(BOSS_CORE_RIG);
     skin.setWeaponKind('ranged', 'enemygun');
     skin.update();
     expect(skin.muzzleLocal()).toBeNull();
+  });
+
+  // Was asserted as `toBeNull()` until 2026-08-21, which is the defect this pass fixed: an
+  // enemy having no muzzle followed from an enemy never mounting a weapon at all. Now that
+  // the held path mounts one, a mob's bullets get the same barrel-tip spawn correction the
+  // hero's have (Scene.reconcile), so the muzzle has to be real.
+  it('is NOT null on a held-mount rig — an enemy has a barrel tip to correct toward', () => {
+    const skin = makeSkin(CRITTER_CORE_RIG);
+    skin.setWeaponKind('ranged', 'enemygun');
+    skin.setAim(0);
+    skin.update();
+    const m = skin.muzzleLocal();
+    expect(m).not.toBeNull();
+    // body tip (0,-40) + drawnBodyR 50 along +x, then barrelReach 0.2 past that.
+    expect(m!.x).toBeCloseTo(50.2, 6);
+    expect(m!.y).toBeCloseTo(-40, 6);
+  });
+});
+
+/**
+ * The held mount, WIRED — `rigWeaponMount.test.ts` covers the geometry as a pure function;
+ * these cover RigSkin actually feeding it the right inputs, which is a separate failure
+ * surface and the one the mutation battery found uncovered.
+ */
+describe('RigSkin — the held weapon mount (the enemy body forms, 2026-08-21)', () => {
+  const moduleOf = (skin: RigSkin) =>
+    (skin as unknown as { weaponSprite: { x: number; y: number; visible: boolean } | null }).weaponSprite;
+  const idleOf = (skin: RigSkin) =>
+    (skin as unknown as { idleModuleSprite: { visible: boolean } | null }).idleModuleSprite;
+
+  // critter-core's own measured fill. The mount has to follow the ART, so this number moving
+  // has to move the gun — that is what makes one rule fit critter (0.70) and brute/floater
+  // (1.00) off a single shared rig.
+  it("scales the mount by the bundle's measured bodyFill, not by the declared bodyR", () => {
+    const armedAt = (bodyFill: number) => {
+      const skin = makeSkinWithFill(CRITTER_CORE_RIG, bodyFill);
+      skin.setWeaponKind('ranged', 'enemygun');
+      skin.setAim(0);
+      skin.update();
+      return moduleOf(skin)!.x;
+    };
+    const partial = armedAt(0.7);
+    const full = armedAt(1);
+    expect(partial).toBeLessThan(full);
+    expect(full / partial).toBeCloseTo(1 / 0.7, 6);
+    // And concretely: critter-core's body bone declares bodyR 50, so 0.70 of it is 35.
+    expect(partial).toBeCloseTo(35, 6);
+  });
+
+  it("mounts exactly one module — a mob does not get the hero's decorative second arm", () => {
+    const skin = makeSkinWithFill(CRITTER_CORE_RIG, 0.7);
+    skin.setWeaponKind('ranged', 'enemygun');
+    skin.update();
+    expect(moduleOf(skin)!.visible).toBe(true);
+    // Either never created, or created and hidden — both are "not drawn"; what must not
+    // happen is a second gun appearing on a creature with one.
+    expect(idleOf(skin)?.visible ?? false).toBe(false);
+  });
+
+  it('rides the body bone through a clip translation — the gun does not hang in the air', () => {
+    // `computeFK` folds a clip's rotation into a bone's tip but NOT its translation, so this
+    // is the plumbing that keeps a held module attached through the idle bob. Asserted here
+    // and not just in the pure-function test because RigSkin has to pass `transforms` down at
+    // all — dropping that argument is invisible to any fixture whose bundle has no clips.
+    const clip: AnimationClip = {
+      duration: 1,
+      loop: false,
+      keyframes: [{ time: 0, bones: new Map([['body', { translateX: 4, translateY: -9 }]]) }],
+    };
+    const still = makeSkinWithFill(CRITTER_CORE_RIG, 0.7);
+    still.setWeaponKind('ranged', 'enemygun');
+    still.setAim(0);
+    still.update();
+    const restX = moduleOf(still)!.x;
+    const restY = moduleOf(still)!.y;
+
+    const bobbing = makeSkinWithFill(CRITTER_CORE_RIG, 0.7, new Map([['idle', clip]]));
+    bobbing.setWeaponKind('ranged', 'enemygun');
+    bobbing.setAim(0);
+    bobbing.playClip('idle', 0);
+    bobbing.update();
+    expect(moduleOf(bobbing)!.x).toBeCloseTo(restX + 4, 6);
+    expect(moduleOf(bobbing)!.y).toBeCloseTo(restY - 9, 6);
+  });
+
+  it("mounts nothing on a 'none' rig, however it is armed", () => {
+    const skin = makeSkin(BOSS_CORE_RIG);
+    skin.setWeaponKind('ranged', 'enemygun');
+    skin.update();
+    expect(moduleOf(skin)?.visible ?? false).toBe(false);
+    expect(idleOf(skin)?.visible ?? false).toBe(false);
+  });
+
+  it('mirrors with the body, so a left-facing mob holds its gun on its left', () => {
+    const skin = makeSkinWithFill(CRITTER_CORE_RIG, 0.7);
+    skin.setWeaponKind('ranged', 'enemygun');
+    skin.setBodyFacing(Math.PI);
+    skin.setAim(Math.PI);
+    skin.update();
+    expect(skin.view.scale.x).toBe(-1);
+    // Canonical (pre-mirror) space puts it at +x; the whole-rig flip renders that on the left.
+    expect(moduleOf(skin)!.x).toBeCloseTo(35, 6);
   });
 });
 

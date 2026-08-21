@@ -20,4 +20,7 @@ export const ORB_CORE_RIG: RigDef = {
     { id: 'socket_r', parent: 'shell', len: 52, rwa: 0, bodyR: 13, outerW: 6, innerW: 3, label: 'Socket R' },
   ],
   drawOrder: ['shell', 'belly', 'eye', 'socket_l', 'socket_r'],
+  // The body plan design/13 built the universal mount around: both weapon modules orbit the
+  // core on their own socket bones, on drawn energy tethers.
+  weaponMount: 'socket',
 };

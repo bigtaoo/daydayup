@@ -2,6 +2,7 @@ import { Container, Graphics } from 'pixi.js';
 import { RigSkin } from '../../render/RigSkin';
 import { getRigSkin } from '../../render/skinRegistry';
 import type { WeaponVisualKind } from '../../render/weaponSkins';
+import { resolveWeaponMount } from '../../render/rigWeaponMount';
 
 // Appearance layer (see design/02-entity-model.md).
 // A skin is either the Graphics placeholder (default — no real art preloaded
@@ -14,6 +15,9 @@ export class Skin {
   readonly view = new Container();
   private front?: Graphics;
   private rig?: RigSkin;
+  /** The `Rig` behind `this.rig` — kept so `weaponMount` can ask the rig def how (or whether)
+   *  this body plan carries a weapon without RigSkin having to re-expose it. */
+  private rigDef!: Parameters<typeof resolveWeaponMount>[0];
   private rigScale = 1; // the wrapper's authoring-px -> gameplay-radius factor (see below)
   /** Half-width of the DRAWN body in world px — the gameplay radius scaled by how much of its
    *  declared radius this bundle's art actually paints (`skinRegistry.BODY_FILL`). This, not
@@ -39,6 +43,7 @@ export class Skin {
 
     if (loaded) {
       this.rig = new RigSkin(loaded.rig, loaded.bundle, loaded.bodyFill);
+      this.rigDef = loaded.rig;
       if (rigTint !== undefined) this.rig.setTint(rigTint);
       // Normalize the rig's authoring-px footprint to this actor's gameplay radius
       // on a separate wrapper — RigSkin.view's own scale.x is its L/R flip toggle
@@ -118,10 +123,33 @@ export class Skin {
     return { x: local.x * s, y: local.y * s };
   }
 
-  /** Whether a real `.tao` rig is active (vs. the Graphics placeholder) — lets Actor
-   *  decide whether its own cosmetic weapon Graphics is still needed. */
+  /** Whether a real `.tao` rig is active (vs. the Graphics placeholder). */
   get hasRig(): boolean {
     return !!this.rig;
+  }
+
+  /**
+   * How this skin shows an equipped weapon — the single question `Actor` has to answer before
+   * deciding whether to draw its own cosmetic `Graphics` bar:
+   *
+   *   'sprite'      — the rig mounts the real weapon texture itself (`RigSkin`, either mount
+   *                   path). Actor must draw nothing, or the two render on top of each other.
+   *   'none'        — the rig deliberately shows no weapon (design/13's boss). Actor must
+   *                   draw nothing here EITHER, which is the whole point of the distinction.
+   *   'placeholder' — no rig loaded, so nothing can mount anything and the Graphics bar is
+   *                   the only thing standing in for a weapon.
+   *
+   * This replaced a `hasRig && faction === 'player'` gate (fixed 2026-08-21). That gate made
+   * mounting a property of the FACTION when it is a property of the RIG, and the consequence
+   * was that every enemy — all of which do load a real rig — fell through to the placeholder
+   * forever: `gun_enemygun.png` shipped fully calibrated in `WEAPON_DEFS` and was never once
+   * rendered in the world, while the bar it fell back to drew at the actor's GROUND origin,
+   * 11-28 world px below a rig body that floats above that origin. Measured on a real frame,
+   * it read as a white rectangle lying on the floor beside the creature, not as a weapon.
+   */
+  get weaponMount(): 'sprite' | 'placeholder' | 'none' {
+    if (!this.rig) return 'placeholder';
+    return resolveWeaponMount(this.rigDef) === 'none' ? 'none' : 'sprite';
   }
 
   /** Forward the equipped weapon's kind to the rig's socket mount (design/03/12/13).

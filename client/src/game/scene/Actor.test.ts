@@ -2,9 +2,12 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { Texture, type Graphics, type Rectangle } from 'pixi.js';
 import { freshStatus } from '@dd/engine/content/damage';
 import { Actor } from './Actor';
+import { THEME } from '../theme';
 import { SHADOW_SQUASH } from './Entity';
 import { Rig } from '../../render/Rig';
 import { ORB_CORE_RIG, ORB_CORE_REFERENCE_RADIUS } from '../../render/orbCoreRig';
+import { CRITTER_CORE_RIG, CRITTER_CORE_REFERENCE_RADIUS } from '../../render/critterCoreRig';
+import { BOSS_CORE_RIG, BOSS_CORE_REFERENCE_RADIUS } from '../../render/bossCoreRig';
 import type { RigSkinBundle } from '../../render/taoBundle';
 import type { SpriteBinding } from '../../render/types';
 import type { LoadedRigSkin } from '../../render/skinRegistry';
@@ -38,6 +41,20 @@ const ORB_CORE_BODY_FILL = 0.81;
 function loadedOrbCoreRig(): LoadedRigSkin {
   const rig = new Rig(ORB_CORE_RIG);
   return { rig, bundle: fakeOrbCoreBundle(rig), referenceRadius: ORB_CORE_REFERENCE_RADIUS, bodyFill: ORB_CORE_BODY_FILL };
+}
+
+/** The enemy body forms' rig (`critter-core`, shared by brute-core/floater-core) and the
+ *  boss's — needed because "who draws the weapon" is decided by the RIG since 2026-08-21,
+ *  so orb-core alone can no longer cover the question. Real `RigDef`s over the same fake
+ *  bundle; `bodyFill` is critter-core's own measured value. */
+function loadedCritterCoreRig(): LoadedRigSkin {
+  const rig = new Rig(CRITTER_CORE_RIG);
+  return { rig, bundle: fakeOrbCoreBundle(rig), referenceRadius: CRITTER_CORE_REFERENCE_RADIUS, bodyFill: 0.7 };
+}
+
+function loadedBossCoreRig(): LoadedRigSkin {
+  const rig = new Rig(BOSS_CORE_RIG);
+  return { rig, bundle: fakeOrbCoreBundle(rig), referenceRadius: BOSS_CORE_REFERENCE_RADIUS, bodyFill: 0.68 };
 }
 
 // EnergyShieldFilter/OutlineFilter/DissolveFilter all build a real WebGL GlProgram at
@@ -155,14 +172,26 @@ describe('Actor.setLocal — "which one is me" marker (design/10 legibility)', (
     expect(me.children.length).toBe(4);
   });
 
-  it('re-outlines an already-drawn health bar when the local flag flips', () => {
+  // Was asserted via the bar's BOUNDS growing, which only worked because the local outline
+  // happened to be a thicker stroke than the default one — an accident of stroke width, not
+  // the design intent, and it broke the moment the bar's frame became a filled contour
+  // (2026-08-21). What the marker actually is: the same-sized contour, recoloured. Asserted
+  // on the drawn fill colours, so it fails if the recolour stops happening.
+  it('recolours an already-drawn health bar when the local flag flips', () => {
+    const contourColorOf = (a: Actor): number => {
+      type Instr = { action: string; data: { style?: { color: number } } };
+      const fills = (healthBarOf(a).context.instructions as unknown as Instr[])
+        .filter((i) => i.action === 'fill' && i.data.style)
+        .map((i) => i.data.style!.color);
+      return fills[0]!; // the contour is drawn first, under everything else
+    };
     const me = new Actor('player', 12);
     me.setHealth(50, 100);
-    const before = healthBarOf(me).getLocalBounds().width;
+    const before = contourColorOf(me);
+    expect(before).not.toBe(THEME.colors.player);
     me.setLocal(true);
     me.setHealth(50, 100); // same ratio — only the forced redraw makes this repaint
-    // The local outline is thicker, so the stroked bounds grow even at an identical ratio.
-    expect(healthBarOf(me).getLocalBounds().width).toBeGreaterThan(before);
+    expect(contourColorOf(me)).toBe(THEME.colors.player);
   });
 });
 
@@ -627,6 +656,84 @@ describe('Actor.interpolate — movingOverride (idle/move clip selection survive
 // lifts `Skin.muzzleAnchor`'s skin-local point into the space `Entity.x/y` live in, so
 // `Scene` can hand it straight to a Bullet. Skin.test.ts covers the rig -> skin scale
 // and RigSkin.test.ts the socket/texture geometry; this is only the last hop.
+/**
+ * WHO DRAWS THE WEAPON — the 2026-08-21 fix, and the regression test for it.
+ *
+ * `Actor` owns a cosmetic `Graphics` bar that stands in for a weapon when no real art can be
+ * mounted. Deciding when to draw it used to read `hasRig && faction === 'player'`, i.e. it
+ * treated mounting as a property of the FACTION. It is a property of the RIG, and the cost of
+ * getting that backwards was total: every enemy loads a real rig, so every enemy failed the
+ * faction half of that test and kept the placeholder forever. `gun_enemygun.png` shipped
+ * calibrated in `WEAPON_DEFS` and was never rendered in the world once; the bar it fell back
+ * to draws at the actor's ground origin, 11-28 world px below where a rig body is drawn, so on
+ * a real frame it read as a white rectangle lying on the floor beside the creature.
+ *
+ * The invariant now: exactly one of {rig-mounted sprite, Graphics placeholder} is ever drawn,
+ * and which one is the rig's call via `Skin.weaponMount`. Note the boss case — 'none' is NOT
+ * the same as 'placeholder', and conflating them is what put a mob's rifle bar on the finale.
+ */
+describe('Actor.setWeaponKind — the rig decides who draws the weapon, not the faction', () => {
+  afterEach(() => {
+    skinRegistryMocks.loaded = undefined;
+  });
+
+  const placeholderWidth = (a: Actor): number =>
+    (a as unknown as { weaponGfx: Graphics }).weaponGfx.getLocalBounds().width;
+
+  it('draws the placeholder when NO rig is loaded — the one case it is for', () => {
+    const a = new Actor('enemy', 15);
+    a.setWeaponKind('ranged', 'physical', 'enemygun');
+    expect(placeholderWidth(a)).toBeGreaterThan(0);
+  });
+
+  it('draws the placeholder for a melee kind too, so an unrigged skin is never unarmed-looking', () => {
+    const a = new Actor('player', 20);
+    a.setWeaponKind('melee', 'fire', 'emberblade');
+    expect(placeholderWidth(a)).toBeGreaterThan(0);
+  });
+
+  it("draws NOTHING for a socket-mount rig — the sprite IS the hero's weapon", () => {
+    skinRegistryMocks.loaded = loadedOrbCoreRig();
+    const a = new Actor('player', 20, undefined, false, 'char_vanguard');
+    a.setWeaponKind('ranged', 'physical', 'blaster');
+    expect(placeholderWidth(a)).toBe(0);
+  });
+
+  // THE regression test. This actor is an enemy AND has a rig, which is precisely the
+  // combination the old faction gate got wrong.
+  it('draws NOTHING for a held-mount enemy rig — the case the faction gate broke', () => {
+    skinRegistryMocks.loaded = loadedCritterCoreRig();
+    const a = new Actor('enemy', 15, 0xf56565, false, 'critter-core');
+    a.setWeaponKind('ranged', 'physical', 'enemygun');
+    expect(placeholderWidth(a)).toBe(0);
+  });
+
+  it("draws NOTHING for a 'none' rig either — a weaponless body is not a placeholder body", () => {
+    skinRegistryMocks.loaded = loadedBossCoreRig();
+    const a = new Actor('enemy', 30, 0x8e24aa, true, 'boss-core');
+    a.setWeaponKind('ranged', 'physical', 'enemygun');
+    expect(placeholderWidth(a)).toBe(0);
+  });
+
+  it('still clears the placeholder when the weapon is unequipped', () => {
+    const a = new Actor('enemy', 15);
+    a.setWeaponKind('ranged', 'physical', 'enemygun');
+    expect(placeholderWidth(a)).toBeGreaterThan(0);
+    a.setWeaponKind(null);
+    expect(placeholderWidth(a)).toBe(0);
+  });
+
+  it('does not depend on the faction at all any more — same rig, both factions, same answer', () => {
+    skinRegistryMocks.loaded = loadedOrbCoreRig();
+    const mine = new Actor('player', 20, undefined, false, 'char_vanguard');
+    const theirs = new Actor('enemy', 20, undefined, false, 'char_vanguard');
+    mine.setWeaponKind('ranged', 'physical', 'blaster');
+    theirs.setWeaponKind('ranged', 'physical', 'blaster');
+    expect(placeholderWidth(mine)).toBe(placeholderWidth(theirs));
+    expect(placeholderWidth(theirs)).toBe(0);
+  });
+});
+
 describe('Actor.muzzlePos — the drawn barrel tip, in Entity coordinates', () => {
   afterEach(() => {
     skinRegistryMocks.loaded = undefined;
@@ -637,8 +744,8 @@ describe('Actor.muzzlePos — the drawn barrel tip, in Entity coordinates', () =
       () => local;
   };
 
-  it('is null when the skin reports no mounted module — every enemy, and any preload gap', () => {
-    const mob = new Actor('enemy', 12);
+  it('is null when the skin reports no mounted module — a placeholder skin, or a preload gap', () => {
+    const mob = new Actor('enemy', 12); // no rig registered: the Graphics placeholder
     expect(mob.muzzlePos()).toBeNull();
   });
 
@@ -881,18 +988,41 @@ describe('Actor — the ground shadow is sized from the DRAWN body, not the coll
 });
 
 describe('Actor — the hover has to be big enough to actually produce its own cue', () => {
-  it('displaces the shadow by more than a screen pixel at rest', () => {
+  it('displaces the shadow by more than a screen pixel, everywhere in the bob', () => {
     // The lesson this pins: at the original base of 3.5 world px the offset was
     // `3.5 x SHADOW_SLANT` = (1.5, 0.8) world px, i.e. under one screen pixel at a normal zoom.
     // The whole HOVER table existed to make a shadow separate from its body and could not,
     // however carefully its numbers were tuned — an arithmetic dead end, not a look problem.
+    //
+    // Sampled across a full bob rather than at one instant. `hoverT` is seeded from a
+    // module-level construction counter (`hoverPhaseSeq`, deliberately order-dependent so a
+    // room of floaters doesn't pulse in lockstep), so "at rest" is not a state a test can
+    // reach: the single-instant version of this assertion silently measured whatever phase the
+    // actors constructed earlier in this FILE happened to leave behind, and broke when an
+    // unrelated test was added above it (2026-08-21).
+    //
+    // Measuring the whole cycle also corrects the claim. `visualZ = base + amp * sin(t)`
+    // swings 6 ± 3.5, i.e. 2.5 to 9.5 — so the offsets run (1.05, 0.55) at the trough through
+    // (2.5, 1.3) at the base to (4.0, 2.1) at the peak. HOVER's own comment quotes only the
+    // base-to-peak half of that; the trough is roughly a quarter of the peak, and it is the
+    // one part of the cycle that is still near the "one screen pixel" floor this table was
+    // doubled to clear. Asserted both ways below, so the cue has to survive the bottom of the
+    // bob AND actually reach a separation at the top.
     skinRegistryMocks.loaded = { ...loadedOrbCoreRig(), bodyFill: 0.81 };
     const a = new Actor('player', 20, undefined, false, 'char_vanguard');
     a.pushState(500, 500, 0, 0);
     a.snap();
-    a.interpolate(1, 0);
-    expect(a.shadow!.x - 500).toBeGreaterThan(2);
-    expect(a.shadow!.y - 500).toBeGreaterThan(1);
+    const dx: number[] = [];
+    const dy: number[] = [];
+    for (let i = 0; i < 40; i++) {
+      a.interpolate(1, 120); // 40 x 120ms = 4.8s, comfortably past the 2.4s period
+      dx.push(a.shadow!.x - 500);
+      dy.push(a.shadow!.y - 500);
+    }
+    expect(Math.min(...dx)).toBeGreaterThan(1); // the trough still separates at all...
+    expect(Math.min(...dy)).toBeGreaterThan(0.5);
+    expect(Math.max(...dx)).toBeGreaterThan(3.5); // ...and the peak separates clearly
+    expect(Math.max(...dy)).toBeGreaterThan(2);
   });
 
   it('and by visibly more at the top of the bob than the bottom', () => {

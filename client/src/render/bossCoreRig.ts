@@ -22,4 +22,11 @@ export const BOSS_CORE_RIG: RigDef = {
     { id: 'ring_b', parent: 'core', len: 90, rwa: 225, bodyR: 22, outerW: 8, innerW: 4, label: 'Ring B' },
   ],
   drawOrder: ['core', 'ring_a', 'ring_b'],
+  // Draws no weapon at all. The boss fires in the sim like any mob, but design/13's "giant
+  // cracked crystal core with orbiting shard rings" already carries its armament — ring_a/
+  // ring_b ARE it — and a raider rifle stuck to a 60-px core reads as a mob's loadout on the
+  // finale. Before 2026-08-21 it drew the same 12x5 `Graphics` placeholder bar every enemy
+  // did, at its ground origin, which measured as a white rectangle lying on the floor ~28
+  // world px below the body's centre. 'none' is what that placeholder was standing in for.
+  weaponMount: 'none',
 };

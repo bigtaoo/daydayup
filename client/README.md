@@ -46,7 +46,8 @@ feels under real thumbs on a real device (`design/04`).
 - **Height / shadow separation** — the `z`/shadow split the tilted view needs, kept in the render layer where a future hop or blink would live
 - **Actor / Skin / Weapon three-layer structure** (see `design/02-entity-model.md`)
 - **Upper/lower body split** — body faces movement, weapon tracks aim, both driven off one engine actor
-- `.tao` **rig playback** (`src/render/`) with per-character atlases and weapon sprites mounted on the rig's sockets
+- `.tao` **rig playback** (`src/render/`) with per-character atlases and weapon sprites mounted per body
+  plan (`rigWeaponMount.ts`: the hero's orbiting sockets, a mob's held mount, the boss's none)
 - Additive-blend fx layer (muzzle / deflect flashes), post-processing and particles, WeChat-safe rendering path
 
 ## Layout

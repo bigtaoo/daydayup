@@ -1,4 +1,5 @@
 import type { BoneDef, WorldPose, WorldPositions, ResolvedBoneTransform } from './types';
+import type { WeaponMountMode } from './rigWeaponMount';
 
 // Ported from tools/animator/src/skeleton/Rig.ts — computeFK only (the editor's
 // computeNaturalHeight is an authoring-time bake concern, not needed at runtime).
@@ -8,6 +9,10 @@ export interface RigDef {
   label: string;
   bones: Omit<BoneDef, 'rla'>[];
   drawOrder: readonly string[];
+  /** How this body plan carries its weapon module — see `rigWeaponMount.WeaponMountMode`.
+   *  Optional only for forward-compat with a rig def that predates the field;
+   *  `resolveWeaponMount` picks a conservative default rather than inventing a weapon. */
+  weaponMount?: WeaponMountMode;
 }
 
 export class Rig {
@@ -15,9 +20,11 @@ export class Rig {
   readonly boneMap: ReadonlyMap<string, BoneDef>;
   readonly boneDefs: readonly BoneDef[];
   readonly drawOrder: readonly string[];
+  readonly weaponMount: WeaponMountMode | undefined;
 
   constructor(def: RigDef) {
     this.id = def.id;
+    this.weaponMount = def.weaponMount;
 
     const boneMap = new Map<string, BoneDef>();
     const boneDefs: BoneDef[] = def.bones.map(raw => {

@@ -34,6 +34,7 @@ import { BODY_FILL, BODY_FILL_DEFAULT, RIG_DEFS } from './skinRegistry';
 import { RigSkin } from './RigSkin';
 import { deserializeClip, type AnimationJson } from './taoBundle';
 import { KIND_DEFAULTS, WEAPON_DEFS, MODULE_SCALE, type WeaponVisualDef } from './weaponSkins';
+import { HELD_MOUNT_R, barrelReach, resolveWeaponMount } from './rigWeaponMount';
 import type { Rig } from './Rig';
 import type { RigSkinBundle } from './taoBundle';
 import type { AnimationClip, BoneDef, SpriteBinding, WorldPose } from './types';
@@ -47,6 +48,11 @@ const readJson = <T>(path: string): T => JSON.parse(read(path).toString('utf8'))
  *  size on disk, so this deliberately does not trust any recorded number. */
 function pngWidth(path: string): number {
   return read(path).readUInt32BE(16);
+}
+
+/** A PNG's real pixel height, from the same IHDR chunk as `pngWidth`. */
+function pngHeight(path: string): number {
+  return read(path).readUInt32BE(20);
 }
 
 /** The (skinName → bundle directory) pairs the GAME preloads, parsed out of main.ts's own
@@ -325,6 +331,108 @@ describe('rig composition — the drawn body fits inside the sim\'s wall clearan
  * alternative would be a second decoder in test code), so this deliberately reads whole images
  * rather than an IHDR header like its siblings above.
  */
+/**
+ * The held weapon mount, checked against the REAL shipped content (2026-08-21).
+ *
+ * `rigWeaponMount.test.ts` covers the geometry as arithmetic and `RigSkin.test.ts` covers the
+ * wiring; neither can tell you whether the rule actually works for the art that ships. This
+ * does, and it is the check that would have caught the alternative design before it was built:
+ * a socket bone on the shared enemy rig could only declare ONE length, and these three bundles
+ * paint 0.70 / 1.00 / 1.00 of the same declared `bodyR`, so no single length clears all three.
+ *
+ * Both bounds are the two ways a mounted gun goes wrong, and each was seen on a real frame
+ * during the pass:
+ *   - the barrel has to CLEAR the body silhouette, or the gun is a lump inside the creature;
+ *   - the housing has to OVERLAP it, or the gun floats detached (which is exactly what a mount
+ *     radius of 1.15 did to floater-core, whose `bodyFill` is its widest row and so overstates
+ *     its half-width at the mount's own height).
+ *
+ * Sized from `BODY_FILL` — pinned to the shipped PNGs by the block above — and from the real
+ * on-disk width of `gun_enemygun.png`. So re-cropping an enemy body, or re-exporting the gun at
+ * a different size, fails here rather than shipping a detached weapon.
+ */
+describe('rig composition — the held weapon mount works for the art that actually ships', () => {
+  const ENEMY_GUN = WEAPON_DEFS.enemygun!;
+  const gunW = pngWidth(ENEMY_GUN.path.replace(/^\//, ''));
+
+  /**
+   * The mounted gun's extent along the aim, in rig authoring-px, measured the way `RigSkin`
+   * and `muzzleLocal` measure it: anchor-to-tip forward, anchor-to-canvas-edge backward.
+   *
+   * Reads the calibration straight out of `WEAPON_DEFS`, NOT through `getWeaponAnchor`/
+   * `getWeaponRotationOffset`. Those resolve through `weaponSkins.resolve()`, which falls back
+   * to the KIND default unless the texture is in the preload cache — and under vitest nothing
+   * is preloaded, so every one of them silently returned `gun_default`'s calibration instead of
+   * `enemygun`'s. The mutation battery found it: moving enemygun's anchor to its barrel tip
+   * changed nothing here. The authored table is what ships, so the table is what to check.
+   */
+  function gunReach(): { forward: number; backward: number } {
+    const anchor = ENEMY_GUN.anchor;
+    const scale = ENEMY_GUN.scale * MODULE_SCALE;
+    const gunH = pngHeight(ENEMY_GUN.path.replace(/^\//, ''));
+    const forward = barrelReach(gunW, gunH, anchor, ENEMY_GUN.rotationOffsetRad ?? 0) * scale;
+    // Backward: from the anchor to the far canvas edge, i.e. how much housing can tuck in.
+    const backward = anchor.x * gunW * scale;
+    return { forward, backward };
+  }
+
+  it("reads enemygun's OWN calibration, not the kind default it falls back to unpreloaded", () => {
+    // Guard on the guard: if these ever coincide, the checks below stop testing enemygun.
+    expect(ENEMY_GUN.anchor).not.toEqual(KIND_DEFAULTS.ranged.anchor);
+    expect(gunReach().forward).toBeGreaterThan(0);
+  });
+
+  const HELD = BUNDLES.filter(({ name }) => resolveWeaponMount(RIG_DEFS[name]!.rig) === 'held');
+
+  it('found the held-mount bundles — critter/brute/floater, all sharing one rig', () => {
+    expect(HELD.map(b => b.name).sort()).toEqual(['brute-core', 'critter-core', 'floater-core']);
+    // The premise of the whole design: one Rig instance, so one socket length for all three.
+    const rigs = new Set(HELD.map(b => RIG_DEFS[b.name]!.rig));
+    expect(rigs.size).toBe(1);
+  });
+
+  it('the three held bundles do NOT share a drawn body radius — why one socket length cannot fit', () => {
+    const radii = new Set(HELD.map(b => RIG_DEFS[b.name]!.rig.boneMap.get('body')!.bodyR! * BODY_FILL[b.name]!));
+    expect(radii.size).toBeGreaterThan(1);
+  });
+
+  it.each(HELD)('$name: the barrel clears the body and the housing still overlaps it', ({ name }) => {
+    const rig = RIG_DEFS[name]!.rig;
+    const drawnR = rig.boneMap.get('body')!.bodyR! * BODY_FILL[name]!;
+    const anchorAt = drawnR * HELD_MOUNT_R;
+    const { forward, backward } = gunReach();
+
+    // The muzzle ends outside the silhouette, by a real margin rather than a rounding error.
+    expect(anchorAt + forward, `${name}: barrel tip vs drawn radius ${drawnR}`).toBeGreaterThan(drawnR * 1.2);
+    // ...and the back of the housing is inside it, so the gun reads as carried.
+    expect(anchorAt - backward, `${name}: housing back vs drawn radius ${drawnR}`).toBeLessThan(drawnR);
+  });
+
+  it.each(HELD)('$name: the gun reads as a module against THIS body, not just against the hero core', ({ name }) => {
+    // Same proportion question the orb-core block above asks, but per enemy body — the mobs are
+    // smaller than the hero, so a gun sized only against the hero's core could swamp them.
+    const drawnR = RIG_DEFS[name]!.rig.boneMap.get('body')!.bodyR! * BODY_FILL[name]!;
+    const ratio = (gunW * ENEMY_GUN.scale * MODULE_SCALE) / (2 * drawnR);
+    expect(ratio).toBeGreaterThan(0.4);
+    expect(ratio).toBeLessThanOrEqual(1.2);
+  });
+
+  it('every preloaded bundle resolves to a mount mode, and the boss is the only weaponless one', () => {
+    const byMode = new Map<string, string[]>();
+    for (const { name } of BUNDLES) {
+      const mode = resolveWeaponMount(RIG_DEFS[name]!.rig);
+      byMode.set(mode, [...(byMode.get(mode) ?? []), name]);
+    }
+    expect(byMode.get('none')).toEqual(['boss-core']);
+    expect(byMode.get('socket')!.sort()).toEqual(['char_juggernaut', 'char_skirmisher', 'char_vanguard']);
+    expect(byMode.get('held')!.length).toBe(3);
+    // No bundle may be left without a mode — that is how the boss ended up drawing a
+    // placeholder bar for months.
+    expect(byMode.get('socket')!.length + byMode.get('held')!.length + byMode.get('none')!.length)
+      .toBe(BUNDLES.length);
+  });
+});
+
 describe('BODY_FILL — the recorded body art fill matches the shipped pixels', () => {
   /** `alpha > 8` rather than `> 0`: a chroma-keyed PNG carries a rim of near-zero antialiasing
    *  alpha that is invisible on screen and would inflate every measurement. */

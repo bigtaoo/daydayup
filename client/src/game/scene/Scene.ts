@@ -144,10 +144,13 @@ export class Scene {
         // hit detection, and which a player standing flush against a wall could
         // otherwise push through to the far side).
         //
-        // `muzzlePos()` is null for anything with no rig-mounted module — every enemy,
-        // whose placeholder barrel already ends within a pixel of its own sim muzzle —
-        // and for the frames before a weapon texture finishes preloading. Both leave the
-        // bullet exactly where the engine put it, as before.
+        // `muzzlePos()` is null for anything with no rig-mounted module — a rig whose
+        // `weaponMount` is 'none' (the boss), a skin still on the Graphics placeholder, and
+        // the frames before a weapon texture finishes preloading. Those leave the bullet
+        // exactly where the engine put it, as before. Enemies used to be in that list too,
+        // for the wrong reason (they never mounted a module at all, see `Skin.weaponMount`);
+        // since 2026-08-21 they mount one, so a mob's shots get the same barrel-tip spawn
+        // correction the hero's have had since 2026-08-17.
         const muzzle = b.ownerId === undefined ? null : this.actorAt(b.ownerId)?.muzzlePos();
         if (muzzle) v.setMuzzleOrigin(muzzle.x - bx, muzzle.y - (by - bz));
       } else {

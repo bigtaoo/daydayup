@@ -14,6 +14,8 @@ import { Skin } from './Skin';
 import { Rig } from '../../render/Rig';
 import { RigSkin } from '../../render/RigSkin';
 import { ORB_CORE_RIG, ORB_CORE_REFERENCE_RADIUS } from '../../render/orbCoreRig';
+import { CRITTER_CORE_RIG, CRITTER_CORE_REFERENCE_RADIUS } from '../../render/critterCoreRig';
+import { BOSS_CORE_RIG, BOSS_CORE_REFERENCE_RADIUS } from '../../render/bossCoreRig';
 import type { RigSkinBundle } from '../../render/taoBundle';
 import type { SpriteBinding } from '../../render/types';
 import type { LoadedRigSkin } from '../../render/skinRegistry';
@@ -215,5 +217,52 @@ describe('Skin.bodyDrawnR — the drawn half-width, not the collision radius', (
     // the number would be back to describing a box rather than a creature.
     mocks.loaded = loadedRig();
     expect(new Skin(0x111111, 0x222222, 40, 'char_vanguard').bodyDrawnR).toBeLessThan(40);
+  });
+});
+
+/**
+ * `weaponMount` is the one question `Actor` asks before deciding whether to draw its own
+ * cosmetic weapon bar, and getting it wrong is expensive in both directions: answer 'sprite'
+ * when nothing can mount and the actor looks unarmed; answer 'placeholder' when the rig IS
+ * mounting one and two weapons render on top of each other.
+ *
+ * It replaced `hasRig && faction === 'player'` in `Actor` (2026-08-21). Note the third value:
+ * 'none' and 'placeholder' both mean "the rig draws no sprite", but they mean opposite things
+ * for Actor, and collapsing them is exactly what left the boss drawing a mob's rifle bar.
+ */
+describe('Skin.weaponMount — who is responsible for drawing the weapon', () => {
+  it("is 'placeholder' with no rig loaded — nothing else can draw anything", () => {
+    mocks.loaded = undefined;
+    expect(new Skin(0x111111, 0x222222, 20).weaponMount).toBe('placeholder');
+    expect(new Skin(0x111111, 0x222222, 20, 'char_vanguard').weaponMount).toBe('placeholder');
+  });
+
+  it("is 'sprite' for a socket-mount rig (the hero)", () => {
+    mocks.loaded = loadedRig();
+    expect(new Skin(0x111111, 0x222222, 20, 'char_vanguard').weaponMount).toBe('sprite');
+  });
+
+  it("is 'sprite' for a held-mount rig — the enemy case that used to fall through to the placeholder", () => {
+    const rig = new Rig(CRITTER_CORE_RIG);
+    mocks.loaded = { rig, bundle: fakeBundle(rig), referenceRadius: CRITTER_CORE_REFERENCE_RADIUS, bodyFill: 0.7 };
+    expect(new Skin(0x111111, 0x222222, 15, 'critter-core').weaponMount).toBe('sprite');
+  });
+
+  it("is 'none' — not 'placeholder' — for a rig that deliberately carries no weapon (the boss)", () => {
+    const rig = new Rig(BOSS_CORE_RIG);
+    mocks.loaded = { rig, bundle: fakeBundle(rig), referenceRadius: BOSS_CORE_REFERENCE_RADIUS, bodyFill: 0.68 };
+    const skin = new Skin(0x111111, 0x222222, 30, 'boss-core');
+    expect(skin.weaponMount).toBe('none');
+    expect(skin.hasRig).toBe(true); // it HAS a rig; it just isn't mounting anything
+  });
+
+  it('never depends on the faction — Skin is not told one, which is the fix', () => {
+    // Regression guard in the strongest available form: the same skin name and the same
+    // registry entry must give the same answer no matter who is carrying it, and `Skin`'s
+    // constructor has no faction parameter for a future change to start branching on.
+    mocks.loaded = loadedRig();
+    const a = new Skin(0x111111, 0x222222, 20, 'char_vanguard');
+    const b = new Skin(0x999999, 0x888888, 20, 'char_vanguard', 0xff0000); // enemy-style tint
+    expect(a.weaponMount).toBe(b.weaponMount);
   });
 });

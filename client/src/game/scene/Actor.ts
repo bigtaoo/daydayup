@@ -5,6 +5,7 @@ import { EnergyShieldFilter, OutlineFilter, DissolveFilter, HeatHazeFilter, Norm
 import type { LightHit } from '../fx/lighting';
 import { Entity, SHADOW_SQUASH } from './Entity';
 import { Skin } from './Skin';
+import { drawHealthBar } from './healthBar';
 
 export type Faction = 'player' | 'enemy';
 export type WeaponKind = 'ranged' | 'melee';
@@ -99,7 +100,6 @@ export class Actor extends Entity {
   private weaponName: string | undefined = undefined;
   private weaponElement: DamageType | undefined = undefined;
   private radiusPx: number;
-  private readonly faction: Faction;
   // Idle hover (see HOVER above) — null for a grounded archetype, in which case `visualZ`
   // is never written and this actor behaves exactly as it did before the depth pass.
   private readonly hover: { base: number; amp: number; periodMs: number } | null;
@@ -107,7 +107,6 @@ export class Actor extends Entity {
 
   constructor(faction: Faction, radiusPx: number, tint?: number, boss = false, atlasKey?: string) {
     super();
-    this.faction = faction;
     this.radiusPx = radiusPx;
     this.isBoss = boss;
     // The actor container sorts children so the weapon can sit in front of / behind.
@@ -224,16 +223,15 @@ export class Actor extends Entity {
     this.applySkinFilters();
   }
 
-  // Swap the cosmetic weapon shape to match the engine's active weapon kind. A real
-  // rig mounts its own weapon sprite on the socket (design/03/12/13's universal
-  // mount); the Graphics placeholder is only drawn when no rig is loaded, so the
-  // two never render on top of each other. Enemies are the exception: critter-core
-  // (design/13) is deliberately socket-less (one bone, no arms yet), so its rig can
-  // never mount a weapon sprite — enemies always keep the Graphics placeholder,
-  // regardless of `hasRig`. `damageType` re-tints the mounted weapon sprite to its
-  // element hue (`ELEMENT_COLORS`, same law as a bullet's own colour) — physical
-  // stays the weapon's neutral authored colour, matching `Bullet.color`'s own
-  // `ELEMENT_COLORS[type] ?? fallback` convention.
+  // Swap the cosmetic weapon shape to match the engine's active weapon kind. A real rig
+  // mounts its own weapon sprite (design/03/12/13's universal mount); the Graphics
+  // placeholder is only drawn when NO rig is loaded, so the two never render on top of each
+  // other. `Skin.weaponMount` is the single source of that decision — see its doc for why it
+  // is asked of the rig rather than of the faction, and what the faction gate that used to
+  // live here cost. `damageType` re-tints the mounted weapon sprite to its element hue
+  // (`ELEMENT_COLORS`, same law as a bullet's own colour) — physical stays the weapon's
+  // neutral authored colour, matching `Bullet.color`'s own `ELEMENT_COLORS[type] ?? fallback`
+  // convention.
   setWeaponKind(kind: WeaponKind | null, damageType?: DamageType, name?: string): void {
     if (kind === this.weaponKind && damageType === this.weaponElement && name === this.weaponName) return;
     this.weaponKind = kind;
@@ -241,8 +239,7 @@ export class Actor extends Entity {
     this.weaponName = name;
     this.skin.setWeaponKind(kind, name);
     this.skin.setWeaponTint(damageType !== undefined ? (ELEMENT_COLORS[damageType] ?? 0xffffff) : 0xffffff);
-    const rigCanMountWeapon = this.skin.hasRig && this.faction === 'player';
-    this.drawWeapon(rigCanMountWeapon ? null : kind);
+    this.drawWeapon(this.skin.weaponMount === 'placeholder' ? kind : null);
   }
 
   /**
@@ -277,27 +274,21 @@ export class Actor extends Entity {
 
   // Update the floating health bar from the engine actor's hp. Colour ramps green →
   // amber → red as it drains; redraws only when the fraction changes, so an actor
-  // sitting at full hp costs nothing per tick.
+  // sitting at full hp costs nothing per tick. What the bar LOOKS like lives in
+  // `healthBar.ts` (and its header records the measurements that shaped it); the size
+  // is per-actor, so it stays here — a boss's bar is drawn bigger and further out so it
+  // still reads as the more prominent threat.
   setHealth(hp: number, maxHp: number): void {
     if (!this.healthBar || maxHp <= 0) return;
     const ratio = Math.max(0, Math.min(1, hp / maxHp));
     if (ratio === this.hpRatio) return;
     this.hpRatio = ratio;
-
-    const w = this.radiusPx * (this.isBoss ? 2.2 : 1.7);
-    const h = this.isBoss ? 6 : 4;
-    const g = this.healthBar;
-    g.clear();
-    g.roundRect(-w / 2, -h / 2, w, h, 2).fill({ color: 0x1a1d26, alpha: 0.85 });
-    if (ratio > 0) {
-      const color = ratio > 0.5 ? 0x66bb6a : ratio > 0.25 ? 0xffca28 : 0xef5350;
-      g.roundRect(-w / 2, -h / 2, w * ratio, h, 2).fill({ color });
-    }
-    g.roundRect(-w / 2, -h / 2, w, h, 2).stroke(
-      this.isLocal
-        ? { color: THEME.colors.player, width: 1.5, alpha: 1 }
-        : { color: 0x0c0e14, width: 1, alpha: 0.9 },
-    );
+    drawHealthBar(this.healthBar, {
+      w: this.radiusPx * (this.isBoss ? 2.2 : 1.7),
+      h: this.isBoss ? 6 : 4,
+      ratio,
+      local: this.isLocal,
+    });
   }
 
   // Mirror the engine actor's lingering status (design/03/07). Draws one glowing

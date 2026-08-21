@@ -17,4 +17,9 @@ export const CRITTER_CORE_RIG: RigDef = {
     { id: 'body', parent: 'root', len: 40, rwa: -90, bodyR: 50, label: 'Body' },
   ],
   drawOrder: ['body'],
+  // No socket bone and no arms to hang one off — the mob's gun mounts on the body's own drawn
+  // edge instead (`rigWeaponMount`'s 'held' path, which explains why a socket bone was
+  // measured and rejected for this rig). Shared by brute-core and floater-core, which reuse
+  // this same `Rig` instance (`skinRegistry.RIG_DEFS`) and so necessarily share the answer.
+  weaponMount: 'held',
 };

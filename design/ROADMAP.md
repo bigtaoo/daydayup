@@ -3474,7 +3474,8 @@ across all 8 workspaces, `check:filelength` clean.
 Two of the audit's own claims were corrected by measurement during the pass, which is the more useful
 half of the record:
 
-- **"The enemy's gun reads as a blank white slab"** — true on screen, wrong about the cause. Dumping a
+- **"The enemy's gun reads as a blank white slab"** — true on screen, wrong about the cause. **Fixed
+  2026-08-21, see the entry below.** Dumping a
   live emberling's display tree showed no weapon sprite at all: `Actor.setWeaponKind` gates the rig
   mount on `hasRig && faction === 'player'`, and `critter-core`/`brute-core`/`floater-core` are
   deliberately socket-less single-bone rigs, so **every enemy in the game always draws the 12x5
@@ -3574,15 +3575,177 @@ inside its opening, zero console errors.
 
 ### Still open in this area
 
-- **Enemies never mount a weapon sprite** (see above) — a socket bone on the three enemy rigs, or a
-  mount path that does not need one. Zero new art.
+- ~~**Enemies never mount a weapon sprite**~~ and ~~**In-world health bars are still bare `Graphics`
+  rectangles**~~ — both **done 2026-08-21**, see the entry below.
 - **Bullets stay `Graphics`, deliberately.** ~5 world px is where a texture buys nothing a tinted
   additive dot does not, and costs a sampler per projectile in the busiest part of the frame.
-- **In-world health bars are still bare `Graphics` rectangles** — a HUD element, so procedural is
-  right, but the styling (frame, backing) has not been touched since the 2026-08-02 legibility pass.
 - **`door_open_raw.png` decodes as HAZE** — 44.7% partial alpha, a 15.4% midtone cluster, shipped that
   way since 2026-08-04. `alpha-audit.mjs` had apparently never been run over `client/public/environment`
-  before this pass. Flagged, not fixed.
+  before this pass. Flagged, not fixed. **Still open after 2026-08-21.**
+
+---
+
+## Enemies pick up their guns, and the health bar stops borrowing its contrast from the floor (2026-08-21, client-only)
+
+The two **pure-code** items left in the first-tier placeholder list — no new art needed for either, which
+is why they were grouped. Both turned out to be worse than their one-line descriptions, and in the same
+way: a number sized against art that has since changed, invisible in the source and obvious in one
+measured frame.
+
+**Render-only, no `ENGINE_VERSION` impact.** 2132 client tests green (+77), `npm run check` green across
+all 8 workspaces, `check:filelength` clean — both files that grew came back UNDER the 500-line limit
+rather than into the baseline (`Actor.ts` 500 to 491, `RigSkin.ts` 490 to 469) via two new sibling
+modules.
+
+### 1. Enemies never mounted a weapon sprite, and the fallback was drawn at their feet
+
+`gun_enemygun.png` shipped fully calibrated in `WEAPON_DEFS` (anchor, scale, a measured
+`rotationOffsetRad`) on 2026-07-29 and **had never once been rendered in the world**. The cause was one
+expression: `Actor.setWeaponKind` gated the mount on `hasRig && faction === 'player'`, making mounting a
+property of the **faction** when it is a property of the **rig**. Every enemy loads a real rig, so every
+enemy failed the faction half and kept the `Graphics` placeholder forever.
+
+The frame showed the second half, which no description had: the placeholder is positioned for the
+*pre-rig* body. `weaponGfx.y` is `-lift`, and `lift` is 0 for a rig skin — but a rig draws its body on
+the body bone's TIP, a hover-height above the ground origin. So the bar rendered **11-28 world px below
+the creature's own centre**, reading as a flat white rectangle lying on the floor beside it. Measured per
+body form: critter 11.4, boss 28.
+
+**A fourth case the brief did not mention.** The boss did this too (a 24x5 bar, 28 px down) — found by
+asking the habitual follow-up question, *which other objects use this same kind of art*. `13` already
+said the boss's shard rings are its armament, so this was a placeholder standing in for "nothing", not
+for "a gun".
+
+#### Why a socket bone was rejected, in numbers
+
+The open item offered two options — "a socket bone on the three enemy rigs, or a mount path that does
+not need one". Measurement settled it before any code was written:
+
+| bundle | `bodyFill` (measured from the shipped PNG) | drawn half-width |
+|---|---|---|
+| `critter-core` | 0.70 | 35 authoring px |
+| `brute-core` | 1.00 | 50 |
+| `floater-core` | 1.00 | 50 |
+
+All three share **one** `Rig` instance (`skinRegistry.RIG_DEFS`), so a socket bone can declare exactly
+one `len`. At the hero's 52 the module clears the critter by 17 px but only 2 px on the brute and
+floater; at a length clearing those two it floats ~30 px off the critter with **nothing drawn between**,
+because an enemy rig has no tether to bridge a gap. Splitting one rig into three to get three lengths
+would triple the rig defs and their ported `tools/animator` siblings for one number. Mounting off the
+body's own *measured* drawn radius fits all three from one rule — and stays correct if any body texture
+is re-cropped, since `BODY_FILL` is re-measured against the real PNGs by `rigComposition.test.ts` on
+every run.
+
+#### What shipped
+
+`RigDef.weaponMount` (`render/rigWeaponMount.ts`, the new sibling to `rigShading.ts`/`rigTethers.ts`)
+declares the path per body plan: `'socket'` (orb-core, unchanged), `'held'` (the three enemy forms),
+`'none'` (boss-core). `Skin.weaponMount` collapses that to the single question `Actor` needs —
+`'sprite' | 'placeholder' | 'none'` — and the faction gate is gone. The default for an undeclared rig is
+deliberately conservative (`'socket'` only if the socket bone exists, else `'none'`), so a new body plan
+has to ask for a weapon rather than sprout one.
+
+Held-mount geometry, both constants measured on live frames rather than picked: the anchor sits at
+`drawnBodyR * 1.0` along the canonical aim, vertical component squashed by 0.45 (the same tilted-view
+constant `EYE_TRACK_SQUASH` uses). `1.15` was tried first and rejected — it left a visible gap on
+`floater-core`, because `bodyFill` is the art's *widest row* while the mount sits at mid-height, where
+that bundle's diamond-ish silhouette is narrower. A mob gets **one** module, not the hero's decorative
+second arm.
+
+Consequence worth noting: `muzzleLocal()` is no longer null for enemies, so a mob's bullets now get the
+same barrel-tip spawn correction the hero's have had since 2026-08-17 (`Scene.reconcile`).
+
+### 2. The health bar was borrowing its contrast from whatever was behind it
+
+The styling ask was "frame, backing". The measurement found a mechanism, not a taste problem: the track
+was `alpha 0.85`, so **its rendered luma was a function of the surface behind it**. Sampled over 18
+placements in one real room, the empty track came out anywhere from **25.6 to 57.1 luma**, and its
+separation from that surface collapsed as the surface darkened — to **1.6-2.9 luma** on the dark floors
+mobs actually stand on. The 1-px stroke drifted identically, 17.5 to 61.9. At 1/3 HP the player saw a
+coloured stub with no visible remainder: no length to read the fraction against.
+
+No single value separates from both a 27-luma shadowed floor and an 88-luma wall cap. So the bar carries
+**its own two-tone frame, every layer opaque**: a near-black contour (the cue against anything bright)
+plus a light top bevel (the cue against anything dark), over an opaque track in the same `0x1f2532` the
+HUD's own `widgets.Bar` uses. The contour is an inflated *fill*, not a stroke, so it can never eat into a
+4-px bar's height; it recolours to the player teal for the local seat, which preserves `10`'s 2026-08-14
+"which one is me" decision unchanged.
+
+Re-measured by swapping the surface behind one live bar across **0 to 197 luma** — far wider than the
+world's real 27-88:
+
+| | empty track | bevel | worst cue vs background |
+|---|---|---|---|
+| before | 25.6 - 57.1 | — | **1.6 - 2.9** |
+| after | **39.5, spread 0.0** | **117.3, spread 0.0** | **55.6** |
+
+Also fixed while measuring the low end: a non-zero HP now always draws at least one pill-width of fill.
+Below that `w * ratio` went sub-pixel at gameplay zoom, so an actor one hit from death rendered as an
+apparently EMPTY bar — indistinguishable from a dead one, on the frame where that distinction matters
+most.
+
+### Tests
+
++77 tests. New: `scene/healthBar.test.ts` (21) and `render/rigWeaponMount.test.ts` (28), plus new
+describes in `Actor.test.ts`, `Skin.test.ts`, `RigSkin.test.ts` and `rigComposition.test.ts`.
+
+The load-bearing ones assert **properties, not shapes**: `healthBar.test.ts` reads the real `Graphics`
+instruction list back out, converts the colours and alphas to luma with its own arithmetic, and asserts
+the two-cue invariant holds across the whole measured world range — so editing the palette in the source
+has to keep the property true rather than keep a number in sync. `rigComposition.test.ts` gained a
+real-content sweep: for every SHIPPED held-mount bundle, sized from `BODY_FILL` and the real on-disk
+`gun_enemygun.png`, the barrel must clear the body silhouette AND the housing must overlap it — the two
+ways a mounted gun goes wrong, both seen on a real frame during the pass. It also asserts the three
+bundles do NOT share a drawn radius, which is the premise of the whole design written down as a test.
+
+**Two tests were rewritten because they pinned the defect as an invariant** — worth recording as a class:
+`muzzleLocal()` "is null on a socket-less rig (critter-core: every enemy)" was the bug, asserted; and the
+local-marker test asserted the bar's *bounds grew*, which only ever worked because the teal stroke was
+thicker than the default one — an accident of stroke width, not the design intent.
+
+**64 mutants, 63 killed.** The first run had 7 survivors, every one a real gap:
+
+| survivor | why nothing caught it |
+|---|---|
+| `TRACK` brightened to mid-grey | the luma invariant measures the bevel OVER the track, so a brighter track brightened the bevel with it and every assertion stayed green — while a bright "empty" destroys the fill-against-empty read the bar exists for. Closed with a track-vs-every-fill-state bound |
+| `BEVEL_H` doubled | the only assertion on it was "the same at both bar sizes", which is true of any constant |
+| held mount reads `pose.sx` (pivot) instead of `pose.ex` (tip) | the fixture left both at 0 — **the same fixture blindness that let art-drawn-at-the-pivot ship for three weeks**. Fixed by giving the pose distinct pivot and tip |
+| `barrelReach` drops the negation on `rotationOffsetRad` | every fixture was vertically symmetric about its anchor, so the sign could not show. Closed with an off-centre anchor |
+| `RigSkin` passes an empty transform map to the mount | no fixture bundle had a clip, so `transforms` was always empty anyway — the *wiring* was untested even though the pure function was covered |
+| held mount uses declared `bodyR` instead of `bodyR * bodyFill` | every fixture used the default `bodyFill` of 1, which makes the two identical. **This is the central measurement of the whole design** and it was uncovered |
+| enemygun's anchor moved to its barrel tip | a flaw in *this pass's own new test*: it read calibration through `getWeaponAnchor`, which resolves through the preload cache and silently falls back to `gun_default` when nothing is preloaded — so the real-content sweep was checking the wrong gun entirely. Now reads the authored `WEAPON_DEFS` entry directly |
+
+The one accepted survivor is a true equivalent (a `weaponMount !== 'held'` guard whose branch is
+unobservable downstream — `activeModuleMount` ignores the argument for `'socket'` and returns null for
+`'none'` regardless), documented as such at the guard.
+
+Five of the 64 mutate across the code/asset seam (`BODY_FILL` values, the gun's authored scale and
+anchor), which is again where the most valuable mutants were.
+
+Confirmed live in the real client: every enemy `weaponMount: 'sprite'` with a real 320x216 module mounted
+at exactly its measured radius (critter 35, brute 50, floater 50), every `Graphics` placeholder measuring
+0 wide, the boss mounting nothing, the player's socket mount unchanged at 52, and the bar's own after
+numbers above. Zero console errors.
+
+### Still open in this area
+
+- **`door_open_raw.png` decodes as HAZE** — carried forward untouched from the entry above.
+- **World geometry occludes the in-world health bar.** A mob standing behind a standing wall has its bar
+  painted over almost opaquely: the occlusion x-ray's hole tracks the BODY, and the bar sits above it,
+  outside the hole. Out of scope for a styling pass and arguably correct under `01`'s depth model, but a
+  HUD readout losing to a wall is a decision someone should actually make rather than inherit.
+- **`HOVER`'s displacement claim is half-right** (found in passing, not fixed). `visualZ = base + amp *
+  sin` swings 6 +/- 3.5, so the shadow offset runs (1.05, 0.55) at the trough through (2.5, 1.3) at the
+  base to (4.0, 2.1) at the peak — but the table's own comment quotes only the base-to-peak half. The
+  trough is roughly a quarter of the peak and back near the one-screen-pixel floor the table was doubled
+  to clear in the 2026-08-19 volume pass. `Actor.test.ts` now samples the whole cycle and asserts both
+  ends honestly instead of asserting "at rest", which is not a state a test can reach (`hoverPhaseSeq` is
+  a deliberately order-dependent module counter, so the old single-instant assertion silently measured
+  whatever phase the actors constructed earlier in the FILE left behind — it broke on an unrelated test
+  being added above it).
+- The queue the user parked for later, unchanged: **room prop layer** (`RoomPiece.props` has the field,
+  zero content uses it, the client has never read it — still the best work-per-unit item), **in-world
+  element icon badges**, **poison biome art**, **character back sets**, **rarity overlay spec**.
 
 ---
 

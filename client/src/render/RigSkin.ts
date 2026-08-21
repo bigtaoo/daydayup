@@ -1,28 +1,22 @@
 import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
 import type { Rig } from './Rig';
 import type { RigSkinBundle } from './taoBundle';
-import type { AnimationClip, ResolvedBoneTransform, WorldPose, WorldPositions } from './types';
+import type { AnimationClip, ResolvedBoneTransform, WorldPositions } from './types';
 import { sampleClip } from './interpolate';
 import { facingFromAngle } from './facing';
 import { getWeaponAnchor, getWeaponRotationOffset, getWeaponScale, getWeaponTexture, type WeaponVisualKind } from './weaponSkins';
 import { MODULE_BEHIND_SCALE, MODULE_BEHIND_SHADE, SHADE_MIN_BODY_R, drawModuleContacts, drawSphereShading, shadeHex } from './rigShading';
 import { drawTethers, hasTetheredBone } from './rigTethers';
+import {
+  AIM_TRACKING_BONES, ACTIVE_WEAPON_SOCKET, IDLE_WEAPON_SOCKET, MODULE_Z_BEHIND,
+  activeModuleMount, barrelReach, idleModuleMount, resolveWeaponMount,
+  type ModuleMount, type WeaponMountMode,
+} from './rigWeaponMount';
 
-// The socket that visibly carries the mounted weapon sprite (design/03 "swapping the
-// active slot swaps which socket fires" — the demo's `attack` clip already privileges
-// this socket for its recoil kick, so mounting here keeps the two in sync). Both
-// sockets still track aim rotation below; only this one shows a weapon module.
-const ACTIVE_WEAPON_SOCKET = 'socket_r';
-// The other arm carries a module too (design/13's "TWO weapon modules that orbit it", and
-// the concept turnaround draws both) — same art, purely decorative: `03`'s model is one
-// ACTIVE weapon at a time, so this one never fires, takes no recoil, and is not what
-// `updateWeaponSprite` aims. It points OUTWARD along its own tether instead of at the
-// reticle, which is both how the concept draws the relaxed pose and what keeps its barrel
-// from crossing the core whenever the hero shoots toward that side.
-const IDLE_WEAPON_SOCKET = 'socket_l';
-// Only the ACTIVE socket's ring tracks aim; the idle one turns with its own module so ring
-// and module read as one assembly.
-const SOCKET_IDS = new Set([ACTIVE_WEAPON_SOCKET]);
+// `barrelReach` moved to ./rigWeaponMount with the rest of the mount geometry; re-exported
+// here so the original import path stays valid for callers and tests (500-line convention:
+// "keep that path alive as a thin re-export shell").
+export { barrelReach };
 
 // Eye tracking (2026-08-18). A 2D rig can't turn a head, and the two-hemisphere billboard
 // (`facingFromAngle`) only has four states — L/R flip × front/back — so a 360° aim used to
@@ -41,11 +35,6 @@ const EYE_TRACK_SQUASH = 0.45;
 /** How much the eye shrinks as the aim turns away from the camera — a little perspective
  *  on top of the front/back texture swap, so crossing the hemisphere isn't a hard cut. */
 const EYE_AWAY_SHRINK = 0.15;
-/** zIndex for a weapon module that should sit BEHIND the body (design/01 "per-weapon local
- *  z-order": facing away, the module is on the far side of the core). Below every bone
- *  binding's zOrder (0..4 for orb-core) and below the tether's own -1. */
-const MODULE_Z_BEHIND = -2;
-
 // The game-side .tao runtime renderer (design/12): bone FK + sprite binding +
 // animation playback, ported from tools/animator/src/rendering/Renderer.ts's
 // `updateSprites` (rewritten for Pixi v8's API — the editor is still on v7).
@@ -98,6 +87,9 @@ export class RigSkin {
    *  shade at all — an enemy with one body bone gets neither. */
   private readonly moduleAO: Graphics | null;
   private readonly shadeBoneId: string | null;
+  /** Which mount path this body plan uses (`rigWeaponMount.resolveWeaponMount`) — resolved
+   *  once at construction, since it is a property of the rig def, not of this frame. */
+  private readonly weaponMount: WeaponMountMode;
   private tetherGeometry = ''; // last-drawn endpoint signature (skip the rebuild if unchanged)
   private tetherTint = 0xffffff; // multiply-tint over the tether hue; white = as authored
   private clip: AnimationClip | null = null;
@@ -122,6 +114,7 @@ export class RigSkin {
     private readonly bundle: RigSkinBundle,
     private readonly bodyFill = 1,
   ) {
+    this.weaponMount = resolveWeaponMount(rig);
     // Tethers paint behind every bone sprite: they run from the core's centre out to a
     // module, so the half nearest the core belongs UNDER the body, not across it.
     this.tethers = hasTetheredBone(rig.boneDefs) ? new Graphics() : null;
@@ -260,7 +253,7 @@ export class RigSkin {
       // `pose.wa` already carries the clip's own rotation for this bone (Rig.computeFK
       // folds it in), so it is NOT added a second time here.
       const restAngleDeg = this.rig.boneMap.get(boneId)?.rwa ?? 0;
-      const angleDeg = SOCKET_IDS.has(boneId) ? canonicalSocketDeg : pose.wa - restAngleDeg;
+      const angleDeg = AIM_TRACKING_BONES.has(boneId) ? canonicalSocketDeg : pose.wa - restAngleDeg;
       sprite.rotation = ((angleDeg + binding.rotation) * Math.PI) / 180;
       let scaleMul = 1;
       if (boneId === EYE_BONE_ID) {
@@ -302,7 +295,7 @@ export class RigSkin {
       );
     }
     this.updateModuleContacts(worldPose, transforms);
-    this.updateWeaponSprites(worldPose);
+    this.updateWeaponSprites(worldPose, transforms);
   }
 
   /** Repaint the module contact shades from this frame's socket-bone tips, in the body
@@ -342,15 +335,32 @@ export class RigSkin {
     return this.rig.boneMap.get(this.shadeBoneId!)!.bodyR! * this.bodyFill;
   }
 
-  /** Mount/move/hide both orbiting weapon modules (design/03 universal mount — render-only,
-   *  never touches the sim): the ACTIVE one, which tracks the live aim, and the decorative
-   *  IDLE one on the other arm, which points outward along its own tether (see the socket
-   *  constants at the top of this file). Each sits on its socket bone's TIP — that's where
-   *  the module orbits; the pivot is the core's own centre. */
-  private updateWeaponSprites(worldPose: WorldPositions): void {
-    const activePose = worldPose.get(ACTIVE_WEAPON_SOCKET);
-    const idlePose = worldPose.get(IDLE_WEAPON_SOCKET);
+  /** The body bone a 'held' module hangs off, or null for a rig that mounts on a socket (or
+   *  mounts nothing). It is the same bone the sphere shading tracks — the rig's actual body —
+   *  and the radius is the ART's, not the bone's declared `bodyR`; see `HELD_MOUNT_R`.
+   *
+   *  The `weaponMount !== 'held'` half of the guard is deliberately unobservable: the socket
+   *  path ignores this argument and the 'none' path returns null whatever it is handed, so
+   *  dropping it changes no output (it is the one surviving mutant of the 59-mutant battery run
+   *  for this pass, and survives as a true equivalent). Kept because it states the intent and
+   *  skips the work, not because anything downstream depends on it. */
+  private heldMountBody(): { boneId: string; drawnR: number } | null {
+    if (this.weaponMount !== 'held' || !this.shadeBoneId) return null;
+    return { boneId: this.shadeBoneId, drawnR: this.drawnBodyR() };
+  }
+
+  /** Mount/move/hide this rig's weapon modules (design/03 universal mount — render-only,
+   *  never touches the sim). Which modules exist, and where they sit, is `rigWeaponMount`'s
+   *  call: the hero's orb-core gets an aim-tracking ACTIVE module on its socket bone's TIP
+   *  plus a decorative IDLE one on the other arm; an enemy body gets a single module held at
+   *  its own drawn edge; the boss gets none. */
+  private updateWeaponSprites(worldPose: WorldPositions, transforms: Map<string, ResolvedBoneTransform>): void {
     const texture = this.weaponKind ? getWeaponTexture(this.weaponName, this.weaponKind) : undefined;
+    const canonical = this.canonicalSocketAngleRad();
+    const activeMount = texture
+      ? activeModuleMount(this.weaponMount, worldPose, transforms, canonical, this.heldMountBody())
+      : null;
+    const idleMount = texture ? idleModuleMount(this.weaponMount, worldPose) : null;
     if (!texture) {
       if (this.weaponSprite) this.weaponSprite.visible = false;
       if (this.idleModuleSprite) this.idleModuleSprite.visible = false;
@@ -359,29 +369,24 @@ export class RigSkin {
 
     const rotationOffset = getWeaponRotationOffset(this.weaponName, this.weaponKind!);
     this.weaponSprite = this.mountModule(
-      this.weaponSprite, ACTIVE_WEAPON_SOCKET, activePose, texture,
-      this.canonicalSocketAngleRad() + rotationOffset,
+      this.weaponSprite, ACTIVE_WEAPON_SOCKET, activeMount, texture, rotationOffset,
     );
-    // The idle module turns with its own bone (rest angle 180° = away from the core), not
-    // with the reticle — computed pre-mirror like every other local angle here, so the
-    // whole-rig flip keeps it pointing outward on whichever side it ends up.
     this.idleModuleSprite = this.mountModule(
-      this.idleModuleSprite, IDLE_WEAPON_SOCKET, idlePose, texture,
-      idlePose ? (idlePose.wa * Math.PI) / 180 + rotationOffset : 0,
+      this.idleModuleSprite, IDLE_WEAPON_SOCKET, idleMount, texture, rotationOffset,
     );
   }
 
-  /** Place one module sprite (creating it on first use) on a socket bone's tip at the given
-   *  local rotation; hides it when that bone isn't posed. Returns the sprite so the caller
-   *  can keep its lazily-created reference. */
+  /** Place one module sprite (creating it on first use) at the given mount; hides it when
+   *  there is no mount this frame (an unposed bone, or a rig that has no such module at all).
+   *  Returns the sprite so the caller can keep its lazily-created reference. */
   private mountModule(
     sprite: Sprite | null,
     socketId: string,
-    pose: WorldPose | undefined,
+    mount: ModuleMount | null,
     texture: Texture,
-    rotation: number,
+    rotationOffset: number,
   ): Sprite | null {
-    if (!pose) {
+    if (!mount) {
       if (sprite) sprite.visible = false;
       return sprite;
     }
@@ -409,9 +414,9 @@ export class RigSkin {
     sprite.anchor.set(anchor.x, anchor.y);
     sprite.scale.set(getWeaponScale(this.weaponName, this.weaponKind!) * (behind ? MODULE_BEHIND_SCALE : 1));
     sprite.visible = true;
-    sprite.x = pose.ex;
-    sprite.y = pose.ey;
-    sprite.rotation = rotation;
+    sprite.x = mount.x;
+    sprite.y = mount.y;
+    sprite.rotation = mount.angle + rotationOffset;
     return sprite;
   }
 
@@ -419,8 +424,10 @@ export class RigSkin {
    * Where the mounted weapon's business end actually is, in this rig's PARENT space
    * (i.e. `view`'s own scale.x flip already applied, the wrapper's uniform scale not
    * yet — `Skin.muzzleAnchor` finishes the job). Null when nothing is mounted, which
-   * covers every socket-less rig (`critter-core`'s enemies) and the frames before the
-   * weapon texture finishes preloading.
+   * covers a rig whose `weaponMount` is 'none' (`boss-core`) and the frames before the
+   * weapon texture finishes preloading. It is NOT null for enemies any more: since
+   * 2026-08-21 they mount a real module on the 'held' path, so their bullets get the same
+   * barrel-tip spawn correction the hero's always had.
    *
    * Exists because the bullet spawns at the SIM's muzzle — `RangedSimSpec.muzzleOffset`,
    * a flat distance along the aim ray from the actor's centre — and the drawn gun's
@@ -435,7 +442,8 @@ export class RigSkin {
    * standing flush against a wall spawn bullets on the far side of it.
    *
    * The geometry, all in the rig's own authoring-px space:
-   *   - the socket bone's TIP (`worldPose.ex/ey`) is where the module is mounted;
+   *   - the module's own mounted position (`sprite.x/y`, i.e. whatever `rigWeaponMount`
+   *     resolved this frame — a socket bone's tip, or the body's drawn edge);
    *   - the barrel points along `canonicalSocketAngleRad()` — the sprite's rotation is
    *     that angle PLUS the texture's `rotationOffsetRad`, and the offset exists exactly
    *     to cancel each texture's own baked pointing direction, so the two cancel and the
@@ -458,33 +466,4 @@ export class RigSkin {
       y: sprite.y + Math.sin(angle) * reach,
     };
   }
-}
-
-/**
- * How far a weapon texture reaches from its anchor toward its own baked business end, in
- * unscaled texture px. A ray/rect intersection: the anchor is the ray origin (it is the
- * sprite's own local origin once `anchor` is set), the direction is the texture's baked
- * tip direction — `-rotationOffsetRad`, since that offset is what gets ADDED to rotate
- * the baked direction onto the live aim angle — and the rect is the texture's bounds
- * around the anchor. Assumes the art reaches its own canvas edge in that direction, which
- * is what `WEAPON_DEFS`' measured `rotationOffsetRad` values were derived from (the
- * alpha-farthest pixel from the anchor); the failure mode for a padded texture is a
- * muzzle a few px too far out, not a wrong direction. Exported for `RigSkin.test.ts`.
- */
-
-export function barrelReach(
-  texW: number,
-  texH: number,
-  anchor: { x: number; y: number },
-  rotationOffsetRad: number,
-): number {
-  const dx = Math.cos(-rotationOffsetRad);
-  const dy = Math.sin(-rotationOffsetRad);
-  const right = (1 - anchor.x) * texW;
-  const left = -anchor.x * texW;
-  const bottom = (1 - anchor.y) * texH;
-  const top = -anchor.y * texH;
-  const tx = dx > 1e-6 ? right / dx : dx < -1e-6 ? left / dx : Infinity;
-  const ty = dy > 1e-6 ? bottom / dy : dy < -1e-6 ? top / dy : Infinity;
-  return Math.min(tx, ty);
 }

@@ -46,7 +46,9 @@ This **replaces** the old humanoid `gear_hand` + per-weapon `grip` mounting mode
 
 Enemies share the hero's DNA — **living crystal, single glowing eye** — but are its **failed opposite**: raw, jagged, wild-grown crystal over a cracked core, where the hero is a polished, contained shell. One base creature is **re-tinted** into the element variants (`09`'s render-only `tint`): a squat single-eyed crystal critter → **emberling / frostling / galvanist / ironclad** — fire / ice / lightning / **physical** (`ironclad` is the physical-resistant, armour-plated one) — told apart by colour + icon alone. **Poison has no dedicated critter yet** (the poison read currently lives on the `blightlord` boss, which is *weak* to it, `09`); a poison-tinted variant is a later add. Roster variety beyond the base body (a heavy brute, a floating ranged form) is a later pass.
 
-The **boss closes the loop thematically**: it is a **giant failed core** — a huge cracked crystal core with orbiting shard rings — the same kind of thing the player *is*, but corrupted. Hero and final boss are the two poles of one object.
+The **boss closes the loop thematically**: it is a **giant failed core** — a huge cracked crystal core with orbiting shard rings — the same kind of thing the player *is*, but corrupted. Hero and final boss are the two poles of one object. Its **shard rings are its armament**: the boss fires in the sim like any mob, but it draws no weapon module, because a mob's rifle stuck to a 60-px core reads as a loadout rather than a finale. Enforced since 2026-08-21 rather than merely implied — `boss-core` declares `weaponMount: 'none'` (`12`), and until then it drew the same 12x5 `Graphics` placeholder bar every enemy did.
+
+The mobs, by contrast, **do** carry a visible weapon — the raider rifle they shoot with (`gun_enemygun.png`, jagged crystal over a dark housing, on-language with the corrupted-crystal read). It mounts on the body's own drawn edge rather than on an orbiting socket: an orbiting module on a tether is the hero's silhouette, and a mob holding its gun is the contrast that keeps the two readable apart.
 
 ### Style & the colour law
 
