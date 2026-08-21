@@ -3,12 +3,13 @@ import type { GameState } from '@dd/engine';
 import type { Layers } from './layers';
 import { Entity } from './Entity';
 import { biomePalette, biomeElementOf, type BiomeElement, type BiomePalette } from '../theme';
-import { fpToPx } from '../coords';
+import { fpToPx, PX_PER_GRID } from '../coords';
 import { getFloorTexture, getWallTexture, getWallFaceTexture, getPillarTexture } from '../../render/biomeTiles';
-import { getDoorTexture } from '../../render/environmentSprites';
+import { getDoorTexture, getPropTexture } from '../../render/environmentSprites';
 import { wallTier, wallHeight, WALL_HEIGHT, type RectPx } from './wallGeometry';
 import { buildWallBlock, drawWallShadow } from './wallRender';
 import { buildPillarBody, buildPillarSprite, pillarArtExtent } from './pillarRender';
+import { buildPropBody, propShadowRadius, resolvePropKind } from './propRender';
 import {
   deepXrayLayers,
   fadeableBlock,
@@ -77,6 +78,13 @@ export class RoomBuilder {
   // means they must be destroyed explicitly like `wallEntities` — `build()`'s wholesale sweep
   // of `layers.ground` no longer covers them.
   private readonly doorFixtures: DoorFixture[] = [];
+  // Decorative room dressing (`RoomPiece.props`, design/09 "decorative + Y-sortable"),
+  // read straight off `s.dungeonRooms` — the same `PlacedRoom[]` SpawnSystem already
+  // populates for walls/obstacles, so no new engine-side plumbing is needed to reach a
+  // piece's authored props plus the offset it was placed at. Static one-shot Entities,
+  // same lifecycle as `pillars`: rebuilt with the room, destroyed explicitly since they
+  // live on the Y-sorted `entities` layer.
+  private readonly props: Entity[] = [];
   private portal: Portal | null = null;
   // World-px position of the current room's portal (its center), or null before the
   // first room ever loads. Game reads this to gate the popup's proximity check.
@@ -202,6 +210,7 @@ export class RoomBuilder {
     this.wallShadows = shadows;
 
     this.buildPillars(s, palette, element);
+    this.buildProps(s, palette);
     this.buildPortal(s, w, h);
   }
 
@@ -410,12 +419,52 @@ export class RoomBuilder {
     }
   }
 
+  /**
+   * Decorative room dressing (`RoomPiece.props`) for the current floor's co-resident
+   * rooms — every room stands at once (same "co-resident" model as walls/pillars, design/05),
+   * so this iterates `s.dungeonRooms` rather than a single piece. Grid → px is a plain
+   * `* PX_PER_GRID` (1 grid = 32 px exactly, `coords.ts`), not the engine's `toFpGrid`/`fpToPx`
+   * round trip — that pair exists to cross the sim's fixed-point boundary, and a prop is never
+   * simulated (no `state.obstacles`/`state.walls` entry, ever — this method only reads
+   * `piece.props`, nothing it does can affect collision).
+   *
+   * No occlusion x-ray registration (unlike walls/pillars/doors) and no collision: see
+   * `propRender.ts`'s module doc for why a prop's short art doesn't need the x-ray treatment,
+   * and `content/rooms.ts`'s own doc comment for why the sim never reads this field at all.
+   */
+  private buildProps(s: GameState, palette: BiomePalette): void {
+    this.clearProps();
+    for (const room of s.dungeonRooms) {
+      for (const prop of room.piece.props ?? []) {
+        const kind = resolvePropKind(prop.id);
+        const e = new Entity();
+        e.addChild(buildPropBody(kind, palette, getPropTexture(kind)));
+        e.makeShadow(propShadowRadius(kind));
+        this.layers.entities.addChild(e);
+        this.layers.shadow.addChild(e.shadow!);
+        this.props.push(e);
+        e.place((prop.x + room.offsetXGrid) * PX_PER_GRID, (prop.y + room.offsetYGrid) * PX_PER_GRID);
+      }
+    }
+  }
+
+  /** Destroy the current room's prop Entities — like `pillars`, they live on the Y-sorted
+   *  `entities` layer, which `build()`/`clear()` never sweep wholesale. */
+  private clearProps(): void {
+    for (const p of this.props) {
+      p.shadow?.destroy();
+      p.destroy();
+    }
+    this.props.length = 0;
+  }
+
   /** Tear down the current room's ground + pillars (beginRun) so a restart doesn't
    *  leak the previous run's geometry. */
   clear(): void {
     for (const c of [...this.layers.ground.children]) c.destroy();
     this.clearDoors();
     this.clearWalls();
+    this.clearProps();
     this.occluders.length = 0;
     for (const p of this.pillars) {
       p.shadow?.destroy();

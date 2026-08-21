@@ -250,6 +250,10 @@ export class Scene {
     this.views.set(id, v);
     this.layers.entities.addChild(v);
     if (v.shadow) this.layers.shadow.addChild(v.shadow);
+    // An Actor's health bar owns itself but isn't a child (Actor.ts's constructor doc) — it
+    // rides `layers.hud`, always in front of every wall/pillar/door regardless of Y-sort or
+    // the occlusion x-ray's fade state (design/01, live report *"血条被墙挡住了"*).
+    if (v instanceof Actor && v.healthBar) this.layers.hud.addChild(v.healthBar);
     v.pushState(x, y, z, facingRad, bodyFacingRad);
     v.snap(); // appear at spawn, don't lerp in from (0,0)
   }

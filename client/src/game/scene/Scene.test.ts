@@ -464,6 +464,100 @@ describe('Scene.reconcile — death-dissolve lingering view (design/01 fidelity 
   });
 });
 
+/**
+ * Health bars ride `layers.hud`, not the Actor's own container (2026-08-21, live report
+ * *"血条被墙挡住了"* — `scene/occlusion.ts`'s cap-only fade keeps a near-white BODY legible but
+ * washes the bar's own dark contour/track into the same luma band as the wall behind it).
+ * `Actor.ts` owns the position sync (`applyTransform`) and teardown (`destroy`); this covers
+ * the half only `Scene` can see — that `spawn()` actually mounts it there for both factions,
+ * keeps tracking it, and cleans it up on every removal path (immediate and dissolve-delayed).
+ */
+describe('Scene.spawn — the health bar rides layers.hud, never the actor\'s own container', () => {
+  it('mounts a player\'s health bar on layers.hud, not as a child of the actor view', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const p = s.players[0]!;
+    const layers = new Layers();
+    const scene = new Scene(layers);
+    scene.reconcile(s, p.id);
+    const view = scene.player!;
+    expect(layers.hud.children).toContain(view.healthBar);
+    expect(view.children).not.toContain(view.healthBar);
+  });
+
+  it('mounts an enemy\'s health bar on layers.hud too', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    addEnemy(s, 300, 300, 0 as Brad);
+    const layers = new Layers();
+    const scene = new Scene(layers);
+    scene.reconcile(s);
+    const view = (scene as unknown as { views: Map<number, Actor> }).views.get(s.enemies[0]!.id)!;
+    expect(layers.hud.children).toContain(view.healthBar);
+  });
+
+  it('keeps the bar tracking the actor across ticks, offset from its own screen position', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const p = s.players[0]!;
+    const scene = new Scene(new Layers());
+    scene.reconcile(s, p.id);
+    const view = scene.player!;
+    scene.interpolate(1, 0);
+    const offset = view.healthBar!.y - view.y;
+
+    p.gx = pxToFp(250);
+    p.gy = pxToFp(180);
+    scene.reconcile(s, p.id);
+    scene.interpolate(1, 0);
+    expect(view.healthBar!.x).toBeCloseTo(view.x, 5);
+    expect(view.healthBar!.y - view.y).toBeCloseTo(offset, 5); // same offset, new position
+  });
+
+  it('destroys and detaches the health bar when a bar-less view is torn down outright (bullet)', () => {
+    // Not an Actor at all — confirms `spawn()`'s `instanceof Actor` guard doesn't choke on a
+    // view with no `healthBar`.
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const bullet = addBullet(s, 300, 300);
+    const layers = new Layers();
+    const scene = new Scene(layers);
+    expect(() => scene.reconcile(s)).not.toThrow();
+    bullet.alive = false;
+    expect(() => scene.reconcile(s)).not.toThrow();
+  });
+
+  it('detaches the health bar from layers.hud once a dissolving enemy actually finishes destroying', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const enemy = addEnemy(s, 300, 300, 0 as Brad);
+    const layers = new Layers();
+    const scene = new Scene(layers);
+    scene.reconcile(s);
+    const view = (scene as unknown as { views: Map<number, Actor> }).views.get(enemy.id)!;
+    const bar = view.healthBar!;
+    expect(layers.hud.children).toContain(bar);
+
+    enemy.alive = false;
+    scene.reconcile(s); // queued to dissolve, not destroyed yet — bar stays mounted
+    expect(layers.hud.children).toContain(bar);
+
+    scene.interpolate(1, 700); // finishes the dissolve → Actor.destroy()
+    expect(layers.hud.children).not.toContain(bar);
+  });
+
+  it('clear() also detaches every still-mounted health bar (live views and dissolving ones)', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const live = addEnemy(s, 300, 300, 0 as Brad);
+    const dying = addEnemy(s, 400, 300, 0 as Brad);
+    const layers = new Layers();
+    const scene = new Scene(layers);
+    scene.reconcile(s);
+    dying.alive = false;
+    scene.reconcile(s);
+    expect(layers.hud.children.length).toBe(3); // the fixture's own player + both enemies
+
+    scene.clear();
+    expect(layers.hud.children.length).toBe(0);
+    void live; // only needed to keep the fixture's second enemy alive through the reconcile above
+  });
+});
+
 describe('Scene.applyLighting — dynamic point lighting (design/01 fidelity roadmap milestone 2)', () => {
   it('shades a live Actor (player) against the strongest nearby light', () => {
     const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });

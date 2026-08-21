@@ -3729,23 +3729,139 @@ numbers above. Zero console errors.
 
 ### Still open in this area
 
-- **`door_open_raw.png` decodes as HAZE** — carried forward untouched from the entry above.
-- **World geometry occludes the in-world health bar.** A mob standing behind a standing wall has its bar
-  painted over almost opaquely: the occlusion x-ray's hole tracks the BODY, and the bar sits above it,
-  outside the hole. Out of scope for a styling pass and arguably correct under `01`'s depth model, but a
-  HUD readout losing to a wall is a decision someone should actually make rather than inherit.
-- **`HOVER`'s displacement claim is half-right** (found in passing, not fixed). `visualZ = base + amp *
-  sin` swings 6 +/- 3.5, so the shadow offset runs (1.05, 0.55) at the trough through (2.5, 1.3) at the
-  base to (4.0, 2.1) at the peak — but the table's own comment quotes only the base-to-peak half. The
-  trough is roughly a quarter of the peak and back near the one-screen-pixel floor the table was doubled
-  to clear in the 2026-08-19 volume pass. `Actor.test.ts` now samples the whole cycle and asserts both
-  ends honestly instead of asserting "at rest", which is not a state a test can reach (`hoverPhaseSeq` is
-  a deliberately order-dependent module counter, so the old single-instant assertion silently measured
-  whatever phase the actors constructed earlier in the FILE left behind — it broke on an unrelated test
-  being added above it).
-- The queue the user parked for later, unchanged: **room prop layer** (`RoomPiece.props` has the field,
-  zero content uses it, the client has never read it — still the best work-per-unit item), **in-world
-  element icon badges**, **poison biome art**, **character back sets**, **rarity overlay spec**.
+- ~~**`door_open_raw.png` decodes as HAZE**~~, ~~**World geometry occludes the in-world health
+  bar**~~, and ~~**`HOVER`'s displacement claim is half-right**~~ — all **done 2026-08-21**, see the
+  entry below. **Room prop layer** (`RoomPiece.props`) is also done, same entry.
+
+---
+
+## Room props stop being a dead field, and three parked follow-ups get cleared (2026-08-21, client-only)
+
+The top of the parked queue — **`RoomPiece.props` had the field, zero content used it, the client had
+never read it** — plus the three items the previous entry's "still open" note left behind. All four are
+render-only; the room-props item needed no engine change at all, and none of the four bump
+`ENGINE_VERSION`.
+
+**Verification.** +38 client tests (2132 -> 2170 across this pass), `npm run check` green across all 8
+workspaces,
+`check:filelength` clean (`RoomBuilder.ts` 479, `propRender.ts` 158 — a new sibling, same 500-line
+convention `wallRender.ts`/`pillarRender.ts` already follow; `Actor.ts` crossed 500 to 552 from the
+health-bar and HOVER fixes below and is now a tracked, justified baseline entry, same shape as
+`Game.ts`'s own). Confirmed live in the real client via `window.__game`: 5 co-resident rooms placed on
+floor 1, 7 authored props rendered as real opaque pixels of the expected sizes/shapes (extracted each
+prop `Entity` in isolation off the actual renderer), and — for the health-bar fix — a real composited
+frame showing the bar's own green fill paint over a spot where an unfaded, fully solid wall painted
+nothing at all.
+
+### 1. The room prop layer, from zero to eight decorated rooms
+
+`RoomPiece.props` (`content/rooms.ts`) already carried straight through placement into a client-visible
+field with **no engine change needed at all**: `state.dungeonRooms` (`PlacedRoom[]`, populated by
+`SpawnSystem`'s dungeon branch) already exposes `piece.props` plus the `offsetXGrid`/`offsetYGrid` a
+piece was placed at — the client had simply never read it. New sibling `scene/propRender.ts` (matching
+`pillarRender.ts`'s split) draws three kinds — `crate`, `barrel`, `rubble` — as Graphics silhouettes
+(no dedicated prop art exists yet; same staged rollout every other object in the room went through,
+wall/pillar/door/weapon all shipped a fallback first). `RoomBuilder.buildProps()` iterates every
+co-resident room's `piece.props ?? []`, converts grid + offset straight to px (`* PX_PER_GRID` — a prop
+is never simulated, so this deliberately skips the engine's `toFpGrid`/`fpToPx` round trip, which exists
+only to cross the sim's fixed-point boundary), and places one static `Entity` per prop on the Y-sorted
+`entities` layer with its own ground shadow. No occlusion x-ray registration and no collision, matching
+`content/rooms.ts`'s own doc comment ("render-only, never read by the sim") and `propRender.ts`'s own —
+every shape tops out under 22 px, far short of the 70-104 px a wall/pillar needs before the x-ray earns
+its keep. `PropPlacement.id` resolves through the same forward-compat rule `SpawnPoint.type` already
+uses (`resolvePropKind`: unrecognized or missing id -> `crate`, never nothing) — found relevant because
+`tools/map-editor`'s existing (already-shipped, never touched this pass) prop-authoring UI defaults a
+freshly placed prop's id to an opaque `prop_N`, which now safely resolves rather than drawing empty.
+
+Eight of the fourteen shipped `ember_l1` room pieces (kiln/forge/furnace/gallery/court/crucible/
+extraction/boss) got real prop content — 2-3 crates/barrels/rubble piles each, positions chosen from a
+programmatic clear-floor sweep (>= 3 grid units from every wall edge, >= 1.5 from every solid/pillar/
+spawn point) rather than eyeballed, since every one of these rooms is otherwise packed with an
+enemy-spawn grid. The remaining six pieces (alcove/bastion/caldera/cell/span/rampart) are unchanged —
+explicitly left for a follow-up pass, not silently skipped.
+
+### 2. `door_open_raw.png` decoded as HAZE since 2026-08-04 — the box-downsample step, not the source art
+
+The **source** file (`art/environment/door_open_raw.png`, the untouched 1024x1536 GPT-Image-2 output)
+audits clean; only the **shipped** 156x224 client copy was flagged. `tools/png-pipeline/compress.mjs`'s
+`boxDownsample` box-averages the alpha channel on the way down, and a THIN, HOLLOW silhouette (the door
+frame has both an outer edge and an inner opening edge close together) turned that averaging into a wide
+~5px gradient band at every edge instead of a normal 1-2px antialiasing fringe — measured, not
+guessed: composited over the real floor luma range (39-49), the original showed a visible haze halo
+along the frame; a diff against the fixed version isolates exactly 1661 px of it, all sitting in a thin
+band that traces the silhouette's own edges, zero new artifacts elsewhere. Fixed in place on the shipped
+file only (dimensions unchanged, 156x224): a colour-bleed pass (soft-alpha pixels take the alpha-weighted
+average of their opaque neighbours, 3 iterations, so sharpening the alpha next can't leave a stray
+background hue as a ring) followed by a steepen of the alpha curve through a narrower `[64, 192]` window
+(the silhouette's actual 50%-alpha boundary doesn't move, so the shape is unchanged). `alpha-audit.mjs`
+now reports the whole `client/public/environment` directory (and `client/public`/`art` more broadly)
+clean of this specific defect. Root cause is in the downsample step, not this one file — worth a look if
+a future biome pass re-runs `compress.mjs` over another thin/hollow silhouette, but out of scope to fix
+generally here.
+
+### 3. The health bar was never actually behind a wall — it just read like it, through the wrong maths
+
+Re-derived from the ground up (three separate lines of reasoning — the occlusion trigger fraction, the
+cap/face fold split, and the actual composited luma — all checked against live numbers pulled straight
+off `window.__game`, since two of the three said "should already be fine" and were wrong about why):
+`scene/occlusion.ts`'s coverage geometry was NOT the bug. Every real body archetype's health bar
+(including the boss's, at its 1.7x radius offset and full hover peak) sits comfortably inside the region
+a triggering wall's cap/deep fade already covers — confirmed by constructing a real boss `Actor` and
+reading its measured `bodySilhouette`/health-bar offset directly, and by forcing a live enemy into the
+exact "12 px north of a wall's south edge" position and reading the real occluder box back. The actual
+defect is contrast, not geometry: `XRAY_FADE` (0.34) composites whatever is behind a faded cap at
+`background*0.34 + subject*0.66` — calibrated against "a near-white rig body over ~50-luma stone
+composites to ~130" (`occlusion.ts`'s own doc), which the health bar's OWN near-black `CONTOUR`/dark-navy
+`TRACK` (the 2026-08-21 redesign's whole legibility contract, see the entry above) never had a chance to
+survive: composited the same way, they land back in the SAME ~27-88 luma band the wall/floor itself
+occupies — the exact "borrowed contrast" failure that redesign was built to remove, just reappearing
+through a translucent wall instead of a varying floor.
+
+Fix is structural, not another colour retune: the health bar no longer shares the actor's own Y-sorted
+container at all. New `Layers.hud` — world-space (pans/zooms with the camera, unlike screen-fixed `ui`),
+drawn last in `world` so it is unconditionally in front of every wall/pillar/door/actor, and deliberately
+NOT `layers.fx` (which carries a permanent bloom `BlurFilter` for muzzle flashes/particles — mounting a
+crisp bar there would blur it). `Actor` no longer parents `healthBar` as a child; it owns and positions
+it the same way `Entity` already owns `shadow` — a companion display object synced by hand
+(`applyTransform` now also writes `healthBar.x/y` from a stored offset) and torn down by hand (`destroy`
+override, since `Entity.destroy`'s `super.destroy({children:true})` no longer reaches it).
+`Scene.spawn` mounts it on `layers.hud` for both factions. Confirmed live: a health bar's own fill
+colour paints correctly at a screen position where an isolated, FULLY OPAQUE (unfaded) wall segment
+paints nothing at all — the bar is not merely "faded less", it is no longer composited through the wall
+in the first place.
+
+### 4. `HOVER`'s displacement table only documented the half of its swing that was safe
+
+Found in passing during the health-bar work, same root cause shape as it: a doc comment quoting only
+half the real range. `visualZ = base + amp * sin(t)` swings across the WHOLE `[base-amp, base+amp]`
+band, and the 2026-08-19 volume pass's own retune (which doubled the table specifically to clear a
+"the shadow offset is under one screen pixel" arithmetic dead end) only checked the base-to-peak half of
+that swing. The trough was left at `char_vanguard`'s 2.5, an offset of `2.5 x SHADOW_SLANT` = (1.05,
+0.55) world px — the Y axis is under one screen pixel at the game's own zoom floor (`FxController`'s
+`Math.max(1, ...)`, reachable on a small viewport framing a large room), i.e. back at the exact problem
+the doubling pass existed to remove. Two archetypes also broke the OTHER, already-documented bound at
+their peak: `floater-core` (8+4=12) and `boss-core` (7+4=11) both exceeded the ~10 px "still hovering,
+not flying" ceiling the same 08-19 comment sets two paragraphs above the numbers that violate it.
+
+Retuned so every archetype's whole swing sits inside `[6, 10]` world px — trough at least 6 (Y offset
+>= 1.32 screen px at zoom 1, a real margin rather than a near-miss), peak at most 10 (the existing
+ceiling, never raised): `char_vanguard`/`char_skirmisher`/`boss-core` now `{base: 8, amp: 2}`,
+`char_juggernaut` (steadier, "heavier") a narrower `{base: 7, amp: 1}`, `floater-core` (already airborne
+even at its lowest) `{base: 8.5, amp: 1.5}`. Periods untouched — a range fix, not a speed one.
+`Actor.test.ts` now sweeps all five hovering archetypes' whole cycle against the `[6, 10]` bound directly
+(reading `visualZ`, independent of the shadow-slant constants), rather than pinning one archetype's
+half-checked numbers.
+
+### Still open in this area
+
+- Six of the fourteen `ember_l1` room pieces (alcove/bastion/caldera/cell/span/rampart) have no props
+  yet — the eight decorated this pass were picked for having enough clear floor to matter, not for
+  completeness.
+- No real prop art exists (`propRender.ts`'s Graphics fallback is the only art these draw today) —
+  `render/environmentSprites.ts getPropTexture` is wired and ready (same optional-texture-else-Graphics
+  shape every other object in the room already uses), waiting on a dedicated art pass.
+- The queue the user parked for later, otherwise unchanged: **in-world element icon badges**,
+  **poison biome art**, **character back sets**, **rarity overlay spec**.
 
 ---
 

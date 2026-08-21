@@ -14,11 +14,12 @@ import { createGameState } from '@dd/engine/state/GameState';
 import type { GameState, DoorRuntime } from '@dd/engine/state/GameState';
 import { pxToFp } from '@dd/engine/content/convert';
 import { PLAYER_BASE } from '@dd/engine';
+import type { PlacedRoom, PropPlacement, RoomPiece } from '@dd/engine';
 import { Layers } from './layers';
 import { RoomBuilder } from './RoomBuilder';
 import { WALL_H_PERIMETER, WALL_H_INTERIOR, WALL_H_KERB } from './wallGeometry';
 import { XRAY_LABEL } from './occlusion';
-import { fpToPx } from '../coords';
+import { fpToPx, PX_PER_GRID } from '../coords';
 import { Entity, SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
 import { Backdrop } from './Backdrop';
 import { pillarTint } from './pillarRender';
@@ -97,6 +98,9 @@ vi.mock('../../render/environmentSprites', () => ({
   // file's subject is the room, and Portal.test.ts owns both of the arch's paths.
   getPortalArchTexture: () => undefined,
   getPickupTexture: () => undefined,
+  // No prop art exists yet (propRender.ts's own Graphics fallback) — undefined here matches
+  // that, and keeps this file's props coverage independent of a future art pass.
+  getPropTexture: () => undefined,
 }));
 
 // `NormalLitFilter` builds a real WebGL GlProgram at construction time — unavailable under
@@ -1447,5 +1451,144 @@ describe('RoomBuilder — pillars from real art', () => {
     const pillar = (rb as unknown as { pillars: Entity[] }).pillars[0]!;
     expect(pillar.shadowOffsetX).toBeCloseTo(WALL_H_INTERIOR * SHADOW_SLANT_X, 5);
     expect(pillar.shadowOffsetY).toBeCloseTo(WALL_H_INTERIOR * SHADOW_SLANT_Y, 5);
+  });
+});
+
+/**
+ * RoomBuilder — decorative props (`RoomPiece.props`, 2026-08-21). Read straight off
+ * `s.dungeonRooms` (the `PlacedRoom[]` SpawnSystem already populates), not a new
+ * engine-side field — these fixtures push directly onto it, the same "readonly is the
+ * array reference, not its contents" convention `s.obstacles.push(...)` already uses
+ * elsewhere in this file.
+ */
+function stateWithProps(props: PropPlacement[], offsetXGrid = 2, offsetYGrid = 3): GameState {
+  const s = createGameState({ seed: 1, worldW: 800, worldH: 600, waves: [], walls: [], obstacles: [] });
+  const piece: RoomPiece = {
+    id: 'test_room',
+    sizeGrid: { w: 20, h: 20 },
+    solids: [],
+    spawns: { player: [], enemy: [] },
+    exits: [],
+    props,
+  };
+  const room: PlacedRoom = { id: 'r1', piece, offsetXGrid, offsetYGrid, entranceGrid: { x: 0, y: 0 } };
+  s.dungeonRooms.push(room);
+  return s;
+}
+
+function propEntities(rb: RoomBuilder): Entity[] {
+  return (rb as unknown as { props: Entity[] }).props;
+}
+
+describe('RoomBuilder — decorative props (RoomPiece.props)', () => {
+  it('creates one Entity per prop, positioned at (grid + room offset) * PX_PER_GRID', () => {
+    const rb = makeRoomBuilder();
+    rb.build(stateWithProps([{ id: 'crate', x: 4, y: 5 }], 2, 3));
+    const props = propEntities(rb);
+    expect(props).toHaveLength(1);
+    expect(props[0]!.curX).toBeCloseTo((4 + 2) * PX_PER_GRID, 5);
+    expect(props[0]!.curY).toBeCloseTo((5 + 3) * PX_PER_GRID, 5);
+  });
+
+  it('lives on the Y-sorted entities layer, zIndex = its own ground y', () => {
+    const rb = makeRoomBuilder();
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    rb.build(stateWithProps([{ id: 'barrel', x: 1, y: 1 }], 0, 0));
+    const [prop] = propEntities(rb);
+    expect(layers.entities.children).toContain(prop);
+    expect(prop!.zIndex).toBeCloseTo(1 * PX_PER_GRID, 5);
+  });
+
+  it('gets a ground shadow on the shadow layer, like every other static object in the room', () => {
+    const rb = makeRoomBuilder();
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    rb.build(stateWithProps([{ id: 'crate', x: 1, y: 1 }], 0, 0));
+    const [prop] = propEntities(rb);
+    expect(prop!.shadow).not.toBeNull();
+    expect(layers.shadow.children).toContain(prop!.shadow);
+  });
+
+  it('draws one per prop across every co-resident room, in placement order', () => {
+    const s = createGameState({ seed: 1, worldW: 800, worldH: 600, waves: [], walls: [], obstacles: [] });
+    const pieceOf = (props: PropPlacement[]): RoomPiece => ({
+      id: 'p', sizeGrid: { w: 10, h: 10 }, solids: [], spawns: { player: [], enemy: [] }, exits: [], props,
+    });
+    s.dungeonRooms.push(
+      { id: 'a', piece: pieceOf([{ id: 'crate', x: 1, y: 1 }]), offsetXGrid: 0, offsetYGrid: 0, entranceGrid: { x: 0, y: 0 } },
+      { id: 'b', piece: pieceOf([{ id: 'barrel', x: 2, y: 2 }, { id: 'rubble', x: 3, y: 3 }]), offsetXGrid: 20, offsetYGrid: 0, entranceGrid: { x: 0, y: 0 } },
+    );
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    expect(propEntities(rb)).toHaveLength(3);
+  });
+
+  it('never renders nothing for an unrecognized id — falls back to the default kind', () => {
+    const rb = makeRoomBuilder();
+    rb.build(stateWithProps([{ id: 'some_future_kind_not_shipped_yet', x: 1, y: 1 }], 0, 0));
+    const [prop] = propEntities(rb);
+    expect(prop!.children.length).toBeGreaterThan(0);
+  });
+
+  it('actually resolves and draws the AUTHORED kind, not just "some body" regardless of id', () => {
+    // A barrel's Graphics draws a top ellipse (`g.ellipse`); a crate's never does. Distinct
+    // enough to catch RoomBuilder ignoring `prop.id` and always drawing one fixed kind — the
+    // per-kind geometry itself is `propRender.test.ts`'s job, this is the WIRING between them.
+    type Instr = { data?: { path?: { instructions?: Array<{ action: string }> } } };
+    const drawsAnEllipse = (e: Entity): boolean => {
+      const g = e.children[0]!.children.find((c) => c instanceof Graphics) as Graphics | undefined;
+      const instructions = (g?.context.instructions ?? []) as unknown as Instr[];
+      return instructions.some((i) => (i.data?.path?.instructions ?? []).some((pi) => pi.action === 'ellipse'));
+    };
+    const rb = makeRoomBuilder();
+    rb.build(stateWithProps([{ id: 'crate', x: 1, y: 1 }, { id: 'barrel', x: 5, y: 5 }], 0, 0));
+    const [crate, barrel] = propEntities(rb);
+    expect(drawsAnEllipse(crate!)).toBe(false);
+    expect(drawsAnEllipse(barrel!)).toBe(true);
+  });
+
+  it('is not registered with the occlusion x-ray — props are short enough not to need it', () => {
+    const rb = makeRoomBuilder();
+    rb.build(stateWithProps([{ id: 'crate', x: 1, y: 1 }], 0, 0));
+    expect(occluders(rb)).toHaveLength(0); // no walls/pillars/doors in this fixture either
+  });
+
+  it('destroys the previous room\'s props on rebuild, no leak', () => {
+    const rb = makeRoomBuilder();
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    rb.build(stateWithProps([{ id: 'crate', x: 1, y: 1 }], 0, 0));
+    const first = propEntities(rb)[0]!;
+    rb.build(stateWithProps([{ id: 'barrel', x: 2, y: 2 }], 0, 0));
+    expect(propEntities(rb)).toHaveLength(1);
+    expect(propEntities(rb)[0]).not.toBe(first);
+    expect(layers.entities.children).not.toContain(first);
+    expect(first.destroyed).toBe(true);
+  });
+
+  it('destroys props on clear() too, and leaves none behind for the next build()', () => {
+    const rb = makeRoomBuilder();
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    rb.build(stateWithProps([{ id: 'crate', x: 1, y: 1 }], 0, 0));
+    rb.clear();
+    expect(propEntities(rb)).toHaveLength(0);
+    expect(layers.entities.children.filter((c) => c instanceof Entity)).toHaveLength(0);
+  });
+
+  it('draws nothing for a room whose piece has no props at all', () => {
+    const rb = makeRoomBuilder();
+    rb.build(stateWithProps([], 0, 0));
+    expect(propEntities(rb)).toHaveLength(0);
+  });
+
+  it('does not throw for a piece that OMITS props entirely, not just an empty array', () => {
+    // Most of the shipped ember_l1 library predates this pass and has no `props` key at all —
+    // `piece.props` is `undefined`, not `[]`, for those pieces.
+    const s = createGameState({ seed: 1, worldW: 800, worldH: 600, waves: [], walls: [], obstacles: [] });
+    const piece: RoomPiece = {
+      id: 'no_props_key', sizeGrid: { w: 10, h: 10 }, solids: [], spawns: { player: [], enemy: [] }, exits: [],
+    };
+    s.dungeonRooms.push({ id: 'r1', piece, offsetXGrid: 0, offsetYGrid: 0, entranceGrid: { x: 0, y: 0 } });
+    const rb = makeRoomBuilder();
+    expect(() => rb.build(s)).not.toThrow();
+    expect(propEntities(rb)).toHaveLength(0);
   });
 });

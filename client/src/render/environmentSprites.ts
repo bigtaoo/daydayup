@@ -70,3 +70,13 @@ export function getPickupTexture(kind: string): Texture | undefined {
 export function getPortalArchTexture(): Texture | undefined {
   return textures.get('portal_arch');
 }
+
+/** A room prop's real-art sprite, by its resolved kind (`propRender.resolvePropKind`). No
+ *  `prop_*` key exists in `ENV_SPRITE_ASSETS` yet — always undefined today, same as every
+ *  other getter here before its art landed — so `RoomBuilder` stays on `propRender.ts`'s
+ *  Graphics silhouettes. Wired now rather than left for later: a future art pass is then a
+ *  one-line addition (`prop_crate: '/environment/prop_crate.png'`, etc.) with nothing else
+ *  to change on the render side. */
+export function getPropTexture(kind: string): Texture | undefined {
+  return textures.get(`prop_${kind}`);
+}

@@ -16,13 +16,23 @@ export class Layers {
   readonly shadow = new Container();
   readonly entities = new Container(); // Y-sort
   readonly fx = new Container();
+  // World-space, always-on-top, never blurred (unlike `fx`, which carries a permanent
+  // bloom-lite BlurFilter for muzzle flashes/trails — see FxController.attach). The one thing
+  // that needs both properties at once is a floating health bar: it has to pan/zoom with the
+  // camera like everything else in `world`, but must never be visually buried behind a standing
+  // wall the occlusion x-ray only PARTIALLY fades (design/01 "Limits of fake 3D" — a health bar
+  // is a HUD readout riding in world space, not a body part; it should never share the body's
+  // "reads through translucent stone" treatment, which stays legible for a near-white body but
+  // washes out the bar's own dark contour/track, live report *"血条被墙挡住了"*). Drawn last
+  // among `world`'s children, so it is unconditionally in front of every wall/pillar/door/actor.
+  readonly hud = new Container();
   readonly ui = new Container();
 
   constructor() {
     // entities are sorted by zIndex (= gy) for top-down depth occlusion
     this.entities.sortableChildren = true;
 
-    this.world.addChild(this.ground, this.shadow, this.entities, this.fx);
+    this.world.addChild(this.ground, this.shadow, this.entities, this.fx, this.hud);
     this.root.addChild(this.backdrop, this.world, this.ui);
   }
 }

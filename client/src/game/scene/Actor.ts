@@ -38,19 +38,39 @@ const BODY_LIFT_R = 0.7;
  * archetype (critter-core, brute-core) gets no entry and never leaves the floor.
  */
 const HOVER: Readonly<Record<string, { base: number; amp: number; periodMs: number }>> = {
-  char_vanguard: { base: 6, amp: 3.5, periodMs: 2400 },
-  char_skirmisher: { base: 6, amp: 3.5, periodMs: 2100 },
-  char_juggernaut: { base: 5.5, amp: 3, periodMs: 2900 },
-  'floater-core': { base: 8, amp: 4, periodMs: 2000 },
-  'boss-core': { base: 7, amp: 4, periodMs: 3200 },
+  char_vanguard: { base: 8, amp: 2, periodMs: 2400 },
+  char_skirmisher: { base: 8, amp: 2, periodMs: 2100 },
+  char_juggernaut: { base: 7, amp: 1, periodMs: 2900 },
+  'floater-core': { base: 8.5, amp: 1.5, periodMs: 2000 },
+  'boss-core': { base: 8, amp: 2, periodMs: 3200 },
 };
 // Roughly doubled 2026-08-19 (volume pass, measured). At base 3.5 the height-driven shadow
 // OFFSET is `3.5 * SHADOW_SLANT` = (1.5, 0.8) world px — under one screen pixel at a normal
 // zoom, so the cue this table exists to produce was arithmetically invisible however carefully
-// it was tuned. At base 6 / peak 9.5 it is (2.5, 1.3) to (4.0, 2.1), which at this camera's
+// it was tuned. At base 6 / peak 9.5 it was (2.5, 1.3) to (4.0, 2.1), which at this camera's
 // ~4x room zoom is 10-16 screen px of separation between a body and its own shadow. Deliberately
 // not raised further: past ~10 px the character stops reading as hovering and starts reading as
 // flying, so the rest of the readability comes from `SHADOW_LIFT_FALLOFF` instead.
+//
+// **Retuned again 2026-08-21 — the 2026-08-19 pass only quoted its base-to-peak half.**
+// `visualZ = base + amp * sin(t)` swings across its FULL `[base - amp, base + amp]` range, and
+// the TROUGH of that swing was never checked against the "under one screen pixel" floor the
+// table exists to clear. Measured (`char_vanguard`, unchanged base=6/amp=3.5): the trough sat
+// at 2.5, an offset of `2.5 x SHADOW_SLANT` = (1.05, 0.55) world px — the Y axis is UNDER one
+// screen pixel even at the game's maximum room-zoom (1x, `FxController`'s `Math.max(1, ...)`
+// floor, reachable on a small viewport framing a large room), and the X axis clears it by only
+// 5%. Two archetypes also broke the OTHER bound at their peak: `floater-core` (8+4=12) and
+// `boss-core` (7+4=11) both exceeded the ~10 px "still hovering, not flying" ceiling the 08-19
+// pass itself set two paragraphs up.
+//
+// Every entry below now keeps its WHOLE swing inside `[6, 10]` world px — trough at least 6
+// (Y offset >= 1.32 screen px at zoom 1, a real margin rather than a near-miss; X >= 2.52),
+// peak at most 10 (the existing ceiling, never raised). `char_juggernaut` sits in the narrower
+// `[6, 8]` sub-band (steadier, "heavier" than the other two hero forms, same relative shape its
+// old base/amp already had); `floater-core` sits in `[7, 10]` (rests visibly higher even at its
+// lowest, matching its "already airborne" flavor). Periods are untouched — this is a range fix,
+// not a speed one. `Actor.test.ts`'s hover coverage now samples the whole cycle rather than
+// asserting only the half that used to be safe.
 
 /** Spreads hover phase across actors so a room full of floaters doesn't pulse in lockstep.
  *  Render-only and deliberately construction-ORDER dependent, not state-derived — nothing
@@ -79,7 +99,15 @@ export class Actor extends Entity {
   private statusAura = new Graphics(); // lingering elemental aura, behind the body
   private auraMask = 0; // bitmask of the effects currently drawn (skip redraw if same)
   private auraT = 0; // aura pulse clock (render-only, ms)
-  private healthBar: Graphics | null = null; // floating hp bar above the head (both factions)
+  // Floating hp bar above the head (both factions). Public like `Entity.shadow` — it is a
+  // world-space companion display object this Actor owns and positions but does NOT parent
+  // (see `healthBarOffsetY`/`applyTransform` override below), so `Scene.spawn` can mount it
+  // on `layers.hud` instead of adding it as this container's own child.
+  healthBar: Graphics | null = null;
+  // Local y offset from this actor's own screen position (set once at construction, same
+  // value `healthBar.y` used to be set to directly back when it was a child). Kept separate
+  // now that `healthBar.y` holds an ABSOLUTE position synced every frame instead.
+  private healthBarOffsetY = 0;
   private isLocal = false;
   private readonly isBoss: boolean;
   private hpRatio = -1; // last-drawn hp fraction (skip redraw if unchanged)
@@ -213,9 +241,20 @@ export class Actor extends Entity {
     // to the player 2026-08-02 so hp is readable on the map itself, not just the corner
     // HUD). A boss's is drawn bigger/further out (setHealth) so it still reads as the
     // more prominent threat.
+    //
+    // NOT a child of this container (2026-08-21, live report *"血条被墙挡住了"*): a bar
+    // parented here would Y-sort with the body, so a wall the occlusion x-ray only
+    // PARTIALLY fades (`scene/occlusion.ts`'s cap-only fade, `XRAY_FADE` = 0.34) reads the
+    // bar through the SAME translucent stone the body does — which keeps a near-white body
+    // legible but composites the bar's own dark contour/track (`healthBar.ts`'s near-black
+    // `CONTOUR`/navy `TRACK`) down into the same 27-88 luma band the wall itself occupies,
+    // erasing the two-tone contrast that pass was built to guarantee. `Scene.spawn` mounts
+    // this on `layers.hud` instead — world-space and always drawn last, so it is never
+    // behind a wall/pillar/door regardless of Y-sort or the x-ray's fade state. `applyTransform`
+    // below keeps it positioned at this offset from the actor's own screen position, the same
+    // "owned but not parented" pattern `Entity.shadow` already uses.
     this.healthBar = new Graphics();
-    this.healthBar.y = bodyCenterY - radiusPx * (boss ? 1.7 : 1.3);
-    this.addChild(this.healthBar);
+    this.healthBarOffsetY = bodyCenterY - radiusPx * (boss ? 1.7 : 1.3);
 
     // litFilter is always on (unlike the four conditionally-active shaders below, whose
     // own setters call applySkinFilters on their own activation edge) — an actor that
@@ -451,6 +490,28 @@ export class Actor extends Entity {
     // `skin.view.y` is the placeholder-only body lift (0 for a rig, see the constructor),
     // included rather than assumed so this stays correct if that ever changes.
     return { x: this.x + local.x, y: this.y + this.skin.view.y + local.y };
+  }
+
+  /** Keeps `healthBar` tracking this actor's own screen position at its fixed offset — it is
+   *  deliberately not a child (see the constructor's doc comment), so nothing else moves it.
+   *  Every position update funnels through here: `place()` (unused by Actor, but inherited)
+   *  and `interpolate()` (Actor's own override, via `super.interpolate` → `applyTransform`)
+   *  both call this. */
+  protected override applyTransform(x: number, y: number, z: number): void {
+    super.applyTransform(x, y, z);
+    if (this.healthBar) {
+      this.healthBar.x = this.x;
+      this.healthBar.y = this.y + this.healthBarOffsetY;
+    }
+  }
+
+  /** `healthBar` lives on `layers.hud`, not as this container's own child (see the
+   *  constructor), so `Entity.destroy()`'s `super.destroy({ children: true })` never reaches
+   *  it — same reason `Entity` itself has to explicitly tear down `shadow`. */
+  override destroy(): void {
+    this.healthBar?.parent?.removeChild(this.healthBar);
+    this.healthBar?.destroy();
+    super.destroy();
   }
 
   override interpolate(alpha: number, frameDt: number): void {

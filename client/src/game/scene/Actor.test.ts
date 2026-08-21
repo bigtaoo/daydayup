@@ -96,32 +96,36 @@ vi.mock('../fx/filters', () => ({
   },
 }));
 
-// Children are appended in this fixed order in the constructor — indexing into
-// `.children` is the only way in from the outside, since healthBar is private (same
-// convention as TouchControlsView.test.ts: no public API, and screenshots aren't
-// available in this environment — see the daydayup memory notes).
-const enum Child { StatusAura, SkinView, WeaponGfx, HealthBar }
+// Children are appended in this fixed order in the constructor — indexing into `.children`
+// is the only way in for the ones with no public API (same convention as
+// TouchControlsView.test.ts: screenshots aren't available in this environment — see the
+// daydayup memory notes). `healthBar` itself is public (2026-08-21: it no longer lives in
+// this list at all — it rides `layers.hud`, not this container, see Actor.ts's constructor
+// doc comment on why — so it's read directly rather than indexed).
+const enum Child { StatusAura, SkinView, WeaponGfx }
 
 function healthBarOf(a: Actor): Graphics {
-  return a.children[Child.HealthBar] as Graphics;
+  return a.healthBar!;
 }
 
 describe('Actor — floating health bars (design/10 legibility fix, 2026-08-02)', () => {
   it('gives every enemy a floating health bar, not just bosses', () => {
     const mob = new Actor('enemy', 12, undefined, false);
-    expect(mob.children.length).toBe(4); // statusAura, skin.view, weaponGfx, healthBar
+    // NOT a child (2026-08-21) — see Actor.ts's constructor doc comment.
+    expect(mob.children.length).toBe(3); // statusAura, skin.view, weaponGfx
     expect(healthBarOf(mob)).toBeDefined();
+    expect(mob.children).not.toContain(mob.healthBar);
   });
 
   it('still gives a boss its (bigger) health bar', () => {
     const boss = new Actor('enemy', 12, undefined, true);
-    expect(boss.children.length).toBe(4);
+    expect(boss.children.length).toBe(3);
     expect(healthBarOf(boss)).toBeDefined();
   });
 
   it('gives a player actor a floating health bar too (visible on the map, not just the HUD)', () => {
     const player = new Actor('player', 12, undefined, false);
-    expect(player.children.length).toBe(4); // statusAura, skin.view, weaponGfx, healthBar
+    expect(player.children.length).toBe(3); // statusAura, skin.view, weaponGfx
     expect(healthBarOf(player)).toBeDefined();
   });
 
@@ -141,6 +145,19 @@ describe('Actor — floating health bars (design/10 legibility fix, 2026-08-02)'
     expect(() => mob.setHealth(0, 0)).not.toThrow();
     // No geometry drawn yet — an empty Graphics has zero bounds.
     expect(healthBarOf(mob).getLocalBounds().width).toBe(0);
+  });
+
+  it('positions the bar at its own stored offset above the actor\'s screen position, not AT it', () => {
+    // `applyTransform` (2026-08-21) has to actually ADD `healthBarOffsetY`, not just track
+    // `this.y` alone — a placeholder (no hover) keeps the maths simple: `place(x,y,0)` sets
+    // `this.y = y` exactly (lift is the only other term, and BODY_LIFT_R's own lift is folded
+    // into `bodyCenterY` already, same value `healthBarOffsetY` was computed from).
+    const mob = new Actor('enemy', 12, undefined, false);
+    mob.place(40, 200, 0);
+    const offsetY = (mob as unknown as { healthBarOffsetY: number }).healthBarOffsetY;
+    expect(offsetY).not.toBe(0); // the fixture is meaningless if the offset itself is zero
+    expect(healthBarOf(mob).x).toBeCloseTo(mob.x, 5);
+    expect(healthBarOf(mob).y).toBeCloseTo(mob.y + offsetY, 5);
   });
 
   it('redraws when the hp fraction actually changes', () => {
@@ -164,12 +181,12 @@ describe('Actor — floating health bars (design/10 legibility fix, 2026-08-02)'
 describe('Actor.setLocal — "which one is me" marker (design/10 legibility)', () => {
   it('never adds a child — the marker is the health-bar outline alone, not a separate view', () => {
     const mob = new Actor('enemy', 12);
-    expect(mob.children.length).toBe(4);
+    expect(mob.children.length).toBe(3);
     mob.setLocal(false);
-    expect(mob.children.length).toBe(4);
+    expect(mob.children.length).toBe(3);
     const me = new Actor('player', 12);
     me.setLocal(true);
-    expect(me.children.length).toBe(4);
+    expect(me.children.length).toBe(3);
   });
 
   // Was asserted via the bar's BOUNDS growing, which only worked because the local outline
@@ -337,7 +354,13 @@ describe('Actor — vertical anchoring: the placeholder is lifted, a rig carries
     const bodyCenterY = bounds.y + bounds.height / 2;
     expect(bodyCenterY).toBeLessThan(-1); // the rig really does sit above the anchor
     expect(auraYOf(a)).toBeCloseTo(bodyCenterY);
-    expect(healthBarOf(a).y).toBeCloseTo(bodyCenterY - 20 * 1.3);
+    // `healthBar` is no longer a child (2026-08-21) — its `.y` only reflects this offset once
+    // `applyTransform` has run (`place`/`interpolate`), and `place` would also fold in
+    // `char_vanguard`'s own idle hover (`visualZ`, HOVER table) on top of it — a second,
+    // unrelated effect this test isn't about. Reading the stored offset directly keeps this
+    // test about what it says it's about: the bar wraps the BODY's centre, not the ground.
+    const offsetY = (a as unknown as { healthBarOffsetY: number }).healthBarOffsetY;
+    expect(offsetY).toBeCloseTo(bodyCenterY - 20 * 1.3);
   });
 });
 
@@ -1001,13 +1024,14 @@ describe('Actor — the hover has to be big enough to actually produce its own c
     // actors constructed earlier in this FILE happened to leave behind, and broke when an
     // unrelated test was added above it (2026-08-21).
     //
-    // Measuring the whole cycle also corrects the claim. `visualZ = base + amp * sin(t)`
-    // swings 6 ± 3.5, i.e. 2.5 to 9.5 — so the offsets run (1.05, 0.55) at the trough through
-    // (2.5, 1.3) at the base to (4.0, 2.1) at the peak. HOVER's own comment quotes only the
-    // base-to-peak half of that; the trough is roughly a quarter of the peak, and it is the
-    // one part of the cycle that is still near the "one screen pixel" floor this table was
-    // doubled to clear. Asserted both ways below, so the cue has to survive the bottom of the
-    // bob AND actually reach a separation at the top.
+    // Retuned again 2026-08-21 (HOVER's own doc comment has the full account): the 08-19 pass
+    // quoted only its base-to-peak half, and the TROUGH of `visualZ = base + amp * sin(t)`
+    // (which swings across the WHOLE `[base-amp, base+amp]` range) was left at (1.05, 0.55) —
+    // under one screen pixel on the Y axis at the game's own zoom floor. Every archetype's
+    // swing now stays inside `[6, 10]` world px, so the trough offset is at least (2.52, 1.32)
+    // — a real margin, not a near-miss — while the peak stays at or under the pre-existing
+    // ~10 px "hovering, not flying" ceiling. Asserted both ways below, so the cue has to
+    // survive the bottom of the bob AND actually reach a separation at the top.
     skinRegistryMocks.loaded = { ...loadedOrbCoreRig(), bodyFill: 0.81 };
     const a = new Actor('player', 20, undefined, false, 'char_vanguard');
     a.pushState(500, 500, 0, 0);
@@ -1019,9 +1043,9 @@ describe('Actor — the hover has to be big enough to actually produce its own c
       dx.push(a.shadow!.x - 500);
       dy.push(a.shadow!.y - 500);
     }
-    expect(Math.min(...dx)).toBeGreaterThan(1); // the trough still separates at all...
-    expect(Math.min(...dy)).toBeGreaterThan(0.5);
-    expect(Math.max(...dx)).toBeGreaterThan(3.5); // ...and the peak separates clearly
+    expect(Math.min(...dx)).toBeGreaterThan(2.4); // the trough clears with real margin now...
+    expect(Math.min(...dy)).toBeGreaterThan(1.25);
+    expect(Math.max(...dx)).toBeGreaterThan(4); // ...and the peak separates clearly
     expect(Math.max(...dy)).toBeGreaterThan(2);
   });
 
@@ -1052,6 +1076,33 @@ describe('Actor — the hover has to be big enough to actually produce its own c
     expect(critter.shadow!.x).toBe(300);
     expect(critter.shadow!.y).toBe(300);
     expect(critter.shadow!.scale.x).toBe(1);
+  });
+
+  it('keeps EVERY hovering archetype\'s whole swing inside [6, 10] world px — not just vanguard\'s', () => {
+    // The 2026-08-21 retune's actual invariant, swept across the table instead of pinned on
+    // one entry: every archetype's `visualZ` trough must clear the "one screen pixel at the
+    // game's own zoom floor" line with real margin (>= 6, giving a Y offset >= 1.32 screen px
+    // at zoom 1 — see HOVER's doc comment), and every peak must stay at/under the pre-existing
+    // ~10 px "hovering, not flying" ceiling — reading `visualZ` directly (before the shadow's
+    // own SLANT/squash math) so this is independent of `Entity`'s shadow-offset constants.
+    for (const [faction, key] of [
+      ['player', 'char_vanguard'],
+      ['player', 'char_skirmisher'],
+      ['player', 'char_juggernaut'],
+      ['enemy', 'floater-core'],
+      ['enemy', 'boss-core'],
+    ] as const) {
+      const a = new Actor(faction, 16, undefined, false, key);
+      a.pushState(0, 0, 0, 0);
+      a.snap();
+      const zs: number[] = [];
+      for (let i = 0; i < 60; i++) {
+        a.interpolate(1, 100); // 6s, comfortably past every archetype's own period
+        zs.push((a as unknown as { visualZ: number }).visualZ);
+      }
+      expect(Math.min(...zs)).toBeGreaterThanOrEqual(6 - 0.05); // trough — sampling tolerance only
+      expect(Math.max(...zs)).toBeLessThanOrEqual(10 + 0.05); // peak
+    }
   });
 });
 

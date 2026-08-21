@@ -13,20 +13,27 @@ describe('Layers', () => {
     expect(layers.root.children).toEqual([layers.backdrop, layers.world, layers.ui]);
   });
 
-  it('world contains ground, shadow, entities, fx in that paint order', () => {
+  it('world contains ground, shadow, entities, fx, hud in that paint order', () => {
     const layers = new Layers();
-    expect(layers.world.children).toEqual([layers.ground, layers.shadow, layers.entities, layers.fx]);
+    expect(layers.world.children).toEqual([layers.ground, layers.shadow, layers.entities, layers.fx, layers.hud]);
   });
 
-  it('only entities is sortable (Y-sort by zIndex) — ground/shadow/fx/ui/backdrop stay insertion order', () => {
+  it('only entities is sortable (Y-sort by zIndex) — ground/shadow/fx/hud/ui/backdrop stay insertion order', () => {
     const layers = new Layers();
     expect(layers.entities.sortableChildren).toBe(true);
     expect(layers.ground.sortableChildren).toBe(false);
     expect(layers.shadow.sortableChildren).toBe(false);
     expect(layers.fx.sortableChildren).toBe(false);
+    expect(layers.hud.sortableChildren).toBe(false);
     expect(layers.ui.sortableChildren).toBe(false);
     expect(layers.backdrop.sortableChildren).toBe(false);
     expect(layers.world.sortableChildren).toBe(false);
+  });
+
+  it('hud is drawn AFTER fx — always on top of the bloom-blurred layer too', () => {
+    const layers = new Layers();
+    const idx = (c: unknown) => layers.world.children.indexOf(c as never);
+    expect(idx(layers.hud)).toBeGreaterThan(idx(layers.fx));
   });
 
   it('backdrop and ui are siblings of world, not children of it (screen-space, never panned/zoomed)', () => {
@@ -50,6 +57,6 @@ describe('Layers', () => {
     expect(layers.entities.parent).toBe(layers.world);
     expect(layers.world.children).toContain(layers.entities);
     // Nothing else may sit in that slot pretending to be `entities`.
-    expect(layers.world.children).toHaveLength(4);
+    expect(layers.world.children).toHaveLength(5);
   });
 });
