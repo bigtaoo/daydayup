@@ -1233,3 +1233,83 @@ the app's own layout maths.
      is deliberately NOT done for the two screen-wide post-fx, which need the clip to size
      themselves to the viewport. General lesson: when a filter's symptom flips on and off
      with the camera zoom, suspect the pow2 filter-texture pool before suspecting Pixi.
+
+## The drops and the gate get real art (2026-08-20)
+
+The pillar pass above closed the scene queue for *surfaces*. This one closes it for the objects that
+stand on them: the five in-run drop kinds and the extraction portal. Both were still Pixi `Graphics`
+— `design/12` had recorded them as "never planned as sprite art", a judgement made while walls were
+flat rectangles on the ground layer, and by now they were the loudest placeholders in the frame.
+**Render-only, no `ENGINE_VERSION` impact.** Art prompts and the three rejected generations are
+archived in `art/environment/prompts.md`.
+
+**A drop is scaled by its LONG axis to one shared 18 px extent** (`Pickup.ART_LONG_AXIS`), so each
+file keeps its own aspect — the crystal draws 11x18, the bandage 18x9 — while a floor of mixed loot
+still reads as one size class. This is the pillar's "scale by one axis, let the art choose the other"
+rule with the axis picked differently, and for a different reason: a pillar's width has to agree with
+a collision footprint, whereas a drop has no footprint at all and only has to agree with its siblings.
+`weapon` is exempt and always will be: it draws that weapon's own business-end art, so
+`getPickupTexture` has no `pickup_weapon` key and `Pickup` never asks for one.
+
+**The gate is split between art and code, along the line "does it move?"** Only the masonry arch is a
+sprite — bottom-anchored on the ground point, fitted by width, its height falling out of the file's
+aspect (the shipped 576x539 lands within a pixel of `archH`). The ground bloom, the two
+counter-rotating rings of arcs, the bright core and the infalling motes stay program-drawn because
+they animate every frame. Consequence worth stating: the arch art is authored as NEUTRAL stone with
+COLOURLESS crystal, because one `Sprite.tint` cannot tint the shards without tinting the masonry, so
+the checkpoint's green comes from the code-drawn layers instead.
+
+**Two numbers moved because real stone has thickness, and they are both measured off the file.** The
+vortex's radii were fractions of `archW`, the object's outer half-width — free while the "arch" was a
+single stroked ellipse whose stone had no thickness at all. The shipped arch's legs take 22% of the
+outer width each, so `ringA`'s authored `0.78 * archW` was drawing the brightest ring straight onto
+the masonry. Fixing it needed the right *measurement*, and the first attempt used the wrong one: the
+horizontal cross-section of the opening at one height (45.4%) ignores that the vortex is an ellipse
+which also extends upward into the narrowing crown. Sweeping the file's alpha for **the largest
+ellipse, squashed the way the code squashes it, that touches no opaque pixel** gives the real answer —
+and it depends on where the ellipse is centred: only `0.365 * archW` at the arch's mid-height, but
+`0.560` with the centre dropped to a QUARTER of the arch's height, where the straight legs become the
+only constraint. So `VORTEX_CENTER_OF_ARCH_H` exists now too, and the vortex sits low in the doorway,
+which is also where an arch's opening actually is. `environmentArt.test.ts` re-derives both constants
+from the shipped alpha every run.
+
+**Three things only a rendered frame could have said**, all found by compositing the sprites at their
+real drawn size over the real floor swatch and by pulling frames out of the live client:
+
+- **A one-pixel arrowhead.** The buff sigil's inner mark was generated as an *outline* — 5.8% of the
+  object's width per stroke, which is one pixel at 18 px. It measured as a correct shape and was
+  invisible in game. The regeneration's solid mark is 27% of the width, about 5 px.
+- **An eye.** The bandage came back as a circular end-on roll with concentric rings and a dark centre
+  hole. In a game whose hero, every critter and the boss are all single-eyed, a pale disc with a dark
+  middle lying on the floor is a fiction-breaking read, and no per-file measurement would ever have
+  flagged it. The fix is the silhouette (a side-on capsule, aspect 1.92), which is therefore what the
+  test asserts.
+- **The glow had become a plate.** Each drop sits on an additive glow that had been ONE flat circle at
+  a single alpha since 2026-08-02. Behind a 14 px flat Graphics silhouette that read as "this shape,
+  glowing"; behind real art it read as a coloured token the object was standing on. It is now twelve
+  non-overlapping annuli on a squared falloff — the same construction as `roomLight`'s room falloff and
+  `wallTone`'s coping ramp, and for the same reason (stacked translucent shapes step in OPACITY and
+  compound). Ten bands stepped by 0.061 alpha, which still read as a ring; twelve step by 0.052.
+
+**And one defect this pass introduced and then caught in its own frame:** pulling the vortex's radii in
+to fit the opening while leaving its stroke widths and mote sizes at their old absolute values took
+`ringA` from 26% of its own radius thick to 44%, and the vortex read as a scatter of debris rather
+than a spinning ring. One `VORTEX_SHRINK` factor now scales widths and mote sizes with the radii, and
+the test bounds the stroke-width-to-radius RATIO rather than an absolute width, so it cannot go stale
+the next time the arch art changes.
+
+**Verification. +87 tests (1968 → 2055), 39 mutants, 39 killed** — after four survivors were closed,
+and all four were real gaps. Two of them were the same gap: `getPickupTexture`'s `pickup_` key prefix
+and `getPortalArchTexture`'s key string are *never executed* under vitest, because no texture ever
+enters the registry there — a typo in either silently leaves every drop and every portal on its
+Graphics fallback forever, which looks exactly like art that was never generated. That is what
+`environmentSpritesLoad.test.ts` is for (stub `Assets.load` to succeed, then assert each getter
+resolves to its OWN file), and it is the same split `biomeTilesLoad.test.ts` already keeps from
+`biomeTiles.test.ts`. The other two were assertions too loose to discriminate: a mote-size bound that
+0.16 satisfied when the shrunk value is 0.11, and a glow-ramp convexity threshold a linear ramp
+cleared by 0.007. `environmentArt.test.ts` decodes the six SHIPPED files and measures them (real alpha
+with transparent corners, no baked halo, trimmed to content, resolution headroom against
+`MAX_ZOOM * DPR`, every band clear of the floor's own 39-49 luma, the crate's top the brightest plane,
+the arch in the wall face's tonal family with its shards untouched by the curve) — and runs the same
+assertions over the three `_alt` rejects, so a check that stops telling accepted from rejected art
+fails instead of passing vacuously.

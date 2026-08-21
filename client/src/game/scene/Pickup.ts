@@ -2,6 +2,7 @@ import { Graphics, Sprite } from 'pixi.js';
 import { WEAPON_SIM_BY_ID } from '@dd/engine';
 import { THEME } from '../theme';
 import { getWeaponTexture } from '../../render/weaponSkins';
+import { getPickupTexture } from '../../render/environmentSprites';
 import { Entity } from './Entity';
 import type { PickupKind } from '@dd/engine';
 
@@ -16,7 +17,7 @@ const PICKUP_GLOW: Record<PickupKind, number> = {
   buff: THEME.colors.pickupBuff,
   crate: THEME.colors.pickupCrate,
   material: THEME.colors.pickupMaterial,
-  bandage: THEME.colors.pickupHeal, // no dedicated bandage art yet — falls into the same crystal fallback shape below as 'material'
+  bandage: THEME.colors.pickupHeal, // shares heal's hue on purpose: same "restore" family, own sprite
 };
 
 // Ambient hover, deliberately in the same band as the scene's other idle loops —
@@ -40,11 +41,30 @@ const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 const GLOW_ALPHA_PEAK = 0.34;
 const GLOW_BREATHE = 0.36; // how much dimmer the bottom of the arc is, as a fraction of peak
 
+// On-screen extent of a drop's sprite art, along whichever axis is longer (2026-08-20).
+// ONE number for every kind rather than the per-kind 14/18 the Graphics fallbacks below
+// still use: each file keeps its own aspect (the crystal is 116x192, the bandage 192x100),
+// so scaling by the long axis is what makes a floor of mixed loot read as one size class.
+// It stays inside the glow's own diameter (GLOW_RADIUS * 2 = 26) so the glow reads as
+// "this shape, glowing" rather than as a disc with something small on it.
+const ART_LONG_AXIS = 18;
+const GLOW_RADIUS = 13;
+/** Bands the glow ramps over. It was ONE flat additive circle until 2026-08-20, which was
+ *  fine behind a flat 14px Graphics silhouette and stopped being fine the moment the drops
+ *  became real sprites: measured live, the disc reads as a hard-edged coloured plate that
+ *  the art sits on, like a token. Non-overlapping annuli instead, each carrying exactly its
+ *  own ramp value — stacked translucent shapes step in OPACITY and compound, which is the
+ *  same trap `wallTone`'s coping ramp and `roomLight`'s falloff are both built to avoid. Twelve
+ *  of them over 13 px (the same count `roomLight` settled on) keeps the largest step to 0.052
+ *  alpha; ten came out at 0.061, which is where a ring starts to read. */
+const GLOW_BANDS = 12;
+
 // Pickup view — an in-run drop (health / coin / weapon). Pure presentation:
 // the engine owns the drop roll and collection; the hover bob here is render-only
 // eye candy (it is NOT part of the sim, which is why PickupItem has no z). Position
-// lerps like any other view; z is the local bob. Each kind gets a distinct silhouette
-// so a player reads "new gun" (chevron) vs "heal" (plus) at a glance.
+// lerps like any other view; z is the local bob. Each kind gets a distinct silhouette so
+// a player reads "new gun" vs "heal" at a glance — a per-kind sprite since 2026-08-20,
+// with the original flat Graphics shapes kept as the never-blocks-gameplay fallback.
 export class Pickup extends Entity {
   private bob: number;
   private readonly glow: Graphics;
@@ -58,19 +78,45 @@ export class Pickup extends Entity {
     super();
     this.kind = kind;
     this.bob = id * GOLDEN_ANGLE;
-    // A soft additive glow behind the shape (design/10 legibility fix, 2026-08-02): a
-    // flat-filled ~14px silhouette reads as a plain dot against a dark/busy floor —
-    // the glow gives every pickup a bit of "pop" at a glance without new art. A
-    // separate Graphics (not the crisp shape below) so only the glow itself blends
-    // additively — the shape on top stays a normal, non-washed-out fill.
+    // A soft additive glow behind the shape (design/10 legibility fix, 2026-08-02): an
+    // ~18px silhouette reads as a plain dot against a dark/busy floor — the glow gives
+    // every pickup a bit of "pop" at a glance. Kept after the art landed: it is also why
+    // no drop sprite needs a baked halo of its own (design/13's "environment desaturated,
+    // hazards saturated" pop is this layer's job, not the file's). A separate Graphics
+    // (not the crisp shape below) so only the glow itself blends additively — the art on
+    // top stays a normal, non-washed-out fill.
     const glow = new Graphics();
-    glow.circle(0, 0, 13).fill({ color: PICKUP_GLOW[kind], alpha: GLOW_ALPHA_PEAK });
+    const bandW = GLOW_RADIUS / GLOW_BANDS;
+    for (let i = 0; i < GLOW_BANDS; i++) {
+      // t: 0 at the centre, → 1 at the rim. Squared, so the glow keeps its bright core and
+      // reaches nothing at the edge instead of ending on a visible boundary.
+      const t = (i + 0.5) / GLOW_BANDS;
+      const r = (i + 0.5) * bandW; // a bandW-wide stroke here spans i*bandW..(i+1)*bandW
+      glow.circle(0, 0, r).stroke({
+        color: PICKUP_GLOW[kind],
+        width: bandW,
+        alpha: GLOW_ALPHA_PEAK * (1 - t) ** 2,
+      });
+    }
     glow.blendMode = 'add';
     this.addChild(glow);
     this.glow = glow;
 
     const gfx = new Graphics();
-    if (kind === 'heal') {
+    // Real art for every kind but `weapon` (which mounts the weapon's own business-end
+    // art below instead of a generic loot icon). Anchored at its centre and scaled by its
+    // LONG axis, so the file's own aspect decides the other one — the same rule the pillar
+    // sprite follows, for the same reason: the aspect is the art's to choose, the extent
+    // is the game's. Falls through to the flat Graphics silhouettes below whenever the
+    // texture isn't resolvable (not preloaded, fetch failed) — art never blocks gameplay
+    // (design/02/12).
+    const art = kind === 'weapon' ? undefined : getPickupTexture(kind);
+    if (art) {
+      const sprite = new Sprite(art);
+      sprite.anchor.set(0.5);
+      sprite.scale.set(ART_LONG_AXIS / Math.max(art.width, art.height));
+      this.addChild(sprite);
+    } else if (kind === 'heal') {
       const color = THEME.colors.pickupHeal;
       // A small plus sign reads as "heal" without art.
       gfx.roundRect(-3, -9, 6, 18, 2).fill({ color });

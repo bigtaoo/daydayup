@@ -92,6 +92,11 @@ vi.mock('../../render/biomeTiles', () => ({
 
 vi.mock('../../render/environmentSprites', () => ({
   getDoorTexture: (locked: boolean) => (locked ? mocks.doorLockedTex : mocks.doorOpenTex),
+  // RoomBuilder builds a Portal per room, and Portal reaches into this same module for its
+  // arch (2026-08-20). Left unloaded here so a portal keeps its Graphics fallback — this
+  // file's subject is the room, and Portal.test.ts owns both of the arch's paths.
+  getPortalArchTexture: () => undefined,
+  getPickupTexture: () => undefined,
 }));
 
 // `NormalLitFilter` builds a real WebGL GlProgram at construction time — unavailable under

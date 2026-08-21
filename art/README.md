@@ -20,6 +20,13 @@
 > transparency CHECKERBOARD painted into it as opaque grey-and-white squares, which no preview can
 > distinguish from a real alpha channel. Keyed by luma at import; the audit reports the shipped file
 > clean. Re-run `alpha-audit.mjs` after any art batch rather than trusting the picture.
+> **Update (2026-08-20, same day):** six more shipped files — the five in-run drop sprites and the
+> portal arch (`environment/`, see the new row below) — bringing `client/public/` to **88 PNGs**.
+> All six came back with a real alpha channel on the first generation, which is the anti-checkerboard
+> paragraph in `environment/prompts.md` doing its job. That audit run also turned up ONE
+> pre-existing offender the directory had apparently never been swept for:
+> `client/public/environment/door_open_raw.png` decodes as **HAZE** (44.7% partial alpha, a 15.4%
+> midtone cluster) and has shipped that way since the 2026-08-04 door pass. Flagged, not fixed.
 
 ## Layout
 
@@ -29,6 +36,7 @@
 | `units/` | Every character and enemy part: the three orb-cores (`shell`/`belly`/`eye_front`/`eye_back`, prefixed `skirmisher_`/`juggernaut_`, unprefixed = the default vanguard), the boss (`boss.png` is an orphaned early attempt, unwired — see `prompts.md` for the real `core`/`ring` pair still needed), and the enemy bodies (`enemy_critter`/`enemy_brute`/`enemy_floater`) + `prompts.md` | `client/public/skins/*/` |
 | `weapon/` | Per-weapon-id business-end sprites (`<weaponId>_raw.png`) + `prompts.md` + `leftover/` (picked-over duplicate generations, incl. two rejected grip-pistol ice attempts). All 6 elemental ids now shipped (`flamer`/`teslagun`/`venomspit`/`cinderscatter`/`cryobolt`/`frostseeker`) | `client/public/weapons/` |
 | `biome/` | Per element: the top-down floor tile, the top-down wall tile (also reused as a standing wall's top cap), and the wall's front elevation (`wallface_*`, 2026-08-18). Plus one whole-OBJECT sprite, not a swatch: `pillar_neutral_raw.png` (2026-08-20), shared by every biome and tinted per room — six rejected generations kept as `pillar_*_alt*.png`. All with `prompts.md` | `client/public/biome/` |
+| `environment/` | Standalone fixtures that stand IN a room rather than surfacing it: the door pair (2026-08-04), the five in-run drop sprites (`pickup_material`/`heal`/`buff`/`crate`/`bandage`) and the extraction portal's masonry arch (`portal_arch`, 2026-08-20) + `prompts.md`. Three rejected drop generations kept as `pickup_*_alt.png` — and re-read every test run as negative fixtures, see `client/src/game/scene/environmentArt.test.ts` | `client/public/environment/` |
 | `ui/` | Hub background, button icons, result badges + `prompts.md` | `client/public/ui/` |
 | `npc/` | Outpost NPCs (the Forger) + `prompts.md` | `client/public/ui/npc_forger.png` |
 | `map/` | The rejected painterly-isometric room backgrounds (`room_*_painterly_rejected`) — kept only as a record of the approach that did not work; the biome look that shipped is the tile art in `biome/` | — (nothing bound) |

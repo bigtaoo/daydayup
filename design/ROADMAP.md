@@ -71,6 +71,10 @@ out of the way, from a report that the character *"跑到墙下面去了"*; the 
 (`occlusionCoverage.test.ts`) measured 5.5% of level 1's standable floor as having made the player
 *completely* invisible, and none of it leaves more than half hidden now. See "The character
 disappeared behind a wall" below. That sweep is also what turned up v44's four wall runs.
+Also render-only, and the last of the scene's Graphics placeholders: 2026-08-20's **drop and portal
+art** — the five in-run pickup kinds and the extraction gate's masonry arch become sprites, leaving
+only bullets (deliberately) and the in-world health bar on procedural geometry. See "The drops and the
+gate get real art" below.
 Earlier, also render-only (no `ENGINE_VERSION` bump — 🟢): the DEFEAT/VICTORY result
 screen's confirm gesture changed from tap-anywhere-on-the-panel (plus a raw fire-button
 rising edge, `confirmEdge.ts`, now deleted) to a single explicit CONFIRM `Button` — the same
@@ -3450,6 +3454,135 @@ tool. **11 of 18 survived**, in three clusters:
 (10 — the tool had none, and `applyLumaCurve` was extracted from the CLI so it could be tested
 directly; two of the ten drive the real CLI through `execFileSync`, because the entry-point gate that
 decides whether the pipeline step does anything at all is itself a decision).
+
+---
+
+## The drops and the gate get real art — the last Graphics placeholders in the frame (2026-08-20, client-only)
+
+Prompted by *"当前游戏的美术还有提升空间吗"* → *"按顺序来，你先给我prompt"*. The audit that question
+asked for measured a real frame of level 1 rather than reading the code, and its top item was that the
+scene's *surfaces* were all real art now (floor, walls, doors, pillars) while the objects standing on
+them were not: `Pickup` and `Portal` were still built entirely from Pixi `Graphics`. `design/12` had
+recorded them as "never planned as sprite art" — a judgement made while `RoomBuilder` still drew every
+wall as a flat rectangle on the ground layer, and worth re-making once it didn't.
+
+**Render-only, no `ENGINE_VERSION` impact.** 2055 client tests green (+87), `npm run check` green
+across all 8 workspaces, `check:filelength` clean.
+
+### What the audit found, and what it got wrong
+
+Two of the audit's own claims were corrected by measurement during the pass, which is the more useful
+half of the record:
+
+- **"The enemy's gun reads as a blank white slab"** — true on screen, wrong about the cause. Dumping a
+  live emberling's display tree showed no weapon sprite at all: `Actor.setWeaponKind` gates the rig
+  mount on `hasRig && faction === 'player'`, and `critter-core`/`brute-core`/`floater-core` are
+  deliberately socket-less single-bone rigs, so **every enemy in the game always draws the 12x5
+  Graphics placeholder**. `gun_enemygun.png` has existed since the weapon-art batch and has never once
+  been rendered in the world. Not fixed here — it is a rig change, not an art one, and needs no new
+  art at all.
+- **"The crate's top face is no brighter than its front"** — plain wrong. Measured, the top band is
+  **168** against a front face of 118. Recorded because looking at the file said one thing and the
+  numbers said another, which is the whole reason this project measures.
+
+### Nine generations, three rejected, and each rejection needed a different kind of check
+
+Full table and prompts in the new `art/environment/prompts.md`. What the rejects cost:
+
+- **A one-pixel arrowhead.** The buff sigil's inner mark came back as an *outline*: 5.8% of the
+  object's width per stroke, i.e. ONE pixel at the 18 px a drop is drawn at. It measures as a
+  correct shape and is invisible in play. Caught by compositing the sprite at its real drawn size
+  over the real floor swatch and looking at that — not by any per-file measurement.
+- **An eye.** The bandage came back as a circular end-on roll: concentric rings, dark centre hole.
+  In a game whose hero, every critter and the boss are all single-eyed, a pale disc with a dark
+  middle lying on the floor is a fiction-breaking read. No tonal or alpha measurement would ever
+  have flagged it; the prompt had asked for the wrong *shape*. The fix is the silhouette (side-on
+  capsule, aspect 0.93 → 1.92), so that is what the test asserts.
+- **A lid that was a hole in the floor.** The heal drop drifted from "vial" to a wide-lidded **jar**
+  — the free-standing-object drift this project has hit before, in a new costume — and its top fifth
+  measured luma **50**, inside the ember floor's own 39-49 band. A quarter of the object would simply
+  have stopped existing at display size. The regeneration measures 146 there.
+
+The anti-checkerboard paragraph added to every prompt after the pillar pass **worked**: all nine
+generations came back with a real alpha channel, zero keying needed. The one import step still
+required was `lumaCurve.mjs` on the arch, whose stone arrived at 2.4x a wall face (mid band 65 against
+27.3) — stone-only p10/p50/p90 went 28.9/60.7/75.7 → **19.0/37.6/47.1**, landing in the pillar's own
+family, while the crystal shards stayed untouched at a mean of 204. A uniform multiply could not have
+done that, which is the whole reason that tool exists. New first step in the pipeline: the generator
+now emits **`.webp`**, which the repo's PNG codec cannot read, so a lossless decode to PNG precedes
+everything else.
+
+### Two numbers that only exist because real stone has thickness
+
+`Portal`'s vortex radii were fractions of `archW`, the object's outer half-width — free while the
+"arch" was one stroked ellipse with no stone thickness. The shipped arch's legs take 22% of the outer
+width each, so `ringA`'s `0.78 * archW` drew the brightest ring onto the masonry. **The first fix used
+the wrong measurement**: the opening's horizontal cross-section at one height (45.4%) ignores that the
+vortex is an ellipse which also extends upward into the narrowing crown. Sweeping the file's alpha for
+the largest ellipse — squashed the way the code squashes it — that touches no opaque pixel gives the
+real bound, and it depends on where the ellipse sits: **0.365 of `archW` centred on the object,
+0.560 with the centre dropped to a quarter of the arch's height**, where the straight legs become the
+only constraint. So the vortex now sits low in the doorway, which is also where an arch's opening
+actually is. Both constants are re-derived from the shipped alpha on every test run.
+
+### Three things found by rendering, one of them self-inflicted
+
+- **The glow had become a plate.** Each drop's additive glow had been ONE flat circle at a single
+  alpha since 2026-08-02 — behind a 14 px flat silhouette it read as "this shape, glowing"; behind
+  real art it read as a coloured token the object stands on. Now twelve non-overlapping annuli on a
+  squared falloff, the same construction as `roomLight`'s falloff and `wallTone`'s coping ramp.
+  Ten bands stepped by 0.061 alpha and still read as a ring; twelve step by 0.052.
+- **The vortex read as debris** — and that one this pass caused: pulling the radii in to fit the
+  opening while leaving stroke widths and mote sizes at their old absolute values took `ringA` from
+  26% of its own radius thick to 44%. One `VORTEX_SHRINK` scales all of it together, and the test
+  bounds the width-to-radius RATIO so it cannot go stale when the arch art next changes.
+- **`environmentSprites.ts` was loading every texture with no mip chain**, doors included, since
+  2026-08-04. A drop is a 192 px source at 18 px — a 10:1 minification, worse than the 4:1 that made
+  the pillar need mipmaps and the same class of defect as the 2026-08-12 rig-art colour noise. Fixed
+  for every file in the module.
+
+### Tests, and a 39-mutant battery with four real survivors
+
+New `environmentArt.test.ts` (44 — decodes the six SHIPPED files and measures them: real alpha with
+transparent corners, no baked halo, trimmed to content, resolution headroom against `MAX_ZOOM * DPR`,
+every band clear of the floor's 39-49 luma, the crate's top the brightest plane, the arch in the wall
+face's tonal family with its shards spared by the curve, and the vortex ellipse it has to clear) and
+`environmentSpritesLoad.test.ts` (5), plus new describes in `Pickup.test.ts`, `Portal.test.ts` and
+`environmentSprites.test.ts`.
+
+The art suite also runs its assertions over the three `_alt` **rejects** — a cheaper and stricter
+guarantee than a mutation battery gives for a binary asset: an assertion that stops discriminating
+accepted from rejected art fails here rather than passing vacuously.
+
+**39 mutants, 39 killed — after four survivors, all four real gaps:**
+
+| survivor | why nothing caught it |
+|---|---|
+| `getPickupTexture` drops its `pickup_` key prefix | no texture ever enters the registry under vitest, so the key each getter builds is never once executed — and the symptom (a getter returning `undefined`) is indistinguishable from "not preloaded yet" |
+| `getPortalArchTexture`'s key string typo'd | same gap, same fix: `environmentSpritesLoad.test.ts` stubs `Assets.load` to SUCCEED and asserts each getter resolves to its own file |
+| motes left at their pre-shrink size | the bound was 0.16 of the vortex's reach and the unshrunk value is exactly 0.16 |
+| the glow ramp made linear instead of squared | monotonic, and its step is smaller than the squared version's — every existing assertion passed. Closed with a convexity bound (squared puts 0.22 of the peak at half the radius, linear 0.48) |
+
+Eight of the 39 mutate the **shipped assets** rather than the code (skip `lumaCurve`, apply it
+uniformly, compress to game size, skip the trim, swap each reject back in), which is the second time
+the most valuable mutants in a pass have been the ones aimed at a binary file.
+
+Confirmed live in the real client across three render-look-fix rounds: all five drop sprites mounted
+at their measured sizes (11x18 / 13x18 / 18x18 / 14x14 / 18x9), a weapon drop still drawing
+`gun_seeker.png`, every Graphics fallback measuring 0x0, the arch mounted at 59.8x56 with the vortex
+inside its opening, zero console errors.
+
+### Still open in this area
+
+- **Enemies never mount a weapon sprite** (see above) — a socket bone on the three enemy rigs, or a
+  mount path that does not need one. Zero new art.
+- **Bullets stay `Graphics`, deliberately.** ~5 world px is where a texture buys nothing a tinted
+  additive dot does not, and costs a sampler per projectile in the busiest part of the frame.
+- **In-world health bars are still bare `Graphics` rectangles** — a HUD element, so procedural is
+  right, but the styling (frame, backing) has not been touched since the 2026-08-02 legibility pass.
+- **`door_open_raw.png` decodes as HAZE** — 44.7% partial alpha, a 15.4% midtone cluster, shipped that
+  way since 2026-08-04. `alpha-audit.mjs` had apparently never been run over `client/public/environment`
+  before this pass. Flagged, not fixed.
 
 ---
 

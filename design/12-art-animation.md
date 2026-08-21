@@ -7,8 +7,10 @@ How pixels get onto the screen: **skins** (the `02` appearance layer made concre
 > bound roster is the full 3 characters + boss/critter/brute/floater enemies + a distinct
 > sprite for every ranged/melee weapon id + biome floor/wall art + UI/NPC art. The original
 > Graphics-only slice (procedural rectangles/ellipses/glows in `Skin.ts`) survives only as
-> the fallback drawn when a skin has no atlas entry, and for bullets/pickups/portal, which
-> were never planned as sprite art. The dated Update notes at the bottom of this doc record
+> the fallback drawn when a skin has no atlas entry, and for BULLETS, whose few world px make a
+> sprite pointless. (Until 2026-08-20 this sentence also named pickups and the portal as
+> "never planned as sprite art" — a judgement made while the walls were still flat rectangles.
+> Both now ship real art; see the Update at the bottom of this doc.) The dated Update notes at the bottom of this doc record
 > how each piece landed. **Update (2026-08-03): ROADMAP 5.3/5.4 are both closed too** — the
 > GPT-Image-2 art this pipeline generates is now treated as final production art (not a
 > placeholder awaiting an authored replacement), which also unblocked dynamic/normal-map
@@ -278,6 +280,49 @@ a silent fallback to 1.0 fails too. That is
 the same shape of guard as the assembly invariants above, applied to the same class of failure:
 **when art changes, every hand-tuned number that was sized against the OLD art is now wrong and
 nothing in either file shows it.** Re-cropping or replacing a body texture must move the table.
+
+## Update (2026-08-20): the drops and the gate leave the Graphics slice
+
+The Status block at the top of this doc used to name three things as "never planned as sprite art":
+bullets, pickups and the portal. That was written while `RoomBuilder` still drew every wall as a flat
+rectangle on the ground layer — once the walls stood up, the floor was a real swatch, the doors were
+fixtures and the pillars were sprites, those three were simply the loudest placeholders left in the
+frame. Two of the three now ship real art. **Bullets do not, and the reason is worth writing down
+rather than re-deciding later: a bullet is drawn at ~5 world px, where a texture buys nothing a
+tinted additive dot does not already give, and costs a sampler per projectile in the busiest part of
+the frame.**
+
+**Five drop sprites, one per `PickupKind` except `weapon`.** A weapon drop already drew that weapon's
+own business-end art, which is the whole point of the universal mount — a generic "loot" icon would
+have thrown that away, so `getPickupTexture` has no `pickup_weapon` key at all and `Pickup` never asks
+for one. Drops are scaled by their LONG axis to one shared 18 px extent, so each file keeps its own
+aspect (the crystal ships 116x192, the bandage 192x100) while a floor of mixed loot still reads as one
+size class.
+
+**The portal is a split, not a sprite.** Only the masonry arch is art; the ground bloom, the two
+counter-rotating rings, the bright core and the infalling motes stay program-drawn, because they
+animate every frame and GPT Image 2 emits one flattened raster. That split is also why the arch is
+authored as NEUTRAL stone with COLOURLESS crystal: a single `Sprite.tint` cannot tint the shards
+without tinting the masonry, so the checkpoint's green arrives from the code-drawn layers instead.
+This is the first asset in the project deliberately authored to be *incomplete* — the file is the half
+of the object that never moves.
+
+**Two pipeline facts this batch adds to the loading path described above.**
+
+1. **`environmentSprites.ts` was loading every texture with no mip chain**, including the door pair,
+   which has shipped that way since 2026-08-04. A door is a 156 px source drawn at 64 px; a drop is a
+   192 px source drawn at 18 px, a 10:1 minification — worse than the 4:1 that made the pillar sprite
+   need mipmaps and the same class of defect as the 2026-08-12 rig-art colour noise. Fixed for all of
+   them; `autoGenerateMipmaps` has to be passed at LOAD time, since setting it on an
+   already-uploaded texture provably does nothing.
+2. **The generator now emits `.webp`.** `tools/png-pipeline/pngCodec.mjs` is a PNG codec and cannot
+   read it, so decoding to PNG (losslessly, via Pillow) is a new first step before the repo's own
+   pipeline can touch a generation at all. Everything after that is unchanged: `lumaCurve.mjs` where a
+   file's tonal placement needs a fold, `compress.mjs` to trim and downsample, `alpha-audit.mjs` to
+   verify.
+
+Full account, including the three rejected generations and what each one cost, is in
+`art/environment/prompts.md`; the render-side geometry is in `design/01`'s "The drops and the gate".
 
 ## Open questions
 

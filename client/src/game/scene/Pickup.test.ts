@@ -6,16 +6,29 @@ import { Pickup, type PickupKind } from './Pickup';
 // weapon icon) is actually reachable under vitest — without it every Pickup test below
 // would only ever exercise the chevron fallback (no art preloaded in a plain-node
 // vitest run), same convention as Forge.npc.test.ts's `uiSkins` mock.
-const mocks = vi.hoisted(() => ({ blasterTexture: undefined as Texture | undefined }));
+// `render/environmentSprites.ts` is mocked for the same reason, and defaults to "nothing
+// loaded" so every other test in this file keeps exercising the Graphics fallback.
+const mocks = vi.hoisted(() => ({
+  blasterTexture: undefined as Texture | undefined,
+  dropTextures: {} as Record<string, Texture | undefined>,
+  dropKindsAsked: [] as string[],
+}));
 
 vi.mock('../../render/weaponSkins', () => ({
   getWeaponTexture: (name: string | undefined) => (name === 'blaster' ? mocks.blasterTexture : undefined),
 }));
 
-// Every kind a Pickup can render (@dd/engine's PickupKind) — 'bandage' has no dedicated
-// glow colour/shape yet and deliberately falls into the same crystal fallback as
-// 'material' (see Pickup.ts's own comment), but it must still not crash and still get
-// a glow.
+vi.mock('../../render/environmentSprites', () => ({
+  getPickupTexture: (kind: string) => {
+    mocks.dropKindsAsked.push(kind);
+    return mocks.dropTextures[kind];
+  },
+}));
+
+// Every kind a Pickup can render (@dd/engine's PickupKind). 'bandage' shares heal's GLOW
+// COLOUR on purpose (same "restore" family) but has had its own sprite since 2026-08-20;
+// its Graphics fallback is still the crystal shape, which is what these tests exercise
+// unless a texture is mocked in.
 const ALL_KINDS: PickupKind[] = ['heal', 'material', 'weapon', 'buff', 'crate', 'bandage'];
 
 // Children are appended in this fixed order in the constructor — glow first (so the
@@ -262,6 +275,172 @@ describe('Pickup — real weapon icon on the ground (design/03)', () => {
       expect(chevron.getLocalBounds().width).toBe(0); // chevron never drew — icon took its place
     } finally {
       mocks.blasterTexture = undefined; // don't leak into later tests
+    }
+  });
+});
+
+describe('Pickup — real drop art (2026-08-20)', () => {
+  /** A texture with a deliberately non-square, non-18 source, so a scale assertion cannot
+   *  pass by accident: every shipped drop file has its own aspect (the crystal is 116x192,
+   *  the bandage 192x100) and `Pickup` is supposed to honour it. */
+  function tex(width: number, height: number): Texture {
+    return new Texture({ source: new TextureSource({ width, height }) });
+  }
+
+  function withArt<T>(entries: Record<string, Texture>, run: () => T): T {
+    mocks.dropTextures = entries;
+    mocks.dropKindsAsked = [];
+    try {
+      return run();
+    } finally {
+      mocks.dropTextures = {};
+    }
+  }
+
+  it.each(['heal', 'material', 'buff', 'crate', 'bandage'] as const)(
+    'mounts the %s sprite in place of its Graphics silhouette',
+    (kind) => {
+      withArt({ [kind]: tex(116, 192) }, () => {
+        const p = new Pickup(kind, undefined, 3);
+        expect(p.children.length).toBe(3); // glow + sprite + the (now-empty) fallback Graphics
+        const sprite = p.children[1] as Sprite;
+        expect(sprite.texture).toBe(mocks.dropTextures[kind]);
+        // The fallback must not ALSO draw: two silhouettes stacked is the bug this shape of
+        // if/else exists to prevent (see the weapon branch's own version of this check).
+        expect((p.children[2] as Graphics).getLocalBounds().width).toBe(0);
+      });
+    },
+  );
+
+  it('scales a drop by its LONG axis and keeps the art aspect', () => {
+    withArt({ material: tex(116, 192) }, () => {
+      const sprite = new Pickup('material', undefined, 0).children[1] as Sprite;
+      // 18 px on the long axis (ART_LONG_AXIS), and the short one follows from the art.
+      expect(Math.max(sprite.width, sprite.height)).toBeCloseTo(18, 4);
+      expect(sprite.width / sprite.height).toBeCloseTo(116 / 192, 4);
+    });
+  });
+
+  it('scales a WIDE drop by its width, not by a fixed box', () => {
+    // Fitting both axes into a square box (what the weapon icon does, because a weapon has
+    // to fit a HUD chip too) would shrink the bandage's 192x100 to 18x9.4 either way — but
+    // a `Math.min` over both axes would give a 9.4-tall crystal as well. Pinning the wide
+    // case separately is what tells the two rules apart.
+    withArt({ bandage: tex(192, 100) }, () => {
+      const sprite = new Pickup('bandage', undefined, 0).children[1] as Sprite;
+      expect(sprite.width).toBeCloseTo(18, 4);
+      expect(sprite.height).toBeCloseTo(18 * (100 / 192), 4);
+    });
+  });
+
+  it('centres a drop on its hover point', () => {
+    // A drop bobs on `z` around a fixed ground point; a top-left or bottom anchor would make
+    // the whole object swing instead of hovering in place.
+    withArt({ heal: tex(136, 192) }, () => {
+      const sprite = new Pickup('heal', undefined, 0).children[1] as Sprite;
+      expect(sprite.anchor.x).toBe(0.5);
+      expect(sprite.anchor.y).toBe(0.5);
+    });
+  });
+
+  it('never asks for drop art for a WEAPON drop', () => {
+    // A weapon drop draws that weapon's own business-end art, so a `pickup_weapon.png` must
+    // never become the thing that shadows it — not even if someone adds the file later.
+    withArt({}, () => {
+      new Pickup('weapon', 'blaster');
+      expect(mocks.dropKindsAsked).not.toContain('weapon');
+    });
+  });
+
+  it('still draws the fallback silhouette when the art has not loaded', () => {
+    // The standing rule: art never blocks gameplay (design/02/12). Every OTHER test in this
+    // file runs in exactly this state, which is why the two paths are asserted separately.
+    withArt({}, () => {
+      const p = new Pickup('material', undefined, 0);
+      expect(p.children.length).toBe(2); // glow + the Graphics silhouette, no sprite
+      expect((p.children[1] as Graphics).getLocalBounds().width).toBeGreaterThan(0);
+    });
+  });
+
+  it('keeps every drop inside the glow that gives it its pop', () => {
+    // ART_LONG_AXIS is chosen against GLOW_RADIUS: art wider than the additive glow behind it
+    // reads as an object with a smudge on it rather than as a glowing object.
+    withArt({ buff: tex(192, 192) }, () => {
+      const p = new Pickup('buff', undefined, 0);
+      const sprite = p.children[1] as Sprite;
+      expect(Math.max(sprite.width, sprite.height)).toBeLessThanOrEqual(glowOf(p).getLocalBounds().width);
+    });
+  });
+});
+
+describe('Pickup — the glow is a ramp, not a plate (2026-08-20)', () => {
+  interface Instr {
+    action: string;
+    data: {
+      style?: { alpha: number; width: number; color: number };
+      path?: { instructions: Array<{ action: string; data: unknown[] }> };
+    };
+  }
+
+  /** The glow's stroked annuli, as `{ alpha, width, radius }` in draw order — read off Pixi's
+   *  retained instruction list, which is the only place the ramp actually exists (bounds and
+   *  the container's own alpha are identical for a flat disc and for a falloff). */
+  function bands(p: Pickup): Array<{ alpha: number; width: number; radius: number }> {
+    const out: Array<{ alpha: number; width: number; radius: number }> = [];
+    for (const i of (glowOf(p).context.instructions as unknown as Instr[])) {
+      if (i.action !== 'stroke') continue;
+      for (const pi of i.data.path?.instructions ?? []) {
+        if (pi.action !== 'circle') continue;
+        const d = pi.data as number[];
+        out.push({ alpha: i.data.style!.alpha, width: i.data.style!.width, radius: d[2]! });
+      }
+    }
+    return out;
+  }
+
+  it.each(ALL_KINDS)("fades a %s drop's glow outward instead of filling a disc", (kind) => {
+    // The live defect this replaced: one flat additive circle at a single alpha reads as a
+    // coloured token plate the art is standing on. A test on bounds or on the container's
+    // alpha cannot tell the two apart, which is why this reads the ramp itself.
+    const b = bands(new Pickup(kind, undefined, 0));
+    expect(b.length).toBeGreaterThan(4);
+    for (let i = 1; i < b.length; i++) expect(b[i]!.alpha).toBeLessThan(b[i - 1]!.alpha);
+    expect(b[0]!.alpha).toBeLessThanOrEqual(0.34); // never brighter than the old peak
+    expect(b[b.length - 1]!.alpha).toBeLessThan(0.02); // reaches nothing at the rim
+  });
+
+  it('steps by less than the eye can see, and covers the disc with no gaps or overlap', () => {
+    // Each band's alpha is exactly its ramp value ONLY while the bands do not overlap —
+    // stacked translucent shapes compound, which is what showed as five hard stripes across
+    // the wall coping in the 2026-08-19 pass. Adjacent radii must therefore differ by exactly
+    // one stroke width, and the innermost stroke must reach the centre.
+    const b = bands(new Pickup('material', undefined, 0));
+    for (let i = 1; i < b.length; i++) {
+      expect(b[i]!.radius - b[i - 1]!.radius).toBeCloseTo(b[i]!.width, 6);
+      expect(b[i - 1]!.alpha - b[i]!.alpha).toBeLessThan(0.06);
+    }
+    expect(b[0]!.radius - b[0]!.width / 2).toBeCloseTo(0, 6);
+    // Convex, not a linear cone: the glow has to keep its brightness in the CORE, or it
+    // reads as a wide flat wash again — half the peak still sitting at half the radius is
+    // most of the plate back. A linear ramp satisfies every other assertion here.
+    // Measured: the squared ramp puts 0.22 of the peak at half the radius, a linear one 0.48.
+    // A 0.5 threshold let the linear version through by 0.007 — the battery caught that too.
+    const mid = b[Math.floor(b.length / 2)]!;
+    expect(mid.alpha).toBeLessThan(b[0]!.alpha * 0.35);
+    const outer = b[b.length - 1]!;
+    expect(outer.radius + outer.width / 2).toBeCloseTo(13, 6); // still a 26px-wide glow
+  });
+
+  it("tints every band with that kind's own colour", () => {
+    // One mismatched band would read as a coloured fringe, and the ramp makes it easy to
+    // introduce: the loop has to carry the colour through every iteration.
+    for (const kind of ALL_KINDS) {
+      const colours = new Set(
+        (glowOf(new Pickup(kind, undefined, 0)).context.instructions as unknown as Instr[])
+          .filter((i) => i.action === 'stroke')
+          .map((i) => i.data.style!.color),
+      );
+      expect(colours.size).toBe(1);
     }
   });
 });
