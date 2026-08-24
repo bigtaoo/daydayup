@@ -8,6 +8,7 @@
 import { describe, it, expect } from 'vitest';
 import type { Graphics } from 'pixi.js';
 import { Entity, SHADOW_SQUASH, SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
+import { AUTO_BATCH_VERTEX_LIMIT } from '../../perf/drawAttribution';
 
 /** Every `ellipse` path instruction drawn into a Graphics, as `[cx, cy, rx, ry]`. Pixi emits one
  *  fill instruction per ring but prefixes all but the first with a `moveTo`, so the ellipse is
@@ -136,6 +137,21 @@ describe('Entity.makeShadow — a penumbra, not a die-cut disc', () => {
     for (const [, , rx, ry] of ellipsesOf(s)) {
       expect(ry! / rx!).toBeCloseTo(SHADOW_SQUASH, 6);
     }
+  });
+
+  it('is a batched Graphics — the ring count puts it past the Pixi auto-batch cutoff', () => {
+    // The reason the two are coupled: the same "many faint rings" decision that makes this a
+    // penumbra rather than a disc is what pushes its geometry past 400 floats, and past that line
+    // Pixi gives a Graphics its own draw call plus a program switch each way. Every actor, bullet,
+    // pillar and prop in the room owns one of these, so on the measured start room they were 22 of
+    // 165 draw calls. Safe to batch only because the caller mounts it on `layers.shadow`, which has
+    // its own render group — see `render/staticGraphics.ts` for why that condition is load-bearing.
+    const s = new Entity().makeShadow(20);
+    expect(s.context.batchMode).toBe('batch');
+    // ...and the geometry really is over the line, i.e. the batch mode is not decoration. A rings
+    // count small enough to auto-batch would make this assertion pointless, so it is checked.
+    const ellipses = ellipsesOf(s).length;
+    expect(ellipses * 4 * 2).toBeGreaterThan(AUTO_BATCH_VERTEX_LIMIT / 8);
   });
 });
 

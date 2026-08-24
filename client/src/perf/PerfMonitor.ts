@@ -58,6 +58,10 @@ export class PerfMonitor {
   private unwrapRender: (() => void) | null = null;
   private observer: { disconnect(): void } | null = null;
 
+  /** Whether the GL wrappers actually went on. `measureFrame` is meaningless without them, and
+   *  `GlProbe` keeps its own flag private. */
+  private glProbeInstalled = false;
+
   private frameStartMs = 0;
   private renderMs = 0;
   private lastWarnMs = -Infinity;
@@ -92,10 +96,33 @@ export class PerfMonitor {
     this.ticker.add(this.onFrameStart, null, UPDATE_PRIORITY.HIGH);
     this.ticker.add(this.onFrameEnd, null, UPDATE_PRIORITY.UTILITY);
     this.wrapRender();
-    if (this.probeGlRequested) this.probe.install(this.renderer.gl as Record<string, unknown> | undefined);
+    if (this.probeGlRequested) {
+      this.glProbeInstalled = this.probe.install(this.renderer.gl as Record<string, unknown> | undefined);
+    }
     this.installLongTaskObserver();
     globalThis.document?.addEventListener?.('visibilitychange', this.onVisibilityChange);
     globalThis.document?.addEventListener?.('freeze', this.onVisibilityChange);
+  }
+
+  /**
+   * Render one extra frame and report the GL commands it cost — the `FrameProbe` that
+   * `drawAttribution` needs. Null when the GL probe is off (`?perf=1` not set), because every
+   * count would then be zero and a caller would read that as "this group is free".
+   *
+   * Two renders, and only the second is counted: the first settles whatever Pixi rebuilds in
+   * response to the visibility change the caller just made, so the measurement is of the steady
+   * state rather than of the invalidation. Note this also overwrites the render-time sample for
+   * the frame it runs in — it is a console tool, not something to call from a ticker listener.
+   */
+  measureFrame(): GlCounts | null {
+    const renderer = this.renderer;
+    const stage = this.stage;
+    if (!renderer || !stage || !this.glProbeInstalled) return null;
+    renderer.render(stage as never);
+    this.probe.beginFrame();
+    renderer.render(stage as never);
+    this.probe.endFrame();
+    return { ...this.probe.perFrame };
   }
 
   uninstall(): void {
@@ -104,6 +131,7 @@ export class PerfMonitor {
     this.unwrapRender?.();
     this.unwrapRender = null;
     this.probe.uninstall();
+    this.glProbeInstalled = false;
     try {
       this.observer?.disconnect();
     } catch {

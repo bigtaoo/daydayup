@@ -1006,6 +1006,67 @@ describe('RoomBuilder — a whole room of walls', () => {
   });
 });
 
+describe('RoomBuilder — which layers batch their Graphics (2026-08-24 draw-call pass)', () => {
+  /** Every Graphics under `root`, with the layer it was found on. Swept from the built scene rather
+   *  than from a hand-listed set of call sites, so a new pass that forgets the policy shows up. */
+  function graphicsOn(root: { children: readonly unknown[] }): Graphics[] {
+    const out: Graphics[] = [];
+    const walk = (n: { children: readonly unknown[] }): void => {
+      for (const c of n.children as Array<{ children: readonly unknown[] }>) {
+        if (c instanceof Graphics) out.push(c);
+        walk(c);
+      }
+    };
+    walk(root);
+    return out;
+  }
+
+  function builtRoom(): Layers {
+    mocks.wallTex = fakeTexture(256, 256);
+    mocks.wallFaceTex = fakeTexture(256, 128);
+    const layers = new Layers();
+    makeRoomBuilder(layers).build(fullPerimeter());
+    return layers;
+  }
+
+  /** Same room as the "a whole room of walls" block above: one wall of every tier plus an
+   *  interior block, so the sweep sees every branch of the wall/shadow pass at once. */
+  function fullPerimeter(): GameState {
+    const s = createGameState({
+      seed: 1, worldW: 480, worldH: 480, waves: [],
+      walls: [[0, 0, 480, 32], [0, 448, 480, 32], [0, 32, 32, 416], [448, 32, 32, 416], [128, 128, 64, 64]],
+      obstacles: [],
+    });
+    s.dungeonRoomRects.push({ id: 'r1', rect: { x: pxToFp(0), y: pxToFp(0), w: pxToFp(480), h: pxToFp(480) } });
+    (s as unknown as { dungeonConfig?: { biomeId: string } }).dungeonConfig = { biomeId: 'ember' };
+    return s;
+  }
+
+  it('batches every Graphics on ground and shadow — the two layers with their own render group', () => {
+    // Pixi only auto-batches a Graphics under 400 floats of geometry, and nothing here is remotely
+    // that small: the shared wall shadow is ~24k floats and the floor's decal pass ~50k, so each
+    // was costing a draw call (27 of a measured 161) plus, between sprites, two program switches.
+    // Forcing `batch` is only affordable because `Layers` gives these two their own render groups —
+    // see `render/staticGraphics.ts` for the measurement, and `layers.test.ts` for the other half.
+    const layers = builtRoom();
+    const statics = [...graphicsOn(layers.ground), ...graphicsOn(layers.shadow)];
+    expect(statics.length).toBeGreaterThan(3); // the sweep found something to check
+    for (const g of statics) expect(g.context.batchMode).toBe('batch');
+  });
+
+  it('leaves the Y-sorted entities layer on Pixi default — batching there measured SLOWER', () => {
+    // Not an oversight: an actor writing its `zIndex` every frame invalidates the whole enclosing
+    // render group, so a forced batch on the wall shading (~18k floats over 27 runs) is repacked
+    // 60 times a second. Measured on the level-1 start room it bought -50 draw calls and -50
+    // program switches for +0.7 ms of a 2.4 ms render — a net loss. If someone reaches for
+    // `staticGraphics()` in the wall/pillar/door pass, this is the test that should stop them.
+    const layers = builtRoom();
+    const moving = graphicsOn(layers.entities);
+    expect(moving.length).toBeGreaterThan(3);
+    for (const g of moving) expect(g.context.batchMode).toBe('auto');
+  });
+});
+
 // 2026-08-19 volume pass, end-to-end through `build()`. Both of these are pure modules with their
 // own unit tests (`wallRuns.test.ts`, `roomLight.test.ts`); what these cover is the wiring —
 // specifically that the tier is decided BEFORE the merge and that the room rects the light pool

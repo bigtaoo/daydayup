@@ -4045,9 +4045,8 @@ Same scenario as the profiler's first measurement (8 live enemies, 1920x855):
 
 Draw calls fell by only 18: the ~157 that remain are the environment's own geometry (a wall
 block is a Container of several Graphics, and Graphics do not batch with Sprites), which is
-also where the 95 program switches come from. That is the next bottleneck if one is ever
-needed — at render p50 2.4ms of a 16.7ms budget it is not costing frame time today, so it is
-recorded rather than scheduled.
+also where the 95 program switches come from. **Followed up the same day — see the next
+section.**
 
 ### Two things worth remembering
 
@@ -4085,3 +4084,129 @@ Documentation           DONE (✅ 2026-08-02) — all 19 design docs + every REA
 Repo structure          DONE (✅ 2026-08-02) — engine/ hoisted to its own top-level package (DOM-free, self-only paths: the determinism rule is now compile-enforced); client/src/game/ split into screens|scene|controllers|match; root npm workspace with a single `npm run check` across all 5 packages; game/config.ts deleted (dead pre-engine duplicates) and split into theme.ts + score.ts. 931 tests before and after, zero behaviour change.
 Test coverage audit     DONE (✅ 2026-08-05) — full test-coverage sweep across all 7 workspaces; zero dead/obsolete tests found (nothing to delete); ~50 previously-untested files closed, 1736 → 2627 tests. See the Test coverage audit pass section above.
 ```
+
+## The draw calls the lighting pass left behind (2026-08-24, client-only)
+
+🟢 Render-only, no `ENGINE_VERSION` bump. Follow-up to the section above, which had cut render p50
+from 10.4ms to 2.4ms and left 157 draw calls / 95 program switches for a scene of 893 nodes.
+
+**165 -> 108 draw calls, 102 -> 98 program switches, 902 -> 871 nodes, and the render group is no
+longer discarded every frame.** Both halves verified by reading the frame back out of the GL context
+and diffing it against the pre-change form rebuilt in the live scene: **0 of 1,641,600 pixels
+different**, independently for each half. Full account in design/01's "Draw calls" note;
+`client/src/perf/README.md` carries the before/after table and the console recipe.
+
+### The tool first, because the hypothesis was half wrong
+
+The prior session's suspicion was that wall blocks were the problem. They were — but not for the
+reason recorded (*"Graphics do not batch with Sprites"* is not true in Pixi v8; Graphics go into the
+same batcher, if they are small enough). Rather than guess, `perf/drawAttribution.ts` was added to
+the profiler: `attributeDraws` hides a group of nodes, re-renders and reports the drop; `census`
+lists every Graphics with Pixi's own batching verdict. Both on `window.__perf`, `?perf=1`, 13 tests.
+
+It found the real rule in one report: **Pixi v8 auto-batches a `Graphics` only under 400 floats of
+geometry** (`GraphicsContextSystem.updateGpuContext`); above that the object gets `batch.break()`,
+its own draw call, and a program switch each way. Nothing in the renderer surfaces that threshold,
+which is why hand-banded shading had been quietly crossing it for months. Attribution: wall blocks
+79 of 165 draws, actors 22, the `shadow` layer 22, doors 14, ground 5.
+
+### What shipped
+
+1. **The cap's additive key light is baked into the swatch** (`scene/capLight.ts`). `CAP_BOOST_*`
+   exists because a Pixi tint cannot multiply *up*, so the lift was a second copy of the cap sprite
+   in `add` mode — and a blend-mode change breaks the batch on both sides, so 27 wall runs plus 4
+   doors cost 3 draw calls each instead of 1. The cap is opaque, so the destination that additive
+   copy read was exactly the cap drawn before it, and the composite is a function of the swatch
+   alone: `cap * (CAP_TINT + CAP_BOOST_TINT * CAP_BOOST_ALPHA)`, which lands at (1.95, 1.90, 1.83) —
+   above 1 on every channel, which is precisely why it has to live in texture space. **-29 draws,
+   -31 nodes.** All four `wall_*.png` swatches were checked fully opaque (minimum alpha 255), the
+   assumption the identity rests on. Falls back to the old two-layer path where no 2D canvas exists,
+   so a headless environment still gets a lit cap.
+2. **The static layers get their own render groups, and their Graphics get forced batch mode**
+   (`scene/layers.ts`, `render/staticGraphics.ts`). The second needs the first: writing any
+   descendant's `zIndex` invalidates a whole render group (`sortMixin.depthOfChildModified`), and
+   `entities` writes one per actor per frame — so before the split, the floor, the ground shadows,
+   the health bars and the UI were re-collected 60 times a second (168 Graphics re-added per frame,
+   54 of them unchanged since the room loaded). With `ground`/`shadow` isolated, batching their
+   geometry is packed once instead of per frame. **-24 draws**, `shadow` layer 22 draws -> 1, and
+   render collection 0.60 -> 0.52ms. One caveat kept in the record rather than smoothed over: `shadow`
+   is static only in that it never resorts — a bullet or actor spawning adds a shadow to it and does
+   invalidate the group, so under sustained fire its batched geometry repacks most frames, measured by
+   interleaved A/B at about **+0.12 ms**. Shipped on the balance (-22 draws there, -0.08 ms the rest of
+   the time), not because it is free. Isolating the room's shared wall shadow in a second render group
+   to dodge that churn was tried and measured *worse*, which at this harness's ±0.3 ms resolution most
+   likely means "below the noise floor" in both directions.
+
+### What was rejected, and the measurement that rejected it
+
+Forcing the same batch mode on the wall shading *inside* `entities` is the single biggest remaining
+item — 50 draw calls and 50 program switches for 27 objects — and it works. It was still not shipped:
+that group is invalidated every frame, so the batcher repacks ~18k floats and 2247 fills per frame,
+measured at **+0.7ms on a 2.4ms render**. `RoomBuilder.test.ts` has a test whose only job is to stop
+the next person reaching for `staticGraphics()` there, and it says why in the failure message.
+
+The lesson generalises past this one call: `enableRenderGroup` and `batchMode: 'batch'` are a pair.
+Either alone is a loss or a wash; the win came from isolating the *static* layers, not from batching
+everything. The first attempt at this pass did batch everything, and cost +1.5ms.
+
+### What is left, with a number on it
+
+~90 of the remaining 98 program switches and 90 of the 108 draw calls are static Graphics inside
+`entities` (wall shading 50, actor rig shading 22, doors 10), unbatched only because they are large.
+Probed live by swapping in a smaller shading geometry, the frame goes to **52 draws / 43 programs**.
+The route there is to get under the 400-float line rather than override it: `wallShadingSurfaces.ts`
+draws every ramp as 12-20 separate stepped-alpha rects, and one `FillGradient` quad per ramp would be
+smaller, cheaper to pack, *and* smoother than the banding — which is the direction the band counts
+were already being pushed. Not pixel-identical, so it wants a look before it ships. Baking each
+block's shading to a texture was the other candidate and is rejected for now: the camera zooms, so a
+1x bake would soften the one surface that has had six rounds of tuning.
+
+Still not costing frame time (render p50 2.1ms of a 16.7ms budget). This is headroom for a low-end
+mobile GPU, where a program switch costs far more than it does here — which is also why every
+candidate's CPU cost was measured rather than assumed, and why two of them were dropped.
+
+### The 加测试 follow-up pass, and the three real gaps it found
+
+The change shipped with 35 tests. A dedicated gap-closing pass afterwards added 13 more, and the
+point of recording it is that all three findings were places where the first round's coverage looked
+complete and was not:
+
+- **A dead export.** `staticGraphics.ts` also exported a `sealStatic(g)` helper "for a Graphics that
+  already exists". Nothing called it but `staticGraphics()` itself. Deleted rather than tested — this
+  repo has been here before (the `LIT_WALLS` switch), and an untested convenience with no caller is
+  the same thing at the start of its life.
+- **A near-vacuous test of the load-bearing constant.** `AUTO_BATCH_VERTEX_LIMIT` was asserted to
+  equal 400 and then "verified" by checking a rect produced one instruction — which says nothing
+  about Pixi's rule at all. Pixi's `GraphicsContextSystem` turns out to be drivable headlessly with a
+  three-field fake renderer, so `render/staticGraphics.test.ts` now pins the real behaviour: 49 rects
+  = 392 floats batches, 50 rects = 400 floats does **not** (the comparison is strict `<`), the unit is
+  floats rather than vertices or fills, and `'batch'` overrides it at 20x the limit. Every doc comment
+  in this pass and the whole batching policy rest on that number; now a Pixi upgrade that moves it
+  fails a test instead of silently invalidating the reasoning.
+- **The shipped code path was the untested one, twice.** `bakeLitCap` needs a 2D canvas, which a
+  headless run has not got — so every composition assertion in `wallRender.test.ts` was describing the
+  *fallback* two-layer path that never ships. `wallCapLit.test.ts` mocks the bake to cover the real
+  one. The same blind spot hid `doorRender`, the other caller of the shared `addCapLayers`: a door
+  legitimately has one additive child (its locked-state glow), so the cap light hid behind it in every
+  count — its own case now pins exactly one. And `RoomBuilder.test.ts`'s sweep of `layers.shadow` can
+  only see wall/pillar/prop shadows, because a player's, an enemy's and a bullet's are mounted by
+  `Scene.spawn`; `Scene.test.ts` sweeps those.
+
+Every new assertion was checked by mutation (6 mutants: the batch policy deleted, `makeShadow` back to
+a plain Graphics, the bake cache keyed on a constant so all biomes share one swatch, the additive path
+forced, the limit off by one, `groundLayer` back to plain Graphics). All 6 killed, most by more than
+one file. 4118 tests green across all 8 workspace packages at the close of this pass (engine 705 /
+client 2377 / server 186 / animator 444 / map-editor 282 / png-pipeline 30 / desktop-shell 81 / root
+build-script 13, `npm run check`) — a fresh datapoint for the snapshot near the top of this file, which
+carries its own warning about having drifted. An earlier round of that battery is what caught a clamp in `applyLitCap` that
+`Uint8ClampedArray` made unreachable — the fix was to widen the parameter to accept a plain
+`Uint8Array` so the clamp is load-bearing and testable, rather than to delete it.
+
+### One measurement note worth keeping
+
+`renderer.render` in a tight loop is **not** a timer. Called back to back it queues frames faster
+than the GPU retires them, so per-render wall time climbs monotonically (0.9ms -> 16ms -> 33ms ->
+66ms across four windows of the same unchanged scene) and any A/B taken that way is noise. Two things
+that do work: stub `gl.drawElements`/`drawArrays` to no-ops to isolate the CPU side, or pace the loop
+with `gl.finish()` per frame for a true total. The draw-call and program-switch *counts* are exact
+either way, which is why they carried this pass.

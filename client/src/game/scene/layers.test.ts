@@ -58,6 +58,31 @@ describe('Layers', () => {
     expect(layers.world.sortableChildren).toBe(false);
   });
 
+  // Render-group split, 2026-08-24 draw-call pass. Writing any descendant's `zIndex` marks the
+  // whole enclosing render group's instruction set for a rebuild, and `entities` writes one per
+  // actor per frame — so before this split the floor, the ground shadows, the health bars and the
+  // UI were all re-collected 60 times a second (measured: 168 Graphics re-added per frame, 54 of
+  // them on layers unchanged since the room loaded). This is also the precondition that makes
+  // `staticGraphics()` a win rather than a loss on `ground`/`shadow`, so the two must not drift
+  // apart: batching that geometry inside a per-frame-rebuilt group measured NET SLOWER.
+  it('gives every structurally-static layer its own render group', () => {
+    const layers = new Layers();
+    for (const layer of [layers.ground, layers.shadow, layers.hud, layers.ui, layers.backdrop]) {
+      expect(layer.isRenderGroup).toBe(true);
+    }
+  });
+
+  it('leaves entities, fx and the wrappers OUT of their own render group', () => {
+    // `entities` is invalidated every frame by design, so a group there buys nothing and costs a
+    // batch boundary; `fx` churns children constantly and carries the bloom blur; `lit`/`world`
+    // contain `entities` and would inherit its churn. Grouping any of them is the mistake this
+    // pins — the win came from isolating the STATIC layers, not from grouping everything.
+    const layers = new Layers();
+    for (const layer of [layers.entities, layers.fx, layers.lit, layers.world, layers.root]) {
+      expect(layer.isRenderGroup).toBe(false);
+    }
+  });
+
   it('hud is drawn AFTER fx — always on top of the bloom-blurred layer too', () => {
     const layers = new Layers();
     const idx = (c: unknown) => layers.world.children.indexOf(c as never);

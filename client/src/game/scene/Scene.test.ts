@@ -7,6 +7,7 @@
  * because the orb-core has no lower body. Enemies/bullets are unaffected — they keep a
  * single facing.
  */
+import type { Graphics } from 'pixi.js';
 import { describe, it, expect, vi } from 'vitest';
 import { createGameState } from '@dd/engine/state/GameState';
 import type { GameState } from '@dd/engine/state/GameState';
@@ -546,6 +547,47 @@ describe('Scene.spawn — the health bar rides layers.hud, never the actor\'s ow
 function skinFiltersOf(a: Actor): unknown[] {
   return ((a as unknown as { skin: { view: { filters: unknown[] | null } } }).skin.view.filters ?? []);
 }
+
+/**
+ * The batching half of the same "does it batch with its neighbours" question the filter tests below
+ * ask (2026-08-24 draw-call pass). `RoomBuilder.test.ts` sweeps `layers.shadow` after a room build,
+ * which covers the wall/pillar/prop shadows — but a player's, an enemy's and a bullet's shadow are
+ * all mounted by `Scene.spawn`, so nothing over there can see them. On the measured start room those
+ * were 22 of 165 draw calls, one per shadow, purely because a nested-ellipse penumbra is past Pixi's
+ * 400-float auto-batch cutoff.
+ */
+describe('Scene.spawn — every shadow it mounts is batched', () => {
+  it('batches the shadow of a player, an enemy and a bullet alike', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    addEnemy(s, 300, 300, 0 as Brad);
+    addBullet(s, 200, 200);
+    const layers = new Layers();
+    new Scene(layers).reconcile(s, s.players[0]!.id);
+    const shadows = layers.shadow.children.filter(
+      (c): c is Graphics => (c as Graphics).context !== undefined,
+    );
+    // Three distinct spawn paths, so a fix applied to only one of them fails here.
+    expect(shadows.length).toBeGreaterThanOrEqual(3);
+    for (const g of shadows) expect(g.context.batchMode).toBe('batch');
+  });
+
+  it('keeps batching them as the cast changes, not just on the first reconcile', () => {
+    // A later spawn goes through the same `spawn()` call, but a future refactor that built the
+    // first frame's views differently (a warm-up path, a pool) could easily miss it.
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const layers = new Layers();
+    const scene = new Scene(layers);
+    scene.reconcile(s, s.players[0]!.id);
+    const before = layers.shadow.children.length;
+    addEnemy(s, 400, 400, 0 as Brad);
+    scene.reconcile(s, s.players[0]!.id);
+    expect(layers.shadow.children.length).toBeGreaterThan(before);
+    for (const c of layers.shadow.children) {
+      const g = c as Graphics;
+      if (g.context) expect(g.context.batchMode).toBe('batch');
+    }
+  });
+});
 
 describe('Scene — actors carry no lighting filter of their own any more', () => {
   it('leaves a player carrying only its own shield glow — no lighting filter underneath it', () => {

@@ -8,6 +8,7 @@ import { getFloorTexture, getWallTexture, getWallFaceTexture, getPillarTexture }
 import { getDoorTexture, getPropTexture } from '../../render/environmentSprites';
 import { wallTier, wallHeight, WALL_HEIGHT, type RectPx } from './wallGeometry';
 import { buildWallBlock, drawWallShadow } from './wallRender';
+import { staticGraphics } from '../../render/staticGraphics';
 import { buildPillarBody, buildPillarSprite, pillarArtExtent } from './pillarRender';
 import { buildPropBody, propShadowRadius, resolvePropKind } from './propRender';
 import {
@@ -143,8 +144,11 @@ export class RoomBuilder {
     // Every wall now stands (2026-08-18 — see `wallGeometry.wallTier` for why the old
     // "east-west runs only" rule was what made a room read flat), at one of three heights.
     // Shadows all land on one shared Graphics, added to `layers.shadow` before the blocks so
-    // it paints under both them and the actors.
-    const shadows = new Graphics();
+    // it paints under both them and the actors. `staticGraphics` because it is by far the largest
+    // single piece of geometry in the frame (~24k floats for a room's 27 runs, four graduated
+    // hull passes plus five hug strokes each) and `layers.shadow` has its own render group, so it
+    // joins the sprite batch for one build-time pack instead of a draw call per frame.
+    const shadows = staticGraphics();
     const faceTex = getWallFaceTexture(element);
     // Tier FIRST, then merge same-tier neighbours into one mass (`wallRuns.ts`): adjacent rooms
     // each author their own perimeter wall, so a room boundary is two parallel 32 px rects and

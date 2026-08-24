@@ -15,12 +15,13 @@
 //      full-strength lattice is the loudest "this is a top-down blueprint" cue in the frame;
 //   4. the per-room light pool (`roomLight`) — painted last of the four so the lattice fades toward
 //      the walls with everything else.
-import { Container, Graphics, type Texture } from 'pixi.js';
+import { Container, type Texture } from 'pixi.js';
 import type { AABB, GameState } from '@dd/engine';
 import type { BiomePalette } from '../theme';
 import { fpToPx } from '../coords';
 import type { RectPx } from './wallGeometry';
 import { drawDoorWear, drawFloorDecals, drawFloorMottle, drawRoomWash, hash2, stampFloor } from './floorRender';
+import { staticGraphics } from '../../render/staticGraphics';
 import { drawRoomLight } from './roomLight';
 
 /** Opacity of the 64 px floor grid. See the module header for why it is this low. */
@@ -58,13 +59,16 @@ export function buildGroundLayer(ground: Container, deps: GroundDeps): void {
       for (const tile of stampFloor(floorTex, region)) ground.addChild(tile);
     }
   } else {
-    const fill = new Graphics();
+    const fill = staticGraphics();
     for (const r of floorRegions) fill.rect(r.x, r.y, r.w, r.h).fill({ color: palette.ground });
     ground.addChild(fill);
   }
 
-  const floorDark = new Graphics();
-  const floorLight = new Graphics();
+  // `staticGraphics` throughout: every pass below is painted once per room build and then never
+  // touched again, and `layers.ground` has its own render group (see `layers.ts`), so batching
+  // this geometry costs one pack at build time instead of a draw call every frame.
+  const floorDark = staticGraphics();
+  const floorLight = staticGraphics();
   floorLight.blendMode = 'add';
   const tileSize = floorTex?.width ?? FALLBACK_TILE;
   for (const room of rooms) {
@@ -76,7 +80,7 @@ export function buildGroundLayer(ground: Container, deps: GroundDeps): void {
   for (const door of doorRects) drawDoorWear(floorLight, door);
   ground.addChild(floorDark, floorLight);
 
-  const grid = new Graphics();
+  const grid = staticGraphics();
   for (const r of floorRegions) {
     const x1 = r.x + r.w;
     const y1 = r.y + r.h;
@@ -86,7 +90,7 @@ export function buildGroundLayer(ground: Container, deps: GroundDeps): void {
   grid.stroke({ color: palette.gridLine, width: 1, alpha: GRID_ALPHA });
   ground.addChild(grid);
 
-  const light = new Graphics();
+  const light = staticGraphics();
   for (const room of rooms) drawRoomLight(light, room);
   ground.addChild(light);
 }

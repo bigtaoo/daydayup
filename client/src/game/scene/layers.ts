@@ -43,5 +43,30 @@ export class Layers {
     this.lit.addChild(this.ground, this.shadow, this.entities);
     this.world.addChild(this.lit, this.fx, this.hud);
     this.root.addChild(this.backdrop, this.world, this.ui);
+
+    // Own render group per structurally-STATIC layer (2026-08-24 draw-call pass).
+    //
+    // A Pixi v8 render group caches its instruction set — the flattened list of "add this
+    // renderable to the batch, break here, draw this on its own" — and rebuilds it only when its
+    // own contents change. Writing any descendant's `zIndex` invalidates it
+    // (`sortMixin.depthOfChildModified` -> `structureDidChange`), and `entities` is a layer whose
+    // whole purpose is that every actor writes a `zIndex` every frame. Before this split there was
+    // ONE group for all of `root`, so those per-actor writes threw away the cached instructions for
+    // the floor, the ground shadows, the health bars and the whole UI as well, and all of it was
+    // re-collected 60 times a second: 168 Graphics re-added per frame, of which 54 belonged to
+    // layers that had not changed since the room loaded.
+    //
+    // The layers below either never change during a room (`ground`) or change only when an entity
+    // spawns/dies (`shadow`, `hud`) or on a phase/resize (`ui`, `backdrop`) — all of which still
+    // invalidate their own group correctly, just not once per frame. Measured on the level-1 start
+    // room, 8 live enemies: 168 -> 114 re-adds, render collection 0.60 -> 0.52 ms, and it is what
+    // makes `staticGraphics()` affordable on `ground`/`shadow` (see that module).
+    //
+    // NOT `entities` (rebuilt every frame by design — a group there would buy nothing and add a
+    // batch boundary), NOT `fx` (particles are added and removed constantly, plus it carries a
+    // blur filter), and NOT `lit`/`world` (they hold `entities`, so they inherit its churn).
+    for (const layer of [this.ground, this.shadow, this.hud, this.ui, this.backdrop]) {
+      layer.enableRenderGroup();
+    }
   }
 }

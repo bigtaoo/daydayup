@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { Container, Ticker, UPDATE_PRIORITY } from 'pixi.js';
+import { Container, Graphics, Ticker, UPDATE_PRIORITY } from 'pixi.js';
 import { installPerf, type InstalledPerf } from './index';
 
 // PerfOverlay builds a real Pixi `Text`, which measures on a canvas this plain-node vitest
@@ -34,7 +34,14 @@ function fakeApp() {
     gl,
     screen: { width: 800, height: 600 },
     texture: { _managedTextures: { items: {} } },
-    render() {},
+    // The census reads its verdicts off `renderer.graphicsContext`; a fixed answer is enough here,
+    // `drawAttribution.test.ts` covers the walk and the sort.
+    graphicsContext: {
+      updateGpuContext: () => ({ isBatchable: false, batches: [{}], geometryData: { vertices: new Array(900) } }),
+    },
+    render() {
+      (gl.drawArrays as () => void)();
+    },
   };
   ticker.add(() => renderer.render(), null, UPDATE_PRIORITY.LOW);
   ticker.update(1000); // prime, so the first measured frame is not the clamped 100ms one
@@ -192,5 +199,41 @@ describe('installPerf — the console handle', () => {
     const { app } = fakeApp();
     handle = installPerf(app);
     expect((globalThis as { __perf?: InstalledPerf }).__perf).toBe(handle);
+  });
+});
+
+describe('installPerf — the console draw-attribution handle', () => {
+  it('attributes a group by hiding it, and puts the scene back', () => {
+    const { app, stage } = fakeApp();
+    handle = installPerf(app, { overlay: true });
+    const target = new Container();
+    stage.addChild(target);
+    const report = handle.attribute({ target: [target] });
+    expect(report.attribution).not.toBeNull();
+    expect(report.attribution!.rows.map((r) => r.name)).toEqual(['target']);
+    expect(report.text).toContain('target');
+    expect(target.visible).toBe(true);
+  });
+
+  it('says so instead of reporting zeros when the GL probe is off', () => {
+    // Without `?perf=1` every counter reads zero, and a zero row reads as "this group is free" —
+    // the one wrong answer the tool must not give.
+    const { app } = fakeApp();
+    handle = installPerf(app);
+    const report = handle.attribute({ anything: [] });
+    expect(report.attribution).toBeNull();
+    expect(report.text).toContain('?perf=1');
+  });
+
+  it('censuses the whole stage by default, and a given subtree when asked', () => {
+    const { app, stage } = fakeApp();
+    handle = installPerf(app, { overlay: true });
+    const g = new Graphics();
+    g.label = 'probe-me';
+    stage.addChild(g);
+    expect(handle.census().rows.map((r) => r.name)).toContain('probe-me');
+    expect(handle.census().text).toContain('NOT batched');
+    // A subtree that holds no Graphics reports an empty census rather than falling back to the stage.
+    expect(handle.census(new Container()).rows).toHaveLength(0);
   });
 });

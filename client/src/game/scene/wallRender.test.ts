@@ -9,7 +9,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { Graphics, TilingSprite, Texture, TextureSource } from 'pixi.js';
-import { buildWallBlock, drawBlockShading, drawWallShadow, sweptHull, type WallSkin } from './wallRender';
+import { addColors, buildWallBlock, drawBlockShading, drawWallShadow, sweptHull, type WallSkin } from './wallRender';
 import { XRAY_LABEL } from './occlusion';
 import type { Entity } from './Entity';
 import { blockCapTop, NO_JOINS, type WallJoins } from './wallRuns';
@@ -17,6 +17,7 @@ import {
   CAP_BOOST_ALPHA,
   CAP_BOOST_TINT,
   CAP_EDGE_PX,
+  CAP_LIGHT,
   CAP_LIGHT_BLEND,
   CAP_TINT,
   EDGE_WIDTH,
@@ -32,6 +33,15 @@ import {
 import { SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
 import { biomePalette } from '../theme';
 import type { RectPx } from './wallGeometry';
+
+/** The colours a Graphics actually filled with, in call order — the only way to read a drawn
+ *  look back out of Pixi headlessly (same shape as `Actor.test.ts`'s contour check). */
+function fillColors(g: Graphics): number[] {
+  type Instr = { action: string; data: { style?: { color?: number } } };
+  return (g.context.instructions as unknown as Instr[])
+    .filter((i) => i.action === 'fill' && i.data.style?.color !== undefined)
+    .map((i) => i.data.style!.color!);
+}
 
 const RECT: RectPx = { x: 320, y: 640, w: 480, h: 32 };
 const HEIGHT = 104;
@@ -198,8 +208,31 @@ describe('buildWallBlock — the extruded block', () => {
   it('still stands (face + cap + shading + outline) when no swatch has loaded', () => {
     const seg = buildWallBlock(RECT, HEIGHT, skin(false));
     expect(seg.children.filter((c) => c instanceof TilingSprite)).toHaveLength(0);
-    // face fallback, cap fallback, additive cap light, shading, outline — all Graphics.
-    expect(seg.children.filter((c) => c instanceof Graphics)).toHaveLength(5);
+    // face fallback, cap fallback (key light summed INTO it, see `addColors`), shading, outline.
+    expect(seg.children.filter((c) => c instanceof Graphics)).toHaveLength(4);
+  });
+
+  it('folds the fallback cap key light into one fill rather than an additive second layer', () => {
+    // The swatch path bakes the key light into the texture (`capLight.ts`); the no-swatch path is
+    // a flat fill over a known opaque destination, so the same lift is just a clamped channel sum.
+    // Either way nothing in a wall block may carry a blend mode: a blend change cuts Pixi's sprite
+    // batch, and 27 wall runs doing it cost 54 draw calls of a measured 161 (2026-08-24).
+    const seg = buildWallBlock(RECT, HEIGHT, skin(false));
+    for (const c of seg.children) expect(c.blendMode).not.toBe(CAP_LIGHT_BLEND);
+    const capFill = seg.children.filter((c) => c.label === XRAY_LABEL);
+    expect(capFill).toHaveLength(1);
+    const fills = fillColors(capFill[0] as Graphics);
+    expect(fills).toEqual([addColors(biomePalette(undefined).pillarTop, CAP_LIGHT)]);
+    // ...and that colour really is brighter than the bare palette top, i.e. the lift survived.
+    expect(fills[0]!).toBeGreaterThan(biomePalette(undefined).pillarTop);
+  });
+
+  it('clamps a summed channel at 0xff instead of carrying into the next one', () => {
+    expect(addColors(0x102030, 0x010203)).toBe(0x112233);
+    expect(addColors(0xf0f0f0, 0x203040)).toBe(0xffffff);
+    // The carry bug this guards: 0xf0 + 0x20 = 0x110, which unclamped would spill a 1 into the
+    // channel above and turn a bright red into a dark one.
+    expect(addColors(0x00f000, 0x002000)).toBe(0x00ff00);
   });
 
   it('adds shading and an outline on top of the art, in that order', () => {
@@ -338,12 +371,14 @@ describe('buildWallBlock — the three height tiers, and per-surface art fallbac
     // half-loaded biome must not lose the geometry of either surface.
     const t = tex();
     const capOnly = buildWallBlock(RECT, HEIGHT, { palette: biomePalette(undefined), cap: t, face: undefined });
+    // Two cap TilingSprites here, not one, because `bakeLitCap` needs a 2D canvas and this
+    // environment has none — see `wallCapLit.test.ts` for the baked path's own composition.
     expect(capOnly.children.filter((c) => c instanceof TilingSprite)).toHaveLength(2); // cap + key light
     const faceOnly = buildWallBlock(RECT, HEIGHT, { palette: biomePalette(undefined), cap: undefined, face: t });
     expect(faceOnly.children.filter((c) => c instanceof TilingSprite)).toHaveLength(1);
-    // Either way the block is still face + cap + cap light + shading + outline.
+    // Either way the block is still face + cap (+ its key light where unbaked) + shading + outline.
     expect(capOnly.children).toHaveLength(5);
-    expect(faceOnly.children).toHaveLength(5);
+    expect(faceOnly.children).toHaveLength(4);
   });
 
   it('outlines the block DARK, and never in the palette\'s light wall-edge colour', () => {
@@ -615,11 +650,14 @@ describe('buildWallBlock — what the occlusion x-ray is allowed to fade', () =>
   // what keep a faded block reading as architecture rather than as a hole in the room. Tagging
   // is by label rather than child index so re-ordering the layers cannot silently re-point it.
   it('tags exactly the cap layers, art or fallback', () => {
-    for (const withArt of [true, false]) {
+    // The art case is two layers only because the key-light bake is unavailable headlessly; the
+    // count is deliberately not the point here, the LABELLING and the y are. See
+    // `wallCapLit.test.ts` for the one-layer baked composition.
+    for (const [withArt, count] of [[true, 2], [false, 1]] as const) {
       const seg = buildWallBlock(RECT, HEIGHT, skin(withArt));
       const tagged = seg.children.filter((c) => c.label === XRAY_LABEL);
-      expect(tagged).toHaveLength(2); // the cap surface + its key light
-      // ...and they are the two layers sitting at the cap, not at the face.
+      expect(tagged).toHaveLength(count);
+      // ...and every one of them sits at the cap, not at the face.
       const capTop = blockCapTop(RECT, HEIGHT);
       for (const c of tagged) expect(layerTop(c)).toBeCloseTo(capTop, 6);
     }

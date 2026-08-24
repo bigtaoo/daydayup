@@ -4,17 +4,66 @@
 import { UPDATE_PRIORITY, type Application } from 'pixi.js';
 import { PerfMonitor, type PerfMonitorOptions, type PerfSnapshot } from './PerfMonitor';
 import { PerfOverlay } from './PerfOverlay';
+import {
+  attributeDraws,
+  formatAttribution,
+  formatCensus,
+  graphicsCensus,
+  type Attribution,
+  type GraphicsInspector,
+  type GraphicsRow,
+  type ToggleableNode,
+} from './drawAttribution';
 
 export { PerfMonitor, type PerfSnapshot, type PerfMonitorOptions } from './PerfMonitor';
 export { PerfOverlay, formatSnapshot } from './PerfOverlay';
 export { FrameSampler, msStats, numFromStorage, type FrameWindow, type MsStats } from './frameSampler';
 export { GlProbe, filterPasses, type GlCounts } from './glProbe';
+export {
+  AUTO_BATCH_VERTEX_LIMIT,
+  attributeDraws,
+  formatAttribution,
+  formatCensus,
+  graphicsCensus,
+  type Attribution,
+  type AttributionRow,
+  type DrawCost,
+  type GraphicsRow,
+  type ToggleableNode,
+} from './drawAttribution';
 export { countScene, heapMB, gpuTextureCount, NODE_WALK_CAP, type SceneCounts } from './sceneCounters';
 
 export interface InstalledPerf {
   monitor: PerfMonitor;
   overlay: PerfOverlay | null;
+  /**
+   * Per-group draw-call attribution (`drawAttribution.attributeDraws`), from the console:
+   *
+   * ```js
+   * const L = window.__game.layers;
+   * const walls = L.entities.children.filter((e) => e.children.length === 4);
+   * console.log(window.__perf.attribute({ walls, ground: [L.ground], shadow: [L.shadow] }).text);
+   * ```
+   *
+   * Needs `?perf=1` — without the GL probe there is nothing to count, and `text` says so.
+   */
+  attribute(groups: Readonly<Record<string, readonly ToggleableNode[]>>): AttributionReport;
+  /** Every Graphics in the scene with Pixi's batching verdict (`drawAttribution.graphicsCensus`).
+   *  Defaults to the whole stage. `console.log(window.__perf.census().text)`. */
+  census(root?: ToggleableNode): CensusReport;
   uninstall(): void;
+}
+
+export interface AttributionReport {
+  /** Null when the GL probe is off — see `InstalledPerf.attribute`. */
+  attribution: Attribution | null;
+  /** The same thing laid out for reading in a console. */
+  text: string;
+}
+
+export interface CensusReport {
+  rows: GraphicsRow[];
+  text: string;
 }
 
 export interface InstallPerfOptions extends PerfMonitorOptions {
@@ -60,6 +109,19 @@ export function installPerf(app: Application, opts: InstallPerfOptions = {}): In
   const handle: InstalledPerf = {
     monitor,
     overlay,
+    attribute(groups): AttributionReport {
+      const probe = (): ReturnType<PerfMonitor['measureFrame']> => monitor.measureFrame();
+      if (probe() === null) {
+        return { attribution: null, text: 'draw attribution needs the GL probe — reload with ?perf=1' };
+      }
+      const attribution = attributeDraws(() => probe()!, groups);
+      return { attribution, text: formatAttribution(attribution) };
+    },
+    census(root): CensusReport {
+      const inspector = (app.renderer as unknown as { graphicsContext: GraphicsInspector }).graphicsContext;
+      const rows = graphicsCensus((root ?? app.stage) as ToggleableNode, inspector);
+      return { rows, text: formatCensus(rows) };
+    },
     uninstall(): void {
       if (tick) app.ticker.remove(tick, null);
       if (overlay) {

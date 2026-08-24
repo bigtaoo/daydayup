@@ -69,7 +69,13 @@ a shipped feature.
   point light with real per-texel falloff, so a muzzle flash lights the room it goes off in
 - **A frame-timing monitor in every session** (`src/perf/`, ported from `funny`): a sustained
   stutter leaves a `[perf]` console warning naming whether update or render was to blame;
-  `?perf=1` adds an on-screen readout and a WebGL draw-call probe
+  `?perf=1` adds an on-screen readout, a WebGL draw-call probe, and two console probes that
+  attribute those draw calls to actual objects (`window.__perf.attribute` / `.census`)
+- **Batching is a per-layer policy, not a default** (`src/render/staticGraphics.ts`): Pixi v8
+  auto-batches a `Graphics` only under 400 floats of geometry, so authored-once geometry gets
+  `batchMode: 'batch'` — but only on layers `scene/layers.ts` gives their own render group.
+  Forcing it inside the Y-sorted `entities` layer is measurably slower; read that module before
+  reaching for it
 
 ## Layout
 

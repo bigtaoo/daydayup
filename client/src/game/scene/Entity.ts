@@ -1,5 +1,6 @@
 import { Container, Graphics } from 'pixi.js';
 import { THEME } from '../theme';
+import { staticGraphics } from '../../render/staticGraphics';
 
 /** Nested-ellipse ground shadow (see `makeShadow`): `SHADOW_RINGS` ellipses stepping evenly
  *  from `SHADOW_R_OUTER` down to `SHADOW_R_INNER` times the body radius. Because they
@@ -124,7 +125,11 @@ export class Entity extends Container {
    * project's one foreshortening constant, shared with the shield ring and the status auras.
    */
   makeShadow(radius: number): Graphics {
-    const s = new Graphics();
+    // `staticGraphics`: SHADOW_RINGS nested ellipses is ~830 floats, well past Pixi's 400-float
+    // auto-batch cutoff, so every shadow in the room was its own draw call. The rings are drawn
+    // once here and the shadow only ever moves after that, and `layers.shadow` — where the caller
+    // mounts it — has its own render group, so batching costs one repack per move instead.
+    const s = staticGraphics();
     for (let i = 0; i < SHADOW_RINGS; i++) {
       const t = i / (SHADOW_RINGS - 1);
       const scale = SHADOW_R_OUTER + (SHADOW_R_INNER - SHADOW_R_OUTER) * t;

@@ -1030,6 +1030,64 @@ already builds for the walls, applied once offline instead of as a per-object fi
 > The older cheap static half — a per-room falloff painted on `ground` (`scene/roomLight.ts`) — landed
 > 2026-08-19 and is unchanged.
 
+> **Draw calls (2026-08-24, the same day's follow-up): 165 -> 108, program switches 102 -> 98, and the
+> render group is no longer thrown away every frame.** The filter pass above cut render p50 to 2.4ms but
+> barely touched the batcher — 157 draw calls for a scene of 893 nodes. `perf/drawAttribution.ts` (new,
+> and `window.__perf.attribute` / `.census` from a `?perf=1` console) attributed them: **wall blocks 79 of
+> 165**, actors 22, the `shadow` layer 22, doors 14, ground 5. Two causes, both structural, both fixed
+> without touching the Y-sorted `entities` layer that every occlusion cue depends on:
+>
+> 1. **The cap's additive key light was a second copy of the cap sprite** (`wallTone.CAP_BOOST_*`, which
+>    exists because a Pixi tint cannot multiply *up*). A blend-mode change breaks the sprite batch, so
+>    each of the 27 wall runs plus 4 doors cost a draw call for itself and two more for the halves of the
+>    batch it split. The lift is a function of the swatch alone — the cap is opaque, so the destination
+>    the additive copy reads is exactly the cap drawn before it — so it is now pre-multiplied into the
+>    texture once (`scene/capLight.ts`) and the cap is one ordinary sprite. **-29 draw calls, -31 nodes**,
+>    and verified by frame read-back rather than by eye: rebuilding the two-layer form in the live scene
+>    and diffing the composited frame gives **0 of 1,641,600 pixels different**. All four `wall_*.png`
+>    swatches are fully opaque (minimum alpha 255), which is the assumption that makes the identity exact;
+>    the brightest pixels clamp (ice: 1.8% of blue) at the same point the additive blend clamped them.
+> 2. **Pixi v8 only auto-batches a `Graphics` under 400 floats of geometry**
+>    (`GraphicsContextSystem.updateGpuContext`), and nothing this project hand-bands comes close — the
+>    room's shared wall shadow is ~24k floats, the floor's decal pass ~50k, one actor shadow ~830. Each was
+>    a draw call plus, between sprites, a program switch each way. `render/staticGraphics.ts` forces
+>    `batchMode: 'batch'` for authored-once geometry — but only on `ground` and `shadow`, which
+>    `scene/layers.ts` now gives their **own render groups**. That second half is what makes the first
+>    affordable: writing any descendant's `zIndex` invalidates the whole enclosing render group
+>    (`sortMixin.depthOfChildModified`), and `entities` writes one per actor per frame, so before the split
+>    the floor, the ground shadows, the health bars and the UI were all re-collected 60 times a second
+>    (168 Graphics re-added per frame, 54 of them unchanged since the room loaded). **-24 draw calls**, and
+>    render collection 0.60 -> 0.52ms. Also pixel-identical (0 of 1,641,600) against both halves reverted.
+>    Caveat, measured and kept: `shadow` is static only in that it never resorts — bullets and actors add
+>    and remove a shadow on it, which does invalidate the group, so under sustained fire its batched
+>    geometry repacks most frames at about **+0.12 ms**. Shipped on the balance against -22 draws there
+>    and -0.08 ms the rest of the time, not because it is free.
+>
+> **Rejected, with the measurement**: forcing the same batch mode on the wall shading inside `entities`.
+> It is the single biggest remaining item — 50 draw calls and 50 program switches for 27 objects — and
+> batching it works, but that group *is* invalidated every frame, so the batcher repacks ~18k floats and
+> 2247 fills per frame. Measured **+0.7ms on a 2.4ms render** for -50 draws. Not shipped; the draw-call
+> count is not the thing being optimised, the frame is.
+>
+> **What that leaves, and the two ways out.** ~90 of the 98 program switches and 90 of the 108 draw calls
+> are Graphics inside `entities` (wall shading 50, actor rig shading 22, doors 10) — all of them static
+> geometry that is only unbatched because it is too big. Bringing the wall shading under the 400-float
+> line was probed live by swapping in a smaller geometry: the frame goes to **52 draws / 43 programs**.
+> Two routes there, in preference order:
+> - **Replace the hand-banded ramps with `FillGradient`.** `wallShadingSurfaces.ts` draws every ramp as
+>   `CAP_GRADIENT_BANDS`/`SIDE_STEPS`/`BASE_AO_BANDS` separate rects at stepped alphas — 65-102 fills per
+>   block. A gradient fill is one quad, so the shading would drop under the auto-batch line *and* pack
+>   far cheaper than today's unbatched path. It would also be **smoother**, which is the direction the
+>   band counts were already being pushed (see `CAST_PASSES`: "at two alphas you see both of them"). Not
+>   pixel-identical, so it needs a look before it ships.
+> - **Bake each block's shading to a texture at room build.** Removes the per-frame cost entirely, but the
+>   camera zooms, so a 1x bake would soften the one surface that has had six rounds of tuning, and it costs
+>   ~27 render textures per room. Rejected for now on both counts.
+>
+> The pass order flagged during the filter work is unchanged and still correct: `SceneLightFilter` shades
+> the composite *after* an actor's own overlays (shield glow, hit outline, dissolve). Nothing here moved a
+> layer or a filter, and the byte-exact frame diffs above are what proves it rather than inspection.
+
 ## Per-weapon local z-order
 
 A weapon is attached to one of the character's orbiting weapon sockets (`02`/`13`) and rendered separately, and must switch front/back by facing:

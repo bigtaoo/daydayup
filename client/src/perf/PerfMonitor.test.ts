@@ -275,3 +275,44 @@ describe('PerfMonitor install/uninstall', () => {
     expect(snapshots).toHaveLength(n);
   });
 });
+
+describe('PerfMonitor.measureFrame — the FrameProbe behind draw attribution', () => {
+  it('renders twice and counts only the second, so a settling frame is not measured', () => {
+    // The caller has just flipped a group invisible, which makes Pixi rebuild its instruction set;
+    // counting that frame would charge the group for the invalidation instead of for its own draws.
+    const clock = { t: 0 };
+    const { app, renderer } = fakeApp({ clock });
+    const m = new PerfMonitor({ probeGl: true });
+    m.install(app);
+    renderer.rendered = 0;
+    const cost = m.measureFrame()!;
+    expect(renderer.rendered).toBe(2);
+    // The fake renderer emits one drawArrays and two bindFramebuffer per render — one render's
+    // worth, not two, must come back.
+    expect(cost.draws).toBe(1);
+    expect(cost.framebuffers).toBe(2);
+    m.uninstall();
+  });
+
+  it('is null without the GL probe, rather than reporting a free scene', () => {
+    // Every counter would read zero with the probe off, and a caller would take that as "this group
+    // costs nothing" — the one wrong answer this must never give.
+    const clock = { t: 0 };
+    const { app } = fakeApp({ clock });
+    const m = new PerfMonitor({ probeGl: false });
+    m.install(app);
+    expect(m.measureFrame()).toBeNull();
+    m.uninstall();
+  });
+
+  it('is null before install and after uninstall', () => {
+    const clock = { t: 0 };
+    const { app } = fakeApp({ clock });
+    const m = new PerfMonitor({ probeGl: true });
+    expect(m.measureFrame()).toBeNull();
+    m.install(app);
+    expect(m.measureFrame()).not.toBeNull();
+    m.uninstall();
+    expect(m.measureFrame()).toBeNull();
+  });
+});

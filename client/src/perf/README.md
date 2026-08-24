@@ -10,6 +10,7 @@ fact that daydayup has no telemetry backend to send findings to.
 | --- | --- |
 | `frameSampler.ts` | Pure windowed sampler: fps, frame/update/render percentiles, long-task busy ratio, hidden-tab discard, sustained-low-fps streak. No Pixi, no DOM. |
 | `glProbe.ts` | Counts the WebGL commands that break batching (draw calls, program/texture/framebuffer binds) per frame. |
+| `drawAttribution.ts` | **Which objects** those draw calls belong to: `attributeDraws` (hide a group, re-render, the drop is its cost) and `graphicsCensus` (every Graphics with Pixi's own batching verdict). Console-only. The 400-float rule it reports against is pinned to real Pixi in `render/staticGraphics.test.ts`. |
 | `sceneCounters.ts` | Scene-graph walk (nodes / visible / **filtered**), GPU texture count, JS heap. |
 | `PerfMonitor.ts` | Installs the above on a live `Application` and emits one `PerfSnapshot` per window. |
 | `PerfOverlay.ts` | On-screen readout. |
@@ -27,6 +28,25 @@ npm run dev --prefix client
 - `http://localhost:5173/?perf=1` — adds the **overlay** and the GL draw-call probe.
 - `window.__perf.monitor.latest` — the last snapshot, from the devtools console.
 - `window.__perf.overlay.toggle()` — show/hide without a reload.
+- `window.__perf.attribute({ name: nodes, ... }).text` — per-group draw-call attribution. Needs
+  `?perf=1` (without the GL probe there is nothing to count, and it says so rather than reporting
+  zeros). Group deltas deliberately do **not** sum to the total: a draw call belongs to a
+  *boundary* between neighbours, so a group whose cost exceeds its own object count is one that is
+  cutting the batcher — which is the finding worth having.
+- `window.__perf.census().text` — every Graphics, largest geometry first, `!` on the ones Pixi will
+  not batch. Pixi v8 auto-batches a Graphics only under **400 floats** of geometry, and nothing in
+  the renderer surfaces that, so a hand-banded gradient quietly crossing the line looks exactly
+  like one that batches fine. This is the probe that found the wall shading.
+
+A worked example, the one the 2026-08-24 pass was measured with:
+
+```js
+const L = window.__game.layers, ents = L.entities.children;
+const walls = ents.filter((e) => e.children.length === 4 && e.children[0].constructor.name.startsWith('_TilingSprite'));
+const actors = ents.filter((e) => ['Enemy', 'Actor'].includes(e.constructor.name));
+console.log(window.__perf.attribute({ walls, actors, ground: [L.ground], shadow: [L.shadow] }).text);
+console.log(window.__perf.census().text);
+```
 
 Thresholds, matching funny's `nw_fps_warn` / `nw_cpu_busy_warn` escape hatch under this
 repo's key namespace:
@@ -95,11 +115,71 @@ nodes 893   filtered 3   gpu tex 50   heap 46MB
 | draw calls | 175 | **157** |
 | program switches | 105 | **95** |
 
+## The second measurement: where the draw calls went (2026-08-24)
+
+Draw calls had fallen by only 18. `drawAttribution.ts` was written to answer why, and did, in one
+report — same scenario, 8 live enemies, 1920x855:
+
+```
+total  draws 165  prog 102
+  wallBlocks      79 draws   50 prog  (27 nodes)
+  actors          22 draws   22 prog  (9 nodes)
+  shadow          22 draws    0 prog  (1 node)
+  doors           14 draws   10 prog  (4 nodes)
+  ground           5 draws    0 prog  (1 node)
+```
+
+Read: **27 wall runs were half the frame's draw calls**, and the whole `shadow` layer — one row here,
+because it was measured as a layer — was another 22 for its 23 Graphics. The census explained both.
+A wall block was 5 children, of which the shading Graphics is 520-816 floats, over Pixi's 400-float
+auto-batch line, so a draw call plus a program switch each way; and the cap's additive key light is a
+blend-mode change, which breaks the batch on both sides. The shadow layer was 23 Graphics of 736-24258
+floats — every one of them over the line, hence one draw call each and, since they are all consecutive
+Graphics, no program switch at all. Two different failure modes with the same 400-float cause.
+
+Fixed the same day, in two parts — see design/01's "Draw calls" note for the full account:
+
+| | before | after |
+| --- | --- | --- |
+| draw calls | 165 | **108** |
+| program switches | 102 | **98** |
+| `shadow` layer draws | 22 | **1** |
+| wall-block draws | 79 | **50** |
+| nodes | 902 | **871** |
+| Graphics re-added per frame | 168 | **114** |
+| render p50 | 2.4 ms | 2.1 ms (inside the noise) |
+
+1. The cap's additive key light is pre-multiplied into the swatch (`scene/capLight.ts`), so the cap
+   is one ordinary sprite instead of two with a blend change.
+2. `render/staticGraphics.ts` forces `batchMode: 'batch'` on authored-once geometry — but only on
+   `ground` and `shadow`, which now have their **own render groups**. Any descendant `zIndex` write
+   invalidates a whole render group, and `entities` writes one per actor per frame, so those layers
+   were being re-collected 60 times a second for no reason. `shadow` keeps one measured caveat: a
+   bullet or actor spawning adds a shadow to it, which *does* invalidate the group, so under sustained
+   fire its batched geometry repacks most frames at about +0.12 ms. See that module's header.
+
+Both were verified by reading the frame back out of the GL context and diffing it against the old
+form rebuilt in the live scene: **0 of 1,641,600 pixels different**, twice. For a change that claims
+to be a pure optimisation that is the check to run — not a screenshot, and certainly not the source.
+
 ## What the numbers say to attack next
 
-Draw calls fell by only 18 — the ~157 that remain are the environment itself (wall blocks
-are Containers of several Graphics each, and Graphics do not batch with Sprites), which is
-also where the 95 program switches come from. That is the next bottleneck, and unlike the
-filter one it is a content/geometry problem rather than an architecture one. It is *not*
-currently costing frame time (render p50 2.4ms of a 16.7ms budget), so it is recorded, not
-scheduled.
+~90 of the remaining 98 program switches and 90 of the 108 draw calls are Graphics inside the
+Y-sorted `entities` layer (wall shading 50, actor rig shading 22, doors 10). All of it is static
+geometry that goes unbatched only because it is *large*.
+
+Forcing the batch mode there was tried and **rejected on measurement**: it works (-50 draws, -50
+program switches) but `entities` is invalidated every frame, so the batcher repacks ~18k floats and
+2247 fills per frame — **+0.7 ms on a 2.4 ms render**. `render/staticGraphics.ts` documents the rule
+that came out of it, and `RoomBuilder.test.ts` has a test whose whole job is to stop the next person
+reaching for it.
+
+The route with a number behind it is to get that geometry *under* the 400-float line rather than to
+override it. Probed live by swapping in a smaller shading geometry: the frame goes to **52 draws /
+43 programs**. `wallShadingSurfaces.ts` draws every ramp as 12-20 separate stepped-alpha rects; one
+`FillGradient` quad per ramp would be smaller, cheaper to pack *and* smoother than the banding. Not
+pixel-identical, so it needs a look before it ships.
+
+Still worth saying: none of this is currently costing frame time (render p50 2.1 ms of a 16.7 ms
+budget). It is headroom for a low-end mobile GPU, where program switches cost far more than they do
+here — which is also why the CPU side of every candidate was measured, not assumed.

@@ -65,6 +65,7 @@ import type { BiomePalette } from '../theme';
 import type { RectPx } from './wallGeometry';
 import { blockCapTop, NO_JOINS, unjoinedSpans, type WallJoins } from './wallRuns';
 import { XRAY_DEEP_LABEL, XRAY_LABEL } from './occlusion';
+import { bakeLitCap } from './capLight';
 import {
   drawBaseContactCrease,
   drawCapDepthGradient,
@@ -229,23 +230,40 @@ export function addCapLayers(seg: Entity, r: RectPx, capTop: number, capH: numbe
     // run (64 px of a 256 px swatch) always windowed the swatch's SAME left quarter, which on
     // ember is one large stone — so every such wall came out as a featureless slab regardless of
     // how good the swatch is. World-aligned, wall tops read as one continuous quarry.
-    seg.addChild(capTile(skin.cap, r, capTop, capH, CAP_TINT, 1, 'inherit'));
-    // The cap's key light: the SAME swatch a second time, additive, so the lift is multiplicative
-    // and the stone keeps its contrast RATIO — see `CAP_BOOST_ALPHA` for the measurement that
-    // replaced the flat additive constant with this. Its own child rather than part of
-    // `drawBlockShading`, because a blend mode is per display object.
-    seg.addChild(capTile(skin.cap, r, capTop, capH, CAP_BOOST_TINT, CAP_BOOST_ALPHA, CAP_LIGHT_BLEND));
+    //
+    // The cap's key light is a MULTIPLICATIVE lift the swatch cannot get from a tint, so it used to
+    // be a second additive copy of the same tile (see `CAP_BOOST_ALPHA` for the contrast-ratio
+    // measurement that chose additive over a white wash). It is now pre-multiplied into the texture
+    // instead — same pixels, one sprite, and no per-block blend-mode change to cut the batch on
+    // (`capLight.ts`, which also documents the fallback below).
+    const lit = bakeLitCap(skin.cap);
+    if (lit) {
+      seg.addChild(capTile(lit, r, capTop, capH, CAP_TINT, 1, 'inherit'));
+    } else {
+      seg.addChild(capTile(skin.cap, r, capTop, capH, CAP_TINT, 1, 'inherit'));
+      seg.addChild(capTile(skin.cap, r, capTop, capH, CAP_BOOST_TINT, CAP_BOOST_ALPHA, CAP_LIGHT_BLEND));
+    }
   } else {
+    // A flat fill has no contrast to preserve, so the fallback keeps the flat additive — but at a
+    // known opaque destination it can be summed into one fill, for the same reason the swatch path
+    // can be baked: `pillarTop + CAP_LIGHT`, clamped per channel exactly as `add` would clamp it.
     const g = new Graphics();
-    g.rect(0, capTop, r.w, capH).fill({ color: skin.palette.pillarTop });
+    g.rect(0, capTop, r.w, capH).fill({ color: addColors(skin.palette.pillarTop, CAP_LIGHT) });
     seg.addChild(g);
-    // A flat fill has no contrast to preserve, so the fallback keeps the flat additive.
-    const capLight = new Graphics();
-    capLight.rect(0, capTop, r.w, capH).fill({ color: CAP_LIGHT });
-    capLight.blendMode = CAP_LIGHT_BLEND;
-    seg.addChild(capLight);
   }
   for (let i = from; i < seg.children.length; i++) seg.children[i]!.label = XRAY_LABEL;
+}
+
+/** Two 0xRRGGBB colours summed per channel and clamped, i.e. what an opaque `add`-blended fill
+ *  over an opaque one composites to. Exported for tests. */
+export function addColors(a: number, b: number): number {
+  let out = 0;
+  for (let i = 0; i < 3; i++) {
+    const shift = 16 - i * 8;
+    const sum = Math.min(255, ((a >> shift) & 0xff) + ((b >> shift) & 0xff));
+    out |= sum << shift;
+  }
+  return out >>> 0;
 }
 
 /**
