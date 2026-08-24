@@ -11,24 +11,30 @@ import { describe, it, expect } from 'vitest';
 import { Graphics, TilingSprite, Texture, TextureSource } from 'pixi.js';
 import { addColors, buildWallBlock, drawBlockShading, drawWallShadow, sweptHull, type WallSkin } from './wallRender';
 import { XRAY_LABEL } from './occlusion';
+import { rampProfile, readRampFill } from '../../render/shadeRamp';
 import type { Entity } from './Entity';
 import { blockCapTop, NO_JOINS, type WallJoins } from './wallRuns';
 import {
   CAP_BOOST_ALPHA,
   CAP_BOOST_TINT,
+  BASE_AO_MAX,
   CAP_EDGE_PX,
+  CAP_GRADIENT_MAX,
   CAP_LIGHT,
+  CORNER_AO_PX,
   CAP_LIGHT_BLEND,
   CAP_TINT,
   EDGE_WIDTH,
   FACE_COPING_SUPPRESS,
   FACE_TINT,
   SIDE_CAP_SOLID_PX,
+  SIDE_ALPHA,
   SIDE_CAP_TAPER_PX,
   SIDE_COLOR,
-  SIDE_STEPS,
+  SIDE_BAND_INNER_SCALE,
   FACE_CROWN_FRACTION_MIN,
   TUCK_CAP_PX,
+  TUCK_FACE_TOP_SCALE,
 } from './wallTone';
 import { SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
 import { biomePalette } from '../theme';
@@ -262,6 +268,38 @@ describe('drawBlockShading — the side thickness a zero-skew projection cannot 
     expect(g.bounds.width).toBeLessThanOrEqual(stub.w + EDGE_WIDTH);
   });
 
+  it('runs each surface ramp in the direction its own cue means', () => {
+    // Every graduated cue is one quad now, so its direction lives in the ramp's segment and
+    // nowhere else — reversing one is a one-character edit that leaves the fill count, the
+    // colours, the alphas and the covered rect all identical. A mutation battery found exactly
+    // that: three of these were reversible with the whole suite still green.
+    const g = drawBlockShading(RECT, HEIGHT);
+    const ramp = (pick: (f: { alpha: number; y: number; color: number }) => boolean) =>
+      onlyRect(rampRects(g).filter(pick), 'ramp').ramp!;
+
+    // Cap depth gradient: nothing at the cap's far (north) edge, darkest AT THE FOLD. Shading it
+    // the other way lights the crease and darkens the open top — the inversion that started this
+    // whole wall pass ("a printed texture, not a lit surface").
+    // Filtered on colour as well as alpha: `LIT_EDGE_ALPHA` is also 0.2, so alpha alone matches
+    // the west chamfer too — which `onlyRect` catches rather than silently picking one of them.
+    const capGrad = ramp((f) => f.alpha === CAP_GRADIENT_MAX && f.color === 0x000000 && f.y < -HEIGHT);
+    expect(capGrad.y1).toBeCloseTo(-HEIGHT, 3); // t = 1, i.e. darkest, at the fold
+    expect(capGrad.y0).toBeLessThan(capGrad.y1); // t = 0 further north
+
+    // Face coping suppression: strongest immediately UNDER the fold, gone by the band's lower
+    // edge. Reversed, it darkens the brick and leaves the over-bright coping alone, i.e. it does
+    // the opposite of the one thing `FACE_COPING_SUPPRESS` exists for.
+    const coping = ramp((f) => f.alpha === FACE_COPING_SUPPRESS);
+    expect(coping.y1).toBeCloseTo(-HEIGHT, 3);
+    expect(coping.y0).toBeGreaterThan(coping.y1);
+
+    // Base contact crease: darkest where the face meets the FLOOR. Reversed, the darkest band
+    // lands at mid-wall and the contact goes clean, which reads as the wall floating.
+    const baseAo = ramp((f) => f.alpha === BASE_AO_MAX);
+    expect(baseAo.y1).toBeCloseTo(0, 3);
+    expect(baseAo.y0).toBeLessThan(baseAo.y1);
+  });
+
   it('keeps all of its geometry inside the block\'s own footprint width', () => {
     // The east side band is INSET, not extruded, precisely so it can never cross into the
     // adjacent segment of the same perimeter run.
@@ -340,7 +378,45 @@ describe('drawWallShadow — the cue that says the wall sits ON the floor', () =
 
 interface Instr {
   action: string;
-  data: { style?: { color: number; alpha: number; width?: number }; path?: { instructions: Array<{ action: string; data: number[] }> } };
+  data: {
+    style?: { color: number; alpha: number; width?: number };
+    path?: { instructions: Array<{ action: string; data: number[] }> };
+  };
+}
+
+/**
+ * A rect fill plus the RAMP it samples, where it has one.
+ *
+ * Every graduated cue in the block shading is now ONE quad sampling a shared ramp texture
+ * (`render/shadeRamp.ts`), where it used to be 5-20 adjacent constant-alpha rects. That changes
+ * how "which end of this cue is dark" has to be asserted: there are no longer two neighbouring
+ * bands whose alphas can be compared, so the direction is read off the ramp's own segment —
+ * `ramp.x0/y0` is where its profile reads 0 and `ramp.x1/y1` where it reads 1. Strictly more
+ * exact than the band comparison it replaces, which could only ever see band CENTRES.
+ */
+function rampRects(g: Graphics): Array<{
+  x: number; y: number; w: number; h: number; color: number; alpha: number;
+  ramp: ReturnType<typeof readRampFill>;
+}> {
+  return (g.context.instructions as Instr[])
+    .filter((i) => i.action === 'fill')
+    .flatMap((i) => {
+      const style = i.data.style!;
+      const ramp = readRampFill(style);
+      return (i.data.path?.instructions ?? [])
+        .filter((p) => p.action === 'rect')
+        .map((p) => ({
+          x: p.data[0]!, y: p.data[1]!, w: p.data[2]!, h: p.data[3]!,
+          color: style.color, alpha: style.alpha, ramp,
+        }));
+    });
+}
+
+/** The one rect matching `pick`, asserted to be unique — a ramp cue is exactly one quad now, and
+ *  a filter that quietly matched two would make every assertion below an accident. */
+function onlyRect<T>(rects: T[], what: string): T {
+  expect(rects, `expected exactly one ${what}`).toHaveLength(1);
+  return rects[0]!;
 }
 
 function strokes(g: Graphics): Array<{ color: number; alpha: number }> {
@@ -455,8 +531,18 @@ describe('drawBlockShading — a north-south run is not an east-west wall with a
     const eastBand = rectFills(g).filter((f) => f.color === SIDE_COLOR);
     const topMost = Math.min(...eastBand.map((f) => f.y));
     expect(topMost).toBeCloseTo(capTopOf(EW, HEIGHT), 3); // the full art height, as before
-    const alphas = new Set(eastBand.map((f) => f.alpha));
-    expect(alphas.size).toBe(SIDE_STEPS); // one alpha per across-the-width step, no length taper
+    // One length band at full strength and no taper — the taper only exists on a cap deeper than
+    // one wall thickness, which this wall's 32 px cap is not.
+    expect(eastBand.map((f) => f.alpha)).toEqual([SIDE_ALPHA]);
+    // ...and across its WIDTH the band is a ramp, weakest at the inner edge and full at the
+    // block's own east side. Read off the ramp rather than off neighbouring bands: `x0` is where
+    // the profile reads 0, `x1` where it reads 1.
+    const ramp = onlyRect(rampRects(g).filter((f) => f.color === SIDE_COLOR), 'east band').ramp!;
+    expect(ramp.x1).toBeCloseTo(EW.w, 3); // strongest at the outer edge...
+    expect(ramp.x0).toBeLessThan(ramp.x1); // ...weakest inboard of it
+    const profile = rampProfile(ramp.texture);
+    expect(profile[0]!).toBeCloseTo(SIDE_BAND_INNER_SCALE, 2); // never fades to nothing: it is a SIDE
+    expect(profile[profile.length - 1]!).toBeCloseTo(1, 2);
   });
 
   it('bevels the cap\'s long edges along their FULL depth instead', () => {
@@ -502,8 +588,11 @@ describe('buildWallBlock — an L corner is two blocks that must not both announ
     const EW: RectPx = { x: 1024, y: 32, w: 992, h: 32 };
     const open = drawBlockShading(EW, HEIGHT, NO_JOINS);
     const joined = drawBlockShading(EW, HEIGHT, { ...NO_JOINS, south: [[480, 544]] });
+    // The cap depth gradient, identified by its own tone rather than by being thinner than the
+    // cap: it is now ONE quad spanning the whole reach, so the old `h < EW.h` filter (which meant
+    // "a single band of the ramp") would exclude it.
     const capRow = (g: Graphics) =>
-      rectFills(g).filter((f) => f.color === 0x000000 && f.y < -HEIGHT && f.h < EW.h);
+      rectFills(g).filter((f) => f.color === 0x000000 && f.y < -HEIGHT && f.alpha === CAP_GRADIENT_MAX);
     // Same bands, but each is now split around the join instead of spanning the full width.
     const widest = (g: Graphics) => Math.max(...capRow(g).map((f) => f.w));
     expect(widest(open)).toBeCloseTo(EW.w, 3);
@@ -525,10 +614,12 @@ describe('buildWallBlock — an L corner is two blocks that must not both announ
     expect(east.length).toBeGreaterThan(0);
     expect(west.length).toBeGreaterThan(0);
     expect(Math.max(...east.map((f) => f.alpha))).toBeGreaterThan(Math.max(...west.map((f) => f.alpha)));
-    // Strongest at the contact, fading outward — a crease, not a panel.
-    const nearest = east.reduce((m, f) => (f.x < m.x ? f : m), east[0]!);
-    const furthest = east.reduce((m, f) => (f.x > m.x ? f : m), east[0]!);
-    expect(nearest.alpha).toBeGreaterThan(furthest.alpha);
+    // Strongest at the contact, fading outward — a crease, not a panel. One quad, so this is the
+    // ramp's own direction: its full-strength end sits ON the join's east edge (544) and its zero
+    // end CORNER_AO_PX further out.
+    const ramp = onlyRect(rampRects(joined).filter((f) => f.x >= 544 && f.y === -HEIGHT && f.h === HEIGHT), 'east crease').ramp!;
+    expect(ramp.x1).toBeCloseTo(544, 3);
+    expect(ramp.x0).toBeCloseTo(544 + CORNER_AO_PX, 3);
   });
 
   it('keeps the corner crease INSET, so it cannot paint over the next block along a run', () => {
@@ -585,12 +676,14 @@ describe('buildWallBlock — a deep run TUCKS behind the wall it runs into', () 
   it('creases the clipped edge, so the cap does not just stop dead at the brick', () => {
     const shading = drawBlockShading(NS, HEIGHT, tucked);
     const capTop = -NS.h - LIFT;
-    const crease = rectFills(shading).filter((f) => f.w === NS.w && f.y >= capTop && f.y < capTop + TUCK_CAP_PX);
-    expect(crease.length).toBeGreaterThan(0);
-    // Darkest against the wall, fading south — an inside corner, not a band.
-    const nearest = crease.reduce((m, f) => (f.y < m.y ? f : m), crease[0]!);
-    const furthest = crease.reduce((m, f) => (f.y > m.y ? f : m), crease[0]!);
-    expect(nearest.alpha).toBeGreaterThan(furthest.alpha);
+    const crease = onlyRect(
+      rampRects(shading).filter((f) => f.w === NS.w && f.y >= capTop && f.y < capTop + TUCK_CAP_PX),
+      'tuck cap crease',
+    );
+    // Darkest against the wall, fading south — an inside corner, not a band. The ramp's
+    // full-strength end is the clipped cap edge itself; it reaches zero TUCK_CAP_PX south of it.
+    expect(crease.ramp!.y1).toBeCloseTo(capTop, 3);
+    expect(crease.ramp!.y0).toBeCloseTo(capTop + TUCK_CAP_PX, 3);
     expect(drawBlockShading(NS, HEIGHT, NO_JOINS).context.instructions.length)
       .toBeLessThan(shading.context.instructions.length);
   });
@@ -602,13 +695,19 @@ describe('buildWallBlock — a deep run TUCKS behind the wall it runs into', () 
     // arithmetic, invisible on brick that `BASE_AO_*` had already crushed.
     const crownH = HEIGHT * CROWN;
     const g = drawBlockShading(EW, HEIGHT, { ...NO_JOINS, tuckedSouth: [[480, 544]] });
-    const onCrown = rectFills(g).filter((f) => f.x > 400 && f.x < 700 && f.y >= -HEIGHT - 0.001);
+    const onCrown = rampRects(g).filter((f) => f.x > 400 && f.x < 700 && f.y >= -HEIGHT - 0.001);
     expect(onCrown.length).toBeGreaterThan(0);
     // Confined to the crown: nothing reaches down into the brick courses.
     expect(Math.max(...onCrown.map((f) => f.y + f.h))).toBeLessThanOrEqual(-HEIGHT + crownH + 0.001);
-    const top = onCrown.reduce((m, f) => (f.y < m.y ? f : m), onCrown[0]!);
-    const bottom = onCrown.reduce((m, f) => (f.y > m.y ? f : m), onCrown[0]!);
-    expect(bottom.alpha).toBeGreaterThan(top.alpha); // darkest at the crown's underside
+    // Darkest at the crown's UNDERSIDE, where the contact is — the ramp's full-strength end — and
+    // still carrying TUCK_FACE_TOP_SCALE of it at the wall's top, since the whole crown is in the
+    // contact's shade.
+    const crease = onlyRect(onCrown, 'crown crease');
+    expect(crease.ramp!.y1).toBeCloseTo(-HEIGHT + crownH, 3);
+    expect(crease.ramp!.y0).toBeCloseTo(-HEIGHT, 3);
+    const profile = rampProfile(crease.ramp!.texture);
+    expect(profile[0]!).toBeCloseTo(TUCK_FACE_TOP_SCALE, 2);
+    expect(profile[profile.length - 1]!).toBeCloseTo(1, 2);
     expect(Math.min(...onCrown.map((f) => f.x))).toBeLessThan(480); // spills past the run's width
     expect(Math.max(...onCrown.map((f) => f.x + f.w))).toBeGreaterThan(544);
   });
@@ -620,7 +719,7 @@ describe('buildWallBlock — a deep run TUCKS behind the wall it runs into', () 
     const merged = drawBlockShading(EW, HEIGHT, { ...NO_JOINS, south: [[480, 544]] });
     const tuckedNbr = drawBlockShading(EW, HEIGHT, { ...NO_JOINS, tuckedSouth: [[480, 544]] });
     const capBands = (g: Graphics) =>
-      rectFills(g).filter((f) => f.color === 0x000000 && f.y < -HEIGHT && f.h < EW.h);
+      rectFills(g).filter((f) => f.color === 0x000000 && f.y < -HEIGHT && f.alpha === CAP_GRADIENT_MAX);
     expect(Math.max(...capBands(merged).map((f) => f.w))).toBeCloseTo(480, 3);
     expect(Math.max(...capBands(tuckedNbr).map((f) => f.w))).toBeCloseTo(EW.w, 3);
   });

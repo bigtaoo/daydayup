@@ -146,21 +146,32 @@ export function faceCrownFraction(element: string): number {
   const rows = FACE_CROWN_ROWS[element];
   return rows ? rows[0] / rows[1] : FACE_CROWN_FRACTION_MIN;
 }
-/** Bands the suppression ramp is built from. 18, not the 5 the side bands use: the coping is the
- *  BRIGHTEST thing on the face, so an alpha step of 0.11 across it (which 5 bands gives) shows as
- *  five hard horizontal stripes — clearly visible in a 3x render, and the loudest artifact the
- *  first version of this correction introduced. At 18 the step is 0.03, i.e. ~5/255 on a coping
- *  that bright. Same reasoning as `rigShading`'s band count: the count follows from the largest
- *  step the eye may not see, and the brighter the surface underneath, the more bands it needs. */
-export const FACE_COPING_BANDS = 18;
+/**
+ * **Where the band counts went (2026-08-24).**
+ *
+ * Every ramp in this file used to carry its own band count, and each one was a judgement about
+ * the largest alpha STEP the surface underneath could hide. The suppression ramp is the clearest
+ * case: at the 5 bands the side band uses, the step across it is 0.11, and because the coping is
+ * the BRIGHTEST thing on the face that showed as five hard horizontal stripes in a 3x render —
+ * the loudest artifact the correction's first version introduced. 18 took the step to 0.03, i.e.
+ * ~5/255 on a coping that bright. The rule was: the count follows from the largest step the eye
+ * may not see, and the brighter the surface underneath, the more bands it needs.
+ *
+ * The ramps are now SAMPLED from a shared texture rather than stepped (`render/shadeRamp.ts`),
+ * so there is no step to hide and no per-surface count to tune: `RAMP_TEXELS` puts the largest
+ * step below 1/255 for every profile here at once, and the GPU's linear filter makes the result
+ * continuous rather than merely finely stepped. `BASE_AO_BANDS` below is the one survivor,
+ * because `pillarRender` still steps its own copy of that crease.
+ *
+ * Kept as a comment rather than deleted because it is the reasoning, not the number, that a
+ * future ramp needs — and because it names the failure mode (banding on a bright surface) that
+ * would come back the moment someone hand-steps a gradient here again.
+ */
 
 /** Depth gradient across the cap, north (far, lit) to south (near, folding into the face):
  *  band count and the alpha the ramp reaches at the fold. A deep cap — level 1's north-south
  *  runs are up to 6 grid cells, ~190 px — is otherwise a completely flat slab of one value,
- *  which is what a printed texture looks like and not what a lit surface looks like.
- *  Non-overlapping bands, so each band's alpha IS its ramp value and the steps never compound
- *  (the pillar shaft's first attempt stacked translucent bands and showed hard seams). */
-export const CAP_GRADIENT_BANDS = 14;
+ *  which is what a printed texture looks like and not what a lit surface looks like. */
 export const CAP_GRADIENT_MAX = 0.2;
 /** ...and how far in from the fold it reaches, in world px. Bounded (2026-08-19) because a
  *  north-south run's cap depth IS its length: spreading the ramp over a 450 px run turned it
@@ -182,7 +193,15 @@ export const FOLD_WIDTH = 1.5;
  *  surface makes with a horizontal one is the darkest place in any room, and its absence is
  *  why a wall face can look like a poster. Was three discrete bands at 0.14/0.18/0.22; now a
  *  smooth ramp, for the same non-overlapping-band reason as the cap. Shared with the pillar's
- *  base, so a cylinder and a block meet the floor the same way. */
+ *  base, so a cylinder and a block meet the floor the same way.
+ *
+ *  `BASE_AO_BANDS` is now used only by `pillarRender`: the wall's copy of this crease samples a
+ *  ramp texture instead (see the note above `FACE_COPING_FRACTION`). The two still agree to
+ *  within one band step — 0.3/12 = 0.025 alpha, which is the threshold that doc calls borderline,
+ *  not comfortably under it — so converting the pillar's is a real follow-up rather than a
+ *  cosmetic one. It is not free: that crease is a `roundRect` whose LAST band also skirts
+ *  `PILLAR_BASE_PX` below the floor line at a held alpha, so it is two shapes under a ramp, not
+ *  one. Recorded in design/01. */
 export const BASE_AO_FRACTION = 0.42;
 export const BASE_AO_BANDS = 12;
 export const BASE_AO_MAX = 0.3;
@@ -209,13 +228,14 @@ export const SIDE_COLOR = 0x141821;
 export const SIDE_ALPHA = 0.86;
 export const SIDE_BAND_PX = 13;
 export const SIDE_BAND_MAX_FRACTION = 0.34;
-/** Sub-bands across both the east shade and the west chamfer. One flat rect at one alpha reads
- *  as a smoked-glass panel laid over the art — you can see the brick continuing underneath it,
- *  dimmed, with a hard edge where the panel stops (2026-08-19 render). Stepping the alpha across
- *  the band, strongest at the block's outer edge and fading inward, is what turns the same pixels
- *  into a surface curving away. `SIDE_STEPS` bands, alpha scaled by `(1 - t)` from the outer edge
- *  for the east side and by `t` for the west. */
-export const SIDE_STEPS = 5;
+/** How much of `SIDE_ALPHA` the east band still carries at its INNER edge. One flat rect at one
+ *  alpha reads as a smoked-glass panel laid over the art — you can see the brick continuing
+ *  underneath it, dimmed, with a hard edge where the panel stops (2026-08-19 render). Ramping the
+ *  alpha across the band, strongest at the block's outer edge and fading inward, is what turns the
+ *  same pixels into a surface curving away. It stops at 0.45 rather than 0 because the band is a
+ *  SIDE: one that faded out completely would stop reading as a plane at all. (The west chamfer
+ *  DOES go to zero — it is a highlight on the cap's own edge, not a face.) */
+export const SIDE_BAND_INNER_SCALE = 0.45;
 /**
  * How far the east band and the west chamfer reach NORTH of the cap/face fold, in world px.
  * Bounded 2026-08-19 for the same reason `CAP_GRADIENT_REACH_PX` is, and it is the second half of
@@ -250,7 +270,6 @@ export const CAP_EDGE_PX = 5;
 export const CAP_EDGE_MAX_FRACTION = 0.3;
 export const CAP_EDGE_ALPHA = 0.5;
 export const CAP_EDGE_WEST_SCALE = 0.55;
-export const CAP_EDGE_STEPS = 5;
 
 /**
  * The crease a corner makes on the wall it stands in front of.
@@ -266,7 +285,6 @@ export const CAP_EDGE_STEPS = 5;
 export const CORNER_AO_PX = 13;
 export const CORNER_AO_ALPHA = 0.42;
 export const CORNER_AO_WEST_SCALE = 0.45;
-export const CORNER_AO_BANDS = 6;
 
 /**
  * The re-entrant corner a TUCKED run makes — `WallJoins.tuckNorth`, the *"相交的部分进行立体化处理"*
@@ -295,11 +313,9 @@ export const CORNER_AO_BANDS = 6;
  */
 export const TUCK_CAP_PX = 14;
 export const TUCK_CAP_ALPHA = 0.5;
-export const TUCK_CAP_BANDS = 7;
 export const TUCK_FACE_ALPHA = 0.5;
 /** Share of `TUCK_FACE_ALPHA` at the TOP of the crown, where the contact is furthest away. */
 export const TUCK_FACE_TOP_SCALE = 0.25;
-export const TUCK_FACE_BANDS = 8;
 /** How far the face crease spills past the run's own width, in world px — a contact this hard
  *  never stops at a razor edge, and the down-light (east) side spills further. */
 export const TUCK_FACE_SPILL_PX = 7;

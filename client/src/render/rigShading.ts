@@ -1,4 +1,5 @@
-import { Graphics } from 'pixi.js';
+import { Graphics, type Texture } from 'pixi.js';
+import { CLEAR, bakedField, over, premul, writeTexel, type Premul } from './shadeRamp';
 
 // Split out of RigSkin.ts (2026-08-18, 500-line convention): the DEPTH-CUE marks a rig
 // draws on top of its own flat-cel art — the sphere shading over its body bone, and the
@@ -41,13 +42,32 @@ export const MODULE_BEHIND_SHADE = 0.68;
 //      the way round, is indistinguishable from a muddy outline at play scale. Deleted; the
 //      ramp already darkens the turning-away edge, which is the only place it belonged.
 //
-// A gradient fill would be the obvious tool for a smooth ramp and is deliberately NOT used:
-// Pixi 8's `FillGradient` calls `DOMAdapter.createCanvas()` at `fill()` time, which throws
-// in this repo's canvas-free test environment — and reading the retained Graphics
-// instruction list is exactly how the look is machine-checked here (`rigShading.test.ts`).
-// The ramp is therefore built from NON-OVERLAPPING chord bands, which is also strictly
-// better than stacked translucent shapes: each band's alpha IS its ramp value, so the steps
-// never compound into the opacity banding that stacked arcs showed on the pillars.
+// **Rebuilt again 2026-08-24, this time as a sampled FIELD rather than as geometry** — the
+// third draw-call pass. Every mark above is a function of one normalised position on the body,
+// so the whole overlay is a 2-D image, and `sphereShadeField` bakes it once into a shared
+// texture that every rig in the game samples from one quad.
+//
+// The version this replaced was 40 non-overlapping chord bands plus 3 nested ellipses: 55 fills
+// and 710 floats of geometry per rig instance, which is over Pixi v8's 400-float auto-batch line
+// (`render/staticGraphics.ts`), so every actor on screen cost a draw call and a program switch
+// each way — 20 of the level-1 start room's 107, at 8 live enemies, and it scaled with the enemy
+// count where a level-1 room holds 15-30. One quad is 8 floats, and the texture is normalised by
+// radius, so it is ONE bake for every skin and every body size rather than one per (skin, radius).
+//
+// The band form existed because the obvious tool did not work: Pixi 8's `FillGradient` calls
+// `DOMAdapter.createCanvas()` at `fill()` time, which throws in this repo's canvas-free test
+// environment, and reading the retained Graphics instruction list was how this look was
+// machine-checked. `render/shadeRamp.ts` gets the same smoothness from a `BufferImageSource`,
+// which needs no canvas — so the field is testable by SAMPLING it, which is a stronger check
+// than counting bands was. See that module's header.
+//
+// Two things the bands got right and this keeps. Each band's alpha WAS its ramp value (they never
+// overlapped), so the steps could not compound into the opacity banding that stacked translucent
+// arcs showed on the pillars — a texel is the same guarantee, made exact. And containment: a band
+// was chord-limited so every corner provably sat inside the body circle, because nothing here is
+// masked and a mark outside the art paints on transparent background. The field does it by
+// construction — it is zero outside `dist > 1` — which is why the old `chordBand` helper and its
+// containment proof are gone rather than ported.
 
 /** Toward the upper-left key light, y-down screen space. Shared with `NormalLitFilter`'s
  *  KEY_DIR and the pillar/wall shading — the project has exactly one light direction. */
@@ -74,24 +94,46 @@ export const SHADE_MIN_BODY_R = 24;
 // the corners, so a circular ramp sized flush to its width still showed a faint arc of shading on
 // the background diagonally out from it. A few percent of margin costs nothing visually and covers
 // every non-circular body the same way.
-const SHADE_FIT = 0.92;
-/** Bands across the body, along the light axis. The count is set by the largest alpha STEP any
- *  band-to-band transition may show — a step is a contour the eye can find, and on near-white
- *  art 0.025 alpha is already ~6/255. At 40 the worst step (in the reflected-light rollback,
- *  which is the steepest part of the curve, not the terminator) is ~0.02. Cheap regardless:
- *  this is one Graphics built once per rig instance and never redrawn, only repositioned. */
-const SHADE_BANDS = 40;
+export const SHADE_FIT = 0.92;
+/**
+ * Texels across the baked field, per axis.
+ *
+ * Replaces a band count (was 40 bands along the light axis), and the reasoning carries over: the
+ * number is set by the largest alpha STEP between neighbouring samples, because a step is a
+ * contour the eye can find and on near-white art 0.025 alpha is already ~6/255. At 40 bands the
+ * worst step was ~0.02, in the reflected-light rollback — the steepest part of the curve, not the
+ * terminator. At 256 samples the same worst step is ~0.003, and the GPU's linear filter makes it
+ * continuous rather than merely finer.
+ *
+ * The other constraint is the opposite one, and it is why this is not larger: the field is
+ * MAGNIFIED on screen. The biggest body here is the boss core (`bodyR` 70), drawn at world scale
+ * 4, so ~515 screen px across — about 2 screen px per texel. The field's sharpest feature is its
+ * own silhouette, which `sphereShadeField` antialiases analytically for exactly that reason;
+ * everything else is smooth by construction and survives the magnification.
+ */
+export const SHADE_FIELD_TEXELS = 256;
+
+/**
+ * How far past the body radius the field (and therefore the quad sampling it) reaches.
+ *
+ * Not 1.0, for two reasons. The silhouette needs a texel of room OUTSIDE the circle to
+ * antialias into, and `textureSpace: 'local'` maps the quad's own bounds onto the texture's full
+ * 0..1 — so with the circle inscribed exactly, the edge texels would sample at the uv boundary
+ * where Pixi's forced `repeat` address mode wraps (see `shadeRamp.bakedField`). A transparent
+ * margin makes both non-issues: nothing at the boundary, so nothing to wrap.
+ */
+export const SHADE_FIELD_EXTENT = 1.04;
 /** Where the terminator sits along the light axis, as a 0..1 position from the lit pole to the
  *  dark limb, and how much of the body the transition is smeared across. 0.52/0.34 puts the
  *  ramp's HALF-darkness point just past the body's centre — which is what "terminator" means —
  *  with a long soft falloff either side of it: a sphere, not a cel-shaded step. The first
  *  attempt smeared it across 84% of the body, which is so soft that the lit hemisphere itself
  *  ends up carrying a fifth of the shadow and the contrast that reads as ROUND is spent. */
-const SHADE_TERMINATOR_T = 0.52;
+export const SHADE_TERMINATOR_T = 0.52;
 const SHADE_SOFTNESS = 0.34;
 /** Peak darkness at the shadow core. Roughly what the old 4-arc stack reached, kept because
  *  that strength WAS right — it was its distribution that read as dirt. */
-const SHADE_MAX_ALPHA = 0.34;
+export const SHADE_MAX_ALPHA = 0.34;
 /** Reflected light: past this point along the axis the ramp rolls back DOWN to
  *  `SHADE_REFLECT_KEEP` of its peak by the limb. Physically the bounce off the floor and the
  *  surrounding walls; practically the difference between a round body and a smudged one,
@@ -115,7 +157,7 @@ const SHADE_WARM_T = 0.5;
  *  darkens the lower RIGHT, and the measured render showed the shell's lower LEFT staying
  *  pure white right down to the silhouette, which reads as a disc lit from the side rather
  *  than as a sphere over a floor. */
-const SHADE_UNDERSIDE: ReadonlyArray<readonly [number, number, number, number]> = [
+export const SHADE_UNDERSIDE: ReadonlyArray<readonly [number, number, number, number]> = [
   [0.44, 0.66, 0.3, 0.07],
   [0.5, 0.55, 0.24, 0.08],
   [0.56, 0.42, 0.17, 0.09],
@@ -145,27 +187,120 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
 }
 
 /**
- * One band of the ramp, as an explicit 4-corner polygon: a chord-limited slab perpendicular
- * to the light axis, spanning `[d0, d1]` along it.
+ * The AXIS ramp at parameter `t` — 0 at the lit pole, 1 at the dark limb: the warm wash and the
+ * form shadow, which are functions of nothing but position along the one light direction.
  *
- * The slab's half-width is the circle's chord at whichever of its two edges is FURTHER from
- * the centre, which is what makes containment exact rather than approximate: a corner sits at
- * axis distance `d` and cross distance `hw`, and `d² + hw² ≤ dFar² + (R² − dFar²) = R²`. So
- * every corner of every band lands on or inside the body circle, for any band count.
+ * Split out from `sphereShadeAt` because it is the part that has to be SMOOTH and MONOTONE (up to
+ * the reflected-light rollback), and the underside occlusion below is neither — it is a hard-edged
+ * blob that the light axis passes straight through, so a profile taken along the axis of the
+ * combined field is not the ramp and must not be asserted as if it were. `rigShading.test.ts`
+ * checks the two separately for that reason.
+ *
+ * Premultiplied, and composited in the order the marks were drawn in when they were geometry,
+ * because source-over is only associative in the premultiplied form (see `shadeRamp.over`).
  */
-function chordBand(r: number, angle: number, d0: number, d1: number): number[] {
-  const ax = Math.cos(angle);
-  const ay = Math.sin(angle);
-  const px = -ay;
-  const py = ax;
-  const dFar = Math.max(Math.abs(d0), Math.abs(d1));
-  const hw = Math.sqrt(Math.max(0, r * r - dFar * dFar));
-  return [
-    ax * d0 + px * hw, ay * d0 + py * hw,
-    ax * d1 + px * hw, ay * d1 + py * hw,
-    ax * d1 - px * hw, ay * d1 - py * hw,
-    ax * d0 - px * hw, ay * d0 - py * hw,
-  ];
+export function sphereRampAt(t: number): Premul {
+  let c = CLEAR;
+  const warm = sphereWarmAlpha(t);
+  if (warm > 0) c = over(c, premul(SHADE_WARM, warm));
+  const dark = sphereFormShadowAlpha(t);
+  if (dark > 0) c = over(c, premul(SHADE_DARK, dark));
+  return c;
+}
+
+/**
+ * The WARM wash's alpha at `t` — the lit side's mark, and a hue rather than a value because value
+ * has nowhere to go on near-white art (see note 1 in the file header). Peaks at the lit pole and
+ * is gone by `SHADE_WARM_T`.
+ *
+ * Exported separately from `sphereFormShadowAlpha` because the two terms overlap in `t` and every
+ * property worth asserting belongs to one or the other: the composite alpha of the pair is a U —
+ * 0.28 of warm at the lit pole, near nothing at the terminator, 0.34 of shadow past it — so a
+ * "monotone" or "largest step" assertion on the composite is asserting the wrong function. When
+ * these marks were geometry the tests separated them by FILL COLOUR; this is that split, made
+ * explicit.
+ */
+export function sphereWarmAlpha(t: number): number {
+  if (t >= SHADE_WARM_T) return 0;
+  return (1 - t / SHADE_WARM_T) * SHADE_WARM_MAX_ALPHA;
+}
+
+/**
+ * The FORM SHADOW's alpha at `t`, with the reflected-light rollback at the limb.
+ *
+ * Both curves are smoothstepped, including the rollback: a LINEAR rollback over the last sliver of
+ * the body is by far the steepest thing in the ramp and would read as a hard contour parallel to
+ * the rim — the exact defect the 2026-08-19 rebuild exists to remove.
+ */
+export function sphereFormShadowAlpha(t: number): number {
+  const dark = smoothstep(SHADE_TERMINATOR_T - SHADE_SOFTNESS, SHADE_TERMINATOR_T + SHADE_SOFTNESS, t)
+    * (1 - (1 - SHADE_REFLECT_KEEP) * smoothstep(SHADE_REFLECT_T, 1, t));
+  return dark > 0.001 ? dark * SHADE_MAX_ALPHA : 0;
+}
+
+/**
+ * The shading value at one normalised point on the body — `(nx, ny)` in units of the shaded
+ * radius, so the body circle is `hypot(nx, ny) <= 1` and the key light comes from the upper left.
+ *
+ * **Deliberately UNMASKED**: it answers "what is the shading here" for any point, including
+ * outside the circle, and `sphereShadeField` is what multiplies in the silhouette. Keeping the
+ * mask out of here is not a detail — it is what lets the field antialias the rim across a texel in
+ * BOTH directions. An early version returned transparent outside the circle, which cut the feather
+ * off at its own midpoint (the outer half of every straddling texel went to zero regardless of
+ * coverage) and, worse, made the containment test below pass for the wrong reason: there was
+ * nothing outside the circle to contain.
+ *
+ * Exported because it IS the look: a test can ask what the shading does at any point on the body
+ * instead of counting the bands some implementation happened to split it into.
+ */
+export function sphereShadeAt(nx: number, ny: number): Premul {
+  // Position along the light axis, 0 at the lit pole and 1 at the dark limb. The ramp runs AWAY
+  // from the key light, which is what makes the terminator a position on that axis rather than an
+  // arc with ends that can be seen cutting off.
+  const away = SHADE_KEY_ANGLE + Math.PI;
+  const t = 0.5 + (nx * Math.cos(away) + ny * Math.sin(away)) / 2;
+  let c = sphereRampAt(t);
+  // Underside occlusion, nested and symmetric in x. Still hard-edged, as it was when these were
+  // three `ellipse` fills — at alpha 0.07-0.09 the edges are well under the visible threshold, and
+  // sampling actually softens them by a texel rather than sharpening them.
+  for (const [cy, rx, ry, alpha] of SHADE_UNDERSIDE) {
+    const ex = nx / rx;
+    const ey = (ny - cy) / ry;
+    if (ex * ex + ey * ey <= 1) c = over(c, premul(SHADE_DARK, alpha));
+  }
+  return c;
+}
+
+/**
+ * The whole sphere overlay as one shared texture: `sphereShadeAt` sampled over the body's
+ * bounding square and multiplied by the silhouette's own antialiased coverage.
+ *
+ * Normalised by radius, so there is exactly one of these for the entire game however many skins
+ * and body sizes exist — which is the difference between this and baking per (skin, radius), and
+ * the reason it needs no renderer and works in a test. The cache key is a constant for the same
+ * reason: every input is a module constant, so there is only ever one field to build.
+ */
+export function sphereShadeField(): Texture {
+  return bakedField('rig-sphere', SHADE_FIELD_TEXELS, SHADE_FIELD_TEXELS, (rgba, w, h) => {
+    // Texels per unit of normalised radius — i.e. the width of one texel at the silhouette, which
+    // is what the edge is feathered over.
+    const perUnit = w / (2 * SHADE_FIELD_EXTENT);
+    for (let j = 0; j < h; j++) {
+      const ny = ((j + 0.5) / h * 2 - 1) * SHADE_FIELD_EXTENT;
+      for (let i = 0; i < w; i++) {
+        const nx = ((i + 0.5) / w * 2 - 1) * SHADE_FIELD_EXTENT;
+        // Analytic coverage across the silhouette, centred ON the circle so it feathers equally
+        // either side of it. Vector fills got this from the rasteriser; a sampled field has to say
+        // it, and it matters here because the outermost ramp value is NOT zero — the
+        // reflected-light sliver is the brightest thing on the shadow side — so the circle's edge
+        // is a real alpha step, and an un-feathered one reads as a chunky rim at 4x world scale.
+        const cover = Math.max(0, Math.min(1, (1 - Math.hypot(nx, ny)) * perUnit + 0.5));
+        if (cover <= 0) continue;
+        const c = sphereShadeAt(nx, ny);
+        writeTexel(rgba, j * w + i, { r: c.r * cover, g: c.g * cover, b: c.b * cover, a: c.a * cover });
+      }
+    }
+  });
 }
 
 /**
@@ -174,45 +309,18 @@ function chordBand(r: number, angle: number, d0: number, d1: number): number[] {
  * (0,0) — a warm wash on the lit side, a smooth form-shadow ramp falling away from the key
  * light with a reflected-light sliver at the limb, and an underside occlusion.
  *
- * See the file header for why each mark is the shape it is, and `SHADE_*` for the tuning.
- * Pure geometry, drawn once per rig instance; `RigSkin.update` only repositions it. The
- * caller counter-flips it against the rig's own mirror so the light never travels with the
- * body — eye moving while the light does not is what reads as a sphere turning.
+ * One quad sampling `sphereShadeField`. See the file header for why each mark is the shape it is,
+ * `SHADE_*` for the tuning, and `sphereShadeAt` for the marks themselves.
+ *
+ * Still a `Graphics` rather than a `Sprite`, deliberately: `RigSkin` counter-flips this against
+ * the rig's own mirror by writing `scale.x = flipX`, and on a Graphics that mirrors the quad's
+ * local geometry while leaving its size alone. A Sprite sized by `width`/`height` would have that
+ * write throw the size away.
  */
 export function drawSphereShading(drawnR: number): Graphics {
   const g = new Graphics();
-  const r = drawnR * SHADE_FIT;
-  // The ramp runs from the lit pole to the dark limb, i.e. AWAY from the key light.
-  const away = SHADE_KEY_ANGLE + Math.PI;
-  const step = (2 * r) / SHADE_BANDS;
-
-  for (let i = 0; i < SHADE_BANDS; i++) {
-    const d0 = -r + i * step;
-    const d1 = d0 + step;
-    const t = (i + 0.5) / SHADE_BANDS;
-    const band = chordBand(r, away, d0, d1);
-
-    // Warm light on the near side of the terminator: a hue shift, since value has nowhere
-    // to go on near-white art.
-    if (t < SHADE_WARM_T) {
-      const warm = (1 - t / SHADE_WARM_T) * SHADE_WARM_MAX_ALPHA;
-      g.poly(band).fill({ color: SHADE_WARM, alpha: warm });
-    }
-
-    // Form shadow, with the reflected-light rollback at the limb.
-    // Both curves are smoothstepped, including the rollback: a LINEAR rollback over the last
-    // sliver of the body is by far the steepest thing in the ramp (it was showing a 0.05 alpha
-    // step per band, twice the terminator's) and would read as a hard contour parallel to the
-    // rim — the exact defect this whole rebuild exists to remove.
-    const dark = smoothstep(SHADE_TERMINATOR_T - SHADE_SOFTNESS, SHADE_TERMINATOR_T + SHADE_SOFTNESS, t)
-      * (1 - (1 - SHADE_REFLECT_KEEP) * smoothstep(SHADE_REFLECT_T, 1, t));
-    if (dark > 0.001) g.poly(band).fill({ color: SHADE_DARK, alpha: dark * SHADE_MAX_ALPHA });
-  }
-
-  for (const [cy, rx, ry, alpha] of SHADE_UNDERSIDE) {
-    g.ellipse(0, r * cy, r * rx, r * ry).fill({ color: SHADE_DARK, alpha });
-  }
-
+  const q = drawnR * SHADE_FIT * SHADE_FIELD_EXTENT;
+  g.rect(-q, -q, 2 * q, 2 * q).fill({ texture: sphereShadeField(), textureSpace: 'local' });
   return g;
 }
 

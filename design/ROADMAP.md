@@ -98,10 +98,11 @@ reachable from any unit test — a full `createGameEngine` end-to-end regression
 `dungeonrun.test.ts` reproducing the reported bug shape directly: one room, two
 real spawned enemies (one beside the player, one clear across the room), driven
 through the real tick order, confirming the near one engages immediately while the
-far one fires zero bullets until it closes the distance. 3557 tests green across all 7
-workspace packages (engine 690 / client 1843 / server 186 / animator 444 / map-editor 280 /
-png-pipeline 20 / desktop-shell 81 / root build-script 13, `npm run check`, re-measured
-2026-08-20 — this snapshot has drifted twice now, so re-measure it rather than trusting it) after fixing two real bugs found from a live player report ("cleared
+far one fires zero bullets until it closes the distance. **4151 tests green across all 8
+workspace packages** (engine 705 / client 2410 / server 186 / animator 444 / map-editor 282 /
+png-pipeline 30 / desktop-shell 81 / root build-script 13, `npm run check`, re-measured
+2026-08-24 — the count and the package list had both drifted, so re-measure rather than
+trusting it) after fixing two real bugs found from a live player report ("cleared
 the room, door's unlocked, still can't walk through it") — see the Room & door model
 section below for the full account. Before that, closing a real gap the test-coverage audit
 pass had flagged and left open: `onRequestSave` (tools/desktop-shell/src/preload.ts) now
@@ -4161,6 +4162,11 @@ were already being pushed. Not pixel-identical, so it wants a look before it shi
 block's shading to a texture was the other candidate and is rejected for now: the camera zooms, so a
 1x bake would soften the one surface that has had six rounds of tuning.
 
+> **Done, same day — see "Shading ramps become sampled textures" below.** The ramp route shipped, but
+> not via `FillGradient` (it needs a canvas, which the tests have not got); the geometry-reduction
+> half of the reasoning above was right and the tool was wrong. It also turned out to apply to the
+> **rig** shading, which this paragraph had written off as a separate problem: 102 -> 27 draws.
+
 Still not costing frame time (render p50 2.1ms of a 16.7ms budget). This is headroom for a low-end
 mobile GPU, where a program switch costs far more than it does here — which is also why every
 candidate's CPU cost was measured rather than assumed, and why two of them were dropped.
@@ -4195,7 +4201,9 @@ complete and was not:
 Every new assertion was checked by mutation (6 mutants: the batch policy deleted, `makeShadow` back to
 a plain Graphics, the bake cache keyed on a constant so all biomes share one swatch, the additive path
 forced, the limit off by one, `groundLayer` back to plain Graphics). All 6 killed, most by more than
-one file. 4118 tests green across all 8 workspace packages at the close of this pass (engine 705 /
+one file. 4118 tests green across all 8 workspace packages at the close of this pass — since
+superseded twice the same day, see the two sections below and the now-current snapshot at the top
+of this file (engine 705 /
 client 2377 / server 186 / animator 444 / map-editor 282 / png-pipeline 30 / desktop-shell 81 / root
 build-script 13, `npm run check`) — a fresh datapoint for the snapshot near the top of this file, which
 carries its own warning about having drifted. An earlier round of that battery is what caught a clamp in `applyLitCap` that
@@ -4210,3 +4218,189 @@ than the GPU retires them, so per-render wall time climbs monotonically (0.9ms -
 that do work: stub `gl.drawElements`/`drawArrays` to no-ops to isolate the CPU side, or pace the loop
 with `gl.finish()` per frame for a true total. The draw-call and program-switch *counts* are exact
 either way, which is why they carried this pass.
+
+## Shading ramps become sampled textures (2026-08-24, client-only)
+
+🟢 Render-only, no `ENGINE_VERSION` bump. Third pass in one day, and it closes the section above: both
+of the candidates that section named with a number are done.
+
+**102 -> 27 draw calls, 93 -> 17 program switches**, on the level-1 start room at 8 live enemies,
+1920x855 — the same scenario and the same harness the 165 -> 108 figures came from. The previous pass
+had probed an upper bound of "52 draws / 43 programs" by swapping in a smaller geometry; the real
+change beats it because it shrank the *rig* shading too, which the probe had not touched.
+
+Both numbers were read at one fixed point — room built, nothing fired, 27 wall runs and 9 actors, 52
+children on `entities` both times, `git stash` between the two reads. The per-group rows below are
+identical in every reading taken; only the frame total moves with how many doors and pickups happen to
+be on screen, which is why the section above records 108 draws for the same scenario.
+
+| | before this pass | after |
+| --- | --- | --- |
+| draw calls | 102 | **27** |
+| program switches | 93 | **17** |
+| wall/door block shading | 50 draws / 50 prog | **0 / 0** |
+| actor rig shading | 20 draws / 20 prog | **3 / 2** |
+| unbatched Graphics | 47 (36,174 floats) | **9 (9,208 floats)** |
+| fills across the room's wall shading | 2,294 | **316** |
+
+### One mechanism, both candidates
+
+`render/shadeRamp.ts` (new): a shading gradient as a **sampled texture** rather than a stack of
+hand-stepped constant-alpha rects. A ramp is a one-dimensional function, so it is a 256-texel RGBA
+texture built from a profile and cached by key, and a cue is one quad — 8 floats where the stepped
+form was 150. Smoother, too: the GPU's linear filter interpolates between texels where the old form
+stepped between bands, and `RAMP_TEXELS` puts the worst step below 1/255 for every profile in the
+project at once, which is what let the per-surface band counts be **deleted** rather than retuned.
+
+The route this was expected to take was `FillGradient`, and that is still impossible: it calls
+`DOMAdapter.createCanvas()` at `fill()` time and throws `ReferenceError: document is not defined` in
+this repo's canvas-free tests, which is exactly where the wall and rig shading are machine-checked.
+`rigShading.ts` had carried a note ruling it out since 2026-08-19 and the note was correct — the
+mistake in the previous pass's plan was assuming a gradient had to come from Pixi's gradient class. A
+`BufferImageSource` needs no canvas, so the look became *more* testable rather than untestable:
+`readRampFill` inverts the fill matrix back to the ramp's own segment and `rampProfile` reads its
+texels, so a test asserts where a cue starts, where it ends, and the shape of its falloff. The old
+band comparison could only ever see band centres.
+
+Ramps are anchored to an explicit **segment** in local space, not to the filled shape's bounds. That
+is the non-obvious part and it is load-bearing: half of these cues are drawn on a rect `clampSpan` has
+already narrowed (`drawCornerAO` runs a crease outward from a join and stops at the block edge), and a
+ramp bound to the shape would compress the whole falloff into whatever slice survived instead of
+truncating it — a crease clipped to 2px would show the same full contact-to-nothing gradient as an
+unclipped 13px one.
+
+### What shipped
+
+1. **Wall and door block shading** (`wallShadingSurfaces.ts`, `wallShadingJoins.ts`): 65-116 fills and
+   520-2010 floats per block -> 8-15 fills and ~150 floats. All 27 wall runs and 4 doors now batch
+   with the cap and face sprites beside them. Not pixel-identical, so measured: **max 11/255 on 7.0%
+   of the composited frame, mean 1.62, 86% of changed pixels within 2/255**, with old-vs-old
+   reproducing at exactly 0. That is the bounded-by-half-a-band-step signature, and it agrees with the
+   analytic bound for the coarsest ramp on a lit cap (13-17/255). Visibly *better* at a 6x crop: the
+   west chamfer's five steps are countable as vertical stripes in the old form and gone in the new one
+   — the same defect `SIDE_STEPS`' doc had already recorded for the coping correction.
+2. **Rig sphere shading** (`rigShading.ts`): 40 chord bands + 3 ellipses (55 fills, 710 floats, per
+   rig instance) -> one quad sampling a 256x256 field **normalised by radius**, so it is one bake for
+   the entire game rather than one per (skin, radius). No renderer needed, so it works in a test. This
+   is the half that mattered most in practice: it was a draw call and two program switches *per actor
+   on screen*, at 8 enemies where a level-1 room holds 15-30.
+
+### The defect the measurement found in the code it replaced
+
+The rig frame diff was larger than the wall one (max 113/255 on 1.4% of pixels), and the useful thing
+was asking *where*. Every pixel differing by more than 20/255 sat at 0.8-1.0 of the body radius and at
+one of the two poles of the light axis — 537 at the lit pole, 474 at the dark limb, 38 anywhere else.
+
+A chord band took its half-width from whichever of its two edges was *further* from the centre, so
+every corner provably sat inside the body circle. Correct, and increasingly conservative toward a
+pole, where the chord shrinks fastest: the two outermost bands of 40 had a half-width of **exactly
+zero**. **3.6% of every body circle, in two crescents at the poles, was never painted at all** — and
+that is where the warm wash peaks and where the reflected-light sliver traces the silhouette, i.e. the
+two marks whose entire job is the rim. Nine months of "the shading looks right" and no test could have
+seen it, because every assertion was about the bands rather than about the body.
+`rigShading.test.ts` now pins that shading reaches the rim at both poles.
+
+Generalising: a containment rule that is *provably* safe can be silently over-safe, and the way to
+catch that is to ask a frame diff where its differences are rather than how big they are.
+
+### Two flaws the tests caught in the new code
+
+Both invisible by inspection, both recorded because the shape recurs:
+
+- **A zero-length ramp segment makes the fill matrix singular.** Pixi *inverts* `style.matrix` at
+  geometry-build time, so a rank-1 matrix fills with non-finite values and takes every other fill in
+  that Graphics down with it — not just the degenerate one. Reachable from any cue whose surface
+  collapses. `rampFill` now falls back to a unit direction, which makes a zero-extent ramp a flat fill
+  at `t = 0` — what a gradient with no extent means.
+- **A mask in the wrong place made a test pass for the wrong reason.** The first version of
+  `sphereShadeAt` returned transparent outside the body circle, and `sphereShadeField` then multiplied
+  in an antialiased coverage — so the feather was cut off at its own midpoint, and the "paints nothing
+  outside the circle" test was trivially true because there was nothing out there to contain. The mask
+  now lives only in the field builder.
+
+### Test coverage
+
+54 new tests (`shadeRamp.test.ts` 23, `rigShading.test.ts` re-pointed from geometry to the field), and
+`wallRender.test.ts`'s band-comparison assertions rewritten to read the ramp's own segment. A
+35-mutant battery over both modules' constants, ramp directions and the Pixi contract ends at **35
+killed, 0 survived**. The first run had 6 survivors and they are the interesting part: three were
+**reversible ramp directions** in the wall shading — a one-character edit that leaves the fill count,
+the colours, the alphas and the covered rect all identical, so nothing in a 2377-test suite noticed
+that the cap gradient darkened the open top instead of the fold. The other three were a cache key that
+dropped one end of its profile, the field's transparent border, and its texture space. All six now have
+assertions. `npm run check` green: 4145 tests across all 8 workspace packages.
+
+### The 加测试 follow-up, and the one gate that a budget could not hold
+
+Six more tests afterwards, and they are worth recording because the interesting one is a *failed*
+first attempt at the gate:
+
+- **The perf claim is now an invariant over shipped content, not a number in a doc.**
+  `wallComposition.test.ts` already ran all five shipped level-1 floors through RoomBuilder's real
+  sequence, so the batching question got asked there: every one of **173 blocks** goes through the
+  real `GraphicsContextSystem` and must come back batchable. Measured, the worst shipped block is
+  **120 floats over 15 fills** (p50 112), against 520-2010 before. A block's fill count depends on
+  its tier, cap depth, how many spans its joins split it into and whether it tucks — so the block
+  that would overflow first is some particular run on some particular floor, which is exactly the
+  class of thing a hand-written rect in `wallRender.test.ts` cannot find.
+- **A float budget is the wrong gate, and the mutation battery said so.** The first version asserted
+  headroom (`worst < 200`), deliberately loose enough to allow a future cue. Reverting one ramp to
+  five stepped rects costs +32 floats — it **survived**. What cannot be faked is the *kind* of fill:
+  a sampled ramp carries a texture and a matrix, a hand-stepped band is a plain colour fill. So the
+  rule is now asserted structurally — every fill in every shipped block's shading is a ramp, and the
+  only non-fill is the cap/face fold, which is genuinely one hard line. That kills the same mutant
+  on the first block regardless of what it costs.
+- **The texture-sharing half had no guard at all.** Getting under 400 floats makes a block
+  *batchable*; the blocks only land in *one batch* if they sample the same few textures. A profile
+  that varied with geometry — `alphaRamp(0, height / 200)` is the plausible slip, since every other
+  number in `wallTone` is a fraction of something — would bake one texture per block size and split
+  the batch again with every existing assertion green. The sweep now pins 3 shared profiles across
+  every wall in the game (ceiling of 6, so a fourth cue is allowed and per-block is not).
+- **The cue ORDER was unpinned**, and reordering is invisible to every other assertion (same fills,
+  same alphas, same rects) while changing the look — the base contact crease has to come *after* the
+  side bands or the block's darkest band composites under a 0.86-alpha panel. Pinned against a
+  synthetic all-branches block, and that is the finding: no shipped block reaches every branch,
+  because `wallJoins` sorts a join into `south` **or** `tuckedSouth` and never both.
+- **The counter-flip test had quietly stopped covering what it claimed.** `RigSkin.test.ts` asserted
+  `view.scale.x * shade.scale.x === 1`, which was sufficient while the marks WERE the geometry —
+  cancel the transform and the marks land where they landed. Now the marks live in a texture and the
+  geometry is one symmetric quad, so a cancelled transform no longer implies a cancelled *look*: the
+  field mirrors with the quad only because it is sampled in local space, and mirrors *in place* only
+  because the quad is centred. Get either wrong and the shading double-flips or slides sideways with
+  the scale product still reading 1. Now asserted end to end — the overlay occupies the same world
+  rect whichever way the body faces — and confirmed by a mutant that de-centres the quad.
+- **The rig sweep now uses the authored roster**: all seven shipped skins, drawn radius =
+  `RIG_DEFS[name].referenceRadius * BODY_FILL[name]`, 27.2 to 50 authoring px, each asserted
+  batchable at exactly 8 floats. Radius-independent by construction, which is what makes the boss
+  affordable.
+
+Second battery: 8 mutants aimed at these six tests, **8 killed**. Re-running the first battery after
+them: 35 killed. `npm run check` green at **4151 tests**.
+
+### What is left
+
+27 draws / 17 programs, 9 unbatched Graphics: a door's recess/glow/sill (2010 and 1434 floats at 10
+fills each — stroke-heavy rather than banded, so the ramp treatment does not apply), the player's
+tether Graphics (912 floats), and four 496-float objects. Still not costing frame time (render p50
+~2.1ms of a 16.7ms budget); this remains headroom for a low-end mobile GPU. One divergence was created
+on purpose: `pillarRender` still steps its base contact crease at `BASE_AO_BANDS` = 12 while the wall's
+samples a ramp — they agree to within one band step, and converting it is two shapes rather than one
+(its last band skirts `PILLAR_BASE_PX` below the floor line at a held alpha).
+
+### Measurement notes, since they cost two rounds each
+
+- **`gl.readPixels` on this canvas returns a stale frame.** The context is `antialias: true`,
+  `preserveDrawingBuffer: false`, so the resolved default framebuffer only updates when the page
+  composites — which never happens in a hidden tab. A deliberate "hide every wall's shading and
+  re-read" sanity check reported *zero* difference, which is what a broken harness looks like when it
+  agrees with you.
+- **`renderer.extract.pixels` works but the scene's filters are screen-space.** Extracting a custom
+  frame lights only the region matching the real on-screen position, so 25 of 27 wall blocks came back
+  pure black (mean luma 0) — where a dark overlay genuinely is a no-op. Moving the camera by hand does
+  not help; the light's uniforms follow the game's own per-frame update, not `world.x`.
+- **What is reliable:** `renderer.render(stage)` and then `drawImage(app.canvas, …)` into a 2-D canvas,
+  in the same task. Verify it by restoring the original form and requiring a third read to match the
+  first *exactly* — every number in this section has that restore check at 0. Also: guard a live A/B
+  swap's restore path separately from its apply path. A `if (!node.parent) continue` guard that is
+  right when attaching is what silently skipped the whole restore, and the tell was a "restore check"
+  that equalled the A/B delta instead of zero.

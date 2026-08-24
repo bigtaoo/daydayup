@@ -613,6 +613,35 @@ describe('RigSkin — sphere shading over the body bone', () => {
     expect(skin.view.scale.x).toBe(-1);
     expect(skin.view.scale.x * shadeOf(skin)!.scale.x).toBe(1); // net transform unchanged
   });
+
+  it('leaves the shading in exactly the same place on screen when the body flips', () => {
+    // The scale product above was a sufficient check while the marks WERE the geometry: cancel the
+    // transform and the marks land where they landed. Since 2026-08-24 the marks live in a texture
+    // and the geometry is one symmetric quad, so a cancelled transform no longer implies a
+    // cancelled *look* — the field mirrors with the quad only because it is sampled in the quad's
+    // own local space (`textureSpace: 'local'`), and the quad mirrors in place only because it is
+    // centred on the body. Get either wrong and the shading either double-flips or slides sideways,
+    // with the scale product still reading 1.
+    //
+    // So this asserts the thing that actually matters: the overlay occupies the same world rect
+    // whichever way the body faces.
+    const skin = makeSkin(ORB_CORE_RIG);
+    skin.setBodyFacing(0);
+    skin.update();
+    const right = shadeOf(skin)!.getBounds().rectangle.clone();
+    skin.setBodyFacing(Math.PI);
+    skin.update();
+    const left = shadeOf(skin)!.getBounds().rectangle;
+    expect(left.x).toBeCloseTo(right.x, 6);
+    expect(left.y).toBeCloseTo(right.y, 6);
+    expect(left.width).toBeCloseTo(right.width, 6);
+    expect(left.height).toBeCloseTo(right.height, 6);
+    expect(right.width).toBeGreaterThan(0); // not vacuous
+    // And the quad really is centred, which is the premise that makes a mirror a no-op in position.
+    const local = shadeOf(skin)!.getLocalBounds();
+    expect(local.minX).toBeCloseTo(-local.maxX, 6);
+    expect(local.minY).toBeCloseTo(-local.maxY, 6);
+  });
 });
 
 // The far-side depth cues stacked on top of the z-flip covered above (2026-08-18).

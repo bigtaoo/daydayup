@@ -7,19 +7,22 @@
 // measured against, onto one shared Graphics. `clampSpan` lives in `wallGeometry.ts` rather
 // than in `wallRender.ts` so both this file and that one can import it without either
 // depending on the other.
+//
+// Every crease here is one quad sampling a shared ramp texture — see
+// `wallShadingSurfaces.ts`'s header and `render/shadeRamp.ts` for the whole argument. The
+// clipping case that made `rampFill` anchor its ramp to a SEGMENT rather than to the filled
+// shape is `drawCornerAO`'s, right at the bottom of this file.
 import { Graphics } from 'pixi.js';
+import { alphaRamp, linearRamp, rampFill } from '../../render/shadeRamp';
 import { clampSpan, type RectPx } from './wallGeometry';
 import { blockCapTop, type WallJoins } from './wallRuns';
 import {
   CORNER_AO_ALPHA,
-  CORNER_AO_BANDS,
   CORNER_AO_PX,
   CORNER_AO_WEST_SCALE,
   TUCK_CAP_ALPHA,
-  TUCK_CAP_BANDS,
   TUCK_CAP_PX,
   TUCK_FACE_ALPHA,
-  TUCK_FACE_BANDS,
   TUCK_FACE_SPILL_PX,
   TUCK_FACE_TOP_SCALE,
 } from './wallTone';
@@ -34,12 +37,9 @@ export function drawTuckCapCrease(g: Graphics, r: RectPx, height: number, joins:
   const capTop = blockCapTop(r, height, joins);
   const capDepth = -height - capTop;
   const tuckReach = Math.min(capDepth, TUCK_CAP_PX);
-  const tuckStep = tuckReach / TUCK_CAP_BANDS;
-  for (let i = 0; i < TUCK_CAP_BANDS; i++) {
-    const t = (i + 0.5) / TUCK_CAP_BANDS; // 0 at the wall → 1 at the crease's south end
-    g.rect(0, capTop + i * tuckStep, r.w, tuckStep)
-      .fill({ color: 0x000000, alpha: (1 - t) * TUCK_CAP_ALPHA });
-  }
+  // Darkest against the wall (the crease's north end), gone by its south end.
+  g.rect(0, capTop, r.w, tuckReach)
+    .fill(rampFill(linearRamp(), 0, capTop + tuckReach, 0, capTop, { color: 0x000000, alpha: TUCK_CAP_ALPHA }));
 }
 
 /**
@@ -50,17 +50,14 @@ export function drawTuckCapCrease(g: Graphics, r: RectPx, height: number, joins:
  */
 export function drawTuckFaceCrease(g: Graphics, r: RectPx, height: number, joins: WallJoins): void {
   const crownH = height * joins.crownFraction;
-  const crownStep = crownH / TUCK_FACE_BANDS;
+  // Never fades to nothing at the wall's top: the contact is close enough that the whole crown
+  // is in its shade, `TUCK_FACE_TOP_SCALE` of it at the furthest point.
+  const ramp = alphaRamp(TUCK_FACE_TOP_SCALE, 1);
   for (const [a, b] of joins.tuckedSouth) {
-    for (let i = 0; i < TUCK_FACE_BANDS; i++) {
-      const t = (i + 0.5) / TUCK_FACE_BANDS; // 0 at the wall's top → 1 at the crown's underside
-      const alpha = (TUCK_FACE_TOP_SCALE + (1 - TUCK_FACE_TOP_SCALE) * t) * TUCK_FACE_ALPHA;
-      const core = clampSpan(a - TUCK_FACE_SPILL_PX * 0.5, b - a + TUCK_FACE_SPILL_PX * 1.5, r.w);
-      if (core) {
-        g.rect(core[0], -height + i * crownStep, core[1], crownStep)
-          .fill({ color: 0x000000, alpha });
-      }
-    }
+    const core = clampSpan(a - TUCK_FACE_SPILL_PX * 0.5, b - a + TUCK_FACE_SPILL_PX * 1.5, r.w);
+    if (!core) continue;
+    g.rect(core[0], -height, core[1], crownH)
+      .fill(rampFill(ramp, 0, -height, 0, -height + crownH, { color: 0x000000, alpha: TUCK_FACE_ALPHA }));
   }
 }
 
@@ -68,22 +65,31 @@ export function drawTuckFaceCrease(g: Graphics, r: RectPx, height: number, joins
  * The crease a corner casts on THIS wall's face, where another run stands in front of it.
  * Only the parts of the face flanking a join are exposed at all (the join itself is behind
  * that run's cap), so this is drawn outward from each interval's ends — see `CORNER_AO_PX`.
+ *
+ * **The `clampSpan` here is why `rampFill` takes a segment.** Like the east band, this cue is
+ * INSET, never extruded, so a join sitting at the very end of a wall cannot paint over the
+ * next block along the run — and a clip therefore makes the drawn rect NARROWER than the
+ * crease. The ramp still has to run over the crease's full `CORNER_AO_PX`, with the clip
+ * cutting its outer end off; a ramp normalised to the rect would instead squeeze the whole
+ * falloff into whatever slice survived, so a crease clipped to 2 px would show the same full
+ * contact-to-nothing gradient as an unclipped 13 px one.
  */
 export function drawCornerAO(g: Graphics, r: RectPx, height: number, joins: WallJoins): void {
-  const cornerStep = CORNER_AO_PX / CORNER_AO_BANDS;
   for (const [a, b] of joins.south) {
-    for (let i = 0; i < CORNER_AO_BANDS; i++) {
-      const t = (i + 0.5) / CORNER_AO_BANDS; // 0 at the contact → 1 at the crease's outer end
-      const alpha = (1 - t) * CORNER_AO_ALPHA;
-      // Clamped to the block's own width: like the east band, this is INSET, never extruded, so
-      // a join sitting at the very end of a wall cannot paint over the next block along the run.
-      const east = clampSpan(b + i * cornerStep, cornerStep, r.w);
-      if (east) g.rect(east[0], -height, east[1], height).fill({ color: 0x000000, alpha });
-      const west = clampSpan(a - (i + 1) * cornerStep, cornerStep, r.w);
-      if (west) {
-        g.rect(west[0], -height, west[1], height)
-          .fill({ color: 0x000000, alpha: alpha * CORNER_AO_WEST_SCALE });
-      }
+    // Strongest at the contact, gone `CORNER_AO_PX` out from it, on both sides of the join.
+    const east = clampSpan(b, CORNER_AO_PX, r.w);
+    if (east) {
+      g.rect(east[0], -height, east[1], height)
+        .fill(rampFill(linearRamp(), b + CORNER_AO_PX, -height, b, -height, { color: 0x000000, alpha: CORNER_AO_ALPHA }));
+    }
+    const west = clampSpan(a - CORNER_AO_PX, CORNER_AO_PX, r.w);
+    if (west) {
+      g.rect(west[0], -height, west[1], height).fill(
+        rampFill(linearRamp(), a - CORNER_AO_PX, -height, a, -height, {
+          color: 0x000000,
+          alpha: CORNER_AO_ALPHA * CORNER_AO_WEST_SCALE,
+        }),
+      );
     }
   }
 }

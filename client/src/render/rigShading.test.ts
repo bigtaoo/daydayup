@@ -12,9 +12,18 @@
  *     background — which is what lets this work with no mask at all);
  *   - the light has ONE direction, and the warm side and the dark side oppose it;
  *   - the ramp is monotonic and its steps are small enough to be invisible;
- *   - the reflected-light rollback exists, i.e. the darkest band is NOT the outermost one. That
+ *   - the reflected-light rollback exists, i.e. the darkest point is NOT the outermost one. That
  *     is the difference between a body that reads as round and one that reads as smudged, and
  *     it is a single constant away from silently disappearing.
+ *
+ * **Re-pointed 2026-08-24** at the FIELD rather than at the geometry. The overlay used to be 40
+ * chord bands and 3 ellipses, so every property above was asserted by reading the bands back off
+ * `context.instructions` and comparing neighbours; it is now one quad sampling a baked texture
+ * (`sphereShadeField`), so the same properties are asserted by SAMPLING — which is strictly more
+ * direct, since a band comparison could only ever see band centres. Two of them get sharper as a
+ * result: "steps too small to see" is now a bound on the texel-to-texel step of the shipped
+ * texture, and "inside the body radius" is checked over every texel rather than over band corners.
+ * The perf claim the rewrite was for has its own test at the bottom of the sphere section.
  */
 import { describe, it, expect } from 'vitest';
 import type { Graphics } from 'pixi.js';
@@ -22,10 +31,37 @@ import {
   drawModuleContacts,
   drawSphereShading,
   shadeHex,
+  sphereFormShadowAlpha,
+  sphereShadeAt,
+  sphereShadeField,
+  sphereWarmAlpha,
   MODULE_BEHIND_SCALE,
   MODULE_BEHIND_SHADE,
+  SHADE_FIELD_EXTENT,
+  SHADE_FIELD_TEXELS,
+  SHADE_FIT,
+  SHADE_MAX_ALPHA,
   SHADE_MIN_BODY_R,
+  SHADE_TERMINATOR_T,
+  SHADE_UNDERSIDE,
 } from './rigShading';
+import { AUTO_BATCH_VERTEX_LIMIT } from '../perf/drawAttribution';
+import { GraphicsContextSystem } from 'pixi.js';
+import { BODY_FILL, RIG_DEFS } from './skinRegistry';
+
+/**
+ * Pixi's own batching decision, run for real against the smallest fake renderer
+ * `GraphicsContextSystem` will accept. Duplicated from `staticGraphics.test.ts`, which is where the
+ * 400-float rule itself is pinned — this file only asks the question of the shipped rigs.
+ */
+function contextSystem(): GraphicsContextSystem {
+  const renderer = {
+    uid: 1,
+    limits: { maxBatchableTextures: 16 },
+    gc: { addResourceHash: () => undefined, now: 0 },
+  } as never;
+  return new GraphicsContextSystem(renderer);
+}
 
 interface Instr {
   action: string;
@@ -67,28 +103,49 @@ function fills(g: Graphics): Array<{ color: number; alpha: number; kind: string;
   return out;
 }
 
-/** The centroid of a chord band (a 4-corner poly), which is where along the light axis it sits. */
-function centroid(points: number[]): { x: number; y: number } {
-  let x = 0;
-  let y = 0;
-  for (let i = 0; i < points.length; i += 2) {
-    x += points[i]!;
-    y += points[i + 1]!;
-  }
-  const n = points.length / 2;
-  return { x: x / n, y: y / n };
-}
-
 /** Unit vector toward the key light (upper-left, y-down screen space) — restated here rather
  *  than imported, so a sign flip in `SHADE_KEY_ANGLE` fails a test instead of moving it. */
 const KEY = { x: -Math.SQRT1_2, y: -Math.SQRT1_2 };
-const DARK_MARKS = (g: Graphics) => fills(g).filter((f) => f.color !== 0xffd9a8);
-const WARM_MARKS = (g: Graphics) => fills(g).filter((f) => f.color === 0xffd9a8);
+
+/**
+ * The baked field's own texels, straight off the shipped texture — non-premultiplied back, so an
+ * assertion can talk about "alpha" and "hue" the way the constants are written.
+ *
+ * Reading the TEXTURE rather than calling `sphereShadeAt` is deliberate for the properties that
+ * are about what ships: it covers the sampling grid, the silhouette feather and the 8-bit
+ * quantisation as well as the maths. `sphereShadeAt` is used where the assertion is about the
+ * maths at an exact point.
+ */
+function fieldTexel(nx: number, ny: number): { r: number; g: number; b: number; a: number } {
+  const N = SHADE_FIELD_TEXELS;
+  const to = (n: number) => Math.min(N - 1, Math.max(0, Math.round(((n / SHADE_FIELD_EXTENT + 1) / 2) * N - 0.5)));
+  const buf = sphereShadeField().source.resource as Uint8Array;
+  const o = (to(ny) * N + to(nx)) * 4;
+  const a = buf[o + 3]! / 255;
+  const un = (v: number) => (a > 0 ? Math.min(1, v / 255 / a) : 0);
+  return { r: un(buf[o]!), g: un(buf[o + 1]!), b: un(buf[o + 2]!), a };
+}
+
+/** The far end of the one light axis — where the ramp runs TO. */
+const AWAY = { x: -KEY.x, y: -KEY.y };
+/**
+ * The FORM SHADOW's alpha at parameter `t` along the light axis: 0 is the lit pole, 1 the dark
+ * limb. This is the "ramp" every assertion below about smoothness, monotonicity and the
+ * reflected-light rollback is really about.
+ *
+ * Two things it deliberately is NOT. Not the shading at that point along the axis: the underside
+ * occlusion is a hard-edged blob low on the body and this axis runs diagonally straight through
+ * it, so the combined profile is a ramp with three steps cut into it. And not the composite of the
+ * two washes: the warm one peaks at `t = 0` and the shadow past the terminator, so their combined
+ * alpha is a U and "monotone" would be false of it by design. When these marks were geometry the
+ * tests separated them by FILL COLOUR; picking the term is the same thing.
+ */
+const alphaAtT = (t: number) => sphereFormShadowAlpha(t);
 
 describe('drawSphereShading — the marks that make a flat-cel body read as a sphere', () => {
   it('keeps every mark strictly inside the body radius, so none can spill past the silhouette', () => {
     // The whole reason no mask/clip is needed (a mask per actor would be 30 stencil passes in
-    // a busy room). If a tuning change pushed a band or the underside occlusion past the rim,
+    // a busy room). If a tuning change pushed the ramp or the underside occlusion past the rim,
     // it would render as a grey/warm blob on transparent background outside the character.
     for (const bodyR of [24, 40, 50, 70]) {
       const b = drawSphereShading(bodyR).bounds;
@@ -97,41 +154,45 @@ describe('drawSphereShading — the marks that make a flat-cel body read as a sp
     }
   });
 
-  /** The furthest any drawn mark reaches from the body centre. NOT the same as `bounds`, which is
-   *  an axis-aligned box: the ramp runs diagonally, so its extreme points sit at 45 degrees and the
-   *  box never comes near them. This is the number that decides whether a mark can spill. */
-  function maxMarkRadius(g: Graphics): number {
-    let max = 0;
-    for (const f of fills(g)) {
-      if (f.kind === 'poly') {
-        for (let i = 0; i < f.data.length; i += 2) max = Math.max(max, Math.hypot(f.data[i]!, f.data[i + 1]!));
-      } else {
-        const [cx, cy, rx, ry] = f.data as [number, number, number, number];
-        max = Math.max(max, Math.hypot(Math.abs(cx) + rx, Math.abs(cy) + ry));
+  it('paints nothing at all outside the body circle, over every texel of the field', () => {
+    // The containment guarantee, checked exhaustively rather than at the corners of 40 bands,
+    // which is all the geometry version could do. The quad the field is sampled through is
+    // SQUARE, so its corners reach 1.41x the radius: everything out there has to be transparent,
+    // or the overlay paints on the transparent background diagonally out from the body — the
+    // exact defect `SHADE_FIT` exists for.
+    const N = SHADE_FIELD_TEXELS;
+    const buf = sphereShadeField().source.resource as Uint8Array;
+    const texel = (2 * SHADE_FIELD_EXTENT) / N; // one texel, in units of the body radius
+    let outsideLit = 0;
+    let insideLit = 0;
+    for (let j = 0; j < N; j++) {
+      for (let i = 0; i < N; i++) {
+        const nx = ((i + 0.5) / N) * 2 * SHADE_FIELD_EXTENT - SHADE_FIELD_EXTENT;
+        const ny = ((j + 0.5) / N) * 2 * SHADE_FIELD_EXTENT - SHADE_FIELD_EXTENT;
+        const a = buf[(j * N + i) * 4 + 3]!;
+        // A texel STRADDLING the rim is legitimately part-covered — that is the antialias.
+        if (Math.hypot(nx, ny) > 1 + texel) {
+          if (a > 0) outsideLit++;
+        } else if (a > 0) insideLit++;
       }
     }
-    return max;
-  }
-
-  it('keeps every band CORNER inside the body circle, not merely inside its bounding box', () => {
-    // Bounds cannot catch a rotated band whose corner pokes out through the circle diagonally —
-    // exactly the failure mode a chord band computed from the wrong edge would have. `chordBand`
-    // sizes each band from whichever of its two edges is FURTHER from the centre for this reason.
-    for (const bodyR of [24, 40, 70]) {
-      expect(maxMarkRadius(drawSphereShading(bodyR))).toBeLessThanOrEqual(bodyR + 1e-9);
-    }
+    expect(outsideLit).toBe(0);
+    expect(insideLit).toBeGreaterThan(N * N * 0.5); // ...and the body itself is not blank
   });
 
   it('leaves a real margin at the rim rather than sitting flush against it', () => {
     // The caller passes the DRAWN radius, which is a half-WIDTH, and none of this art is a circle:
     // `critter-core`'s crystal cluster is 35 wide by 38 tall with gaps at its corners, so a ramp
     // flush to that width still showed a faint arc of shading on the background diagonally out
-    // from it. A margin here is what covers every non-circular body at once — and it is invisible
-    // to any `bounds`-based assertion, since the ramp's extremes are at 45 degrees.
+    // from it. A margin here is what covers every non-circular body at once.
     const bodyR = 40;
-    const reach = maxMarkRadius(drawSphereShading(bodyR));
+    const b = drawSphereShading(bodyR).bounds;
+    const reach = Math.max(-b.minX, b.maxX, -b.minY, b.maxY);
     expect(reach).toBeLessThan(bodyR * 0.98);
     expect(reach).toBeGreaterThan(bodyR * 0.85); // ...and not so shy that the limb stops reading
+    // The margin is SHADE_FIT, widened by the field's own transparent border — which must not be
+    // allowed to eat into it, hence both bounds above and not just the upper one.
+    expect(reach).toBeCloseTo(bodyR * SHADE_FIT * SHADE_FIELD_EXTENT, 6);
   });
 
   it('draws real geometry, scaled with the body it is given', () => {
@@ -141,77 +202,185 @@ describe('drawSphereShading — the marks that make a flat-cel body read as a sp
     expect(big.width).toBeGreaterThan(small.width);
     expect(big.width / small.width).toBeCloseTo(70 / 24, 1);
   });
+
+  it('batches for every body in the shipped roster, per real Pixi', () => {
+    // The perf claim, asked of the actual content rather than of a radius someone typed into a
+    // test: every skin's drawn body radius is its rig's own `bodyR` times the share of it the
+    // bundle really paints (`BODY_FILL`, measured off the PNGs). Seven skins across three rigs,
+    // 27.2 to 50 authoring px. The 40-band form was 710 floats at every one of them — a draw call
+    // and two program switches per actor on screen, scaling with the enemy count.
+    const sys = contextSystem();
+    const names = Object.keys(BODY_FILL);
+    expect(names.length).toBeGreaterThanOrEqual(7); // the sweep is a sweep
+    for (const name of names) {
+      const rig = RIG_DEFS[name];
+      expect(rig, `${name} resolves to a rig`).toBeDefined();
+      const drawnR = rig!.referenceRadius * BODY_FILL[name]!;
+      const gpu = sys.updateGpuContext(drawSphereShading(drawnR).context);
+      const floats = gpu.geometryData.vertices.length;
+      expect(gpu.isBatchable, `${name} (drawnR ${drawnR.toFixed(1)}, ${floats} floats)`).toBe(true);
+      // One quad, and the same quad regardless of radius — the field is normalised, so a bigger
+      // body costs no more geometry. That is what makes the boss affordable.
+      expect(floats).toBe(8);
+    }
+    // ...and all of them share the one bake, which is what puts them in the same batch.
+    expect(sphereShadeField()).toBe(sphereShadeField());
+  });
+
+  it('paints the POLES of the light axis, which the chord-band form left bare', () => {
+    // Found by diffing this against the 40-band version it replaced (2026-08-24): every pixel that
+    // changed by more than 20/255 sat at 0.8-1.0 of the radius and at one of the two POLES of the
+    // light axis — 537 at the lit one, 474 at the dark one, 38 anywhere else.
+    //
+    // The cause is in the bands' own construction. A chord band spanning [d0, d1] took its
+    // half-width from whichever edge was FURTHER from the centre, so that every corner provably
+    // sat inside the circle — correct, and increasingly conservative toward a pole, where the chord
+    // shrinks fastest. The two outermost bands of 40 had a half-width of EXACTLY ZERO: 3.6% of
+    // every body circle, in two crescents at the poles, was never painted at all. At the lit pole
+    // that is where the warm wash peaks and at the dark limb it is the reflected-light sliver — the
+    // two marks whose whole job is to trace the silhouette.
+    //
+    // A sampled field has no such construction, so this is a property to keep rather than a bug to
+    // remember: shading must reach all the way to the rim at both ends of the axis.
+    const nearPole = 0.95;
+    for (const k of [KEY, AWAY]) {
+      const at = fieldTexel(k.x * nearPole, k.y * nearPole);
+      expect(at.a).toBeGreaterThan(0.05);
+    }
+  });
+
+  it("keeps a transparent border around the field, so the quad's own edge is never sampled", () => {
+    // Reaching the rim at the poles (above) and mapping the quad's bounds to the texture's full
+    // 0..1 (`textureSpace: 'local'`) are in tension: with the circle inscribed EXACTLY, the shading
+    // would be non-zero at the uv boundary, where Pixi's forced `repeat` address mode wraps a
+    // linear sample onto the opposite edge. `SHADE_FIELD_EXTENT` buys the margin that makes both
+    // safe, and neither symptom would look like a wrapped texture — it would look like a faint
+    // stray arc beside the character.
+    expect(SHADE_FIELD_EXTENT).toBeGreaterThan(1);
+    const N = SHADE_FIELD_TEXELS;
+    const buf = sphereShadeField().source.resource as Uint8Array;
+    const alphaAt = (i: number, j: number) => buf[(j * N + i) * 4 + 3]!;
+    for (let i = 0; i < N; i++) {
+      expect(alphaAt(i, 0)).toBe(0); // top row
+      expect(alphaAt(i, N - 1)).toBe(0); // bottom row
+      expect(alphaAt(0, i)).toBe(0); // left column
+      expect(alphaAt(N - 1, i)).toBe(0); // right column
+    }
+  });
+
+  it('is ONE batchable quad per rig, sharing a single field texture with every other rig', () => {
+    // The reason for the 2026-08-24 rewrite, stated as the thing that would silently regress.
+    // Pixi v8 auto-batches a Graphics only under AUTO_BATCH_VERTEX_LIMIT floats; the 40-band
+    // version was 710, so every actor on screen cost a draw call plus a program switch each way
+    // — and it scaled with the enemy count, which a level-1 room puts at 15-30.
+    const g = drawSphereShading(40);
+    const fillInstrs = instructions(g).filter((i) => i.action === 'fill');
+    expect(fillInstrs).toHaveLength(1);
+    const rects = fillInstrs[0]!.data.path!.instructions.filter((p) => p.action === 'rect');
+    expect(rects).toHaveLength(1); // one quad: 4 corners, 8 floats
+    expect(8).toBeLessThan(AUTO_BATCH_VERTEX_LIMIT);
+    // 'local', so the field is mapped onto the quad's own bounds and therefore scales with the
+    // body. 'global' would map it in world texels — one fixed-size patch wherever the actor
+    // happens to stand, which is a different bug at every position on the map.
+    const style = fillInstrs[0]!.data.style as unknown as { textureSpace?: string };
+    expect(style.textureSpace).toBe('local');
+    // Normalised by radius, so it is one bake for the whole game — not one per (skin, radius),
+    // which is what makes it shareable across every actor in the room and hence batchable.
+    expect(sphereShadeField()).toBe(sphereShadeField());
+    const texOf = (r: number) =>
+      (instructions(drawSphereShading(r))[0]!.data.style as unknown as { texture: unknown }).texture;
+    expect(texOf(24)).toBe(texOf(70));
+  });
 });
 
 describe('drawSphereShading — the light has one direction, and the two washes oppose it', () => {
-  const bodyR = 40;
-
-  it('puts the WARM wash on the key-light side — upper left, the project\'s one direction', () => {
+  it("puts the WARM wash on the key-light side — upper left, the project's one direction", () => {
     // Shared with NormalLitFilter's KEY_DIR and the pillar/wall shading. The light mark is warm
     // rather than white because design/13's shells are near-white flat-cel art: measured at 255
     // before any shading, so a white specular over them is arithmetically a no-op. Hue is the
     // only channel left, and it also does real work on the dark re-tinted enemy bodies.
-    const warm = WARM_MARKS(drawSphereShading(bodyR));
-    expect(warm.length).toBeGreaterThan(4);
-    for (const f of warm) {
-      const c = centroid(f.data);
-      expect(c.x * KEY.x + c.y * KEY.y).toBeGreaterThan(0); // toward the light
-    }
+    const lit = fieldTexel(KEY.x * 0.7, KEY.y * 0.7);
+    expect(lit.a).toBeGreaterThan(0.1);
+    expect(lit.r).toBeGreaterThan(lit.b + 0.1); // warm: red over blue, i.e. a hue and not a value
+    // ...and the far side carries no warmth at all.
+    const dark = fieldTexel(AWAY.x * 0.7, AWAY.y * 0.7);
+    expect(dark.r).toBeLessThan(dark.b);
   });
 
   it('puts the form shadow on the diametrically OPPOSITE side, toward the lower right', () => {
-    // Weighted, not per-band: a smooth ramp deliberately starts before the terminator, so the
-    // faintest bands DO sit on the lit side. What must hold is where the shadow's mass is, and
-    // that nothing substantial lands on the light's own side.
-    const dark = DARK_MARKS(drawSphereShading(bodyR)).filter((f) => f.kind === 'poly');
-    expect(dark.length).toBeGreaterThan(4);
-    const peak = Math.max(...dark.map((f) => f.alpha));
-    let mass = 0;
-    for (const f of dark) {
-      const c = centroid(f.data);
-      const along = c.x * KEY.x + c.y * KEY.y;
-      mass += along * f.alpha;
-      // Half-darkness and beyond must be past the body's centre — the definition of a
-      // terminator. Below that a smooth ramp legitimately reaches onto the lit hemisphere.
-      if (f.alpha > peak * 0.5) expect(along).toBeLessThan(1e-9);
-    }
-    expect(mass).toBeLessThan(0);
+    // A smooth ramp deliberately starts before the terminator, so faint darkening DOES reach the
+    // lit side. What must hold is that HALF-DARKNESS sits past the body's centre — that is what
+    // the word terminator means, and `SHADE_TERMINATOR_T` is where it is put.
+    expect(SHADE_TERMINATOR_T).toBeGreaterThan(0.5);
+    expect(alphaAtT(SHADE_TERMINATOR_T)).toBeCloseTo(SHADE_MAX_ALPHA / 2, 3);
+    // Half-darkness is crossed ONCE, and past the centre — the ramp climbs monotonically to it.
+    const crossings = Array.from({ length: 1000 }, (_, i) => i / 999)
+      .filter((t, i, all) => i > 0 && alphaAtT(t) >= SHADE_MAX_ALPHA / 2 && alphaAtT(all[i - 1]!) < SHADE_MAX_ALPHA / 2);
+    expect(crossings).toHaveLength(1);
+    expect(crossings[0]!).toBeGreaterThan(0.5);
+    // ...and nothing SUBSTANTIAL lands on the light's own side. The previous form of this check
+    // compared "over half the peak" against t > 0.5 and passed only because its 40-band grid
+    // never sampled t = 0.5: the rollback pulls the peak down to ~0.297, so half of THAT is
+    // crossed at t = 0.487, marginally on the lit side. Half of the ramp's own scale is the
+    // number the terminator is defined against, and it lands where the constant says.
+    expect(alphaAtT(0.25)).toBeLessThan(SHADE_MAX_ALPHA * 0.15);
+    expect(alphaAtT(0.85)).toBeGreaterThan(alphaAtT(0.15)); // and the shadow side is the darker one
+    // The warm wash is the mirror statement, on the other term: it exists only on the lit side.
+    expect(sphereWarmAlpha(0.15)).toBeGreaterThan(0);
+    expect(sphereWarmAlpha(0.85)).toBe(0);
   });
 
   it('holds the two washes a full 180° apart, not merely on different sides', () => {
     // A single sign error in SHADE_KEY_ANGLE would stack both on one side, which reads as a
     // smudge rather than as a lit form — and would still pass a looser "opposite sides" check.
-    const g = drawSphereShading(bodyR);
-    const warmest = centroid(WARM_MARKS(g)[0]!.data);
-    const darkest = DARK_MARKS(g).filter((f) => f.kind === 'poly').at(-1)!;
-    const d = centroid(darkest.data);
-    const dot = (warmest.x * d.x + warmest.y * d.y) / (Math.hypot(warmest.x, warmest.y) * Math.hypot(d.x, d.y));
+    // Read as the alpha-weighted centroid of the warm mark and of the dark one over the field.
+    const N = 64;
+    const wc = { x: 0, y: 0, m: 0 };
+    const dc = { x: 0, y: 0, m: 0 };
+    for (let j = 0; j < N; j++) {
+      for (let i = 0; i < N; i++) {
+        const nx = ((i + 0.5) / N) * 2 - 1;
+        const ny = ((j + 0.5) / N) * 2 - 1;
+        if (Math.hypot(nx, ny) > 1) continue;
+        // Weighted by each TERM rather than by the composite: where the shadow overlays the
+        // wash, the blend's own hue no longer says which mark put it there, and the underside
+        // occlusion (symmetric, low on the body) is not part of the directional lighting at all.
+        const t = 0.5 + (nx * AWAY.x + ny * AWAY.y) / 2;
+        const warm = sphereWarmAlpha(t);
+        const dark = sphereFormShadowAlpha(t);
+        wc.x += nx * warm; wc.y += ny * warm; wc.m += warm;
+        dc.x += nx * dark; dc.y += ny * dark; dc.m += dark;
+      }
+    }
+    expect(wc.m).toBeGreaterThan(0);
+    expect(dc.m).toBeGreaterThan(0);
+    const dot = (wc.x * dc.x + wc.y * dc.y) / (Math.hypot(wc.x, wc.y) * Math.hypot(dc.x, dc.y));
     expect(dot).toBeCloseTo(-1, 6);
   });
 });
 
 describe('drawSphereShading — the ramp is smooth, and it rolls back at the limb', () => {
-  const bodyR = 40;
-
   it('steps the form shadow up in alpha by amounts too small to see', () => {
-    // The whole point of many non-overlapping bands: each band's alpha IS its ramp value, so the
-    // step between neighbours is what a viewer could notice as a contour. On near-white art a
-    // step of 0.02 is ~5/255, which is invisible; the old 4-arc version stepped ~0.08 AND
-    // overlapped, which is what made the shadow side look dirty.
-    const dark = DARK_MARKS(drawSphereShading(bodyR)).filter((f) => f.kind === 'poly');
-    for (let i = 1; i < dark.length; i++) {
-      expect(Math.abs(dark[i]!.alpha - dark[i - 1]!.alpha)).toBeLessThan(0.025);
+    // A step is a contour the eye can find, and on near-white art 0.025 alpha is already ~6/255.
+    // The 40-band version's worst step was ~0.02, in the reflected-light rollback; sampling at
+    // SHADE_FIELD_TEXELS puts the same worst step an order of magnitude lower. This is the
+    // assertion that pins the resolution constant.
+    const N = SHADE_FIELD_TEXELS;
+    let worst = 0;
+    for (let i = 1; i < N; i++) {
+      worst = Math.max(worst, Math.abs(alphaAtT(i / (N - 1)) - alphaAtT((i - 1) / (N - 1))));
     }
+    expect(worst).toBeLessThan(0.005);
   });
 
   it('ramps UP monotonically until the reflected-light rollback, then back DOWN', () => {
-    const dark = DARK_MARKS(drawSphereShading(bodyR)).filter((f) => f.kind === 'poly');
-    const alphas = dark.map((f) => f.alpha);
+    const N = 200;
+    const alphas = Array.from({ length: N }, (_, i) => alphaAtT(i / (N - 1)));
     const peak = alphas.indexOf(Math.max(...alphas));
     expect(peak).toBeGreaterThan(0);
-    expect(peak).toBeLessThan(alphas.length - 1); // NOT the outermost band — that is the point
-    for (let i = 1; i <= peak; i++) expect(alphas[i]!).toBeGreaterThanOrEqual(alphas[i - 1]!);
-    for (let i = peak + 1; i < alphas.length; i++) expect(alphas[i]!).toBeLessThan(alphas[i - 1]!);
+    expect(peak).toBeLessThan(N - 1); // NOT the limb — that is the point
+    for (let i = 1; i <= peak; i++) expect(alphas[i]!).toBeGreaterThanOrEqual(alphas[i - 1]! - 1e-12);
+    for (let i = peak + 1; i < N; i++) expect(alphas[i]!).toBeLessThan(alphas[i - 1]! + 1e-12);
   });
 
   it('leaves the outermost sliver of the shadow side visibly lighter than the shadow core', () => {
@@ -219,7 +388,7 @@ describe('drawSphereShading — the ramp is smooth, and it rolls back at the lim
     // difference between a round body and a smudged one, because it leaves a lit edge tracing
     // the silhouette. The old version put its DARKEST arc at 0.91 of the radius — right on the
     // rim — and measured as a dirty outline.
-    const alphas = DARK_MARKS(drawSphereShading(bodyR)).filter((f) => f.kind === 'poly').map((f) => f.alpha);
+    const alphas = Array.from({ length: 200 }, (_, i) => alphaAtT(i / 199));
     const last = alphas.at(-1)!;
     expect(last).toBeLessThan(Math.max(...alphas) * 0.75);
     expect(last).toBeGreaterThan(0); // still in shadow, just not the darkest part of it
@@ -228,25 +397,44 @@ describe('drawSphereShading — the ramp is smooth, and it rolls back at the lim
   it('strengthens the shadow enough to survive near-white flat-cel art', () => {
     // design/13's shells are near-white, and the first tuning (terminator alphas 0.20 down to
     // 0.08) was invisible over them in a 7x render. This is a floor on that lesson.
-    const alphas = DARK_MARKS(drawSphereShading(bodyR)).map((f) => f.alpha);
+    const alphas = Array.from({ length: 200 }, (_, i) => alphaAtT(i / 199));
     expect(Math.max(...alphas)).toBeGreaterThan(0.25);
   });
 
   it('adds an underside occlusion, symmetric in x and low on the body', () => {
     // The form ramp only darkens the lower RIGHT. Measured, the shell's lower LEFT stayed pure
     // white right down to the silhouette, which reads as a disc lit from the side rather than as
-    // a sphere sitting over a floor. These ellipses are the other half of that.
-    const under = DARK_MARKS(drawSphereShading(bodyR)).filter((f) => f.kind === 'ellipse');
-    expect(under.length).toBeGreaterThanOrEqual(3);
-    for (const f of under) {
-      const [cx, cy] = f.data;
-      expect(cx).toBe(0); // symmetric in x — not part of the directional lighting
-      expect(cy!).toBeGreaterThan(0); // y-down: low on the body
+    // a sphere sitting over a floor. This occlusion is the other half of that.
+    expect(SHADE_UNDERSIDE.length).toBeGreaterThanOrEqual(3);
+    for (const [cy, rx, ry] of SHADE_UNDERSIDE) {
+      expect(cy).toBeGreaterThan(0); // y-down: low on the body
+      expect(rx).toBeGreaterThan(ry); // squashed, like every other round thing in this tilted view
     }
+    // ...and its EFFECT, which is the half a constant table cannot show: the lower LEFT — the
+    // quadrant the directional ramp does not touch — comes out darker than the upper left.
+    expect(sphereShadeAt(-0.4, 0.45).a).toBeGreaterThan(sphereShadeAt(-0.4, -0.45).a);
+    // Symmetric in x: mirroring a point about the body's vertical axis must not change how much
+    // of THIS mark it gets. Checked as the difference from the mirrored point's ramp value, since
+    // the directional ramp itself is deliberately not symmetric.
+    const under = (nx: number, ny: number) => sphereShadeAt(nx, ny).a - sphereShadeAt(nx, -ny).a;
+    expect(under(0.35, 0.5)).toBeGreaterThan(0);
+    expect(under(-0.35, 0.5)).toBeGreaterThan(0);
   });
 
   it('draws no pure-white mark at all, since white over near-white art is a no-op', () => {
-    for (const f of fills(drawSphereShading(bodyR))) expect(f.color).not.toBe(0xffffff);
+    // Value has nowhere to go on art that already reads 255, so every mark has to be a hue shift
+    // or a darkening. A NEUTRAL texel anywhere would be the old white-specular bug returning.
+    const pts: Array<[number, number]> = [
+      [KEY.x * 0.9, KEY.y * 0.9],
+      [KEY.x * 0.4, KEY.y * 0.4],
+      [AWAY.x * 0.5, AWAY.y * 0.5],
+      [AWAY.x * 0.9, AWAY.y * 0.9],
+    ];
+    for (const [nx, ny] of pts) {
+      const c = sphereShadeAt(nx, ny);
+      if (c.a <= 0.001) continue;
+      expect(Math.abs(c.r / c.a - c.b / c.a)).toBeGreaterThan(0.02);
+    }
   });
 });
 

@@ -48,6 +48,11 @@ console.log(window.__perf.attribute({ walls, actors, ground: [L.ground], shadow:
 console.log(window.__perf.census().text);
 ```
 
+...and the census row to look for is a `Graphics` over 400 floats with a `!`. After the sampled-ramp
+pass the wall shading is 8-15 fills of ~150 floats and does not appear; what does is a door's
+stroke-heavy recess (2010 floats, 10 fills), which is a different shape of problem and not one a ramp
+texture fixes.
+
 Thresholds, matching funny's `nw_fps_warn` / `nw_cpu_busy_warn` escape hatch under this
 repo's key namespace:
 
@@ -162,6 +167,60 @@ Both were verified by reading the frame back out of the GL context and diffing i
 form rebuilt in the live scene: **0 of 1,641,600 pixels different**, twice. For a change that claims
 to be a pure optimisation that is the check to run — not a screenshot, and certainly not the source.
 
+## The third measurement: the ramps themselves (2026-08-24)
+
+Both of the routes the section below named got done the same day, in one mechanism —
+`render/shadeRamp.ts`, which draws a shading gradient as a **sampled 256-texel texture** instead of a
+stack of hand-stepped rects. Same scenario, 8 live enemies at 1920x855, both reads taken at one fixed
+point (room built, nothing fired, 52 children on `entities`) with `git stash` between them — the frame
+TOTAL drifts by a few draws with how many doors and pickups are on screen, the per-group rows do not:
+
+| | before | after |
+| --- | --- | --- |
+| draw calls | 102 | **27** |
+| program switches | 93 | **17** |
+| wall/door block shading | 50 draws / 50 prog | **0 / 0** |
+| actor rig shading | 20 draws / 20 prog | **3 / 2** |
+| unbatched Graphics | 47 (36,174 floats) | **9 (9,208 floats)** |
+
+`FillGradient` — the obvious tool, and the one the plan below names — is still unusable here: it calls
+`DOMAdapter.createCanvas()` at `fill()` time and throws in the canvas-free test environment. A
+`BufferImageSource` does not, so the same smoothness arrives *with* machine-checkable ramps
+(`readRampFill` recovers the ramp's segment from a fill style, `rampProfile` reads its texels).
+
+Two things this pass learned about measuring, both of which cost a round:
+
+- **`gl.readPixels` on this canvas is a stale frame.** `antialias: true` +
+  `preserveDrawingBuffer: false` means the resolved default framebuffer only updates on a page
+  composite, which never happens in a hidden tab. Hiding all 27 wall shadings and re-reading reported
+  **zero** difference — a broken harness agreeing with you.
+- **`renderer.extract.pixels` respects the frame you ask for, but the scene's filters are
+  screen-space.** Extract a custom region and only the part matching the real on-screen position is
+  lit; 25 of 27 wall blocks came back at mean luma 0, where a dark overlay is a genuine no-op.
+
+What works, and what every number above came from:
+
+```js
+const app = window.__game.app;
+const read = () => { app.renderer.render(app.stage);
+  const c = document.createElement('canvas'); c.width = app.canvas.width; c.height = app.canvas.height;
+  c.getContext('2d').drawImage(app.canvas, 0, 0);
+  return c.getContext('2d').getImageData(0, 0, c.width, c.height); };
+const A = read();            // new form
+swapInOldForm();
+const B = read();            // old form, rebuilt live
+swapBackToNewForm();
+const C = read();            // MUST equal A exactly, or the numbers mean nothing
+```
+
+That third read is not optional. This pass shipped a swap helper whose restore path was skipped by an
+`if (!node.parent) continue` guard — correct when attaching, wrong when re-attaching a detached node —
+and the only symptom was a "restore check" that equalled the A/B delta instead of zero.
+
+And when a diff IS non-zero, ask **where** before asking how big. Binning the rig-shading deltas by
+normalised radius and by angle to the key light is what found a real defect in the *old* code: its
+chord bands left 3.6% of every body circle unpainted, in two crescents at the poles of the light axis.
+
 ## What the numbers say to attack next
 
 ~90 of the remaining 98 program switches and 90 of the 108 draw calls are Graphics inside the
@@ -173,6 +232,9 @@ program switches) but `entities` is invalidated every frame, so the batcher repa
 2247 fills per frame — **+0.7 ms on a 2.4 ms render**. `render/staticGraphics.ts` documents the rule
 that came out of it, and `RoomBuilder.test.ts` has a test whose whole job is to stop the next person
 reaching for it.
+
+*(Superseded by the section above — this is the plan as it stood, kept because its reasoning was right
+and its choice of tool was not.)*
 
 The route with a number behind it is to get that geometry *under* the 400-float line rather than to
 override it. Probed live by swapping in a smaller shading geometry: the frame goes to **52 draws /

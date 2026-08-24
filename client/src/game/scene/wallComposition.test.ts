@@ -30,6 +30,7 @@
  * survive in a canvas-free vitest run.
  */
 import { describe, it, expect } from 'vitest';
+import { GraphicsContextSystem } from 'pixi.js';
 import { readdirSync, readFileSync } from 'node:fs';
 import { inflateSync } from 'node:zlib';
 import {
@@ -43,7 +44,19 @@ import {
 import { fpToPx } from '../coords';
 import { WALL_H_KERB, wallHeight, wallTier, type RectPx } from './wallGeometry';
 import { mergeWallRuns, wallJoins, type WallJoins, type WallRun } from './wallRuns';
-import { FACE_CROWN_FRACTION_MIN, FACE_CROWN_ROWS, faceCrownFraction } from './wallTone';
+import {
+  BASE_AO_MAX,
+  CAP_GRADIENT_MAX,
+  FACE_COPING_SUPPRESS,
+  FACE_CROWN_FRACTION_MIN,
+  FACE_CROWN_ROWS,
+  LIT_EDGE_COLOR,
+  SIDE_COLOR,
+  faceCrownFraction,
+} from './wallTone';
+import { drawBlockShading } from './wallRender';
+import { AUTO_BATCH_VERTEX_LIMIT } from '../../perf/drawAttribution';
+import { readRampFill, resetShadeRampCache, shadeRampCacheSize } from '../../render/shadeRamp';
 
 /** One floor, taken all the way through the sequence `RoomBuilder.build` uses. */
 interface Floor {
@@ -526,5 +539,166 @@ describe('FACE_CROWN_ROWS — measured off the shipped art, and still true of it
       const rows = pngRowLuma(`biome/wallface_${el}.png`);
       expect(mortarRow(rows), el).not.toBe(Math.round(rows.length * 0.4));
     }
+  });
+});
+
+/**
+ * Pixi's own batching decision, run for real against the smallest fake renderer
+ * `GraphicsContextSystem` will accept. Duplicated from `render/staticGraphics.test.ts`, which is
+ * where the 400-float rule itself is pinned — this file only asks the question of real content.
+ */
+function contextSystem(): GraphicsContextSystem {
+  const renderer = {
+    uid: 1,
+    limits: { maxBatchableTextures: 16 },
+    gc: { addResourceHash: () => undefined, now: 0 },
+  } as never;
+  return new GraphicsContextSystem(renderer);
+}
+
+describe('shipped level-1 walls — the shading still batches', () => {
+  // The 2026-08-24 sampled-ramp pass is worth 50 of the frame's 102 draw calls, and the whole win
+  // rests on one property of every block: its shading geometry stays under Pixi's 400-float
+  // auto-batch line. That is a property of CONTENT, not of a hand-written rect — a block's fill
+  // count depends on its tier, its cap depth, how many spans its joins split it into and whether it
+  // tucks, so the block that overflows first will be some particular run on some particular floor.
+  // Nothing else in the suite would notice: the shading would still draw, still look identical, and
+  // just quietly cost a draw call and two program switches again.
+  //
+  // So: every wall of every shipped floor, through the real `GraphicsContextSystem`.
+
+  it("keeps every block's shading under Pixi's auto-batch line, on all five floors", () => {
+    const sys = contextSystem();
+    let blocks = 0;
+    let worstFloats = 0;
+    let worstFills = 0;
+    let worstWhere = '';
+    for (const f of FLOORS) {
+      for (const [i, run] of f.runs.entries()) {
+        const g = drawBlockShading(run.rect, wallHeight(run.tier), f.joins[i]!);
+        const gpu = sys.updateGpuContext(g.context);
+        const floats = gpu.geometryData.vertices.length;
+        const fills = g.context.instructions.length;
+        expect(
+          gpu.isBatchable,
+          `floor ${f.index} run ${i} (${run.rect.w}x${run.rect.h}, tier ${run.tier}, ${floats} floats, ${fills} fills)`,
+        ).toBe(true);
+        blocks++;
+        if (floats > worstFloats) {
+          worstFloats = floats;
+          worstWhere = `floor ${f.index} run ${i} (${run.rect.w}x${run.rect.h})`;
+        }
+        worstFills = Math.max(worstFills, fills);
+      }
+    }
+    // The sweep has to be a sweep. If a content or merge change emptied it, every assertion above
+    // would vacuously pass.
+    expect(blocks).toBeGreaterThan(50);
+    // ...and the headroom, stated so the next person adding a cue can see what they are spending.
+    // The stepped form these replaced ran 520-2010 floats, i.e. 1.3-5x over the line; the worst
+    // shipped block is now 120 floats over 15 fills.
+    expect(worstFloats, `worst block: ${worstWhere}`).toBeLessThan(AUTO_BATCH_VERTEX_LIMIT / 2);
+    expect(worstFills).toBeLessThan(30);
+  });
+
+  it('draws every graduated cue as a SAMPLED ramp, never as hand-stepped bands', () => {
+    // The structural form of the rule, and the gate that actually holds it. A float budget does not:
+    // reverting one cue to 5 stepped rects costs +32 floats, which fits inside any headroom loose
+    // enough to allow a future cue — measured, it survives the sweep above.
+    //
+    // What cannot be faked is the KIND of fill. A sampled ramp carries a texture and a matrix
+    // (`readRampFill` recovers them); a hand-stepped band is a plain colour fill. So: every fill in
+    // every shipped block's shading is a ramp, and the only non-fill is the cap/face fold, which is
+    // a single hard line and correctly a stroke. Anyone hand-banding a gradient here again fails
+    // this on the first block, whatever it costs in floats.
+    let fills = 0;
+    let strokes = 0;
+    for (const f of FLOORS) {
+      for (const [i, run] of f.runs.entries()) {
+        const g = drawBlockShading(run.rect, wallHeight(run.tier), f.joins[i]!);
+        for (const ins of g.context.instructions as ReadonlyArray<{ action: string; data: { style?: unknown } }>) {
+          if (ins.action === 'stroke') {
+            strokes++;
+            continue;
+          }
+          expect(ins.action, `floor ${f.index} run ${i}`).toBe('fill');
+          expect(
+            readRampFill(ins.data.style),
+            `floor ${f.index} run ${i} (${run.rect.w}x${run.rect.h}) has a flat fill, not a ramp`,
+          ).not.toBeNull();
+          fills++;
+        }
+      }
+    }
+    expect(fills).toBeGreaterThan(500); // ~173 blocks x 8-15 cues
+    expect(strokes).toBeGreaterThan(0); // the fold is still drawn
+  });
+
+  it('samples only a handful of SHARED ramp textures across every wall in the game', () => {
+    // The other half of the draw-call argument, and the one with no other guard on it. Getting
+    // under 400 floats makes a block batchable; the blocks only end up in ONE batch if they all
+    // sample the same few textures, because a batch holds a bounded number of texture slots.
+    //
+    // A profile that varied with geometry — `alphaRamp(0, height / 200)` is the plausible slip,
+    // since every other number in `wallTone` is a fraction of something — would bake one texture
+    // per distinct block size, blow the slot budget, and split the batch again. Every existing
+    // assertion would stay green: the cache would still work, each ramp would still be linear, each
+    // block would still be one quad.
+    resetShadeRampCache();
+    for (const f of FLOORS) {
+      for (const [i, run] of f.runs.entries()) drawBlockShading(run.rect, wallHeight(run.tier), f.joins[i]!);
+    }
+    // Three profiles as of this pass: the plain 0->1 ramp, the east band's 0.45->1, and the crown
+    // crease's 0.25->1. A ceiling rather than an equality, so adding a fourth cue is allowed and
+    // going per-block is not.
+    expect(shadeRampCacheSize()).toBeGreaterThan(0);
+    expect(shadeRampCacheSize()).toBeLessThanOrEqual(6);
+  });
+
+  it('draws its cues in the order the tones were measured against', () => {
+    // `drawBlockShading`'s call order IS part of the look — Pixi paints fills in call order and a
+    // later one composites over an earlier one, which is why both shading modules' headers say so.
+    // Reordering is invisible to every other assertion in the suite (same fills, same alphas, same
+    // rects) and changes what the block looks like, so the sequence is pinned.
+    //
+    // The joins here are SYNTHETIC on purpose, and that is the finding: no shipped block exercises
+    // every branch at once, because `wallJoins` sorts a join into `south` OR `tuckedSouth` and never
+    // both (a corner and a tuck are the two answers to the same question). Ordering is a property of
+    // the function rather than of the content, so the subject is built to reach all of it, and the
+    // sweep above is what covers the real geometry.
+    const rect = { x: 0, y: 0, w: 480, h: 224 };
+    const height = wallHeight('perimeter');
+    const all = {
+      north: [[0, 480]] as Array<[number, number]>,
+      south: [[100, 160]] as Array<[number, number]>,
+      tuckNorth: true,
+      tuckLiftPx: height * (1 - FACE_CROWN_FRACTION_MIN),
+      tuckedSouth: [[300, 360]] as Array<[number, number]>,
+      crownFraction: FACE_CROWN_FRACTION_MIN,
+      doorClip: false,
+    };
+    const g = drawBlockShading(rect, height, all);
+    const tones = (
+      g.context.instructions as ReadonlyArray<{ action: string; data: { style?: { color?: number; alpha?: number } } }>
+    ).map((ins) => `${ins.action}:${ins.data.style?.color}@${ins.data.style?.alpha?.toFixed(3)}`);
+    const at = (needle: string) => tones.findIndex((t) => t.includes(needle));
+    const capGradient = at(`fill:0@${CAP_GRADIENT_MAX.toFixed(3)}`);
+    const coping = at(`fill:0@${FACE_COPING_SUPPRESS.toFixed(3)}`);
+    const chamfer = at(`fill:${LIT_EDGE_COLOR}@`);
+    const eastBand = at(`fill:${SIDE_COLOR}@`);
+    const fold = tones.findIndex((t) => t.startsWith('stroke:'));
+    const baseCrease = at(`fill:0@${BASE_AO_MAX.toFixed(3)}`);
+    for (const [name, idx] of Object.entries({ capGradient, coping, chamfer, eastBand, fold, baseCrease })) {
+      expect(idx, `${name} is drawn at all`).toBeGreaterThanOrEqual(0);
+    }
+    // Cap depth gradient, the face's coping correction, the side bands, then the fold stroke...
+    expect(capGradient).toBeLessThan(coping);
+    expect(coping).toBeLessThan(chamfer);
+    expect(chamfer).toBeLessThan(eastBand); // warm chamfer before the dark band, per length band
+    expect(eastBand).toBeLessThan(fold);
+    // ...and the base contact crease LAST of all. It has to outlive the side bands: drawn before
+    // them, the block's darkest band would be composited under a 0.86-alpha side panel and the
+    // wall would stop meeting the floor.
+    expect(baseCrease).toBe(tones.length - 1);
   });
 });
