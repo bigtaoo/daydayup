@@ -71,10 +71,13 @@ out of the way, from a report that the character *"跑到墙下面去了"*; the 
 (`occlusionCoverage.test.ts`) measured 5.5% of level 1's standable floor as having made the player
 *completely* invisible, and none of it leaves more than half hidden now. See "The character
 disappeared behind a wall" below. That sweep is also what turned up v44's four wall runs.
-Also render-only, and the last of the scene's Graphics placeholders: 2026-08-20's **drop and portal
-art** — the five in-run pickup kinds and the extraction gate's masonry arch become sprites, leaving
-only bullets (deliberately) and the in-world health bar on procedural geometry. See "The drops and the
-gate get real art" below.
+Also render-only: 2026-08-20's **drop and portal art** — the five in-run pickup kinds and the
+extraction gate's masonry arch become sprites. See "The drops and the gate get real art" below. That
+entry called itself "the last of the scene's Graphics placeholders" and was wrong by one:
+`RoomPiece.props` was still drawing Graphics silhouettes, closed 2026-08-24 by the room-prop art
+pass below. What is left on procedural geometry now is bullets (deliberately) and the in-world
+health bar — and `propRender.ts`'s fallback, kept on purpose so the next prop kind has something
+to draw before its art exists.
 Earlier, also render-only (no `ENGINE_VERSION` bump — 🟢): the DEFEAT/VICTORY result
 screen's confirm gesture changed from tap-anywhere-on-the-panel (plus a raw fire-button
 rising edge, `confirmEdge.ts`, now deleted) to a single explicit CONFIRM `Button` — the same
@@ -98,11 +101,11 @@ reachable from any unit test — a full `createGameEngine` end-to-end regression
 `dungeonrun.test.ts` reproducing the reported bug shape directly: one room, two
 real spawned enemies (one beside the player, one clear across the room), driven
 through the real tick order, confirming the near one engages immediately while the
-far one fires zero bullets until it closes the distance. **4151 tests green across all 8
-workspace packages** (engine 705 / client 2410 / server 186 / animator 444 / map-editor 282 /
-png-pipeline 30 / desktop-shell 81 / root build-script 13, `npm run check`, re-measured
-2026-08-24 — the count and the package list had both drifted, so re-measure rather than
-trusting it) after fixing two real bugs found from a live player report ("cleared
+far one fires zero bullets until it closes the distance. **4220 tests green across all 8
+workspace packages** (engine 705 / client 2470 / server 186 / animator 444 / map-editor 282 /
+png-pipeline 39 / desktop-shell 81 / root build-script 13, `npm run check`, re-measured
+2026-08-24 after the room-prop pass — the count and the package list have both drifted before,
+so re-measure rather than trusting it) after fixing two real bugs found from a live player report ("cleared
 the room, door's unlocked, still can't walk through it") — see the Room & door model
 section below for the full account. Before that, closing a real gap the test-coverage audit
 pass had flagged and left open: `onRequestSave` (tools/desktop-shell/src/preload.ts) now
@@ -3855,14 +3858,86 @@ half-checked numbers.
 
 ### Still open in this area
 
-- Six of the fourteen `ember_l1` room pieces (alcove/bastion/caldera/cell/span/rampart) have no props
-  yet — the eight decorated this pass were picked for having enough clear floor to matter, not for
-  completeness.
-- No real prop art exists (`propRender.ts`'s Graphics fallback is the only art these draw today) —
-  `render/environmentSprites.ts getPropTexture` is wired and ready (same optional-texture-else-Graphics
-  shape every other object in the room already uses), waiting on a dedicated art pass.
-- The queue the user parked for later, otherwise unchanged: **in-world element icon badges**,
-  **poison biome art**, **character back sets**, **rarity overlay spec**.
+- ~~Six of the fourteen `ember_l1` room pieces have no props yet~~ — **closed 2026-08-24**: all
+  fourteen are authored 3-4 each (54 placements, was 15), swept by `propContent.test.ts`.
+- ~~No real prop art exists~~ — **closed 2026-08-24**: `prop_{crate,barrel,rubble}.png` ship, and
+  landing them was three rows in `ENV_SPRITE_ASSETS` exactly as `getPropTexture`'s comment
+  predicted. See "Room props get real art" below.
+- The queue the user parked for later: **in-world element icon badges**, **poison biome art**,
+  **rarity overlay spec**. ~~character back sets~~ came off this list on 2026-08-24 — the half that
+  was visible in play (a character facing away still showing its front belly chamber) is fixed with
+  no art at all; see design/12 and the same section below. Worth noting what the remaining three
+  have in common, since it bears on when to schedule them: each is a *locked* design rule that
+  shipped half-built rather than a nice-to-have. design/13 line 56 calls the element
+  colour-plus-icon pair a hard dual-channel rule and only the colour channel exists, so any future
+  elemental content is already leaning on a legibility backstop that was never built.
+
+---
+
+## Room props get real art, and three loaders that were never mip-mapped (2026-08-24, client-only)
+
+The user's framing set the priority: *"我主要是不想在堆完功能之后突然发现美术表现不达标，或者很多功能美术上根本无法实现，或者客户端帧率很低。所以我想先验证关卡里完整的美术表现和客户端性能"* — validate level 1's art and the client's performance BEFORE more feature work. Against that, the parked render-perf list (door recess strokes, pillar base AO, the tether Graphics) is neither art nor features and costs nothing today (render p50 2.1 ms of 16.7), so all of it stays parked; what the level was actually missing was **props**, the last Graphics placeholder in a room.
+
+🟢 Render/content-only, no `ENGINE_VERSION` impact.
+
+### The art
+
+Three shipped files (`client/public/environment/prop_{crate,barrel,rubble}.png`) from four generations, with the full prompt/rejection record in `art/props/prompts.md`. The reject is instructive and is kept as a negative fixture: the first rubble came back as pale diagonal splinters (median luma 61 against the ember floor's 34, aspect 23% over) and read as bone chips on dark stone — backwards from design/13's "environment desaturated, hazards saturated", where a light heap reads as loot. Its TONE was fixable offline with `lumaCurve.mjs`; its silhouette was not, which is what decided the reroll. Three things in the reroll prompt each fixed a measured failure: naming the primitive ("BLOCKS, not shards", with a count), stating the value target numerically (median ~45, highlights <=100 — it landed 48/95), and naming what a wrong value would be mistaken for.
+
+The accepted barrel did NOT honour its requested aspect (0.719 against 0.94), so it stands 22.3 px rather than 17. `PROP_METRICS` moved to match the art rather than the art being squeezed to fit: 22.3 is still a third of the 70 px where the occlusion x-ray band starts, and the new `PROP_HEIGHT_CEILING_PX` pins that reasoning in a test sweeping both the Graphics bounds and each sprite's derived height — replacing this module's own doc-comment claim of "every shape here tops out under 18 px", which was the thing that had gone stale.
+
+### A new alpha defect class, and the tool for it
+
+All three generations decoded as clean bimodal alpha and were not: the body sat at 252-253 rather than 255, inside a veil of alpha 1-10 reaching 50-140 px past the object. Both ends are invisible (99% and 4% opacity) and `alpha-audit.mjs` reads the pair as one "suspicious" file with no opaque pixels at all. Each end breaks something different:
+
+- **The veil wrecks the geometry.** `trimAlphaBoundingBox` keeps any pixel with `alpha !== 0`, so the rubble trimmed to aspect 2.95 against its real 3.67 — and `buildPropBody` scales a prop by WIDTH and lets the art's aspect set its height, so it would have stood 25% too tall. The trim also kept 123 empty rows under the rubble and 138 under the barrel, and a prop sprite is bottom-anchored to its ground point, so both would have hovered.
+- **The 253 plateau retires the audit.** `alpha-audit.mjs` classifies on `alpha == 255`, so a clean file reports 0% opaque / 83% partial.
+
+New `tools/png-pipeline/alphaClamp.mjs` (9 tests) snaps both plateaus and runs BEFORE `compress.mjs`. Every file shipped before this pass measures identically at `alpha > 0` and `alpha > 25` — all keyed or thresholded on import — so the `alpha !== 0` trim had never yet been handed a file where it mattered. `propArt.test.ts` decodes the shipped copies and asserts the trim is tight and the body genuinely opaque, so nothing records "was the step run" by memory; verified by rebuilding the rubble without the clamp, which fails exactly those two assertions.
+
+### The integration gap the art exposed
+
+`buildPropBody` took a `BiomePalette` and, on the sprite branch, never read it. The Graphics fallback mixes `PROP_BIOME_MIX` (0.16) of `palette.wall` into each of its own tones for a reason its own comment states — "a prop reads as part of THIS room rather than a fixed decal pasted over every biome alike" — and that stopped happening for anything the player could see the moment real art landed. New `propTint` mixes the identical amount into WHITE and multiplies, the trick `pillarTint` already uses. What it does NOT do is re-hue the art: at 16% of a dark near-neutral wall the multiply lands near 0.87 on every channel, so `prop_crate.png`'s warm lean (R+10.0/B-9.6, alone in an environment set that is all stone and leans blue) comes out still warm — deliberately, since it is wood, its chroma of 20.0 is inside the shipped band, and what separates it from the loot crate is VALUE (53 against 167), not hue.
+
+### Content: 15 placements across 8 of 14 pieces, to 54 across all 14
+
+Six `ember_l1` pieces had no props at all and the decorated eight used a (3,3)-plus-far-corner formula. All fourteen are now authored 3-4 each, hugging walls or the base of an interior block, and `propContent.test.ts` sweeps every placement enumerated from `EMBER_L1_ROOMS` itself — inside the room, clear of interior solids, clear of player and enemy spawns, out of the middle band of each wall where a door passage lands, and never stacked. It also asserts no placement leans on `resolvePropKind`'s unknown-id fallback, which would let a typo'd `barrle` silently draw a crate forever. That validator ran before the content was written and rejected nine of the first placements, mostly onto enemy spawn points.
+
+### The loader audit, which was not about props at all
+
+Verifying the props' mip chains live (`gl.getTexParameter(..., TEXTURE_MIN_FILTER)` reading `LINEAR_MIPMAP_LINEAR`, `mipLevelCount` 8) meant dumping every texture in the frame — and two loaders came back with `autoGenerateMipmaps: false`. `weaponSkins.ts` and `uiSkins.ts` were the last two still passing a bare url string to `Assets.load`. A mounted weapon measures **5.3:1** minification in a real room (320 px source, 60 px on screen; 6.2:1 on a smaller actor) — worse than the 4:1 that made the pillar need a mip chain, on the object every actor in the frame carries, sitting right where the 2026-08-12 rig-art colour-noise bug was diagnosed. Both fixed, both now with the same `Assets.load`-shape assertion `environmentSprites`/`biomeTiles`/`taoBundle` already carry. This is the "audit them ALL, not just the one you are touching" rule from that 2026-08-12 pass finally being run.
+
+### design/12's last facing gap, closed without new art
+
+design/12 had one open item in the facing model: with the back set showing, only the eye swaps to `eye__back`, so a character facing away still showed the transparent `belly` chamber set into its front. That doc offers two fixes — ship `belly__back`, or hide it. This takes the second and writes it so the first supersedes it for free: a new `FRONT_ONLY_BONES` set (just `belly`) is hidden only when `showBack` is true AND no `${boneId}__back` texture exists, so the moment the PNG ships the lookup finds it and the bone draws again with no code change. Deliberately keyed off what the art DEPICTS rather than off "bones missing back art" — `shell` is missing one too, and hiding the shell would delete the character. 5 new tests, mutation-checked 4/4.
+
+### `perf/frameProbe.ts` — and the harness failure that designed it
+
+The A/B/C frame diff that every art pass rebuilt by hand is now a module (13 tests), because this pass paid for a new way of getting it wrong. Roughly an hour went into diffs that all read exactly zero — hiding all 19 props, then the whole `entities` layer, then the entire world — before a screenshot showed why: the scene under test was never on screen. `Game.beginRun()` is reachable from the console and sets up a complete run (phase `playing`, 19 prop entities, textures loaded), but it does not hide the main menu, which is drawn over everything in `layers.ui`. A, B and C agreed perfectly, on a frame of the menu.
+
+**The restore check cannot catch that**, which is the finding worth keeping: when the subject is not being drawn, hiding it changes nothing and C equals A. So `probeFrames` requires a *liveness control* — a change the frame must visibly react to — runs it FIRST, and returns `trustworthy: false` with an explanation when it moves zero pixels. A zero diff is not a finding until the reader has demonstrated it can see the scene. `perf/README.md`'s console recipe was not wrong; it was just missing the one control that separates "my change did nothing" from "I am not looking at my change".
+
+### Client performance: the honest state of it
+
+The measurement the user asked for is **not delivered**, and the reason is worth recording rather than papering over. This machine's Chrome reports `ANGLE (Microsoft, Microsoft Basic Render Driver ... D3D11)` — a **software rasterizer, no GPU acceleration** — and exposes no `EXT_disjoint_timer_query_webgl2`, so there is no way to measure real GPU time here. Two things did come out of it:
+
+1. **One repeatable result.** At a 390x844 viewport and DPR 3, removing the `fx` layer's `BlurFilter({strength: 3, quality: 2})` roughly halves the frame cost (66.5 ms -> 34.2 ms in one run, 70.4 -> 36.0 in another). That blur is 4 of the ~7 full-screen render-target passes the frame carries (`lit` -> `SceneLightFilter`, `world` -> vignette + chromatic, `fx` -> blur), and full-screen passes are exactly the term a desktop never exercises and a mobile tiler hates. It is also the cheapest thing to drop in a quality tier.
+2. **The rest of the attribution is not trustworthy.** Removing *all* filters measured SLOWER than removing one, which is physically impossible — so the harness is measuring something other than what it claims. That is precisely the "make the measurement accurate before optimising" prerequisite the parked perf list already named, and it needs a real GPU plus a timer query, not another round of `performance.now()`.
+
+Also unresolved and worth the user's attention on its own: if the earlier 2.1 ms render p50 was measured on a machine in this state, it needs re-measuring, because that figure is not achievable on a software rasterizer.
+
+### The 加测试 follow-up, and the nine real gaps it found
+
+A mutation battery over everything this pass touched — 38 source mutants plus 12 that perturb the authored room JSON — came back **27/38** on the first run, and the survivors were the whole point. Two clusters, both in the newest code:
+
+- **`frameProbe` was mostly untested where it mattered.** Nine mutants lived: swapped Rec.601 coefficients (every fixture had been GREY, where any permutation of the coefficients gives the same answer — the fixture made two different things equal), the missing lower clamp on a sample rect (only non-negative coordinates had ever been passed), an unclamped `p: 1` percentile index (returns NaN, which reads as a real measurement of zero), the percentile SORT (every fixture had been authored in ascending scan order, so sorted and unsorted agreed), `defaultControl`'s undo (nothing exercised the default at all — every test supplied its own control, so the fallback could have been permanently destroying the scene it was asked to measure), and all of `readFrame`/`frameRectOf`, which had **no coverage of any kind** because this workspace's test environment has no DOM. Stubbing `document` with just enough canvas made `readFrame`'s two branches reachable, including the one that matters most: that it renders BEFORE copying, since copying without rendering is precisely the stale-frame failure the module exists to prevent.
+- **The `probe` handle on `installPerf` was wired and never called**, so replacing the caller's `change` callback with a no-op survived the entire suite. A wrapper's only job is to bind `app` and forward the rest, and forwarding is exactly what a wrapper gets wrong.
+
+Also worth recording: the 12 content mutants killed **12/12** on the first run, so `propContent.test.ts` genuinely holds the authored data — a prop moved onto an enemy spawn, into a solid, into a door band, past the perimeter, onto a player spawn, stacked on its neighbour, a piece stripped bare or padded to five, a typo'd kind id, and the whole level narrowed to one kind all fail it. And exactly one mutant survives *correctly*: splitting `alphaClamp`'s `else if` into two `if`s cannot change behaviour (`floor < ceiling` is enforced, a pixel cleared to 0 then fails `0 >= ceiling`, and a pixel at or above `ceiling` never satisfied `<= floor`). It is noted in `frameProbe.test.ts` as equivalent rather than chased — an equivalent mutant is not a gap.
+
+Second run: **37/38**, the one survivor being that equivalent mutant.
+
+**4220 tests green** (engine 705 / client 2470 / server 186 / animator 444 / map-editor 282 / png-pipeline 39 / desktop-shell 81 / root 13), `tsc --noEmit` and `check:filelength` clean. Verified live in real Chrome: all three prop sprites mounted with the right footprint, bottom anchor, biome tint and a real bound mip chain, and screenshotted in a level-1 room at zoom 4.
 
 ---
 
@@ -3873,7 +3948,8 @@ and *"护盾绘制不对了，现在的护盾成了一个圆圈，我希望是�
 
 ### 1. `client/src/perf/` — the profiler, and what it immediately found
 
-Ported from `funny`'s `client/src/cache/PerfMonitor.ts` + `MemoryMonitor.ts`. Six modules, 78 tests;
+Ported from `funny`'s `client/src/cache/PerfMonitor.ts` + `MemoryMonitor.ts`. Six modules, 78 tests
+(a seventh, `frameProbe.ts`, joined 2026-08-24 — see the room-prop pass below);
 `client/src/perf/README.md` is the usage doc and carries the deviation list. Installed from
 `main.ts` / `main.wechat.ts` (deliberately NOT from `Game.ts` — that file is already over the
 500-line baseline, and the monitor needs to install *after* `game.start()` anyway so its ticker

@@ -133,7 +133,15 @@ export async function preloadWeaponSkins(): Promise<void> {
   await Promise.all(
     allDefs().map(async ([key, def]) => {
       try {
-        textures.set(key, await Assets.load<Texture>(def.path));
+        // A mounted weapon is a LONE OBJECT drawn far smaller than its source: every def
+        // here scales a 320 px file to ~78-80, and measured live in a real room the sprite
+        // lands at 60 px on screen for a 5.3:1 minification (6.2:1 on a smaller actor).
+        // Worse than the 4:1 that made the pillar need this, on the object the player looks
+        // at most, and it sits right on top of the character's eye — the exact spot the
+        // 2026-08-12 rig-art colour-noise bug was diagnosed at. Found by an audit of every
+        // loader while shipping the room props, not by a report. `repeat` stays off (a lone
+        // object's edge would sample its own far side).
+        textures.set(key, await Assets.load<Texture>({ src: def.path, data: { autoGenerateMipmaps: true } }));
       } catch {
         // Best-effort, like every sibling preloader (uiSkins.ts/biomeTiles.ts) — a
         // per-item try/catch so one bad fetch can't abort every OTHER still-in-flight

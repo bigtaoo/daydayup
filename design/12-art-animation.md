@@ -28,8 +28,14 @@ How pixels get onto the screen: **skins** (the `02` appearance layer made concre
 > scale. **Update (2026-08-18): the facing model got two real corrections** (aim-driven body
 > + continuously-tracking eye, see "Facing model" below) and `01`'s per-weapon front/back
 > z-order rule — documented since `01` was written, never implemented — now actually runs.
-> The one art gap left in this pipeline is the **back set beyond the eye**: `shell__back` and
-> the belly's back treatment, 1–2 PNGs per character, no code.
+> The one art gap left in this pipeline WAS the **back set beyond the eye**; the half of it that
+> mattered in play is closed as of 2026-08-24, with no new art. A character facing away used to
+> keep drawing the transparent `belly` chamber set into its FRONT, which is the second of the two
+> fixes offered under "Facing model" below — hide it rather than paint a `belly__back`.
+> `RigSkin`'s new `FRONT_ONLY_BONES` set does exactly that, and only when no `${boneId}__back`
+> texture exists, so shipping the PNG later supersedes the hide for free. `shell__back` remains
+> genuinely optional: design/13 chose a radially-ish-symmetric body partly so front/back sets
+> nearly collapse, and the shell reads the same from either side.
 
 ## The decisions (locked)
 
@@ -89,11 +95,13 @@ funny is a lane auto-battler (units only face left/right); DayDayUp aims in **36
 >    `view.scale.x` flips the rig. That turns four poses into a continuum using `eye.png`
 >    exactly as it already ships.
 >
-> Still open, and the only part of this that would need new art: when the back set is showing,
-> only the eye swaps (to `eye__back`) — `shell` and the front-facing transparent `belly`
-> chamber are unchanged, so a character facing away still shows its belly. Fixing that is 1–2
-> PNGs per character (`shell__back`, and either `belly__back` or simply hiding the belly), and
-> zero code: the `${boneId}__back` variant lookup already handles any bone.
+> ~~Still open, and the only part of this that would need new art:~~ **Closed 2026-08-24** by the
+> second option this paragraph already named. When the back set shows, the eye swaps to
+> `eye__back` and the front-facing `belly` chamber is now HIDDEN rather than drawn as though the
+> character were still facing the camera — `RigSkin`'s `FRONT_ONLY_BONES`, gated on there being no
+> `${boneId}__back` texture, so a future `belly__back` PNG takes over with zero code change. Note
+> what that set is keyed off: what the art DEPICTS, not which bones lack back art. `shell` lacks
+> it too, and hiding the shell would delete the character.
 
 > **Update (2026-08-18, later the same day): a *volume* pass on top of the facing pass.** The
 > user's reply to the above was that the character did now read as having direction — *"眼睛和手

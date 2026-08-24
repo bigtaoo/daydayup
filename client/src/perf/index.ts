@@ -4,6 +4,7 @@
 import { UPDATE_PRIORITY, type Application } from 'pixi.js';
 import { PerfMonitor, type PerfMonitorOptions, type PerfSnapshot } from './PerfMonitor';
 import { PerfOverlay } from './PerfOverlay';
+import { probeFrames, type ProbeOptions, type ProbeResult } from './frameProbe';
 import {
   attributeDraws,
   formatAttribution,
@@ -32,6 +33,18 @@ export {
   type ToggleableNode,
 } from './drawAttribution';
 export { countScene, heapMB, gpuTextureCount, NODE_WALK_CAP, type SceneCounts } from './sceneCounters';
+export {
+  diffFrames,
+  frameRectOf,
+  lumaPercentiles,
+  meanLuma,
+  probeFrames,
+  readFrame,
+  type Frame,
+  type FrameDiff,
+  type ProbeOptions,
+  type ProbeResult,
+} from './frameProbe';
 
 export interface InstalledPerf {
   monitor: PerfMonitor;
@@ -51,6 +64,20 @@ export interface InstalledPerf {
   /** Every Graphics in the scene with Pixi's batching verdict (`drawAttribution.graphicsCensus`).
    *  Defaults to the whole stage. `console.log(window.__perf.census().text)`. */
   census(root?: ToggleableNode): CensusReport;
+  /**
+   * A/B/C frame probe bound to this app (`frameProbe.probeFrames`) — the "did my art change
+   * actually do anything" loop, with the liveness control and restore check that keep a
+   * broken reader from agreeing with you:
+   *
+   * ```js
+   * const props = window.__game.roomBuilder.props;
+   * window.__perf.probe({ change: () => { props.forEach(p => p.visible = false);
+   *                                       return () => props.forEach(p => p.visible = true); } });
+   * ```
+   *
+   * Read `trustworthy` before `diff`. A zero diff means nothing until the control has fired.
+   */
+  probe<T = undefined>(opts: ProbeOptions<T>): ProbeResult<T>;
   uninstall(): void;
 }
 
@@ -121,6 +148,9 @@ export function installPerf(app: Application, opts: InstallPerfOptions = {}): In
       const inspector = (app.renderer as unknown as { graphicsContext: GraphicsInspector }).graphicsContext;
       const rows = graphicsCensus((root ?? app.stage) as ToggleableNode, inspector);
       return { rows, text: formatCensus(rows) };
+    },
+    probe<T = undefined>(opts: ProbeOptions<T>): ProbeResult<T> {
+      return probeFrames(app, opts);
     },
     uninstall(): void {
       if (tick) app.ticker.remove(tick, null);

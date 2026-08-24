@@ -237,3 +237,66 @@ describe('installPerf — the console draw-attribution handle', () => {
     expect(handle.census(new Container()).rows).toHaveLength(0);
   });
 });
+
+describe('installPerf — the console frame-probe handle', () => {
+  it('passes the caller\'s own change and control through to probeFrames', () => {
+    // The gap a mutation battery found: `probe` was wired but nothing called it, so replacing
+    // the caller's `change` with a no-op survived the whole suite. The handle's only job is to
+    // bind `app` and forward everything else, and forwarding is exactly what a wrapper gets
+    // wrong — so assert the callbacks RAN, not just that a result came back.
+    const { app } = fakeApp();
+    handle = installPerf(app);
+    const calls: string[] = [];
+    const state = { lit: false };
+    const r = handle.probe({
+      read: () => {
+        const data = new Uint8ClampedArray(4 * 4 * 4);
+        if (state.lit) data.fill(200);
+        return { width: 4, height: 4, data };
+      },
+      control: () => {
+        calls.push('control');
+        state.lit = true;
+        return () => {
+          state.lit = false;
+        };
+      },
+      change: () => {
+        calls.push('change');
+        state.lit = true;
+        return () => {
+          calls.push('undo');
+          state.lit = false;
+        };
+      },
+    });
+    expect(calls).toEqual(['control', 'change', 'undo']);
+    expect(r.liveness.changed).toBeGreaterThan(0);
+    expect(r.diff.changed).toBeGreaterThan(0);
+    expect(r.restore.changed).toBe(0);
+    expect(r.trustworthy).toBe(true);
+  });
+
+  it('binds THIS app, so the default control blanks the stage it was installed on', () => {
+    // The other half of "the wrapper forwards correctly": with no `control` supplied, the
+    // default has to reach the app `installPerf` was given. If it bound the wrong stage the
+    // scene would come back untouched and the probe would silently report un-trustworthy.
+    const { app, stage } = fakeApp();
+    handle = installPerf(app);
+    const before = [...stage.children];
+    let sawEmptyStage = false;
+    const r = handle.probe({
+      read: () => {
+        if (stage.children.length === 0) sawEmptyStage = true;
+        const data = new Uint8ClampedArray(4);
+        data.fill(stage.children.length === 0 ? 0 : 255);
+        return { width: 1, height: 1, data };
+      },
+      change: () => () => {},
+    });
+    expect(sawEmptyStage).toBe(true);
+    expect(stage.children).toEqual(before);
+    expect(r.liveness.changed).toBe(1);
+    expect(r.trustworthy).toBe(true);
+  });
+});

@@ -46,7 +46,12 @@ export async function preloadUiArt(): Promise<void> {
   await Promise.all(
     Object.entries(UI_ASSETS).map(async ([key, path]) => {
       try {
-        textures.set(key, await Assets.load<Texture>(path));
+        // Same lone-object rule the weapon/environment/biome-sprite loaders follow: these
+        // are 208-256 px sources drawn into buttons and badges a fraction of that size, so
+        // without a mip chain they minify off a 2x2 texel neighbourhood. Caught in the same
+        // loader audit as `weaponSkins.ts` (2026-08-24). `repeat` stays off — only a
+        // tileable swatch wants it, and every file here is a lone object.
+        textures.set(key, await Assets.load<Texture>({ src: path, data: { autoGenerateMipmaps: true } }));
       } catch {
         // Not generated yet (or failed to fetch) — fine, every consumer already
         // renders correctly without it.

@@ -10,7 +10,7 @@
  * was entirely unregistered, not when it WAS registered but its texture simply never
  * loaded — leaving the weapon socket fully invisible instead of the neutral silhouette.
  */
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import {
   preloadWeaponSkins, getWeaponTexture, getWeaponAnchor, getWeaponScale, getWeaponRotationOffset,
   KIND_DEFAULTS, WEAPON_DEFS, MODULE_SCALE,
@@ -67,5 +67,39 @@ describe('preloadWeaponSkins — best-effort, never rejects (missing/unreachable
     expect(getWeaponScale('repeater', 'ranged')).toBeCloseTo(
       (WEAPON_DEFS.repeater?.scale ?? 0) * MODULE_SCALE, 12,
     );
+  });
+});
+
+describe('weaponSkins — every texture is loaded WITH a mip chain', () => {
+  it('asks for autoGenerateMipmaps on all of them, and never for repeat addressing', async () => {
+    // Measured live in a real level-1 room before this was added: `gun_blaster.png` is 320 px
+    // wide and its mounted sprite lands at 60 px on screen — 5.3:1, and 6.2:1 on a smaller
+    // actor. That is worse than the 4:1 that made the pillar sprite need a mip chain and far
+    // worse than the point where un-mipmapped minification starts reading as colour noise
+    // (2026-08-12, the rig-art bug), on the object that is on screen for every actor in the
+    // frame. The flag has to be passed at LOAD time — setting it on an already-uploaded GPU
+    // texture provably does nothing.
+    const calls: unknown[] = [];
+    const pixi = await import('pixi.js');
+    const spy = vi.spyOn(pixi.Assets, 'load').mockImplementation(async (opts: unknown) => {
+      calls.push(opts);
+      throw new Error('no asset server in this test environment');
+    });
+    try {
+      await preloadWeaponSkins();
+    } finally {
+      spy.mockRestore();
+    }
+    const defCount = Object.keys(KIND_DEFAULTS).length + Object.keys(WEAPON_DEFS).length;
+    expect(calls.length).toBe(defCount);
+    for (const call of calls) {
+      const opt = call as { src?: string; data?: Record<string, unknown> };
+      // A bare url string is the shape that has no mip chain — the bug this guards is a new
+      // def being added back in that form, which would look identical in review.
+      expect(typeof call).toBe('object');
+      expect(opt.src).toMatch(/^\/weapons\/.+\.png$/);
+      expect(opt.data?.autoGenerateMipmaps).toBe(true);
+      expect(opt.data?.addressMode).toBeUndefined();
+    }
   });
 });

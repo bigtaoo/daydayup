@@ -20,6 +20,25 @@
 > transparency CHECKERBOARD painted into it as opaque grey-and-white squares, which no preview can
 > distinguish from a real alpha channel. Keyed by luma at import; the audit reports the shipped file
 > clean. Re-run `alpha-audit.mjs` after any art batch rather than trusting the picture.
+> **Update (2026-08-24):** three more shipped files — the room-prop trio (`props/`, see the new
+> row below) — bringing `client/public/` to **92 PNGs**, and one genuinely new alpha defect class
+> alongside them. All three generations decoded as *clean bimodal alpha* and were not: the body sat
+> at 252-253 rather than 255, inside a veil of alpha 1-10 reaching 50-140 px past the object. Both
+> ends are invisible (99% and 4% opacity) and `alpha-audit.mjs` reads the pair as one "suspicious"
+> file with no opaque pixels at all — but `trimAlphaBoundingBox` keeps any pixel with `alpha !== 0`,
+> so the veil became part of the object: the rubble trimmed to aspect 2.95 against its real 3.67
+> (a prop is scaled by width with the art's aspect setting its height, so it would have stood 25%
+> too tall) and the trim kept 123 empty rows underneath it, which a bottom-anchored sprite turns
+> into clearance above the floor. New `tools/png-pipeline/alphaClamp.mjs` snaps both plateaus and
+> runs BEFORE `compress.mjs`; every file shipped before this pass measures identically at
+> `alpha > 0` and `alpha > 25`, so the `alpha !== 0` trim had simply never been handed a file where
+> it mattered. Also closed here, from a loader audit rather than a report: `weaponSkins.ts` and
+> `uiSkins.ts` were the last two loaders still passing a bare url to `Assets.load`, i.e. with no
+> mip chain — a mounted weapon measures **5.3:1** minification live (320 px source, 60 px on
+> screen), worse than the 4:1 that made the pillar need one, on the object every actor carries.
+> **The `door_open_raw.png` haze flagged below was fixed in 2026-08-21's props/follow-ups pass** and
+> the whole `environment/` directory now audits clean (11/11).
+>
 > **Update (2026-08-20, same day):** six more shipped files — the five in-run drop sprites and the
 > portal arch (`environment/`, see the new row below) — bringing `client/public/` to **88 PNGs**.
 > All six came back with a real alpha channel on the first generation, which is the anti-checkerboard
@@ -37,6 +56,7 @@
 | `weapon/` | Per-weapon-id business-end sprites (`<weaponId>_raw.png`) + `prompts.md` + `leftover/` (picked-over duplicate generations, incl. two rejected grip-pistol ice attempts). All 6 elemental ids now shipped (`flamer`/`teslagun`/`venomspit`/`cinderscatter`/`cryobolt`/`frostseeker`) | `client/public/weapons/` |
 | `biome/` | Per element: the top-down floor tile, the top-down wall tile (also reused as a standing wall's top cap), and the wall's front elevation (`wallface_*`, 2026-08-18). Plus one whole-OBJECT sprite, not a swatch: `pillar_neutral_raw.png` (2026-08-20), shared by every biome and tinted per room — six rejected generations kept as `pillar_*_alt*.png`. All with `prompts.md` | `client/public/biome/` |
 | `environment/` | Standalone fixtures that stand IN a room rather than surfacing it: the door pair (2026-08-04), the five in-run drop sprites (`pickup_material`/`heal`/`buff`/`crate`/`bandage`) and the extraction portal's masonry arch (`portal_arch`, 2026-08-20) + `prompts.md`. Three rejected drop generations kept as `pickup_*_alt.png` — and re-read every test run as negative fixtures, see `client/src/game/scene/environmentArt.test.ts` | `client/public/environment/` |
+| `props/` | Room dressing for `RoomPiece.props` (2026-08-24): the crate/barrel/rubble trio (`prop_<kind>_raw.png`) + `prompts.md`. One rejected rubble generation kept as `prop_rubble_alt.png`, re-measured every test run by `client/src/game/scene/propArt.test.ts` on all three axes it failed (aspect, value band, blue lean) | `client/public/environment/prop_*.png` |
 | `ui/` | Hub background, button icons, result badges + `prompts.md` | `client/public/ui/` |
 | `npc/` | Outpost NPCs (the Forger) + `prompts.md` | `client/public/ui/npc_forger.png` |
 | `map/` | The rejected painterly-isometric room backgrounds (`room_*_painterly_rejected`) — kept only as a record of the approach that did not work; the biome look that shipped is the tile art in `biome/` | — (nothing bound) |

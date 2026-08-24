@@ -14,6 +14,7 @@ fact that daydayup has no telemetry backend to send findings to.
 | `sceneCounters.ts` | Scene-graph walk (nodes / visible / **filtered**), GPU texture count, JS heap. |
 | `PerfMonitor.ts` | Installs the above on a live `Application` and emits one `PerfSnapshot` per window. |
 | `PerfOverlay.ts` | On-screen readout. |
+| `frameProbe.ts` | A/B/C frame differencing for ART work: `readFrame`/`diffFrames`, plus `probeFrames`, which runs a **liveness control** first and refuses to be believed if it moves zero pixels. `window.__perf.probe(...)`. |
 | `index.ts` | `installPerf(app, { overlay })` + the `window.__perf` console handle. |
 
 ## Using it
@@ -198,24 +199,39 @@ Two things this pass learned about measuring, both of which cost a round:
   screen-space.** Extract a custom region and only the part matching the real on-screen position is
   lit; 25 of 27 wall blocks came back at mean luma 0, where a dark overlay is a genuine no-op.
 
-What works, and what every number above came from:
+What works, and what every number above came from — now packaged as `frameProbe.ts`, because
+retyping it is how each of the mistakes below got made:
 
 ```js
-const app = window.__game.app;
-const read = () => { app.renderer.render(app.stage);
-  const c = document.createElement('canvas'); c.width = app.canvas.width; c.height = app.canvas.height;
-  c.getContext('2d').drawImage(app.canvas, 0, 0);
-  return c.getContext('2d').getImageData(0, 0, c.width, c.height); };
-const A = read();            // new form
-swapInOldForm();
-const B = read();            // old form, rebuilt live
-swapBackToNewForm();
-const C = read();            // MUST equal A exactly, or the numbers mean nothing
+// The whole recipe, with both guards:
+const props = window.__game.roomBuilder.props;
+const r = window.__perf.probe({
+  change: () => { props.forEach(p => (p.visible = false));
+                  return () => props.forEach(p => (p.visible = true)); },
+});
+r.trustworthy || console.warn(r.problems);   // READ THIS FIRST
+r.diff;                                      // { changed, pct, meanDelta, maxDelta, bbox }
 ```
 
-That third read is not optional. This pass shipped a swap helper whose restore path was skipped by an
-`if (!node.parent) continue` guard — correct when attaching, wrong when re-attaching a detached node —
-and the only symptom was a "restore check" that equalled the A/B delta instead of zero.
+The raw form is still `render` -> `drawImage(app.canvas)` -> `getImageData`, read three times
+(A, B, then C after the undo). That third read is not optional: this repo once shipped a swap
+helper whose restore path was skipped by an `if (!node.parent) continue` guard — correct when
+attaching, wrong when re-attaching a detached node — and the only symptom was a "restore check"
+that equalled the A/B delta instead of zero.
+
+**And the restore check is not sufficient (2026-08-24).** A prop-art pass spent about an hour on
+diffs that all read exactly zero: hiding all 19 props, then the whole `entities` layer, then the
+entire world, each time with a clean restore. Nothing was wrong with the reader. The scene under
+test was never on screen — `Game.beginRun()` is reachable from the console and sets up a complete
+run (phase `playing`, entities built, textures loaded) but does NOT hide the main menu, which
+draws over everything in `layers.ui`. A, B and C agreed perfectly, on a frame of the menu. Note
+that C-equals-A *passes* in that situation, because hiding something invisible changes nothing.
+
+So a probe needs a third read of a different kind: a **liveness control**, some change the frame
+cannot fail to react to, run BEFORE the measurement. `probeFrames` defaults it to blanking the
+stage and reports `trustworthy: false` when it moves nothing. A zero diff means nothing until the
+reader has demonstrated it can see the scene at all. (Pass a narrower `control` when you want to
+prove a specific subtree is on screen rather than just "something is".)
 
 And when a diff IS non-zero, ask **where** before asking how big. Binning the rig-shading deltas by
 normalised radius and by angle to the key light is what found a real defect in the *old* code: its

@@ -35,6 +35,19 @@ const EYE_TRACK_SQUASH = 0.45;
 /** How much the eye shrinks as the aim turns away from the camera — a little perspective
  *  on top of the front/back texture swap, so crossing the hemisphere isn't a hard cut. */
 const EYE_AWAY_SHRINK = 0.15;
+/**
+ * Bones whose art depicts a FRONT surface and has no meaning seen from behind. Only the
+ * belly qualifies today: it is the transparent chamber set into the front of the shell, so
+ * from the back there is simply no chamber to see — the shell's own surface is the correct
+ * picture. Every other bone either has real back art (`eye__back` ships for all three
+ * characters) or reads the same from either side, which is a property of the design rather
+ * than an accident: design/13 chose "one bold radially-ish-symmetric shape" partly because
+ * "front/back sets nearly collapse".
+ *
+ * NOT a list of bones missing back art — `shell` is missing it too, and hiding the shell
+ * would delete the character. This is a statement about what the art depicts.
+ */
+const FRONT_ONLY_BONES: ReadonlySet<string> = new Set(['belly']);
 // The game-side .tao runtime renderer (design/12): bone FK + sprite binding +
 // animation playback, ported from tools/animator/src/rendering/Renderer.ts's
 // `updateSprites` (rewritten for Pixi v8's API — the editor is still on v7).
@@ -246,6 +259,14 @@ export class RigSkin {
 
       const backTexture = this.showBack ? this.bundle.textures.get(`${boneId}__back`) : undefined;
       sprite.texture = backTexture ?? this.bundle.textures.get(boneId)!;
+      // A FRONT_ONLY bone with no back art of its own is hidden from behind rather than
+      // drawn as though the character were still facing the camera. Closes design/12's one
+      // remaining facing-model gap ("a character facing away still shows its belly"), which
+      // that doc offers two fixes for: ship `belly__back`, or hide it. This is the second,
+      // and it is written so the first supersedes it for free — the moment a `belly__back`
+      // texture exists the lookup above finds it, `backTexture` is defined, and the bone
+      // draws again with no code change.
+      sprite.visible = !(this.showBack && !backTexture && FRONT_ONLY_BONES.has(boneId));
 
       const transform = transforms.get(boneId);
       sprite.x = pose.ex + (transform?.translateX ?? 0);

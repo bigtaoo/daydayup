@@ -20,6 +20,12 @@ const ENV_SPRITE_ASSETS: Readonly<Record<string, string>> = {
   // vortex rings, core, infalling motes and ground bloom stay program-drawn in Portal.ts
   // (they animate every frame, which a sprite cannot do).
   portal_arch: '/environment/portal_arch.png',
+  // Room dressing (`RoomPiece.props`), 2026-08-24. Keyed `prop_<kind>` to match
+  // `getPropTexture`, whose lookup is built from `propRender.ts`'s own `PropKind` union —
+  // add a kind there and its art slots in here under the same name with no other change.
+  prop_crate: '/environment/prop_crate.png',
+  prop_barrel: '/environment/prop_barrel.png',
+  prop_rubble: '/environment/prop_rubble.png',
 };
 
 /** Every key the getters below can resolve once preloaded — exposed so tests can assert a
@@ -71,12 +77,12 @@ export function getPortalArchTexture(): Texture | undefined {
   return textures.get('portal_arch');
 }
 
-/** A room prop's real-art sprite, by its resolved kind (`propRender.resolvePropKind`). No
- *  `prop_*` key exists in `ENV_SPRITE_ASSETS` yet — always undefined today, same as every
- *  other getter here before its art landed — so `RoomBuilder` stays on `propRender.ts`'s
- *  Graphics silhouettes. Wired now rather than left for later: a future art pass is then a
- *  one-line addition (`prop_crate: '/environment/prop_crate.png'`, etc.) with nothing else
- *  to change on the render side. */
+/** A room prop's real-art sprite, by its resolved kind (`propRender.resolvePropKind`). All
+ *  three of today's kinds shipped 2026-08-24; the getter still returns `undefined` for an
+ *  unregistered kind, which is what keeps `buildPropBody`'s Graphics branch reachable for
+ *  the next kind added before its art exists. The prediction the previous version of this
+ *  comment made held exactly: landing the art was three rows in `ENV_SPRITE_ASSETS` and
+ *  nothing else on the render side. */
 export function getPropTexture(kind: string): Texture | undefined {
   return textures.get(`prop_${kind}`);
 }

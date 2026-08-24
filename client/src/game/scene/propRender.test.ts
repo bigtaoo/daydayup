@@ -6,7 +6,16 @@
  */
 import { describe, it, expect } from 'vitest';
 import { Graphics, Sprite, Texture, TextureSource } from 'pixi.js';
-import { buildPropBody, propFootprintWidth, propShadowRadius, resolvePropKind, type PropKind } from './propRender';
+import {
+  buildPropBody,
+  propBodyHeight,
+  propFootprintWidth,
+  propShadowRadius,
+  propTint,
+  PROP_HEIGHT_CEILING_PX,
+  resolvePropKind,
+  type PropKind,
+} from './propRender';
 import { biomePalette } from '../theme';
 
 interface Instr {
@@ -94,7 +103,8 @@ describe('buildPropBody — no texture (the Graphics fallback every prop draws t
     const g = bodyGraphics('crate', palette);
     const [body, lid] = rects(g, 'roundRect');
     const halfW = propFootprintWidth('crate') / 2;
-    expect(body!.slice(0, 5)).toEqual([-halfW, -15, halfW * 2, 15, 1.5]);
+    const h = propBodyHeight('crate');
+    expect(body!.slice(0, 5)).toEqual([-halfW, -h, halfW * 2, h, 1.5]);
     expect(lid![2]).toBeCloseTo(halfW * 2, 6); // as wide as the body
     expect(lid![3]).toBeGreaterThan(0);
     expect(lid![3]).toBeLessThan(15); // a BAND across the top, not the whole face
@@ -117,7 +127,7 @@ describe('buildPropBody — no texture (the Graphics fallback every prop draws t
   it('places the barrel\'s hoops inside the body and its lid ellipse centred on top', () => {
     const g = bodyGraphics('barrel', palette);
     const halfW = propFootprintWidth('barrel') / 2;
-    const height = 17;
+    const height = propBodyHeight('barrel');
     const hoops = rects(g, 'rect');
     expect(hoops).toHaveLength(2);
     expect(hoops[0]!.slice(0, 4)).toEqual([-halfW, -height + height * 0.28, halfW * 2, 2]);
@@ -130,7 +140,8 @@ describe('buildPropBody — no texture (the Graphics fallback every prop draws t
     const g = bodyGraphics('barrel', palette);
     const halfW = propFootprintWidth('barrel') / 2;
     const [body] = rects(g, 'roundRect');
-    expect(body!.slice(0, 5)).toEqual([-halfW, -17, halfW * 2, 17, halfW * 0.4]);
+    const h = propBodyHeight('barrel');
+    expect(body!.slice(0, 5)).toEqual([-halfW, -h, halfW * 2, h, halfW * 0.4]);
   });
 
   it('draws rubble as a handful of overlapping stones, with NO silhouette stroke', () => {
@@ -155,10 +166,16 @@ describe('buildPropBody — no texture (the Graphics fallback every prop draws t
   });
 
   it('every prop stays well under a wall/pillar\'s height (70-104) — short enough the x-ray never needs it', () => {
+    // The DRAWN extent, not `height`: the barrel's lid ellipse sits centred on `-height` and
+    // the silhouette stroke straddles the outline, so both reach past the metric. Whether a
+    // prop can hide a character is a question about what lands on screen.
     for (const kind of ['crate', 'barrel', 'rubble'] as const) {
       const g = bodyGraphics(kind, palette);
-      expect(g.bounds.height).toBeLessThan(22);
+      expect(g.bounds.height).toBeLessThanOrEqual(PROP_HEIGHT_CEILING_PX);
     }
+    // ...and the shortest object that DOES need the x-ray stands 70 px, so the ceiling has
+    // to stay well under that or the exemption this module claims stops being true.
+    expect(PROP_HEIGHT_CEILING_PX).toBeLessThan(70 / 2);
   });
 
   it('is deterministic — two props of the same kind draw identically', () => {
@@ -232,5 +249,40 @@ describe('buildPropBody — real art, when a texture is supplied', () => {
     const tallSprite = tall.children.find((ch) => ch instanceof Sprite) as Sprite;
     expect(wideSprite.width).toBeCloseTo(tallSprite.width, 4); // same footprint width...
     expect(wideSprite.height).toBeLessThan(tallSprite.height); // ...different height
+  });
+
+  it('tints the sprite toward the room, so the art is not a fixed decal across biomes', () => {
+    // The bug this exists for: the sprite branch took `palette` and never read it, so the
+    // moment real art landed, `PROP_BIOME_MIX` silently stopped applying to anything the
+    // player could see — the Graphics fallback kept mixing and the shipped sprite did not.
+    const spriteFor = (biome: string | undefined) => {
+      const c = buildPropBody('crate', biomePalette(biome), tex());
+      return c.children.find((ch) => ch instanceof Sprite) as Sprite;
+    };
+    expect(spriteFor('ember').tint).not.toBe(0xffffff);
+    expect(spriteFor('ember').tint).not.toBe(spriteFor('ice').tint);
+  });
+
+  it('pulls the sprite by the SAME amount the Graphics fallback pulls itself', () => {
+    // Not just "a tint is set" — the two branches have to agree, or swapping between them
+    // (which is exactly what a missing texture does) visibly changes the object's colour.
+    // A sprite can only multiply, so the equivalent of mixing `mix` of the wall into a tone
+    // is mixing `mix` of the wall into white: check the tint against that directly.
+    const channel = (hex: number, shift: number) => (hex >> shift) & 0xff;
+    for (const biome of ['ember', 'ice', undefined]) {
+      const palette = biomePalette(biome);
+      const t = propTint(palette);
+      for (const shift of [16, 8, 0]) {
+        const wall = channel(palette.wall, shift);
+        const amount = (0xff - channel(t, shift)) / (0xff - wall);
+        expect(amount).toBeCloseTo(0.16, 1);
+      }
+    }
+  });
+
+  it('leaves the tint a pure biome pull — white wall, white tint, art unchanged', () => {
+    // Guards the direction of the mix. `mixHex(palette.wall, 0xffffff, MIX)` compiles, reads
+    // the same, and is backwards: it would tint every prop nearly white and wash the art out.
+    expect(propTint({ ...biomePalette(undefined), wall: 0xffffff })).toBe(0xffffff);
   });
 });

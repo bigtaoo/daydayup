@@ -940,3 +940,72 @@ describe('RigSkin — contact shades seat an orbiting module against the core', 
     expect(snap()).not.toEqual(before);
   });
 });
+
+describe('the front-only bone set — design/12\'s last facing-model gap', () => {
+  /** Like `fakeBundle`, but the caller chooses which `__back` variants exist. */
+  function bundleWithBacks(rig: Rig, backs: string[]): RigSkinBundle {
+    const bindings = new Map<string, SpriteBinding>();
+    const textures = new Map<string, Texture>();
+    for (const boneId of rig.drawOrder) {
+      bindings.set(boneId, { anchorX: 0.5, anchorY: 0.5, flipX: false, zOrder: 0, rotation: 0, scaleX: 1, scaleY: 1 });
+      textures.set(boneId, Texture.WHITE);
+    }
+    for (const boneId of backs) textures.set(`${boneId}__back`, Texture.EMPTY);
+    return { bindings, clips: new Map(), textures };
+  }
+
+  function visibility(skin: RigSkin): Record<string, boolean> {
+    skin.update();
+    const sprites = (skin as unknown as { sprites: Map<string, { visible: boolean }> }).sprites;
+    return Object.fromEntries([...sprites].map(([id, s]) => [id, s.visible]));
+  }
+
+  function skinWith(backs: string[]): RigSkin {
+    const rig = new Rig(ORB_CORE_RIG);
+    return new RigSkin(rig, bundleWithBacks(rig, backs));
+  }
+
+  it('draws every bone while the character faces the camera', () => {
+    const skin = skinWith(['eye']);
+    skin.setBodyFacing(Math.PI / 2); // toward the camera (front hemisphere)
+    const vis = visibility(skin);
+    expect(Object.values(vis).every((v) => v)).toBe(true);
+    expect(vis.belly).toBe(true);
+  });
+
+  it('hides the belly — and ONLY the belly — once the character turns away', () => {
+    // The reported shape of the bug: the eye swapped to `eye__back` but the transparent
+    // front chamber kept drawing, so a character running away still showed its belly.
+    const skin = skinWith(['eye']);
+    skin.setBodyFacing(-Math.PI / 2); // away from the camera (back hemisphere)
+    const vis = visibility(skin);
+    expect(vis.belly).toBe(false);
+    for (const [id, v] of Object.entries(vis)) {
+      if (id !== 'belly') expect({ id, v }).toEqual({ id, v: true });
+    }
+  });
+
+  it('never hides the shell, which has no back art either', () => {
+    // The failure mode of keying this off "bones missing a __back texture" instead of off
+    // what the art depicts: `shell` is missing one too, and hiding it deletes the character.
+    const skin = skinWith([]);
+    skin.setBodyFacing(-Math.PI / 2);
+    expect(visibility(skin).shell).toBe(true);
+  });
+
+  it('draws the belly again the moment real `belly__back` art exists, with no code change', () => {
+    // The hide is a FALLBACK, not a rule — design/12 offers both fixes and this keeps the
+    // other one free. If this test ever fails, shipping the PNG stopped being sufficient.
+    const skin = skinWith(['eye', 'belly']);
+    skin.setBodyFacing(-Math.PI / 2);
+    expect(visibility(skin).belly).toBe(true);
+  });
+
+  it('comes back on turning around, rather than latching off for the rest of the run', () => {
+    const skin = skinWith(['eye']);
+    skin.setBodyFacing(-Math.PI / 2);
+    expect(visibility(skin).belly).toBe(false);
+    skin.setBodyFacing(Math.PI / 2);
+    expect(visibility(skin).belly).toBe(true);
+  });
+});

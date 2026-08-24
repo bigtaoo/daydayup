@@ -12,6 +12,7 @@ import {
   getDoorTexture,
   getPickupTexture,
   getPortalArchTexture,
+  getPropTexture,
   ENV_SPRITE_ASSET_KEYS,
 } from './environmentSprites';
 
@@ -45,6 +46,12 @@ describe('environmentSprites — every key a caller can ask for is actually regi
     expect(ENV_SPRITE_ASSET_KEYS).toContain('portal_arch');
   });
 
+  it('registers all three room-prop kinds', () => {
+    for (const kind of ['crate', 'barrel', 'rubble']) {
+      expect(ENV_SPRITE_ASSET_KEYS).toContain(`prop_${kind}`);
+    }
+  });
+
   it('deliberately has NO pickup_weapon', () => {
     // A weapon drop draws that weapon's own business-end art (render/weaponSkins.ts) so it
     // reads as "that specific gun". A generic file here would quietly shadow it.
@@ -63,6 +70,70 @@ describe('environmentSprites — the getters before any preload', () => {
       expect(getPickupTexture(kind)).toBeUndefined();
     }
     expect(getPortalArchTexture()).toBeUndefined();
+  });
+});
+
+describe('environmentSprites — each getter resolves the key it registered, after a real preload', () => {
+  /**
+   * Every other test in this file runs against an EMPTY texture map, where a getter returns
+   * `undefined` whether its key is right or wrong — so none of them can see a getter looking
+   * up the wrong name. Proven by mutation: dropping the `prop_` prefix from `getPropTexture`
+   * survived the whole suite. Loading a distinguishable texture per path and asking each
+   * getter for it is what closes that, and it closes it for the door/pickup/arch getters at
+   * the same time rather than only for the one that happened to be caught.
+   */
+  async function preloadWithStubs(): Promise<() => void> {
+    const pixi = await import('pixi.js');
+    // `Assets.load` is overloaded (array form returns a record), so the single-asset stub
+    // needs the cast — the sibling mock above only escapes it by throwing, which types as
+    // `never`.
+    const stub = async (opts: unknown) => {
+      const src = (opts as { src: string }).src;
+      // The `label` is the only thing asserted, so the stub carries the path it was asked for.
+      return new pixi.Texture({ source: new pixi.TextureSource({ width: 4, height: 4, label: src }) });
+    };
+    const spy = vi
+      .spyOn(pixi.Assets, 'load')
+      .mockImplementation(stub as unknown as typeof pixi.Assets.load);
+    await preloadEnvironmentSprites();
+    return () => spy.mockRestore();
+  }
+
+  it('maps every getter onto the file its own key names', async () => {
+    const restore = await preloadWithStubs();
+    try {
+      const at = (t: { source: { label: string } } | undefined) => t?.source.label;
+      expect(at(getDoorTexture(true))).toBe('/environment/door_locked_raw.png');
+      expect(at(getDoorTexture(false))).toBe('/environment/door_open_raw.png');
+      expect(at(getPortalArchTexture())).toBe('/environment/portal_arch.png');
+      for (const kind of ['material', 'heal', 'buff', 'crate', 'bandage']) {
+        expect(at(getPickupTexture(kind))).toBe(`/environment/pickup_${kind}.png`);
+      }
+      for (const kind of ['crate', 'barrel', 'rubble']) {
+        expect(at(getPropTexture(kind))).toBe(`/environment/prop_${kind}.png`);
+      }
+    } finally {
+      restore();
+    }
+  });
+
+  it('keeps the prop and pickup namespaces apart — both have a `crate`', async () => {
+    // The two kinds genuinely collide on their own name: a lootable supply crate and a
+    // scenery crate. Only the key prefix separates them, so a getter that drops it would
+    // hand the room's dressing the bright pickup art and nothing else would complain.
+    // Preloads again rather than leaning on the test above having run: the texture map is
+    // module state, and a test whose subject only exists because of its neighbour stops
+    // covering its own claim the moment either one is reordered or run alone.
+    const restore = await preloadWithStubs();
+    try {
+      const prop = getPropTexture('crate');
+      const pickup = getPickupTexture('crate');
+      expect(prop).toBeDefined();
+      expect(pickup).toBeDefined();
+      expect(prop).not.toBe(pickup);
+    } finally {
+      restore();
+    }
   });
 });
 

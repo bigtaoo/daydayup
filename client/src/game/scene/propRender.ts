@@ -3,8 +3,11 @@
 // this module owns the drawing. A prop is render-only clutter, never read by the sim
 // (rooms.ts's own doc comment) — no collision, no occlusion x-ray. The x-ray exists for
 // objects tall enough that their art reaches north past their own footprint far enough to
-// cover a character standing just beyond it (a wall/pillar/door, 70-104 px); every shape
-// here tops out under 18 px, so the Y-sort alone already gets the front/back order right.
+// cover a character standing just beyond it (a wall/pillar/door, 70-104 px); nothing here
+// comes close, so the Y-sort alone already gets the front/back order right. That bound is
+// `PROP_HEIGHT_CEILING_PX` and `propRender.test.ts` sweeps every kind against it — both the
+// Graphics metrics below AND the height each shipped sprite's own aspect derives — rather
+// than leaving it as a claim in this comment that new art could silently outgrow.
 //
 // `PropPlacement.id` had no declared vocabulary (content/rooms.ts: "A decorative
 // placement... render-only, never read by the sim") — `resolvePropKind` gives it one,
@@ -58,9 +61,39 @@ interface PropMetrics {
   shadowRadius: number;
 }
 
+/**
+ * The tallest a prop's art may reach above its own ground point, world px. Not a tuning
+ * knob — it is the reason this module skips the occlusion x-ray, so it is the number a test
+ * can hold instead of a claim in a comment. The shortest object that DOES need the x-ray
+ * stands 70 px, and a prop a third of that can cover a character's feet but never the head
+ * and eye that identify it.
+ *
+ * 28 rather than the "under 18" this file used to claim. Real art landed the barrel at 22.3
+ * (sprite) and 25.6 (Graphics fallback, whose lid ellipse and silhouette stroke both reach
+ * past `height`), and the honest fix was to move the bound to where the art actually is and
+ * pin it, not to squeeze art to fit a number nothing had ever enforced. Both paths are swept
+ * against this in `propRender.test.ts`, so it is the drawn extent that is held, not `height`.
+ */
+export const PROP_HEIGHT_CEILING_PX = 28;
+
+/** A kind's Graphics-fallback silhouette height (world px). Sibling of
+ *  `propFootprintWidth`, exposed for the same reason: so a test can derive the number
+ *  instead of restating it, and so the sprite/Graphics agreement can be checked at all. */
+export function propBodyHeight(kind: PropKind): number {
+  return PROP_METRICS[kind].height;
+}
+
+/**
+ * `height` is the GRAPHICS fallback's silhouette height; a sprite derives its own from the
+ * art's aspect (`buildPropBody`). The two are kept in agreement deliberately — the fallback
+ * exists to stand in for the art, and a stand-in that is a different size is a worse bug
+ * than no art at all. Each `height` below is `halfW * 2 / aspect` of the shipped file,
+ * rounded: crate 144x128 -> 16, barrel 128x178 -> 22, rubble 176x48 -> 6.
+ * `propRender.test.ts` re-derives all three from the real PNGs rather than trusting this.
+ */
 const PROP_METRICS: Record<PropKind, PropMetrics> = {
-  crate: { halfW: 9, height: 15, shadowRadius: 9 },
-  barrel: { halfW: 8, height: 17, shadowRadius: 8 },
+  crate: { halfW: 9, height: 16, shadowRadius: 9 },
+  barrel: { halfW: 8, height: 22, shadowRadius: 8 },
   rubble: { halfW: 11, height: 6, shadowRadius: 11 },
 };
 
@@ -73,6 +106,30 @@ export function propFootprintWidth(kind: PropKind): number {
 
 function biomeTone(base: number, palette: BiomePalette): number {
   return mixHex(base, palette.wall, PROP_BIOME_MIX);
+}
+
+/**
+ * The same biome pull as `biomeTone`, in the only form a Sprite can take it. The Graphics
+ * fallback mixes `PROP_BIOME_MIX` of `palette.wall` into each of its own tones; a sprite
+ * cannot mix, only multiply, so the identical amount is mixed into WHITE and multiplied over
+ * the art instead — the trick `pillarTint` already uses, and it lands in the same place
+ * because `palette.wall` is a dark near-neutral in every biome.
+ *
+ * Without this the sprite branch simply ignored the `palette` it was handed, which is the
+ * whole point of `PROP_BIOME_MIX` ("a prop reads as part of THIS room rather than a fixed
+ * decal pasted over every biome alike") quietly not happening as soon as real art landed:
+ * the Graphics fallback kept mixing and the shipped sprite did not.
+ *
+ * What this does NOT do is re-hue the art. At 16% of a dark near-neutral wall the multiply
+ * lands around 0.87 on every channel, which moves a colour's R-to-B balance by about a
+ * point — it is a value/biome pull, not a colour correction. `prop_crate.png` leans warm
+ * (R+10.0/B-9.6, alone among the environment set, which is all stone and leans blue) and
+ * comes out of this still leaning warm, deliberately: it is wood, its chroma of 20.0 sits
+ * inside the shipped band (floor 15.3, wall face 18.1), and its median luma of 53 is what
+ * separates it from the loot crate's 167 — value carries that distinction, not hue.
+ */
+export function propTint(palette: BiomePalette): number {
+  return mixHex(0xffffff, palette.wall, PROP_BIOME_MIX);
 }
 
 function silhouette(g: Graphics, halfW: number, height: number, corner: number): void {
@@ -137,11 +194,17 @@ function buildRubble(palette: BiomePalette): Graphics {
  *  ground point — drawn upward (negative y), same convention `Entity`/pillar/pickup all
  *  share, so `RoomBuilder` can `place()` it exactly like any other static ground object.
  *
- * `tex` is real art (`render/environmentSprites.ts getPropTexture`), undefined until a
- * future pass ships one — the same optional-art-else-Graphics shape `Pickup.ts`/
- * `pillarRender.buildPillarSprite` already use. Bottom-anchored and scaled by WIDTH (the
- * footprint every kind's `halfW` already fixes), letting the art's own aspect set height —
- * same rule the pillar sprite follows, for the same reason: aspect is the art's to choose. */
+ * `tex` is real art (`render/environmentSprites.ts getPropTexture`), shipped 2026-08-24 for
+ * all three kinds — the same optional-art-else-Graphics shape `Pickup.ts`/
+ * `pillarRender.buildPillarSprite` already use, kept because the fallback is what any future
+ * kind draws with before its art exists. Bottom-anchored and scaled by WIDTH (the footprint
+ * every kind's `halfW` already fixes), letting the art's own aspect set height — same rule
+ * the pillar sprite follows, for the same reason: aspect is the art's to choose.
+ *
+ * Bottom-anchoring is why the import runs `alphaClamp.mjs` before `compress.mjs`: the trim
+ * keeps any pixel with `alpha !== 0`, and all three generations arrived wrapped in a veil of
+ * alpha 1-10 reaching over a hundred px past the object, which would have left empty rows
+ * under the anchor and floated every prop off the floor. */
 export function buildPropBody(kind: PropKind, palette: BiomePalette, tex?: Texture): Container {
   const c = new Container();
   if (tex) {
@@ -149,6 +212,7 @@ export function buildPropBody(kind: PropKind, palette: BiomePalette, tex?: Textu
     const sprite = new Sprite(tex);
     sprite.anchor.set(0.5, 1);
     sprite.setSize(w, w * (tex.height / tex.width));
+    sprite.tint = propTint(palette);
     c.addChild(sprite);
     return c;
   }
