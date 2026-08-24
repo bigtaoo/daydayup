@@ -1,8 +1,7 @@
 import { Filter, Graphics, Rectangle } from 'pixi.js';
 import type { DamageType, StatusState } from '@dd/engine';
 import { THEME, ELEMENT_COLORS } from '../theme';
-import { EnergyShieldFilter, OutlineFilter, DissolveFilter, HeatHazeFilter, NormalLitFilter } from '../fx/filters';
-import type { LightHit } from '../fx/lighting';
+import { EnergyShieldFilter, OutlineFilter, DissolveFilter, HeatHazeFilter } from '../fx/filters';
 import { Entity, SHADOW_SQUASH } from './Entity';
 import { Skin } from './Skin';
 import { drawHealthBar } from './healthBar';
@@ -111,10 +110,11 @@ export class Actor extends Entity {
   private isLocal = false;
   private readonly isBoss: boolean;
   private hpRatio = -1; // last-drawn hp fraction (skip redraw if unchanged)
-  // Dynamic lighting (design/01 fidelity roadmap milestone 2) — unlike every filter
-  // below, this one is never conditionally active: every actor is always lit, so it's
-  // built eagerly instead of lazily, and always first in applySkinFilters()'s list.
-  private readonly litFilter = new NormalLitFilter();
+  // Lighting is NOT here. Until 2026-08-24 every actor carried its own always-on
+  // `NormalLitFilter`, which meant every actor cost a render-target pass and broke the
+  // sprite batch — measured as the dominant cost of the frame (src/perf/README.md). It is
+  // now one screen-space pass over `Layers.lit` (`SceneLightFilter`), so an actor with no
+  // status at all carries NO filter and batches with its neighbours.
   private shieldFilter: EnergyShieldFilter | null = null; // lazily built — most actors never carry a shield pool
   private shieldActive = false;
   private shieldRatio = -1; // last-applied shield fraction (skip redundant work if unchanged)
@@ -177,7 +177,7 @@ export class Actor extends Entity {
     // real rig's mounted weapon sprite both extend the auto-computed bounds out to one
     // side only (whichever way the actor is currently facing/aiming), which drags
     // EVERY skin-level filter's UV-space "center" along with it. Most filters
-    // (OutlineFilter, NormalLitFilter, HeatHazeFilter) sample the real alpha edge so
+    // (OutlineFilter, HeatHazeFilter) sample the real alpha edge so
     // they're visually tolerant of that drift, but EnergyShieldFilter's rim-glow is a
     // hardcoded UV-distance-from-0.5 circle (see filters.ts) — it needs the render
     // area itself to stay centered and symmetric, or the glow renders lopsided toward
@@ -256,10 +256,9 @@ export class Actor extends Entity {
     this.healthBar = new Graphics();
     this.healthBarOffsetY = bodyCenterY - radiusPx * (boss ? 1.7 : 1.3);
 
-    // litFilter is always on (unlike the four conditionally-active shaders below, whose
-    // own setters call applySkinFilters on their own activation edge) — an actor that
-    // never takes a status/shield/hit/death would otherwise never get it attached at all.
-    this.applySkinFilters();
+    // Nothing to attach yet: all four skin shaders are conditionally active and each
+    // one's own setter calls applySkinFilters on its activation edge. A freshly spawned
+    // actor therefore has `filters === null` and costs no pass at all.
   }
 
   // Swap the cosmetic weapon shape to match the engine's active weapon kind. A real rig
@@ -400,14 +399,6 @@ export class Actor extends Entity {
     return this.skin.silhouette;
   }
 
-  /** Apply this frame's strongest nearby point light (design/01 milestone 2) — called
-   *  once per render frame by Scene.applyLighting, `null` when nothing is close enough
-   *  to matter (the filter's fixed key light still shades in that case). */
-  setLighting(hit: LightHit | null): void {
-    if (hit) this.litFilter.setPoint(hit.dirX, hit.dirY, hit.color, hit.intensity);
-    else this.litFilter.clearPoint();
-  }
-
   private setShieldActive(active: boolean): void {
     if (active === this.shieldActive) return;
     this.shieldActive = active;
@@ -447,15 +438,17 @@ export class Actor extends Entity {
     return this.dissolveMs >= DISSOLVE_MS;
   }
 
-  // Recompute `skin.view.filters` from `litFilter` (always on) plus whichever of the
-  // four conditionally-active skin-level shaders are currently live. Order is
-  // lit-then-warp-then-glow-then-highlight-then-dissolve: lighting establishes the base
-  // shaded colour every later overlay then distorts/adds onto/highlights, the UV wobble
-  // should distort what the glow/outline draw (not the other way around), a hit flash
-  // should still read on top of an active shield glow, and a dying actor's dissolve
-  // should be the last word regardless of what else was active the instant it died.
+  // Recompute `skin.view.filters` from whichever of the four conditionally-active
+  // skin-level shaders are currently live — most of the time that is none, and the actor
+  // draws unfiltered, batched with its neighbours. Order is
+  // warp-then-glow-then-highlight-then-dissolve: the UV wobble should distort what the
+  // glow/outline draw (not the other way around), a hit flash should still read on top of
+  // an active shield glow, and a dying actor's dissolve should be the last word regardless
+  // of what else was active the instant it died. Lighting is no longer in this list at all
+  // (2026-08-24): it is one pass over the whole scene layer, running AFTER these composite
+  // rather than first, underneath them — see fx/filters/litFx.ts.
   private applySkinFilters(): void {
-    const list: Filter[] = [this.litFilter];
+    const list: Filter[] = [];
     if (this.heatHazeActive && this.heatHazeFilter) list.push(this.heatHazeFilter);
     if (this.shieldActive && this.shieldFilter) list.push(this.shieldFilter);
     if (this.outlineMs > 0 && this.outlineFilter) list.push(this.outlineFilter);

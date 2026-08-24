@@ -5,12 +5,6 @@
 import { Filter, GlProgram, UniformGroup, defaultFilterVert } from 'pixi.js';
 import { FRAME_UV, hexToRgb } from './shaderPrelude';
 
-/** Vertical foreshortening of the shield ring — see `uSquash` in `shieldFrag` below.
- *  Deliberately the same 0.62 the ground-shadow ellipse and the status auras use
- *  (`Entity.makeShadow`, `Actor.setStatus`), so every round thing wrapping a body in
- *  this view agrees on how much the camera tilt compresses it. */
-export const SHIELD_SQUASH = 0.62;
-
 const shieldFrag = FRAME_UV + /* glsl */ `
 in vec2 vTextureCoord;
 out vec4 finalColor;
@@ -19,7 +13,6 @@ uniform sampler2D uTexture;
 uniform vec3 uColor;
 uniform float uIntensity;
 uniform float uTime;
-uniform float uSquash;
 
 void main(void)
 {
@@ -29,13 +22,16 @@ void main(void)
     // See FRAME_UV above for the full story (this is the bug that produced the long-
     // running "shield renders as a partial crescent" report).
     vec2 uv = frameUv(vTextureCoord) - vec2(0.5);
-    // Squashed vertically (2026-08-18 depth pass, user report: the ring read as "a sticker
-    // glued on"): a shield WRAPS a body, and this is a tilted view (design/01), so its
-    // silhouette is an ellipse, not the perfect screen-space circle a raw UV distance
-    // gives. Dividing the vertical component by uSquash (<1) shortens the ring's vertical
-    // reach by exactly that factor while leaving its horizontal reach alone — the same
-    // foreshortening \`RigSkin\`'s EYE_TRACK_SQUASH and \`Entity\`'s shadow ellipse already use.
-    uv.y /= uSquash;
+    // A CIRCLE, deliberately — no vertical foreshortening, unlike every other round thing
+    // around a body here (2026-08-24, user report: *"护盾成了一个圆圈, 我希望是圆形护盾的效果,
+    // 最初那种效果是对的"*). The 2026-08-18 depth pass had divided \`uv.y\` by 0.62, the same
+    // squash \`Entity\`'s ground shadow and \`Actor.setStatus\`'s auras use, on the reasoning
+    // that "every round thing wrapping a body in a tilted view foreshortens the same way".
+    // That reasoning holds for a shadow and an aura and does NOT hold for this: those are
+    // flat discs lying ON THE GROUND PLANE, which a tilted camera compresses; a shield is a
+    // SPHERE around the body, and a sphere's silhouette is a circle from every angle. The
+    // squashed version read on screen as a flat hoop threaded through the character at gun
+    // height — the "圆圈" of the report — instead of a bubble enclosing it.
     float dist = length(uv) * 1.4142135;
     // A band hugging the silhouette's own bounding circle, not the true alpha edge —
     // same UV-distance trick as VignetteFilter above, so it needs no extra per-skin
@@ -93,7 +89,6 @@ export class EnergyShieldFilter extends Filter {
           uColor: { value: hexToRgb(color), type: 'vec3<f32>' },
           uIntensity: { value: intensity, type: 'f32' },
           uTime: { value: 0, type: 'f32' },
-          uSquash: { value: SHIELD_SQUASH, type: 'f32' },
         }),
       },
     });
@@ -103,10 +98,6 @@ export class EnergyShieldFilter extends Filter {
   set intensity(v: number) { this.resources.shieldUniforms.uniforms.uIntensity = v; }
 
   set color(hex: number) { this.resources.shieldUniforms.uniforms.uColor = hexToRgb(hex); }
-
-  /** The ring's vertical foreshortening (`SHIELD_SQUASH`). Read-only in practice — exposed
-   *  so a test can assert the ring is an ellipse rather than the old screen-space circle. */
-  get squash(): number { return this.resources.shieldUniforms.uniforms.uSquash; }
 
   /** Advance the shimmer clock — call once per rendered frame while attached. */
   tick(frameDt: number): void {

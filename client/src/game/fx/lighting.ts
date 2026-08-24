@@ -1,12 +1,17 @@
 // Dynamic point-light bookkeeping (design/01 fidelity roadmap milestone 2, "point
 // lights"). Pure data/logic, no Pixi/GPU dependency — a light here is just a position,
-// colour, radius and intensity; `NormalLitFilter` (filters.ts) is what actually shades a
-// sprite against the strongest one nearby. Kept deliberately small (no spatial index,
-// linear scan): this project only ever has a handful of lights alive at once (one
-// persistent local-player glow + a few transient muzzle-flash/impact bursts), so an
-// O(n) scan per actor per frame is the "own the cost" simplification this codebase's
-// other filters already established (VignetteFilter's UV-distance trick, HeatHazeFilter's
-// sine wobble — no extra machinery bought for a cost this cheap).
+// colour, radius and intensity; `SceneLightFilter` (fx/filters/litFx.ts) is what actually
+// shades the scene against them. Kept deliberately small (no spatial index, linear scan):
+// this project only ever has a handful of lights alive at once (one persistent local-player
+// glow + a few transient muzzle-flash/impact bursts), so an O(n) scan per FRAME is the "own
+// the cost" simplification this codebase's other filters already established.
+//
+// 2026-08-24: `strongestAt(x, y)` — one winning light per actor, evaluated at that actor's
+// centre — is gone, replaced by `snapshot`, which hands the whole active set to the shader.
+// The old shape existed because lighting was a per-actor filter and each instance had room
+// for exactly one light's direction; with one screen-space pass the falloff is computed per
+// TEXEL, so several lights add up and a light near a body's edge no longer shades the whole
+// body as if it were at its centre.
 
 export interface LightSource {
   x: number;
@@ -16,12 +21,14 @@ export interface LightSource {
   intensity: number;
 }
 
-/** What a lit actor's shader actually needs: a normalized direction (from the actor
- *  TOWARD the light) plus colour/intensity already falloff-adjusted for its distance. */
-export interface LightHit {
-  dirX: number;
-  dirY: number;
+/** One live light as the shader wants it: world position and radius, with the transient
+ *  fade already folded into `intensity` (distance falloff is the shader's job now — it has
+ *  the texel's own world position, which this layer does not). */
+export interface ActiveLight {
+  x: number;
+  y: number;
   color: number;
+  radius: number;
   intensity: number;
 }
 
@@ -63,27 +70,57 @@ export class LightRegistry {
     this.transients = [];
   }
 
-  /** The strongest light near (x, y), direction-and-falloff-adjusted for a shader to
-   *  consume directly — `null` when nothing is close enough to matter (key light only). */
-  strongestAt(x: number, y: number): LightHit | null {
-    let best: LightHit | null = null;
-    let bestScore = 0;
+  /**
+   * Fill `out` with this frame's live lights, strongest first, and return how many were
+   * written. Never allocates: `out` is a caller-owned scratch array whose entries are reused
+   * in place, so this can run every render frame.
+   *
+   * `out.length` is a real cap — the shader has a fixed number of light slots
+   * (`MAX_SCENE_LIGHTS`), and a busy fight registers one transient per impact, so a frame CAN
+   * have more lights than slots. The ones dropped are the weakest by `intensity * fade`,
+   * which is the right thing to lose: an almost-expired impact flash contributes least. This
+   * is the only place that truncation happens, and it is deliberate rather than incidental.
+   */
+  snapshot(out: ActiveLight[]): number {
+    if (out.length === 0) return 0; // no slots to rank into — the insert below indexes out[-1]
+    let n = 0;
 
     const consider = (light: LightSource, fade: number): void => {
-      const dx = light.x - x;
-      const dy = light.y - y;
-      const dist = Math.hypot(dx, dy);
-      const falloff = Math.max(0, 1 - dist / Math.max(1, light.radius));
-      const score = light.intensity * falloff * fade;
-      if (score <= 0 || score <= bestScore) return;
-      bestScore = score;
-      const invLen = dist > 0.0001 ? 1 / dist : 0;
-      best = { dirX: dx * invLen, dirY: dy * invLen, color: light.color, intensity: score };
+      const intensity = light.intensity * fade;
+      if (intensity <= 0 || light.radius <= 0) return;
+      // Insertion sort into the (very small, fixed-capacity) output: a full scan-then-sort
+      // would allocate, and n is at most a handful.
+      let at = n < out.length ? n : out.length - 1;
+      if (n >= out.length && intensity <= out[at]!.intensity) return; // weaker than the weakest kept
+      while (at > 0 && out[at - 1]!.intensity < intensity) {
+        copyLight(out[at]!, out[at - 1]!);
+        at--;
+      }
+      const slot = out[at]!;
+      slot.x = light.x;
+      slot.y = light.y;
+      slot.color = light.color;
+      slot.radius = light.radius;
+      slot.intensity = intensity;
+      if (n < out.length) n++;
     };
 
     for (const light of this.persistent.values()) consider(light, 1);
     for (const t of this.transients) consider(t.light, Math.max(0, t.lifeMs / t.totalMs));
 
-    return best;
+    return n;
   }
+}
+
+/** A scratch buffer of `size` reusable light slots — build one per consumer, keep it. */
+export function makeLightBuffer(size: number): ActiveLight[] {
+  return Array.from({ length: size }, () => ({ x: 0, y: 0, color: 0xffffff, radius: 0, intensity: 0 }));
+}
+
+function copyLight(dst: ActiveLight, src: ActiveLight): void {
+  dst.x = src.x;
+  dst.y = src.y;
+  dst.color = src.color;
+  dst.radius = src.radius;
+  dst.intensity = src.intensity;
 }

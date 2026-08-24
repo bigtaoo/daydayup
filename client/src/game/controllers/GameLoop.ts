@@ -332,12 +332,16 @@ export class GameLoop {
     // persistent glow, re-registered at their current position every frame rather than
     // tracked as a one-time spawn; every other point light (muzzle flash/impact bursts)
     // is registered directly by FxController.flash. This one `updateFx` wrapper is
-    // already called from every render path (paused/menu/offline/online), so shading
-    // every live actor here covers all of them with no per-path wiring.
+    // already called from every render path (paused/menu/offline/online), so registering
+    // here covers all of them with no per-path wiring.
+    //
+    // What used to follow — `scene.applyLighting`, one `strongestAt` scan and one uniform
+    // write PER ACTOR — is gone (2026-08-24). The whole set is uploaded once, to the single
+    // scene-lighting pass, by `FxController.updateCamera`, which is where the camera
+    // transform this frame's world→region mapping needs is settled.
     const player = this.deps.scene.player;
     if (player) this.deps.fx.lights.addPersistent('local', { x: player.curX, y: player.curY, color: 0xfff4d6, radius: 140, intensity: 0.35 });
     else this.deps.fx.lights.removePersistent('local');
-    this.deps.scene.applyLighting(this.deps.fx.lights);
 
     // Occlusion x-ray (design/01 "Limits of fake 3D"): a standing wall block or pillar that is
     // currently drawing over the local player OR any live enemy goes translucent so nobody can

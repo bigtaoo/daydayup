@@ -28,9 +28,12 @@ const SHADOW_ALPHA_INNER = 0.1;
  *  darkness into the inner third and leaves the outer half nearly transparent. */
 const SHADOW_ALPHA_CURVE = 2;
 
-/** Vertical foreshortening of everything round that lies on the ground plane or wraps a
- *  body in this tilted view (design/01). Shared with `EnergyShieldFilter`'s SHIELD_SQUASH
- *  and `Actor.setStatus`'s auras so they cannot drift apart. */
+/** Vertical foreshortening of everything round that lies ON THE GROUND PLANE in this
+ *  tilted view (design/01): this shadow and `Actor.setStatus`'s auras, which are flat
+ *  discs at the actor's feet and so are compressed by the camera tilt. Shared between them
+ *  so they cannot drift apart. `EnergyShieldFilter` deliberately does NOT use it — a shield
+ *  is a sphere around the body, not a disc under it, and a sphere reads as a circle from
+ *  every angle (2026-08-24, see that filter's own comment). */
 export const SHADOW_SQUASH = 0.62;
 
 /** How much a shadow slides away from the key light per world px of height. The key light

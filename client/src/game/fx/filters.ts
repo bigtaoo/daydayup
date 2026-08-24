@@ -7,8 +7,8 @@
 //   filters/shaderPrelude.ts — the shared GLSL prelude (FRAME_UV) + hexToRgb
 //   filters/screenFx.ts      — screen-space post: vignette, chromatic aberration
 //   filters/skinFx.ts        — per-actor skin fx: shield, outline, dissolve, heat-haze
-//   filters/litFx.ts         — directional lighting (actors)
+//   filters/litFx.ts         — one screen-space lighting pass over the scene layer
 export { FRAME_UV, hexToRgb } from './filters/shaderPrelude';
 export { VignetteFilter, ChromaticAberrationFilter } from './filters/screenFx';
-export { EnergyShieldFilter, OutlineFilter, DissolveFilter, HeatHazeFilter, SHIELD_SQUASH } from './filters/skinFx';
-export { NormalLitFilter, type NormalLitOptions } from './filters/litFx';
+export { EnergyShieldFilter, OutlineFilter, DissolveFilter, HeatHazeFilter } from './filters/skinFx';
+export { SceneLightFilter, MAX_SCENE_LIGHTS, flatReference, FLAT_KEY, type SceneLightOptions, type SceneLight } from './filters/litFx';

@@ -16,6 +16,7 @@ describe('parseGameQueryParams', () => {
       matchBaseUrl: null,
       lagMs: null,
       loadoutOverride: null,
+      perf: false,
     });
   });
 

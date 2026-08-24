@@ -3865,6 +3865,206 @@ half-checked numbers.
 
 ---
 
+## A performance profiler ported from `funny`, and a shield that is round again (2026-08-24, client-only)
+
+Two user reports in one pass: *"现在渲染帧率非常低。你可以将funny项目中客户端性能分析那套系统借鉴过来吗?"*
+and *"护盾绘制不对了，现在的护盾成了一个圆圈，我希望是圆形护盾的效果，最初那种效果是对的"*.
+
+### 1. `client/src/perf/` — the profiler, and what it immediately found
+
+Ported from `funny`'s `client/src/cache/PerfMonitor.ts` + `MemoryMonitor.ts`. Six modules, 78 tests;
+`client/src/perf/README.md` is the usage doc and carries the deviation list. Installed from
+`main.ts` / `main.wechat.ts` (deliberately NOT from `Game.ts` — that file is already over the
+500-line baseline, and the monitor needs to install *after* `game.start()` anyway so its ticker
+brackets sit outside every listener the game added).
+
+What carried over unchanged: the two-signal design (long-task busy ratio reports on a single
+window because a long task is hard evidence; sustained low fps needs five consecutive windows so a
+room transition doesn't cry wolf), the hidden-tab **latch** (sampling `document.hidden` at window
+end misses a tab that was hidden mid-window and shown again — it discards the sample *and* the
+streak), and localStorage threshold overrides.
+
+Named deviations from `funny`, per the porting convention:
+
+1. **No telemetry sink.** funny's monitors exist to file `reportAnomaly` events to Loki. This repo
+   has no such channel, so a breach goes to `console.warn` (with a local 30s cooldown standing in
+   for the backend's own per-type cooldown) and to an on-screen overlay. `onWarn`/`onSnapshot` are
+   the seams where a backend would attach.
+2. **The frame is split into update vs render.** funny reports one fps number; here every sample
+   also carries the CPU cost of the game's own update and of `renderer.render`, so a report already
+   names which half to look at. Done by bracketing the ticker (`UPDATE_PRIORITY.HIGH` / `UTILITY`)
+   and wrapping `renderer.render` — `Game`/`GameLoop` are untouched and do not know it exists.
+3. **A WebGL command probe, which funny has no equivalent of** (it renders a handful of card
+   sprites; "how many draw calls" was never its question). `glProbe.ts` monkey-patches the live GL
+   context to count draw calls, program switches, texture binds and framebuffer binds per frame.
+4. **Pixi v8, not v7-legacy.** No `PIXI.utils.BaseTextureCache`, no `DisplayObject`. The texture
+   count is shape-sniffed off the renderer's own managed-texture hash (`GCManagedHash.items` as of
+   8.6 — a private field that has already been renamed once, hence the sniffing and the -1
+   "cannot tell" fallback rather than a hard read).
+5. **No pool registry** — this client has no object pools, so that half of `MemoryMonitor` is not
+   ported. What replaces it is `scene.filtered`: the count of nodes carrying a filter, i.e. how
+   many extra render-target passes the frame will pay for.
+
+**The first measurement** (a real run, 8 live enemies, 1920x855):
+
+```
+frame p50 16.7ms   update p50 0.6ms   render p50 10.4ms
+draws 175   prog 105   tex 162   framebuffers 23  (~11 filter passes)
+nodes 892   filtered 11   gpu tex 72   heap 49MB
+```
+
+The frame is **render-bound by more than 15x**, and the render cost is not geometry — 892 nodes is
+nothing. It is **175 draw calls with 105 shader-program switches for 11 filtered actors**. Every
+actor carries a `NormalLitFilter` unconditionally (`Actor.applySkinFilters`), and in Pixi a filtered
+container is its own render-target pass: bind target, draw, bind back, re-draw through the filter's
+program. Eleven of those (plus the two screen-wide post-fx) account for the framebuffer binds, and
+they also cut the sprite batcher into as many pieces as there are actors, which is where the rest of
+the draw calls come from. `filtered` tracking the on-screen actor count is the signature.
+
+Fixing that is a renderer-architecture change — bake the lighting into the rig sprites, or run one
+screen-space lighting pass over the whole world layer instead of one filter per actor — so it was
+recorded here rather than folded into the port. The user picked the second option the same day;
+see "One lighting pass instead of one per actor" below for what it cost and what it bought
+(render p50 10.4ms -> 2.4ms).
+
+### 2. The shield was an ellipse; a shield is a sphere
+
+The 2026-08-18 depth pass divided the shield shader's `uv.y` by `SHIELD_SQUASH` (0.62), deliberately
+the same constant `Entity`'s ground shadow and `Actor.setStatus`'s auras use, on the reasoning that
+"every round thing wrapping a body in a tilted view foreshortens the same way". That reasoning is
+right for a shadow and an aura and wrong for this one: those are flat discs lying **on the ground
+plane**, which the camera tilt compresses; a shield is a **sphere around the body**, and a sphere's
+silhouette is a circle from every angle. On screen the squashed version read as a flat hoop threaded
+through the character at gun height — the "圆圈" of the report — rather than a bubble enclosing it.
+
+Fix: the squash is gone from `EnergyShieldFilter` entirely (uniform, constant, getter and re-export),
+and `SHADOW_SQUASH`'s doc now says explicitly which shapes share it and why the shield does not.
+Everything else the 08-18/08-19 passes tuned is kept — the band still peaks at 1.2 body radii (it does
+not go back to the original 2.1, which blanketed the floor and hid the ground shadow), the slow
+0.29 Hz shimmer stays, the 0.7 alpha knob stays. Only the projection changed.
+
+Verified by differencing two composited frames (shield on minus shield off, so the background cancels
+— the "sample the frame, not the source" rule): glow reaches **105 px horizontally and 106 px
+vertically** from the filter square's centre, against a predicted outer edge of 109 px. Before, the
+vertical reach was 0.62x the horizontal by construction.
+
+`filters.test.ts`'s three "ring shape" tests previously pinned the ellipse as an invariant — a test
+defending the defect. They now assert the circle instead, and are written against the *number* as
+well as the identifier (no `uv.y` scaling at all, by any uniform name), because re-introducing 0.62
+under a different name reproduces the flat hoop. Mutation-checked: re-adding `uv.y /= 0.62` fails all
+three.
+
+---
+
+## One lighting pass instead of one per actor (2026-08-24, client-only)
+
+Follow-up to the profiler section above, on the user's instruction *"那就把每个 actor 的滤镜改成
+整层一遍光照"*. The profiler had just measured the per-actor `NormalLitFilter` as the dominant
+cost of the frame; this replaces it with a single screen-space pass.
+
+### What moved
+
+`Layers` gains a `lit` container holding `ground` + `shadow` + `entities`, carrying one
+`SceneLightFilter` (`fx/filters/litFx.ts`, the rewritten `NormalLitFilter`). `fx` and `hud`
+stay outside it, deliberately: a muzzle flash IS light and shading it would dim the very thing
+casting the light, and a floating health bar is a HUD readout riding in world space, not a
+surface. `entities` is **not** split — a wall block and a character Y-sort against each other
+as one set, and giving actors their own filter target would break every occlusion cue in the
+frame; the `lit` container wraps that set rather than dividing it.
+
+Removed with it: `Actor.litFilter` / `Actor.setLighting`, `Scene.applyLighting`, and
+`LightRegistry.strongestAt`. `Actor.applySkinFilters` now starts from an EMPTY list, so an
+actor with no status/shield/hit/death carries no filter at all.
+
+### The three things that changed besides the cost
+
+1. **Point lights became per-pixel.** The old filter had room for one light's *direction*,
+   sampled once at the actor's centre (`strongestAt`), so a light near a body's edge shaded
+   the whole body as if it were in the middle and a second light was simply discarded. The
+   pass gets every live light's world position and radius (`LightRegistry.snapshot` → a
+   `vec4` array uniform) and computes direction and falloff per texel, so lights add up.
+2. **The environment is lit.** Measured on a live frame, filter on vs off: a floor patch
+   under a placed light goes from luma 50.9 to 67.3 (+32%) — a flash now lights the room it
+   goes off in. The per-actor form could never do this.
+3. **Shading runs AFTER each actor's own overlays** (shield glow, hit flash, dissolve) rather
+   than first, underneath them, since the pass sees them already composited. Accepted: the
+   alternative is going back to per-actor passes. Verified not to distort the shield — the
+   glow still measures 106 px horizontally by 104 px vertically from the filter square's
+   centre, the same circle as before the move.
+
+### Keeping the environment's look
+
+The pass now covers pre-shaded floor and wall art, so the shading is **normalized**: it
+divides by `flatReference = ambient + dot(flatNormal, KEY_DIR) * key`, which makes a flat,
+point-light-free texel come out at exactly its painted colour. Ambient 0.55 / key 0.55 /
+gradient 7.0 are the per-actor filter's own numbers, unchanged, so relative contrast on a
+character is identical; what changes is that the whole scene is no longer dimmed ~21%.
+
+Measured per-pixel luma delta (pass on minus off) on the shipped art:
+
+| region | p05 | p50 | p95 | range |
+| --- | --- | --- | --- | --- |
+| actor | -19 | +4.2 | +34.5 | -76 .. +73 |
+| floor (no light nearby) | +1.2 | +3.2 | +7.1 | -28 .. +37 |
+| wall | -4.0 | -0.1 | +4.7 | -30 .. +20 |
+
+So the actor keeps its full relief, the wall is untouched (median 0.1/255), and the floor
+gains a ~1% lift plus faint relief at its lava-crack edges. `design/01`'s 2026-08-20 finding
+that shader lighting does nothing visible to walls still holds — this pass does not
+contradict it, it is normalized so it cannot.
+
+### The mapping, and why `filterArea` is mandatory here
+
+The shader needs each texel's WORLD position to place a light. It gets it from
+`uRegion.xy + frameUv(vTextureCoord) * uRegion.zw`, where `uRegion` is the visible world rect,
+computed in `FxController.syncSceneLight` as the inverse of the camera transform (a plain
+divide — this camera only scales and translates) and set on `layers.lit.filterArea` from the
+same computation. The two MUST describe the same rectangle, so they come from one place.
+
+`uOutputFrame.xy` is not usable for this: `FilterSystem._updateFilterUniforms` zeroes it
+whenever the filter's output is not the final render target, and this pass always renders
+into `world`'s post-fx input. The filter therefore also sets `clipToViewport: false` and
+`padding: 0` — anything that grows the region past `filterArea` puts the mapping out of step.
+
+Sync happens at the END of `updateCamera`, not in `updateFx` where the old per-actor call
+sat: a region computed from last frame's camera would slide the whole lighting a
+camera-delta behind the scene it lights.
+
+### Cost, and what is next
+
+Same scenario as the profiler's first measurement (8 live enemies, 1920x855):
+
+| | before | after |
+| --- | --- | --- |
+| render p50 | 10.4 ms | **2.4 ms** |
+| filter passes | 11 | **3** |
+| framebuffer binds | 23 | **6** |
+| filtered nodes | 11 | **3** |
+| draw calls | 175 | **157** |
+| program switches | 105 | **95** |
+
+Draw calls fell by only 18: the ~157 that remain are the environment's own geometry (a wall
+block is a Container of several Graphics, and Graphics do not batch with Sprites), which is
+also where the 95 program switches come from. That is the next bottleneck if one is ever
+needed — at render p50 2.4ms of a 16.7ms budget it is not costing frame time today, so it is
+recorded rather than scheduled.
+
+### Two things worth remembering
+
+- **A filter that takes the `FRAME_UV` prelude must not also declare `uInputSize`.** Doing
+  both is `'uInputSize : redefinition'`, a hard compile error — and a filter whose program
+  fails to compile renders its whole layer **black** rather than failing loudly. This shipped
+  for one iteration and was caught by looking at the browser console, not by the type checker
+  or the test suite. `filters.test.ts`'s FRAME_UV suite now covers `SceneLightFilter`, and
+  that suite's `countOf(src, 'uniform highp vec4 uInputSize;') === 1` assertion is exactly
+  the guard that would have caught it.
+- **The light-slot cap is real.** The shader has `MAX_SCENE_LIGHTS` (8) slots and a busy fight
+  registers one transient per impact, so a frame can have more lights than slots.
+  `LightRegistry.snapshot` drops the WEAKEST by faded intensity — an almost-expired impact
+  flash is the right thing to lose — and that is the only place the truncation happens.
+
+---
+
 ## Dependency summary
 
 ```

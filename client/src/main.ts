@@ -9,6 +9,8 @@ import { preloadBiomeTiles } from './render/biomeTiles';
 import { preloadEnvironmentSprites } from './render/environmentSprites';
 import { pinTextMeasurementToPaintCanvas } from './render/textMetrics';
 import { reportWebBootFailure } from './bootError';
+import { installPerf } from './perf';
+import { parseGameQueryParams } from './game/match/gameQueryParams';
 
 // Web entry. The WeChat entry is client/src/main.wechat.ts (loaded by client/wechat/game.js).
 // Both reuse the Game core; only the Platform differs. The real `.tao` rig skin
@@ -56,6 +58,14 @@ async function boot() {
 
   const game = new Game(app, input, audio);
   game.start();
+
+  // Frame-timing monitor (src/perf, ported from `funny` — see that folder's README for the
+  // deviations). Installed after `start()` so its two ticker brackets sit outside every
+  // listener the game added, which is what lets it split a frame into "our update" vs
+  // "the renderer" without Game or GameLoop knowing it exists. The monitor runs in every
+  // session (a sustained stutter leaves a `[perf]` console warning naming the expensive
+  // half); `?perf=1` adds the on-screen readout and the WebGL draw-call probe on top.
+  installPerf(app, { overlay: parseGameQueryParams(location.search).perf });
   document.getElementById('boot-loading')?.remove();
 
   // Pick up a new deploy when the player tabs back in (production builds only). Held back

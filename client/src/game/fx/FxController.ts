@@ -1,8 +1,8 @@
-import { BlurFilter, Container, Graphics } from 'pixi.js';
+import { BlurFilter, Container, Graphics, Rectangle } from 'pixi.js';
 import type { Layers } from '../scene/layers';
-import { VignetteFilter, ChromaticAberrationFilter } from './filters';
+import { VignetteFilter, ChromaticAberrationFilter, SceneLightFilter, MAX_SCENE_LIGHTS } from './filters';
 import { ParticleSystem } from './Particles';
-import { LightRegistry } from './lighting';
+import { LightRegistry, makeLightBuffer, type ActiveLight } from './lighting';
 
 const FX_LIFE_MS = 170; // flash/trail lifetime
 const MAX_SHAKE_PX = 14; // camera-shake offset at full trauma (design/01 milestone 3)
@@ -68,6 +68,16 @@ export class FxController {
   /** Dynamic point lights (design/01 milestone 2) — the local-player glow (registered
    *  by Game.ts each frame) plus transient bursts registered by `flash()` below. */
   readonly lights = new LightRegistry();
+  /** The one lighting pass (design/01 milestone 2) — replaced a per-actor filter 2026-08-24,
+   *  see fx/filters/litFx.ts. Mounted on `layers.lit` by `attach`. */
+  readonly sceneLight = new SceneLightFilter();
+  /** `layers.lit`'s filter region, in WORLD px. Pinned to exactly the visible world rect and
+   *  mutated in place each frame (never reassigned) so the filter's own `uRegion` and Pixi's
+   *  computed bounds describe the same rectangle — the shader's world-space mapping, and so
+   *  every light's position on screen, depends on those two agreeing. */
+  private readonly litArea = new Rectangle(0, 0, 1, 1);
+  /** Reused scratch for `LightRegistry.snapshot` — one slot per shader light slot. */
+  private readonly lightBuffer: ActiveLight[] = makeLightBuffer(MAX_SCENE_LIGHTS);
   private shakeTrauma = 0;
   private hitStopMs = 0;
   /** Current world→screen zoom applied in updateCamera — CommandBuilder needs this
@@ -85,6 +95,13 @@ export class FxController {
     // bright-pass bloom (first-pass approximation, design/01's own "milestone" framing).
     this.layers.fx.filters = [new BlurFilter({ strength: 3, quality: 2 })];
     this.layers.fx.addChild(this.particles.view);
+    // One lighting pass over ground+shadow+entities (see Layers.lit for what is deliberately
+    // left out of it). `filterArea` is mandatory here, not an optimisation: this filter opts
+    // out of Pixi's viewport clip, so without an area the region would be the whole dungeon
+    // floor's bounds. The first `updateCamera` replaces these placeholder numbers; until then
+    // there are no point lights registered, and the key-light term does not read the region.
+    this.layers.lit.filterArea = this.litArea;
+    this.layers.lit.filters = [this.sceneLight];
   }
 
   /** Drop a fading dot at (x,y) — bullet trails (spawnBulletTrails). */
@@ -178,7 +195,12 @@ export class FxController {
     player: CameraTarget | null,
     frame: CameraFrame | null = null,
   ): void {
-    if (!player) return;
+    if (!player) {
+      // Still re-sync: the camera is unchanged, but a light may have expired or moved, and
+      // the pass is live whether or not there is anyone to follow.
+      this.syncSceneLight(viewport);
+      return;
+    }
     const { vw, vh } = viewport;
     const worldW = worldSize ? worldSize.w : vw;
     const worldH = worldSize ? worldSize.h : vh;
@@ -213,6 +235,27 @@ export class FxController {
     this.layers.world.scale.set(zoom);
     this.layers.world.x = cx + shakeX;
     this.layers.world.y = cy + shakeY;
+    this.syncSceneLight(viewport);
+  }
+
+  /**
+   * Hand this frame's camera rect and light set to the single scene-lighting pass. Called at
+   * the END of updateCamera, after the world transform is settled: the shader maps each texel
+   * to a WORLD position, so a region computed from last frame's camera would slide the whole
+   * lighting a camera-delta behind the scene it is lighting.
+   *
+   * The rect is the inverse of the camera transform applied to the viewport — safe as a plain
+   * divide because this camera only ever scales and translates (no rotation, see updateCamera).
+   */
+  private syncSceneLight(viewport: { vw: number; vh: number }): void {
+    const world = this.layers.world;
+    const zoom = world.scale.x || 1;
+    this.litArea.x = -world.x / zoom;
+    this.litArea.y = -world.y / zoom;
+    this.litArea.width = viewport.vw / zoom;
+    this.litArea.height = viewport.vh / zoom;
+    this.sceneLight.setRegion(this.litArea.x, this.litArea.y, this.litArea.width, this.litArea.height);
+    this.sceneLight.setLights(this.lightBuffer, this.lights.snapshot(this.lightBuffer));
   }
 
   /** Bump camera-shake trauma (clamped to 1) — call from consumeEvents on an impactful moment. */

@@ -40,6 +40,21 @@ half aims + fires; two corner buttons for weapon 1 / 2. Hit-test geometry lives 
 never sees it. Not there yet: an on-screen INTERACT control, and any verification of how this
 feels under real thumbs on a real device (`design/04`).
 
+## Dev `?query=` flags
+
+Parsed in one place (`src/game/match/gameQueryParams.ts`); each is a dev/demo toggle, never
+a shipped feature.
+
+| Flag | Effect |
+|------|--------|
+| `?perf=1` | On-screen perf readout + WebGL draw-call probe (`src/perf/README.md`) |
+| `?coop=1` | Bring a local bot ally |
+| `?online=1` / `?pvp=1` | Route the run through CoopSession / the matchmade PvP arena |
+| `?arenaDemo=1` | Synthetic local PvP arena |
+| `?skin=` / `?wpn=` | Override the character / the starting weapon |
+| `?lag=` | Inject synthetic one-way latency (ms) to feel the online predictor |
+| `?mm=` | Override the matchsvc origin |
+
 ## What the render layer is responsible for
 
 - Tilted-view scene + **Y-sort depth occlusion** (walking in front of / behind a pillar occludes correctly)
@@ -49,6 +64,12 @@ feels under real thumbs on a real device (`design/04`).
 - `.tao` **rig playback** (`src/render/`) with per-character atlases and weapon sprites mounted per body
   plan (`rigWeaponMount.ts`: the hero's orbiting sockets, a mob's held mount, the boss's none)
 - Additive-blend fx layer (muzzle / deflect flashes), post-processing and particles, WeChat-safe rendering path
+- **One screen-space lighting pass** over the scene layer (`game/fx/filters/litFx.ts`) — a
+  per-pixel fake normal off the layer's own luminance, a fixed key light, and every live
+  point light with real per-texel falloff, so a muzzle flash lights the room it goes off in
+- **A frame-timing monitor in every session** (`src/perf/`, ported from `funny`): a sustained
+  stutter leaves a `[perf]` console warning naming whether update or render was to blame;
+  `?perf=1` adds an on-screen readout and a WebGL draw-call probe
 
 ## Layout
 
@@ -83,6 +104,8 @@ src/
 │  │                  without a canvas (textWidth is the only sizing input the HUD
 │  │                  has; nothing here may call Text.width/getBounds)
 │  └─ fx/             FxController, particles, filters
+├─ perf/              frame-timing monitor + GL draw-call probe + on-screen readout
+│                     (`?perf=1`); see its own README for the funny port's deviations
 ├─ render/            skin/rig/atlas infrastructure (.tao runtime, weapon + UI skins)
 ├─ net/               transport, CoopSession, matchmaking, party, auth, session
 ├─ meta/              persistent forge/blueprint state

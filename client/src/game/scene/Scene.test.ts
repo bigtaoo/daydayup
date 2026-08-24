@@ -20,13 +20,8 @@ import { Scene } from './Scene';
 import { Layers } from './layers';
 import { bradToRad } from '../coords';
 import { BODY_TURN_PER_TICK } from '../../render/facing';
-import { LightRegistry } from '../fx/lighting';
 import type { Actor } from './Actor';
 import type { Entity } from './Entity';
-
-function litFilterOf(a: Actor): { dirX: number; dirY: number; intensity: number } {
-  return (a as unknown as { litFilter: { dirX: number; dirY: number; intensity: number } }).litFilter;
-}
 
 // EnergyShieldFilter/OutlineFilter/DissolveFilter (Actor's setShield/hitFlash/
 // startDissolve) all build a real WebGL GlProgram at construction time — unavailable
@@ -45,21 +40,6 @@ vi.mock('../fx/filters', () => ({
   HeatHazeFilter: class {
     intensity = 1;
     tick() {}
-  },
-  NormalLitFilter: class {
-    dirX = 0;
-    dirY = 0;
-    color = 0;
-    intensity = 0;
-    setPoint(dirX: number, dirY: number, color: number, intensity: number) {
-      this.dirX = dirX;
-      this.dirY = dirY;
-      this.color = color;
-      this.intensity = intensity;
-    }
-    clearPoint() {
-      this.intensity = 0;
-    }
   },
 }));
 
@@ -558,56 +538,31 @@ describe('Scene.spawn — the health bar rides layers.hud, never the actor\'s ow
   });
 });
 
-describe('Scene.applyLighting — dynamic point lighting (design/01 fidelity roadmap milestone 2)', () => {
-  it('shades a live Actor (player) against the strongest nearby light', () => {
+// `Scene.applyLighting` is gone (2026-08-24). Shading a scene is no longer something the
+// scene graph does per Actor — it is one screen-space pass over `Layers.lit`, driven from
+// `FxController.updateCamera`, and its coverage lives in FxController.test.ts. What remains
+// worth pinning HERE is the consequence for an Actor's own filter list: a plain actor now
+// carries no filter at all, where it used to always carry the lit one.
+function skinFiltersOf(a: Actor): unknown[] {
+  return ((a as unknown as { skin: { view: { filters: unknown[] | null } } }).skin.view.filters ?? []);
+}
+
+describe('Scene — actors carry no lighting filter of their own any more', () => {
+  it('leaves a player carrying only its own shield glow — no lighting filter underneath it', () => {
+    // The launch characters all have a shield pool, so the ONE filter here is the shield's.
+    // Before this change there were two, and the lit one was on every actor unconditionally.
     const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
     const scene = new Scene(new Layers());
     scene.reconcile(s);
-
-    const lights = new LightRegistry();
-    lights.addPersistent('a', { x: 150, y: 100, color: 0x66e0ff, radius: 200, intensity: 1 });
-    scene.applyLighting(lights);
-
-    expect(litFilterOf(scene.player!).intensity).toBeGreaterThan(0);
+    expect(skinFiltersOf(scene.player!).map((f) => (f as object).constructor.name)).toEqual(['EnergyShieldFilter']);
   });
 
-  it('shades enemies too, not just the player (Enemy extends Actor)', () => {
+  it('spawns a shieldless enemy with NO filters at all, so it batches with its neighbours', () => {
     const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
     const enemy = addEnemy(s, 300, 300, 0 as Brad);
     const scene = new Scene(new Layers());
     scene.reconcile(s);
-
-    const lights = new LightRegistry();
-    lights.addPersistent('a', { x: 310, y: 300, color: 0xff8844, radius: 200, intensity: 1 });
-    scene.applyLighting(lights);
-
-    const view = scene.actorAt(enemy.id)!;
-    expect(litFilterOf(view).intensity).toBeGreaterThan(0);
-  });
-
-  it('clears the point term when nothing is close enough to matter', () => {
-    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
-    const scene = new Scene(new Layers());
-    scene.reconcile(s);
-
-    const lights = new LightRegistry();
-    lights.addPersistent('far', { x: 100000, y: 100000, color: 0xffffff, radius: 50, intensity: 1 });
-    scene.applyLighting(lights);
-
-    expect(litFilterOf(scene.player!).intensity).toBe(0);
-  });
-
-  it('leaves bullets/pickups alone — only Actor views (player/enemy) get shaded', () => {
-    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
-    addBullet(s, 300, 300);
-    addPickup(s, 300, 300);
-    const scene = new Scene(new Layers());
-    scene.reconcile(s);
-
-    const lights = new LightRegistry();
-    lights.addPersistent('a', { x: 300, y: 300, color: 0xffffff, radius: 200, intensity: 1 });
-    // Would throw if it ever tried to read `.litFilter` off a Bullet/Pickup view.
-    expect(() => scene.applyLighting(lights)).not.toThrow();
+    expect(skinFiltersOf(scene.actorAt(enemy.id)!)).toEqual([]);
   });
 });
 

@@ -1,15 +1,45 @@
 import { describe, it, expect, vi } from 'vitest';
 import { FxController, type CameraTarget } from './FxController';
 import { Layers } from '../scene/layers';
+import { makeLightBuffer } from './lighting';
 
 // FxController's filters (fx/filters.ts) build a real WebGL GlProgram at construction
 // time — unavailable under plain vitest (no `document`/canvas), and irrelevant to the
 // camera-zoom math this file tests. Stubbed the same way RoomBuilder.test.ts stubs
 // render/biomeTiles.ts: a controllable, network/GPU-independent replacement.
+// `SceneLightFilter`'s stub RECORDS what it is handed, so the tests below can assert the
+// region and light set the camera pass uploads without a GPU.
+// `attach()` also builds Pixi's own BlurFilter for the fx layer, which compiles a real GL
+// program at construction and therefore needs a canvas. Partial-mocked (everything else in
+// pixi.js stays real — `Layers` needs the actual Container) so the attach path is testable.
+vi.mock('pixi.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('pixi.js')>()),
+  BlurFilter: class { strength = 0; quality = 0; },
+}));
+
 vi.mock('./filters', () => ({
   VignetteFilter: class { intensity = 0; radius = 0; },
   ChromaticAberrationFilter: class { amount: number; constructor(amount = 0) { this.amount = amount; } },
+  MAX_SCENE_LIGHTS: 8,
+  SceneLightFilter: class {
+    region: number[] = [0, 0, 1, 1];
+    lights: { x: number; y: number; radius: number; intensity: number; color: number }[] = [];
+    setRegion(x: number, y: number, w: number, h: number) { this.region = [x, y, w, h]; }
+    setLights(lights: { x: number; y: number; radius: number; intensity: number; color: number }[], count: number) {
+      this.lights = lights.slice(0, count).map((l) => ({ ...l }));
+    }
+  },
 }));
+
+const MAX_SCENE_LIGHTS = 8;
+
+/** The stub filter's recorded state, typed for the assertions below. */
+function recorded(fx: FxController) {
+  return fx.sceneLight as unknown as {
+    region: number[];
+    lights: { x: number; y: number; radius: number; intensity: number; color: number }[];
+  };
+}
 
 // updateCamera's zoom-to-fill (design/10 legibility fix, 2026-08-02; cover-fit follow-up
 // 2026-08-12): a room smaller than the viewport is zoomed up so BOTH axes cover it
@@ -22,26 +52,33 @@ function fakePlayer(x: number, y: number): CameraTarget {
   return { interpGroundX: () => x, interpGroundY: () => y };
 }
 
+/** The registry's live set, as `SceneLightFilter` would receive it. */
+function activeLights(fx: FxController) {
+  const buf = makeLightBuffer(MAX_SCENE_LIGHTS);
+  return buf.slice(0, fx.lights.snapshot(buf));
+}
+
 describe('FxController.lights (design/01 fidelity roadmap milestone 2)', () => {
   it('registers a transient light from flash(), matching the burst position/colour', () => {
     const layers = new Layers();
     const fx = new FxController(layers);
     fx.flash(100, 200, 0x66e0ff, 20);
-    const hit = fx.lights.strongestAt(100, 200);
-    expect(hit).not.toBeNull();
-    expect(hit!.color).toBe(0x66e0ff);
+    const lit = activeLights(fx);
+    expect(lit).toHaveLength(1);
+    expect(lit[0]!.color).toBe(0x66e0ff);
+    expect([lit[0]!.x, lit[0]!.y]).toEqual([100, 200]);
   });
 
   it('decays flash()-registered lights via updateFx, same lifetime as the visual burst', () => {
     const layers = new Layers();
     const fx = new FxController(layers);
     fx.flash(0, 0, 0xffffff, 20);
-    const full = fx.lights.strongestAt(0, 0)!.intensity;
+    const full = activeLights(fx)[0]!.intensity;
     fx.updateFx(85, 0, undefined); // half of FX_LIFE_MS (170ms)
-    const half = fx.lights.strongestAt(0, 0)!.intensity;
+    const half = activeLights(fx)[0]!.intensity;
     expect(half).toBeLessThan(full);
     fx.updateFx(86, 0, undefined); // past its lifetime
-    expect(fx.lights.strongestAt(0, 0)).toBeNull();
+    expect(activeLights(fx)).toEqual([]);
   });
 
   it('resetForNewRun clears every light — a fresh run inherits none of the last one\'s glow', () => {
@@ -49,7 +86,7 @@ describe('FxController.lights (design/01 fidelity roadmap milestone 2)', () => {
     const fx = new FxController(layers);
     fx.lights.addPersistent('local', { x: 0, y: 0, color: 0xffffff, radius: 100, intensity: 1 });
     fx.resetForNewRun();
-    expect(fx.lights.strongestAt(0, 0)).toBeNull();
+    expect(activeLights(fx)).toEqual([]);
   });
 });
 
@@ -191,5 +228,91 @@ describe('FxController.updateCamera', () => {
     );
     expect(fx.zoom).toBeCloseTo(2);
     expect(layers.world.x).toBeCloseTo(-3200); // hit the WORLD's east bound, not the room's
+  });
+});
+
+// 2026-08-24: lighting moved off the individual actors onto one screen-space pass over
+// `Layers.lit`. The pass shades by WORLD position, so the camera rect it is handed has to be
+// the inverse of the camera transform that same frame — get this wrong and every light sits
+// somewhere other than where its source is, in a way no unit test of the shader could catch.
+describe('FxController scene-light sync', () => {
+  it('mounts the one lighting pass on the lit layer, with a filterArea (never bare bounds)', () => {
+    // The filter opts out of Pixi's viewport clip, so with no filterArea its region would be
+    // the whole dungeon floor's bounds — a texture allocation the size of the level.
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.attach();
+    expect(layers.lit.filters).toEqual([fx.sceneLight]);
+    expect(layers.lit.filterArea).not.toBeNull();
+  });
+
+  it('leaves fx and hud out of the pass — a muzzle flash is light, a health bar is a readout', () => {
+    const layers = new Layers();
+    new FxController(layers).attach();
+    expect(layers.lit.children).toEqual([layers.ground, layers.shadow, layers.entities]);
+    expect(layers.world.children).toEqual([layers.lit, layers.fx, layers.hud]);
+  });
+
+  it('hands the pass the world rect the camera is actually showing', () => {
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.attach();
+    // World twice the viewport on each axis, player dead centre: zoom 1, world at (-400,-300)
+    // with the 8%-of-vh body bias, so the visible world rect starts at (400, 348).
+    fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 1600, h: 1200 }, fakePlayer(800, 600));
+    const [x, y, w, h] = recorded(fx).region;
+    expect(w).toBeCloseTo(800);
+    expect(h).toBeCloseTo(600);
+    expect(x).toBeCloseTo(-layers.world.x / layers.world.scale.x);
+    expect(y).toBeCloseTo(-layers.world.y / layers.world.scale.x);
+  });
+
+  it('divides the viewport by the zoom — a zoomed-in camera shows LESS world, not more', () => {
+    // The region is in world px, so it must shrink as the camera zooms in. Multiplying
+    // instead of dividing would look identical at zoom 1 and be wrong at every other zoom,
+    // which is exactly the class of bug the shipped camera (zoom 4 in a real room) hits.
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.attach();
+    fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 2000, h: 2000 }, fakePlayer(1000, 1000), { x: 800, y: 800, w: 400, h: 400 });
+    expect(fx.zoom).toBeCloseTo(2);
+    const [, , w, h] = recorded(fx).region;
+    expect(w).toBeCloseTo(400);
+    expect(h).toBeCloseTo(300);
+  });
+
+  it('keeps the filterArea and the shader region describing the same rectangle', () => {
+    // These two are set from one computation on purpose: Pixi sizes the render target from
+    // `filterArea` while the shader maps texels through `uRegion`. Any drift between them
+    // slides the whole lighting relative to the scene.
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.attach();
+    fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 2000, h: 2000 }, fakePlayer(1000, 1000), { x: 800, y: 800, w: 400, h: 400 });
+    const area = layers.lit.filterArea!;
+    expect(recorded(fx).region).toEqual([area.x, area.y, area.width, area.height]);
+  });
+
+  it('re-syncs even with no player, so an expiring light still leaves the pass', () => {
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.attach();
+    fx.flash(10, 20, 0xff0000, 5);
+    fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 400, h: 400 }, null);
+    expect(recorded(fx).lights).toHaveLength(1);
+    fx.updateFx(1000, 0, undefined); // well past FX_LIFE_MS
+    fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 400, h: 400 }, null);
+    expect(recorded(fx).lights).toEqual([]);
+  });
+
+  it('uploads lights in world coordinates, untouched by the camera', () => {
+    // The shader converts texel -> world, not light -> screen. A light pre-multiplied by the
+    // camera here would be double-transformed.
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.attach();
+    fx.lights.addPersistent('local', { x: 1234, y: 567, color: 0xfff4d6, radius: 140, intensity: 0.35 });
+    fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 2000, h: 2000 }, fakePlayer(1000, 1000), { x: 800, y: 800, w: 400, h: 400 });
+    expect(recorded(fx).lights[0]).toMatchObject({ x: 1234, y: 567, radius: 140, intensity: 0.35 });
   });
 });

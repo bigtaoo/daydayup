@@ -6,7 +6,6 @@
 // engine already computed (design/08 "render/server only read").
 import type { GameState } from '@dd/engine';
 import type { Layers } from './layers';
-import type { LightRegistry } from '../fx/lighting';
 import { Entity } from './Entity';
 import { Actor } from './Actor';
 import { Enemy } from './Enemy';
@@ -206,17 +205,6 @@ export class Scene {
         v.destroy();
         this.dying.splice(i, 1);
       }
-    }
-  }
-
-  /** Shade every live Actor against this frame's strongest nearby point light (design/01
-   *  milestone 2) — call once per render frame, any time after `lights` has this frame's
-   *  positions registered (Game.ts registers the local-player glow first). Bullets/
-   *  pickups aren't Actors and are skipped; a dying (dissolving) actor is left as it was
-   *  lit the instant it died rather than kept updating for an animation already ending. */
-  applyLighting(lights: LightRegistry): void {
-    for (const v of this.views.values()) {
-      if (v instanceof Actor) v.setLighting(lights.strongestAt(v.curX, v.curY));
     }
   }
 

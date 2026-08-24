@@ -237,9 +237,6 @@ function skinViewOf(a: Actor): { getLocalBounds: () => Rectangle } {
 function shieldFilterOf(a: Actor): { intensity: number } | null {
   return (a as unknown as { shieldFilter: { intensity: number } | null }).shieldFilter;
 }
-function litFilterOf(a: Actor): { dirX: number; dirY: number; color: number; intensity: number } {
-  return (a as unknown as { litFilter: { dirX: number; dirY: number; color: number; intensity: number } }).litFilter;
-}
 
 // Lopsided-shield-glow fix (2026-08-12): `EnergyShieldFilter`'s shader hardcodes
 // texture-coordinate (0.5,0.5) as the character's centre, but `skin.view`'s
@@ -368,9 +365,9 @@ describe('Actor.setShield — energy-shield shader (design/01 fidelity roadmap m
   it('is a no-op with no shield pool (maxShield <= 0) — most enemies never pay for a filter', () => {
     const mob = new Actor('enemy', 12);
     mob.setShield(0, 0);
-    // litFilter (design/01 milestone 2) is always attached — "no-op" here means no
-    // CONDITIONAL shader joins it, not that the filter list itself is ever empty.
-    expect(skinFiltersOf(mob) as unknown[]).toEqual([litFilterOf(mob)]);
+    // Since 2026-08-24 there is no always-on lighting filter underneath, so "no-op" here
+    // means the list is genuinely EMPTY and the mob costs no render-target pass at all.
+    expect(skinFiltersOf(mob) as unknown[] ?? []).toEqual([]);
     expect(shieldFilterOf(mob)).toBeNull();
   });
 
@@ -395,7 +392,7 @@ describe('Actor.setShield — energy-shield shader (design/01 fidelity roadmap m
     a.setShield(4, 8);
     expect(skinFiltersOf(a)).toBeTruthy();
     a.setShield(0, 8);
-    expect(skinFiltersOf(a) as unknown[]).toEqual([litFilterOf(a)]); // back to lit-only
+    expect(skinFiltersOf(a) as unknown[] ?? []).toEqual([]); // back to no filter at all
   });
 
   it('re-attaches on regen after a break, without rebuilding the filter', () => {
@@ -403,7 +400,7 @@ describe('Actor.setShield — energy-shield shader (design/01 fidelity roadmap m
     a.setShield(4, 8);
     const first = shieldFilterOf(a);
     a.setShield(0, 8);
-    expect(skinFiltersOf(a) as unknown[]).toEqual([litFilterOf(a)]); // back to lit-only
+    expect(skinFiltersOf(a) as unknown[] ?? []).toEqual([]); // back to no filter at all
     a.setShield(2, 8);
     expect(skinFiltersOf(a)).toBeTruthy();
     expect(shieldFilterOf(a)).toBe(first);
@@ -426,9 +423,9 @@ function outlineFilterOf(a: Actor): { alpha: number } | null {
 describe('Actor.hitFlash — outline shader (design/01 fidelity roadmap milestone 5)', () => {
   it('attaches the outline filter at full alpha on the first hit', () => {
     const a = new Actor('enemy', 12);
-    expect(skinFiltersOf(a) as unknown[]).toEqual([litFilterOf(a)]); // lit-only, pre-hit
+    expect(skinFiltersOf(a) as unknown[] ?? []).toEqual([]); // no filter, pre-hit
     a.hitFlash();
-    expect(skinFiltersOf(a) as unknown[]).toHaveLength(2);
+    expect(skinFiltersOf(a) as unknown[]).toHaveLength(1); // the outline alone
     expect(outlineFilterOf(a)!.alpha).toBe(1);
   });
 
@@ -440,7 +437,7 @@ describe('Actor.hitFlash — outline shader (design/01 fidelity roadmap mileston
     expect(skinFiltersOf(a)).toBeTruthy();
     a.interpolate(1, 80); // fully decayed
     expect(outlineFilterOf(a)!.alpha).toBe(0);
-    expect(skinFiltersOf(a) as unknown[]).toEqual([litFilterOf(a)]); // back to lit-only
+    expect(skinFiltersOf(a) as unknown[] ?? []).toEqual([]); // back to no filter at all
   });
 
   it('reuses the same filter instance across repeated hits', () => {
@@ -457,7 +454,7 @@ describe('Actor.hitFlash — outline shader (design/01 fidelity roadmap mileston
     const a = new Actor('player', 12);
     a.setShield(4, 8);
     a.hitFlash();
-    expect(skinFiltersOf(a) as unknown[]).toHaveLength(3); // lit + shield + outline
+    expect(skinFiltersOf(a) as unknown[]).toHaveLength(2); // shield + outline (no lit filter since 2026-08-24)
   });
 });
 
@@ -510,7 +507,7 @@ describe('Actor.setStatus — heat-haze shader on burn (design/01 fidelity roadm
   it('is a no-op with no active status at all', () => {
     const a = new Actor('enemy', 12);
     a.setStatus(freshStatus());
-    expect(skinFiltersOf(a) as unknown[]).toEqual([litFilterOf(a)]); // lit-only
+    expect(skinFiltersOf(a) as unknown[] ?? []).toEqual([]); // no filter at all
     expect(heatHazeFilterOf(a)).toBeNull();
   });
 
@@ -526,7 +523,7 @@ describe('Actor.setStatus — heat-haze shader on burn (design/01 fidelity roadm
     a.setStatus({ ...freshStatus(), burnTicks: 10, chillTicks: 5 });
     expect(skinFiltersOf(a)).toBeTruthy();
     a.setStatus({ ...freshStatus(), burnTicks: 0, chillTicks: 5 }); // burn ends, chill lingers
-    expect(skinFiltersOf(a) as unknown[]).toEqual([litFilterOf(a)]); // lit-only: no heat-haze/shield/outline/dissolve
+    expect(skinFiltersOf(a) as unknown[] ?? []).toEqual([]); // no heat-haze/shield/outline/dissolve
   });
 
   it('does not rebuild the filter on an unrelated aura change while still burning', () => {
@@ -541,36 +538,46 @@ describe('Actor.setStatus — heat-haze shader on burn (design/01 fidelity roadm
     const a = new Actor('player', 12);
     a.setShield(4, 8);
     a.setStatus({ ...freshStatus(), burnTicks: 10 });
-    expect(skinFiltersOf(a) as unknown[]).toHaveLength(3); // lit + shield + heat-haze
+    expect(skinFiltersOf(a) as unknown[]).toHaveLength(2); // shield + heat-haze (no lit filter since 2026-08-24)
   });
 });
 
-describe('Actor.setLighting — dynamic point lighting (design/01 fidelity roadmap milestone 2)', () => {
-  it('attaches the lit filter immediately at construction — every actor is always lit', () => {
+// Lighting left the Actor entirely on 2026-08-24 (see fx/filters/litFx.ts): it is one
+// screen-space pass over `Layers.lit`, not a filter per character. These pin the
+// consequence — the thing that made the frame expensive was that this list was NEVER empty.
+describe('Actor filters — nothing is attached unconditionally any more', () => {
+  it('a freshly constructed actor carries no filter at all', () => {
     const a = new Actor('enemy', 12);
-    expect(skinFiltersOf(a) as unknown[]).toEqual([litFilterOf(a)]);
+    expect(skinFiltersOf(a) as unknown[] ?? []).toEqual([]);
   });
 
-  it('forwards a light hit straight to the filter', () => {
+  it('does not grow a filter list just from being interpolated or re-facing', () => {
+    // The old lit filter was attached in the constructor, so "no filters" could regress
+    // silently by anything that called applySkinFilters. Drive the ordinary per-frame path.
     const a = new Actor('player', 12);
-    a.setLighting({ dirX: 0.6, dirY: 0.8, color: 0x66e0ff, intensity: 0.4 });
-    const lit = litFilterOf(a);
-    expect(lit.dirX).toBeCloseTo(0.6);
-    expect(lit.dirY).toBeCloseTo(0.8);
-    expect(lit.color).toBe(0x66e0ff);
-    expect(lit.intensity).toBeCloseTo(0.4);
+    a.pushState(0, 0, 0, 0, 0);
+    a.snap();
+    a.interpolate(1, 16);
+    a.setStatus(freshStatus());
+    a.setHealth(6, 6);
+    expect(skinFiltersOf(a) as unknown[] ?? []).toEqual([]);
   });
 
-  it('clears the point term when nothing is close enough (null hit)', () => {
+  it('drops back to an empty list once every conditional shader has expired', () => {
     const a = new Actor('player', 12);
-    a.setLighting({ dirX: 1, dirY: 0, color: 0xffffff, intensity: 0.9 });
-    a.setLighting(null);
-    expect(litFilterOf(a).intensity).toBe(0);
+    a.setStatus({ ...freshStatus(), burnTicks: 10 });
+    a.setShield(4, 8);
+    a.hitFlash();
+    expect(skinFiltersOf(a) as unknown[]).toHaveLength(3);
+    a.setStatus(freshStatus());
+    a.setShield(0, 8);
+    a.interpolate(1, 10_000); // long enough for the hit flash to run out
+    expect(skinFiltersOf(a) as unknown[] ?? []).toEqual([]);
   });
 });
 
-describe('Actor — lighting plus all four fidelity-roadmap shaders composed at once (design/01 milestones 2 and 5)', () => {
-  it('stacks lit, heat-haze, shield, outline, and dissolve in a fixed lit→warp→glow→highlight→dissolve order', () => {
+describe('Actor — all four fidelity-roadmap shaders composed at once (design/01 milestone 5)', () => {
+  it('stacks heat-haze, shield, outline, and dissolve in a fixed warp→glow→highlight→dissolve order', () => {
     const a = new Actor('player', 12);
     a.setStatus({ ...freshStatus(), burnTicks: 10 });
     a.setShield(4, 8);
@@ -578,12 +585,11 @@ describe('Actor — lighting plus all four fidelity-roadmap shaders composed at 
     a.startDissolve();
 
     const list = skinFiltersOf(a) as unknown[];
-    expect(list).toHaveLength(5);
-    expect(list[0]).toBe(litFilterOf(a));
-    expect(list[1]).toBe(heatHazeFilterOf(a));
-    expect(list[2]).toBe(shieldFilterOf(a));
-    expect(list[3]).toBe(outlineFilterOf(a));
-    expect(list[4]).toBe(dissolveFilterOf(a));
+    expect(list).toHaveLength(4); // was 5 — the always-on lit filter is gone
+    expect(list[0]).toBe(heatHazeFilterOf(a));
+    expect(list[1]).toBe(shieldFilterOf(a));
+    expect(list[2]).toBe(outlineFilterOf(a));
+    expect(list[3]).toBe(dissolveFilterOf(a));
   });
 });
 
@@ -931,8 +937,10 @@ describe('Actor.setStatus — the aura wraps a body in a tilted view', () => {
   }
 
   it('draws each ring as a foreshortened ellipse, not a screen-space circle', () => {
-    // A true circle is the loudest "flat decal" cue a round overlay can give — the same problem
-    // the shield ring had. All three (shadow, aura, shield) now share one squash constant.
+    // A true circle is the loudest "flat decal" cue a round overlay can give. An aura is a
+    // ring at the actor's FEET, on the ground plane, so it foreshortens with the camera tilt
+    // and shares SHADOW_SQUASH with the ground shadow. The shield deliberately does not (a
+    // sphere around the body reads as a circle from every angle) — see filters.test.ts.
     const a = new Actor('enemy', 20);
     a.setStatus({ ...freshStatus(), burnTicks: 5 });
     // Read the ellipse's own radii rather than the Graphics bounds, which are inflated by the

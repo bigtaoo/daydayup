@@ -12,6 +12,14 @@ export class Layers {
   // Added to `root` before `world` so it always paints behind everything else.
   readonly backdrop = new Container();
 
+  // Everything the one scene-lighting pass shades (`SceneLightFilter`, attached by
+  // `FxController.attach`): the floor, the ground shadows, and the Y-sorted entity set.
+  // Deliberately NOT `fx` (muzzle flashes and particles ARE light — shading them would dim
+  // the very thing casting the light, and that layer carries its own bloom-lite blur) and
+  // NOT `hud` (a floating health bar is a readout riding in world space, not a surface).
+  // Introduced 2026-08-24 when lighting moved off the individual actors — see litFx.ts.
+  readonly lit = new Container();
+
   readonly ground = new Container();
   readonly shadow = new Container();
   readonly entities = new Container(); // Y-sort
@@ -32,7 +40,8 @@ export class Layers {
     // entities are sorted by zIndex (= gy) for top-down depth occlusion
     this.entities.sortableChildren = true;
 
-    this.world.addChild(this.ground, this.shadow, this.entities, this.fx, this.hud);
+    this.lit.addChild(this.ground, this.shadow, this.entities);
+    this.world.addChild(this.lit, this.fx, this.hud);
     this.root.addChild(this.backdrop, this.world, this.ui);
   }
 }

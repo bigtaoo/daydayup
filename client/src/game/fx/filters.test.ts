@@ -19,14 +19,16 @@ beforeAll(() => {
 
 import { defaultFilterVert, nextPow2 } from 'pixi.js';
 import {
+  MAX_SCENE_LIGHTS,
+  FLAT_KEY,
+  flatReference,
   VignetteFilter,
   ChromaticAberrationFilter,
   EnergyShieldFilter,
   OutlineFilter,
   DissolveFilter,
   HeatHazeFilter,
-  NormalLitFilter,
-  SHIELD_SQUASH,
+  SceneLightFilter,
   FRAME_UV,
   hexToRgb,
 } from './filters';
@@ -79,7 +81,7 @@ describe('ChromaticAberrationFilter', () => {
 });
 
 // `hexToRgb` and `tick()` live in this same file but belong to the other 5 filters
-// (EnergyShieldFilter/OutlineFilter/DissolveFilter/HeatHazeFilter/NormalLitFilter).
+// (EnergyShieldFilter/OutlineFilter/DissolveFilter/HeatHazeFilter/SceneLightFilter).
 // Every existing test that touches those replaces the whole module with hand-rolled
 // mocks (Actor.test.ts, FxController.test.ts via this file), so `hexToRgb`'s actual
 // bit-shifting/normalization and `tick()`'s clock accumulation have never run for real
@@ -118,6 +120,9 @@ describe('region-relative filters normalize vTextureCoord (frameUv)', () => {
     ['EnergyShieldFilter', () => new EnergyShieldFilter()],
     ['DissolveFilter', () => new DissolveFilter()],
     ['HeatHazeFilter', () => new HeatHazeFilter()],
+    // Joined 2026-08-24: the scene-lighting pass maps each texel to a WORLD position, which
+    // is a region-relative read and so has exactly the pow2-pool trap this suite is about.
+    ['SceneLightFilter', () => new SceneLightFilter()],
   ] as const;
 
   const countOf = (src: string, needle: string) => src.split(needle).length - 1;
@@ -136,9 +141,11 @@ describe('region-relative filters normalize vTextureCoord (frameUv)', () => {
       // Defined — a shader that CALLS frameUv without the prelude compiles nowhere, and
       // vitest can't see that, so assert the definition is actually present.
       expect(countOf(src, 'vec2 frameUv(vec2 coord)')).toBe(1);
-      // ...and only once. Prepending FRAME_UV to a filter that already declares
-      // `uInputSize` itself (OutlineFilter/NormalLitFilter) would redeclare both the
-      // uniform and the helpers — GL rejects that too.
+      // ...and only once. Prepending FRAME_UV to a filter that ALSO declares `uInputSize`
+      // itself redeclares both the uniform and the helpers, and GL rejects that with
+      // 'uInputSize : redefinition'. This is not hypothetical: SceneLightFilter shipped that
+      // exact mistake for one iteration on 2026-08-24, and a filter whose program fails to
+      // compile renders its whole layer BLACK rather than failing loudly.
       expect(countOf(src, 'uniform highp vec4 uInputSize;')).toBe(1);
       expect(countOf(src, 'uniform highp vec4 uOutputFrame;')).toBe(1);
     });
@@ -158,11 +165,13 @@ describe('region-relative filters normalize vTextureCoord (frameUv)', () => {
     }
   });
 
-  it('OutlineFilter/NormalLitFilter stay on raw texel stepping (uInputSize.zw is already right for that)', () => {
-    for (const src of [new OutlineFilter().glProgram.fragment!, new NormalLitFilter().glProgram.fragment!]) {
-      expect(src).toContain('uInputSize.zw');
-      expect(src).not.toContain('frameUv');
-    }
+  it('OutlineFilter stays on raw texel stepping (uInputSize.zw is already right for that)', () => {
+    // It only ever steps by ONE TEXEL, never to a position, so the pool-texture trap above
+    // cannot reach it. SceneLightFilter does both: texel stepping for its normal AND a
+    // region-relative world position, which is why it appears in the list above instead.
+    const src = new OutlineFilter().glProgram.fragment!;
+    expect(src).toContain('uInputSize.zw');
+    expect(src).not.toContain('frameUv');
   });
 
   it('declares every shared filter uniform highp, matching the vertex stage (or GL refuses to link)', () => {
@@ -173,7 +182,7 @@ describe('region-relative filters normalize vTextureCoord (frameUv)', () => {
       new OutlineFilter(),
       new DissolveFilter(),
       new HeatHazeFilter(),
-      new NormalLitFilter(),
+      new SceneLightFilter(),
     ];
     for (const f of all) {
       for (const decl of f.glProgram.fragment!.matchAll(/uniform\s+(\w+\s+)?vec4\s+(uInputSize|uOutputFrame|uInputClamp)/g)) {
@@ -214,8 +223,12 @@ describe('Pixi filter-pipeline assumptions frameUv depends on', () => {
 // once already.
 describe('the pow2 filter-texture mechanism (why vTextureCoord - 0.5 was wrong)', () => {
   const RESOLUTION = 2; // WebPlatform: Math.min(devicePixelRatio, 2)
-  // Actor pins `filterArea` to a 3x-body-radius square; the player's radius is 16px, and
-  // NormalLitFilter (always attached) pads the region by 2px per side.
+  // Actor pins `filterArea` to a 3x-body-radius square; the player's radius is 16px, and the
+  // always-attached NormalLitFilter of the day padded the region by 2px per side. Kept AS IT
+  // WAS WHEN THE BUG WAS REPORTED on purpose — this suite reproduces a specific historical
+  // symptom from first principles, so it has to model that frame's geometry, not today's
+  // (the lit filter and its padding left the actor on 2026-08-24). The live geometry is
+  // asserted by the source-contract tests above, which is where a change to it belongs.
   const REGION_WORLD_PX = 16 * 3 * 2 + 2 * 2;
 
   /** Where the OLD shader's hardcoded `0.5` actually landed, in 0..1 region space.
@@ -336,32 +349,43 @@ describe('EnergyShieldFilter shimmer pace', () => {
   });
 });
 
-// 2026-08-18 depth pass, user report *"希望能再强化一下立体效果"* / *"墙看起来还是没有高度感"*.
+// 2026-08-19 volume pass, then 2026-08-24 user report *"护盾成了一个圆圈, 我希望是圆形护盾的
+// 效果, 最初那种效果是对的"*.
 describe('EnergyShieldFilter ring shape', () => {
   /** Shader source with comments stripped, so a number quoted in a comment cannot satisfy a
    *  regex meant to read the real code (same helper the shimmer suite above uses). */
   const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*/g, '');
 
-  it('is a vertically foreshortened ellipse, not a screen-space circle', () => {
-    // A perfect circle was the loudest "this is a decal pasted on" cue in the frame — a
-    // shield WRAPS a body, and design/01's view is tilted, so its silhouette is an ellipse.
-    const f = new EnergyShieldFilter();
-    expect(f.squash).toBe(SHIELD_SQUASH);
-    expect(f.squash).toBeGreaterThan(0);
-    expect(f.squash).toBeLessThan(1);
+  it('is a screen-space CIRCLE — a sphere around the body, not a disc on the floor', () => {
+    // The 2026-08-18 depth pass squashed this ring vertically by SHADOW_SQUASH, reasoning
+    // that every round thing wrapping a body in a tilted view foreshortens the same way.
+    // It does not: a shadow and a status aura lie flat on the ground plane (so the tilt
+    // compresses them), while a shield is a sphere AROUND the body, and a sphere's
+    // silhouette is a circle from every angle. On screen the squashed version read as a
+    // flat hoop threaded through the character at gun height — the reported "圆圈".
+    // These two assertions are what stop that fix being silently re-applied.
+    const src = code(new EnergyShieldFilter().glProgram.fragment!);
+    expect(src).not.toMatch(/uv\.y\s*[\/*]=/);
+    expect(src).not.toContain('uSquash');
   });
 
-  it('agrees with the ground shadow and the status auras on how much the tilt compresses', () => {
-    // Three different mechanisms (a shader, a Graphics ellipse, a stroked aura) drawing
-    // round things around the same body — they have to share one number or the character
-    // reads as sitting in three different projections at once.
-    expect(SHIELD_SQUASH).toBe(SHADOW_SQUASH);
+  it('does not take the ground shadow squash constant back by another name', () => {
+    // The regression this suite exists for is a NUMBER, not an identifier: re-introducing
+    // 0.62 (or its reciprocal) on the vertical axis reproduces the flat hoop no matter what
+    // the uniform ends up being called.
+    const src = code(new EnergyShieldFilter().glProgram.fragment!);
+    const yScaled = /uv\.y\s*[\/*]=\s*([0-9.]+)/.exec(src);
+    expect(yScaled).toBeNull();
+    expect(SHADOW_SQUASH).toBeLessThan(1); // the shadow itself is still an ellipse
   });
 
-  it('divides the vertical component rather than the horizontal, so the ring widens not narrows', () => {
-    // `uv.y /= uSquash` with squash < 1 shortens the ring's vertical reach. Getting this
-    // backwards (dividing x) would produce a TALL ellipse, i.e. the wrong projection.
-    expect(new EnergyShieldFilter().glProgram.fragment).toContain('uv.y /= uSquash');
+  it('derives the radius from an unmodified uv, so both axes reach equally far', () => {
+    // `length(uv)` over a raw region-centred uv IS the circle. Anything that scaled one
+    // component before this line would be an ellipse again.
+    const src = code(new EnergyShieldFilter().glProgram.fragment!);
+    const between = src.slice(src.indexOf('vec2 uv ='), src.indexOf('float dist'));
+    expect(between).not.toMatch(/uv\.[xy]/);
+    expect(src).toContain('float dist = length(uv)');
   });
 
   // 2026-08-19 volume pass. The ring's SIZE, expressed in the only unit that means anything to
@@ -398,30 +422,148 @@ describe('EnergyShieldFilter ring shape', () => {
   });
 });
 
-describe('NormalLitFilter per-call-site look', () => {
-  it('defaults to the actor tuning, so every existing call site is unchanged', () => {
-    const f = new NormalLitFilter();
-    expect(f.ambient).toBeCloseTo(0.55, 6); // the value this filter shipped with in 2026-08-03
+// 2026-08-24: lighting moved from one filter PER ACTOR to one pass over the whole scene
+// layer (see fx/filters/litFx.ts for the measurement that forced it). What these pin is the
+// two things that move with it: the shading has to stay neutral on a flat surface (the pass
+// now covers pre-shaded floor/wall art that must not be darkened), and the light set has to
+// reach the shader as a bounded, in-place-written array.
+describe('SceneLightFilter shading', () => {
+  it('keeps the actor tuning the per-actor filter shipped with', () => {
+    const f = new SceneLightFilter();
+    expect(f.ambient).toBeCloseTo(0.55, 6);
     expect(f.gradient).toBeCloseTo(7.0, 6);
   });
 
-  it('accepts a per-call-site ambient/gradient override, brighter-side included', () => {
-    // The one non-default look this used to ship with was RoomBuilder's wall tuning
-    // (`WALL_LIT_*`, removed 2026-08-20 after being measured to do nothing visible — see
-    // RoomBuilder.ts's git history). `NormalLitOptions` itself is unaffected: any future
-    // call site can still invert the bias the same way a wall briefly did — ambient above
-    // `1 − key` brightens the lit side instead of darkening the unlit one.
-    const f = new NormalLitFilter(0xfff2e0, 0.3, { ambient: 0.86, gradient: 2.6 });
-    expect(f.ambient).toBeCloseTo(0.86, 6);
-    expect(f.gradient).toBeCloseTo(2.6, 6);
-    expect(0.86 + 0.3).toBeGreaterThan(1);
+  it('normalizes so a FLAT unlit texel comes out at exactly its painted colour', () => {
+    // The whole reason the same ambient/key numbers can now apply to the environment: the
+    // shader divides by this reference, so relief and lights read as relative brightening
+    // and darkening of authored art instead of a flat ~21% dimming of the entire scene.
+    const f = new SceneLightFilter();
+    expect(f.flatReference).toBeCloseTo(f.ambient + FLAT_KEY * 0.55, 6);
+    // ...and that divisor genuinely cancels: (ambient + flatKey*key) / itself is 1.
+    expect((f.ambient + FLAT_KEY * 0.55) / f.flatReference).toBeCloseTo(1, 9);
   });
 
-  it('drives both from uniforms, so every look shares one compiled program', () => {
-    const src = new NormalLitFilter().glProgram.fragment!;
+  it('takes FLAT_KEY from the shader own KEY_DIR, not a second copy of the number', () => {
+    // A KEY_DIR edit that left FLAT_KEY behind would silently tint the whole scene, since
+    // the divisor would no longer be what a flat texel actually computes.
+    const src = new SceneLightFilter().glProgram.fragment!;
+    const m = /const vec3 KEY_DIR = vec3\(([-0-9.]+), ([-0-9.]+), ([0-9.]+)\)/.exec(src);
+    if (!m) throw new Error('scene-light shader no longer declares KEY_DIR');
+    // dot(vec3(0,0,1), KEY_DIR) is just KEY_DIR.z.
+    expect(Number(m[3])).toBeCloseTo(FLAT_KEY, 4);
+  });
+
+  it('divides by the reference rather than baking it into the ambient constant', () => {
+    const src = new SceneLightFilter().glProgram.fragment!;
+    expect(src).toContain('uniform float uFlatReference;');
+    expect(src).toContain('lit / uFlatReference');
+  });
+
+  it('accepts a per-call-site look, and re-derives the reference from it', () => {
+    // The reference is a FUNCTION of ambient and key: an override that changed one without
+    // the other would put the neutral point somewhere other than 1.0 and tint the scene.
+    const f = new SceneLightFilter({ ambient: 0.86, gradient: 2.6, keyIntensity: 0.3 });
+    expect(f.ambient).toBeCloseTo(0.86, 6);
+    expect(f.gradient).toBeCloseTo(2.6, 6);
+    expect(f.flatReference).toBeCloseTo(flatReference(0.86, 0.3), 9);
+  });
+
+  it('drives ambient and gradient from uniforms, so every look shares one compiled program', () => {
+    const src = new SceneLightFilter().glProgram.fragment!;
     expect(src).toContain('uniform float uAmbient;');
     expect(src).toContain('uniform float uGradient;');
     expect(src).not.toContain('GRADIENT_STRENGTH'); // the old hardcoded constant is gone
+  });
+});
+
+describe('SceneLightFilter lights', () => {
+  const uniformsOf = (f: SceneLightFilter) =>
+    (f.resources.sceneLightUniforms as { uniforms: Record<string, unknown> }).uniforms;
+
+  it('starts with no lights, so an un-synced filter is key-light only', () => {
+    expect(new SceneLightFilter().lightCount).toBe(0);
+  });
+
+  it('packs position, radius and intensity into one vec4 per light', () => {
+    const f = new SceneLightFilter();
+    f.setLights([{ x: 12, y: -34, radius: 140, intensity: 0.35, color: 0xffffff }]);
+    const data = uniformsOf(f).uLights as Float32Array;
+    expect([...data.slice(0, 4)]).toEqual([12, -34, 140, 0.3499999940395355]);
+    expect(f.lightCount).toBe(1);
+  });
+
+  it('writes colours as 0..1 triples in the matching slot', () => {
+    const f = new SceneLightFilter();
+    f.setLights([
+      { x: 0, y: 0, radius: 1, intensity: 1, color: 0x000000 },
+      { x: 0, y: 0, radius: 1, intensity: 1, color: 0xff8000 },
+    ]);
+    const c = uniformsOf(f).uLightColors as Float32Array;
+    expect([...c.slice(0, 3)]).toEqual([0, 0, 0]);
+    expect(c[3]).toBeCloseTo(1);
+    expect(c[4]).toBeCloseTo(128 / 255);
+    expect(c[5]).toBeCloseTo(0);
+  });
+
+  it('mutates the same buffers rather than allocating per frame', () => {
+    // This runs every rendered frame; a fresh Float32Array each time is exactly the churn
+    // the move away from per-actor filters was about.
+    const f = new SceneLightFilter();
+    const before = uniformsOf(f).uLights;
+    f.setLights([{ x: 1, y: 2, radius: 3, intensity: 4, color: 0xffffff }]);
+    expect(uniformsOf(f).uLights).toBe(before);
+  });
+
+  it('never writes past its slot count, however many lights it is handed', () => {
+    // The shader loop is bounded by a compile-time constant; a longer array would run off
+    // the end of the buffer (or silently corrupt the colour array next to it).
+    const f = new SceneLightFilter();
+    const many = Array.from({ length: MAX_SCENE_LIGHTS + 5 }, (_, i) => ({
+      x: i, y: 0, radius: 1, intensity: 1, color: 0xffffff,
+    }));
+    f.setLights(many);
+    expect(f.lightCount).toBe(MAX_SCENE_LIGHTS);
+    expect((uniformsOf(f).uLights as Float32Array).length).toBe(MAX_SCENE_LIGHTS * 4);
+  });
+
+  it('honours an explicit count shorter than the array — the caller owns a reusable buffer', () => {
+    // `LightRegistry.snapshot` returns a count and leaves stale entries past it; reading
+    // `lights.length` instead would resurrect last frame's expired flashes.
+    const f = new SceneLightFilter();
+    const buf = [
+      { x: 1, y: 1, radius: 1, intensity: 1, color: 0xffffff },
+      { x: 9, y: 9, radius: 9, intensity: 9, color: 0xff0000 },
+    ];
+    f.setLights(buf, 1);
+    expect(f.lightCount).toBe(1);
+  });
+
+  it('bounds the shader loop by the same constant the buffers are sized to', () => {
+    const src = new SceneLightFilter().glProgram.fragment!;
+    expect(src).toContain('uniform vec4 uLights[' + MAX_SCENE_LIGHTS + '];');
+    expect(src).toContain('for (int i = 0; i < ' + MAX_SCENE_LIGHTS + '; i++)');
+    expect(src).toContain('if (i >= uLightCount) break;');
+  });
+
+  it('records the world rect it was given, clamping a degenerate size', () => {
+    const f = new SceneLightFilter();
+    f.setRegion(400, 348, 800, 600);
+    expect([...f.region]).toEqual([400, 348, 800, 600]);
+    f.setRegion(0, 0, 0, 0); // a zero-size viewport would divide the world mapping by zero
+    expect([...f.region]).toEqual([0, 0, 1, 1]);
+  });
+
+  it('mutates the region array in place too', () => {
+    const f = new SceneLightFilter();
+    const before = f.region;
+    f.setRegion(1, 2, 3, 4);
+    expect(f.region).toBe(before);
+  });
+
+  it('maps a texel through the region, so lights are compared in WORLD space', () => {
+    const src = new SceneLightFilter().glProgram.fragment!;
+    expect(src).toContain('uRegion.xy + frameUv(vTextureCoord) * uRegion.zw');
   });
 });
 
@@ -437,7 +579,7 @@ describe('game/fx/filters — the assembly shell after the split', () => {
       OutlineFilter,
       DissolveFilter,
       HeatHazeFilter,
-      NormalLitFilter,
+      SceneLightFilter,
     ]) {
       expect(typeof cls).toBe('function');
     }
@@ -448,13 +590,6 @@ describe('game/fx/filters — the assembly shell after the split', () => {
     // modules to share it; the shell keeps it reachable so nothing outside has to know it moved.
     expect(FRAME_UV).toContain('vec2 frameUv(vec2 coord)');
     expect(hexToRgb(0xff8000)).toEqual([1, 128 / 255, 0]);
-  });
-
-  it('re-exports the tuning constants the split moved into sibling modules', () => {
-    // The value this file's own look assertions read. A split that dropped it would fail at
-    // import time in the app but could easily pass a narrower test.
-    expect(typeof SHIELD_SQUASH).toBe('number');
-    expect(Number.isFinite(SHIELD_SQUASH)).toBe(true);
   });
 
   it('gives every filter its own distinct shader — the split copied nothing', () => {
@@ -468,7 +603,7 @@ describe('game/fx/filters — the assembly shell after the split', () => {
       new OutlineFilter().glProgram.fragment,
       new DissolveFilter().glProgram.fragment,
       new HeatHazeFilter().glProgram.fragment,
-      new NormalLitFilter().glProgram.fragment,
+      new SceneLightFilter().glProgram.fragment,
     ];
     for (const s of sources) expect(s).toBeTruthy();
     expect(new Set(sources).size).toBe(sources.length);

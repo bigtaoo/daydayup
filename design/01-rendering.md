@@ -180,9 +180,12 @@ extruded block on the `entities` layer — `scene/wallRender.ts` owns the drawin
   deleted "so the experiment is repeatable," which in practice meant a permanently-false switch,
   an un-scheduled re-tune, and the single most expensive pass in wall rendering surviving in the
   codebase for no visible benefit; removed outright once nobody had a re-tune actually queued up.
-  `NormalLitFilter` itself and its actor-facing `ACTOR_*` look (`fx/filters/litFx.ts`) are
-  unaffected — only the wall-specific look and its `RoomBuilder` call site are gone. The relief
-  the walls actually have now is free and comes from `wallTone.ts`.
+  Only the wall-specific look and its `RoomBuilder` call site went at the time; the actor-facing
+  look survived until 2026-08-24, when lighting became one screen-space pass over the whole scene
+  layer (`SceneLightFilter`) and the per-actor filter went with it. Walls are inside that pass now,
+  but it is normalized so a FLAT texel comes out at exactly its painted colour — measured on the
+  shipped art, the median wall pixel moves by 0.1/255 — so this paragraph's finding still holds:
+  the relief the walls read with is `wallTone.ts`'s, not a shader's.
 - **Pillars follow the same language** (`pillarRender.buildPillarBody`, split out of
   `wallRender.ts` 2026-08-19). They were flat fills
   from `palette.pillar`/`palette.pillarTop`, which are **pre-art fallback hues** — the ember
@@ -230,10 +233,17 @@ facing continuum, but nothing said it was a **volume standing in a space**.
   a black plate it was sitting in. The alpha now ramps (squared) across the rings, so the edge is
   nearly transparent while the core still composites to ~0.45. The other half of that fix was its
   SIZE — see "Volume, measured".*
-- **Everything round shares one 0.62 foreshortening.** The ground shadow, the status auras
-  and `EnergyShieldFilter`'s rim glow. The shield ring in particular was a perfect
-  screen-space circle (a raw UV distance), which is the loudest "this is a decal pasted on"
-  cue a round overlay can give in a tilted view.
+- **Everything round that lies ON THE GROUND PLANE shares one 0.62 foreshortening**
+  (`SHADOW_SQUASH`): the ground shadow and the status auras. Both are flat discs at the
+  actor's feet, and the camera tilt compresses a disc — drawing one as a perfect
+  screen-space circle is the loudest "this is a decal pasted on" cue a round overlay can
+  give in a tilted view.
+- **The shield is the deliberate exception, and is a true circle** (2026-08-24, user report
+  *"护盾成了一个圆圈"*). It was squashed with the other two for six days on the reasoning that
+  "everything round wrapping a body foreshortens the same way"; that is wrong for this one.
+  A shield is a SPHERE around the body, not a disc under it, and a sphere's silhouette is a
+  circle from every angle. Squashed, it read on screen as a flat hoop threaded through the
+  character at gun height — the reported 圆圈 — instead of a bubble enclosing it.
 - **The body is shaded as a sphere** (`render/rigShading.ts`). A fixed specular highlight
   toward the key light and a curved terminator falling away from it — drawn, not authored,
   because they must stay pinned to the light's **screen-space** direction while the body they
@@ -996,7 +1006,7 @@ already builds for the walls, applied once offline instead of as a per-object fi
 - A soft shadow is drawn from the **ground coordinates** (`shadow.gy = gy`), so it stays on the floor no matter how high the body is.
 - It shrinks, fades, **and slides away from the fixed upper-left key light** as the lift grows → reinforces the sense of height. This is the cheapest "3D cheat". `Entity.SHADOW_SLANT_X/Y` are the one place the slant is defined; actors, bullets, pillars and walls all use them, so nothing in a room disagrees about where the light is.
 - Static tall objects (pillars) are drawn *upward* from a grounded origin rather than lifted by the transform, so their `z` is 0 and the displacement has to be supplied by hand (`Entity.shadowOffsetX/Y`).
-- See "Grounding the character" above for the shape of the shadow itself (nested ellipses, not one disc) and for the 0.62 foreshortening every round thing in this view shares.
+- See "Grounding the character" above for the shape of the shadow itself (nested ellipses, not one disc) and for the 0.62 foreshortening every round thing lying on the GROUND PLANE shares — and for why the shield, which wraps the body rather than lying under it, is deliberately not among them.
 - **Its radius comes from the DRAWN body, not from a collision radius** (`Skin.bodyDrawnR`, 2026-08-19) — see "Volume, measured" for why a number sized off the rig's declared radius made an enemy's shadow ~45% wider than the enemy.
 
 ## Layers (bottom to top)
@@ -1009,7 +1019,16 @@ already builds for the walls, applied once offline instead of as a per-object fi
 | fx | muzzle flashes, explosions, deflect flashes, per-element bullet trails (additive blend) | overlay |
 | ui | HP, weapon, crosshair | topmost |
 
-> The lighting layer (lightmap) is later inserted between entities and fx, composited with multiply blend. See the roadmap. Its cheap static half — a per-room falloff painted on `ground` (`scene/roomLight.ts`) — landed 2026-08-19; the dynamic half is still parked.
+> **Lighting (2026-08-24): shipped, as one screen-space pass rather than a composited lightmap layer.**
+> `ground`, `shadow` and `entities` are grouped under a `lit` container (`scene/layers.ts`) that carries a
+> single `SceneLightFilter` (`fx/filters/litFx.ts`); `fx` and `hud` stay outside it — a muzzle flash IS
+> light, and a floating health bar is a readout, not a surface. The pass derives a per-pixel fake normal
+> from the composited layer's own luminance, applies the fixed key light, and then adds every live point
+> light with real per-texel direction and falloff, so a flash lights the floor it goes off on. It replaced
+> a `NormalLitFilter` attached to EVERY actor, which cost one render-target pass per character and broke
+> the sprite batch — measured at render p50 10.4ms of a 16.7ms frame; the one pass is 2.4ms.
+> The older cheap static half — a per-room falloff painted on `ground` (`scene/roomLight.ts`) — landed
+> 2026-08-19 and is unchanged.
 
 ## Per-weapon local z-order
 
@@ -1131,7 +1150,7 @@ the app's own layout maths.
 ## Fidelity roadmap (by priority)
 
 1. **[verified in demo]** Tilted view + Y-sort + height/shadow + additive-blend FX.
-2. **[shipped 2026-08-03]** Dynamic lighting: a per-pixel fake normal derived at shader time from a sprite's own rendered luminance/alpha (a Sobel-style gradient over 4 neighbour-texel taps, the same trick milestone 5's `OutlineFilter` already uses for alpha-edge detection — no normal-map texture asset exists or is needed), shaded against a fixed key light (reusing `RoomBuilder.ts`'s "lit from upper-left" pillar-shading direction) plus a small dynamic point-light registry (`game/fx/lighting.ts`'s `LightRegistry` — the local player's own glow + transient muzzle-flash/impact bursts). This is a scoped equivalent of "normal maps + point lights + lightmap (multiply composite)," not that literal architecture: no `RenderTexture`/deferred-lighting layer exists anywhere in this codebase, and building one would be disproportionate to a fixed-camera 2D sim — a fifth custom `Filter` (`NormalLitFilter`, `game/fx/filters.ts`) does the job instead, following the same template as the four milestone-5 shaders below. Unblocked once ROADMAP 5.3 settled that GPT-Image-2-generated art counts as final production art (no more "normal-map authoring needs real art first" gate) — see ROADMAP's 2026-08-03 updates on both items for the full account.
+2. **[shipped 2026-08-03]** Dynamic lighting: a per-pixel fake normal derived at shader time from a sprite's own rendered luminance/alpha (a Sobel-style gradient over 4 neighbour-texel taps, the same trick milestone 5's `OutlineFilter` already uses for alpha-edge detection — no normal-map texture asset exists or is needed), shaded against a fixed key light (reusing `RoomBuilder.ts`'s "lit from upper-left" pillar-shading direction) plus a small dynamic point-light registry (`game/fx/lighting.ts`'s `LightRegistry` — the local player's own glow + transient muzzle-flash/impact bursts). This is a scoped equivalent of "normal maps + point lights + lightmap (multiply composite)," not that literal architecture: no `RenderTexture`/deferred-lighting layer exists anywhere in this codebase, and building one would be disproportionate to a fixed-camera 2D sim — a fifth custom `Filter` does the job instead, following the same template as the four milestone-5 shaders below. **Re-shaped 2026-08-24** into `SceneLightFilter`, ONE pass over the `lit` layer instead of one `NormalLitFilter` per actor: the per-actor form cost a render-target pass per character and broke the sprite batch (render p50 10.4ms of a 16.7ms frame, 175 draw calls / 105 program switches for 9 actors; one pass is 2.4ms). The move also upgraded the point lights from one averaged direction per actor (`LightRegistry.strongestAt`) to real per-texel direction and falloff for every light at once, and extended lighting to the floor and walls, which the per-actor form could never reach. Unblocked once ROADMAP 5.3 settled that GPT-Image-2-generated art counts as final production art (no more "normal-map authoring needs real art first" gate) — see ROADMAP's 2026-08-03 updates on both items for the full account.
 3. **[shipped 2026-07-26]** Post-processing: bloom-lite (`BlurFilter` on the additive `fx` layer — a cheap approximation, not real multi-pass bloom), custom `VignetteFilter`/`ChromaticAberrationFilter` (`game/fx/filters.ts`, hand-written GLSL, no third-party filter package), hit-stop (brief sim-tick freeze, offline-only) + screen-shake (decaying trauma, `game/Game.ts`).
 4. **[shipped 2026-07-26]** Particle system: `game/fx/Particles.ts` — muzzle flames + shell casings (on `bullet_fired`), explosion debris (on enemy `death`), ambient drifting dust. Graphics-only (no textures), same events-queue-driven render-only discipline as the rest of this doc.
 5. **[shipped 2026-08-03] Custom shaders — all four items done:** dissolve on death,
@@ -1224,8 +1243,11 @@ the app's own layout maths.
      back to texcoord space, `clampToFrame()` keeps displaced samples off the pooled
      texture's stale neighbouring pixels. Used by the shield (ring centre), vignette and
      chromatic aberration (screen centre), dissolve (cell grid), and heat haze (wobble
-     frequency + amplitude). `OutlineFilter`/`NormalLitFilter` deliberately do NOT use it:
-     they only ever step by one texel, and `uInputSize.zw` is already exactly that.
+     frequency + amplitude), and by the scene-lighting pass (each texel's WORLD position,
+     `uRegion`). `OutlineFilter` deliberately does NOT use it: it only ever steps by one
+     texel, and `uInputSize.zw` is already exactly that. A filter that takes the prelude
+     must NOT also declare `uInputSize` itself — that is a hard 'redefinition' compile
+     error, and a filter whose program fails to compile renders its whole layer black.
      `EnergyShieldFilter` additionally sets `clipToViewport: false`, because Pixi otherwise
      intersects the region with the viewport (`FilterSystem._calculateFilterBounds`) and
      would re-introduce a lopsided ring for any shielded actor standing at a screen edge;

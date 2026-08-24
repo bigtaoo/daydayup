@@ -49,7 +49,6 @@ function fakeScene() {
     interpolate: vi.fn(),
     reconcile: vi.fn(),
     positionLocal: vi.fn(),
-    applyLighting: vi.fn(),
   };
 }
 
@@ -684,5 +683,71 @@ describe('GameLoop — the occlusion x-ray is driven every render frame', () => 
       [{ x: 5, y: 6, halfW: 12.96, bodyH: 32 }],
       16,
     );
+  });
+});
+
+// The local player's glow is the one PERSISTENT light in the registry, re-registered at the
+// player's current position every render frame rather than tracked as a spawn. Since
+// 2026-08-24 that registration is ALL `updateFx` does for lighting — the set is uploaded to
+// the one scene-lighting pass by `FxController.updateCamera`, not applied per actor here
+// (`Scene.applyLighting` is gone). These pin the half that stayed.
+describe('GameLoop — the local player glow (design/01 milestone 2)', () => {
+  const silhouette = { halfW: 1, bodyH: 1 };
+
+  it('re-registers the glow at the player position every frame under the same id', () => {
+    // One id, every frame, is what makes it a replace-in-place rather than an accumulating
+    // leak: `LightRegistry.addPersistent` keys on it. A frame-unique id would put a trail of
+    // stale glows along the player's path and quietly exhaust the shader's light slots.
+    const { deps, scene, fx } = buildDeps();
+    const loop = new GameLoop(deps, buildHost());
+
+    scene.player = { curX: 10, curY: 20, bodySilhouette: silhouette };
+    loop.update(16);
+    scene.player = { curX: 90, curY: 40, bodySilhouette: silhouette };
+    loop.update(16);
+
+    const calls = fx.lights.addPersistent.mock.calls;
+    expect(calls).toHaveLength(2);
+    expect(calls.every((c: unknown[]) => c[0] === 'local')).toBe(true);
+    expect(calls[0]![1]).toMatchObject({ x: 10, y: 20 });
+    expect(calls[1]![1]).toMatchObject({ x: 90, y: 40 });
+  });
+
+  it('drops the glow when there is no player view, rather than leaving it at a stale position', () => {
+    const { deps, scene, fx } = buildDeps();
+    const loop = new GameLoop(deps, buildHost());
+
+    scene.player = { curX: 10, curY: 20, bodySilhouette: silhouette };
+    loop.update(16);
+    scene.player = undefined;
+    loop.update(16);
+
+    expect(fx.lights.removePersistent).toHaveBeenCalledWith('local');
+  });
+
+  it('registers it from every render path, not just `playing`', () => {
+    // `updateFx` is the one wrapper every phase goes through (playing / paused / idle /
+    // online), which is exactly why the registration lives there and needs no per-path wiring.
+    for (const phase of ['playing', 'paused', 'victory'] as const) {
+      const { deps, scene, fx } = buildDeps();
+      const loop = new GameLoop(deps, buildHost({ getPhase: () => phase }));
+      scene.player = { curX: 1, curY: 2, bodySilhouette: silhouette };
+      loop.update(16);
+      expect(fx.lights.addPersistent).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('gives the glow a real radius and a warm colour — a light with neither would be invisible', () => {
+    // The shader drops a light with radius or intensity 0 outright (`LightRegistry.snapshot`),
+    // so these are not decoration: a regression to 0 here would silently unlight the player.
+    const { deps, scene, fx } = buildDeps();
+    const loop = new GameLoop(deps, buildHost());
+    scene.player = { curX: 0, curY: 0, bodySilhouette: silhouette };
+    loop.update(16);
+
+    const light = fx.lights.addPersistent.mock.calls[0]![1] as { radius: number; intensity: number; color: number };
+    expect(light.radius).toBeGreaterThan(0);
+    expect(light.intensity).toBeGreaterThan(0);
+    expect(light.color).toBeGreaterThan(0);
   });
 });
