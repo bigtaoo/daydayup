@@ -12,10 +12,11 @@
  * running at, and the filters mounted on the scene layers.
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { Container } from 'pixi.js';
+import { Container, Ticker } from 'pixi.js';
 import { installFakeTextCanvas } from './screens/fakeTextCanvas';
 import { Game } from './Game';
 import { resetActiveQuality, activeQuality } from '../render/quality';
+import { installPerf } from '../perf';
 import { defaultSettingsState, MemorySettingsStore, type SettingsState } from '../settings';
 import { SettingsBinding } from './settingsBinding';
 import type { RenderQualityController } from './renderQuality';
@@ -221,5 +222,78 @@ describe('Game — the watchdog has no authority on a pinned tier', () => {
     // watchdog would already be latched here and auto would resolve straight to low — a verdict
     // inherited from measurements that never applied to it.
     expect(activeQuality().tier).toBe('high');
+  });
+});
+
+/**
+ * The entries' own expression, end to end:
+ *
+ *     installPerf(app, { onSnapshot: (s) => game.observePerfWindow(s.window) })
+ *
+ * Every other case in this file hands `observePerfWindow` a hand-written window literal. That is
+ * enough to test the policy and not enough to test the CONTRACT — if the real `FrameWindow` did
+ * not carry what the watchdog reads, all of them would still pass while no device ever
+ * downgraded. Here the windows come out of a real `FrameSampler` in a real `PerfMonitor` driven
+ * by a real `Ticker`, and the thing asserted at the end is the renderer's own state.
+ *
+ * `render/qualityFromPerf.test.ts` covers the same seam against the watchdog alone; this one
+ * closes it through `Game`, which is where the entries actually attach it.
+ */
+describe('Game — a real perf window drops a real tier', () => {
+  it('downgrades the live renderer off the real sampler, not off a literal', () => {
+    const { game, renderer, inner } = newGame({ quality: 'auto' }, 2);
+    expect(mountedCounts(inner)).toEqual({ world: 2, fx: 1, lit: 1 });
+
+    // A second, independent app purely to run the real perf pipeline — `Game`'s own fake ticker
+    // never fires, and standing up a real one would drag the whole update loop into this test.
+    const ticker = new Ticker();
+    ticker.autoStart = false;
+    const perfApp = {
+      ticker,
+      stage: new Container(),
+      renderer: { gl: { drawArrays: () => {}, useProgram: () => {}, bindTexture: () => {}, bindFramebuffer: () => {} },
+        screen: { width: 800, height: 600 }, texture: { _managedTextures: { items: {} } }, render() {} },
+    } as never;
+    ticker.update(1000);
+    const perf = installPerf(perfApp, { onSnapshot: (s) => game.observePerfWindow(s.window) });
+    try {
+      // 100ms per frame — a device genuinely rendering at 10fps, for ~10s.
+      let t = 1000;
+      for (let i = 0; i < 100; i++) { t += 100; ticker.update(t); }
+    } finally {
+      perf.uninstall();
+    }
+
+    expect(activeQuality().tier).toBe('low');
+    expect(mountedCounts(inner)).toEqual({ world: 0, fx: 0, lit: 0 });
+    expect(renderer.resolution).toBe(1);
+    // The setting itself is untouched — the downgrade is a fact about this session, not a choice.
+    expect(inner.settingsBinding.state.quality).toBe('auto');
+  });
+
+  it('leaves the renderer alone when the real sampler reports a healthy device', () => {
+    const { game, renderer, inner } = newGame({ quality: 'auto' }, 2);
+    const ticker = new Ticker();
+    ticker.autoStart = false;
+    const perfApp = {
+      ticker,
+      stage: new Container(),
+      renderer: { gl: { drawArrays: () => {}, useProgram: () => {}, bindTexture: () => {}, bindFramebuffer: () => {} },
+        screen: { width: 800, height: 600 }, texture: { _managedTextures: { items: {} } }, render() {} },
+    } as never;
+    ticker.update(1000);
+    let windows = 0;
+    const perf = installPerf(perfApp, { onSnapshot: (s) => { windows++; game.observePerfWindow(s.window); } });
+    try {
+      let t = 1000;
+      for (let i = 0; i < 400; i++) { t += 16; ticker.update(t); }
+    } finally {
+      perf.uninstall();
+    }
+    // The control: windows really were produced and really did reach the game.
+    expect(windows).toBeGreaterThanOrEqual(3);
+    expect(activeQuality().tier).toBe('high');
+    expect(mountedCounts(inner)).toEqual({ world: 2, fx: 1, lit: 1 });
+    expect(renderer.resizes).toHaveLength(0);
   });
 });
