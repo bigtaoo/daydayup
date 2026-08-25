@@ -35,7 +35,14 @@
 // The bake needs a 2D canvas, which a headless test environment does not have. `bakeLitCap` returns
 // `undefined` there and `wallRender.addCapLayers` keeps the original two-layer additive path, so the
 // cap is never left unlit — the optimisation is an optimisation, not a correctness dependency.
-import { Texture } from 'pixi.js';
+//
+// Every DOM touch here goes through Pixi's `DOMAdapter` rather than through `document` and
+// `Texture.from` directly, because the WeChat mini-game runtime has neither a `document` nor an
+// `HTMLCanvasElement` global — and `Texture.from` identifies a canvas by `instanceof` against
+// exactly those globals. Going through the adapter is what makes this file work on that target;
+// see `platform/wechat/WeChatAdapter.ts`.
+import { CanvasSource, DOMAdapter, Texture } from 'pixi.js';
+import type { ICanvas, ICanvasRenderingContext2D } from 'pixi.js';
 import { CAP_BOOST_ALPHA, CAP_BOOST_TINT, CAP_TINT } from './wallTone';
 
 /** Per-channel multiplier the two cap layers composite to. See the module header for the identity. */
@@ -95,29 +102,39 @@ function bake(cap: Texture): Texture | undefined {
   const w = Math.round(frame.width);
   const h = Math.round(frame.height);
   if (w <= 0 || h <= 0) return undefined;
-  let canvas: HTMLCanvasElement;
+  let canvas: ICanvas;
   try {
-    canvas = document.createElement('canvas');
+    // Through the adapter, never `document.createElement` — see the module header. On the WeChat
+    // mini-game runtime this is `wx.createCanvas()`; in a browser it is the same `<canvas>` as
+    // before; in a canvas-free environment it throws and the caller keeps the additive path.
+    canvas = DOMAdapter.get().createCanvas(w, h);
   } catch {
     return undefined;
   }
-  canvas.width = w;
-  canvas.height = h;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const ctx = canvas.getContext('2d', { willReadFrequently: true }) as ICanvasRenderingContext2D | null;
   const source = cap.source.resource as CanvasImageSource | null;
   if (!ctx || !source) return undefined;
+  let lit: Texture;
   try {
     // Source-frame coordinates, not the whole resource: correct for a swatch that is one region of
     // a packed sheet as well as for the standalone PNGs shipped today.
-    ctx.drawImage(source, Math.round(frame.x), Math.round(frame.y), w, h, 0, 0, w, h);
+    ctx.drawImage(source as CanvasImageSource, Math.round(frame.x), Math.round(frame.y), w, h, 0, 0, w, h);
     const image = ctx.getImageData(0, 0, w, h);
     applyLitCap(image.data);
     ctx.putImageData(image, 0, 0);
+    // `new CanvasSource(...)`, not `Texture.from(canvas)`: `Texture.from` picks a source class by
+    // sniffing the resource, and every canvas test in that list is an `instanceof` against a DOM
+    // global (`HTMLCanvasElement` / `OffscreenCanvas`). A WeChat canvas is an instance of neither —
+    // there is no such global on that runtime — so `from` fell through the whole list and threw
+    // "Could not find a source type for resource", taking the room build down with it. Naming the
+    // source class removes the sniff; `CanvasSource` itself only ever touches width/height/
+    // getContext, which the wx canvas has.
+    lit = new Texture({ source: new CanvasSource({ resource: canvas }) });
   } catch {
-    // A tainted canvas (a cross-origin swatch) throws here. Fall back rather than ship a black cap.
+    // A tainted canvas (a cross-origin swatch) throws at `getImageData`, and a runtime whose canvas
+    // the renderer cannot accept throws at the source. Fall back rather than ship a black cap.
     return undefined;
   }
-  const lit = Texture.from(canvas);
   // The cap is a TilingSprite, so the baked copy needs the same wrap the swatch was loaded with
   // (`biomeTiles.preloadBiomeTiles`) — clamp-to-edge would repeat one border pixel instead.
   lit.source.addressMode = 'repeat';

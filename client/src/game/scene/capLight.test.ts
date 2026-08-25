@@ -8,7 +8,7 @@
  * values, including the ones that clamp. Everything else here is the plumbing around it.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { Texture, TextureSource } from 'pixi.js';
+import { DOMAdapter, Texture, TextureSource } from 'pixi.js';
 import { LIT_CAP_FACTORS, applyLitCap, bakeLitCap, resetLitCapCache } from './capLight';
 import { CAP_BOOST_ALPHA, CAP_BOOST_TINT, CAP_TINT } from './wallTone';
 
@@ -177,9 +177,6 @@ describe('bakeLitCap — availability and caching', () => {
       }),
     };
     vi.stubGlobal('document', { createElement: () => fake });
-    const fromSpy = vi.spyOn(Texture, 'from').mockReturnValue(
-      new Texture({ source: new TextureSource({ width: 32, height: 24 }) }),
-    );
 
     const lit = bakeLitCap(t)!;
     expect(lit).toBeDefined();
@@ -189,6 +186,46 @@ describe('bakeLitCap — availability and caching', () => {
     expect(lit.source.addressMode).toBe('repeat');
     // ...and the pixels really went through the transform on the way.
     expect(pixels[0]!).toBe(Math.min(255, Math.round(60 * LIT_CAP_FACTORS[0]!)));
-    fromSpy.mockRestore();
+  });
+
+  it('bakes on a runtime with NO document and a canvas that is not an HTMLCanvasElement (WeChat)', () => {
+    // The shipped WeChat crash, in one test: entering any room threw "Could not find a source type
+    // for resource" out of `roomBuilder.build`. `Texture.from` chooses a source class by testing the
+    // resource with `resource instanceof HTMLCanvasElement || resource instanceof OffscreenCanvas`,
+    // and the mini-game runtime defines neither global — so a perfectly usable `wx.createCanvas()`
+    // matched nothing and Pixi threw. Nothing about the pixels was wrong; the SNIFF was.
+    //
+    // Both halves matter and each one alone still passes on the broken code, so they are asserted
+    // together: the canvas has to come from `DOMAdapter` (there is no `document` here to fall back
+    // to), and the texture has to be built by naming `CanvasSource` rather than by detection.
+    const t = new Texture({ source: new TextureSource({ width: 16, height: 16 }) });
+    (t.source as unknown as { resource: unknown }).resource = { width: 16, height: 16 };
+    const wxCanvas = {
+      width: 0,
+      height: 0,
+      getContext: () => ({
+        drawImage: () => undefined,
+        getImageData: () => ({ data: new Uint8ClampedArray(16 * 16 * 4).fill(40) }),
+        putImageData: () => undefined,
+      }),
+    };
+    vi.stubGlobal('document', undefined);
+    vi.stubGlobal('HTMLCanvasElement', undefined);
+    vi.stubGlobal('OffscreenCanvas', undefined);
+    const browserAdapter = DOMAdapter.get();
+    DOMAdapter.set({ ...browserAdapter, createCanvas: (w = 0, h = 0) => {
+      wxCanvas.width = w;
+      wxCanvas.height = h;
+      return wxCanvas as unknown as HTMLCanvasElement;
+    } });
+    try {
+      const lit = bakeLitCap(t);
+      expect(lit).toBeDefined();
+      expect(lit!.source.resource).toBe(wxCanvas);
+      expect(lit!.source.width).toBe(16);
+      expect(lit!.source.addressMode).toBe('repeat');
+    } finally {
+      DOMAdapter.set(browserAdapter);
+    }
   });
 });

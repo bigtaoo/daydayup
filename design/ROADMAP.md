@@ -5119,5 +5119,101 @@ log in). `--version 2.01.2510280 --force` fixes it. The CLI additionally needs
 registered appid — `touristappid` and an empty appid are both rejected with
 `不存在此 AppID (code 10)` even from a logged-in session.
 
-**Still open**: `04`'s checklist items 2, 3, 5, 6, 10 and 11 — with **item 10 (the game does
-not start) blocking every other one**.
+**Fourth update, same session: the map crashed on entry, and then every label in the game
+was blank.** Two more WeChat-only defects, both in the same class as each other and as none
+of the three above: Pixi code that identifies a browser by touching DOM globals, on a runtime
+that has some of them and not others.
+
+**1. Entering any room threw `Could not find a source type for resource` out of
+`RoomBuilder.build`.** `capLight.bakeLitCap` (the 2026-08-24 draw-call pass) rasterises the
+wall cap's key light through a 2D canvas, and it reached for the browser directly:
+`document.createElement('canvas')`, then `Texture.from(canvas)`. `Texture.from` picks a
+source class by SNIFFING the resource, and every canvas test in that list is an `instanceof`
+against a DOM global (`HTMLCanvasElement` / `OffscreenCanvas`). The mini-game runtime defines
+neither, so a perfectly usable `wx.createCanvas()` matched nothing and Pixi threw. Fixed by
+going through `DOMAdapter.get().createCanvas()` and naming the source class —
+`new Texture({ source: new CanvasSource({ resource: canvas }) })` — with the texture
+construction moved inside the existing try, so a host that cannot do the bake falls back to
+the old two-sprite additive path instead of taking the room build down.
+
+**A latent device-only boot crash fell out of the same read.** `main.wechat.ts` called
+`pinTextMeasurementToPaintCanvas()` as the FIRST line of `boot()` — before
+`platform.createApp()`, which is where `DOMAdapter.set(WeChatAdapter)` happens. So it
+allocated its canvas through Pixi's *browser* adapter, i.e. `document.createElement`. The
+DevTools simulator answers that call (which is why it had looked healthy since the day it
+shipped); a device has no `document` at all, so it would have been a `ReferenceError` out of
+`boot()`. Now ordered after `createApp()`, with the pin itself made unable to throw — it is a
+measurement refinement and must never be what fails boot.
+
+**2. Every label was blank, and the cause was ONE property assignment.** Pixi feature-detects
+`context.letterSpacing` by looking for the property on the 2D context PROTOTYPE. That runtime
+carries it, so `experimentalLetterSpacingSupported` came out true and Pixi set
+`context.letterSpacing = '0px'` before every measurement and every `fillText`. On that
+runtime the assignment poisons the context: measured in the simulator by bisecting Pixi's own
+draw sequence one call at a time, an identical draw painted **1058 pixels with the step
+omitted and 0 with it included**, and `measureText` went from 43.33px to a non-finite width.
+One assignment, both symptoms — the NaN width AND the blank glyphs.
+
+Fixed by `disableBrokenLetterSpacing()` (`client/src/render/textMetrics.ts`), called from both
+entries. It is a DETECTION, not a platform check: setting a spacing of **zero** must not change
+what a measurement returns, so a host that fails that invariant is broken whoever it is, and
+one that later fixes it gets the fast path back automatically. Turning the flag off costs
+nothing real — Pixi falls back to drawing letter-spaced text a character at a time.
+
+### How it was actually found, and the four wrong turns on the way
+
+No test could have caught any of this, so the method was a probe compiled into the WeChat
+bundle that reported into the DevTools console, tightened over five reloads. What that
+sequence is worth recording for:
+
+- **A staged probe beats a clever one.** The stages that mattered were the boring ones: does
+  the wx canvas paint a glyph at all (yes, 417 px), what does Pixi make of a `Text` (`NaNx26`
+  — the width was NaN), does it survive to the GPU (no). Each stage named the next question.
+- **Always carry a control.** `gpu.lit: 0` was only evidence because a white sprite through
+  the SAME render-and-extract path read back 64 lit pixels. Without that line the reading
+  would have been indistinguishable from "`extract.pixels` does not work here".
+- **A probe can measure something the engine deliberately erased.** Reading
+  `texture.source.resource` reported "0 pixels painted" and it meant nothing: the WebGL text
+  system constructs with `retainCanvasContext = false`, so `getTexture` hands the canvas
+  straight back to `CanvasPool`, whose `returnCanvasAndContext` does a `clearRect`. The fix
+  was to call `CanvasTextGenerator.getCanvasAndContext()` — rasterisation with no upload and
+  no pool return — and read THAT.
+- **Two confident hypotheses died to one A/B each.** "`texImage2D` cannot take a wx canvas"
+  and "WeChat rejects the `normal normal normal 24px sans-serif` shorthand / the 8-digit
+  `#rrggbbaa` colour" were both wrong, and cheap to kill: paint with each string in turn and
+  count pixels (442 and 417 — both fine).
+
+**And two self-inflicted ones, both fixture blindness:**
+
+- The first sanitiser built its copy with `Object.create(metrics)`, inheriting the real
+  `TextMetrics`'s getter-only accessors, so every write threw — on the path every label takes.
+  The test fake returned a plain object literal, which accepts writes happily, so the suite
+  stayed green while the shipped build went from "no text" to "does not start". The fake is
+  now a class with getter-only properties.
+- The first version of the letter-spacing tests passed with the fix **deleted**: the fake
+  context's prototype had no `letterSpacing`, so Pixi's detection answered false for a reason
+  unrelated to the fix and the poisoned path was never entered. The fixture now carries the
+  property on the prototype, and each case asserts that premise (`supported === true`) before
+  asserting anything else. `Object.assign` was the second half of that mistake — it COPIES a
+  getter's value and drops the accessor, so the "poisoned" fake could never be poisoned.
+
+### What is now tested
+
+`client/src/render/wechatTextRaster.test.ts` — a 2D context faked to the behaviours actually
+measured on that runtime (prototype carries `letterSpacing`; assigning it makes measurement
+non-finite and drawing paint nothing), with Pixi's REAL `CanvasTextGenerator` run against it.
+Every draw is recorded together with the poisoned flag as it stood at that moment, because the
+broken build called `fillText` exactly as often, with the same arguments, at the same
+coordinates — onto a dead context. A call-count assertion cannot see this bug; only
+"drew, and was not poisoned" can. Seven cases: the premise, a plain label, canvas sizing (not
+the 1px that `nextPow2(NaN)` collapses to), the per-character letter-spacing fallback the
+platform now depends on, multi-line, stroked labels, and the counter-case that shows the same
+rasterisation drawing onto a poisoned context with the boot repair skipped.
+`client/src/game/scene/wechatRoomBuild.test.ts` does the same for the room build, in both host
+shapes — simulator (a `document` exists) and device (none), which fail differently: the first
+crashed, the second silently skipped the bake and paid two draw calls per wall cap forever.
+3005 client tests (was 2981), `tsc --noEmit` clean, file-length baseline clean, WeChat bundle
+rebuilt (main pack 3.31 MB / 4.00 MB).
+
+**Still open**: `04`'s checklist items 2, 3, 5, 6 and 11 — all of which need a real handset or
+the upload dialog. Items 10, 12, 13 and 14 (the four in-simulator blockers) are closed.

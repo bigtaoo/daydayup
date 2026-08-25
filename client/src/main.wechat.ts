@@ -8,7 +8,7 @@ import { WeChatPlatform } from './platform/wechat/WeChatPlatform';
 import { weChatAssetHost } from './platform/wechat/weChatAssetHost';
 import { setAssetHost } from './render/assetHost';
 import { preloadCoreArt } from './render/preloadArt';
-import { pinTextMeasurementToPaintCanvas } from './render/textMetrics';
+import { disableBrokenLetterSpacing, pinTextMeasurementToPaintCanvas } from './render/textMetrics';
 import { reportWeChatBootFailure } from './bootError';
 import { installPerf } from './perf';
 
@@ -16,12 +16,23 @@ import { installPerf } from './perf';
 // older version of this comment claimed there was): the bundle installs Pixi's own
 // DOMAdapter itself, in WeChatPlatform.createApp, before Application.init.
 async function boot() {
-  // Same measure-canvas/paint-canvas pinning as the web entry (render/textMetrics.ts) —
-  // a no-op-equivalent here if weapp-adapter exposes no OffscreenCanvas, but the two
-  // entries should not diverge on how text is measured.
-  pinTextMeasurementToPaintCanvas();
   const platform = new WeChatPlatform();
   const app = await platform.createApp();
+  // Same measure-canvas/paint-canvas pinning as the web entry (render/textMetrics.ts), but it
+  // MUST come after createApp(), not before it as it did until 2026-08-25: the pin allocates its
+  // canvas through `DOMAdapter`, and the adapter is still Pixi's BrowserAdapter until
+  // `createApp()` installs ours. Called first, it therefore reached for `document.createElement`
+  // — which the DevTools simulator happens to answer (so this looked fine there) and a real
+  // device does not have at all, making it a ReferenceError out of boot() on device. Ordering it
+  // after the platform is up is what makes both hosts take the same wx canvas.
+  //
+  // Still ahead of the first `Text`: Pixi memoises the measurement canvas on first use, and
+  // nothing between here and the Game constructor below builds one.
+  pinTextMeasurementToPaintCanvas();
+  // ...and turn off Pixi's letter-spacing fast path where the host's own `letterSpacing` property
+  // breaks the context it is set on (render/textMetrics.ts — it is what blanked every WeChat
+  // label). A no-op on a host whose property works, so both entries run the same check.
+  disableBrokenLetterSpacing();
   const input = platform.createInput(app);
   const audio = platform.createAudio();
 

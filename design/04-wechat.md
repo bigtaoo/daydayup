@@ -2,9 +2,9 @@
 
 The WeChat mini-game is the most constrained target: **no DOM, no full window/document, no eval**. Rendering dependencies and base-library versions must be verified explicitly.
 
-> **Status (2026-08-25, third pass): the game boots, renders, and is now navigable end to
-> end in the simulator.** Three WeChat-only bugs were found and fixed the same day, in the
-> order they blocked each other — each one hid the next:
+> **Status (2026-08-25, fourth pass): the game boots, renders, is navigable, and now has
+> readable text and a playable map in the simulator.** Five WeChat-only bugs were found and
+> fixed the same day, in the order they blocked each other — each one hid the next:
 >
 > 1. Boot never reached `Game.start()` (`URLSearchParams` is absent on this runtime) —
 >    checklist item 10.
@@ -14,9 +14,17 @@ The WeChat mini-game is the most constrained target: **no DOM, no full window/do
 >    every menu screen is laid out for a viewport roughly twice as tall as this one, so the
 >    Forge's START RUN button was drawn underneath its own blueprint grid — item 13.
 >
-> Note the shape of that list: (1) and (2) each made (3) unreachable, and (2) specifically
-> looked fine from the outside because the in-run twin-stick controls bypass Pixi's
-> interaction system entirely. "It renders" proved nothing about "it plays".
+> 4. With the Forge navigable, **entering any room threw** — `capLight.bakeLitCap` built its
+>    texture with `Texture.from(canvas)`, which identifies a canvas by `instanceof` against
+>    DOM globals this runtime does not have — item 14.
+> 5. With the map enterable, **every label in the game was blank** — Pixi sets
+>    `context.letterSpacing = '0px'` before every measurement and every `fillText`, and that
+>    one assignment poisons a wx 2D context — item 15.
+>
+> Note the shape of that list: (1) and (2) each made (3) unreachable, (3) made (4)
+> unreachable, and (2) specifically looked fine from the outside because the in-run
+> twin-stick controls bypass Pixi's interaction system entirely. "It renders" proved nothing
+> about "it plays", and "it plays" proved nothing about "you can read it".
 >
 > The asset half is likewise verified against the real base library: both entries call the
 > same `render/preloadArt.ts`, `client/public` is mirrored into `platforms/wechat` by
@@ -44,6 +52,7 @@ The WeChat mini-game is the most constrained target: **no DOM, no full window/do
 - **No WebGPU** → force Pixi to WebGL (`preference: 'webgl'`). We also tree-shake the WebGPU renderer out of the bundle entirely (see build notes).
 - **No `eval` / `new Function`** (unsafe-eval is disabled). Pixi v8 generates uniform/UBO/shader upload code via `new Function` by default → must use Pixi's eval-free polyfill.
 - Avoid `document.createElement('canvas')` for texture generation; the demo's glow uses pure Pixi Graphics (portable). Canvas2D that *is* needed (e.g. `Text` glyph rasterization) goes through the adapter's `createCanvas` → `wx.createCanvas()`.
+- **A `document` DOES exist in the DevTools simulator and does not on a device.** This is the single most misleading thing about this target: `document.createElement('canvas')` answers in the simulator, so browser-only code can look healthy there and be a `ReferenceError` on a handset. Two shipped bugs hid behind it. See **Canvas2D on this runtime** below.
 
 ## Adaptation approach (verified)
 
@@ -282,6 +291,30 @@ flips `phase` `forge` -> `playing`).
   behaves correctly, but never pinned down the platform layer's OWN logic branches as a
   fast, deterministic regression suite).
 
+## Canvas2D on this runtime
+
+Everything Pixi does with a 2D canvas — `Text` rasterisation, `capLight`'s baked wall-cap
+swatch — goes through `WeChatAdapter.createCanvas()` → `wx.createCanvas()`. Three traps, all
+paid for in shipped bugs on 2026-08-25, all of the same shape: **Pixi identifying a browser by
+touching a DOM global, on a runtime that has some of them and not others.**
+
+| Trap | What breaks | What to do instead |
+|---|---|---|
+| `Texture.from(canvas)` | Picks a source class by SNIFFING (`resource instanceof HTMLCanvasElement \|\| instanceof OffscreenCanvas`). Neither global exists here, so a valid wx canvas matches nothing and Pixi throws `Could not find a source type for resource` | Name the class: `new Texture({ source: new CanvasSource({ resource: canvas }) })` |
+| `document.createElement('canvas')` | Answers in the SIMULATOR, throws on a device. Browser-only code therefore passes every simulator check and dies on a handset | `DOMAdapter.get().createCanvas(w, h)` — and only AFTER `DOMAdapter.set(WeChatAdapter)` has run, i.e. after `WeChatPlatform.createApp()` |
+| `context.letterSpacing = '0px'` | **Poisons the context.** After the assignment `measureText` returns a non-finite width and `fillText` paints nothing. Pixi does it before every measurement and every draw, gated only on the property existing on the context prototype — which it does here | `disableBrokenLetterSpacing()` at boot (`render/textMetrics.ts`) turns Pixi's flag off after checking the invariant that a ZERO spacing must not change a measurement |
+
+The last one is worth the detail because of how total and how quiet it was: every label in the
+game rendered blank, `glGetError` was 0, the texture was allocated at a sensible size, and
+`fillText` was called exactly as often as it should be, with the right arguments, at the right
+coordinates. The only observable difference was that the canvas it drew onto was dead. It was
+localised by bisecting Pixi's own draw sequence one call at a time inside the running
+mini-game (1058 painted pixels without the assignment, 0 with it).
+
+Both are now covered without a device by `client/src/render/wechatTextRaster.test.ts` and
+`client/src/game/scene/wechatRoomBuild.test.ts` — the same "WeChat-shaped host, real Pixi"
+method as `wechatAssetLoad.test.ts`, described under **Verification checklist**.
+
 ## Verification checklist
 
 > Method used so far: drive WeChat DevTools via its CLI (`cli.bat open --project
@@ -302,6 +335,14 @@ of every loader resolves at the source art's real dimensions.
 It cannot pin what the real base library does — that `wx.createImage()` fills `width`/
 `height` before `onload`, that `readFileSync(..., 'utf8')` returns a string on the lowest
 base library, or anything about uploading a wx `Image` to GL. Those stay below.
+
+Two more suites now use the same method for the two paths that went through a 2D canvas
+rather than the loaders, both written after the bugs in items 14 and 15 got through:
+`client/src/render/wechatTextRaster.test.ts` (text, through the real `CanvasTextGenerator`)
+and `client/src/game/scene/wechatRoomBuild.test.ts` (the room build, through the real
+`RoomBuilder`). Both fake the context to behaviours actually MEASURED on the runtime rather
+than to what a browser does — that difference is the whole point, since a browser-shaped fake
+is exactly what let both bugs ship.
 
 1. [x] Integrate the adapter; the `client` build boots in WeChat DevTools and renders the tilted-view scene. *(2026-07-07, base lib 3.15.2)*
 2. [ ] Verify on the **lowest target base-library version** (not just the latest).
@@ -408,6 +449,40 @@ base library, or anything about uploading a wx `Image` to GL. Those stay below.
    *Second, pre-existing bug found in the same area*: the forge's floating SETTINGS button
    was mounted before the screens, so it rendered underneath the hub Panel — invisible and
    untappable at every viewport, desktop included. It is now mounted above them.
+14. [x] **Entering any room crashed — found and fixed (2026-08-25, fourth blocker of the
+   day).** `Error: Could not find a source type for resource: [object HTMLCanvasElement]` out
+   of `RoomBuilder.build`. `capLight.bakeLitCap` (the 2026-08-24 draw-call pass) bakes the
+   wall cap's key light through a 2D canvas and then called `Texture.from(canvas)`, which
+   chooses a source class by testing the resource against `HTMLCanvasElement` /
+   `OffscreenCanvas` — neither of which is a global here, so the canvas matched nothing.
+   Fixed by allocating through `DOMAdapter` and naming the class
+   (`new Texture({ source: new CanvasSource({ resource: canvas }) })`), with the construction
+   inside the existing try so an incapable host falls back to the old two-sprite additive cap
+   instead of failing the room build. **A latent device-only boot crash fell out of the same
+   read**: `main.wechat.ts` ran `pinTextMeasurementToPaintCanvas()` before
+   `platform.createApp()`, i.e. before our adapter is installed, so it allocated through
+   Pixi's BROWSER adapter — `document.createElement`, which the simulator answers and a device
+   does not. Reordered, and the pin can no longer throw. Covered by
+   `client/src/game/scene/wechatRoomBuild.test.ts` in both host shapes (with a `document` and
+   without), which fail differently: the simulator shape crashed, the device shape silently
+   skipped the bake and paid two draw calls per wall cap forever.
+15. [x] **Every label in the game was blank — found and fixed (2026-08-25, fifth blocker).**
+   Sprites drew, text did not, `glGetError` was 0, the glyph texture was allocated at a
+   sensible size, and `fillText` was called exactly as often as it should be with the right
+   arguments at the right coordinates. Cause: Pixi feature-detects `context.letterSpacing` on
+   the 2D context PROTOTYPE, this runtime carries it, and **assigning the property poisons the
+   context** — after it, `measureText` returns a non-finite width and a draw paints nothing.
+   Pixi does that assignment before every measurement and every `fillText`. Localised by
+   bisecting Pixi's own draw sequence one call at a time inside the running mini-game: 1058
+   painted pixels with the step omitted, 0 with it included. Fixed by
+   `disableBrokenLetterSpacing()` (`render/textMetrics.ts`), called from both entries, which
+   checks an invariant rather than a platform name — a spacing of ZERO must not change what a
+   measurement returns — and turns Pixi's flag off when it fails, dropping to the
+   per-character drawing path. A non-finite guard on the measurement itself
+   (`withFiniteMetrics`) sits under it, because Pixi's `?? 0` guards a MISSING field and not a
+   NaN one, and `Math.max(43.3, NaN)` is NaN — which is how the width reached the glyph canvas
+   as `NaN` and collapsed it to 1px. Covered by `client/src/render/wechatTextRaster.test.ts`.
+   See **Canvas2D on this runtime**.
 
 **How to get diagnostics out of a mini-game at all.** There is no automation API worth the
 name: `miniprogram-automator` *connects* to `cli auto --auto-port` (use `ws://127.0.0.1:…`,

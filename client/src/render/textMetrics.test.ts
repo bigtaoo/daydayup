@@ -22,7 +22,7 @@ import { Button } from '../game/ui/widgets';
 import { Settings } from '../game/screens/Settings';
 import { defaultSettingsState } from '../settings';
 import { LOCALES, setLocale, resetLocaleForTests } from '../i18n';
-import { pinTextMeasurementToPaintCanvas } from './textMetrics';
+import { disableBrokenLetterSpacing, pinTextMeasurementToPaintCanvas } from './textMetrics';
 
 // Per-character advance at 15px, as Chrome reported for `bold 15px monospace`:
 // 'AAAAA' → 41.2px / 'ААААА' → 41.2px on a DOM canvas, 45px / 85px on an OffscreenCanvas.
@@ -135,6 +135,227 @@ afterEach(() => {
   restoreGlobal('OffscreenCanvas', saved.offscreen);
 });
 
+/**
+ * The WeChat blank-text defect (2026-08-25), reproduced without WeChat.
+ *
+ * Symptom on device/simulator: every label in the game was empty, while sprites drew fine and
+ * the very same wx canvas painted 'ABC' correctly when asked directly. A probe in the running
+ * mini-game reported `Text` size "NaNx26" and a 1x64 glyph texture — the WIDTH was NaN, so the
+ * canvas Pixi rasterises onto was allocated one pixel wide.
+ *
+ * Cause: that runtime's `TextMetrics` carries the `actualBoundingBox*` fields but leaves them
+ * NaN rather than absent, and Pixi's per-line width is
+ * `Math.max(metrics.width, actualBoundingBoxRight - -actualBoundingBoxLeft)`. Its `?? 0` guards
+ * a MISSING field, not a NaN one, and `Math.max(43.3, NaN)` is NaN.
+ *
+ * These run through the real `CanvasTextMetrics` and the real `Text`, so they fail if Pixi ever
+ * stops needing the sanitising — which would be the moment to delete it.
+ */
+describe('a measurement context that reports NaN bounding boxes (WeChat)', () => {
+  const ADVANCE = 8.25;
+
+  /**
+   * A `TextMetrics` the way a browser (and WeChat) actually returns one: getter-ONLY accessors on
+   * a prototype, not own data properties.
+   *
+   * This distinction is not decoration. The first version of the fix built its sanitised copy with
+   * `Object.create(metrics)`, which inherits those accessors and so throws on every write — and
+   * because a plain-object fake accepts writes happily, the whole suite stayed green while the
+   * shipped mini-game died on its first label ("Cannot set property width of [object TextMetrics]
+   * which has only a getter"). The fake has to be as unforgiving as the real thing.
+   */
+  class FakeTextMetrics {
+    constructor(private readonly values: Record<string, number>) {}
+    get width(): number { return this.values.width!; }
+    get actualBoundingBoxLeft(): number { return this.values.actualBoundingBoxLeft!; }
+    get actualBoundingBoxRight(): number { return this.values.actualBoundingBoxRight!; }
+    get actualBoundingBoxAscent(): number { return this.values.actualBoundingBoxAscent!; }
+    get actualBoundingBoxDescent(): number { return this.values.actualBoundingBoxDescent!; }
+  }
+
+  /** A context shaped like WeChat's: a real advance width, NaN bounding boxes, real ascent. */
+  function wechatShapedContext(fields: Record<string, number>) {
+    return {
+      ...fakeContext(DOM_ADVANCE),
+      measureText: (text: string) => new FakeTextMetrics({ width: text.length * ADVANCE, ...fields }),
+    };
+  }
+
+  function pinTo(context: unknown): void {
+    const browserAdapter = DOMAdapter.get();
+    DOMAdapter.set({
+      ...browserAdapter,
+      createCanvas: () => fakeCanvas(context as FakeContext).canvas as unknown as HTMLCanvasElement,
+    });
+    try {
+      pinTextMeasurementToPaintCanvas();
+    } finally {
+      DOMAdapter.set(browserAdapter);
+    }
+  }
+
+  const NAN_BOUNDS = {
+    actualBoundingBoxLeft: NaN,
+    actualBoundingBoxRight: NaN,
+    actualBoundingBoxAscent: 15,
+    actualBoundingBoxDescent: 5,
+  };
+
+  it('still measures a finite width — the whole of the blank-label bug', () => {
+    pinTo(wechatShapedContext(NAN_BOUNDS));
+    const width = CanvasTextMetrics.measureText('ABC', new TextStyle({ fontSize: 20 })).width;
+    expect(Number.isFinite(width)).toBe(true);
+    expect(width).toBeCloseTo(3 * ADVANCE, 5);
+  });
+
+  it('gives `Text` a real width instead of NaN — the exact value the probe reported', () => {
+    // `Text.width` NaN is what the shipped mini-game showed ("NaNx26"), and it is the value the
+    // glyph canvas is sized from, so this is the assertion closest to what the player sees.
+    pinTo(wechatShapedContext(NAN_BOUNDS));
+    const text = new Text({ text: 'ABC', style: new TextStyle({ fontSize: 20 }) });
+    expect(Number.isFinite(text.width)).toBe(true);
+    expect(text.width).toBeGreaterThan(0);
+  });
+
+  it('is NaN-proof on every bounding-box field, not just the pair WeChat happened to break', () => {
+    // One field at a time: whichever the runtime leaves unset must not poison the width, and a
+    // fix that special-cased only `Left`/`Right` would pass the tests above and still ship blank
+    // text on the next runtime that unsets `width` instead.
+    for (const field of ['actualBoundingBoxLeft', 'actualBoundingBoxRight', 'width'] as const) {
+      resetPixiTextMetrics();
+      pinTo(wechatShapedContext({ ...NAN_BOUNDS, actualBoundingBoxLeft: 0, actualBoundingBoxRight: 3 * ADVANCE, [field]: NaN }));
+      const width = CanvasTextMetrics.measureText('ABC', new TextStyle({ fontSize: 20 })).width;
+      expect({ field, finite: Number.isFinite(width) }).toEqual({ field, finite: true });
+    }
+  });
+
+  it('passes a healthy browser measurement through untouched', () => {
+    // The sanitising must not become a second source of wrong numbers: where the values are
+    // already finite, the width has to be exactly what the context reported.
+    pinTo(wechatShapedContext({ actualBoundingBoxLeft: 1, actualBoundingBoxRight: 200, actualBoundingBoxAscent: 15, actualBoundingBoxDescent: 5 }));
+    const width = CanvasTextMetrics.measureText('ABC', new TextStyle({ fontSize: 20 })).width;
+    expect(width).toBeCloseTo(201, 5); // right - -left, which exceeds the 24.75 advance
+  });
+
+  it('still lets Pixi set the font it measures with', () => {
+    // Pixi writes `context.font` before every measurement. The wrapper is a Proxy; if its `set`
+    // trap failed to reach the real context, every measurement would silently use the default
+    // font — wrong widths with no NaN to make it obvious.
+    const context = wechatShapedContext(NAN_BOUNDS);
+    pinTo(context);
+    CanvasTextMetrics.measureText('ABC', new TextStyle({ fontSize: 20, fontFamily: 'monospace' }));
+    expect(context.font).toContain('monospace');
+  });
+});
+
+/**
+ * `disableBrokenLetterSpacing` — the actual cause of the WeChat blank-label bug.
+ *
+ * Pixi detects `context.letterSpacing` by looking for the property on the 2D context prototype and,
+ * finding it on that runtime, set `letterSpacing = '0px'` before every measurement and every
+ * `fillText`. The assignment poisons the context there: a bisect in the running mini-game painted
+ * 1058 pixels with the step omitted and 0 with it included, and `measureText` went from 43.33px to
+ * a non-finite width. So these tests are written against a context that behaves that way, and the
+ * assertions are about what Pixi ends up doing with it.
+ */
+describe('disableBrokenLetterSpacing', () => {
+  const flags = CanvasTextMetrics as unknown as { _experimentalLetterSpacingSupported?: boolean };
+
+  beforeEach(() => {
+    // The prototype has to CARRY `letterSpacing`, or Pixi's own detection answers false for a
+    // reason that has nothing to do with this fix — which is exactly how the first version of
+    // these tests passed with the fix deleted. It is the property's presence on the prototype
+    // that puts WeChat on the poisoned path in the first place.
+    class WithLetterSpacing {}
+    Object.defineProperty(WithLetterSpacing.prototype, 'letterSpacing', { value: '', writable: true });
+    defineGlobal('CanvasRenderingContext2D', WithLetterSpacing);
+    flags._experimentalLetterSpacingSupported = undefined;
+    expect(CanvasTextMetrics.experimentalLetterSpacingSupported).toBe(true); // the premise
+    flags._experimentalLetterSpacingSupported = undefined;
+  });
+
+  afterEach(() => {
+    flags._experimentalLetterSpacingSupported = undefined;
+    defineGlobal('CanvasRenderingContext2D', class {});
+  });
+
+  /** A context whose `letterSpacing` setter breaks it, exactly as WeChat's does.
+   *  Built with `defineProperty`, not `Object.assign` — assign COPIES a getter's value and drops
+   *  the accessor, so the setter would never run and the fake would quietly be a healthy host. */
+  function poisonedContext() {
+    const ctx = fakeContext(DOM_ADVANCE);
+    let poisoned = false;
+    const measure = ctx.measureText.bind(ctx);
+    const target = ctx as unknown as Record<string, unknown>;
+    Object.defineProperty(target, 'letterSpacing', {
+      get: () => '0px',
+      set: () => { poisoned = true; },
+      configurable: true,
+    });
+    target.measureText = (text: string) => (poisoned ? { width: NaN } : measure(text));
+    return ctx;
+  }
+
+  /** Run boot's two text-setup calls against a host that makes a FRESH context per canvas.
+   *  Fresh matters: in production the pinned canvas and the probe's canvas are different objects,
+   *  so the probe poisoning its own context must not poison the one Pixi goes on to measure with.
+   *  Sharing one context here would make this file fail for a reason production does not have. */
+  function pinTo(makeContext: () => unknown): void {
+    const browserAdapter = DOMAdapter.get();
+    DOMAdapter.set({
+      ...browserAdapter,
+      createCanvas: () => fakeCanvas(makeContext() as FakeContext).canvas as unknown as HTMLCanvasElement,
+    });
+    try {
+      pinTextMeasurementToPaintCanvas();
+      disableBrokenLetterSpacing();
+    } finally {
+      DOMAdapter.set(browserAdapter);
+    }
+  }
+
+  it('turns the flag off when a 0px spacing changes what the context measures', () => {
+    pinTo(poisonedContext);
+    expect(CanvasTextMetrics.experimentalLetterSpacingSupported).toBe(false);
+  });
+
+  it('leaves a healthy host on the fast path', () => {
+    // The check must not cost a working browser its letter-spacing support: a context whose
+    // measurement is unmoved by a 0px spacing has to come out untouched, with the flag still the
+    // `true` the premise in beforeEach established.
+    pinTo(() => fakeContext(DOM_ADVANCE));
+    expect(CanvasTextMetrics.experimentalLetterSpacingSupported).toBe(true);
+  });
+
+  it('treats a setter that throws as broken too', () => {
+    // A getter-only `letterSpacing` would make Pixi's own assignment throw mid-render, which is a
+    // crash rather than blank text — worse, and caught by the same probe.
+    const ctx = fakeContext(DOM_ADVANCE);
+    Object.defineProperty(ctx, 'letterSpacing', { get: () => '0px' }); // no setter
+    pinTo(() => ctx);
+    expect(CanvasTextMetrics.experimentalLetterSpacingSupported).toBe(false);
+  });
+
+  it('stops Pixi from touching the property at all — the measurement stays right', () => {
+    // The end-to-end claim, through the real `CanvasTextMetrics`: with the flag off, Pixi never
+    // makes the assignment, so a poisoned context is never poisoned and text measures normally.
+    // Without the fix this is NaN, and every label in the game renders blank.
+    pinTo(poisonedContext);
+    const width = CanvasTextMetrics.measureText('AAAAA', new TextStyle({ fontSize: FONT_SIZE })).width;
+    expect(width).toBeCloseTo(5 * DOM_ADVANCE.latin, 5);
+  });
+
+  it('survives a host with no canvas', () => {
+    const browserAdapter = DOMAdapter.get();
+    DOMAdapter.set({ ...browserAdapter, createCanvas: () => { throw new ReferenceError('document is not defined'); } });
+    try {
+      expect(() => disableBrokenLetterSpacing()).not.toThrow();
+    } finally {
+      DOMAdapter.set(browserAdapter);
+    }
+  });
+});
+
 describe('pinTextMeasurementToPaintCanvas', () => {
   it('pins Pixi’s measurement canvas/context to a DOMAdapter-created canvas', () => {
     const context = fakeContext(DOM_ADVANCE);
@@ -144,7 +365,11 @@ describe('pinTextMeasurementToPaintCanvas', () => {
     pinTextMeasurementToPaintCanvas();
 
     expect(statics.__canvas).toBe(canvas);
-    expect(statics.__context).toBe(context);
+    // Not `toBe(context)`: since the NaN-metrics fix the pinned object is a thin wrapper AROUND
+    // that context (see the describe block above), so identity is the wrong question — what has
+    // to hold is that a measurement reaches this context and comes back with its numbers.
+    const measured = (statics.__context as { measureText: (t: string) => { width: number } }).measureText('AAAAA');
+    expect(measured.width).toBeCloseTo(5 * DOM_ADVANCE.latin, 5);
     // Pixi's own contextSettings for this canvas — font metrics come from a readback.
     expect(calls).toEqual([['2d', { willReadFrequently: true }]]);
   });
@@ -157,6 +382,24 @@ describe('pinTextMeasurementToPaintCanvas', () => {
 
     const style = new TextStyle({ fontSize: FONT_SIZE, fontFamily: 'monospace', fontWeight: 'bold' });
     expect(CanvasTextMetrics.measureText('ААААА', style).width).toBeCloseTo(5 * DOM_ADVANCE.cyrillic, 3);
+  });
+
+  it('survives an adapter that cannot make a canvas at all — a refinement must never fail boot', () => {
+    // `boot()` has no error boundary below `reportWeChatBootFailure`, so anything this function
+    // throws is a black screen rather than a slightly-mismeasured label. A host with no canvas is
+    // reachable in practice: it is what the browser adapter does on a runtime with no `document`.
+    const browserAdapter = DOMAdapter.get();
+    DOMAdapter.set({
+      ...browserAdapter,
+      createCanvas: () => {
+        throw new ReferenceError('document is not defined');
+      },
+    });
+    try {
+      expect(() => pinTextMeasurementToPaintCanvas()).not.toThrow();
+    } finally {
+      DOMAdapter.set(browserAdapter);
+    }
   });
 
   it('creates the canvas through DOMAdapter, so a swapped adapter (WeChat) is honored', () => {
@@ -202,7 +445,10 @@ describe('pinTextMeasurementToPaintCanvas', () => {
     pinTextMeasurementToPaintCanvas();
     pinTextMeasurementToPaintCanvas();
 
-    expect(statics.__context).toBe(second);
+    // Identified by what it MEASURES rather than by identity (the pinned object wraps the
+    // context): 'ААААА' is 8.25px/char through `second` and 17px/char through `first`.
+    const measured = (statics.__context as { measureText: (t: string) => { width: number } }).measureText('ААААА');
+    expect(measured.width).toBeCloseTo(5 * DOM_ADVANCE.cyrillic, 5);
   });
 
   it('leaves Pixi’s own lazy path alone when there is no 2D context', () => {
@@ -279,7 +525,25 @@ describe('Button label vs. box — the Russian settings-screen regression', () =
       expect({ entry, called: call >= 0 }).toEqual({ entry, called: true });
       // Pixi memoises the measurement canvas on first use, so this has to come first.
       expect({ entry, beforeGame: call < source.indexOf('new Game(') }).toEqual({ entry, beforeGame: true });
+      // Same for the letter-spacing repair: Pixi memoises the support flag on first measurement,
+      // and a label built before the repair runs is a label rasterised on a poisoned context.
+      const repair = source.indexOf('disableBrokenLetterSpacing()');
+      expect({ entry, called: repair >= 0 }).toEqual({ entry, called: true });
+      expect({ entry, beforeGame: repair < source.indexOf('new Game(') }).toEqual({ entry, beforeGame: true });
     }
+  });
+
+  it('is called AFTER the WeChat adapter is installed, not before it', () => {
+    // The other half of the ordering, and the half a device fails on. The pin allocates its
+    // canvas through `DOMAdapter`, which is still Pixi's BrowserAdapter until
+    // `WeChatPlatform.createApp()` swaps in ours — so calling it first (as the entry did until
+    // 2026-08-25) means `document.createElement` on a runtime with no `document`: a
+    // ReferenceError straight out of `boot()`. The DevTools simulator DOES answer that call,
+    // which is exactly why an ordering bug this total could sit there looking healthy.
+    const call = wechatEntrySource.indexOf('pinTextMeasurementToPaintCanvas()');
+    const createApp = wechatEntrySource.indexOf('platform.createApp()');
+    expect(createApp).toBeGreaterThan(0);
+    expect(call).toBeGreaterThan(createApp);
   });
 
   it('a Latin label fits either way — why the Italian/English screens looked fine', () => {

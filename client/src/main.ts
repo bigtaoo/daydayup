@@ -3,7 +3,7 @@ import type { Phase } from './game/phase';
 import { WebPlatform } from './platform/web/WebPlatform';
 import { installAutoReload } from './platform/web/autoReload';
 import { preloadCoreArt } from './render/preloadArt';
-import { pinTextMeasurementToPaintCanvas } from './render/textMetrics';
+import { disableBrokenLetterSpacing, pinTextMeasurementToPaintCanvas } from './render/textMetrics';
 import { reportWebBootFailure } from './bootError';
 import { installPerf } from './perf';
 import { parseGameQueryParams } from './game/match/gameQueryParams';
@@ -18,6 +18,10 @@ async function boot() {
   // Before any Text exists — Pixi caches its measurement canvas on first use (see
   // render/textMetrics.ts for why the default offscreen one mis-measures Cyrillic).
   pinTextMeasurementToPaintCanvas();
+  // ...and turn off Pixi's letter-spacing fast path where the host's own `letterSpacing` property
+  // breaks the context it is set on (render/textMetrics.ts — it is what blanked every WeChat
+  // label). A no-op on a host whose property works, so both entries run the same check.
+  disableBrokenLetterSpacing();
   const platform = new WebPlatform();
   const app = await platform.createApp();
   const input = platform.createInput(app);
