@@ -4,10 +4,13 @@
  * it instead of DOM touch events — mirrors `WebInput.test.ts`'s own pattern (plain-node
  * vitest, no jsdom; a hand-rolled fake global that captures registered callbacks so a
  * test can fire them directly), just for the `wx` global instead of `window`/a canvas.
+ * The bridge-dispatch describe block covers the OTHER half (2026-08-25): feeding Pixi's
+ * own interaction system via an injected `WeChatEventBridge` — see weChatDomEvents.ts.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Application } from 'pixi.js';
 import { WeChatInput } from './WeChatInput';
+import type { WeChatEventBridge, WeChatSyntheticPointerType } from './weChatDomEvents';
 
 type WxHandler = (e: WxTouchEvent) => void;
 
@@ -154,5 +157,102 @@ describe('WeChatInput — setControlMirror', () => {
     const before = input.getTouchVisual().weapon1.cx;
     input.setControlMirror(true);
     expect(input.getTouchVisual().weapon1.cx).toBeLessThan(before);
+  });
+});
+
+describe('WeChatInput — event bridge (feeds Pixi Button/Slider, see weChatDomEvents.ts)', () => {
+  // Each test here stubs its OWN fresh `wx` fake rather than reusing the outer
+  // `beforeEach`'s `input`/`wxFake` — that pair stays alive with its own (bridge-less)
+  // WeChatInput attached to the SAME global, and double-attaching a second InputSource
+  // to it would register two independent handler sets on one fake with no benefit.
+  function setUp(bridge?: WeChatEventBridge) {
+    const wxLocal = fakeWx();
+    vi.stubGlobal('wx', wxLocal);
+    const app = { screen: { width: 800, height: 600 } } as unknown as Application;
+    const local = new WeChatInput(app, bridge);
+    local.attach();
+    return { wxLocal, local };
+  }
+
+  function fakeBridge() {
+    const calls: { type: WeChatSyntheticPointerType; x: number; y: number }[] = [];
+    const bridge: WeChatEventBridge = {
+      dispatch: (type, x, y) => { calls.push({ type, x, y }); },
+    };
+    return { bridge, calls };
+  }
+
+  it('a plain construction with no bridge (existing call sites/tests) never throws', () => {
+    // No `bridge` arg at all — the default-parameter path every OTHER describe block
+    // in this file already exercises implicitly; asserted explicitly here once so a
+    // future signature change can't silently drop the default.
+    const { wxLocal } = setUp();
+    expect(() => wxLocal.fire('touchstart', { touches: [], changedTouches: [touch(1, 100, 100)] })).not.toThrow();
+  });
+
+  it('the first touch to start dispatches mousedown at its coordinates', () => {
+    const { bridge, calls } = fakeBridge();
+    const { wxLocal } = setUp(bridge);
+
+    wxLocal.fire('touchstart', { touches: [], changedTouches: [touch(1, 123, 45)] });
+
+    expect(calls).toEqual([{ type: 'mousedown', x: 123, y: 45 }]);
+  });
+
+  it('move/up for that SAME touch id dispatch mousemove/mouseup; up clears the owner', () => {
+    const { bridge, calls } = fakeBridge();
+    const { wxLocal } = setUp(bridge);
+
+    wxLocal.fire('touchstart', { touches: [], changedTouches: [touch(1, 100, 100)] });
+    wxLocal.fire('touchmove', { touches: [], changedTouches: [touch(1, 150, 120)] });
+    wxLocal.fire('touchend', { touches: [], changedTouches: [touch(1, 150, 120)] });
+
+    expect(calls).toEqual([
+      { type: 'mousedown', x: 100, y: 100 },
+      { type: 'mousemove', x: 150, y: 120 },
+      { type: 'mouseup', x: 150, y: 120 },
+    ]);
+  });
+
+  it('a SECOND simultaneous touch (e.g. the fire button held while dragging the move stick) does not also drive the bridge', () => {
+    const { bridge, calls } = fakeBridge();
+    const { wxLocal } = setUp(bridge);
+
+    wxLocal.fire('touchstart', { touches: [], changedTouches: [touch(1, 100, 100)] });
+    wxLocal.fire('touchstart', { touches: [], changedTouches: [touch(2, 700, 300)] });
+    wxLocal.fire('touchmove', { touches: [], changedTouches: [touch(2, 720, 320)] });
+
+    // Only touch 1 (the FIRST to start) ever reaches the bridge — touch 2's start/move
+    // must not appear, even though both reach TouchControls (proven by the existing
+    // "multiple simultaneous touches" describe block above).
+    expect(calls).toEqual([{ type: 'mousedown', x: 100, y: 100 }]);
+  });
+
+  it('after the owning touch ends, the NEXT touch to start becomes the new owner', () => {
+    const { bridge, calls } = fakeBridge();
+    const { wxLocal } = setUp(bridge);
+
+    wxLocal.fire('touchstart', { touches: [], changedTouches: [touch(1, 10, 10)] });
+    wxLocal.fire('touchend', { touches: [], changedTouches: [touch(1, 10, 10)] });
+    wxLocal.fire('touchstart', { touches: [], changedTouches: [touch(2, 20, 20)] });
+
+    expect(calls).toEqual([
+      { type: 'mousedown', x: 10, y: 10 },
+      { type: 'mouseup', x: 10, y: 10 },
+      { type: 'mousedown', x: 20, y: 20 },
+    ]);
+  });
+
+  it('touchcancel on the owning touch also dispatches mouseup and clears the owner (same `end` handler as touchend)', () => {
+    const { bridge, calls } = fakeBridge();
+    const { wxLocal } = setUp(bridge);
+
+    wxLocal.fire('touchstart', { touches: [], changedTouches: [touch(1, 5, 5)] });
+    wxLocal.fire('touchcancel', { touches: [], changedTouches: [touch(1, 5, 5)] });
+
+    expect(calls).toEqual([
+      { type: 'mousedown', x: 5, y: 5 },
+      { type: 'mouseup', x: 5, y: 5 },
+    ]);
   });
 });

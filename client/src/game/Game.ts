@@ -47,7 +47,7 @@ import { RunOutcome } from './controllers/RunOutcome';
 import { ForgeActions } from './controllers/ForgeActions';
 import { ScreenFlow } from './controllers/ScreenFlow';
 import { GameLoop } from './controllers/GameLoop';
-import { parseGameQueryParams } from './match/gameQueryParams';
+import { readGameQueryParams } from './match/gameQueryParams';
 import { computeScreenSize } from './viewport';
 import type { Phase } from './phase';
 import type { AudioBus, InputCanvas, InputSource } from '../platform/types';
@@ -238,11 +238,11 @@ export class Game {
     this.builder = new CommandBuilder(input);
     // Load persistent meta (bank / unlocks / loadout / chosen character, design/14).
     this.meta = this.store.load();
-    // Dev/demo `?query=` overrides (parseGameQueryParams — see that file's doc comment
-    // for what each means). `?skin=` still only overrides to a character the account
-    // owns (selectCharacter itself guards that) — otherwise the saved choice stands.
-    if (typeof location !== 'undefined') {
-      const q = parseGameQueryParams(location.search);
+    // Dev/demo `?query=` overrides (readGameQueryParams — see its doc comment for what
+    // each means and why the platform guard lives there). `?skin=` still only overrides
+    // to a character the account owns (selectCharacter guards that) — else it stands.
+    const q = readGameQueryParams();
+    if (q) {
       if (q.skinOverride) this.meta = selectCharacter(this.meta, q.skinOverride);
       this.coop = q.coop;
       this.online = q.online;

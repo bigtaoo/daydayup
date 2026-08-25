@@ -1,8 +1,9 @@
 /** parseGameQueryParams: pure URLSearchParams parser (see gameQueryParams.ts field doc
  *  comments for what each dev/demo override means). Mirrors pvpConfig.test.ts's plain
- *  input->output style. */
-import { describe, it, expect } from 'vitest';
-import { parseGameQueryParams } from './gameQueryParams';
+ *  input->output style. readGameQueryParams: the platform-guard wrapper Game.ts actually
+ *  calls — covered separately below since it reads globals, not an argument. */
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { parseGameQueryParams, readGameQueryParams } from './gameQueryParams';
 
 describe('parseGameQueryParams', () => {
   it('defaults every field when no params are present', () => {
@@ -107,5 +108,31 @@ describe('parseGameQueryParams', () => {
       expect(parseGameQueryParams('').loadoutOverride).toBeNull();
       expect(parseGameQueryParams('?wpn=').loadoutOverride).toBeNull();
     });
+  });
+});
+
+describe('readGameQueryParams', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('parses location.search when both globals are present (web/jsdom)', () => {
+    vi.stubGlobal('location', { search: '?coop=1' });
+    expect(readGameQueryParams()).toEqual(parseGameQueryParams('?coop=1'));
+  });
+
+  it('returns null without throwing when URLSearchParams is missing (WeChat mini-game)', () => {
+    // Mirrors the real WeChat runtime: it injects a compat `location` (search always
+    // '') for libraries that probe it, but has no URLSearchParams at all — this is the
+    // exact shape that used to throw a bare ReferenceError out of Game's constructor.
+    vi.stubGlobal('location', { search: '' });
+    vi.stubGlobal('URLSearchParams', undefined);
+    expect(() => readGameQueryParams()).not.toThrow();
+    expect(readGameQueryParams()).toBeNull();
+  });
+
+  it('returns null when location itself is missing', () => {
+    vi.stubGlobal('location', undefined);
+    expect(readGameQueryParams()).toBeNull();
   });
 });

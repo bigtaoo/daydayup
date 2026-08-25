@@ -275,18 +275,60 @@ base library, or anything about uploading a wx `Image` to GL. Those stay below.
    **`webGLVersion: 2`** with `nonPowOf2mipmaps: true` / `nonPowOf2wrapping: true`, so the
    silent-degradation hazard above does not bite in the simulator (a low-end device is still
    unknown — that is item 3).
-10. [ ] **`new Game(...)` does not survive this runtime.** Boot reaches the end of
-   `preloadCoreArt()` and never reaches the first line of `Game.start()`; the only statement
-   between them is the `Game` constructor, whose throw is swallowed by
-   `boot().catch(reportWeChatBootFailure)` into a console message DevTools keeps off disk.
-   Reproduced across two independent builds. NOT yet pinned to a line — a third instrumented
-   run could not be landed because the simulator stopped reliably picking up new builds from
-   `cli open` alone. **This is the next thing to chase, and it needs a dependable
-   rebuild/reload loop first.** Prime suspect: `this.fx.attach()` compiles the
-   post-processing shaders, and a shader that fails to compile paints nothing and throws
-   nothing (the 2026-08-12 lesson in `12`).
+10. [x] **`new Game(...)` did not survive this runtime — root cause found and fixed
+   (2026-08-25).** Not the suspected shader compile: the `Game` constructor read
+   `location.search` behind a `typeof location !== 'undefined'` guard
+   (`parseGameQueryParams`, design's `?query=` dev overrides), and the WeChat mini-game
+   runtime injects a compat `location` (with an always-empty `.search`) for libraries that
+   probe it, but has no `URLSearchParams` at all — `new URLSearchParams(...)` threw a bare
+   `ReferenceError` that `boot().catch(reportWeChatBootFailure)` only logged to a console
+   DevTools keeps off disk. Fixed by guarding on both globals (extracted into
+   `readGameQueryParams()`, `client/src/game/match/gameQueryParams.ts`) — there is no
+   `?query=` to parse on this platform anyway. **Verified in the real simulator**
+   (DevTools 2.01.2510280, appid `wx25a3b18a3e83ffce`) via a temporary USER_DATA_PATH
+   breadcrumb probe: boot reaches `installPerf` with `ok:true`, the ticker reaches 90
+   ticks, and `renderer.extract.pixels(app.stage)` reads a non-blank composited frame
+   (mean luma 70.33) — the render loop is alive and drawing real content, not stuck or
+   painting black. Free-form interactive playtesting (tapping AROUND through menus,
+   watching what happens) is still not automatable here — `miniprogram-automator`'s
+   `evaluate`/`screenshot` hang against a GAME target regardless of boot success
+   (reconfirmed the same session) — but see item 12 below for a narrower technique that
+   DOES work for a single targeted claim ("does tapping THIS button do THAT").
 11. [ ] DevTools' upload dialog still has to settle whether the 4 MB limit is measured raw or
    compressed (see **Package budget**).
+12. [x] **Every menu/HUD Button and Slider was silently unclickable on WeChat — found and
+   fixed (2026-08-25, same day as item 10).** Root cause: `Button`/`Slider`
+   (`game/ui/widgets.ts`) are built entirely on Pixi's own interaction system
+   (`eventMode:'static'` + `.on('pointertap', ...)`), which only works because a real
+   `HTMLCanvasElement` dispatches real events Pixi's `EventSystem` listens for. The wx
+   canvas has no DOM event API at all — `WeChatPlatform.createApp` gave it harmless
+   `addEventListener`/`removeEventListener` no-ops just so `Application.init` didn't
+   crash calling them, which meant nothing ever fed Pixi's `EventSystem` anything to
+   hit-test. `TouchControls` (the in-run twin-stick scheme) was unaffected — it
+   hit-tests screen-space geometry itself and never went through Pixi's interaction
+   system — which is exactly why this had gone unnoticed: the game LOOKED playable
+   (renders, twin-stick moves/fires) right up until a player tried to tap PLAY.
+   **Fix**: a new `platform/wechat/weChatDomEvents.ts` installs a real (if minimal)
+   listener registry on the canvas, and `WeChatInput` drives it per touch — the first
+   touch to start, while none other is already driving it, becomes a single synthetic
+   mouse pointer (Pixi's `EventSystem` always takes its plain-mouse branch here, since
+   this runtime has neither a global `PointerEvent` nor `TouchEvent`/`'ontouchstart'`,
+   so replicating the touch branch would buy nothing over the simpler mouse shape).
+   `mouseup`/`mousemove` are registered by Pixi on `globalThis`/`globalThis.document`
+   rather than the canvas (hardcoded in `EventSystem.js`, not something an `Adapter` can
+   redirect) — both already exist in this runtime (proven by `Application.init()` not
+   throwing), so the fix wraps just those two `addEventListener` calls to also capture
+   the handler, forwarding through to the original. **Verified in the real simulator**:
+   a temporary probe wrapped `wx.onTouchStart`/`onTouchEnd` to capture WeChatInput's own
+   registered callbacks, then — once MainMenu had had a few frames to build — read the
+   real PLAY button's `getBounds()` and fed a synthetic touch through that SAME real
+   callback chain at that exact position. Result: `Game.phase` flipped from `'menu'` to
+   `'modeSelect'`, proving the full chain (wx touch → bridge → Pixi hit-test →
+   `Button.onTap` → the game's own screen-flow) works end to end, not just in a unit test
+   against a fake bridge. This targeted "synthesize one real tap, assert one real state
+   change" technique is the answer to item 10's "not automatable" note above wherever the
+   claim under test is narrow enough to state as a before/after — it does not extend to
+   open-ended playtesting.
 
 **How to get diagnostics out of a mini-game at all.** There is no automation API worth the
 name: `miniprogram-automator` *connects* to `cli auto --auto-port` (use `ws://127.0.0.1:…`,

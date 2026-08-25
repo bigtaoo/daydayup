@@ -3,6 +3,7 @@ import type { AudioBus, InputSource, Platform } from '../types';
 import { WeChatAdapter } from './WeChatAdapter';
 import { WeChatInput } from './WeChatInput';
 import { WeChatAudio } from './WeChatAudio';
+import { installWeChatEventBridge, type WeChatEventBridge } from './weChatDomEvents';
 
 // WeChat mini-game platform.
 //
@@ -15,6 +16,12 @@ import { WeChatAudio } from './WeChatAudio';
 //    so the adapter's own lazy sub-canvas probes never become the main canvas.
 //  - No WebGPU → force WebGL. No resizeTo/autoDensity → size explicitly, set resolution.
 export class WeChatPlatform implements Platform {
+  // Set by createApp() (before Application.init(), see weChatDomEvents.ts's doc
+  // comment for why the timing matters), read by createInput() — WeChatInput drives
+  // this per touch so Pixi's Button/Slider widgets (game/ui/widgets.ts) actually
+  // receive taps on this platform instead of going silently dead.
+  private eventBridge: WeChatEventBridge | null = null;
+
   async createApp(): Promise<Application> {
     // The first wx.createCanvas() is the main (on-screen) canvas.
     const wxCanvas = wx.createCanvas();
@@ -23,16 +30,14 @@ export class WeChatPlatform implements Platform {
     const resolution = Math.min(info.pixelRatio || 1, 2);
 
     // Pixi's EventSystem attaches DOM listeners to the canvas during init. The wx canvas
-    // has no DOM event API, so give it harmless no-ops — we drive input via WeChatInput,
-    // not Pixi events.
+    // has no DOM event API at all — installWeChatEventBridge gives it a real (if
+    // minimal) one, driven per touch by WeChatInput, so Pixi's own interaction system
+    // (Button/Slider) works here instead of the canvas silently swallowing every tap.
+    this.eventBridge = installWeChatEventBridge(wxCanvas);
     const c = wxCanvas as unknown as {
-      addEventListener?: () => void;
-      removeEventListener?: () => void;
       getBoundingClientRect?: () => { x: number; y: number; width: number; height: number; left: number; top: number; right: number; bottom: number };
       style?: Record<string, unknown>;
     };
-    c.addEventListener ??= () => {};
-    c.removeEventListener ??= () => {};
     c.getBoundingClientRect ??= () => ({
       x: 0, y: 0, left: 0, top: 0,
       width: info.windowWidth, height: info.windowHeight,
@@ -59,7 +64,7 @@ export class WeChatPlatform implements Platform {
   }
 
   createInput(app: Application): InputSource {
-    return new WeChatInput(app);
+    return new WeChatInput(app, this.eventBridge);
   }
 
   createAudio(): AudioBus {

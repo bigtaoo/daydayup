@@ -14,6 +14,18 @@ export interface GameQueryParams {
   perf: boolean;
 }
 
+/** Game's constructor calls this instead of `parseGameQueryParams(location.search)`
+ *  directly, guarding both globals it needs. `location` alone is not enough: the WeChat
+ *  mini-game runtime injects a compat `location` (with an always-empty `.search`) for
+ *  libraries that probe it, but has no `URLSearchParams` at all — constructing one
+ *  throws a bare ReferenceError there. There is no `?query=` to parse on that platform
+ *  anyway (see main.wechat.ts's boot comment), so `null` (skip the overrides) is the
+ *  correct outcome, not a fallback. */
+export function readGameQueryParams(): GameQueryParams | null {
+  if (typeof location === 'undefined' || typeof URLSearchParams === 'undefined') return null;
+  return parseGameQueryParams(location.search);
+}
+
 export function parseGameQueryParams(search: string): GameQueryParams {
   const params = new URLSearchParams(search);
   const seats = Number(params.get('seats'));

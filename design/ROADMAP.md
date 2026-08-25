@@ -4953,6 +4953,59 @@ So resources arrive and nothing is playable. This target is not shippable until 
 closed, and every remaining checklist item (frame rate, touch feel, lowest base library) sits
 behind it.
 
+**Update (2026-08-25, same day): root cause found, and it was not the shader.** The
+`Game` constructor reads `location.search` behind a `typeof location !== 'undefined'`
+guard (`parseGameQueryParams`, the `?query=` dev-override reader) — the WeChat mini-game
+runtime injects a compat `location` (an always-empty `.search`) for libraries that probe
+it, but has no `URLSearchParams` at all, so `new URLSearchParams(...)` threw a bare
+`ReferenceError` straight out of the constructor. Fixed by guarding on both globals
+(`readGameQueryParams()`, `client/src/game/match/gameQueryParams.ts` — there is no
+`?query=` to parse on this platform anyway). **Verified in the real simulator** via the
+USER_DATA_PATH breadcrumb technique above: boot now reaches `installPerf` with `ok:true`,
+and a follow-up probe confirmed the render loop is actually alive — `app.ticker` reaches
+90 ticks and `renderer.extract.pixels(app.stage)` reads a non-blank composited frame
+(mean luma 70.33), not a stuck or all-black canvas. The diagnostic probe itself was
+temporary and has been removed from `main.wechat.ts`; the rebuilt bundle is
+byte-identical in size to the pre-probe build, confirming a clean revert. Free-form
+interactive playtesting (tapping around through menus) is still not automatable here —
+`miniprogram-automator`'s `evaluate`/`screenshot` hang against a GAME target regardless
+of boot success (reconfirmed this session) — so open-ended touch-driven verification
+still needs a human on the simulator or a real device. This target is shippable again as
+far as boot goes; 5.5 (frame rate, touch feel, lowest base library, real device) remains
+open.
+
+**Second update, same session: the game booted and rendered, but nothing was tappable —
+found and fixed.** A player report ("这个开始游戏的按钮点击不了" — the start-game button
+can't be clicked) surfaced a second, unrelated WeChat-only bug hiding behind the first:
+every `Button`/`Slider` (`game/ui/widgets.ts`) is built on Pixi's own interaction system
+(`eventMode:'static'` + `.on('pointertap', ...)`), which needs a real `HTMLCanvasElement`
+dispatching real events for Pixi's `EventSystem` to hit-test against. The wx canvas has
+none — `WeChatPlatform.createApp` gave it harmless `addEventListener`/
+`removeEventListener` no-ops just so `Application.init` wouldn't crash calling them,
+which meant Pixi's `EventSystem` never received anything to dispatch. `TouchControls`
+(the in-run twin-stick scheme) was unaffected, since it hit-tests screen-space geometry
+itself and never touches Pixi's interaction system — exactly why this stayed invisible
+even after the boot fix: the game visibly rendered and the render-loop probe above
+proved real content on screen, but literally every menu button (PLAY included) had
+always been dead on this platform, likely since MainMenu itself first shipped. Fixed by
+a new `platform/wechat/weChatDomEvents.ts`: installs a real listener registry on the
+canvas, and `WeChatInput` drives it per touch, treating the first touch to start (while
+none other already is) as a single synthetic mouse pointer — the shape Pixi's
+`EventSystem` always uses here regardless, since this runtime has neither a global
+`PointerEvent` nor `TouchEvent`/`'ontouchstart'`. The one wrinkle: Pixi hardcodes
+`mouseup`→`globalThis` and `mousemove`→`globalThis.document` rather than the canvas, so
+the fix wraps just those two `addEventListener` calls to also capture the handler,
+forwarding through to the original. **Verified end-to-end in the real simulator**, not
+just against a unit-test fake bridge: a temporary probe captured WeChatInput's real
+`wx.onTouchStart`/`onTouchEnd` callbacks, read the real on-screen PLAY button's
+`getBounds()` once MainMenu had settled, and fed a synthetic touch through that exact
+chain at that exact position — `Game.phase` flipped `'menu'` → `'modeSelect'`, `tapped:
+true`. 2807 client tests (was 2793) + `tsc --noEmit` clean throughout. This
+"synthesize one real tap, assert one real state change" technique is a working answer to
+"how do you verify a specific WeChat interaction claim without a human", even though it
+does not extend to open-ended playtesting — see design/04-wechat.md item 12 for the full
+writeup.
+
 **How to get diagnostics out of a mini-game at all**, since none of this is documented and it
 cost most of the session's tooling time: there is no usable automation API.
 `miniprogram-automator` *connects* to `cli auto --auto-port` (use `ws://127.0.0.1:…`, not
