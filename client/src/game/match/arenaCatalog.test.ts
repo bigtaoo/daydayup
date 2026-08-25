@@ -2,7 +2,7 @@
  *  arenaCatalog.ts's doc comment for landing_basic vs. arena_prototype_60's roles). Mirrors
  *  pvpConfig.test.ts's plain input->output style. */
 import { describe, it, expect } from 'vitest';
-import { ARENA_CATALOG } from './arenaCatalog';
+import { ARENA_CATALOG, ARENA_IDS, resolveArenaId } from './arenaCatalog';
 
 describe('ARENA_CATALOG', () => {
   it('has exactly the two known arena ids', () => {
@@ -50,5 +50,23 @@ describe('ARENA_CATALOG', () => {
       expect(Array.isArray(arena.rooms)).toBe(true);
       expect(arena.rooms.length).toBeGreaterThan(0);
     });
+  });
+});
+
+describe('resolveArenaId', () => {
+  it('accepts every id the catalog actually has — no hand-kept second list', () => {
+    expect(ARENA_IDS.sort()).toEqual(Object.keys(ARENA_CATALOG).sort());
+    for (const id of ARENA_IDS) expect(resolveArenaId(id)).toBe(id);
+  });
+
+  it('rejects absent, empty and unknown ids', () => {
+    expect(resolveArenaId(null)).toBeNull();
+    expect(resolveArenaId('')).toBeNull();
+    expect(resolveArenaId('arena_prototype_61')).toBeNull();
+  });
+
+  it('rejects an inherited Object.prototype key — `includes`, not `in`', () => {
+    expect(resolveArenaId('toString')).toBeNull();
+    expect(resolveArenaId('constructor')).toBeNull();
   });
 });

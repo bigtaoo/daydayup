@@ -10,6 +10,7 @@
     "test:watch": "vitest",
     "test:pvp-sim": "vitest run --config vitest.pvp-sim.config.ts --reporter=verbose",
     "test:pve-sim": "vitest run --config vitest.pve-sim.config.ts --reporter=verbose",
+    "audit:arena": "vitest run --config vitest.arena-audit.config.ts --reporter=verbose",
     "typecheck": "tsc --noEmit",
     "check:filelength": "node ../build/checkFileLength.mjs",
     "gen:trig": "node tools/gen-trig-tables.mjs",

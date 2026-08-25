@@ -1,6 +1,8 @@
 import { EMBER_DUNGEON, EMBER_L1_ROOMS, type EngineConfig } from '@dd/engine';
 import { toFpGrid } from '@dd/engine/content/convert';
-import { ARENA_CATALOG } from './arenaCatalog';
+import type { ArenaMap } from '@dd/engine/content/arenas';
+import type { Point } from '@dd/engine/content/rooms';
+import { ARENA_CATALOG, type ArenaId } from './arenaCatalog';
 import { fpToPx } from '../coords';
 
 // Ignored in dungeon/arena mode (each room/arena sets its own bounds) — mirrors the
@@ -32,20 +34,44 @@ export function buildDungeonRunConfig(opts: {
 }
 
 /**
- * Dev-only (`?arenaDemo=1`, see Game.arenaDemo's field doc comment): a tiny synthetic
- * 3-room ArenaMap + two local seats on distinct teams, with zero matchmaking round-trip.
+ * Dev-only (`?arenaDemo=1` / `?arena=<id>`, see Game.arenaDemo's field doc comment): any
+ * catalog ArenaMap + two local seats on distinct teams, with zero matchmaking round-trip.
+ * Defaults to the small synthetic `landing_basic` fixture, which is what `?arenaDemo=1`
+ * has always booted; `?arena=arena_prototype_60` is how the real launch map gets walked
+ * in a single tab.
  */
-export function buildArenaDemoConfig(opts: { seed: number; localSkinId: string; allySkinId: string }): EngineConfig {
+export function buildArenaDemoConfig(opts: {
+  seed: number;
+  localSkinId: string;
+  allySkinId: string;
+  arenaId?: ArenaId;
+}): EngineConfig {
+  const arena = ARENA_CATALOG[opts.arenaId ?? 'landing_basic'];
   const px = (grid: number) => fpToPx(toFpGrid(grid));
+  const [a, b] = arenaDemoStarts(arena);
   return {
     seed: opts.seed,
     worldW: PLACEHOLDER_WORLD,
     worldH: PLACEHOLDER_WORLD,
     waves: [],
     players: [
-      { skinId: opts.localSkinId, teamId: 0, start: [px(5), px(5)] }, // room A centre
-      { skinId: opts.allySkinId, teamId: 1, start: [px(5), px(35)] }, // room C centre
+      { skinId: opts.localSkinId, teamId: 0, start: [px(a.x), px(a.y)] },
+      { skinId: opts.allySkinId, teamId: 1, start: [px(b.x), px(b.y)] },
     ],
-    arena: ARENA_CATALOG.landing_basic,
+    arena,
   };
+}
+
+/**
+ * Where the harness' two seats stand, in GRID units. A real map authors `spawns`
+ * (design/15: >= seat count, system-assigned) and the first two are used verbatim, so the
+ * demo starts where a real match would. `landing_basic` has none — it predates that field
+ * — so it keeps its original hand-picked room A / room C centres, which is why this is a
+ * fallback rather than a derivation from `rooms[0]`/`rooms[1]`: those would be rooms A and
+ * B, putting both seats one door apart instead of at opposite ends of the L.
+ */
+function arenaDemoStarts(arena: ArenaMap): [Point, Point] {
+  const [a, b] = arena.spawns;
+  if (a && b) return [a, b];
+  return [{ x: 5, y: 5 }, { x: 5, y: 35 }];
 }

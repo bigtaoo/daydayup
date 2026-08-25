@@ -61,6 +61,36 @@ describe('buildArenaDemoConfig', () => {
     expect(cfg.dungeon).toBeUndefined();
   });
 
+  describe('?arena=<id> — any catalog map, not just the synthetic fixture', () => {
+    const opts = { seed: 1, localSkinId: 'vanguard', allySkinId: 'juggernaut' } as const;
+
+    it('an explicit landing_basic is byte-identical to the default (no arenaId)', () => {
+      expect(buildArenaDemoConfig({ ...opts, arenaId: 'landing_basic' })).toEqual(
+        buildArenaDemoConfig(opts),
+      );
+    });
+
+    it('builds the REAL 60-room launch map, seats standing on its own authored spawns', () => {
+      const arena = ARENA_CATALOG.arena_prototype_60;
+      const cfg = buildArenaDemoConfig({ ...opts, arenaId: 'arena_prototype_60' });
+      const px = (grid: number) => fpToPx(toFpGrid(grid));
+      expect(cfg.arena).toBe(arena);
+      // Read out of the map rather than written as literals: the point of this path is
+      // that the harness stands where a REAL match would, so the assertion has to move
+      // if the map's spawns do. (Both are non-empty — pinned below, since two undefined
+      // spawns would make this comparison vacuously true.)
+      expect(arena.spawns.length).toBeGreaterThanOrEqual(2);
+      expect(cfg.players![0]!.start).toEqual([px(arena.spawns[0]!.x), px(arena.spawns[0]!.y)]);
+      expect(cfg.players![1]!.start).toEqual([px(arena.spawns[1]!.x), px(arena.spawns[1]!.y)]);
+      expect(cfg.players![0]!.start).not.toEqual(cfg.players![1]!.start);
+    });
+
+    it('still puts the two seats on distinct teams, same as the fixture path', () => {
+      const cfg = buildArenaDemoConfig({ ...opts, arenaId: 'arena_prototype_60' });
+      expect(cfg.players!.map((p) => p.teamId)).toEqual([0, 1]);
+    });
+  });
+
   it('is a pure function of its opts, seed passthrough included — identical config on every call', () => {
     const opts = { seed: 9, localSkinId: 'vanguard', allySkinId: 'juggernaut' };
     const a = buildArenaDemoConfig(opts);

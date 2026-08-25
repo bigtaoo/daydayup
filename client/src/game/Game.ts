@@ -8,6 +8,7 @@ import {
 import { CoopSession } from '../net/CoopSession';
 import { connectOnlineSession } from './match/onlineConnect';
 import { buildDungeonRunConfig, buildArenaDemoConfig } from './match/offlineConfig';
+import type { ArenaId } from './match/arenaCatalog';
 import { buildTutorialConfig } from './match/tutorialConfig';
 import {
   defaultMetaState, bankMaterials, clearLoadout, selectCharacter,
@@ -180,14 +181,12 @@ export class Game {
   localOwner = 0;
   private coop = false;
   private online = false;
-  // `?arenaDemo=1` — a DEV-ONLY harness, kept even after `?pvp=1` (below) became a
-  // real matchmade entry point: it boots a tiny local synthetic 3-room ArenaMap with
-  // zero network/matchmaking round-trip, so the PvP zone HUD row + Minimap (design/10)
-  // have real `state.zoneEnabled`/`arenaMap`/`zone` data to iterate against without a
-  // second tab or a running matchsvc. Not a substitute for `?pvp=1` — no real map, no
-  // matchmaking, no HP/weapon scaling. Reuses the coop bot-ally submit path to drive
-  // the second seat locally (see stepSim).
-  private arenaDemo = false;
+  // WHICH map the DEV-ONLY local-arena harness boots, or null when it is off. `?arenaDemo=1`
+  // is the original small synthetic fixture; `?arena=<id>` picks any catalog map, and is the
+  // only way to WALK the real 60-room launch map in a single tab (no matchmaking, no second
+  // tab, no matchsvc). Still not a substitute for `?pvp=1`: no ticketed seats, no HP/weapon
+  // scaling. Drives the second seat through the coop bot-ally submit path (see stepSim).
+  private arenaDemo: ArenaId | null = null;
   // `?pvp=1` (design/15, ROADMAP Phase 4 closeout) — a REAL matchmade PvP arena run:
   // requests an 8-seat (default; `?seats=` overrides for local two-tab testing) 'pvp'-
   // mode match instead of 2-seat 'coop', builds an arena EngineConfig (ARENA_CATALOG +
@@ -851,14 +850,15 @@ export class Game {
     this.screens.hide();
   }
 
-  /** Dev-only (see `arenaDemo` field doc comment): a tiny synthetic 3-room ArenaMap +
-   * two local seats on distinct teams. Unlike dungeon mode, arena rooms are all
+  /** Dev-only (see `arenaDemo` field doc comment): a catalog ArenaMap + two local seats
+   * on distinct teams. Unlike dungeon mode, arena rooms are all
    * co-resident from tick 0 (ROADMAP 4.2b) — no `room_enter` event ever fires to prime
    * the view, so `buildRoom` is called once here directly. The second seat is driven by
    * the existing coop bot-ally submit path (stepSim), not a real opponent. */
   private beginArenaDemoRun() {
     this.engine = createGameEngine(buildArenaDemoConfig({
       seed: SEED_BASE + this.runCount,
+      arenaId: this.arenaDemo ?? 'landing_basic',
       localSkinId: this.meta.selectedSkin,
       allySkinId: this.allySkinId(),
     }));
@@ -1007,7 +1007,7 @@ export class Game {
   }
 
   isArenaDemo(): boolean {
-    return this.arenaDemo;
+    return this.arenaDemo !== null;
   }
 
   isTutorialActive(): boolean {

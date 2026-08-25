@@ -1,11 +1,13 @@
 /** Dev/demo `?query=` overrides Game's constructor reads (see Game.ts field doc comments
  *  for what each one means). Pulled out as a pure parser — no `this`, easy to reason about
  *  independent of Game's constructor. `null` means "param absent — leave the default." */
+import { resolveArenaId, type ArenaId } from './arenaCatalog';
+
 export interface GameQueryParams {
   skinOverride: string | null;
   coop: boolean;
   online: boolean;
-  arenaDemo: boolean;
+  arenaDemo: ArenaId | null;
   pvp: boolean;
   pvpSeats: number | null;
   matchBaseUrl: string | null;
@@ -36,7 +38,11 @@ export function parseGameQueryParams(search: string): GameQueryParams {
     skinOverride: params.get('skin'),
     coop: params.get('coop') === '1', // dev toggle: bring a local bot ally
     online: params.get('online') === '1' || pvp, // a PvP run always rides the online/CoopSession path
-    arenaDemo: params.get('arenaDemo') === '1', // dev toggle: synthetic local PvP arena
+    // Dev toggle: boot an ArenaMap locally, no matchmaking. `?arenaDemo=1` keeps its
+    // original meaning (the small synthetic fixture); `?arena=<id>` picks any catalog
+    // map — the only way to walk the real 60-room launch map in ONE tab. An unknown id
+    // resolves to null, i.e. the harness stays off rather than booting an empty arena.
+    arenaDemo: resolveArenaId(params.get('arena')) ?? (params.get('arenaDemo') === '1' ? 'landing_basic' : null),
     pvp,
     pvpSeats: Number.isInteger(seats) && seats >= 2 && seats <= 8 ? seats : null,
     matchBaseUrl: params.get('mm'), // override the matchsvc origin (default localhost:8788)

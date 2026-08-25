@@ -11,7 +11,7 @@ describe('parseGameQueryParams', () => {
       skinOverride: null,
       coop: false,
       online: false,
-      arenaDemo: false,
+      arenaDemo: null,
       pvp: false,
       pvpSeats: null,
       matchBaseUrl: null,
@@ -28,13 +28,43 @@ describe('parseGameQueryParams', () => {
     expect(p.loadoutOverride).toEqual(['shotgun']);
   });
 
-  it('treats coop/online/arenaDemo/pvp as "1" boolean toggles, any other value is falsy', () => {
+  it('treats coop/online/pvp as "1" boolean toggles, any other value is falsy', () => {
     expect(parseGameQueryParams('?coop=1').coop).toBe(true);
     expect(parseGameQueryParams('?coop=0').coop).toBe(false);
     expect(parseGameQueryParams('?coop=true').coop).toBe(false);
     expect(parseGameQueryParams('?online=1').online).toBe(true);
-    expect(parseGameQueryParams('?arenaDemo=1').arenaDemo).toBe(true);
     expect(parseGameQueryParams('?pvp=1').pvp).toBe(true);
+  });
+
+  describe('arenaDemo — which local arena the dev harness boots (null = off)', () => {
+    it('?arenaDemo=1 keeps its original meaning: the small synthetic fixture', () => {
+      expect(parseGameQueryParams('?arenaDemo=1').arenaDemo).toBe('landing_basic');
+      expect(parseGameQueryParams('?arenaDemo=0').arenaDemo).toBeNull();
+      expect(parseGameQueryParams('?arenaDemo=true').arenaDemo).toBeNull();
+    });
+
+    it('?arena=<id> selects any catalog map and implies the harness, no arenaDemo needed', () => {
+      expect(parseGameQueryParams('?arena=arena_prototype_60').arenaDemo).toBe('arena_prototype_60');
+      expect(parseGameQueryParams('?arena=landing_basic').arenaDemo).toBe('landing_basic');
+    });
+
+    // The failure this rejects is silent, not loud: an unvalidated id reaches
+    // `EngineConfig.arena` as `undefined`, which boots a run with NO arena rather than
+    // reporting the typo — so an unknown id must leave the harness off, not on-with-nothing.
+    it('an unknown ?arena= id leaves the harness off rather than booting an empty arena', () => {
+      expect(parseGameQueryParams('?arena=nope').arenaDemo).toBeNull();
+      expect(parseGameQueryParams('?arena=').arenaDemo).toBeNull();
+    });
+
+    it('an unknown ?arena= id does not cancel an explicit ?arenaDemo=1', () => {
+      expect(parseGameQueryParams('?arena=nope&arenaDemo=1').arenaDemo).toBe('landing_basic');
+    });
+
+    it('?arena= wins over ?arenaDemo=1 when both name a real map', () => {
+      expect(parseGameQueryParams('?arenaDemo=1&arena=arena_prototype_60').arenaDemo).toBe(
+        'arena_prototype_60',
+      );
+    });
   });
 
   it('pvp=1 implies online=true even without an explicit online param', () => {

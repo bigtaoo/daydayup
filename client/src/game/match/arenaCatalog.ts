@@ -39,3 +39,15 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaMap> = {
   landing_basic: buildLandingBasic(),
   arena_prototype_60: arenaPrototype60 as ArenaMap,
 };
+
+/** Every catalog id, as a value — the `?arena=` parser validates against this rather
+ *  than against a hand-kept second list. */
+export const ARENA_IDS = Object.keys(ARENA_CATALOG) as ArenaId[];
+
+/** `?arena=<id>` → a real catalog id, or `null` for absent AND for unknown. An unknown
+ *  id must not reach `EngineConfig.arena` as `undefined`: that silently boots a run with
+ *  no arena at all instead of naming the typo, so it is rejected here and the caller
+ *  keeps its default. */
+export function resolveArenaId(raw: string | null): ArenaId | null {
+  return raw !== null && (ARENA_IDS as string[]).includes(raw) ? (raw as ArenaId) : null;
+}
