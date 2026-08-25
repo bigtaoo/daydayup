@@ -96,8 +96,9 @@ export class HudView {
   readonly weaponPickupPrompt = new WeaponPickupPrompt();
   // Shared PvP/PvE room-graph minimap (design/10, PvE wiring 2026-08-05) — its own
   // visibility is driven independently of the rest of the HUD (zoneEnabled/
-  // dungeonRooms, not phase), so it's mounted directly into `layers.ui`, not `view`
-  // (see build()). Box size is fixed, so it can construct as a plain field.
+  // dungeonRooms, not phase), so it's mounted as a SIBLING of `view` inside
+  // `layers.hudOverlay`, not as a child of `view` (see build()). Box size is fixed, so
+  // it can construct as a plain field.
   readonly minimap = new Minimap({ w: 140, h: 140 });
   // In-run pause entry point (design/10, "now resolved" — a real gap this pass closed:
   // `Game.pause()` had exactly one way in, a keyboard Escape/P listener, so touch/WeChat
@@ -155,8 +156,10 @@ export class HudView {
     // Minimap (design/10 "room progress") — hidden unless zoneEnabled/PvE has rooms
     // placed (update()). Top-right, inset enough to keep the WeChat capsule corner
     // clear (design/10 layout note). A sibling of `view`, not a child — see the field
-    // doc comment above for why it's mounted directly into `layers.ui`.
-    layers.ui.addChild(this.minimap.view);
+    // doc comment above. `hudOverlay`, NOT `layers.ui` directly: `ui` is exactly two
+    // sub-layers now (layers.ts) and the menus are the upper one, so a third child
+    // mounted straight into `ui` would paint the minimap OVER the pause menu.
+    layers.hudOverlay.addChild(this.minimap.view);
 
     this.reposition(screenPx);
   }

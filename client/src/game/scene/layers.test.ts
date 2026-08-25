@@ -6,6 +6,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { Layers } from './layers';
+import { MenuLayer } from '../ui/menuLayer';
 
 describe('Layers', () => {
   it('roots backdrop, world, ui in that paint order', () => {
@@ -121,5 +122,34 @@ describe('Layers', () => {
     // Nothing else may sit in that slot pretending to be `entities`.
     expect(layers.lit.children).toHaveLength(3);
     expect(layers.world.children).toHaveLength(3);
+  });
+});
+
+// `ui` gained two named sub-layers on 2026-08-25, when the menus picked up a fit-scale for
+// short viewports (ui/menuLayer.ts). Before that, the in-run HUD and the menu screens were
+// siblings in `ui` whose order came from *when* Game happened to add each one —
+// `buildHud()` first, menu screens after, so menus painted on top. Getting that backwards
+// is invisible in every unit test and shows up only as a pause menu drawn behind the HUD.
+describe('Layers — the two screen-space sub-layers inside ui', () => {
+  it('paints menus OVER the in-run HUD', () => {
+    const layers = new Layers();
+    expect(layers.ui.children).toEqual([layers.hudOverlay, layers.menu]);
+  });
+
+  it('keeps the in-run HUD out of the scaled menu layer', () => {
+    // The HUD/touch controls must not inherit MenuLayer's fit-scale — a thumbstick stays
+    // thumb-sized on a short viewport even while the menus shrink to fit it.
+    const layers = new Layers();
+    expect(layers.menu).toBeInstanceOf(MenuLayer);
+    expect(layers.hudOverlay).not.toBeInstanceOf(MenuLayer);
+    layers.menu.fit({ w: 844, h: 390 }); // the WeChat landscape phone viewport
+    expect(layers.menu.scale.x).toBeLessThan(1);
+    expect(layers.hudOverlay.scale.x).toBe(1);
+  });
+
+  it('leaves both sub-layers OUT of their own render group — `ui` already is one', () => {
+    const layers = new Layers();
+    expect(layers.hudOverlay.isRenderGroup).toBe(false);
+    expect(layers.menu.isRenderGroup).toBe(false);
   });
 });

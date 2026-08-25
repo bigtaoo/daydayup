@@ -298,11 +298,11 @@ export class Game {
     // (needs `this.matchBaseUrl` after the constructor's query-param override).
     this.partyScreen = new PartyScreen({ matchBaseUrl: this.matchBaseUrl });
     this.loginScreen = new LoginScreen({ matchBaseUrl: this.matchBaseUrl });
-    this.layers.ui.addChild(
-      this.mainMenu.view, this.modeSelect.view, this.forge.view, this.pvpPreview.view, this.matchmaking.view,
-      this.screens.view, this.settingsScreen.view, this.pauseMenu.view,
-      this.partyScreen.view, this.loginScreen.view,
-    );
+    this.layers.menu.mount(
+      [this.mainMenu.view, this.modeSelect.view, this.forge.view, this.pvpPreview.view, this.matchmaking.view,
+        this.screens.view, this.settingsScreen.view, this.pauseMenu.view,
+        this.partyScreen.view, this.loginScreen.view],
+      [this.settingsBtn.view]); // floats OVER a screen — see MenuLayer.mount for why that matters
     // Same late-construction reason as partyScreen/loginScreen above — needs
     // settingsBtn (built by buildHud() just above) and both of those.
     this.screenFlow = new ScreenFlow({
@@ -421,21 +421,20 @@ export class Game {
     this.hud.build(this.layers, this.screenSize());
     this.portalPrompt.reposition(this.screenSize());
     this.hudView.addChild(this.hud.view, this.touchControlsView.view, this.portalPrompt.view);
-    this.layers.ui.addChild(this.hudView);
+    this.layers.hudOverlay.addChild(this.hudView);
 
-    // Settings entry (design/10) — only shown in the forge phase (showForge/beginRun).
+    // Settings entry (design/10) — forge phase only (showForge/beginRun). Built here, MOUNTED in the
+    // constructor ABOVE every screen: mounted here it sat under the forge's own full-viewport hub Panel.
     this.settingsBtn = new Button(t('settings.title'), { w: 110, h: 30, fontSize: 12 });
     this.settingsBtn.onTap = () => this.openSettings();
     this.settingsBtn.view.visible = false;
-    this.layers.ui.addChild(this.settingsBtn.view);
-    this.settingsBtn.view.position.set(this.screenSize().w - 130, this.screenSize().h - 50);
   }
 
   private openSettings() {
     if (this.phase !== 'forge' && this.phase !== 'menu') return;
     this.settingsReturnPhase = this.phase;
     this.phase = 'settings';
-    const { w, h } = this.screenSize();
+    const { w, h } = this.layers.menu.fit(this.screenSize());
     this.screenFlow.openSettings(w, h, this.settings);
   }
 
@@ -456,7 +455,7 @@ export class Game {
 
   private pause() {
     this.phase = 'paused';
-    const { w, h } = this.screenSize();
+    const { w, h } = this.layers.menu.fit(this.screenSize());
     this.screenFlow.pause(w, h, this.tutorialActive ? t('tutorial.skip') : undefined);
   }
 
@@ -468,13 +467,13 @@ export class Game {
   private openSettingsFromPause() {
     this.settingsReturnPhase = 'paused';
     this.phase = 'settings';
-    const { w, h } = this.screenSize();
+    const { w, h } = this.layers.menu.fit(this.screenSize());
     this.screenFlow.openSettingsFromPause(w, h, this.settings);
   }
 
   private openPauseFromSettings() {
     this.phase = 'paused';
-    const { w, h } = this.screenSize();
+    const { w, h } = this.layers.menu.fit(this.screenSize());
     this.screenFlow.openPauseFromSettings(w, h, this.tutorialActive ? t('tutorial.skip') : undefined);
   }
 
@@ -525,10 +524,11 @@ export class Game {
   // on first show). HudView.reposition already existed for exactly this but was never
   // wired to anything.
   private relayoutViewport() {
-    const { w, h } = this.screenSize();
-    this.backdrop.resize(w, h);
-    this.hud.reposition({ w, h });
-    this.portalPrompt.reposition({ w, h });
+    // `w`/`h` below are MENU design space (ui/menuLayer.ts); the backdrop and in-run HUD are not.
+    const { w, h } = this.layers.menu.fit(this.screenSize());
+    this.backdrop.resize(this.screenSize().w, this.screenSize().h);
+    this.hud.reposition(this.screenSize());
+    this.portalPrompt.reposition(this.screenSize());
     this.screenFlow.repositionSettingsButtonIfForge(this.phase === 'forge', w, h);
     switch (this.phase) {
       case 'menu': this.mainMenu.show(w, h); break;
@@ -556,7 +556,7 @@ export class Game {
   // SETTINGS reuses the same settings overlay the forge uses.
   private showMenu() {
     this.phase = 'menu';
-    const { w, h } = this.screenSize();
+    const { w, h } = this.layers.menu.fit(this.screenSize());
     this.screenFlow.showMenu(w, h);
   }
 
@@ -566,7 +566,7 @@ export class Game {
   // the standalone level (beginTutorialRun).
   private showModeSelect() {
     this.phase = 'modeSelect';
-    const { w, h } = this.screenSize();
+    const { w, h } = this.layers.menu.fit(this.screenSize());
     this.screenFlow.showModeSelect(w, h, !this.meta.hasSeenTutorial);
   }
 
@@ -579,7 +579,7 @@ export class Game {
    */
   private showPvpPreview() {
     this.phase = 'pvpPreview';
-    const { w, h } = this.screenSize();
+    const { w, h } = this.layers.menu.fit(this.screenSize());
     this.screenFlow.showPvpPreview(w, h, this.meta.selectedSkin);
   }
 
@@ -587,7 +587,7 @@ export class Game {
   // the main menu; a successful `onStartMatch` hands off to beginSquadMatch below.
   private showSquad() {
     this.phase = 'squad';
-    const { w, h } = this.screenSize();
+    const { w, h } = this.layers.menu.fit(this.screenSize());
     this.screenFlow.showSquad(w, h);
   }
 
@@ -595,7 +595,7 @@ export class Game {
   // door). BACK returns to the main menu, same shape as showSquad.
   private showAccount() {
     this.phase = 'account';
-    const { w, h } = this.screenSize();
+    const { w, h } = this.layers.menu.fit(this.screenSize());
     this.screenFlow.showAccount(w, h);
   }
 
@@ -607,7 +607,7 @@ export class Game {
    */
   private showMatchmaking() {
     this.phase = 'matchmaking';
-    const { w, h } = this.screenSize();
+    const { w, h } = this.layers.menu.fit(this.screenSize());
     this.screenFlow.showMatchmaking(w, h, (signal) => this.connectForMatchmaking(signal));
   }
 
@@ -688,7 +688,7 @@ export class Game {
   // RUN button descends into a run.
   private showForge() {
     this.phase = 'forge';
-    const { w, h } = this.screenSize();
+    const { w, h } = this.layers.menu.fit(this.screenSize());
     this.screenFlow.showForge(w, h, this.meta);
   }
 
@@ -707,7 +707,7 @@ export class Game {
       this.meta = remote ?? this.meta;
       this.store.save(this.meta); // mirrors into localStorage and (if remote was null) pushes local state up
       if (this.phase === 'forge') {
-        const { w, h } = this.screenSize();
+        const { w, h } = this.layers.menu.fit(this.screenSize());
         this.forge.render(this.meta, w, h);
       }
     } catch {
@@ -723,7 +723,7 @@ export class Game {
   private onForgeKey(code: string) {
     if (this.phase !== 'forge') return;
     const digit = /^Digit([1-9])$/.exec(code);
-    const { w, h } = this.screenSize();
+    const { w, h } = this.layers.menu.fit(this.screenSize());
     if (digit) {
       const i = Number(digit[1]) - 1;
       if (this.forge.order[i]) this.forgeCraftAt(i);
@@ -745,22 +745,22 @@ export class Game {
   }
 
   private forgeCraftAt(i: number) {
-    const { w, h } = this.screenSize();
+    const { w, h } = this.layers.menu.fit(this.screenSize());
     this.meta = this.forgeActions.craftAt(this.meta, i, w, h);
   }
 
   private forgeCycleCharacter() {
-    const { w, h } = this.screenSize();
+    const { w, h } = this.layers.menu.fit(this.screenSize());
     this.meta = this.forgeActions.cycleCharacter(this.meta, w, h);
   }
 
   private forgeAcquireBlueprint() {
-    const { w, h } = this.screenSize();
+    const { w, h } = this.layers.menu.fit(this.screenSize());
     this.meta = this.forgeActions.acquireBlueprint(this.meta, w, h);
   }
 
   private forgeClear() {
-    const { w, h } = this.screenSize();
+    const { w, h } = this.layers.menu.fit(this.screenSize());
     this.meta = this.forgeActions.clear(this.meta, w, h);
   }
 
@@ -920,7 +920,7 @@ export class Game {
   }
 
   showOutcomeScreen(won: boolean, title: string, lines: readonly string[]): void {
-    const { w, h } = this.screenSize();
+    const { w, h } = this.layers.menu.fit(this.screenSize());
     this.screens.show(w, h, won, title, lines);
   }
 

@@ -317,6 +317,22 @@ describe('HudView — weapon-pickup panel placement (design/03)', () => {
 });
 
 describe('HudView — mode-dependent widgets', () => {
+  // The minimap is the one HUD element mounted OUTSIDE `view` (its visibility is driven by
+  // zoneEnabled/dungeonRooms, not by phase), which makes where it lands easy to get wrong.
+  // It must be a sibling of `view` inside `hudOverlay` — real screen space, under the menus.
+  // Mounted straight into `layers.ui` (as it was until 2026-08-25) it outranks `layers.menu`
+  // and paints over the pause menu; mounted inside `layers.menu` it would inherit the menus'
+  // fit-scale and shrink on a phone.
+  it('mounts the minimap into hudOverlay — beside the HUD, not inside it and not in the menu layer', () => {
+    const layers = new Layers();
+    const hud = new HudView();
+    hud.build(layers, { w: 1280, h: 720 });
+    expect(hud.minimap.view.parent).toBe(layers.hudOverlay);
+    expect(hud.view.children).not.toContain(hud.minimap.view);
+    expect(layers.ui.children).not.toContain(hud.minimap.view);
+    expect(layers.menu.children).not.toContain(hud.minimap.view);
+  });
+
   it('shows the minimap for a PvP arena, reading state.arenaMap/zone', () => {
     const hud = newHud();
     hud.update(pvpState(), 16, CTX);

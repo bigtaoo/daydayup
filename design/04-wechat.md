@@ -2,22 +2,34 @@
 
 The WeChat mini-game is the most constrained target: **no DOM, no full window/document, no eval**. Rendering dependencies and base-library versions must be verified explicitly.
 
-> **Status (2026-08-25): real art loads here — and the game still does not RUN here.** Read
-> both halves of that sentence.
+> **Status (2026-08-25, third pass): the game boots, renders, and is now navigable end to
+> end in the simulator.** Three WeChat-only bugs were found and fixed the same day, in the
+> order they blocked each other — each one hid the next:
 >
-> The asset half is done and verified against the real base library in the simulator: both
-> entries call the same `render/preloadArt.ts`, `client/public` is mirrored into
-> `platforms/wechat` by package, the main package sits at **3.31 MB / 4.00 MB** with four
-> subpackages, and every registered texture of every loader resolves (checklist item 9).
-> `wx.loadSubpackage` works, and the runtime reports WebGL2.
+> 1. Boot never reached `Game.start()` (`URLSearchParams` is absent on this runtime) —
+>    checklist item 10.
+> 2. With the game running, every menu `Button`/`Slider` was silently unclickable (the wx
+>    canvas has no DOM event API for Pixi's `EventSystem` to listen to) — item 12.
+> 3. With the buttons live, the player could reach the Forge and then got **stuck** there:
+>    every menu screen is laid out for a viewport roughly twice as tall as this one, so the
+>    Forge's START RUN button was drawn underneath its own blueprint grid — item 13.
 >
-> The game half does not. Boot finishes `preloadCoreArt()` and never reaches the first line
-> of `Game.start()` — see checklist item 10. So "real art loads" means resources arrive, NOT
-> that anything is playable on this target yet. Until item 10 is closed, this platform is not
-> shippable and no frame-rate or touch verification below it is even reachable.
+> Note the shape of that list: (1) and (2) each made (3) unreachable, and (2) specifically
+> looked fine from the outside because the in-run twin-stick controls bypass Pixi's
+> interaction system entirely. "It renders" proved nothing about "it plays".
 >
-> See **Asset loading** for the three mechanisms and **Verification** for exactly what is and
-> is not proven.
+> The asset half is likewise verified against the real base library: both entries call the
+> same `render/preloadArt.ts`, `client/public` is mirrored into `platforms/wechat` by
+> package, the main package sits at **3.31 MB / 4.00 MB** with four subpackages, and every
+> registered texture of every loader resolves (checklist item 9). `wx.loadSubpackage` works,
+> and the runtime reports WebGL2.
+>
+> Still open before this platform is shippable: everything that needs a real handset —
+> lowest base library (item 2), low-end frame rate (item 3), touch feel (item 5) — plus the
+> raw-vs-compressed package-limit question (item 11).
+>
+> See **Asset loading** for the three mechanisms, **Viewport** for the landscape-phone
+> layout constraint, and **Verification** for exactly what is and is not proven.
 >
 > **Status (2026-07-07): boot + render verified in WeChat DevTools.** The vertical
 > slice (tilted-view grid, player + weapon, pillars with Y-sort/height/shadow, enemy)
@@ -199,6 +211,43 @@ an art decision, not a packaging side effect. The mipmap half is deliberately no
 a count: essentially all sprite art is non-power-of-two, and changing that means padding
 every file and moving every anchor with it.
 
+## Viewport: a landscape phone is SHORT, and menus are laid out for a desktop
+
+`client/wechat/game.json` declares `"deviceOrientation": "landscape"`, so the mini-game
+viewport on an iPhone 12/13 is **844 x 390 logical px** — wider than a desktop window is
+tall, and roughly *half the height* every menu screen in `client/src/game/screens/` was
+written against. `WeChatPlatform.createApp` sizes the renderer straight from
+`wx.getWindowInfo()`, so `renderer.screen` is that 844 x 390 and every screen's own layout
+math (`show(w, h)` / `render(meta, w, h)`) received it verbatim.
+
+Measured minimum heights of the shipped layouts at the time (via
+`client/src/game/screens/viewportFit.test.ts`'s own sweep): Forge 540 — 570 to also clear
+its fixed bottom action bar — Settings 485, LoginScreen 405, PvpPreview/PartyScreen 400,
+ModeSelect 380, Screens 370, MainMenu 330. Every one of them overflows 390; the Forge
+overflows it badly enough that START RUN, anchored at `h - 60`, landed *inside* the
+blueprint grid that flows to y≈509 and simply read as absent.
+
+**The fix is a layer-wide fit-scale, not per-screen re-flow.** `client/src/game/ui/
+menuLayer.ts` defines a design space (760 x 640) and `MenuLayer.fit(real)` sets the menu
+container's scale to `min(1, w/760, h/640)`, returning the design-space size the screens lay
+out against. `Layers.ui` therefore splits into exactly two screen-space children:
+
+| sub-layer | holds | scaled? |
+| --- | --- | --- |
+| `hudOverlay` | in-run HUD, touch controls, minimap | no — a thumbstick stays thumb-sized |
+| `menu` | every full-screen screen + the forge's SETTINGS button | yes |
+
+Two properties matter. It **never scales up** (`min(1, …)`), so any viewport at or above the
+design size — every desktop browser — is the identity transform and bit-for-bit unchanged.
+And it costs **density**: 844 x 390 fits at 0.61, so a 12px label renders at ~7 CSS px
+(~15 device px at `pixelRatio` 2). Re-flowing the Forge's 4x2 grid wider-and-shorter on a
+very wide viewport would buy that back and is the follow-up if it reads too small in the
+hand; it is a legibility question, not a correctness one.
+
+Pixi hit-testing goes through the container transform, so taps land correctly with no
+input-side change (verified live: a synthetic pointer at START RUN's on-screen position
+flips `phase` `forge` -> `playing`).
+
 ## Adaptation layer (client/src/platform)
 
 - `platform/` isolates platform differences behind interfaces: `Platform` (canvas +
@@ -329,6 +378,36 @@ base library, or anything about uploading a wx `Image` to GL. Those stay below.
    change" technique is the answer to item 10's "not automatable" note above wherever the
    claim under test is narrow enough to state as a before/after — it does not extend to
    open-ended playtesting.
+13. [x] **The Forge was a dead end on a landscape phone — found and fixed (2026-08-25,
+   same day as items 10 and 12, and only reachable once both of those were closed).**
+   Reported live from the simulator as *"点击开始游戏后会卡在选武器的页面，因为进入地图的
+   按钮看不到"*. Not an input bug and not a WeChat bug: the 844 x 390 landscape viewport is
+   about half the height every menu screen is laid out for, so the Forge's fixed bottom
+   action bar (`h - 60` = 330) sat inside a blueprint grid that flows to y≈509, and START
+   RUN painted over the weapon cards instead of below them. **Fix**: a fit-scale on a new
+   `Layers.menu` container — see **Viewport** above. **Coverage**:
+   three layers, sized by a mutation battery rather than by feel — the first 20-mutant run
+   killed only 14, and each survivor was a real hole (the width axis of the fit was never
+   exercised, the minimap's mount point was untested, and `Game.ts` had NO coverage at all:
+   even the control mutant survived, since no test imported it). See the ROADMAP entry for
+   the full account. The three layers:
+   `client/src/game/ui/menuLayer.test.ts` (the scale math and the `mount` paint-order
+   contract), `client/src/game/screens/viewportFit.test.ts` (all nine screens at seven real
+   viewports — two of them width-bound, so the fit's width axis is exercised at all — then
+   again across **all eight shipped locales** at the tightest one, since translated copy
+   changes measured text width and the Forge flows its layout off `Text.height`; plus two
+   harness checks pinning that the original bug reproduces when the fit-scale is skipped, a
+   sweep that cannot fail proving nothing), and
+   `client/src/game/gameViewport.test.ts` (the composed property in REAL pixels: `Game` is
+   constructed headlessly against a fake `Application` and each screen's on-screen bounds
+   must both FIT the viewport and FILL it — "fits" alone passes trivially when the fit is
+   skipped, since the layout just squeezes into the top-left 61%). Verified live at exactly
+   844 x 390 through the web entry too — the whole Forge fits, and a synthetic pointer at
+   START RUN's on-screen position moves `phase` from `'forge'` to `'playing'`, so
+   hit-testing survives the container scale.
+   *Second, pre-existing bug found in the same area*: the forge's floating SETTINGS button
+   was mounted before the screens, so it rendered underneath the hub Panel — invisible and
+   untappable at every viewport, desktop included. It is now mounted above them.
 
 **How to get diagnostics out of a mini-game at all.** There is no automation API worth the
 name: `miniprogram-automator` *connects* to `cli auto --auto-port` (use `ws://127.0.0.1:…`,

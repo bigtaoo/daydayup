@@ -11,8 +11,8 @@
  * which left it floating on top of the still-there row list instead of below it.
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import { DOMAdapter } from 'pixi.js';
 import { Forge } from './Forge';
+import { installFakeTextCanvas } from './fakeTextCanvas';
 import { defaultMetaState, acquireBlueprint, purchasableBlueprints } from '../../meta';
 import type { MetaState } from '../../meta';
 import { setLocale, resetLocaleForTests } from '../../i18n';
@@ -35,30 +35,10 @@ interface TestCard {
   stagedLabel: string;
 }
 
-// This suite is the first to call Forge.render(), which reads `Text.height` to flow
-// its layout — that lazily asks Pixi to measure text on a real `<canvas>` 2D context,
-// which doesn't exist under this repo's plain-node vitest environment (no jsdom/canvas
-// dependency; every other UI screen test avoids `.height`/`.bounds` on a Text for
-// exactly this reason). Swapping in a fake canvas via Pixi's own `DOMAdapter` seam
-// avoids pulling in a real canvas/jsdom dependency just to run this: the actual glyph
-// metrics don't matter to any assertion below (they only affect where content flows,
-// never whether the fixed bottom bar or the no-room compare-card hide behave right).
-DOMAdapter.set({
-  ...DOMAdapter.get(),
-  createCanvas: (width?: number, height?: number) => {
-    const ctx = {
-      font: '',
-      measureText(text: string) {
-        const m = /(\d+(?:\.\d+)?)px/.exec(this.font as string);
-        const fontSize = m ? parseFloat(m[1]!) : 10;
-        const w = text.length * fontSize * 0.6;
-        return { width: w, actualBoundingBoxAscent: fontSize * 0.8, actualBoundingBoxDescent: fontSize * 0.2 };
-      },
-    };
-    return { width: width ?? 0, height: height ?? 0, getContext: () => ctx } as unknown as HTMLCanvasElement;
-  },
-  getCanvasRenderingContext2D: () => class {} as unknown as typeof CanvasRenderingContext2D,
-});
+// Forge.render() flows its layout off `Text.height`, which needs a canvas 2D context this
+// environment has no real implementation of — see fakeTextCanvas.ts for the seam and why
+// approximate glyph metrics are fine for every assertion below.
+installFakeTextCanvas();
 
 function privateOf(f: Forge) {
   return f as unknown as {

@@ -1,4 +1,5 @@
 import { Container } from 'pixi.js';
+import { MenuLayer } from '../ui/menuLayer';
 
 // Render layers (see design/01-rendering.md).
 // The world layer pans with the camera; the ui layer is fixed.
@@ -36,6 +37,24 @@ export class Layers {
   readonly hud = new Container();
   readonly ui = new Container();
 
+  // `ui` splits into exactly two screen-space sub-layers, in this paint order:
+  //
+  //  hudOverlay — the in-run HUD + touch controls (Game.buildHud's `hudView`). NOT the
+  //    `hud` layer above: that one is world-space floating health bars, this one is
+  //    fixed to the viewport. Stays UNSCALED — a thumbstick should be thumb-sized on a
+  //    phone, not shrunk with the menus.
+  //  menu — every full-screen menu/overlay + the forge's SETTINGS button. On its own
+  //    container because that container carries a transform: MenuLayer.fit() scales it
+  //    down on viewports shorter than the menus' design size (a WeChat landscape phone
+  //    is 390 logical px tall — see ui/menuLayer.ts).
+  //
+  // Menus paint OVER the HUD (that is why the pause menu is legible mid-run), which is
+  // the pre-split order: `Game.buildHud()` runs before the menu screens are added, so
+  // `hudView` was always the lower of the two. Pinning it here as two named containers
+  // makes that an invariant of the layer tree instead of an add-order accident.
+  readonly hudOverlay = new Container();
+  readonly menu = new MenuLayer();
+
   constructor() {
     // entities are sorted by zIndex (= gy) for top-down depth occlusion
     this.entities.sortableChildren = true;
@@ -43,6 +62,7 @@ export class Layers {
     this.lit.addChild(this.ground, this.shadow, this.entities);
     this.world.addChild(this.lit, this.fx, this.hud);
     this.root.addChild(this.backdrop, this.world, this.ui);
+    this.ui.addChild(this.hudOverlay, this.menu);
 
     // Own render group per structurally-STATIC layer (2026-08-24 draw-call pass).
     //

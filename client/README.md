@@ -102,7 +102,10 @@ src/
 │  │                  EventReactor, RunOutcome)
 │  ├─ match/          how a run is configured and connected (arenaCatalog, matchConfig,
 │  │                  offlineConfig, pvpConfig, onlineConnect, gameQueryParams)
-│  ├─ ui/             HUD + widget kit (HudView composing PlayerCard/WeaponCard/
+│  ├─ ui/             HUD + widget kit + menuLayer (the fit-scale that keeps every
+│  │                  full-screen menu inside a short landscape-phone viewport;
+│  │                  Layers.menu carries it, Layers.hudOverlay deliberately does not)
+│  │                  (HudView composing PlayerCard/WeaponCard/
 │  │                  StatChip/Minimap/DownedBanner, plus the shared widgets — Minimap
 │  │                  is shared by both PvP and PvE, reading either state.arenaMap or a
 │  │                  dungeonToArenaMap-converted floor via minimapLayout.ts)
@@ -139,7 +142,7 @@ One PixiJS codebase, per-platform entry + platform layer. All share `src/game`.
 |--------|---------|-------|
 | Web (dev) | `npm run dev` | http://localhost:5173 |
 | Web (prod) | `npm run build` | → `dist/` |
-| WeChat mini-game | `npm run build:wechat` | bundles the IIFE, mirrors `public/` in by package and generates `game.json` into `../platforms/wechat/`; open that in WeChat DevTools. Real art loads, the game boots and renders, and menu taps work (all simulator-verified 2026-08-25, main package 3.31 MB / 4.00 MB + 4 subpackages) — real-device verification (frame rate, touch feel, lowest base-library version) is what remains, see `../design/04-wechat.md` |
+| WeChat mini-game | `npm run build:wechat` | bundles the IIFE, mirrors `public/` in by package and generates `game.json` into `../platforms/wechat/`; open that in WeChat DevTools. Real art loads, the game boots and renders, menu taps work, and the menus fit the 844x390 landscape-phone viewport (all 2026-08-25, main package 3.31 MB / 4.00 MB + 4 subpackages) — real-device verification (frame rate, touch feel, lowest base-library version) is what remains, see `../design/04-wechat.md` |
 | Android | `npm run cap:add:android` then `npm run cap:sync` / `cap:open:android` | opens in Android Studio to build the APK (needs Android SDK) |
 | iOS | `npm run cap:add:ios` then `cap:open:ios` | opens in Xcode (macOS only) |
 

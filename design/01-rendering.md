@@ -1044,7 +1044,19 @@ already builds for the walls, applied once offline instead of as a per-object fi
 | shadow | all cast shadows | fixed (below entities) |
 | entities | characters / enemies / pillars / bullets / **standing wall blocks + door fixtures** | **Y-sort (zIndex = gy)** |
 | fx | muzzle flashes, explosions, deflect flashes, per-element bullet trails (additive blend) | overlay |
-| ui | HP, weapon, crosshair | topmost |
+| ui | HP, weapon, crosshair — split into `hudOverlay` then `menu`, see below | topmost |
+
+> **`ui` is two sub-layers, and only the upper one is scaled (2026-08-25).** `hudOverlay` holds the
+> in-run HUD, the touch controls and the minimap; `menu` holds every full-screen screen plus the forge's
+> floating SETTINGS button, and paints over `hudOverlay` (which is why a pause menu is legible mid-run).
+> `menu` is a `MenuLayer` (`game/ui/menuLayer.ts`): it carries a fit-scale, `min(1, w/760, h/640)`, so a
+> viewport shorter than the menus' design space shrinks the whole layer instead of each screen re-flowing
+> — a WeChat landscape phone is 390 logical px tall, about half what these screens are laid out for.
+> Capped at 1, so it is the identity transform on any desktop viewport. `hudOverlay` is deliberately
+> outside it: a thumbstick should be thumb-sized on a phone, not shrunk with the menus. Before the split
+> these were bare siblings in `ui` whose order came from *when* `Game` happened to add each one, which is
+> also how the SETTINGS button ended up under the forge's own backdrop, invisible at every viewport.
+> See design/04-wechat.md's **Viewport** section.
 
 > **Lighting (2026-08-24): shipped, as one screen-space pass rather than a composited lightmap layer.**
 > `ground`, `shadow` and `entities` are grouped under a `lit` container (`scene/layers.ts`) that carries a

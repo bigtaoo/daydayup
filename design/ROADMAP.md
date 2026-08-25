@@ -101,11 +101,11 @@ reachable from any unit test — a full `createGameEngine` end-to-end regression
 `dungeonrun.test.ts` reproducing the reported bug shape directly: one room, two
 real spawned enemies (one beside the player, one clear across the room), driven
 through the real tick order, confirming the near one engages immediately while the
-far one fires zero bullets until it closes the distance. **4550 tests green across all 8
-workspace packages** (engine 711 / client 2790 / server 187 / animator 444 / map-editor 282 /
+far one fires zero bullets until it closes the distance. **4741 tests green across all 8
+workspace packages** (engine 711 / client 2981 / server 187 / animator 444 / map-editor 282 /
 png-pipeline 42 / desktop-shell 81 / root build-script 13, `npm run check`, re-measured
-2026-08-25 after the WeChat art pass — the count and the package list have both drifted before,
-so re-measure rather than trusting it) after fixing two real bugs found from a live player report ("cleared
+2026-08-25 after the three WeChat fixes — the count and the package list have both drifted
+before, so re-measure rather than trusting it) after fixing two real bugs found from a live player report ("cleared
 the room, door's unlocked, still can't walk through it") — see the Room & door model
 section below for the full account. Before that, closing a real gap the test-coverage audit
 pass had flagged and left open: `onRequestSave` (tools/desktop-shell/src/preload.ts) now
@@ -4929,6 +4929,11 @@ tests** (engine 711 / client 2790 / server 187 / animator 444 / map-editor 282 /
 42 / desktop-shell 81 / root build-script 13).
 ### Then it was run in the real simulator — the art half passed, the GAME half did not
 
+> **Superseded, same day.** Everything below down to the first **Update** is the snapshot as
+> it stood mid-session, kept for the diagnosis trail. All three blockers it describes were
+> found and fixed before the day was out — read the three Updates that follow it for the
+> current state.
+
 Same day, once a real mini-game appid existed. DevTools 2.01.2510280, appid
 `wx25a3b18a3e83ffce`, opened with `cli open --project platforms/wechat`.
 
@@ -5005,6 +5010,89 @@ true`. 2807 client tests (was 2793) + `tsc --noEmit` clean throughout. This
 "how do you verify a specific WeChat interaction claim without a human", even though it
 does not extend to open-ended playtesting — see design/04-wechat.md item 12 for the full
 writeup.
+
+**Third update, same session: with the buttons alive, the player could finally reach the
+Forge — and got stuck there.** Live report from the simulator: *"点击开始游戏后会卡在选武器的
+页面，因为进入地图的按钮看不到"*. Not an input bug this time, and not WeChat-specific in its
+mechanism: `client/wechat/game.json` declares `deviceOrientation: "landscape"`, so the
+mini-game viewport on an iPhone 12/13 is **844 x 390 logical px** — wider than a desktop
+window is tall, and roughly half the height every menu screen in `client/src/game/screens/`
+was laid out against. `WeChatPlatform.createApp` sizes the renderer straight from
+`wx.getWindowInfo()`, and each screen's `show(w, h)` got that verbatim. The Forge is the
+worst offender: its blueprint grid flows to y≈509 while its fixed bottom action bar is
+anchored at `h - 60` = 330, so START RUN was painted **on top of the weapon cards** rather
+than below them and simply read as absent. Measuring the rest of the set at the same time
+(a sweep harness, not eyeballing) showed it was the whole set, by less: Forge 540 (570 to
+also clear its own bar), Settings 485, LoginScreen 405, PvpPreview/PartyScreen 400,
+ModeSelect 380, Screens 370, MainMenu 330 — every one above the 390 available.
+
+**Fix: one layer-wide fit-scale, not nine re-flows.** `client/src/game/ui/menuLayer.ts`
+defines a 760 x 640 design space; `MenuLayer.fit(real)` sets the menu container's scale to
+`min(1, w/760, h/640)` and returns the design-space size the screens lay out against, so a
+screen never learns it is being scaled. `Layers.ui` now splits into exactly two screen-space
+children — `hudOverlay` (in-run HUD, touch controls, minimap: **unscaled**, a thumbstick
+should stay thumb-sized) and `menu` (every full-screen screen + the forge's SETTINGS button:
+scaled). Every menu call site in `Game.ts` goes through `this.layers.menu.fit(this.screenSize())`
+instead of `this.screenSize()`; `Game.ts` stayed exactly at its 1033-line baseline. Because
+the scale is capped at 1 it is the identity transform on any viewport at or above the design
+size, so **desktop web is unchanged**. The cost is density — 844 x 390 fits at 0.61 — and
+re-flowing the Forge's 4x2 grid wider-and-shorter on a very wide viewport is the follow-up if
+that reads too small in the hand; it is legibility, not correctness.
+
+Two things worth keeping from how this was verified. First, the coverage is a **sweep, not a
+Forge regression**: `client/src/game/screens/viewportFit.test.ts` lays out all nine screens at
+seven real viewports and asserts nothing lands outside — a Forge-only test would have let the
+next screen to grow past the design height fail silently on the phone only. It also carries
+two **harness checks** that assert the original bug still reproduces when the fit-scale is
+skipped, because a sweep that cannot fail proves nothing. Second, the live check was through
+the *web* entry pinned to exactly 844 x 390, which is the cheap way to exercise a
+viewport-shaped bug without the simulator: the whole Forge fits, and a synthetic pointer at
+START RUN's on-screen position moves `phase` `'forge'` → `'playing'`, so Pixi hit-testing
+survives the container scale.
+
+**Then a mutation battery was run over the whole change, and it is what actually sized the
+coverage** — the first run killed only 14/20, and every survivor was a real hole no amount of
+re-reading the tests would have surfaced:
+
+- **`MENU_DESIGN_W` could be set to anything.** All five viewports in the sweep were
+  *height*-limited, so the `w / MENU_DESIGN_W` term of the fit was dead code as far as the
+  suite was concerned. Fixed by adding two width-bound viewports (a portrait phone, a narrow
+  desktop window) — plus the mirror-image assertion the height axis already had: shrink
+  `MENU_DESIGN_W` by 200 and the widest screen must stop fitting. That second one matters
+  because an OVERSIZED design space is not a layout bug at all — nothing overflows, it just
+  silently halves the scale on every phone.
+- **The minimap's new mount point was untested**, so moving it back into `layers.ui` (over the
+  pause menu) or into `layers.menu` (inheriting the shrink) both passed. Now pinned in
+  `HudView.test.ts`.
+- **`Game.ts` had NO coverage at all** — not weak coverage, none: the *control* mutant
+  survived, because no test in the suite so much as imported it. All 19 `fit(...)` call sites
+  were revertible in silence. Closed by a new `client/src/game/gameViewport.test.ts` that
+  constructs a real `Game` headlessly against a fake `Application` (a real stage `Container`,
+  a mutable `renderer.screen`, a ticker that never fires) and asserts the composed property in
+  REAL pixels. The non-obvious half: **"fits the viewport" is not enough**. A screen laid out
+  at the raw 844 x 390 and then scaled by 0.61 still fits — it just occupies the top-left
+  corner. So the test asserts it FILLS the viewport too, which is the same shape as the HiDPI
+  bug already recorded in `viewport.ts`.
+- The forge SETTINGS button ordering needed the strong form of the assertion (`last child`,
+  not `above the forge`) — listing it among the screens but not last cleared the weak one.
+
+Also worth recording: the mount API turned one class of mutant into an **equivalent** mutant.
+Because `MenuLayer.mount(screens, floating)` appends floats after screens, and Pixi's
+`addChild` on an already-parented child *moves* it rather than duplicating, passing the
+settings button in both lists produces byte-identical paint order. A surviving mutant is not
+automatically a coverage hole — check whether it changed behaviour at all before writing a
+test for it. After the second run: 2981 client tests (was 2870), every non-equivalent mutant
+killed.
+
+**A second, pre-existing bug fell out of the same pass**: the forge's floating SETTINGS
+button was mounted into the UI layer *before* the screens (it is built in `buildHud()`, which
+runs first), so it rendered underneath the forge's own full-viewport hub Panel — invisible
+and untappable at **every** viewport, desktop included, for as long as the hub backdrop art
+has existed. Confirmed by moving it to the top of the layer at runtime and watching the
+button appear. It is now mounted above the screens, through a named
+`MenuLayer.mount(screens, floating)` contract rather than a bare `addChild` argument order.
+2981 client tests (was 2807), `tsc --noEmit` clean, file-length baseline clean (`Game.ts`
+still exactly 1033), WeChat bundle rebuilt (main pack still 3.31 MB / 4.00 MB).
 
 **How to get diagnostics out of a mini-game at all**, since none of this is documented and it
 cost most of the session's tooling time: there is no usable automation API.
