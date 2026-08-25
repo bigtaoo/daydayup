@@ -2,9 +2,15 @@
 
 The WeChat mini-game is the most constrained target: **no DOM, no full window/document, no eval**. Rendering dependencies and base-library versions must be verified explicitly.
 
-> **Status (2026-08-25, fourth pass): the game boots, renders, is navigable, and now has
-> readable text and a playable map in the simulator.** Five WeChat-only bugs were found and
-> fixed the same day, in the order they blocked each other — each one hid the next:
+> **Status (2026-08-25, fifth pass): the game boots, renders, is navigable, has readable text
+> and a playable map in the simulator, its five custom shaders are confirmed to COMPILE and do
+> real work there, and a device that cannot afford them now has something to turn off.**
+> Everything below this line is history in the order it was found; the two most recent items
+> (the shader confirmation and the render quality tiers) are the "fifth pass" Update further
+> down, and checklist item 16.
+>
+> Five WeChat-only bugs were found and fixed on the fourth pass, in the order they blocked each
+> other — each one hid the next:
 >
 > 1. Boot never reached `Game.start()` (`URLSearchParams` is absent on this runtime) —
 >    checklist item 10.

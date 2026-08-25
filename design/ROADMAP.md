@@ -5282,7 +5282,7 @@ fired** — and both of this session's zero-diff scares were the measurement, no
 
 ### What the tests pin, and what a mutation battery had to be fixed to say
 
-56 new tests across seven files (3005 -> 3061). The battery over 27 hand-written mutants
+70 new tests across nine files (3005 -> 3075). The battery over 27 hand-written mutants
 covering every knob, branch and constant of the feature reported **27/27 killed on the first
 run — and that was a broken harness**, the mirror image of the "ALL SURVIVED" failure this repo
 already had recorded: `npx vitest run --silent <file>` makes vitest 4 parse the filename as the
@@ -5293,9 +5293,51 @@ which named a missing test (`Scene.refreshQuality` untested in both loops; the p
 the ambient dust interval; a stale watchdog verdict leaking out of a pinned tier). Final: 31/31
 real mutants killed, both controls surviving.
 
+**Then the battery was pointed at the PRODUCER instead, and found the real hole.** Everything
+above mutates the code under test. The watchdog's own suite, though, feeds it hand-written
+`{ fps, frames, discarded }` literals — which pins the policy and is blind to the contract: if
+the real `FrameWindow` computed `fps` differently, named a field differently, or never set
+`discarded` on the windows it actually delivers, every one of those tests would still pass while
+no device ever downgraded. Four mutants applied to `frameSampler`/`PerfMonitor` — never marking a
+window `discarded`, `fps` reporting a frame COUNT rather than a rate, `frames` pinned to 0, and
+the monitor never forwarding a window to `onSnapshot` — **all four survived the fixture-based
+tests and all four died to a test driven by the real chain** (`Ticker` -> `FrameSampler` ->
+`PerfMonitor` -> `installPerf({onSnapshot})` -> the live renderer). The last of them is the
+wired-to-nothing failure this repo has now hit three times.
+
+That gap was structural, not an oversight: the expression it covers lives only in `main.ts` and
+`main.wechat.ts`, **neither of which can have a test file** — they run `boot()` on import, which
+is why `bootError.ts` was split out in the first place. Anything written only in an entry is
+untested by construction, so the rule is to reproduce the entry's exact expression in a test
+against the real modules. `client/src/render/qualityFromPerf.test.ts` is that test, and it also
+pins the load-bearing half of the `discarded` guard, which only the real sampler can show:
+discarded windows ARE still delivered to `onWindow` (they exist for the overlay), so a
+backgrounded tab really does push single-digit fps at the watchdog on perfectly healthy
+hardware.
+
 **And the 500-line gate did its job.** `Game.ts` is baselined at 1033 lines and the wiring took
 it to 1097, so per CLAUDE.md the answer was to split rather than to raise the baseline. Two
 extractions, both form (2): `game/renderQuality.ts` (the tier controller) and
 `game/settingsBinding.ts` (the persisted settings and the four places a change to them lands).
 The second one paid for itself immediately — it turned "a setting that applies on change but not
 at boot" from a two-call-site invariant kept by hand into one method with a test.
+
+**Still open, and it is now a short list of exactly one kind of thing: hardware.** `04`'s
+checklist items 2 (lowest base library), 3 (low-end Android frame rate), 5 (touch feel) and 6
+(lighting cost on a handset) all need a real phone, and item 11 (whether the 4 MB main-package
+cap is measured raw or compressed) needs the upload dialog. Nothing on that list is blocked on
+code any more, and `04` now carries a step-by-step **On-device test plan** so the person holding
+the phone does not have to reconstruct what to look for.
+
+Two of those got materially easier this session rather than merely staying open. Item 3 is
+answerable **without any tooling on the device** — once the watchdog fires, the settings screen
+reads `AUTO (LOW)` / `自动 (低)`, which is a low-end device reporting itself, model and all. And
+item 6 is now a comparison a tester can run by hand: pin `HIGH`, play a room, pin `LOW`, play the
+same room. If `LOW` is still uncomfortable, that is a real finding and it points away from the
+shaders — the next place to look would be the draw-call and entity budget, not the filters.
+
+One measurement this session deliberately did NOT make, so it does not get mistaken for one that
+was: the **fill-rate** saving from halving the renderer resolution is arithmetic, not data.
+Timing `renderer.render()` in a loop inside a non-compositing tab measures CPU submission, and
+the GPU work is deferred — the honest numbers here are the GL counters (render-target switches
+11 -> 1), and only a device can turn the resolution half into a frame-rate claim.
