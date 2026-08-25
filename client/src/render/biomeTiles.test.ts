@@ -8,14 +8,27 @@
 import { describe, it, expect } from 'vitest';
 import { preloadBiomeTiles, getFloorTexture, getWallTexture, BIOME_TILE_ASSET_KEYS } from './biomeTiles';
 
-const ELEMENTS = ['fire', 'ice', 'lightning', 'neutral'] as const;
+/** Every `BiomeElement`, i.e. design/13's locked five. Was four until 2026-08-25: poison had
+ *  no registry entry at all, so there was no path from a poison biome to a swatch even in
+ *  principle. */
+const ELEMENTS = ['fire', 'ice', 'lightning', 'neutral', 'poison'] as const;
+/** The four whose swatch files actually ship today. */
+const WITH_ART = ['fire', 'ice', 'lightning', 'neutral'] as const;
 
 describe('biomeTiles — asset registry', () => {
-  it('has a floor and a wall key for every non-poison element', () => {
+  it('has a floor, wall and wall-face key for EVERY element the colour law closes over', () => {
     for (const el of ELEMENTS) {
       expect(BIOME_TILE_ASSET_KEYS).toContain(`floor_${el}`);
       expect(BIOME_TILE_ASSET_KEYS).toContain(`wall_${el}`);
+      expect(BIOME_TILE_ASSET_KEYS).toContain(`wallface_${el}`);
     }
+  });
+
+  it('covers exactly the five, with no sixth element smuggled in', () => {
+    const swatchElements = new Set(
+      BIOME_TILE_ASSET_KEYS.filter((k) => k.startsWith('floor_')).map((k) => k.slice('floor_'.length)),
+    );
+    expect([...swatchElements].sort()).toEqual([...ELEMENTS].sort());
   });
 
   it('has the pillar SPRITE key — one file for every biome, the hue arriving as a tint', () => {
@@ -28,12 +41,12 @@ describe('biomeTiles — asset registry', () => {
     }
   });
 
-  it('deliberately has no poison swatch yet (design/13: poison is not floor 1)', () => {
-    expect(BIOME_TILE_ASSET_KEYS).not.toContain('floor_poison');
-    expect(BIOME_TILE_ASSET_KEYS).not.toContain('wall_poison');
-  });
-
-  it('getFloorTexture/getWallTexture return undefined for an element with no swatch (poison)', () => {
+  it('a registered key whose file does not exist yet still resolves to undefined, not a throw', () => {
+    // The whole reason poison could be REGISTERED before its art was generated (2026-08-25):
+    // registration and availability are separate, and the unavailable case is the same
+    // flat-palette fallback `RoomBuilder` has always had. Previously this file asserted the
+    // opposite — that no poison key existed — which pinned the gap as an invariant and would
+    // have failed the moment the gap was closed.
     expect(getFloorTexture('poison')).toBeUndefined();
     expect(getWallTexture('poison')).toBeUndefined();
   });
@@ -42,7 +55,7 @@ describe('biomeTiles — asset registry', () => {
 describe('biomeTiles — preloadBiomeTiles never throws (missing/unreachable art must not block boot)', () => {
   it('resolves cleanly even though no asset server exists in this test environment', async () => {
     await expect(preloadBiomeTiles()).resolves.toBeUndefined();
-    for (const el of ELEMENTS) {
+    for (const el of WITH_ART) {
       expect(getFloorTexture(el)).toBeUndefined();
       expect(getWallTexture(el)).toBeUndefined();
     }

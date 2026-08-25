@@ -457,7 +457,8 @@ describe('FACE_CROWN_ROWS — measured off the shipped art, and still true of it
   // run of this file reported ice's mortar line at row 17 where the constant said 31 — i.e. two of
   // four shipped biomes were being clipped through the crown, invisibly, and no unit test or render
   // of the ember floor could ever have shown it.
-  const SWATCHES = ['fire', 'ice', 'lightning', 'neutral'] as const;
+  // Five since 2026-08-25 — poison was the last element of design/13's locked five with no art.
+  const SWATCHES = ['fire', 'ice', 'lightning', 'neutral', 'poison'] as const;
 
   /** The row of the swatch's mortar line: the darkest row in its top third. This IS the definition
    *  `FACE_CROWN_ROWS` is measured by, so the assertion is exact rather than a tolerance. */
@@ -518,8 +519,11 @@ describe('FACE_CROWN_ROWS — measured off the shipped art, and still true of it
   it('defaults to the SHALLOWEST measured crown, which can never cross a deeper one', () => {
     const all = Object.values(FACE_CROWN_ROWS).map(([row, total]) => row / total);
     expect(FACE_CROWN_FRACTION_MIN).toBeCloseTo(Math.min(...all), 9);
-    // An element with no swatch — `poison` ships none — takes it.
-    expect(faceCrownFraction('poison')).toBe(FACE_CROWN_FRACTION_MIN);
+    // An element with no measured crown takes it. Every element in design/13's closed five now has
+    // one (poison's landed 2026-08-25), so the subject here is a hypothetical sixth — which is the
+    // honest statement of what the fallback is for, and does not go stale the next time art lands.
+    expect(faceCrownFraction('not_an_element_yet')).toBe(FACE_CROWN_FRACTION_MIN);
+    expect(faceCrownFraction('poison')).not.toBe(FACE_CROWN_FRACTION_MIN); // it IS measured now
   });
 
   it("is actually WIRED to the room's element by RoomBuilder", () => {

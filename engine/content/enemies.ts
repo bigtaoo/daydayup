@@ -15,7 +15,7 @@
 import { toFp, type Fp } from '../math/fixed';
 import { ENEMY_TEAM_ID, type EnemyActor, type EnrageSim, type RangedSimSpec } from '../state/entities';
 import type { GameState } from '../state/GameState';
-import type { ResistMap } from './damage';
+import type { DamageType, ResistMap } from './damage';
 import { freshStatus } from './damage';
 import { pxToFp } from './convert';
 import { ENEMY_GUN_SIM, makeWeapon } from './weapons';
@@ -31,6 +31,18 @@ export interface EnemyBlueprint {
   // Missing type = neutral. The knob that makes damage types matter per mob (design/07).
   resist?: ResistMap;
   tint?: number; // render-only body colour (design/01); the sim never reads it
+  // Which of design/13's five elements this variant IS — render-only, copied to the
+  // actor like `tint`, never read by the sim. The view draws the locked element ICON
+  // badge from it (design/13: "told apart by colour + icon alone"), which is the second
+  // channel of a dual-channel rule whose colour half is `tint` right above.
+  //
+  // AUTHORED, not derived from `resist`. A "strongest resist wins" rule would have been
+  // free and would also have been wrong twice over: `brute` resists physical without
+  // being the physical variant, and `blightlord` — the boss whose whole flavour is
+  // poison — resists physical hardest and is WEAK to poison, so it would have been
+  // badged as the physical mob. Only the four locked variants carry this; everything
+  // else is deliberately unbadged (see the design/13 sentence naming exactly four).
+  element?: DamageType;
   // Render-only body rig atlas key (design/13 "roster variety beyond the base body: a
   // heavy brute, a floating ranged form") — like `tint`, the sim never reads it.
   // Undefined = the shared 'critter-core' body (Actor.ts's existing default).
@@ -103,6 +115,7 @@ export const BASIC_ENEMY: EnemyBlueprint = {
 /** Fire mob: shrugs off fire, melts to ice. */
 export const EMBERLING: EnemyBlueprint = {
   type: 'emberling',
+  element: 'fire',
   maxHp: 4,
   radius: pxToFp(15),
   footprintRadius: pxToFp(7),
@@ -114,6 +127,7 @@ export const EMBERLING: EnemyBlueprint = {
 /** Ice mob: shrugs off ice, melts to fire. */
 export const FROSTLING: EnemyBlueprint = {
   type: 'frostling',
+  element: 'ice',
   maxHp: 4,
   radius: pxToFp(15),
   footprintRadius: pxToFp(7),
@@ -125,6 +139,7 @@ export const FROSTLING: EnemyBlueprint = {
 /** Charged mob: shrugs off lightning, rots to poison. */
 export const GALVANIST: EnemyBlueprint = {
   type: 'galvanist',
+  element: 'lightning',
   maxHp: 4,
   radius: pxToFp(15),
   footprintRadius: pxToFp(7),
@@ -137,6 +152,7 @@ export const GALVANIST: EnemyBlueprint = {
  *  Tougher — the "bring the right tool" wall. */
 export const IRONCLAD: EnemyBlueprint = {
   type: 'ironclad',
+  element: 'physical',
   maxHp: 6,
   radius: pxToFp(17),
   footprintRadius: pxToFp(8),
@@ -277,6 +293,7 @@ export function buildEnemyActor(state: GameState, gx: Fp, gy: Fp, type?: string)
     status: freshStatus(),
     resist: bp.resist,
     tint: bp.tint,
+    element: bp.element,
     bodyRig: bp.bodyRig,
     boss: bp.boss,
     enrage: bp.enrage,

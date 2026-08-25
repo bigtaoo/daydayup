@@ -282,6 +282,12 @@ export interface EnemyActor extends Actor {
   // Render-only body tint from the blueprint (design/01); the sim never reads it,
   // like `z`. Lets the view distinguish elemental variants. Undefined = default palette.
   tint?: number;
+  // Which of design/13's five elements this variant IS — render-only, copied from the
+  // blueprint like `tint`; the sim never reads it. The COLOUR half of that doc's locked
+  // dual-channel element law is `tint` right above; this is what lets the view draw the
+  // ICON half (`game/elementIcons.ts`). Undefined = not one of the four locked elemental
+  // variants, and the view draws no badge at all.
+  element?: DamageType;
   // Render-only body rig atlas key (design/13 "roster variety beyond the base body"),
   // copied from the blueprint like `tint`/`boss`; the sim never reads it. Undefined =
   // the shared 'critter-core' body (Actor.ts's existing fallback).

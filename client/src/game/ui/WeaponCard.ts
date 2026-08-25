@@ -2,6 +2,7 @@ import { Container, Graphics, Sprite, Text } from 'pixi.js';
 import type { WeaponSimSpec } from '@dd/engine';
 import { getWeaponTexture } from '../../render/weaponSkins';
 import { elementColor, rarityColor } from '../theme';
+import { drawElementGlyph } from '../elementIcons';
 import { Bar } from './widgets';
 import { estimateMonoWidth } from './textWidth';
 import { getLocale, t, tName } from '../../i18n';
@@ -27,6 +28,13 @@ export class WeaponCard {
   private static readonly SUB_SIZE = 10;
   private static readonly BADGE_SIZE = 11;
   private static readonly CD_W = 150;
+  /** Element-glyph radius inside the damage badge (badge height is 16, so a 10 px glyph
+   *  clears its rounded ends). The badge is `13`'s "weapon carries an element icon badge"
+   *  clause: the number was already element-TINTED, which is the colour channel only, and
+   *  the subtitle names the element in words — but words are a different channel again and
+   *  the badge is the part a player reads mid-fight. */
+  private static readonly BADGE_GLYPH_R = 5;
+  private static readonly BADGE_GLYPH_GAP = 4;
 
   private readonly chip = new Graphics();
   private readonly badge = new Graphics();
@@ -155,17 +163,23 @@ export class WeaponCard {
       return;
     }
     const tint = elementColor(spec.damageType);
+    const glyphR = WeaponCard.BADGE_GLYPH_R;
+    const glyphBox = glyphR * 2 + WeaponCard.BADGE_GLYPH_GAP;
     this.badgeValue.visible = true;
     this.badgeValue.text = t('hud.weapon.damage', { damage: spec.damage });
     this.badgeValue.style.fill = tint;
     const x = WeaponCard.TEXT_X + Math.ceil(estimateMonoWidth(this.name.text, WeaponCard.NAME_SIZE)) + 8;
-    const w = Math.ceil(estimateMonoWidth(this.badgeValue.text, WeaponCard.BADGE_SIZE)) + 12;
+    const w = Math.ceil(estimateMonoWidth(this.badgeValue.text, WeaponCard.BADGE_SIZE)) + 12 + glyphBox;
     this.badge
       .roundRect(x, 0, w, 16, 8)
       .fill({ color: tint, alpha: 0.18 })
       .roundRect(x + 0.5, 0.5, w - 1, 15, 8)
       .stroke({ color: tint, alpha: 0.7, width: 1 });
-    this.badgeValue.position.set(x + 6, 2);
+    // The glyph is drawn into the badge's own Graphics, left of the number, and takes the
+    // hole colour of the HUD panel it sits on (the badge fill is only alpha 0.18, so a
+    // punched socket shows the panel through it, not the badge).
+    drawElementGlyph(this.badge, spec.damageType, x + 6 + glyphR, 8, glyphR, tint, 0x0b0e14);
+    this.badgeValue.position.set(x + 6 + glyphBox, 2);
     this.badgeRight = x + w;
   }
 }

@@ -117,28 +117,43 @@ export const FACE_COPING_SUPPRESS = 0.55;
  * whatever stands in front.
  *
  * **Per element, because the swatches genuinely disagree** — and nothing in the renderer would ever
- * have said so. `wallComposition.test.ts` measures all four on every run: fire and lightning put
- * their mortar line at row 27 of 127, neutral at 25 of 125, and **ice at 17 of 125** — its coping
- * band is a third shorter than the others'. A single constant taken from fire would have sliced
- * straight through an ice room's crown, which is the exact defect this whole corner treatment
- * exists to prevent, shipped invisibly on two biomes out of four.
+ * have said so. `wallComposition.test.ts` measures all five on every run: fire and lightning put
+ * their mortar line at row 27 of 127, neutral at 25 of 125, poison at 26 of 128, and **ice at 17 of
+ * 125** — its coping band is a third shorter than the others'. A single constant taken from fire
+ * would have sliced straight through an ice room's crown, which is the exact defect this whole
+ * corner treatment exists to prevent, shipped invisibly on two biomes out of four.
  *
  * Row-luma scans behind the numbers (256-wide swatches, mean per row):
  *   - fire 127 rows: coping 0-20 at 97-173, mortar 21-30 (76 -> 7 -> 22), brick 31+ at ~50
  *   - ice 125 rows: coping 0-13 at 75-186, mortar 14-19 (58 -> 10 -> 25), brick 20+ at ~44
  *   - lightning 127 rows: coping 0-24 at 62-180, mortar 25-30 (51 -> 22 -> 37), brick 31+ at ~48
  *   - neutral 125 rows: coping 0-22 at 62-142, mortar 23-29 (51 -> 15 -> 35), brick 31+ at ~52
+ *   - poison 128 rows: coping 0-10 at 95-100, first brick 12-23 at ~48, mortar 24-28
+ *     (38 -> 15 -> 32), brick 29+ at ~42  (added 2026-08-25)
+ *
+ * **Poison is the one case where "darkest row in the top third" and "the coping/brick joint" are
+ * not the same row, and the darkest row is still the right answer.** Its coping ends at row 11 in a
+ * smooth 97 -> 72 -> 51 gradient with no dark mortar line under it at all; the first real dark
+ * horizontal is row 26, the joint between its FIRST and SECOND brick courses. That row is what the
+ * rule is actually for — the longest unbroken horizontal near the top of the wall, the line the eye
+ * reads a back wall by — so the operational definition holds even though the prose description of
+ * it does not. Its fraction (0.203) lands within 0.01 of fire/lightning/neutral anyway.
  */
 export const FACE_CROWN_ROWS: Readonly<Record<string, readonly [number, number]>> = {
   fire: [27, 127],
   ice: [17, 125],
   lightning: [27, 127],
   neutral: [25, 125],
+  poison: [26, 128],
 };
 
 /** The SHALLOWEST crown of any shipped swatch, and therefore the safe default for an element with
- *  no art of its own (`poison` ships none, so its walls are on the Graphics fallback): clipping to
- *  the shallowest crown can never cross a deeper one. */
+ *  no art of its own: clipping to the shallowest crown can never cross a deeper one.
+ *
+ *  Every element in design/13's closed five now HAS a swatch (poison landed 2026-08-25), so today
+ *  nothing in the game takes this path — it is the fallback for a sixth element, or for a swatch
+ *  that ships before anyone measures it. `wallComposition.test.ts` keeps it honest by asserting it
+ *  equals the minimum of the measured table rather than a literal. */
 export const FACE_CROWN_FRACTION_MIN = 17 / 125;
 
 /** The measured crown fraction for `element`, or the conservative default. */

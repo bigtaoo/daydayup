@@ -164,9 +164,12 @@ describe('wallJoins — which edges are buried in an L or T corner', () => {
     expect(faceCrownFraction('ice')).not.toBeCloseTo(faceCrownFraction('fire'), 3);
     expect(ice.tuckLiftPx).toBeGreaterThan(fire.tuckLiftPx); // a shallower crown lets it reach further
     expect(ice.crownFraction).toBeCloseTo(faceCrownFraction('ice'), 6);
-    // An element with no swatch of its own falls back to the shallowest measured crown, which can
-    // never cross a deeper one.
-    expect(faceCrownFraction('poison')).toBe(FACE_CROWN_FRACTION_MIN);
+    // An element with no MEASURED crown falls back to the shallowest one, which can never cross a
+    // deeper one. The subject used to be `poison` — every element in design/13's closed five has a
+    // measured crown since its art landed 2026-08-25, so a hypothetical sixth is the honest
+    // subject, and one that cannot go stale the next time art ships.
+    expect(faceCrownFraction('not_an_element_yet')).toBe(FACE_CROWN_FRACTION_MIN);
+    expect(faceCrownFraction('poison')).not.toBe(FACE_CROWN_FRACTION_MIN);
   });
 
   it('takes the lift from the SHORTEST northern neighbour, whose crown has to survive', () => {

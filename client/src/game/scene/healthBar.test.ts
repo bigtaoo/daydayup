@@ -26,8 +26,12 @@
  */
 import { describe, it, expect } from 'vitest';
 import { Graphics } from 'pixi.js';
+import type { DamageType } from '@dd/engine';
 import { THEME } from '../theme';
 import { drawHealthBar, healthFillColor } from './healthBar';
+
+/** design/13's locked five. Listed, not derived, for the reason `elementIcons.test.ts` gives. */
+const ELEMENTS: readonly DamageType[] = ['fire', 'ice', 'lightning', 'poison', 'physical'];
 
 const WORLD_LUMA = { min: 27, max: 88 };
 
@@ -291,5 +295,90 @@ describe('drawHealthBar — per-actor sizing (Actor owns the numbers, this owns 
     expect(mob.contour!.w - mob.track!.w).toBeCloseTo(2, 10);
     expect(boss.contour!.w - boss.track!.w).toBeCloseTo(2, 10);
     expect(mob.bevel!.h).toBeCloseTo(boss.bevel!.h, 10);
+  });
+});
+
+describe('drawHealthBar — the element badge (design/13 icon channel, 2026-08-25)', () => {
+  const W = 20;
+  const H = 4;
+
+  function raw(element?: DamageType): Graphics {
+    const g = new Graphics();
+    drawHealthBar(g, { w: W, h: H, ratio: 0.5, local: false, element });
+    return g;
+  }
+
+  /** Circles drawn into `g` — the badge's chip/ring/glyph details. The bar itself draws
+   *  only roundRects, so a circle here is unambiguously badge geometry. */
+  function badgeCircles(g: Graphics): Array<{ cx: number; cy: number; r: number }> {
+    type Instr = { data: { path?: { instructions: Array<{ action: string; data: unknown[] }> } } };
+    return (g.context.instructions as unknown as Instr[]).flatMap((ins) =>
+      (ins.data.path?.instructions ?? [])
+        .filter((pi) => pi.action === 'circle')
+        .map((pi) => {
+          const [cx, cy, r] = pi.data as number[];
+          return { cx: cx!, cy: cy!, r: r! };
+        }),
+    );
+  }
+
+  it('an actor with no element draws the bar it always drew — not one shape more', () => {
+    // The load-bearing regression guard: every player and every un-elemental mob must be
+    // byte-identical to the pre-badge bar, or this became a change to all of them.
+    const without = raw(undefined).context.instructions.length;
+    const with_ = raw('fire').context.instructions.length;
+    expect(without).toBeGreaterThan(0);
+    expect(with_).toBeGreaterThan(without);
+    expect(badgeCircles(raw(undefined))).toHaveLength(0);
+  });
+
+  it.each(ELEMENTS)('%s draws a badge entirely LEFT of the bar, never on the track', (element) => {
+    // The 2026-08-21 pass exists so the player can read the remaining FRACTION. An icon
+    // sitting on the track would take that back by eating bar length, so the badge's right
+    // edge has to clear the contour's left edge.
+    const cs = badgeCircles(raw(element));
+    expect(cs.length).toBeGreaterThan(0);
+    const contourLeft = -W / 2 - 1; // CONTOUR_W = 1
+    for (const c of cs) expect(c.cx + c.r).toBeLessThanOrEqual(contourLeft);
+  });
+
+  it.each(ELEMENTS)('%s badge is vertically centred on the bar', (element) => {
+    const chip = badgeCircles(raw(element))[0]!; // chip is drawn first, and is the largest
+    expect(chip.cy).toBeCloseTo(0, 6);
+  });
+
+  it('the badge scales with the bar, so a boss carries a bigger one', () => {
+    const mob = new Graphics();
+    drawHealthBar(mob, { w: 26, h: 4, ratio: 1, local: false, element: 'fire' });
+    const boss = new Graphics();
+    drawHealthBar(boss, { w: 66, h: 6, ratio: 1, local: false, element: 'fire' });
+    expect(badgeCircles(boss)[0]!.r).toBeGreaterThan(badgeCircles(mob)[0]!.r);
+  });
+
+  it('the five elements draw five different badges', () => {
+    const seen = new Set<string>();
+    for (const element of ELEMENTS) {
+      type Instr = {
+        action: string;
+        data: { style?: { color?: number }; path?: { instructions: Array<{ action: string; data: unknown[] }> } };
+      };
+      const digest = (raw(element).context.instructions as unknown as Instr[])
+        .map((ins) => {
+          const path = (ins.data.path?.instructions ?? [])
+            .map((pi) => {
+              const nums: number[] = [];
+              for (const v of pi.data) {
+                if (typeof v === 'number') nums.push(v);
+                else if (Array.isArray(v)) for (const n of v) if (typeof n === 'number') nums.push(n);
+              }
+              return `${pi.action}(${nums.map((n) => n.toFixed(2)).join(',')})`;
+            })
+            .join('|');
+          return `${ins.action} ${ins.data.style?.color ?? ''} ${path}`;
+        })
+        .join(';');
+      seen.add(digest);
+    }
+    expect(seen.size).toBe(ELEMENTS.length);
   });
 });

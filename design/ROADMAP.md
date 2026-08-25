@@ -209,8 +209,12 @@ stray lit coping bar that made north-south runs look broken).
 - **No atlas packing and no bundle boundaries.** `client/public` is 14 MB of 78 loose PNGs
   and `main.ts` `await`s every rig bundle before the game starts, versus WeChat's 4 MB main
   package. `12`'s "bundle boundaries" + lazy per-biome bundles are still To-design.
-- **`13`'s rarity-overlay spec** (白→蓝→紫→橙→金 without colliding with the five reserved
-  element hues) — the last purely-art-direction blank.
+- ~~**`13`'s rarity-overlay spec**~~ (白→蓝→紫→橙→金 without colliding with the five reserved
+  element hues) — **closed 2026-08-25.** The collision turned out to be already REAL rather than
+  hypothetical (four of five rarity hues sit on a reserved element hue, and `common` white is
+  byte-identical to physical's neutral), so no re-picking of hues could have solved it. Locked
+  spec: **rarity's channel is COUNT, element's is hue** — see `13` and
+  `client/src/game/rarityOverlay.ts`.
 - **One-room-per-screen**: whether to hard-lock the camera to the room, accepting a jump-cut
   at every door. Flagged 2026-08-17, still the user's call.
 - **The back set beyond the eye** (`shell__back`, belly treatment) — 1–2 PNGs per character,
@@ -3863,14 +3867,17 @@ half-checked numbers.
 - ~~No real prop art exists~~ — **closed 2026-08-24**: `prop_{crate,barrel,rubble}.png` ship, and
   landing them was three rows in `ENV_SPRITE_ASSETS` exactly as `getPropTexture`'s comment
   predicted. See "Room props get real art" below.
-- The queue the user parked for later: **in-world element icon badges**, **poison biome art**,
-  **rarity overlay spec**. ~~character back sets~~ came off this list on 2026-08-24 — the half that
+- ~~The queue the user parked for later: **in-world element icon badges**, **poison biome art**,
+  **rarity overlay spec**.~~ **All three closed 2026-08-25** — see "The three parked rules that had
+  only shipped half" below. ~~character back sets~~ came off this list on 2026-08-24 — the half that
   was visible in play (a character facing away still showing its front belly chamber) is fixed with
-  no art at all; see design/12 and the same section below. Worth noting what the remaining three
-  have in common, since it bears on when to schedule them: each is a *locked* design rule that
-  shipped half-built rather than a nice-to-have. design/13 line 56 calls the element
-  colour-plus-icon pair a hard dual-channel rule and only the colour channel exists, so any future
-  elemental content is already leaning on a legibility backstop that was never built.
+  no art at all; see design/12 and the same section below.
+
+  The observation that decided the scheduling turned out to be the right one and is worth keeping:
+  each of the three was a *locked* design rule that shipped half-built rather than a nice-to-have.
+  design/13 line 56 called the element colour-plus-icon pair a hard dual-channel rule and only the
+  colour channel existed, so every elemental read in the game was one hue away from being
+  unreadable — a legibility backstop that had been specified, relied on, and never built.
 
 ---
 
@@ -4562,3 +4569,233 @@ suite catches it with one. Both suites are kept — they fail on different thing
 
 `npm run check` clean in the client workspace: **2705 tests**, `tsc --noEmit` and `check:filelength`
 green.
+
+
+---
+
+## The three parked rules that had only shipped half (2026-08-25, client + one render-only engine field)
+
+The park queue's last three items, cleared in one pass. The user's own framing in `ROADMAP` is what
+set the order: *"每一项都是已 locked 的设计规则只发了一半，不是可有可无的加分项"* — each is a locked
+design rule that shipped half-built, not an optional extra. That reading held up under contact, and
+in one case understated the problem.
+
+🟢 Render/content-only. One new render-only `EnemyBlueprint`/`EnemyActor` field (`element`), in the
+same never-read-by-the-sim family as `tint`/`bodyRig`/`boss` and absent from `serializeState`, so no
+`ENGINE_VERSION` impact.
+
+### 1. The element icon badge — a locked dual-channel rule with one channel
+
+design/13 line 56 has said, for as long as the doc has existed: *"Every weapon / enemy / status also
+carries a small matching element icon badge (flame / snowflake / bolt / skull / gem). Colour sets the
+mood, the icon is the legibility backstop (small size, colour-blind, dark background). This dual
+channel is **locked**."* Only the colour channel existed. `ELEMENT_COLORS` drove bullet trails,
+status auras, enemy `tint` and the mounted weapon's tint; nothing anywhere drew an icon.
+
+Shipped as vectors (`game/elementIcons.ts`), not art — the same standing rule design/13 records for
+the HUD's stat-chip glyphs, and for the same two reasons: a badge is tinted per element from an
+already-locked palette, and five PNGs would be five more files to keep on-model. Wired into the four
+carriers the doc names, plus one it does not:
+
+- **enemy** — a badge at the left end of its floating health bar (`scene/healthBar.ts`)
+- **status** — a glyph on each active aura ring (`scene/statusAura.ts`); burn/chill/poison used to be
+  three rings differing in nothing but hue
+- **weapon, in the HUD** — the glyph inside the already-element-tinted damage badge (`ui/WeaponCard.ts`)
+- **weapon, on the floor** — a badge on the drop, and the drop's icon is now element-TINTED at all
+  (see 3 below)
+
+**Why the enemy badge rides the health bar and not the body.** Both reasons come from things already
+on screen: the bar is mounted on `layers.hud`, so unlike anything parented to the body it is never
+behind a wall the occlusion x-ray only partially fades (the 2026-08-21 *"血条被墙挡住了"* fix), and
+unlike a fixed offset on the body it is never covered by the orbiting weapon module, which sweeps a
+full circle around every actor by design/13's own universal-mount rule. It also cost zero new
+display objects.
+
+**The field is AUTHORED, not derived — and that decision is a test, not a comment.** A "the type it
+shrugs off hardest is its element" rule is one line and needs no schema change. It is also wrong on
+two of the blueprints that must not be badged: `brute` resists physical without being the physical
+variant, and `blightlord` — the boss whose entire flavour is poison and which is *weak* to poison at
+2000 — resists physical hardest at 400, so it would have been badged as the physical mob.
+`enemies.test.ts` asserts the four-variant list AND that the derived rule would have been wrong, so
+the reasoning survives the next person who notices the shortcut.
+
+**Two silhouette collisions design/13's own glyph list created.** This is the semantic-collision
+class no tonal or alpha measurement can catch — the same class as the rejected bandage that read as
+an eyeball. The doc assigns the **skull** to poison, and the skull was already `drawHudIcon('enemies')`,
+the enemies-remaining stat chip; it assigns the **gem** to physical, and a crystal in this game means
+"refined material you carry out". Resolved:
+
+- Skull went to the locked rule. The FOES chip became a single-eyed crystal critter head — which is
+  more on-fiction anyway, since design/13 describes enemies as *"living crystal, single glowing
+  eye"* and nothing in this world has a skull. That absence is exactly what makes a skull read as
+  "toxic" here rather than as "a mob".
+- Gem vs crystal resolved by silhouette rather than by renaming: the material is a TALL four-point
+  shard, physical's gem a WIDE brilliant cut with a flat table and a girdle. The aspect inequality
+  (`gem.width/height > 1 > crystal.width/height`) is pinned as an assertion, so a later edit to
+  either shape cannot quietly converge them.
+
+`physical` gets a glyph even though `ELEMENT_COLORS` deliberately omits it, because the icon channel
+has no faction colour to fall back on: without one, "no badge" and "physical" are the same picture.
+
+### 2. The poison biome — the fifth element of a closed five, with no art path at all
+
+The 2026-08-02 batch skipped poison on the reasoning that it isn't floor 1 and has no dedicated
+critter. That was a reason not to *schedule the biome*; it was taken as a reason to leave the fifth
+element of a LOCKED five-colour language with no path to the renderer whatsoever — `biomeTiles.ts`
+had no poison key, and a test asserted there wasn't one, which pinned the gap as an invariant.
+
+Three swatches shipped (`{floor,wall,wallface}_poison.png`), first generation, no reroll. All five
+elements are now registered in the loader; registration and availability were already separate
+concerns there (a key whose file is missing falls back to the flat palette fill, same as before), so
+nothing had to wait on the art and nothing will have to wait on the next element either.
+
+Poison's brief carries a clause the other four do not, and it is a gameplay clause: design/13's
+*"the poison biome's ambient green must be dialled down … or green FX/enemies camouflage against a
+green floor."* A green floor here is not a style miss, it is the poison bullet and the poison-tinted
+mob becoming invisible. So the prompt stated it numerically and the shipped pixels are asserted
+against it (`scene/biomeSwatchArt.test.ts`): blue stays the highest channel, mean green runs no more
+than 10/255 ahead of mean red (measured 3.3-6.3 — `wall_ice` is actually greener, at 10.3), the
+greenest single pixel scores 5-7 where `#9CCC65` scores 48, and the brightest stone pixel stays far
+below the FX green's luma of 186. That last one is the assertion that actually answers the worry:
+whatever the hue does, a saturated mark at 186 cannot hide on stone whose brightest pixel is a
+fraction of it.
+
+That test is a sweep over **all five elements and all three kinds**, not a poison-specific check.
+The properties it pins are what makes the set a set — one tonal family, one camera, the per-kind seam
+rule (floor/cap tile on four edges, an elevation on two and must NOT match top-to-bottom) — and this
+repo's recurring art bug is a per-element file that satisfies its own spec and disagrees with its
+neighbours, already measured twice before (the rejected per-element pillar, and the four face
+swatches' crown rows that turned out to differ by a third).
+
+One real defect, fixed at import: the elevation came back with a 1-2 px near-black frame drawn around
+all four sides despite the prompt forbidding a border. Cropped at a 4 px inset chosen by MEASURING
+the wrap at each candidate rather than picking a round number — 0 px reads as trivially seamless
+(both edges are the same black line) while tiling as a doubled dark stripe. The shipped file's L/R
+wrap difference is 3.55 against an adjacent-column baseline of 3.91, i.e. lower than the difference
+between two neighbouring columns.
+
+`FACE_CROWN_ROWS` gained `poison: [26, 128]`, and poison is the one element where that table's
+operational rule and its own prose description disagree: `wallTone.ts` calls the value "the joint
+between the coping course and the first brick course", but poison's coping ends at row 11 in a smooth
+97 → 72 → 51 gradient with no dark mortar under it, and the first real dark horizontal is row 26,
+between its first and second brick courses. Row 26 is still right — what the value is FOR is the
+longest unbroken horizontal near the top of the wall, the line the eye reads a back wall by — and its
+fraction (0.203) lands within 0.01 of fire/lightning/neutral. Written into `wallTone.ts` rather than
+left as a surprise for the next element.
+
+**What is still open is not art.** Which biome id maps to poison is a `05` balance question that
+design/13 already tracks (poison stays off floor 1 regardless); `engine/world/rooms/` still has only
+`ember`, so a poison biome is one `BIOME_ID_TO_ELEMENT` entry plus an authored room set.
+
+### 3. The rarity overlay — the spec was open because the problem was stated wrong
+
+design/13's blank read: rarity *"must read via border + a per-rarity ornament/emissive overlay on the
+sprite, without colliding with the element language. Concrete overlay spec is still open."*
+
+The first thing worth measuring was whether the collision was real, and it was worse than
+hypothetical — it was already shipped. Four of the five rarity hues sit on top of a reserved element
+hue: `fine` blue `#63B3ED` vs ice `#81D4FA`, `legend` orange `#F6AD55` vs fire `#FF7043`,
+`legendary` gold `#F6E05E` vs lightning `#FFF176`, and `common` white `#E2E8F0` which is *the same
+value* as physical's neutral. So no re-picking of hues could ever have closed this item: as long as
+rarity's carrier is HUE, rarity and element compete for one channel, and design/13 locks that channel
+to element.
+
+**Locked spec: rarity's channel is COUNT, element's is hue.** Neither can express the other, so the
+two can never be confused — a stronger guarantee than any pair of palettes could give, and the reason
+this is the shape worth locking rather than a nicer set of oranges. `game/rarityOverlay.ts`:
+
+1. **count** = the tier's index in `RARITY_ORDER` (common 0 → legendary 4) — countable at a glance in
+   that range, and monotone, so "more marks = better" needs no legend
+2. **position** = an arc across the top of the object, centred and symmetric — a fixed place, found
+   without hunting, and above the object so the marks never cover the silhouette they describe
+3. **colour is reinforcement only** — the marks take `RARITY_COLORS`, the object keeps its element
+   hue, and a colour-blind player (or one looking through a biome's colour cast) still counts four
+4. **emissive ramps with tier** — additive blending, alpha climbing up the ladder; this is the
+   "emissive overlay" clause, layered on top of count rather than replacing it
+5. **`common` draws nothing at all** — that is what the baseline tier means, and it keeps the
+   overwhelmingly common case at zero added geometry
+
+Shipped on the one object in the game that carried NEITHER channel: a weapon lying on the floor. Its
+rarity was invisible (every drop wore the same amber kind-glow) and its element was invisible too,
+because the ground icon was drawn untinted — a fire rifle and a poison one were literally the same
+picture, while the MOUNTED copy of that exact texture has been element-tinted since it shipped. Both
+fixed in `scene/Pickup.ts`.
+
+Deliberately not drawn on the actor's own mounted weapon: the mount is ~15 world px, sweeps a full
+circle around the body every frame, and is frequently behind it — small, moving and intermittently
+hidden are conditions a legibility backstop should survive, not share. The equipped weapon's tier
+already reads from the HUD `WeaponCard`'s rarity-bordered chip, 40 px away and stationary.
+
+### The 500-line split this forced, and why it is the right one
+
+The badge work pushed `scene/Actor.ts` from 552 to 589 lines — a real `checkFileLength` GREW
+violation, and CLAUDE.md is explicit that the answer is a split, not a bumped number. The baseline's
+own note had already nominated the candidate, so both extractions landed in CLAUDE.md's priority
+order:
+
+- **`scene/statusAura.ts`** — form (1), independent functions. `auraMaskOf` + `drawStatusAura`, a pure
+  drawing function over a caller-owned `Graphics` with no state of its own, exactly the shape
+  `healthBar.ts` already had. `Actor` keeps the mask caching and the burn hand-off, because both are
+  its own state.
+- **`scene/actorFilters.ts`** — form (2), composition. The four lazily-built skin shaders (shield
+  shell / hit outline / death dissolve / burn heat-haze) and the rule that composes them into one
+  `filters` list. The cross-boundary call list is exactly ONE method, so the host dependency is
+  declared as a one-method interface (`setSkinFilters`) rather than as the whole `Actor` — and there
+  is no call in the other direction.
+
+Actor.ts is 464 lines and **off the baseline entirely** rather than renumbered. Behaviour-preserving:
+`Actor.test.ts`'s existing filter assertions were kept verbatim, their private-field accessors just
+reaching one level deeper through `fx`.
+
+### Testing: 51 mutants, and the 14 that survived the first run
+
+The mutation battery is the coverage measurement, and it earned that description again — **37/51
+killed on the first run, 14 survivors**, every one a real hole rather than an equivalent mutant. All
+14 are now killed (51/51). What they were is more useful than the number:
+
+- **Four in `WeaponCard`, all from one fixture blindness.** The test asserted "the badge contains a
+  path that is not a `roundRect`", which sounds like "it drew the glyph" and is not: a Pixi `stroke`
+  emits a bare `moveTo`, so the assertion passed happily on a badge with the glyph call deleted
+  outright. Replaced with containment against an independently drawn reference glyph — plus its
+  negative control (a fire badge must NOT contain the ice glyph), because a containment assertion
+  with no negative control is the same trap one level up.
+- **Four in the status aura, from a counting test.** It counted polys and distinct glyph radii. The
+  skull's own circles supply plenty of distinct radii on their own, so "every aura draws the SAME
+  glyph", "the glyph stops scaling with the ring" and "all three glyphs stack at one radius" all
+  survived. Now each glyph is checked against a reference at its own ring index.
+- **Two on the glyph shapes themselves.** A hairline six-armed star fills its whole bounding box and
+  1.5% of its area, so an extent test passes it; the fix is to measure filled AREA (shoelace + πr²,
+  minus punched holes). And a five-pointed ice star is a perfectly good solid star that happens to
+  be the `score` chip — so sixfold symmetry is asserted on the vertices, not left to a digest.
+- **One in the badge chip**, which drew the plate and no glyph and still produced five distinct
+  digests, because five differently-coloured rings are five different digests.
+
+One separate fixture-blindness bug the tests caught *while being written*, worth recording because it
+is the same shape: the instruction digest copied from `doorRender.test.ts` only kept top-level
+numbers, and `poly` carries its vertices as a NESTED array — so every poly-only glyph digested as the
+empty string `poly()` and the ice star and the lightning bolt came out byte-identical. Caught by
+writing the distinctness test as a sweep over the real glyphs instead of as a fixture; a fixture
+would have made two different things equal. The digest now has a guard test of its own asserting it
+can tell two polys apart at all.
+
+### Verification
+
+Both live-frame and offline, because the two answer different questions.
+
+**Live** (the dev server, `window.__game`, five hand-spawned mobs and five drops): the element badge's
+composited pixels come back as the exact locked hexes — `#FF7043`, `#81D4FA`, `#FFF176`, and
+`#E2E8F0` at distance 0 — and the basic mob's bar is unchanged at 27x6 with zero badge geometry. The
+rarity marks were read by counting opaque RUNS across the widest row (the technique from the
+one-pixel-arrowhead episode): 0 / 1 / 2 / 3 / 4 for common / fine / epic / legend / legendary, with
+`stormglaive`'s marks measuring `#f6e05e` exactly. Physical's badge needed a different probe than the
+other four — its `#E2E8F0` is nearly unsaturated, so a "most saturated pixel" search finds the health
+bar's green fill instead; searched by proximity to the target hex.
+
+**Offline** for the biome art, composing the room from the shipped swatches at the real render scales
+(floor stamped 1:1, cap 1:1, face at `WALL_HEIGHT / face.height` with `FACE_TINT` and the coping
+suppression), with a poison bullet, its glow and a poison-tinted mob drawn at their real sizes on
+top. Rendering `fire` and `ice` through the same composite FIRST is what made it trustworthy: the
+fire room came out matching the known shipped look, so the poison one can be believed. Poison's floor
+measures 33.1 luma against the FX green's 186.4, and the mob reads as a hole punched in the floor.
+
+All workspaces green throughout: `tsc --noEmit`, `check:filelength`, and 4500 tests.

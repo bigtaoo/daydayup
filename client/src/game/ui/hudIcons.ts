@@ -57,11 +57,29 @@ export function drawHudIcon(g: Graphics, icon: HudIconId, cx: number, cy: number
       break;
     }
     case 'enemies': {
-      // Skull — the same red as the enemy faction tint (THEME.colors.enemy).
-      g.circle(cx, cy - r * 0.2, r * 0.82).fill({ color });
-      g.roundRect(cx - r * 0.5, cy + r * 0.3, r, r * 0.62, 1).fill({ color });
-      g.circle(cx - r * 0.33, cy - r * 0.22, r * 0.24).fill({ color: HOLE });
-      g.circle(cx + r * 0.33, cy - r * 0.22, r * 0.24).fill({ color: HOLE });
+      // A single-eyed crystal critter head — the same red as the enemy faction tint
+      // (THEME.colors.enemy), and the same silhouette the world actually spawns.
+      //
+      // This was a SKULL until 2026-08-25, when `game/elementIcons.ts` landed the icon
+      // half of design/13's locked dual-channel element law — and that law names the
+      // skull as POISON's glyph. Two different meanings for one silhouette on one screen
+      // is exactly the class of collision this project has been bitten by before (the
+      // pale-disc-with-a-dark-centre that read as an eye), so the skull went to the
+      // locked rule and this chip took the shape it should arguably always have had:
+      // design/13 describes enemies as "living crystal, single glowing eye", and nothing
+      // in this world has a skull — which is why a skull reads as "toxic" and not as
+      // "a mob" here in the first place.
+      g.poly([
+        cx, cy - r,
+        cx + r * 0.86, cy - r * 0.30,
+        cx + r * 0.62, cy + r * 0.78,
+        cx - r * 0.62, cy + r * 0.78,
+        cx - r * 0.86, cy - r * 0.30,
+      ]).fill({ color });
+      // The eye: a punched socket with a bright pupil, so the "one eye" read survives
+      // even where the body silhouette is small enough to be a blob.
+      g.circle(cx, cy - r * 0.06, r * 0.38).fill({ color: HOLE });
+      g.circle(cx, cy - r * 0.06, r * 0.20).fill({ color });
       break;
     }
     case 'banked': {

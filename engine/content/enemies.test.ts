@@ -134,3 +134,81 @@ describe('buildEnemyActor — solid clearance (ENGINE_VERSION 43)', () => {
     expect(e.solidRadius).toBeLessThan(PLAYER_BASE.solidRadius);
   });
 });
+
+/**
+ * `element` — the render-only element identity design/13's locked dual-channel law needs
+ * (added 2026-08-25 alongside the client's `game/elementIcons.ts`). Same category as `tint`
+ * and `bodyRig`: authored on the blueprint, copied to the actor, never read by the sim.
+ *
+ * The reason these tests exist rather than a one-line "the field is copied" check: this field
+ * was DELIBERATELY authored instead of derived, and the sweep below is what records why. A
+ * "the resist it shrugs off hardest is its element" rule is one line and free, and it is right
+ * for exactly the four variants that carry the field and wrong for two of the ones that do not.
+ */
+describe('EnemyBlueprint.element — design/13 icon channel', () => {
+  /** The strongest resist, i.e. the damage type this mob shrugs off hardest — the thing a
+   *  derived rule would have used. */
+  function toughestAgainst(bp: { resist?: Partial<Record<string, number>> }): string | undefined {
+    const entries = Object.entries(bp.resist ?? {}).filter(([, v]) => v !== undefined) as Array<[string, number]>;
+    if (!entries.length) return undefined;
+    return entries.reduce((best, e) => (e[1] < best[1] ? e : best))[0];
+  }
+
+  it('exactly design/13\'s four locked elemental variants carry an element', () => {
+    // Enumerated from the authored registry, so a fifth variant added without an element (or
+    // an element added to something that is not a locked variant) fails here rather than
+    // shipping a mob whose badge silently disagrees with the doc.
+    const badged = Object.values(ENEMY_BLUEPRINTS)
+      .filter((bp) => bp.element !== undefined)
+      .map((bp) => bp.type)
+      .sort();
+    expect(badged).toEqual(['emberling', 'frostling', 'galvanist', 'ironclad']);
+  });
+
+  it('each badged variant names the element it is, matching design/13\'s own list', () => {
+    const want: Record<string, string> = {
+      emberling: 'fire',
+      frostling: 'ice',
+      galvanist: 'lightning',
+      ironclad: 'physical',
+    };
+    for (const [type, element] of Object.entries(want)) {
+      expect(ENEMY_BLUEPRINTS[type]!.element, type).toBe(element);
+    }
+  });
+
+  it('a derived "strongest resist" rule would agree on all four badged variants…', () => {
+    for (const bp of Object.values(ENEMY_BLUEPRINTS)) {
+      if (!bp.element) continue;
+      expect(toughestAgainst(bp), bp.type).toBe(bp.element);
+    }
+  });
+
+  it('…and would be WRONG on the unbadged ones, which is why the field is authored', () => {
+    // This is the test that justifies the design decision instead of just asserting it. `brute`
+    // resists physical without being the physical variant, and `blightlord` — the boss whose
+    // entire flavour is poison, and which is WEAK to poison — resists physical hardest, so a
+    // derived rule would badge the poison boss as the physical mob.
+    const brute = ENEMY_BLUEPRINTS['brute']!;
+    expect(brute.element).toBeUndefined();
+    expect(toughestAgainst(brute)).toBe('physical'); // what a derived rule would have said
+
+    expect(BLIGHTLORD.element).toBeUndefined();
+    expect(toughestAgainst(BLIGHTLORD)).toBe('physical');
+    expect(BLIGHTLORD.resist!.poison).toBeGreaterThan(1000); // …while actually being poison-WEAK
+  });
+
+  it('buildEnemyActor copies it through, and leaves it undefined when unauthored', () => {
+    expect(buildEnemyActor(state(), pxToFp(400), pxToFp(400), 'emberling').element).toBe('fire');
+    expect(buildEnemyActor(state(), pxToFp(400), pxToFp(400), 'ironclad').element).toBe('physical');
+    expect(buildEnemyActor(state(), pxToFp(400), pxToFp(400), 'basic').element).toBeUndefined();
+    expect(buildEnemyActor(state(), pxToFp(400), pxToFp(400), 'blightlord').element).toBeUndefined();
+  });
+
+  it('every authored element is one of the five the colour law closes over', () => {
+    const CLOSED: readonly string[] = ['physical', 'fire', 'ice', 'lightning', 'poison'];
+    for (const bp of Object.values(ENEMY_BLUEPRINTS)) {
+      if (bp.element) expect(CLOSED, bp.type).toContain(bp.element);
+    }
+  });
+});

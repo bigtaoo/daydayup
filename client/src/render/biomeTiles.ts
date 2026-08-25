@@ -4,11 +4,23 @@
 // pattern as uiSkins.ts/weaponSkins.ts: a missing/not-yet-generated swatch just leaves
 // RoomBuilder on its existing flat-colour fallback, never blocks boot.
 //
-// Keyed by BiomeElement (game/config.ts), not by DungeonConfig.biomeId — a biome's
+// Keyed by BiomeElement (game/theme.ts), not by DungeonConfig.biomeId — a biome's
 // LOOK is one swatch per element, reused by every biome that shares that element
-// (mirrors how biomePalette() already works). 'poison' has no swatch yet (design/13:
-// poison isn't floor 1 and has no dedicated critter either) — RoomBuilder's fallback
-// covers it until one is generated.
+// (mirrors how biomePalette() already works).
+//
+// All FIVE elements are registered here as of 2026-08-25, poison included. Every entry is
+// best-effort: a key whose file has not been generated resolves to `undefined` exactly like a
+// key that failed to fetch, and `RoomBuilder` falls back to its flat palette fill. So
+// registering the poison keys before the art exists costs nothing and means the swatches go
+// live the moment the files land, with no second code change — which is the shape of the bug
+// this pass was closing in the first place (the fifth element of a LOCKED five-colour language
+// had no path to the renderer at all).
+//
+// What is still open is not art and not this file: WHICH biome id maps to `poison`. There is no
+// poison room set authored yet (`engine/world/rooms/` has only `ember`), and design/13's own
+// "biome difficulty/order" item keeps that a `05` balance question — poison stays off floor 1
+// regardless, per the green-on-green camouflage note. When one is authored, it is one entry in
+// `theme.ts`'s BIOME_ID_TO_ELEMENT, not a change here.
 import { Assets, Texture } from 'pixi.js';
 import type { BiomeElement } from '../game/theme';
 
@@ -17,10 +29,12 @@ const BIOME_TILE_ASSETS: Readonly<Record<string, string>> = {
   floor_ice: '/biome/floor_ice.png',
   floor_lightning: '/biome/floor_lightning.png',
   floor_neutral: '/biome/floor_neutral.png',
+  floor_poison: '/biome/floor_poison.png',
   wall_fire: '/biome/wall_fire.png',
   wall_ice: '/biome/wall_ice.png',
   wall_lightning: '/biome/wall_lightning.png',
   wall_neutral: '/biome/wall_neutral.png',
+  wall_poison: '/biome/wall_poison.png',
   // Front ELEVATION of a wall, for the standing-wall pass (design/01, 2026-08-18) —
   // a separate asset from `wall_*` above, which is the top-down surface and is now
   // reused as the raised wall's top cap. Tiles horizontally only: its top rows are a
@@ -30,6 +44,7 @@ const BIOME_TILE_ASSETS: Readonly<Record<string, string>> = {
   wallface_ice: '/biome/wallface_ice.png',
   wallface_lightning: '/biome/wallface_lightning.png',
   wallface_neutral: '/biome/wallface_neutral.png',
+  wallface_poison: '/biome/wallface_poison.png',
   // A whole pillar, as one SPRITE — not a swatch (2026-08-20). Unlike everything above
   // it is never tiled and never repeated: a pillar is a fixed-size round object, and
   // sampling a 256 px wall swatch through a ~35 px cap window was tried in 2026-08-18

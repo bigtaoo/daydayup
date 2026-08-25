@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { Texture, type Graphics, type Rectangle } from 'pixi.js';
+import { Graphics, Texture, type Rectangle } from 'pixi.js';
 import { freshStatus } from '@dd/engine/content/damage';
+import type { DamageType } from '@dd/engine';
 import { Actor } from './Actor';
+import { drawElementGlyph } from '../elementIcons';
 import { THEME } from '../theme';
 import { SHADOW_SQUASH } from './Entity';
 import { Rig } from '../../render/Rig';
@@ -234,8 +236,15 @@ function skinFilterAreaOf(a: Actor): Rectangle {
 function skinViewOf(a: Actor): { getLocalBounds: () => Rectangle } {
   return (a as unknown as { skin: { view: { getLocalBounds: () => Rectangle } } }).skin.view;
 }
+// The four skin shaders moved into a composed `ActorFilters` (2026-08-25, 500-line split), so
+// these reach one level deeper than they used to. The CLAIMS are unchanged — every test below is
+// still about the lazily-built-once, ticked-per-frame contract, which is exactly what a
+// behaviour-preserving extraction has to keep true.
+function fxOf(a: Actor): Record<string, unknown> {
+  return (a as unknown as { fx: Record<string, unknown> }).fx;
+}
 function shieldFilterOf(a: Actor): { intensity: number } | null {
-  return (a as unknown as { shieldFilter: { intensity: number } | null }).shieldFilter;
+  return fxOf(a).shieldFilter as { intensity: number } | null;
 }
 
 // Lopsided-shield-glow fix (2026-08-12): `EnergyShieldFilter`'s shader hardcodes
@@ -417,7 +426,7 @@ describe('Actor.setShield — energy-shield shader (design/01 fidelity roadmap m
 });
 
 function outlineFilterOf(a: Actor): { alpha: number } | null {
-  return (a as unknown as { outlineFilter: { alpha: number } | null }).outlineFilter;
+  return fxOf(a).outlineFilter as { alpha: number } | null;
 }
 
 describe('Actor.hitFlash — outline shader (design/01 fidelity roadmap milestone 5)', () => {
@@ -459,7 +468,7 @@ describe('Actor.hitFlash — outline shader (design/01 fidelity roadmap mileston
 });
 
 function dissolveFilterOf(a: Actor): { progress: number } | null {
-  return (a as unknown as { dissolveFilter: { progress: number } | null }).dissolveFilter;
+  return fxOf(a).dissolveFilter as { progress: number } | null;
 }
 
 describe('Actor.startDissolve — death-dissolve shader (design/01 fidelity roadmap milestone 5)', () => {
@@ -500,7 +509,7 @@ describe('Actor.startDissolve — death-dissolve shader (design/01 fidelity road
 });
 
 function heatHazeFilterOf(a: Actor): unknown {
-  return (a as unknown as { heatHazeFilter: unknown }).heatHazeFilter;
+  return fxOf(a).heatHazeFilter;
 }
 
 describe('Actor.setStatus — heat-haze shader on burn (design/01 fidelity roadmap milestone 5)', () => {
@@ -1153,5 +1162,173 @@ describe('Actor.bodySilhouette — what the occlusion x-ray measures a wall agai
       expect(a.bodySilhouette.bodyH).toBeLessThanOrEqual(48);
       expect(a.bodySilhouette.halfW).toBeLessThanOrEqual(16);
     }
+  });
+});
+
+// The ICON half of design/13's locked dual-channel element law, on the two places an Actor
+// carries an element: its own variant identity (a badge on the health bar) and any lingering
+// status it is under (a glyph on that status's aura ring). Before 2026-08-25 both were hue-only
+// — three simultaneous statuses were three rings that differed in nothing but colour.
+//
+// Every glyph assertion here compares against an INDEPENDENTLY DRAWN reference at the exact
+// position and radius the aura should have used, rather than counting shapes. The first version
+// of this file counted polys and distinct radii, and a mutation battery walked straight through
+// it: "every aura draws the same glyph", "the glyph stops scaling with the ring" and "all the
+// glyphs stack at one radius" all survived, because the skull's own circles supplied enough
+// distinct radii to satisfy the counting version on their own.
+describe('Actor — the element icon channel (design/13, 2026-08-25)', () => {
+  const SQUASH = SHADOW_SQUASH;
+  const GLYPH_ANGLE = (-Math.PI * 3) / 4;
+  const GLYPH_R_RATIO = 0.3;
+  const GLYPH_R_MIN = 3;
+  /** Aura ring radii, in the order `Actor` nests them (burn, chill, poison). */
+  const ringRadius = (radiusPx: number, ring: number): number => radiusPx * (1.15 + ring * 0.22);
+
+  type Ins = {
+    action: string;
+    data: { style?: { color?: number }; path?: { instructions: Array<{ action: string; data: unknown[] }> } };
+  };
+
+  function auraGfx(a: Actor): Graphics {
+    return a.children[Child.StatusAura] as Graphics;
+  }
+
+  /** Digest with `moveTo` dropped — see WeaponCard.test.ts for why that normalisation matters. */
+  function digest(g: Graphics): string {
+    return (g.context.instructions as unknown as Ins[])
+      .map((ins) => {
+        const path = (ins.data.path?.instructions ?? [])
+          .filter((pi) => pi.action !== 'moveTo')
+          .map((pi) => {
+            const nums: number[] = [];
+            for (const v of pi.data) {
+              if (typeof v === 'number') nums.push(v);
+              else if (Array.isArray(v)) for (const n of v) if (typeof n === 'number') nums.push(n);
+            }
+            return `${pi.action}(${nums.map((n) => n.toFixed(2)).join(',')})`;
+          })
+          .join('|');
+        return `${ins.action} ${ins.data.style?.color ?? ''} ${path}`;
+      })
+      .join(';');
+  }
+
+  /** The glyph `Actor` is supposed to have drawn for `element` on ring index `ring`. */
+  function expectedGlyph(radiusPx: number, ring: number, element: DamageType, color: number): string {
+    const rad = ringRadius(radiusPx, ring);
+    const g = new Graphics();
+    drawElementGlyph(
+      g,
+      element,
+      Math.cos(GLYPH_ANGLE) * rad,
+      Math.sin(GLYPH_ANGLE) * rad * SQUASH,
+      Math.max(GLYPH_R_MIN, rad * GLYPH_R_RATIO),
+      color,
+    );
+    return digest(g);
+  }
+
+  it('a burning actor draws the FLAME on its ring, at the ring\'s own radius', () => {
+    const a = new Actor('enemy', 20);
+    a.setStatus({ ...freshStatus(), burnTicks: 5 });
+    expect(digest(auraGfx(a))).toContain(expectedGlyph(20, 0, 'fire', THEME.colors.statusBurn));
+  });
+
+  it('a chilled actor draws the SNOWFLAKE, not the flame', () => {
+    const a = new Actor('enemy', 20);
+    a.setStatus({ ...freshStatus(), chillTicks: 5 });
+    const d = digest(auraGfx(a));
+    expect(d).toContain(expectedGlyph(20, 0, 'ice', THEME.colors.statusChill));
+    expect(d).not.toContain(expectedGlyph(20, 0, 'fire', THEME.colors.statusBurn));
+  });
+
+  it('a poisoned actor draws the SKULL, not the flame', () => {
+    const a = new Actor('enemy', 20);
+    a.setStatus({ ...freshStatus(), poison: [{ ticks: 5, dmg: 1 }] as never });
+    const d = digest(auraGfx(a));
+    expect(d).toContain(expectedGlyph(20, 0, 'poison', THEME.colors.statusPoison));
+    expect(d).not.toContain(expectedGlyph(20, 0, 'fire', THEME.colors.statusBurn));
+  });
+
+  it('three simultaneous statuses draw three DIFFERENT glyphs, each on its own ring', () => {
+    // The point of the second channel. Burn/chill/poison used to differ only in hue, so a
+    // colour-blind player (or one looking through a biome's colour cast) read one ring three
+    // times. Each glyph is checked at its own ring index, so a version that drew all three at
+    // one radius — or drew the same glyph three times — fails.
+    const a = new Actor('enemy', 20);
+    a.setStatus({
+      ...freshStatus(),
+      burnTicks: 5,
+      chillTicks: 5,
+      poison: [{ ticks: 5, dmg: 1 }] as never,
+    });
+    const d = digest(auraGfx(a));
+    expect(d).toContain(expectedGlyph(20, 0, 'fire', THEME.colors.statusBurn));
+    expect(d).toContain(expectedGlyph(20, 1, 'ice', THEME.colors.statusChill));
+    expect(d).toContain(expectedGlyph(20, 2, 'poison', THEME.colors.statusPoison));
+  });
+
+  it('an actor with no status draws no glyph either (the aura stays a real no-op)', () => {
+    const a = new Actor('enemy', 20);
+    a.setStatus(freshStatus());
+    expect(auraGfx(a).context.instructions).toHaveLength(0);
+  });
+
+  it('the aura glyph scales with the ring, so a boss carries a bigger one', () => {
+    const mob = new Actor('enemy', 12);
+    mob.setStatus({ ...freshStatus(), burnTicks: 5 });
+    const boss = new Actor('enemy', 40, undefined, true);
+    boss.setStatus({ ...freshStatus(), burnTicks: 5 });
+    expect(digest(mob.children[Child.StatusAura] as Graphics)).toContain(
+      expectedGlyph(12, 0, 'fire', THEME.colors.statusBurn),
+    );
+    expect(digest(boss.children[Child.StatusAura] as Graphics)).toContain(
+      expectedGlyph(40, 0, 'fire', THEME.colors.statusBurn),
+    );
+    // …and those really are different sizes, so the assertion above is not scale-blind.
+    expect(expectedGlyph(40, 0, 'fire', THEME.colors.statusBurn)).not.toBe(
+      expectedGlyph(12, 0, 'fire', THEME.colors.statusBurn),
+    );
+  });
+
+  it('a tiny actor still gets a minimum-size glyph rather than a speck', () => {
+    // `AURA_GLYPH_R_MIN`. At radiusPx 4 the ratio alone would give 1.4 px, which is the
+    // invisible-at-gameplay-scale failure `art/props/prompts.md` records.
+    const tiny = new Actor('enemy', 4);
+    tiny.setStatus({ ...freshStatus(), burnTicks: 5 });
+    const clamped = expectedGlyph(4, 0, 'fire', THEME.colors.statusBurn);
+    expect(digest(tiny.children[Child.StatusAura] as Graphics)).toContain(clamped);
+    // The clamp is genuinely engaged at this size, so the assertion covers it rather than
+    // riding on the unclamped path.
+    expect(ringRadius(4, 0) * GLYPH_R_RATIO).toBeLessThan(GLYPH_R_MIN);
+  });
+
+  it('an elemental variant puts a badge on its health bar; a plain mob does not', () => {
+    const plain = new Actor('enemy', 15);
+    plain.setHealth(5, 10);
+    const ember = new Actor('enemy', 15, 0xff7043, false, undefined, 'fire');
+    ember.setHealth(5, 10);
+    expect(healthBarOf(ember).context.instructions.length).toBeGreaterThan(
+      healthBarOf(plain).context.instructions.length,
+    );
+  });
+
+  it('the bar badge is the variant\'s OWN element, not a fixed one', () => {
+    const ember = new Actor('enemy', 15, 0xff7043, false, undefined, 'fire');
+    ember.setHealth(5, 10);
+    const frost = new Actor('enemy', 15, 0x81d4fa, false, undefined, 'ice');
+    frost.setHealth(5, 10);
+    expect(digest(healthBarOf(ember))).not.toBe(digest(healthBarOf(frost)));
+  });
+
+  it('a player never gets a badge — element is an enemy-variant identity, not a loadout one', () => {
+    const me = new Actor('player', 14);
+    me.setLocal(true);
+    me.setHealth(7, 10);
+    const circles = (healthBarOf(me).context.instructions as unknown as Ins[]).reduce(
+      (n, ins) => n + (ins.data.path?.instructions ?? []).filter((pi) => pi.action === 'circle').length,
+      0,
+    );
+    expect(circles).toBe(0); // the bar is all roundRects; a circle would be badge geometry
   });
 });

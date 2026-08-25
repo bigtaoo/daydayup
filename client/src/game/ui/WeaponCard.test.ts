@@ -6,7 +6,11 @@
  * silently swallowed the first time this was written.
  */
 import { describe, it, expect, afterEach } from 'vitest';
-import type { WeaponSimSpec } from '@dd/engine';
+import { Graphics } from 'pixi.js';
+import type { DamageType, WeaponSimSpec } from '@dd/engine';
+import { drawElementGlyph } from '../elementIcons';
+import { elementColor } from '../theme';
+import { estimateMonoWidth } from './textWidth';
 import { WEAPON_SIM_BY_ID } from '@dd/engine';
 import { WeaponCard } from './WeaponCard';
 import { rarityColor } from '../theme';
@@ -198,5 +202,151 @@ describe('rarityColor — the border hue the card passes through (design/14)', (
     const tiers: Array<WeaponSimSpec['rarity']> = ['common', 'fine', 'epic', 'legend', 'legendary'];
     const colors = tiers.map((r) => rarityColor(variant(BLASTER, { rarity: r })));
     expect(new Set(colors).size).toBe(tiers.length);
+  });
+});
+
+/**
+ * The element ICON in the damage badge (design/13's dual-channel law, 2026-08-25). The badge
+ * was element-TINTED before, which is the colour channel only; the subtitle names the element
+ * in words, which is a third channel that the player is not reading mid-fight. The glyph is
+ * what the doc actually asks a weapon to carry.
+ */
+describe('WeaponCard — the element icon in the damage badge (design/13)', () => {
+  type Instr = {
+    action: string;
+    data: { style?: { color?: number }; path?: { instructions: Array<{ action: string; data: unknown[] }> } };
+  };
+
+  function badgeOf(card: WeaponCard): Graphics {
+    // `view` children: chip, [icon], name, sub, badge, badgeValue, cdBar — the badge is the
+    // Graphics that is not the chip, found by type + order rather than by a fixed index (the
+    // icon child appears only when a texture resolves).
+    const gs = card.view.children.filter((c): c is Graphics => c instanceof Graphics);
+    return gs[gs.length - 1]!;
+  }
+
+  /** `moveTo` is dropped: it is Pixi's own path bookkeeping and is emitted or not depending on
+   *  what was drawn into the same Graphics beforehand, so keeping it would stop an identically
+   *  shaped glyph from matching a reference drawn on a bare Graphics. */
+  function digest(g: Graphics): string {
+    return (g.context.instructions as unknown as Instr[])
+      .map((ins) => {
+        const path = (ins.data.path?.instructions ?? [])
+          .filter((pi) => pi.action !== 'moveTo')
+          .map((pi) => {
+            const nums: number[] = [];
+            for (const v of pi.data) {
+              if (typeof v === 'number') nums.push(v);
+              else if (Array.isArray(v)) for (const n of v) if (typeof n === 'number') nums.push(n);
+            }
+            return `${pi.action}(${nums.map((n) => n.toFixed(2)).join(',')})`;
+          })
+          .join('|');
+        return `${ins.action} ${ins.data.style?.color ?? ''} ${path}`;
+      })
+      .join(';');
+  }
+
+  const ELEMENTS: readonly DamageType[] = ['fire', 'ice', 'lightning', 'poison', 'physical'];
+
+  /** Where the card puts the glyph, recomputed here from the card's own public geometry rather
+   *  than copied from its private constants — the reference has to land on the same spot as the
+   *  real one for the containment assertion below to mean anything. */
+  function glyphSpotOf(card: WeaponCard, spec: WeaponSimSpec): { cx: number; cy: number; r: number } {
+    // The badge's frame is its first roundRect; the glyph sits one padding-step inside its left
+    // edge, vertically centred on the 16 px frame.
+    const frame = (badgeOf(card).context.instructions as unknown as Instr[])
+      .flatMap((ins) => ins.data.path?.instructions ?? [])
+      .find((pi) => pi.action === 'roundRect')!;
+    const [x] = pi_nums(frame);
+    void spec;
+    const r = 5; // BADGE_GLYPH_R
+    return { cx: x! + 6 + r, cy: 8, r };
+  }
+
+  function pi_nums(pi: { data: unknown[] }): number[] {
+    const nums: number[] = [];
+    for (const v of pi.data) {
+      if (typeof v === 'number') nums.push(v);
+      else if (Array.isArray(v)) for (const n of v) if (typeof n === 'number') nums.push(n);
+    }
+    return nums;
+  }
+
+  it.each(ELEMENTS)('%s draws ITS OWN glyph inside the badge', (damageType) => {
+    // Asserted against an independently drawn reference glyph, not against "some path that is
+    // not a roundRect" — a stroke emits a bare `moveTo`, so that weaker form passed happily on
+    // a badge with the glyph call deleted outright (caught by the mutation battery).
+    const spec = variant(BLASTER, { damageType });
+    const card = new WeaponCard();
+    card.set(spec, 0, 10);
+    const { cx, cy, r } = glyphSpotOf(card, spec);
+    const reference = new Graphics();
+    drawElementGlyph(reference, damageType, cx, cy, r, elementColor(damageType), 0x0b0e14);
+    expect(digest(badgeOf(card))).toContain(digest(reference));
+  });
+
+  it('a fire weapon does NOT contain the ice glyph (the containment check discriminates)', () => {
+    const card = new WeaponCard();
+    const spec = variant(BLASTER, { damageType: 'fire' });
+    card.set(spec, 0, 10);
+    const { cx, cy, r } = glyphSpotOf(card, spec);
+    const ice = new Graphics();
+    drawElementGlyph(ice, 'ice', cx, cy, r, elementColor('fire'), 0x0b0e14);
+    expect(digest(badgeOf(card))).not.toContain(digest(ice));
+  });
+
+  it('the five elements produce five different badges', () => {
+    const seen = new Set<string>();
+    for (const damageType of ELEMENTS) {
+      const card = new WeaponCard();
+      card.set(variant(BLASTER, { damageType }), 0, 10);
+      seen.add(digest(badgeOf(card)));
+    }
+    expect(seen.size).toBe(ELEMENTS.length);
+  });
+
+  it('the badge frame WIDENED for the glyph rather than the number being drawn over it', () => {
+    // Two separate things had to happen when the glyph landed: the frame got wider, and the
+    // number moved right. Each was its own mutant and neither was caught by a bounds check.
+    const spec = variant(BLASTER, { damageType: 'fire', nameKey: 'x', damage: 7 });
+    const card = new WeaponCard();
+    card.set(spec, 0, 10);
+    const frame = pi_nums(
+      (badgeOf(card).context.instructions as unknown as Instr[])
+        .flatMap((ins) => ins.data.path?.instructions ?? [])
+        .find((pi) => pi.action === 'roundRect')!,
+    );
+    const [fx, , fw] = frame;
+    const { cx, r } = glyphSpotOf(card, spec);
+    // Glyph fully inside the frame…
+    expect(cx - r).toBeGreaterThan(fx!);
+    expect(cx + r).toBeLessThan(fx! + fw!);
+    // …and the number starts to the RIGHT of the glyph, so the two never overlap.
+    const numberX = (card.view.children.find((c) => 'text' in c && (c as { text: string }).text === card.damageText) as
+      | { x: number }
+      | undefined)!;
+    expect(numberX.x).toBeGreaterThanOrEqual(cx + r);
+    // …and the number still FITS: the frame has to have grown by the glyph's box, not just had
+    // its contents shoved right. Dropping the widening leaves the digits hanging out past the
+    // rounded end, which every geometric check above is blind to.
+    const numberRight = numberX.x + estimateMonoWidth(card.damageText, 11);
+    expect(numberRight).toBeLessThanOrEqual(fx! + fw!);
+  });
+
+  it('estimatedWidth() covers the widened badge, so the HUD panel cannot clip it', () => {
+    const card = new WeaponCard();
+    card.set(variant(BLASTER, { damageType: 'fire', nameKey: 'x' }), 0, 10);
+    const b = badgeOf(card).getLocalBounds();
+    expect(card.estimatedWidth()).toBeGreaterThanOrEqual(b.right - 1);
+  });
+
+  it('the unarmed card draws no glyph — there is no element to name', () => {
+    const card = new WeaponCard();
+    card.set(null, 0, 10);
+    const paths = (badgeOf(card).context.instructions as unknown as Instr[]).flatMap(
+      (ins) => ins.data.path?.instructions ?? [],
+    );
+    expect(paths).toHaveLength(0);
   });
 });

@@ -1,6 +1,8 @@
 import { Graphics, Sprite } from 'pixi.js';
 import { WEAPON_SIM_BY_ID } from '@dd/engine';
-import { THEME } from '../theme';
+import { THEME, elementColor } from '../theme';
+import { drawElementBadge } from '../elementIcons';
+import { drawRarityPips } from '../rarityOverlay';
 import { getWeaponTexture } from '../../render/weaponSkins';
 import { getPickupTexture } from '../../render/environmentSprites';
 import { Entity } from './Entity';
@@ -59,6 +61,16 @@ const GLOW_RADIUS = 13;
  *  alpha; ten came out at 0.061, which is where a ring starts to read. */
 const GLOW_BANDS = 12;
 
+/** Where a weapon drop's element badge sits, in local px, and how big its glyph is.
+ *  Lower-LEFT: weapon art in this repo is authored socket-upper-left / tip-lower-right
+ *  (`render/weaponSkins.ts`'s baseline convention), so the lower-left quadrant is the one a
+ *  diagonal silhouette leaves empty — the badge covers no part of the weapon it labels. It
+ *  stays inside `GLOW_RADIUS` (offset magnitude ~10.6 of 13) so the glow still reads as
+ *  "this object, glowing" rather than as a disc with something hanging off it. */
+const WEAPON_BADGE_X = -8;
+const WEAPON_BADGE_Y = 7;
+const WEAPON_BADGE_GLYPH_R = 3;
+
 // Pickup view — an in-run drop (health / coin / weapon). Pure presentation:
 // the engine owns the drop roll and collection; the hover bob here is render-only
 // eye candy (it is NOT part of the sim, which is why PickupItem has no z). Position
@@ -110,6 +122,9 @@ export class Pickup extends Entity {
     // is the game's. Falls through to the flat Graphics silhouettes below whenever the
     // texture isn't resolvable (not preloaded, fetch failed) — art never blocks gameplay
     // (design/02/12).
+    // Resolved before the kind dispatch because BOTH the weapon branch below and the
+    // rarity/element overlays after it need it (design/13's two channels + the icon).
+    const sim = kind === 'weapon' && weaponId ? WEAPON_SIM_BY_ID[weaponId] : undefined;
     const art = kind === 'weapon' ? undefined : getPickupTexture(kind);
     if (art) {
       const sprite = new Sprite(art);
@@ -128,13 +143,18 @@ export class Pickup extends Entity {
       // texture isn't resolvable (unknown id / not yet loaded) — a ground item, unlike
       // WeaponCard's chip, has no adjacent name text to fall back on, so it must always
       // draw *something*.
-      const simKind = weaponId ? WEAPON_SIM_BY_ID[weaponId]?.kind : undefined;
-      const texture = getWeaponTexture(weaponId, simKind ?? 'ranged');
+      const texture = getWeaponTexture(weaponId, sim?.kind ?? 'ranged');
       if (texture) {
         const icon = new Sprite(texture);
         icon.anchor.set(0.5);
         const box = 22;
         icon.scale.set(Math.min(box / texture.width, box / texture.height));
+        // Element hue on the drop, the same way `Skin.setWeaponTint` puts it on the MOUNTED
+        // copy of this exact texture (design/13's locked colour channel). It was untinted
+        // here, so one weapon read as two different objects depending on whether it was on
+        // the floor or in your hand — and a fire rifle lying on the ground was
+        // indistinguishable from a poison one.
+        if (sim) icon.tint = elementColor(sim.damageType);
         this.addChild(icon);
       } else {
         const color = THEME.colors.pickupWeapon;
@@ -158,6 +178,23 @@ export class Pickup extends Entity {
       gfx.circle(0, 0, 3.5).fill({ color: 0xfffbe6, alpha: 0.7 });
     }
     this.addChild(gfx);
+
+    // Both channels design/13 requires of a WEAPON, on the one object in the game that had
+    // neither: a drop on the floor. Rarity as a COUNT of additive marks on the top arc
+    // (`rarityOverlay.ts` has the spec and the hue-collision numbers behind it), element as
+    // the locked icon badge. `WeaponPickupPrompt`/`CompareCard` still spell both out in text,
+    // but only once you are already standing on the drop — this is what decides whether it is
+    // worth walking to, which is the decision design/14's loot loop actually turns on.
+    if (kind === 'weapon' && sim) {
+      const marks = new Graphics();
+      drawRarityPips(marks, sim.rarity, 0, 0, GLOW_RADIUS);
+      marks.blendMode = 'add'; // the "emissive" half of design/13's overlay clause
+      this.addChild(marks);
+      const badge = new Graphics();
+      drawElementBadge(badge, sim.damageType, WEAPON_BADGE_X, WEAPON_BADGE_Y, WEAPON_BADGE_GLYPH_R);
+      this.addChild(badge);
+    }
+
     this.makeShadow(9);
   }
 

@@ -1,6 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
-import { Texture, TextureSource, type Graphics, type Sprite } from 'pixi.js';
+import { Texture, TextureSource, Graphics, Sprite } from 'pixi.js';
+import { WEAPON_SIM_BY_ID } from '@dd/engine';
 import { Pickup, type PickupKind } from './Pickup';
+import { pipCount } from '../rarityOverlay';
+import { elementColor } from '../theme';
 
 // `render/weaponSkins.ts` is mocked here so the "texture exists" branch (the real
 // weapon icon) is actually reachable under vitest — without it every Pickup test below
@@ -268,9 +271,18 @@ describe('Pickup — real weapon icon on the ground (design/03)', () => {
     mocks.blasterTexture = new Texture({ source: new TextureSource({ width: 8, height: 8 }) });
     try {
       const p = new Pickup('weapon', 'blaster');
-      expect(p.children.length).toBe(3); // glow + icon sprite + the (now-empty) chevron Graphics
-      const icon = p.children[1] as Sprite;
-      expect(icon.texture).toBe(mocks.blasterTexture);
+      // Identified by TYPE, not by child index/count: a weapon drop also carries the
+      // rarity/element overlays (2026-08-25), and a raw count assertion here would have to be
+      // renumbered every time the drop gains a layer — which is how an assertion quietly stops
+      // covering the claim it was written for.
+      const icon = p.children.find((c): c is Sprite => c instanceof Sprite);
+      expect(icon).toBeDefined();
+      expect(icon!.texture).toBe(mocks.blasterTexture);
+      // The displaced chevron. `shapeOf` can't be used here — it indexes child 1, which in the
+      // with-texture case is the Sprite. Construction order for a weapon drop WITH art is
+      // glow, icon, chevron, then the rarity/element overlays (both of which draw something
+      // for a non-common weapon, so "the empty Graphics" isn't a unique handle either —
+      // `blaster` is common, so its rarity marks are legitimately empty too).
       const chevron = p.children[2] as Graphics;
       expect(chevron.getLocalBounds().width).toBe(0); // chevron never drew — icon took its place
     } finally {
@@ -441,6 +453,143 @@ describe('Pickup — the glow is a ramp, not a plate (2026-08-20)', () => {
           .map((i) => i.data.style!.color),
       );
       expect(colours.size).toBe(1);
+    }
+  });
+});
+
+/**
+ * A weapon lying on the floor is the one object in the game that carried NEITHER of the two
+ * channels design/13 requires of a weapon: its rarity was invisible (every drop wore the same
+ * amber kind-glow) and its element was invisible too (the icon was drawn untinted, so a fire
+ * rifle and a poison one were the same picture). Both landed 2026-08-25 — rarity as a COUNT of
+ * additive marks (`game/rarityOverlay.ts`), element as the locked icon badge.
+ *
+ * Subjects come from the authored content, so the sweep covers whatever tiers/elements actually
+ * ship rather than a hand-picked pair that could drift out of the registry.
+ */
+describe('Pickup — a weapon drop carries its rarity and its element (design/13/14, 2026-08-25)', () => {
+  type Instr = {
+    action: string;
+    data: { style?: { color?: number; alpha?: number }; path?: { instructions: Array<{ action: string; data: unknown[] }> } };
+  };
+
+  /** Additive Graphics children — the rarity marks live on one, per the "emissive" clause. */
+  function additiveGraphics(p: Pickup): Graphics[] {
+    return p.children.filter((c): c is Graphics => c instanceof Graphics && c.blendMode === 'add');
+  }
+
+  /** Circles drawn across every Graphics child of `p`, tagged with the blend mode they were
+   *  drawn on — enough to separate the additive rarity marks from the opaque element badge. */
+  function circlesOf(p: Pickup): Array<{ r: number; color: number; additive: boolean }> {
+    const out: Array<{ r: number; color: number; additive: boolean }> = [];
+    for (const c of p.children) {
+      if (!(c instanceof Graphics)) continue;
+      const additive = c.blendMode === 'add';
+      for (const ins of c.context.instructions as unknown as Instr[]) {
+        for (const pi of ins.data.path?.instructions ?? []) {
+          if (pi.action !== 'circle') continue;
+          const [, , r] = pi.data as number[];
+          out.push({ r: r!, color: ins.data.style?.color ?? 0, additive });
+        }
+      }
+    }
+    return out;
+  }
+
+  /** The rarity marks only: the additive Graphics that is NOT the glow. The glow is 12
+   *  concentric STROKED circles; the marks are fills, so filter on the instruction action. */
+  function markCount(p: Pickup): number {
+    let n = 0;
+    for (const g of additiveGraphics(p)) {
+      for (const ins of g.context.instructions as unknown as Instr[]) {
+        if (ins.action !== 'fill') continue;
+        n += (ins.data.path?.instructions ?? []).filter((pi) => pi.action === 'circle').length;
+      }
+    }
+    return n;
+  }
+
+  // Enumerated from `WEAPON_SIM_BY_ID`, which is the registry `Pickup` itself looks up — NOT
+  // from `WEAPON_SPECS`. The two differ by exactly one entry (`enemygun`, the mob loadout that
+  // is deliberately not player-facing and therefore never drops), and sweeping the wrong one
+  // asserts a badge on a weapon that can never appear on a floor.
+  const WEAPON_IDS = Object.keys(WEAPON_SIM_BY_ID);
+
+  it('the content spans more than one rarity tier (else the sweep below proves nothing)', () => {
+    expect(new Set(WEAPON_IDS.map((id) => WEAPON_SIM_BY_ID[id]!.rarity)).size).toBeGreaterThan(2);
+  });
+
+  it('the sweep covers every droppable weapon, and only those', () => {
+    expect(WEAPON_IDS.length).toBeGreaterThan(10);
+    expect(WEAPON_IDS).not.toContain('enemygun');
+  });
+
+  it.each(WEAPON_IDS)('%s draws exactly its tier\'s mark count', (id) => {
+    const spec = WEAPON_SIM_BY_ID[id]!;
+    expect(markCount(new Pickup('weapon', id))).toBe(pipCount(spec.rarity));
+  });
+
+  it('a baseline-tier drop adds no marks at all, so a common drop stays undecorated', () => {
+    const common = WEAPON_IDS.find((id) => WEAPON_SIM_BY_ID[id]!.rarity === 'common')!;
+    expect(markCount(new Pickup('weapon', common))).toBe(0);
+  });
+
+  it('a top-tier drop is louder than a low-tier one (the emissive half of the spec)', () => {
+    const alphaOf = (id: string): number => {
+      for (const g of additiveGraphics(new Pickup('weapon', id))) {
+        for (const ins of g.context.instructions as unknown as Instr[]) {
+          if (ins.action !== 'fill') continue;
+          if ((ins.data.path?.instructions ?? []).some((pi) => pi.action === 'circle')) {
+            return ins.data.style?.alpha ?? 0;
+          }
+        }
+      }
+      return 0;
+    };
+    const low = WEAPON_IDS.find((id) => WEAPON_SIM_BY_ID[id]!.rarity === 'fine');
+    const top = WEAPON_IDS.find((id) => WEAPON_SIM_BY_ID[id]!.rarity === 'legendary');
+    expect(low, 'content has no fine-tier weapon').toBeDefined();
+    expect(top, 'content has no legendary weapon').toBeDefined();
+    expect(alphaOf(top!)).toBeGreaterThan(alphaOf(low!));
+  });
+
+  it.each(WEAPON_IDS)('%s draws an element badge in its own element hue', (id) => {
+    const want = elementColor(WEAPON_SIM_BY_ID[id]!.damageType);
+    // The badge's ring is drawn in the element hue on a NON-additive Graphics (its chip is a
+    // dark plate, which additive blending would erase).
+    const opaque = circlesOf(new Pickup('weapon', id)).filter((c) => !c.additive);
+    expect(opaque.map((c) => c.color)).toContain(want);
+  });
+
+  it('the badge sits inside the glow, so the drop still reads as one object', () => {
+    const p = new Pickup('weapon', 'blaster');
+    const badge = p.children[p.children.length - 1] as Graphics; // badge is appended last
+    const b = badge.getLocalBounds();
+    const GLOW_RADIUS = 13;
+    expect(Math.hypot(b.x + b.width / 2, b.y + b.height / 2)).toBeLessThan(GLOW_RADIUS);
+  });
+
+  it('a non-weapon drop gets neither channel — they describe a WEAPON, not a pickup', () => {
+    for (const kind of ['heal', 'material', 'buff', 'crate', 'bandage'] as PickupKind[]) {
+      const p = new Pickup(kind);
+      expect(markCount(p), kind).toBe(0);
+    }
+  });
+
+  it('an unresolvable weapon id claims nothing rather than guessing a tier', () => {
+    const p = new Pickup('weapon', 'not_a_real_weapon');
+    expect(markCount(p)).toBe(0);
+    expect(circlesOf(p).filter((c) => !c.additive)).toHaveLength(0);
+  });
+
+  it('the real icon is tinted to its element, matching the MOUNTED copy of the same texture', () => {
+    mocks.blasterTexture = new Texture({ source: new TextureSource({ width: 8, height: 8 }) });
+    try {
+      const p = new Pickup('weapon', 'blaster');
+      const icon = p.children.find((c): c is Sprite => c instanceof Sprite)!;
+      expect(icon.tint).toBe(elementColor(WEAPON_SIM_BY_ID['blaster']!.damageType));
+    } finally {
+      mocks.blasterTexture = undefined;
     }
   });
 });

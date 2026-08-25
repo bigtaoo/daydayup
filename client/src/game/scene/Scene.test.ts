@@ -632,7 +632,13 @@ describe('Scene.reconcile — weapon pickup id passthrough (design/03)', () => {
 
       const views = (scene as unknown as { views: Map<number, { children: unknown[] }> }).views;
       const view = views.get(it.id)!;
-      expect(view.children.length).toBe(3); // glow + real icon sprite + empty chevron Graphics
+      // The claim is "the id reached the view and resolved a real texture", so assert THAT —
+      // the drop's child count also moves whenever the drop gains a layer (it gained the
+      // rarity/element overlays in 2026-08-25), and a count would fail for the wrong reason.
+      const { Sprite } = await import('pixi.js');
+      const icon = view.children.find((c): c is InstanceType<typeof Sprite> => c instanceof Sprite);
+      expect(icon).toBeDefined();
+      expect(icon!.texture).toBe(weaponSkinMocks.texture);
     } finally {
       weaponSkinMocks.texture = undefined;
     }

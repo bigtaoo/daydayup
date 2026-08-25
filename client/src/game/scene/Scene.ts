@@ -112,7 +112,7 @@ export class Scene {
       if (!e.alive) continue;
       let v = this.views.get(e.id) as Enemy | undefined;
       if (!v) {
-        v = new Enemy(fpToPx(e.radius), e.tint, e.boss, e.bodyRig);
+        v = new Enemy(fpToPx(e.radius), e.tint, e.boss, e.bodyRig, e.element);
         this.spawn(e.id, v, fpToPx(e.gx), fpToPx(e.gy), fpToPx(e.z), bradToRad(e.facing));
       } else {
         v.pushState(fpToPx(e.gx), fpToPx(e.gy), fpToPx(e.z), bradToRad(e.facing));

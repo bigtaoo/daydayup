@@ -1,10 +1,11 @@
-import { Filter, Graphics, Rectangle } from 'pixi.js';
+import { Graphics, Rectangle } from 'pixi.js';
 import type { DamageType, StatusState } from '@dd/engine';
 import { THEME, ELEMENT_COLORS } from '../theme';
-import { EnergyShieldFilter, OutlineFilter, DissolveFilter, HeatHazeFilter } from '../fx/filters';
-import { Entity, SHADOW_SQUASH } from './Entity';
+import { ActorFilters } from './actorFilters';
+import { Entity } from './Entity';
 import { Skin } from './Skin';
 import { drawHealthBar } from './healthBar';
+import { auraMaskOf, drawStatusAura, AURA_BIT_BURN } from './statusAura';
 
 export type Faction = 'player' | 'enemy';
 export type WeaponKind = 'ranged' | 'melee';
@@ -76,18 +77,6 @@ const HOVER: Readonly<Record<string, { base: number; amp: number; periodMs: numb
  *  in the sim can see it (design/08 "render only reads"). */
 let hoverPhaseSeq = 0;
 
-const HIT_FLASH_MS = 160; // outline "you were just hit" flash duration (Actor.hitFlash)
-const DISSOLVE_MS = 700; // death-dissolve shader duration (Actor.startDissolve)
-
-// Lingering status auras (design/03/07): a concentric glowing ring per active
-// on-hit effect, so a burning / chilled / poisoned actor reads while the DoT lasts —
-// not just a one-frame flash on the hit. Lightning has no lingering status (the
-// chain is instant), so it deliberately has no aura. Bit index = ring order.
-const AURAS: ReadonlyArray<{ bit: number; color: number; active: (s: StatusState) => boolean }> = [
-  { bit: 1, color: THEME.colors.statusBurn, active: (s) => s.burnTicks > 0 },
-  { bit: 2, color: THEME.colors.statusChill, active: (s) => s.chillTicks > 0 },
-  { bit: 4, color: THEME.colors.statusPoison, active: (s) => s.poison.length > 0 },
-];
 
 // Actor view (player / enemy). Pure presentation: body skin, a soft shadow, and a
 // cosmetic weapon graphic that swaps shape by the engine weapon's kind (Stage D:
@@ -109,21 +98,25 @@ export class Actor extends Entity {
   private healthBarOffsetY = 0;
   private isLocal = false;
   private readonly isBoss: boolean;
+  /** design/13's element identity for this actor, if it has one (`EnemyActor.element`) — the
+   *  ICON half of the locked dual-channel law, drawn as a badge on the health bar. Undefined
+   *  for every player and every un-elemental mob, and the bar then draws exactly as before. */
+  private readonly element: DamageType | undefined;
   private hpRatio = -1; // last-drawn hp fraction (skip redraw if unchanged)
   // Lighting is NOT here. Until 2026-08-24 every actor carried its own always-on
   // `NormalLitFilter`, which meant every actor cost a render-target pass and broke the
   // sprite batch — measured as the dominant cost of the frame (src/perf/README.md). It is
   // now one screen-space pass over `Layers.lit` (`SceneLightFilter`), so an actor with no
   // status at all carries NO filter and batches with its neighbours.
-  private shieldFilter: EnergyShieldFilter | null = null; // lazily built — most actors never carry a shield pool
-  private shieldActive = false;
-  private shieldRatio = -1; // last-applied shield fraction (skip redundant work if unchanged)
-  private outlineFilter: OutlineFilter | null = null; // lazily built — most actors never get hit while on screen
-  private outlineMs = 0; // remaining ms of the current hit flash, 0 = inactive
-  private dissolveFilter: DissolveFilter | null = null;
-  private dissolveMs = -1; // -1 = not dissolving; counts up from 0 once startDissolve fires
-  private heatHazeFilter: HeatHazeFilter | null = null; // lazily built — most actors never burn
-  private heatHazeActive = false;
+  // The four conditionally-active skin shaders (shield shell / hit outline / death dissolve /
+  // burn heat-haze) and the rule that composes them into one `filters` list live in
+  // `actorFilters.ts` — see its header for why this is composition and not a base class. This
+  // object owns no engine state; `Actor` mirrors sim values into it and ticks its clocks.
+  private readonly fx: ActorFilters = new ActorFilters({
+    setSkinFilters: (filters) => {
+      this.skin.view.filters = filters;
+    },
+  });
   private weaponKind: WeaponKind | null | undefined = undefined;
   private weaponName: string | undefined = undefined;
   private weaponElement: DamageType | undefined = undefined;
@@ -133,8 +126,16 @@ export class Actor extends Entity {
   private readonly hover: { base: number; amp: number; periodMs: number } | null;
   private hoverT: number;
 
-  constructor(faction: Faction, radiusPx: number, tint?: number, boss = false, atlasKey?: string) {
+  constructor(
+    faction: Faction,
+    radiusPx: number,
+    tint?: number,
+    boss = false,
+    atlasKey?: string,
+    element?: DamageType,
+  ) {
     super();
+    this.element = element;
     this.radiusPx = radiusPx;
     this.isBoss = boss;
     // The actor container sorts children so the weapon can sit in front of / behind.
@@ -326,71 +327,30 @@ export class Actor extends Entity {
       h: this.isBoss ? 6 : 4,
       ratio,
       local: this.isLocal,
+      element: this.element,
     });
   }
 
-  // Mirror the engine actor's lingering status (design/03/07). Draws one glowing
-  // ring per active effect; redraws only when the active set changes (the pulse is
-  // an alpha animation in interpolate, so a steady burn doesn't rebuild geometry).
+  /**
+   * Mirror the engine actor's lingering status (design/03/07). Redraws only when the active SET
+   * changes — the pulse is an alpha animation in `interpolate`, so a steady burn never rebuilds
+   * geometry. What the aura looks like lives in `statusAura.ts`; the caching and the hand-off to
+   * the burn shader stay here, because both are this actor's own state.
+   */
   setStatus(status: StatusState): void {
-    let mask = 0;
-    for (const a of AURAS) if (a.active(status)) mask |= a.bit;
+    const mask = auraMaskOf(status);
     if (mask === this.auraMask) return;
-    const prevMask = this.auraMask;
     this.auraMask = mask;
-
-    const g = this.statusAura;
-    g.clear();
-    if (mask !== 0) {
-      const r = this.radiusPx;
-      let ring = 0;
-      for (const a of AURAS) {
-        if (!(mask & a.bit)) continue;
-        const rad = r * (1.15 + ring * 0.22);
-        // An ellipse, not a circle (2026-08-18 depth pass): an aura wraps the body in a
-        // TILTED view, so it foreshortens vertically exactly like the ground shadow and the
-        // shield ring. A true circle is the single loudest "this is a flat decal" cue a
-        // round overlay can give, which is what the shield's own report was about.
-        g.ellipse(0, 0, rad, rad * SHADOW_SQUASH).stroke({ color: a.color, width: 3, alpha: 0.55 });
-        ring++;
-      }
-    }
-
-    // Heat-haze distortion (design/01 fidelity roadmap milestone 5, `HeatHazeFilter`) —
-    // the silhouette itself shimmers while burning, on top of the ring above. Burn is
-    // bit 1 (AURAS[0]); only reacts on an actual burn on/off edge, not every aura change
-    // (a chill/poison toggle alongside an ongoing burn shouldn't rebuild this filter).
-    const wasBurning = (prevMask & 1) !== 0;
-    const isBurning = (mask & 1) !== 0;
-    if (isBurning !== wasBurning) {
-      if (isBurning && !this.heatHazeFilter) this.heatHazeFilter = new HeatHazeFilter();
-      this.heatHazeActive = isBurning;
-      this.applySkinFilters();
-    }
+    drawStatusAura(this.statusAura, mask, this.radiusPx);
+    // Heat-haze distortion while burning. The on/off edge is detected inside
+    // `ActorFilters.setBurning`, so this is an unconditional hand-off.
+    this.fx.setBurning((mask & AURA_BIT_BURN) !== 0);
   }
 
-  // Mirror the engine actor's two-pool shield (design/02/05/07) as a shimmering rim-glow
-  // (design/01 fidelity roadmap milestone 5, `EnergyShieldFilter`). maxShield <= 0 is the
-  // common case (most enemies, the 0-shield starter) and stays a cheap no-op — the filter
-  // is only ever built for an actor that actually carries a shield pool. Ratio 0 (broken,
-  // still has a maxShield) removes it — the `shield_break` event's own flash already
-  // covers that instant, so there's nothing left for the glow to do.
+  /** Mirror the engine actor's two-pool shield (design/02/05/07) — see `ActorFilters.setShield`
+   *  for the shell itself and for why `maxShield <= 0` is a cheap no-op. */
   setShield(shield: number, maxShield: number): void {
-    if (maxShield <= 0) {
-      this.shieldRatio = -1;
-      this.setShieldActive(false);
-      return;
-    }
-    const ratio = Math.max(0, Math.min(1, shield / maxShield));
-    if (ratio === this.shieldRatio) return;
-    this.shieldRatio = ratio;
-    if (ratio <= 0) {
-      this.setShieldActive(false);
-      return;
-    }
-    if (!this.shieldFilter) this.shieldFilter = new EnergyShieldFilter(THEME.colors.shield);
-    this.shieldFilter.intensity = ratio;
-    this.setShieldActive(true);
+    this.fx.setShield(shield, maxShield);
   }
 
   /** The DRAWN body's half-width and height in world px (`Skin.silhouette`) — what the
@@ -399,61 +359,30 @@ export class Actor extends Entity {
     return this.skin.silhouette;
   }
 
-  private setShieldActive(active: boolean): void {
-    if (active === this.shieldActive) return;
-    this.shieldActive = active;
-    this.applySkinFilters();
-  }
-
-  // Brief "you were just hit" silhouette flash (design/01 milestone 5, `OutlineFilter`)
-  // — real alpha-edge detection, unlike the shield's UV-distance approximation, so it
-  // reads correctly against any body shape. Fired from EventReactor's 'hit' case for
-  // BOTH factions (whichever actor the event names as `target`), independent of the
-  // existing position-anchored `fx.flash()` burst — that one reads as "impact happened
-  // here", this one reads as "THIS actor took it".
+  /** Brief "you were just hit" silhouette flash — see `ActorFilters.hitFlash`. Fired from
+   *  EventReactor's 'hit' case for whichever actor the event names as `target`. */
   hitFlash(): void {
-    if (!this.outlineFilter) this.outlineFilter = new OutlineFilter(0xffffff);
-    this.outlineFilter.alpha = 1;
-    this.outlineMs = HIT_FLASH_MS;
-    this.applySkinFilters();
+    this.fx.hitFlash();
   }
 
-  // Kick off the death-dissolve shader (design/01 milestone 5, `DissolveFilter`) — called
-  // once by Scene when this actor's id drops out of the engine's alive list, instead of
-  // destroying the view that same tick. Hides everything except the dissolving body
-  // itself (weapon/aura/hp-bar are all meaningless on a dead actor and would otherwise
-  // float oddly over a half-dissolved silhouette).
+  /**
+   * Kick off the death-dissolve — called once by `Scene` when this actor's id drops out of the
+   * engine's alive list, instead of destroying the view that same tick.
+   *
+   * The shader belongs to `ActorFilters`; hiding this actor's OTHER furniture belongs here,
+   * because those are its own children: weapon, status aura and health bar are all meaningless
+   * on a dead actor and would otherwise float over a half-dissolved silhouette.
+   */
   startDissolve(): void {
-    if (this.dissolveMs >= 0) return; // already dissolving — defensive, shouldn't double-fire
-    this.dissolveFilter = new DissolveFilter();
-    this.dissolveMs = 0;
+    this.fx.startDissolve();
     this.weaponGfx.visible = false;
     this.statusAura.visible = false;
     if (this.healthBar) this.healthBar.visible = false;
-    this.applySkinFilters();
   }
 
   /** True once the death-dissolve has fully played out — Scene destroys the view then. */
   get isDissolved(): boolean {
-    return this.dissolveMs >= DISSOLVE_MS;
-  }
-
-  // Recompute `skin.view.filters` from whichever of the four conditionally-active
-  // skin-level shaders are currently live — most of the time that is none, and the actor
-  // draws unfiltered, batched with its neighbours. Order is
-  // warp-then-glow-then-highlight-then-dissolve: the UV wobble should distort what the
-  // glow/outline draw (not the other way around), a hit flash should still read on top of
-  // an active shield glow, and a dying actor's dissolve should be the last word regardless
-  // of what else was active the instant it died. Lighting is no longer in this list at all
-  // (2026-08-24): it is one pass over the whole scene layer, running AFTER these composite
-  // rather than first, underneath them — see fx/filters/litFx.ts.
-  private applySkinFilters(): void {
-    const list: Filter[] = [];
-    if (this.heatHazeActive && this.heatHazeFilter) list.push(this.heatHazeFilter);
-    if (this.shieldActive && this.shieldFilter) list.push(this.shieldFilter);
-    if (this.outlineMs > 0 && this.outlineFilter) list.push(this.outlineFilter);
-    if (this.dissolveMs >= 0 && this.dissolveFilter) list.push(this.dissolveFilter);
-    this.skin.view.filters = list.length ? list : null;
+    return this.fx.isDissolved;
   }
 
   private drawWeapon(kind: WeaponKind | null): void {
@@ -530,16 +459,6 @@ export class Actor extends Entity {
       this.auraT += frameDt;
       this.statusAura.alpha = 0.75 + 0.25 * Math.sin(this.auraT * 0.008);
     }
-    if (this.shieldActive && this.shieldFilter) this.shieldFilter.tick(frameDt);
-    if (this.heatHazeActive && this.heatHazeFilter) this.heatHazeFilter.tick(frameDt);
-    if (this.outlineMs > 0) {
-      this.outlineMs = Math.max(0, this.outlineMs - frameDt);
-      this.outlineFilter!.alpha = this.outlineMs / HIT_FLASH_MS;
-      if (this.outlineMs === 0) this.applySkinFilters();
-    }
-    if (this.dissolveMs >= 0 && this.dissolveMs < DISSOLVE_MS) {
-      this.dissolveMs = Math.min(DISSOLVE_MS, this.dissolveMs + frameDt);
-      this.dissolveFilter!.progress = this.dissolveMs / DISSOLVE_MS;
-    }
+    this.fx.tick(frameDt);
   }
 }

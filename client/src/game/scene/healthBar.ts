@@ -1,5 +1,7 @@
 import type { Graphics } from 'pixi.js';
+import type { DamageType } from '@dd/engine';
 import { THEME } from '../theme';
+import { drawElementBadge, elementBadgeRadius } from '../elementIcons';
 
 // Split out of Actor.ts (2026-08-21, 500-line convention): the in-world floating health bar
 // every actor carries above its head (design/10 legibility). A pure drawing function over a
@@ -60,6 +62,17 @@ const LOW_AT = 0.25;
 const CONTOUR_W = 1;
 const BEVEL_H = 1;
 
+/** Element-badge glyph radius, as a multiple of the bar's track height. The badge rides at
+ *  the bar's LEFT end because that is the one piece of an actor's on-screen furniture that
+ *  is already guaranteed legible: `Actor` mounts the bar on `layers.hud`, so unlike anything
+ *  parented to the body it is never behind a wall the occlusion x-ray only partially fades,
+ *  and unlike a fixed offset on the body it is never covered by the orbiting weapon module
+ *  (which sweeps a full circle around every actor, design/13's universal mount). Sized off
+ *  `h` rather than off the actor's radius so a boss's badge scales with its bigger bar. */
+const BADGE_GLYPH_R = 0.85;
+/** Gap between the bar's outer contour and the badge's chip. */
+const BADGE_GAP = 1;
+
 export interface HealthBarStyle {
   /** Track width in world px (the full bar, i.e. hp = max). */
   w: number;
@@ -71,6 +84,13 @@ export interface HealthBarStyle {
    *  (design/10's "which one is me" cue, chosen 2026-08-14 over a ground ring because a bar
    *  above the head never shares screen space with the shield rim-glow). */
   local: boolean;
+  /** Which of design/13's five elements this actor IS, if it is one of the four locked
+   *  elemental variants (`EnemyActor.element`). Draws the ICON half of that doc's locked
+   *  dual-channel law at the bar's left end. Undefined draws no badge at all and leaves the
+   *  bar byte-identical to what it was before badges existed — which is every player, every
+   *  un-elemental mob, and the boss (whose toxic-purple is its own flavour colour, explicitly
+   *  not the poison element hue; see `content/enemies.ts`). */
+  element?: DamageType;
 }
 
 /** Fill colour for an hp fraction. Exported so the test can assert the ramp without
@@ -112,4 +132,14 @@ export function drawHealthBar(g: Graphics, style: HealthBarStyle): void {
 
   // Top bevel, over both track and fill.
   g.roundRect(x + r * 0.5, y, w - r, BEVEL_H, BEVEL_H / 2).fill({ color: BEVEL, alpha: BEVEL_ALPHA });
+
+  // The element badge, outside the contour on the left. Drawn last so it is never clipped by
+  // the fill, and left of the track rather than on it so it never eats bar length — the whole
+  // point of `healthBar.ts`'s 2026-08-21 measurement pass was that the player has to be able
+  // to read the REMAINING fraction, and an icon sitting on the track would take that back.
+  if (style.element) {
+    const glyphR = h * BADGE_GLYPH_R;
+    const cx = x - CONTOUR_W - BADGE_GAP - elementBadgeRadius(glyphR);
+    drawElementBadge(g, style.element, cx, 0, glyphR);
+  }
 }
