@@ -31,6 +31,7 @@ import { Texture } from 'pixi.js';
 import { PLAYER_BASE } from '@dd/engine';
 import { fpToPx } from '../game/coords';
 import { BODY_FILL, BODY_FILL_DEFAULT, RIG_DEFS } from './skinRegistry';
+import { CHAR_BUNDLES } from './preloadArt';
 import { RigSkin } from './RigSkin';
 import { deserializeClip, type AnimationJson } from './taoBundle';
 import { KIND_DEFAULTS, WEAPON_DEFS, MODULE_SCALE, type WeaponVisualDef } from './weaponSkins';
@@ -55,14 +56,16 @@ function pngHeight(path: string): number {
   return read(path).readUInt32BE(20);
 }
 
-/** The (skinName → bundle directory) pairs the GAME preloads, parsed out of main.ts's own
- *  source. Read rather than imported because importing main.ts runs `boot()` (same `?raw`-
- *  style trick as textMetrics.test.ts) — and read at all so a character added to main.ts
- *  can't quietly skip every check in this file. */
+/** The (skinName → bundle directory) pairs the GAME preloads. Taken from the real table so
+ *  a character added there cannot quietly skip every check in this file. */
 function preloadedBundles(): Array<{ name: string; dir: string }> {
-  const source = readFileSync(new URL('../main.ts', import.meta.url)).toString('utf8');
-  const list = source.match(/CHAR_BUNDLES[\s\S]*?\];/)?.[0] ?? '';
-  return [...list.matchAll(/\['([\w-]+)',\s*'\/skins\/([\w-]+)'\]/g)].map(m => ({ name: m[1], dir: m[2] }));
+  // Imported, not scraped. This used to regex `main.ts`'s source for a `CHAR_BUNDLES`
+  // literal, which silently produced an EMPTY list the moment that table moved (it moved
+  // to render/preloadArt.ts when the WeChat entry started sharing it) — every
+  // `describe.each` below would then have vanished with nothing failing except the
+  // length assertion in the next describe, which is the only reason the hole was visible.
+  // The table is a real exported constant now, so read it as one.
+  return CHAR_BUNDLES.map(([name, baseUrl]) => ({ name, dir: baseUrl.replace('/skins/', '') }));
 }
 
 interface Assembly {

@@ -61,6 +61,12 @@ export const RIG_DEFS: Record<string, { rig: Rig; referenceRadius: number }> = {
  * exactly what made a ground shadow read as a black dinner plate the enemy sat in — the
  * shadow was scaled to the box, not to the art.
  *
+ * Re-measured whenever the art is re-encoded: `boss-core` moved 0.68 -> 0.69 in the
+ * 2026-08-25 downsampling pass, because a 4:1 box downsample spreads a hard silhouette edge
+ * across one output texel and the alpha bounding box grows by exactly that texel. That is a
+ * quantisation artifact of the resample, not the art changing shape — but the number has to
+ * follow it, or the shadow is sized for a body that is no longer on disk.
+ *
  * Measured, not guessed: `tools/png-pipeline/pngCodec.mjs` decodes each shipped body PNG and
  * `rigComposition.test.ts` re-measures the alpha bounding box of the REAL files on every run
  * and fails if a number here drifts from it. So re-cropping or replacing a body texture
@@ -74,7 +80,7 @@ export const BODY_FILL: Readonly<Record<string, number>> = {
   'critter-core': 0.7,
   'brute-core': 1,
   'floater-core': 1,
-  'boss-core': 0.68,
+  'boss-core': 0.69,
 };
 /** Fallback for a skin with no measured entry — assume the art fills its declared radius,
  *  which is the conservative direction (a shadow slightly too big, never a missing one). */

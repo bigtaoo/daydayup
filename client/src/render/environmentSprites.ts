@@ -4,8 +4,11 @@
 // weaponSkins.ts: a missing/not-yet-generated sprite just leaves its caller on the
 // existing Graphics fallback, never blocks boot.
 import { Assets, Texture } from 'pixi.js';
+import { resolveAssetUrl } from './assetHost';
 
-const ENV_SPRITE_ASSETS: Readonly<Record<string, string>> = {
+/** Exported so the WeChat package checks can enumerate the real FILES this loader asks
+ *  for — see biomeTiles.ts's BIOME_TILE_ASSETS for the full note. */
+export const ENV_SPRITE_ASSETS: Readonly<Record<string, string>> = {
   door_locked: '/environment/door_locked_raw.png',
   door_open: '/environment/door_open_raw.png',
   // In-run drops (design/09's pickup vocabulary). `weapon` has no file here on purpose —
@@ -47,7 +50,7 @@ export async function preloadEnvironmentSprites(): Promise<void> {
         // texture does nothing (the 2026-08-12 rig-art colour-noise bug, design/12).
         // No `addressMode: 'repeat'` for the same reason biomeTiles.ts withholds it from
         // its sprite keys: wrapping a lone object's edge samples its own far side.
-        const tex = await Assets.load<Texture>({ src: path, data: { autoGenerateMipmaps: true } });
+        const tex = await Assets.load<Texture>({ src: resolveAssetUrl(path), data: { autoGenerateMipmaps: true } });
         textures.set(key, tex);
       } catch {
         // Not generated yet (or failed to fetch) — fine, the caller's Graphics fallback

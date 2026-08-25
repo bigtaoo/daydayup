@@ -7,8 +7,8 @@
       "flipX": false,
       "zOrder": 0,
       "rotation": 0,
-      "scaleX": 0.13671875,
-      "scaleY": 0.13671875
+      "scaleX": 0.546875,
+      "scaleY": 0.546875
     },
     "ring_a": {
       "anchorX": 0.5,
@@ -16,8 +16,8 @@
       "flipX": false,
       "zOrder": 1,
       "rotation": 0,
-      "scaleX": 0.04296875,
-      "scaleY": 0.04296875
+      "scaleX": 0.171875,
+      "scaleY": 0.171875
     },
     "ring_b": {
       "anchorX": 0.5,
@@ -25,8 +25,8 @@
       "flipX": false,
       "zOrder": 1,
       "rotation": 0,
-      "scaleX": 0.04296875,
-      "scaleY": 0.04296875
+      "scaleX": 0.171875,
+      "scaleY": 0.171875
     }
   },
   "animations": {
@@ -37,25 +37,49 @@
         {
           "time": 0,
           "bones": {
-            "core": { "translateY": 0 },
-            "ring_a": { "translateY": 0, "rotation": 0 },
-            "ring_b": { "translateY": 0, "rotation": 0 }
+            "core": {
+              "translateY": 0
+            },
+            "ring_a": {
+              "translateY": 0,
+              "rotation": 0
+            },
+            "ring_b": {
+              "translateY": 0,
+              "rotation": 0
+            }
           }
         },
         {
           "time": 1,
           "bones": {
-            "core": { "translateY": -10 },
-            "ring_a": { "translateY": -6, "rotation": 6 },
-            "ring_b": { "translateY": -6, "rotation": -6 }
+            "core": {
+              "translateY": -10
+            },
+            "ring_a": {
+              "translateY": -6,
+              "rotation": 6
+            },
+            "ring_b": {
+              "translateY": -6,
+              "rotation": -6
+            }
           }
         },
         {
           "time": 2,
           "bones": {
-            "core": { "translateY": 0 },
-            "ring_a": { "translateY": 0, "rotation": 0 },
-            "ring_b": { "translateY": 0, "rotation": 0 }
+            "core": {
+              "translateY": 0
+            },
+            "ring_a": {
+              "translateY": 0,
+              "rotation": 0
+            },
+            "ring_b": {
+              "translateY": 0,
+              "rotation": 0
+            }
           }
         }
       ]
@@ -67,25 +91,41 @@
         {
           "time": 0,
           "bones": {
-            "core": { "scaleX": 1, "scaleY": 1, "alpha": 1 }
+            "core": {
+              "scaleX": 1,
+              "scaleY": 1,
+              "alpha": 1
+            }
           }
         },
         {
           "time": 0.06,
           "bones": {
-            "core": { "scaleX": 1.1, "scaleY": 0.85, "alpha": 0.6 }
+            "core": {
+              "scaleX": 1.1,
+              "scaleY": 0.85,
+              "alpha": 0.6
+            }
           }
         },
         {
           "time": 0.18,
           "bones": {
-            "core": { "scaleX": 0.96, "scaleY": 1.04, "alpha": 1 }
+            "core": {
+              "scaleX": 0.96,
+              "scaleY": 1.04,
+              "alpha": 1
+            }
           }
         },
         {
           "time": 0.3,
           "bones": {
-            "core": { "scaleX": 1, "scaleY": 1, "alpha": 1 }
+            "core": {
+              "scaleX": 1,
+              "scaleY": 1,
+              "alpha": 1
+            }
           }
         }
       ]
@@ -97,33 +137,85 @@
         {
           "time": 0,
           "bones": {
-            "core": { "scaleX": 1, "scaleY": 1, "translateY": 0, "alpha": 1 },
-            "ring_a": { "scaleX": 1, "scaleY": 1, "alpha": 1 },
-            "ring_b": { "scaleX": 1, "scaleY": 1, "alpha": 1 }
+            "core": {
+              "scaleX": 1,
+              "scaleY": 1,
+              "translateY": 0,
+              "alpha": 1
+            },
+            "ring_a": {
+              "scaleX": 1,
+              "scaleY": 1,
+              "alpha": 1
+            },
+            "ring_b": {
+              "scaleX": 1,
+              "scaleY": 1,
+              "alpha": 1
+            }
           }
         },
         {
           "time": 0.3,
           "bones": {
-            "core": { "scaleX": 1.08, "scaleY": 0.88, "translateY": 6, "alpha": 1 },
-            "ring_a": { "scaleX": 1.05, "scaleY": 1.05, "alpha": 0.8 },
-            "ring_b": { "scaleX": 1.05, "scaleY": 1.05, "alpha": 0.8 }
+            "core": {
+              "scaleX": 1.08,
+              "scaleY": 0.88,
+              "translateY": 6,
+              "alpha": 1
+            },
+            "ring_a": {
+              "scaleX": 1.05,
+              "scaleY": 1.05,
+              "alpha": 0.8
+            },
+            "ring_b": {
+              "scaleX": 1.05,
+              "scaleY": 1.05,
+              "alpha": 0.8
+            }
           }
         },
         {
           "time": 0.6,
           "bones": {
-            "core": { "scaleX": 0.7, "scaleY": 0.5, "translateY": 14, "alpha": 0.5 },
-            "ring_a": { "scaleX": 0.6, "scaleY": 0.6, "alpha": 0.3 },
-            "ring_b": { "scaleX": 0.6, "scaleY": 0.6, "alpha": 0.3 }
+            "core": {
+              "scaleX": 0.7,
+              "scaleY": 0.5,
+              "translateY": 14,
+              "alpha": 0.5
+            },
+            "ring_a": {
+              "scaleX": 0.6,
+              "scaleY": 0.6,
+              "alpha": 0.3
+            },
+            "ring_b": {
+              "scaleX": 0.6,
+              "scaleY": 0.6,
+              "alpha": 0.3
+            }
           }
         },
         {
           "time": 0.9,
           "bones": {
-            "core": { "scaleX": 0.4, "scaleY": 0.3, "translateY": 18, "alpha": 0 },
-            "ring_a": { "scaleX": 0.3, "scaleY": 0.3, "alpha": 0 },
-            "ring_b": { "scaleX": 0.3, "scaleY": 0.3, "alpha": 0 }
+            "core": {
+              "scaleX": 0.4,
+              "scaleY": 0.3,
+              "translateY": 18,
+              "alpha": 0
+            },
+            "ring_a": {
+              "scaleX": 0.3,
+              "scaleY": 0.3,
+              "alpha": 0
+            },
+            "ring_b": {
+              "scaleX": 0.3,
+              "scaleY": 0.3,
+              "alpha": 0
+            }
           }
         }
       ]
@@ -135,33 +227,75 @@
         {
           "time": 0,
           "bones": {
-            "core": { "scaleX": 0.2, "scaleY": 0.2, "alpha": 0 },
-            "ring_a": { "scaleX": 0.2, "scaleY": 0.2, "alpha": 0 },
-            "ring_b": { "scaleX": 0.2, "scaleY": 0.2, "alpha": 0 }
+            "core": {
+              "scaleX": 0.2,
+              "scaleY": 0.2,
+              "alpha": 0
+            },
+            "ring_a": {
+              "scaleX": 0.2,
+              "scaleY": 0.2,
+              "alpha": 0
+            },
+            "ring_b": {
+              "scaleX": 0.2,
+              "scaleY": 0.2,
+              "alpha": 0
+            }
           }
         },
         {
           "time": 0.15,
           "bones": {
-            "core": { "scaleX": 1.1, "scaleY": 0.9, "alpha": 1 },
-            "ring_a": { "scaleX": 1.1, "scaleY": 1.1, "alpha": 1 },
-            "ring_b": { "scaleX": 1.1, "scaleY": 1.1, "alpha": 1 }
+            "core": {
+              "scaleX": 1.1,
+              "scaleY": 0.9,
+              "alpha": 1
+            },
+            "ring_a": {
+              "scaleX": 1.1,
+              "scaleY": 1.1,
+              "alpha": 1
+            },
+            "ring_b": {
+              "scaleX": 1.1,
+              "scaleY": 1.1,
+              "alpha": 1
+            }
           }
         },
         {
           "time": 0.25,
           "bones": {
-            "core": { "scaleX": 0.95, "scaleY": 1.05 },
-            "ring_a": { "scaleX": 0.95, "scaleY": 0.95 },
-            "ring_b": { "scaleX": 0.95, "scaleY": 0.95 }
+            "core": {
+              "scaleX": 0.95,
+              "scaleY": 1.05
+            },
+            "ring_a": {
+              "scaleX": 0.95,
+              "scaleY": 0.95
+            },
+            "ring_b": {
+              "scaleX": 0.95,
+              "scaleY": 0.95
+            }
           }
         },
         {
           "time": 0.35,
           "bones": {
-            "core": { "scaleX": 1, "scaleY": 1 },
-            "ring_a": { "scaleX": 1, "scaleY": 1 },
-            "ring_b": { "scaleX": 1, "scaleY": 1 }
+            "core": {
+              "scaleX": 1,
+              "scaleY": 1
+            },
+            "ring_a": {
+              "scaleX": 1,
+              "scaleY": 1
+            },
+            "ring_b": {
+              "scaleX": 1,
+              "scaleY": 1
+            }
           }
         }
       ]

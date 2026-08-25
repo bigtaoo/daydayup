@@ -101,10 +101,10 @@ reachable from any unit test — a full `createGameEngine` end-to-end regression
 `dungeonrun.test.ts` reproducing the reported bug shape directly: one room, two
 real spawned enemies (one beside the player, one clear across the room), driven
 through the real tick order, confirming the near one engages immediately while the
-far one fires zero bullets until it closes the distance. **4220 tests green across all 8
-workspace packages** (engine 705 / client 2470 / server 186 / animator 444 / map-editor 282 /
-png-pipeline 39 / desktop-shell 81 / root build-script 13, `npm run check`, re-measured
-2026-08-24 after the room-prop pass — the count and the package list have both drifted before,
+far one fires zero bullets until it closes the distance. **4550 tests green across all 8
+workspace packages** (engine 711 / client 2790 / server 187 / animator 444 / map-editor 282 /
+png-pipeline 42 / desktop-shell 81 / root build-script 13, `npm run check`, re-measured
+2026-08-25 after the WeChat art pass — the count and the package list have both drifted before,
 so re-measure rather than trusting it) after fixing two real bugs found from a live player report ("cleared
 the room, door's unlocked, still can't walk through it") — see the Room & door model
 section below for the full account. Before that, closing a real gap the test-coverage audit
@@ -201,14 +201,11 @@ stray lit coping bar that made north-south runs look broken).
 
 **Parked here by the user's own request, for a dedicated session each — not started:**
 
-- **WeChat cannot load any real art at all.** `WeChatAdapter.fetch` still rejects
-  unconditionally ("the slice loads no remote assets") and `main.wechat.ts` has no preload,
-  so the mini-game target renders the Graphics placeholders only. This is the single locked
-  platform premise (`00` Decision 1: "single engine = smallest WeChat adaptation surface")
-  that has never been cashed.
-- **No atlas packing and no bundle boundaries.** `client/public` is 14 MB of 78 loose PNGs
-  and `main.ts` `await`s every rig bundle before the game starts, versus WeChat's 4 MB main
-  package. `12`'s "bundle boundaries" + lazy per-biome bundles are still To-design.
+- ~~**WeChat cannot load any real art at all.**~~ ~~**No atlas packing and no bundle
+  boundaries.**~~ **Both closed 2026-08-25** — they were one item, as the user said when
+  queuing them. See "WeChat loads real art, and the 14 MB becomes 3.2 MB" below. The
+  premise from `00` Decision 1 is cashed; `12`'s bundle boundaries are designed and
+  shipped; atlas packing is NOT done and is explicitly not what the size problem was.
 - ~~**`13`'s rarity-overlay spec**~~ (白→蓝→紫→橙→金 without colliding with the five reserved
   element hues) — **closed 2026-08-25.** The collision turned out to be already REAL rather than
   hypothetical (four of five rarity hues sit on a reserved element hue, and `common` white is
@@ -4799,3 +4796,187 @@ fire room came out matching the known shipped look, so the poison one can be bel
 measures 33.1 luma against the FX green's 186.4, and the mob reads as a hole punched in the floor.
 
 All workspaces green throughout: `tsc --noEmit`, `check:filelength`, and 4500 tests.
+
+---
+
+## WeChat loads real art, and the 14 MB becomes 3.2 MB (2026-08-25, client + build + art)
+
+The park queue's largest remaining item, and the one the user correctly said was really two
+entries for one problem: `WeChatAdapter.fetch` rejected unconditionally, `main.wechat.ts` had
+no preload at all, and `client/public` was 13.66 MB of loose PNGs against WeChat's 4 MB main
+package. Fixing only the first would have moved the failure from "can't load it" to "can't
+fit it". This is the one locked premise from `00`'s Decision 1 ("single engine = smallest
+WeChat adaptation surface") that had never been cashed, and it is also the reason the user's
+own stated priority — *validate level 1's art and the client's frame rate before stacking
+more features* — had only ever been satisfied on desktop. **Render/build/art only; no
+`ENGINE_VERSION` impact.**
+
+### Three things the queue had wrong
+
+**The image path never needed `fetch`.** Pixi v8's texture parser only calls `fetch` on its
+`createImageBitmap` path; with no `globalThis.createImageBitmap` — exactly the WeChat case —
+it falls back to `DOMAdapter.createImage()` + `.src = url`
+(`pixi.js/lib/assets/loader/parsers/textures/loadTextures.mjs:46`), and
+`WeChatAdapter.createImage` had been implemented since the adapter was written. What actually
+blocked real art was the JSON sidecars, and worse than recorded: `taoBundle.ts` called the
+GLOBAL `fetch`, which a mini-game does not have at all. All 14 sidecars together are 43 KB.
+`fetch` stays deliberately unimplemented — nothing in production reaches it, and anything that
+does is asking for a REMOTE asset, which is a bundle-boundary decision rather than a loader
+detail.
+
+**The 14 MB was not a missing atlas packer.** It was source art shipped at authoring
+resolution. `orb-core`'s four bone textures were 1254² while `skirmisher-core` and
+`juggernaut-core` — the same rig, the same bindings — had been 256² for months, a 30×
+difference per file (`eye.png`: 1087 KB vs 35 KB). Six byte-identical 650 KB `socket_*.png`
+copies accounted for 3.9 MB on their own. Downsampling alone took `client/public` from
+**13.66 MB to 3.20 MB**. Atlas packing would have saved almost none of it — merging RGBA PNGs
+removes no pixels — so it stays queued for its real benefit (draw calls), which is not urgent
+at a 2.1 ms render p50.
+
+**WeChat's limits are wider than the note said.** Official 分包 docs: main ≤ 4 MB, a standard
+subpackage has **no individual cap**, an independent subpackage ≤ 4 MB, whole game ≤ 30 MB.
+The parked note recorded only the 4 MB figure.
+
+### What shipped
+
+- **`render/assetHost.ts`** — one seam for how art is addressed and how its sidecars are read.
+  Web is the identity function plus `fetch`; WeChat is `packedPathFor` plus
+  `FileSystemManager.readFileSync`. The five loaders (`taoBundle` / `biomeTiles` / `uiSkins` /
+  `environmentSprites` / `weaponSkins`) kept their public shape exactly; no call site changed.
+- **`render/preloadArt.ts`** — `preloadCoreArt()`, called by BOTH entries. The character table
+  used to be inlined in `main.ts`, which is the mechanism behind "the mini-game renders
+  placeholders": there was nothing for the other entry to call.
+- **`render/assetPacks.json` + `assetManifest.ts` + `packLoader.ts`** — the bundle-boundary
+  table, read by three consumers (runtime, build, gate) so they cannot drift, plus the
+  memoised `ensurePack`. Four subpackages hold what a fresh run cannot reach: the
+  ice/lightning/poison swatches (`theme.ts` maps the only authored dungeon to `fire`, and
+  everything without a `dungeonConfig` to `neutral`) and `skins/boss-core` (`blightlord`,
+  floor 5 only). `brute-core`/`floater-core` deliberately stay in `main` — both spawn on
+  FLOOR 1, so a pack holding them would be a lie the moment it became lazy. All four load
+  once at boot, which satisfies WeChat's first-download rule without an `await` on the way
+  into a room; real laziness later is `ensurePack(name)` at the point of use.
+- **`build/wechatAssetSync.mjs`** — mirrors `client/public` into `platforms/wechat` by pack and
+  generates `game.json` (generated, not copied, because a second pack has to appear in it as a
+  `subpackages` entry). It PRUNES: a renamed texture stops costing bytes twice.
+- **`build/checkWeChatPackage.mjs`** (`npm run check:wechatpackage`, folded into
+  `npm run check`) — the byte gate. Reads `client/public` and the pack table, so it runs
+  without a build.
+- **The art**: rig bones to 256, UI icons to 128, `hub_bg` to 384, weapons to 160,
+  `npc_forger` held at 256 (it is drawn up to 220 px tall). `processPNG` gained `trim: false`
+  (`compress.mjs --no-trim`), which is mandatory for rig art — `animation.json` binds a bone as
+  `scale = authoringPx / sourceWidth` with the pivot at the canvas centre, so cropping the
+  transparent margin resizes AND re-pivots it. Every binding scale and all 27 weapon `scale`
+  divisors moved with the files.
+
+**Main 3.31 MB / 4.00 MB**, of which 0.90 MB is `js/game.js`, plus four subpackages totalling
+0.64 MB (3.95 MB whole-game against the 30 MB ceiling). The gate enforces raw bytes
+deliberately: WeChat's docs state the limit without saying whether it is measured before or
+after compression, so raw is the conservative direction, and the gate prints the compressed
+estimate (~3.31 MB) alongside rather than depending on the guess.
+
+### A device-blocking bug the new test found on its first run
+
+`Assets.init()` throws `ReferenceError: document is not defined` on this runtime — its format
+detections include video probes that call `document.createElement('video')`. `Assets` sets its
+`_initialized` flag BEFORE running them, so every concurrent load races straight past the
+throw. The symptom on a device would therefore not have been a crash but **exactly one
+arbitrary texture missing**, whichever load happened to be first — here it was
+`gun_default.png`, the never-invisible fallback silhouette, which is about the least likely
+thing anyone would have noticed. `preloadCoreArt()` now calls `Assets.init` explicitly with
+the host's options (`{ skipDetections: true }` on WeChat) before the first load.
+
+### Verification, four tiers, none needing a device
+
+The user asked whether the offline-composition/real-pixel method reused here. Partly.
+
+1. **A WeChat-shaped simulation suite** (`wechatAssetLoad.test.ts`) — delete `fetch` /
+   `createImageBitmap` / `document` / `window` / `Image` / `XMLHttpRequest`, install a `wx`
+   fake backed by the REAL shipped files, run the REAL `preloadCoreArt()` through the real Pixi
+   `Assets` pipeline and the real `WeChatAdapter`. The only fake is `wx`. This is what found
+   the `Assets.init` bug. It cannot prove what the real base library does — that
+   `wx.createImage()` fills `width`/`height` before `onload`, or that
+   `readFileSync(..., 'utf8')` returns a string on the lowest base library.
+2. **The byte gate**, which is the brake the "every new asset costs a bit more" worry was
+   missing.
+3. **A live-renderer A/B**, and this is where the offline method did NOT transfer. An offline
+   box-downsample comparison of old vs new art gave numbers that swung by more than the effect
+   being measured — going through a *smaller* intermediate sometimes matched the reference
+   better, which is impossible as information loss and obvious as resampling-grid phase. The
+   comparison was redone through the actual renderer: each texture drawn at its real on-screen
+   size into its own `RenderTexture`, read back with `extract.pixels`, old art staged under
+   `client/public/__ab/` from git and loaded alongside. Result — the exactly-halved families
+   are essentially pixel-identical (`icon_play` p50 0.1 / p95 0.8 / max 1.0 of 255;
+   `gun_scattergun` p50 0.2 / p95 3.3), and the rig art's non-integer 1254 to 256 step reads
+   p50 0.7–4.5 / p95 15–21, concentrated on silhouette edges. **That is what settled 320 to 160
+   over a rounder-looking 192**: only an exact 2:1 step makes every output texel the mean of
+   exactly four inputs.
+4. **A WebGL1 audit** (`texturePowerOfTwo.test.ts`) for a hazard nobody had named:
+   `GlTextureSystem` gates mipmap generation on `nonPowOf2mipmaps || isPowerOfTwo` and forces
+   clamp on `!nonPowOf2wrapping && !isPowerOfTwo`, with both flags equal to `isWebGl2`. On a
+   WebGL1-only device every non-power-of-two texture silently loses its mip chain — reproducing
+   the 2026-08-12 colour-noise bug — and every wrapping one is clamped. Neither logs. The test
+   pins the wrapping half and records the four `wallface_*` swatches (256x125..127) as a known
+   gap; padding them to 256x128 is one row, but their crown rows are measured against that exact
+   height (`wallTone.ts`'s `FACE_CROWN_ROWS`), so it is an art decision, not a packaging one.
+
+One thing the alpha audit flagged and one thing it did not: `ui/icon_account.png` now reads
+HAZE, and it is not — 1290 of its 1292 midtone-alpha texels touch an opaque neighbour, i.e.
+antialiased silhouette from an exact 2:1 box step, not the translucent-background bug the
+audit's heuristic is looking for.
+
+All workspaces green: `tsc --noEmit`, `check:filelength`, `check:wechatpackage`, and **4550
+tests** (engine 711 / client 2790 / server 187 / animator 444 / map-editor 282 / png-pipeline
+42 / desktop-shell 81 / root build-script 13).
+### Then it was run in the real simulator — the art half passed, the GAME half did not
+
+Same day, once a real mini-game appid existed. DevTools 2.01.2510280, appid
+`wx25a3b18a3e83ffce`, opened with `cli open --project platforms/wechat`.
+
+**What passed, against the real base library rather than the `wx` fake:** 7/7 rig bundles,
+5/5 biome element sets, 17/17 UI textures, 11/11 environment sprites, 25/25 weapon textures
+plus both kind defaults — each at its exact post-downsampling dimensions. **`wx.loadSubpackage`
+works for real**: `boss-core` and the ice/lightning/poison swatches came out of subpackages.
+The runtime reports **`webGLVersion: 2`** with `nonPowOf2mipmaps`/`nonPowOf2wrapping` both
+true, which closes `04`'s checklist item 4 for the simulator — the silent NPOT degradation
+does not bite there (a low-end device is still unknown).
+
+**What did NOT pass: the game does not start.** Boot reaches the end of `preloadCoreArt()` and
+never reaches the first line of `Game.start()`. The only statement between those two points is
+`new Game(app, input, audio)`, and its throw is swallowed by
+`boot().catch(reportWeChatBootFailure)` into a console message DevTools keeps off disk.
+Reproduced across two independent builds. **Not pinned to a line yet** — a third instrumented
+run could not be landed because the simulator stopped reliably re-running new builds from
+`cli open` alone. Prime suspect: `fx.attach()` compiles the post-processing shaders, and a
+shader that fails to compile paints nothing and throws nothing (`12`'s 2026-08-12 lesson).
+
+So resources arrive and nothing is playable. This target is not shippable until that is
+closed, and every remaining checklist item (frame rate, touch feel, lowest base library) sits
+behind it.
+
+**How to get diagnostics out of a mini-game at all**, since none of this is documented and it
+cost most of the session's tooling time: there is no usable automation API.
+`miniprogram-automator` *connects* to `cli auto --auto-port` (use `ws://127.0.0.1:…`, not
+`localhost` — the port binds IPv6-only), but every method it exposes is 小程序-shaped and both
+`evaluate` and `screenshot` hang forever against a GAME. What works is making the game report
+on itself into `wx.env.USER_DATA_PATH`, which lands on disk under
+`User Data/<profile>/WeappSimulator/WeappFileSystem/<openid>/<appid>/usr/`. Write the report
+BEFORE any step that might hang, and drop a breadcrumb per boot stage — that trail is the only
+reason the failure could be localised to one statement.
+
+Two measurement traps, both of which produced confidently wrong conclusions before being
+caught: the IDE process is **`wechatdevtools.exe`** plus node helpers, while
+`微信开发者工具.exe` is only a ~14 MB launcher stub — matching on the latter reports "the IDE
+died" while it runs fine, and force-killing it leaves the real IDE holding the profile
+lockfile. And **`cli open` does not reliably make the simulator re-run a NEW build**, so one
+"the probe wrote nothing" result proves nothing; re-run before concluding.
+
+**Installing the tool: pin the version.** `winget install --id Tencent.WeixinDevTools` gives
+`2.02.2608050`, whose QR login is broken — the scan completes but the session never commits,
+so WeChat reports 登录成功 on the phone while the tool stays logged out (only 游客模式 could
+log in). `--version 2.01.2510280 --force` fixes it. The CLI additionally needs
+**设置 → 安全设置 → 服务端口** switched on once by hand, and a mini-GAME project needs a real
+registered appid — `touristappid` and an empty appid are both rejected with
+`不存在此 AppID (code 10)` even from a logged-in session.
+
+**Still open**: `04`'s checklist items 2, 3, 5, 6, 10 and 11 — with **item 10 (the game does
+not start) blocking every other one**.

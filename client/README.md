@@ -139,7 +139,7 @@ One PixiJS codebase, per-platform entry + platform layer. All share `src/game`.
 |--------|---------|-------|
 | Web (dev) | `npm run dev` | http://localhost:5173 |
 | Web (prod) | `npm run build` | → `dist/` |
-| WeChat mini-game | `npm run build:wechat` | bundles + syncs into `../platforms/wechat/`; open that in WeChat DevTools. **Boot + render verified** (see `../design/04-wechat.md`) |
+| WeChat mini-game | `npm run build:wechat` | bundles the IIFE, mirrors `public/` in by package and generates `game.json` into `../platforms/wechat/`; open that in WeChat DevTools. Real art loads (simulator-verified, main package 3.31 MB / 4.00 MB + 4 subpackages) but **the game does not start there yet** — see `../design/04-wechat.md` |
 | Android | `npm run cap:add:android` then `npm run cap:sync` / `cap:open:android` | opens in Android Studio to build the APK (needs Android SDK) |
 | iOS | `npm run cap:add:ios` then `cap:open:ios` | opens in Xcode (macOS only) |
 

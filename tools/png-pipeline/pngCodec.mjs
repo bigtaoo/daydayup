@@ -244,10 +244,19 @@ function imagesEqual(a, b) {
   return true;
 }
 
-/** Trim + downsample + re-encode a PNG buffer, round-trip-verifying the output decodes back to the exact pre-encode pixels before returning it. Throws rather than silently shipping a mismatched encode. */
-export function processPNG(inputBuf, { targetLongAxis = 320 } = {}) {
+/**
+ * Trim + downsample + re-encode a PNG buffer, round-trip-verifying the output decodes back to the exact pre-encode pixels before returning it. Throws rather than silently shipping a mismatched encode.
+ *
+ * `trim: false` skips the alpha-bbox crop, which matters for any art whose CANVAS carries
+ * meaning. A rig bone's PNG is one: `animation.json` binds it with a scale that is exactly
+ * `authoringPx / sourceWidth` and pins it by its centre, so cropping the transparent margin
+ * moves both the size and the pivot, while a pure downsample only changes the divisor.
+ * Untrimmed output is also SMALLER here in practice — the fully transparent rows either side
+ * cost almost nothing once deflated, whereas a cropped image is dense pixels edge to edge.
+ */
+export function processPNG(inputBuf, { targetLongAxis = 320, trim = true } = {}) {
   const decoded = decodePNG(inputBuf);
-  const trimmed = trimAlphaBoundingBox(decoded);
+  const trimmed = trim ? trimAlphaBoundingBox(decoded) : decoded;
   const resized = boxDownsample(trimmed, targetLongAxis);
   const encoded = encodePNG(resized);
   const roundTrip = decodePNG(encoded);

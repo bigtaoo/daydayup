@@ -9,6 +9,7 @@
 // for how the loose files are produced. Swapping in a real packed atlas
 // later only touches this file, not Rig/RigSkin.
 import { Assets, Texture } from 'pixi.js';
+import { readJsonAsset, resolveAssetUrl } from './assetHost';
 import type { AnimationClip, BoneKeyframe, SpriteBinding } from './types';
 
 interface SerializedBoneKeyframe extends BoneKeyframe {}
@@ -54,8 +55,12 @@ export function deserializeClip(s: SerializedClip): AnimationClip {
 
 export async function loadRigSkinBundle(baseUrl: string): Promise<RigSkinBundle> {
   const [animJson, framesJson] = await Promise.all([
-    fetch(`${baseUrl}/animation.json`).then(r => r.json()) as Promise<AnimationJson>,
-    fetch(`${baseUrl}/frames.json`).then(r => r.json()) as Promise<FramesJson>,
+    // Through `assetHost`, not the global `fetch`: a WeChat mini-game has no `fetch` at
+    // all and reads a file bundled in its code package through FileSystemManager instead
+    // (assetHost.ts). These two sidecars were the ONLY reason this loader could not run
+    // there — the PNG path below never needed anything but a rewritten path.
+    readJsonAsset<AnimationJson>(`${baseUrl}/animation.json`),
+    readJsonAsset<FramesJson>(`${baseUrl}/frames.json`),
   ]);
 
   const bindings = new Map(Object.entries(animJson.bindings));
@@ -77,7 +82,7 @@ export async function loadRigSkinBundle(baseUrl: string): Promise<RigSkinBundle>
         // — classic un-mipmapped texture aliasing, not a flaw in the source art itself.
         // A generated mip chain lets the GPU sample a pre-downsampled level instead.
         const texture = await Assets.load<Texture>({
-          src: `${baseUrl}/${frameId}.png`,
+          src: resolveAssetUrl(`${baseUrl}/${frameId}.png`),
           data: { autoGenerateMipmaps: true },
         });
         textures.set(frameId, texture);

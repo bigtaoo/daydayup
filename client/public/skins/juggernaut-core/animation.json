@@ -34,8 +34,8 @@
       "flipX": false,
       "zOrder": 3,
       "rotation": 0,
-      "scaleX": 0.020734,
-      "scaleY": 0.020734
+      "scaleX": 0.10156420312499999,
+      "scaleY": 0.10156420312499999
     },
     "socket_r": {
       "anchorX": 0.5,
@@ -43,8 +43,8 @@
       "flipX": false,
       "zOrder": 4,
       "rotation": 0,
-      "scaleX": 0.020734,
-      "scaleY": 0.020734
+      "scaleX": 0.10156420312499999,
+      "scaleY": 0.10156420312499999
     }
   },
   "animations": {

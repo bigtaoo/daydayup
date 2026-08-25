@@ -2,21 +2,18 @@ import { Game } from './game/Game';
 import type { Phase } from './game/phase';
 import { WebPlatform } from './platform/web/WebPlatform';
 import { installAutoReload } from './platform/web/autoReload';
-import { preloadRigSkin } from './render/skinRegistry';
-import { preloadWeaponSkins } from './render/weaponSkins';
-import { preloadUiArt } from './render/uiSkins';
-import { preloadBiomeTiles } from './render/biomeTiles';
-import { preloadEnvironmentSprites } from './render/environmentSprites';
+import { preloadCoreArt } from './render/preloadArt';
 import { pinTextMeasurementToPaintCanvas } from './render/textMetrics';
 import { reportWebBootFailure } from './bootError';
 import { installPerf } from './perf';
 import { parseGameQueryParams } from './game/match/gameQueryParams';
 
 // Web entry. The WeChat entry is client/src/main.wechat.ts (loaded by client/wechat/game.js).
-// Both reuse the Game core; only the Platform differs. The real `.tao` rig skin
-// preload (design/12) is web-only for now — WeChat's fetch/Image path for real
-// assets is explicitly unverified (design/12's open questions), so that entry
-// stays on the Graphics placeholder until it's tested on-device.
+// Both reuse the Game core; only the Platform differs — including the art preload, which
+// is now the SHARED render/preloadArt.ts rather than a table inlined here. That inlining
+// was the mechanism behind "the mini-game renders Graphics placeholders only": there was
+// no preload for the other entry to call. Web needs no AssetHost of its own — the default
+// in render/assetHost.ts is the web one.
 async function boot() {
   // Before any Text exists — Pixi caches its measurement canvas on first use (see
   // render/textMetrics.ts for why the default offscreen one mis-measures Cyrillic).
@@ -26,35 +23,7 @@ async function boot() {
   const input = platform.createInput(app);
   const audio = platform.createAudio();
 
-  // Best-effort: a failed/slow preload just leaves that character's skin on its
-  // Graphics placeholder (design/02/12 — art never blocks gameplay). Registry keys
-  // are SkinDef.atlasKey values (content/skins.ts) — the three launch characters
-  // (design/13), all on the shared orb-core rig — plus 'critter-core', the shared
-  // enemy body (design/13's "one neutral-grey critter, re-tinted per variant").
-  const CHAR_BUNDLES: ReadonlyArray<[string, string]> = [
-    ['char_vanguard', '/skins/orb-core'],
-    ['char_skirmisher', '/skins/skirmisher-core'],
-    ['char_juggernaut', '/skins/juggernaut-core'],
-    ['critter-core', '/skins/critter-core'],
-    ['brute-core', '/skins/brute-core'],
-    ['floater-core', '/skins/floater-core'],
-    ['boss-core', '/skins/boss-core'],
-  ];
-  await Promise.all([
-    ...CHAR_BUNDLES.map(async ([name, baseUrl]) => {
-      try {
-        await preloadRigSkin(name, baseUrl);
-      } catch (err) {
-        console.warn(`${name} skin preload failed, falling back to placeholder`, err);
-      }
-    }),
-    preloadWeaponSkins().catch((err) => {
-      console.warn('weapon skins preload failed, socket stays unarmed-looking', err);
-    }),
-    preloadUiArt(),
-    preloadBiomeTiles(),
-    preloadEnvironmentSprites(),
-  ]);
+  await preloadCoreArt();
 
   const game = new Game(app, input, audio);
   game.start();

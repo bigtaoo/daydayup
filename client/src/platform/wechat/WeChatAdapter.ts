@@ -11,9 +11,10 @@ import type { Adapter, ICanvas, ICanvasRenderingContext2D } from 'pixi.js';
 // manageImports:false so Pixi's browser environment probe doesn't overwrite it with
 // the BrowserAdapter (which calls document.createElement and would crash here).
 //
-// Only the surface our slice touches is implemented: createCanvas (Text rasterization),
-// the two context-constructor probes (WebGL1/2 detection, text metrics). Asset/XML/font
-// paths throw — the slice renders with pure Graphics and loads no remote assets.
+// Only the surface this runtime actually reaches is implemented: createCanvas (Text
+// rasterization), createImage (every shipped PNG — see `fetch` below for why that is the
+// whole image path), and the two context-constructor probes (WebGL1/2 detection, text
+// metrics). XML/font paths throw; nothing here parses either.
 
 // Cache constructors sniffed from a throwaway sub-canvas. wx sub-canvases (created after
 // the main one) support only 2D, which is exactly what we need for the 2D probe.
@@ -56,9 +57,21 @@ export const WeChatAdapter: Adapter = {
   getBaseUrl: () => '',
   getFontFaceSet: () => null,
   fetch: (_url: RequestInfo, _options?: RequestInit): Promise<Response> => {
-    // The slice loads no remote assets. Wire this to wx.request/wx.downloadFile
-    // if/when Assets are introduced.
-    return Promise.reject(new Error('WeChatAdapter.fetch is not implemented'));
+    // Deliberately unimplemented, and NOT the reason real art used to be unreachable here.
+    //
+    // Pixi's texture parser only calls `fetch` on the createImageBitmap path; with no
+    // `globalThis.createImageBitmap` (this runtime has none) it takes the `createImage()`
+    // branch above instead, which needs no network primitive at all. The JSON sidecars do
+    // need one, and they go through render/assetHost.ts's WeChat implementation
+    // (FileSystemManager) rather than through here, because a code-package file is not
+    // fetchable — `wx.request` speaks HTTP and cannot read the package.
+    //
+    // So no production path reaches this, and it should stay loud rather than become a
+    // half-working wx.request shim: anything that lands here is asking for a REMOTE asset,
+    // which is a bundle-boundary decision (render/assetPacks.json), not a loader detail.
+    return Promise.reject(
+      new Error('WeChatAdapter.fetch is not implemented — assets load via createImage/assetHost, not fetch'),
+    );
   },
   parseXML: (_xml: string): Document => {
     throw new Error('WeChatAdapter.parseXML is not implemented');

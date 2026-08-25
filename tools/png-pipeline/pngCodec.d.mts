@@ -15,5 +15,5 @@ export function trimAlphaBoundingBox(img: PngImage): PngImage;
 export function boxDownsample(img: PngImage, targetLongAxis: number): PngImage;
 export function processPNG(
   inputBuf: Uint8Array,
-  opts?: { targetLongAxis?: number },
+  opts?: { targetLongAxis?: number; trim?: boolean },
 ): PngImage & { buffer: Buffer; originalWidth: number; originalHeight: number };

@@ -1,0 +1,87 @@
+{
+  "$comment": [
+    "Bundle boundaries (design/12 'Bundle boundaries', design/04 WeChat package limits).",
+    "This file is the ONE place a shipped asset's package membership is decided, and it is",
+    "read by three consumers on purpose: the TypeScript runtime (render/assetManifest.ts,",
+    "which rewrites a path into its packed location), plain Node in the build",
+    "(build/wechatAssetSync.mjs), and the byte gate (build/checkWeChatPackage.mjs). A JSON",
+    "file is the only shape all three can read without a build step, which is what keeps",
+    "them from drifting apart.",
+    "",
+    "WeChat's real limits (official 分包 docs, re-checked 2026-08-25): main package <= 4 MB,",
+    "a standard subpackage has NO individual cap, an INDEPENDENT subpackage <= 4 MB, and the",
+    "whole game (main + every subpackage) <= 30 MB. design/ROADMAP's parked note recorded only",
+    "the 4 MB main-package figure, which made the situation look more constrained than it is.",
+    "",
+    "WHAT IS DEFERRED, AND WHY THESE AND NOTHING ELSE. Every subpackage below holds art that",
+    "is unreachable in a fresh run, checked against the shipped content rather than assumed:",
+    "  - biome-ice / biome-lightning / biome-poison: theme.ts's BIOME_ID_TO_ELEMENT maps the",
+    "    only authored dungeon ('ember') to 'fire', and everything without a dungeonConfig",
+    "    (PvP, arena) falls to 'neutral'. So fire and neutral must stay in main and the other",
+    "    three elements cannot be reached at all today.",
+    "  - boss: 'blightlord' is the only user of skins/boss-core, and it spawns on floor 5 only.",
+    "Explicitly NOT deferred: brute-core and floater-core. `brute` and `floater` both spawn on",
+    "FLOOR 1 (world/dungeons/ember/ember_l1_floor_1.json), so a pack holding them would be a",
+    "lie the moment anyone made it lazy.",
+    "",
+    "HOW THEY LOAD TODAY: all of them, once, at boot (render/packLoader.ts, called from",
+    "preloadCoreArt). That satisfies WeChat's 4 MB main-package rule — which is a rule about",
+    "the FIRST download, not about total bytes — without paying for a per-room await. Making",
+    "a pack genuinely lazy later is an `ensurePack(name)` at the point of use plus dropping it",
+    "from the boot set; no loader and no manifest entry changes.",
+    "",
+    "A rule matches by path PREFIX against the public-relative path a loader asks for (the",
+    "leading-slash form, e.g. '/biome/floor_ice.png'). First matching rule wins; anything",
+    "unmatched falls to `defaultPack`.",
+    "",
+    "`limitBytes` on a subpackage is OUR guard, not WeChat's — a standard subpackage has no",
+    "individual cap, so this is only here to make a pack that quietly becomes the new dumping",
+    "ground fail the gate instead of the 30 MB total."
+  ],
+  "defaultPack": "main",
+  "totalLimitBytes": 31457280,
+  "packs": [
+    {
+      "name": "main",
+      "root": "",
+      "limitBytes": 4194304,
+      "note": "Boot-critical and WeChat's real 4 MB ceiling: every rig a floor-1 run can meet, the UI chrome, environment fixtures, weapons, and the fire/neutral biome swatches. Must also cover js/game.js."
+    },
+    {
+      "name": "biome-ice",
+      "root": "packs/biome-ice",
+      "limitBytes": 2097152,
+      "note": "No authored dungeon maps to 'ice' yet (theme.ts BIOME_ID_TO_ELEMENT)."
+    },
+    {
+      "name": "biome-lightning",
+      "root": "packs/biome-lightning",
+      "limitBytes": 2097152,
+      "note": "No authored dungeon maps to 'lightning' yet."
+    },
+    {
+      "name": "biome-poison",
+      "root": "packs/biome-poison",
+      "limitBytes": 2097152,
+      "note": "No authored dungeon maps to 'poison' yet; design/13 also keeps poison off floor 1 deliberately."
+    },
+    {
+      "name": "boss",
+      "root": "packs/boss",
+      "limitBytes": 2097152,
+      "note": "skins/boss-core — 'blightlord' only, floor 5 only."
+    }
+  ],
+  "rules": [
+    { "prefix": "/biome/floor_ice.png", "pack": "biome-ice" },
+    { "prefix": "/biome/wall_ice.png", "pack": "biome-ice" },
+    { "prefix": "/biome/wallface_ice.png", "pack": "biome-ice" },
+    { "prefix": "/biome/floor_lightning.png", "pack": "biome-lightning" },
+    { "prefix": "/biome/wall_lightning.png", "pack": "biome-lightning" },
+    { "prefix": "/biome/wallface_lightning.png", "pack": "biome-lightning" },
+    { "prefix": "/biome/floor_poison.png", "pack": "biome-poison" },
+    { "prefix": "/biome/wall_poison.png", "pack": "biome-poison" },
+    { "prefix": "/biome/wallface_poison.png", "pack": "biome-poison" },
+    { "prefix": "/skins/boss-core/", "pack": "boss" }
+  ]
+}

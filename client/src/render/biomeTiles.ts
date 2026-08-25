@@ -22,9 +22,13 @@
 // regardless, per the green-on-green camouflage note. When one is authored, it is one entry in
 // `theme.ts`'s BIOME_ID_TO_ELEMENT, not a change here.
 import { Assets, Texture } from 'pixi.js';
+import { resolveAssetUrl } from './assetHost';
 import type { BiomeElement } from '../game/theme';
 
-const BIOME_TILE_ASSETS: Readonly<Record<string, string>> = {
+/** Exported alongside the key list so the WeChat package checks can enumerate the real
+ *  FILES this loader will ask for (`wechatAssetLoad.test.ts`, build/checkWeChatPackage.mjs) —
+ *  a key alone does not say which file it resolves to. */
+export const BIOME_TILE_ASSETS: Readonly<Record<string, string>> = {
   floor_fire: '/biome/floor_fire.png',
   floor_ice: '/biome/floor_ice.png',
   floor_lightning: '/biome/floor_lightning.png',
@@ -76,8 +80,8 @@ export async function preloadBiomeTiles(): Promise<void> {
       try {
         const isSprite = SPRITE_KEYS.has(key);
         const tex = isSprite
-          ? await Assets.load<Texture>({ src: path, data: { autoGenerateMipmaps: true } })
-          : await Assets.load<Texture>(path);
+          ? await Assets.load<Texture>({ src: resolveAssetUrl(path), data: { autoGenerateMipmaps: true } })
+          : await Assets.load<Texture>(resolveAssetUrl(path));
         // Tiling textures must wrap, not clamp-to-edge (Pixi's default) — otherwise a
         // TilingSprite repeats the same clamped border pixel instead of the swatch.
         // A sprite key keeps the default clamp: wrapping a lone object's edge would

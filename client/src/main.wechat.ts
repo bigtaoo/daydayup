@@ -5,12 +5,16 @@
 import 'pixi.js/unsafe-eval';
 import { Game } from './game/Game';
 import { WeChatPlatform } from './platform/wechat/WeChatPlatform';
+import { weChatAssetHost } from './platform/wechat/weChatAssetHost';
+import { setAssetHost } from './render/assetHost';
+import { preloadCoreArt } from './render/preloadArt';
 import { pinTextMeasurementToPaintCanvas } from './render/textMetrics';
 import { reportWeChatBootFailure } from './bootError';
 import { installPerf } from './perf';
 
-// WeChat mini-game entry. It is loaded by client/wechat/game.js, which MUST have
-// already required weapp-adapter so window/document/Image exist before Pixi imports.
+// WeChat mini-game entry, loaded by client/wechat/game.js. There is no weapp-adapter (an
+// older version of this comment claimed there was): the bundle installs Pixi's own
+// DOMAdapter itself, in WeChatPlatform.createApp, before Application.init.
 async function boot() {
   // Same measure-canvas/paint-canvas pinning as the web entry (render/textMetrics.ts) —
   // a no-op-equivalent here if weapp-adapter exposes no OffscreenCanvas, but the two
@@ -20,6 +24,15 @@ async function boot() {
   const app = await platform.createApp();
   const input = platform.createInput(app);
   const audio = platform.createAudio();
+
+  // Real art, same core bundle as the web entry (design/12 "load a core bundle at boot").
+  // The host swap has to happen BEFORE the first load: it is what turns a public-relative
+  // '/skins/...' path into a code-package path, and what routes the JSON sidecars through
+  // FileSystemManager instead of a `fetch` this runtime does not have. Everything under it
+  // is best-effort, so a missing or unreadable asset degrades to the Graphics placeholder
+  // this entry used to render exclusively, rather than failing boot.
+  setAssetHost(weChatAssetHost);
+  await preloadCoreArt();
 
   const game = new Game(app, input, audio);
   game.start();

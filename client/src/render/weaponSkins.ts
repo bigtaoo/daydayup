@@ -13,6 +13,7 @@
 // Preloaded like skinRegistry's character bundles: best-effort, never blocks gameplay
 // if a fetch fails.
 import { Assets, Texture } from 'pixi.js';
+import { resolveAssetUrl } from './assetHost';
 
 export type WeaponVisualKind = 'ranged' | 'melee';
 
@@ -59,17 +60,20 @@ export const MODULE_SCALE = 0.75;
 // Anchor fractions themselves are still first-pass eyeball, good enough since the
 // rotation offset is what actually determines pointing direction.
 // `scale`'s divisor is the SOURCE TEXTURE's own width, so it has to be re-derived whenever
-// that art is resized. Both of these were left at `/1536` after their PNGs were downsampled
-// to 320px (every WEAPON_DEFS sibling below correctly divides by 320) — so the fallback
+// that art is resized — which is exactly what happened again on 2026-08-25, when every file
+// here went 320 px -> 160 px for the WeChat package budget and all 27 divisors moved with
+// them (`rigComposition.test.ts`'s module-proportion band caught the two bundles where they
+// had not yet, before the change left the working tree). Both of these were left at `/1536`
+// after their PNGs were downsampled to 320px — so the fallback
 // silhouette rendered at ~22 authoring-px against an 80-px core, ~0.2x the body, a nub
 // instead of a weapon. Found 2026-08-17 by `rigComposition.test.ts`'s module-proportion
 // band, not by eye: this is the never-invisible FALLBACK path (`resolve()` below), so it
 // only shows up for a weapon id with no entry of its own or after a texture load fails —
 // rare enough to have gone unnoticed, and exactly what that fallback exists to prevent.
-// 90/320 matches `repeater`/`cannon`'s generic housing, mid-range among the real entries.
+// 90/160 matches `repeater`/`cannon`'s generic housing, mid-range among the real entries.
 const KIND_DEFAULTS: Record<WeaponVisualKind, WeaponVisualDef> = {
-  ranged: { path: '/weapons/gun_default.png', anchor: { x: 0.25, y: 0.44 }, scale: 90 / 320 },
-  melee: { path: '/weapons/sword_default.png', anchor: { x: 0.2, y: 0.455 }, scale: 90 / 320 },
+  ranged: { path: '/weapons/gun_default.png', anchor: { x: 0.25, y: 0.44 }, scale: 90 / 160 },
+  melee: { path: '/weapons/sword_default.png', anchor: { x: 0.2, y: 0.455 }, scale: 90 / 160 },
 };
 
 // Both tables are exported for `rigComposition.test.ts`, which multiplies each `scale` by
@@ -77,34 +81,34 @@ const KIND_DEFAULTS: Record<WeaponVisualKind, WeaponVisualDef> = {
 // against the core it mounts on (the check that caught KIND_DEFAULTS' stale divisor above).
 export { KIND_DEFAULTS };
 export const WEAPON_DEFS: Partial<Record<string, WeaponVisualDef>> = {
-  scattergun: { path: '/weapons/gun_scattergun.png', anchor: { x: 0.875, y: 0.245 }, scale: 80 / 320, rotationOffsetRad: deg(-156.8) },
-  seeker: { path: '/weapons/gun_seeker.png', anchor: { x: 0.922, y: 0.278 }, scale: 78 / 320, rotationOffsetRad: deg(-161.3) },
-  mortar: { path: '/weapons/gun_mortar.png', anchor: { x: 0.938, y: 0.628 }, scale: 85 / 320, rotationOffsetRad: deg(165.5) },
-  lasercutter: { path: '/weapons/gun_lasercutter.png', anchor: { x: 0.922, y: 0.382 }, scale: 95 / 320, rotationOffsetRad: deg(-165) },
-  tomahawk: { path: '/weapons/gun_tomahawk.png', anchor: { x: 0.906, y: 0.241 }, scale: 78 / 320, rotationOffsetRad: deg(-162.8) },
-  novaburst: { path: '/weapons/gun_novaburst.png', anchor: { x: 0.875, y: 0.704 }, scale: 80 / 320, rotationOffsetRad: deg(178.4) },
+  scattergun: { path: '/weapons/gun_scattergun.png', anchor: { x: 0.875, y: 0.245 }, scale: 80 / 160, rotationOffsetRad: deg(-156.8) },
+  seeker: { path: '/weapons/gun_seeker.png', anchor: { x: 0.922, y: 0.278 }, scale: 78 / 160, rotationOffsetRad: deg(-161.3) },
+  mortar: { path: '/weapons/gun_mortar.png', anchor: { x: 0.938, y: 0.628 }, scale: 85 / 160, rotationOffsetRad: deg(165.5) },
+  lasercutter: { path: '/weapons/gun_lasercutter.png', anchor: { x: 0.922, y: 0.382 }, scale: 95 / 160, rotationOffsetRad: deg(-165) },
+  tomahawk: { path: '/weapons/gun_tomahawk.png', anchor: { x: 0.906, y: 0.241 }, scale: 78 / 160, rotationOffsetRad: deg(-162.8) },
+  novaburst: { path: '/weapons/gun_novaburst.png', anchor: { x: 0.875, y: 0.704 }, scale: 80 / 160, rotationOffsetRad: deg(178.4) },
   // Drawn the opposite way round from the other 8 (housing/socket on the LEFT, the
   // spinning disc business-end on the RIGHT) — close to gun_default's own convention,
   // so only a small offset.
-  gyre: { path: '/weapons/gun_gyre.png', anchor: { x: 0.219, y: 0.448 }, scale: 85 / 320, rotationOffsetRad: deg(-7.8) },
-  hammer: { path: '/weapons/sword_hammer.png', anchor: { x: 0.906, y: 0.508 }, scale: 75 / 320, rotationOffsetRad: deg(173.7) },
-  spear: { path: '/weapons/sword_spear.png', anchor: { x: 0.906, y: 0.346 }, scale: 100 / 320, rotationOffsetRad: deg(-161.1) },
+  gyre: { path: '/weapons/gun_gyre.png', anchor: { x: 0.219, y: 0.448 }, scale: 85 / 160, rotationOffsetRad: deg(-7.8) },
+  hammer: { path: '/weapons/sword_hammer.png', anchor: { x: 0.906, y: 0.508 }, scale: 75 / 160, rotationOffsetRad: deg(173.7) },
+  spear: { path: '/weapons/sword_spear.png', anchor: { x: 0.906, y: 0.346 }, scale: 100 / 160, rotationOffsetRad: deg(-161.1) },
   // 2026-07-29 batch: prompted this time for the gun_default/sword_default convention
   // directly (socket upper-left, tip lower-right) instead of leaving it to chance — it
   // worked, all 10 landed within ~25 deg of their KIND_DEFAULTS reference, so offsets
   // are small this time instead of the near-180 deg flips the previous batch needed.
   // Anchors are first-pass eyeball (per the note above); rotationOffsetRad IS measured
   // by the same farthest-alpha-pixel-from-anchor method as the batch above.
-  blaster: { path: '/weapons/gun_blaster.png', anchor: { x: 0.22, y: 0.42 }, scale: 80 / 320, rotationOffsetRad: deg(-1.2) },
-  repeater: { path: '/weapons/gun_repeater.png', anchor: { x: 0.2, y: 0.44 }, scale: 90 / 320, rotationOffsetRad: deg(-0.1) },
-  cannon: { path: '/weapons/gun_cannon.png', anchor: { x: 0.22, y: 0.35 }, scale: 90 / 320, rotationOffsetRad: deg(-5.7) },
-  carom: { path: '/weapons/gun_carom.png', anchor: { x: 0.28, y: 0.35 }, scale: 85 / 320, rotationOffsetRad: deg(-13.5) },
-  enemygun: { path: '/weapons/gun_enemygun.png', anchor: { x: 0.35, y: 0.35 }, scale: 80 / 320, rotationOffsetRad: deg(-14.4) },
-  saber: { path: '/weapons/sword_saber.png', anchor: { x: 0.22, y: 0.42 }, scale: 100 / 320, rotationOffsetRad: deg(-12.1) },
-  emberblade: { path: '/weapons/sword_emberblade.png', anchor: { x: 0.22, y: 0.4 }, scale: 100 / 320, rotationOffsetRad: deg(-9.8) },
-  frostbrand: { path: '/weapons/sword_frostbrand.png', anchor: { x: 0.22, y: 0.32 }, scale: 100 / 320, rotationOffsetRad: deg(-15.1) },
-  stormglaive: { path: '/weapons/sword_stormglaive.png', anchor: { x: 0.14, y: 0.32 }, scale: 100 / 320, rotationOffsetRad: deg(-5.8) },
-  leech: { path: '/weapons/sword_leech.png', anchor: { x: 0.28, y: 0.35 }, scale: 90 / 320, rotationOffsetRad: deg(-12.9) },
+  blaster: { path: '/weapons/gun_blaster.png', anchor: { x: 0.22, y: 0.42 }, scale: 80 / 160, rotationOffsetRad: deg(-1.2) },
+  repeater: { path: '/weapons/gun_repeater.png', anchor: { x: 0.2, y: 0.44 }, scale: 90 / 160, rotationOffsetRad: deg(-0.1) },
+  cannon: { path: '/weapons/gun_cannon.png', anchor: { x: 0.22, y: 0.35 }, scale: 90 / 160, rotationOffsetRad: deg(-5.7) },
+  carom: { path: '/weapons/gun_carom.png', anchor: { x: 0.28, y: 0.35 }, scale: 85 / 160, rotationOffsetRad: deg(-13.5) },
+  enemygun: { path: '/weapons/gun_enemygun.png', anchor: { x: 0.35, y: 0.35 }, scale: 80 / 160, rotationOffsetRad: deg(-14.4) },
+  saber: { path: '/weapons/sword_saber.png', anchor: { x: 0.22, y: 0.42 }, scale: 100 / 160, rotationOffsetRad: deg(-12.1) },
+  emberblade: { path: '/weapons/sword_emberblade.png', anchor: { x: 0.22, y: 0.4 }, scale: 100 / 160, rotationOffsetRad: deg(-9.8) },
+  frostbrand: { path: '/weapons/sword_frostbrand.png', anchor: { x: 0.22, y: 0.32 }, scale: 100 / 160, rotationOffsetRad: deg(-15.1) },
+  stormglaive: { path: '/weapons/sword_stormglaive.png', anchor: { x: 0.14, y: 0.32 }, scale: 100 / 160, rotationOffsetRad: deg(-5.8) },
+  leech: { path: '/weapons/sword_leech.png', anchor: { x: 0.28, y: 0.35 }, scale: 90 / 160, rotationOffsetRad: deg(-12.9) },
 
   // 2026-08-03 batch: the 6 starter-frame elemental variants that never got their own
   // silhouette (flamer/cryobolt/teslagun/venomspit all fell back to gun_default) plus
@@ -115,12 +119,12 @@ export const WEAPON_DEFS: Partial<Record<string, WeaponVisualDef>> = {
   // trigger guard (art/weapon/leftover/*ice_weapon_icon*/*crystal_tech_rifle_icon*),
   // which broke this game's no-hands fiction; the prompt was rewritten to forbid that
   // explicitly (art/weapon/prompts.md) and the second attempt landed clean.
-  flamer: { path: '/weapons/gun_flamer.png', anchor: { x: 0.14, y: 0.16 }, scale: 80 / 320, rotationOffsetRad: deg(-40.6) },
-  teslagun: { path: '/weapons/gun_teslagun.png', anchor: { x: 0.08, y: 0.14 }, scale: 80 / 320, rotationOffsetRad: deg(-25.8) },
-  venomspit: { path: '/weapons/gun_venomspit.png', anchor: { x: 0.14, y: 0.16 }, scale: 78 / 320, rotationOffsetRad: deg(-43.2) },
-  cinderscatter: { path: '/weapons/gun_cinderscatter.png', anchor: { x: 0.11, y: 0.10 }, scale: 80 / 320, rotationOffsetRad: deg(-43.8) },
-  cryobolt: { path: '/weapons/gun_cryobolt.png', anchor: { x: 0.08, y: 0.12 }, scale: 80 / 320, rotationOffsetRad: deg(-38.6) },
-  frostseeker: { path: '/weapons/gun_frostseeker.png', anchor: { x: 0.084, y: 0.078 }, scale: 78 / 320, rotationOffsetRad: deg(-42.4) },
+  flamer: { path: '/weapons/gun_flamer.png', anchor: { x: 0.14, y: 0.16 }, scale: 80 / 160, rotationOffsetRad: deg(-40.6) },
+  teslagun: { path: '/weapons/gun_teslagun.png', anchor: { x: 0.08, y: 0.14 }, scale: 80 / 160, rotationOffsetRad: deg(-25.8) },
+  venomspit: { path: '/weapons/gun_venomspit.png', anchor: { x: 0.14, y: 0.16 }, scale: 78 / 160, rotationOffsetRad: deg(-43.2) },
+  cinderscatter: { path: '/weapons/gun_cinderscatter.png', anchor: { x: 0.11, y: 0.10 }, scale: 80 / 160, rotationOffsetRad: deg(-43.8) },
+  cryobolt: { path: '/weapons/gun_cryobolt.png', anchor: { x: 0.08, y: 0.12 }, scale: 80 / 160, rotationOffsetRad: deg(-38.6) },
+  frostseeker: { path: '/weapons/gun_frostseeker.png', anchor: { x: 0.084, y: 0.078 }, scale: 72.9 / 150, rotationOffsetRad: deg(-42.4) },
 };
 
 const textures = new Map<string, Texture>();
@@ -134,14 +138,20 @@ export async function preloadWeaponSkins(): Promise<void> {
     allDefs().map(async ([key, def]) => {
       try {
         // A mounted weapon is a LONE OBJECT drawn far smaller than its source: every def
-        // here scales a 320 px file to ~78-80, and measured live in a real room the sprite
-        // lands at 60 px on screen for a 5.3:1 minification (6.2:1 on a smaller actor).
+        // here scales a 160 px file to ~78-80, and measured live in a real room the sprite
+        // lands at 60 px on screen for a 2.7:1 minification (3.1:1 on a smaller actor —
+        // it was 5.3:1 before the 2026-08-25 WeChat downsampling pass took these files
+        // from 320 px, and a mip chain is still what keeps it readable). 160 rather than a
+        // rounder-looking 192 because 320 -> 160 is an EXACT 2:1 box step: every output
+        // texel is the mean of exactly four inputs, with no resampling phase error at all.
+        // Any other target lands output texels between input texels and smears detail that
+        // the resolution alone would have kept.
         // Worse than the 4:1 that made the pillar need this, on the object the player looks
         // at most, and it sits right on top of the character's eye — the exact spot the
         // 2026-08-12 rig-art colour-noise bug was diagnosed at. Found by an audit of every
         // loader while shipping the room props, not by a report. `repeat` stays off (a lone
         // object's edge would sample its own far side).
-        textures.set(key, await Assets.load<Texture>({ src: def.path, data: { autoGenerateMipmaps: true } }));
+        textures.set(key, await Assets.load<Texture>({ src: resolveAssetUrl(def.path), data: { autoGenerateMipmaps: true } }));
       } catch {
         // Best-effort, like every sibling preloader (uiSkins.ts/biomeTiles.ts) — a
         // per-item try/catch so one bad fetch can't abort every OTHER still-in-flight

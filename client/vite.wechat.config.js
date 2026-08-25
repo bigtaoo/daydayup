@@ -2,6 +2,7 @@ import { defineConfig } from 'vite';
 import { fileURLToPath } from 'node:url';
 import { copyFileSync, mkdirSync } from 'node:fs';
 import { engineAlias } from '../build/ddAlias.mjs';
+import { syncAssets } from '../build/wechatAssetSync.mjs';
 
 // Strip Pixi's WebGPU renderer from the WeChat bundle.
 //
@@ -32,9 +33,10 @@ const stripWebGPU = {
 // the project WeChat DevTools actually opens (it keeps its own project.config.json,
 // which carries the real appid, so we never overwrite that). This makes
 // `npm run build:wechat` produce a ready-to-open project in one step.
+// game.json is NOT copied here — build/wechatAssetSync.mjs generates it, because a
+// second asset pack has to appear in it as a `subpackages` entry.
 const PLATFORM_FILES = [
   ['wechat/game.js', '../platforms/wechat/game.js'],
-  ['wechat/game.json', '../platforms/wechat/game.json'],
   ['wechat/js/game.js', '../platforms/wechat/js/game.js'],
 ];
 const copyToPlatform = {
@@ -47,7 +49,11 @@ const copyToPlatform = {
         fileURLToPath(new URL(to, import.meta.url)),
       );
     }
-    console.log('  synced game.js / game.json / js/game.js → platforms/wechat');
+    console.log('  synced game.js / js/game.js → platforms/wechat');
+    // The art, laid out by package (client/src/render/assetPacks.json), plus the generated
+    // game.json. Mirrors rather than copies: a texture deleted from client/public is
+    // removed from the package too, so a rename cannot quietly keep paying for both files.
+    syncAssets(fileURLToPath(new URL('..', import.meta.url)));
   },
 };
 
@@ -60,14 +66,16 @@ const copyToPlatform = {
 // Notes:
 //  - IIFE + inlineDynamicImports → one file, no ESM import/export, no code-split
 //    chunks (the WeChat runtime loads a single script via require).
-//  - No assets are emitted: main.wechat.ts never calls preloadRigSkin/preloadWeaponSkins
-//    (design/12: the real .tao rig fetch/Image path is web-only until verified on-device,
-//    main.ts's own comment), so the slice renders with pure Pixi Graphics placeholders —
-//    there are no texture URLs to rewrite and client/public/skins|weapons (8.7MB+768KB,
-//    2026-07-28 asset audit) are correctly NOT part of this build. Wiring real WeChat art
-//    (and, at that point, subpackaging given WeChat's package-size limits) is real future
-//    work gated on that on-device verification landing first, not a gap in this config.
-//    assetsInlineLimit is raised as a guard in case that ever changes silently.
+//  - Assets ARE emitted, as of 2026-08-25: `main.wechat.ts` now runs the same
+//    `preloadCoreArt()` as the web entry, and `copyToPlatform` mirrors client/public into
+//    platforms/wechat by package (build/wechatAssetSync.mjs). They are copied, not bundled
+//    — a mini-game reads its own package files by path, so there are no texture URLs for
+//    Rollup to rewrite. The earlier version of this note said the opposite ("no assets are
+//    emitted... correctly NOT part of this build"), which was true only because the WeChat
+//    entry had no preload to feed. assetsInlineLimit stays high as a guard against an
+//    asset accidentally becoming a base64 string in the IIFE.
+//  - `npm run check:wechatpackage` (build/checkWeChatPackage.mjs) is the byte gate for the
+//    4 MB main package; it reads the same pack table and needs no build to run.
 //  - minify follows Vite's `mode` (production by default, including plain `vite build`)
 //    so the shipped `build:wechat` output is minified; `build:wechat:debug` opts into
 //    unminified output with readable stack traces for DevTools bring-up.

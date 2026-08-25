@@ -36,9 +36,27 @@ interface WxImage {
   onerror: (() => void) | null;
 }
 
+interface WxFileSystemManager {
+  /** Reads a file. A path inside the code package (`a/b/c` or `/a/b/c`, never `./a/b/c`)
+   *  is readable but never writable; `wx.env.USER_DATA_PATH` is the writable area. With
+   *  'utf8' the result is a string, without an encoding it is an ArrayBuffer. */
+  readFileSync(path: string, encoding: 'utf8'): string;
+}
+
 interface Wx {
   createCanvas(): WxCanvas;
   createImage(): WxImage;
+  /** Package-file reads (design/04) — how the art loaders' JSON sidecars are read here,
+   *  since a mini-game has no `fetch`. See platform/wechat/weChatAssetHost.ts. */
+  getFileSystemManager(): WxFileSystemManager;
+  /** Fetches and runs a subpackage declared in game.json's `subpackages` (design/04's
+   *  package budget). Its files do not resolve before this succeeds. Resolved by NAME —
+   *  the `root` lives in game.json, which build/wechatAssetSync.mjs generates. */
+  loadSubpackage(opts: {
+    name: string;
+    success?: () => void;
+    fail?: (res: { errMsg?: string }) => void;
+  }): void;
   getWindowInfo(): WxWindowInfo;
   onTouchStart(cb: (e: WxTouchEvent) => void): void;
   onTouchMove(cb: (e: WxTouchEvent) => void): void;

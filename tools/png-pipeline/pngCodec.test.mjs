@@ -279,6 +279,47 @@ describe('boxDownsample', () => {
   });
 });
 
+describe('processPNG — trim: false', () => {
+  /** The rig-art case (2026-08-25 WeChat downsampling pass). A bone's PNG is bound by
+   *  `animation.json` with `scale = authoringPx / sourceWidth` and pivoted at the canvas
+   *  centre, so the transparent margin is load-bearing geometry: trimming it changes both
+   *  the rendered size and where the bone sits. `trim: false` is what makes re-encoding a
+   *  bone texture a pure change of divisor. */
+  const bordered = () =>
+    makeImage(8, 8, (x, y) =>
+      x >= 2 && x < 6 && y >= 2 && y < 6 ? [200, 20, 20, 255] : [0, 0, 0, 0],
+    );
+
+  it('keeps the full canvas, so the opaque content stays centred at the same fraction', () => {
+    const result = processPNG(encodePNG(bordered()), { targetLongAxis: 4, trim: false });
+    expect(result.width).toBe(4);
+    expect(result.height).toBe(4);
+    const out = decodePNG(result.buffer);
+    // The 4x4 opaque block occupied the middle half of an 8x8 canvas; at 4x4 that is the
+    // middle 2x2. Corners stay transparent — with trimming they would be opaque.
+    expect(pixelAt(out, 0, 0)[3]).toBe(0);
+    expect(pixelAt(out, 3, 3)[3]).toBe(0);
+    expect(pixelAt(out, 1, 1)).toEqual([200, 20, 20, 255]);
+    expect(pixelAt(out, 2, 2)).toEqual([200, 20, 20, 255]);
+  });
+
+  it('differs from the trimming default on the same input', () => {
+    const input = encodePNG(bordered());
+    const trimmed = processPNG(input, { targetLongAxis: 4 });
+    const kept = processPNG(input, { targetLongAxis: 4, trim: false });
+    // Trimming crops to the 4x4 block first, so its 4x4 output is entirely opaque.
+    expect(pixelAt(decodePNG(trimmed.buffer), 0, 0)[3]).toBe(255);
+    expect(pixelAt(decodePNG(kept.buffer), 0, 0)[3]).toBe(0);
+  });
+
+  it('still reports the original dimensions and still round-trip-verifies', () => {
+    const result = processPNG(encodePNG(bordered()), { targetLongAxis: 4, trim: false });
+    expect(result.originalWidth).toBe(8);
+    expect(result.originalHeight).toBe(8);
+    expect(decodePNG(result.buffer).width).toBe(4);
+  });
+});
+
 describe('processPNG', () => {
   it('composes trim + downsample + encode and round-trip-verifies the result', () => {
     // 8x8 source: transparent border, with a 4x4 opaque block of two solid-color

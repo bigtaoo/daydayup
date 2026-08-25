@@ -9,5 +9,5 @@
     "uploadWithSourceMap": true
   },
   "miniprogramRoot": "./",
-  "description": "DayDayUp WeChat mini-game — Pixi v8 + weapp-adapter (see ../../design/04-wechat.md)"
+  "description": "DayDayUp WeChat mini-game — Pixi v8 + our own DOMAdapter, no weapp-adapter (see ../../design/04-wechat.md)"
 }
