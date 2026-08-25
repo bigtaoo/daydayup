@@ -351,7 +351,7 @@ describe('EnergyShieldFilter shimmer pace', () => {
 
 // 2026-08-19 volume pass, then 2026-08-24 user report *"护盾成了一个圆圈, 我希望是圆形护盾的
 // 效果, 最初那种效果是对的"*.
-describe('EnergyShieldFilter ring shape', () => {
+describe('EnergyShieldFilter shell shape', () => {
   /** Shader source with comments stripped, so a number quoted in a comment cannot satisfy a
    *  regex meant to read the real code (same helper the shimmer suite above uses). */
   const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*/g, '');
@@ -388,37 +388,106 @@ describe('EnergyShieldFilter ring shape', () => {
     expect(src).toContain('float dist = length(uv)');
   });
 
-  // 2026-08-19 volume pass. The ring's SIZE, expressed in the only unit that means anything to
-  // a player: body radii. `Actor` pins this filter's area to a square `radiusPx * 3` per side,
-  // so `uv` (region-normalized, minus 0.5) spans ±0.5 across 6 body radii, and
-  // `dist = length(uv) * sqrt(2)`. A `dist` of D therefore sits `D * 6 / sqrt(2)` body radii out.
-  it('hugs the body at ~1.2 body radii instead of ballooning past 2', () => {
-    // Measured before the fix: the band peaked at dist 0.5, i.e. **2.1 body radii** — the ring was
-    // more than twice the size of the character it wrapped, and it blanketed the floor around a
-    // shielded actor's feet with opaque cyan, hiding the ground shadow entirely. That is the whole
+  // 2026-08-19 volume pass, then 2026-08-25's shell rewrite. The shell's SIZE, expressed in the
+  // only unit that means anything to a player: body radii. `Actor` pins this filter's area to a
+  // square `radiusPx * 3` per side, so `uv` (region-normalized, minus 0.5) spans ±0.5 across
+  // 6 body radii, and `dist = length(uv) * sqrt(2)`. A `dist` of D therefore sits
+  // `D * 6 / sqrt(2)` body radii out.
+  const radii = (dist: number): number => (dist * 6) / Math.SQRT2;
+
+  /** The shell's outer-surface radius, in `dist` units, as the shader actually declares it. */
+  function shellRadius(src: string): number {
+    const m = /const float SHELL_R = ([0-9.]+);/.exec(code(src));
+    if (!m) throw new Error('shield shader no longer declares `const float SHELL_R`');
+    return Number(m[1]);
+  }
+
+  it('encloses the whole character at ~1.9 body radii instead of ballooning past 2.1', () => {
+    // Measured before the 2026-08-19 pass: the band peaked at dist 0.5, i.e. **2.1 body radii** —
+    // more than twice the size of the character it wrapped, blanketing the floor around a shielded
+    // actor's feet with opaque cyan and hiding the ground shadow entirely. That is the whole
     // grounding cue of the volume pass, lost whenever a shield was up.
     const src = code(new EnergyShieldFilter().glProgram.fragment!);
-    const m = /smoothstep\(([0-9.]+), ([0-9.]+), dist\) \* \(1\.0 - smoothstep\(([0-9.]+), ([0-9.]+), dist\)\)/.exec(src);
-    if (!m) throw new Error('shield shader no longer has a two-smoothstep rim band over `dist`');
-    const [inner, peak, peak2, outer] = m.slice(1, 5).map(Number);
-    const radii = (dist: number): number => (dist * 6) / Math.SQRT2;
-    expect(peak).toBe(peak2); // one band, not two overlapping ramps
-    expect(radii(peak!)).toBeGreaterThan(1); // outside the silhouette — it is a shield, not a skin
-    expect(radii(peak!)).toBeLessThan(1.45); // ...and not a pool on the floor
-    expect(inner!).toBeLessThan(peak!);
-    expect(outer!).toBeGreaterThan(peak!);
-    expect(radii(outer!)).toBeLessThan(1.8); // even the band's faint outer edge stays off the feet
+    const r = shellRadius(src);
+    expect(radii(r)).toBeGreaterThan(1.7); // encloses the whole character, mounted weapon included
+    expect(radii(r)).toBeLessThan(2.1); // ...and is not a pool on the floor
+    // The soft outer bloom past the surface has to stay close to it for the same reason.
+    const fade = /1\.0 - smoothstep\(SHELL_R, SHELL_R \+ ([0-9.]+), dist\)/.exec(src);
+    if (!fade) throw new Error('shield shader no longer fades out just past SHELL_R');
+    expect(radii(r + Number(fade[1]))).toBeLessThan(2.3);
+  });
+
+  // 2026-08-25 user report: *"现在的护盾是一个圆圈包裹着角色, 我希望的是类似一个透明的蛋壳一样的
+  // 效果将角色全部包裹, 而不是一个圆环"*. Every version through 2026-08-24 drew
+  // `smoothstep(a, b, dist) * (1.0 - smoothstep(b, c, dist))` — a band with a HOLE in it, so the
+  // character stood in empty space with a hoop round its waist. These four are what stop a
+  // future retune from reintroducing the hole; the shape they pin is "solid disc, bright limb".
+  describe('is a solid shell, not a ring', () => {
+    it('never gates brightness on being FAR ENOUGH from the centre', () => {
+      // A ring is exactly one thing: a term that RISES with `dist`, zeroing the middle. Every
+      // smoothstep over `dist` in a shell shader must be a negated (falling) one.
+      const src = code(new EnergyShieldFilter().glProgram.fragment!);
+      const steps = [...src.matchAll(/(1\.0 - )?smoothstep\([^)]*dist\)/g)];
+      expect(steps.length).toBeGreaterThan(0);
+      for (const s of steps) expect(s[1]).toBe('1.0 - ');
+    });
+
+    it('fills the interior with a real tint, faint enough to read the character through', () => {
+      const src = code(new EnergyShieldFilter().glProgram.fragment!);
+      const declared = /const float FILL = ([0-9.]+);/.exec(src);
+      if (!declared) throw new Error('shield shader no longer declares `const float FILL`');
+      const m = /shell \* \(FILL \* \(1\.0 - ([0-9.]+) \* color\.a\) \+ ([0-9.]+) \* fresnel\)/.exec(src);
+      if (!m) throw new Error('shield shader no longer mixes a body-damped fill with a fresnel limb');
+      const [fill, damp, limb] = [Number(declared[1]), Number(m[1]), Number(m[2])];
+      expect(fill).toBeGreaterThan(0.05); // a glass shell, not an outline: the middle is painted
+      expect(fill).toBeLessThan(0.3); // ...but the character underneath still has to read
+      // Composited with `color.a = max(color.a, glow * K)` below, the interior is what covers the
+      // ground shadow, so its worst case matters more than its nominal value.
+      const k = Number(/color\.a = max\(color\.a, glow \* ([0-9.]+)\)/.exec(src)![1]);
+      expect(fill * k).toBeLessThan(0.15);
+      expect(fill + limb).toBeCloseTo(1, 6); // the limb reaches full brightness at the surface
+      expect(limb).toBeGreaterThan(fill); // ...and it is the limb that dominates, not the fill
+      // The damping term is what keeps the fill off the ART: at full body alpha the additive wash
+      // drops to `fill * (1 - damp)`. Measured with no damping at all (2026-08-25): the hero's
+      // saturated blue eye came out the same pale cyan as the shell around it. A damp of 1 would
+      // be the other failure — the character would punch a hole in its own bubble.
+      expect(damp).toBeGreaterThan(0.25);
+      expect(damp).toBeLessThan(0.8);
+    });
+
+    it('brightens toward the limb via a sphere normal, which is what makes it read as curved', () => {
+      // `nz` is the sphere normal's z (1 face-on, 0 at the silhouette edge) and `1 - nz` the
+      // grazing-angle term. Flattening the exponent to 1 would wash the whole disc out into a
+      // uniform cyan blob; dropping the term entirely leaves a flat decal.
+      const src = code(new EnergyShieldFilter().glProgram.fragment!);
+      expect(src).toContain('float nz = sqrt(max(0.0, 1.0 - r * r));');
+      const m = /float fresnel = pow\(1\.0 - nz, ([0-9.]+)\);/.exec(src);
+      if (!m) throw new Error('shield shader no longer derives a fresnel term from the sphere normal');
+      expect(Number(m[1])).toBeGreaterThanOrEqual(2); // tight against the edge, not a wash
+    });
+
+    it('carries a specular highlight, offset from the centre and inside the shell', () => {
+      // The one cue that reads instantly as "curved and transparent". Centred, it would just be a
+      // second glow blob; outside the surface it would float free of the shell.
+      const src = code(new EnergyShieldFilter().glProgram.fragment!);
+      const m = /vec2 hi = uv - vec2\(([-0-9.]+), ([-0-9.]+)\);/.exec(src);
+      if (!m) throw new Error('shield shader no longer places a specular highlight');
+      const offset = Math.hypot(Number(m[1]), Number(m[2])) * Math.SQRT2; // in `dist` units
+      expect(offset).toBeGreaterThan(0.05 * shellRadius(src)); // genuinely off-centre
+      expect(offset).toBeLessThan(0.8 * shellRadius(src)); // ...and well inside the surface
+      expect(src).toContain('float spec = shell *'); // masked by the shell, so it cannot outlive it
+    });
   });
 
   it('paints itself onto transparent background at well under full opacity', () => {
-    // `color.a = max(color.a, glow * K)` is what draws the ring OUTSIDE the body's own alpha, so
+    // `color.a = max(color.a, glow * K)` is what draws the shell OUTSIDE the body's own alpha, so
     // K is also the knob deciding how much floor a shielded actor hides. 1.0 would be a solid
     // cyan disc over the shadow.
     const src = code(new EnergyShieldFilter().glProgram.fragment!);
     const m = /color\.a = max\(color\.a, glow \* ([0-9.]+)\)/.exec(src);
     if (!m) throw new Error('shield shader no longer writes `color.a = max(color.a, glow * K)`');
     expect(Number(m[1])).toBeLessThanOrEqual(0.75);
-    expect(Number(m[1])).toBeGreaterThan(0.4); // still a visible ring, not a hint
+    expect(Number(m[1])).toBeGreaterThan(0.4); // still a visible shell, not a hint
   });
 });
 

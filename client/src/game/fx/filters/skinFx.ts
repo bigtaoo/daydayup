@@ -1,5 +1,5 @@
 // Split out of fx/filters.ts (2026-08-18, 500-line convention): the four PER-ACTOR skin
-// filters (design/01 fidelity-roadmap milestone 5) — shield rim-glow, hit outline,
+// filters (design/01 fidelity-roadmap milestone 5) — shield shell, hit outline,
 // death dissolve, burn heat-haze. Attached to one `Skin.view` at a time by
 // `Actor.applySkinFilters`, never to the whole screen.
 import { Filter, GlProgram, UniformGroup, defaultFilterVert } from 'pixi.js';
@@ -17,7 +17,7 @@ uniform float uTime;
 void main(void)
 {
     vec4 color = texture(uTexture, vTextureCoord);
-    // Region-normalized, NOT raw \`vTextureCoord\` — this ring's centre is the whole point
+    // Region-normalized, NOT raw \`vTextureCoord\` — this shell's centre is the whole point
     // of the filter and the raw coord's midpoint is the pool texture's, not the actor's.
     // See FRAME_UV above for the full story (this is the bug that produced the long-
     // running "shield renders as a partial crescent" report).
@@ -33,37 +33,69 @@ void main(void)
     // squashed version read on screen as a flat hoop threaded through the character at gun
     // height — the "圆圈" of the report — instead of a bubble enclosing it.
     float dist = length(uv) * 1.4142135;
-    // A band hugging the silhouette's own bounding circle, not the true alpha edge —
-    // same UV-distance trick as VignetteFilter above, so it needs no extra per-skin
-    // wiring to read correctly against both the Graphics placeholder body and a real
-    // .tao rig sprite.
-    // Band radius (2026-08-19 volume pass). \`uv\` spans ±0.5 across a filterArea 6 body radii
-    // wide, so \`dist\` 0.5 sits 2.1 BODY RADII from the actor's centre — the ring was more than
-    // twice the size of the character it wrapped, and blanketed the floor all round its feet
-    // with opaque cyan. Measured consequence: a shielded actor lost its ground shadow entirely,
-    // and with it every grounding cue the volume pass added. Pulled in to peak at 0.283, i.e.
-    // 1.2 body radii, which hugs the silhouette the way a shield should.
-    float rim = smoothstep(0.17, 0.283, dist) * (1.0 - smoothstep(0.283, 0.40, dist));
+    // A SOLID SHELL, not a rim band (2026-08-25, user report: *"现在的护盾是一个圆圈包裹着
+    // 角色, 我希望的是类似一个透明的蛋壳一样的效果将角色全部包裹, 而不是一个圆环"*). Every
+    // version up to here was \`smoothstep(a, b, dist) * (1.0 - smoothstep(b, c, dist))\` — a
+    // band with a HOLE in it, so the character stood in empty space with a hoop drawn round
+    // its waist. What follows instead treats the region as a glass sphere: the interior is
+    // filled (faintly — you have to still read the character through it), and the brightness
+    // comes from where the surface turns away from the viewer, which is what makes a
+    // transparent shell look like a shell rather than a decal.
+    //
+    // \`SHELL_R\` is the outer surface, in the same \`dist\` units as above. \`Actor\` pins this
+    // filter's area to a square 6 body radii per side, so \`dist\` D sits D * 6 / sqrt(2) body
+    // radii out: 0.44 is ~1.87 radii, an envelope that encloses the WHOLE character — body,
+    // spikes and mounted weapon (the 2026-08-25 report asks for the character 全部包裹, and at
+    // ~1.55 radii the gun barrels stuck out through it) — while stopping short of pooling on the
+    // floor around the feet, where the ground shadow has to stay readable (that is what the
+    // 2026-08-19 volume pass added, and what an opaque overlay here eats).
+    const float SHELL_R = 0.44;
+    // Sphere normal's z at this pixel: 1.0 face-on at the centre, 0.0 at the silhouette
+    // edge. \`1.0 - nz\` is therefore the grazing-angle term — Fresnel, cubed so the limb
+    // brightening stays tight against the edge instead of washing the whole disc out.
+    float r = min(dist / SHELL_R, 1.0);
+    float nz = sqrt(max(0.0, 1.0 - r * r));
+    float fresnel = pow(1.0 - nz, 3.0);
+    // Falls to nothing just PAST the surface, which is also where \`fresnel\` is pinned at 1 —
+    // so the same term doubles as the shell's soft outer bloom. Never rises with \`dist\`:
+    // that is the difference between a shell and the ring this replaced.
+    float shell = 1.0 - smoothstep(SHELL_R, SHELL_R + 0.045, dist);
+    // \`FILL\` is the glass tint — the whole interior is painted, not just the edge, which is the
+    // difference between a shell and an outline — and the fresnel term carries it the rest of the
+    // way to a bright limb. It is DAMPED by the body's own alpha (\`1.0 - 0.55 * color.a\`): over
+    // empty background the fill is the bubble you look through, but over the character it is an
+    // additive wash on top of the art, and at full strength it flattened the hero's face — the
+    // saturated blue eye came out as the same pale cyan as the shell around it.
+    const float FILL = 0.14;
+    float glass = shell * (FILL * (1.0 - 0.55 * color.a) + 0.86 * fresnel);
+    // A single specular blob up and to the left, the one cue that reads instantly as
+    // "curved and transparent" (every drawn soap bubble / egg has one). Positioned in \`uv\`
+    // space at ~0.6 of the shell radius — far enough out to land on CLEAR shell rather than on the
+    // body, where an additive glint over pale character art is invisible. Screen-y points down.
+    vec2 hi = uv - vec2(-0.120, -0.143);
+    float spec = shell * exp(-dot(hi, hi) * 260.0) * 1.3;
     // Shimmer: a slow breathing pulse, not a flicker (user report, 2026-08-17: "护盾的
     // 闪烁频率降低"). Was \`0.6 + 0.4 * sin(uTime * 0.006 + dist * 18.0)\` — 0.006 rad/ms
-    // is ~0.95 Hz, and with the ring's own 18-cycle radial banding scrolling through it
+    // is ~0.95 Hz, and with the shell's own 18-cycle radial banding scrolling through it
     // the combined effect read as a strobe on the character's silhouette rather than as
     // energy. Two changes: the temporal rate drops to ~0.29 Hz (one pulse per ~3.4s),
     // and the swing narrows from ±0.4 to ±0.25 around a brighter base, so the shield
     // stays continuously readable instead of dimming to 0.6x every cycle. The radial
     // term is halved too — it is what turns a slow pulse back into visible ripple
-    // banding as the wave crosses the rim.
+    // banding as the wave crosses the surface.
     float shimmer = 0.75 + 0.25 * sin(uTime * 0.0018 + dist * 9.0);
-    float glow = rim * shimmer * uIntensity;
+    float glow = (glass + spec) * shimmer * uIntensity;
     color.rgb += uColor * glow;
     // 0.85 -> 0.7: what this line does is paint the glow onto TRANSPARENT background outside
-    // the body, so it is also the knob that decides how much floor the shield hides.
+    // the body, so it is also the knob that decides how much floor the shield hides. With the
+    // fill above it now applies to the shell's INTERIOR too — at FILL 0.14 that lands near
+    // 8% alpha over the ground, a tint the shadow still reads through.
     color.a = max(color.a, glow * 0.7);
     finalColor = color;
 }
 `;
 
-/** A shimmering rim-glow around a character's silhouette — the "energy shield" custom
+/** A shimmering transparent shell enclosing a character — the "energy shield" custom
  * shader (design/01 fidelity roadmap milestone 5). `intensity` is driven by the live
  * shield ratio (Actor.setShield): full glow at a full shield pool, fading as it drains,
  * gone once it hits 0 — the `shield_break` event's own flash (EventReactor) covers that
@@ -75,11 +107,11 @@ export class EnergyShieldFilter extends Filter {
     const glProgram = GlProgram.from({ vertex: defaultFilterVert, fragment: shieldFrag, name: 'energy-shield-filter' });
     super({
       glProgram,
-      // The rim ring is positioned relative to the filtered REGION's centre, so the
+      // The shell is positioned relative to the filtered REGION's centre, so the
       // region has to stay the full `Actor.filterArea` square. Pixi otherwise intersects
       // it with the viewport (`FilterSystem._calculateFilterBounds`), which would crop
       // the square — and therefore move its centre — for any shielded actor standing
-      // near a screen edge, reintroducing the lopsided ring in exactly that spot. Safe
+      // near a screen edge, reintroducing the lopsided glow in exactly that spot. Safe
       // to disable here because `filterArea` already bounds this filter to a small fixed
       // square (3× body radius); it is NOT safe for the two screen-wide post-fx above,
       // which rely on the clip to size themselves to the viewport.

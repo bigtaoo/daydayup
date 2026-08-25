@@ -244,6 +244,33 @@ facing continuum, but nothing said it was a **volume standing in a space**.
   A shield is a SPHERE around the body, not a disc under it, and a sphere's silhouette is a
   circle from every angle. Squashed, it read on screen as a flat hoop threaded through the
   character at gun height — the reported 圆圈 — instead of a bubble enclosing it.
+- **...and since 2026-08-25 it is a SOLID shell, not a rim band** (user report: *"现在的护盾是
+  一个圆圈包裹着角色, 我希望的是类似一个透明的蛋壳一样的效果将角色全部包裹, 而不是一个圆环"*).
+  Un-squashing it fixed the ellipse but left the other half of "圆圈" standing: the shader drew
+  `smoothstep(a, b, dist) * (1.0 - smoothstep(b, c, dist))`, a band with a HOLE in it, so a
+  shielded character stood in empty space with a hoop around it. It is now a glass sphere —
+  a filled interior plus a Fresnel limb (`1 - nz` off a sphere normal, cubed) and one specular
+  glint at ~0.6 of the radius, which is the pair of cues that read as "curved and transparent"
+  rather than "decal". Three numbers carry the look, and each is pinned twice — as a source
+  contract (`filters.test.ts`, "is a solid shell, not a ring") and as a MEASUREMENT
+  (`shieldShellModel.test.ts`, which interprets the shipped GLSL and asserts the profile it
+  paints: centre painted, no hole out to the surface, circular at every angle, gone past the
+  fade). Text was the wrong evidence for a question about a shape — two shaders can satisfy
+  every regex and paint different things — and running it found two real facts the source
+  reading had missed: the composite is not quite monotonic (the shimmer bands radially, so a
+  ray outward ripples by ~0.03% of peak), and an alpha bound read at `uTime = 0` is a lucky
+  sample that a doubled composite knob walks straight through:
+  - **No term may rise with `dist`.** That is the whole definition of a ring; every
+    `smoothstep` over `dist` in this shader is a negated (falling) one.
+  - **The fill is damped by the body's own alpha** (`FILL * (1.0 - 0.55 * color.a)`). Over the
+    floor it is the bubble you look through; over the character it is an additive wash on top
+    of the art, and undamped it flattened the hero's face — the saturated blue eye came out the
+    same pale cyan as the shell around it. Measured live, on screen, at both settings.
+  - **The radius grew 1.55 → 1.87 body radii**, because "全部包裹" includes the mounted weapon:
+    at the smaller radius the gun barrels stuck out through the shell. It still stops short of
+    the feet, where the ground shadow has to stay readable (below). The interior composites at
+    ~8% alpha over the floor, so it tints rather than hides it — the failure mode the
+    2026-08-19 volume pass fixed by shrinking the old ring.
 - **The body is shaded as a sphere** (`render/rigShading.ts`). A fixed specular highlight
   toward the key light and a curved terminator falling away from it — drawn, not authored,
   because they must stay pinned to the light's **screen-space** direction while the body they
@@ -1340,10 +1367,11 @@ the app's own layout maths.
    here earlier turned out not to matter in practice. Milestone 2 (lighting) has since
    shipped too (2026-08-03, see above) — the "genuinely blocked on real art" note that used
    to live here no longer applies, now that this project's GPT-Image-2 art counts as final.
-   - **`EnergyShieldFilter`** — a shimmering rim-glow using the same UV-distance-from-
-     centre technique as `VignetteFilter` (not true alpha-edge detection, so it needs no
-     extra per-skin wiring against either the Graphics placeholder body or a real `.tao`
-     rig). `Actor.setShield` drives `intensity` off the actor's live two-pool shield ratio
+   - **`EnergyShieldFilter`** — a shimmering translucent shell enclosing the character
+     (a rim band until 2026-08-25, see "The shield is the deliberate exception" above for
+     the rewrite), built on the same UV-distance-from-centre technique as `VignetteFilter`
+     (not true alpha-edge detection, so it needs no extra per-skin wiring against either the
+     Graphics placeholder body or a real `.tao` rig). `Actor.setShield` drives `intensity` off the actor's live two-pool shield ratio
      (design/02/05/07) — full glow at a full shield, fading as it drains, gone once it
      hits 0 (the `shield_break` event's own flash, `EventReactor`, already covers that
      instant). Its UV-distance-from-0.5 assumption DOES need the render area itself to be

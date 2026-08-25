@@ -4480,3 +4480,85 @@ samples a ramp — they agree to within one band step, and converting it is two 
   swap's restore path separately from its apply path. A `if (!node.parent) continue` guard that is
   right when attaching is what silently skipped the whole restore, and the tell was a "restore check"
   that equalled the A/B delta instead of zero.
+---
+
+## The shield becomes a shell, and a shader you can finally MEASURE (2026-08-25, client-only)
+
+One user report, with a screenshot of the hero circled in red: *"现在的护盾是一个圆圈包裹着角色,
+我希望的是类似一个透明的蛋壳一样的效果将角色全部包裹, 而不是一个圆环"*.
+
+### 1. The look
+
+The 2026-08-24 pass above un-squashed this shield back into a true circle. That fixed the ellipse and
+left the other half of 圆圈 standing: the shader still drew `smoothstep(a, b, dist) * (1.0 -
+smoothstep(b, c, dist))` — a band with a **hole** in it — so a shielded character stood in empty space
+with a hoop around its waist. A ring is not a small shell; it is a different object.
+
+`EnergyShieldFilter` now paints a glass sphere (`fx/filters/skinFx.ts`, 44 lines of the shader
+rewritten, nothing else in the module touched):
+
+- **A filled interior**, `FILL` = 0.14, so the middle is painted at all — the single assertion that
+  separates a shell from a ring, and the one every previous version failed by exactly 100%.
+- **A Fresnel limb.** `nz = sqrt(1 - r²)` is the sphere normal's z; `pow(1 - nz, 3)` is the
+  grazing-angle term that brightens toward the silhouette. Cubed, not linear: linear washes the whole
+  disc into a flat cyan blob, which is the failure mode that reads as "decal" rather than "curved".
+- **One specular glint** at ~0.6 of the radius, up and to the left. At 0.45 of the radius it landed on
+  the body itself, where an additive glint over near-white character art is invisible — found by
+  looking at a real frame, not at the source.
+- **The fill is damped by the body's own alpha** (`FILL * (1.0 - 0.55 * color.a)`). Over the floor it
+  is the bubble you look through; over the character it is an additive wash on top of the art, and
+  undamped it flattened the hero's face — the saturated blue eye came out the same pale cyan as the
+  shell around it. Both settings screenshotted before choosing.
+- **1.55 → 1.87 body radii.** "全部包裹" includes the mounted weapon: at the smaller radius the gun
+  barrels stuck out through the shell. It still stops short of the feet — the interior composites at
+  ~8% alpha over the floor, so the ground shadow the 2026-08-19 volume pass added still reads through
+  it, which is the failure the old ring was shrunk to fix.
+
+Verified live in real Chrome at three shield ratios (full / 31% / 0), console clean — a shader that
+fails to compile paints nothing and throws nothing, so "it looks right" is the only proof that a
+custom filter linked at all.
+
+### 2. `shieldShellModel.test.ts` — running the GLSL instead of reading it
+
+The existing shield suite asserts what the shader *says*: regexes over `glProgram.fragment` for the
+constants and the shape of the expression. That was the wrong kind of evidence for this report. The
+question was about a SHAPE, a shape is a profile of numbers, and two shaders can satisfy every regex
+in that file while painting completely different things.
+
+There is no GL context under vitest on this machine, and `sceneLightModel.test.ts` answered the same
+problem by reimplementing its shader's equation in TS — correct for a lighting equation, but a
+reimplementation cannot catch a shader whose STRUCTURE regressed, since the model would still compute
+a shell while the shader drew a ring. So this file interprets the real thing: `evalGlsl` is a
+GLSL-subset evaluator (tokenizer, Pratt parser, GLSL broadcasting, the builtins this shader uses) that
+executes the shipped `main` — prelude functions, `frameUv`'s pow2 remap and all. It duplicates no
+constant and no formula. Control flow it cannot evaluate throws rather than being skipped.
+
+25 tests in four groups: the shape (centre painted, no hole out to the surface, peak at the surface,
+gone past the fade, circular at 16 angles, a glint that is off-centre and inside the shell), the
+transparency (wash on the art vs on the floor, ground alpha swept over a whole shimmer period, and
+`color.a` untouched where the body is already opaque), the fade with the shield pool and the breathing
+pulse, and the region-centring across four region/pow2-texture mismatches — the crescent bug that took
+this filter three separate fixes is now a **case**, not a comment. The evaluator carries its own three
+tests, because an evaluator that quietly mis-evaluates makes every measurement agree with anything.
+
+**Running it found two things reading the source had not:**
+
+- The composite is **not** monotonic. `sin(uTime * K + dist * 9.0)` bands radially, so a ray outward
+  dips ~0.03% of peak in the flat interior. That is the ripple the term exists for; the test asserts
+  the dip's MAGNITUDE (a ring dips 100%) rather than pretending the profile is clean.
+- An alpha bound read at `uTime = 0` is a **lucky sample**. The first version of the ground-readability
+  test passed with the `glow * 0.7` composite knob mutated to 1.0, because at that radius the shimmer
+  happened to sit near its trough. Sweeping the period and taking the worst instant kills it — and the
+  band had to be narrowed to the flat interior (0..0.6R), since a bound drawn across the limb's own
+  ramp is measuring the limb.
+
+**Mutation battery: 16 mutants, 16 killed by the measured suite alone** (ring band restored, `FILL` to
+0 / 0.17 / 0.2, damping removed, radius, y squashed back into an ellipse, `frameUv` dropped, Fresnel
+exponent, sphere normal linearised, glint centred / removed, alpha knob, `max` replaced by assignment,
+`uIntensity` ignored, shimmer strobed / widened / banded). Every one is killed by at least one of the
+two suites, and the split is informative: the source-contract suite misses "`uIntensity` ignored"
+entirely, and the measured suite catches the dropped `frameUv` with 15 failing tests where the regex
+suite catches it with one. Both suites are kept — they fail on different things.
+
+`npm run check` clean in the client workspace: **2705 tests**, `tsc --noEmit` and `check:filelength`
+green.
