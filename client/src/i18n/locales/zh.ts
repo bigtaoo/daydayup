@@ -32,6 +32,11 @@ export const zh: Translations<typeof en> = {
     controlLayout: '操作布局：{mode}',
     controlLayoutStandard: '标准',
     controlLayoutMirrored: '左手模式',
+    quality: '画质: {mode}',
+    qualityAuto: '自动',
+    qualityHigh: '高',
+    qualityLow: '低',
+    qualityAutoLow: '自动 (低)',
     back: '返回',
   },
   forge: {

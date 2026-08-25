@@ -31,6 +31,11 @@ export const en = {
     controlLayout: 'CONTROLS: {mode}',
     controlLayoutStandard: 'STANDARD',
     controlLayoutMirrored: 'LEFT-HANDED',
+    quality: 'QUALITY: {mode}',
+    qualityAuto: 'AUTO',
+    qualityHigh: 'HIGH',
+    qualityLow: 'LOW',
+    qualityAutoLow: 'AUTO (LOW)',
     back: 'BACK',
   },
   forge: {

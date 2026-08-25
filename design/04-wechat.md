@@ -32,9 +32,26 @@ The WeChat mini-game is the most constrained target: **no DOM, no full window/do
 > registered texture of every loader resolves (checklist item 9). `wx.loadSubpackage` works,
 > and the runtime reports WebGL2.
 >
+> **Update (2026-08-25, fifth pass): the shaders are confirmed to RUN here, and there is now
+> something to turn off.** Two gaps that had nothing to do with each other:
+>
+> - Every perf number in `01` was measured on a desktop Chrome. Nothing had ever been measured
+>   on a phone — and, more to the point, a bad measurement would have had **nothing to act on**:
+>   the four full-viewport filter passes, the per-actor skin shaders and the renderer resolution
+>   all ran unconditionally, with no quality setting anywhere in the codebase. `render/quality.ts`
+>   is the lever; see **Render quality tiers** below. Item 6 is no longer "measure and hope".
+> - The custom shaders had never been shown to COMPILE on this runtime. That mattered because a
+>   shader that fails to compile paints nothing and throws nothing, and the 2026-08-25 boot
+>   verification only established that the composited frame was non-blank — which the (bright,
+>   unfiltered) menu satisfies on its own. Now measured directly: removing `SceneLightFilter`
+>   from the live scene in the simulator changes a large fraction of the frame, so the pass is
+>   compiling and doing real work on the real base library. See **Verification**.
+>
 > Still open before this platform is shippable: everything that needs a real handset —
 > lowest base library (item 2), low-end frame rate (item 3), touch feel (item 5) — plus the
-> raw-vs-compressed package-limit question (item 11).
+> raw-vs-compressed package-limit question (item 11). Item 3 is now answerable **without any
+> tooling on the device**: if the frame watchdog fires, the settings screen's quality button
+> reads `AUTO (LOW)` / `自动 (低)`, which is a low-end device reporting itself.
 >
 > See **Asset loading** for the three mechanisms, **Viewport** for the landscape-phone
 > layout constraint, and **Verification** for exactly what is and is not proven.
@@ -315,6 +332,51 @@ Both are now covered without a device by `client/src/render/wechatTextRaster.tes
 `client/src/game/scene/wechatRoomBuild.test.ts` — the same "WeChat-shaped host, real Pixi"
 method as `wechatAssetLoad.test.ts`, described under **Verification checklist**.
 
+## On-device test plan (what a person holding a phone should actually do)
+
+Everything below needs hardware and cannot be run from here. Ordered by what is most likely to
+find something. Items 3/4/5/6 of the checklist correspond.
+
+**Setup.** 微信开发者工具 → 预览 to get a QR code, scan with the test account. For anything that
+needs a console, use **真机调试** instead of 预览 — it mirrors the device's `console` into the
+IDE, which is where the `[perf]` warnings land.
+
+1. **Does it hold the frame? (item 3)** Play into a room with several enemies and fight for two
+   or three minutes — the sustained-slow detector needs ~6 seconds under 25fps and will not fire
+   on a loading hitch. Then open **设置** and read the quality button.
+   - `自动` — the device held the high tier. That is the answer.
+   - `自动 (低)` — the watchdog fired: this device cannot hold the high tier, and has already
+     been dropped. **This is the result worth reporting**, along with the phone model.
+   - On 真机调试, the `[perf]` console warning additionally names whether the expensive half was
+     `update` (our sim + scene mirroring) or `render` (the GPU submission), which is the
+     difference between a CPU problem and a fill-rate one.
+2. **Is the low tier enough? (item 6)** In the same room, pin 画质 to `高`, play a minute, then
+   pin it to `低` and play the same minute. This is the lighting-cost measurement: `低` removes
+   all four full-viewport passes and halves the renderer resolution. If `低` is comfortable and
+   `高` is not, the tiers are doing their job and the default (`自动`) is correct. **If `低` is
+   still not comfortable, that is a real finding** — it means the cost is not in the shaders and
+   the next place to look is the draw-call/entity budget, not the filters.
+3. **Lowest base library (item 2).** 详情 → 本地设置 → 调试基础库 → set to the lowest version the
+   project targets, then relaunch. Check: does it boot, do menus paint text, does a room load,
+   does the art look right? The simulator has been run on the newest library only, and this is
+   the single cheapest way to find a runtime difference.
+4. **WebGL2 / NPOT (item 4).** On 真机调试, the boot console reports the renderer. What matters:
+   if the device reports WebGL**1**, the shipped art is non-power-of-two and silently loses
+   mipmaps, so look for shimmering/aliasing on the floor and walls when the camera moves. This
+   is a picture-quality question, not a crash one.
+5. **Touch feel (item 5).** The twin-stick is wired and works, but "works" and "feels right" are
+   different claims and only hands can settle the second. Specifically worth judging: dead zone,
+   stick radius, whether the fire stick's aim is precise enough at this zoom, and whether the
+   left-handed mirror in 设置 actually lands where a left-handed player wants it.
+6. **The package limit (item 11).** Only the upload dialog settles whether the 4 MB main-package
+   cap is measured raw or compressed. `npm run check:wechatpackage` reports both numbers (3.32 MB
+   raw / ~2.68 MB compressed as of 2026-08-25), so the upload either accepts it or names which
+   one it meant.
+
+What NOT to spend device time on: anything already closed in the simulator (boot, taps, layout,
+text, art loading, subpackages, the shaders compiling). Those are items 1 and 7-16, and they were
+verified against the real base library.
+
 ## Verification checklist
 
 > Method used so far: drive WeChat DevTools via its CLI (`cli.bat open --project
@@ -336,6 +398,49 @@ It cannot pin what the real base library does — that `wx.createImage()` fills 
 `height` before `onload`, that `readFileSync(..., 'utf8')` returns a string on the lowest
 base library, or anything about uploading a wx `Image` to GL. Those stay below.
 
+**What the shaders do on the real base library (2026-08-25).** The same in-bundle-probe method
+as items 10/12/15, aimed at a question tests cannot reach: a filter whose program fails to
+compile paints nothing and throws nothing, so nothing verified before this distinguished
+"the lighting pass runs" from "the lighting pass silently does nothing". Method: step the game
+into a real room by hand, hide `layers.menu` (`beginRun()` does not — see
+`perf/frameProbe.ts`'s header, this trap wasted the first two attempts and made every diff read
+zero), extract a VIEWPORT-sized frame, then remove one pass at a time and diff. Measured at
+844x390 @ resolution 2:
+
+| removed | frame changed | verdict |
+|---|---|---|
+| `SceneLightFilter` | **27.4%** | compiles, runs, materially lights the scene |
+| `VignetteFilter` + `ChromaticAberrationFilter` | **26.4%** | both compile and run |
+| the bloom-lite `BlurFilter` | **1.7%** (max delta 663) | compiles and runs |
+| the whole low tier (filters only, constant resolution) | **48.2%** | matches the 48.8% measured on web |
+
+With two liveness controls that both fired — hiding `layers.world` moved 93.8% of the frame,
+hiding `layers.entities` 18.4% — and a restore that came back byte-exact (0%). Without those
+controls none of the numbers above would mean anything: the first run of this probe extracted
+`app.stage` with no frame, which uses the stage BOUNDS, i.e. the whole co-resident dungeon
+floor, so 97% of every buffer was off-screen black and every percentage described that
+emptiness rather than the picture.
+
+The bloom row needed its own setup and is the reason to distrust a small number here: it blurs
+the ADDITIVE `fx` layer, which is EMPTY unless something is firing, so the first measurement read
+0% and meant "nothing to blur", not "shader dead". Spawning a muzzle flash first is what turned
+it into evidence. Its small percentage with a large max delta is the correct signature for a
+local glow — which is why `frameProbe`'s diff reports the mean over CHANGED pixels and a bbox
+rather than a whole-frame mean.
+
+**The new settings row is tappable here (2026-08-25).** Driven through the platform's own
+`WeChatEventBridge` — the same path a real finger takes into Pixi's `EventSystem`, not a direct
+`onTap()` call, which would prove nothing about whether this runtime can deliver a touch to a
+widget (item 12). The quality button went `auto` -> `high` on one synthesized tap, with MUTE as
+the control (`false` -> `true`) so that a failure would have distinguished "this button is dead"
+from "this technique is dead". This is the check item 13 would have wanted: a newly added row on
+a screen already known to be tight at 844x390.
+
+The quality tier's resolution knob is confirmed here too: pinning `low` took the renderer from
+2 to 1 and the extracted buffer from 1,316,640 to 329,160 pixels — exactly a quarter — with the
+scene still fully lit (mean luma 45.2 -> 46.7, 0% black; brighter because the vignette is gone,
+which is what a low tier should look like).
+
 Two more suites now use the same method for the two paths that went through a 2D canvas
 rather than the loaders, both written after the bugs in items 14 and 15 got through:
 `client/src/render/wechatTextRaster.test.ts` (text, through the real `CanvasTextGenerator`)
@@ -346,12 +451,28 @@ is exactly what let both bugs ship.
 
 1. [x] Integrate the adapter; the `client` build boots in WeChat DevTools and renders the tilted-view scene. *(2026-07-07, base lib 3.15.2)*
 2. [ ] Verify on the **lowest target base-library version** (not just the latest).
-3. [ ] Real-device check: frame rate on low-end Android (target 30 vs 60 fps).
+3. [ ] Real-device check: frame rate on low-end Android (target 30 vs 60 fps). **Now readable
+   without tooling** (2026-08-25): the frame watchdog (`render/qualityWatchdog.ts`) drops the
+   renderer to the low tier after ~6s below 25fps, and the settings screen then reads
+   `AUTO (LOW)` / `自动 (低)`. So the device answers the question itself — open settings after
+   a few minutes of play and read the button. A remote-debug console additionally shows the
+   `[perf]` warning, which names whether the expensive half was update or render.
 4. [ ] Verify WebGL2 availability; define a fallback path if unavailable. **See "WebGL1
    degrades silently" above** — the fallback already exists inside Pixi and is invisible;
-   what is unknown is only whether any target device takes it.
+   what is unknown is only whether any target device takes it. The simulator reports WebGL2
+   with NPOT mipmaps and wrapping (item 9), so this is a device-only question. It is not purely
+   a performance one: the shipped art is deliberately non-power-of-two (104x128, 249x256,
+   384x288...), so a device that silently falls back to WebGL1 loses mipmaps on all of it,
+   which is a picture-quality regression rather than a crash.
 5. [ ] Touch input on a real device (twin-stick logic is wired; feel needs hands-on).
-6. [ ] Milestone 2: dynamic lighting (lightmap / normal maps) performance on the lowest base library + low-end devices.
+6. [ ] Milestone 2: dynamic lighting (`SceneLightFilter`) performance on the lowest base
+   library + low-end devices. Two halves, and one of them is now closed: **the pass compiles
+   and does real work on the real base library** (2026-08-25 — removing it from the live scene
+   in the simulator changes a large fraction of the composited frame, so it is not silently
+   failing to compile). What remains is purely the COST on a handset — and unlike before, a bad
+   answer now has a remedy: `render/quality.ts`'s low tier turns this pass off along with the
+   other three, and halves the renderer resolution. To measure it by hand on a device, pin the
+   quality setting to `HIGH` and then to `LOW` in the same room and compare.
 7. [x] Real art loads at all, through the real loaders, in a runtime with none of the
    browser globals. *(2026-08-25, `wechatAssetLoad.test.ts` — simulation, not a device.)*
 8. [x] The package fits: main 3.31 MB / 4.00 MB plus four subpackages, gated by
@@ -483,6 +604,14 @@ is exactly what let both bugs ship.
    NaN one, and `Math.max(43.3, NaN)` is NaN — which is how the width reached the glyph canvas
    as `NaN` and collapsed it to 1px. Covered by `client/src/render/wechatTextRaster.test.ts`.
    See **Canvas2D on this runtime**.
+
+16. [x] **The shaders were never shown to COMPILE here, and there was no way to turn them
+   off. Both closed (2026-08-25).** Every perf number in `01` came from a desktop Chrome, and
+   the four full-viewport passes plus the per-actor skin shaders plus the renderer resolution
+   all ran unconditionally — so items 3 and 6 were unanswerable in the only sense that matters:
+   a bad answer had no remedy attached. `render/quality.ts` is the remedy (see `01`'s **Render
+   quality tiers**), and the compile question was settled by measurement rather than by
+   inference — see **Verification** below for the probe and its controls.
 
 **How to get diagnostics out of a mini-game at all.** There is no automation API worth the
 name: `miniprogram-automator` *connects* to `cli auto --auto-port` (use `ws://127.0.0.1:…`,

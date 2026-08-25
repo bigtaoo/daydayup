@@ -189,3 +189,62 @@ describe('ParticleSystem.clear', () => {
     expect(ps.view.children.length).toBe(1);
   });
 });
+
+/**
+ * The quality budget (`render/quality.ts`, 2026-08-25) — the cheapest knob in the fx budget.
+ * Each particle is its own `Graphics` node, so this is CPU per frame plus a draw call whenever
+ * one fails to batch.
+ */
+describe('ParticleSystem.setBudget', () => {
+  it('thins a burst in proportion to the budget', () => {
+    const full = new ParticleSystem();
+    withRandom(0.5, () => full.explosionDebris(0, 0, 0xffffff));
+    const thin = new ParticleSystem();
+    thin.setBudget(0.35);
+    withRandom(0.5, () => thin.explosionDebris(0, 0, 0xffffff));
+    expect(thin.view.children.length).toBeLessThan(full.view.children.length);
+    expect(thin.view.children.length).toBeGreaterThan(0);
+  });
+
+  it('never silences a burst entirely, however small the budget', () => {
+    // A muzzle flash that emits ZERO particles reads as the gun failing to fire — a legibility
+    // regression, not a quality one. At budget 0.01 the arithmetic alone rounds to 0; the floor
+    // is what keeps one particle alive.
+    const p = new ParticleSystem();
+    p.setBudget(0.01);
+    withRandom(0.5, () => p.muzzleFlame(0, 0, 0, 0xffffff));
+    expect(p.view.children.length).toBe(1);
+  });
+
+  it('emits nothing at a budget of exactly 0 — the only value allowed to', () => {
+    const p = new ParticleSystem();
+    p.setBudget(0);
+    withRandom(0.5, () => {
+      p.muzzleFlame(0, 0, 0, 0xffffff);
+      p.explosionDebris(0, 0, 0xffffff);
+      p.shellCasing(0, 0, 0);
+    });
+    expect(p.view.children.length).toBe(0);
+  });
+
+  it('stretches the ambient dust interval instead of dropping motes from a burst', () => {
+    const bounds = { x: 0, y: 0, w: 100, h: 100 };
+    // 1000ms of frames at a 100ms dust interval: 10 motes at full budget.
+    const full = new ParticleSystem();
+    withRandom(0.5, () => { for (let i = 0; i < 10; i++) full.update(100, 100, bounds); });
+    const thin = new ParticleSystem();
+    thin.setBudget(0.5);
+    withRandom(0.5, () => { for (let i = 0; i < 10; i++) thin.update(100, 100, bounds); });
+    // Half the budget, half the motes over the same wall-clock — a sparser room, with no change
+    // in the rhythm of any individual spawn.
+    expect(full.view.children.length).toBe(10);
+    expect(thin.view.children.length).toBe(5);
+  });
+
+  it('stops spawning dust at a budget of 0', () => {
+    const p = new ParticleSystem();
+    p.setBudget(0);
+    withRandom(0.5, () => { for (let i = 0; i < 10; i++) p.update(100, 100, { x: 0, y: 0, w: 100, h: 100 }); });
+    expect(p.view.children.length).toBe(0);
+  });
+});

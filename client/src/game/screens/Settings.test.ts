@@ -10,6 +10,7 @@ import { Settings } from './Settings';
 import { defaultSettingsState, type SettingsState } from '../../settings';
 import { getLocale, setLocale, resetLocaleForTests, LOCALES } from '../../i18n';
 import { estimateMonoWidth } from '../ui/textWidth';
+import { resetActiveQuality, setActiveQuality } from '../../render/quality';
 
 type ButtonInternals = {
   label: { text: string };
@@ -30,6 +31,7 @@ function privateOf(s: Settings) {
     muteBtn: ButtonInternals;
     languageBtn: ButtonInternals;
     controlLayoutBtn: ButtonInternals;
+    qualityBtn: ButtonInternals;
     backBtn: ButtonInternals;
   };
 }
@@ -268,5 +270,66 @@ describe('Settings — button width/centering across locales (autoWidth, 2026-08
     expect(p.muteBtn.label.text).toBe('ВКЛЮЧИТЬ ЗВУК');
     expect(p.muteBtn.width).toBeGreaterThan(120);
     assertPairLayout();
+  });
+});
+
+/**
+ * The render-quality button (`render/quality.ts`, 2026-08-25). Two claims worth pinning: the
+ * cycle visits every setting and wraps, and `'auto'` reports what it actually RESOLVED to —
+ * a player whose phone was downgraded by the frame watchdog must not read "AUTO" on a screen
+ * that is visibly running the low tier.
+ */
+describe('Settings — render quality', () => {
+  afterEach(() => {
+    resetActiveQuality();
+    resetLocaleForTests();
+  });
+
+  it('cycles auto -> high -> low -> auto, reporting each pick through onChange', () => {
+    const s = new Settings();
+    const seen: SettingsState['quality'][] = [];
+    s.onChange = (next) => { seen.push(next.quality); s.show(800, 600, next); };
+    s.show(800, 600, { ...defaultSettingsState(), quality: 'auto' });
+    const p = privateOf(s);
+    p.qualityBtn.onTap?.();
+    p.qualityBtn.onTap?.();
+    p.qualityBtn.onTap?.();
+    expect(seen).toEqual(['high', 'low', 'auto']);
+  });
+
+  it('labels a pinned tier from the setting alone', () => {
+    const s = new Settings();
+    const p = privateOf(s);
+    s.show(800, 600, { ...defaultSettingsState(), quality: 'high' });
+    expect(p.qualityBtn.label.text).toBe('QUALITY: HIGH');
+    s.show(800, 600, { ...defaultSettingsState(), quality: 'low' });
+    expect(p.qualityBtn.label.text).toBe('QUALITY: LOW');
+  });
+
+  it('says AUTO while auto is running high, and AUTO (LOW) once it has dropped', () => {
+    const s = new Settings();
+    const p = privateOf(s);
+    setActiveQuality('high');
+    s.show(800, 600, { ...defaultSettingsState(), quality: 'auto' });
+    expect(p.qualityBtn.label.text).toBe('QUALITY: AUTO');
+
+    // The watchdog fired. The SETTING is unchanged — only the resolved tier moved, and the
+    // button is the only place the player can find that out.
+    setActiveQuality('low');
+    s.show(800, 600, { ...defaultSettingsState(), quality: 'auto' });
+    expect(p.qualityBtn.label.text).toBe('QUALITY: AUTO (LOW)');
+  });
+
+  it('stays centred and translated in every locale', () => {
+    const s = new Settings();
+    const p = privateOf(s);
+    for (const loc of LOCALES) {
+      setLocale(loc);
+      s.show(800, 600, { ...defaultSettingsState(), locale: loc, quality: 'low' });
+      expect(p.qualityBtn.label.text, loc).not.toContain('{mode}');
+      expect(p.qualityBtn.label.text, loc).not.toBe('settings.quality');
+      const centre = p.qualityBtn.view.position.x + p.qualityBtn.width / 2;
+      expect(centre, loc).toBeCloseTo(400, 6);
+    }
   });
 });

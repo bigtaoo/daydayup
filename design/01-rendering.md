@@ -1472,6 +1472,71 @@ the app's own layout maths.
      themselves to the viewport. General lesson: when a filter's symptom flips on and off
      with the camera zoom, suspect the pow2 filter-texture pool before suspecting Pixi.
 
+## Render quality tiers (2026-08-25)
+
+Everything the fidelity roadmap above shipped ran **unconditionally**. There was no quality
+setting anywhere in the codebase, and every perf number in this document was measured on a
+desktop Chrome — so a device that could not afford the frame had nothing to turn off. That is
+the gap this closes, and it is worth stating that it is a DESIGN gap rather than a missing
+measurement: `04`'s checklist items 3 and 6 ("frame rate on low-end Android", "lighting
+performance on low-end devices") were unanswerable in the only way that matters, because a bad
+answer had no remedy attached to it.
+
+`render/quality.ts` holds two tiers and the table that separates them. `render/qualityWatchdog.ts`
+holds the `'auto'` policy. `game/renderQuality.ts` applies a tier to the live renderer.
+
+| Knob | high | low | why it is on this list |
+|---|---|---|---|
+| `resolutionCap` | 2 | 1 | Fill rate. A DPR-3 phone rendering at 2 draws 4x the fragments of one at 1, and **every pass below pays that multiplier again**. The platform's own `min(devicePixelRatio, 2)` still applies on top — the cap only ever lowers it. |
+| `sceneLight` | on | off | The one `SceneLightFilter` pass over `layers.lit`. |
+| `screenFx` | on | off | `VignetteFilter` + `ChromaticAberrationFilter` over `layers.world`. |
+| `bloom` | on | off | The bloom-lite `BlurFilter` over the additive `layers.fx`. |
+| `actorShaders` | on | off | The four per-actor skin shaders. One render-target pass **per actor** that currently has a status effect — the cost profile the 2026-08-24 lighting pass existed to remove from the frame, still reachable through the status shaders. |
+| `particleBudget` | 1 | 0.35 | Burst counts and ambient dust rate. Each particle is its own `Graphics` node. |
+
+**Measured, in the live scene** (`?perf=1`, a level-1 room with 8 enemies, via
+`perf/drawAttribution`'s GL counters):
+
+| | high | low | delta |
+|---|---|---|---|
+| draw calls | 31 | 23 | -8 |
+| **render-target switches** | **11** | **1** | **-10** |
+| program switches | 20 | 12 | -8 |
+| texture binds | 100 | 90 | -10 |
+
+The render-target line is the one that matters. On a mobile tile-based GPU each of those is a
+full-viewport resolve, and the low tier removes ten of eleven — before the resolution halving
+quarters the fragments in the one that remains. The A/B was confirmed to be real rather than
+a no-op by frame diff: switching tiers moves **48.8%** of the composited frame, against an
+independent liveness control (hiding `layers.entities`) at 32.4%.
+
+Two rules the tiers are built around:
+
+- **Quality is presentation-only.** It never reaches the sim (`06`/`12`'s locked "art never
+  decides an outcome"), so two clients on different tiers stay byte-identical in simulation. A
+  low-tier client sees a flatter scene, never a different fight.
+- **`'auto'` never climbs back up.** A device that downgraded is by definition one whose frame
+  budget the high tier does not fit, so re-enabling would re-measure a slow frame and downgrade
+  again — an oscillation the player would read as the game flickering between two looks. An
+  explicit `'high'` pick always outranks the watchdog: the player asking for the good-looking
+  version beats our guess about their hardware.
+
+### The one place the tiers are not simply "less"
+
+The low tier has no `DissolveFilter`, so a dying actor would stand at full opacity for the whole
+`DISSOLVE_MS` and then vanish in a single frame — which reads as a dropped frame, not as a
+cheaper effect. `ActorFilters` therefore drives a plain alpha ramp off the same clock
+(`ActorFilterHost.setSkinAlpha`). The other three shaders need no such stand-in: they each have a
+non-shader companion that still carries the information (the status aura ring, the hit flash's
+own positional burst), so dropping them costs detail rather than meaning.
+
+### What a device tester can read without any tooling
+
+The settings screen's quality button reports what `'auto'` actually RESOLVED to, not just that
+it is auto: once the frame watchdog fires it reads `AUTO (LOW)` / `自动 (低)`. That makes `04`'s
+item 3 answerable by anyone holding the phone — a low-end device reporting itself — rather than
+requiring a remote console session.
+
 ## The drops and the gate get real art (2026-08-20)
 
 The pillar pass above closed the scene queue for *surfaces*. This one closes it for the objects that

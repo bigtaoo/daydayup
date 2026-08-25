@@ -52,7 +52,11 @@ async function boot() {
   // `?query=` to turn one on in a mini-game, and this runtime has no PerformanceObserver,
   // so the long-task signal is absent and the sustained-low-fps path carries it alone —
   // which is exactly the fallback funny's original was built around.
-  installPerf(app);
+  // Each closed window also feeds the quality watchdog (render/qualityWatchdog.ts). This
+  // runtime is the reason that path exists at all: every perf number in design/01 was measured
+  // on a desktop Chrome, and until 2026-08-25 a handset that could not hold the frame had
+  // nothing to turn off.
+  installPerf(app, { onSnapshot: (s) => game.observePerfWindow(s.window) });
 
   (GameGlobal as Record<string, unknown>).__game = game;
 }

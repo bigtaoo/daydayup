@@ -5217,3 +5217,85 @@ rebuilt (main pack 3.31 MB / 4.00 MB).
 
 **Still open**: `04`'s checklist items 2, 3, 5, 6 and 11 — all of which need a real handset or
 the upload dialog. Items 10, 12, 13 and 14 (the four in-simulator blockers) are closed.
+
+## Fifth update, same session: the missing lever, and the shader question nobody had asked
+
+Two gaps with nothing in common except that both were invisible from the code.
+
+**1. Every perf number in `01` was measured on a desktop Chrome, and there was nothing to turn
+off.** The four full-viewport filter passes (`SceneLightFilter`, vignette + chromatic, the
+bloom-lite blur), the four per-actor skin shaders and the renderer resolution all ran
+unconditionally — `grep -l quality` over the whole client matched three unrelated files. So
+`04`'s checklist items 3 and 6 ("frame rate on low-end Android", "lighting performance on
+low-end devices") were unanswerable in the only sense that matters: **a bad answer had no remedy
+attached to it.** The missing thing was not a measurement, it was a lever.
+
+`render/quality.ts` is the lever — two tiers over six knobs, with `resolutionCap` first because
+fill rate is what a phone actually runs out of. `render/qualityWatchdog.ts` is the `'auto'`
+policy: a latching, streak-based detector fed by the perf monitor's existing window stream, with
+no path back up (a device that downgraded is one the high tier does not fit; re-enabling would
+re-measure a slow frame and oscillate). `game/renderQuality.ts` applies a tier to the live
+renderer. See `01`'s **Render quality tiers** for the table and the measurements.
+
+Measured in a level-1 room with 8 enemies: **render-target switches 11 -> 1**, draw calls
+31 -> 23, program switches 20 -> 12, before the resolution halving quarters the fragments in the
+one pass that remains. On a mobile tile-based GPU that first line is the whole story.
+
+**2. The custom shaders had never been shown to COMPILE on the WeChat runtime.** This had been
+sitting behind a false sense of closure: the 2026-08-25 boot verification established that the
+composited frame was non-blank (mean luma 70.33), and that was quietly taken as "rendering
+works". It is not the same claim. A filter whose program fails to compile paints nothing and
+throws nothing, and a bright unfiltered MENU satisfies "non-blank" on its own. Measured
+properly now — one pass removed at a time from a live room in the simulator, viewport-sized
+extract, both liveness controls firing: `SceneLightFilter` accounts for **27.4%** of the frame,
+the two screen-space post-fx for **26.4%**, and the bloom blur for **1.7%** with a max delta of
+663. All four run.
+
+The bloom row is worth keeping as a reminder: it first read 0%, because it blurs the additive
+`fx` layer and that layer is EMPTY unless something is firing. "Nothing to blur" and "shader
+dead" produce the identical number, and only spawning a muzzle flash first told them apart.
+
+The same probe answered a question item 13 would have asked: the new settings row is **tappable
+on that runtime**, driven through the platform's own `WeChatEventBridge` rather than by calling
+`onTap()` — `auto` -> `high` on one synthesized tap, with MUTE as the control so a failure would
+have separated "this button is dead" from "this technique is dead".
+
+### The method, and the two ways it lied first
+
+The probe had to be rebuilt twice before any of its numbers meant anything, both times for
+reasons already written down in this repo:
+
+- **It extracted `app.stage` with no frame.** That uses the stage's BOUNDS — the whole
+  co-resident dungeon floor, ~36x the viewport — so 97% of every buffer was off-screen black,
+  the liveness control moved 0.01%, and every percentage described the emptiness rather than the
+  picture. `perf/frameProbe.ts` already says to derive sample rects from the renderer. Fixed by
+  extracting an explicit `screen`-sized frame.
+- **It looked the menu layer up by `constructor.name`,** which the production build minifies
+  away — so `beginRun()`'s still-visible main menu stayed drawn over everything, exactly the
+  trap `frameProbe.ts`'s own header documents as having cost it the most time. `layers.menu`
+  IS the container; there was never a need to search for it.
+
+The same session's web-side check produced the mirror-image lesson: a hand-rolled
+`drawImage(app.canvas)` reader reported zero for everything, and only a control that hid the
+ENTIRE world showed the reader was blind. **A zero diff is not a result until a control has
+fired** — and both of this session's zero-diff scares were the measurement, not the subject.
+
+### What the tests pin, and what a mutation battery had to be fixed to say
+
+56 new tests across seven files (3005 -> 3061). The battery over 27 hand-written mutants
+covering every knob, branch and constant of the feature reported **27/27 killed on the first
+run — and that was a broken harness**, the mirror image of the "ALL SURVIVED" failure this repo
+already had recorded: `npx vitest run --silent <file>` makes vitest 4 parse the filename as the
+value of `--silent`, so it crashed before running a single test and every non-zero exit read as
+a kill. With that fixed and two deliberately-unreachable CONTROL mutants added to prove the
+harness can report a survivor, the real result was 22/29 with five genuine survivors, each of
+which named a missing test (`Scene.refreshQuality` untested in both loops; the particle floor;
+the ambient dust interval; a stale watchdog verdict leaking out of a pinned tier). Final: 31/31
+real mutants killed, both controls surviving.
+
+**And the 500-line gate did its job.** `Game.ts` is baselined at 1033 lines and the wiring took
+it to 1097, so per CLAUDE.md the answer was to split rather than to raise the baseline. Two
+extractions, both form (2): `game/renderQuality.ts` (the tier controller) and
+`game/settingsBinding.ts` (the persisted settings and the four places a change to them lands).
+The second one paid for itself immediately — it turned "a setting that applies on change but not
+at boot" from a two-call-site invariant kept by hand into one method with a test.

@@ -14,11 +14,8 @@ import {
   unlockBlueprint, createAccountSyncMetaStore, pullAccountMeta, type MetaState, type MetaStore,
 } from '../meta';
 import { getSession } from '../net/session';
-import {
-  defaultSettingsState, createWebSettingsStore, effectiveVolume,
-  type SettingsState, type SettingsStore,
-} from '../settings';
-import { t, setLocale } from '../i18n';
+import type { SettingsState } from '../settings';
+import { t } from '../i18n';
 import { THEME } from './theme';
 import { Layers } from './scene/layers';
 import { Scene } from './scene/Scene';
@@ -34,6 +31,9 @@ import { Settings } from './screens/Settings';
 import { PauseMenu } from './screens/PauseMenu';
 import { Button } from './ui/widgets';
 import { FxController } from './fx/FxController';
+import { RenderQualityController } from './renderQuality';
+import { SettingsBinding } from './settingsBinding';
+import type { FrameWindowLike } from '../render/qualityWatchdog';
 import { HudView } from './ui/HudView';
 import { TouchControlsView } from './ui/TouchControlsView';
 import { CommandBuilder } from './controllers/CommandBuilder';
@@ -153,8 +153,14 @@ export class Game {
 
   // Persistent client-side settings (design/10/11: master/SFX/music volume + mute).
   // Reached from the forge outpost only — see openSettings/closeSettings.
-  private settingsStore: SettingsStore = createWebSettingsStore();
-  private settings: SettingsState = defaultSettingsState();
+  // Persisted settings + the four places a change to them lands — see `settingsBinding.ts`.
+  private readonly settingsBinding: SettingsBinding;
+  // Render quality — the tier's whole wiring lives in `renderQuality.ts`; this is the handle.
+  private readonly quality: RenderQualityController;
+
+  /** The live settings, for the screens that render them. Every WRITE goes through
+   *  `settingsBinding.update`, never through this. */
+  private get settings(): SettingsState { return this.settingsBinding.state; }
 
   private phase: Phase = 'menu';
   private runCount = 0;
@@ -231,6 +237,15 @@ export class Game {
     this.app = app;
     this.input = input;
     this.audio = audio;
+    // Built here (not as a field initializer) — it captures the platform's own renderer
+    // resolution, which only exists once `app` is assigned.
+    this.quality = new RenderQualityController({
+      fx: this.fx,
+      scene: this.scene,
+      renderer: app.renderer,
+      screenSize: () => this.screenSize(),
+    });
+    this.settingsBinding = new SettingsBinding({ audio, input, quality: this.quality });
     // Built here (not as a field initializer) — it needs `this.audio`, which isn't
     // assigned yet when field initializers run.
     this.events = new EventReactor(this.fx, this.hud, this.audio, this);
@@ -256,33 +271,18 @@ export class Game {
     app.stage.eventMode = 'static'; // let the overlay receive pointer taps (web)
     app.stage.addChild(this.layers.root);
 
-    // Persisted volume + language take effect immediately, not just after the first
-    // settings edit (design/17-i18n.md: `setLocale` is the live mirror every `t()` call
-    // reads, `this.settings.locale` is only the persisted copy).
-    this.settings = this.settingsStore.load();
-    this.applyAudioSettings();
-    this.applyControlLayout();
-    setLocale(this.settings.locale);
-    this.settingsScreen.onChange = (s) => {
-      this.settings = s;
-      this.settingsStore.save(s);
-      this.applyAudioSettings();
-      this.applyControlLayout();
-    };
+    // Volume, language, control layout and quality all take effect at boot, not just after the
+    // first settings edit — see `settingsBinding.ts`.
+    this.settingsBinding.load();
+    this.settingsScreen.onChange = (next) => this.settingsBinding.update(next);
     this.settingsScreen.onBack = () =>
       this.settingsReturnPhase === 'paused' ? this.openPauseFromSettings() : this.closeSettings();
   }
 
-  private applyAudioSettings() {
-    this.audio.setSfxVolume(effectiveVolume(this.settings, 'sfx'));
-    this.audio.setMusicVolume(effectiveVolume(this.settings, 'music'));
-  }
-
-  // Left-handed control-layout option (design/10 open question, `Settings.ts`) — a
-  // no-op for any InputSource that doesn't implement setControlMirror (a test fake
-  // with no touch controls at all has nothing to mirror).
-  private applyControlLayout() {
-    this.input.setControlMirror?.(this.settings.controlLayout === 'mirrored');
+  /** One closed perf sampling window (`src/perf`), handed over by whichever entry installed the
+   *  monitor. Feeds the auto-downgrade watchdog — see `RenderQualityController.observeWindow`. */
+  observePerfWindow(w: FrameWindowLike) {
+    this.quality.observeWindow(this.settings.quality, w);
   }
 
   start() {

@@ -38,7 +38,13 @@ async function boot() {
   // "the renderer" without Game or GameLoop knowing it exists. The monitor runs in every
   // session (a sustained stutter leaves a `[perf]` console warning naming the expensive
   // half); `?perf=1` adds the on-screen readout and the WebGL draw-call probe on top.
-  installPerf(app, { overlay: parseGameQueryParams(location.search).perf });
+  installPerf(app, {
+    overlay: parseGameQueryParams(location.search).perf,
+    // Feed each closed window to the quality watchdog (render/qualityWatchdog.ts),
+    // which drops the renderer to the low tier if this device cannot sustain the
+    // frame. Same stream the `[perf]` console warning already uses.
+    onSnapshot: (s) => game.observePerfWindow(s.window),
+  });
   document.getElementById('boot-loading')?.remove();
 
   // Pick up a new deploy when the player tabs back in (production builds only). Held back

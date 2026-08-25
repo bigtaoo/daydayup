@@ -13,6 +13,7 @@ import { BOSS_CORE_RIG, BOSS_CORE_REFERENCE_RADIUS } from '../../render/bossCore
 import type { RigSkinBundle } from '../../render/taoBundle';
 import type { SpriteBinding } from '../../render/types';
 import type { LoadedRigSkin } from '../../render/skinRegistry';
+import { resetActiveQuality, setActiveQuality } from '../../render/quality';
 
 // A real rig's decorative bones (orb-core's eye/belly/weapon sockets) hang off the
 // body bone's TIP, not its centre (orbCoreRig.ts) — the exact geometry that makes the
@@ -1330,5 +1331,89 @@ describe('Actor — the element icon channel (design/13, 2026-08-25)', () => {
       0,
     );
     expect(circles).toBe(0); // the bar is all roundRects; a circle would be badge geometry
+  });
+});
+
+/**
+ * The low quality tier draws no per-actor shaders (`render/quality.ts`, 2026-08-25). Four
+ * render-target passes per actor is the exact cost profile the 2026-08-24 lighting pass was
+ * built to remove from the frame — the status shaders are the last way back into it, and a room
+ * where eight mobs are burning pays it eight times.
+ *
+ * The fixture trap this suite has to avoid: asserting only that the filter LIST is empty. That
+ * passes with the whole feature deleted on an actor that has no status at all, which is most
+ * actors most of the time. Every case below therefore turns an effect ON first, so an ungated
+ * build would have something to show.
+ */
+describe('Actor filters — quality tier gate', () => {
+  afterEach(() => resetActiveQuality());
+
+  it('drops the shield shell on the low tier, on an actor that HAS a shield up', () => {
+    setActiveQuality('high');
+    const a = new Actor('player', 12);
+    a.setShield(50, 100);
+    expect(skinFiltersOf(a)).toBeTruthy(); // premise: the high tier really does mount it
+
+    setActiveQuality('low');
+    const b = new Actor('player', 12);
+    b.setShield(50, 100);
+    expect(skinFiltersOf(b)).toBeNull();
+  });
+
+  it('drops the hit outline and the burn haze on the low tier', () => {
+    setActiveQuality('low');
+    const a = new Actor('enemy', 12);
+    a.hitFlash();
+    a.setStatus({ ...freshStatus(), burning: 1 } as ReturnType<typeof freshStatus>);
+    expect(skinFiltersOf(a)).toBeNull();
+  });
+
+  it('keeps the underlying state truthful, so switching back mid-run restores the shell', () => {
+    setActiveQuality('low');
+    const a = new Actor('player', 12);
+    a.setShield(50, 100);
+    expect(skinFiltersOf(a)).toBeNull();
+
+    // The gate is at the composition funnel, not at the setters — which is what makes this
+    // recoverable. A build that gated `setShield` itself would have discarded the shield ratio
+    // and this would come back empty.
+    setActiveQuality('high');
+    a.refreshQuality();
+    expect(skinFiltersOf(a) as unknown[]).toHaveLength(1);
+  });
+
+  it('fades a dying actor out on the low tier instead of leaving it standing', () => {
+    setActiveQuality('low');
+    const a = new Actor('enemy', 12);
+    a.startDissolve();
+    expect(skinFiltersOf(a)).toBeNull(); // no dissolve shader here
+    const alphaOf = () => (a as unknown as { skin: { view: { alpha: number } } }).skin.view.alpha;
+    expect(alphaOf()).toBe(1);
+    a.interpolate(1, 350); // half of the 700ms
+    expect(alphaOf()).toBeCloseTo(0.5, 1);
+    a.interpolate(1, 400);
+    expect(alphaOf()).toBe(0);
+    // Same clock as the shader tier: both agree on WHEN the actor is gone.
+    expect(a.isDissolved).toBe(true);
+  });
+
+  it('leaves the body fully opaque on the high tier, where the shader owns the fade', () => {
+    setActiveQuality('high');
+    const a = new Actor('enemy', 12);
+    a.startDissolve();
+    a.interpolate(1, 350);
+    // The alpha ramp must NOT stack with the dissolve shader — that would dim the body twice.
+    expect((a as unknown as { skin: { view: { alpha: number } } }).skin.view.alpha).toBe(1);
+    expect(dissolveFilterOf(a)!.progress).toBeCloseTo(0.5, 1);
+  });
+
+  it('restores opacity when a mid-dissolve tier flip hands the fade back to the shader', () => {
+    setActiveQuality('low');
+    const a = new Actor('enemy', 12);
+    a.startDissolve();
+    a.interpolate(1, 350);
+    setActiveQuality('high');
+    a.refreshQuality();
+    expect((a as unknown as { skin: { view: { alpha: number } } }).skin.view.alpha).toBe(1);
   });
 });

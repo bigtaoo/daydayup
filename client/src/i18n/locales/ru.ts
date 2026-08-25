@@ -37,6 +37,11 @@ export const ru: Translations<typeof en> = {
     controlLayout: 'УПРАВЛЕНИЕ: {mode}',
     controlLayoutStandard: 'СТАНДАРТ',
     controlLayoutMirrored: 'ЛЕВША',
+    quality: 'КАЧЕСТВО: {mode}',
+    qualityAuto: 'АВТО',
+    qualityHigh: 'ВЫСОКОЕ',
+    qualityLow: 'НИЗКОЕ',
+    qualityAutoLow: 'АВТО (НИЗКОЕ)',
     back: 'НАЗАД',
   },
   forge: {

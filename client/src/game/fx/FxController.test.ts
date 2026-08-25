@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { FxController, type CameraTarget } from './FxController';
 import { Layers } from '../scene/layers';
 import { makeLightBuffer } from './lighting';
+import { resetActiveQuality, setActiveQuality } from '../../render/quality';
 
 // FxController's filters (fx/filters.ts) build a real WebGL GlProgram at construction
 // time — unavailable under plain vitest (no `document`/canvas), and irrelevant to the
@@ -314,5 +315,118 @@ describe('FxController scene-light sync', () => {
     fx.lights.addPersistent('local', { x: 1234, y: 567, color: 0xfff4d6, radius: 140, intensity: 0.35 });
     fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 2000, h: 2000 }, fakePlayer(1000, 1000), { x: 800, y: 800, w: 400, h: 400 });
     expect(recorded(fx).lights[0]).toMatchObject({ x: 1234, y: 567, radius: 140, intensity: 0.35 });
+  });
+});
+
+/**
+ * The quality lever (`render/quality.ts`, 2026-08-25) — does turning it actually unmount the
+ * full-viewport passes?
+ *
+ * These assert the OUTPUT: what is on `layers.*.filters` after `applyQuality()`, which is the
+ * only thing the renderer reads. A test that spied on `applyQuality` being CALLED would pass
+ * with every filter still mounted, and that is precisely the bug this lever exists to prevent
+ * — a knob wired to nothing looks identical to a knob wired to everything until a device
+ * measures it.
+ */
+describe('FxController quality tiers', () => {
+  afterEach(() => resetActiveQuality());
+
+  /** Filters actually mounted on each of the three filtered layers. */
+  function mounted(layers: Layers) {
+    return {
+      world: (layers.world.filters ?? []) as unknown[],
+      fx: (layers.fx.filters ?? []) as unknown[],
+      lit: (layers.lit.filters ?? []) as unknown[],
+    };
+  }
+
+  it('mounts all three full-viewport passes on the high tier', () => {
+    setActiveQuality('high');
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.attach();
+    const m = mounted(layers);
+    expect(m.world).toEqual([fx.vignette, fx.chromatic]);
+    expect(m.fx).toHaveLength(1); // the bloom blur
+    expect(m.lit).toEqual([fx.sceneLight]);
+  });
+
+  it('mounts none of them on the low tier', () => {
+    setActiveQuality('low');
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.attach();
+    const m = mounted(layers);
+    expect(m.world).toEqual([]);
+    expect(m.fx).toEqual([]);
+    expect(m.lit).toEqual([]);
+  });
+
+  it('keeps `lit`\'s filterArea across both tiers, so re-mounting needs no second call', () => {
+    setActiveQuality('low');
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.attach();
+    // The area is a property of the LAYER, not of the pass: without it the region would be the
+    // whole dungeon floor's bounds the instant the filter came back.
+    expect(layers.lit.filterArea).not.toBeNull();
+    const area = layers.lit.filterArea;
+    setActiveQuality('high');
+    fx.applyQuality();
+    expect(layers.lit.filterArea).toBe(area);
+    expect(layers.lit.filters).toEqual([fx.sceneLight]);
+  });
+
+  it('flips back and forth without rebuilding the filters', () => {
+    setActiveQuality('high');
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.attach();
+    const firstBloom = (layers.fx.filters as unknown[])[0];
+    setActiveQuality('low');
+    fx.applyQuality();
+    setActiveQuality('high');
+    fx.applyQuality();
+    // Same instance, not a fresh one — a rebuilt filter is a fresh GL program upload, and on the
+    // device this is aimed at, a settings tap must not cost that.
+    expect((layers.fx.filters as unknown[])[0]).toBe(firstBloom);
+  });
+
+  it('stops feeding the lighting pass its per-frame region while it is unmounted', () => {
+    setActiveQuality('low');
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.attach();
+    fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 800, h: 600 }, fakePlayer(400, 300));
+    // The stub records what it was handed; the placeholder region it was constructed with is
+    // what should still be there. (Asserting the CAMERA still works is the control: the pass
+    // being off must not stop the world transform from being computed.)
+    expect(recorded(fx).region).toEqual([0, 0, 1, 1]);
+    expect(layers.world.scale.x).toBeGreaterThan(0);
+  });
+
+  it('resumes feeding it the moment the tier comes back', () => {
+    setActiveQuality('low');
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.attach();
+    fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 800, h: 600 }, fakePlayer(400, 300));
+    setActiveQuality('high');
+    fx.applyQuality();
+    fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 800, h: 600 }, fakePlayer(400, 300));
+    expect(recorded(fx).region).not.toEqual([0, 0, 1, 1]);
+  });
+
+  it('thins particles rather than silencing them', () => {
+    setActiveQuality('low');
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.attach();
+    fx.particles.muzzleFlame(0, 0, 0, 0xffffff);
+    // Fewer than the authored three, but never zero — a muzzle flash carries the information
+    // that someone fired.
+    const count = fx.particles.view.children.length;
+    expect(count).toBeGreaterThan(0);
+    expect(count).toBeLessThan(3);
   });
 });

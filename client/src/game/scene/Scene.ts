@@ -58,6 +58,22 @@ export class Scene {
     return this.enemiesScratch;
   }
 
+  /**
+   * Recompose every live actor's skin filters against the current quality tier
+   * (`render/quality.ts`, 2026-08-25). `Game` calls this when the tier changes, because an
+   * actor's filter list is otherwise only rebuilt when that actor's own status changes — a
+   * player standing still with a shield up, or an enemy mid-burn, would keep whichever list the
+   * previous tier produced until something happened to it.
+   *
+   * Includes the `dying` list: a tier flip during a death animation has to reach the actor
+   * playing it, which is exactly the case where the two tiers differ most (shader dissolve vs
+   * alpha ramp).
+   */
+  refreshQuality(): void {
+    for (const v of this.views.values()) if (v instanceof Actor) v.refreshQuality();
+    for (const v of this.dying) v.refreshQuality();
+  }
+
   /** Drop every view — called on a fresh run before a new engine is created. */
   clear(): void {
     for (const v of this.views.values()) v.destroy();

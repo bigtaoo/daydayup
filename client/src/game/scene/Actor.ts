@@ -116,6 +116,9 @@ export class Actor extends Entity {
     setSkinFilters: (filters) => {
       this.skin.view.filters = filters;
     },
+    setSkinAlpha: (alpha) => {
+      this.skin.view.alpha = alpha;
+    },
   });
   private weaponKind: WeaponKind | null | undefined = undefined;
   private weaponName: string | undefined = undefined;
@@ -357,6 +360,12 @@ export class Actor extends Entity {
    *  occlusion x-ray measures a standing block's art against (`scene/occlusion.ts`). */
   get bodySilhouette(): { halfW: number; bodyH: number } {
     return this.skin.silhouette;
+  }
+
+  /** Recompose this actor's skin filters against the current quality tier — see
+   *  `ActorFilters.refreshQuality` and `Scene.refreshQuality`. */
+  refreshQuality(): void {
+    this.fx.refreshQuality();
   }
 
   /** Brief "you were just hit" silhouette flash — see `ActorFilters.hitFlash`. Fired from

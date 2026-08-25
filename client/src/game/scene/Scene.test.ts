@@ -8,7 +8,7 @@
  * single facing.
  */
 import type { Graphics } from 'pixi.js';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createGameState } from '@dd/engine/state/GameState';
 import type { GameState } from '@dd/engine/state/GameState';
 import { pxToFp } from '@dd/engine/content/convert';
@@ -21,6 +21,7 @@ import { Scene } from './Scene';
 import { Layers } from './layers';
 import { bradToRad } from '../coords';
 import { BODY_TURN_PER_TICK } from '../../render/facing';
+import { resetActiveQuality, setActiveQuality } from '../../render/quality';
 import type { Actor } from './Actor';
 import type { Entity } from './Entity';
 
@@ -677,5 +678,58 @@ describe('Scene.reconcile — pickup hover phase passthrough (strobe fix, 2026-0
       return Math.round((v.curY - v.y) * 100) / 100; // hover height (Entity writes y = groundY - z)
     });
     expect(new Set(heights).size).toBe(heights.length);
+  });
+});
+
+/**
+ * `Scene.refreshQuality` (render/quality.ts, 2026-08-25) — a tier change has to reach actors
+ * that already exist.
+ *
+ * An actor's filter list is otherwise only recomposed when that actor's own status changes, so
+ * without this a player standing still with a shield up, or an enemy mid-burn, would keep
+ * whichever list the PREVIOUS tier produced. Both loops matter and are asserted separately: the
+ * live views and the `dying` list, which is deliberately kept out of `views`.
+ */
+describe('Scene.refreshQuality', () => {
+  afterEach(() => resetActiveQuality());
+
+  it('recomposes a live actor that already has an effect up', () => {
+    setActiveQuality('high');
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const p = s.players[0]!;
+    p.maxShield = 100;
+    p.shield = 100;
+    const scene = new Scene(new Layers());
+    scene.reconcile(s, p.id);
+    const view = scene.player!;
+    expect(skinFiltersOf(view)).toHaveLength(1); // premise: the shell is mounted
+
+    setActiveQuality('low');
+    scene.refreshQuality();
+    expect(skinFiltersOf(view)).toEqual([]);
+  });
+
+  it('reaches an actor that is already playing its death animation', () => {
+    setActiveQuality('high');
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const e = addEnemy(s, 200, 200, 0 as Brad);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s, s.players[0]!.id);
+    // Kill it: reconcile moves the view out of `views` and into `dying`, dissolving.
+    s.enemies.length = 0;
+    scene.reconcile(s, s.players[0]!.id);
+    const dying = (scene as unknown as { dying: Actor[] }).dying;
+    expect(dying).toHaveLength(1);
+    expect(skinFiltersOf(dying[0]!)).toHaveLength(1);
+    void e;
+
+    setActiveQuality('low');
+    scene.refreshQuality();
+    // The dissolve shader is gone and the alpha fade has taken over — the case where the two
+    // tiers differ most, and the one a `views`-only loop would miss entirely.
+    expect(skinFiltersOf(dying[0]!)).toEqual([]);
+    expect((dying[0]! as unknown as { skin: { view: { alpha: number } } }).skin.view.alpha).toBe(1);
+    dying[0]!.interpolate(1, 350);
+    expect((dying[0]! as unknown as { skin: { view: { alpha: number } } }).skin.view.alpha).toBeCloseTo(0.5, 1);
   });
 });

@@ -3,6 +3,7 @@ import type { Layers } from '../scene/layers';
 import { VignetteFilter, ChromaticAberrationFilter, SceneLightFilter, MAX_SCENE_LIGHTS } from './filters';
 import { ParticleSystem } from './Particles';
 import { LightRegistry, makeLightBuffer, type ActiveLight } from './lighting';
+import { activeQuality } from '../../render/quality';
 
 const FX_LIFE_MS = 170; // flash/trail lifetime
 const MAX_SHAKE_PX = 14; // camera-shake offset at full trauma (design/01 milestone 3)
@@ -71,6 +72,10 @@ export class FxController {
   /** The one lighting pass (design/01 milestone 2) — replaced a per-actor filter 2026-08-24,
    *  see fx/filters/litFx.ts. Mounted on `layers.lit` by `attach`. */
   readonly sceneLight = new SceneLightFilter();
+  /** Bloom-lite blur over the additive fx layer. A field rather than a `new` inside `attach()`
+   *  (as it was until 2026-08-25) so `applyQuality` can mount and unmount it without building a
+   *  fresh filter — and its GL program — every time the tier changes. */
+  private readonly bloom = new BlurFilter({ strength: 3, quality: 2 });
   /** `layers.lit`'s filter region, in WORLD px. Pinned to exactly the visible world rect and
    *  mutated in place each frame (never reassigned) so the filter's own `uRegion` and Pixi's
    *  computed bounds describe the same rectangle — the shader's world-space mapping, and so
@@ -89,19 +94,42 @@ export class FxController {
 
   /** Wire post-processing filters + mount the particle view — call once from Game.start(). */
   attach(): void {
-    this.layers.world.filters = [this.vignette, this.chromatic];
-    // Bloom-lite: a modest blur directly on the ADDITIVE-blended fx layer (muzzle
-    // flashes/trails/particles) gives a cheap glow halo without a real multi-pass
-    // bright-pass bloom (first-pass approximation, design/01's own "milestone" framing).
-    this.layers.fx.filters = [new BlurFilter({ strength: 3, quality: 2 })];
     this.layers.fx.addChild(this.particles.view);
     // One lighting pass over ground+shadow+entities (see Layers.lit for what is deliberately
     // left out of it). `filterArea` is mandatory here, not an optimisation: this filter opts
     // out of Pixi's viewport clip, so without an area the region would be the whole dungeon
     // floor's bounds. The first `updateCamera` replaces these placeholder numbers; until then
     // there are no point lights registered, and the key-light term does not read the region.
+    // Set unconditionally, even on the low tier where the filter itself is not mounted: it is
+    // a property of the layer, not of the pass, and leaving it correct means re-mounting on a
+    // tier change needs no second call.
     this.layers.lit.filterArea = this.litArea;
-    this.layers.lit.filters = [this.sceneLight];
+    this.applyQuality();
+  }
+
+  /**
+   * Mount exactly the full-viewport passes the active quality tier calls for
+   * (`render/quality.ts`). Idempotent, and safe to call at any time — `Game` calls it once from
+   * `attach()` and again whenever the setting or the frame watchdog changes the tier.
+   *
+   * Each of the three lists below is one render-target pass over the whole viewport, and on a
+   * phone each of those pays the renderer's resolution multiplier again. Turning them off is
+   * the largest lever this class has, which is why it is a lever and not a constant (2026-08-25;
+   * before that these three assignments ran unconditionally, and a device that could not afford
+   * them had nothing to turn off).
+   *
+   * `filters = []` rather than `null`: Pixi treats both as "no filter", and an empty array keeps
+   * the property's type stable across tier flips.
+   */
+  applyQuality(): void {
+    const q = activeQuality();
+    this.layers.world.filters = q.screenFx ? [this.vignette, this.chromatic] : [];
+    // Bloom-lite: a modest blur directly on the ADDITIVE-blended fx layer (muzzle
+    // flashes/trails/particles) gives a cheap glow halo without a real multi-pass
+    // bright-pass bloom (first-pass approximation, design/01's own "milestone" framing).
+    this.layers.fx.filters = q.bloom ? [this.bloom] : [];
+    this.layers.lit.filters = q.sceneLight ? [this.sceneLight] : [];
+    this.particles.setBudget(q.particleBudget);
   }
 
   /** Drop a fading dot at (x,y) — bullet trails (spawnBulletTrails). */
@@ -248,6 +276,9 @@ export class FxController {
    * divide because this camera only ever scales and translates (no rotation, see updateCamera).
    */
   private syncSceneLight(viewport: { vw: number; vh: number }): void {
+    // Nothing reads these uniforms while the pass is unmounted (low tier), and the region math
+    // below is per-frame work — so skip it rather than feed a filter that is not running.
+    if (!activeQuality().sceneLight) return;
     const world = this.layers.world;
     const zoom = world.scale.x || 1;
     this.litArea.x = -world.x / zoom;

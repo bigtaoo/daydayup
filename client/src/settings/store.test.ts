@@ -143,3 +143,31 @@ describe('createWebSettingsStore — first-boot browser-locale detection', () =>
     });
   });
 });
+
+describe('SettingsStore — render quality (render/quality.ts, 2026-08-25)', () => {
+  it('round-trips every quality setting', () => {
+    withFakeLocalStorage(() => {
+      for (const q of ['auto', 'high', 'low'] as const) {
+        const store = createWebSettingsStore(`t.settings.q.${q}`);
+        store.save({ ...defaultSettingsState(), quality: q });
+        expect(createWebSettingsStore(`t.settings.q.${q}`).load().quality).toBe(q);
+      }
+    });
+  });
+
+  it('falls back to auto for a save that predates the setting', () => {
+    withFakeLocalStorage(() => {
+      const { quality, ...preQuality } = defaultSettingsState();
+      void quality;
+      localStorage.setItem('t.settings.q.old', JSON.stringify(preQuality));
+      expect(createWebSettingsStore('t.settings.q.old').load().quality).toBe('auto');
+    });
+  });
+
+  it('rejects a garbage tier rather than handing it to the renderer', () => {
+    withFakeLocalStorage(() => {
+      localStorage.setItem('t.settings.q.bad', JSON.stringify({ ...defaultSettingsState(), quality: 'ultra' }));
+      expect(createWebSettingsStore('t.settings.q.bad').load().quality).toBe('auto');
+    });
+  });
+});

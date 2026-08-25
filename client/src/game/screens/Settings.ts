@@ -2,9 +2,30 @@ import { Container, Text } from 'pixi.js';
 import type { ControlLayout, SettingsState } from '../../settings';
 import { Panel, Slider, Button } from '../ui/widgets';
 import { t, setLocale, LOCALES, type Locale } from '../../i18n';
+import { QUALITY_SETTINGS, activeQuality, type QualitySetting } from '../../render/quality';
 
 function nextControlLayout(current: ControlLayout): ControlLayout {
   return current === 'standard' ? 'mirrored' : 'standard';
+}
+
+/** Same tap-to-cycle shape as the language and control-layout buttons — three values, so a
+ *  picker widget would be more ceremony than the setting is worth (see `nextLocale`). */
+function nextQuality(current: QualitySetting): QualitySetting {
+  const i = QUALITY_SETTINGS.indexOf(current);
+  return QUALITY_SETTINGS[(i + 1) % QUALITY_SETTINGS.length]!;
+}
+
+/**
+ * The button's value half. `'auto'` reports what auto actually RESOLVED to, not just that it is
+ * auto: a player whose phone was downgraded by the frame watchdog (`render/qualityWatchdog.ts`)
+ * would otherwise see "AUTO" on a screen that is visibly running the low tier, with nothing
+ * anywhere connecting the two. The live mirror is the only place that knows — the setting alone
+ * cannot answer it.
+ */
+function qualityLabel(setting: QualitySetting): string {
+  if (setting === 'high') return t('settings.qualityHigh');
+  if (setting === 'low') return t('settings.qualityLow');
+  return activeQuality().tier === 'low' ? t('settings.qualityAutoLow') : t('settings.qualityAuto');
 }
 
 /** Display name for the LANGUAGE toggle — always shown in that language's own name
@@ -49,13 +70,14 @@ export class Settings {
   private muteBtn: Button;
   private languageBtn: Button;
   private controlLayoutBtn: Button;
+  private qualityBtn: Button;
   private backBtn: Button;
 
   onChange: ((s: SettingsState) => void) | null = null;
   onBack: (() => void) | null = null;
 
   private state: SettingsState = {
-    master: 1, sfx: 0.5, music: 0.5, muted: false, locale: 'en', controlLayout: 'standard',
+    master: 1, sfx: 0.5, music: 0.5, muted: false, locale: 'en', controlLayout: 'standard', quality: 'auto',
   };
 
   // Screen-space anchors for the four buttons below, captured by `show()` and reused by
@@ -65,6 +87,7 @@ export class Settings {
   private cx = 0;
   private languageY = 0;
   private controlY = 0;
+  private qualityY = 0;
   private pairY = 0;
 
   constructor() {
@@ -113,6 +136,15 @@ export class Settings {
       this.update({ ...this.state, controlLayout: next });
     };
 
+    // Render quality (design/04 items 3/6, `render/quality.ts`) — the one setting here that is
+    // about the DEVICE rather than about taste, which is why 'auto' is the default and is
+    // listed first: most players should never have to think about it, and the ones on hardware
+    // that cannot hold 60fps get the drop without asking for it.
+    this.qualityBtn = new Button('', { w: 200, h: 34, autoWidth: true });
+    this.qualityBtn.onTap = () => {
+      this.update({ ...this.state, quality: nextQuality(this.state.quality) });
+    };
+
     this.backBtn = new Button(t('settings.back'), { w: 120, h: 34, autoWidth: true });
     this.backBtn.onTap = () => this.onBack?.();
 
@@ -121,7 +153,8 @@ export class Settings {
       this.masterLabel, this.masterSlider.view,
       this.sfxLabel, this.sfxSlider.view,
       this.musicLabel, this.musicSlider.view,
-      this.muteBtn.view, this.languageBtn.view, this.controlLayoutBtn.view, this.backBtn.view,
+      this.muteBtn.view, this.languageBtn.view, this.controlLayoutBtn.view, this.qualityBtn.view,
+      this.backBtn.view,
     );
     this.view.eventMode = 'static';
     this.view.visible = false;
@@ -151,6 +184,7 @@ export class Settings {
     this.languageBtn.setText(t('settings.language', { name: LOCALE_NAMES[this.state.locale] }));
     const modeKey = this.state.controlLayout === 'mirrored' ? 'settings.controlLayoutMirrored' : 'settings.controlLayoutStandard';
     this.controlLayoutBtn.setText(t('settings.controlLayout', { mode: t(modeKey) }));
+    this.qualityBtn.setText(t('settings.quality', { mode: qualityLabel(this.state.quality) }));
     this.layoutButtons();
   }
 
@@ -165,6 +199,7 @@ export class Settings {
     const cx = this.cx;
     this.languageBtn.view.position.set(cx - this.languageBtn.width / 2, this.languageY);
     this.controlLayoutBtn.view.position.set(cx - this.controlLayoutBtn.width / 2, this.controlY);
+    this.qualityBtn.view.position.set(cx - this.qualityBtn.width / 2, this.qualityY);
     // Mute + Back sit side-by-side as a pair, centered as a unit under `cx` (was
     // `cx - 130` / `cx + 10`, i.e. two fixed 120px boxes with a 20px gap between them —
     // reproduced here from each button's actual width instead).
@@ -195,6 +230,8 @@ export class Settings {
     this.languageY = y + 10;
     y += 44;
     this.controlY = y + 10;
+    y += 44;
+    this.qualityY = y + 10;
     y += 44;
     this.pairY = y + 10;
     this.syncWidgets();

@@ -39,11 +39,25 @@ const NO_TOUCH = {
 
 /** Enough of a Pixi Application for Game's constructor + start(): a real stage Container
  *  (so the layer tree and every global transform are real), a mutable `screen`, and a
- *  ticker that never fires — no frame ever runs here, only layout. */
-function fakeApp(screen: { width: number; height: number }) {
+ *  ticker that never fires — no frame ever runs here, only layout.
+ *
+ *  `resolution`/`resize` model the real renderer's contract (see AbstractRenderer): `resize`
+ *  takes a LOGICAL size plus a resolution and leaves `screen` in logical px. The quality tier's
+ *  `resolutionCap` (render/quality.ts) drives that call, and a fake without it both hid the
+ *  behaviour and crashed the moment the tier changed. */
+function fakeApp(screen: { width: number; height: number }, resolution = 2) {
+  const renderer = {
+    screen,
+    resolution,
+    resize(w: number, h: number, res?: number) {
+      screen.width = w;
+      screen.height = h;
+      if (res !== undefined) renderer.resolution = res;
+    },
+  };
   return {
     stage: new Container(),
-    renderer: { screen },
+    renderer,
     ticker: { add: () => {}, remove: () => {} },
     canvas: {},
   } as unknown as ConstructorParameters<typeof Game>[0];

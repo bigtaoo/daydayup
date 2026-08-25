@@ -16,6 +16,7 @@
 import type { Filter } from 'pixi.js';
 import { EnergyShieldFilter, OutlineFilter, DissolveFilter, HeatHazeFilter } from '../fx/filters';
 import { THEME } from '../theme';
+import { activeQuality } from '../../render/quality';
 
 /** Outline "you were just hit" flash duration. */
 const HIT_FLASH_MS = 160;
@@ -31,6 +32,18 @@ export const DISSOLVE_MS = 700;
 export interface ActorFilterHost {
   /** Apply the composed filter list to the body's display object, or clear it when empty. */
   setSkinFilters(filters: Filter[] | null): void;
+  /**
+   * Body opacity, 0..1. Exists for the low quality tier (2026-08-25), which draws no per-actor
+   * shaders and therefore has no `DissolveFilter` to play a death out with — without this the
+   * corpse would stand there at full opacity for the whole `DISSOLVE_MS` and then vanish in one
+   * frame, which reads as a dropped frame rather than as a cheaper effect. A plain alpha ramp is
+   * not the dissolve, but it is the same 700ms and it costs nothing.
+   *
+   * This is the second method on what the file header calls a one-method interface. It is still
+   * the narrow-dependency form from CLAUDE.md: two named things this object needs done to a view
+   * it deliberately cannot reach, not a handle on `Actor`.
+   */
+  setSkinAlpha(alpha: number): void;
 }
 
 export class ActorFilters {
@@ -135,7 +148,10 @@ export class ActorFilters {
     }
     if (this.dissolveMs >= 0 && this.dissolveMs < DISSOLVE_MS) {
       this.dissolveMs = Math.min(DISSOLVE_MS, this.dissolveMs + frameDt);
-      this.dissolveFilter!.progress = this.dissolveMs / DISSOLVE_MS;
+      if (this.dissolveFilter) this.dissolveFilter.progress = this.dissolveMs / DISSOLVE_MS;
+      // The low tier's shader-free equivalent, driven from the same clock so the two tiers
+      // agree on WHEN the actor is gone even though they disagree on how it looks going.
+      if (!activeQuality().actorShaders) this.host.setSkinAlpha(this.lowTierAlpha());
     }
   }
 
@@ -157,11 +173,48 @@ export class ActorFilters {
    * them — see `fx/filters/litFx.ts`.
    */
   private apply(): void {
+    // Low tier draws the actor unfiltered (`render/quality.ts`, 2026-08-25). Each of the four
+    // below is a render-target pass for ONE actor, so a room where eight enemies are burning
+    // costs eight of them — the per-actor cost profile the 2026-08-24 lighting pass was built
+    // to get rid of, still reachable through the status shaders.
+    //
+    // Gated HERE, at the single composition funnel, rather than at each setter: the setters
+    // also maintain the state that says WHICH effects are live, and that state has to stay
+    // truthful across a tier flip so `refreshQuality()` can recompose the real list when the
+    // player switches back to high mid-run. The filters themselves stay lazily built, so a
+    // session that never leaves the low tier never constructs one.
+    const shaders = activeQuality().actorShaders;
+    const list: Filter[] = shaders ? this.buildFilterList() : [];
+    this.host.setSkinFilters(list.length ? list : null);
+    // On the high tier the body is always fully opaque and the dissolve shader does the fading.
+    // Setting it back to 1 unconditionally here is what makes a mid-dissolve tier flip safe: a
+    // half-faded body handed to the shader would dim twice.
+    this.host.setSkinAlpha(shaders ? 1 : this.lowTierAlpha());
+  }
+
+  /** The low tier's stand-in for whatever a shader would have been doing to the body. Today that
+   *  is only the death fade — the other three effects have visible companions that are not
+   *  shaders at all (the status aura ring, the hit flash's own positional burst), so dropping
+   *  them costs detail rather than information. */
+  private lowTierAlpha(): number {
+    if (this.dissolveMs < 0) return 1;
+    return 1 - Math.min(1, this.dissolveMs / DISSOLVE_MS);
+  }
+
+  /** Re-run the composition against the current tier — `Scene` calls this on every live actor
+   *  when the quality setting changes, since a filter list is otherwise only recomposed when
+   *  the actor's own status changes (an actor standing still and burning would keep whichever
+   *  list the previous tier produced). */
+  refreshQuality(): void {
+    this.apply();
+  }
+
+  private buildFilterList(): Filter[] {
     const list: Filter[] = [];
     if (this.heatHazeActive && this.heatHazeFilter) list.push(this.heatHazeFilter);
     if (this.shieldActive && this.shieldFilter) list.push(this.shieldFilter);
     if (this.outlineMs > 0 && this.outlineFilter) list.push(this.outlineFilter);
     if (this.dissolveMs >= 0 && this.dissolveFilter) list.push(this.dissolveFilter);
-    this.host.setSkinFilters(list.length ? list : null);
+    return list;
   }
 }

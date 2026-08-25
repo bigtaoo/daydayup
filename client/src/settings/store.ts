@@ -1,6 +1,7 @@
 // SettingsStore — persistence port for SettingsState, symmetric to ../meta/store.ts.
 import { defaultSettingsState, type ControlLayout, type SettingsState } from './SettingsState';
 import { LOCALES, detectBrowserLocale, type Locale } from '../i18n';
+import { QUALITY_SETTINGS, type QualitySetting } from '../render/quality';
 
 export interface SettingsStore {
   load(): SettingsState;
@@ -77,6 +78,11 @@ function migrate(parsed: unknown): SettingsState {
   const locale = (v: unknown, fallback: Locale) => (LOCALES.includes(v as Locale) ? (v as Locale) : fallback);
   const controlLayout = (v: unknown, fallback: ControlLayout): ControlLayout =>
     v === 'standard' || v === 'mirrored' ? v : fallback;
+  // A save that predates the quality setting falls back to the default `'auto'`, same as every
+  // other field here — a returning player gets the watchdog rather than being pinned to
+  // whatever tier happened to be the default when they last played.
+  const quality = (v: unknown, fallback: QualitySetting): QualitySetting =>
+    QUALITY_SETTINGS.includes(v as QualitySetting) ? (v as QualitySetting) : fallback;
   return {
     master: num(p.master, d.master),
     sfx: num(p.sfx, d.sfx),
@@ -84,5 +90,6 @@ function migrate(parsed: unknown): SettingsState {
     muted: typeof p.muted === 'boolean' ? p.muted : d.muted,
     locale: locale(p.locale, d.locale),
     controlLayout: controlLayout(p.controlLayout, d.controlLayout),
+    quality: quality(p.quality, d.quality),
   };
 }

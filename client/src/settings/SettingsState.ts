@@ -6,6 +6,7 @@
 // platform-seam method to implement per backend (design/11's WebAudio/WeChatAudio).
 import type { Locale } from '../i18n';
 import { DEFAULT_LOCALE } from '../i18n';
+import type { QualitySetting } from '../render/quality';
 
 /** design/10 open question ("control layout … left-handed mirror") — 'mirrored' swaps
  * which half of the screen drives the movement vs. aim/fire stick, and moves the
@@ -22,10 +23,14 @@ export interface SettingsState {
    * boot and on every change (design/17-i18n.md), not read directly from here. */
   locale: Locale;
   controlLayout: ControlLayout;
+  /** Render quality tier (`render/quality.ts`, 2026-08-25). `'auto'` starts on the high tier
+   * and drops to low once the frame watchdog decides the device cannot hold it; `'high'`/
+   * `'low'` pin it. Presentation-only — it never reaches the sim (design/06/12). */
+  quality: QualitySetting;
 }
 
 export function defaultSettingsState(): SettingsState {
-  return { master: 1, sfx: 0.5, music: 0.5, muted: false, locale: DEFAULT_LOCALE, controlLayout: 'standard' };
+  return { master: 1, sfx: 0.5, music: 0.5, muted: false, locale: DEFAULT_LOCALE, controlLayout: 'standard', quality: 'auto' };
 }
 
 /** The effective 0..1 gain to hand the AudioBus for a given slider — `muted` zeroes

@@ -22,6 +22,25 @@ export class ParticleSystem {
   readonly view = new Container();
   private particles: Particle[] = [];
   private dustAccumMs = 0;
+  /** Multiplier on every burst count and on the ambient dust rate (`render/quality.ts`,
+   *  2026-08-25). 1 is the authored look; the low tier thins it. Each particle is its own
+   *  `Graphics` node — CPU per frame plus a draw call whenever it fails to batch — so this is
+   *  the cheapest knob in the fx budget and the only one whose absence a player can hardly
+   *  name. 0 turns particles off entirely. */
+  private budget = 1;
+
+  setBudget(budget: number): void {
+    this.budget = Math.max(0, budget);
+  }
+
+  /** Scale an authored burst count by the budget. Rounds so a fractional budget still yields a
+   *  whole number, and floors at 1 for any non-zero budget: a muzzle flash that emits ZERO
+   *  particles reads as the gun failing to fire, which is a legibility regression rather than a
+   *  quality one. Only a budget of exactly 0 is allowed to produce nothing. */
+  private scaled(count: number): number {
+    if (this.budget <= 0) return 0;
+    return Math.max(1, Math.round(count * this.budget));
+  }
 
   private spawn(opts: {
     x: number; y: number; vx: number; vy: number; gravity?: number; spin?: number;
@@ -61,10 +80,14 @@ export class ParticleSystem {
       p.g.alpha = Math.max(0, p.life / p.maxLife);
     }
 
-    if (dustEvery > 0 && bounds) {
+    // Ambient dust thins by stretching its INTERVAL rather than by dropping motes from a burst
+    // — the bed is a steady-state population, so a longer gap between spawns is exactly a
+    // sparser room, with no visible rhythm change.
+    const dustInterval = this.budget > 0 ? dustEvery / this.budget : 0;
+    if (dustInterval > 0 && bounds) {
       this.dustAccumMs += dt;
-      while (this.dustAccumMs >= dustEvery) {
-        this.dustAccumMs -= dustEvery;
+      while (this.dustAccumMs >= dustInterval) {
+        this.dustAccumMs -= dustInterval;
         this.driftingDust(bounds);
       }
     }
@@ -79,7 +102,8 @@ export class ParticleSystem {
 
   /** A quick warm burst at the muzzle, jittered around the fire direction. */
   muzzleFlame(x: number, y: number, facingRad: number, color: number) {
-    for (let i = 0; i < 3; i++) {
+    const count = this.scaled(3);
+    for (let i = 0; i < count; i++) {
       const spread = (Math.random() - 0.5) * 0.9;
       const speed = 90 + Math.random() * 70;
       const a = facingRad + spread;
@@ -94,6 +118,7 @@ export class ParticleSystem {
   /** One ejected casing, roughly sideways-and-back from the fire direction, arcing
    * down under gravity — a physical (non-additive) little rect, not a glow. */
   shellCasing(x: number, y: number, facingRad: number) {
+    if (this.budget <= 0) return;
     const eject = facingRad + Math.PI / 2 + (Math.random() - 0.5) * 0.5;
     const speed = 60 + Math.random() * 40;
     this.spawn({
@@ -105,7 +130,7 @@ export class ParticleSystem {
 
   /** A radial burst of debris on death — gravity-affected, faction/element-tinted. */
   explosionDebris(x: number, y: number, color: number) {
-    const count = 6 + Math.floor(Math.random() * 3);
+    const count = this.scaled(6 + Math.floor(Math.random() * 3));
     for (let i = 0; i < count; i++) {
       const a = (i / count) * Math.PI * 2 + Math.random() * 0.4;
       const speed = 70 + Math.random() * 90;

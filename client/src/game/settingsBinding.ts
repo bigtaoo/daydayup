@@ -1,0 +1,80 @@
+// Split out of Game.ts (2026-08-25, 500-line convention — the quality tier pushed that file
+// past its recorded baseline, and CLAUDE.md's priority order says split rather than baseline).
+//
+// Owns one concern: the persisted `SettingsState` and the four places a change to it has to
+// land — the audio bus (design/11), the touch control layout (design/10), the render quality
+// tier (`renderQuality.ts`), and the live i18n mirror (design/17). Before this, those four were
+// four private methods on `Game` plus a load block plus an `onChange` closure, all of which had
+// to be kept in step by hand: `applyQuality` was added to the load path and to `onChange`
+// separately, which is exactly the shape of the bug where a setting applies on change but not
+// at boot.
+//
+// Form (2) from CLAUDE.md: the cross-boundary call list is `load`/`update`/`state` outward and
+// the three-member `deps` object below inward, each narrowed to the methods actually used rather
+// than being a handle on the whole `AudioBus`/`InputSource`/`RenderQualityController`.
+import {
+  createWebSettingsStore,
+  defaultSettingsState,
+  effectiveVolume,
+  type SettingsState,
+  type SettingsStore,
+} from '../settings';
+import { setLocale } from '../i18n';
+import type { QualitySetting } from '../render/quality';
+
+export interface SettingsBindingDeps {
+  audio: { setSfxVolume(v: number): void; setMusicVolume(v: number): void };
+  /** `setControlMirror` is optional on `InputSource` — a fake with no touch controls has
+   *  nothing to mirror, and that is a legitimate host, not a missing implementation. */
+  input: { setControlMirror?(mirrored: boolean): void };
+  quality: { apply(setting: QualitySetting): void; pin(setting: QualitySetting): void };
+}
+
+export class SettingsBinding {
+  private current: SettingsState = defaultSettingsState();
+
+  constructor(
+    private readonly deps: SettingsBindingDeps,
+    private readonly store: SettingsStore = createWebSettingsStore(),
+  ) {}
+
+  /** The live state, for the screens that render it. Read-only by convention: every write goes
+   *  through `update` so that persistence and application cannot be skipped. */
+  get state(): SettingsState {
+    return this.current;
+  }
+
+  /**
+   * Load the persisted state and apply ALL of it. Volume, language, control layout and quality
+   * all take effect immediately at boot rather than only after the first settings edit — the
+   * property that is easy to lose when each of them is wired separately.
+   */
+  load(): SettingsState {
+    this.current = this.store.load();
+    this.applyAll();
+    // design/17-i18n.md: `setLocale` is the live mirror every `t()` call reads;
+    // `current.locale` is only the persisted copy. Not in `applyAll` — the settings SCREEN
+    // calls `setLocale` itself before reporting the change (so its own re-render is already in
+    // the new language), and calling it twice on that path would be redundant, not wrong.
+    setLocale(this.current.locale);
+    this.deps.quality.apply(this.current.quality);
+    return this.current;
+  }
+
+  /** The settings screen reported a change: persist it, then apply whatever moved. */
+  update(next: SettingsState): void {
+    const qualityChanged = next.quality !== this.current.quality;
+    this.current = next;
+    this.store.save(next);
+    this.applyAll();
+    // Only on an actual change: `pin` can reallocate the renderer's backing buffer, and a volume
+    // drag must not pay for one on every frame of the drag.
+    if (qualityChanged) this.deps.quality.pin(next.quality);
+  }
+
+  private applyAll(): void {
+    this.deps.audio.setSfxVolume(effectiveVolume(this.current, 'sfx'));
+    this.deps.audio.setMusicVolume(effectiveVolume(this.current, 'music'));
+    this.deps.input.setControlMirror?.(this.current.controlLayout === 'mirrored');
+  }
+}

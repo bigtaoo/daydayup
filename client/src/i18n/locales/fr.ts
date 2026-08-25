@@ -32,6 +32,11 @@ export const fr: Translations<typeof en> = {
     controlLayout: 'COMMANDES : {mode}',
     controlLayoutStandard: 'STANDARD',
     controlLayoutMirrored: 'GAUCHER',
+    quality: 'QUALITÉ : {mode}',
+    qualityAuto: 'AUTO',
+    qualityHigh: 'ÉLEVÉE',
+    qualityLow: 'BASSE',
+    qualityAutoLow: 'AUTO (BASSE)',
     back: 'RETOUR',
   },
   forge: {
