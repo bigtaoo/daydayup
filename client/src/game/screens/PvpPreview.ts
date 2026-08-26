@@ -13,7 +13,6 @@ import { t } from '../../i18n';
 // so this map stays total over `ArenaId` rather than needing a fallback string.
 const ARENA_DISPLAY_NAME: Record<ArenaId, string> = {
   landing_basic: 'Landing Basic',
-  arena_prototype_60: 'Prototype Arena',
   arena_launch: 'The Seven Districts',
 };
 

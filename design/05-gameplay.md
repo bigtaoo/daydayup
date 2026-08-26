@@ -27,7 +27,7 @@ The original plan rejected extraction wholesale; we adopted a **narrow slice** o
 One run, floor-based push-your-luck:
 
 ```
-Loadout (bring up to 2 weapons; none → auto pistol)
+Loadout (bring up to 2 weapons; every free slot filled by kind — a run always carries a gun + a melee weapon)
    → enter floor 1 (seeded)
       → clear (some of) its rooms: fight, open chests, pick up weapons & materials
       → reach this floor's EXTRACTION ROOM
@@ -378,8 +378,11 @@ this one, for the whole level rather than a single floor. `ENGINE_VERSION` 38.
   `RoomPiece` files plus 5 `DungeonFloorMap` files, in exactly the two shapes
   `tools/map-editor` reads and writes, so the level is tuned in the editor rather than
   in a source literal. `engine/world/rooms/emberLevel1.ts` is a pure loader over them.
-  Same precedent PvP set for its 60-room arena (today `engine/world/arenas/` `arena_launch`; originally `world/arenas/arena_prototype_60.json`
-  loaded by `arenaCatalog.ts`): content under `world/`, code only points at it. Seeded
+  PvP set that precedent first and has since moved the other way: its 60-room arena is
+  hand-authored TypeScript (`engine/world/arenas/` `arena_launch`), because a map whose layout
+  is a drawing reads better as code than as JSON — the JSON predecessor
+  `world/arenas/arena_prototype_60.json` was retired and deleted 2026-08-26. This level stays
+  JSON under `world/` so the editor can round-trip it: code only points at it. Seeded
   once by `tools/map-editor/scripts/genEmberLevel1.mjs`, deliberately not wired into
   any npm script — re-running it overwrites editor tweaks, and the JSON is the source
   of truth from the moment it lands.
@@ -556,7 +559,7 @@ Three pickup classes, split by **whether the player must make a choice**. Materi
 |------|--------|-----------|--------------|
 | **Materials** | banked during a PvE run (deeper floors → better) | **Yes** — the only carry-out; the meta-forge currency | **No** — normalized out |
 | **In-run weapons / buffs** | found this run (chests, drops) | **No** — every weapon is wiped at run end | N/A (PvE only) |
-| **Brought-in weapon(s)** | crafted per-run from an unlocked blueprint + materials, equipped into the loadout (0–2; none → auto pistol); the crafted instance = one run (`14`) | **No** *within a run* (wiped like any weapon); the blueprint unlock is permanent/account-level (`14`) | N/A (PvE only) |
+| **Brought-in weapon(s)** | crafted per-run from an unlocked blueprint + materials, equipped into the loadout (0–2); a free slot is filled with the starter weapon of the kind the loadout does not already cover, so a run always spawns carrying one gun and one melee weapon and the SWAP verb always has a second slot (`resolveLoadout`, ENGINE_VERSION 45); the crafted instance = one run (`14`) | **No** *within a run* (wiped like any weapon); the blueprint unlock is permanent/account-level (`14`) | N/A (PvE only) |
 | **Character (skin)** | free roster + purchased; carries `(maxHp,maxShield)` + break-passive (`14`) | **Yes** — account-level | **Yes** — the *one* meta thing in PvP, but side-grades only (no all-rounder), fairness by balance discipline (`14`) |
 | **Arena preset / in-match pickups** | preset chosen at match start / dropped on map | No | Yes — the only PvP power source |
 

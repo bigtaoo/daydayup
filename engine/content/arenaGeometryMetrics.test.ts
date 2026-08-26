@@ -1,11 +1,15 @@
 /** measurePlacement / measureEnclosure: where an ArenaMap's content actually lands, and
- *  whether its rooms and doors physically exist. Synthetic maps for the mechanisms, plus the
- *  REAL shipped map — which is where both of these were first pointed, and where they found
- *  two defects no variety metric could see. */
+ *  whether its rooms and doors physically exist. Synthetic maps for the mechanisms.
+ *
+ *  Both were first pointed at `arena_prototype_60`, where they found two defects no variety
+ *  metric could see (every pillar and loot marker authored in the wrong coordinate space, and
+ *  `solids: []` everywhere so no room or door physically existed). That map was retired
+ *  2026-08-26 along with the block pinning those numbers — every defect it exhibited has a
+ *  fixture above, and the real-content case now runs against the map that ships, in
+ *  `world/arenas/launchArena.test.ts`. */
 import { describe, it, expect } from 'vitest';
 import { measureEnclosure, measurePlacement, solidCellSet } from './arenaGeometryMetrics';
 import type { ArenaMap, ArenaRoom } from './arenas';
-import arenaPrototype60 from '../../world/arenas/arena_prototype_60.json';
 
 function room(id: string, x: number, y: number, extra: Partial<ArenaRoom> = {}): ArenaRoom {
   return { id, rectGrid: { x, y, w: 10, h: 10 }, solids: [], ...extra };
@@ -199,41 +203,5 @@ describe('measureEnclosure', () => {
       const e = measureEnclosure(map([partial, room('b', 20, 0)]));
       expect(e.undoorLeaks).toBe(1);
     });
-  });
-});
-
-/**
- * The shipped map, which is what both of these were written for. Pinned so the map that
- * replaces it has to move these numbers — and so the defect cannot quietly come back.
- */
-describe('the shipped arena_prototype_60', () => {
-  const arena = arenaPrototype60 as ArenaMap;
-  const p = measurePlacement(arena);
-  const e = measureEnclosure(arena);
-
-  it('authored its pillars and loot markers as absolute — every single one is misplaced', () => {
-    expect(p.byFeature.pillar).toEqual({ authored: 60, misplaced: 60 });
-    expect(p.byFeature.loot).toEqual({ authored: 60, misplaced: 60 });
-  });
-
-  // The counterweight, and the reason this is a coordinate-convention bug rather than a
-  // wholesale-garbage map: two of the five feature lists are authored correctly.
-  it('authored its hazard tiles and enemy spawns correctly', () => {
-    expect(p.byFeature.trait.misplaced).toBe(0);
-    expect(p.byFeature.enemySpawn.misplaced).toBe(0);
-    expect(p.byFeature.trait.authored).toBeGreaterThan(0);
-    expect(p.byFeature.enemySpawn.authored).toBeGreaterThan(0);
-  });
-
-  it('throws most of that content clean off the map', () => {
-    expect(p.offMap.length).toBeGreaterThan(p.outsideOwnRoom.length / 2);
-    expect(p.offMap.every((m) => m.feature === 'pillar' || m.feature === 'loot')).toBe(true);
-  });
-
-  it('has no walls at all, so its 60 rooms and every one of its doors are decorative', () => {
-    expect(e.solidCells).toBe(0);
-    expect(e.unenclosedRooms).toHaveLength(60);
-    expect(e.doorsWithoutWalls).toBe(arena.doors.length);
-    expect(e.undoorLeaks).toBeGreaterThan(0);
   });
 });

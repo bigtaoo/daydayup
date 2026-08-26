@@ -15,7 +15,7 @@
  * Measuring against that convention is the whole point. A map can be internally consistent,
  * pass `validate.ts`, and still author half its features as if they were absolute — the
  * offset is then applied to an already-absolute number and the content lands somewhere
- * nobody intended. That is exactly what `arena_prototype_60` does with its pillars and loot
+ * nobody intended. That is exactly what `arena_prototype_60` did with its pillars and loot
  * markers, and no variety metric can see it: every room is wrong in the same way, so the
  * map looks perfectly uniform right up until you ask where the cover physically is.
  */

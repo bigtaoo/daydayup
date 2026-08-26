@@ -1,12 +1,21 @@
 /** ARENA_CATALOG: the id -> ArenaMap lookup a real PvP match start resolves against (see
- *  arenaCatalog.ts's doc comment for landing_basic vs. arena_prototype_60's roles). Mirrors
+ *  arenaCatalog.ts's doc comment for landing_basic vs. arena_launch's roles). Mirrors
  *  pvpConfig.test.ts's plain input->output style. */
 import { describe, it, expect } from 'vitest';
 import { ARENA_CATALOG, ARENA_IDS, resolveArenaId } from './arenaCatalog';
 
 describe('ARENA_CATALOG', () => {
-  it('has exactly the three known arena ids', () => {
-    expect(Object.keys(ARENA_CATALOG).sort()).toEqual(['arena_launch', 'arena_prototype_60', 'landing_basic']);
+  it('has exactly the two known arena ids', () => {
+    expect(Object.keys(ARENA_CATALOG).sort()).toEqual(['arena_launch', 'landing_basic']);
+  });
+
+  // Retired 2026-08-26 with the map itself. Asserted rather than merely deleted because the
+  // id is the one thing that outlives a deletion: a `?arena=arena_prototype_60` bookmark, or
+  // a stale link in a doc, must land on "unknown id, harness stays off" and not on a silently
+  // empty arena — which is exactly what `resolveArenaId` exists to prevent.
+  it('no longer carries the retired arena_prototype_60', () => {
+    expect(ARENA_IDS).not.toContain('arena_prototype_60');
+    expect(resolveArenaId('arena_prototype_60')).toBeNull();
   });
 
   it('arena_launch is the hand-authored launch map a real PvP match resolves to', () => {
@@ -52,15 +61,6 @@ describe('ARENA_CATALOG', () => {
     });
   });
 
-  describe('arena_prototype_60', () => {
-    it('is present and carries the world/arenas/arena_prototype_60.json id', () => {
-      const arena = ARENA_CATALOG.arena_prototype_60;
-      expect(arena).toBeDefined();
-      expect(arena.id).toBe('arena_prototype_60');
-      expect(Array.isArray(arena.rooms)).toBe(true);
-      expect(arena.rooms.length).toBeGreaterThan(0);
-    });
-  });
 });
 
 describe('resolveArenaId', () => {

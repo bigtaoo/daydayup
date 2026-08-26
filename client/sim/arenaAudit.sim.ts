@@ -15,8 +15,10 @@
  * The second was invisible to the variety half of this report, which is why the geometry half
  * exists: "60 identical rooms" and "60 rooms whose contents are all somewhere else" look the
  * same from a uniformity metric. `arena_launch` was then authored against both halves, and it
- * is what a real match now builds; `arena_prototype_60` is kept in the catalog as the
- * before-picture this report prints beside it.
+ * is what a real match now builds. `arena_prototype_60` was retired and deleted 2026-08-26,
+ * once its before-picture had been transcribed into ROADMAP's comparison table and every defect
+ * it exhibited had a fixture in the two metrics test files; this report now covers the catalog
+ * as it stands, which is `arena_launch` plus the `landing_basic` dev fixture.
  *
  * Still a REPORT and not a gate: the numbers a good map should hold are now KNOWN (see
  * ROADMAP's "The Seven Districts" table), so turning the load-bearing ones into thresholds is

@@ -1,11 +1,16 @@
 /** measureArena: pure static metrics over an ArenaMap (see arenaMetrics.ts's doc comment
  *  for why structural validity and design quality are different claims). Synthetic maps for
- *  the mechanisms, plus one case driven by the REAL shipped map so the suite is not blind to
- *  a schema the fixtures happen to agree with. */
+ *  the mechanisms only.
+ *
+ *  The "not blind to a schema the fixtures happen to agree with" half USED to live here as a
+ *  block pinning `arena_prototype_60`'s numbers; that map was retired 2026-08-26 and the block
+ *  went with it. The guarantee did not: `world/arenas/launchArena.test.ts` drives all three
+ *  measure functions over `LAUNCH_ARENA`, a map this file did not author and the one that
+ *  actually ships — a strictly better source for it, since a drift between reader and content
+ *  now fails against the content a match builds. */
 import { describe, it, expect } from 'vitest';
 import { measureArena } from './arenaMetrics';
 import type { ArenaMap, ArenaRoom } from './arenas';
-import arenaPrototype60 from '../../world/arenas/arena_prototype_60.json';
 
 /** A 10x10 room at (x, y) with nothing in it. */
 function room(id: string, x: number, y: number, extra: Partial<ArenaRoom> = {}): ArenaRoom {
@@ -251,51 +256,5 @@ describe('zone reach', () => {
     );
     expect(m.eyeCandidates).toBe(1);
     expect(m.maxHopsToEye).toBe(1);
-  });
-});
-
-/**
- * One case driven by the REAL shipped map rather than a fixture. Every test above agrees
- * with a map this file wrote, so all of them would still pass if the JSON's schema and this
- * module's reader had drifted apart. These are the audit's headline findings — the evidence
- * that `arena_prototype_60` is a generated placeholder, pinned so that the map replacing it
- * has to move them.
- */
-describe('the shipped arena_prototype_60', () => {
-  const m = measureArena(arenaPrototype60 as ArenaMap);
-
-  it('is measurable at all: 60 connected rooms with real doors', () => {
-    expect(m.roomCount).toBe(60);
-    expect(m.doorCount).toBeGreaterThan(0);
-    expect(m.graph.connected).toBe(true);
-    expect(m.graph.isolated).toEqual([]);
-  });
-
-  // The signature of a map whose pillars and loot markers were authored as ABSOLUTE
-  // coordinates: one shape, sixty different sets of numbers for it. `interiors.distinct === 1`
-  // (what the first version of this module reported) would have hidden the defect behind the
-  // correct-sounding "one room stamped 60 times" headline.
-  it('is one SHAPE stamped 60 times, at 60 different sets of coordinates', () => {
-    expect(m.footprints.distinct).toBe(1);
-    expect(m.interiorShapes.distinct).toBe(1);
-    expect(m.interiors.distinct).toBe(60);
-    expect(m.interiors.rooms).toBe(60);
-    expect(m.lootLayouts.distinct).toBe(60);
-    expect(m.lootTables).toEqual({ arena_common: 60 });
-  });
-
-  it('has no wall runs anywhere — every room cover is one pillar', () => {
-    expect(m.cover.totalSolids).toBe(0);
-    expect(m.cover.roomsWithNoWalls).toHaveLength(60);
-    expect(m.cover.totalPillars).toBe(60);
-    // Flat across the map: the min and the max are the same number.
-    expect(m.cover.coverFractions[0]).toBeCloseTo(m.cover.coverFractions[59]!, 10);
-  });
-
-  it('drops its 8 seats at wildly unequal separations', () => {
-    expect(m.spawns.count).toBe(8);
-    expect(m.spawns.orphans).toBe(0);
-    expect(m.spawns.colliding).toBe(0);
-    expect(m.spawns.maxPairHops).toBeGreaterThan(m.spawns.minPairHops * 2);
   });
 });

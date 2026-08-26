@@ -71,8 +71,8 @@ describe('buildArenaDemoConfig', () => {
     });
 
     it('builds the REAL 60-room launch map, seats standing on its own authored spawns', () => {
-      const arena = ARENA_CATALOG.arena_prototype_60;
-      const cfg = buildArenaDemoConfig({ ...opts, arenaId: 'arena_prototype_60' });
+      const arena = ARENA_CATALOG.arena_launch;
+      const cfg = buildArenaDemoConfig({ ...opts, arenaId: 'arena_launch' });
       const px = (grid: number) => fpToPx(toFpGrid(grid));
       expect(cfg.arena).toBe(arena);
       // Read out of the map rather than written as literals: the point of this path is
@@ -86,7 +86,7 @@ describe('buildArenaDemoConfig', () => {
     });
 
     it('still puts the two seats on distinct teams, same as the fixture path', () => {
-      const cfg = buildArenaDemoConfig({ ...opts, arenaId: 'arena_prototype_60' });
+      const cfg = buildArenaDemoConfig({ ...opts, arenaId: 'arena_launch' });
       expect(cfg.players!.map((p) => p.teamId)).toEqual([0, 1]);
     });
   });

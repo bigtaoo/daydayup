@@ -3,11 +3,11 @@
  * audit reports in, and the vocabulary a future quality GATE will be stated against.
  *
  * Why this exists: `tools/map-editor`'s `validate.ts` answers "is this map STRUCTURALLY
- * loadable" (ids non-empty, rects on whole cells, no overlapping rooms) and the shipped
- * `arena_prototype_60.json` passes it — while being 60 identical 10x10 rooms on a regular
- * lattice, every one with `solids: []`, one dead-centre pillar and one `arena_common` loot
- * marker. Structural validity and design quality are different claims, and nothing in the
- * repo measured the second one. These functions do.
+ * loadable" (ids non-empty, rects on whole cells, no overlapping rooms), and the map that used
+ * to ship — `arena_prototype_60.json`, retired 2026-08-26 — passed it while being 60 identical
+ * 10x10 rooms on a regular lattice, every one with `solids: []`, one dead-centre pillar and one
+ * `arena_common` loot marker. Structural validity and design quality are different claims, and
+ * nothing in the repo measured the second one. These functions do.
  *
  * Everything here is a pure function of the map: no engine state, no RNG, no clock — so a
  * report is reproducible and an assertion over it is stable. Read by `sim/arenaAudit.sim.ts`

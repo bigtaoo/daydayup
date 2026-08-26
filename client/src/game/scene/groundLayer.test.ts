@@ -12,12 +12,19 @@
 import { describe, it, expect } from 'vitest';
 import { Container, Graphics, Sprite, Texture, TextureSource } from 'pixi.js';
 import { createGameState } from '@dd/engine/state/GameState';
-import { pxToFp } from '@dd/engine/content/convert';
+import { pxToFp, toFpGrid } from '@dd/engine/content/convert';
 import { biomePalette } from '../theme';
 import { buildGroundLayer, floorRegionsPx, roomRectsPx, type GroundDeps } from './groundLayer';
+import { ARENA_CATALOG } from '../match/arenaCatalog';
+import { fpToPx } from '../coords';
 import type { RectPx } from './wallGeometry';
 
 const PALETTE = biomePalette('ember');
+
+/** An AABB from whole grid cells — the unit arena content is authored in. */
+const g = (x: number, y: number, w: number, h: number) => ({
+  x: toFpGrid(x), y: toFpGrid(y), w: toFpGrid(w), h: toFpGrid(h),
+});
 
 function tex(size: number): Texture {
   return new Texture({ source: new TextureSource({ width: size, height: size }) });
@@ -173,16 +180,100 @@ describe('roomRectsPx vs floorRegionsPx — identity is not coverage', () => {
     expect(roomRectsPx(dungeon, 800, 600)).toEqual([{ x: 32, y: 32, w: 256, h: 256 }]);
   });
 
-  it('floor COVERAGE follows the dungeon rooms only — an arena keeps the whole world', () => {
-    // The asymmetry is the point, and `floorCoverage.test.ts` has the measurement behind it: an
-    // arena's rooms are not a partition of its walkable space, so stopping its floor at them would
-    // leave a player walking over the backdrop.
-    const arena = createGameState({ seed: 1, worldW: 800, worldH: 600, waves: [], walls: [], obstacles: [] });
-    arena.arenaRoomRects.push({ id: 'a', rect: { x: pxToFp(0), y: pxToFp(0), w: pxToFp(320), h: pxToFp(320) } });
-    expect(floorRegionsPx(arena, 800, 600)).toEqual([{ x: 0, y: 0, w: 800, h: 600 }]);
+  it('floor COVERAGE is derived per map, not assumed from the map KIND', () => {
+    // The asymmetry used to be hardcoded — dungeon per room, arena whole-world — on the strength
+    // of one sweep of a map that had no walls. `floorCoverage.test.ts` carries the measurement and
+    // the real-content sweep; this file pins the three shapes the function itself distinguishes.
+    const unwalled = createGameState({ seed: 1, worldW: 800, worldH: 600, waves: [], walls: [], obstacles: [] });
+    unwalled.arenaRoomRects.push({ id: 'a', rect: { x: pxToFp(0), y: pxToFp(0), w: pxToFp(320), h: pxToFp(320) } });
+    // Rooms floating in open world: stopping the floor at them would put the player on the backdrop.
+    expect(floorRegionsPx(unwalled, 800, 600)).toEqual([{ x: 0, y: 0, w: 800, h: 600 }]);
+
+    const walled = createGameState({ seed: 1, worldW: 800, worldH: 600, waves: [], walls: [], obstacles: [] });
+    walled.arenaRoomRects.push({ id: 'a', rect: { x: pxToFp(64), y: pxToFp(64), w: pxToFp(320), h: pxToFp(320) } });
+    // The same room, now with a perimeter around it: its floor may stop at the room.
+    for (const [x, y, w, h] of [[64, 64, 320, 32], [64, 352, 320, 32], [64, 64, 32, 320], [352, 64, 32, 320]]) {
+      walled.walls.push({ x: pxToFp(x!), y: pxToFp(y!), w: pxToFp(w!), h: pxToFp(h!) });
+    }
+    expect(floorRegionsPx(walled, 800, 600)).toEqual([{ x: 64, y: 64, w: 320, h: 320 }]);
 
     const dungeon = createGameState({ seed: 1, worldW: 800, worldH: 600, waves: [], walls: [], obstacles: [] });
     dungeon.dungeonRoomRects.push({ id: 'd', rect: { x: pxToFp(32), y: pxToFp(32), w: pxToFp(256), h: pxToFp(256) } });
+    // A dungeon floor answers directly, with no flood fill: `floorCoverage.test.ts` sweeps all
+    // five shipped floors for the same property, so re-deriving it per room transition buys nothing.
     expect(floorRegionsPx(dungeon, 800, 600)).toEqual([{ x: 32, y: 32, w: 256, h: 256 }]);
+  });
+
+  it('measures the arena against the world it is actually in, on both axes', () => {
+    // G7 in the battery: `cellExtent(s.worldH, s.worldW)` — the axes swapped at the call site —
+    // survived the whole suite, because `arena_launch` is the only non-square arena the catalog
+    // has and the swap happens not to flip its answer. A wide, short world where a room is flush
+    // against the EAST edge does flip it: with the extent right the world boundary encloses the
+    // room (per-room floor); with the axes swapped the grid is too narrow to contain the room at
+    // all, no cell seeds, and the map falls back to a whole-world floor.
+    const CELL = 32;
+    const state = createGameState({
+      seed: 1, worldW: 30 * CELL, worldH: 10 * CELL, waves: [], walls: [], obstacles: [],
+    });
+    state.arenaRoomRects.push({ id: 'east', rect: g(22, 2, 8, 6) });
+    // Walled north, south and west; the east side is the map edge.
+    for (const wall of [g(22, 2, 8, 1), g(22, 7, 8, 1), g(22, 2, 1, 6)]) state.walls.push(wall);
+    expect(floorRegionsPx(state, 30 * CELL, 10 * CELL)).toEqual([
+      { x: 22 * CELL, y: 2 * CELL, w: 8 * CELL, h: 6 * CELL },
+    ]);
+  });
+});
+
+describe('the real launch arena, end to end through the ground stage', () => {
+  // Every other case in this file is a literal. This one sources its deps from the REAL producer
+  // (`ARENA_CATALOG.arena_launch` -> `roomRectsPx`/`floorRegionsPx` -> `buildGroundLayer`):
+  // `floorCoverage.test.ts` proves the REGIONS stop at the rooms and `floorRender.test.ts` proves
+  // `stampFloor` clips a tile to the region it was handed, but neither runs the map a match
+  // actually builds through the stage that paints it.
+  //
+  // Honest about its own weight: it was written to close a seam and it fires on every composition
+  // mutant tried against it (a tile never clipped, clipped on one axis only, a full tile positioned
+  // by its top-left while keeping anchor 0.5, the world box stamped alongside the regions) — but
+  // `floorRender.test.ts` or `RoomBuilder.test.ts` catch each of those too, so no mutant is known
+  // that ONLY this test kills. What it uniquely states is an identity over real content at real
+  // scale: the area painted for 60 authored rooms equals those rooms' own area, exactly. A fixture
+  // of one 512x512 room cannot make that claim, and it is the claim that breaks first if regions,
+  // clipping or tile placement drift apart from each other.
+  const arena = (() => {
+    const state = createGameState({ seed: 1, worldW: 1, worldH: 1, waves: [], arena: ARENA_CATALOG.arena_launch });
+    const w = fpToPx(state.worldW);
+    const h = fpToPx(state.worldH);
+    return { state, w, h, rooms: roomRectsPx(state, w, h), regions: floorRegionsPx(state, w, h) };
+  })();
+
+  it('stamps 60 rooms and not the void between them', () => {
+    const { ground } = build(deps({ rooms: arena.rooms, floorRegions: arena.regions }));
+    const sprites = ground.children.filter((c): c is Sprite => c instanceof Sprite);
+    expect(arena.regions).toHaveLength(60);
+
+    const inARoom = (x: number, y: number): boolean =>
+      arena.rooms.some((r) => x >= r.x - 0.01 && x <= r.x + r.w + 0.01 && y >= r.y - 0.01 && y <= r.y + r.h + 0.01);
+    let outside = 0;
+    let painted = 0;
+    for (const sp of sprites) {
+      // `stampFloor` mirrors a FULL tile about its own centre, so an unclipped tile carries
+      // anchor 0.5 and its `x`/`y` are the tile's CENTRE — reading them as a top-left corner
+      // manufactures phantom out-of-bounds tiles at every room's south-east corner.
+      const w = Math.abs(sp.width);
+      const h = Math.abs(sp.height);
+      const left = sp.x - sp.anchor.x * w;
+      const top = sp.y - sp.anchor.y * h;
+      painted += w * h;
+      const corners: [number, number][] = [[left, top], [left + w, top], [left, top + h], [left + w, top + h]];
+      if (!corners.every(([x, y]) => inARoom(x, y))) outside++;
+    }
+    expect(sprites.length).toBeGreaterThan(0);
+    expect(outside).toBe(0);
+    // Painted area equals the rooms' own area exactly — the rooms are flush, so they overlap only
+    // on zero-area boundary lines, and any tile spilling into the void would push this over.
+    const roomArea = arena.rooms.reduce((a, r) => a + r.w * r.h, 0);
+    expect(painted).toBeCloseTo(roomArea, 5);
+    // ...and that really is less than the world box, or "stops at the rooms" is vacuous here.
+    expect(roomArea).toBeLessThan(arena.w * arena.h);
   });
 });

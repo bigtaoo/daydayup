@@ -44,7 +44,7 @@ describe('parseGameQueryParams', () => {
     });
 
     it('?arena=<id> selects any catalog map and implies the harness, no arenaDemo needed', () => {
-      expect(parseGameQueryParams('?arena=arena_prototype_60').arenaDemo).toBe('arena_prototype_60');
+      expect(parseGameQueryParams('?arena=arena_launch').arenaDemo).toBe('arena_launch');
       expect(parseGameQueryParams('?arena=landing_basic').arenaDemo).toBe('landing_basic');
     });
 
@@ -61,8 +61,8 @@ describe('parseGameQueryParams', () => {
     });
 
     it('?arena= wins over ?arenaDemo=1 when both name a real map', () => {
-      expect(parseGameQueryParams('?arenaDemo=1&arena=arena_prototype_60').arenaDemo).toBe(
-        'arena_prototype_60',
+      expect(parseGameQueryParams('?arenaDemo=1&arena=arena_launch').arenaDemo).toBe(
+        'arena_launch',
       );
     });
   });

@@ -4,19 +4,22 @@
  *
  * `arena_launch` is THE launch map: hand-authored (`@dd/engine/world/arenas`, seven
  * districts joined by a short list of arteries), and what a real PvP match resolves to.
+ * `landing_basic` is a small synthetic 3-room fixture kept ONLY for the lightweight
+ * `?arenaDemo=1` dev harness (Game.beginArenaDemoRun) — three rooms with no walls at all,
+ * which is why it is a harness and not a map.
  *
- * `arena_prototype_60` is its predecessor, kept as the audit's before-picture rather than
- * as a playable map: `world/arenas/arena_prototype_60.json` is a generated 60-room lattice
- * with `solids: []` everywhere (so its rooms and all 71 of its doors are logical-only) whose
- * pillars and loot markers are authored in the wrong coordinate space. `npm run audit:arena`
- * reports both side by side. `landing_basic` is a small synthetic 3-room fixture kept ONLY
- * for the lightweight `?arenaDemo=1` dev harness (Game.beginArenaDemoRun).
+ * `arena_prototype_60` used to sit here as the audit's before-picture and was retired
+ * 2026-08-26 (`world/arenas/arena_prototype_60.json` deleted): a generated 60-room lattice
+ * with `solids: []` everywhere, so its rooms and all 71 of its doors were logical-only and
+ * its pillars and loot markers were authored in the wrong coordinate space. Its numbers are
+ * kept in ROADMAP's "The Seven Districts" comparison table, and every defect it exhibited has
+ * a fixture in `arenaMetrics.test.ts`/`arenaGeometryMetrics.test.ts` — nothing needed the map
+ * itself to stay loadable.
  */
 import type { ArenaMap } from '@dd/engine/content/arenas';
 import { LAUNCH_ARENA } from '@dd/engine/world/arenas';
-import arenaPrototype60 from '../../../../world/arenas/arena_prototype_60.json';
 
-export type ArenaId = 'landing_basic' | 'arena_prototype_60' | 'arena_launch';
+export type ArenaId = 'landing_basic' | 'arena_launch';
 
 /** An L-shaped 3-room layout connected by doors, no encounter/loot markers — enough for
  * ZoneSystem's shrink and the placement win condition to run for real, not enough to be
@@ -41,7 +44,6 @@ function buildLandingBasic(): ArenaMap {
 
 export const ARENA_CATALOG: Record<ArenaId, ArenaMap> = {
   landing_basic: buildLandingBasic(),
-  arena_prototype_60: arenaPrototype60 as ArenaMap,
   arena_launch: LAUNCH_ARENA,
 };
 

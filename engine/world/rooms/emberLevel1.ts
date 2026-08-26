@@ -6,10 +6,11 @@
  * plain JSON on disk, in exactly the two shapes `tools/map-editor` reads and writes
  * (`RoomPiece` for the "PvE Room Library" tab, `DungeonFloorMap` for the "PvE
  * Dungeon Floor" tab), so the level can be tuned in the editor without touching a
- * line of TypeScript. The same precedent PvP already set for its 60-room arena
- * (`world/arenas/arena_prototype_60.json`, loaded by
- * `client/src/game/match/arenaCatalog.ts`) — content lives under `world/`, code only
- * points at it.
+ * line of TypeScript. PvP set that precedent first and has since moved the other way:
+ * its 60-room launch arena is hand-authored TypeScript (`engine/world/arenas/`,
+ * imported directly by `client/src/game/match/arenaCatalog.ts`), because a map whose
+ * layout is a drawing reads better as code than as JSON. The two conventions coexist on
+ * purpose — this level stays JSON under `world/` so the editor can round-trip it.
  *
  * Shape of the level (the spec this content was seeded against, and what
  * `emberLevel1.test.ts` holds it to):

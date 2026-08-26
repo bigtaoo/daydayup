@@ -924,11 +924,17 @@ than assumed: `floorCoverage.test.ts` flood-fills each shipped floor's grid from
 through non-wall cells and requires every reachable cell to be inside a room rect (0 outside, all
 five floors). "Not inside a wall" would have been the wrong test — a floor's bounding box contains
 large enclosed regions that no room occupies and nothing walls off; they are simply unreachable.
-**A PvP arena is the opposite case and deliberately keeps the whole-world floor**: the same sweep
-over the shipped `arena_prototype_60` finds 5240 of its 11,524 non-wall cells (45%) reachable and
-outside every room rect *and* every door passage, so a per-room floor there would leave a player
-walking over the backdrop. `groundLayer.floorRegionsPx` is that branch, and the arena's 60 rooms
-still get their own wash/mottle/light on top of the continuous floor.
+**A PvP arena used to be the opposite case, and that stopped being true when the map changed.**
+The same sweep over `arena_prototype_60` found 5240 of its 11,524 non-wall cells (45%) reachable
+and outside every room rect *and* every door passage — that map had `solids: []` everywhere, so it
+had no walls to stop anyone — and a per-room floor there would have left a player walking over the
+backdrop. `groundLayer.floorRegionsPx` was a branch on map KIND because of it. `arena_launch`
+(2026-08-25) walls every room, so 2026-08-26 that branch became a MEASUREMENT
+(`scene/floorPartition.roomsCoverReachableSpace`, one rasterize + one BFS at room-build time):
+`arena_launch` reports 0 cells outside and its floor now stops at its 60 rooms — 322 stamp sprites
+covering 9,246,720 px of a 11,770,880 px world box, the 2465 cells of deliberately-empty slots and
+outer margin no longer painted — while `landing_basic`, three wall-less rooms in open world, still
+gets the whole-world floor. Every room keeps its own wash/mottle/light either way.
 
 **Two: the floor had no variation at all.** Three 256x256 patches of open floor, 512 px apart, in
 three DIFFERENT rooms, came back with identical statistics (mean 38.6, sd 4.6, min 21, max 105) and

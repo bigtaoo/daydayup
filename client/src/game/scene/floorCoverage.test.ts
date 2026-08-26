@@ -12,9 +12,14 @@
  *
  * Measured when written, over the five shipped floors: the reachable set is exactly the rooms
  * (0 cells outside), while the world's bounding box is 1.41-2.26x the rooms' own area — 29%, 35%,
- * 39%, 39% and 56% of the old floor was painted where no room exists at all. The shipped
- * `arena_prototype_60` fails the same test by 5240 cells (45% of its non-wall cells), which is why
- * an arena keeps the whole-world floor.
+ * 39%, 39% and 56% of the old floor was painted where no room exists at all.
+ *
+ * **2026-08-26: the PvP half of that sentence stopped being a fixed answer.** It used to read
+ * "the shipped `arena_prototype_60` fails the same test by 5240 cells (45% of its non-wall
+ * cells), which is why an arena keeps the whole-world floor" — true of that map, false of the
+ * map that replaced it. `floorRegionsPx` now DERIVES it per map rather than branching on map
+ * kind, and the second half of this file sweeps every catalog map against what the client
+ * actually paints.
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -25,8 +30,12 @@ import {
   toFpGrid,
   type RoomPiece,
 } from '@dd/engine';
-import { buildArenaGeometry, buildArenaRoomRects } from '@dd/engine/content/arenas';
-import { ARENA_CATALOG } from '../match/arenaCatalog';
+import { createGameState } from '@dd/engine';
+import { buildArenaGeometry, buildArenaRoomRects, type ArenaMap } from '@dd/engine/content/arenas';
+import { ARENA_CATALOG, ARENA_IDS, type ArenaId } from '../match/arenaCatalog';
+import { fpToPx, PX_PER_GRID } from '../coords';
+import { floorRegionsPx } from './groundLayer';
+import type { RectPx } from './wallGeometry';
 
 interface GridRect {
   x: number;
@@ -130,27 +139,81 @@ describe('a PvE floor\'s rooms cover everywhere the player can reach', () => {
   });
 });
 
-describe('a PvP arena\'s rooms do NOT — which is why it keeps the whole-world floor', () => {
-  it('has reachable space outside every room rect and every door passage', () => {
-    const map = ARENA_CATALOG.arena_prototype_60;
+describe("and the arena's floor now follows the same rule — per map, not per map KIND", () => {
+  // Until 2026-08-26 this described the opposite: `arena_prototype_60`'s rooms were NOT a
+  // partition of its walkable space (5240 of 11,524 non-wall cells reachable and outside every
+  // room, because that map had `solids: []` everywhere), so `floorRegionsPx` hardcoded a
+  // whole-world floor for every arena. `arena_launch` walls every room, which made the premise
+  // false while the branch went on answering the same way — so the branch now MEASURES it
+  // (`floorPartition.roomsCoverReachableSpace`) and this sweep checks the result the client
+  // actually paints, for every map in the catalog.
+  //
+  // `reachOutside` above is the independent oracle: a different implementation (rect list, cell
+  // centres, explicit queue) from `floorPartition`'s rasterized bitmap BFS, so the two agreeing
+  // is evidence rather than a tautology.
+  const cells = (r: RectPx): GridRect => ({
+    x: r.x / PX_PER_GRID,
+    y: r.y / PX_PER_GRID,
+    w: r.w / PX_PER_GRID,
+    h: r.h / PX_PER_GRID,
+  });
+
+  const painted = (id: ArenaId): { regions: GridRect[]; perRoom: boolean; map: ArenaMap } => {
+    const map = ARENA_CATALOG[id];
+    const state = createGameState({ seed: 1, worldW: 1, worldH: 1, waves: [], arena: map });
+    const regions = floorRegionsPx(state, fpToPx(state.worldW), fpToPx(state.worldH)).map(cells);
+    const whole = regions.length === 1 && regions[0]!.x === 0 && regions[0]!.y === 0;
+    return { regions, perRoom: !whole, map };
+  };
+
+  it.each(ARENA_IDS)('%s: what the client paints agrees with what the map actually is', (id) => {
+    const { regions, perRoom, map } = painted(id);
     const geo = buildArenaGeometry(map);
-    const rooms = buildArenaRoomRects(map).map(({ rect }) => ({
-      x: rect.x / toFpGrid(1),
-      y: rect.y / toFpGrid(1),
-      w: rect.w / toFpGrid(1),
-      h: rect.h / toFpGrid(1),
-    }));
-    const passages: GridRect[] = (map.doors ?? []).map((d) => ({
-      x: d.passageGrid.x,
-      y: d.passageGrid.y,
-      w: d.passageGrid.w,
-      h: d.passageGrid.h,
-    }));
+    const rooms = buildArenaRoomRects(map).map(({ rect }) =>
+      cells({ x: fpToPx(rect.x), y: fpToPx(rect.y), w: fpToPx(rect.w), h: fpToPx(rect.h) }),
+    );
+    // Seed from every room, not from one spawn: a room the door graph strands, or one an
+    // interior kit splits into pockets, still has to have a floor under it.
     const starts = rooms.map((r) => ({ x: Math.floor(r.x + r.w / 2), y: Math.floor(r.y + r.h / 2) }));
-    const { outside } = reachOutside(map.sizeGrid, geo.walls, [...rooms, ...passages], starts);
-    // If this ever reaches 0, an arena's rooms have become a partition of its walkable space and
-    // `RoomBuilder.floorRegionsPx` should stop special-casing it — the per-room floor is the better
-    // look and the branch only exists because of this number.
-    expect(outside).toBeGreaterThan(0);
+    const { reached, outside } = reachOutside(map.sizeGrid, geo.walls, regions, starts);
+    expect(outside).toBe(0);
+    expect(reached).toBeGreaterThan(0);
+
+    // ...and the check above is only half of it. A whole-world floor covers EVERYTHING, so for a
+    // map that took the fallback the assertion above passes no matter what the map is — the sweep
+    // would look total while testing one branch. So the branch itself is checked against the map:
+    // per-room demands the rooms really are a partition, and whole-world demands they really are
+    // not. Being needlessly conservative is only wasted floor rather than a player on the backdrop,
+    // which is why the derivation errs that way — but an untested "safe" answer is how a branch
+    // stops meaning anything, so it is pinned in both directions.
+    const outsideRooms = reachOutside(map.sizeGrid, geo.walls, rooms, starts).outside;
+    if (perRoom) expect(outsideRooms).toBe(0);
+    else expect(outsideRooms).toBeGreaterThan(0);
+  });
+
+  // Both answers have to actually occur, or the derivation is a constant wearing a function's
+  // clothes — the failure mode `doorStandCoverage.test.ts`'s header names and this repo has
+  // shipped once (`wallGeometry`'s old `w > h` guard matched 1 run where 32 should have).
+  it('stops at the rooms on the walled launch map, and covers the world on the wall-less fixture', () => {
+    const launch = painted('arena_launch');
+    expect(launch.perRoom).toBe(true);
+    expect(launch.regions).toHaveLength(launch.map.rooms.length);
+
+    // `landing_basic` is three rooms with `solids: []` and nothing between them: its whole
+    // 50x50 world is walkable, so stopping the floor at its rooms would put the player on the
+    // backdrop between them. This is the case that makes the derivation load-bearing.
+    const fixture = painted('landing_basic');
+    expect(fixture.perRoom).toBe(false);
+    expect(fixture.regions).toEqual([{ x: 0, y: 0, w: 50, h: 50 }]);
+  });
+
+  it("the launch arena's floor really did shrink — the world box is bigger than its rooms", () => {
+    const { regions, map } = painted('arena_launch');
+    const paintedArea = regions.reduce((a, r) => a + r.w * r.h, 0);
+    const boxArea = map.sizeGrid.w * map.sizeGrid.h;
+    // Measured 2026-08-26: 9030 cells of rooms against an 11,495-cell box — the 2465 cells of
+    // deliberately-empty slots and outer margin that used to be stamped and gridded over.
+    expect(paintedArea).toBeLessThan(boxArea);
+    expect(boxArea - paintedArea).toBeGreaterThan(2000);
   });
 });

@@ -23,6 +23,7 @@ import type { RectPx } from './wallGeometry';
 import { drawDoorWear, drawFloorDecals, drawFloorMottle, drawRoomWash, hash2, stampFloor } from './floorRender';
 import { staticGraphics } from '../../render/staticGraphics';
 import { drawRoomLight } from './roomLight';
+import { cellExtent, roomsCoverReachableSpace } from './floorPartition';
 
 /** Opacity of the 64 px floor grid. See the module header for why it is this low. */
 const GRID_ALPHA = 0.12;
@@ -106,30 +107,33 @@ export function roomRectsPx(s: GameState, w: number, h: number): RectPx[] {
 }
 
 /**
- * Where the FLOOR is actually painted (the stamp and the grid) — a different question from
- * `roomRectsPx`, and the difference is measured (`floorCoverage.test.ts`):
+ * Where the FLOOR is actually painted (the stamp and the 64 px grid) — a different question from
+ * `roomRectsPx`, which is room IDENTITY and already runs per room on both kinds of map.
  *
- * - A PvE dungeon floor's rooms ARE its walkable space. `buildFloorGeometry` walls every room edge
- *   and a door passage always straddles two adjacent room rects, so the floor can stop at the rooms
- *   — and it should, since the world's BOUNDING BOX is 1.41-2.26x their own area on the five shipped
- *   floors (29-56% of the old floor was painted where no room exists at all).
- * - A PvP ARENA's rooms were NOT a partition of its walkable space, when this was measured.
- *   Swept over `arena_prototype_60`: 5240 of its 11,524 non-wall grid cells (45%) are reachable
- *   and fall outside every room rect AND every door passage, with nothing walling them off — so
- *   a per-room floor there would leave a player walking over the backdrop. The arena keeps the
- *   whole-world floor, and its rooms get their own wash/mottle/light on top of it.
+ * The floor may stop at the rooms exactly when the rooms are a partition of everywhere the player
+ * can reach, and that is MEASURED per map (`roomsCoverReachableSpace`) rather than assumed from
+ * the map's kind. It used to be assumed: dungeon floors per room, arenas whole-world, on the
+ * strength of one sweep of `arena_prototype_60` — 5240 of its 11,524 non-wall cells (45%)
+ * reachable and outside every room, because that map had no walls at all. `arena_launch`
+ * (2026-08-25) walls every room, so the premise under the branch became false while the branch
+ * kept answering the same way. Measured 2026-08-26: `arena_launch` 0 cells outside (its rooms ARE
+ * a partition, and its floor now stops at them), `arena_prototype_60` 5240, `landing_basic` —
+ * a wall-less `?arenaDemo=1` fixture — its whole 50x50 world minus three rooms. The derivation
+ * costs 3ms once per arena build.
  *
- *   **That premise no longer holds for the map a match actually builds** (2026-08-25). The
- *   launch map `arena_launch` walls every room and reports zero undoored walk-throughs
- *   (`npm run audit:arena`), so its rooms ARE a partition and the whole-world branch is now
- *   merely conservative rather than necessary. Switching it is a measurement, not a guess —
- *   re-run the flood fill against the new map first. Left alone here on purpose: this pass
- *   authored the map, and changing how the arena paints its floor in the same breath would
- *   mix a content change with a rendering one.
+ * A PvE dungeon floor keeps its direct answer: `floorCoverage.test.ts` sweeps all five shipped
+ * floors for exactly this property (0 cells outside, against a world bounding box 1.41-2.26x the
+ * rooms' own area), so re-deriving it on every room transition would buy nothing.
  */
 export function floorRegionsPx(s: GameState, w: number, h: number): RectPx[] {
-  if (s.dungeonRoomRects.length === 0) return [{ x: 0, y: 0, w, h }];
-  return s.dungeonRoomRects.map(({ rect }) => toPx(rect));
+  if (s.dungeonRoomRects.length > 0) return s.dungeonRoomRects.map(({ rect }) => toPx(rect));
+  if (s.arenaRoomRects.length > 0) {
+    const rooms = s.arenaRoomRects.map(({ rect }) => rect);
+    if (roomsCoverReachableSpace(cellExtent(s.worldW, s.worldH), s.walls, rooms)) {
+      return rooms.map(toPx);
+    }
+  }
+  return [{ x: 0, y: 0, w, h }];
 }
 
 function toPx(rect: AABB): RectPx {
