@@ -707,10 +707,79 @@ survive, since a battery reporting all-killed is as suspect as one reporting all
 suites also drive a case off the REAL shipped JSON, which is where the placement defect surfaced
 — a fixture-only suite would have agreed with the map.
 
-**Still open: the map itself.** Authoring a real one is the next pass, and the audit is what it
-gets held to. It is now clear that authoring means more than furnishing: the map needs actual
-`solids` so its rooms and doors constrain movement at all, and its pillar/loot coordinates have
-to move into the room-relative space every other consumer already assumes.
+**The map itself was then authored** — see the next section.
+
+
+## The Seven Districts: the launch arena gets authored (2026-08-25, content)
+
+`arena_launch` (`engine/world/arenas/`) replaces `arena_prototype_60` as what a real PvP match
+builds. 60 rooms, 74 doors, 121x95 grid — and, unlike its predecessor, it is a place.
+
+**Seven districts joined by twelve arteries.** terraces (open, thin cover), kilns (hazards),
+cisterns (colonnades), atrium (the hub — biggest halls, richest loot, usually the eye of the
+zone), barracks (close quarters), catacombs (the maze, most rooms and most dead ends), foundry
+(dense industrial cover). Districts connect ONLY through the artery list, which is where the
+map's decisions are: inside a district you have options, leaving one is a commitment through a
+place someone can be waiting. The audit's chokepoint list is mostly artery endpoints, which is
+the intended shape rather than a coincidence.
+
+**Authored as TypeScript, not clicked or hand-typed as JSON.** `launchArenaPlan.ts` is the
+drawing: two 9x8 ASCII grids (district code + interior kit per slot, 12 slots left empty so the
+map is not a lattice), the column widths and row heights, every door as a slot pair, the eight
+drop points, the eye candidates with weights, and a per-district profile (loot table, AI
+flavour, encounter share). `launchArena.ts` assembles it; `slotGrid.ts` does the wall
+arithmetic; `interiorKits.ts` holds ten hand-designed cover patterns. The client imports
+`LAUNCH_ARENA` directly, the way PvE imports `EMBER_L1_ROOMS` — no JSON round-trip to go stale.
+design/15's "the editor is the authority" is satisfied by the LAYOUT being authored; the wall
+runs under it are the same derivation the editor's own door tool performs.
+
+**What the audit says, next to the map it replaces:**
+
+| | `arena_prototype_60` | `arena_launch` |
+|---|---|---|
+| room footprints | 1 distinct / 60 | **25 distinct**, none over 6.7% |
+| interiors (numbers / shapes) | 60 / **1** | **60 / 60** |
+| wall-run rects · solid cells | 0 · **0** | 492 · **2533** |
+| cover / floor area | 3.1% flat | 20.4% min, 33.3% median, 51.3% max |
+| features misplaced · off map | 120 · **90** | **0 · 0** |
+| unenclosed rooms | 60 | **0** |
+| doors gating nothing | 71 | **0** |
+| undoored walk-throughs | 33 | **0** |
+| loot tables | 1 | 3 (47 common / 9 rich / 12 vault) |
+| hazards | 7, one kind, one district | 7 across two districts, phased and always-on |
+| door graph | connected, diam 18, 14 chokepoints | connected, diam 15, 10 chokepoints, 8 dead ends |
+| drop separation | 3 to 18 hops | **4 to 14 hops** |
+
+**Two numbers only the audit could have found.** The first draft dropped two seats "at opposite
+corners" that were **two door hops apart** — the foundry->catacombs artery puts those corners
+back to back, which is invisible on the drawing and obvious in hops. And the hazards were all in
+one district, because every hazard kit had been assigned to the kilns; two moved to the
+catacombs. Neither was a bug, both were the map playing worse than intended, and neither would
+have been noticed by looking at it.
+
+**Verified live, with the same probe that condemned the old map.** `?arena=arena_launch` boots
+it in one tab: 492 walls / 124 obstacles (the old map: 0 / 60, all misplaced). A player driven
+due east from the drop point stops at **grid x 14.5** — the east wall of `terraces_r0c0` — and
+stays there for 800 more ticks. Lined up with that room's door instead, the same input carries
+them through it. Frame luma 39.41 world-drawn / 16.40 world-removed / 39.41 restored, control
+firing.
+
+**Tests: 48 new, and the battery found the two things the suite was not looking at.** Eight
+mutants over `slotGrid.ts`/`launchArena.ts`; six died. The survivors: "ignore the target cell,
+take the first free cell" (nothing asserted content goes WHERE it was aimed, only that it misses
+the walls — loot aims at the middle, enemy spawns at the edges, and that difference is the whole
+reason a vault pen has anything in it) and "blocked cells ignore pillars" (the no-content-inside-
+geometry sweep used `solidCellSet`, which is solids only). Both now covered — the aim separation
+distributionally, since per room the two aims can legitimately invert in a small room whose
+middle is walled. Control mutant survives.
+
+**Still open in this area.** `arena_prototype_60` stays in `ARENA_CATALOG` as the audit's
+before-picture, not as a playable map — dropping it is a follow-up, along with its pinned defect
+tests. `groundLayer.ts`'s arena branch still paints a whole-world floor because the OLD map's
+rooms were not a partition of its walkable space (45% of reachable cells sat outside every
+room); `arena_launch` reports 0 undoored leaks, so per-room floor painting is now probably
+correct there and worth re-measuring. And the audit is still a report: with a map that can meet
+thresholds, the numbers in the table above are the candidates for turning into a real gate.
 
 
 ## Phase 5 — Presentation & platform
@@ -4262,7 +4331,7 @@ Phase 0 (sync)  ─┬─ 0.1 affix removal ──┬─ 0.2 rarity
 Phase 1 (in-run loop)   ALL DONE (✅). 1.2 rooms/1.3 dungeon generation AND live wiring (generated multi-room floors, room-to-room traversal, branching, WaveScript timing — this is what the real client runs); 1.4 extraction/1.5 materials work over either the generated-dungeon or flat single-arena mode. 1.1 frames independent (✅ done)
 Phase 2 (meta)          ALL DONE (✅) — forge + tier-gated craft + 3-char roster + monetization scaffolding
 Phase 3 (co-op/net)     ALL DONE (✅). 3.2 revive/downed engine-side; 3.1 net layer = EngineConfig.players (the 2nd player) + @dd/engine/net + server/ + CoopSession, loopback-verified byte-for-byte; live N-player render wired (localOwner seam + ?coop=1 bot ally), browser-verified. 3.3 matchmaking control plane = matchsvc + HMAC tickets + ticket-verified /ws + client ?online=1, two-tab browser-verified (byte-identical lockstep) + render-layer LocalPredictor (movement/aim, snap-vs-lerp, ?lag= harness). NOTHING deferred (local firing prediction is a documented non-goal — needs sim rollback). 2026-08-04: mid-match reconnect (resume ticket + gameserver handshake routing + CoopSession.reconnect()) actually wired end-to-end — the wire protocol/server logic existed since 3.1 but was unreachable dead code until this pass; the local player's own walk animation (a real, separate render bug) also fixed — see the Phase 3 update above.
-Phase 4 (PvP)           CODE DONE, CONTENT OPEN (✅ 4.1 through 4.6, design/15). One open item, and it is content, not code: the shipped `arena_prototype_60` is a PROCEDURALLY GENERATED 60-room map, not the hand-authored one design/15 locks — 1 distinct room interior across all 60, zero wall runs. `npm run audit:arena -w client` measures it; `?arena=<id>` walks it in one tab. See "The launch arena is a placeholder that passes validation". 8p solo BR decided; team/hostility (ENGINE_VERSION 18) + multi-room broadphase/stitching + zone/EnvironmentSystem + placement win condition + in-arena loot/AI + anti-cheat checkpoints (ENGINE_VERSION 19) + sparse net sync + matchsvc ladder rating all shipped and tested. End-to-end match assembly wired (2026-07-26): mode:'coop'|'pvp' threaded through Matchmaker/ticket/MatchRoom/matchsvc, client ?pvp=1 -> arena EngineConfig (teamId per seat) -> placement gameover screens -> CoopSession.reportResult actually fires (was dead code for coop too) -> checkpoint/ladder settlement. The real ~60-room ArenaMap (arena_prototype_60.json, a concurrent session) is wired into ARENA_CATALOG. buildArenaSpecs' HP-scale/loadout preset is now called from GameState.buildSeat too (ENGINE_VERSION 19->20) — a PvP seat's weapons/maxHp/maxShield come from the scaled arena preset, never the PvE loadout. All browser-verified two-tab, byte-identical. 2026-07-29: the 4.1 "squads/revive reserved interface" is now built too (ENGINE_VERSION 29->30) — pre-formed party invite (server/src/PartyService.ts) + squad-chunked Matchmaker/teamId + squad placement/gated bandage revive + a PartyScreen lobby UI; see the Phase 4 update above. 2026-08-04: fixed a real squad-win scoring bug (RunOutcome compared seat identity instead of team membership, so most of a winning squad saw a DEFEAT screen) — see the Phase 4 update above.
+Phase 4 (PvP)           COMPLETELY DONE (✅ 4.1 through 4.6, design/15), content included as of 2026-08-25. The launch map is now `arena_launch` ("The Seven Districts", `engine/world/arenas/`) — hand-authored, 60 rooms / 74 doors / 7 districts / 12 arteries, with real wall geometry (0 unenclosed rooms, 0 doors gating nothing, 0 undoored walk-throughs). It replaced `arena_prototype_60`, a generated lattice with no walls at all whose pillars/loot were in the wrong coordinate space; that map is retained only as the audit's before-picture. `npm run audit:arena` measures any catalog map; `?arena=<id>` walks it in one tab. See "The launch arena is a placeholder that passes validation" and "The Seven Districts". 8p solo BR decided; team/hostility (ENGINE_VERSION 18) + multi-room broadphase/stitching + zone/EnvironmentSystem + placement win condition + in-arena loot/AI + anti-cheat checkpoints (ENGINE_VERSION 19) + sparse net sync + matchsvc ladder rating all shipped and tested. End-to-end match assembly wired (2026-07-26): mode:'coop'|'pvp' threaded through Matchmaker/ticket/MatchRoom/matchsvc, client ?pvp=1 -> arena EngineConfig (teamId per seat) -> placement gameover screens -> CoopSession.reportResult actually fires (was dead code for coop too) -> checkpoint/ladder settlement. The real ~60-room ArenaMap (arena_prototype_60.json, a concurrent session) is wired into ARENA_CATALOG. buildArenaSpecs' HP-scale/loadout preset is now called from GameState.buildSeat too (ENGINE_VERSION 19->20) — a PvP seat's weapons/maxHp/maxShield come from the scaled arena preset, never the PvE loadout. All browser-verified two-tab, byte-identical. 2026-07-29: the 4.1 "squads/revive reserved interface" is now built too (ENGINE_VERSION 29->30) — pre-formed party invite (server/src/PartyService.ts) + squad-chunked Matchmaker/teamId + squad placement/gated bandage revive + a PartyScreen lobby UI; see the Phase 4 update above. 2026-08-04: fixed a real squad-win scoring bug (RunOutcome compared seat identity instead of team membership, so most of a winning squad saw a DEFEAT screen) — see the Phase 4 update above.
 Phase 5 (presentation)  parallelizable throughout
 Client hardening pass   DONE (✅ 2026-08-04) — full client/src code review (182 files), fixed in place: PartyScreen/LoginScreen staleness guards, weaponSkins preload/fallback resilience, net/transport.ts dead-socket + swallowed-handler-exception fixes, TextInputOverlay blur teardown, Slider pointercancel, Rig bone-order validation, main.ts/main.wechat.ts boot() error boundary, meta/store.ts materialBank validation, auth.ts non-JSON error guard, theme.ts English-policy fix. See the Client hardening pass section above.
 Room & door model       DONE (✅ 2026-08-04/05, ENGINE_VERSION 34→35) — PvE floors co-resident + door-connected (placeFloor/carveDoorGaps/buildFloorGeometry, new DoorSystem: activation/lock-unlock/force-regroup), replacing the old one-room swap. HudView.ts fixed to compile against the new schema. Client room rendering shipped same day: door_{locked,open}_raw.png loaded and wired onto RoomBuilder's per-door Sprite (reactive lock/unlock in place via updateDoors(), no full rebuild), EventReactor reacts to force_regroup with a local-player camera snap. Fully-realized branching shipped 2026-08-05 (ENGINE_VERSION 35) — a real fork-and-reconverge diamond of sibling rooms, needing zero client changes (DoorSystem/RoomBuilder/EventReactor already topology-agnostic). PvE minimap adapter shipped same day — FloorProgress deleted, PvE now shares PvP's own Minimap widget via dungeonToArenaMap/dungeonRoomStatus (minimapLayout.ts). Map-editor door placement shipped same day (no engine version bump) — DungeonFloorMap/placeAuthoredFloor/DungeonConfig.floorMaps + a third tools/map-editor mode ("PvE Dungeon Floor") + validateDungeonFloorMap, closing the last item of the original three-item follow-up list. "全部加测试" follow-up added DungeonFloorCanvas.test.ts (28 tests, previously zero coverage on the tool's most complex new file). Real 2D graph layout (`layout: 'graph2d'`, `placeFloorGraph2d`) shipped same day too — a generated floor can place in real 2D instead of a forced west→east spine. "graph2d content" pass shipped 2026-08-05 (same day): `EMBER_DUNGEON` switches to `'graph2d'` (a new `ember_atrium` piece + wider exit authoring on `ember_pillars`/`ember_extraction`/`ember_boss`), and `placeFloorGraph2d` gains a direction-retry fallback for fold-back overlaps — both found necessary by testing the real content, not by inspection. `'branching'` still stays unused by any shipped config. **Bug fix pass shipped 2026-08-12 (ENGINE_VERSION 35→36):** two real bugs found from a live player report (door unlocked but still physically impassable) — `DeathDropsSystem`'s `onDeathSpawn` boss-adds now inherit the dying boss's own `roomId` (was `undefined`, so `DoorSystem` briefly saw the room as cleared and force-regrouped the player back), and `placeFloorGraph2d` now shifts a floor's whole coordinate space so a north/west hop off the origin-pinned spawn room never leaves a room (and its door) at a negative, physically-unreachable offset. See the Room & door model section above. **Stranded-enemy fix shipped 2026-08-15 (ENGINE_VERSION 38→39):** the third consequence of this same model — the checkpoint only requires the *capstone* room to be cleared, so a DESCEND could carry every enemy still alive elsewhere on the floor (plus their in-flight bullets) into the next one, holding a dead `roomId` and a position in geometry that had just been torn down; `resolveDescend` now clears `state.enemies`/`state.projectiles` alongside the room arrays it already wiped. See the Stranded-enemy section above.

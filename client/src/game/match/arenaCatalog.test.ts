@@ -5,8 +5,18 @@ import { describe, it, expect } from 'vitest';
 import { ARENA_CATALOG, ARENA_IDS, resolveArenaId } from './arenaCatalog';
 
 describe('ARENA_CATALOG', () => {
-  it('has exactly the two known arena ids', () => {
-    expect(Object.keys(ARENA_CATALOG).sort()).toEqual(['arena_prototype_60', 'landing_basic']);
+  it('has exactly the three known arena ids', () => {
+    expect(Object.keys(ARENA_CATALOG).sort()).toEqual(['arena_launch', 'arena_prototype_60', 'landing_basic']);
+  });
+
+  it('arena_launch is the hand-authored launch map a real PvP match resolves to', () => {
+    const arena = ARENA_CATALOG.arena_launch;
+    expect(arena.id).toBe('arena_launch');
+    expect(arena.rooms).toHaveLength(60);
+    // The property the map it replaces did not have: real geometry. Asserted here (not only
+    // in the engine's own suite) because this is the object the client actually builds from.
+    expect(arena.rooms.every((r) => r.solids.length > 0)).toBe(true);
+    expect(arena.spawns.length).toBeGreaterThanOrEqual(8);
   });
 
   describe('landing_basic', () => {

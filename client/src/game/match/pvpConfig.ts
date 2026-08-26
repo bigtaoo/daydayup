@@ -56,6 +56,6 @@ export function buildPvpEngineConfig(seed: number, playerCount: number): EngineC
       skinId: ids[i % ids.length]!,
       teamId: teamIdForOwner(i, playerCount),
     })),
-    arena: ARENA_CATALOG.arena_prototype_60,
+    arena: ARENA_CATALOG.arena_launch,
   };
 }

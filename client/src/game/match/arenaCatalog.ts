@@ -2,17 +2,21 @@
  * Client-side arena catalog (design/15, ROADMAP Phase 4 closeout) — the id → ArenaMap
  * lookup a real PvP match start resolves against.
  *
- * `arena_prototype_60` is the real hand-authored (well, map-editor-authored:
- * procedurally generated + validated in the editor, tools/map-editor) 60-room launch
- * map — `world/arenas/arena_prototype_60.json`, produced and validated separately from
- * this client. `landing_basic` is a small synthetic 3-room fixture (same shape as the
- * engine's own content/arenas.test.ts) kept ONLY for the lightweight `?arenaDemo=1` dev
- * harness (Game.beginArenaDemoRun) — a real PvP match always resolves to the real map.
+ * `arena_launch` is THE launch map: hand-authored (`@dd/engine/world/arenas`, seven
+ * districts joined by a short list of arteries), and what a real PvP match resolves to.
+ *
+ * `arena_prototype_60` is its predecessor, kept as the audit's before-picture rather than
+ * as a playable map: `world/arenas/arena_prototype_60.json` is a generated 60-room lattice
+ * with `solids: []` everywhere (so its rooms and all 71 of its doors are logical-only) whose
+ * pillars and loot markers are authored in the wrong coordinate space. `npm run audit:arena`
+ * reports both side by side. `landing_basic` is a small synthetic 3-room fixture kept ONLY
+ * for the lightweight `?arenaDemo=1` dev harness (Game.beginArenaDemoRun).
  */
 import type { ArenaMap } from '@dd/engine/content/arenas';
+import { LAUNCH_ARENA } from '@dd/engine/world/arenas';
 import arenaPrototype60 from '../../../../world/arenas/arena_prototype_60.json';
 
-export type ArenaId = 'landing_basic' | 'arena_prototype_60';
+export type ArenaId = 'landing_basic' | 'arena_prototype_60' | 'arena_launch';
 
 /** An L-shaped 3-room layout connected by doors, no encounter/loot markers — enough for
  * ZoneSystem's shrink and the placement win condition to run for real, not enough to be
@@ -38,6 +42,7 @@ function buildLandingBasic(): ArenaMap {
 export const ARENA_CATALOG: Record<ArenaId, ArenaMap> = {
   landing_basic: buildLandingBasic(),
   arena_prototype_60: arenaPrototype60 as ArenaMap,
+  arena_launch: LAUNCH_ARENA,
 };
 
 /** Every catalog id, as a value — the `?arena=` parser validates against this rather

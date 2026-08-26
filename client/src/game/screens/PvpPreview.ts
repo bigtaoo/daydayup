@@ -14,12 +14,13 @@ import { t } from '../../i18n';
 const ARENA_DISPLAY_NAME: Record<ArenaId, string> = {
   landing_basic: 'Landing Basic',
   arena_prototype_60: 'Prototype Arena',
+  arena_launch: 'The Seven Districts',
 };
 
 // A real PvP solo-queue match always resolves to this map (Game.buildOnlineConfig /
 // match/pvpConfig.ts) — known upfront, before matchmaking even starts, so a preview can
 // show it honestly rather than guessing.
-const REAL_ARENA_ID: ArenaId = 'arena_prototype_60';
+const REAL_ARENA_ID: ArenaId = 'arena_launch';
 
 /**
  * PvP match preview (design/10 open question "PvP preset-pick has no UI yet", 15) —

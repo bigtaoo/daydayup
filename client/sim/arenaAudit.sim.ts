@@ -4,20 +4,25 @@
  * `arenaGeometryMetrics` (where the content actually lands, and whether the rooms and doors
  * physically exist).
  *
- * Why this is a report and not a gate: `tools/map-editor`'s `validate.ts` already answers
- * "is this map structurally loadable", and `arena_prototype_60.json` passes it. What nothing
- * measured is whether the map is DESIGNED — and it is not. It is 60 identical 10x10 rooms on
- * a regular lattice with `solids: []` everywhere, so it has no walls at all: the room rects
- * and all 71 doors are logical-only, and an actor crosses the whole map in a straight line.
- * Worse, its pillars and loot markers are authored as ABSOLUTE coordinates where the engine
- * expects room-relative, so every one of them is displaced and most land off the map.
+ * Why this exists: `tools/map-editor`'s `validate.ts` answers "is this map structurally
+ * loadable", which is a different question from "is this map designed". `arena_prototype_60`
+ * passed the first and failed the second in two ways nothing had measured — 60 identical rooms
+ * with `solids: []` everywhere (so no walls at all: its rects and all 71 doors were
+ * logical-only and an actor crossed the map in a straight line), and pillars and loot markers
+ * authored as ABSOLUTE coordinates where the engine expects room-relative, displacing every
+ * one of them and throwing 90 of 120 off the map.
  *
- * Both of those were invisible to the variety half of this report, which is why the geometry
- * half exists: "60 identical rooms" and "60 rooms whose contents are all somewhere else" look
- * the same from a uniformity metric. Turning any of it into pass/fail thresholds now would
- * pin the placeholder's own numbers as the standard; the thresholds belong with the map that
- * can meet them (ROADMAP: the arena-map authoring pass). Until then this prints the numbers,
- * and the two metrics test files pin that the numbers mean what they say.
+ * The second was invisible to the variety half of this report, which is why the geometry half
+ * exists: "60 identical rooms" and "60 rooms whose contents are all somewhere else" look the
+ * same from a uniformity metric. `arena_launch` was then authored against both halves, and it
+ * is what a real match now builds; `arena_prototype_60` is kept in the catalog as the
+ * before-picture this report prints beside it.
+ *
+ * Still a REPORT and not a gate: the numbers a good map should hold are now KNOWN (see
+ * ROADMAP's "The Seven Districts" table), so turning the load-bearing ones into thresholds is
+ * a reasonable follow-up — it just should not be done by transcribing whatever the current map
+ * happens to score. The two metrics test files pin that the numbers mean what they say, and
+ * `world/arenas/launchArena.test.ts` already asserts the important ones for the shipped map.
  *
  * Run: `npm run audit:arena -w client`. Same harness shape as the two balance sims — kept
  * out of the default `npm test` glob because its output is a report to read, not an
