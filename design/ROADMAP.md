@@ -553,7 +553,7 @@ added 2026-08-05's "graph2d content" pass, Room & door model section below). **W
 ## Phase 2 — Close the meta loop ✅ (2026-07-24)
 
 - **2.1 ✅ Forge outpost** (14/09): blueprint unlock (permanent) + per-run craft from materials. Recipes are `element × qty × min-tier` — and **`minTier` is now enforced**: the material bank keys by (element, rolled tier) via `bankKey` (additive, no bump — tier 0 keeps the flat key), so a premium recipe (e.g. emberblade: fire×2 minTier 1) genuinely demands materials from deeper floors; spending is lowest-qualifying-tier-first.
-- **2.2 ✅ Loadout screen** (10): up to 2 crafted weapons carried into a run via `EngineConfig.loadout`; none → auto pistol. Lives in the demo forge outpost (`game/Forge.ts`).
+- **2.2 ✅ Loadout screen** (10): up to 2 crafted weapons carried into a run via `EngineConfig.loadout`; a free slot keeps its starter default, by kind, so every run carries a gun + a melee weapon (ENGINE_VERSION 45). Lives in the demo forge outpost (`game/Forge.ts`).
 - **2.3 ✅ Character roster + select** (14/09/13): the **3 launch characters** ship — vanguard (6/4), skirmisher (3/8), juggernaut (9/0, the flat-HP tank). Full side-grade balance suite (`skins.test.ts`): Pareto-non-domination, per-axis spread, equal-worth budget band, no inert passive on a zero-shield body. All free for now (paid split is the store's job).
 - **2.4 ✅ Monetization scaffolding** (14): direct-purchase blueprint/character grant APIs (`acquireBlueprint`/`grantCharacter`/`purchasableBlueprints`), no gacha. Real billing is deliberately out of scope (a platform adapter would call these after its own payment flow).
 
@@ -1156,7 +1156,7 @@ render-only / net-layer-optional, no `ENGINE_VERSION` impact.
   presets, but only one, `landing_basic`, exists today, and there is only one real map,
   `arena_prototype_60`) — so this is a confirm/preview step, not a picker, inserted between
   ModeSelect's PVP SOLO QUEUE button and Matchmaking. It shows the real map name/room count,
-  and the player's own PvP-scaled character + landing-kit weapon via `buildArenaSpecs` — the
+  and the player's own PvP-scaled character + the WHOLE landing kit (gun card + idle melee slot chip, the same widget pair the in-match HUD uses; the kit became a pair in `ENGINE_VERSION` 45) via `buildArenaSpecs` — the
   SAME function `GameState.buildSeat` calls for a real arena seat, so the preview can never
   drift from what a match actually seats them with. Deliberately does **NOT** run for the
   squad path (`beginSquadMatch`): every party member's poll auto-advances there, so a manual
@@ -5641,3 +5641,96 @@ was: the **fill-rate** saving from halving the renderer resolution is arithmetic
 Timing `renderer.render()` in a loop inside a non-compositing tab measures CPU submission, and
 the GPU work is deferred — the honest numbers here are the GL counters (render-target switches
 11 -> 1), and only a device can turn the resolution half into a frame-rate claim.
+
+## A character carries a gun AND a blade — in both modes (2026-08-26, `ENGINE_VERSION` 45)
+
+A play report with a red circle drawn round an empty patch of HUD: *"角色可以同时持有一把近战
+武器和一把枪，并且在ui上我标注的位置可以进行切换。我记得之前实现过一次，你看看"*.
+
+They had. **Every layer of weapon swapping was present and individually green** —
+`Button.SWAP_WEAPON`, `ApplyInputSystem.swap()`, the keyboard `1`/`2` keys, the touch corner
+buttons, and `HudView.weaponSlotChip` positioned at exactly the circled pixel. What had gone
+missing was the SECOND WEAPON.
+
+`GameState.buildSeat` read `if (seat.loadout)` — and `[]` is truthy in JS, so a
+staged-but-empty loadout took the "the player chose this" branch and fell back to design/05's
+old `none → auto pistol` rule, discarding the starter gun+saber pair. That branch was not an
+edge case: a fresh save stages `[]`, and `Game.beginRun` consumes the staged loadout the moment
+a run starts ("one run each", `05`), so **every run from the second onward hit it**. With
+`weapons.length === 1` the HUD chip hides itself *by design* ("no empty nothing-to-swap-to
+tile"), so the verb disappeared with nothing red anywhere.
+
+### What shipped
+
+- `resolveLoadout` (`engine/content/players.ts`) owns one rule for the whole PvE side: unknown
+  ids dropped (`09` forward-compat), survivors capped at `weaponSlots` and kept ACTIVE-first
+  (you crafted it, you spawn holding it), then **every free slot filled from
+  `PLAYER_BASE.startWeapons` with a kind the staged list does not already cover**. Nothing
+  crafted → gun + saber; one crafted gun → that gun + saber; one crafted blade → that blade +
+  gun. Two of the SAME kind stay verbatim — an explicit choice, and no crafted weapon is ever
+  evicted for a default.
+- **PvP got the same invariant by its own route.** `landing_basic` was `[BLASTER_SIM]`: one
+  gun, so every arena seat spawned with no second slot and no parry until it looted a melee
+  weapon. It is now `[BLASTER_SIM, SABER_SIM]`, both scaled by `PVP_SCALE_FACTOR`. Kept as
+  arena-scoped authored data rather than routed through `resolveLoadout` (which reads PvE meta
+  content) — the fairness wall stays structural, and the both-kinds invariant is gated by a
+  sweep over the new `ARENA_PRESET_IDS` instead.
+- Three places that had quietly become false: the Forge board's `(none → auto pistol)` text
+  (now built from the real default pair's names), the Forge compare card's "equipped"
+  comparator (now `resolveLoadout(m.loadout)`, so a half-crafted loadout still diffs a melee
+  candidate against the saber that would fill the slot), and `PvpPreview`, which drew only
+  `weapons[0]` and would have under-reported the kit by half — it now draws the same
+  card + idle-chip pair the in-match HUD does.
+- **A design claim moved rather than being patched over.** `03`/`05` said "ranged loadouts get
+  no parry — the core ranged-vs-melee trade-off". With a guaranteed melee slot that is simply
+  false. The trade-off is now MOMENT-level: the swap is instant and free, but only the active
+  weapon's arc exists, so the gun's uptime and the saber's parry sector can never be held in
+  the same instant. Both docs say that now. It also means parry is universal in PvP from the
+  drop, which moves bullet-vs-body balance — named in `15` as something its first-pass TTK
+  tuning inherits, not buried.
+
+### Coverage was chosen by measurement, not by guesswork
+
+A mutation battery over `resolveLoadout` (14 mutants, plus controls) came back **12 killed, 2
+survived** — and both survivors were EQUIVALENT mutants pointing at the same dead early return,
+whose branch the fill loop already handled identically. **The fix was to delete code, not to
+write a test**: with it gone, reversing the fallback order became a real behaviour difference
+(spawn holding the blade instead of the gun) that the existing assertions already killed.
+Re-run: **14/14 killed, both controls survived.** The PvP side got its own battery (6/6 killed)
+— during which a "control" was killed too, and the honest diagnosis was that *the control was
+mislabelled*, not that the harness was broken: preset ORDER decides which weapon you spawn
+holding, so the suites were right. Genuinely inert mutations (copy-before-map, rename a
+parameter) then survived, which is what proved the harness.
+
+The batteries cannot see a gap in what the tests REACH, so four suites were added around them:
+
+- **An authored-content sweep**: every craftable blueprint in `BLUEPRINT_CATALOG` staged alone
+  still yields one gun + one melee weapon, with the crafted one active — plus a diagonal sweep
+  over pairs, so a blueprint added later is covered the day it is authored.
+- **The HUD, from the real producer with the config a real run passes.** `HudView.test.ts`
+  already built state from `createGameState`, which *looked* like real coverage — but its
+  config had no `loadout` key at all, which was always the healthy two-weapon path. The bug
+  lived in `loadout: []`. **Replaying the shipped bug verbatim leaves all 47 pre-existing HUD
+  cases green and reddens only the 2 new ones** — that is the evidence the gap was real.
+- **Every co-op seat** (`buildSeat` runs per seat; an ally seat is the one shape with no
+  `loadout` key at all) and **the run config as the engine receives it**, starting from
+  `parseGameQueryParams` because `?wpn=<id>` is the one input that stages a one-weapon loadout
+  on purpose.
+- **The whole verb, HUD tap to sim** (`client/src/game/gameWeaponSwap.test.ts`): `Game` built
+  headlessly against a fake `Application` whose ticker is captured and driven by hand,
+  asserting that after the tap the weapon the SIM considers active is a different one, of the
+  other kind. Unwiring `hud.onSwapWeapon` kills exactly the three chip cases and unwiring
+  `input.onSwitchWeapon` exactly the one keyboard case — precise, not a blanket red. This is
+  the file that would have caught the original report: every PIECE had a green test while the
+  verb was unusable.
+
+### Verification
+
+Driven live in the browser (a hand-driven ticker, since the pane does not composite when
+backgrounded). PvE, real forge → run with an empty loadout: kit `blaster + saber`, chip visible
+at x=220 — right of the 198-px weapon card, the circled spot — tap → saber active, keyboard `2`
+→ back. PvP, `?arena=arena_launch` (`zoneEnabled`, two seats): kit `blaster` 5 dmg + `saber` 10
+dmg (1x5, 2x5), `deflect: true`, tap → saber active. Forge board reads
+`Loadout (none → Blaster + Saber) (0/2)`. Engine 819 tests green, `tsc --noEmit` clean in both
+workspaces, file-length gate clean in all seven.
+

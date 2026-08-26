@@ -265,12 +265,37 @@ describe('meta loadout reaches the run via EngineConfig.loadout', () => {
     expect(names(undefined)).toEqual(PLAYER_BASE.startWeapons.map((s) => s.name));
   });
 
-  it('an empty loadout falls back to the auto pistol (design/05 "none → auto pistol")', () => {
-    expect(names([])).toEqual([WEAPON_SIM_BY_ID.blaster!.name]);
+  // Was "an empty loadout falls back to the auto pistol". That rule fired on every
+  // ORDINARY run — a fresh save stages `[]`, and Game.beginRun consumes the staged
+  // loadout immediately (design/05 "one run each"), so runs 2+ were always empty — and
+  // it left the player holding a single gun with no melee weapon and no second slot, at
+  // which point the HUD's swap chip hides itself and the swap verb vanishes. See
+  // engine/content/players.test.ts for resolveLoadout's own rules.
+  it('an empty loadout still spawns the full starter pair, not a lone pistol', () => {
+    expect(names([])).toEqual(PLAYER_BASE.startWeapons.map((s) => s.name));
+  });
+
+  it('a HALF-crafted loadout keeps the crafted weapon and fills the other slot by kind', () => {
+    const start = bankMaterials(defaultMetaState(), { mat_physical: 3 });
+    const r = craft(start, 'repeater');
+    expect(r.ok).toBe(true);
+    const loadout = r.ok ? r.meta.loadout : [];
+    expect(loadout).toEqual(['repeater']);
+    // The crafted gun replaces the DEFAULT GUN; the starter saber stays in slot 2, so a
+    // player who crafted one weapon can still swap to melee.
+    expect(names(loadout)).toEqual(['repeater', WEAPON_SIM_BY_ID.saber!.name]);
   });
 
   it('unknown ids are dropped; too many are capped at WEAPON_SLOTS', () => {
-    expect(names(['ghost'])).toEqual([WEAPON_SIM_BY_ID.blaster!.name]); // all unknown → pistol
+    expect(names(['ghost'])).toEqual(PLAYER_BASE.startWeapons.map((s) => s.name)); // all unknown → starter pair
     expect(names(['repeater', 'flamer', 'cannon'])).toHaveLength(PLAYER_BASE.weaponSlots);
+  });
+
+  it('every run carries a second slot for the swap control to point at', () => {
+    // The invariant the live report was actually about — asserted at the seam a real run
+    // goes through, not just against resolveLoadout in isolation.
+    for (const loadout of [undefined, [], ['ghost'], ['repeater'], ['emberblade']]) {
+      expect(names(loadout).length).toBe(PLAYER_BASE.weaponSlots);
+    }
   });
 });

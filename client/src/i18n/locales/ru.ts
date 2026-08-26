@@ -53,7 +53,7 @@ export const ru: Translations<typeof en> = {
     pagePrevButton: '‹ СТРАНИЦА',
     pageNextButton: 'СТРАНИЦА ›',
     charStats: '{skin}  ({hp} ОЗ / {sh} Щит)',
-    noneAutoPistol: '(нет → автопистолет)',
+    noneStarterPair: '(нет → {weapons})',
     moreAvailable: 'ещё доступно: {count}',
     materialsLine: 'Материалы   {bank}   |   персонажей в наличии: {ownedChars}',
     loadoutLine: 'Снаряжение  {loadout}   ({count}/{max})',

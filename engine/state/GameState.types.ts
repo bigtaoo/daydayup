@@ -30,7 +30,8 @@ export type WaveDef = readonly SpawnSpec[];
  * command's `owner` routes to the right seat (ApplyInputSystem). Every field mirrors
  * the single-player top-level config so a seat is self-describing:
  *   - `skinId`   chosen character (unknown/absent → default, resolveSkin)
- *   - `loadout`  crafted weapon ids (unknown dropped; empty → auto pistol)
+ *   - `loadout`  crafted weapon ids (unknown dropped; free slots filled by kind from
+ *                PLAYER_BASE.startWeapons — see resolveLoadout, content/players.ts)
  *   - `start`    spawn px (absent → world centre; dungeon mode overrides on room load)
  * The engine has always iterated `state.players` by owner, so N seats need no system
  * change — only this construction path. See `EngineConfig.players`.
@@ -63,11 +64,11 @@ export interface EngineConfig {
   players?: readonly PlayerConfig[];
   skinId?: SkinId; // chosen character (design/14); unknown/absent → default (resolveSkin)
   // Brought-in loadout (design/05/14, ROADMAP 2.2) — up to WEAPON_SLOTS weapon ids the
-  // player crafted at the forge and carried into this run. Resolved through
-  // WEAPON_SIM_BY_ID (unknown ids dropped, design/09 forward-compat); an empty/all-unknown
-  // list falls back to the auto pistol ("none → auto pistol", design/05). ABSENT (every
-  // config before this feature) → the PLAYER_BASE.startWeapons default, byte-identical —
-  // additive, no ENGINE_VERSION bump.
+  // player crafted at the forge and carried into this run. Resolved by `resolveLoadout`
+  // (content/players.ts): unknown ids dropped (design/09 forward-compat), then every free
+  // slot filled from PLAYER_BASE.startWeapons with a kind the staged list doesn't cover,
+  // so a run always spawns carrying a gun AND a melee weapon. ABSENT or EMPTY → the plain
+  // PLAYER_BASE.startWeapons pair.
   loadout?: readonly string[];
   playerStart?: readonly [number, number]; // px; defaults to world centre
   // Static round solids (pillars), in world px [x, y, radius]. Converted to

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { createGameState } from '@dd/engine/state/GameState';
 import { pxToFp } from '@dd/engine/content/convert';
 import { PVP_SCALE_FACTOR } from '@dd/engine/balance/build';
-import { BLASTER_SIM } from '@dd/engine/content/weapons';
+import { BLASTER_SIM, SABER_SIM } from '@dd/engine/content/weapons';
 import { SKIN_DEFS, DEFAULT_SKIN_ID } from '@dd/engine/content/skins';
 import { PLAYER_BASE } from '@dd/engine/content/players';
 import type { ArenaMap } from '@dd/engine/content/arenas';
@@ -78,7 +78,16 @@ describe('GameState.buildSeat — buildArenaSpecs wiring (design/15, ROADMAP 4.2
     expect(p.maxShield).toBe(Math.round(defaultSkin.maxShield * PVP_SCALE_FACTOR));
     expect(p.hp).toBe(p.maxHp); // spawns full
     expect(p.shield).toBe(p.maxShield);
-    expect(p.weapon?.spec.damage).toBe(Math.round(BLASTER_SIM.damage * PVP_SCALE_FACTOR)); // landing kit, not 'saber'
+    expect(p.weapon?.spec.damage).toBe(Math.round(BLASTER_SIM.damage * PVP_SCALE_FACTOR)); // landing kit, not the PvE loadout
+    // The kit is a gun + a melee weapon (ENGINE_VERSION 45), so the seat DOES spawn with
+    // a saber — which makes the fairness assertion sharper, not weaker: the saber it holds
+    // is the ARENA's scaled copy, not the PvE 'saber' the config asked for. A leaked PvE
+    // spec would show up here as raw damage 2 against a 30 HP pool.
+    expect(p.weapons).toHaveLength(PLAYER_BASE.weaponSlots);
+    const melee = p.weapons.find((w) => w.spec.kind === 'melee');
+    expect(melee).toBeDefined();
+    expect(melee!.spec.damage).toBe(Math.round(SABER_SIM.damage * PVP_SCALE_FACTOR));
+    expect(melee!.spec.damage).not.toBe(SABER_SIM.damage);
   });
 
   it('an arena seat scales the RIGHT character\'s stats by skinId', () => {
@@ -102,6 +111,30 @@ describe('GameState.buildSeat — buildArenaSpecs wiring (design/15, ROADMAP 4.2
       expect(p.solidRadius).toBe(PLAYER_BASE.solidRadius);
       expect(p.footprintRadius).toBe(PLAYER_BASE.footprintRadius); // and the feet circle is untouched
     }
+  });
+
+  /**
+   * Per-SEAT loadout resolution (ENGINE_VERSION 45). `buildSeat` runs once per seat, so
+   * the "always a gun AND a melee weapon" invariant has to hold for a co-op ally too —
+   * and an ally seat is the one shape that carries no `loadout` key at all, while the
+   * local seat carries whatever the meta staged (`[]` on a fresh save). Both paths run
+   * through the same construction, but nothing asserted that they BOTH end up armed for
+   * the swap control until now.
+   */
+  it('every co-op seat spawns with both weapon kinds, whatever its own loadout key looks like', () => {
+    const s = createGameState({
+      seed: 1, worldW: 800, worldH: 600, waves: [],
+      players: [{ loadout: [] }, {}, { loadout: ['repeater'] }, { loadout: ['ghost'] }],
+    });
+    expect(s.players).toHaveLength(4);
+    for (const p of s.players) {
+      expect(p.weapons).toHaveLength(PLAYER_BASE.weaponSlots);
+      expect(new Set(p.weapons.map((w) => w.spec.kind))).toEqual(new Set(['ranged', 'melee']));
+      // The active pointer and the slot cursor agree — what ApplyInputSystem.swap toggles.
+      expect(p.weapon).toBe(p.weapons[p.activeSlot]);
+    }
+    // The one seat that staged a real weapon spawns holding it, not a default.
+    expect(s.players[2]!.weapon?.spec.name).toBe('repeater');
   });
 
   it('a non-arena config is completely unaffected — plain unscaled SkinDef stats + real loadout', () => {

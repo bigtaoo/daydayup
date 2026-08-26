@@ -11,7 +11,7 @@
 import type { Fp } from '../math/fixed';
 import type { WeaponSimSpec } from '../state/entities';
 import { pxToFp } from './convert';
-import { BLASTER_SIM, SABER_SIM } from './weapons';
+import { BLASTER_SIM, SABER_SIM, WEAPON_SIM_BY_ID } from './weapons';
 
 /**
  * PLAYER_BASE — the stats SHARED by every character (design/09). The per-character
@@ -27,7 +27,11 @@ export interface PlayerBase {
   speedPerTick: Fp; // fp displacement per tick at full move magnitude
   margin: Fp; // clamp inset from the world edge
   weaponSlots: number; // carried-weapon slots (design/09 WEAPON_SLOTS)
-  startWeapons: WeaponSimSpec[]; // loadout; index 0 active at spawn, SWAP toggles
+  // Default loadout: one GUN + one MELEE weapon, index 0 active at spawn, SWAP toggles.
+  // Order matters twice — index 0 is what a run spawns holding, and resolveLoadout()
+  // below fills a crafted loadout's free slots from here BY KIND, so this list is also
+  // the per-kind default table. Keep exactly one entry per kind.
+  startWeapons: WeaponSimSpec[];
 }
 
 export const PLAYER_BASE: PlayerBase = {
@@ -57,5 +61,49 @@ export const PLAYER_BASE: PlayerBase = {
   speedPerTick: pxToFp(6.4), // 3.2 px/frame × 2 = 6.4 px/tick ≈ 6 grid/s
   margin: pxToFp(20),
   weaponSlots: 2,
-  startWeapons: [BLASTER_SIM, SABER_SIM], // gun + saber; a Stage-F build swaps this
+  // gun + saber. Every run carries both (resolveLoadout): a crafted weapon REPLACES the
+  // default of its own kind rather than emptying the other slot, so the swap verb always
+  // has something to swap to. A Stage-F build swaps the defaults themselves.
+  startWeapons: [BLASTER_SIM, SABER_SIM],
 };
+
+/**
+ * Resolve the loadout a run actually spawns with (design/05/09, ENGINE_VERSION note
+ * below). The invariant this enforces: **a character always carries a gun AND a melee
+ * weapon** — the swap control (Button.SWAP_WEAPON / the HUD's idle-slot chip) is a core
+ * verb, not something a run can silently lose.
+ *
+ * Rules, in order:
+ *   - Unknown ids are dropped (design/09 forward-compat), then the list is capped at
+ *     `weaponSlots`.
+ *   - Whatever survived keeps its staged order and stays ACTIVE-first — you crafted it,
+ *     you spawn holding it.
+ *   - Every free slot is then filled from `startWeapons` with a kind (`ranged`/`melee`)
+ *     the staged list doesn't already cover. So: nothing crafted → gun + saber; one
+ *     crafted gun → that gun + saber; one crafted blade → that blade + gun.
+ *
+ * Replaces the old "empty loadout → auto pistol" fallback, which was reachable on EVERY
+ * ordinary run (a fresh save's `loadout` is `[]`, and crafted weapons are consumed after
+ * one run, so runs 2+ were always empty) and left the player with a single weapon and no
+ * melee at all. Staging two weapons of the SAME kind is still honoured verbatim — that
+ * is an explicit choice, and no crafted weapon is ever discarded to make room for a
+ * default.
+ */
+export function resolveLoadout(ids: readonly string[] | undefined): readonly WeaponSimSpec[] {
+  const staged = (ids ?? [])
+    .map((id) => WEAPON_SIM_BY_ID[id])
+    .filter((s): s is WeaponSimSpec => s !== undefined)
+    .slice(0, PLAYER_BASE.weaponSlots);
+
+  // No `staged.length === 0` shortcut: the fill loop below already yields exactly
+  // `startWeapons`, in order, for an empty list. A mutation battery flagged that early
+  // return as unreachable-equivalent — and returning `PLAYER_BASE.startWeapons` itself
+  // handed callers a mutable alias of the content table, which the loop's fresh array
+  // never does.
+  const out = [...staged];
+  for (const fallback of PLAYER_BASE.startWeapons) {
+    if (out.length >= PLAYER_BASE.weaponSlots) break;
+    if (!out.some((w) => w.kind === fallback.kind)) out.push(fallback);
+  }
+  return out;
+}

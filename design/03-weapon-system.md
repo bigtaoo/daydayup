@@ -106,7 +106,9 @@ Deflect is **part of the melee attack — not a separate state or button.** Pres
 - **Enemies** in the sector take the swing's damage (once per swing).
 - **Enemy bullets** in the sector are deflected: faction flips to player, velocity is redirected toward the nearest enemy (or mirror-reflected when the arena is clear), and a deflect flash plays (additive on the fx layer).
 
-So there is no `isBlocking`, no block key, no separate `blockArc` — the arc that hits enemies is the arc that bats bullets back. A per-weapon `deflect: bool` gates whether a given melee weapon can parry at all (the ranged-vs-melee trade-off: ranged loadouts get no parry).
+So there is no `isBlocking`, no block key, no separate `blockArc` — the arc that hits enemies is the arc that bats bullets back. A per-weapon `deflect: bool` gates whether a given melee weapon can parry at all.
+
+**Where the ranged-vs-melee trade-off actually lives (`ENGINE_VERSION` 45).** It used to read "ranged loadouts get no parry" — a BUILD-level choice. That is no longer true, and deliberately so: every loadout now carries one gun and one melee weapon (`resolveLoadout`, `09`; PvP's landing kit is the same pair, `15`), because a one-weapon loadout silently removed the swap verb from the game. The trade-off is now MOMENT-level: the swap is instant and free, but only the active weapon's arc exists, so you cannot hold the gun's uptime and the saber's parry sector in the same instant — you choose, mid-fight, which one is in your hands when the bullet arrives. Both halves are always OWNED; neither is ever both-at-once.
 
 - Extensible: perfect-swing timing window for a damage bonus, etc.
 

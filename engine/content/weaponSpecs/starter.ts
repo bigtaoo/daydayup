@@ -55,7 +55,10 @@ export const STARTER_WEAPON_SPECS: Record<string, WeaponSpec> = {
     rangeGrid: 1.44, // demo 46px
     swingSec: 0.13, // active hit window ⊂ cooldown
     knockback: 6, // grid/s impulse (applied by HitResolve once z/knockback lands, 07)
-    deflect: true, // ranged loadouts have no parry (03/05)
+    // The parry sector (03/05). Every loadout carries a melee weapon since
+    // ENGINE_VERSION 45, so parry is always owned — the trade-off is which weapon is
+    // ACTIVE when the bullet arrives, not which one was brought.
+    deflect: true,
     deflectSpeed: 14.4, // grid/s of a redirected bullet (demo 5.5px/f · 1.4 · 60/32)
   },
 };

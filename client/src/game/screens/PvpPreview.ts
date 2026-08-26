@@ -3,6 +3,7 @@ import { buildArenaSpecs, PVP_SCALE_FACTOR, type SkinId } from '@dd/engine';
 import { Panel, Button } from '../ui/widgets';
 import { PlayerCard } from '../ui/PlayerCard';
 import { WeaponCard } from '../ui/WeaponCard';
+import { WeaponSlotChip } from '../ui/WeaponSlotChip';
 import { ARENA_CATALOG, type ArenaId } from '../match/arenaCatalog';
 import { t } from '../../i18n';
 
@@ -41,6 +42,11 @@ export class PvpPreview {
   private readonly fairnessNote: Text;
   private readonly playerCard = new PlayerCard();
   private readonly weaponCard = new WeaponCard();
+  // The kit's OTHER slot, drawn with the same widget (and so the same reading) the
+  // in-match HUD uses for it. A landing kit is a gun + a melee weapon (ENGINE_VERSION
+  // 45), and this screen exists to show what a player is about to enter with — showing
+  // only `weapons[0]` would now under-report the kit by half.
+  private readonly weaponSlotChip = new WeaponSlotChip();
   private readonly queueBtn: Button;
   private readonly backBtn: Button;
 
@@ -65,7 +71,7 @@ export class PvpPreview {
 
     this.view.addChild(
       this.panel.view, this.card.view, this.title, this.mapLine, this.fairnessNote,
-      this.playerCard.view, this.weaponCard.view, this.queueBtn.view, this.backBtn.view,
+      this.playerCard.view, this.weaponCard.view, this.weaponSlotChip.view, this.queueBtn.view, this.backBtn.view,
     );
     this.view.eventMode = 'static';
     this.view.visible = false;
@@ -92,7 +98,11 @@ export class PvpPreview {
     this.card.layout(cardW, cardH);
     this.card.view.position.set(cx - cardW / 2, cardTop);
     this.playerCard.view.position.set(cx - cardW / 2 + 16, cardTop + 16);
-    this.weaponCard.view.position.set(cx - cardW / 2 + 16, cardTop + 16 + PlayerCard.HEIGHT + 12);
+    const weaponRowY = cardTop + 16 + PlayerCard.HEIGHT + 12;
+    this.weaponCard.view.position.set(cx - cardW / 2 + 16, weaponRowY);
+    // Right of the active card, same row and same gap as HudView's own idle-slot chip
+    // (+2 to line up with the WeaponCard's icon chip, which starts at local y=2).
+    this.weaponSlotChip.view.position.set(cx - cardW / 2 + 16 + this.weaponCard.estimatedWidth() + 10, weaponRowY + 2);
     y = cardTop + cardH + 16;
 
     this.fairnessNote.position.set(cx, y);
@@ -123,5 +133,10 @@ export class PvpPreview {
     this.playerCard.set(skinId, built.maxHp, built.maxHp, built.maxShield, built.maxShield);
     const weapon = built.weapons[0] ?? null;
     this.weaponCard.set(weapon?.spec ?? null, 1, 1); // ready (full bar), no live cooldown to show
+    // Slot 2 — hidden rather than drawn empty if a preset ever carries one weapon, the
+    // same convention HudView applies to this widget.
+    const other = built.weapons[1] ?? null;
+    this.weaponSlotChip.view.visible = other !== null;
+    this.weaponSlotChip.set(other?.spec ?? null);
   }
 }

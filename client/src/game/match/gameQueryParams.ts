@@ -47,7 +47,10 @@ export function parseGameQueryParams(search: string): GameQueryParams {
     pvpSeats: Number.isInteger(seats) && seats >= 2 && seats <= 8 ? seats : null,
     matchBaseUrl: params.get('mm'), // override the matchsvc origin (default localhost:8788)
     lagMs: Number.isFinite(lag) && lag > 0 ? lag : null, // dev: inject synthetic one-way latency (ms)
-    loadoutOverride: wpn ? [wpn] : null, // dev toggle: start a run's loadout with exactly this weapon id
+    // Dev toggle: stage exactly this weapon id. It reaches the run through resolveLoadout
+    // like any crafted loadout, so the free slot still fills with the starter weapon of the
+    // OTHER kind (ENGINE_VERSION 45) — `?wpn=<a gun>` spawns that gun + the saber.
+    loadoutOverride: wpn ? [wpn] : null,
     perf: params.get('perf') === '1', // dev toggle: on-screen perf readout + GL draw-call probe (src/perf)
   };
 }

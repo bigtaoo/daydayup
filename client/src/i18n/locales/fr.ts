@@ -48,7 +48,7 @@ export const fr: Translations<typeof en> = {
     pagePrevButton: '‹ PAGE',
     pageNextButton: 'PAGE ›',
     charStats: '{skin}  ({hp} PV / {sh} Bouclier)',
-    noneAutoPistol: '(aucune → pistolet auto)',
+    noneStarterPair: '(aucune → {weapons})',
     moreAvailable: '{count} de plus disponibles',
     materialsLine: 'Matériaux   {bank}   |   personnages possédés : {ownedChars}',
     loadoutLine: 'Équipement  {loadout}   ({count}/{max})',

@@ -1,6 +1,6 @@
 import { Container, Sprite, Text } from 'pixi.js';
 import {
-  BLUEPRINT_CATALOG, SKIN_DEFS, DAMAGE_TYPES, PLAYER_BASE, WEAPON_SPECS, RARITY_TIERS,
+  BLUEPRINT_CATALOG, SKIN_DEFS, DAMAGE_TYPES, PLAYER_BASE, WEAPON_SPECS, RARITY_TIERS, resolveLoadout,
   type WeaponBlueprint,
 } from '@dd/engine';
 import type { MetaState } from '../../meta';
@@ -209,7 +209,13 @@ export class Forge {
     const skin = SKIN_DEFS[m.selectedSkin];
     this.charText.text = skin ? t('forge.charStats', { skin: tName(skin.nameKey), hp: skin.maxHp, sh: skin.maxShield }) : m.selectedSkin;
 
-    const loadout = m.loadout.length ? m.loadout.join(', ') : t('forge.noneAutoPistol');
+    // Empty board text names the ACTUAL default pair (resolveLoadout's fill-by-kind
+    // rule, ENGINE_VERSION 45) instead of the old "(none → auto pistol)" — that string
+    // outlived the behaviour it described, and it was the only place the forge told the
+    // player what an empty loadout means.
+    const loadout = m.loadout.length
+      ? m.loadout.join(', ')
+      : t('forge.noneStarterPair', { weapons: PLAYER_BASE.startWeapons.map((w) => tName(w.nameKey)).join(' + ') });
     const buyable = purchasableBlueprints(m);
     // Named only when short; past 3 it collapses to a bare count instead of trying to
     // fit a variable-length name list — `buyable` can list every unlocked-but-uncrafted
@@ -331,14 +337,16 @@ export class Forge {
   }
 
   /** design/10's loadout-detail decision: the browse cursor's blueprint vs whichever
-   * loadout entry shares its weapon kind (empty loadout falls back to the auto-equip
-   * pair, mirroring the board's own "(none → auto pistol)" text). Hidden when there's
-   * no same-kind comparator (e.g. loadout already has 2 of the other kind) — nothing
-   * useful to diff against. */
+   * loadout entry shares its weapon kind. The comparator is what the run would ACTUALLY
+   * spawn carrying (`resolveLoadout`, ENGINE_VERSION 45) — so a half-crafted loadout
+   * still diffs a melee candidate against the starter saber that would fill the free
+   * slot, instead of hiding the card as if that slot were empty. Hidden only when there
+   * genuinely is no same-kind comparator (a loadout holding two of the OTHER kind) —
+   * nothing useful to diff against. */
   private renderCompareCard(m: MetaState, cx: number, y: number): boolean {
     const candidateId = this.order[this.selectedIndex];
     const candidate = candidateId ? WEAPON_SPECS[BLUEPRINT_CATALOG[candidateId]!.weaponId] : undefined;
-    const effectiveLoadout = m.loadout.length ? m.loadout : PLAYER_BASE.startWeapons.map((s) => s.name);
+    const effectiveLoadout = resolveLoadout(m.loadout).map((w) => w.name);
     const equipped = candidate ? equippedSpecOfKind(effectiveLoadout, candidate.kind) : undefined;
     const rows = candidate && equipped ? buildCompareRows(equipped, candidate) : null;
 

@@ -16,8 +16,7 @@ import { toFp } from '../math/fixed';
 import type { Fp } from '../math/fixed';
 import { pxToFp } from '../content/convert';
 import { freshStatus } from '../content/damage';
-import { PLAYER_BASE } from '../content/players';
-import { WEAPON_SIM_BY_ID } from '../content/weapons';
+import { PLAYER_BASE, resolveLoadout } from '../content/players';
 import { resolveSkin, toShieldBreakSim } from '../content/skins';
 import { buildRunSpecs, buildArenaSpecs } from '../balance/build';
 import { UniformGrid } from '../systems/spatialGrid';
@@ -36,7 +35,6 @@ import type {
   PickupItem,
   PlayerActor,
   Projectile,
-  WeaponSimSpec,
   WeaponState,
   Winner,
 } from './entities';
@@ -305,21 +303,13 @@ export class GameState {
       maxShield = built.maxShield;
     } else {
       // PvE: resolve the loadout through the run builder (design/09 fairness wall) — the
-      // base meta loadout carried in at match start. A `seat.loadout` (crafted weapon
-      // ids, ROADMAP 2.2) resolves through WEAPON_SIM_BY_ID — unknown ids dropped
-      // (forward-compat), an empty result falling back to the auto pistol (design/05
-      // "none → auto pistol"). Absent → the shared PLAYER_BASE default (byte-identical
-      // to before — additive).
-      let baseLoadout: readonly WeaponSimSpec[];
-      if (seat.loadout) {
-        const resolved = seat.loadout
-          .map((id) => WEAPON_SIM_BY_ID[id])
-          .filter((s): s is WeaponSimSpec => s !== undefined);
-        baseLoadout = (resolved.length > 0 ? resolved : [WEAPON_SIM_BY_ID['blaster']!]).slice(0, PLAYER_BASE.weaponSlots);
-      } else {
-        baseLoadout = PLAYER_BASE.startWeapons;
-      }
-      weapons = buildRunSpecs(baseLoadout);
+      // base meta loadout carried in at match start. `resolveLoadout` (content/players.ts)
+      // owns the whole rule: unknown crafted ids dropped (forward-compat), the survivors
+      // kept active-first, and every free slot filled from PLAYER_BASE.startWeapons with
+      // a kind the staged list doesn't cover — so a run ALWAYS spawns with a gun and a
+      // melee weapon, and the swap control always has a second slot to point at. Absent
+      // or empty `seat.loadout` → the plain starter pair, unchanged.
+      weapons = buildRunSpecs(resolveLoadout(seat.loadout));
       maxHp = skin.maxHp;
       maxShield = skin.maxShield;
     }

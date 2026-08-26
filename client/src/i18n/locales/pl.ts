@@ -48,7 +48,7 @@ export const pl: Translations<typeof en> = {
     pagePrevButton: '‹ STRONA',
     pageNextButton: 'STRONA ›',
     charStats: '{skin}  ({hp} PŻ / {sh} Tarcza)',
-    noneAutoPistol: '(brak → automatyczny pistolet)',
+    noneStarterPair: '(brak → {weapons})',
     moreAvailable: 'dostępnych jeszcze: {count}',
     materialsLine: 'Surowce   {bank}   |   posiadane postacie: {ownedChars}',
     loadoutLine: 'Ekwipunek   {loadout}   ({count}/{max})',

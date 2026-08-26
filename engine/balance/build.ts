@@ -21,7 +21,7 @@
  * mode is assembled end-to-end (Phase 4 closeout, ROADMAP.md).
  */
 import type { WeaponSimSpec, WeaponState } from '../state/entities';
-import { makeWeapon, BLASTER_SIM } from '../content/weapons';
+import { makeWeapon, BLASTER_SIM, SABER_SIM } from '../content/weapons';
 import { resolveSkin, type SkinId } from '../content/skins';
 
 /**
@@ -37,14 +37,41 @@ export function buildRunSpecs(baseLoadout: readonly WeaponSimSpec[]): WeaponStat
 //
 // A "small landing-kit set, not a full loadout" (ROADMAP 4.2c) — real power comes
 // from the map's own loot (design/05/15), so one modest starter preset is enough
-// until the map editor's loot tables exist (4.3). The LOAD-BEARING part is the
-// signature: no THIRD (meta) parameter exists, ever.
+// until the map editor's loot tables exist (4.3). "Small" means MODEST NUMBERS, not
+// a missing weapon kind: the kit is a gun + a melee weapon, so the swap verb and both
+// sides of design/03's ranged/melee trade-off exist from the drop (see ARENA_PRESETS).
+// The LOAD-BEARING part is the signature: no THIRD (meta) parameter exists, ever.
 
 export type ArenaPresetId = string;
 
+/**
+ * A landing kit is a PAIR: one gun + one melee weapon (design/05's landing kit is
+ * "opening weapon(s)", and design/03/05's ranged-vs-melee trade-off — reach and chip
+ * damage against burst, AoE arc and the parry — is a choice a player makes DURING a
+ * fight, via the swap control, not one the spawn makes for them). A one-weapon kit
+ * also silently removed the swap verb from PvP entirely: `HudView`'s idle-slot chip
+ * hides itself when `weapons.length <= 1`, so the arena had no visible second slot
+ * and no parry at all.
+ *
+ * Consequence worth naming: parry (`MeleeSimSpec.deflect`) is now available to every
+ * arena seat from the drop, where before it was reachable only by looting a melee
+ * weapon off the map. That is the point — both halves of design/03's trade-off should
+ * be in a player's hands — but it does move PvP's bullet-vs-body balance, and the
+ * zone/TTK tuning below is still first-pass (design/15 "real play required").
+ *
+ * Kept explicit per preset rather than routed through PvE's `resolveLoadout`: an arena
+ * kit is arena-scoped authored content (the fairness wall — it must not read
+ * `PLAYER_BASE.startWeapons`, which is where the PvE meta's defaults live). The
+ * both-kinds invariant is gated by a sweep over `ARENA_PRESET_IDS` in build.test.ts.
+ */
 const ARENA_PRESETS: Record<ArenaPresetId, { loadout: WeaponSimSpec[] }> = {
-  landing_basic: { loadout: [BLASTER_SIM] },
+  landing_basic: { loadout: [BLASTER_SIM, SABER_SIM] },
 };
+
+/** Every authored preset id — exported so a test can sweep the real content instead of
+ *  restating a hand-written list. Ids only: this leaks no meta and is not a hole in the
+ *  fairness wall (buildArenaSpecs still takes no third parameter). */
+export const ARENA_PRESET_IDS: readonly ArenaPresetId[] = Object.keys(ARENA_PRESETS);
 
 /**
  * PvP HP/weapon scale factor (design/15) — a single factor applied to both a

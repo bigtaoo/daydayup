@@ -60,7 +60,7 @@ The persistent layer **between runs**: what carries across, what materials buy, 
 ## The forge outpost (to design — `13`)
 
 - A safe hub between runs: **forge** (unlock / craft weapons), **character select**, cosmetics. The outpost's look and any NPCs are `13`'s to-design.
-- Screen-flow: sits in `10`'s menu → loadout state machine, ahead of a run's loadout pick (bring up to 2 crafted weapons; none → auto pistol, `05`).
+- Screen-flow: sits in `10`'s menu → loadout state machine, ahead of a run's loadout pick (bring up to 2 crafted weapons; each replaces the starter weapon of its own kind, and any free slot keeps its starter default — never a one-weapon run, `05`).
 
 ## Relationship to other docs
 

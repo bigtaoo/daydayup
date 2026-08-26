@@ -48,7 +48,7 @@ export const zh: Translations<typeof en> = {
     pagePrevButton: '‹ 上一页',
     pageNextButton: '下一页 ›',
     charStats: '{skin}（{hp}生命 / {sh}护盾）',
-    noneAutoPistol: '（无 → 自动配备手枪）',
+    noneStarterPair: '（无 → {weapons}）',
     moreAvailable: '还有 {count} 件可购买',
     materialsLine: '材料   {bank}   |   已拥有角色：{ownedChars}',
     loadoutLine: '装备     {loadout}   （{count}/{max}）',

@@ -6,6 +6,7 @@ import type { PlacedRoom } from '@dd/engine/world/dungeon';
 import { Layers } from '../scene/layers';
 import { HudView, type HudContext } from './HudView';
 import { StatChip } from './StatChip';
+import { WeaponCard } from './WeaponCard';
 import { setLocale, resetLocaleForTests, tName } from '../../i18n';
 
 afterEach(() => resetLocaleForTests());
@@ -239,6 +240,54 @@ describe('HudView — idle weapon slot chip (design/10 HUD follow-up, 2026-08-12
     expect(hud.view.children).toContain(hud.weaponSlotChip.view);
     expect(hud.weaponSlotChip.view.position.x).toBeGreaterThan(hud.weaponCard.view.position.x + hud.weaponCard.estimatedWidth());
     void otherSpec; // exercised via bindIcon/redraw internally — no public getter to assert the spec name against
+  });
+
+  /**
+   * The regression the live report was: *"角色可以同时持有一把近战武器和一把枪，并且在ui上
+   * 我标注的位置可以进行切换。我记得之前实现过一次"* — screenshot showed one weapon and an
+   * empty tile where this chip belongs (ENGINE_VERSION 45).
+   *
+   * `pveState()` above builds its config with NO `loadout` field, which was always the
+   * two-weapon path — so this suite passed all the way through the bug. What a real run
+   * actually passes is `loadout: <the staged meta array>`, and `[]` (a fresh save, or any
+   * run after the previous one consumed its crafted weapons) used to resolve to a lone
+   * pistol, at which point the chip hid ITSELF by design and the swap verb vanished with
+   * nothing red anywhere. So these cases source their state from the real producer with
+   * the configs `Game.beginRun` really builds, not from a hand-written weapons array.
+   */
+  it.each([
+    ['an empty staged loadout (fresh save, or a run after the last one consumed its crafts)', [] as string[]],
+    ['a half-crafted loadout — one gun, melee slot filled by the starter saber', ['repeater']],
+    ['a half-crafted loadout — one blade, gun slot filled by the starter blaster', ['emberblade']],
+    ['an all-unknown loadout (a save written by a newer build)', ['ghost']],
+  ])('shows the chip for %s', (_label, loadout) => {
+    const hud = newHud();
+    const s = createGameState({ ...PVE_CFG, loadout });
+    const p = s.players[0]!;
+
+    hud.update(s, 16, CTX);
+
+    expect(p.weapons).toHaveLength(2);
+    expect(new Set(p.weapons.map((w) => w.spec.kind))).toEqual(new Set(['ranged', 'melee']));
+    expect(hud.weaponSlotChip.view.visible).toBe(true);
+    // ...and it lands where the report circled it: right of the weapon card, same row.
+    expect(hud.weaponSlotChip.view.position.x).toBeGreaterThan(hud.weaponCard.view.position.x + hud.weaponCard.estimatedWidth());
+    expect(hud.weaponSlotChip.view.position.y).toBeLessThan(hud.weaponCard.view.position.y + WeaponCard.HEIGHT);
+  });
+
+  it('shows in a PvP arena too — the landing kit is a pair, so the swap verb exists there', () => {
+    // PvP does not go through `resolveLoadout` at all (the fairness wall: `buildArenaSpecs`
+    // reads an arena-scoped preset and never the PvE meta), so the invariant has to be
+    // observed separately on this side. A one-weapon kit hid this chip in every arena match.
+    const hud = newHud();
+    const s = pvpState();
+    const p = s.players[0]!;
+
+    hud.update(s, 16, CTX);
+
+    expect(p.weapons.length).toBeGreaterThan(1);
+    expect(new Set(p.weapons.map((w) => w.spec.kind))).toEqual(new Set(['ranged', 'melee']));
+    expect(hud.weaponSlotChip.view.visible).toBe(true);
   });
 
   it('hides when the loadout has only one weapon', () => {

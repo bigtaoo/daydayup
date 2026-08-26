@@ -6,6 +6,10 @@ import { fpToPx } from '../coords';
 import { toFpGrid } from '@dd/engine/content/convert';
 import { ARENA_CATALOG } from './arenaCatalog';
 import { buildDungeonRunConfig, buildArenaDemoConfig } from './offlineConfig';
+import { parseGameQueryParams } from './gameQueryParams';
+import { createGameEngine } from '@dd/engine';
+import type { EngineConfig } from '@dd/engine';
+import { PLAYER_BASE } from '@dd/engine/content/players';
 
 describe('buildDungeonRunConfig', () => {
   const localSeat = { skinId: 'vanguard', loadout: ['auto_pistol'] };
@@ -97,5 +101,50 @@ describe('buildArenaDemoConfig', () => {
     const b = buildArenaDemoConfig(opts);
     expect(a).toEqual(b);
     expect(a.seed).toBe(9);
+  });
+});
+
+/**
+ * The config builders above are asserted as pure input→output. This block closes the loop
+ * the other way: the config a real `beginRun` hands the ENGINE must spawn a player who can
+ * actually use the swap control (one gun + one melee weapon, ENGINE_VERSION 45). The
+ * builders themselves can't tell — `loadout` is an opaque string array to them — so the
+ * assertion has to run the real engine, and it starts from `parseGameQueryParams` because
+ * `?wpn=<id>` is the one input that stages a ONE-weapon loadout on purpose (Game.ts merges
+ * `loadoutOverride` into `meta.loadout` before calling the builder).
+ */
+describe('the run config actually reaches the engine armed for the swap control', () => {
+  const spawnedWeapons = (cfg: EngineConfig, owner = 0) =>
+    createGameEngine(cfg).state.players[owner]!.weapons.map((w) => ({ name: w.spec.name, kind: w.spec.kind }));
+
+  const runFor = (search: string, coop = false) => {
+    const q = parseGameQueryParams(search);
+    // Exactly Game.ts's merge: an override replaces the staged meta loadout, absent leaves it.
+    const loadout = q.loadoutOverride ?? [];
+    return buildDungeonRunConfig({ seed: 1, coop, localSeat: { skinId: 'vanguard', loadout }, allySkinId: 'juggernaut' });
+  };
+
+  it.each([
+    ['no dev override — the empty staged loadout every ordinary run carries', ''],
+    ['?wpn=<a gun> — the melee slot still fills', '?wpn=repeater'],
+    ['?wpn=<a blade> — the gun slot still fills', '?wpn=emberblade'],
+    ['?wpn=<not a weapon> — dropped, then filled', '?wpn=definitely_not_a_weapon'],
+  ])('solo: %s', (_label, search) => {
+    const weapons = spawnedWeapons(runFor(search));
+    expect(weapons).toHaveLength(PLAYER_BASE.weaponSlots);
+    expect(new Set(weapons.map((w) => w.kind))).toEqual(new Set(['ranged', 'melee']));
+  });
+
+  it('?wpn= puts the requested weapon in the ACTIVE slot, so a dev toggle still tests that weapon', () => {
+    expect(spawnedWeapons(runFor('?wpn=emberblade'))[0]).toEqual({ name: 'emberblade', kind: 'melee' });
+  });
+
+  it('coop: the local seat AND the bot ally both spawn able to swap', () => {
+    const cfg = runFor('?wpn=repeater', true);
+    for (const owner of [0, 1]) {
+      const weapons = spawnedWeapons(cfg, owner);
+      expect(weapons).toHaveLength(PLAYER_BASE.weaponSlots);
+      expect(new Set(weapons.map((w) => w.kind))).toEqual(new Set(['ranged', 'melee']));
+    }
   });
 });

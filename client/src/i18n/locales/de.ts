@@ -48,7 +48,7 @@ export const de: Translations<typeof en> = {
     pagePrevButton: '‹ SEITE',
     pageNextButton: 'SEITE ›',
     charStats: '{skin}  ({hp} LP / {sh} Schild)',
-    noneAutoPistol: '(keine → automatisch Pistole)',
+    noneStarterPair: '(keine → {weapons})',
     moreAvailable: '{count} weitere verfügbar',
     materialsLine: 'Materialien   {bank}   |   eigene Charaktere: {ownedChars}',
     loadoutLine: 'Ausrüstung  {loadout}   ({count}/{max})',

@@ -47,7 +47,7 @@ export const en = {
     pagePrevButton: '‹ PAGE',
     pageNextButton: 'PAGE ›',
     charStats: '{skin}  ({hp}HP / {sh}SH)',
-    noneAutoPistol: '(none → auto pistol)',
+    noneStarterPair: '(none → {weapons})',
     moreAvailable: '{count} more available',
     materialsLine: 'Materials   {bank}   |   owned chars: {ownedChars}',
     loadoutLine: 'Loadout     {loadout}   ({count}/{max})',

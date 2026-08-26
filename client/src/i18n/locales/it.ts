@@ -48,7 +48,7 @@ export const it: Translations<typeof en> = {
     pagePrevButton: '‹ PAGINA',
     pageNextButton: 'PAGINA ›',
     charStats: '{skin}  ({hp} PV / {sh} Scudo)',
-    noneAutoPistol: '(nessuna → pistola automatica)',
+    noneStarterPair: '(nessuna → {weapons})',
     moreAvailable: 'altri disponibili: {count}',
     materialsLine: 'Materiali   {bank}   |   personaggi posseduti: {ownedChars}',
     loadoutLine: 'Equipaggiamento  {loadout}   ({count}/{max})',

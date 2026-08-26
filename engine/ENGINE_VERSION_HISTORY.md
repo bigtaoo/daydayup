@@ -819,3 +819,63 @@ the wall geometry, and every enemy path around it. A real level-1 run is driven 
 placement is unchanged by the engine half of this bump; its GEOMETRY still changes
 where the nine content values moved. PvP arenas are unaffected — they never call
 either placement function.
+
+v45: a run always spawns carrying a gun AND a melee weapon, from a live report
+(*"角色可以同时持有一把近战武器和一把枪，并且在ui上我标注的位置可以进行切换。我记得之前
+实现过一次"* — with a screenshot showing one weapon and an empty swap slot).
+
+    Every layer of weapon swapping had shipped and was still wired: `Button.SWAP_WEAPON`
+    → `ApplyInputSystem.swap()`, the keyboard 1/2 keys, the touch corner buttons, and
+    `HudView.weaponSlotChip` (the tile the report circled). What had gone missing was
+    the SECOND WEAPON. The loadout resolution read
+
+        if (seat.loadout) { ...resolve; empty → [blaster] }
+        else               { PLAYER_BASE.startWeapons }
+
+    and `[]` is truthy in JS, so a staged-but-empty loadout took the "player chose
+    this" branch and fell back to a lone auto pistol (design/05's old "none → auto
+    pistol" rule), discarding the starter gun+saber pair entirely. That branch was not
+    an edge case: a fresh save stages `[]`, and `Game.beginRun` consumes the staged
+    loadout the moment a run starts (design/05, "one run each"), so every run from the
+    second onward hit it. With `weapons.length === 1` the HUD chip hides itself by
+    design ("no empty *nothing to swap to* tile"), and the swap verb disappeared with
+    no error anywhere.
+
+    `resolveLoadout` (content/players.ts) now owns the whole rule: unknown ids dropped
+    (design/09 forward-compat), the survivors capped at `weaponSlots` and kept
+    active-first (you crafted it, you spawn holding it), then every free slot filled
+    from `PLAYER_BASE.startWeapons` with a kind (`ranged`/`melee`) the staged list does
+    not already cover. Nothing staged → gun + saber; one crafted gun → that gun + the
+    saber; one crafted blade → that blade + the gun. Two weapons of the SAME kind are
+    still honoured verbatim — that is an explicit choice, and no crafted weapon is ever
+    evicted to make room for a default, so it stays the one input that legitimately
+    carries no melee weapon.
+
+Coverage: `engine/content/players.test.ts` asserts the invariant (two slots, one per
+kind) across staged/empty/unknown/over-long inputs rather than restating literals, and
+pins the fixture ids' kinds as a premise so a content change cannot quietly make the
+kind-filling assertions vacuous. `client/src/meta/forge.test.ts` re-asserts it at the
+seam a real run actually goes through (`EngineConfig.loadout` → spawned `weapons`),
+including the half-crafted case.
+
+    PvP got the same invariant in the same bump, by a different route. `buildArenaSpecs`
+    still never reads `seat.loadout` (the fairness wall is untouched — there is no third
+    parameter), but its landing-kit PRESET was `[BLASTER_SIM]`: a single gun, so every
+    arena seat spawned with one weapon, no second slot for the swap control, and no
+    access to a parry at all until it looted a melee weapon off the map. `landing_basic`
+    is now `[BLASTER_SIM, SABER_SIM]`, both scaled by `PVP_SCALE_FACTOR` like any kit
+    weapon. Kept as authored per-preset data rather than routed through `resolveLoadout`,
+    which reads `PLAYER_BASE.startWeapons` — PvE meta content an arena kit must not
+    touch; the both-kinds invariant is gated by a sweep over `ARENA_PRESET_IDS` instead.
+
+    Balance consequence, named rather than buried: parry (`MeleeSimSpec.deflect`) is now
+    available to every arena seat from the drop. That is the intent — design/03's
+    ranged-vs-melee trade-off should be a choice a player makes during a fight — but it
+    moves PvP's bullet-vs-body math, and design/15's zone/TTK numbers are still first-pass.
+
+Replay impact: any stream recorded against a config whose `loadout` was `[]` or
+all-unknown diverges — the player now carries a second weapon, which the swap button
+can reach and which changes every damage number after it. Configs with an ABSENT
+`loadout` (the starter pair) or two resolvable ids are byte-identical on the PvE side.
+EVERY PvP arena stream diverges: the landing kit is a different array, so both seats
+spawn with a second (scaled) weapon and a reachable parry.

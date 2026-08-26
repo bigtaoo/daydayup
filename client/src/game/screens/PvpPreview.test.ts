@@ -16,7 +16,8 @@ function privateOf(p: PvpPreview) {
     queueBtn: { label: { text: string }; onTap: (() => void) | null };
     backBtn: { label: { text: string }; onTap: (() => void) | null };
     playerCard: { displayName: string };
-    weaponCard: { nameText: string; damageText: string };
+    weaponCard: { nameText: string; damageText: string; estimatedWidth(): number; view: { position: { x: number; y: number } } };
+    weaponSlotChip: { view: { visible: boolean; position: { x: number; y: number } }; set(spec: unknown): void };
   };
 }
 
@@ -66,6 +67,27 @@ describe('PvpPreview — PvP-scaled build preview', () => {
     expect(privateOf(p).playerCard.displayName).toBe(tName(SKIN_DEFS[DEFAULT_SKIN_ID]!.nameKey));
     expect(privateOf(p).weaponCard.nameText).toBe(tName(built.weapons[0]!.spec.nameKey));
     expect(privateOf(p).weaponCard.damageText).toContain(String(built.weapons[0]!.spec.damage));
+  });
+
+  it('shows the WHOLE kit — the melee slot beside the active gun, not half of it', () => {
+    // The kit is a gun + a melee weapon (ENGINE_VERSION 45). This screen's entire job is
+    // "see what you are about to enter with", so rendering only `weapons[0]` would be a
+    // silent halving — and the kind of thing that rots the day a preset changes, since
+    // nothing about a one-card layout looks wrong on its own.
+    const p = new PvpPreview();
+    p.show(800, 600, DEFAULT_SKIN_ID);
+    const built = buildArenaSpecs('landing_basic', DEFAULT_SKIN_ID);
+    expect(built.weapons.length).toBeGreaterThan(1); // premise: a pair is what we are previewing
+
+    const inner = privateOf(p);
+    expect(inner.weaponSlotChip.view.visible).toBe(true);
+    // Same reading as the in-match HUD: idle slot immediately right of the active card's
+    // RIGHT EDGE (comparing against the width alone would pass even unpositioned, since
+    // the card itself is already inset past that many pixels), on the same row.
+    expect(inner.weaponSlotChip.view.position.x)
+      .toBeGreaterThan(inner.weaponCard.view.position.x + inner.weaponCard.estimatedWidth());
+    expect(inner.weaponSlotChip.view.position.y).toBe(inner.weaponCard.view.position.y + 2);
+    expect(inner.weaponSlotChip.set).toBeDefined();
   });
 
   it('names the scale factor actually in effect', () => {
