@@ -773,13 +773,24 @@ geometry sweep used `solidCellSet`, which is solids only). Both now covered — 
 distributionally, since per room the two aims can legitimately invert in a small room whose
 middle is walled. Control mutant survives.
 
-**Still open in this area.** `arena_prototype_60` stays in `ARENA_CATALOG` as the audit's
-before-picture, not as a playable map — dropping it is a follow-up, along with its pinned defect
-tests. `groundLayer.ts`'s arena branch still paints a whole-world floor because the OLD map's
-rooms were not a partition of its walkable space (45% of reachable cells sat outside every
-room); `arena_launch` reports 0 undoored leaks, so per-room floor painting is now probably
-correct there and worth re-measuring. And the audit is still a report: with a map that can meet
-thresholds, the numbers in the table above are the candidates for turning into a real gate.
+**Still open in this area, and the first item is the one to do next.**
+
+1. **Nobody has judged how the arena LOOKS.** Until this pass the arena had no walls at all, so
+   the client's whole standing-wall stack — tiering, run merging, kerbs, door blocks, the
+   occlusion x-ray, every fix recorded in the 2026-08-19/20 entries above — had never run on it
+   (README said so explicitly, and that line is now corrected). It runs now: 492 wall runs, 426
+   entity nodes, 133 shadows, no console errors. That is "it builds and draws", which this repo
+   has learned repeatedly is NOT "it looks right" — the wall passes were all driven by measured
+   frames, and none of those measurements has been repeated here.
+2. `arena_prototype_60` stays in `ARENA_CATALOG` as the audit's before-picture, not as a playable
+   map. Dropping it, with its pinned defect tests, is a follow-up.
+3. `groundLayer.ts`'s arena branch still paints a whole-world floor because the OLD map's rooms
+   were not a partition of its walkable space (45% of reachable cells sat outside every room);
+   `arena_launch` reports 0 undoored leaks, so per-room painting is probably correct there now.
+   Re-run the flood fill against the new map rather than assuming it.
+4. The audit is still a report. With a map that can meet thresholds, the load-bearing numbers in
+   the table above are the candidates for a real gate — derived from what a good map needs, not
+   transcribed from whatever this one happens to score.
 
 
 ## Phase 5 — Presentation & platform

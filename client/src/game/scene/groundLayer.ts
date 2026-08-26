@@ -113,11 +113,19 @@ export function roomRectsPx(s: GameState, w: number, h: number): RectPx[] {
  *   and a door passage always straddles two adjacent room rects, so the floor can stop at the rooms
  *   — and it should, since the world's BOUNDING BOX is 1.41-2.26x their own area on the five shipped
  *   floors (29-56% of the old floor was painted where no room exists at all).
- * - A PvP ARENA's rooms are NOT a partition of its walkable space. Swept over the shipped
- *   `arena_prototype_60`: 5240 of its 11,524 non-wall grid cells (45%) are reachable and fall
- *   outside every room rect AND every door passage, with nothing walling them off — so a per-room
- *   floor there would leave a player walking over the backdrop. The arena keeps the whole-world
- *   floor it always had, and its 60 rooms still get their own wash/mottle/light on top of it.
+ * - A PvP ARENA's rooms were NOT a partition of its walkable space, when this was measured.
+ *   Swept over `arena_prototype_60`: 5240 of its 11,524 non-wall grid cells (45%) are reachable
+ *   and fall outside every room rect AND every door passage, with nothing walling them off — so
+ *   a per-room floor there would leave a player walking over the backdrop. The arena keeps the
+ *   whole-world floor, and its rooms get their own wash/mottle/light on top of it.
+ *
+ *   **That premise no longer holds for the map a match actually builds** (2026-08-25). The
+ *   launch map `arena_launch` walls every room and reports zero undoored walk-throughs
+ *   (`npm run audit:arena`), so its rooms ARE a partition and the whole-world branch is now
+ *   merely conservative rather than necessary. Switching it is a measurement, not a guess —
+ *   re-run the flood fill against the new map first. Left alone here on purpose: this pass
+ *   authored the map, and changing how the arena paints its floor in the same breath would
+ *   mix a content change with a rendering one.
  */
 export function floorRegionsPx(s: GameState, w: number, h: number): RectPx[] {
   if (s.dungeonRoomRects.length === 0) return [{ x: 0, y: 0, w, h }];

@@ -37,8 +37,8 @@ export function buildDungeonRunConfig(opts: {
  * Dev-only (`?arenaDemo=1` / `?arena=<id>`, see Game.arenaDemo's field doc comment): any
  * catalog ArenaMap + two local seats on distinct teams, with zero matchmaking round-trip.
  * Defaults to the small synthetic `landing_basic` fixture, which is what `?arenaDemo=1`
- * has always booted; `?arena=arena_prototype_60` is how the real launch map gets walked
- * in a single tab.
+ * has always booted; `?arena=arena_launch` is how the real launch map gets walked in a
+ * single tab (and `?arena=arena_prototype_60` still reaches its retired predecessor).
  */
 export function buildArenaDemoConfig(opts: {
   seed: number;
