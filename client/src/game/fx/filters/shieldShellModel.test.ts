@@ -55,7 +55,7 @@ const stripComments = (src: string): string =>
   src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*/g, '');
 
 function tokenize(src: string): string[] {
-  const re = /\s*(\d+\.?\d*(?:[eE][-+]?\d+)?|\.\d+|[A-Za-z_]\w*|\+=|-=|\*=|\/=|[-+*/(),.;=])/g;
+  const re = /\s*(\d+\.?\d*(?:[eE][-+]?\d+)?|\.\d+|[A-Za-z_]\w*|>=|<=|==|!=|\+=|-=|\*=|\/=|[-+*/(),.;=<>])/g;
   const out: string[] = [];
   let m: RegExpExecArray | null;
   let at = 0;
@@ -82,6 +82,23 @@ const smoothstep1 = (e0: number, e1: number, x: number): number => {
   const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0)));
   return t * t * (3 - 2 * t);
 };
+
+/** The comparison operators the shield's cull guard needs. GLSL's are bool-valued; here they
+ *  produce 1/0 so the rest of the numeric machinery is untouched. */
+const COMPARE: Record<string, ((a: number, b: number) => boolean) | undefined> = {
+  '>': (a, b) => a > b,
+  '<': (a, b) => a < b,
+  '>=': (a, b) => a >= b,
+  '<=': (a, b) => a <= b,
+  '==': (a, b) => a === b,
+  '!=': (a, b) => a !== b,
+};
+
+/** Sampler identity. A sampler is not a value, but the expression parser still has to resolve
+ *  the identifier, so each one is bound to a distinct number and `texture()` dispatches on it —
+ *  the shield samples TWO (the actor's own frame and the membrane tile) and a model that
+ *  returned the same texel for both would make the membrane untestable. */
+const SAMPLER = { uTexture: 0, uScales: 1 } as const;
 
 interface Fn { params: string[]; body: string }
 
@@ -121,12 +138,18 @@ class Evaluator {
     let left = this.unary();
     for (;;) {
       const op = this.peek();
-      const prec = op === '*' || op === '/' ? 2 : op === '+' || op === '-' ? 1 : 0;
+      const prec = op === '*' || op === '/' ? 3
+        : op === '+' || op === '-' ? 2
+        : COMPARE[op ?? ''] ? 1
+        : 0;
       if (prec === 0 || prec < minPrec) return left;
       this.take();
       const right = this.binary(prec + 1);
-      left = broadcast(left, right, (a, b) =>
-        (op === '*' ? a * b : op === '/' ? a / b : op === '+' ? a + b : a - b));
+      const cmp = COMPARE[op!];
+      left = cmp
+        ? broadcast(left, right, (a, b) => (cmp(a, b) ? 1 : 0))
+        : broadcast(left, right, (a, b) =>
+          (op === '*' ? a * b : op === '/' ? a / b : op === '+' ? a + b : a - b));
     }
   }
 
@@ -207,7 +230,11 @@ class Evaluator {
       case 'smoothstep':
         return Array.from({ length: widest() }, (_, i) =>
           smoothstep1(pick(args[0]!, i), pick(args[1]!, i), pick(args[2]!, i)));
-      case 'texture': return this.env.__texel!;
+      case 'step': return broadcast(args[0]!, args[1]!, (edge, x) => (x < edge ? 0 : 1));
+      case 'texture':
+        return args[0]![0] === SAMPLER.uScales
+          ? (this.env.__scaleTexel ?? [0, 0, 0, 1])
+          : this.env.__texel!;
       default: {
         const fn = this.fns[name];
         if (!fn) throw new Error(`glslEval: unsupported function "${name}()"`);
@@ -245,27 +272,85 @@ function mainBody(src: string): string {
   throw new Error('glslEval: unterminated main()');
 }
 
-/** Run a fragment shader's `main` and return every name it bound, uniforms included. */
-export function evalGlsl(fragment: string, uniforms: Env): Env {
-  const src = stripComments(fragment);
-  // A sampler is not a value here — `texture()` ignores its first argument and returns the
-  // injected `__texel` — but it is still an identifier the expression parser has to resolve.
-  const env: Env = { uTexture: [0], ...uniforms };
-  const ev = new Evaluator(parseFns(src), env);
-  const body = mainBody(src);
-  if (/\b(if|for|while|discard)\b/.test(body)) {
-    throw new Error('glslEval: main() gained control flow — extend the evaluator, do not skip it');
+/** Index of the `)` / `}` matching the opener at `from`. */
+function matching(src: string, from: number, open: string, close: string): number {
+  let depth = 0;
+  for (let i = from; i < src.length; i++) {
+    if (src[i] === open) depth++;
+    else if (src[i] === close && --depth === 0) return i;
   }
-  for (const raw of body.split(';')) {
-    const stmt = raw.trim();
-    if (!stmt) continue;
-    const decl = /^(?:const\s+)?(?:float|vec[234])\s+(\w+)\s*=\s*([\s\S]+)$/.exec(stmt);
+  throw new Error(`glslEval: unterminated "${open}"`);
+}
+
+/**
+ * Split a block into top-level statements. `;` inside a nested block does not separate, so an
+ * `if (...) { ... }` comes back whole.
+ */
+function statements(body: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < body.length; i++) {
+    const c = body[i];
+    if (c === '(' || c === '{') depth++;
+    else if (c === ')') depth--;
+    else if (c === '}') {
+      depth--;
+      if (depth === 0) {
+        out.push(body.slice(start, i + 1));
+        start = i + 1;
+      }
+    } else if (c === ';' && depth === 0) {
+      out.push(body.slice(start, i + 1));
+      start = i + 1;
+    }
+  }
+  if (body.slice(start).trim()) throw new Error(`glslEval: dangling "${body.slice(start).trim()}"`);
+  return out.map((t) => t.trim()).filter(Boolean);
+}
+
+/**
+ * Execute one block against `env`, which it mutates. Returns true if the block hit a `return`,
+ * so an enclosing block stops too.
+ *
+ * `if` is supported (2026-08-26) because the shield shader gained a real one: a radial cull that
+ * skips the ~70% of the filtered square the shell does not reach. That guard is a PERFORMANCE
+ * device whose correctness claim — "nothing visible is being skipped" — is exactly the sort of
+ * thing this file exists to measure, so evaluating around it was never an option.
+ */
+function runBlock(body: string, env: Env, fns: Record<string, Fn>): boolean {
+  const ev = new Evaluator(fns, env);
+  for (const stmt of statements(body)) {
+    if (stmt === 'return;') return true;
+    if (stmt.startsWith('if')) {
+      const openParen = stmt.indexOf('(');
+      if (openParen < 0) throw new Error(`glslEval: "if" without a condition in "${stmt}"`);
+      const closeParen = matching(stmt, openParen, '(', ')');
+      const openBrace = stmt.indexOf('{', closeParen);
+      // No `else`, and nothing between the condition and the block. Both would evaluate to
+      // something plausible if waved through, which is the failure mode this file cannot afford.
+      if (openBrace < 0) throw new Error(`glslEval: "if" without a block in "${stmt}"`);
+      if (stmt.slice(closeParen + 1, openBrace).trim()) {
+        throw new Error(`glslEval: unsupported "if" form "${stmt}"`);
+      }
+      if (stmt.slice(matching(stmt, openBrace, '{', '}') + 1).trim()) {
+        throw new Error(`glslEval: trailing clause (an "else"?) in "${stmt}"`);
+      }
+      const cond = ev.expr(stmt.slice(openParen + 1, closeParen));
+      if (cond[0]) {
+        if (runBlock(stmt.slice(openBrace + 1, matching(stmt, openBrace, '{', '}')), env, fns)) return true;
+      }
+      continue;
+    }
+    const bare = stmt.replace(/;$/, '').trim();
+    if (!bare) continue;
+    const decl = /^(?:const\s+)?(?:float|vec[234])\s+(\w+)\s*=\s*([\s\S]+)$/.exec(bare);
     if (decl) {
       env[decl[1]!] = ev.expr(decl[2]!);
       continue;
     }
-    const asg = /^(\w+)(?:\.(\w+))?\s*(\+=|-=|\*=|\/=|=)\s*([\s\S]+)$/.exec(stmt);
-    if (!asg) throw new Error(`glslEval: unsupported statement "${stmt}"`);
+    const asg = /^(\w+)(?:\.(\w+))?\s*(\+=|-=|\*=|\/=|=)\s*([\s\S]+)$/.exec(bare);
+    if (!asg) throw new Error(`glslEval: unsupported statement "${bare}"`);
     const [, name, swz, op, rhs] = asg;
     const value = ev.expr(rhs!);
     if (!swz) {
@@ -287,6 +372,22 @@ export function evalGlsl(fragment: string, uniforms: Env): Env {
     });
     env[name!] = next;
   }
+  return false;
+}
+
+/** Run a fragment shader's `main` and return every name it bound, uniforms included. */
+export function evalGlsl(fragment: string, uniforms: Env): Env {
+  const src = stripComments(fragment);
+  // A sampler is not a value here, but it is still an identifier the expression parser has to
+  // resolve; `texture()` dispatches on the number each one is bound to.
+  const env: Env = { uTexture: [SAMPLER.uTexture], uScales: [SAMPLER.uScales], ...uniforms };
+  const body = mainBody(src);
+  // `if` is now executed (see runBlock). Loops and `discard` still are not, and a shader that
+  // grows one must fail here loudly rather than be silently half-evaluated.
+  if (/(^|[^A-Za-z_])(for|while|discard|else)([^A-Za-z0-9_]|$)/.test(body)) {
+    throw new Error('glslEval: main() gained control flow — extend the evaluator, do not skip it');
+  }
+  runBlock(body, env, parseFns(src));
   return env;
 }
 
@@ -335,7 +436,38 @@ describe('glslEval (the evaluator these measurements depend on)', () => {
     const wrap = (body: string): string => `void main(void) { ${body} }`;
     expect(() => evalGlsl(wrap('float a = nope(1.0);'), {})).toThrow(/unsupported function/);
     expect(() => evalGlsl(wrap('float a = missing;'), {})).toThrow(/undefined identifier/);
-    expect(() => evalGlsl(wrap('if (a) { }'), {})).toThrow(/control flow/);
+    expect(() => evalGlsl(wrap('for (;;) { }'), {})).toThrow(/control flow/);
+    expect(() => evalGlsl(wrap('discard;'), {})).toThrow(/control flow/);
+    // An `if` IS executed now (the shield's radial cull), but only in the one form the shader
+    // uses. Anything richer has to fail rather than be half-run.
+    expect(() => evalGlsl(wrap('if (1.0 > 0.0) { } else { }'), {})).toThrow(/control flow/);
+  });
+
+  it('executes a guard-return, and only the branch that was taken', () => {
+    const wrap = (body: string): string => `void main(void) { ${body} }`;
+    const taken = evalGlsl(wrap('float a = 1.0; if (a > 0.5) { float b = 7.0; return; } float c = 9.0;'), {});
+    expect(taken.b).toEqual([7]);
+    expect(taken.c).toBeUndefined(); // the `return` really stopped the block
+    const skipped = evalGlsl(wrap('float a = 0.0; if (a > 0.5) { float b = 7.0; return; } float c = 9.0;'), {});
+    expect(skipped.b).toBeUndefined();
+    expect(skipped.c).toEqual([9]);
+  });
+
+  it('evaluates every comparison the guard form can use', () => {
+    const wrap = (body: string): string => `void main(void) { ${body} }`;
+    const cases: Array<[string, number]> = [
+      ['2.0 > 1.0', 1], ['1.0 > 2.0', 0], ['1.0 < 2.0', 1],
+      ['2.0 >= 2.0', 1], ['2.0 <= 1.0', 0], ['2.0 == 2.0', 1], ['2.0 != 2.0', 0],
+    ];
+    for (const [src, want] of cases) {
+      expect(evalGlsl(wrap(`float a = 0.0; if (${src}) { a = 1.0; }`), {}).a).toEqual([want]);
+    }
+  });
+
+  it('keeps comparison BELOW arithmetic, so `a + b > c` is not `a + (b > c)`', () => {
+    const wrap = (body: string): string => `void main(void) { ${body} }`;
+    expect(evalGlsl(wrap('float a = 0.0; if (1.0 + 1.0 > 1.5) { a = 1.0; }'), {}).a).toEqual([1]);
+    expect(evalGlsl(wrap('float a = 0.0; if (1.0 + 1.0 > 2.5) { a = 1.0; }'), {}).a).toEqual([0]);
   });
 });
 
@@ -357,8 +489,17 @@ interface SampleOpts {
   angle?: number;
   /** The texel under this pixel: transparent background by default, or opaque body art. */
   texel?: Val;
+  /** What the membrane tile reads at this pixel: `r` the scale field, `g` the cell constant.
+   *  Defaults to the tile's own mid-grey with a mid-range cell id. The evaluator has no image,
+   *  so this is a PARAMETER the tests sweep — the tile's own properties (seamlessness, range,
+   *  cell count) are measured from its bytes in `shieldScales.test.ts` instead. */
+  scaleTexel?: Val;
   intensity?: number;
   time?: number;
+  /** Milliseconds since the last impact, and the direction it came from. */
+  hitAge?: number;
+  hitDir?: [number, number];
+  membrane?: number;
   region?: number;
   pool?: number;
 }
@@ -375,6 +516,7 @@ function sample(f: EnergyShieldFilter, o: SampleOpts): Env {
   const r = o.dist / Math.SQRT2;
   const angle = o.angle ?? 0;
   const u = [0.5 + r * Math.cos(angle), 0.5 + r * Math.sin(angle)];
+  const dir = o.hitDir ?? [0, -1];
   return evalGlsl(f.glProgram.fragment!, {
     // frameUv() undoes exactly this, which is the point of routing through it.
     vTextureCoord: [(u[0]! * region) / pool, (u[1]! * region) / pool],
@@ -384,11 +526,30 @@ function sample(f: EnergyShieldFilter, o: SampleOpts): Env {
     uColor: uniforms.uColor as Val,
     uIntensity: [o.intensity ?? 1],
     uTime: [o.time ?? 0],
+    uMembrane: [o.membrane ?? 1],
+    uHit: [dir[0], dir[1], o.hitAge ?? HIT_SETTLED()],
     __texel: o.texel ?? [0, 0, 0, 0],
+    __scaleTexel: o.scaleTexel ?? [0.45, 0.5, 0, 1],
   });
 }
 
-const glowAt = (f: EnergyShieldFilter, o: SampleOpts): number => sample(f, o).glow![0]!;
+/** Matches `HIT_SETTLED_MS` in the filter — read off a filter that has never been hit rather
+ *  than repeated, so the two cannot drift. Lazy, because constructing a filter needs the
+ *  `document` stub that `beforeAll` installs, and module scope runs before it. */
+let settled = -1;
+const HIT_SETTLED = (): number => {
+  if (settled < 0) settled = new EnergyShieldFilter().hitAge;
+  return settled;
+};
+
+/** Total light this pixel adds, front hemisphere plus the occluded back one. Zero where the
+ *  radial cull fired — neither name is bound on that path, and "the shader returned early" and
+ *  "the shader added no light" are the same statement, which is the claim the cull suite
+ *  measures separately. */
+const glowAt = (f: EnergyShieldFilter, o: SampleOpts): number => {
+  const s = sample(f, o);
+  return (s.glow?.[0] ?? 0) + (s.behind?.[0] ?? 0);
+};
 const alphaAt = (f: EnergyShieldFilter, o: SampleOpts): number => sample(f, o).finalColor![3]!;
 
 /** The shader's declared outer-surface radius, read off the source rather than repeated. */
@@ -398,177 +559,557 @@ function shellR(f: EnergyShieldFilter): number {
   return Number(m[1]);
 }
 
+/** The wall thickness, as a fraction of `SHELL_R`, likewise read off the source. */
+function thickness(f: EnergyShieldFilter): number {
+  const m = /const float THICKNESS = ([0-9.]+);/.exec(stripComments(f.glProgram.fragment!));
+  if (!m) throw new Error('shield shader no longer declares THICKNESS');
+  return Number(m[1]);
+}
+
 /** `Actor` pins the filter area to a square `radiusPx * 3` per side, so `uv` spans 6 radii. */
 const bodyRadii = (dist: number): number => (dist * 6) / Math.SQRT2;
 
-describe('EnergyShieldFilter, measured: a shell encloses the character', () => {
+// ---------------------------------------------------------------------------------------
+// 2026-08-26. The rewrite these were re-measured for, and the report that forced it:
+// *"没有被蛋壳包裹的感觉 … 边缘的那个圈太过实线了"*.
+//
+// The previous shape was `pow(1.0 - nz, 3.0)` over a flat `FILL` plate. Every assertion in the
+// old version of this file passed against it, because they asked "is the middle painted?" and
+// "is the limb brighter?" — both true of a plate with a hard bright ring around it. The
+// property they never asked for is the one that was missing: WIDTH. A shell whose brightness
+// is a function that only reaches its maximum AT the silhouette is a line, however solid the
+// disc behind it. So these measure the radial profile's shape, not just its endpoints.
+// ---------------------------------------------------------------------------------------
+
+describe('EnergyShieldFilter, measured: the wall has thickness', () => {
+  /** The radial profile, sampled at `n` points from the centre out to `to` x SHELL_R. */
+  function profile(f: EnergyShieldFilter, n = 60, to = 1.25): Array<{ b: number; glow: number }> {
+    const R = shellR(f);
+    return Array.from({ length: n + 1 }, (_, i) => {
+      const b = (i / n) * to;
+      return { b, glow: glowAt(f, { dist: b * R }) };
+    });
+  }
+
+  it('peaks the WALL at the inner surface — where the chord stops being occluded', () => {
+    // The wall term alone, not the composite: `halo` is a separate soft bloom centred on the
+    // outer surface, and the two together deliberately produce a flat top rather than a spike
+    // (the next test measures that). `pow(1 - nz, k)`, the shape this replaced, peaks at b = 1
+    // exactly — a chord through a shell of real thickness peaks at b = 1 - THICKNESS.
+    const f = filter();
+    const R = shellR(f);
+    const at = (b: number): number => sample(f, { dist: b * R }).density![0]!;
+    const peak = Array.from({ length: 61 }, (_, i) => i / 60)
+      .reduce((a, b) => (at(b) > at(a) ? b : a));
+    const inner = 1 - thickness(f);
+    expect(peak).toBeGreaterThan(inner - 0.05);
+    expect(peak).toBeLessThan(inner + 0.05);
+  });
+
+  it('puts the composite maximum well inside the silhouette, not on it', () => {
+    const f = filter();
+    const peak = profile(f).reduce((a, c) => (c.glow > a.glow ? c : a));
+    expect(peak.b).toBeLessThan(0.95); // the old shape's maximum sat at b >= 1
+    expect(peak.b).toBeGreaterThan(0.6);
+  });
+
+  it('is bright across a WIDE band, not a rim — the "边缘的那个圈太过实线" complaint', () => {
+    // The width, in units of the surface radius, over which the profile stays above half its
+    // peak. The old shader (fresnel^3, cut off with a 0.045 smoothstep) held that for ~0.10 of
+    // the radius. Anything under ~0.2 is a line again however it is written.
+    const f = filter();
+    const p = profile(f, 200);
+    const peak = Math.max(...p.map((s) => s.glow));
+    const above = p.filter((s) => s.glow >= peak * 0.5);
+    const width = Math.max(...above.map((s) => s.b)) - Math.min(...above.map((s) => s.b));
+    // 0.25 of the surface radius. Measured on the shader this replaced: 0.08.
+    expect(width).toBeGreaterThan(0.25);
+  });
+
+  it('never rises monotonically to the edge — it comes back down before the silhouette', () => {
+    // The single clearest statement of "not a ring": there is a maximum strictly inside the
+    // surface, and the profile is falling by the time it reaches it.
+    const f = filter();
+    const R = shellR(f);
+    expect(glowAt(f, { dist: 0.995 * R })).toBeLessThan(glowAt(f, { dist: (1 - thickness(f)) * R }));
+  });
+
   it('paints the CENTRE — the one thing a ring cannot do', () => {
-    // The whole 2026-08-25 report in one assertion. Every version through 2026-08-24 computed
-    // exactly 0 here: the band's inner `smoothstep` zeroed everything within 1.2 body radii,
-    // so the character stood in a hole with a hoop around it.
-    expect(glowAt(filter(), { dist: 0 })).toBeGreaterThan(0);
+    const f = filter();
+    expect(glowAt(f, { dist: 0 })).toBeGreaterThan(0.05);
   });
 
   it('has no hole anywhere between the centre and the surface', () => {
-    // Sampled along +x, away from the specular glint, so this is the shell's own profile.
     const f = filter();
     const R = shellR(f);
-    const ray = (i: number): number => (i / 40) * R;
-    const glass = Array.from({ length: 41 }, (_, i) => sample(f, { dist: ray(i) }).glass![0]!);
-    for (let i = 1; i < glass.length; i++) {
-      expect(glass[i]!).toBeGreaterThanOrEqual(glass[i - 1]!);
+    for (let i = 0; i <= 40; i++) {
+      expect(glowAt(f, { dist: (i / 40) * R * 0.98 })).toBeGreaterThan(0.05);
     }
-    expect(glass[glass.length - 1]!).toBeGreaterThan(glass[0]! * 3); // and the limb dominates
   });
 
-  it('ripples by a fraction of a percent as the shimmer crosses it, not by a hole', () => {
-    // The composite is NOT quite monotonic: `sin(uTime * K + dist * 9.0)` bands radially, so
-    // a ray outward crosses the wave and dips slightly (measured: 0.03% of peak, at the flat
-    // interior where the fresnel term has not started climbing). That is the ripple the term
-    // exists for. It is worth pinning as a MAGNITUDE, because the shape this suite is about
-    // is the difference between a dip of a fraction of a percent and one of a hundred.
+  it('tracks THICKNESS: a thinner declared wall puts the peak further out', () => {
+    // Not a second copy of the formula — it re-reads the shipped constant and checks the shape
+    // it produces is the one that constant means. A wall term that ignored THICKNESS would
+    // still pass every "is it wide" assertion above with a hand-tuned gradient.
     const f = filter();
+    const t = thickness(f);
+    expect(t).toBeGreaterThan(0.05); // a real wall
+    expect(t).toBeLessThan(0.6); // ...not a filled ball, which has no limb at all
     const R = shellR(f);
-    const profile = Array.from({ length: 81 }, (_, i) => glowAt(f, { dist: (i / 80) * R }));
-    const peak = Math.max(...profile);
-    const worstDip = Math.max(...profile.map((v, i) => (i === 0 ? 0 : profile[i - 1]! - v)));
-    expect(worstDip).toBeLessThan(0.01 * peak);
+    const atInner = glowAt(f, { dist: (1 - t) * R });
+    const atCentre = glowAt(f, { dist: 0 });
+    expect(atInner).toBeGreaterThan(atCentre * 1.5); // the wall is genuinely brighter than the fill
   });
 
-  it('peaks AT the surface and is gone past it', () => {
+  it('spends the wall term BEFORE the silhouette, so the visible edge is the halo', () => {
+    // The anti-hairline property, stated on the term that can produce one. `nz` has an infinite
+    // slope at b = 1, so a wall that is still carrying real brightness when it gets there falls
+    // off across about half a screen pixel. What stops that is the feather starting well inside
+    // (`inside`), and this is the assertion that measures it: by the silhouette the chord has to
+    // be all but gone, leaving the smooth halo to draw the edge.
     const f = filter();
     const R = shellR(f);
-    const at = (d: number): number => glowAt(f, { dist: d });
-    expect(at(R)).toBeGreaterThan(at(R * 0.9));
-    expect(at(R * 1.2)).toBe(0); // past the outer fade, nothing is painted at all
-    expect(at(R * 1.02)).toBeGreaterThan(0); // ...but the fade itself is soft, not a hard cut
+    const at = (b: number): number => sample(f, { dist: b * R }).density![0]!;
+    const peak = at(1 - thickness(f));
+    expect(at(0.99)).toBeLessThan(peak * 0.08);
+    expect(at(0.9)).toBeGreaterThan(peak * 0.4); // ...but not so early that the wall loses its body
+  });
+
+  it('tapers past the surface instead of stopping at it', () => {
+    // A hard cutoff at the surface is what draws an outline. The halo has to carry the profile
+    // down continuously — no step between the last pixel inside and the first outside.
+    const f = filter();
+    const R = shellR(f);
+    const justIn = glowAt(f, { dist: 0.999 * R });
+    const justOut = glowAt(f, { dist: 1.001 * R });
+    expect(Math.abs(justIn - justOut)).toBeLessThan(0.03);
+    expect(justOut).toBeGreaterThan(0); // ...and there IS something out there to taper
+    expect(glowAt(f, { dist: 1.1 * R })).toBeLessThan(justOut);
   });
 
   it('is a circle at every angle, not an ellipse', () => {
-    // The behavioural form of "no `uv.y /= 0.62`". `glass` is sampled rather than `glow`
-    // because the specular glint is deliberately NOT rotationally symmetric.
+    // A shield is a SPHERE around the body, whose silhouette is a circle from every angle —
+    // unlike the ground shadow and the status auras, which are flat discs ON the ground plane
+    // and do foreshorten. Squashing this one (2026-08-18, reverted 2026-08-24) read on screen
+    // as a flat hoop threaded through the character at gun height.
     const f = filter();
-    const R = shellR(f);
-    for (const d of [0.2 * R, 0.6 * R, 0.95 * R]) {
-      const ring = Array.from({ length: 16 }, (_, i) =>
-        sample(f, { dist: d, angle: (i / 16) * Math.PI * 2 }).glass![0]!);
-      for (const v of ring) expect(v).toBeCloseTo(ring[0]!, 10);
-    }
-  });
-
-  it('carries a glint that is off-centre, inside the surface, and brighter than the glass', () => {
-    // A shell without one reads as a flat disc of colour. It has to sit on CLEAR shell, not on
-    // the body (an additive glint over pale character art is invisible — measured on screen).
-    const f = filter();
-    const R = shellR(f);
-    const ray = Array.from({ length: 40 }, (_, i) => ({
-      d: ((i + 1) / 40) * R,
-      spec: sample(f, { dist: ((i + 1) / 40) * R, angle: Math.PI * 1.25 }).spec![0]!,
-    }));
-    const peak = ray.reduce((a, b) => (b.spec > a.spec ? b : a));
-    expect(peak.spec).toBeGreaterThan(0.3);
-    expect(peak.d / R).toBeGreaterThan(0.35); // off-centre...
-    expect(peak.d / R).toBeLessThan(0.85); // ...but well inside the surface
-    expect(sample(f, { dist: 0 }).spec![0]!).toBeLessThan(peak.spec * 0.5); // not centred
+    const d = shellR(f) * (1 - thickness(f));
+    // Away from the specular glint, which is deliberately off-centre and would break symmetry.
+    const at = (angle: number): number => sample(f, { dist: d, angle }).density![0]!;
+    const ref = at(0);
+    // 7 places, not 10: the region/pool remap puts a different rounding on each angle, and
+    // 1e-8 of disagreement is that, not a crescent (which diverges by whole percent).
+    for (let i = 1; i < 12; i++) expect(at((i / 12) * Math.PI * 2)).toBeCloseTo(ref, 7);
   });
 
   it('encloses more than the body it wraps', () => {
-    // `Actor`'s filter area is 6 body radii wide, so the surface has to sit outside 1.0 —
-    // a shield drawn INSIDE the silhouette is a skin, not a shield — and outside the mounted
-    // weapon's reach, which is what "全部包裹" asked for and 1.55 radii did not deliver.
-    expect(bodyRadii(shellR(filter()))).toBeGreaterThan(1.7);
+    const f = filter();
+    expect(bodyRadii(shellR(f))).toBeGreaterThan(1.7);
+    expect(bodyRadii(shellR(f))).toBeLessThan(2.1);
+  });
+
+  it('carries a glint that is off-centre, inside the surface, and brighter than the glass', () => {
+    const f = filter();
+    const R = shellR(f);
+    // The glint sits up and to the left; screen y points down, so that is angle ~ -3pi/4.
+    const lit = sample(f, { dist: R * 0.42, angle: (-3 * Math.PI) / 4 }).spec![0]!;
+    const opposite = sample(f, { dist: R * 0.42, angle: Math.PI / 4 }).spec![0]!;
+    expect(lit).toBeGreaterThan(opposite * 10);
+    expect(lit).toBeGreaterThan(sample(f, { dist: R * 0.42 }).density![0]!);
+    expect(sample(f, { dist: R * 1.3 }).finalColor).toBeDefined(); // culled path still writes a colour
   });
 });
 
-describe('EnergyShieldFilter, measured: you can still see through it', () => {
+// ---------------------------------------------------------------------------------------
+// The other half of the same report — *"没有被蛋壳包裹的感觉"*. Shape alone never produced it,
+// because every version painted the whole shell ON TOP of the character. What makes a body
+// read as enclosed is that part of the shell is BEHIND it.
+// ---------------------------------------------------------------------------------------
+
+describe('EnergyShieldFilter, measured: the character is inside it', () => {
   const BODY: Val = [0.8, 0.8, 0.85, 1]; // near-white shell art, opaque (design/13's rigs)
 
-  it('washes the character far less than it tints the empty background', () => {
-    // Undamped, the additive fill flattened the hero's face — the saturated blue eye came out
-    // the same pale cyan as the shell around it (measured on screen, 2026-08-25).
+  it('puts the back hemisphere BEHIND the body — occluded exactly by the body alpha', () => {
     const f = filter();
-    const d = 0.3 * shellR(f);
-    const overArt = glowAt(f, { dist: d, texel: BODY });
-    const overFloor = glowAt(f, { dist: d });
-    expect(overArt).toBeLessThan(overFloor * 0.6);
-    expect(overArt).toBeGreaterThan(0); // ...but the shell does still pass over the character
+    const d = shellR(f) * 0.35;
+    const overFloor = sample(f, { dist: d }).behind![0]!;
+    const overBody = sample(f, { dist: d, texel: BODY }).behind![0]!;
+    // A real SHARE of the light, not a trace of it. `> 0` passed with the back hemisphere
+    // multiplied out entirely (the impact term leaves a denormal behind at rest), which is the
+    // one mutant this whole rewrite is about — found by the 2026-08-26 battery, not by review.
+    expect(overFloor).toBeGreaterThan(sample(f, { dist: d }).glow![0]! * 0.3);
+    expect(overBody).toBe(0); // fully occluded by an opaque body — this is the whole cue
+    const half = sample(f, { dist: d, texel: [0.8, 0.8, 0.85, 0.5] }).behind![0]!;
+    expect(half).toBeCloseTo(overFloor * 0.5, 10); // ...and it is linear in between
   });
 
-  it('keeps the additive wash on the art below a tenth of a channel', () => {
+  it('leaves the FRONT hemisphere unoccluded, so the body is sandwiched', () => {
+    // If both halves were occluded the shell would vanish over the character; if neither were,
+    // it would all be in front and the character would be pasted on top of a decal again.
     const f = filter();
-    const R = shellR(f);
-    const worst = Math.max(...Array.from({ length: 21 }, (_, i) =>
-      Math.max(...sample(f, { dist: (i / 20) * R * 0.75, texel: BODY }).finalColor!.slice(0, 3))
-      - 0.85));
-    expect(worst).toBeLessThan(0.1);
+    const d = shellR(f) * 0.35;
+    expect(sample(f, { dist: d, texel: BODY }).glow![0]!)
+      .toBeCloseTo(sample(f, { dist: d }).glow![0]!, 10);
   });
 
-  it('leaves the ground under the shell mostly unpainted, at every instant of the pulse', () => {
-    // The 2026-08-19 volume pass added the ground shadow; the ring it replaced blanketed the
-    // floor with opaque cyan and ate it. The interior may TINT the floor, never hide it.
-    //
-    // Swept over a full shimmer period, not read at t=0: the breathing term also bands
-    // radially, so any single instant is a lucky sample. A first version of this test read
-    // t=0 only and passed with the `glow * 0.7` composite knob mutated to 1.0 — at that
-    // radius the wave happened to be near its trough.
+  it('refracts: the sample point is displaced, inward and by more toward the limb', () => {
+    // The evaluator has no image, so what is measured is the DISPLACEMENT the shader computes —
+    // its direction and how it grows with the grazing angle. A shell that sampled straight
+    // through would read as a decal however well lit.
     const f = filter();
     const R = shellR(f);
-    const period = (2 * Math.PI) / 0.0018;
-    const worstAlpha = (dist: number): number =>
-      Math.max(...Array.from({ length: 24 }, (_, i) =>
-        alphaAt(f, { dist, time: (i / 24) * period })));
-    // 0.6R is the flat interior — past it the limb's own ramp is already climbing, and a
-    // bound drawn across both would be measuring the limb, not the glass.
+    const near = sample(f, { dist: R * 0.3 }).bend as number[];
+    const far = sample(f, { dist: R * 0.9 }).bend as number[];
+    const mag = (v: number[]): number => Math.hypot(v[0]!, v[1]!);
+    expect(mag(near)).toBeGreaterThan(0);
+    // Faster than linearly in the radius, which is what `1 - nz` buys and what a plain `uv`
+    // scaling does not: a bend proportional to the radius alone reaches only ~3x here, and is a
+    // uniform magnification rather than a sphere.
+    expect(mag(far)).toBeGreaterThan(mag(near) * 10);
+    expect(near[0]).toBeLessThan(0); // sampled at angle 0, i.e. +x — the bend points back inward
+    expect(sample(f, { dist: R * 1.3 }).bend).toBeUndefined(); // culled before it is computed
+  });
+
+  it('never bends a sample outside the filtered region', () => {
+    // `clampToFrame` exists because the pooled texture beyond the region holds whatever the LAST
+    // filter to borrow that pool entry left there — not transparent black. Relying on the clamp
+    // to save us would mean smearing the region's edge texel around the shell's limb; the
+    // displacement has to be small enough that the clamp never actually fires. Swept over the
+    // whole disc, and with an impact live, since that adds a second term.
+    const f = filter();
+    const R = shellR(f);
     for (let i = 0; i <= 16; i++) {
-      expect(worstAlpha((i / 16) * R * 0.6)).toBeLessThan(0.11);
+      for (let k = 0; k < 12; k++) {
+        const o = { dist: (i / 16) * R * 1.1, angle: (k / 12) * Math.PI * 2, hitAge: 0, hitDir: [1, 0] as [number, number] };
+        const s = sample(f, o);
+        if (!s.bend) continue; // culled — no sample taken at all
+        const at = [s.vTextureCoord![0]! + s.bend[0]!, s.vTextureCoord![1]! + s.bend[1]!];
+        expect(at[0]!).toBeGreaterThanOrEqual(s.uInputClamp![0]!);
+        expect(at[1]!).toBeGreaterThanOrEqual(s.uInputClamp![1]!);
+        expect(at[0]!).toBeLessThanOrEqual(s.uInputClamp![2]!);
+        expect(at[1]!).toBeLessThanOrEqual(s.uInputClamp![3]!);
+      }
     }
-    expect(worstAlpha(R)).toBeLessThan(0.75); // even the limb, at its brightest, stays translucent
   });
 
-  it('never touches a pixel the body already draws opaque', () => {
-    // `color.a = max(color.a, …)` must be a no-op at alpha 1 — anything that RAISED it would
-    // be writing past full opacity, and anything that lowered it would punch holes in the art.
+  it('bends by a fraction of a body radius — the character stays recognisable', () => {
+    // The growth test above is a RATIO, so it is scale-free: a bend ten times too strong passes
+    // it unchanged (2026-08-26 battery, the one survivor of the second pass). And the clamp
+    // sweep does not catch it either, because the shell only reaches 62% of the region's
+    // half-width — there is enough margin that a grotesque displacement is still "inside".
+    // So the magnitude needs its own bound, in the unit that means something.
+    const f = filter();
+    const R = shellR(f);
+    let worst = 0;
+    for (let i = 0; i <= 40; i++) {
+      for (let k = 0; k < 8; k++) {
+        const s = sample(f, { dist: (i / 40) * R * 1.05, angle: (k / 8) * Math.PI * 2 });
+        if (!s.bend) continue;
+        // `bend` is in texcoord space; `frameOffset`'s inverse puts it back in region units, and
+        // the region spans 6 body radii.
+        const region = Math.hypot(s.bend[0]! / (s.uOutputFrame![2]! * s.uInputSize![2]!),
+          s.bend[1]! / (s.uOutputFrame![3]! * s.uInputSize![3]!));
+        worst = Math.max(worst, region * 6);
+      }
+    }
+    expect(worst).toBeGreaterThan(0.05); // there IS refraction
+    expect(worst).toBeLessThan(0.4); // ...and it is a lens, not a smear
+  });
+
+  it('fades the refraction with the pool, so nothing un-warps in one frame at the break', () => {
+    // `ActorFilters` detaches the shell the instant the pool hits 0. Anything still at full
+    // strength at that moment pops. The glow already scaled with `uIntensity`; the bend did not.
+    const f = filter();
+    const d = shellR(f) * 0.7;
+    const mag = (v: number[]): number => Math.hypot(v[0]!, v[1]!);
+    const full = mag(sample(f, { dist: d }).bend as number[]);
+    const dying = mag(sample(f, { dist: d, intensity: 0.05 }).bend as number[]);
+    expect(dying).toBeLessThan(full * 0.1);
+    expect(mag(sample(f, { dist: d, intensity: 0 }).bend as number[])).toBe(0);
+  });
+
+  it('tints the art it covers instead of only glowing over it — glass with substance', () => {
+    // Isolated from the additive glow, which dominates the raw channel value and would hide
+    // this either way: what is measured is the gap between the shipped result and what a
+    // PURELY additive shell would have produced from the same glow.
+    const f = filter();
+    const d = shellR(f) * 0.5;
+    const s = sample(f, { dist: d, texel: BODY });
+    const lit = s.glow![0]! + s.behind![0]!;
+    const additiveOnly = BODY[0]! + (s.tint as number[])[0]! * lit;
+    expect(s.finalColor![0]!).toBeLessThan(additiveOnly);
+    // ...but not by so much that the art stops reading. This is the number the 2026-08-25 pass
+    // was about (the hero's saturated blue eye flattening to the same pale cyan as the shell).
+    expect(additiveOnly - s.finalColor![0]!).toBeLessThan(0.1);
+  });
+
+  it('never punches a hole in the art it covers', () => {
     const f = filter();
     for (const k of [0, 0.5, 1.0]) {
       expect(alphaAt(f, { dist: k * shellR(f), texel: BODY })).toBe(1);
     }
   });
+
+  it('leaves the ground under the shell readable, at every instant of the pulse', () => {
+    // The 2026-08-19 volume pass added the ground shadow; the shell has to tint the floor
+    // around a shielded actor's feet, never hide it. `Entity`'s SHADOW_ALPHA_INNER is 0.1, so a
+    // shell interior above that composites more strongly than the shadow it sits over and the
+    // actor stops reading as planted. The 2026-08-26 rewrite paints the BACK hemisphere over
+    // the floor as well as the front, i.e. it puts more light there for the same shape — the
+    // interior stays under the same bound anyway, via the contrast curve on `density`, rather
+    // than by relaxing the bound to fit.
+    //
+    // Swept over a full breath, not read at t=0: any single instant is a lucky sample.
+    const f = filter();
+    const R = shellR(f);
+    const period = (2 * Math.PI) / 0.0018;
+    const worst = (dist: number): number =>
+      Math.max(...Array.from({ length: 24 }, (_, i) => alphaAt(f, { dist, time: (i / 24) * period })));
+    for (let i = 0; i <= 16; i++) expect(worst((i / 16) * R * 0.6)).toBeLessThan(0.11);
+    expect(worst(R * (1 - thickness(f)))).toBeLessThan(0.5); // even the wall stays translucent
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// The cull. A performance device whose entire correctness claim is "nothing visible is being
+// skipped", which is a measurement, not a comment.
+// ---------------------------------------------------------------------------------------
+
+describe('EnergyShieldFilter, measured: the radial cull skips nothing visible', () => {
+  /** The cull radius, in units of the surface, as the shader declares it. */
+  function cull(f: EnergyShieldFilter): number {
+    const m = /const float CULL = ([0-9.]+);/.exec(stripComments(f.glProgram.fragment!));
+    if (!m) throw new Error('shield shader no longer declares CULL');
+    return Number(m[1]);
+  }
+
+  it('is already below one 8-bit step by the time it culls', () => {
+    // Sampled just INSIDE the cull, where the shader still runs: if what it computes there is
+    // under 1/255 in both colour and alpha, dropping it beyond that point is invisible.
+    const f = filter();
+    const b = cull(f) * 0.999;
+    const s = sample(f, { dist: b * shellR(f) });
+    expect(s.glow![0]! + s.behind![0]!).toBeLessThan(1 / 255);
+    expect(s.finalColor![3]!).toBeLessThan(1 / 255);
+  });
+
+  it('culls only OUTSIDE the surface, never into the shell', () => {
+    expect(cull(filter())).toBeGreaterThan(1);
+  });
+
+  it('hands back the untouched texel where it culls', () => {
+    const f = filter();
+    const texel: Val = [0.3, 0.4, 0.5, 0.6];
+    expect(sample(f, { dist: cull(f) * 1.2 * shellR(f), texel }).finalColor).toEqual(texel);
+  });
+
+  it('is worth having: it skips well over half the filtered square', () => {
+    // The shell reaches SHELL_R in `dist` units over a region whose half-width is 0.5 * sqrt(2)
+    // in the same units, so the fraction of the square the shader still runs for is the area of
+    // a circle of radius CULL * SHELL_R / (0.5 * sqrt(2)) inscribed in it.
+    const f = filter();
+    const rel = (cull(f) * shellR(f)) / (0.5 * Math.SQRT2);
+    const covered = (Math.PI * rel * rel) / 4;
+    expect(covered).toBeLessThan(0.5);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// The impact. Nothing here existed before 2026-08-26 — the shield's only dynamic was the pool.
+// ---------------------------------------------------------------------------------------
+
+describe('EnergyShieldFilter, measured: it reacts to being hit', () => {
+  const DIR: [number, number] = [1, 0]; // hit arriving from -x, landing on the -x side
+
+  it('dents the struck side and bulges the far one', () => {
+    const f = filter();
+    const struck = sample(f, { dist: 0.1, angle: Math.PI, hitAge: 0, hitDir: DIR }).surface![0]!;
+    const far = sample(f, { dist: 0.1, angle: 0, hitAge: 0, hitDir: DIR }).surface![0]!;
+    const rest = sample(f, { dist: 0.1, angle: Math.PI }).surface![0]!;
+    expect(struck).toBeLessThan(rest); // pushed in where it was hit
+    expect(far).toBeGreaterThan(rest); // ...and out on the far side
+  });
+
+  it('REBOUNDS past rest rather than fading back — the thing a squash frame does', () => {
+    // A damped exponential alone would return monotonically to the rest radius, which reads as
+    // "the glow faded". The cosine is what makes it spring back through it. Measured as a sign
+    // change in the offset from rest, not as a formula.
+    const f = filter();
+    const at = (age: number): number =>
+      sample(f, { dist: 0.1, angle: Math.PI, hitAge: age, hitDir: DIR }).surface![0]!
+      - sample(f, { dist: 0.1, angle: Math.PI }).surface![0]!;
+    const trace = Array.from({ length: 60 }, (_, i) => at(i * 10));
+    expect(trace[0]!).toBeLessThan(0); // dented first
+    expect(Math.max(...trace)).toBeGreaterThan(0); // then past rest, the other way
+    expect(Math.abs(trace[59]!)).toBeLessThan(Math.abs(trace[0]!) * 0.1); // and settles
+  });
+
+  it('settles completely, so a shield that was hit long ago is an unperturbed sphere', () => {
+    const f = filter();
+    const hit = sample(f, { dist: 0.1, hitAge: HIT_SETTLED(), hitDir: DIR }).surface![0]!;
+    const never = sample(f, { dist: 0.1 }).surface![0]!;
+    expect(hit).toBeCloseTo(never, 6);
+  });
+
+  it('blooms on the struck hemisphere and not the far one', () => {
+    const f = filter();
+    const d = shellR(f) * 0.6;
+    const near = sample(f, { dist: d, angle: Math.PI, hitAge: 0, hitDir: DIR }).impact![0]!;
+    const far = sample(f, { dist: d, angle: 0, hitAge: 0, hitDir: DIR }).impact![0]!;
+    expect(near).toBeGreaterThan(far * 5);
+  });
+
+  it('sends a ripple ACROSS the surface — the crest moves outward from the impact', () => {
+    // A pulse that merely decayed in place would brighten and dim the same annulus. This
+    // asserts travel: the angle at which the ripple crests is further from the impact point
+    // later than it was earlier.
+    const f = filter();
+    const d = shellR(f) * 0.5;
+    const crest = (age: number): number => {
+      let best = -Infinity;
+      let at = 0;
+      for (let i = 0; i <= 40; i++) {
+        const angle = Math.PI - (i / 40) * Math.PI; // from the impact point round to the far side
+        const v = sample(f, { dist: d, angle, hitAge: age, hitDir: DIR }).ripple![0]!;
+        if (v > best) {
+          best = v;
+          at = i / 40;
+        }
+      }
+      return at;
+    };
+    expect(crest(60)).toBeGreaterThan(crest(0));
+  });
+
+  it('does not touch the resting shield at all', () => {
+    // Every impact term has to vanish at rest, or a shielded actor standing still would carry a
+    // permanent dent on whichever axis it was last hit.
+    const f = filter();
+    const s = sample(f, { dist: shellR(f) * 0.5 });
+    expect(s.impact![0]!).toBeLessThan(1e-4);
+    expect(s.wob![0]!).toBeLessThan(1e-4);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// The membrane, the breath, and the damage channel.
+// ---------------------------------------------------------------------------------------
+
+describe('EnergyShieldFilter, measured: the membrane', () => {
+  it('samples the tile at two DIFFERENT places for the two hemispheres', () => {
+    // One sample would put the same scale in front of and behind the body, which is precisely
+    // the coincidence that reads as flat.
+    const f = filter();
+    const s = sample(f, { dist: shellR(f) * 0.5 });
+    const [fx, fy] = s.warpF as [number, number];
+    const [bx, by] = s.warpB as [number, number];
+    expect(Math.hypot(fx - bx, fy - by)).toBeGreaterThan(0.1);
+  });
+
+  it('compresses the pattern toward the limb, which is what wraps a flat tile on a sphere', () => {
+    const f = filter();
+    const R = shellR(f);
+    // Tile coordinates per unit of screen distance: higher means the pattern is finer there.
+    const rate = (b: number): number => {
+      const a = sample(f, { dist: b * R }).warpF as number[];
+      const c = sample(f, { dist: (b + 0.02) * R }).warpF as number[];
+      return Math.hypot(c[0]! - a[0]!, c[1]! - a[1]!);
+    };
+    expect(rate(0.85)).toBeGreaterThan(rate(0.1) * 1.5);
+  });
+
+  it('fades out before the silhouette, where its own compression would alias', () => {
+    // Measured as the membrane's EFFECT on the wall — `front / density` is the multiplier it
+    // applies — not as the value of the `grain` term. Reading `grain` alone passed with `grain`
+    // computed and then never used (2026-08-26 battery), which is the same shader as one that
+    // has no limb fade at all.
+    const f = filter();
+    const boost = (b: number): number => {
+      const s = sample(f, { dist: b * shellR(f), scaleTexel: [1, 0.5, 0, 1] });
+      return s.front![0]! / s.density![0]!;
+    };
+    expect(boost(0.999)).toBeLessThan(1.06); // all but gone at the silhouette
+    expect(boost(0.5)).toBeGreaterThan(1.2); // ...and fully present across the face
+    expect(sample(f, { dist: shellR(f) * 0.5 }).grain![0]!).toBeGreaterThan(0.9);
+  });
+
+  it('brightens the shell where the tile is bright, and is switched off by uMembrane', () => {
+    const f = filter();
+    const d = shellR(f) * 0.5;
+    const dark = sample(f, { dist: d, scaleTexel: [0, 0.5, 0, 1] }).front![0]!;
+    const bright = sample(f, { dist: d, scaleTexel: [1, 0.5, 0, 1] }).front![0]!;
+    expect(bright).toBeGreaterThan(dark * 1.3);
+    const off = sample(f, { dist: d, scaleTexel: [1, 0.5, 0, 1], membrane: 0 }).front![0]!;
+    expect(off).toBeCloseTo(dark, 10); // uMembrane 0 leaves exactly the bare wall
+  });
+
+  it('keeps the SHAPE when the membrane is off — the cheap tier is still a shell', () => {
+    // What a device that cannot afford the tile gives up is detail, not the enclosure cue.
+    const f = filter();
+    const R = shellR(f);
+    const at = (b: number): number => sample(f, { dist: b * R, membrane: 0 }).density![0]!;
+    const inner = 1 - thickness(f);
+    expect(at(inner)).toBeGreaterThan(at(0) * 1.5);
+    expect(at(0.995)).toBeLessThan(at(inner));
+  });
+
+  it('extinguishes whole scales as the pool drains — a second channel, not just dimming', () => {
+    // design/13's dual-channel law. At full pool every cell is lit whatever its constant; at a
+    // low pool a cell with a low constant is dropped to a quarter strength while its neighbour
+    // with a high one survives, so the membrane visibly breaks up.
+    const f = filter();
+    const d = shellR(f) * 0.5;
+    const live = (cell: number, intensity: number): number =>
+      sample(f, { dist: d, scaleTexel: [1, cell, 0, 1], intensity }).liveF![0]!;
+    expect(live(0.05, 1)).toBe(1);
+    expect(live(0.95, 1)).toBe(1);
+    expect(live(0.05, 0.12)).toBeLessThan(1); // a low-constant cell goes out first...
+    expect(live(0.95, 0.12)).toBe(1); // ...while its neighbour is still lit
+  });
+
+  it('shifts hue as it fails, so a dying shield is not merely a dimmer one', () => {
+    const f = filter();
+    const full = sample(f, { dist: shellR(f) * 0.5 }).tint as number[];
+    const dying = sample(f, { dist: shellR(f) * 0.5, intensity: 0.1 }).tint as number[];
+    // Cyan (low red, high blue) toward a hot pale tone (high red).
+    expect(dying[0]!).toBeGreaterThan(full[0]! + 0.3);
+  });
 });
 
 describe('EnergyShieldFilter, measured: it fades with the pool and breathes', () => {
-  it('scales linearly with the shield ratio, and vanishes at zero', () => {
+  it('scales with the shield ratio, and vanishes at zero', () => {
     const f = filter();
-    const d = shellR(f) * 0.9;
-    const full = glowAt(f, { dist: d, intensity: 1 });
-    expect(glowAt(f, { dist: d, intensity: 0.5 })).toBeCloseTo(full * 0.5, 12);
+    const d = shellR(f) * 0.6;
     expect(glowAt(f, { dist: d, intensity: 0 })).toBe(0);
-    expect(alphaAt(f, { dist: d, intensity: 0 })).toBe(0); // a drained pool paints NOTHING
+    const half = glowAt(f, { dist: d, intensity: 0.5 });
+    const full = glowAt(f, { dist: d, intensity: 1 });
+    expect(half).toBeGreaterThan(0);
+    expect(half).toBeLessThan(full);
   });
 
-  it('breathes without ever dimming below half — measured over a full period', () => {
-    // `filters.test.ts` asserts the shimmer CONSTANTS; this asserts what they produce, which
-    // is the thing the 2026-08-17 report ("护盾的闪烁频率降低") was actually about.
+  it('breathes the MEMBRANE and not the shell — a surface with energy moving over it', () => {
+    // The pre-2026-08-26 shimmer multiplied the whole glow, so the character's silhouette
+    // pulsed. Here the wall is time-invariant and only the pattern on it moves. Measured over a
+    // full period so no single instant can be a lucky sample.
     const f = filter();
-    const d = shellR(f) * 0.9;
+    const d = shellR(f) * 0.5;
     const period = (2 * Math.PI) / 0.0018;
-    const series = Array.from({ length: 96 }, (_, i) =>
-      glowAt(f, { dist: d, time: (i / 96) * period }));
-    const lo = Math.min(...series);
-    const hi = Math.max(...series);
-    expect(hi).toBeGreaterThan(lo); // it does animate at all
-    // `0.75 + 0.25 * sin(...)` swings between exactly half and full, so the trough sits AT the
-    // limit rather than comfortably inside it — asserted as `>=` with the sampling slack that
-    // implies, not as a strict `>`, which passes or fails on where the 96 samples happen to land.
-    expect(lo).toBeGreaterThanOrEqual(0.5 * hi - 1e-9);
-    expect(hi / lo).toBeLessThanOrEqual(2 + 1e-6);
+    const walls = Array.from({ length: 24 }, (_, i) =>
+      sample(f, { dist: d, time: (i / 24) * period }).density![0]!);
+    expect(Math.max(...walls) - Math.min(...walls)).toBeLessThan(1e-9); // the shell itself is steady
+    const breaths = Array.from({ length: 24 }, (_, i) =>
+      sample(f, { dist: d, time: (i / 24) * period }).breath![0]!);
+    expect(Math.max(...breaths)).toBeGreaterThan(Math.min(...breaths)); // ...but the pattern moves
+    expect(Math.min(...breaths)).toBeGreaterThan(Math.max(...breaths) * 0.5); // never dims by half
   });
 
-  it('takes a full pulse in seconds, not in frames', () => {
-    const f = filter();
-    const d = shellR(f) * 0.9;
-    const at = (t: number): number => glowAt(f, { dist: d, time: t });
-    // One 16 ms frame must move it imperceptibly — a strobe is exactly the opposite.
-    expect(Math.abs(at(16) - at(0))).toBeLessThan(0.02 * at(0));
+  it('takes a full breath in seconds, not in frames', () => {
+    const src = stripComments(filter().glProgram.fragment!);
+    const m = /sin\(uTime \* ([0-9.]+)\)/.exec(src);
+    if (!m) throw new Error('shield shader no longer breathes on uTime');
+    const hz = (Number(m[1]) * 1000) / (2 * Math.PI);
+    expect(hz).toBeGreaterThan(0);
+    expect(hz).toBeLessThan(0.5); // ~0.95 Hz read as a strobe (2026-08-17)
   });
 });
 
@@ -591,9 +1132,9 @@ describe('EnergyShieldFilter, measured: centred on the REGION, at any texture si
 
   it.each(POW2_CASES)('keeps the shell symmetric about it (region %i in a %i texture)', (region, pool) => {
     const f = filter();
-    const d = shellR(f) * 0.9;
-    const left = sample(f, { dist: d, angle: Math.PI, region, pool }).glass![0]!;
-    const right = sample(f, { dist: d, angle: 0, region, pool }).glass![0]!;
+    const d = shellR(f) * (1 - thickness(f));
+    const left = sample(f, { dist: d, angle: Math.PI, region, pool }).density![0]!;
+    const right = sample(f, { dist: d, angle: 0, region, pool }).density![0]!;
     expect(left).toBeCloseTo(right, 10); // a crescent is exactly this pair diverging
   });
 });

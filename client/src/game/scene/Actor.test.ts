@@ -6,6 +6,7 @@ import { Actor } from './Actor';
 import { drawElementGlyph } from '../elementIcons';
 import { THEME } from '../theme';
 import { SHADOW_SQUASH } from './Entity';
+import { HIT_FLASH_MS } from './actorFilters';
 import { Rig } from '../../render/Rig';
 import { ORB_CORE_RIG, ORB_CORE_REFERENCE_RADIUS } from '../../render/orbCoreRig';
 import { CRITTER_CORE_RIG, CRITTER_CORE_REFERENCE_RADIUS } from '../../render/critterCoreRig';
@@ -68,7 +69,11 @@ function loadedBossCoreRig(): LoadedRigSkin {
 vi.mock('../fx/filters', () => ({
   EnergyShieldFilter: class {
     intensity = 0;
+    membrane = 1;
+    /** Last impact handed to it, so a test can assert `hitFlash` forwards the direction. */
+    lastHit: [number, number] | null = null;
     constructor(public color?: number) {}
+    hit(dx: number, dy: number) { this.lastHit = [dx, dy]; }
     tick() {}
   },
   OutlineFilter: class {
@@ -442,10 +447,10 @@ describe('Actor.hitFlash — outline shader (design/01 fidelity roadmap mileston
   it('decays to 0 over HIT_FLASH_MS and then detaches', () => {
     const a = new Actor('player', 12);
     a.hitFlash();
-    a.interpolate(1, 80); // half of the 160ms flash
+    a.interpolate(1, HIT_FLASH_MS / 2);
     expect(outlineFilterOf(a)!.alpha).toBeCloseTo(0.5, 1);
     expect(skinFiltersOf(a)).toBeTruthy();
-    a.interpolate(1, 80); // fully decayed
+    a.interpolate(1, HIT_FLASH_MS / 2); // fully decayed
     expect(outlineFilterOf(a)!.alpha).toBe(0);
     expect(skinFiltersOf(a) as unknown[] ?? []).toEqual([]); // back to no filter at all
   });
@@ -454,7 +459,7 @@ describe('Actor.hitFlash — outline shader (design/01 fidelity roadmap mileston
     const a = new Actor('player', 12);
     a.hitFlash();
     const first = outlineFilterOf(a);
-    a.interpolate(1, 160); // fully decays
+    a.interpolate(1, HIT_FLASH_MS); // fully decays
     a.hitFlash();
     expect(outlineFilterOf(a)).toBe(first);
     expect(outlineFilterOf(a)!.alpha).toBe(1);
@@ -465,6 +470,48 @@ describe('Actor.hitFlash — outline shader (design/01 fidelity roadmap mileston
     a.setShield(4, 8);
     a.hitFlash();
     expect(skinFiltersOf(a) as unknown[]).toHaveLength(2); // shield + outline (no lit filter since 2026-08-24)
+  });
+
+  // 2026-08-26: a hit now also dents the shell (`EnergyShieldFilter.hit`). Everything above
+  // calls `hitFlash()` with no arguments, so none of it exercises the direction at all.
+  describe('forwards the impact direction to the shell', () => {
+    const lastHitOf = (a: Actor): [number, number] | null =>
+      (shieldFilterOf(a) as unknown as { lastHit: [number, number] | null } | null)?.lastHit ?? null;
+
+    it('hands the shell the delta it was given, unchanged', () => {
+      const a = new Actor('player', 12);
+      a.setShield(4, 8);
+      a.hitFlash(5, -2);
+      expect(lastHitOf(a)).toEqual([5, -2]);
+    });
+
+    it('does not build a shell for an actor that has no shield pool', () => {
+      // An unshielded actor still flashes its outline. Creating a shield filter here just to
+      // animate it would wrap a bubble round a character that has no shield — and it would cost
+      // a render-target pass per hit for every enemy in the room, which is the exact per-actor
+      // cost the 2026-08-24 lighting pass existed to remove.
+      const a = new Actor('enemy', 12);
+      a.hitFlash(5, -2);
+      expect(shieldFilterOf(a)).toBeNull();
+      expect(skinFiltersOf(a) as unknown[]).toHaveLength(1); // the outline alone
+    });
+
+    it('does not dent a shell that has already broken', () => {
+      const a = new Actor('player', 12);
+      a.setShield(4, 8);
+      a.hitFlash(1, 0);
+      a.setShield(0, 8); // broken — the shell detaches, `shield_break`'s own burst covers it
+      a.hitFlash(-1, 0);
+      expect(lastHitOf(a)).toEqual([1, 0]); // the second hit did not reach it
+      expect(skinFiltersOf(a) as unknown[]).toHaveLength(1);
+    });
+
+    it('defaults to a directionless hit rather than passing undefined through', () => {
+      const a = new Actor('player', 12);
+      a.setShield(4, 8);
+      a.hitFlash();
+      expect(lastHitOf(a)).toEqual([0, 0]); // `hit()` reads (0,0) as "keep the previous axis"
+    });
   });
 });
 

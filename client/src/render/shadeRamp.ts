@@ -116,6 +116,7 @@ export function bakedField(
   w: number,
   h: number,
   paint: (rgba: Uint8Array, w: number, h: number) => void,
+  opts: { mipmap?: boolean } = {},
 ): Texture {
   const hit = baked.get(key);
   if (hit) return hit;
@@ -127,6 +128,12 @@ export function bakedField(
       width: w,
       height: h,
       alphaMode: 'premultiplied-alpha',
+      // Off by default: a 1-D ramp is sampled along its length at roughly 1:1 and gains
+      // nothing from mip levels. A 2-D tile that a shader MINIFIES does — the shield
+      // membrane compresses ~5x at the limb (`filters/shieldScales.ts`), and without mips
+      // that is a shimmering moire ring rather than a surface. POT sizes only: WebGL1
+      // (WeChat) silently disables mipmapping on an NPOT texture.
+      autoGenerateMipmaps: opts.mipmap ?? false,
       // Linear is the whole point — it is what turns 256 samples into a continuous ramp.
       scaleMode: 'linear',
       // `generateTextureMatrix` force-sets `repeat` on any non-gradient texture fill anyway

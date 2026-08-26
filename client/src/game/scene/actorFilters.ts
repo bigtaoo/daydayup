@@ -18,8 +18,10 @@ import { EnergyShieldFilter, OutlineFilter, DissolveFilter, HeatHazeFilter } fro
 import { THEME } from '../theme';
 import { activeQuality } from '../../render/quality';
 
-/** Outline "you were just hit" flash duration. */
-const HIT_FLASH_MS = 160;
+/** Outline "you were just hit" flash duration. Exported so `Actor.test.ts` can drive the
+ *  decay from the real number instead of a magic half-of-it — a retune is a look change,
+ *  not a contract change, and a test named after this constant should read it. */
+export const HIT_FLASH_MS = 160;
 /** Death-dissolve shader duration. */
 export const DISSOLVE_MS = 700;
 
@@ -111,11 +113,20 @@ export class ActorFilters {
    * against any body shape. Fired from EventReactor's 'hit' case for BOTH factions (whichever
    * actor the event names as `target`), independent of the position-anchored `fx.flash()` burst
    * — that one reads as "impact happened here", this one as "THIS actor took it".
+   *
+   * `dx`/`dy` are the screen-space delta from the actor's centre to where the hit landed (y
+   * down), and drive the shield shell's elastic dent.
    */
-  hitFlash(): void {
+  hitFlash(dx = 0, dy = 0): void {
     if (!this.outlineFilter) this.outlineFilter = new OutlineFilter(0xffffff);
     this.outlineFilter.alpha = 1;
     this.outlineMs = HIT_FLASH_MS;
+    // The shell dents where the hit landed (2026-08-26, `EnergyShieldFilter.hit`). Only
+    // meaningful while a shield is actually up: an unshielded actor has no filter to dent, and
+    // building one here just to animate it would put a shell around an actor with no pool.
+    // `dx`/`dy` default to 0, which `hit()` reads as "keep the previous axis" — a caller that
+    // has no impact position still gets a dent, just not a directed one.
+    if (this.shieldActive && this.shieldFilter) this.shieldFilter.hit(dx, dy);
     this.apply();
   }
 

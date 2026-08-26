@@ -31,7 +31,9 @@ export interface EventReactorHost {
    *  flash at a world position the way `fx.flash()` does. Undefined for a bullet/pickup
    *  id, or an actor that's already gone. Duck-typed (not `Actor`) so this file still
    *  never imports scene/ — same decoupling as the rest of this interface. */
-  actorAt(id: number): { hitFlash(): void } | undefined;
+  /** The narrow view of an `Actor` this reactor needs: where it is on screen (world px, so an
+   *  event's own position can be turned into a delta from its centre) and the hit reaction. */
+  actorAt(id: number): { hitFlash(dx?: number, dy?: number): void; x: number; y: number } | undefined;
 }
 
 /**
@@ -73,7 +75,14 @@ export class EventReactor {
           // A silhouette flash on the SPECIFIC actor hit (design/01 milestone 5,
           // `OutlineFilter`) — independent of the position-anchored burst above, which
           // reads as "impact happened here" rather than "this one took it".
-          this.host.actorAt(e.target)?.hitFlash();
+          // Handed the impact point as a delta from the target's own centre, so the shield
+          // shell dents where the hit landed rather than in a fixed direction
+          // (`EnergyShieldFilter.hit`, 2026-08-26). The event already carries the position the
+          // burst above is anchored to; nothing new had to reach the client for this.
+          {
+            const target = this.host.actorAt(e.target);
+            target?.hitFlash(fpToPx(e.gx) - target.x, fpToPx(e.gy) - target.y);
+          }
           if (e.faction === 'enemy') {
             // The (any) player took the hit — a small punch of feedback.
             this.fx.addShake(0.18);

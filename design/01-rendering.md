@@ -244,7 +244,10 @@ facing continuum, but nothing said it was a **volume standing in a space**.
   A shield is a SPHERE around the body, not a disc under it, and a sphere's silhouette is a
   circle from every angle. Squashed, it read on screen as a flat hoop threaded through the
   character at gun height — the reported 圆圈 — instead of a bubble enclosing it.
-- **...and since 2026-08-25 it is a SOLID shell, not a rim band** (user report: *"现在的护盾是
+- **2026-08-25: it became a SOLID shell, not a rim band** — superseded 2026-08-26 by the bullet
+  below, which found that the "Fresnel limb" this pass shipped is itself a ring by another name.
+  Kept because the report it answers is real and the hole it closed has not reopened
+  (user report: *"现在的护盾是
   一个圆圈包裹着角色, 我希望的是类似一个透明的蛋壳一样的效果将角色全部包裹, 而不是一个圆环"*).
   Un-squashing it fixed the ellipse but left the other half of "圆圈" standing: the shader drew
   `smoothstep(a, b, dist) * (1.0 - smoothstep(b, c, dist))`, a band with a HOLE in it, so a
@@ -271,6 +274,71 @@ facing continuum, but nothing said it was a **volume standing in a space**.
     the feet, where the ground shadow has to stay readable (below). The interior composites at
     ~8% alpha over the floor, so it tints rather than hides it — the failure mode the
     2026-08-19 volume pass fixed by shrinking the old ring.
+- **...and since 2026-08-26 it is a shell with THICKNESS, with the character between its two
+  halves** (user report: *"没有被蛋壳包裹的感觉 … 边缘的那个圈太过实线了"*). The 2026-08-25 pass
+  above had filled the ring's hole and stopped there, and the report that followed named both
+  halves of what was still wrong. Neither was a tuning problem:
+  - **`pow(1 - nz, 3)` is a ring, whatever the surrounding code calls it.** It equals 1 only AT
+    the silhouette, so every version through 2026-08-25 was a flat `FILL` plate with all of its
+    energy in a hairline around the edge. Measured on the shipped frame: the profile's maximum sat
+    at `b = 1.00` and held above half-peak across **0.10** of the radius. What replaced it is the
+    length of the view ray's chord through a shell of real thickness — an outer sphere minus an
+    inner one, saturated Beer-Lambert style. That profile peaks at the INNER wall
+    (`b = 1 - THICKNESS`, 0.78) and falls away on both sides: measured peak `b = 0.80`, half-peak
+    width **0.30**. Same measurement from two independent directions — the GLSL interpreter
+    predicts 0.78 / 0.31, and a luma cut read off a real GPU frame says 0.80 / 0.30.
+  - **"包裹" is not a shape at all, it is a compositing order.** Every version up to here added
+    the whole shell ON TOP of the character, so it read as a decal in front of it however the
+    silhouette was tuned — nothing was ever behind. The fix is one multiplication: the back
+    hemisphere's contribution is scaled by `(1.0 - color.a)`, so the body occludes it and sits
+    between the two halves. This is the single change that produces the enclosure cue; the
+    thickness above is what stops the enclosure reading as a hoop.
+  - **Refraction, for the price of a UV offset.** The filter already samples the character's own
+    texture, so bending the sample point by the sphere normal shows the body THROUGH the glass —
+    magnified face-on, smeared toward the limb. Faded with the pool along with everything else
+    (found by test, 2026-08-26: left at full strength the character stayed warped while the glow
+    drained and then un-warped in a single frame when `ActorFilters` detached the filter, a pop
+    landing exactly on the break burst), and bounded to a fraction of a body radius — the
+    "grows toward the limb" assertion is a ratio and therefore scale-free, so a displacement ten
+    times too strong satisfied it.
+  - **A generated membrane, not authored art.** A smooth gradient reads as a filter no matter how
+    well shaped; the eye needs a repeating detail element before it accepts a surface. The tile is
+    a seamless irregular-scale field computed at boot (`fx/filters/shieldScales.ts`) — see that
+    file's header for why a generator beats an image model here, and `design/04` for the package
+    budget it costs nothing against. Sampled twice with different projections, front and back, so
+    the two layers do not coincide; the projection is `uv / (nz + k)` rather than true spherical
+    coordinates, which foreshortens the pattern toward the limb for one divide instead of four
+    transcendentals and a pole singularity.
+  - **The damage state changes the SHAPE.** `design/13`'s dual-channel law, which this filter had
+    been violating: as the pool drains, whole scales go out one at a time (the tile's green channel
+    is that cell's place in a shuffled extinction order) and the tint shifts from cyan toward a hot
+    pale tone. Brightness alone was the entire damage signal before.
+  - **The interior still stays under the ground shadow.** `Entity`'s `SHADOW_ALPHA_INNER` is 0.1,
+    and a shell interior compositing above about that much stops the actor reading as planted. The
+    2026-08-26 rewrite paints the back hemisphere over the floor as well as the front — i.e. more
+    light there for the same shape — and holds the same bound anyway, via a contrast curve on the
+    chord (`pow(…, 1.6)`, which pulls the interior down harder than the wall) rather than by
+    relaxing the bound to fit what the new shader happened to produce.
+  - **A hit now dents it.** Until 2026-08-26 the shield had exactly one dynamic — `uIntensity`
+    tracking the pool — and did nothing at all when the actor was hit; `ActorFilters.hitFlash`
+    drove only the white `OutlineFilter`. The envelope is a damped OSCILLATION (`exp` decay times
+    `cos`), so the surface springs back past its rest radius and settles: a fade reads as "the
+    glow dimmed", a rebound reads as "something hit it". This is what 20-year-old sprite shields
+    did with hand-drawn squash frames, and it is the cheapest item on this list. `EventReactor`'s
+    `hit` case already carried the impact position, so the direction cost nothing new to plumb —
+    it is handed over as a delta from the target's own centre.
+  - **The one lever that pays is the radial cull.** The shell reaches 0.62 of the filtered
+    square's half-width, so ~70% of its pixels used to run the whole shader to produce zero. A
+    single `if (b > CULL) { … return; }` skips them — CULL is set where the only term still alive
+    out there has fallen below one 8-bit step, and `shieldShellModel.test.ts` measures that rather
+    than trusting it. Measured on an Intel Arc Pro over a 768 px region: **0.223 ms with the cull,
+    0.321 ms without**, against **0.162 ms** for the shader this replaced. So the rewrite is +38%
+    for roughly three times the visual information, and without the cull it would have been +100%.
+    The membrane's own uniform branch (`uMembrane`, the lever for a cheaper tier) measures as no
+    saving at all on desktop — that region is fill-bound and two cached tile fetches are not what
+    it spends its time on. It stays because it is correct and free, and because a bandwidth-bound
+    mobile GPU is where those fetches would show up; that case is unmeasured (`design/04` item 6)
+    and nothing here should be read as a promise about it.
 - **The body is shaded as a sphere** (`render/rigShading.ts`). A fixed specular highlight
   toward the key light and a curved terminator falling away from it — drawn, not authored,
   because they must stay pinned to the light's **screen-space** direction while the body they
@@ -1417,11 +1485,15 @@ the app's own layout maths.
    here earlier turned out not to matter in practice. Milestone 2 (lighting) has since
    shipped too (2026-08-03, see above) — the "genuinely blocked on real art" note that used
    to live here no longer applies, now that this project's GPT-Image-2 art counts as final.
-   - **`EnergyShieldFilter`** — a shimmering translucent shell enclosing the character
-     (a rim band until 2026-08-25, see "The shield is the deliberate exception" above for
-     the rewrite), built on the same UV-distance-from-centre technique as `VignetteFilter`
+   - **`EnergyShieldFilter`** — a transparent shell enclosing the character (a rim band until
+     2026-08-25, a filled disc with a Fresnel hairline until 2026-08-26, a chord through a
+     shell of real thickness with the body between its two hemispheres since; see "The shield
+     is the deliberate exception" above and the two bullets after it for the rewrites and what
+     each measured), built on the same UV-distance-from-centre technique as `VignetteFilter`
      (not true alpha-edge detection, so it needs no extra per-skin wiring against either the
-     Graphics placeholder body or a real `.tao` rig). `Actor.setShield` drives `intensity` off the actor's live two-pool shield ratio
+     Graphics placeholder body or a real `.tao` rig). It is the one filter here that samples a
+     SECOND texture — the generated membrane tile, `fx/filters/shieldScales.ts` — and the one
+     with a radial cull, which is the only measured perf lever it has. `Actor.setShield` drives `intensity` off the actor's live two-pool shield ratio
      (design/02/05/07) — full glow at a full shield, fading as it drains, gone once it
      hits 0 (the `shield_break` event's own flash, `EventReactor`, already covers that
      instant). Its UV-distance-from-0.5 assumption DOES need the render area itself to be

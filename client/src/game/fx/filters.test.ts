@@ -296,86 +296,40 @@ describe('EnergyShieldFilter.tick', () => {
   });
 });
 
-// Shimmer PACE (2026-08-17, live report: "护盾的闪烁频率降低"). Another shader-source
-// contract test, for the same reason as the `frameUv` block above — no GL context under
-// vitest — but asserted as a derived FREQUENCY rather than as the literal constant, so
-// it guards the intent ("a slow breathing pulse, not a strobe on the character's
-// silhouette") instead of pinning a number nobody may retune.
-describe('EnergyShieldFilter shimmer pace', () => {
-  /**
-   * GLSL with its comments removed. Necessary, not incidental: the shield shader's own
-   * comment quotes the PREVIOUS shimmer expression verbatim to explain what was wrong
-   * with it, so a naive source scan matches the old constants and reports the bug it is
-   * supposed to catch. (Written after doing exactly that.) Anything scanning shader text
-   * for a value should strip comments the same way.
-   */
-  const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*/g, '');
-
-  /** The `sin(uTime * K + ...)` coefficient, in radians per millisecond. */
-  function timeCoefficient(src: string): number {
-    const m = /sin\(uTime \* ([0-9.]+)/.exec(code(src));
-    if (!m) throw new Error('shield shader no longer has a `sin(uTime * K` shimmer term');
-    return Number(m[1]);
-  }
-
-  /** The `+ dist * K` radial-banding coefficient inside the same sin(). */
-  function radialCoefficient(src: string): number {
-    const m = /sin\(uTime \* [0-9.]+ \+ dist \* ([0-9.]+)\)/.exec(code(src));
-    if (!m) throw new Error('shield shader no longer has a `+ dist * K` radial term');
-    return Number(m[1]);
-  }
-
-  it('pulses well under 0.5 Hz — a breath, not a flicker', () => {
-    const hz = (timeCoefficient(new EnergyShieldFilter().glProgram.fragment!) * 1000) / (2 * Math.PI);
-    expect(hz).toBeGreaterThan(0); // still animated at all
-    expect(hz).toBeLessThan(0.5); // was ~0.95 Hz, which read as a strobe
-  });
-
-  it('never dims the ring below 50% of its peak — a live shield stays readable throughout', () => {
-    // `shimmer = base + swing * sin(...)`, so the trough is base - swing.
-    const src = new EnergyShieldFilter().glProgram.fragment!;
-    const m = /float shimmer = ([0-9.]+) \+ ([0-9.]+) \* sin\(/.exec(code(src));
-    expect(m).not.toBeNull();
-    const [base, swing] = [Number(m![1]), Number(m![2])];
-    expect(base + swing).toBeCloseTo(1, 6); // peak is full brightness
-    expect(base - swing).toBeGreaterThanOrEqual(0.5);
-  });
-
-  it('keeps the radial banding coarse enough that a slow pulse does not read as ripple', () => {
-    // The `dist * K` term makes K concentric bands across the rim; scroll enough of them
-    // past and a slowed-down pulse turns back into visible travelling ripple, which is
-    // the same complaint by another route.
-    expect(radialCoefficient(new EnergyShieldFilter().glProgram.fragment!)).toBeLessThanOrEqual(12);
-  });
-});
-
-// 2026-08-19 volume pass, then 2026-08-24 user report *"护盾成了一个圆圈, 我希望是圆形护盾的
-// 效果, 最初那种效果是对的"*.
-describe('EnergyShieldFilter shell shape', () => {
+// What is left here after the 2026-08-26 shell rewrite: the handful of shield claims that text
+// really is the right evidence for. Everything about the SHAPE moved to
+// `filters/shieldShellModel.test.ts`, which runs the shader instead of reading it.
+//
+// That move was overdue and the rewrite forced it. This block used to pin the shape as literal
+// source patterns — `shell * (FILL * (1.0 - K * color.a) + K2 * fresnel)`, `1.0 - smoothstep(
+// SHELL_R, SHELL_R + K, dist)`, `float shimmer = A + B * sin(` — and every one of them passed
+// against a shader whose brightness peaked exactly at the silhouette, i.e. against a ring. They
+// were not wrong about their own clauses; they were asking about spelling when the question was
+// about a profile. A regex cannot tell a rind from a line, and pinning the spelling made the
+// shape harder to change than it made it safe.
+describe('EnergyShieldFilter shell shape (the claims text is good evidence for)', () => {
   /** Shader source with comments stripped, so a number quoted in a comment cannot satisfy a
-   *  regex meant to read the real code (same helper the shimmer suite above uses). */
+   *  regex meant to read the real code. The shield's own comments quote superseded formulas to
+   *  explain what was wrong with them, so a naive scan matches the bug it is meant to catch. */
   const code = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*/g, '');
 
   it('is a screen-space CIRCLE — a sphere around the body, not a disc on the floor', () => {
-    // The 2026-08-18 depth pass squashed this ring vertically by SHADOW_SQUASH, reasoning
-    // that every round thing wrapping a body in a tilted view foreshortens the same way.
-    // It does not: a shadow and a status aura lie flat on the ground plane (so the tilt
-    // compresses them), while a shield is a sphere AROUND the body, and a sphere's
-    // silhouette is a circle from every angle. On screen the squashed version read as a
-    // flat hoop threaded through the character at gun height — the reported "圆圈".
-    // These two assertions are what stop that fix being silently re-applied.
+    // The 2026-08-18 depth pass squashed this vertically by SHADOW_SQUASH, reasoning that every
+    // round thing wrapping a body in a tilted view foreshortens the same way. It does not: a
+    // shadow and a status aura lie flat on the ground plane (so the tilt compresses them), while
+    // a shield is a sphere AROUND the body, and a sphere's silhouette is a circle from every
+    // angle. On screen the squashed version read as a flat hoop threaded through the character
+    // at gun height — the reported "圆圈". These are what stop that fix being re-applied.
     const src = code(new EnergyShieldFilter().glProgram.fragment!);
-    expect(src).not.toMatch(/uv\.y\s*[\/*]=/);
+    expect(src).not.toMatch(/uv\.y\s*[/*]=/);
     expect(src).not.toContain('uSquash');
   });
 
   it('does not take the ground shadow squash constant back by another name', () => {
-    // The regression this suite exists for is a NUMBER, not an identifier: re-introducing
-    // 0.62 (or its reciprocal) on the vertical axis reproduces the flat hoop no matter what
-    // the uniform ends up being called.
+    // The regression this guards is a NUMBER, not an identifier: re-introducing 0.62 (or its
+    // reciprocal) on the vertical axis reproduces the flat hoop whatever the uniform is called.
     const src = code(new EnergyShieldFilter().glProgram.fragment!);
-    const yScaled = /uv\.y\s*[\/*]=\s*([0-9.]+)/.exec(src);
-    expect(yScaled).toBeNull();
+    expect(/uv\.y\s*[/*]=\s*([0-9.]+)/.exec(src)).toBeNull();
     expect(SHADOW_SQUASH).toBeLessThan(1); // the shadow itself is still an ellipse
   });
 
@@ -384,110 +338,63 @@ describe('EnergyShieldFilter shell shape', () => {
     // component before this line would be an ellipse again.
     const src = code(new EnergyShieldFilter().glProgram.fragment!);
     const between = src.slice(src.indexOf('vec2 uv ='), src.indexOf('float dist'));
-    expect(between).not.toMatch(/uv\.[xy]/);
+    expect(between).not.toMatch(/uv\.[xy]\s*[/*+-]?=/);
     expect(src).toContain('float dist = length(uv)');
   });
 
-  // 2026-08-19 volume pass, then 2026-08-25's shell rewrite. The shell's SIZE, expressed in the
-  // only unit that means anything to a player: body radii. `Actor` pins this filter's area to a
-  // square `radiusPx * 3` per side, so `uv` (region-normalized, minus 0.5) spans ±0.5 across
-  // 6 body radii, and `dist = length(uv) * sqrt(2)`. A `dist` of D therefore sits
-  // `D * 6 / sqrt(2)` body radii out.
-  const radii = (dist: number): number => (dist * 6) / Math.SQRT2;
-
-  /** The shell's outer-surface radius, in `dist` units, as the shader actually declares it. */
-  function shellRadius(src: string): number {
-    const m = /const float SHELL_R = ([0-9.]+);/.exec(code(src));
-    if (!m) throw new Error('shield shader no longer declares `const float SHELL_R`');
-    return Number(m[1]);
-  }
-
   it('encloses the whole character at ~1.9 body radii instead of ballooning past 2.1', () => {
-    // Measured before the 2026-08-19 pass: the band peaked at dist 0.5, i.e. **2.1 body radii** —
-    // more than twice the size of the character it wrapped, blanketing the floor around a shielded
-    // actor's feet with opaque cyan and hiding the ground shadow entirely. That is the whole
-    // grounding cue of the volume pass, lost whenever a shield was up.
+    // The shell's SIZE, in the only unit that means anything to a player. `Actor` pins this
+    // filter's area to a square `radiusPx * 3` per side, so `uv` spans ±0.5 across 6 body radii
+    // and `dist = length(uv) * sqrt(2)`; a `dist` of D sits `D * 6 / sqrt(2)` body radii out.
+    // Measured before the 2026-08-19 pass: the band peaked at 2.1 body radii, blanketing the
+    // floor around a shielded actor's feet and hiding the ground shadow entirely.
     const src = code(new EnergyShieldFilter().glProgram.fragment!);
-    const r = shellRadius(src);
-    expect(radii(r)).toBeGreaterThan(1.7); // encloses the whole character, mounted weapon included
-    expect(radii(r)).toBeLessThan(2.1); // ...and is not a pool on the floor
-    // The soft outer bloom past the surface has to stay close to it for the same reason.
-    const fade = /1\.0 - smoothstep\(SHELL_R, SHELL_R \+ ([0-9.]+), dist\)/.exec(src);
-    if (!fade) throw new Error('shield shader no longer fades out just past SHELL_R');
-    expect(radii(r + Number(fade[1]))).toBeLessThan(2.3);
+    const m = /const float SHELL_R = ([0-9.]+);/.exec(src);
+    if (!m) throw new Error('shield shader no longer declares `const float SHELL_R`');
+    const radii = (Number(m[1]) * 6) / Math.SQRT2;
+    expect(radii).toBeGreaterThan(1.7); // encloses the whole character, mounted weapon included
+    expect(radii).toBeLessThan(2.1); // ...and is not a pool on the floor
   });
 
-  // 2026-08-25 user report: *"现在的护盾是一个圆圈包裹着角色, 我希望的是类似一个透明的蛋壳一样的
-  // 效果将角色全部包裹, 而不是一个圆环"*. Every version through 2026-08-24 drew
-  // `smoothstep(a, b, dist) * (1.0 - smoothstep(b, c, dist))` — a band with a HOLE in it, so the
-  // character stood in empty space with a hoop round its waist. These four are what stop a
-  // future retune from reintroducing the hole; the shape they pin is "solid disc, bright limb".
-  describe('is a solid shell, not a ring', () => {
-    it('never gates brightness on being FAR ENOUGH from the centre', () => {
-      // A ring is exactly one thing: a term that RISES with `dist`, zeroing the middle. Every
-      // smoothstep over `dist` in a shell shader must be a negated (falling) one.
-      const src = code(new EnergyShieldFilter().glProgram.fragment!);
-      const steps = [...src.matchAll(/(1\.0 - )?smoothstep\([^)]*dist\)/g)];
-      expect(steps.length).toBeGreaterThan(0);
-      for (const s of steps) expect(s[1]).toBe('1.0 - ');
-    });
-
-    it('fills the interior with a real tint, faint enough to read the character through', () => {
-      const src = code(new EnergyShieldFilter().glProgram.fragment!);
-      const declared = /const float FILL = ([0-9.]+);/.exec(src);
-      if (!declared) throw new Error('shield shader no longer declares `const float FILL`');
-      const m = /shell \* \(FILL \* \(1\.0 - ([0-9.]+) \* color\.a\) \+ ([0-9.]+) \* fresnel\)/.exec(src);
-      if (!m) throw new Error('shield shader no longer mixes a body-damped fill with a fresnel limb');
-      const [fill, damp, limb] = [Number(declared[1]), Number(m[1]), Number(m[2])];
-      expect(fill).toBeGreaterThan(0.05); // a glass shell, not an outline: the middle is painted
-      expect(fill).toBeLessThan(0.3); // ...but the character underneath still has to read
-      // Composited with `color.a = max(color.a, glow * K)` below, the interior is what covers the
-      // ground shadow, so its worst case matters more than its nominal value.
-      const k = Number(/color\.a = max\(color\.a, glow \* ([0-9.]+)\)/.exec(src)![1]);
-      expect(fill * k).toBeLessThan(0.15);
-      expect(fill + limb).toBeCloseTo(1, 6); // the limb reaches full brightness at the surface
-      expect(limb).toBeGreaterThan(fill); // ...and it is the limb that dominates, not the fill
-      // The damping term is what keeps the fill off the ART: at full body alpha the additive wash
-      // drops to `fill * (1 - damp)`. Measured with no damping at all (2026-08-25): the hero's
-      // saturated blue eye came out the same pale cyan as the shell around it. A damp of 1 would
-      // be the other failure — the character would punch a hole in its own bubble.
-      expect(damp).toBeGreaterThan(0.25);
-      expect(damp).toBeLessThan(0.8);
-    });
-
-    it('brightens toward the limb via a sphere normal, which is what makes it read as curved', () => {
-      // `nz` is the sphere normal's z (1 face-on, 0 at the silhouette edge) and `1 - nz` the
-      // grazing-angle term. Flattening the exponent to 1 would wash the whole disc out into a
-      // uniform cyan blob; dropping the term entirely leaves a flat decal.
-      const src = code(new EnergyShieldFilter().glProgram.fragment!);
-      expect(src).toContain('float nz = sqrt(max(0.0, 1.0 - r * r));');
-      const m = /float fresnel = pow\(1\.0 - nz, ([0-9.]+)\);/.exec(src);
-      if (!m) throw new Error('shield shader no longer derives a fresnel term from the sphere normal');
-      expect(Number(m[1])).toBeGreaterThanOrEqual(2); // tight against the edge, not a wash
-    });
-
-    it('carries a specular highlight, offset from the centre and inside the shell', () => {
-      // The one cue that reads instantly as "curved and transparent". Centred, it would just be a
-      // second glow blob; outside the surface it would float free of the shell.
-      const src = code(new EnergyShieldFilter().glProgram.fragment!);
-      const m = /vec2 hi = uv - vec2\(([-0-9.]+), ([-0-9.]+)\);/.exec(src);
-      if (!m) throw new Error('shield shader no longer places a specular highlight');
-      const offset = Math.hypot(Number(m[1]), Number(m[2])) * Math.SQRT2; // in `dist` units
-      expect(offset).toBeGreaterThan(0.05 * shellRadius(src)); // genuinely off-centre
-      expect(offset).toBeLessThan(0.8 * shellRadius(src)); // ...and well inside the surface
-      expect(src).toContain('float spec = shell *'); // masked by the shell, so it cannot outlive it
-    });
+  it('binds the membrane tile it samples', () => {
+    // A sampler declared in GLSL but never handed a resource reads as black on some drivers and
+    // as whatever was last bound on others — i.e. the membrane would silently vanish, or worse,
+    // silently become another actor's texture. Neither shows up in a shape test.
+    const f = new EnergyShieldFilter();
+    const declared = [...code(f.glProgram.fragment!).matchAll(/uniform sampler2D (\w+);/g)]
+      .map((m) => m[1]!)
+      .filter((n) => n !== 'uTexture'); // Pixi binds the filter's own input itself
+    expect(declared.length).toBeGreaterThan(0);
+    for (const name of declared) expect(f.resources[name]).toBeDefined();
   });
 
-  it('paints itself onto transparent background at well under full opacity', () => {
-    // `color.a = max(color.a, glow * K)` is what draws the shell OUTSIDE the body's own alpha, so
-    // K is also the knob deciding how much floor a shielded actor hides. 1.0 would be a solid
-    // cyan disc over the shadow.
-    const src = code(new EnergyShieldFilter().glProgram.fragment!);
-    const m = /color\.a = max\(color\.a, glow \* ([0-9.]+)\)/.exec(src);
-    if (!m) throw new Error('shield shader no longer writes `color.a = max(color.a, glow * K)`');
-    expect(Number(m[1])).toBeLessThanOrEqual(0.75);
-    expect(Number(m[1])).toBeGreaterThan(0.4); // still a visible shell, not a hint
+  it('parks the impact clock instead of letting it run for the whole session', () => {
+    // `exp(-uHit.z * k)` over an unbounded `uHit.z` eventually underflows to a denormal, which
+    // some mobile GPUs flush to zero and others make very slow. `tick` clamps it.
+    const f = new EnergyShieldFilter();
+    const rest = f.hitAge;
+    expect(rest).toBeGreaterThan(0);
+    for (let i = 0; i < 100; i++) f.tick(1000);
+    expect(f.hitAge).toBe(rest);
+    f.hit(1, 0);
+    expect(f.hitAge).toBe(0);
+    f.tick(16);
+    expect(f.hitAge).toBe(16);
+  });
+
+  it('normalizes the impact axis, and keeps the last one for a zero-length delta', () => {
+    // A hit resolved exactly on the actor's own centre must not produce a NaN axis — every term
+    // downstream of `uHit.xy` would then be NaN, which on a GPU is a black or white square.
+    const f = new EnergyShieldFilter();
+    f.hit(3, 4);
+    const hit = f.resources.shieldUniforms.uniforms.uHit as number[];
+    expect(Math.hypot(hit[0]!, hit[1]!)).toBeCloseTo(1, 9);
+    f.tick(50);
+    f.hit(0, 0);
+    const after = f.resources.shieldUniforms.uniforms.uHit as number[];
+    expect(after.slice(0, 2)).toEqual(hit.slice(0, 2)); // axis kept
+    expect(after[2]).toBe(0); // ...but it is still a new impact
+    expect(Number.isNaN(after[0])).toBe(false);
   });
 });
 

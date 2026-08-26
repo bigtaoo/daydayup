@@ -6,7 +6,7 @@
  * HudView.test.ts.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import type { GameEvent, GameState } from '@dd/engine';
+import { pxToFp, type GameEvent, type GameState } from '@dd/engine';
 import { EventReactor, type EventReactorHost } from './EventReactor';
 import type { FxController } from '../fx/FxController';
 import { HudView } from '../ui/HudView';
@@ -158,6 +158,57 @@ describe('EventReactor — hit-flash outline (design/01 fidelity roadmap milesto
     reactor.consume([{ type: 'hit', target: 7, faction: 'player', gx: 0, gy: 0, damage: 1, damageType: 'physical' } as GameEvent]);
     expect(host.actorAt).toHaveBeenCalledWith(7);
     expect(hitFlash).toHaveBeenCalled();
+  });
+
+  // 2026-08-26. The shield shell dents where the hit LANDED (`EnergyShieldFilter.hit`), which
+  // makes the delta this passes a load-bearing value rather than a decoration. It is also
+  // completely invisible when wrong: a sign flip dents the far side, and "the shield deformed"
+  // still reads as correct on screen. Nothing else in the suite covers this — the mutation
+  // battery for the rewrite only mutates the shader and the tile, never this file.
+  describe('hands the shell the direction the hit came from', () => {
+    const fire = (target: { hitFlash: ReturnType<typeof vi.fn>; x: number; y: number }, gx: number, gy: number) => {
+      const hud = new HudView();
+      hud.build(new Layers(), { w: 1280, h: 720 });
+      const host = fakeHost();
+      (host.actorAt as ReturnType<typeof vi.fn>).mockReturnValue(target);
+      new EventReactor(fakeFx(), hud, fakeAudio(), host).consume([
+        { type: 'hit', target: 7, faction: 'player', gx, gy, damage: 1, damageType: 'physical' } as GameEvent,
+      ]);
+      return target.hitFlash.mock.calls[0] as [number, number];
+    };
+    // The actor is deliberately NOT at the origin: with it at (0,0) an implementation that
+    // forwarded the impact's absolute position instead of the delta would produce the same
+    // vector, and this whole describe would pass against it.
+    const AT = { x: 300, y: 200 };
+
+    it('points from the actor toward the impact, not the other way', () => {
+      const t = { hitFlash: vi.fn(), ...AT };
+      // Impact one grid to the RIGHT of the actor: 300px is 9.375 grid, +1 grid = 332px.
+      const [dx, dy] = fire(t, pxToFp(332), pxToFp(200));
+      expect(dx).toBeGreaterThan(0);
+      expect(Math.abs(dy)).toBeLessThan(1e-6);
+    });
+
+    it('flips with the impact side', () => {
+      const right = fire({ hitFlash: vi.fn(), ...AT }, pxToFp(332), pxToFp(200));
+      const left = fire({ hitFlash: vi.fn(), ...AT }, pxToFp(268), pxToFp(200));
+      expect(Math.sign(right[0])).toBe(1);
+      expect(Math.sign(left[0])).toBe(-1);
+      expect(right[0]).toBeCloseTo(-left[0], 6); // symmetric about the actor
+    });
+
+    it('is a DELTA from the actor, not the impact position', () => {
+      const t = { hitFlash: vi.fn(), ...AT };
+      const [dx, dy] = fire(t, pxToFp(332), pxToFp(232));
+      expect(dx).toBeCloseTo(32, 6);
+      expect(dy).toBeCloseTo(32, 6);
+    });
+
+    it('uses screen-down y, so a hit from below dents the bottom of the shell', () => {
+      const t = { hitFlash: vi.fn(), ...AT };
+      const [, dy] = fire(t, pxToFp(300), pxToFp(264));
+      expect(dy).toBeGreaterThan(0); // +y is DOWN on screen; the shader's dent axis assumes it
+    });
   });
 
   it('is a no-op when the target id has no live view (already gone)', () => {

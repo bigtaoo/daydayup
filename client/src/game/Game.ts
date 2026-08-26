@@ -965,7 +965,7 @@ export class Game {
     }
   }
 
-  actorAt(id: number): { hitFlash(): void } | undefined {
+  actorAt(id: number): { hitFlash(dx?: number, dy?: number): void; x: number; y: number } | undefined {
     return this.scene.actorAt(id);
   }
 

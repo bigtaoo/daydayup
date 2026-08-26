@@ -95,6 +95,26 @@ describe('writeTexel — 8-bit quantisation, and the clamp that has to survive',
   });
 });
 
+// 2026-08-26: `bakedField` grew a mipmap opt-in for the shield membrane tile
+// (`game/fx/filters/shieldScales.ts`), which a shader MINIFIES by ~5x at the shell's limb.
+// Two things worth pinning, and the second is the one that would go wrong quietly.
+describe('bakedField mipmap opt-in', () => {
+  const paint = (rgba: Uint8Array) => { rgba.fill(200); };
+
+  it('turns mipmaps on when asked', () => {
+    const tex = bakedField('mip-on-probe', 4, 4, paint, { mipmap: true });
+    expect(tex.source.autoGenerateMipmaps).toBe(true);
+  });
+
+  it('leaves every existing caller alone — off unless asked', () => {
+    // A 1-D ramp sampled along its length at ~1:1 gains nothing from mip levels and would
+    // quietly pay for generating them. `alphaRamp` and friends pass no options at all, so the
+    // default is the whole contract for them.
+    expect(bakedField('mip-off-probe', 4, 4, paint).source.autoGenerateMipmaps).toBe(false);
+    expect(alphaRamp(0, 1).source.autoGenerateMipmaps).toBe(false);
+  });
+});
+
 describe('alphaRamp — the shared 1-D profile', () => {
   it('runs linearly from `from` to `to`, hitting both ends exactly', () => {
     const p = rampProfile(alphaRamp(0, 1));

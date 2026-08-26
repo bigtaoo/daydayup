@@ -370,8 +370,8 @@ export class Actor extends Entity {
 
   /** Brief "you were just hit" silhouette flash — see `ActorFilters.hitFlash`. Fired from
    *  EventReactor's 'hit' case for whichever actor the event names as `target`. */
-  hitFlash(): void {
-    this.fx.hitFlash();
+  hitFlash(dx = 0, dy = 0): void {
+    this.fx.hitFlash(dx, dy);
   }
 
   /**

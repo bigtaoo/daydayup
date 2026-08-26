@@ -4,107 +4,216 @@
 // `Actor.applySkinFilters`, never to the whole screen.
 import { Filter, GlProgram, UniformGroup, defaultFilterVert } from 'pixi.js';
 import { FRAME_UV, hexToRgb } from './shaderPrelude';
+import { shieldScaleTexture } from './shieldScales';
 
 const shieldFrag = FRAME_UV + /* glsl */ `
 in vec2 vTextureCoord;
 out vec4 finalColor;
 
 uniform sampler2D uTexture;
+uniform sampler2D uScales;
 uniform vec3 uColor;
 uniform float uIntensity;
 uniform float uTime;
+uniform float uMembrane;
+uniform vec3 uHit; // xy = unit impact direction, z = ms since that impact
 
 void main(void)
 {
-    vec4 color = texture(uTexture, vTextureCoord);
     // Region-normalized, NOT raw \`vTextureCoord\` — this shell's centre is the whole point
     // of the filter and the raw coord's midpoint is the pool texture's, not the actor's.
     // See FRAME_UV above for the full story (this is the bug that produced the long-
     // running "shield renders as a partial crescent" report).
     vec2 uv = frameUv(vTextureCoord) - vec2(0.5);
-    // A CIRCLE, deliberately — no vertical foreshortening, unlike every other round thing
-    // around a body here (2026-08-24, user report: *"护盾成了一个圆圈, 我希望是圆形护盾的效果,
-    // 最初那种效果是对的"*). The 2026-08-18 depth pass had divided \`uv.y\` by 0.62, the same
-    // squash \`Entity\`'s ground shadow and \`Actor.setStatus\`'s auras use, on the reasoning
-    // that "every round thing wrapping a body in a tilted view foreshortens the same way".
-    // That reasoning holds for a shadow and an aura and does NOT hold for this: those are
-    // flat discs lying ON THE GROUND PLANE, which a tilted camera compresses; a shield is a
-    // SPHERE around the body, and a sphere's silhouette is a circle from every angle. The
-    // squashed version read on screen as a flat hoop threaded through the character at gun
-    // height — the "圆圈" of the report — instead of a bubble enclosing it.
-    float dist = length(uv) * 1.4142135;
-    // A SOLID SHELL, not a rim band (2026-08-25, user report: *"现在的护盾是一个圆圈包裹着
-    // 角色, 我希望的是类似一个透明的蛋壳一样的效果将角色全部包裹, 而不是一个圆环"*). Every
-    // version up to here was \`smoothstep(a, b, dist) * (1.0 - smoothstep(b, c, dist))\` — a
-    // band with a HOLE in it, so the character stood in empty space with a hoop drawn round
-    // its waist. What follows instead treats the region as a glass sphere: the interior is
-    // filled (faintly — you have to still read the character through it), and the brightness
-    // comes from where the surface turns away from the viewer, which is what makes a
-    // transparent shell look like a shell rather than a decal.
-    //
-    // \`SHELL_R\` is the outer surface, in the same \`dist\` units as above. \`Actor\` pins this
+
+    // ---- 1. impact: an ELASTIC DENT along the hit axis ------------------------------
+    // 2026-08-26. Until now the shield had exactly one dynamic — \`uIntensity\` tracking
+    // the pool — and did nothing at all when the actor was hit: \`ActorFilters.hitFlash\`
+    // drove only the white \`OutlineFilter\`. This is what 20-year-old sprite shields did
+    // with hand-drawn squash frames, done properly: the envelope is a DAMPED OSCILLATION
+    // (\`exp\` decay times \`cos\`), so the surface springs back past its rest radius and
+    // settles, rather than fading out. A fade reads as "the glow dimmed"; a rebound reads
+    // as "something hit it".
+    float env = exp(-uHit.z * 0.0055);
+    float wob = env * cos(uHit.z * 0.019);
+    // +1 at the point the hit landed, -1 directly opposite. Written as a normalized dot by
+    // hand rather than via normalize() so the shader stays inside the small builtin set the
+    // GLSL evaluator in shieldShellModel.test.ts implements.
+    float toward = dot(uv, -uHit.xy) / max(length(uv), 1e-5);
+    float nearSide = smoothstep(-0.1, 1.0, toward);
+    float farSide = smoothstep(-0.1, 1.0, -toward);
+    // \`SHELL_R\` is the outer surface in the same \`dist\` units as below. \`Actor\` pins this
     // filter's area to a square 6 body radii per side, so \`dist\` D sits D * 6 / sqrt(2) body
     // radii out: 0.44 is ~1.87 radii, an envelope that encloses the WHOLE character — body,
-    // spikes and mounted weapon (the 2026-08-25 report asks for the character 全部包裹, and at
-    // ~1.55 radii the gun barrels stuck out through it) — while stopping short of pooling on the
-    // floor around the feet, where the ground shadow has to stay readable (that is what the
-    // 2026-08-19 volume pass added, and what an opaque overlay here eats).
+    // spikes and mounted weapon — while stopping short of pooling on the floor around the
+    // feet, where the ground shadow has to stay readable.
     const float SHELL_R = 0.44;
-    // Sphere normal's z at this pixel: 1.0 face-on at the centre, 0.0 at the silhouette
-    // edge. \`1.0 - nz\` is therefore the grazing-angle term — Fresnel, cubed so the limb
-    // brightening stays tight against the edge instead of washing the whole disc out.
-    float r = min(dist / SHELL_R, 1.0);
+    float surface = SHELL_R * (1.0 - 0.115 * wob * nearSide + 0.06 * wob * farSide);
+
+    float dist = length(uv) * 1.4142135;
+    // \`b\` is the view ray's impact parameter in units of the (possibly dented) surface
+    // radius: 0 dead centre, 1 exactly at the silhouette.
+    float b = dist / surface;
+
+    // ---- 2. cull ---------------------------------------------------------------------
+    // The shell occupies ~30% of the filtered square, so without this two thirds of the
+    // pixels run the whole shader to produce zero. The skipped area is one large contiguous
+    // ring, which is the case a GPU's branch granularity handles well — whole warps exit.
+    // CULL is set where the only term still alive out there, \`halo\`, has fallen below one
+    // 8-bit step; the measured suite pins that rather than trusting it.
+    const float CULL = 1.18;
+    if (b > CULL) { finalColor = texture(uTexture, vTextureCoord); return; }
+
+    float r = min(b, 1.0);
+    // Sphere normal's z: 1.0 face-on at the centre, 0.0 at the silhouette edge.
     float nz = sqrt(max(0.0, 1.0 - r * r));
-    float fresnel = pow(1.0 - nz, 3.0);
-    // Falls to nothing just PAST the surface, which is also where \`fresnel\` is pinned at 1 —
-    // so the same term doubles as the shell's soft outer bloom. Never rises with \`dist\`:
-    // that is the difference between a shell and the ring this replaced.
-    float shell = 1.0 - smoothstep(SHELL_R, SHELL_R + 0.045, dist);
-    // \`FILL\` is the glass tint — the whole interior is painted, not just the edge, which is the
-    // difference between a shell and an outline — and the fresnel term carries it the rest of the
-    // way to a bright limb. It is DAMPED by the body's own alpha (\`1.0 - 0.55 * color.a\`): over
-    // empty background the fill is the bubble you look through, but over the character it is an
-    // additive wash on top of the art, and at full strength it flattened the hero's face — the
-    // saturated blue eye came out as the same pale cyan as the shell around it.
-    const float FILL = 0.14;
-    float glass = shell * (FILL * (1.0 - 0.55 * color.a) + 0.86 * fresnel);
-    // A single specular blob up and to the left, the one cue that reads instantly as
-    // "curved and transparent" (every drawn soap bubble / egg has one). Positioned in \`uv\`
-    // space at ~0.6 of the shell radius — far enough out to land on CLEAR shell rather than on the
-    // body, where an additive glint over pale character art is invisible. Screen-y points down.
-    vec2 hi = uv - vec2(-0.120, -0.143);
-    float spec = shell * exp(-dot(hi, hi) * 260.0) * 1.3;
-    // Shimmer: a slow breathing pulse, not a flicker (user report, 2026-08-17: "护盾的
-    // 闪烁频率降低"). Was \`0.6 + 0.4 * sin(uTime * 0.006 + dist * 18.0)\` — 0.006 rad/ms
-    // is ~0.95 Hz, and with the shell's own 18-cycle radial banding scrolling through it
-    // the combined effect read as a strobe on the character's silhouette rather than as
-    // energy. Two changes: the temporal rate drops to ~0.29 Hz (one pulse per ~3.4s),
-    // and the swing narrows from ±0.4 to ±0.25 around a brighter base, so the shield
-    // stays continuously readable instead of dimming to 0.6x every cycle. The radial
-    // term is halved too — it is what turns a slow pulse back into visible ripple
-    // banding as the wave crosses the surface.
-    float shimmer = 0.75 + 0.25 * sin(uTime * 0.0018 + dist * 9.0);
-    float glow = (glass + spec) * shimmer * uIntensity;
-    color.rgb += uColor * glow;
-    // 0.85 -> 0.7: what this line does is paint the glow onto TRANSPARENT background outside
-    // the body, so it is also the knob that decides how much floor the shield hides. With the
-    // fill above it now applies to the shell's INTERIOR too — at FILL 0.14 that lands near
-    // 8% alpha over the ground, a tint the shadow still reads through.
-    color.a = max(color.a, glow * 0.7);
+    // Feathered from well inside the surface, not from it. \`nz\` has an infinite slope at the
+    // silhouette, so a mask that only starts there drops the wall term to zero across about
+    // half a screen pixel — a hairline exactly where the 2026-08-26 report said the edge was
+    // too hard. Starting at 0.90 spreads that over ~12 px at gameplay zoom and hands the
+    // outside over to \`halo\`, which is smooth by construction.
+    float inside = 1.0 - smoothstep(0.90, 1.02, b);
+
+    // ---- 3. refraction ---------------------------------------------------------------
+    // The single strongest "this is a shell and not a decal" cue, and nearly free: this
+    // filter already samples the character's own texture, so bending the sample point by the
+    // sphere normal shows the character THROUGH the glass — magnified face-on, smeared
+    // toward the limb. The second term is the impact shoving that view sideways for as long
+    // as the dent lasts.
+    // Faded with the pool along with everything else. Left at full strength (the first version
+    // of this line) the character stays visibly warped while the glow drains away, and then
+    // un-warps in a single frame when the pool hits 0 and \`ActorFilters\` detaches the filter —
+    // a pop exactly at the moment the break burst is trying to sell.
+    vec2 bend = frameOffset((uv * (-0.17 * (1.0 - nz) * inside)
+      + uHit.xy * (0.020 * env * nearSide * inside)) * uIntensity);
+    vec4 color = texture(uTexture, clampToFrame(vTextureCoord + bend));
+
+    // ---- 4. the WALL, as a chord and not an edge -------------------------------------
+    // 2026-08-26, user report: *"没有被蛋壳包裹的感觉 … 边缘的那个圈太过实线了"*. Every
+    // version up to here derived brightness from \`pow(1.0 - nz, 3.0)\`, which equals 1 only
+    // AT the silhouette — mathematically a ring, whatever the surrounding code called it,
+    // with a flat \`FILL\` plate inside it. What replaces it is the length of the view ray's
+    // chord through a shell of real THICKNESS: an outer sphere minus an inner one. That
+    // profile peaks at the INNER wall (b = 1 - THICKNESS) and falls away on both sides, so
+    // the bright part has width and the outer edge tapers instead of stopping.
+    const float THICKNESS = 0.22;
+    float innerR = 1.0 - THICKNESS;
+    float innerChord = sqrt(max(0.0, innerR * innerR - r * r));
+    float wall = nz - innerChord;
+    // Beer-Lambert rather than the raw length: a chord twice as long is not twice as bright,
+    // and the saturation is what keeps the peak from blowing out.
+    // The 1.6 is a contrast curve, not physics: it pulls the INTERIOR down harder than the
+    // wall (0.26 -> 0.11 at the centre, 0.57 -> 0.41 at the peak). What it is set against is
+    // \`Entity\`'s SHADOW_ALPHA_INNER of 0.1 — the ground shadow is a 10% darkening, and a shell
+    // interior that composites over it at more than about that much stops the actor reading as
+    // planted. Measured, not asserted, in shieldShellModel.test.ts.
+    float density = pow(1.0 - exp(-1.35 * wall), 1.6) * inside;
+    // The soft outer bloom. Rises INTO the surface and decays past it, so it meets the wall
+    // term (which is going to zero there) without a seam — together they are one continuous
+    // falloff. This is the term the cull above is sized against.
+    float halo = exp(-max(0.0, b - 1.0) * 26.0) * 0.18 * smoothstep(0.75, 1.0, b);
+
+    // ---- 5. the MEMBRANE -------------------------------------------------------------
+    // A surface needs a repeating detail element before the eye will accept it as a physical
+    // membrane; a smooth gradient reads as a filter no matter how well shaped. The tile is
+    // generated, not authored — see filters/shieldScales.ts for why.
+    //
+    // The projection is \`uv / (nz + k)\`, deliberately NOT true spherical coordinates: it
+    // compresses the pattern toward the limb (which is the whole point — that is what makes
+    // a flat tile read as wrapped onto a sphere) for one divide, where atan/asin would cost
+    // four transcendentals per pixel AND introduce a pole singularity that then has to be
+    // damped back out.
+    float integrity = smoothstep(0.0, 0.45, uIntensity);
+    // Angular distance from the impact point: 0 there, 2 at the antipode.
+    float arc = 1.0 - toward;
+    float ripple = sin(arc * 9.0 - uHit.z * 0.022) * exp(-arc * 1.6) * env;
+    // The slow breath now modulates ONLY the membrane, never the shell's own brightness.
+    // Modulating everything is what made the previous version read as a strobe on the
+    // character's silhouette; a surface whose pattern shifts while its body stays put reads
+    // as energy moving across something solid.
+    float breath = 0.62 + 0.12 * sin(uTime * 0.0018) + 0.38 * max(0.0, ripple);
+    // Faded out in the last sliver before the limb: that is where the projection's own
+    // compression is worst (so the pattern would alias), and where the wall term is
+    // brightest anyway.
+    float grain = smoothstep(0.0, 0.22, nz);
+    // Declared before the branch so the bare wall is what a membrane-less tier draws.
+    float front = density;
+    float back = density * 0.5;
+    // A UNIFORM branch: every fragment in the draw takes the same side, so there is no divergence
+    // to pay for. The first version multiplied \`uMembrane\` into the result instead, which turned
+    // the membrane off visually while still sampling the tile twice.
+    //
+    // Measured, and the honest answer is that it does NOT pay on desktop: 0.223 ms with the
+    // membrane vs 0.231 ms without, over a 768px region on an Intel Arc Pro — inside the run-to-
+    // run spread, i.e. no saving at all. This region is fill-bound, and two cached tile fetches
+    // are not what it is spending its time on. The branch stays because it is correct and free,
+    // and because a bandwidth-bound mobile GPU is the case where those fetches would show up —
+    // but that case is UNMEASURED (design/04 item 6), so nothing here should be read as a
+    // promise about it. The lever that actually pays is the radial cull above: 46%.
+    if (uMembrane > 0.0) {
+        const float TILE = 0.55;
+        vec2 warpF = uv * (TILE / (surface * (nz + 0.35)));
+        // The back layer is the same projection at a different scale and offset. Not a
+        // physically-derived far-side mapping — just a second, non-coincident layer, which is
+        // all the volume cue needs.
+        vec2 warpB = warpF * 0.92 + vec2(0.37, 0.21);
+        vec4 sF = texture(uScales, warpF);
+        vec4 sB = texture(uScales, warpB);
+        // design/13's dual-channel law, applied to the damage state: as the pool drains, whole
+        // scales go out one at a time (the tile's GREEN channel is a per-cell constant), so a
+        // failing shield changes SHAPE and not only brightness. \`tint\` below carries the second
+        // half of it.
+        float liveF = mix(0.25, 1.0, step(1.0 - integrity, sF.g * 0.9 + 0.1));
+        float liveB = mix(0.25, 1.0, step(1.0 - integrity, sB.g * 0.9 + 0.1));
+        float membrane = 0.85 * grain * breath * uMembrane;
+        front = density * (1.0 + membrane * sF.r * liveF);
+        back = density * (1.0 + membrane * sB.r * liveB) * 0.5;
+    }
+
+    // ---- 6. highlights ---------------------------------------------------------------
+    // A single specular blob up and to the left, the one cue that reads instantly as "curved
+    // and transparent" (every drawn soap bubble / egg has one). Screen-y points down.
+    vec2 hi = uv - vec2(-0.085, -0.100);
+    float spec = inside * exp(-dot(hi, hi) * 430.0) * 0.55;
+    // The impact's own bloom, concentrated on the struck hemisphere.
+    float impact = env * exp(-arc * 3.2) * 1.1 * inside;
+
+    // ---- 7. composite: the character sits BETWEEN the two halves ---------------------
+    // This is the "包裹" cue, and it is one multiplication: the back hemisphere is occluded
+    // by the character's own alpha, the front is not. Every previous version added
+    // everything on top of the character, which is why it read as a decal in front of it
+    // however the shape was tuned — nothing was ever behind.
+    const float GAIN = 0.42;
+    vec3 tint = mix(vec3(1.0, 0.62, 0.42), uColor, integrity);
+    float glow = (front * GAIN + halo + spec + impact) * uIntensity;
+    float behind = (back * GAIN + impact * 0.5) * uIntensity * (1.0 - color.a);
+    // A faint tint ON the art, not just light over it — glass with substance. Damped hard,
+    // and only where the body is actually opaque: at full strength this flattened the hero's
+    // face, the saturated blue eye coming out the same pale cyan as the shell.
+    color.rgb = mix(color.rgb, tint * 0.55, 0.16 * density * uIntensity * color.a);
+    color.rgb += tint * (glow + behind);
+    // 0.7 is also the knob deciding how much floor the shield hides — the ground shadow
+    // under a shielded actor has to stay readable through the interior.
+    color.a = max(color.a, (glow + behind) * 0.7);
     finalColor = color;
 }
 `;
 
-/** A shimmering transparent shell enclosing a character — the "energy shield" custom
- * shader (design/01 fidelity roadmap milestone 5). `intensity` is driven by the live
- * shield ratio (Actor.setShield): full glow at a full shield pool, fading as it drains,
- * gone once it hits 0 — the `shield_break` event's own flash (EventReactor) covers that
- * instant, this filter just isn't there to fade awkwardly underneath it. */
+/** Rest value of `uHit.z`: far enough back that the impact envelope has decayed to ~2e-5,
+ *  so a filter that has never been hit computes an unperturbed sphere. */
+const HIT_SETTLED_MS = 4000;
+
+/** A transparent shell enclosing a character — the "energy shield" custom shader (design/01
+ * fidelity roadmap milestone 5). `intensity` is driven by the live shield ratio
+ * (Actor.setShield): full glow at a full shield pool, fading as it drains, gone once it hits
+ * 0 — the `shield_break` event's own flash (EventReactor) covers that instant, this filter
+ * just isn't there to fade awkwardly underneath it. */
 export class EnergyShieldFilter extends Filter {
   private clock = 0;
 
   constructor(color = 0x66e0ff, intensity = 0) {
     const glProgram = GlProgram.from({ vertex: defaultFilterVert, fragment: shieldFrag, name: 'energy-shield-filter' });
+    const scales = shieldScaleTexture();
     super({
       glProgram,
       // The shell is positioned relative to the filtered REGION's centre, so the
@@ -121,7 +230,14 @@ export class EnergyShieldFilter extends Filter {
           uColor: { value: hexToRgb(color), type: 'vec3<f32>' },
           uIntensity: { value: intensity, type: 'f32' },
           uTime: { value: 0, type: 'f32' },
+          uMembrane: { value: 1, type: 'f32' },
+          uHit: { value: [0, -1, HIT_SETTLED_MS], type: 'vec3<f32>' },
         }),
+        // Matches Pixi's own `DisplacementFilter`: the source binds the `sampler2D`, the
+        // style is what a WGSL backend would want. Both platforms force `preference:'webgl'`
+        // (design/04) so only the first is ever read today.
+        uScales: scales.source,
+        uScalesSampler: scales.source.style,
       },
     });
   }
@@ -131,10 +247,43 @@ export class EnergyShieldFilter extends Filter {
 
   set color(hex: number) { this.resources.shieldUniforms.uniforms.uColor = hexToRgb(hex); }
 
-  /** Advance the shimmer clock — call once per rendered frame while attached. */
+  /** The membrane pattern, 0..1. The lever for a device that cannot afford it: at 0 the
+   *  shader still draws the shell's SHAPE (the wall chord, the occluded back hemisphere,
+   *  refraction) and only the two tile samples stop contributing. Nothing sets it below 1
+   *  today — `render/quality.ts`'s low tier drops every per-actor shader outright, so a
+   *  profile field for this would be a knob whose trigger no code path can reach — but it
+   *  exists so a future middle tier is a one-line change rather than a rewrite. */
+  set membrane(v: number) { this.resources.shieldUniforms.uniforms.uMembrane = v; }
+  get membrane(): number { return this.resources.shieldUniforms.uniforms.uMembrane; }
+
+  /** Milliseconds since the last `hit()`, clamped at `HIT_SETTLED_MS`. */
+  get hitAge(): number { return (this.resources.shieldUniforms.uniforms.uHit as number[])[2]!; }
+
+  /**
+   * Register an impact. `dx`/`dy` point from the actor's centre toward where the hit landed,
+   * in screen space (y down); they are normalized here, so callers can hand over a raw
+   * delta. Restarts the elastic dent from zero — a second hit during the first one's rebound
+   * is a new dent, not a summed one. A zero-length delta (a hit resolved exactly on the
+   * actor's own centre) keeps the previous direction rather than producing a NaN axis.
+   */
+  hit(dx: number, dy: number): void {
+    const len = Math.hypot(dx, dy);
+    const u = this.resources.shieldUniforms.uniforms;
+    const prev = u.uHit as number[];
+    u.uHit = len > 1e-4 ? [dx / len, dy / len, 0] : [prev[0]!, prev[1]!, 0];
+  }
+
+  /** Advance the shimmer and impact clocks — call once per rendered frame while attached. */
   tick(frameDt: number): void {
     this.clock += frameDt;
-    this.resources.shieldUniforms.uniforms.uTime = this.clock;
+    const u = this.resources.shieldUniforms.uniforms;
+    u.uTime = this.clock;
+    const hit = u.uHit as number[];
+    // Parked at the rest value once settled: left free-running, `uHit.z` would grow without
+    // bound for the whole session and `exp(-z * k)` would eventually underflow to a denormal.
+    if (hit[2]! < HIT_SETTLED_MS) {
+      u.uHit = [hit[0]!, hit[1]!, Math.min(HIT_SETTLED_MS, hit[2]! + frameDt)];
+    }
   }
 }
 

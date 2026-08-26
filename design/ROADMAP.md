@@ -1315,7 +1315,7 @@ All copy translated across all 8 locales (new `hud.downed.*`/`hud.ally.reviving`
 `pvpPreview.*`/`settings.controlLayout*` keys). 667 client tests (was 582) + `tsc --noEmit`
 clean; 1234 across the repo. `npm run check` green on all five packages throughout.
 
-- **5.4 Fidelity roadmap** (01): ✅ post-processing (bloom-lite, vignette, chromatic aberration, hit-stop, screen-shake) + particles shipped 2026-07-26; ✅ ALL FOUR custom shaders (energy shield, outline/hit-flash, dissolve-on-death, heat-haze) shipped 2026-08-03 — `game/fx/filters.ts`'s `EnergyShieldFilter`/`OutlineFilter`/`DissolveFilter`/`HeatHazeFilter`, wired into `Actor`'s live shield/hit/death/burn signals (see 01's milestone 5 for the per-shader detail, including the `Scene.reconcile` architecture change dissolve needed and a Pixi-uniform-precision gotcha worth knowing before writing another filter). Shipped clean against today's placeholder art — the "shaders read best after real art lands" sequencing note from earlier turned out not to matter.
+- **5.4 Fidelity roadmap** (01): ✅ post-processing (bloom-lite, vignette, chromatic aberration, hit-stop, screen-shake) + particles shipped 2026-07-26; ✅ ALL FOUR custom shaders (energy shield, outline/hit-flash, dissolve-on-death, heat-haze) shipped 2026-08-03 — `game/fx/filters.ts`'s `EnergyShieldFilter`/`OutlineFilter`/`DissolveFilter`/`HeatHazeFilter`, wired into `Actor`'s live shield/hit/death/burn signals (see 01's milestone 5 for the per-shader detail, including the `Scene.reconcile` architecture change dissolve needed and a Pixi-uniform-precision gotcha worth knowing before writing another filter). Shipped clean against today's placeholder art — the "shaders read best after real art lands" sequencing note from earlier turned out not to matter. The shield has since been rewritten three times against user reports (2026-08-24 un-squashed to a true circle, 2026-08-25 ring → filled disc, **2026-08-26 disc → a shell with real thickness whose back hemisphere the body occludes**, plus an elastic dent on impact, refraction, a generated membrane tile and a radial cull that pays for most of the added cost — see "The shell gets thickness" at the end of this file). Its one open item is that `shield_break` still has no shell exit animation.
 
   **Update (2026-08-03): ✅ dynamic lighting (milestone 2) shipped too — Phase 5.4 has no open items left.** Unblocked the same day 5.3 (above) closed the "AI art is placeholder" question milestone 2 named as its own blocker. Ships as a scoped equivalent of design/01's literal "normal maps + point lights + lightmap (multiply composite)" text, not that architecture verbatim: no `RenderTexture`/deferred-lighting layer exists anywhere in this codebase (confirmed by search) and building one would be disproportionate infrastructure for a fixed-camera 2D sim — so this is a fifth custom `Filter` instead, following the exact template the four milestone-5 shaders above already established. New `NormalLitFilter` (`game/fx/filters.ts`) derives a fake per-pixel normal straight from a sprite's OWN rendered luminance/alpha via 4 neighbour-texel taps — the same technique `OutlineFilter` already uses for alpha-edge detection, just reading brightness into a Sobel-style gradient instead of alpha into an edge test — so **no normal-map texture asset exists or is needed anywhere**, matching the "own the code, own the cost" discipline `VignetteFilter`/`HeatHazeFilter` already established. Shaded against a fixed key light (direction reused from `RoomBuilder.ts`'s existing "lit from upper-left" pillar-shading convention, design/10 2026-08-02) plus a small dynamic point-light registry, `game/fx/lighting.ts`'s `LightRegistry` — the local player's own persistent glow (re-registered each frame, `Game.ts`'s `updateFx` wrapper) and transient muzzle-flash/impact bursts (`FxController.flash` now registers a matching light, no new call site). Deliberately NOT a full lightmap: a handful of lights, linear-scanned, nearest/brightest wins — this project never needs more than that at once. `Actor.ts`'s `litFilter` is built eagerly (unlike the four conditionally-active shaders) and always first in `applySkinFilters()`'s list, since every actor is always lit; `Scene.applyLighting()` shades every live Actor (not bullets/pickups) once per render frame. No `ENGINE_VERSION` impact (render-only, design/08). 18 new tests (`lighting.test.ts`'s full `LightRegistry` coverage, plus extensions to `Actor.test.ts`/`Scene.test.ts`/`FxController.test.ts`), `tsc --noEmit` clean, browser-verified live (visible directional shading on both the player and enemy sprites, a `flash()` call live-confirmed to brighten a nearby enemy's `uPointIntensity` and decay back to 0, zero console errors).
 - **5.5 WeChat device verification** (04): lowest base library, low-end frame rate, real-device touch, WebGL2 fallback — none of this can be done without a physical device or WeChat DevTools install, neither found on this machine as of 2026-07-27.
@@ -6006,3 +6006,181 @@ or at least 2, never 1), the `spawns.count >= 2` guard is **equivalent** (`minPa
 - **Pillar shading is still 496 floats.** The route is `shadeRamp.ts`, already proven on walls.
 - **No frame-time number for the arena**, per the above — that needs a device, and it is now the
   best-motivated item on the on-device list.
+
+---
+
+## The shell gets thickness, and the character finally goes INSIDE it (2026-08-26, client-only)
+
+Started as a question, not a bug report: *"你知道传奇游戏里，魔法师的魔法盾效果吗？…包括被攻击时，
+魔法盾还会变形，那是20年前的游戏了啊"* — and then, once the answer had been talked through:
+*"我们目前的盾，看起来的效果还不如魔法盾呢"*, followed by the two sentences that named the whole
+job: *"没有被蛋壳包裹的感觉 … 边缘的那个圈太过实线了"*.
+
+The 2001 answer turned out to be worth knowing. Legend of Mir 2 ran on DirectDraw with 8-bit
+palettised sprites in `.wil` libraries — no shaders, no alpha channel, no mesh. Its shield was
+pre-drawn frames additively blitted, and its famous "deformation" on being hit was almost
+certainly a second hand-drawn frame sequence plus a palette flash plus a few pixels of sprite
+jitter. The transferable part is that last observation: **perceived deformation is mostly not
+geometric.** Flash + jitter + squash frames read as "the shield was struck" and any one of them
+alone reads as nothing. Two of the three are still the cheapest items in the list below.
+
+### 1. Why the shield looked worse than a 20-year-old sprite
+
+Read off `skinFx.ts` before touching it, and the diagnosis was not "needs more precision":
+
+1. **It did not react to being hit at all.** Its only dynamic was `uIntensity` tracking the pool.
+   `ActorFilters.hitFlash` drove the white `OutlineFilter` and never told the shield.
+2. **No surface structure.** Pure analytic gradient. The eye wants a repeating detail element
+   before it will accept a membrane; a smooth gradient reads as "a filter was applied".
+3. **One channel: brightness.** Drained → dimmer, and nothing else. `design/13`'s dual-channel
+   law, which the status auras honour with ring + glyph, was simply not being applied here.
+4. **No refraction.** The filter samples the character's own texture, so bending that sample is
+   nearly free — and a transparent shell that does not bend what is behind it is a decal.
+
+### 2. `pow(1 - nz, 3)` is a ring, whatever you call it
+
+The 2026-08-25 pass had replaced a band-with-a-hole with a filled disc plus a "Fresnel limb", and
+the shipped comments called the result a shell. It is not: `pow(1 - nz, 3)` reaches 1 only AT the
+silhouette, so all of the energy sits in a hairline and the interior is a flat `FILL = 0.14`
+plate. Plate + bright ring = a hoop. **Measured on the shipped frame: maximum at `b = 1.00`,
+half-peak width 0.10 of the radius.** That number is what *"太过实线"* is, quantitatively.
+
+What replaced it is the chord of the view ray through a shell with an inner and an outer radius,
+saturated Beer-Lambert style. The profile peaks at the INNER wall and falls away on both sides:
+**measured peak `b = 0.80`, half-peak width 0.30** — three times the width, with the maximum
+strictly inside the silhouette instead of on it. `THICKNESS` (0.22) is the number the user picked
+by dragging a slider in a live WebGL comparison before any of this was written.
+
+### 3. "包裹" is a compositing order, not a shape
+
+The other half of the report, and the more surprising one. Every version of this filter added the
+entire shell ON TOP of the character, so nothing was ever behind it — which is why no amount of
+silhouette tuning ever produced enclosure. The fix is one multiplication:
+
+```glsl
+float behind = (back * GAIN + impact * 0.5) * uIntensity * (1.0 - color.a);
+```
+
+The back hemisphere is occluded by the body's own alpha; the front is not; the character is
+sandwiched. In the interactive comparison this single term is what flips the read, and it is
+worth more than every shape change in section 2.
+
+### 4. The rest of the list
+
+- **Elastic dent on impact.** `exp` decay times `cos`, so the surface springs back PAST its rest
+  radius and settles. A damped exponential alone returns monotonically, which reads as "the glow
+  faded". `EventReactor`'s `hit` case already carried the impact position, so the direction is a
+  delta from the target's own centre and nothing new had to reach the client.
+- **Refraction** by the sphere normal, bounded to a fraction of a body radius and faded with the
+  pool (see § 6 — both of those came from tests, not from review).
+- **A generated membrane.** The user asked whether the scale texture had to be authored after all
+  (*"或许那张鳞片细节图还是得出？"*). Answer: the tile is needed, the image model is not. Its two
+  hard requirements are seamless tiling and a known grey range, which are exactly what a
+  generative model is worst at and a 40-line Voronoi is exact at; density has to be balanced
+  against the shader's own UV compression at the limb, which is a number you converge on by
+  editing a number rather than a prompt; and generating it at boot costs **zero bytes** against
+  `design/04`'s 4 MB main package and sidesteps the whole art pipeline's known failure set for
+  soft translucent masks (the invisible alpha veil, defringe, box-downsample haze). See
+  `fx/filters/shieldScales.ts`.
+- **Damage as a second channel.** Whole scales go out one at a time as the pool drains, and the
+  tint shifts cyan → hot pale. `design/13`'s law, finally applied here.
+
+### 5. The perf answer, and a harness that lied first
+
+The user asked whether any of this would cost. The scale was worth measuring rather than
+estimating: player radius is 16 world px, `Actor` pins `filterArea` to 3× that per side, and room
+zoom runs 3.4–4.1 against a `MAX_ZOOM` of 4.5 — so one shielded actor on a DPR-2 screen is a
+**768 px square, ~590k pixels**. Only players carry a shield pool (`enemies.ts`: `maxShield: 0`),
+and zoom and on-screen headcount are inversely related, so the total is self-limiting.
+
+**The first measurement was blind and looked completely plausible.** `performance.now()` around a
+`renderer.render` loop with `gl.finish()` reported the new shader as *cheaper* than the old one.
+The control caught it: a shader with a 200-iteration loop — roughly 1000× the ALU — came back at
+2.35× the cost of no filter, which is impossible. Nothing in that first run meant anything. Real
+numbers needed `EXT_disjoint_timer_query_webgl2`, where the same control fires at 10.8×.
+
+With that, over a 768 px region on an Intel Arc Pro, interleaved A/B, median of 7 passes:
+
+| | filter-only GPU time |
+| --- | --- |
+| old shell | **0.162 ms** |
+| new shell | **0.223 ms** (+38%) |
+| new shell, cull disabled | **0.321 ms** |
+
+So the radial cull — one `if (b > CULL) return;` skipping the ~58% of the filtered square the
+shell never reaches — pays for most of the rewrite. Without it this would have been +100%. CULL is
+placed where the only surviving term has fallen below one 8-bit step, and that is measured in
+`shieldShellModel.test.ts` rather than asserted in a comment.
+
+The membrane's own uniform branch measures as **no saving at all** on desktop (0.223 vs 0.231 ms,
+inside the spread) — that region is fill-bound and two cached tile fetches are not where its time
+goes. It stays because it is correct and free and because a bandwidth-bound mobile GPU is where
+those fetches would show up, but that case is unmeasured and the comment in the source says so.
+A third quality tier was *not* added: with only `high`/`low`, and `low` already dropping every
+per-actor shader, a profile field for this would be a knob no code path can reach.
+
+### 6. What the tests found that reading did not
+
+The measured suite (`shieldShellModel.test.ts`) had to grow real control flow for this: the cull is
+a performance device whose entire correctness claim is "nothing visible is being skipped", which is
+a measurement. The GLSL evaluator now executes `if`/`return` and comparison operators, still
+refusing loops and `discard` loudly, and dispatches `texture()` on which sampler it was handed —
+the shield samples two now, and a model returning the same texel for both would make the membrane
+untestable.
+
+Then the source-contract suite lost most of its shield block, and that was overdue. Those
+assertions pinned the old shape as literal patterns — `shell * (FILL * (1.0 - K * color.a) + K2 *
+fresnel)`, `float shimmer = A + B * sin(` — and every one of them passed against a shader whose
+brightness peaked exactly on the silhouette. They were not wrong about their own clauses; they were
+asking about spelling when the question was about a profile. A regex cannot tell a rind from a
+line, and pinning the spelling made the shape harder to change than it made it safe. What stayed is
+what text really is good evidence for: no vertical squash by any name, the radius in body radii,
+that every declared sampler actually has a resource bound, and that the impact clock parks.
+
+**Mutation battery, two passes.** First pass: 41 mutants over the shader and the tile, **37 killed,
+4 real survivors, all 4 controls surviving**, with a harness self-check (clean tree must pass, a
+known-bad mutant must die) in front of it. The four survivors were each a real gap, and the first
+of them was the central claim of the whole rewrite: `* (1.0 - color.a)` multiplied out entirely
+still passed, because the assertion said `behind > 0` and the impact term leaves a denormal there
+at rest. Two defects the tile's own tests found the same way: 35 cells drawing independent random
+constants collide into 34 distinct values at 8 bits — about a 90% chance, so two scales would
+always die together — which sent the generator to a shuffled RANK (evenly spaced, so the fraction
+still lit tracks the shield ratio linearly instead of coming apart in lumps); and `grain`, the
+membrane's limb fade, could be computed and then never used, because the assertion read the term
+instead of its effect.
+
+**Second pass, after the user asked *"有测试可以加吗"*.** The honest answer was that the first
+battery's "0 survivors" said nothing about the wiring, because it never mutated
+`EventReactor.ts` or `actorFilters.ts` — and the wiring is where a sign error hides best, since a
+dent on the wrong side still reads as "the shield deformed". The only coverage there was one
+`expect(hitFlash).toHaveBeenCalled()`, and every `Actor.test.ts` call site passed no arguments at
+all. Extended to 53 mutants across five files, **0 survivors, 5 controls surviving**. What now
+dies: direction inverted, absolute position passed instead of a delta, axes swapped, direction
+dropped in `ActorFilters`, a broken shell still dented, an unshielded actor getting a shell built
+for it, an NPOT tile (WebGL1 silently drops both mipmapping and REPEAT — invisible on the
+WebGL2 simulator, which is the trap that hid two other WeChat-only bugs), mipmaps forced on for
+every baked field, and the baked-field cache bypassed so all eight PvP seats bake their own tile.
+
+Two more findings from that pass:
+
+- **Refraction did not fade with the pool.** The glow scaled with `uIntensity`; the bend did not.
+  So a draining shield left the character fully warped and then un-warped in one frame when
+  `ActorFilters` detached the filter — a pop landing exactly on the break burst.
+- **A control died, and it was right to.** `HIT_FLASH_MS` 160 → 165 broke a pre-existing test
+  named `decays to 0 over HIT_FLASH_MS` that drove the decay with a magic `80`. The name is about
+  the constant; the assertion pinned its value. Exported the constant and drove the test from it.
+- **One survivor was equivalent-ish and still worth a test.** A 10× refraction passed both the
+  growth assertion (a ratio, therefore scale-free) and the clamp sweep (the shell only reaches
+  62% of the region's half-width, so there is margin for a grotesque displacement to still be
+  "inside"). The magnitude needed its own bound, in body radii.
+
+### Still open
+
+- **`shield_break` has no shell farewell.** The filter simply detaches and `EventReactor`'s
+  positional burst covers the instant. The shell should get its own ~200 ms exit — outer radius
+  expanding, membrane scattering, alpha collapsing — and `Particles.ts` is the right home for the
+  fragments. Not done.
+- **Nothing here is measured on a phone.** The +38% and the cull's 46% are one desktop GPU. The
+  membrane branch exists for the mobile case and has never been run there (`design/04` item 6).
+- **The interpreter-vs-GPU profile agreement is a one-off**, not a gate. Making it a regression
+  test needs a headless GL harness this machine does not have.
