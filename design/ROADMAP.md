@@ -101,11 +101,11 @@ reachable from any unit test — a full `createGameEngine` end-to-end regression
 `dungeonrun.test.ts` reproducing the reported bug shape directly: one room, two
 real spawned enemies (one beside the player, one clear across the room), driven
 through the real tick order, confirming the near one engages immediately while the
-far one fires zero bullets until it closes the distance. **4741 tests green across all 8
-workspace packages** (engine 711 / client 2981 / server 187 / animator 444 / map-editor 282 /
-png-pipeline 42 / desktop-shell 81 / root build-script 13, `npm run check`, re-measured
-2026-08-25 after the three WeChat fixes — the count and the package list have both drifted
-before, so re-measure rather than trusting it) after fixing two real bugs found from a live player report ("cleared
+far one fires zero bullets until it closes the distance. **5133 tests green across all 8
+workspace packages** (engine 845 / client 3211 / server 189 / animator 444 / map-editor 282 /
+png-pipeline 42 / desktop-shell 81 / root build-script 39, `npm run check`, re-measured
+2026-08-26 after the arena doorway fix and the server config-test pass — this block said 4741
+across four different numbers one day earlier, so re-measure rather than trusting it) after fixing two real bugs found from a live player report ("cleared
 the room, door's unlocked, still can't walk through it") — see the Room & door model
 section below for the full account. Before that, closing a real gap the test-coverage audit
 pass had flagged and left open: `onRequestSave` (tools/desktop-shell/src/preload.ts) now
@@ -1165,6 +1165,37 @@ wrong.
 
 `RoomBuilder.ts` is at exactly 500 lines after this, with the comment trimmed once to get there. The
 next thing added to it trips `check:filelength`, and the split that file wants is a real one.
+
+
+## A 5-second timeout was a cold import, not a test (2026-08-26, server tests only)
+
+🟢 Test-only: one file, no source change, no `ENGINE_VERSION` bump. `server/test/config.test.ts`'s
+first `it` had been failing roughly 3 runs in 20 with a 5000ms timeout and never with a failed
+assertion. Worth its own entry because that file's header already carried a 2026-08-25 note about one
+unreproduced red, and the two structural causes it fixed on suspicion were not it.
+
+Measured from inside the test, by appending `performance.now()` deltas to a FILE rather than through
+`console.log` (vitest 4 swallows a passing test's log output): the cold `await
+import('../src/config')` that follows `vi.resetModules()` reaches ~104 modules through
+`@dd/game/match/pvpConfig` and cost **0.9s-8.1s across 10 identical `vitest run`s**, purely as a
+function of what else the machine was doing — and the two runs that went red were exactly the two
+whose import exceeded 5s. A second `resetModules` + re-import costs **~50ms**: the reset discards
+evaluated modules, not vite's transform cache. So one warm-up `import` in `beforeAll` with an
+explicit hook timeout, which moves the whole variance out of a 5s test budget. Re-running 12x with
+that hook instrumented, one run's hook took 5169ms — red under the old shape — with every first-test
+import then landing at 40-91ms.
+
+Nothing guards the timing itself, deliberately. Delete the warm-up and that import costs 0.9-8.1s
+again, so any bound tight enough to notice would fire on roughly half the runs: a new flake standing
+guard over an old one. The comment carries it instead.
+
+**The warm-up's own precondition turned out to be the untested property.** A warm-up is only sound if
+importing is inert, and `ticketSecret()` reading `process.env` per CALL rather than capturing it at
+module scope had never been asserted — all seven existing cases set the env var BEFORE importing, so
+they pass either way. That is the shape where a server signs real tickets with the dev secret because
+whatever loads the environment ran after the import, which is the exact posture this file exists to
+defend. A mutant capturing env at module scope **survived all 187 tests** and kills exactly the two
+new cases (set-after-import, removed-after-import). 189 server tests, full `npm run check` green.
 
 
 ## Phase 5 — Presentation & platform
