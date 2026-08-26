@@ -91,6 +91,62 @@ describe('ParticleSystem.explosionDebris', () => {
   });
 });
 
+describe('ParticleSystem.shieldShards', () => {
+  it('throws a ring of additive shards, one per authored slot', () => {
+    const ps = new ParticleSystem();
+    withRandom(0.5, () => ps.shieldShards(0, 0, 0x66e0ff));
+    expect(ps.view.children.length).toBe(11);
+    for (const child of ps.view.children) expect(child.blendMode).toBe('add');
+  });
+
+  it('sends them OUTWARD in every direction, not in one', () => {
+    // The property that makes this read as a shell letting go rather than as a directional
+    // spray: the shards' velocities have to cover the circle. Measured after one step, since
+    // the velocity itself is private — and with jitter pinned to 0 so the walk is exact.
+    const ps = new ParticleSystem();
+    withRandom(0.5, () => ps.shieldShards(0, 0, 0x66e0ff));
+    ps.update(40);
+    const moved = ps.view.children.map((c) => ({ a: Math.atan2(c.y, c.x), r: Math.hypot(c.x, c.y) }));
+    expect(moved).toHaveLength(11);
+    for (const m of moved) expect(m.r).toBeGreaterThan(1); // every shard left the centre
+    // ...and they left in distinct directions spanning the whole circle.
+    const sorted = moved.map((m) => m.a).sort((x, y) => x - y);
+    const gaps = sorted.map((a, i) => (i === 0 ? a + Math.PI * 2 - sorted[sorted.length - 1]! : a - sorted[i - 1]!));
+    expect(Math.max(...gaps)).toBeLessThan(Math.PI / 2); // no empty half or quadrant
+    expect(Math.min(...gaps)).toBeGreaterThan(0); // ...and no two shards on the same heading
+  });
+
+  it('spawns at the position it is given', () => {
+    const ps = new ParticleSystem();
+    withRandom(0.5, () => ps.shieldShards(120, -45, 0x66e0ff));
+    for (const c of ps.view.children) {
+      expect(c.x).toBe(120);
+      expect(c.y).toBe(-45);
+    }
+  });
+
+  it('is gone inside the shell exit it belongs to', () => {
+    // The shards and `EnergyShieldFilter.shatter` are two halves of one moment (~200ms). Shards
+    // still drifting after the shell has finished leaving read as unrelated debris.
+    const ps = new ParticleSystem();
+    withRandom(0.999, () => ps.shieldShards(0, 0, 0x66e0ff)); // the longest-lived roll
+    ps.update(260);
+    expect(ps.view.children.length).toBe(0);
+  });
+
+  it('is thinned by the quality budget like every other burst', () => {
+    const thin = new ParticleSystem();
+    thin.setBudget(0.25);
+    withRandom(0.5, () => thin.shieldShards(0, 0, 0x66e0ff));
+    expect(thin.view.children.length).toBeLessThan(11);
+    expect(thin.view.children.length).toBeGreaterThan(0); // ...never to nothing
+    const off = new ParticleSystem();
+    off.setBudget(0);
+    withRandom(0.5, () => off.shieldShards(0, 0, 0x66e0ff));
+    expect(off.view.children.length).toBe(0);
+  });
+});
+
 describe('ParticleSystem.update', () => {
   it('fades alpha proportionally to remaining life', () => {
     const ps = new ParticleSystem();

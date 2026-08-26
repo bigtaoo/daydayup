@@ -29,7 +29,7 @@ beforeAll(() => {
 });
 
 // eslint-disable-next-line import/first
-import { EnergyShieldFilter } from './skinFx';
+import { EnergyShieldFilter } from './shieldFx';
 
 // ---------------------------------------------------------------------------------------
 // A GLSL-subset evaluator.
@@ -100,13 +100,28 @@ const COMPARE: Record<string, ((a: number, b: number) => boolean) | undefined> =
  *  returned the same texel for both would make the membrane untestable. */
 const SAMPLER = { uTexture: 0, uScales: 1 } as const;
 
+/**
+ * A membrane-tile sampler, keyed off the coordinate the shader hands `texture()`.
+ *
+ * Without one, every `texture(uScales, ...)` call returns the same constant texel, which was
+ * enough while nothing in the shader depended on WHERE it sampled — and is exactly wrong the
+ * moment something does. The shatter's per-cell throw DISPLACES the lookup, so a fixed texel
+ * would make a displacement of any size (including none at all) produce an identical result.
+ * `evalGlsl`'s third argument supplies a tile with real spatial structure instead.
+ */
+type TileSampler = (uv: Val) => Val;
+
 interface Fn { params: string[]; body: string }
 
 class Evaluator {
   private toks: string[] = [];
   private at = 0;
 
-  constructor(private readonly fns: Record<string, Fn>, private readonly env: Env) {}
+  constructor(
+    private readonly fns: Record<string, Fn>,
+    private readonly env: Env,
+    private readonly tile?: TileSampler,
+  ) {}
 
   /** Evaluate one expression source string against this evaluator's env. */
   expr(src: string): Val {
@@ -232,14 +247,15 @@ class Evaluator {
           smoothstep1(pick(args[0]!, i), pick(args[1]!, i), pick(args[2]!, i)));
       case 'step': return broadcast(args[0]!, args[1]!, (edge, x) => (x < edge ? 0 : 1));
       case 'texture':
-        return args[0]![0] === SAMPLER.uScales
-          ? (this.env.__scaleTexel ?? [0, 0, 0, 1])
-          : this.env.__texel!;
+        if (args[0]![0] === SAMPLER.uScales) {
+          return this.tile ? this.tile(args[1]!) : (this.env.__scaleTexel ?? [0, 0, 0, 1]);
+        }
+        return this.env.__texel!;
       default: {
         const fn = this.fns[name];
         if (!fn) throw new Error(`glslEval: unsupported function "${name}()"`);
         const bound = Object.fromEntries(fn.params.map((p, i) => [p, args[i]!]));
-        return new Evaluator(this.fns, { ...this.env, ...bound }).expr(fn.body);
+        return new Evaluator(this.fns, { ...this.env, ...bound }, this.tile).expr(fn.body);
       }
     }
   }
@@ -318,8 +334,8 @@ function statements(body: string): string[] {
  * device whose correctness claim — "nothing visible is being skipped" — is exactly the sort of
  * thing this file exists to measure, so evaluating around it was never an option.
  */
-function runBlock(body: string, env: Env, fns: Record<string, Fn>): boolean {
-  const ev = new Evaluator(fns, env);
+function runBlock(body: string, env: Env, fns: Record<string, Fn>, tile?: TileSampler): boolean {
+  const ev = new Evaluator(fns, env, tile);
   for (const stmt of statements(body)) {
     if (stmt === 'return;') return true;
     if (stmt.startsWith('if')) {
@@ -338,7 +354,7 @@ function runBlock(body: string, env: Env, fns: Record<string, Fn>): boolean {
       }
       const cond = ev.expr(stmt.slice(openParen + 1, closeParen));
       if (cond[0]) {
-        if (runBlock(stmt.slice(openBrace + 1, matching(stmt, openBrace, '{', '}')), env, fns)) return true;
+        if (runBlock(stmt.slice(openBrace + 1, matching(stmt, openBrace, '{', '}')), env, fns, tile)) return true;
       }
       continue;
     }
@@ -376,7 +392,7 @@ function runBlock(body: string, env: Env, fns: Record<string, Fn>): boolean {
 }
 
 /** Run a fragment shader's `main` and return every name it bound, uniforms included. */
-export function evalGlsl(fragment: string, uniforms: Env): Env {
+export function evalGlsl(fragment: string, uniforms: Env, tile?: TileSampler): Env {
   const src = stripComments(fragment);
   // A sampler is not a value here, but it is still an identifier the expression parser has to
   // resolve; `texture()` dispatches on the number each one is bound to.
@@ -387,7 +403,7 @@ export function evalGlsl(fragment: string, uniforms: Env): Env {
   if (/(^|[^A-Za-z_])(for|while|discard|else)([^A-Za-z0-9_]|$)/.test(body)) {
     throw new Error('glslEval: main() gained control flow — extend the evaluator, do not skip it');
   }
-  runBlock(body, env, parseFns(src));
+  runBlock(body, env, parseFns(src), tile);
   return env;
 }
 
@@ -464,6 +480,32 @@ describe('glslEval (the evaluator these measurements depend on)', () => {
     }
   });
 
+  it('hands a positional sampler the coordinate the shader actually sampled', () => {
+    // The default sampler answers every uScales lookup with one constant, which is fine until
+    // something in the shader depends on WHERE it samples. The shatter's per-cell throw does,
+    // so this is the extension it needed — and a sampler that ignored its argument would make
+    // a displacement of any size, including none, measure identically.
+    const PROBE = `
+      void main(void)
+      {
+          vec4 a = texture(uScales, vec2(0.25, 0.75));
+          vec4 b = texture(uScales, vec2(0.5, 0.5));
+          finalColor = a + b;
+      }
+    `;
+    const seen: number[][] = [];
+    const e = evalGlsl(PROBE, {}, (uv) => {
+      seen.push([...uv]);
+      return [uv[0]!, uv[1]!, 0, 1];
+    });
+    expect(seen).toEqual([[0.25, 0.75], [0.5, 0.5]]);
+    expect(e.a).toEqual([0.25, 0.75, 0, 1]);
+    expect(e.b).toEqual([0.5, 0.5, 0, 1]);
+    // ...and the other sampler is untouched by it.
+    expect(evalGlsl('void main(void) { vec4 a = texture(uTexture, vec2(0.1)); finalColor = a; }',
+      { __texel: [1, 2, 3, 4] }, () => [9, 9, 9, 9]).a).toEqual([1, 2, 3, 4]);
+  });
+
   it('keeps comparison BELOW arithmetic, so `a + b > c` is not `a + (b > c)`', () => {
     const wrap = (body: string): string => `void main(void) { ${body} }`;
     expect(evalGlsl(wrap('float a = 0.0; if (1.0 + 1.0 > 1.5) { a = 1.0; }'), {}).a).toEqual([1]);
@@ -500,6 +542,11 @@ interface SampleOpts {
   hitAge?: number;
   hitDir?: [number, number];
   membrane?: number;
+  /** The shell's exit progress, 0 (intact, the rest value) .. 1 (gone). */
+  shatter?: number;
+  /** A membrane tile with real spatial structure, for the measurements that depend on WHERE the
+   *  shader samples it rather than on what it reads. Overrides `scaleTexel` when present. */
+  tile?: (uv: Val) => Val;
   region?: number;
   pool?: number;
 }
@@ -528,9 +575,13 @@ function sample(f: EnergyShieldFilter, o: SampleOpts): Env {
     uTime: [o.time ?? 0],
     uMembrane: [o.membrane ?? 1],
     uHit: [dir[0], dir[1], o.hitAge ?? HIT_SETTLED()],
+    // Defaults to the FILTER's own uniform, not to a literal 0. Every measurement below can
+    // then be driven either through the harness or through the real `shatter` property, and a
+    // setter that dropped its argument stops being invisible here.
+    uShatter: [o.shatter ?? f.shatter],
     __texel: o.texel ?? [0, 0, 0, 0],
     __scaleTexel: o.scaleTexel ?? [0.45, 0.5, 0, 1],
-  });
+  }, o.tile);
 }
 
 /** Matches `HIT_SETTLED_MS` in the filter — read off a filter that has never been hit rather
@@ -903,6 +954,22 @@ describe('EnergyShieldFilter, measured: the radial cull skips nothing visible', 
     expect(sample(f, { dist: cull(f) * 1.2 * shellR(f), texel }).finalColor).toEqual(texel);
   });
 
+  it('is STILL below one 8-bit step at every instant of the exit', () => {
+    // The exit expands the shell, which is exactly the change that would push light past a
+    // fixed cull radius — the argument that it does not (the expansion goes into `surface`, and
+    // `b` is measured in surfaces, so the cull grows with the shell) is an argument. This is the
+    // measurement. Sampled just inside the cull at each instant, against that instant's own
+    // surface rather than a remembered one.
+    const f = filter();
+    const surfaceAt = (shatter: number): number => sample(f, { dist: 0.01, shatter }).surface![0]!;
+    for (let i = 0; i <= 20; i++) {
+      const shatter = i / 20;
+      const s = sample(f, { dist: cull(f) * 0.999 * surfaceAt(shatter), shatter });
+      expect(s.glow![0]! + s.behind![0]!).toBeLessThan(1 / 255);
+      expect(s.finalColor![3]!).toBeLessThan(1 / 255);
+    }
+  });
+
   it('is worth having: it skips well over half the filtered square', () => {
     // The shell reaches SHELL_R in `dist` units over a region whose half-width is 0.5 * sqrt(2)
     // in the same units, so the fraction of the square the shader still runs for is the area of
@@ -1136,5 +1203,274 @@ describe('EnergyShieldFilter, measured: centred on the REGION, at any texture si
     const left = sample(f, { dist: d, angle: Math.PI, region, pool }).density![0]!;
     const right = sample(f, { dist: d, angle: 0, region, pool }).density![0]!;
     expect(left).toBeCloseTo(right, 10); // a crescent is exactly this pair diverging
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// The EXIT — the one item the 2026-08-26 shell rewrite left open. Until now `ActorFilters`
+// dropped this filter from its composed list the frame the pool hit 0: the shell vanished
+// between two frames and `EventReactor`'s burst had to carry the whole moment alone.
+//
+// `uShatter` is the only input that changed, so every measurement here is a difference between
+// two runs of the SAME shader. That is deliberately the form that catches a term computed and
+// then not used — the mutant this file's membrane suite already lost once.
+// ---------------------------------------------------------------------------------------
+
+/** A `const float NAME = x;` the shader declares, read off the shipped source rather than
+ *  restated. Same discipline as `shellR`/`thickness` above, generalized because the exit added
+ *  three more of them. */
+function shaderConst(f: EnergyShieldFilter, name: string): number {
+  const m = new RegExp(`const float ${name} = ([0-9.]+);`).exec(stripComments(f.glProgram.fragment!));
+  if (!m) throw new Error(`shield shader no longer declares ${name}`);
+  return Number(m[1]);
+}
+
+describe('EnergyShieldFilter, measured: the shell has an exit', () => {
+  /** Where the shell's light stops, in `dist` units: the furthest radius still carrying at
+   *  least one 8-bit step of it. Scanned rather than derived, so it follows whatever the shader
+   *  actually does with the expansion. */
+  const visibleEdge = (f: EnergyShieldFilter, shatter: number): number => {
+    let out = 0;
+    for (let i = 0; i <= 100; i++) {
+      const dist = (i / 100) * 0.75;
+      if (glowAt(f, { dist, shatter }) >= 1 / 255) out = dist;
+    }
+    return out;
+  };
+
+  /** The brightest point anywhere on the shell at this instant of the exit. */
+  const peakLight = (f: EnergyShieldFilter, shatter: number): number =>
+    Math.max(...Array.from({ length: 121 }, (_, i) => glowAt(f, { dist: (i / 120) * 0.72, shatter })));
+
+  /** The wall term against the shader's OWN impact parameter, both read back off each run so
+   *  neither the surface formula nor the expansion is duplicated here. */
+  const wallProfile = (f: EnergyShieldFilter, shatter: number): Array<{ b: number; v: number }> =>
+    Array.from({ length: 181 }, (_, i) => {
+      const s = sample(f, { dist: (i / 180) * 0.72, shatter });
+      return { b: s.b![0]!, v: s.density?.[0] ?? 0 };
+    });
+
+  it('expands the outer surface, by the amount BURST declares, easing OUT', () => {
+    const f = filter();
+    const R = shellR(f);
+    const burst = shaderConst(f, 'BURST');
+    expect(burst).toBeGreaterThan(0.1); // a real throw...
+    expect(burst).toBeLessThan(0.5); // ...not a balloon
+    const at = (shatter: number): number => sample(f, { dist: 0.1, shatter }).surface![0]!;
+    expect(at(0)).toBeCloseTo(R, 12); // the intact shell is exactly untouched
+    expect(at(1)).toBeCloseTo(R * (1 + burst), 12);
+    const trace = Array.from({ length: 21 }, (_, i) => at(i / 20));
+    for (let i = 1; i < trace.length; i++) expect(trace[i]!).toBeGreaterThan(trace[i - 1]!);
+    // Most of the growth in the first half: the shell leaps and coasts. `>` alone was not
+    // enough — a LINEAR ramp splits the growth exactly evenly and survived it on floating-point
+    // noise (2026-08-26 battery). An ease-out quad puts 75% of the travel in the first half.
+    expect(trace[10]! - trace[0]!).toBeGreaterThan((trace[20]! - trace[10]!) * 1.5);
+  });
+
+  it('carries the light OUTWARD on screen, not just the maths', () => {
+    // `surface` is a term; where the light actually reaches is the effect. A shader that grew
+    // `surface` while the profile stayed pinned to the old radius would pass the test above and
+    // look identical to the version with no exit at all.
+    const f = filter();
+    expect(visibleEdge(f, 0.5)).toBeGreaterThan(visibleEdge(f, 0) * 1.05);
+  });
+
+  it('never grows past the filter area it is drawn into', () => {
+    // The expansion has a ceiling nobody would notice being crossed: `Actor` pins this filter's
+    // area to a fixed square, so `dist` beyond 0.5 * sqrt(2) does not exist along its narrowest
+    // axis and a shell that grew past it would be cut off FLAT on four sides only. Both the
+    // arithmetic BURST is chosen against and the scanned result.
+    const f = filter();
+    const REGION_EDGE = 0.5 * Math.SQRT2;
+    expect(shellR(f) * (1 + shaderConst(f, 'BURST')) * shaderConst(f, 'CULL'))
+      .toBeLessThan(REGION_EDGE);
+    for (let i = 0; i <= 8; i++) expect(visibleEdge(f, i / 8)).toBeLessThan(REGION_EDGE);
+  });
+
+  it('thins the wall to a rim as it opens, instead of inflating at constant thickness', () => {
+    // A shell that expanded at constant thickness reads as inflating. What makes it read as a
+    // surface being pulled apart is the wall stretching thin while the radius grows — measured
+    // as the same half-peak WIDTH the "边缘的那个圈太过实线" suite above uses to prove the
+    // intact shell is not a rim, here required to go the other way.
+    const f = filter();
+    const thin = shaderConst(f, 'SHATTER_THIN');
+    expect(thin).toBeGreaterThan(0.4); // a real thinning...
+    expect(thin).toBeLessThan(1.0); // ...that still leaves a wall to look at
+    const halfWidth = (shatter: number): number => {
+      const p = wallProfile(f, shatter);
+      const peak = Math.max(...p.map((x) => x.v));
+      const above = p.filter((x) => x.v >= peak * 0.5);
+      return Math.max(...above.map((x) => x.b)) - Math.min(...above.map((x) => x.b));
+    };
+    expect(halfWidth(1)).toBeLessThan(halfWidth(0) * 0.5);
+    expect(halfWidth(1)).toBeGreaterThan(0.02); // ...and it is a rim, not nothing
+  });
+
+  it('migrates the wall to the outer surface as it thins', () => {
+    // The other half of the same statement, and the one a hand-tuned width curve could not
+    // fake: the chord's peak sits at the INNER wall (`b = 1 - THICKNESS`), so a wall that
+    // genuinely thins has its bright band travel out toward the silhouette.
+    const f = filter();
+    const peakB = (shatter: number): number =>
+      wallProfile(f, shatter).reduce((a, c) => (c.v > a.v ? c : a)).b;
+    expect(peakB(0)).toBeCloseTo(1 - thickness(f), 1);
+    expect(peakB(1)).toBeGreaterThan(peakB(0) + 0.1);
+    expect(peakB(1)).toBeLessThan(1.0);
+  });
+
+  it('collapses to LITERALLY nothing by the end, monotonically', () => {
+    const f = filter();
+    const trace = Array.from({ length: 7 }, (_, i) => peakLight(f, i / 6));
+    for (let i = 1; i < trace.length; i++) expect(trace[i]!).toBeLessThan(trace[i - 1]!);
+    expect(trace[0]!).toBeGreaterThan(0.05); // there was a shell to lose
+    // Not "small": at the instant `ActorFilters` detaches the filter the shader has to be
+    // handing back the source texel UNCHANGED, or the detach is itself a visible step — which
+    // is the entire defect this animation exists to remove.
+    const texel: Val = [0.31, 0.42, 0.53, 0.64];
+    for (const k of [0, 0.4, 0.8, 1.0]) {
+      expect(sample(f, { dist: k * shellR(f), shatter: 1, texel }).finalColor).toEqual(texel);
+    }
+  });
+
+  it('fades the refraction out with it, so nothing un-warps at the detach', () => {
+    // The same property the pool drain already had (`fades the refraction with the pool`),
+    // restated for the exit: the bend is scaled by `energy`, and the exit is a second way for
+    // `energy` to reach 0.
+    const f = filter();
+    const d = shellR(f) * 0.7;
+    const mag = (v: number[]): number => Math.hypot(v[0]!, v[1]!);
+    expect(mag(sample(f, { dist: d, shatter: 1 }).bend as number[])).toBe(0);
+    expect(mag(sample(f, { dist: d, shatter: 0.9 }).bend as number[]))
+      .toBeLessThan(mag(sample(f, { dist: d }).bend as number[]) * 0.2);
+  });
+
+  it('is driven through the filter\'s own `shatter` property', () => {
+    // Everything above reaches the uniform through the harness. `ActorFilters` cannot — it goes
+    // through this setter — so a setter that dropped its argument would leave every measurement
+    // in this file passing while the shell vanished between two frames exactly as before
+    // (2026-08-26 battery survivor).
+    const f = filter();
+    const d = shellR(f) * 0.6;
+    expect(f.shatter).toBe(0);
+    const intact = glowAt(f, { dist: d });
+    expect(intact).toBeGreaterThan(0.05);
+    f.shatter = 1;
+    expect(f.shatter).toBe(1);
+    expect(glowAt(f, { dist: d })).toBe(0);
+    f.shatter = 0.5;
+    expect(sample(f, { dist: 0.1 }).surface![0]!).toBeGreaterThan(shellR(f) * 1.05);
+    f.shatter = 0;
+    expect(glowAt(f, { dist: d })).toBeCloseTo(intact, 12);
+  });
+
+  it('swings the tint to the hot end as the shell dies', () => {
+    const f = filter();
+    const cold = sample(f, { dist: 0.22 }).tint as number[];
+    const hot = sample(f, { dist: 0.22, shatter: 0.9 }).tint as number[];
+    expect(hot[0]!).toBeGreaterThan(cold[0]! + 0.3);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// The membrane's own half of the exit. `shieldScales.ts` publishes each cell's place in a
+// shuffled extinction order in the tile's GREEN channel; the exit reuses it as a per-cell
+// launch speed, so the scales come apart in pieces rather than sliding off as one sheet.
+// ---------------------------------------------------------------------------------------
+
+describe('EnergyShieldFilter, measured: the membrane comes apart in pieces', () => {
+  const AT = { dist: 0.22, angle: 0 } as const;
+  const TILE_G = 0.95;
+  /** A tile with no spatial structure but a definite cell rank — the throw is keyed off the
+   *  rank, so it has to be pinned even where the position is not what is being measured. */
+  const flat = (): Val => [0.5, TILE_G, 0, 1];
+
+  /**
+   * Every uScales lookup the shader made, in order, plus the run itself. The exit DISPLACES
+   * those lookups, so what has to be measured is where the shader actually sampled — a factor
+   * it computed on the way there is precisely the thing that has survived a mutant here before.
+   */
+  const lookups = (
+    f: EnergyShieldFilter, o: SampleOpts, texel: (uv: Val) => Val = flat,
+  ): { at: Val[]; env: Env } => {
+    const at: Val[] = [];
+    const env = sample(f, { ...o, tile: (uv) => { at.push([...uv]); return texel(uv); } });
+    return { at, env };
+  };
+
+  it('probes the cell and then fetches the displaced texel, per hemisphere', () => {
+    // Reading a per-cell constant costs a tap of its own: which cell is under this pixel is
+    // exactly what the tap answers, so four is the count and a shader down to two has stopped
+    // displacing anything.
+    expect(lookups(filter(), AT).at).toHaveLength(4);
+  });
+
+  it('does not move the lookup at all while the shield is intact', () => {
+    const { at } = lookups(filter(), AT);
+    expect(at[2]).toEqual(at[0]); // the front fetch lands on the texel its probe pulled in...
+    expect(at[3]).toEqual(at[1]); // ...and the same for the back layer
+  });
+
+  it('throws each scale OUTWARD once the shell lets go', () => {
+    // Sampling further IN along the radius is what puts the cell further OUT on screen.
+    const angle = 0.7;
+    const dir = [Math.cos(angle), Math.sin(angle)];
+    const { at } = lookups(filter(), { dist: 0.22, angle, shatter: 1 });
+    for (const [probe, fetch] of [[at[0]!, at[2]!], [at[1]!, at[3]!]]) {
+      const d = [probe[0]! - fetch[0]!, probe[1]! - fetch[1]!];
+      const len = Math.hypot(d[0]!, d[1]!);
+      expect(len).toBeGreaterThan(0.05);
+      // ...and it is along the outward radius, not in some other direction.
+      expect((d[0]! * dir[0]! + d[1]! * dir[1]!) / len).toBeCloseTo(1, 6);
+    }
+  });
+
+  it('throws each scale at ITS OWN speed, off the extinction rank in the tile', () => {
+    // The whole reason the offset is keyed off the GREEN channel. One global slide would move
+    // the membrane as a single sheet, which reads as the pattern scrolling rather than as the
+    // surface coming apart, and would pass every other assertion in this section.
+    const f = filter();
+    const throwFor = (rank: number): number => {
+      const { at } = lookups(f, { ...AT, shatter: 1 }, () => [0.5, rank, 0, 1]);
+      return Math.hypot(at[0]![0]! - at[2]![0]!, at[0]![1]! - at[2]![1]!);
+    };
+    expect(throwFor(0.9)).toBeGreaterThan(throwFor(0.1) * 1.5);
+    expect(throwFor(0.1)).toBeGreaterThan(0); // ...and the slowest cell still leaves
+  });
+
+  it('reads the DISPLACED texel and not the probe — the throw reaches the picture', () => {
+    // The assertion this section exists for. A shader that computed the offset, sampled with
+    // it, and then composited the PROBE's texel would pass everything above while painting a
+    // membrane that never moves. So: learn where the two lookups land, hand back a tile that is
+    // bright at one of them and dark at the other, and ask which one came out.
+    const f = filter();
+    const o = { ...AT, shatter: 0.8 };
+    const { at } = lookups(f, o);
+    const [probe, fetch] = [at[0]!, at[2]!];
+    expect(Math.hypot(probe[0]! - fetch[0]!, probe[1]! - fetch[1]!)).toBeGreaterThan(0.05);
+    const near = (uv: Val, p: Val): boolean => Math.hypot(uv[0]! - p[0]!, uv[1]! - p[1]!) < 1e-9;
+    const boost = (bright: Val, dark: Val): number => {
+      const e = sample(f, {
+        ...o,
+        tile: (uv) => [near(uv, bright) ? 1 : near(uv, dark) ? 0 : 0.5, TILE_G, 0, 1],
+      });
+      return e.front![0]! / e.density![0]!;
+    };
+    expect(boost(fetch, probe)).toBeGreaterThan(1.4); // the bright cell arrived...
+    expect(boost(probe, fetch)).toBeLessThan(1.02); // ...and the probe's own texel did not
+  });
+
+  it('puts the scales OUT as it goes, not merely outward', () => {
+    // The exit runs the same dual-channel extinction the pool drain does (design/13), because
+    // `integrity` is derived from `energy` and not from `uIntensity`: whole cells go dark in the
+    // tile's shuffled rank order while the shell is still expanding. A membrane that only dimmed
+    // uniformly is the "brightness only" failure that law exists to forbid.
+    const f = filter();
+    const live = (rank: number, shatter: number): number =>
+      sample(f, { ...AT, scaleTexel: [1, rank, 0, 1], shatter }).liveF![0]!;
+    expect(live(0.05, 0)).toBe(1);
+    expect(live(0.95, 0)).toBe(1);
+    expect(live(0.05, 0.75)).toBeLessThan(1); // the first cells in the order have gone...
+    expect(live(0.95, 0.75)).toBe(1); // ...while the last are still lit
+    expect(live(0.95, 0.98)).toBeLessThan(1); // and by the end, everything
   });
 });

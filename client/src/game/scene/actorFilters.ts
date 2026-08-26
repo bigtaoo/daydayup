@@ -24,6 +24,17 @@ import { activeQuality } from '../../render/quality';
 export const HIT_FLASH_MS = 160;
 /** Death-dissolve shader duration. */
 export const DISSOLVE_MS = 700;
+/**
+ * Shield-shell exit duration (2026-08-26). The shell no longer disappears between two frames
+ * when the pool empties: `EnergyShieldFilter.shatter` runs 0→1 over this and the filter stays
+ * ATTACHED for the whole of it — the same "keep the view alive past the state change" shape
+ * `startDissolve` and `Scene`'s dying-view list already use, rather than a second mechanism.
+ *
+ * Short on purpose. It has to finish inside the window `EventReactor`'s own break reaction
+ * occupies (a 50 ms hit-stop, a decaying shake, a 28 px burst and the shard particles), or the
+ * shell is still visibly leaving after the moment it belongs to is over.
+ */
+export const SHATTER_MS = 200;
 
 /**
  * What this needs from the object it decorates. One method, so it is declared as one method —
@@ -55,8 +66,13 @@ export class ActorFilters {
   // 2026-08-24 lighting pass existed to establish (every actor used to carry an always-on
   // `NormalLitFilter`, measured as the dominant cost of the frame; see `src/perf/README.md`).
   private shieldFilter: EnergyShieldFilter | null = null;
+  // Two independent facts about the shell, deliberately not one tri-state: `shieldActive` is
+  // "the POOL is up", `shatterMs >= 0` is "the exit is playing". The filter is on screen while
+  // either holds (`shellVisible`), which is what lets `setShield` clear `shieldActive` the
+  // instant the pool empties — the way it always did — while the view outlives it.
   private shieldActive = false;
   private shieldRatio = -1; // last-applied shield fraction (skip redundant work if unchanged)
+  private shatterMs = -1; // -1 = not shattering; counts up from 0 once the pool empties
   private outlineFilter: OutlineFilter | null = null;
   private outlineMs = 0; // remaining ms of the current hit flash, 0 = inactive
   private dissolveFilter: DissolveFilter | null = null;
@@ -71,12 +87,13 @@ export class ActorFilters {
    * (design/01 fidelity roadmap milestone 5, `EnergyShieldFilter`). `maxShield <= 0` is the
    * common case (most enemies, the 0-shield starter) and stays a cheap no-op — the filter is
    * only ever built for an actor that actually carries a shield pool. Ratio 0 (broken, but still
-   * has a maxShield) removes it: the `shield_break` event's own flash already covers that
-   * instant, so there is nothing left for the shell to do.
+   * has a maxShield) starts the shell's ~200 ms EXIT (`startShatter`) rather than removing it —
+   * until 2026-08-26 it detached here and the shell vanished between two frames.
    */
   setShield(shield: number, maxShield: number): void {
     if (maxShield <= 0) {
       this.shieldRatio = -1;
+      this.endShatter();
       this.setShieldActive(false);
       return;
     }
@@ -84,12 +101,53 @@ export class ActorFilters {
     if (ratio === this.shieldRatio) return;
     this.shieldRatio = ratio;
     if (ratio <= 0) {
+      // Order matters: `startShatter` decides whether there was a shell to see off by reading
+      // `shieldActive`, so it has to run before that is cleared.
+      this.startShatter();
       this.setShieldActive(false);
       return;
     }
+    // Regen landing mid-exit puts the shell straight back up. Cancelled rather than allowed to
+    // finish underneath the restored shell: the two are the same filter, so a running exit would
+    // otherwise keep expanding and thinning a shield that is live again.
+    this.endShatter();
     if (!this.shieldFilter) this.shieldFilter = new EnergyShieldFilter(THEME.colors.shield);
     this.shieldFilter.intensity = ratio;
     this.setShieldActive(true);
+  }
+
+  /**
+   * Begin the shell's exit. The one guard is `shieldActive` — a shell that is not currently on
+   * screen has nothing to see off — and it covers BOTH cases that look like a break from the
+   * outside but are not one:
+   *
+   * - **No shell was ever up.** An actor that arrives with an already-empty pool (a mid-match
+   *   join, a skin whose shield has not regenerated yet) reaches ratio 0 from the initial
+   *   `shieldRatio = -1` without ever having been shielded, and one whose whole pool was taken
+   *   away (`maxShield <= 0`) has already been detached. Starting an exit there would put a
+   *   bursting bubble, and a render-target pass, around a character that never had one.
+   * - **The exit is already running.** `setShield` clears `shieldActive` the moment it starts
+   *   one, so a second `shield_break` inside the 200 ms — a DoT tick on the same frame, the same
+   *   event delivered twice — finds this false and cannot snap the shell back to full size.
+   *
+   * `shatter` is deliberately NOT zeroed here: the only two ways out of an exit
+   * (`advanceShatter`'s completion and `endShatter`'s cancel) both reset it, so a third reset
+   * would be a line no test could reach.
+   */
+  private startShatter(): void {
+    if (!this.shieldActive || !this.shieldFilter) return;
+    this.shatterMs = 0;
+    // Flared to full, not left at whatever sliver of pool it died with: a shield that broke from
+    // 12% would otherwise play its whole exit at 12% brightness. See the shader's `energy`.
+    this.shieldFilter.intensity = 1;
+  }
+
+  /** Abandon a running exit and put the shell back in its intact state. */
+  private endShatter(): void {
+    if (this.shatterMs < 0) return;
+    this.shatterMs = -1;
+    if (this.shieldFilter) this.shieldFilter.shatter = 0;
+    this.apply(); // the exit was what held the filter on screen — recompose without it
   }
 
   /**
@@ -126,6 +184,9 @@ export class ActorFilters {
     // building one here just to animate it would put a shell around an actor with no pool.
     // `dx`/`dy` default to 0, which `hit()` reads as "keep the previous axis" — a caller that
     // has no impact position still gets a dent, just not a directed one.
+    // A shell already playing its exit does NOT dent: it is coming apart, and an elastic
+    // rebound would read as it healing. That falls out of `shieldActive` — which means "the pool
+    // is up", and the pool is what just ran out — rather than needing its own condition.
     if (this.shieldActive && this.shieldFilter) this.shieldFilter.hit(dx, dy);
     this.apply();
   }
@@ -150,7 +211,8 @@ export class ActorFilters {
 
   /** Advance every active shader's own clock. Call once per render frame (dt in ms). */
   tick(frameDt: number): void {
-    if (this.shieldActive && this.shieldFilter) this.shieldFilter.tick(frameDt);
+    if (this.shellVisible && this.shieldFilter) this.shieldFilter.tick(frameDt);
+    if (this.shatterMs >= 0) this.advanceShatter(frameDt);
     if (this.heatHazeActive && this.heatHazeFilter) this.heatHazeFilter.tick(frameDt);
     if (this.outlineMs > 0) {
       this.outlineMs = Math.max(0, this.outlineMs - frameDt);
@@ -164,6 +226,38 @@ export class ActorFilters {
       // agree on WHEN the actor is gone even though they disagree on how it looks going.
       if (!activeQuality().actorShaders) this.host.setSkinAlpha(this.lowTierAlpha());
     }
+  }
+
+  /**
+   * Advance the shell's exit and, at the end of it, finally let go of the filter. The clock runs
+   * on the low quality tier too even though `buildFilterList` draws nothing there: it is what
+   * decides WHEN the shell is gone, and that has to agree across tiers the same way
+   * `lowTierAlpha` makes the dissolve agree.
+   */
+  private advanceShatter(frameDt: number): void {
+    this.shatterMs += frameDt;
+    if (this.shatterMs >= SHATTER_MS) {
+      this.shatterMs = -1;
+      if (this.shieldFilter) {
+        // Reset rather than left at 1, because this instance is REUSED — a regenerated shield
+        // re-attaches the same filter (`setShield`), and one still holding a finished exit would
+        // come back as an expanded, thinned, invisible shell.
+        this.shieldFilter.shatter = 0;
+        this.shieldFilter.intensity = 0;
+      }
+      this.apply(); // and NOW the filter comes off the list
+      return;
+    }
+    // Written only on a frame that did not finish the exit, which is why no clamp is needed
+    // here: `shatterMs` is strictly less than `SHATTER_MS` on every path that reaches this line,
+    // however long the frame was. A clamp would be a line nothing could reach.
+    if (this.shieldFilter) this.shieldFilter.shatter = this.shatterMs / SHATTER_MS;
+  }
+
+  /** The shell is on screen while its pool is up OR while it is playing its exit. The whole
+   *  point of the 2026-08-26 exit is that those two stopped being the same statement. */
+  private get shellVisible(): boolean {
+    return this.shieldActive || this.shatterMs >= 0;
   }
 
   private setShieldActive(active: boolean): void {
@@ -223,7 +317,7 @@ export class ActorFilters {
   private buildFilterList(): Filter[] {
     const list: Filter[] = [];
     if (this.heatHazeActive && this.heatHazeFilter) list.push(this.heatHazeFilter);
-    if (this.shieldActive && this.shieldFilter) list.push(this.shieldFilter);
+    if (this.shellVisible && this.shieldFilter) list.push(this.shieldFilter);
     if (this.outlineMs > 0 && this.outlineFilter) list.push(this.outlineFilter);
     if (this.dissolveMs >= 0 && this.dissolveFilter) list.push(this.dissolveFilter);
     return list;

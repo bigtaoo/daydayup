@@ -1471,7 +1471,7 @@ All copy translated across all 8 locales (new `hud.downed.*`/`hud.ally.reviving`
 `pvpPreview.*`/`settings.controlLayout*` keys). 667 client tests (was 582) + `tsc --noEmit`
 clean; 1234 across the repo. `npm run check` green on all five packages throughout.
 
-- **5.4 Fidelity roadmap** (01): ✅ post-processing (bloom-lite, vignette, chromatic aberration, hit-stop, screen-shake) + particles shipped 2026-07-26; ✅ ALL FOUR custom shaders (energy shield, outline/hit-flash, dissolve-on-death, heat-haze) shipped 2026-08-03 — `game/fx/filters.ts`'s `EnergyShieldFilter`/`OutlineFilter`/`DissolveFilter`/`HeatHazeFilter`, wired into `Actor`'s live shield/hit/death/burn signals (see 01's milestone 5 for the per-shader detail, including the `Scene.reconcile` architecture change dissolve needed and a Pixi-uniform-precision gotcha worth knowing before writing another filter). Shipped clean against today's placeholder art — the "shaders read best after real art lands" sequencing note from earlier turned out not to matter. The shield has since been rewritten three times against user reports (2026-08-24 un-squashed to a true circle, 2026-08-25 ring → filled disc, **2026-08-26 disc → a shell with real thickness whose back hemisphere the body occludes**, plus an elastic dent on impact, refraction, a generated membrane tile and a radial cull that pays for most of the added cost — see "The shell gets thickness" at the end of this file). Its one open item is that `shield_break` still has no shell exit animation.
+- **5.4 Fidelity roadmap** (01): ✅ post-processing (bloom-lite, vignette, chromatic aberration, hit-stop, screen-shake) + particles shipped 2026-07-26; ✅ ALL FOUR custom shaders (energy shield, outline/hit-flash, dissolve-on-death, heat-haze) shipped 2026-08-03 — `game/fx/filters.ts`'s `EnergyShieldFilter`/`OutlineFilter`/`DissolveFilter`/`HeatHazeFilter`, wired into `Actor`'s live shield/hit/death/burn signals (see 01's milestone 5 for the per-shader detail, including the `Scene.reconcile` architecture change dissolve needed and a Pixi-uniform-precision gotcha worth knowing before writing another filter). Shipped clean against today's placeholder art — the "shaders read best after real art lands" sequencing note from earlier turned out not to matter. The shield has since been rewritten three times against user reports (2026-08-24 un-squashed to a true circle, 2026-08-25 ring → filled disc, **2026-08-26 disc → a shell with real thickness whose back hemisphere the body occludes**, plus an elastic dent on impact, refraction, a generated membrane tile and a radial cull that pays for most of the added cost — see "The shell gets thickness" at the end of this file), and **2026-08-26 gained its `shield_break` EXIT** (`EnergyShieldFilter.shatter` — the shell expands, its wall thins to a rim, its scales are thrown outward off the membrane tile's own extinction order and its light collapses to exactly nothing over 200 ms, with the fragments in `ParticleSystem.shieldShards`; see "The shell gets an exit" at the end of this file). Nothing open in the shield.
 
   **Update (2026-08-03): ✅ dynamic lighting (milestone 2) shipped too — Phase 5.4 has no open items left.** Unblocked the same day 5.3 (above) closed the "AI art is placeholder" question milestone 2 named as its own blocker. Ships as a scoped equivalent of design/01's literal "normal maps + point lights + lightmap (multiply composite)" text, not that architecture verbatim: no `RenderTexture`/deferred-lighting layer exists anywhere in this codebase (confirmed by search) and building one would be disproportionate infrastructure for a fixed-camera 2D sim — so this is a fifth custom `Filter` instead, following the exact template the four milestone-5 shaders above already established. New `NormalLitFilter` (`game/fx/filters.ts`) derives a fake per-pixel normal straight from a sprite's OWN rendered luminance/alpha via 4 neighbour-texel taps — the same technique `OutlineFilter` already uses for alpha-edge detection, just reading brightness into a Sobel-style gradient instead of alpha into an edge test — so **no normal-map texture asset exists or is needed anywhere**, matching the "own the code, own the cost" discipline `VignetteFilter`/`HeatHazeFilter` already established. Shaded against a fixed key light (direction reused from `RoomBuilder.ts`'s existing "lit from upper-left" pillar-shading convention, design/10 2026-08-02) plus a small dynamic point-light registry, `game/fx/lighting.ts`'s `LightRegistry` — the local player's own persistent glow (re-registered each frame, `Game.ts`'s `updateFx` wrapper) and transient muzzle-flash/impact bursts (`FxController.flash` now registers a matching light, no new call site). Deliberately NOT a full lightmap: a handful of lights, linear-scanned, nearest/brightest wins — this project never needs more than that at once. `Actor.ts`'s `litFilter` is built eagerly (unlike the four conditionally-active shaders) and always first in `applySkinFilters()`'s list, since every actor is always lit; `Scene.applyLighting()` shades every live Actor (not bullets/pickups) once per render frame. No `ENGINE_VERSION` impact (render-only, design/08). 18 new tests (`lighting.test.ts`'s full `LightRegistry` coverage, plus extensions to `Actor.test.ts`/`Scene.test.ts`/`FxController.test.ts`), `tsc --noEmit` clean, browser-verified live (visible directional shading on both the player and enemy sprites, a `flash()` call live-confirmed to brighten a nearby enemy's `uPointIntensity` and decay back to 0, zero console errors).
 - **5.5 WeChat device verification** (04): lowest base library, low-end frame rate, real-device touch, WebGL2 fallback — none of this can be done without a physical device or WeChat DevTools install, neither found on this machine as of 2026-07-27.
@@ -6333,10 +6333,11 @@ Two more findings from that pass:
 
 ### Still open
 
-- **`shield_break` has no shell farewell.** The filter simply detaches and `EventReactor`'s
+- ~~**`shield_break` has no shell farewell.** The filter simply detaches and `EventReactor`'s
   positional burst covers the instant. The shell should get its own ~200 ms exit — outer radius
   expanding, membrane scattering, alpha collapsing — and `Particles.ts` is the right home for the
-  fragments. Not done.
+  fragments.~~ **Done 2026-08-26** — including the `Particles.ts` guess, which turned out to be
+  right for a reason the note did not have: see "The shell gets an exit" below.
 - **Nothing here is measured on a phone.** The +38% and the cull's 46% are one desktop GPU. The
   membrane branch exists for the mobile case and has never been run there (`design/04` item 6).
 - **The interpreter-vs-GPU profile agreement is a one-off**, not a gate. Making it a regression
@@ -6422,3 +6423,213 @@ reversed), that the texture is literally the one `linearRamp()` returns and that
 `shadeRampCacheSize` does not grow across pillars of three different sizes, that the fill count
 is exactly 2 (a bound like `<= 12` would not notice a return to stepping), and the half-band
 deviation above. Client 3207 tests green, `tsc --noEmit` clean, file-length gate clean.
+
+
+## The shell gets an exit, and three guards that guarded nothing (2026-08-26, client-only)
+
+The one item the thickness rewrite above left open. Until this pass `ActorFilters` dropped
+`EnergyShieldFilter` from its composed list on the frame the pool hit 0: the shell vanished
+between two frames, and `EventReactor`'s burst had to carry the whole moment on its own.
+
+Now `uShatter` runs 0 → 1 over `SHATTER_MS` (200 ms) while the filter stays ATTACHED — the same
+"keep the view alive past the state change" shape `startDissolve` and `Scene`'s dying-view list
+already use, rather than a second mechanism. Design detail is in `01`'s shield bullets; this
+records what the pass *found*.
+
+**One structural side-effect worth recording:** the exit pushed `skinFx.ts` to 520 lines, past
+CLAUDE.md's 500-line convention and not in the baseline, so `check:filelength` failed. The shield
+moved into a sibling, `fx/filters/shieldFx.ts` (520 -> 172 + 364) — CLAUDE.md's form (1), a split
+by domain, since it shares no state with the outline / dissolve / heat-haze filters it left behind
+and was already the only one of the four with a second texture, a radial cull and an animation of
+its own. `fx/filters.ts` stays the assembly shell every caller imports. The battery was re-run
+against the new path afterwards rather than assumed: a "0 survivors" result is scoped to the file
+NAMES it mutates, and a pure move silently empties that list.
+
+### 1. The expansion goes into `surface`, which is what keeps the cull honest
+
+The open note predicted a fight with the radial cull: "an expanding shatter radius will cross
+`CULL = 1.18`, so either drive CULL from the progress or the expansion gets clipped." There is a
+third option, and it is better than both: put the growth into `surface` itself rather than into
+`b` or `dist` afterwards. `b` is measured *in surfaces*, so a shell that grew 30% has a cull
+radius that grew with it, and the constant needs no progress term at all. The suite measures that
+claim across the whole exit rather than inheriting it — `shieldShellModel.test.ts` samples just
+inside the cull at 21 instants and requires under one 8-bit step at every one.
+
+What *does* bound the expansion is the filter's own area, and it is much tighter than taste would
+have picked: `Actor` pins that to 6 body radii per side, so `dist` beyond `0.5·√2 = 0.707` does
+not exist along the region's narrowest axis, and a shell past it would be cut off FLAT on four
+sides only — the kind of defect that is invisible in a screenshot of a fight in the middle of a
+room. `0.44 · 1.30 · 1.18 = 0.675` leaves ~5% of margin, and the suite scans the actual visible
+edge at every instant instead of trusting that arithmetic.
+
+### 2. The fragments belong in `Particles.ts`, for a reason the open note did not have
+
+The note guessed right and the guess held, but the decisive argument turned out to be the same
+fixed `filterArea`: anything the shader draws is clipped at ~2.4 body radii, so a shard that flies
+further simply stops existing — the one thing a fragment must not do. (The two supporting
+reasons: a shader pays for its fragments at every pixel of the region for the whole animation,
+where 11 shards cost 11 shards; and `Particles.ts` already owns motion, gravity, spin, lifetime,
+alpha decay and the quality budget.) `ParticleSystem.shieldShards`, fired from `EventReactor`'s
+`shield_break` case — whose event position **is** the target actor's centre (`combat.ts` pushes
+`target.gx/gy`), unlike the neighbouring `hit` case's impact point.
+
+### 3. Three guards that read correctly and guarded nothing
+
+The battery's real finding, and the shape worth remembering. The first run left five survivors;
+three of them were guards in `startShatter`/`advanceShatter` that are *unreachable in effect*:
+
+- `if (this.shatterMs >= 0) return;` (no double-start) — unreachable, because `setShield`'s own
+  `ratio === this.shieldRatio` short-circuit already returns before `startShatter` is called.
+- `Math.min(SHATTER_MS, …)` (no overshoot) — the clamped value is written to the uniform and then
+  reset in the same call, so no frame can ever render it.
+- `if (!this.shieldActive …) return;` (no shell to break) — nothing re-attached the filter at that
+  moment, so starting an exit for an invisible shell changed nothing observable.
+
+The fix was not to write tests for them. It was to notice that the state model was
+over-guarded and rebuild it around two independent facts — `shieldActive` = "the pool is up",
+`shatterMs >= 0` = "the exit is playing", `shellVisible` = either — after which **one** guard
+carries both the "never had a shell" and the "already leaving" properties, and it is reachable:
+`setShield` clears `shieldActive` the moment an exit starts, so a second `shield_break` inside the
+200 ms finds it false. Two of the three redundant lines are simply gone.
+
+**And one attempted fix was itself scaffolding.** The first attempt at making the last guard
+observable added an unconditional `this.apply()` to the break path. It killed the mutant — and a
+follow-up mutant proved the new line was dead in the *correct* code, existing only to make the
+guard's failure visible. Reverted. The real observable is that an exit started for an invisible
+shell shows up at the NEXT recompose from any cause at all, so the test takes its reading after
+one (`a.hitFlash()`), which is both honest and closer to how the bug would actually appear.
+
+### 4. Testing: 51 mutants, 6 controls, and an evaluator extension rather than a workaround
+
+`shieldShellModel.test.ts` gained a third argument: a POSITIONAL tile sampler. Its `texture()`
+had been returning one constant texel for every `uScales` lookup, which was fine while nothing
+depended on WHERE it sampled — and exactly wrong for a per-cell throw that DISPLACES the lookup,
+since a fixed texel makes a displacement of any size (including none) measure identically. The
+evaluator's own error message says to extend it rather than route around it, so it was extended,
+and the extension has its own self-test.
+
+That bought the assertion the section exists for: learn where the probe and the displaced fetch
+land, hand back a tile that is bright at one and dark at the other, and ask which one came out.
+A shader that computed the offset, sampled with it, and then composited the PROBE's texel passes
+every other measurement while painting a membrane that never moves.
+
+The battery ran 51 mutants across `shieldFx.ts`, `shieldScales.ts`, `actorFilters.ts`,
+`EventReactor.ts` and `Particles.ts`, plus 6 controls that must survive and a self-check that must
+die. After the restructure above: **0 survivors, 6/6 controls surviving.** Two other findings:
+
+- **A LINEAR ramp survived the ease-out assertion.** `first half > second half` is exactly equal
+  for a linear ramp, and floating-point noise put it on the passing side. The bound is now 1.5×
+  (an ease-out quad puts 75% of the travel in the first half).
+- **The `shatter` setter itself was untested.** Every measurement drove the uniform through the
+  harness; `ActorFilters` cannot. `sample()` now defaults `uShatter` to the filter's own property,
+  so a setter that dropped its argument stops being invisible.
+
+### 5. Perf: free at rest, and the cull still pays during the exit
+
+`EXT_disjoint_timer_query_webgl2`, never `performance.now()` (which reported a 1000×-ALU control
+at 2.35× on this same machine). 768 px square, Intel Arc Pro, ESSL 3.00 at the shipped `mediump`,
+8 draws per query, median of 50 rounds after 6 warm-up, **with the page's own game loop stopped** —
+see the failure below for why that line matters. Two independent runs agreed to three decimals.
+
+| | fragment-shader time | vs pre-exit |
+| --- | --- | --- |
+| pre-exit shader | **0.172 ms** | 1.00× |
+| shipped, intact (`uShatter` 0) | **0.189 ms** | **1.094×** |
+| shipped, mid-exit (0.5) | **0.233 ms** | 1.35× |
+| shipped, end of exit (0.95) | **0.249 ms** | 1.45× |
+| shipped mid-exit, cull defeated | **0.303 ms** | (1.30× the culled one) |
+| control (+200 ALU iterations) | **2.499 ms** | 13.3× the intact shell |
+
+So the state a shield spends essentially all of its time in costs **+9.4%** — two extra tile taps
+which, at `uShatter` 0, land on the exact texel the probe already pulled in, plus a handful of
+ALU. The exit peaks at +45% for 200 ms, and that is area, not instructions: the shell is
+physically bigger, so more pixels run the full shader. The cull is still the lever that pays
+during the exit — 1.30× without it.
+
+These absolute numbers are NOT comparable to the 0.223 ms in the section above: this harness times
+the fragment shader over a full-screen quad in a standalone context, with no Pixi filter pass or
+render-target switch around it. The ratios are the result; the milliseconds are the units they
+were measured in.
+
+**The measurement failed twice before it worked, both times plausibly.** A run that rotated the
+variant order per round and reported a trimmed mean came back saying the bigger shader was 3.5×
+*cheaper* than the one without the exit — the page's own render loop was drawing the real game
+into the same GPU between queries, and the tails (p90 of 2.5 ms on a 0.17 ms shader) were that,
+not the shader. What fixed it: `app.ticker.stop()`, several draws inside each query so the shader
+dominates the query's own fixed cost, and the median rather than a trimmed mean. The control is
+what said the first two runs were wrong — at 8.0× and then 13.2× against the same shaders, an
+unstable control is a broken harness, not a slow shader.
+
+### 6. The shape, confirmed on a real GPU
+
+The interpreter and a GPU frame, two independent paths, same statements — the pattern the
+thickness pass used for its 0.78/0.31 vs 0.80/0.30 agreement. Radial alpha profile of the shipped
+shader over a fully transparent source (so what is read back is the shell's own light and nothing
+else), 512 px, `readPixels` after `finish()`:
+
+| `uShatter` | peak at `dist` | half-peak width | visible edge | total light |
+| --- | --- | --- | --- | --- |
+| 0 | 0.380 | 0.141 | 0.492 | 2.60 |
+| 0.25 | 0.445 | 0.112 | 0.551 | 2.10 |
+| 0.5 | 0.480 | 0.094 | 0.586 | 1.31 |
+| 0.75 | 0.521 | 0.077 | 0.598 | 0.52 |
+| 1.0 | — | — | **0** | **0** |
+
+The bright band travels outward while narrowing (the wall thinning to a rim), the visible edge
+expands and stays inside the region's 0.707 limit throughout, and the light collapses
+monotonically to exactly nothing. The last row is the run's own control: a frame that is
+uniformly zero is what proves the readback is live rather than stale — five `uShatter` values
+produced five different frames and one of them is empty.
+
+### 7. *"有测试可以加吗"* — and the answer was seven survivors OUTSIDE the five files
+
+Asked again after the 0-survivor result above, which is exactly the question that result invites.
+The honest answer was that "0 survivors" is scoped to the files a battery mutates, and the exit's
+battery mutated the shader, the tile, `ActorFilters`, `EventReactor` and `Particles` — **not the
+call chain that connects any of it to the game**. Mutating that instead:
+
+| survivor | what it means |
+| --- | --- |
+| `Scene`: `v.setShield(Math.max(1, p.shield), p.maxShield)` | **the shell can never break** — the whole exit is dead in the shipped game |
+| `Scene`: `v.setShield(p.maxShield, p.shield)` | the pool ratio inverted; a full shield draws as empty |
+| `Scene`: `v.setShield(p.shield, 1)` | the pool hard-coded; brightness stops tracking anything |
+| `Scene`: enemy shield sync deleted | no shipped enemy has a pool, so nothing reached the line |
+| `config`: `SHIELD_REGEN_DELAY` 90 → 3 | regen cuts the exit short in real play |
+| `GameLoop`: `scene.interpolate(alpha, 0)` | every per-actor clock frozen — nothing animates, ever |
+| `FxController`: `particles.update` never advances | every burst spawns and hangs in mid-air |
+
+Seven mutants, all surviving 3239 tests. Two of them (the first and the sixth) are the same class
+of defect the arena sweeps kept finding: **a mechanism that is correct, unit-tested, and connected
+to nothing**.
+
+What the fixes look like, and the two lessons worth keeping:
+
+- **Source one case from the real PRODUCER.** Every shield test in `Actor.test.ts` says
+  `setShield(4, 8)`. The new `Scene.test.ts` case drives the engine's own `takeDamage` until the
+  pool empties, then asserts both halves of the moment off that one call: `shield_break` in
+  `state.events` (what `EventReactor` throws shards from) and `shield === 0` reaching the shell
+  through `reconcile` (what starts the exit). The wiring's comments claim the two need no
+  handshake *because* they read the same instant from different channels — a literal-driven test
+  cannot check that claim, and this one does.
+- **A survivor can be a CONTENT gap.** Deleting the enemy shield sync survived because
+  `enemies.ts` gives every shipped enemy `maxShield: 0`, so nothing in the game reaches the line.
+  design/07's two-pool health is a property of *every* actor and a shielded elite is a content
+  change, not a code one — so the test supplies the pool the roster does not have yet, rather than
+  the line being deleted as dead.
+- **The regen coupling is asserted as a MARGIN**, not a number: `SHIELD_REGEN_DELAY` in ms must
+  exceed `3 × SHATTER_MS`. Either constant can be retuned; only an actual collision fails.
+
+After: **all seven killed, controls still surviving, self-checks still dying**, 3247 tests.
+
+### Still open after this
+
+- **Still nothing measured on a phone.** Unchanged from the section above, and the exit adds two
+  more tile taps to the membrane branch — which is exactly the branch that exists for the mobile
+  case and has never been run there (`design/04` item 6). On desktop those taps are 9%; on a
+  bandwidth-bound GPU they are the case the branch was written for, and nothing here is evidence
+  about it.
+- **Nobody has watched the exit at gameplay speed.** It is measured twice over — through the GLSL
+  interpreter and off a real GPU frame — and both agree on the shape. That is stronger evidence
+  than looking, and it is still not the same question as "does 200 ms read as a shield breaking".
+- **The interpreter-vs-GPU agreement is still a one-off**, not a gate, for the same reason as
+  before: a headless GL harness this machine does not have.

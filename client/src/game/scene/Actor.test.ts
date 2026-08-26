@@ -6,7 +6,9 @@ import { Actor } from './Actor';
 import { drawElementGlyph } from '../elementIcons';
 import { THEME } from '../theme';
 import { SHADOW_SQUASH } from './Entity';
-import { HIT_FLASH_MS } from './actorFilters';
+import { HIT_FLASH_MS, SHATTER_MS } from './actorFilters';
+import { TICK_RATE } from '@dd/engine';
+import { SHIELD_REGEN_DELAY } from '@dd/engine/config';
 import { Rig } from '../../render/Rig';
 import { ORB_CORE_RIG, ORB_CORE_REFERENCE_RADIUS } from '../../render/orbCoreRig';
 import { CRITTER_CORE_RIG, CRITTER_CORE_REFERENCE_RADIUS } from '../../render/critterCoreRig';
@@ -70,6 +72,8 @@ vi.mock('../fx/filters', () => ({
   EnergyShieldFilter: class {
     intensity = 0;
     membrane = 1;
+    /** The shell's exit, 0..1 — driven by `ActorFilters` over SHATTER_MS. */
+    shatter = 0;
     /** Last impact handed to it, so a test can assert `hitFlash` forwards the direction. */
     lastHit: [number, number] | null = null;
     constructor(public color?: number) {}
@@ -249,8 +253,8 @@ function skinViewOf(a: Actor): { getLocalBounds: () => Rectangle } {
 function fxOf(a: Actor): Record<string, unknown> {
   return (a as unknown as { fx: Record<string, unknown> }).fx;
 }
-function shieldFilterOf(a: Actor): { intensity: number } | null {
-  return fxOf(a).shieldFilter as { intensity: number } | null;
+function shieldFilterOf(a: Actor): { intensity: number; shatter: number } | null {
+  return fxOf(a).shieldFilter as { intensity: number; shatter: number } | null;
 }
 
 // Lopsided-shield-glow fix (2026-08-12): `EnergyShieldFilter`'s shader hardcodes
@@ -402,12 +406,18 @@ describe('Actor.setShield — energy-shield shader (design/01 fidelity roadmap m
     expect(shieldFilterOf(a)!.intensity).toBeCloseTo(0.5);
   });
 
-  it('detaches the filter once the shield hits 0 (shield_break already flashes the moment)', () => {
+  it('HOLDS the filter past ratio 0 so the shell can play its exit, then detaches', () => {
+    // Until 2026-08-26 this detached on the frame the pool emptied and the shell vanished
+    // between two frames. The exit is the reason the filter has to outlive the state change —
+    // the same shape `startDissolve` and `Scene`'s dying-view list already use.
     const a = new Actor('player', 12);
     a.setShield(4, 8);
-    expect(skinFiltersOf(a)).toBeTruthy();
     a.setShield(0, 8);
-    expect(skinFiltersOf(a) as unknown[] ?? []).toEqual([]); // back to no filter at all
+    expect(skinFiltersOf(a) as unknown[]).toHaveLength(1); // still there, now leaving
+    a.interpolate(1, SHATTER_MS - 1);
+    expect(skinFiltersOf(a) as unknown[]).toHaveLength(1); // ...for the whole duration
+    a.interpolate(1, 1);
+    expect(skinFiltersOf(a) as unknown[] ?? []).toEqual([]); // and only then gone
   });
 
   it('re-attaches on regen after a break, without rebuilding the filter', () => {
@@ -415,6 +425,7 @@ describe('Actor.setShield — energy-shield shader (design/01 fidelity roadmap m
     a.setShield(4, 8);
     const first = shieldFilterOf(a);
     a.setShield(0, 8);
+    a.interpolate(1, SHATTER_MS); // let the exit run out
     expect(skinFiltersOf(a) as unknown[] ?? []).toEqual([]); // back to no filter at all
     a.setShield(2, 8);
     expect(skinFiltersOf(a)).toBeTruthy();
@@ -428,6 +439,145 @@ describe('Actor.setShield — energy-shield shader (design/01 fidelity roadmap m
     before!.intensity = 0.99; // tamper — a real update at the same ratio should leave it alone
     a.setShield(4, 8);
     expect(shieldFilterOf(a)!.intensity).toBe(0.99);
+  });
+});
+
+// 2026-08-26: the shell no longer disappears the frame the pool empties — it plays a ~200ms
+// exit (`EnergyShieldFilter.shatter`) that `ActorFilters` drives and holds the filter for. The
+// wiring is where this can go wrong invisibly: an exit that never starts, one that restarts
+// mid-flight, one that never releases the filter, or one that leaves a reused filter holding a
+// finished exit all look like "the shield broke" from the outside.
+describe('Actor.setShield — the shell exit (2026-08-26)', () => {
+  afterEach(() => resetActiveQuality());
+
+  const shatterOf = (a: Actor): number => shieldFilterOf(a)!.shatter;
+
+  /** A shielded actor whose pool has just emptied — the state every test here starts from. */
+  const broken = (): Actor => {
+    const a = new Actor('player', 12);
+    a.setShield(4, 8);
+    a.setShield(0, 8);
+    return a;
+  };
+
+  it('drives shatter 0 -> 1 across exactly SHATTER_MS', () => {
+    const a = broken();
+    expect(shatterOf(a)).toBe(0);
+    a.interpolate(1, SHATTER_MS / 4);
+    expect(shatterOf(a)).toBeCloseTo(0.25, 6);
+    a.interpolate(1, SHATTER_MS / 4);
+    expect(shatterOf(a)).toBeCloseTo(0.5, 6);
+    a.interpolate(1, SHATTER_MS / 2);
+    // Reset on release, not parked at 1 — this instance is REUSED by a regenerated shield, and
+    // one still holding a finished exit would come back expanded, thinned and invisible.
+    expect(shatterOf(a)).toBe(0);
+    expect(shieldFilterOf(a)!.intensity).toBe(0);
+  });
+
+  it('flares to full brightness at the break rather than exiting from a sliver of pool', () => {
+    const a = new Actor('player', 12);
+    a.setShield(1, 8); // 12.5% — a shield about to go
+    expect(shieldFilterOf(a)!.intensity).toBeCloseTo(0.125);
+    a.setShield(0, 8);
+    expect(shieldFilterOf(a)!.intensity).toBe(1);
+  });
+
+  it('overshoots nothing when a long frame lands mid-exit', () => {
+    // A hitch, or the 50ms hit-stop `shield_break` itself queues, can hand `tick` a frame far
+    // longer than what is left. `shatter` must not go past 1 (the shader's fade would go
+    // NEGATIVE and the shell would come back brighter than it started).
+    const a = broken();
+    a.interpolate(1, SHATTER_MS * 5);
+    expect(shatterOf(a)).toBe(0);
+    expect(skinFiltersOf(a) as unknown[] ?? []).toEqual([]);
+  });
+
+  it('finishes before shield REGEN could possibly cancel it', () => {
+    // A cross-layer invariant that nothing stated. Regen landing mid-exit cancels it (that is
+    // deliberate — see `setShield`), and the engine refills the pool `SHIELD_REGEN_DELAY` idle
+    // ticks after the last hit. If that delay ever dropped near `SHATTER_MS`, the shell would be
+    // cut off mid-flight in real play and every test in this file would still pass — the
+    // 2026-08-26 battery confirmed it: `SHIELD_REGEN_DELAY` 90 -> 3 survived the whole suite.
+    //
+    // Asserted as a MARGIN rather than as the number, so a retune of either constant is only a
+    // failure when the two actually collide.
+    const regenMs = (SHIELD_REGEN_DELAY / TICK_RATE) * 1000;
+    expect(regenMs).toBeGreaterThan(SHATTER_MS * 3);
+  });
+
+  it('does not restart when a second break lands inside the exit', () => {
+    const a = broken();
+    a.interpolate(1, SHATTER_MS / 2);
+    expect(shatterOf(a)).toBeCloseTo(0.5, 6);
+    a.setShield(0, 8); // a DoT tick on the same actor, or the same event twice
+    expect(shatterOf(a)).toBeCloseTo(0.5, 6); // not snapped back to the start
+    a.interpolate(1, SHATTER_MS / 2);
+    expect(skinFiltersOf(a) as unknown[] ?? []).toEqual([]); // and it still ends on time
+  });
+
+  it('cancels the exit when the shield regenerates mid-flight', () => {
+    // The exit and the live shell are the SAME filter, so an exit left running underneath a
+    // restored shield would keep expanding and thinning it.
+    const a = broken();
+    a.interpolate(1, SHATTER_MS / 2);
+    a.setShield(3, 8);
+    expect(shatterOf(a)).toBe(0);
+    expect(shieldFilterOf(a)!.intensity).toBeCloseTo(0.375);
+    a.interpolate(1, SHATTER_MS * 2); // the cancelled exit must not fire later
+    expect(skinFiltersOf(a) as unknown[]).toHaveLength(1);
+    expect(shieldFilterOf(a)!.intensity).toBeCloseTo(0.375);
+  });
+
+  it('does not shatter an actor that never had a shell on screen', () => {
+    // An actor arriving with an already-empty pool reaches ratio 0 from the initial `-1`
+    // without ever having been shielded. Playing a bubble bursting there would build a filter,
+    // and a render-target pass, around a character that never had one.
+    const a = new Actor('player', 12);
+    a.setShield(0, 8);
+    expect(shieldFilterOf(a)).toBeNull();
+    expect(skinFiltersOf(a) as unknown[] ?? []).toEqual([]);
+    a.interpolate(1, SHATTER_MS);
+    expect(shieldFilterOf(a)).toBeNull();
+  });
+
+  it('does not resurrect a shell that is no longer on screen', () => {
+    // The subtler half of the guard above: `shieldFilter` outlives the shell it draws (it is
+    // reused), so "there is a filter" is not "there is a shell". An exit started for a bubble
+    // nobody can see does not show up immediately — the list is not recomposed at that instant —
+    // it shows up at the NEXT recompose from any cause at all, which is what makes it the kind
+    // of bug that survives review. So the assertion has to be taken after one.
+    const a = new Actor('player', 12);
+    a.setShield(4, 8);
+    a.setShield(0, 0); // the pool itself went away — the shell detached, with no exit
+    expect(shieldFilterOf(a)).not.toBeNull(); // ...but the filter instance is still around
+    a.setShield(0, 8); // "broken", with nothing on screen to break
+    a.interpolate(1, SHATTER_MS / 2);
+    a.hitFlash(); // ANY recompose — a hit, a burn toggle, a quality flip
+    expect(skinFiltersOf(a) as unknown[]).toHaveLength(1); // the outline alone, no shell
+  });
+
+  it('drops the shell at once when the pool itself goes away', () => {
+    // `maxShield <= 0` is a different statement from "the shield broke" — there is no shield to
+    // watch shatter, so any exit in flight is abandoned rather than played out.
+    const a = broken();
+    a.interpolate(1, SHATTER_MS / 4);
+    a.setShield(0, 0);
+    expect(skinFiltersOf(a) as unknown[] ?? []).toEqual([]);
+    expect(shatterOf(a)).toBe(0);
+  });
+
+  it('runs the exit clock on the low quality tier too, which draws no shader at all', () => {
+    // `render/quality.ts`'s low tier composes an empty filter list, but the clock still decides
+    // WHEN the shell is gone — the same reason `lowTierAlpha` exists for the dissolve. A clock
+    // that only ran while something was drawn would leave `shieldActive` stuck true forever, and
+    // a tier flip back to high would resurrect a broken shell.
+    setActiveQuality('low');
+    const a = broken();
+    expect(skinFiltersOf(a) as unknown[] ?? []).toEqual([]);
+    a.interpolate(1, SHATTER_MS);
+    setActiveQuality('high');
+    a.refreshQuality();
+    expect(skinFiltersOf(a) as unknown[] ?? []).toEqual([]);
   });
 });
 
@@ -500,10 +650,25 @@ describe('Actor.hitFlash — outline shader (design/01 fidelity roadmap mileston
       const a = new Actor('player', 12);
       a.setShield(4, 8);
       a.hitFlash(1, 0);
-      a.setShield(0, 8); // broken — the shell detaches, `shield_break`'s own burst covers it
+      a.setShield(0, 8); // broken — the shell is now playing its exit, not sitting there
       a.hitFlash(-1, 0);
       expect(lastHitOf(a)).toEqual([1, 0]); // the second hit did not reach it
-      expect(skinFiltersOf(a) as unknown[]).toHaveLength(1);
+      // The shell is STILL ATTACHED here (it is mid-exit, 2026-08-26), so the elastic dent has
+      // to be excluded by name rather than by the filter's absence: a shield coming apart that
+      // sprang back from a hit would read as it healing.
+      expect(skinFiltersOf(a) as unknown[]).toHaveLength(2); // the exiting shell + the outline
+    });
+
+    it('dents again once a regenerated shell replaces the one that broke', () => {
+      // The other side of the guard above: excluding the exit must not leave the shell
+      // permanently deaf to impacts after the first break of a match.
+      const a = new Actor('player', 12);
+      a.setShield(4, 8);
+      a.setShield(0, 8);
+      a.interpolate(1, SHATTER_MS);
+      a.setShield(4, 8);
+      a.hitFlash(-1, 0);
+      expect(lastHitOf(a)).toEqual([-1, 0]);
     });
 
     it('defaults to a directionless hit rather than passing undefined through', () => {

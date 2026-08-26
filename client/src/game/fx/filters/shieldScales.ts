@@ -1,6 +1,7 @@
 // Split out of skinFx.ts (2026-08-26, shell rewrite): the ONE texture the shield shader
-// samples — a seamless irregular-scale tile — and nothing else. A sibling of `skinFx.ts`,
-// imported by it, never the other way round.
+// samples — a seamless irregular-scale tile — and nothing else. A sibling of `shieldFx.ts`
+// (which the shader itself moved into later the same day), imported by it, never the other
+// way round.
 //
 // Why this is generated rather than authored art (the question the 2026-08-26 session asked
 // directly — *"或许那张鳞片细节图还是得出？"*). The tile has exactly two hard requirements:

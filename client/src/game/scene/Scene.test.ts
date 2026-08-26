@@ -10,6 +10,7 @@
 import type { Graphics } from 'pixi.js';
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createGameState } from '@dd/engine/state/GameState';
+import { takeDamage } from '@dd/engine/systems/combat';
 import type { GameState } from '@dd/engine/state/GameState';
 import { pxToFp } from '@dd/engine/content/convert';
 import { freshStatus } from '@dd/engine/content/damage';
@@ -22,6 +23,7 @@ import { Layers } from './layers';
 import { bradToRad } from '../coords';
 import { BODY_TURN_PER_TICK } from '../../render/facing';
 import { resetActiveQuality, setActiveQuality } from '../../render/quality';
+import { SHATTER_MS } from './actorFilters';
 import type { Actor } from './Actor';
 import type { Entity } from './Entity';
 
@@ -31,6 +33,9 @@ import type { Entity } from './Entity';
 vi.mock('../fx/filters', () => ({
   EnergyShieldFilter: class {
     intensity = 0;
+    /** The exit, 0..1 — `ActorFilters` drives it once the pool empties (2026-08-26). */
+    shatter = 0;
+    hit() {}
     tick() {}
   },
   OutlineFilter: class {
@@ -606,6 +611,91 @@ describe('Scene — actors carry no lighting filter of their own any more', () =
     const scene = new Scene(new Layers());
     scene.reconcile(s);
     expect(skinFiltersOf(scene.actorAt(enemy.id)!)).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// The shield shell, driven by the ENGINE's numbers rather than by literals.
+//
+// Every test in `Actor.test.ts` calls `setShield(4, 8)` by hand. This is the seam where the real
+// pool arrives, and a 2026-08-26 mutation battery over `Scene.ts` — the file the shell-exit
+// battery never mutated — found it untested in exactly the way that matters. All three of these
+// survived the whole 3239-test suite:
+//
+//   v.setShield(p.maxShield, p.shield)          // the ratio inverted
+//   v.setShield(p.shield, 1)                    // the pool hard-coded
+//   v.setShield(Math.max(1, p.shield), p.maxShield)  // the shell can NEVER break
+//
+// The last one is the one to remember: it leaves the entire exit animation dead in the shipped
+// game with everything green. "0 survivors" is always scoped to the files a battery mutates.
+// ---------------------------------------------------------------------------------------
+
+describe('Scene — the shield shell reads the real pool, not just an on/off switch', () => {
+  const shellOf = (a: Actor): { intensity: number; shatter: number } | null =>
+    (a as unknown as { fx: { shieldFilter: { intensity: number; shatter: number } | null } })
+      .fx.shieldFilter;
+
+  it('sets the shell brightness to the RATIO the engine reports', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const p = s.players[0]!;
+    p.shield = p.maxShield / 4; // a real pool, quartered — not a literal pair
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+    expect(shellOf(scene.player!)!.intensity).toBeCloseTo(0.25, 6);
+  });
+
+  it('follows the pool down as it drains, frame by frame', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const p = s.players[0]!;
+    const scene = new Scene(new Layers());
+    const seen: number[] = [];
+    for (const k of [1, 0.75, 0.5, 0.25]) {
+      p.shield = p.maxShield * k;
+      scene.reconcile(s);
+      seen.push(shellOf(scene.player!)!.intensity);
+    }
+    expect(seen).toEqual([1, 0.75, 0.5, 0.25].map((k) => expect.closeTo(k, 6)));
+  });
+
+  it('starts the exit off a REAL hit that empties the pool', () => {
+    // `takeDamage` is the only producer of both halves of this moment: the `shield_break` event
+    // `EventReactor` throws its shards from, and the `shield === 0` the shell reads to begin its
+    // exit. Driving the real one here is what actually checks the claim the wiring's comments
+    // make — that the two halves need no handshake because they read the same instant from two
+    // different channels. No literal-driven test can check that.
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const p = s.players[0]!;
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+    expect(shellOf(scene.player!)!.shatter).toBe(0);
+
+    s.events.length = 0;
+    takeDamage(s, p, p.shield, 'enemy', 'physical');
+    expect(p.shield).toBe(0);
+    expect(s.events.some((e) => e.type === 'shield_break')).toBe(true);
+
+    scene.reconcile(s);
+    // Still on screen — the exit is what holds it there, and this is the frame the burst lands on.
+    expect(skinFiltersOf(scene.player!)).toHaveLength(1);
+    scene.interpolate(1, SHATTER_MS / 2);
+    expect(shellOf(scene.player!)!.shatter).toBeCloseTo(0.5, 6);
+    scene.interpolate(1, SHATTER_MS / 2);
+    expect(skinFiltersOf(scene.player!)).toEqual([]); // and only then gone
+  });
+
+  it('gives a shielded ENEMY a shell too — the sync is not player-only', () => {
+    // No shipped enemy carries a shield pool today (`enemies.ts`: `maxShield: 0`), which is why
+    // deleting the enemy half of the sync survived the suite untouched. That is a CONTENT gap,
+    // not a test gap: design/07's two-pool health is a property of every actor, and a shielded
+    // elite is a content change rather than a code one. So the fixture supplies the pool the
+    // shipped roster does not have yet, and the line stops being unverifiable.
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const e = addEnemy(s, 300, 300, 0 as Brad);
+    e.maxShield = 4;
+    e.shield = 2;
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+    expect(shellOf(scene.actorAt(e.id)!)!.intensity).toBeCloseTo(0.5, 6);
   });
 });
 

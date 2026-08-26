@@ -259,6 +259,40 @@ describe('GameLoop — offline sim stepping (advanceSim/stepSim)', () => {
   });
 });
 
+describe('GameLoop — the render frame every per-actor clock rides on', () => {
+  // The paused and not-yet-online paths above already assert `interpolate(1, 16)`. The RUNNING
+  // path — the one a match actually spends its time in — only had `toHaveBeenCalled()`, and a
+  // 2026-08-26 battery showed what that costs: `scene.interpolate(alpha, 0)` survived the whole
+  // suite. Every clock `ActorFilters` owns rides on that argument (the shield shell's 200ms exit
+  // and its shimmer, the hit-flash decay, the death dissolve, the burn heat-haze), so a frozen dt
+  // is "no actor ever animates again" with 3000+ tests still green.
+  it('hands the scene the real FRAME dt while running, not zero and not the sim step', () => {
+    const { deps, scene } = buildDeps();
+    const engine = createGameEngine(CFG);
+    const host = buildHost({ getEngine: () => engine });
+    const loop = new GameLoop(deps, host);
+
+    loop.update(16);
+
+    const calls = (scene.interpolate as ReturnType<typeof vi.fn>).mock.calls as Array<[number, number]>;
+    expect(calls.length).toBeGreaterThan(0);
+    for (const [, dt] of calls) expect(dt).toBe(16);
+  });
+
+  it('passes a LONGER frame straight through, so a hitch advances the clocks by what it cost', () => {
+    // The bound that matters for the exit: a 200ms animation stepped by a constant would take a
+    // different number of real milliseconds on a stuttering machine than on a smooth one.
+    const { deps, scene } = buildDeps();
+    const engine = createGameEngine(CFG);
+    const loop = new GameLoop(deps, buildHost({ getEngine: () => engine }));
+
+    loop.update(50);
+
+    const calls = (scene.interpolate as ReturnType<typeof vi.fn>).mock.calls as Array<[number, number]>;
+    for (const [, dt] of calls) expect(dt).toBe(50);
+  });
+});
+
 describe('GameLoop — hit-stop', () => {
   it('a consumed hit-stop freezes stepSim for that frame but still renders', () => {
     const { deps, fx, scene } = buildDeps();

@@ -339,6 +339,55 @@ facing continuum, but nothing said it was a **volume standing in a space**.
     it spends its time on. It stays because it is correct and free, and because a bandwidth-bound
     mobile GPU is where those fetches would show up; that case is unmeasured (`design/04` item 6)
     and nothing here should be read as a promise about it.
+- **...and since 2026-08-26 it has an EXIT** (`EnergyShieldFilter.shatter`, the one item the
+  thickness rewrite above left open — and the change that moved this filter out of `skinFx.ts`
+  into its own `fx/filters/shieldFx.ts`, since it took that file past the 500-line convention). Until this pass `ActorFilters` dropped the filter from its
+  composed list on the frame the pool hit 0: the shell vanished between two frames and
+  `EventReactor`'s positional burst had to carry the whole moment. Now a `uShatter` uniform runs
+  0 → 1 over `SHATTER_MS` (200 ms) while `ActorFilters` holds the filter ATTACHED — the same
+  "keep the view alive past the state change" shape `startDissolve` and `Scene`'s dying-view list
+  already use, not a second mechanism.
+  - **The surface throws itself open and its wall thins to a rim.** The expansion goes into
+    `surface` itself, not into `b` afterwards, which is what keeps the radial cull correct for
+    free: `b` is measured in surfaces, so a shell that grew 30% has a cull radius that grew with
+    it. Eased OUT — the shell leaps at the break and coasts; the reverse profile reads as a bubble
+    inflating. Simultaneously `THICKNESS` is scaled down toward zero, so the bright band migrates
+    out to the silhouette and narrows: measured half-peak width 0.265 of the surface radius at
+    rest, 0.08 at full shatter. A shell that expanded at constant thickness reads as inflating;
+    one whose wall stretches thin reads as a surface being pulled apart.
+  - **The whole fade lives in the shader, not in a second clock.** One `energy = uIntensity *
+    (1.0 - uShatter)` replaces every use of `uIntensity`, so at `uShatter = 1` the shader hands
+    back the source texel unchanged — measured as exact equality, not "small" — and the detach
+    that follows is invisible. It also runs the membrane's own extinction (`integrity` is derived
+    from `energy`) so whole scales go dark in the tile's shuffled rank order and the tint swings
+    hot, i.e. the exit is `design/13`'s dual-channel law played at 5× speed.
+  - **`BURST` is bounded by the filter's own area, not by taste.** `Actor` pins that area to 6
+    body radii per side, so `dist` beyond `0.5·√2` does not exist along its narrowest axis and a
+    shell that grew past it would be cut off FLAT on four sides only. `0.44 · 1.30 · 1.18 = 0.675`
+    against a limit of 0.707 — and the suite scans the actual visible edge at every instant rather
+    than trusting that arithmetic.
+  - **The membrane's scales are thrown outward per cell, off the channel that was already there.**
+    The tile's GREEN channel is each cell's place in a shuffled extinction order; the exit reuses
+    it as a launch speed, so the scales come apart in pieces instead of sliding off as one sheet.
+    Reading a per-cell constant costs a tap of its own (which cell is under this pixel is exactly
+    what the tap answers), so the membrane branch goes from two tile fetches to four; at rest the
+    offset is exactly zero and the second tap lands on the texel the first already pulled in.
+  - **The fragments are `Particles.ts`' job, not the shader's** (`shieldShards`, wired from
+    `EventReactor`'s `shield_break` case — whose event position IS the target actor's centre,
+    unlike the neighbouring `hit`). The decisive reason is the same fixed `filterArea`: anything
+    the shader draws is clipped at ~2.4 body radii, and a shard that flies further would simply
+    stop existing. A shader also pays for its fragments at every pixel of the region for the whole
+    animation, where 11 shards cost 11 shards — and this file already owns motion, gravity, spin,
+    lifetime, alpha decay and the quality budget.
+  - **The exit flares to full brightness rather than starting from the pool it died with.** A
+    shield that broke from 12% would otherwise play its whole 200 ms at 12% brightness, i.e.
+    invisibly. That lifts the refraction for one frame too, which is deliberate: the frame it
+    lands on is behind `EventReactor`'s 50 ms hit-stop and a 28 px burst, and a shell bending
+    light harder as it lets go is the read we want there.
+  - **Perf: the exit is free at rest, and the shipped shader did not get slower.** Measured with
+    `EXT_disjoint_timer_query_webgl2` (never `performance.now()`, which reported a 1000×-ALU
+    control at 2.35× on this same machine), interleaved A/B/C with that control carried through
+    every round — see ROADMAP's "The shell gets an exit" for the table.
 - **The body is shaded as a sphere** (`render/rigShading.ts`). A fixed specular highlight
   toward the key light and a curved terminator falling away from it — drawn, not authored,
   because they must stay pinned to the light's **screen-space** direction while the body they
@@ -1550,15 +1599,17 @@ the app's own layout maths.
    - **`EnergyShieldFilter`** — a transparent shell enclosing the character (a rim band until
      2026-08-25, a filled disc with a Fresnel hairline until 2026-08-26, a chord through a
      shell of real thickness with the body between its two hemispheres since; see "The shield
-     is the deliberate exception" above and the two bullets after it for the rewrites and what
+     is the deliberate exception" above and the three bullets after it for the rewrites and what
      each measured), built on the same UV-distance-from-centre technique as `VignetteFilter`
      (not true alpha-edge detection, so it needs no extra per-skin wiring against either the
      Graphics placeholder body or a real `.tao` rig). It is the one filter here that samples a
      SECOND texture — the generated membrane tile, `fx/filters/shieldScales.ts` — and the one
      with a radial cull, which is the only measured perf lever it has. `Actor.setShield` drives `intensity` off the actor's live two-pool shield ratio
-     (design/02/05/07) — full glow at a full shield, fading as it drains, gone once it
-     hits 0 (the `shield_break` event's own flash, `EventReactor`, already covers that
-     instant). Its UV-distance-from-0.5 assumption DOES need the render area itself to be
+     (design/02/05/07) — full glow at a full shield, fading as it drains, and since 2026-08-26
+     playing a ~200 ms EXIT of its own once it hits 0 (`shatter`: expanding, wall thinning,
+     scales thrown outward, light collapsing to exactly nothing) rather than being dropped
+     between two frames. `EventReactor`'s burst and `ParticleSystem.shieldShards` cover the
+     same instant in world space. Its UV-distance-from-0.5 assumption DOES need the render area itself to be
      centred and symmetric, though — Pixi's auto-computed filter bounds for `skin.view`
      are not (the placeholder's facing-direction wedge / a real rig's aim-mounted weapon
      sprite both extend outward on one side only), which read as a lopsided glow until

@@ -430,3 +430,25 @@ describe('FxController quality tiers', () => {
     expect(count).toBeLessThan(3);
   });
 });
+
+describe('FxController.updateFx — the particle system is actually advanced', () => {
+  // Nothing in this file asserted that `updateFx` steps `this.particles` at all, and a 2026-08-26
+  // battery confirmed the gap: `this.particles.update(0 * dt, …)` survived the whole suite. Every
+  // burst this controller owns would spawn and then hang in mid-air forever — the muzzle flames,
+  // the casings, the death debris, and the shield shards `shield_break` throws.
+  it('moves live particles and retires them on schedule', () => {
+    const fx = new FxController(new Layers());
+    fx.particles.shieldShards(0, 0, 0x66e0ff);
+    const spawned = fx.particles.view.children.length;
+    expect(spawned).toBeGreaterThan(0);
+    const first = fx.particles.view.children[0]!;
+    const at = { x: first.x, y: first.y };
+
+    fx.updateFx(16, 0, undefined);
+    expect(Math.hypot(first.x - at.x, first.y - at.y)).toBeGreaterThan(0); // it moved
+
+    // ...and the same clock retires them, so a burst is a burst and not a permanent decal.
+    fx.updateFx(400, 0, undefined);
+    expect(fx.particles.view.children.length).toBe(0);
+  });
+});

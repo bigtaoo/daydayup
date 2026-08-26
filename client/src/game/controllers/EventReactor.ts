@@ -93,6 +93,12 @@ export class EventReactor {
         case 'shield_break':
           // A shattered shield — a bright cyan burst (design/07 two-pool break).
           this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), THEME.colors.shield, 28);
+          // ...plus the shell's own fragments (2026-08-26). The event's position IS the target
+          // actor's centre (`combat.ts` pushes `target.gx/gy`), which is what the ring has to be
+          // thrown from — unlike `hit`, whose position is the impact point. The shell's surface
+          // animates itself over the same 200 ms in `EnergyShieldFilter.shatter`, driven off the
+          // pool reaching 0 rather than off this event, so the two need no handshake.
+          this.fx.particles.shieldShards(fpToPx(e.gx), fpToPx(e.gy), THEME.colors.shield);
           this.fx.addShake(0.4);
           this.fx.addHitStop(50);
           this.fx.pulseChromatic(0.014);

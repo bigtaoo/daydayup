@@ -142,6 +142,42 @@ export class ParticleSystem {
     }
   }
 
+  /**
+   * The shell coming apart on `shield_break` (2026-08-26) — a ring of shards thrown outward
+   * from the actor's own centre, additive and shield-tinted, dying inside the ~200 ms the
+   * shell's own exit animation (`EnergyShieldFilter.shatter`) takes.
+   *
+   * The fragments live HERE and not in the shader, which was the open question. Three reasons,
+   * and the first is decisive: `Actor` pins that filter's area to a fixed square 6 body radii
+   * per side, so anything the shader draws is clipped at ~2.4 radii from the centre — a shard
+   * that flies further simply stops existing, which is the one thing a fragment must not do.
+   * Second, a shader pays for its fragments at every pixel of the region for the whole
+   * animation, where these cost only the shards that exist. Third, this file already owns
+   * motion, gravity, spin, lifetime, alpha decay and the quality budget, and `shield_break` is
+   * already an `EventReactor` case composing a burst, a shake and a hit-stop at that same
+   * position — the shards belong with those, not inside the shell's own maths.
+   *
+   * What the shader keeps is what only it can do: the SURFACE coming apart (expanding, its wall
+   * thinning, its scales thrown outward off the tile's own extinction order).
+   */
+  shieldShards(x: number, y: number, color: number) {
+    const count = this.scaled(11);
+    for (let i = 0; i < count; i++) {
+      // Evenly spaced and then jittered, so the ring reads as a shell letting go all at once
+      // rather than as a random spray — the same reason `explosionDebris` walks the circle.
+      const a = (i / count) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
+      const speed = 130 + Math.random() * 90;
+      this.spawn({
+        x, y, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
+        // Barely any: these are shell fragments dissipating, not debris falling. Enough to
+        // stop the ring reading as mechanically symmetric, not enough to read as weight.
+        gravity: 70, spin: (Math.random() - 0.5) * 9,
+        color, size: 2 + Math.random() * 2.5, shape: 'rect', additive: true, alpha: 0.85,
+        lifeMs: 150 + Math.random() * 110,
+      });
+    }
+  }
+
   /** One faint, slow-drifting dust mote — ambient, desaturated (design/13 "quiet
    * world bed, punchy combat"). Spawned periodically within the current room bounds. */
   private driftingDust(bounds: { x: number; y: number; w: number; h: number }) {

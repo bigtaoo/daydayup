@@ -25,7 +25,9 @@ function fakeFx(): FxController {
     addShake: vi.fn(),
     addHitStop: vi.fn(),
     pulseChromatic: vi.fn(),
-    particles: { muzzleFlame: vi.fn(), shellCasing: vi.fn(), explosionDebris: vi.fn() },
+    particles: {
+      muzzleFlame: vi.fn(), shellCasing: vi.fn(), explosionDebris: vi.fn(), shieldShards: vi.fn(),
+    },
   } as unknown as FxController;
 }
 
@@ -158,6 +160,51 @@ describe('EventReactor — hit-flash outline (design/01 fidelity roadmap milesto
     reactor.consume([{ type: 'hit', target: 7, faction: 'player', gx: 0, gy: 0, damage: 1, damageType: 'physical' } as GameEvent]);
     expect(host.actorAt).toHaveBeenCalledWith(7);
     expect(hitFlash).toHaveBeenCalled();
+  });
+
+  // 2026-08-26. `shield_break` grew a second fx call: the shell's own fragments
+  // (`ParticleSystem.shieldShards`). Worth a test of its own because the POSITION is the part
+  // that can be wrong invisibly — `shield_break` carries the target actor's centre (`combat.ts`
+  // pushes `target.gx/gy`) while the neighbouring `hit` case carries the impact point, and a
+  // ring of shards thrown from the wrong one of those still reads as "the shield broke".
+  describe('shield_break spawns the shell fragments', () => {
+    const breakAt = (gx: number, gy: number) => {
+      const hud = new HudView();
+      hud.build(new Layers(), { w: 1280, h: 720 });
+      const fx = fakeFx();
+      new EventReactor(fx, hud, fakeAudio(), fakeHost()).consume([
+        { type: 'shield_break', id: 7, gx, gy } as GameEvent,
+      ]);
+      return fx.particles.shieldShards as unknown as ReturnType<typeof vi.fn>;
+    };
+
+    it('throws the ring from the event position, in screen px', () => {
+      const shards = breakAt(pxToFp(300), pxToFp(200));
+      expect(shards).toHaveBeenCalledTimes(1);
+      const [x, y] = shards.mock.calls[0] as [number, number, number];
+      expect(x).toBeCloseTo(300, 6);
+      expect(y).toBeCloseTo(200, 6);
+    });
+
+    it('follows the actor rather than sitting at the origin', () => {
+      // The failure this catches: a burst hard-coded to (0,0), or to the camera centre, which
+      // looks plausible in any single screenshot of a fight near the middle of the room.
+      const [x, y] = breakAt(pxToFp(-140), pxToFp(96)).mock.calls[0] as [number, number, number];
+      expect(x).toBeCloseTo(-140, 6);
+      expect(y).toBeCloseTo(96, 6);
+    });
+
+    it('does not fire on any other event that reaches the same switch', () => {
+      const hud = new HudView();
+      hud.build(new Layers(), { w: 1280, h: 720 });
+      const fx = fakeFx();
+      new EventReactor(fx, hud, fakeAudio(), fakeHost()).consume([
+        { type: 'hit', target: 7, faction: 'player', gx: 0, gy: 0, damage: 1, damageType: 'physical' },
+        { type: 'deflect', gx: 0, gy: 0 },
+        { type: 'clash', gx: 0, gy: 0 },
+      ] as GameEvent[]);
+      expect(fx.particles.shieldShards).not.toHaveBeenCalled();
+    });
   });
 
   // 2026-08-26. The shield shell dents where the hit LANDED (`EnergyShieldFilter.hit`), which
