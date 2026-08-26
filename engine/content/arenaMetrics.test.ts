@@ -25,12 +25,41 @@ function map(rooms: ArenaRoom[], doors: [string, string][], extra: Partial<Arena
 }
 
 describe('variety — the "stamped, not authored" measurement', () => {
+  // ROOM-RELATIVE is the engine's convention (only `rectGrid` is absolute — see
+  // buildArenaRoomRects). Two rooms furnished the same way therefore carry the SAME
+  // numbers regardless of where they sit, and the metric must not subtract the offset.
   it('counts two identically-furnished rooms at DIFFERENT offsets as one interior', () => {
-    const furnish = (x: number, y: number): Partial<ArenaRoom> => ({
+    const furnish: Partial<ArenaRoom> = { pillars: [{ center: { x: 5, y: 5 }, radius: 1 }] };
+    const m = measureArena(map([room('a', 0, 0, furnish), room('b', 20, 20, furnish)], [['a', 'b']]));
+    expect(m.interiors).toEqual({ rooms: 2, distinct: 1, dominantShare: 1 });
+  });
+
+  // The distinction the first version of this module got wrong, and that its fixture agreed
+  // with: a map authoring these as ABSOLUTE is internally consistent and visibly uniform,
+  // but every room's numbers differ. `interiors` must report that honestly (2 distinct),
+  // while `interiorShapes` still recognises one repeated arrangement.
+  it('separates "same numbers" from "same shape" when a map authors absolute coordinates', () => {
+    const absolute = (x: number, y: number): Partial<ArenaRoom> => ({
       pillars: [{ center: { x: x + 5, y: y + 5 }, radius: 1 }],
     });
-    const m = measureArena(map([room('a', 0, 0, furnish(0, 0)), room('b', 20, 20, furnish(20, 20))], [['a', 'b']]));
-    expect(m.interiors).toEqual({ rooms: 2, distinct: 1, dominantShare: 1 });
+    const m = measureArena(
+      map([room('a', 0, 0, absolute(0, 0)), room('b', 20, 20, absolute(20, 20))], [['a', 'b']]),
+    );
+    expect(m.interiors.distinct).toBe(2);
+    expect(m.interiorShapes.distinct).toBe(1);
+  });
+
+  it('interiorShapes still separates genuinely different arrangements', () => {
+    const m = measureArena(
+      map(
+        [
+          room('a', 0, 0, { pillars: [{ center: { x: 5, y: 5 }, radius: 1 }] }),
+          room('b', 20, 0, { pillars: [{ center: { x: 1, y: 1 }, radius: 1 }, { center: { x: 8, y: 8 }, radius: 1 }] }),
+        ],
+        [['a', 'b']],
+      ),
+    );
+    expect(m.interiorShapes.distinct).toBe(2);
   });
 
   // The counterweight: without it the test above would also pass if `interiorKey` returned a
@@ -55,7 +84,7 @@ describe('variety — the "stamped, not authored" measurement', () => {
       map(
         [
           room('a', 0, 0, { pillars: [p(2, 2), p(7, 7)] }),
-          room('b', 20, 0, { pillars: [p(27, 7), p(22, 2)] }),
+          room('b', 20, 0, { pillars: [p(7, 7), p(2, 2)] }),
         ],
         [['a', 'b']],
       ),
@@ -242,11 +271,16 @@ describe('the shipped arena_prototype_60', () => {
     expect(m.graph.isolated).toEqual([]);
   });
 
-  it('is one room stamped 60 times — a single footprint, interior and loot layout', () => {
+  // The signature of a map whose pillars and loot markers were authored as ABSOLUTE
+  // coordinates: one shape, sixty different sets of numbers for it. `interiors.distinct === 1`
+  // (what the first version of this module reported) would have hidden the defect behind the
+  // correct-sounding "one room stamped 60 times" headline.
+  it('is one SHAPE stamped 60 times, at 60 different sets of coordinates', () => {
     expect(m.footprints.distinct).toBe(1);
-    expect(m.interiors.distinct).toBe(1);
+    expect(m.interiorShapes.distinct).toBe(1);
+    expect(m.interiors.distinct).toBe(60);
     expect(m.interiors.rooms).toBe(60);
-    expect(m.lootLayouts.distinct).toBe(1);
+    expect(m.lootLayouts.distinct).toBe(60);
     expect(m.lootTables).toEqual({ arena_common: 60 });
   });
 

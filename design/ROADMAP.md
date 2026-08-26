@@ -624,18 +624,44 @@ Measured, not guessed:
 | | `arena_prototype_60` |
 |---|---|
 | rooms | 60, **all 10x10**, on a regular 10x6 lattice 2 cells apart |
-| room footprints / interiors / loot layouts | **1 distinct each, over all 60 rooms** |
+| room footprints | **1 distinct** over all 60 |
+| interiors | 60 distinct sets of numbers for **1 distinct SHAPE** — see the placement defect below |
 | wall runs | **0 in the entire map** — every room is `solids: []` |
-| cover | 60 pillars, one dead-centre per room; cover/floor **3.1% flat**, min = max |
-| loot | 60 markers, all `arena_common`, all at the same local offset |
-| encounters | 24 / 60 rooms, 6 distinct scripts |
-| hazards | 7 spikes, one kind, all identical |
+| cover | 60 authored pillars, one per room; **every one lands outside its own room** |
+| loot | 60 markers, all `arena_common`, **all 60 misplaced** |
+| off the map entirely | **90 of the 120 pillars + markers** — e.g. `room_0_6`'s pillar at (168, 24) on a 134-wide map |
+| encounters / hazards | 24 / 60 rooms, 6 scripts; 7 spikes, 1 kind — **both authored correctly** |
 | door graph | connected, 71 doors, diameter 18, degrees {1:7, 2:27, 3:23, 4:3}, 14 chokepoints |
+| enclosure | 60 unenclosed rooms, **71 doors gating nothing**, 33 undoored walk-throughs |
 | the 8 spawns | none orphaned, none colliding — but **3 hops apart at the closest, 18 at the furthest** |
 
-Structural validity and design quality are different claims, and only the first one had ever
-been measured. Note which half of that table is fine: the door graph is a genuinely reasonable
-shape. It is the *content stamped into it* that is one room repeated 60 times.
+Structural validity and design quality are different claims, and only the first had ever been
+measured. Two separate defects, and the second is the serious one:
+
+**1. It is one room stamped 60 times.** One footprint, one interior shape, one loot layout, one
+hazard kind. The door graph is the exception — connected, 18 hops across, 14 chokepoints, a
+genuinely reasonable shape.
+
+**2. It has no geometry, and its contents are in the wrong coordinate space.** `roomGeometry`
+derives walls ONLY from each room's `solids`, and every room's is empty — so the room rects and
+all 71 doors are *logical only*. Confirmed by walking it: a player driven due east travels 30
+grid units through three rooms and two inter-room gaps without touching anything, and stops
+only when the zone kills them. Every chokepoint the graph reports is fictional. Separately, the
+engine's convention (documented at `buildArenaRoomRects`) is that only `rectGrid` is absolute
+and `solids`/`pillars`/`cellTraits`/`spawns`/`lootMarkers` are ROOM-RELATIVE — and this map
+authors its pillars and loot markers as absolute, so the offset is applied to an already-
+absolute number. `room_0_0`'s pillar, written `(16,16)`, is built at `(24,24)`: a room away.
+Pillars land at `2*rect + 8`, which puts 45 of 60 past the map's own bounds. `cellTraits` and
+`spawns` are authored correctly, which is what makes this a convention bug rather than noise.
+
+**The second defect was invisible to the first pass of this audit, for a reason worth keeping.**
+The variety metrics normalized each feature by subtracting `rectGrid` — the wrong convention —
+and reported `1 distinct interior over 60 rooms`, a correct-sounding headline that hid it. The
+fixture agreed: it authored its "identically furnished rooms" absolutely too, so the test and
+the code were wrong in the same direction. Fixed by keying on the authored numbers (the
+engine's convention) and adding `interiorShapes` beside it: **many distinct interiors + one
+distinct shape is precisely the double-offset signature**, and `arenaGeometryMetrics` confirms
+it directly.
 
 **Nobody had ever looked at it.** `?arenaDemo=1` builds `landing_basic` (the synthetic 3-room
 fixture), and the only path to the real map was `?pvp=1` — matchmaking, a running matchsvc and
@@ -650,11 +676,13 @@ first):
    at all rather than naming the typo. Wired at **net zero lines** in `Game.ts`, which sits
    exactly on its 1033-line baseline — the `arenaDemo` field became `ArenaId | null` and its
    now-inaccurate doc comment paid for the new argument.
-2. **`engine/content/arenaMetrics.ts` + `npm run audit:arena -w client`** — pure metrics
-   (variety, cover, door graph incl. iterative-Tarjan chokepoints, spawn fairness, zone reach)
-   and the printed report the table above came from. Deliberately a REPORT, not a gate:
-   thresholds written today would pin the placeholder's own numbers as the standard. They belong
-   with the map that can meet them.
+2. **`engine/content/arenaMetrics.ts` + `arenaGeometryMetrics.ts` + `npm run audit:arena`** —
+   pure metrics in two halves: variety/cover/door-graph (incl. iterative-Tarjan chokepoints)/
+   spawn fairness/zone reach, and separately where the content LANDS (per-feature placement
+   against the engine's offset rule, perimeter enclosure, doors that gate nothing, undoored
+   walk-throughs between neighbouring rooms). Deliberately a REPORT, not a gate: thresholds
+   written today would pin the placeholder's own numbers as the standard. They belong with the
+   map that can meet them. Split across two files per the 500-line convention, form (1).
 
 **Verified live, and the verification lied twice first** — both times in ways already written
 down in this repo. `?arena=arena_prototype_60` boots the real 60-room map in one tab: 60 rooms,
@@ -667,15 +695,22 @@ it removed, 48.17 restored** — a control that fires. Getting there needed: hid
 non-compositing tab never runs its ticker, so the camera sat at the origin and every read came
 back identical. **The first three reads were a stale frame, and only the control said so.**
 
-**Tests: 24 new, plus a mutation battery that found a real hole.** Four mutants over
-`arenaMetrics.ts`; three died, and Tarjan's ROOT rule survived — the star fixture starts its DFS
-at a leaf, so the hub was always found by the ordinary non-root test and the root's child-count
-rule was never exercised. Listing the hub first as `rooms[0]` kills it. The suite also drives one
-case off the REAL shipped JSON rather than a fixture, so a schema drift between the map and this
-reader cannot pass unnoticed.
+**Tests: 51 new, and both mutation batteries found real holes.** Over `arenaMetrics.ts`: four
+mutants, three died, and Tarjan's ROOT rule survived — the star fixture starts its DFS at a leaf,
+so the hub was always found by the ordinary non-root test and the root's child-count rule was
+never exercised. Listing the hub first as `rooms[0]` kills it. Over `arenaGeometryMetrics.ts`:
+seven mutants, **three survived and all three named the same gap** — every leak test was an
+east-west pair, so the entire north-south corridor branch (its occlusion guard, its facing-edge
+scan) was uncovered, and a half-open containment case was missing. Vertical twins for each case
+kill all three, verified per-branch. Both batteries carry a doc-comment CONTROL mutant that must
+survive, since a battery reporting all-killed is as suspect as one reporting all-survived. Both
+suites also drive a case off the REAL shipped JSON, which is where the placement defect surfaced
+— a fixture-only suite would have agreed with the map.
 
 **Still open: the map itself.** Authoring a real one is the next pass, and the audit is what it
-gets held to.
+gets held to. It is now clear that authoring means more than furnishing: the map needs actual
+`solids` so its rooms and doors constrain movement at all, and its pillar/loot coordinates have
+to move into the room-relative space every other consumer already assumes.
 
 
 ## Phase 5 — Presentation & platform

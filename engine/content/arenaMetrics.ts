@@ -82,9 +82,13 @@ export interface ArenaMetrics {
   sizeGrid: { w: number; h: number };
   /** Distinct room footprints (w x h). 1 means every room is the same box. */
   footprints: Variety;
-  /** Distinct interior layouts — `solids` + `pillars`, expressed relative to the room's
-   *  own origin so two identically-furnished rooms at different offsets compare equal. */
+  /** Distinct interior layouts (`solids` + `pillars`) as the engine reads them. */
   interiors: Variety;
+  /** The same, translated to each room's own bounding box — "how many distinct SHAPES".
+   *  Fewer shapes than interiors means the same arrangement was authored at many different
+   *  offsets, which for a lattice of same-size rooms means the coordinates are absolute
+   *  where the engine expects room-relative. See `interiorShapeKey`. */
+  interiorShapes: Variety;
   lootLayouts: Variety;
   encounters: Variety;
   traits: Variety;
@@ -120,23 +124,52 @@ function varietyOf(keys: readonly (string | null)[]): Variety {
   };
 }
 
-/** A room's interior, relative to its own origin — the comparison that makes "room 3 and
- *  room 47 are furnished identically" a measurable fact rather than an impression. */
+/**
+ * A room's interior AS THE ENGINE READS IT. Every one of these lists is room-relative by
+ * the engine's own convention (`buildArenaRoomRects`' doc comment: only `rectGrid` is
+ * absolute), so the authored numbers are used verbatim — subtracting the room offset here
+ * would make two identically-furnished rooms at different offsets compare UNEQUAL, and it
+ * is what the first version of this module did.
+ *
+ * That matters beyond correctness: a map that authored these as if they were ABSOLUTE is
+ * internally consistent and looks uniform to the eye, but every room's numbers differ, so
+ * this key reports 60 distinct interiors for what is visibly one repeated room. Pair it
+ * with `interiorShapeKey` below — "many distinct interiors, ONE distinct shape" is exactly
+ * that defect's signature, and `arenaGeometryMetrics.measurePlacement` confirms it.
+ */
 function interiorKey(room: ArenaRoom): string | null {
-  const solids = room.solids.map((s) => `s${s.x},${s.y},${s.w},${s.h}`);
-  const pillars = (room.pillars ?? []).map(
-    (p) => `p${p.center.x - room.rectGrid.x},${p.center.y - room.rectGrid.y},${p.radius}`,
-  );
+  const parts = featureParts(room);
+  return parts.length === 0 ? null : canonical(parts);
+}
+
+function featureParts(room: ArenaRoom): string[] {
+  return [
+    ...room.solids.map((s) => `s${s.x},${s.y},${s.w},${s.h}`),
+    ...(room.pillars ?? []).map((p) => `p${p.center.x},${p.center.y},${p.radius}`),
+  ];
+}
+
+/** The same interior, translated so its own bounding box starts at the origin — so "the
+ *  same furniture arrangement, sitting somewhere else" counts as one shape whatever
+ *  coordinate convention the map was authored in. */
+function interiorShapeKey(room: ArenaRoom): string | null {
+  const solids = room.solids;
+  const pillars = room.pillars ?? [];
   if (solids.length === 0 && pillars.length === 0) return null;
-  return canonical([...solids, ...pillars]);
+  const xs = [...solids.map((s) => s.x), ...pillars.map((p) => p.center.x)];
+  const ys = [...solids.map((s) => s.y), ...pillars.map((p) => p.center.y)];
+  const ox = Math.min(...xs);
+  const oy = Math.min(...ys);
+  return canonical([
+    ...solids.map((s) => `s${s.x - ox},${s.y - oy},${s.w},${s.h}`),
+    ...pillars.map((p) => `p${p.center.x - ox},${p.center.y - oy},${p.radius}`),
+  ]);
 }
 
 function lootKey(room: ArenaRoom): string | null {
   const markers = room.lootMarkers ?? [];
   if (markers.length === 0) return null;
-  return canonical(
-    markers.map((m) => `${m.point.x - room.rectGrid.x},${m.point.y - room.rectGrid.y}:${m.tableId}`),
-  );
+  return canonical(markers.map((m) => `${m.point.x},${m.point.y}:${m.tableId}`));
 }
 
 function encounterKey(room: ArenaRoom): string | null {
@@ -151,7 +184,7 @@ function traitKey(room: ArenaRoom): string | null {
   return canonical(
     traits.map(
       (t) =>
-        `${t.kind}@${t.rectGrid.x - room.rectGrid.x},${t.rectGrid.y - room.rectGrid.y},` +
+        `${t.kind}@${t.rectGrid.x},${t.rectGrid.y},` +
         `${t.rectGrid.w}x${t.rectGrid.h}:${t.timed ? 'timed' : 'always'}:${t.damage ?? 0}`,
     ),
   );
@@ -369,6 +402,7 @@ export function measureArena(map: ArenaMap): ArenaMetrics {
     sizeGrid: map.sizeGrid,
     footprints: varietyOf(map.rooms.map((r) => `${r.rectGrid.w}x${r.rectGrid.h}`)),
     interiors: varietyOf(map.rooms.map(interiorKey)),
+    interiorShapes: varietyOf(map.rooms.map(interiorShapeKey)),
     lootLayouts: varietyOf(map.rooms.map(lootKey)),
     encounters: varietyOf(map.rooms.map(encounterKey)),
     traits: varietyOf(map.rooms.map(traitKey)),

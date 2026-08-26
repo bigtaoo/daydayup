@@ -1,15 +1,23 @@
 /**
- * Arena map audit (design/15) — a printed report over every map in `ARENA_CATALOG`,
- * measured by `@dd/engine/content/arenaMetrics`.
+ * Arena map audit (design/15) — a printed report over every map in `ARENA_CATALOG`, in two
+ * halves: `arenaMetrics` (variety, cover, door graph, spawns, zone reach) and
+ * `arenaGeometryMetrics` (where the content actually lands, and whether the rooms and doors
+ * physically exist).
  *
  * Why this is a report and not a gate: `tools/map-editor`'s `validate.ts` already answers
- * "is this map structurally loadable", and `arena_prototype_60.json` passes it. What
- * nothing measured is whether the map is DESIGNED — and it is not: it is 60 identical
- * 10x10 rooms on a regular lattice, every one with `solids: []`, one dead-centre pillar and
- * one `arena_common` loot marker. Turning those observations into pass/fail thresholds now
- * would just pin the placeholder's own numbers as the standard; the thresholds belong with
- * the map that can meet them (ROADMAP: the arena-map authoring pass). Until then this
- * prints the numbers, and `arenaMetrics.test.ts` pins that the numbers mean what they say.
+ * "is this map structurally loadable", and `arena_prototype_60.json` passes it. What nothing
+ * measured is whether the map is DESIGNED — and it is not. It is 60 identical 10x10 rooms on
+ * a regular lattice with `solids: []` everywhere, so it has no walls at all: the room rects
+ * and all 71 doors are logical-only, and an actor crosses the whole map in a straight line.
+ * Worse, its pillars and loot markers are authored as ABSOLUTE coordinates where the engine
+ * expects room-relative, so every one of them is displaced and most land off the map.
+ *
+ * Both of those were invisible to the variety half of this report, which is why the geometry
+ * half exists: "60 identical rooms" and "60 rooms whose contents are all somewhere else" look
+ * the same from a uniformity metric. Turning any of it into pass/fail thresholds now would
+ * pin the placeholder's own numbers as the standard; the thresholds belong with the map that
+ * can meet them (ROADMAP: the arena-map authoring pass). Until then this prints the numbers,
+ * and the two metrics test files pin that the numbers mean what they say.
  *
  * Run: `npm run audit:arena -w client`. Same harness shape as the two balance sims — kept
  * out of the default `npm test` glob because its output is a report to read, not an
@@ -17,6 +25,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import { measureArena, type ArenaMetrics } from '@dd/engine/content/arenaMetrics';
+import { measureEnclosure, measurePlacement } from '@dd/engine/content/arenaGeometryMetrics';
+import type { ArenaMap } from '@dd/engine/content/arenas';
 import { ARENA_CATALOG, ARENA_IDS } from '../src/game/match/arenaCatalog';
 
 function pct(x: number): string {
@@ -35,6 +45,38 @@ function varietyLine(label: string, v: { rooms: number; distinct: number; domina
     `   (most common covers ${pct(v.dominantShare)})`;
 }
 
+/** The half of the audit that asks where the content physically LANDS — see
+ *  arenaGeometryMetrics.ts for why a variety metric cannot see any of this. */
+function geometryReport(map: ArenaMap): string {
+  const p = measurePlacement(map);
+  const e = measureEnclosure(map);
+  const lines: string[] = [];
+  const push = (s = '') => lines.push(s);
+
+  push('PLACEMENT — where the authored content lands once the room offset is applied');
+  for (const [feature, counts] of Object.entries(p.byFeature)) {
+    if (counts.authored === 0) continue;
+    const flag = counts.misplaced > 0 ? '  <-- OUTSIDE ITS OWN ROOM' : '';
+    push(`  ${feature.padEnd(20)} ${String(counts.authored).padStart(3)} authored, ` +
+      `${String(counts.misplaced).padStart(3)} misplaced${flag}`);
+  }
+  push(`  off the map entirely  ${p.offMap.length}`);
+  for (const m of p.offMap.slice(0, 3)) {
+    push(`      e.g. ${m.room} ${m.feature} -> (${m.at.x}, ${m.at.y})`);
+  }
+  push();
+
+  push('ENCLOSURE — whether the rooms and doors are physically real');
+  push(`  solid cells            ${e.solidCells}${e.solidCells === 0 ? '  <-- NO WALLS ANYWHERE' : ''}`);
+  push(`  unenclosed rooms       ${e.unenclosedRooms.length}`);
+  push(`  perimeter coverage     min ${pct(e.perimeterCoverage[0] ?? 0)}` +
+    `  max ${pct(e.perimeterCoverage[e.perimeterCoverage.length - 1] ?? 0)}`);
+  push(`  doors gating nothing   ${e.doorsWithoutWalls}`);
+  push(`  undoored walk-throughs ${e.undoorLeaks}  (room pairs with no door and no wall)`);
+  push();
+  return lines.join('\n');
+}
+
 function report(m: ArenaMetrics): string {
   const lines: string[] = [];
   const push = (s = '') => lines.push(s);
@@ -43,7 +85,8 @@ function report(m: ArenaMetrics): string {
   push();
   push('VARIETY — how much of this map is the same thing repeated');
   push(varietyLine('room footprints', m.footprints));
-  push(varietyLine('interiors (cover)', m.interiors));
+  push(varietyLine('interiors (as read)', m.interiors));
+  push(varietyLine('interior SHAPES', m.interiorShapes));
   push(varietyLine('loot layouts', m.lootLayouts));
   push(varietyLine('encounters', m.encounters));
   push(varietyLine('hazard tiles', m.traits));
@@ -53,11 +96,11 @@ function report(m: ArenaMetrics): string {
 
   const c = m.cover;
   const mid = c.coverFractions[Math.floor(c.coverFractions.length / 2)] ?? 0;
-  push('COVER — what breaks line of sight');
+  push('COVER — what breaks line of sight, AS AUTHORED (see PLACEMENT for where it lands)');
   push(`  wall-run rects         ${c.totalSolids} across the whole map`);
   push(`  pillars                ${c.totalPillars}`);
-  push(`  rooms with NO cover    ${c.roomsWithNoCover.length} / ${m.roomCount}`);
-  push(`  rooms with NO walls    ${c.roomsWithNoWalls.length} / ${m.roomCount}`);
+  push(`  rooms with no authored cover  ${c.roomsWithNoCover.length} / ${m.roomCount}`);
+  push(`  rooms with no authored walls  ${c.roomsWithNoWalls.length} / ${m.roomCount}`);
   push(
     `  cover / floor area     min ${pct(c.coverFractions[0] ?? 0)}` +
       `  median ${pct(mid)}  max ${pct(c.coverFractions[c.coverFractions.length - 1] ?? 0)}`,
@@ -92,8 +135,9 @@ function report(m: ArenaMetrics): string {
 describe('arena map audit', () => {
   for (const id of ARENA_IDS) {
     it(`reports ${id}`, () => {
-      const metrics = measureArena(ARENA_CATALOG[id]);
-      console.log(`\n${report(metrics)}`);
+      const arena = ARENA_CATALOG[id];
+      const metrics = measureArena(arena);
+      console.log(`\n${report(metrics)}${geometryReport(arena)}`);
       // The report is the point, but a run that measured NOTHING must not read as a pass —
       // the same "a zero is not a result until something fires" rule the perf probes use.
       expect(metrics.roomCount).toBeGreaterThan(0);
