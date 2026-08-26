@@ -17,6 +17,13 @@ import {
   pillarTint,
 } from './pillarRender';
 import { buildWallBlock, type WallSkin } from './wallRender';
+import {
+  linearRamp,
+  rampProfile,
+  readRampFill,
+  resetShadeRampCache,
+  shadeRampCacheSize,
+} from '../../render/shadeRamp';
 import { biomePalette } from '../theme';
 import type { RectPx } from './wallGeometry';
 
@@ -56,6 +63,40 @@ function strokes(g: Graphics): Array<{ color: number; alpha: number }> {
 /** Perceived brightness, for asserting a shading ramp goes the right way. */
 function luma(hex: number): number {
   return 0.299 * ((hex >> 16) & 0xff) + 0.587 * ((hex >> 8) & 0xff) + 0.114 * (hex & 0xff);
+}
+
+interface CreaseShape {
+  kind: string;
+  x: number; y: number; w: number; h: number;
+  radius?: number;
+  color: number; alpha: number;
+  ramp: ReturnType<typeof readRampFill>;
+}
+
+/**
+ * Every filled shape in a crease Graphics, with its geometry AND its ramp fill if it has one.
+ *
+ * Reads both `rect` and `roundRect` because the crease is deliberately one of each (see
+ * `drawPillarBaseCrease`), and a helper that only knew about one would go quietly blind to the
+ * other — which is the shape of the four battery survivors the old band assertions were written
+ * to close. `roundRect` data is [x, y, w, h, radius], `rect` is [x, y, w, h]; the `moveTo(0, 0)`
+ * Pixi emits before each path is filtered out by matching on the action.
+ */
+function creaseShapes(g: Graphics): CreaseShape[] {
+  return (g.context.instructions as Instr[])
+    .filter((i) => i.action === 'fill')
+    .flatMap((i) => {
+      const style = i.data.style!;
+      const ramp = readRampFill(style);
+      return (i.data.path?.instructions ?? [])
+        .filter((pi) => pi.action === 'rect' || pi.action === 'roundRect')
+        .map((pi) => ({
+          kind: pi.action,
+          x: pi.data[0]!, y: pi.data[1]!, w: pi.data[2]!, h: pi.data[3]!,
+          radius: pi.data[4],
+          color: style.color, alpha: style.alpha, ramp,
+        }));
+    });
 }
 
 describe('buildPillarBody — a stone cylinder in the wall\'s tonal language', () => {
@@ -336,14 +377,128 @@ describe('buildPillarSprite — real pillar art in place of the hand-toned cylin
     const g = c.children.find((ch) => ch instanceof Graphics) as Graphics;
     expect(g).toBeDefined();
     const fills = (g.context.instructions as Instr[]).filter((i) => i.action === 'fill');
-    expect(fills.length).toBe(12); // BASE_AO_BANDS — proven non-empty before anything below
+    // Two shapes since 2026-08-26 — the sampled gradient and the held skirt below the floor
+    // line — where it used to be 12 stacked bands. Pinned as an exact count, not a bound: the
+    // whole point of the conversion is that this stays small, and "<= 12" would not notice a
+    // regression back to stepping.
+    expect(fills.length).toBe(2);
     expect(fills.every((f) => f.data.style!.color === 0x000000)).toBe(true);
     expect(fills.every((f) => f.data.style!.alpha < 1)).toBe(true);
     expect(strokes(g)).toHaveLength(0);
-    // The ramp deepens toward the floor; bands at one flat alpha show their own edges (the same
-    // lesson as CAST_PASSES and the door bloom's nine rings).
-    const alphas = fills.map((f) => f.data.style!.alpha);
-    for (let i = 1; i < alphas.length; i++) expect(alphas[i]).toBeGreaterThan(alphas[i - 1]!);
+  });
+
+  it('draws that crease as ONE sampled ramp plus a held skirt, not a stack of bands', () => {
+    // The draw-call fix (2026-08-26). 12 rounded rects measured 496 floats of geometry, over
+    // Pixi v8's 400-float auto-batch line, which is what made the launch arena's 124 pillars
+    // cost 245 of a 278-draw frame. What matters is not the count on its own but that the
+    // gradient is a RAMP FILL — a count could be got down to 2 by stepping more coarsely, which
+    // would be the banding regression `wallTone`'s BASE_AO_BANDS note warns about.
+    const height = 70;
+    const bodyW = 80;
+    const c = buildPillarSprite(bodyW, height, palette, artTex());
+    const g = c.children.find((ch) => ch instanceof Graphics) as Graphics;
+    const shapes = creaseShapes(g);
+    expect(shapes).toHaveLength(2);
+
+    const gradient = shapes.find((sh) => sh.ramp !== null);
+    const skirt = shapes.find((sh) => sh.ramp === null);
+    expect(gradient).toBeDefined();
+    expect(skirt).toBeDefined();
+
+    const aoH = height * 0.42; // BASE_AO_FRACTION
+    // The gradient runs from the top of the crease DOWN to the ground line, deepening as it
+    // goes — direction asserted rather than assumed, since a ramp is byte-identical reversed.
+    expect(gradient!.ramp!.y0).toBeCloseTo(-aoH, 4);
+    expect(gradient!.ramp!.y1).toBeCloseTo(0, 4);
+    const profile = rampProfile(gradient!.ramp!.texture);
+    expect(profile[0]!).toBeCloseTo(0, 2);
+    expect(profile[profile.length - 1]!).toBeCloseTo(1, 2);
+    for (let i = 1; i < profile.length; i++) expect(profile[i]!).toBeGreaterThanOrEqual(profile[i - 1]!);
+    // ...reaching the same peak the stepped version reached, through the fill's own alpha.
+    expect(gradient!.alpha).toBeCloseTo(0.3, 4); // BASE_AO_MAX
+
+    // The skirt holds that peak across the foot, so the two meet at the ground line with no
+    // step: continuity is the reason the split into two shapes is invisible.
+    expect(skirt!.alpha).toBeCloseTo(0.3, 4);
+    expect(skirt!.y).toBeCloseTo(0, 4);
+  });
+
+  it('samples the WALL\'s own ramp texture, so one bake serves every pillar and wall', () => {
+    // The draw-call argument rests on sharing: a key that varied per pillar would give each one
+    // its own texture and its own batch break, which is the failure mode `shadeRampCacheSize`
+    // exists to catch. Asserted two ways — the cache does not grow with the number of pillars,
+    // and the texture is literally the one `linearRamp()` hands the wall face.
+    resetShadeRampCache();
+    const first = linearRamp();
+    const after = shadeRampCacheSize();
+    for (const [w, h] of [[80, 70], [64, 104], [96, 88]] as const) {
+      const c = buildPillarSprite(w, h, palette, artTex());
+      const g = c.children.find((ch) => ch instanceof Graphics) as Graphics;
+      const gradient = creaseShapes(g).find((sh) => sh.ramp !== null);
+      expect(gradient!.ramp!.texture).toBe(first);
+    }
+    expect(shadeRampCacheSize()).toBe(after);
+  });
+
+  it('paints what the 12 bands painted, to within half a band step', () => {
+    // The visual half of the ramp conversion, answered from the shipped code rather than from a
+    // screenshot — a per-pixel frame diff of this change is not obtainable here (the crease is a
+    // near-black wash on a dark floor, and every canvas reader in a non-compositing pane failed
+    // its own liveness control), but the question is one-dimensional and so has an exact answer.
+    //
+    // The stepped version filled band i (of BASE_AO_BANDS) at its CENTRE value ((i + 0.5) / n),
+    // and the ramp is linear in the same span, so the ramp passes exactly THROUGH every band's
+    // value at that band's midpoint and can only differ inside a band. The worst case is a band
+    // edge, at half a step: 0.5 * BASE_AO_MAX / 12 = 0.0125 alpha, i.e. ~3/255. `wallTone`'s
+    // BASE_AO_BANDS note predicted "one band step" as the disagreement between the wall's
+    // already-converted crease and this one; this pins it at half that, and pins the DIRECTION
+    // too (the ramp is darker in the upper part of each band, lighter in the lower).
+    const height = 104;
+    const bodyW = 80;
+    const BANDS = 12;
+    const MAX = 0.3; // BASE_AO_MAX
+    const aoH = height * 0.42; // BASE_AO_FRACTION
+
+    const c = buildPillarSprite(bodyW, height, palette, artTex());
+    const g = c.children.find((ch) => ch instanceof Graphics) as Graphics;
+    const shapes = creaseShapes(g);
+    const gradient = shapes.find((sh) => sh.ramp !== null)!;
+    const profile = rampProfile(gradient.ramp!.texture);
+    const peak = gradient.alpha;
+
+    // The ramp's alpha at a given y, read from the texture the way the GPU will sample it.
+    const rampAt = (y: number): number => {
+      const t = (y - gradient.ramp!.y0) / (gradient.ramp!.y1 - gradient.ramp!.y0);
+      const i = Math.min(profile.length - 1, Math.max(0, Math.round(t * (profile.length - 1))));
+      return profile[i]! * peak;
+    };
+    // ...and what the stepped version put there.
+    const steppedAt = (y: number): number => {
+      const i = Math.min(BANDS - 1, Math.max(0, Math.floor(((y + aoH) / aoH) * BANDS)));
+      return ((i + 0.5) / BANDS) * MAX;
+    };
+
+    let worst = 0;
+    let worstY = 0;
+    for (let y = -aoH; y <= 0; y += 0.25) {
+      const d = Math.abs(rampAt(y) - steppedAt(y));
+      if (d > worst) { worst = d; worstY = y; }
+    }
+    // Half a band step, plus a texel's worth of quantisation from the 256-sample texture.
+    expect(worst).toBeLessThan(0.5 * MAX / BANDS + 0.002);
+    expect(worst).toBeGreaterThan(0); // the two really are different functions, not the same one
+
+    // Agreement is EXACT at each band's midpoint, which is what makes the bound above a
+    // statement about the whole span rather than about the points that happen to be sampled.
+    for (let i = 0; i < BANDS; i++) {
+      const mid = -aoH + ((i + 0.5) / BANDS) * aoH;
+      expect(rampAt(mid)).toBeCloseTo(steppedAt(mid), 2);
+    }
+    // And the skirt below the floor line: the stepped version held its last band's value there,
+    // the ramp holds its peak — the same half-step apart, never lighter.
+    expect(peak).toBeGreaterThan(((BANDS - 0.5) / BANDS) * MAX);
+    expect(peak - ((BANDS - 0.5) / BANDS) * MAX).toBeLessThan(0.5 * MAX / BANDS + 1e-9);
+    expect(worstY).toBeGreaterThanOrEqual(-aoH);
   });
 
   it('mounts the crease OVER the sprite, not under it', () => {
@@ -355,49 +510,60 @@ describe('buildPillarSprite — real pillar art in place of the hand-toned cylin
     expect(c.children[1]).toBeInstanceOf(Graphics);
   });
 
-  it('draws the crease over the base fraction of the ROOM height, rounded like the shaft', () => {
-    // Also a battery survivor, four times over: reading only the fills' alphas made the crease's
+  it('draws the crease over the base fraction of the ROOM height, rounded at the foot', () => {
+    // A battery survivor four times over: reading only the fills' alphas made the crease's
     // geometry invisible to the tests, so it could be sized off the ART's height instead of the
     // room's, lose its corner rounding under a round object, stop short of the foot, or cover the
-    // whole shaft. `roundRect` data is [x, y, w, h, radius] — and the `moveTo(0, 0)` Pixi emits
-    // before each path has to be filtered out first.
+    // whole shaft. All four still asserted after the ramp conversion, which is the point of
+    // rewriting these rather than deleting them.
     const height = 70;
     const bodyW = 80;
     const c = buildPillarSprite(bodyW, height, palette, artTex());
     const g = c.children.find((ch) => ch instanceof Graphics) as Graphics;
-    const rects = (g.context.instructions as Instr[])
-      .flatMap((i) => i.data.path?.instructions ?? [])
-      .filter((pi) => pi.action === 'roundRect')
-      .map((pi) => pi.data as number[]);
-    expect(rects).toHaveLength(12); // BASE_AO_BANDS, and non-empty before anything below
-    const aoH = height * 0.42; // BASE_AO_FRACTION
-    // Top band starts exactly one base fraction above the ground point...
-    expect(rects[0]![1]).toBeCloseTo(-aoH, 4);
-    // ...bands step evenly down from there...
-    expect(rects[1]![1]! - rects[0]![1]!).toBeCloseTo(aoH / 12, 4);
-    // ...the last one runs PILLAR_BASE_PX past the ground point, so the foot is covered...
-    const last = rects[11]!;
-    expect(last[1]! + last[3]!).toBeCloseTo(10, 4);
-    // ...every band is as wide as the shaft and rounded like it.
-    for (const r of rects) {
-      expect(r[2]).toBeCloseTo(bodyW, 4);
-      expect(r[4]).toBeCloseTo(bodyW * 0.12, 4); // PILLAR_CORNER_FRACTION
+    const shapes = creaseShapes(g);
+    expect(shapes).toHaveLength(2);
+    const aoH = height * 0.42; // BASE_AO_FRACTION — the ROOM height, not the art's
+
+    // Sized off the room height, starting exactly one base fraction above the ground point...
+    const top = Math.min(...shapes.map((sh) => sh.y));
+    expect(top).toBeCloseTo(-aoH, 4);
+    // ...running PILLAR_BASE_PX past it, so the foot is covered...
+    const bottom = Math.max(...shapes.map((sh) => sh.y + sh.h));
+    expect(bottom).toBeCloseTo(10, 4);
+    // ...and NOT up the whole shaft (the crease is a contact cue, not a wash).
+    expect(aoH).toBeLessThan(height);
+
+    // Both shapes are as wide as the shaft and centred on it.
+    for (const sh of shapes) {
+      expect(sh.w).toBeCloseTo(bodyW, 4);
+      expect(sh.x).toBeCloseTo(-bodyW / 2, 4);
     }
+
+    // The rounding lives on the SKIRT — the foot, where a cylinder's silhouette actually
+    // curves. The gradient above it is a plain rect on purpose: the stepped version rounded
+    // every band, including ones far up the shaft where nothing curves.
+    const skirt = shapes.find((sh) => sh.kind === 'roundRect');
+    expect(skirt).toBeDefined();
+    expect(skirt!.radius).toBeCloseTo(bodyW * 0.12, 4); // PILLAR_CORNER_FRACTION
+    expect(skirt!.y).toBeCloseTo(0, 4);
+    expect(skirt!.h).toBeCloseTo(10, 4); // PILLAR_BASE_PX
+    expect(shapes.filter((sh) => sh.kind === 'rect')).toHaveLength(1);
   });
 
   it('is the same crease the hand-toned body draws, so both bodies meet the floor alike', () => {
     const c = buildPillarSprite(80, 70, palette, artTex());
     const g = c.children.find((ch) => ch instanceof Graphics) as Graphics;
-    const spriteAlphas = (g.context.instructions as Instr[])
-      .filter((i) => i.action === 'fill')
-      .map((i) => i.data.style!.alpha);
-    const handToned = buildPillarBody(80, 70, palette);
-    const handAlphas = (handToned.context.instructions as Instr[])
-      .filter((i) => i.action === 'fill' && i.data.style!.color === 0x000000 && i.data.style!.alpha < 1)
-      .map((i) => i.data.style!.alpha);
-    // The hand-toned body's black translucent fills are its mottle followed by its crease; the
-    // crease is the tail of that list and must match the sprite's set exactly.
-    expect(spriteAlphas.length).toBeGreaterThan(0);
-    expect(handAlphas.slice(-spriteAlphas.length)).toEqual(spriteAlphas);
+    const spriteCrease = creaseShapes(g);
+    expect(spriteCrease).toHaveLength(2);
+
+    // The hand-toned body ends with the same crease call, so its last two filled shapes must
+    // match the sprite's — compared on geometry AND on ramp identity, not just on alpha: the
+    // old version compared alphas alone, which two different gradients can share.
+    const handToned = creaseShapes(buildPillarBody(80, 70, palette));
+    const tail = handToned.slice(-2);
+    expect(tail.map((sh) => [sh.kind, sh.x, sh.y, sh.w, sh.h, sh.radius, sh.color, sh.alpha]))
+      .toEqual(spriteCrease.map((sh) => [sh.kind, sh.x, sh.y, sh.w, sh.h, sh.radius, sh.color, sh.alpha]));
+    expect(tail.find((sh) => sh.ramp !== null)!.ramp!.texture)
+      .toBe(spriteCrease.find((sh) => sh.ramp !== null)!.ramp!.texture);
   });
 });

@@ -6003,7 +6003,8 @@ or at least 2, never 1), the `spawns.count >= 2` guard is **equivalent** (`minPa
 - **The buried doorways are not fixed.** Wiring the passages changes 21 run outlines and wants
   ground-wear decals at 74 doorways; the measurement says it works, the camera now says it is
   worth doing, and the doorway art is a call for a person.
-- **Pillar shading is still 496 floats.** The route is `shadeRamp.ts`, already proven on walls.
+- ~~**Pillar shading is still 496 floats.**~~ Done the same day — and it was the base contact
+  CREASE rather than the shaft. See "The pillar crease stops being 12 rects": 262 draws -> 14.
 - **No frame-time number for the arena**, per the above — that needs a device, and it is now the
   best-motivated item on the on-device list.
 
@@ -6184,3 +6185,84 @@ Two more findings from that pass:
   membrane branch exists for the mobile case and has never been run there (`design/04` item 6).
 - **The interpreter-vs-GPU profile agreement is a one-off**, not a gate. Making it a regression
   test needs a headless GL harness this machine does not have.
+
+## The pillar crease stops being 12 rects (2026-08-26, client-only)
+
+Follow-through on the previous session's finding: the launch arena's 124 pillars were 88% of its
+draw calls. `wallTone`'s `BASE_AO_BANDS` doc had already named this as the outstanding half of
+the 2026-08-24 ramp conversion, and had already flagged the catch.
+
+**It was the base contact CREASE, not the shaft shading.** Worth stating plainly because the
+previous session's shorthand ("pillar shading") pointed at the wrong function. The shipped path
+is `buildPillarSprite` — real art plus one `Graphics` — and that Graphics is
+`drawPillarBaseCrease`: `BASE_AO_BANDS` (12) stacked `roundRect`s, **496 floats over 12 fills**,
+past Pixi v8's 400-float auto-batch line. The hand-toned `buildPillarBody`, whose 22-band
+`PILLAR_RAMP_STEPS` shaft ramp *is* literally the pillar's shading, is the fallback for a missing
+texture — and `getPillarTexture` falls back to `pillar_neutral` for every element, which ships,
+so that body is never drawn in a healthy run and converting it could not move a draw call. Left
+as it is, deliberately.
+
+### Two shapes, not one
+
+The crease is now the wall's own ramp texture under a plain rect, plus a held skirt:
+
+```ts
+g.rect(-bodyW / 2, -aoH, bodyW, aoH)
+  .fill(rampFill(linearRamp(), 0, -aoH, 0, 0, { color: 0x000000, alpha: BASE_AO_MAX }));
+g.roundRect(-bodyW / 2, 0, bodyW, PILLAR_BASE_PX, corner)
+  .fill({ color: 0x000000, alpha: BASE_AO_MAX });
+```
+
+Two rather than one because of the catch that doc recorded: the stepped version's LAST band also
+ran `PILLAR_BASE_PX` below the floor line at a held alpha, so the crease is not a single span. A
+single `roundRect` over the whole thing under one ramp would reach past the end of a ramp
+anchored at the ground line, and `rampFill` only guarantees no wrapping while the filled shape is
+a SUBSET of its own segment — the fill would wrap to alpha 0 and the crease would fade out at the
+foot. The alternative, a custom baked field that rises then holds, works but keys a bake per
+distinct pillar height and stops sharing the wall's texture. Sharing won: this is the same
+`linearRamp()` every wall face samples, so "a pillar and a wall meet the floor the same way" is
+now true of the texture and not only of the constants. The rounding also moved to where the
+silhouette actually curves — the stepped version rounded all 12 bands, including ones far up the
+shaft where nothing does.
+
+### Measured, before and after, on the same base
+
+Both readings at `9fc067b`, `?arena=arena_launch&perf=1`, 1920x855, same scene both times (419
+entities, 1025 `Graphics`), swapping only this file:
+
+| | before | after |
+| --- | --- | --- |
+| frame draw calls | 262 | **14** |
+| program switches | 254 | **6** |
+| `pillars` group | 248 draws / 248 prog | **0 / 0** |
+| unbatched `Graphics` in the scene | 124 | **0** |
+| the crease's own geometry | 496 floats, 12 fills | **78 floats, 2 fills** |
+
+A 124-object group going to zero attributed draws is what perfect batching looks like, not an
+object that vanished: the census line for one pillar reads `78 floats 2 fills` with no `!`, the
+scene still holds its 1025 `Graphics`, and a screenshot at the same camera still draws the arena.
+
+**The visual half was answered analytically, not from a frame diff.** Every canvas reader tried
+here failed its own control — `drawImage(app.canvas)` inside one evaluation never sees a fresh
+composite (three reads returned one stale frame, so blanking the whole world layer "changed" 0
+pixels), `__perf.probe` reported `trustworthy: false` whenever the camera was pinned in the same
+evaluation, and `extract.pixels` with a hand-computed `frame` sampled a region of ONE distinct
+luma value. Per this repo's own rule a zero is not a result until a control fires, so none of
+those numbers are reported. The question is one-dimensional and has an exact answer instead: the
+stepped version filled each band at its CENTRE value, and the ramp is linear across the same
+span, so **the ramp passes exactly through every band's value at that band's midpoint and
+deviates at most half a band step — 0.01279 alpha, 3.26/255 — at a band edge.** Pinned in
+`pillarRender.test.ts`, together with the skirt's matching half-step (the stepped tail held
+0.2875 where the ramp holds 0.3). Full frames at an identical pinned camera are indistinguishable
+apart from animated pickups.
+
+### Tests
+
+The four crease assertions were battery survivors written to pin geometry the alpha-only reads
+had gone blind to, so they were rewritten rather than deleted — they still assert the crease is
+sized off the ROOM height, covers the foot, spans the shaft's width and is rounded, now against a
+ramp instead of a band stack. Added: the ramp's direction and profile (a ramp is byte-identical
+reversed), that the texture is literally the one `linearRamp()` returns and that
+`shadeRampCacheSize` does not grow across pillars of three different sizes, that the fill count
+is exactly 2 (a bound like `<= 12` would not notice a return to stepping), and the half-band
+deviation above. Client 3207 tests green, `tsc --noEmit` clean, file-length gate clean.

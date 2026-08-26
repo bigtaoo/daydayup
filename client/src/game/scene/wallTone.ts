@@ -175,8 +175,9 @@ export function faceCrownFraction(element: string): number {
  * The ramps are now SAMPLED from a shared texture rather than stepped (`render/shadeRamp.ts`),
  * so there is no step to hide and no per-surface count to tune: `RAMP_TEXELS` puts the largest
  * step below 1/255 for every profile here at once, and the GPU's linear filter makes the result
- * continuous rather than merely finely stepped. `BASE_AO_BANDS` below is the one survivor,
- * because `pillarRender` still steps its own copy of that crease.
+ * continuous rather than merely finely stepped. `BASE_AO_BANDS` was the one survivor, because
+ * `pillarRender` still stepped its own copy of that crease; it was converted 2026-08-26 and the
+ * constant is gone, so nothing in this renderer hand-steps a gradient any more.
  *
  * Kept as a comment rather than deleted because it is the reasoning, not the number, that a
  * future ramp needs — and because it names the failure mode (banding on a bright surface) that
@@ -210,15 +211,14 @@ export const FOLD_WIDTH = 1.5;
  *  smooth ramp, for the same non-overlapping-band reason as the cap. Shared with the pillar's
  *  base, so a cylinder and a block meet the floor the same way.
  *
- *  `BASE_AO_BANDS` is now used only by `pillarRender`: the wall's copy of this crease samples a
- *  ramp texture instead (see the note above `FACE_COPING_FRACTION`). The two still agree to
- *  within one band step — 0.3/12 = 0.025 alpha, which is the threshold that doc calls borderline,
- *  not comfortably under it — so converting the pillar's is a real follow-up rather than a
- *  cosmetic one. It is not free: that crease is a `roundRect` whose LAST band also skirts
- *  `PILLAR_BASE_PX` below the floor line at a held alpha, so it is two shapes under a ramp, not
- *  one. Recorded in design/01. */
+ *  Both copies of this crease now sample the same ramp texture: `pillarRender` was converted
+ *  2026-08-26 (it was 12 stacked `roundRect`s at 496 floats, over Pixi's auto-batch line, and
+ *  124 of them were 88% of an arena frame's draw calls). `BASE_AO_BANDS` went with it. The catch
+ *  this note used to predict held exactly: the pillar's crease is TWO shapes under a ramp, not
+ *  one, because its last band also skirted `PILLAR_BASE_PX` below the floor line at a held
+ *  alpha. The disagreement between stepped and sampled came out at half a band step, 0.0128
+ *  alpha, pinned in `pillarRender.test.ts`. */
 export const BASE_AO_FRACTION = 0.42;
-export const BASE_AO_BANDS = 12;
 export const BASE_AO_MAX = 0.3;
 
 /** The block's silhouette outline. Was `palette.wallEdge` until 2026-08-18, which is a LIGHT

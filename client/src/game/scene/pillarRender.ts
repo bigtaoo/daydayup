@@ -4,8 +4,8 @@
 // which is what keeps the split acyclic.
 import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
 import { mixHex, type BiomePalette } from '../theme';
+import { linearRamp, rampFill } from '../../render/shadeRamp';
 import {
-  BASE_AO_BANDS,
   BASE_AO_FRACTION,
   BASE_AO_MAX,
   COPING_ALPHA,
@@ -165,16 +165,39 @@ function buildPillarBaseCrease(bodyW: number, height: number): Graphics {
   return drawPillarBaseCrease(new Graphics(), bodyW, height);
 }
 
+/**
+ * The contact crease, as TWO shapes sampling the wall's own ramp texture (2026-08-26) — it was
+ * `BASE_AO_BANDS` stacked `roundRect`s, which is what made a pillar the most expensive object in
+ * an arena frame: 12 rounded rects is 496 floats of geometry, over Pixi v8's 400-float
+ * auto-batch line, so each of the launch map's 124 pillars cost a draw call and a program
+ * switch each way (245 of a 278-draw frame). `wallShadingSurfaces.drawBaseContactCrease` had
+ * already been converted; `wallTone`'s `BASE_AO_BANDS` doc named this as the outstanding half
+ * and flagged the catch, which is why this is two shapes rather than one:
+ *
+ *  1. the GRADIENT, over the base fraction of the room height down to the ground line. Full
+ *     width and unrounded, because the pillar is full width here — the stepped version rounded
+ *     every band, including the ones far up the shaft where nothing curves, which pinched the
+ *     crease inward slightly at each one.
+ *  2. the SKIRT below the ground line, which the stepped version carried as extra height on its
+ *     last band at that band's held alpha. This is the piece that needs the shaft's corner
+ *     rounding, because the foot is where the silhouette actually curves.
+ *
+ * Two shapes rather than one roundRect under one ramp for a reason worth keeping: `rampFill`
+ * only guarantees no wrapping while the filled shape is a SUBSET of its own ramp segment (see
+ * its doc), and a shape reaching past the ground line would sample beyond the last texel of a
+ * ramp anchored at it — a `repeat` wrap back to alpha 0, i.e. a crease that fades out at the
+ * foot. The alternative is a custom baked field that rises then HOLDS, which works but keys a
+ * bake per distinct pillar height and stops sharing the wall's texture. Sharing wins: this is
+ * the same `linearRamp()` every wall face samples, so "a pillar and a wall meet the floor the
+ * same way" is now true of the texture and not just of the constants.
+ */
 function drawPillarBaseCrease(g: Graphics, bodyW: number, height: number): Graphics {
   const corner = bodyW * PILLAR_CORNER_FRACTION;
   const aoH = height * BASE_AO_FRACTION;
-  const aoStep = aoH / BASE_AO_BANDS;
-  for (let i = 0; i < BASE_AO_BANDS; i++) {
-    const t = (i + 0.5) / BASE_AO_BANDS;
-    const last = i === BASE_AO_BANDS - 1 ? PILLAR_BASE_PX : 0;
-    g.roundRect(-bodyW / 2, -aoH + i * aoStep, bodyW, aoStep + last, corner)
-      .fill({ color: 0x000000, alpha: t * BASE_AO_MAX });
-  }
+  g.rect(-bodyW / 2, -aoH, bodyW, aoH)
+    .fill(rampFill(linearRamp(), 0, -aoH, 0, 0, { color: 0x000000, alpha: BASE_AO_MAX }));
+  g.roundRect(-bodyW / 2, 0, bodyW, PILLAR_BASE_PX, corner)
+    .fill({ color: 0x000000, alpha: BASE_AO_MAX });
   return g;
 }
 
