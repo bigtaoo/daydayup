@@ -101,11 +101,17 @@ reachable from any unit test — a full `createGameEngine` end-to-end regression
 `dungeonrun.test.ts` reproducing the reported bug shape directly: one room, two
 real spawned enemies (one beside the player, one clear across the room), driven
 through the real tick order, confirming the near one engages immediately while the
-far one fires zero bullets until it closes the distance. **5133 tests green across all 8
-workspace packages** (engine 845 / client 3211 / server 189 / animator 444 / map-editor 282 /
-png-pipeline 42 / desktop-shell 81 / root build-script 39, `npm run check`, re-measured
-2026-08-26 after the arena doorway fix and the server config-test pass — this block said 4741
-across four different numbers one day earlier, so re-measure rather than trusting it) after fixing two real bugs found from a live player report ("cleared
+far one fires zero bullets until it closes the distance. **5150 tests green across all 8
+workspace packages** (engine 845 / client 3254 / server 189 / animator 444 / map-editor 282 /
+png-pipeline 42 / desktop-shell 81 / root build-script 13, `npm run check`, re-measured
+2026-08-26 after the shield-shell exit — and **measure it from the MAIN checkout with no sibling
+worktree checked out**, which is the mechanism that has been corrupting this block rather than
+ordinary drift. The root leg of `npm run test` is `npx vitest run build/versionManifestPlugin.test.mjs`
+run from the repo root, and `.claude/worktrees/<name>/` lives *inside* the repo, so vitest globs
+each worktree's copy of that file as well: the honest count is 13, it reads 26 with one worktree
+checked out and 39 with two — which is exactly the "13 → 39" this block recorded a few hours
+earlier as if it were growth. The same caveat that has always been here still applies to the
+other seven numbers, which are genuine: re-measure rather than trusting them) after fixing two real bugs found from a live player report ("cleared
 the room, door's unlocked, still can't walk through it") — see the Room & door model
 section below for the full account. Before that, closing a real gap the test-coverage audit
 pass had flagged and left open: `onRequestSave` (tools/desktop-shell/src/preload.ts) now
