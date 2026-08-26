@@ -1329,7 +1329,9 @@ already builds for the walls, applied once offline instead of as a per-object fi
 >
 > **What is left, and it is no longer wall shading.** 27 draws / 17 programs, with 9 unbatched Graphics:
 > a door's recess/glow/sill (2010 and 1434 floats, 10 fills each — stroke-heavy, not banded, so the ramp
-> treatment does not apply), the player's tether Graphics (912 floats), and four 496-float objects. None
+> treatment does not apply), the player's tether Graphics (912 floats), and four 496-float objects — which
+> were the four PILLAR CREASES in that room, converted 2026-08-26 (see below); on a PvE floor there are
+> four of them and on the PvP arena there are 124. None
 > of it costs frame time today (render p50 ~2.1ms of a 16.7ms budget); it is headroom for a low-end mobile
 > GPU where a program switch is far more expensive than it is here.
 >
@@ -1339,6 +1341,28 @@ already builds for the walls, applied once offline instead of as a per-object fi
 > it is not a one-liner — that crease is a `roundRect` whose last band also skirts `PILLAR_BASE_PX` below
 > the floor line at a held alpha, so it is two shapes under a ramp, not one. Pillars were not costing a
 > draw call, so it is recorded rather than rushed.
+>
+> **Closed 2026-08-26, and the premise it was parked on was the thing that was wrong.** "Pillars were
+> not costing a draw call" was measured on a level-1 PvE floor, which has a handful of them. The PvP
+> launch arena has **124**, and they were **245 of that frame's 278 draw calls** — the single most
+> expensive object class in the map, while its 294 wall blocks cost 2. Everything else in the note held
+> exactly: it is two shapes under a ramp, not one, and for the reason predicted. `rampFill` only
+> guarantees no wrapping while the filled shape is a SUBSET of its own ramp segment, so one `roundRect`
+> over the whole crease under a ramp anchored at the ground line would sample past the last texel and
+> `repeat`-wrap to alpha 0 — a crease that fades out exactly at the foot. Shipped as a plain rect under
+> the wall's own `linearRamp()` plus a held `roundRect` skirt, which also keeps the TEXTURE shared with
+> every wall face (the alternative, a rises-then-holds baked field, is one fill but keys a bake per
+> distinct pillar height and shares nothing). Measured on one commit, same scene, swapping one file:
+> **262 draws / 254 programs → 14 / 6**, unbatched `Graphics` in the scene **124 → 0**, the crease
+> itself **496 floats / 12 fills → 78 / 2**. `BASE_AO_BANDS` is gone; nothing in this renderer
+> hand-steps a gradient any more.
+>
+> The look is unchanged, and that is provable rather than eyeballed: a stepped ramp fills band *i* at
+> its CENTRE value, so a linear ramp over the same span passes exactly through every band's value at
+> that band's midpoint and can differ only inside a band — **worst case half a step, 0.01279 alpha
+> (3.26/255)**, pinned in `pillarRender.test.ts` along with the skirt's matching half-step. Worth
+> stating because no frame diff was obtainable: every canvas reader tried failed its own control (see
+> the measurement note below, which now has three more entries).
 >
 > **Measurement note, since it cost two rounds.** `gl.readPixels` on this canvas returns a stale frame:
 > the context is created with `antialias: true` and `preserveDrawingBuffer: false`, so the resolved
@@ -1350,6 +1374,33 @@ already builds for the walls, applied once offline instead of as a per-object fi
 > `renderer.render(stage)` followed immediately by `drawImage(app.canvas, …)` into a 2-D canvas, in the
 > same task — and then verifying the harness by restoring the original form and requiring the third read
 > to match the first exactly. Every number above comes from that, with the restore check at 0.
+>
+> **Amended 2026-08-26: "in the same task" is exactly what does NOT work, and it fails silently.** The
+> pillar-crease pass could not obtain a frame diff at all, and each attempt looked like a different bug:
+>
+> 1. `render()` + `drawImage(app.canvas)` three times inside ONE evaluation returns the SAME stale
+>    composite for all three. The resolved framebuffer updates on a page COMPOSITE, and a synchronous
+>    task never yields to the compositor — so the technique above is only sound when its three reads are
+>    in three separate tasks. Symptom: blanking the entire world layer "changed" 0 pixels, while a
+>    signature stored in a previous evaluation differed by 99%.
+> 2. `perf/frameProbe.ts`'s `probeFrames` inherits that: it reported `trustworthy: true` with a real
+>    4.6% diff once, then `trustworthy: false` on the next attempt purely because the camera had been
+>    pinned in the same evaluation as the probe.
+> 3. `extract.pixels({target, frame})` needs a genuine Pixi `Rectangle` (it calls `frame.copyTo`; a
+>    plain object throws), and the `frame` is not screen space — a hand-computed screen rect returned
+>    **one distinct luma value** across 34,000 samples.
+>
+> Two rules came out of it. **Carry your own control aimed at the same subtree**, not just the
+> harness's: `probeFrames`' built-in control blanks the stage and passed while hiding 124 pillar sprites
+> moved 0 pixels, and that mismatch is what exposed ②. And when the quantity is one-dimensional — a
+> ramp, an alpha profile — **answer it analytically from the shipped code instead**: sample the ramp
+> texture with `rampProfile` and compare it against the formula it replaced. That is what pinned the
+> crease conversion at half a band step (0.01279 alpha) when no reader would produce a frame.
+>
+> Also worth knowing when the subject is a wall or pillar: the occlusion x-ray **fades your subject**.
+> A first probe honestly read 0 because every pillar at that camera was faded, and a faded pillar's
+> crease contributes nothing. A block only fades when its `sortY` is south of the player, so stand
+> NORTH of the cluster to get unfaded subjects on screen.
 
 ## Per-weapon local z-order
 
