@@ -15,7 +15,16 @@
 //      full-strength lattice is the loudest "this is a top-down blueprint" cue in the frame;
 //   4. the per-room light pool (`roomLight`) — painted last of the four so the lattice fades toward
 //      the walls with everything else.
-import { Container, type Texture } from 'pixi.js';
+//
+// Each stage is mounted as one piece PER ROOM (per region, per door) rather than as one Graphics for
+// the whole floor, and every piece carries the rect it paints so `groundCulling.ts` can switch the
+// off-screen ones off. That is the 2026-08-26 arena pass: the stage order above is unchanged and the
+// geometry is byte-for-byte the same (`groundGeometryBudget.test.ts` pins both halves against the
+// pre-split browser census), but the layer went from "285k floats submitted every frame wherever the
+// camera is" to "whatever the viewport touches" — 17x less packed vertex data on `arena_launch`.
+// Read `groundCulling.ts` before quoting that as a frame-time win: it is not one, and the header
+// there says what the A/B actually measured.
+import { Container, Graphics, type Texture } from 'pixi.js';
 import type { AABB, GameState } from '@dd/engine';
 import type { BiomePalette } from '../theme';
 import { fpToPx } from '../coords';
@@ -24,6 +33,7 @@ import { drawDoorWear, drawFloorDecals, drawFloorMottle, drawRoomWash, hash2, st
 import { staticGraphics } from '../../render/staticGraphics';
 import { drawRoomLight } from './roomLight';
 import { cellExtent, roomsCoverReachableSpace } from './floorPartition';
+import { tagGroundPiece } from './groundCulling';
 
 /** Opacity of the 64 px floor grid. See the module header for why it is this low. */
 const GRID_ALPHA = 0.12;
@@ -54,46 +64,91 @@ export interface GroundDeps {
  */
 export function buildGroundLayer(ground: Container, deps: GroundDeps): void {
   const { rooms, floorRegions, wallRects, doorRects, palette, floorTex } = deps;
-
-  if (floorTex) {
-    for (const region of floorRegions) {
-      for (const tile of stampFloor(floorTex, region)) ground.addChild(tile);
-    }
-  } else {
-    const fill = staticGraphics();
-    for (const r of floorRegions) fill.rect(r.x, r.y, r.w, r.h).fill({ color: palette.ground });
-    ground.addChild(fill);
-  }
-
-  // `staticGraphics` throughout: every pass below is painted once per room build and then never
-  // touched again, and `layers.ground` has its own render group (see `layers.ts`), so batching
-  // this geometry costs one pack at build time instead of a draw call every frame.
-  const floorDark = staticGraphics();
-  const floorLight = staticGraphics();
-  floorLight.blendMode = 'add';
   const tileSize = floorTex?.width ?? FALLBACK_TILE;
+
+  // (1) the floor itself. One container per region rather than 322 loose sprites, so the piece the
+  // camera switches off is the region — the same granularity every other stage is culled at, and
+  // the one rect that is already known exactly without measuring anything.
+  for (const region of floorRegions) {
+    const tiles = new Container();
+    if (floorTex) {
+      for (const tile of stampFloor(floorTex, region)) tiles.addChild(tile);
+    } else {
+      const fill = staticGraphics();
+      fill.rect(region.x, region.y, region.w, region.h).fill({ color: palette.ground });
+      tiles.addChild(fill);
+    }
+    mountPiece(ground, tiles, region);
+  }
+
+  // (2) the floor's variation. Two pieces per room, because the light half is additively blended —
+  // and ALL the dark halves are mounted before ANY light half, not dark-then-light per room. That
+  // matters: a mottle blob reaches well outside the room that seeded it, so the stage order has to
+  // hold ACROSS rooms, not merely within one. Door wear rides at the top of the light half, where
+  // it has always been.
+  //
+  // `staticGraphics` throughout, as before: painted once per room build and never touched again, on
+  // a layer with its own render group.
+  const lightHalves: Graphics[] = [];
   for (const room of rooms) {
+    const dark = staticGraphics();
+    const light = staticGraphics();
+    light.blendMode = 'add';
     const seed = hash2(Math.round(room.x), Math.round(room.y)) >>> 8;
-    drawRoomWash(floorDark, room, seed);
-    drawFloorMottle(floorDark, floorLight, room, seed, tileSize);
-    drawFloorDecals(floorDark, floorLight, room, seed, wallRects);
+    drawRoomWash(dark, room, seed);
+    drawFloorMottle(dark, light, room, seed, tileSize);
+    drawFloorDecals(dark, light, room, seed, wallRects);
+    mountPainted(ground, dark);
+    lightHalves.push(light);
   }
-  for (const door of doorRects) drawDoorWear(floorLight, door);
-  ground.addChild(floorDark, floorLight);
+  for (const light of lightHalves) mountPainted(ground, light);
+  for (const door of doorRects) {
+    const wear = staticGraphics();
+    wear.blendMode = 'add';
+    drawDoorWear(wear, door);
+    mountPainted(ground, wear);
+  }
 
-  const grid = staticGraphics();
-  for (const r of floorRegions) {
-    const x1 = r.x + r.w;
-    const y1 = r.y + r.h;
-    for (let x = Math.ceil(r.x / GRID_STEP) * GRID_STEP; x <= x1; x += GRID_STEP) grid.moveTo(x, r.y).lineTo(x, y1);
-    for (let y = Math.ceil(r.y / GRID_STEP) * GRID_STEP; y <= y1; y += GRID_STEP) grid.moveTo(r.x, y).lineTo(x1, y);
+  // (3) the grid, per region, and (4) the light pool, per room.
+  for (const region of floorRegions) {
+    const grid = staticGraphics();
+    drawRegionGrid(grid, region, palette);
+    mountPiece(ground, grid, region);
   }
+  for (const room of rooms) {
+    const light = staticGraphics();
+    drawRoomLight(light, room);
+    mountPainted(ground, light);
+  }
+}
+
+/** The 64 px lattice over one floor region. */
+function drawRegionGrid(grid: Graphics, r: RectPx, palette: BiomePalette): void {
+  const x1 = r.x + r.w;
+  const y1 = r.y + r.h;
+  for (let x = Math.ceil(r.x / GRID_STEP) * GRID_STEP; x <= x1; x += GRID_STEP) grid.moveTo(x, r.y).lineTo(x, y1);
+  for (let y = Math.ceil(r.y / GRID_STEP) * GRID_STEP; y <= y1; y += GRID_STEP) grid.moveTo(r.x, y).lineTo(x1, y);
   grid.stroke({ color: palette.gridLine, width: 1, alpha: GRID_ALPHA });
-  ground.addChild(grid);
+}
 
-  const light = staticGraphics();
-  for (const room of rooms) drawRoomLight(light, room);
-  ground.addChild(light);
+/** Mount a piece whose painted extent is known exactly (a region's floor stamp, its grid). */
+function mountPiece(ground: Container, node: Container, bounds: RectPx): void {
+  tagGroundPiece(node, bounds);
+  ground.addChild(node);
+}
+
+/**
+ * Mount a piece and tag it with what it actually PAINTED, read back off the geometry.
+ *
+ * Not the room rect: `drawFloorMottle` seeds its blobs inside the room but draws them up to 1.8
+ * tiles across, so a 448x384 room's dark pass measures 838x446 px. Tagging the room would cull
+ * those blobs while a slice of them was still on screen. Reading the bounds back also means this
+ * stays right when the blob constants move, which a hand-derived margin would not.
+ */
+function mountPainted(ground: Container, node: Container): void {
+  const b = node.getLocalBounds();
+  tagGroundPiece(node, { x: b.minX, y: b.minY, w: b.maxX - b.minX, h: b.maxY - b.minY });
+  ground.addChild(node);
 }
 
 /** The floor's room footprints in world px — room IDENTITY (which rooms get their own wash, mottle,

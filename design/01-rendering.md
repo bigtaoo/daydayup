@@ -1147,7 +1147,9 @@ in `client/src/perf/README.md`; the tooling is `client/src/perf/gpuTimer.ts`.
 
 Two things follow, and both contradict what the draw-call work above would predict.
 
-**The frame is not fill-bound.** 16x the pixels buys 1.85x the time: ~3.0 ms of the frame is
+**The frame is not fill-bound.** *(Falsified 2026-08-26 — see the follow-up below: every filter in
+this scene has `resolution: 1`, so a renderer-resolution sweep does not scale the fill inside them.)*
+16x the pixels buys 1.85x the time: ~3.0 ms of the frame is
 resolution-independent, ~0.7 ms is fill. So the render-quality tiers (2026-08-25), whose whole
 mechanism is removing full-viewport passes and halving resolution, are aimed at about a fifth of
 this scene's cost. They are still right for the PvE room they were measured on, where 11 filter
@@ -1156,7 +1158,9 @@ passes *were* the frame — this is a statement about the arena.
 **The walls and pillars are a tenth of the frame; the floor is more than half.** Hiding one
 render-group root at a time, against a 4.05 ms frame: `ground` 2.28 ms (56%), `shadow` 0.63 ms
 (16%), `entities` — all 294 wall blocks and 124 pillars — 0.39 ms (10%). `ground` measured **flat**
-across the full 16x pixel range (2.15/2.17/2.76 ms), so it is submission, not fill.
+across the full 16x pixel range (2.15/2.17/2.76 ms). *The share is right and the inference is not:*
+cutting `ground`'s submitted triangles 17x later changed nothing, so it is neither fill nor
+submission — see the follow-up below.
 
 The mechanism is `buildGroundLayer` meeting a map far larger than the one its policy was tuned on.
 It paints `drawRoomWash` + `drawFloorMottle` + `drawFloorDecals` **per room** into two
@@ -1172,7 +1176,8 @@ pillars would buy, which is the opposite of where "294 blocks resident, no culli
 Not yet done, and deliberately so: this is one desktop GPU saying the arena is comfortable (~4 ms
 of a 16.7 ms budget). It does not answer the on-device question, and the reason is now sharper
 rather than vaguer — the dominant cost is geometry submission, which is the half that gets
-relatively *worse* on a mobile GPU.
+relatively *worse* on a mobile GPU. *(That last clause did not survive the follow-up below. The
+on-device question is still open, and now open for a reason nobody has named yet.)*
 
 **And none of it needed a GPU to see, which is the part worth keeping.** The float counts come out
 of the real `GraphicsContextSystem` headlessly - `staticGraphics.test.ts` had been driving it that
@@ -1206,6 +1211,45 @@ render-group ROOT, never a child inside one.** Hiding the 322 floor sprites *ins
 measured slower than leaving them visible (4.52 vs 4.14 ms) — the toggle invalidates the group and
 the batcher repacks ~550k floats, costing more than the geometry removed. That is the same
 invalidation hazard `staticGraphics.ts` documents, seen from the measuring end.
+
+### Follow-up: the floor is cullable now, and the diagnosis above was wrong (2026-08-26)
+
+The fix the section above nominates is done. `groundLayer.ts` mounts the ground as one piece per
+room (per region, per door) instead of one `Graphics` per stage, each tagged with the rect it
+actually paints, and `groundCulling.ts` switches the off-screen ones off once per frame from
+`FxController.updateCamera`. The stage order is unchanged and so is the geometry: the two overlay
+halves still sum to 284,966 and 265,566 floats, byte-for-byte the pre-split browser census.
+
+Standing in the arena's first room the batcher packs **101,304 floats / 49,962 indices** instead of
+**1,730,364 / 845,796** — 13 of 374 pieces, 17x less vertex data and 17x fewer triangles, ~6.5 MB
+less in the batch buffer. **And the GPU frame did not measurably move**: interleaved A/B, cull on
+against every piece forced visible, 13 samples each, 4.07 vs 4.28 ms with the min/max bands
+overlapping. By the standard the measurement above set for itself, that is a null result.
+
+Which is the finding. **The floor's ~2 ms is not vertex work, not triangle count, and not draw
+calls** (the whole layer is 3 of the frame's 42). And the reasoning that pointed there was resting
+on a control that measured the wrong thing: the "16x the pixels for 1.85x the time" sweep varies
+`renderer.resolution`, but `layers.lit` (ground + shadow + entities), `layers.fx` and `layers.world`
+all carry filters at Pixi's default `resolution: 1`, which does **not** follow the renderer's.
+Almost the whole scene is drawn into targets pinned at 1x, so that sweep scales the final blit and
+little else. "Resolution-independent" was a property of the filter chain.
+
+So the arena's dominant cost is unattributed again, and it is a better-posed question than it was:
+something about having a floor on screen costs 2 ms, and it is insensitive to how much floor. The
+next sweep varies the on-screen AREA the blended overlays cover at a fixed resolution, and A/Bs the
+`layers.lit` filter off — `perf/README.md`'s fifth measurement records both, plus two harness traps
+(a `gl.finish()`-bounded wall clock reads 10x lower and fails its own resolution control; a
+background tab's sample loop is clamped to ~1 s per sample).
+
+The per-room split ships on its own merits rather than on a frame-time claim: it costs nothing
+measurable, it cuts real memory, it removes the "one 285k-float `Graphics`" shape that
+`staticGraphics.ts`'s batch policy was never measured at, and vertex throughput is exactly the half
+that gets relatively worse on a phone. `groundGeometryBudget.test.ts` was rewritten around it — the
+`arena_launch` exemption is gone (no piece is large any more), and the gate it leaves behind is the
+one the old shape had no way to state: **what a single camera submits**, swept over every room of
+every catalog map through the real `FxController.updateCamera` (worst 76,646 floats of 574,692, or
+13%). Its control runs the other way — pull the camera back past the map and every piece must come
+back, or a `groundPieceBounds` returning empty rects would pass everything.
 
 ## A pillar is a sprite now (2026-08-20)
 

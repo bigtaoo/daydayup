@@ -1,107 +1,123 @@
 /**
- * The ground stage's BATCH-POLICY ENVELOPE, over real shipped maps (2026-08-26).
+ * The ground stage's BATCH-POLICY ENVELOPE and its CULL, over real shipped maps.
  *
- * Why this file exists. `buildGroundLayer` mounts its four overlay passes with
- * `staticGraphics()`, which forces `batchMode: 'batch'` and so overrides Pixi's 400-float
- * auto-batch cutoff unconditionally. That override is a *measured* trade, and
- * `render/staticGraphics.ts`'s header states the content it was measured on: **"a room's shared
- * wall-shadow Graphics is ~24k floats, the floor's decal pass ~50k"**, where forcing `batch` on
- * `layers.ground`/`layers.shadow` bought -24 draw calls for -0.08 ms.
+ * ## What this file was, and what changed on 2026-08-26
  *
- * Nothing checked that the content stayed inside that envelope, and it did not. On 2026-08-26 a
- * GPU timer-query pass (`perf/gpuTimer.ts`, `perf/README.md`'s fourth measurement) found
- * `layers.ground` costing **2.28 ms of a 4.05 ms arena frame — 56%**, resolution-INDEPENDENT, i.e.
- * geometry submission rather than fill. `arena_launch`'s two floor passes had grown to **291,722 and
- * 274,282 floats**, ~6x and ~11x the numbers the policy was validated at, and all of it is submitted
- * every frame regardless of where the camera is. For comparison the same frame's 294 wall blocks and
- * 124 pillars together cost 0.39 ms (10%).
+ * `buildGroundLayer` mounts its overlay passes with `staticGraphics()`, which forces
+ * `batchMode: 'batch'` and so overrides Pixi's 400-float auto-batch cutoff unconditionally. That
+ * override is a *measured* trade, and `render/staticGraphics.ts`'s header states the content it was
+ * measured on: **"a room's shared wall-shadow Graphics is ~24k floats, the floor's decal pass
+ * ~50k"**, where forcing `batch` on `layers.ground`/`layers.shadow` bought -24 draw calls for
+ * -0.08 ms.
  *
- * None of that needed a GPU to see. The float counts come out of the REAL `GraphicsContextSystem`
- * headlessly — `staticGraphics.test.ts` already drives it that way — so this is a property that was
- * offline-measurable the whole time and simply had no test. That is the gap this file closes, and
- * the reason it is a sweep over `ARENA_CATALOG` rather than a fixture: a fixture cannot notice that
- * a per-room cost met a 60-room map.
+ * Nothing checked that the content stayed inside that envelope, and it had not. `arena_launch`
+ * accumulated its per-room wash/mottle/decals into TWO whole-map `Graphics` of 284,966 and 265,566
+ * floats, batched and submitted every frame however far away the camera was, on a layer measured at
+ * **2.05 ms of a 4.3 ms arena GPU frame**. This file's first version gated that as a per-Graphics
+ * budget with `arena_launch` pinned as a known-over-budget exemption.
  *
- * Two bounds, deliberately of different kinds, because the 2026-08-26 batteries kept showing that a
- * numeric bound measured on one body of content passes vacuously on the next:
+ * The change was not to draw less. It was to make what is drawn CULLABLE: the layer is now one piece
+ * per room (per region, per door), each tagged with the rect it paints, and `groundCulling.ts`
+ * switches the off-screen ones off once per frame from `FxController.updateCamera`. The geometry is
+ * unchanged to the float — the sums below reproduce the pre-split browser census exactly — so the
+ * exemption is gone not because the content shrank but because no single piece is large any more.
  *
- *  1. **A per-ROOM rate** (portable). These passes are painted per room, so their cost is
+ * What that did and did not buy is recorded in `groundCulling.ts` and `perf/README.md`, and it is
+ * not what the first version of this file predicted: the batcher packs 17x less vertex data, and the
+ * GPU frame did not measurably move. So the bounds below are bounds on GEOMETRY, which is what they
+ * always measured; none of them is evidence about milliseconds.
+ *
+ * ## The three bounds here, deliberately of different kinds
+ *
+ *  1. **A per-ROOM rate** (portable). These passes are painted per room, so the layer's total is
  *     `rooms x rate`. The rate is the part a 3-room dev fixture can still falsify, which makes it
- *     the bound that would have caught this at authoring time — adding a fifth per-room pass moves
- *     it immediately, on any map.
- *  2. **A per-GRAPHICS total** (content-specific), swept over every catalog map, with an explicit
- *     exemption list. `arena_launch` is over it today, so it is exempted AND pinned: the test
- *     asserts it still FAILS the budget, which makes the known defect the gate's own control (the
- *     same trick `arenaQuality`'s `landing_basic` assertion uses), and caps it so it cannot grow
- *     while the fix is outstanding.
+ *     the bound that would have caught the original defect at authoring time.
+ *  2. **A per-PIECE ceiling** (what the batch policy is about). Every mounted piece must stay inside
+ *     the envelope `staticGraphics()` was measured on. Its control is that the map's TOTAL is still
+ *     an order of magnitude past that ceiling — the per-piece pass must not be able to come from the
+ *     content having got smaller.
+ *  3. **What the CAMERA submits** (the property the fix created, and the one with no other reader).
+ *     Swept over every room of every catalog map, through the real `FxController.updateCamera`. A
+ *     regression that silently un-tagged the pieces, or mounted them as one Graphics again, leaves
+ *     bounds (1) and (2) untouched and fails only here.
  *
- * Scope, stated rather than implied: the harness hands `buildGroundLayer` no `wallRects` and the
- * real `doorRects`. Omitting wall rects can only ADD floats (they suppress rubble — see
- * `groundLayer.test.ts`'s "keeps rubble off the wall footprints"), so every total here is an upper
- * bound on the shipped one, which is the safe direction for a budget. Cross-checked against the
- * live browser census of the same map: grid (17,280) and room-light (6,400) match EXACTLY, and the
- * two floor passes read 2-3% ABOVE the browser's 284,966 / 265,566 — the predicted direction, which
- * is what says this harness is measuring the same pipeline the GPU pays for rather than a mirror
- * of it.
+ * Scope, stated rather than implied: the harness in the first half hands `buildGroundLayer` no
+ * `wallRects`. Omitting them can only ADD floats (they suppress rubble — see `groundLayer.test.ts`'s
+ * "keeps rubble off the wall footprints"), so those totals are an upper bound on the shipped one,
+ * which is the safe direction for a budget. The second half drives the real `RoomBuilder`.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { Container, Graphics, GraphicsContextSystem, Texture, TextureSource } from 'pixi.js';
 import { createGameState } from '@dd/engine/state/GameState';
 import { biomePalette } from '../theme';
 import { buildGroundLayer, floorRegionsPx, roomRectsPx } from './groundLayer';
+import { groundPieceBounds } from './groundCulling';
 import { ARENA_CATALOG, type ArenaId } from '../match/arenaCatalog';
 import { fpToPx, PX_PER_GRID } from '../coords';
 import { AUTO_BATCH_VERTEX_LIMIT } from '../../perf/drawAttribution';
-import type { RectPx } from './wallGeometry';
+import { MAX_WALL_HEIGHT, type RectPx } from './wallGeometry';
 import { Layers } from './layers';
 import { Backdrop } from './Backdrop';
 import { RoomBuilder } from './RoomBuilder';
+import { FxController } from '../fx/FxController';
+
+// The camera sweep below drives the REAL `FxController.updateCamera`, and its post-processing
+// filters compile a GL program at construction — which needs a canvas this environment does not
+// have. Stubbed exactly as `fx/FxController.test.ts` stubs them, and for the same reason: the shader
+// is irrelevant to the camera math, and the alternative is mirroring the zoom rule in this file.
+// `pixi.js` itself stays real apart from `BlurFilter` — `GraphicsContextSystem` is the whole point.
+vi.mock('pixi.js', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('pixi.js')>()),
+  BlurFilter: class { strength = 0; quality = 0; },
+}));
+vi.mock('../fx/filters', () => ({
+  VignetteFilter: class { intensity = 0; radius = 0; },
+  ChromaticAberrationFilter: class { amount: number; constructor(amount = 0) { this.amount = amount; } },
+  MAX_SCENE_LIGHTS: 8,
+  SceneLightFilter: class {
+    setRegion() {}
+    setLights() {}
+  },
+}));
 
 /**
- * Per-Graphics ceiling for batch-forced ground geometry, in floats.
+ * Per-PIECE ceiling for batch-forced ground geometry, in floats.
  *
  * Anchored to `staticGraphics.ts`'s own measurement (~50k for the floor's decal pass, where the
  * policy was a win) and rounded up to give authored content real room: this is "stay within an
- * order of the content this override was validated on", not a tuned optimum. It is deliberately
- * NOT transcribed from what any map scores today — the margin assertions below exist so nobody
- * can quietly retune it to whatever the content happens to be.
+ * order of the content this override was validated on", not a tuned optimum. It is deliberately NOT
+ * transcribed from what any map scores today — the margin assertions below exist so nobody can
+ * quietly retune it to whatever the content happens to be.
  */
 const FLOOR_PASS_FLOAT_BUDGET = 64_000;
+
+/**
+ * Ceiling on what ONE camera may submit, in floats. Same anchor as the per-piece budget and the same
+ * reasoning: a viewport's worth of floor should cost about what the whole floor cost back when the
+ * batch policy was measured, not what a 60-room map's floor costs.
+ */
+const CAMERA_FLOAT_BUDGET = 128_000;
 
 /** Side of the reference room the per-room rate below is measured at. */
 const REF_ROOM_PX = 512;
 
 /**
- * Floats per REF_ROOM_PX-square room (measured 5,219-5,574 across 1..60 of them).
+ * Floats per REF_ROOM_PX-square room, summed over the whole layer (measured 9,901-10,216 across
+ * 1..60 of them).
  *
  * Scoped to that room size on purpose, because the rate is NOT room-invariant: the passes count
  * their blobs from room AREA (`Math.max(2, Math.round(area / MOTTLE_PX_PER_BLOB))` and friends), so
- * the same code yields ~5.3k floats for a 512px room, ~13.9k at 1024px and ~55.5k at 2048px. An
- * earlier draft of this file put a bare 3k-8k band here and would have failed on any map authored
- * with bigger rooms while the real defect sailed through — the exact "informative bound measured on
- * one body of content" trap the 2026-08-26 batteries kept turning up. What gates the shipped
- * content is the two-sided pin on the real builder further down; this band only holds the COST
- * MODEL (linear in room count) in place.
+ * the same code yields ~10.0k floats for a 512px room and ~24.2k at 1024px. An earlier draft of this
+ * file put a bare band here without scoping it and would have failed on any map authored with bigger
+ * rooms while the real defect sailed through — the "informative bound measured on one body of
+ * content" trap the 2026-08-26 batteries kept turning up. What gates the shipped content is the
+ * two-sided pin on the real builder further down; this band only holds the COST MODEL (linear in
+ * room count) in place.
  */
-const PER_ROOM_FLOAT_BAND = { min: 3_000, max: 8_000 };
+const PER_ROOM_FLOAT_BAND = { min: 7_000, max: 14_000 };
 
-/**
- * Maps allowed to exceed {@link FLOOR_PASS_FLOAT_BUDGET}, with the number each is pinned at.
- *
- * An explicit list, so adding a map puts it under the budget automatically and exempting one is a
- * visible edit here — the same direction `ARENA_HARNESS_IDS` is scoped in, and for the same reason:
- * a gate scoped by a property the offending content happens to have would silently stop covering
- * the next offender.
- */
-const OVER_BUDGET: Partial<Record<ArenaId, { pinnedFloats: number; why: string }>> = {
-  arena_launch: {
-    // 291,722 measured 2026-08-26 (274,282 of it the base wash/mottle/decals, the rest door wear).
-    // Capped just above, so the known defect cannot grow while the fix is outstanding; DROP this
-    // entry when the per-district split lands — do not raise it.
-    pinnedFloats: 300_000,
-    why: '60 rooms x ~4.6k floats of per-room wash/mottle/decals; costs 2.28 ms of a 4.05 ms frame',
-  },
-};
+/** The viewport every camera sweep here is measured at — a desktop 16:9 window. */
+const VIEWPORT = { vw: 1920, vh: 855 };
 
 /** Pixi's real batching decision, driven by the smallest renderer it accepts — same fake as
  *  `staticGraphics.test.ts`, which is where that shape is justified. */
@@ -118,14 +134,30 @@ function tex(size: number): Texture {
   return new Texture({ source: new TextureSource({ width: size, height: size }) });
 }
 
+/** Floats in `node` and everything under it — the stamp's sprites live one level down inside their
+ *  region's container, and a piece that stopped being a leaf must not fall out of the count. */
+function floatsOf(node: Container, sys: GraphicsContextSystem): number {
+  let n = node instanceof Graphics ? sys.updateGpuContext(node.context).geometryData.vertices.length : 0;
+  for (const c of node.children) n += floatsOf(c, sys);
+  return n;
+}
+
+/** Every Graphics under `node`, at any depth. */
+function graphicsUnder(node: Container): Graphics[] {
+  return node.children.flatMap((c) => [...(c instanceof Graphics ? [c] : []), ...graphicsUnder(c)]);
+}
+
 interface GroundGeometry {
   rooms: number;
-  /** Floats per mounted Graphics, largest first. */
+  /** Floats per mounted PIECE (a top-level child of `ground`), largest first. */
   floats: number[];
-  /** True only if every mounted Graphics is batch-forced — otherwise a budget on them is a
-   *  budget on nothing in particular. */
-  allBatchForced: boolean;
+  total: number;
   largest: number;
+  /** True only if every mounted Graphics is batch-forced — otherwise a budget on them is a budget on
+   *  nothing in particular. */
+  allBatchForced: boolean;
+  /** True only if every piece carries a cull rect — an untagged piece is resident forever. */
+  allTagged: boolean;
 }
 
 /** `buildGroundLayer` over a set of room rects, measured through the real context system. */
@@ -144,15 +176,14 @@ function measure(
     floorTex: tex(256),
   });
   const sys = contextSystem();
-  const gfx = ground.children.filter((c): c is Graphics => c instanceof Graphics);
-  const floats = gfx
-    .map((c) => sys.updateGpuContext(c.context).geometryData.vertices.length)
-    .sort((a, b) => b - a);
+  const floats = ground.children.map((c) => floatsOf(c, sys)).sort((a, b) => b - a);
   return {
     rooms: rooms.length,
     floats,
-    allBatchForced: gfx.every((c) => c.context.batchMode === 'batch'),
+    total: floats.reduce((a, b) => a + b, 0),
     largest: floats[0] ?? 0,
+    allBatchForced: graphicsUnder(ground).every((c) => c.context.batchMode === 'batch'),
+    allTagged: ground.children.every((c) => groundPieceBounds(c) !== undefined),
   };
 }
 
@@ -189,37 +220,53 @@ describe('the ground stage is painted PER ROOM, and that is what its cost scales
     const counts = [1, 4, 12, 30, 60];
     const rates = counts.map((n) => {
       const m = synthetic(n);
-      return { n, largest: m.largest, perRoom: m.largest / n };
+      return { n, perRoom: m.total / n };
     });
     for (const { n, perRoom } of rates) {
       expect(perRoom, `${n} rooms`).toBeGreaterThan(PER_ROOM_FLOAT_BAND.min);
       expect(perRoom, `${n} rooms`).toBeLessThan(PER_ROOM_FLOAT_BAND.max);
     }
     // Linear, not merely monotonic: the rate must be flat across a 60x range in room count. A
-    // per-room pass that started scaling super-linearly (say a decal pass that consulted every
-    // other room) would keep every total under its budget on a small map and blow up on a big one.
+    // per-room pass that started scaling super-linearly (say a decal pass that consulted every other
+    // room) would keep every total under its budget on a small map and blow up on a big one.
     const perRoom = rates.map((r) => r.perRoom);
     expect(Math.max(...perRoom) / Math.min(...perRoom)).toBeLessThan(1.25);
   });
 
-  it('is one whole-map Graphics per pass, so the total is the whole map every frame', () => {
-    // The cost model above only holds because these passes accumulate into ONE context each,
-    // rather than one per room. That is also exactly why the total cannot be culled by camera
-    // today, and therefore the thing a fix has to change.
+  it('is one piece per room per stage, so the LARGEST piece does not grow with the map', () => {
+    // The inverse of what this test asserted before 2026-08-26, and the inversion is the fix. It
+    // used to read "one whole-map Graphics per pass, so the total is the whole map every frame",
+    // with `sixty.largest > one.largest * 40` — i.e. it pinned exactly the property that made the
+    // layer uncullable. A 60x map now costs 60x the TOTAL and about 1x the largest piece.
     const one = synthetic(1);
     const sixty = synthetic(60);
-    expect(one.floats).toHaveLength(sixty.floats.length);
-    expect(sixty.largest).toBeGreaterThan(one.largest * 40);
+    expect(sixty.total / one.total).toBeGreaterThan(40);
+    expect(sixty.largest / one.largest).toBeLessThan(1.2); // measured 1.11
+    expect(sixty.floats.length).toBe(one.floats.length * 60);
   });
 
-  it('forces the batch on every pass it mounts — or these budgets are about nothing', () => {
-    // If `staticGraphics()` stopped being used here, Pixi's own 400-float cutoff would apply and
-    // the geometry would cost draw calls instead of a repack. Either is a real design, but the
-    // budgets in this file are written for the batch-forced one.
+  it('forces the batch on every piece it mounts — or these budgets are about nothing', () => {
+    // If `staticGraphics()` stopped being used here, Pixi's own 400-float cutoff would apply and the
+    // geometry would cost draw calls instead of a repack. Either is a real design, but the budgets
+    // in this file are written for the batch-forced one.
     expect(synthetic(12).allBatchForced).toBe(true);
     expect(measureArena('arena_launch').allBatchForced).toBe(true);
-    // ...and every pass is far past the auto cutoff, which is why the override is load-bearing.
-    for (const f of synthetic(12).floats) expect(f).toBeGreaterThan(AUTO_BATCH_VERTEX_LIMIT);
+    // ...and the pieces are still far past the auto cutoff, which is why the override is
+    // load-bearing. Not EVERY piece: a door's worn patch is four ellipses and would batch on its own
+    // merits, and after the split that is a real share of them.
+    // ...and the two variation halves of every room are still far past the auto cutoff, which is
+    // what keeps the override load-bearing. NOT every piece: after the split a grid (~120 floats)
+    // and a light pool (288) would batch on their own merits, and so would a door's worn patch.
+    const twelve = synthetic(12);
+    const big = twelve.floats.filter((f) => f > AUTO_BATCH_VERTEX_LIMIT);
+    expect(big).toHaveLength(24); // 12 rooms x {dark, light}
+    expect(Math.min(...big)).toBeGreaterThan(AUTO_BATCH_VERTEX_LIMIT * 5);
+  });
+
+  it('tags every piece it mounts, or the cull silently leaves it resident', () => {
+    expect(synthetic(12).allTagged).toBe(true);
+    expect(measureArena('arena_launch').allTagged).toBe(true);
+    expect(measureArena('landing_basic').allTagged).toBe(true);
   });
 });
 
@@ -227,66 +274,153 @@ describe('every catalog map stays inside the envelope staticGraphics() was measu
   const ids = Object.keys(ARENA_CATALOG) as ArenaId[];
 
   it('sweeps the whole catalog, not a hand-picked subset', () => {
-    // Guards the sweep itself: an exemption list is only fail-safe if the thing it exempts FROM
-    // actually enumerates everything.
     expect(ids).toContain('arena_launch');
     expect(ids.length).toBeGreaterThanOrEqual(2);
   });
 
   for (const id of ids) {
-    const exempt = OVER_BUDGET[id];
-
-    if (!exempt) {
-      it(`${id}: every ground pass is under the budget, with margin`, () => {
-        const m = measureArena(id);
-        expect(m.largest).toBeLessThan(FLOOR_PASS_FLOAT_BUDGET);
-        // State the margin, so a future map that creeps up on the budget is visible as a shrinking
-        // number here rather than as a still-passing test.
-        expect(FLOOR_PASS_FLOAT_BUDGET / m.largest).toBeGreaterThan(2);
-      });
-      continue;
-    }
-
-    it(`${id}: is over the budget, which is what makes this gate a real one`, () => {
-      // The exemption's own control. If this map ever comes back UNDER the budget, either the fix
-      // landed (delete the entry) or the gate stopped measuring anything — and a test that only
-      // ever asserted "under budget" could not tell those apart from a passing sweep.
+    it(`${id}: every ground piece is under the budget, with margin`, () => {
       const m = measureArena(id);
-      expect(m.largest).toBeGreaterThan(FLOOR_PASS_FLOAT_BUDGET);
-      expect(m.largest / FLOOR_PASS_FLOAT_BUDGET).toBeGreaterThan(4);
-    });
-
-    it(`${id}: does not grow past what it was pinned at`, () => {
-      const m = measureArena(id);
-      expect(m.largest).toBeLessThanOrEqual(exempt.pinnedFloats);
-      // And the pin is not slack enough to hide real growth: it sits within 10% of today's score,
-      // so the next per-room pass added to this map fails here instead of being absorbed.
-      expect(exempt.pinnedFloats / m.largest).toBeLessThan(1.1);
+      expect(m.largest).toBeLessThan(FLOOR_PASS_FLOAT_BUDGET);
+      // State the margin, so a map that creeps up on the budget is visible as a shrinking number
+      // here rather than as a still-passing test.
+      expect(FLOOR_PASS_FLOAT_BUDGET / m.largest).toBeGreaterThan(2);
     });
   }
 
+  it('...and on the big map that is NOT because the content got smaller', () => {
+    // The control for the sweep above, and the replacement for the `OVER_BUDGET` exemption this file
+    // used to carry: `arena_launch` still paints an order of magnitude more floor than the per-piece
+    // budget. A version of `buildGroundLayer` that quietly stopped drawing four fifths of the floor
+    // would pass every per-piece assertion above and fail here.
+    const m = measureArena('arena_launch');
+    expect(m.total / FLOOR_PASS_FLOAT_BUDGET).toBeGreaterThan(8); // measured ~9.0
+    expect(m.total / m.largest).toBeGreaterThan(50); // spread over ~98 pieces' worth
+  });
+
   it('the smallest catalog map cannot reach the budget, so its pass is not evidence', () => {
-    // Honest about what a green `landing_basic` proves: with 3 rooms it scores 13,750, ~4.6x under
-    // the budget, so it would keep passing through a per-room regression of nearly 5x. The per-room
-    // rate above is the bound that actually covers it; this asserts the limitation rather than
-    // leaving it implied.
+    // Honest about what a green `landing_basic` proves: 3 rooms, largest piece 4,528, ~14x under the
+    // per-piece budget. The per-room rate above and the camera sweep below are the bounds that
+    // actually cover it; this asserts the limitation rather than leaving it implied.
     const m = measureArena('landing_basic');
-    expect(m.largest * 4).toBeLessThan(FLOOR_PASS_FLOAT_BUDGET);
-    expect(m.largest * 6).toBeGreaterThan(FLOOR_PASS_FLOAT_BUDGET);
+    expect(m.largest * 10).toBeLessThan(FLOOR_PASS_FLOAT_BUDGET);
+  });
+});
+
+/** The camera rect `GameLoop.cameraFrame` hands `updateCamera` for a room — its rect grown upward by
+ *  the tallest a wall can be, so the north wall's cap is not pushed off the top of the viewport.
+ *  Mirrored here (four lines, and `cameraFrame` is private) but the ZOOM and the cull that follow it
+ *  are the real `FxController`, which is the half this file is measuring. */
+function cameraFrameOf(room: RectPx): RectPx {
+  return { x: room.x, y: room.y - MAX_WALL_HEIGHT, w: room.w, h: room.h + MAX_WALL_HEIGHT };
+}
+
+interface Shot {
+  zoom: number;
+  visible: number;
+  submitted: number;
+}
+
+/** Walk one catalog map room by room with the real camera, and report what each stop submits. */
+function cameraSweep(id: ArenaId): { shots: Shot[]; total: number; pieces: number } {
+  const layers = new Layers();
+  const rb = new RoomBuilder(layers, new Backdrop(layers));
+  const state = createGameState({ seed: 1, worldW: 1, worldH: 1, waves: [], arena: ARENA_CATALOG[id] });
+  rb.build(state);
+  const fx = new FxController(layers);
+  const sys = contextSystem();
+  const world = { w: fpToPx(state.worldW), h: fpToPx(state.worldH) };
+  const rooms = roomRectsPx(state, world.w, world.h);
+  const total = layers.ground.children.reduce((a, c) => a + floatsOf(c, sys), 0);
+  const shots = rooms.map((room) => {
+    const at = { x: room.x + room.w / 2, y: room.y + room.h / 2 };
+    fx.updateCamera(1, VIEWPORT, world, { interpGroundX: () => at.x, interpGroundY: () => at.y }, cameraFrameOf(room));
+    const submitted = layers.ground.children
+      .filter((c) => !c.culled)
+      .reduce((a, c) => a + floatsOf(c, sys), 0);
+    return { zoom: fx.zoom, visible: fx.visibleGroundPieces, submitted };
+  });
+  return { shots, total, pieces: layers.ground.children.length };
+}
+
+describe('what ONE camera submits — the property the per-room split exists for', () => {
+  for (const id of Object.keys(ARENA_CATALOG) as ArenaId[]) {
+    it(`${id}: every room's camera stays inside the camera budget, with margin`, () => {
+      const { shots, total } = cameraSweep(id);
+      expect(shots.length).toBeGreaterThan(0);
+      const worst = Math.max(...shots.map((s) => s.submitted));
+      expect(worst).toBeLessThan(CAMERA_FLOAT_BUDGET);
+      expect(CAMERA_FLOAT_BUDGET / worst).toBeGreaterThan(1.5);
+      // Every stop draws SOMETHING: a cull that switched the floor off entirely would sail through a
+      // ceiling, and this is the direction a bad `groundPieceBounds` fails in.
+      expect(Math.min(...shots.map((s) => s.submitted))).toBeGreaterThan(total / 100);
+      expect(Math.min(...shots.map((s) => s.visible))).toBeGreaterThan(0);
+    });
+  }
+
+  it('arena_launch: the camera sees a fraction of the map, and the fraction is the win', () => {
+    const { shots, total, pieces } = cameraSweep('arena_launch');
+    const submitted = shots.map((s) => s.submitted).sort((a, b) => a - b);
+    const median = submitted[submitted.length >> 1]!;
+    expect(pieces).toBe(374); // 60 stamps + 60 dark + 60 light + 74 door patches + 60 grids + 60 pools
+    expect(shots).toHaveLength(60);
+    // ~8.5% of the layer at the median stop, ~13% at the worst — and it is 100% without the cull.
+    expect(median / total).toBeLessThan(0.1);
+    expect(submitted[submitted.length - 1]! / total).toBeLessThan(0.15);
+    // The camera really is zoomed into a room rather than looking at the whole map, or the fraction
+    // above would be a statement about the viewport and not about the cull.
+    expect(Math.max(...shots.map((s) => s.zoom))).toBeGreaterThan(3);
+  });
+
+  it('a camera over the whole map submits ALL of it — nothing is permanently hidden', () => {
+    // The cull's own control, in the other direction. Every assertion above passes for a
+    // `groundPieceBounds` that returned a zero-size rect for everything, and this is the one that
+    // does not: pull the camera back far enough and the whole layer must come back.
+    const layers = new Layers();
+    const rb = new RoomBuilder(layers, new Backdrop(layers));
+    const state = createGameState({ seed: 1, worldW: 1, worldH: 1, waves: [], arena: ARENA_CATALOG.arena_launch });
+    rb.build(state);
+    const fx = new FxController(layers);
+    const sys = contextSystem();
+    const world = { w: fpToPx(state.worldW), h: fpToPx(state.worldH) };
+    const total = layers.ground.children.reduce((a, c) => a + floatsOf(c, sys), 0);
+    // A viewport twice the world's size, from each corner and the middle: `updateCamera` clamps its
+    // pan to the world, so the union of those five stops has to be every piece there is.
+    const seen = new Set<Container>();
+    const stops = [
+      { x: 0, y: 0 },
+      { x: world.w, y: 0 },
+      { x: 0, y: world.h },
+      { x: world.w, y: world.h },
+      { x: world.w / 2, y: world.h / 2 },
+    ];
+    for (const at of stops) {
+      fx.updateCamera(1, { vw: world.w * 2, vh: world.h * 2 }, world,
+        { interpGroundX: () => at.x, interpGroundY: () => at.y }, null);
+      for (const c of layers.ground.children) if (!c.culled) seen.add(c);
+    }
+    expect(seen.size).toBe(layers.ground.children.length);
+    expect([...seen].reduce((a, c) => a + floatsOf(c, sys), 0)).toBe(total);
   });
 });
 
 /**
- * Pinned from the REAL `RoomBuilder.build` on `arena_launch`, 2026-08-26. These reproduce the live
- * browser `census()` of the same map EXACTLY (284,966 / 265,566 / 17,280 / 6,400 on ground; 49,392
- * on shadow), which is what says the headless path measures the shipped frame and not a lookalike.
+ * Pinned from the REAL `RoomBuilder.build` on `arena_launch`, 2026-08-26. The two overlay sums
+ * reproduce the pre-split live browser `census()` of the same map EXACTLY (284,966 additive /
+ * 265,566 multiply on ground, 49,392 on shadow), which is what says the split moved geometry between
+ * display objects and did not change a single vertex of it.
  */
 const REAL = {
-  /** The additive pass (mottle-light + door wear), and the multiply pass (wash + mottle-dark +
-   *  decals). BOTH are pinned, two-sided: an earlier draft bounded only the larger one, and a
-   *  battery then showed three mutants walking straight through it — a doubled stain density, a
-   *  doubled mottle density and `drawRoomWash` deleted outright all land on the SECOND pass. */
-  groundPasses: [284_966, 265_566],
+  /** Everything additive: every room's mottle-light + rubble highlights, plus every door's worn
+   *  patch. One Graphics before the split, 134 pieces after it, the same 284,966 floats. */
+  additive: 284_966,
+  /** Everything else on the layer: the dark half (265,566), the fallback flat fill this headless
+   *  build gets in place of a stamped swatch (480), the grid (6,400) and the light pools (17,280). */
+  rest: 289_726,
+  total: 574_692,
+  /** Largest single piece, and the worst any one camera submits. */
+  largestPiece: 5_840,
+  worstCamera: 76_646,
   shadowLargest: 49_392,
   /** `staticGraphics.ts`'s stated envelope for the wall-shadow pass, for comparison. */
   shadowMeasuredAt: 24_000,
@@ -298,8 +432,8 @@ const REAL = {
  * Deterministic pipeline, fixed seed, fixed authored map: these integers reproduced byte-identically
  * across runs and matched the live browser `census()` exactly, so there is no noise for a tolerance
  * to absorb — a tolerance only decides how much silent drift is allowed through. A 2% band was tried
- * first and a battery walked `drawRoomWash` deletion straight past it: removing that pass moves
- * `groundPasses[1]` by 480 floats, **0.18%**, which is exactly the size of change a band is worst at
+ * first and a battery walked `drawRoomWash` deletion straight past it: removing that pass moves the
+ * multiply half by 480 floats, **0.18%**, which is exactly the size of change a band is worst at
  * seeing. Nothing else in the suite noticed it either.
  *
  * So: if you changed the floor art on purpose, re-measure and update these numbers in the SAME
@@ -310,41 +444,67 @@ const REAL = {
 
 /** Every batch-forced Graphics on one layer of a real build, floats descending. */
 function layerFloats(layer: Container, sys: GraphicsContextSystem): number[] {
-  return layer.children
-    .filter((c): c is Graphics => c instanceof Graphics)
+  return graphicsUnder(layer)
     .map((c) => sys.updateGpuContext(c.context).geometryData.vertices.length)
     .sort((a, b) => b - a);
 }
 
 describe('the REAL builder, not the mirror in this file', () => {
-  // Every case above calls `buildGroundLayer` directly with rects this file assembles. That is a
-  // MIRROR of the pipeline, and 2026-08-26 is the day this repo learned what that costs: a
+  // Every case in the first half calls `buildGroundLayer` directly with rects this file assembles.
+  // That is a MIRROR of the pipeline, and 2026-08-26 is the day this repo learned what that costs: a
   // door-clip fix was verified against a harness that mirrored `RoomBuilder.build`'s sequence,
   // scored perfectly, and the shipping code did nothing at all. So the aggregate is also read back
-  // off the real call site — `RoomBuilder` is headlessly constructible on `Layers` + `Backdrop`,
-  // the same way `arenaWallCoverage.test.ts` drives it.
+  // off the real call site.
   const built = (() => {
     const layers = new Layers();
     const rb = new RoomBuilder(layers, new Backdrop(layers));
     const state = createGameState({ seed: 1, worldW: 1, worldH: 1, waves: [], arena: ARENA_CATALOG.arena_launch });
     rb.build(state);
     const sys = contextSystem();
-    return { ground: layerFloats(layers.ground, sys), shadow: layerFloats(layers.shadow, sys) };
+    const gfx = graphicsUnder(layers.ground);
+    const sum = (list: Graphics[]): number =>
+      list.reduce((a, c) => a + sys.updateGpuContext(c.context).geometryData.vertices.length, 0);
+    return {
+      pieces: layers.ground.children.map((c) => floatsOf(c, sys)).sort((a, b) => b - a),
+      additive: sum(gfx.filter((c) => c.blendMode === 'add')),
+      rest: sum(gfx.filter((c) => c.blendMode !== 'add')),
+      shadow: layerFloats(layers.shadow, sys),
+    };
   })();
 
-  it('ground: both shipped passes are over the budget, and pinned two-sided', () => {
-    // Two passes over the budget, not one — the fix has to address both, and a change that merged
-    // them into a single context would look like an improvement here while costing the same.
-    expect(built.ground.filter((f) => f > FLOOR_PASS_FLOAT_BUDGET)).toHaveLength(2);
-    // Exact, both passes: growth is the regression this file exists for, and a DROP means a
-    // per-room pass quietly stopped running — which no other test in the suite noticed.
-    expect(built.ground.slice(0, 2)).toEqual(REAL.groundPasses);
-    for (const f of REAL.groundPasses) expect(f).toBeGreaterThan(FLOOR_PASS_FLOAT_BUDGET);
+  it('ground: the same geometry as before the split, to the float', () => {
+    // Identified by BLEND MODE rather than by child index, so this keeps measuring the same two
+    // halves however the pieces are ordered — and both are pinned, because an earlier draft bounded
+    // only the larger one and a battery then showed three mutants walking straight through it (a
+    // doubled stain density, a doubled mottle density, and `drawRoomWash` deleted outright, all of
+    // which land on the multiply half).
+    expect(built.additive).toBe(REAL.additive);
+    expect(built.rest).toBe(REAL.rest);
+    expect(built.additive + built.rest).toBe(REAL.total);
+  });
+
+  it('ground: no piece of it is large any more, and that is not because there is less of it', () => {
+    expect(built.pieces[0]).toBe(REAL.largestPiece);
+    expect(built.pieces).toHaveLength(374);
+    expect(built.pieces[0]!).toBeLessThan(FLOOR_PASS_FLOAT_BUDGET);
+    // The total is still 9x the per-piece budget — see the sweep's control above for why that
+    // matters. Stated as a margin rather than as a second copy of the number.
+    expect(REAL.total / FLOOR_PASS_FLOAT_BUDGET).toBeGreaterThan(8);
+  });
+
+  it('ground: the worst camera on the map, pinned', () => {
+    const { shots } = cameraSweep('arena_launch');
+    expect(Math.max(...shots.map((s) => s.submitted))).toBe(REAL.worstCamera);
+    // And the margin to the budget, so nobody can transcribe the score into the budget later.
+    expect(CAMERA_FLOAT_BUDGET / REAL.worstCamera).toBeGreaterThan(1.5);
+    expect(REAL.worstCamera / REAL.total).toBeLessThan(0.15);
   });
 
   it('shadow: inside the budget, but recorded against the envelope it was measured at', () => {
-    // Not a defect today, and the reason to pin it anyway: it is the SAME drift as ground's, two
-    // doublings behind. `staticGraphics.ts` measured this pass at ~24k; the arena runs it at ~49k.
+    // Not a defect today, and the reason to pin it anyway: it is the SAME drift ground's was, two
+    // doublings behind, and it is NOT covered by the split above — `wallRender`'s shadows are still
+    // one shared Graphics per floor. `staticGraphics.ts` measured this pass at ~24k; the arena runs
+    // it at ~49k, resident every frame.
     expect(built.shadow[0]).toBe(REAL.shadowLargest);
     expect(built.shadow[0]).toBeLessThan(FLOOR_PASS_FLOAT_BUDGET);
     expect(built.shadow[0]).toBeGreaterThan(REAL.shadowMeasuredAt); // ~2x, stated rather than implied
@@ -382,8 +542,8 @@ describe('the REAL builder, not the mirror in this file', () => {
     // Direction is asserted, not just closeness: the harness omits `wallRects`, which suppress
     // rubble, so it must come out slightly HIGHER. A harness that drifted BELOW the real number
     // would mean it is missing a pass, which is the failure that hid the door-clip fix.
-    const harness = measureArena('arena_launch').largest;
-    expect(harness).toBeGreaterThanOrEqual(built.ground[0]!);
-    expect(harness / built.ground[0]!).toBeLessThan(1.1); // measured 1.024
+    const harness = measureArena('arena_launch').total;
+    expect(harness).toBeGreaterThanOrEqual(REAL.total);
+    expect(harness / REAL.total).toBeLessThan(1.1);
   });
 });

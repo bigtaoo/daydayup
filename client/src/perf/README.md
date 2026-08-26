@@ -353,3 +353,76 @@ pixel-identical, so it needs a look before it ships.
 Still worth saying: none of this is currently costing frame time (render p50 2.1 ms of a 16.7 ms
 budget). It is headroom for a low-end mobile GPU, where program switches cost far more than they do
 here — which is also why the CPU side of every candidate was measured, not assumed.
+
+## The fifth measurement: the floor was made cullable, and the fourth measurement's diagnosis was wrong (2026-08-26)
+
+The section above ends by naming `layers.ground` as the thing to fix and gives the mechanism: the
+floor's per-room wash/mottle/decals accumulated into two whole-map `Graphics` (284,966 and 265,566
+floats on `arena_launch`) and all of it was submitted every frame however far away the camera was.
+That much is true, and it was fixed: `groundLayer.ts` now mounts one piece per room (per region, per
+door), each tagged with the rect it paints, and `groundCulling.ts` switches the off-screen ones off
+from `FxController.updateCamera`. Standing in the arena's first room:
+
+```
+batcher packed, layers.ground   101,304 floats / 49,962 indices   (13 of 374 pieces visible)
+                without the cull  1,730,364 floats / 845,796 indices
+```
+
+**17x less vertex data and 17x fewer triangles, and the GPU frame did not measurably move.**
+Interleaved A/B, cull on against every piece forced visible, 13 samples of 6 renders each:
+
+```
+cull on    4.07 ms   band 2.68-4.83
+cull off   4.28 ms   band 4.11-4.82     <- bands OVERLAP
+ground hidden entirely  2.16 ms
+```
+
+By the standard the fourth measurement set for itself — a reading is quotable when the min/max bands
+do not overlap — that is a null result, not a 5% win. And it is the finding, because it falsifies the
+diagnosis it was meant to confirm: **the ground layer's ~2 ms is not vertex or triangle work.**
+Cutting the submitted triangles by 17x changed nothing; hiding the layer outright still costs 2 ms.
+Nor is it draw calls — the whole layer is 3 of the frame's 42.
+
+### The control that was wrong
+
+The fourth measurement's central inference was *"16x the pixels for 1.85x the time, therefore the
+frame is not fill-bound, therefore the fixed cost is geometry submission."* The sweep behind it
+varies `renderer.resolution`. **Every filter in this scene has `resolution: 1`** — Pixi's `Filter`
+default, which does NOT follow the renderer's:
+
+```
+layers.lit    SceneLightFilter        resolution 1     <- ground + shadow + entities are INSIDE this
+layers.fx     BlurFilter              resolution 1
+layers.world  Vignette, Chromatic     resolution 1
+```
+
+So almost the whole scene is rendered into filter targets pinned at 1x, and a renderer-resolution
+sweep scales the final blit and little else. "Resolution-independent" was a statement about the
+filter chain, not about the scene's fill. The empty-target control and the disjoint checks were all
+sound; the *interpretation* of the sweep was not, and one wrong control was enough to point a whole
+pass at the wrong half of the frame.
+
+### What to do next, and how to measure it
+
+The question the sweep should have asked is not "more pixels per unit of scene" but "more scene per
+pixel": vary the on-screen AREA the overlays cover, at a fixed resolution. Two cheap experiments,
+both A/B-able live:
+
+- Move the camera so a room's blended overlays cover a quarter of the viewport rather than all of it,
+  and re-run the same interleaved A/B. If the cost tracks covered area, it is fill inside the filter
+  chain and the render-quality tiers are aimed at the right thing after all.
+- Toggle `layers.lit`'s filter off entirely and repeat. `ground` hidden vs visible costs ~2 ms with
+  five filter passes live over it; the same delta with no filter says the cost is the floor's own
+  blending, and a much smaller one says the floor is expensive only because the passes above it have
+  to read what it wrote.
+
+Two smaller notes from the same sitting, both of which cost a round:
+
+- **`gl.finish()`-bounded wall-clock is not a cross-check on the timer query.** Submitting 40 renders
+  and timing to a `finish()` reported ~0.4 ms/frame against the timer's 4.3, and then FAILED its own
+  resolution control (0.37 / 0.58 / 0.38 / 1.01 ms at 0.5 / 1 / 2 / 3, non-monotonic). The timer
+  query passes that control; this does not. Do not use it to "confirm" a GPU number.
+- **In a background tab each `sample()` costs ~1 s of wall time**, because the result poll's
+  `setTimeout` fallback is clamped there. It does not corrupt the reading, but it caps a single
+  console evaluation at roughly six samples before the CDP call times out — accumulate into a handle
+  on `window` and call a stepper repeatedly rather than writing one long loop.

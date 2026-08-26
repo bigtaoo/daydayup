@@ -101,10 +101,10 @@ reachable from any unit test — a full `createGameEngine` end-to-end regression
 `dungeonrun.test.ts` reproducing the reported bug shape directly: one room, two
 real spawned enemies (one beside the player, one clear across the room), driven
 through the real tick order, confirming the near one engages immediately while the
-far one fires zero bullets until it closes the distance. **5192 tests green across all 8
-workspace packages** (engine 845 / client 3296 / server 189 / animator 444 / map-editor 282 /
+far one fires zero bullets until it closes the distance. **5205 tests green across all 8
+workspace packages** (engine 845 / client 3309 / server 189 / animator 444 / map-editor 282 /
 png-pipeline 42 / desktop-shell 81 / root build-script 13, `npm run check`, re-measured
-2026-08-26 after the arena frame-time pass (`perf/gpuTimer.ts` +30, `groundGeometryBudget.test.ts` +12) — and **measure it from the MAIN checkout with no sibling
+2026-08-26 after the ground-cull pass (`groundCulling.test.ts` +6, `groundGeometryBudget.test.ts` +7) — and **measure it from the MAIN checkout with no sibling
 worktree checked out**, which is the mechanism that has been corrupting this block rather than
 ordinary drift. The root leg of `npm run test` is `npx vitest run build/versionManifestPlugin.test.mjs`
 run from the repo root, and `.claude/worktrees/<name>/` lives *inside* the repo, so vitest globs
@@ -818,8 +818,16 @@ them; see the two sections below.
    and ~24k that `staticGraphics.ts`'s batch policy was measured on. So the thing to fix is the
    floor's batched geometry, not the wall count, and it is worth ~5x more. See design/01's "The
    arena's frame, measured on a GPU" and `client/src/perf/README.md`'s fourth measurement; the
-   tooling is `client/src/perf/gpuTimer.ts`. Still genuinely open: the on-device run (design/04),
-   which this sharpens rather than replaces.
+   tooling is `client/src/perf/gpuTimer.ts`. **The floor was made cullable the same day, and the
+   "worth ~5x more" estimate did not survive it**: `groundLayer.ts` now mounts one piece per room
+   and `groundCulling.ts` culls them against the camera, which cuts what the batcher packs 17x
+   (1,730,364 -> 101,304 floats) and moved the GPU frame by 0.21 ms with OVERLAPPING bands, i.e.
+   not measurably. So `ground`'s 2.28 ms is neither fill nor geometry submission, and the
+   resolution sweep that said "not fill-bound" was reading the filter chain (every filter in this
+   scene is `resolution: 1`, which does not follow the renderer's). The split ships anyway — it is
+   free, it cuts ~6.5 MB of batch buffer, and it un-blocks a per-camera gate — but the arena's
+   dominant cost is **open again**, with a named next sweep in `perf/README.md`'s fifth
+   measurement. Still genuinely open too: the on-device run (design/04).
 2. ~~`arena_prototype_60` stays in `ARENA_CATALOG` as the audit's before-picture. Dropping it,
    with its pinned defect tests, is a follow-up.~~ **Done 2026-08-26.**
 3. ~~`groundLayer.ts`'s arena branch still paints a whole-world floor because the OLD map's rooms

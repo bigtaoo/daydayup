@@ -9,7 +9,7 @@
  * preload contract.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { Graphics, Sprite, TilingSprite, Texture, TextureSource } from 'pixi.js';
+import { Container, Graphics, Sprite, TilingSprite, Texture, TextureSource } from 'pixi.js';
 import { createGameState } from '@dd/engine/state/GameState';
 import type { GameState, DoorRuntime } from '@dd/engine/state/GameState';
 import { pxToFp } from '@dd/engine/content/convert';
@@ -18,6 +18,7 @@ import type { PlacedRoom, PropPlacement, RoomPiece } from '@dd/engine';
 import { Layers } from './layers';
 import { RoomBuilder } from './RoomBuilder';
 import { WALL_H_PERIMETER, WALL_H_INTERIOR, WALL_H_KERB } from './wallGeometry';
+import { groundPieceBounds } from './groundCulling';
 import { XRAY_LABEL } from './occlusion';
 import { fpToPx, PX_PER_GRID } from '../coords';
 import { Entity, SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
@@ -146,6 +147,23 @@ function stateWithOneWall(biomeId: string | undefined): GameState {
   return s;
 }
 
+/**
+ * Every node under `layers.ground`, in PAINT order (depth-first pre-order).
+ *
+ * Recursive since 2026-08-26: the ground stage is mounted one piece per room/region/door so the
+ * camera can cull it (`groundCulling.ts`), and a region's floor sprites now sit inside that
+ * region's own container — one level deeper than a direct `children` scan reaches.
+ */
+function groundNodes(layers: Layers): Container[] {
+  const walk = (c: Container): Container[] => c.children.flatMap((k) => [k, ...walk(k)]);
+  return walk(layers.ground);
+}
+
+/** The floor's stamped tiles, wherever they are mounted. */
+function groundTiles(layers: Layers): Sprite[] {
+  return groundNodes(layers).filter((c): c is Sprite => c instanceof Sprite && !(c instanceof TilingSprite) && !(c instanceof Graphics));
+}
+
 describe('RoomBuilder — no biome art registered (fallback)', () => {
   it('fills the ground with flat Graphics, not a TilingSprite', () => {
     mocks.floorTex = undefined;
@@ -153,7 +171,7 @@ describe('RoomBuilder — no biome art registered (fallback)', () => {
     const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(stateWithOneWall('ember'));
-    const ground = layers.ground.children;
+    const ground = groundNodes(layers);
     expect(ground.some((c) => c instanceof TilingSprite)).toBe(false);
     expect(ground.some((c) => c instanceof Graphics)).toBe(true);
   });
@@ -187,7 +205,7 @@ describe('RoomBuilder — biome art registered for this element', () => {
     // One 256x256 room in a 1000x1000 world: 6.5% of the bounding box.
     s.dungeonRoomRects.push({ id: 'r', rect: { x: pxToFp(128), y: pxToFp(128), w: pxToFp(256), h: pxToFp(256) } });
     rb.build(s);
-    const tiles = layers.ground.children.filter((c) => c instanceof Sprite && !(c instanceof TilingSprite)) as Sprite[];
+    const tiles = groundTiles(layers);
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity, area = 0;
     for (const t of tiles) {
       const w = Math.abs(t.width);
@@ -216,7 +234,7 @@ describe('RoomBuilder — biome art registered for this element', () => {
     const s = createGameState({ seed: 1, worldW: 640, worldH: 320, waves: [], walls: [], obstacles: [] });
     s.arenaRoomRects.push({ id: 'a', rect: { x: pxToFp(0), y: pxToFp(0), w: pxToFp(128), h: pxToFp(128) } });
     rb.build(s);
-    const tiles = layers.ground.children.filter((c) => c instanceof Sprite && !(c instanceof TilingSprite)) as Sprite[];
+    const tiles = groundTiles(layers);
     const area = tiles.reduce((a, t) => a + Math.abs(t.width) * Math.abs(t.height), 0);
     expect(area).toBeCloseTo(640 * 320, 3); // the whole world, NOT the one 128x128 arena room
   });
@@ -228,10 +246,10 @@ describe('RoomBuilder — biome art registered for this element', () => {
     const layers = (rb as unknown as { layers: Layers }).layers;
     const s = stateWithOneWall('ember'); // 800x600 world, no dungeon rooms -> one region
     rb.build(s);
-    const tiles = layers.ground.children.filter((c) => c instanceof Sprite && !(c instanceof TilingSprite)) as Sprite[];
+    const tiles = groundTiles(layers);
     expect(tiles.length).toBe(Math.ceil(800 / 64) * Math.ceil(600 / 64));
     expect(tiles.every((t) => t.texture.source === mocks.floorTex!.source)).toBe(true);
-    expect(layers.ground.children.some((c) => c instanceof TilingSprite)).toBe(false);
+    expect(groundNodes(layers).some((c) => c instanceof TilingSprite)).toBe(false);
   });
 
   it('uses the wall swatch as each standing block\'s top CAP, at the wall rect', () => {
@@ -262,7 +280,7 @@ describe('RoomBuilder — biome art registered for this element', () => {
     const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(stateWithOneWall(undefined)); // undefined biomeId -> 'neutral' element
-    expect(layers.ground.children.some((c) => c instanceof TilingSprite)).toBe(false);
+    expect(groundNodes(layers).some((c) => c instanceof TilingSprite)).toBe(false);
   });
 });
 
@@ -550,7 +568,7 @@ describe('RoomBuilder — grid overlay and rebuild', () => {
     // The ground fill is Sprites (stamped tiles), so the Graphics here are exactly the four
     // overlays: the floor's own dark and additive variation layers (`floorRender`), the grid, and
     // the per-room light pool. Since 2026-08-18 the walls have left this layer entirely.
-    expect(layers.ground.children.filter((c) => c instanceof Graphics)).toHaveLength(4);
+    expect(groundNodes(layers).filter((c) => c instanceof Graphics)).toHaveLength(4);
   });
 
   it('clears the previous room contents on a second build() call', () => {
@@ -573,12 +591,12 @@ describe('RoomBuilder — doors (design/05 "Room & door model", 2026-08-04; stan
     const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(s);
-    // With no floor swatch loaded: the flat palette fill + the floor's two variation layers +
-    // grid + the per-room light pool are the only ground Graphics now; the real wall is a standing
-    // block on `entities`. If the locked door's passageAabb (also present in s.walls, mirroring
-    // DoorSystem) weren't excluded, it would be built as a SECOND standing block on `entities` —
-    // which is what the wallEntities count below catches.
-    expect(layers.ground.children.filter((c) => c instanceof Graphics).length).toBe(5);
+    // With no floor swatch loaded: the flat palette fill, the floor's two variation layers, this
+    // door's worn patch, the grid and the per-room light pool are the only ground Graphics now; the
+    // real wall is a standing block on `entities`. If the locked door's passageAabb (also present
+    // in s.walls, mirroring DoorSystem) weren't excluded, it would be built as a SECOND standing
+    // block on `entities` — which is what the wallEntities count below catches.
+    expect(groundNodes(layers).filter((c) => c instanceof Graphics).length).toBe(6);
     expect((rb as unknown as { wallEntities: Entity[] }).wallEntities).toHaveLength(1);
     expect(doorFixtures(rb)).toHaveLength(1);
   });
@@ -920,7 +938,7 @@ describe('RoomBuilder — the floor grid steps back', () => {
     // One stroke instruction carries the whole lattice, which is what identifies the grid among
     // the ground Graphics — the palette floor fill has none, and the per-room light pool added
     // after it (see `roomLight.ts`) strokes one band per step.
-    const strokeLists = layers.ground.children
+    const strokeLists = groundNodes(layers)
       .filter((c): c is Graphics => c instanceof Graphics)
       .map((g) => (g.context.instructions as Array<{ action: string; data: { style: { alpha: number } } }>)
         .filter((i) => i.action === 'stroke'));
@@ -1182,32 +1200,37 @@ describe('RoomBuilder — one boundary drawn twice becomes one block', () => {
 });
 
 describe('RoomBuilder — the per-room light pool', () => {
-  /** The light pool is the LAST Graphics added to `ground` by `build()` (floor fill, grid, light —
-   *  doors are Sprites), and it is the only one that strokes more than once. */
-  function lightPool(rb: RoomBuilder): Graphics {
-    const layers = (rb as unknown as { layers: Layers }).layers;
-    const graphics = layers.ground.children.filter((c): c is Graphics => c instanceof Graphics);
-    return graphics[graphics.length - 1]!;
-  }
   function strokeCount(g: Graphics): number {
     return (g.context.instructions as Array<{ action: string }>).filter((i) => i.action === 'stroke').length;
   }
+  /** Every light pool on `ground`, found by SHAPE rather than by position: `roomLight.ts` is the
+   *  only thing on this layer that strokes more than once (the grid strokes its whole lattice in
+   *  one call, and every other stage fills). Identified this way since 2026-08-26, when "the last
+   *  Graphics on the layer" stopped meaning "the light pool" — there is now one pool per room, and
+   *  a positional lookup would have quietly gone on passing while reading only the last room's. */
+  function lightPools(rb: RoomBuilder): Graphics[] {
+    const layers = (rb as unknown as { layers: Layers }).layers;
+    return groundNodes(layers).filter((c): c is Graphics => c instanceof Graphics && strokeCount(c) > 1);
+  }
 
-  it('paints one falloff per room, all onto a single shared display object', () => {
+  it('paints one falloff per room — one piece each, so the camera can cull them separately', () => {
     mocks.floorTex = undefined;
     mocks.wallTex = undefined;
     const rb = makeRoomBuilder();
-    const oneRoom = (() => {
-      rb.build(stateWithOneRoom(480, 480));
-      return strokeCount(lightPool(rb));
-    })();
+    rb.build(stateWithOneRoom(480, 480));
+    const one = lightPools(rb);
+    expect(one).toHaveLength(1);
     const rb2 = makeRoomBuilder();
     rb2.build(stateWithTwoRooms());
-    expect(strokeCount(lightPool(rb2))).toBe(oneRoom * 2);
-    // ...and still exactly one Graphics carrying both.
-    const layers = (rb2 as unknown as { layers: Layers }).layers;
-    // floor fill + the floor's dark/additive variation layers + grid + light
-    expect(layers.ground.children.filter((c) => c instanceof Graphics)).toHaveLength(5);
+    const two = lightPools(rb2);
+    // Two rooms, two pools, and between them exactly twice the bands — the same total the one
+    // shared Graphics used to carry. What changed in 2026-08-26 is only which display object each
+    // room's bands land on, and that is the whole point: a pool the camera cannot see is now a
+    // piece it can switch off.
+    expect(two).toHaveLength(2);
+    expect(two.reduce((n, g) => n + strokeCount(g), 0)).toBe(strokeCount(one[0]!) * 2);
+    // Each pool is tagged with what it paints, or the cull would leave it resident forever.
+    for (const pool of two) expect(groundPieceBounds(pool)).toBeDefined();
   });
 
   it('spans both rooms, so neither is left unlit', () => {
@@ -1215,9 +1238,9 @@ describe('RoomBuilder — the per-room light pool', () => {
     mocks.wallTex = undefined;
     const rb = makeRoomBuilder();
     rb.build(stateWithTwoRooms());
-    const b = lightPool(rb).bounds;
-    expect(b.minX).toBeLessThan(480);
-    expect(b.maxX).toBeGreaterThan(480); // reaches into the second room
+    const pools = lightPools(rb);
+    expect(Math.min(...pools.map((g) => g.bounds.minX))).toBeLessThan(480);
+    expect(Math.max(...pools.map((g) => g.bounds.maxX))).toBeGreaterThan(480); // reaches into the second room
   });
 
   it('falls back to the whole world as one room in a mode with no room model', () => {
@@ -1228,9 +1251,11 @@ describe('RoomBuilder — the per-room light pool', () => {
     const s = createGameState({ seed: 1, worldW: 600, worldH: 600, waves: [], walls: [], obstacles: [] });
     const rb = makeRoomBuilder();
     rb.build(s);
-    expect(strokeCount(lightPool(rb))).toBeGreaterThan(0);
+    const pools = lightPools(rb);
+    expect(pools).toHaveLength(1);
+    expect(strokeCount(pools[0]!)).toBeGreaterThan(0);
     // Inside the world, to within a stroke's own antialiasing slack.
-    expect(lightPool(rb).bounds.maxX).toBeLessThanOrEqual(600.5);
+    expect(pools[0]!.bounds.maxX).toBeLessThanOrEqual(600.5);
   });
 
   function stateWithOneRoom(w: number, h: number): GameState {

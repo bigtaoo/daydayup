@@ -944,9 +944,13 @@ describe('arena passages — the clip rule that used to be dead code here', () =
     // hole in the stone is a threshold. Asserted by AIM rather than by count — every passage
     // centre must have its own stack of `drawDoorWear` bands centred on it, so a version that
     // painted 296 ellipses in the wrong place, or 295 in the right one, fails here.
-    const additive = layers.ground.children.filter((c) => c instanceof Graphics && c.blendMode === 'add');
-    expect(additive).toHaveLength(1);
-    const ellipses = (additive[0] as Graphics).context.instructions.flatMap((ins) => {
+    // Every additive piece of the layer, not one shared Graphics: since 2026-08-26 the ground is
+    // mounted one piece per room (per door) so the camera can cull it — `groundCulling.ts`. Sweeping
+    // all of them is the stronger form of this check anyway, because a wear patch that landed in the
+    // wrong PIECE would still be caught by where it is AIMED, which is what this asserts.
+    const additive = layers.ground.children.filter((c): c is Graphics => c instanceof Graphics && c.blendMode === 'add');
+    expect(additive.length).toBeGreaterThanOrEqual(LAUNCH.passages.length);
+    const ellipses = additive.flatMap((g) => g.context.instructions).flatMap((ins) => {
       const path = (ins as unknown as { data?: { path?: { instructions?: Array<{ action: string; data: number[] }> } } })
         .data?.path?.instructions;
       return (path ?? []).filter((i) => i.action === 'ellipse').map((i) => ({ cx: i.data[0]!, cy: i.data[1]! }));

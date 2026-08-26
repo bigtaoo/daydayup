@@ -4,6 +4,7 @@ import { VignetteFilter, ChromaticAberrationFilter, SceneLightFilter, MAX_SCENE_
 import { ParticleSystem } from './Particles';
 import { LightRegistry, makeLightBuffer, type ActiveLight } from './lighting';
 import { activeQuality } from '../../render/quality';
+import { cullGroundLayer } from '../scene/groundCulling';
 
 const FX_LIFE_MS = 170; // flash/trail lifetime
 const MAX_SHAKE_PX = 14; // camera-shake offset at full trauma (design/01 milestone 3)
@@ -89,6 +90,10 @@ export class FxController {
    *  to convert a screen-space mouse point back to world space (Game.ts reads it
    *  into `cam.zoom`). 1 until the first updateCamera call (no zoom applied yet). */
   zoom = 1;
+  /** How many pieces of `layers.ground` the last `updateCamera` left on screen — the ground cull's
+   *  own readout (`groundCulling.ts`). 0 before the first camera update, and 0 while there is no
+   *  ground built. Read by tests and by the perf console handle; nothing in the render path uses it. */
+  visibleGroundPieces = 0;
 
   constructor(private readonly layers: Layers) {}
 
@@ -226,7 +231,7 @@ export class FxController {
     if (!player) {
       // Still re-sync: the camera is unchanged, but a light may have expired or moved, and
       // the pass is live whether or not there is anyone to follow.
-      this.syncSceneLight(viewport);
+      this.syncCamera(viewport);
       return;
     }
     const { vw, vh } = viewport;
@@ -263,28 +268,41 @@ export class FxController {
     this.layers.world.scale.set(zoom);
     this.layers.world.x = cx + shakeX;
     this.layers.world.y = cy + shakeY;
-    this.syncSceneLight(viewport);
+    this.syncCamera(viewport);
   }
 
   /**
-   * Hand this frame's camera rect and light set to the single scene-lighting pass. Called at
-   * the END of updateCamera, after the world transform is settled: the shader maps each texel
-   * to a WORLD position, so a region computed from last frame's camera would slide the whole
-   * lighting a camera-delta behind the scene it is lighting.
+   * Everything that depends on WHERE the camera ended up this frame: what the floor has to submit,
+   * and what the scene-lighting pass has to shade. Called at the END of updateCamera, after the
+   * world transform is settled — the light shader maps each texel to a WORLD position, so a region
+   * computed from last frame's camera would slide the whole lighting a camera-delta behind the
+   * scene it is lighting, and a cull computed from it would be a frame stale at every room edge.
    *
    * The rect is the inverse of the camera transform applied to the viewport — safe as a plain
    * divide because this camera only ever scales and translates (no rotation, see updateCamera).
+   * `layers.ground` sits under `world` with no transform of its own, so the same rect is directly
+   * the ground layer's own space.
+   *
+   * Note the ORDER of the two things below: the region is computed unconditionally, because the
+   * ground cull needs it on every quality tier, and only the light pass's uniforms are skipped when
+   * that pass is unmounted. Before 2026-08-26 the whole method returned early on the low tier, which
+   * was right when the region existed only to feed the filter.
    */
-  private syncSceneLight(viewport: { vw: number; vh: number }): void {
-    // Nothing reads these uniforms while the pass is unmounted (low tier), and the region math
-    // below is per-frame work — so skip it rather than feed a filter that is not running.
-    if (!activeQuality().sceneLight) return;
+  private syncCamera(viewport: { vw: number; vh: number }): void {
     const world = this.layers.world;
     const zoom = world.scale.x || 1;
     this.litArea.x = -world.x / zoom;
     this.litArea.y = -world.y / zoom;
     this.litArea.width = viewport.vw / zoom;
     this.litArea.height = viewport.vh / zoom;
+    this.visibleGroundPieces = cullGroundLayer(this.layers.ground, {
+      x: this.litArea.x,
+      y: this.litArea.y,
+      w: this.litArea.width,
+      h: this.litArea.height,
+    });
+    // Nothing reads these uniforms while the pass is unmounted (low tier).
+    if (!activeQuality().sceneLight) return;
     this.sceneLight.setRegion(this.litArea.x, this.litArea.y, this.litArea.width, this.litArea.height);
     this.sceneLight.setLights(this.lightBuffer, this.lights.snapshot(this.lightBuffer));
   }

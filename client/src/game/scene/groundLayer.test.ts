@@ -59,23 +59,31 @@ function digest(g: Graphics): string {
     .join(';');
 }
 
-function build(d: GroundDeps): { ground: Container; graphics: Graphics[]; tiles: Sprite[] } {
+/** Every node under `root`, in PAINT order (depth-first pre-order — what Pixi draws in).
+ *  Recursive since 2026-08-26: the floor stamp's sprites now sit inside one container per floor
+ *  region so the camera can cull the region as a unit (`groundCulling.ts`), which is one level
+ *  deeper than this file used to look. */
+function paintOrder(root: Container): Container[] {
+  return root.children.flatMap((c) => [c, ...paintOrder(c)]);
+}
+
+function build(d: GroundDeps): { ground: Container; order: Container[]; graphics: Graphics[]; tiles: Sprite[] } {
   const ground = new Container();
   buildGroundLayer(ground, d);
+  const order = paintOrder(ground);
   return {
     ground,
-    graphics: ground.children.filter((c): c is Graphics => c instanceof Graphics),
-    tiles: ground.children.filter((c): c is Sprite => c instanceof Sprite && !(c instanceof Graphics)),
+    order,
+    graphics: order.filter((c): c is Graphics => c instanceof Graphics),
+    tiles: order.filter((c): c is Sprite => c instanceof Sprite && !(c instanceof Graphics)),
   };
 }
 
 describe('buildGroundLayer — the stack, in the order it has to be in', () => {
   it('paints the floor first and the overlays on top of it, never the reverse', () => {
-    const { ground, tiles } = build(deps());
-    const lastTile = Math.max(...tiles.map((t) => ground.children.indexOf(t)));
-    const firstOverlay = Math.min(
-      ...ground.children.filter((c) => c instanceof Graphics).map((c) => ground.children.indexOf(c)),
-    );
+    const { order, tiles } = build(deps());
+    const lastTile = Math.max(...tiles.map((t) => order.indexOf(t)));
+    const firstOverlay = Math.min(...order.filter((c) => c instanceof Graphics).map((c) => order.indexOf(c)));
     // Pixi paints in child order, so a grid or a light pool mounted before the floor is invisible —
     // and every "what does this layer draw" test still passes while it is.
     expect(firstOverlay).toBeGreaterThan(lastTile);
@@ -147,8 +155,12 @@ describe('buildGroundLayer — determinism and per-room identity', () => {
   it('gives every door a worn patch in the additive layer', () => {
     const withoutDoor = build(deps());
     const withDoor = build(deps({ doorRects: [{ x: 200, y: 240, w: 64, h: 128 }] }));
-    const additive = (b: ReturnType<typeof build>): Graphics => b.graphics.find((g) => g.blendMode === 'add')!;
-    expect(digest(additive(withDoor)).length).toBeGreaterThan(digest(additive(withoutDoor)).length);
+    // Across EVERY additive piece, not the first one found: door wear is its own piece per door
+    // since 2026-08-26, and a `find` here would have picked up the room's light half instead and
+    // reported no difference whether the wear was drawn or not.
+    const additive = (b: ReturnType<typeof build>): string =>
+      b.graphics.filter((g) => g.blendMode === 'add').map(digest).join(';');
+    expect(additive(withDoor).length).toBeGreaterThan(additive(withoutDoor).length);
   });
 
   it('keeps rubble off the wall footprints it is handed', () => {
@@ -247,8 +259,7 @@ describe('the real launch arena, end to end through the ground stage', () => {
   })();
 
   it('stamps 60 rooms and not the void between them', () => {
-    const { ground } = build(deps({ rooms: arena.rooms, floorRegions: arena.regions }));
-    const sprites = ground.children.filter((c): c is Sprite => c instanceof Sprite);
+    const { tiles: sprites } = build(deps({ rooms: arena.rooms, floorRegions: arena.regions }));
     expect(arena.regions).toHaveLength(60);
 
     const inARoom = (x: number, y: number): boolean =>
