@@ -51,6 +51,27 @@ export const ARENA_CATALOG: Record<ArenaId, ArenaMap> = {
  *  than against a hand-kept second list. */
 export const ARENA_IDS = Object.keys(ARENA_CATALOG) as ArenaId[];
 
+/**
+ * The ids that are dev HARNESS fixtures rather than maps a real PvP match resolves to.
+ *
+ * Exists so the arena quality gate (`@dd/engine/content/arenaQuality`) can hold every OTHER
+ * catalog entry to the bar BY DEFAULT: adding a map puts it under the gate automatically, and
+ * exempting one is a visible edit to this line rather than a silent omission. That direction
+ * matters — a gate scoped by a property the broken content happens to lack (say "has spawns")
+ * would quietly excuse exactly the maps it exists to catch.
+ *
+ * `landing_basic` qualifies on its own terms: three rooms with `solids: []`, so it has no
+ * walls, no cover and no authored spawns, and `arenaCatalogQuality.test.ts` asserts that it
+ * really does fail the gate — the fixture doubles as proof the gate can fire on real content.
+ */
+export const DEV_FIXTURE_ARENA_IDS: readonly ArenaId[] = ['landing_basic'];
+
+/** The catalog minus the dev fixtures — every map a real match can build, and the set the
+ *  quality gate applies to. */
+export const MATCH_ARENA_IDS: ArenaId[] = ARENA_IDS.filter(
+  (id) => !DEV_FIXTURE_ARENA_IDS.includes(id),
+);
+
 /** `?arena=<id>` → a real catalog id, or `null` for absent AND for unknown. An unknown
  *  id must not reach `EngineConfig.arena` as `undefined`: that silently boots a run with
  *  no arena at all instead of naming the typo, so it is rejected here and the caller

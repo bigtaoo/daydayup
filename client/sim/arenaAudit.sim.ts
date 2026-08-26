@@ -20,11 +20,17 @@
  * it exhibited had a fixture in the two metrics test files; this report now covers the catalog
  * as it stands, which is `arena_launch` plus the `landing_basic` dev fixture.
  *
- * Still a REPORT and not a gate: the numbers a good map should hold are now KNOWN (see
- * ROADMAP's "The Seven Districts" table), so turning the load-bearing ones into thresholds is
- * a reasonable follow-up — it just should not be done by transcribing whatever the current map
- * happens to score. The two metrics test files pin that the numbers mean what they say, and
- * `world/arenas/launchArena.test.ts` already asserts the important ones for the shipped map.
+ * This report is now backed by a GATE (2026-08-26). `@dd/engine/content/arenaQuality` turns
+ * the load-bearing numbers into thresholds and `src/game/match/arenaCatalogQuality.test.ts`
+ * enforces them in the default `npm test` run, so a bad map fails CI instead of merely
+ * printing badly here. The thresholds were chosen as answers to "what would make a PvP arena
+ * unplayable, or unauthored" rather than transcribed from what `arena_launch` happens to
+ * score — `arenaQuality.test.ts` asserts the margin between each bound and the shipped map's
+ * number, so a bound quietly retuned onto the current content fails there.
+ *
+ * This file stays a report, and still earns its place: the gate answers pass/fail, while the
+ * numbers below are what you read when deciding what to author next. Both are printed
+ * together now (the VERDICT block) so they can never disagree about the same map.
  *
  * Run: `npm run audit:arena -w client`. Same harness shape as the two balance sims — kept
  * out of the default `npm test` glob because its output is a report to read, not an
@@ -33,8 +39,9 @@
 import { describe, it, expect } from 'vitest';
 import { measureArena, type ArenaMetrics } from '@dd/engine/content/arenaMetrics';
 import { measureEnclosure, measurePlacement } from '@dd/engine/content/arenaGeometryMetrics';
+import { auditArenaQuality, formatViolations } from '@dd/engine/content/arenaQuality';
 import type { ArenaMap } from '@dd/engine/content/arenas';
-import { ARENA_CATALOG, ARENA_IDS } from '../src/game/match/arenaCatalog';
+import { ARENA_CATALOG, ARENA_IDS, DEV_FIXTURE_ARENA_IDS } from '../src/game/match/arenaCatalog';
 
 function pct(x: number): string {
   return `${(x * 100).toFixed(1)}%`;
@@ -139,12 +146,28 @@ function report(m: ArenaMetrics): string {
   return lines.join('\n');
 }
 
+/**
+ * The gate's answer for this map, printed alongside the numbers so the report and CI can
+ * never disagree. A dev fixture is labelled rather than silently excused — `landing_basic`
+ * fails the bar on purpose and is exempt by name, not by scoring well.
+ */
+function verdict(id: string): string {
+  const violations = auditArenaQuality(ARENA_CATALOG[id as keyof typeof ARENA_CATALOG]);
+  const exempt = (DEV_FIXTURE_ARENA_IDS as readonly string[]).includes(id);
+  const head = exempt
+    ? 'VERDICT - dev fixture, EXEMPT from the gate (see arenaCatalog.DEV_FIXTURE_ARENA_IDS)'
+    : `VERDICT - ${violations.length === 0 ? 'clears the gate' : `FAILS the gate, ${violations.length} violation(s)`}`;
+  return `${head}
+${formatViolations(violations)}
+`;
+}
+
 describe('arena map audit', () => {
   for (const id of ARENA_IDS) {
     it(`reports ${id}`, () => {
       const arena = ARENA_CATALOG[id];
       const metrics = measureArena(arena);
-      console.log(`\n${report(metrics)}${geometryReport(arena)}`);
+      console.log(`\n${report(metrics)}${geometryReport(arena)}${verdict(id)}`);
       // The report is the point, but a run that measured NOTHING must not read as a pass —
       // the same "a zero is not a result until something fires" rule the perf probes use.
       expect(metrics.roomCount).toBeGreaterThan(0);

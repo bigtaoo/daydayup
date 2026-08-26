@@ -683,6 +683,10 @@ first):
    walk-throughs between neighbouring rooms). Deliberately a REPORT, not a gate: thresholds
    written today would pin the placeholder's own numbers as the standard. They belong with the
    map that can meet them. Split across two files per the 500-line convention, form (1).
+   *(Superseded 2026-08-26 — that condition is now met. `engine/content/arenaQuality.ts` turns
+   the load-bearing numbers into a gate enforced by `npm test`, with the bounds argued from
+   what breaks a PvP arena rather than from `arena_launch`'s scores. See "The arena in front of
+   a camera, and the audit becomes a gate".)*
 
 **Verified live, and the verification lied twice first** — both times in ways already written
 down in this repo. `?arena=arena_prototype_60` boots the real 60-room map in one tab: 60 rooms,
@@ -5866,3 +5870,139 @@ dmg (1x5, 2x5), `deflect: true`, tap → saber active. Forge board reads
 `Loadout (none → Blaster + Saber) (0/2)`. Engine 819 tests green, `tsc --noEmit` clean in both
 workspaces, file-length gate clean in all seven.
 
+## The arena in front of a camera, and the audit becomes a gate (2026-08-26, client + engine)
+
+The offline half (commit `0062737`) took the five wall/x-ray content sweeps to the arena and
+came back with four things to look at and one thing to measure. This is that half: a real
+frame, and then the audit turned into something that can fail CI.
+
+Run from a detached worktree pinned at `0062737`, not the shared tree — a second session was
+editing `skinFx`/`shieldScales`/`shadeRamp` at the time, and frame-cost numbers taken over
+someone else's in-flight shader work are not `main`'s numbers.
+
+### The measurement that overturned its own hypothesis
+
+The offline half flagged the wall shading's float budget: worst arena block 208 floats against
+a PvE worst of 120, over `wallComposition.test.ts`'s own `< AUTO_BATCH_VERTEX_LIMIT / 2` bound.
+That turns out to be the wrong number to have worried about. Attribution on the real frame
+(`?arena=arena_launch&perf=1`, 1920x855, 419 entities):
+
+```
+total  draws 278  prog 265
+  pillars             245 draws   242 prog  (124 nodes)
+  actors               14 draws    10 prog  (14 nodes)
+  ground                3 draws     0 prog  (1 nodes)
+  walls                 2 draws     3 prog  (294 nodes)
+  shadow                1 draws     0 prog  (1 nodes)
+```
+
+**294 wall blocks cost 2 draw calls. 124 pillars cost 245.** The census names the cause in one
+line: each pillar carries a `Graphics` of **496 floats over 12 fills on `batchMode: 'auto'`** —
+over Pixi v8's 400-float auto-batch line, so one draw call and one program switch each way,
+124 times. Scene-wide that is 132 of 1091 `Graphics` unbatched.
+
+This is the *same* failure mode the 2026-08-24 pass fixed for wall shading, and the fix already
+exists in the repo: `render/shadeRamp.ts`'s sampled 256-texel texture took wall shading from
+520-816 floats to under the line. **The pillars never got that treatment**, and a PvE floor has
+few enough of them that nothing noticed. Probed by hiding the 124 pillar shadings and
+re-attributing, with the third read the perf README insists on:
+
+| | draws | programs |
+| --- | --- | --- |
+| as shipped | 278 | 265 |
+| pillar shading hidden | **33** | **23** |
+| restored (control) | 278 | 265 |
+
+So ~88% of the arena frame's draw calls and ~91% of its program switches are one unconverted
+shading path. Fixing it would put the arena *below* the PvE baseline's 108 draws.
+
+**No frame-time claim is made here, deliberately.** The tab does not composite while the pane
+is hidden, and this repo already recorded the rule that follows (`renderer.render()` in a loop
+there measures CPU submission while the GPU work is deferred): the honest numbers are the GL
+counters. `nodes 3045` / `filtered 5` are structural and trustworthy; the sampler's own window
+came back `discarded: true` with a 164 ms render p95, which is throttling, not the renderer.
+Turning this into a frame-rate claim needs a device.
+
+### What the camera said about the other three
+
+Camera coordinates derived from the sweep's own findings, and the shipped map obliges by putting
+two of them in one room (`terraces_r1c0` holds both the four-pillar cluster and a fully buried
+passage).
+
+- **The buried doorways are the real defect, and they do not look like a bug.** Passage 3
+  (`terraces_r1c0` → `terraces_r1c1`, a 64x96 hole at world x 480-544) is covered by the wall
+  run standing south of it, whose art reaches from y 535 up over the whole 96 px. On screen the
+  column reads as **continuous, plausible, deliberately-authored stone** — brick coursing
+  unbroken top to bottom. Hiding that one block opens a clean gap where the doorway is; putting
+  it back closes it seamlessly. That is worse than an obviously broken visual: a player reads it
+  as a wall and never tries to walk through. 36 of 74 passages are like this, so over half the
+  map's authored connectivity is unreadable. The fix is the one the offline half already
+  measured (feed `s.arenaMap.doors[].passageGrid` to `bordersDoorNorth`, 58 covered → 10).
+- **Four pillars fading at once reads fine.** At the single sample of 72,686 that reaches four
+  (`terraces_r1c0`'s 2x2 colonnade — the `fourPillars` kit in `interiorKits.ts`), each pillar
+  keeps its cap ellipse and its silhouette edges and only the body goes translucent. It reads as
+  four glass columns, not as a hole in the room, and the two solid pillars a few metres west sit
+  in the same frame as a built-in control. Conspicuous, not broken.
+- **The arena hiding the player three times as often as a PvE floor also reads fine.** At
+  `cisterns_r2c2`'s worst spot the character is the most legible thing in frame; what fades keeps
+  its outline, which is what carries it. The 11.6% number is a property of a map whose colonnades
+  exist to provide cover, not a defect.
+
+### The audit becomes a gate
+
+`npm run audit:arena` printed a report, and a report cannot fail CI. `arena_launch` also had a
+hand-written per-map test (`world/arenas/launchArena.test.ts`) covering its geometry, which does
+nothing for the *next* map.
+
+- **`engine/content/arenaQuality.ts`** — `auditArenaQuality(map)` → 21 rules in two severities.
+  `defect` (11 rules, zero-tolerance) are the ones `arena_prototype_60` really shipped: content
+  off the map or outside its own room, `solids: []`, doors gating nothing, undoored leaks, a
+  disconnected graph, spawns orphaned or sharing a room. `design` (10 rules) are bands where both
+  ends are a real failure — stamped rooms, the cover fraction, spawn separation, map depth,
+  branching, zone choice, perimeter coverage.
+- **Thresholds are answers to "what would make a PvP arena unplayable or unauthored", not
+  transcriptions of what `arena_launch` scores** — and that is enforced, not just intended:
+  `arenaQuality.test.ts` asserts the *margin* between each bound and the shipped map's number
+  (0.067 against a 0.5 stamped bound, 0.333 in a 0.05-0.7 cover band, 4 hops against 2, 15
+  against 3), so a bound quietly retuned onto current content fails there. `chokepoints` and
+  `deadEnds` are deliberately NOT gated: `arena_launch` ships 8 and 10 on purpose, and gating
+  them would be the same mistake pointed the other way.
+- **Scoped fail-safe.** `arenaCatalog.MATCH_ARENA_IDS` is the catalog minus an explicit
+  `DEV_FIXTURE_ARENA_IDS`, so a new map is gated **by default** and exempting one is a visible
+  edit. Scoping by a property the broken content happens to lack ("has spawns") would have
+  excused exactly the maps the gate exists to catch.
+- **The exempt fixture is the gate's own control.** `arenaCatalogQuality.test.ts` asserts that
+  `landing_basic` *fails* — `no_walls`, `no_spawns`, `door_gates_nothing`, `unenclosed_room` — so
+  the pass on `arena_launch` means the rules can fire on real catalog content, not just on
+  hand-built fixtures. The report now prints the same verdict beside the numbers, so CI and the
+  report can never disagree about a map.
+
+### Verification
+
+Engine 837 tests (819 + 18, then 26 in that file after the battery), client 172 files / 3189,
+`tsc --noEmit` clean in every workspace, file-length gate clean in all seven.
+
+**Mutation battery over the gate** (throwaway worktree, 33 mutants, 2 comment/string controls
+that must survive): first run **21 of 31 killed**. The 10 survivors were each a bound whose exact
+position no fixture pinned, and 7 became tests — one bogus door rather than eight, one unenclosed
+room rather than seven, `stamped_rooms` firing on interior SHAPE with the footprint half proven
+below its bound, the cover band reading the median so one deliberate plaza is allowed, the
+two-hop/three-hop diameter straddle, the 0.455/0.727 perimeter straddle, and the
+`defect`/`design` partition pinned independently of the rule names. Second run: **28 of 31
+killed, both controls still surviving.**
+
+The 3 that remain are recorded in `arenaQuality.ts` at the lines they belong to rather than
+papered over: `colliding > 0` vs `> 1` is **equivalent** (the metric sums group sizes, so it is 0
+or at least 2, never 1), the `spawns.count >= 2` guard is **equivalent** (`minPairHops` is
++Infinity below two spawns, so the comparison is already false — the guard is documentation), and
+`perimeterCoverage <=` vs `<` is an **unreachable boundary** (whole authored sides land at 0.227 /
+0.455 / 0.727 on a 10x10 room, so exactly 0.5 does not occur on grid-aligned walls).
+
+### Still open
+
+- **The buried doorways are not fixed.** Wiring the passages changes 21 run outlines and wants
+  ground-wear decals at 74 doorways; the measurement says it works, the camera now says it is
+  worth doing, and the doorway art is a call for a person.
+- **Pillar shading is still 496 floats.** The route is `shadeRamp.ts`, already proven on walls.
+- **No frame-time number for the arena**, per the above — that needs a device, and it is now the
+  best-motivated item on the on-device list.
