@@ -45,6 +45,18 @@ export {
   type ProbeOptions,
   type ProbeResult,
 } from './frameProbe';
+export {
+  GpuTimer,
+  createGpuTimer,
+  resolutionSplit,
+  sweepTrust,
+  type CostSplit,
+  type GpuTimerOptions,
+  type MsSample,
+  type RenderOnce,
+  type SweepPoint,
+  type TimerGl,
+} from './gpuTimer';
 
 export interface InstalledPerf {
   monitor: PerfMonitor;

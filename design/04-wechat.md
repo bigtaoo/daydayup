@@ -343,6 +343,25 @@ method as `wechatAssetLoad.test.ts`, described under **Verification checklist**.
 Everything below needs hardware and cannot be run from here. Ordered by what is most likely to
 find something. Items 3/4/5/6 of the checklist correspond.
 
+**Narrowed on 2026-08-26, for the arena.** Items 1 and 2 used to be open questions in both
+directions: nobody knew what the PvP arena's frame cost, or whether its cost was shaders or
+geometry. That much is now settled off-device — `arena_launch` runs at **~4 ms of GPU time per
+frame on a desktop Intel Arc**, and the split is **~3.0 ms resolution-independent against ~0.7 ms
+of fill**, with `layers.ground` alone accounting for 56% of the frame and all 294 wall blocks plus
+124 pillars accounting for 10%. See design/01's "The arena's frame, measured on a GPU" and
+`client/src/perf/README.md`'s fourth measurement. Two consequences for the device run:
+
+- Item 2 (**is the low tier enough?**) is now the *less* informative half for the arena. `低`
+  removes full-viewport passes and halves resolution, i.e. it attacks the ~20% of the arena frame
+  that is fill. Expect it to help less there than it does in a PvE room, and treat "`低` barely
+  helped in the arena" as a CONFIRMATION of the measurement rather than a surprise.
+- The thing actually worth reporting from the arena is whether the **resolution-independent** half
+  holds, because that is draw submission and vertex work — the half that gets relatively worse on a
+  mobile GPU, not better. On 真机调试 the `[perf]` warning already names `update` vs `render`; a
+  `render`-side breach in the arena with `低` pinned is the signal that the floor's batched geometry
+  (285k + 266k floats, submitted whole every frame regardless of camera) needs the fix design/01
+  describes, and is not something a quality tier can reach.
+
 **Setup.** 微信开发者工具 → 预览 to get a QR code, scan with the test account. For anything that
 needs a console, use **真机调试** instead of 预览 — it mirrors the device's `console` into the
 IDE, which is where the `[perf]` warnings land.

@@ -15,6 +15,7 @@ fact that daydayup has no telemetry backend to send findings to.
 | `PerfMonitor.ts` | Installs the above on a live `Application` and emits one `PerfSnapshot` per window. |
 | `PerfOverlay.ts` | On-screen readout. |
 | `frameProbe.ts` | A/B/C frame differencing for ART work: `readFrame`/`diffFrames`, plus `probeFrames`, which runs a **liveness control** first and refuses to be believed if it moves zero pixels. `window.__perf.probe(...)`. |
+| `gpuTimer.ts` | GPU-side frame timing via `EXT_disjoint_timer_query_webgl2` — what the GPU actually did, not what the CPU spent submitting it. Carries its own controls (`sweepTrust`) and the fixed-vs-fill decomposition (`resolutionSplit`). |
 | `index.ts` | `installPerf(app, { overlay })` + the `window.__perf` console handle. |
 
 ## Using it
@@ -236,6 +237,97 @@ prove a specific subtree is on screen rather than just "something is".)
 And when a diff IS non-zero, ask **where** before asking how big. Binning the rig-shading deltas by
 normalised radius and by angle to the key light is what found a real defect in the *old* code: its
 chord bands left 3.6% of every body circle unpainted, in two crescents at the poles of the light axis.
+
+## The fourth measurement: the arena's frame, on a real GPU (2026-08-26)
+
+Every measurement above is a CPU number — `render p50` is the cost of *submitting* the frame. The
+PvP arena needed the other half: `arena_launch` keeps **294 wall blocks and 124 pillars resident
+with no culling anywhere in `client/src`**, and the draw-call work above was all tuned on a
+27-run PvE room, so the open question was whether the arena's frame is actually expensive on a GPU.
+It had no frame-time number at all, and the standing assumption was that getting one needed a
+handset.
+
+It did not. What it needed was **the right browser surface**: the in-app browser pane here reports
+`ANGLE (Microsoft, Microsoft Basic Render Driver)` — a software rasterizer with no timer-query
+extension, which is where "this machine cannot measure GPU time" came from — while real Chrome on
+the same box reports `ANGLE (Intel, Intel(R) Arc(TM) Pro Graphics, D3D11)` and supports
+`EXT_disjoint_timer_query_webgl2`. The claim was about a surface, not a machine.
+
+Measured with `gpuTimer.ts`: ticker stopped, renders driven by hand, `n` renders per query, median
+of the samples. 1920x855, resolution 1.0, camera settled at zoom 4.29, all menus hidden:
+
+```
+GPU frame  ~3.8-4.3 ms  (medians across runs; min 2.82, max 4.84)
+draws 36   prog 20   tex 82   framebuffers 10   (~5 filter passes)
+            world-only, HUD+UI hidden: draws 30   prog 17
+```
+
+Both controls fired, which is the only reason the number is quotable:
+
+- **empty target: 0.000 ms** — the harness itself costs nothing, so the frame's cost is the scene's.
+- **resolution sweep: 3.20 / 4.31 / 5.93 ms at 0.5 / 1.0 / 2.0**, min-max bands non-overlapping
+  (res-0.5 max 3.66 < res-2.0 min 5.42). The timer demonstrably responds to load.
+
+And that sweep is the finding, not just the control: **16x the pixels for 1.85x the time.**
+`resolutionSplit` puts it at **~3.0 ms fixed against ~0.7 ms of fill** at native resolution. The
+arena frame is not fill-bound, so it is not a shader problem, and the render-quality tiers (which
+exist to remove full-viewport passes) are aimed at the wrong 20%.
+
+Where the fixed cost is, by hiding one render-group root at a time — full frame 4.05 ms:
+
+| layer | cost | share |
+| --- | --- | --- |
+| `ground` | **2.28 ms** | **56%** |
+| `shadow` | 0.63 ms | 16% |
+| `entities` (294 wall blocks + 124 pillars) | 0.39 ms | 10% |
+
+**The walls and pillars are a tenth of the frame.** The floor is more than half of it, and
+`ground` measured **flat across the whole 16x pixel range** (2.15 / 2.17 / 2.76 ms) — it is
+geometry submission, not fill.
+
+`census()` names the mechanism in one line. `buildGroundLayer` paints `drawRoomWash` +
+`drawFloorMottle` + `drawFloorDecals` **per room** into two `staticGraphics()` Graphics, and
+`arena_launch` has 60 room rects over 4485x3462 px of floor:
+
+```
+1069 Graphics, 7 NOT batched
+    Graphics   284966 floats  1375 fills  batch      <- floorDark
+    Graphics   265566 floats  1343 fills  batch      <- floorLight (blendMode 'add')
+    Graphics    49392 floats  2646 fills  batch      <- shadow
+```
+
+`staticGraphics.ts`'s own header records the numbers its policy was measured against: *"a room's
+shared wall-shadow Graphics is ~24k floats, the floor's decal pass ~50k"*, and on `ground`/`shadow`
+forcing `batch` bought -24 draw calls for -0.08 ms. Those same two passes are **285k and 266k
+floats** here — 5.7x and 11x larger — and all of it is submitted every frame regardless of where
+the camera is. The policy is not wrong; it is being applied an order of magnitude outside the
+content it was measured on. That is the thing to fix, and it is worth ~5x what culling the walls
+and pillars would buy.
+
+Three method notes, each of which cost a round:
+
+- **Attribute by hiding a render-group ROOT, never a child inside one.** Hiding the 322 floor
+  sprites *inside* `layers.ground` measured **slower** than leaving them visible (4.52 vs 4.14 ms):
+  the toggle invalidates the group and the batcher repacks ~550k floats, which costs more than the
+  geometry removed. Hiding `layers.ground` itself skips the group with its cached instructions
+  intact and is trustworthy. Only the group-root rows above are quotable for that reason.
+- **`ticker.FPS` and `PerfMonitor` are both invalid in a background tab.** `document.hidden` was
+  true throughout; the browser throttles rAF, so `FPS` read 60.2 while the sampler had accumulated
+  333 ms of frames in six seconds of wall time, and every window is `discarded` by design. The GPU
+  timer is unaffected because it does not use rAF — but see the next point.
+- **A backgrounded tab eventually makes the GPU clock unusable.** A later re-measurement returned
+  `GPU_DISJOINT_EXT` on **every** sample (25 of 25 discarded) once the window had been fully
+  behind another app for a while. That is the extension refusing to lie, and the harness reporting
+  `ms: null` rather than a plausible number is the correct outcome — the fix is to foreground the
+  window, not to relax the check. Relatedly, `setTimeout` is clamped to ~1 s in a background tab,
+  so the result poll must not yield; `gpuTimer` polls synchronously after `gl.finish()` for exactly
+  this reason, and reading `GPU_DISJOINT_EXT` *clears* it, so it must be read once per query.
+
+Scope, stated rather than implied: this is a desktop Intel Arc GPU, and it says the arena is
+comfortable here (~4 ms of a 16.7 ms budget). It does **not** answer design/04's on-device
+question, and the reason it does not is now sharper rather than vaguer — the cost is
+resolution-independent geometry submission, which is the half that gets relatively *worse* on a
+mobile GPU, not better. What changed is that a device run now has a specific thing to check.
 
 ## What the numbers say to attack next
 

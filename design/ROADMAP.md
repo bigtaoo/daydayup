@@ -101,10 +101,10 @@ reachable from any unit test — a full `createGameEngine` end-to-end regression
 `dungeonrun.test.ts` reproducing the reported bug shape directly: one room, two
 real spawned enemies (one beside the player, one clear across the room), driven
 through the real tick order, confirming the near one engages immediately while the
-far one fires zero bullets until it closes the distance. **5150 tests green across all 8
-workspace packages** (engine 845 / client 3254 / server 189 / animator 444 / map-editor 282 /
+far one fires zero bullets until it closes the distance. **5192 tests green across all 8
+workspace packages** (engine 845 / client 3296 / server 189 / animator 444 / map-editor 282 /
 png-pipeline 42 / desktop-shell 81 / root build-script 13, `npm run check`, re-measured
-2026-08-26 after the shield-shell exit — and **measure it from the MAIN checkout with no sibling
+2026-08-26 after the arena frame-time pass (`perf/gpuTimer.ts` +30, `groundGeometryBudget.test.ts` +12) — and **measure it from the MAIN checkout with no sibling
 worktree checked out**, which is the mechanism that has been corrupting this block rather than
 ordinary drift. The root leg of `npm run test` is `npx vitest run build/versionManifestPlugin.test.mjs`
 run from the repo root, and `.claude/worktrees/<name>/` lives *inside* the repo, so vitest globs
@@ -806,8 +806,20 @@ them; see the two sections below.
    2026-08-24 draw-call work (165 to 108 draws, `enableRenderGroup` + `batchMode` tradeoffs) was
    tuned on a PvE scene of 27. "No console errors" is not a frame time. **The sweeps ran
    2026-08-26** and produced the camera list — see "The five wall sweeps had never seen the arena"
-   below. What is still open is the LIVE half: putting a camera on the five places that list names,
-   and measuring the frame.
+   below. ~~What is still open is the LIVE half: putting a camera on the five places that list names,
+   and measuring the frame.~~ **Both halves are now closed (2026-08-26).** The camera half was shot
+   the same day (the buried doorways were the one real defect, and were fixed — see "The arena's
+   passages reach the clip rule"). The FRAME half was measured later that day and did not need a
+   handset after all, only real Chrome instead of the in-app browser pane: **~4 ms of GPU time per
+   frame on a desktop Intel Arc**, 36 draws / 20 programs. It also inverted this item's own premise.
+   "No culling, so all 492 wall runs are live every frame" turned out to cost **0.39 ms of a 4.05 ms
+   frame (10%)**, while `layers.ground` alone costs **2.28 ms (56%)** and is resolution-INDEPENDENT
+   — the floor's two per-room detail passes are 285k and 266k floats on this map against the ~50k
+   and ~24k that `staticGraphics.ts`'s batch policy was measured on. So the thing to fix is the
+   floor's batched geometry, not the wall count, and it is worth ~5x more. See design/01's "The
+   arena's frame, measured on a GPU" and `client/src/perf/README.md`'s fourth measurement; the
+   tooling is `client/src/perf/gpuTimer.ts`. Still genuinely open: the on-device run (design/04),
+   which this sharpens rather than replaces.
 2. ~~`arena_prototype_60` stays in `ARENA_CATALOG` as the audit's before-picture. Dropping it,
    with its pinned defect tests, is a follow-up.~~ **Done 2026-08-26.**
 3. ~~`groundLayer.ts`'s arena branch still paints a whole-world floor because the OLD map's rooms
@@ -4521,12 +4533,12 @@ The A/B/C frame diff that every art pass rebuilt by hand is now a module (13 tes
 
 ### Client performance: the honest state of it
 
-The measurement the user asked for is **not delivered**, and the reason is worth recording rather than papering over. This machine's Chrome reports `ANGLE (Microsoft, Microsoft Basic Render Driver ... D3D11)` — a **software rasterizer, no GPU acceleration** — and exposes no `EXT_disjoint_timer_query_webgl2`, so there is no way to measure real GPU time here. Two things did come out of it:
+The measurement the user asked for is **not delivered**, and the reason is worth recording rather than papering over. This machine's Chrome reports `ANGLE (Microsoft, Microsoft Basic Render Driver ... D3D11)` — a **software rasterizer, no GPU acceleration** — and exposes no `EXT_disjoint_timer_query_webgl2`, so there is no way to measure real GPU time here. **(Corrected 2026-08-26: that is true of the IN-APP BROWSER PANE, not of this machine. Real Chrome on the same box reports `ANGLE (Intel, Intel(R) Arc(TM) Pro Graphics, D3D11)`, supports the extension and composites — reach it via claude-in-chrome. Generalising this sentence from a surface to a machine is what left the PvP arena with no frame time for a whole step; see “The arena finally has a frame time” at the end of this file. One `getExtension` call settles which surface you are on.)** Two things did come out of it:
 
 1. **One repeatable result.** At a 390x844 viewport and DPR 3, removing the `fx` layer's `BlurFilter({strength: 3, quality: 2})` roughly halves the frame cost (66.5 ms -> 34.2 ms in one run, 70.4 -> 36.0 in another). That blur is 4 of the ~7 full-screen render-target passes the frame carries (`lit` -> `SceneLightFilter`, `world` -> vignette + chromatic, `fx` -> blur), and full-screen passes are exactly the term a desktop never exercises and a mobile tiler hates. It is also the cheapest thing to drop in a quality tier.
 2. **The rest of the attribution is not trustworthy.** Removing *all* filters measured SLOWER than removing one, which is physically impossible — so the harness is measuring something other than what it claims. That is precisely the "make the measurement accurate before optimising" prerequisite the parked perf list already named, and it needs a real GPU plus a timer query, not another round of `performance.now()`.
 
-Also unresolved and worth the user's attention on its own: if the earlier 2.1 ms render p50 was measured on a machine in this state, it needs re-measuring, because that figure is not achievable on a software rasterizer.
+Also unresolved and worth the user's attention on its own: if the earlier 2.1 ms render p50 was measured on a machine in this state, it needs re-measuring, because that figure is not achievable on a software rasterizer. **(2026-08-26: less alarming than it read. The pane and real Chrome are different surfaces on the same box, so a figure measured in one says nothing about the other, and 2.1 ms is unremarkable on the Arc. It is still a CPU submission number either way — `render p50` always was — so it is not comparable to the GPU milliseconds now recorded for the arena.)**
 
 ### The 加测试 follow-up, and the nine real gaps it found
 
@@ -6639,3 +6651,112 @@ After: **all seven killed, controls still surviving, self-checks still dying**, 
   than looking, and it is still not the same question as "does 200 ms read as a shield breaking".
 - **The interpreter-vs-GPU agreement is still a one-off**, not a gate, for the same reason as
   before: a headless GL harness this machine does not have.
+
+
+## The arena finally has a frame time, and it was not the walls (2026-08-26, client-only)
+
+Step 4's last blocker was that `arena_launch` had **no frame-time number at all**. What existed
+were GL counts and a hypothesis: 294 wall blocks and 124 pillars resident with no culling anywhere
+in `client/src`, against draw-call work that had all been tuned on a 27-run PvE room. The standing
+conclusion — written into design/04's on-device list as its best-justified item — was that a real
+handset was required.
+
+**It was not.** It required a different browser surface. The in-app browser pane on this machine
+reports `ANGLE (Microsoft, Microsoft Basic Render Driver, D3D11)` — a software rasterizer, no
+`EXT_disjoint_timer_query_webgl2` — and an earlier session had recorded that, correctly, as "there
+is no way to measure real GPU time here". The generalisation from *surface* to *machine* is what
+cost the measurement: real Chrome on the same box reports `ANGLE (Intel, Intel(R) Arc(TM) Pro
+Graphics, D3D11)`, supports the extension, and composites. Checking the premise took one
+`getExtension` call.
+
+**The number.** `arena_launch`, 1920x855, resolution 1.0, camera settled at zoom 4.29, menus
+hidden, ticker stopped and renders driven by hand: **~3.8-4.3 ms of GPU time per frame**, 36 draws
+/ 20 programs / 10 framebuffer binds (30 / 17 with HUD and UI hidden). About a quarter of a 16.7 ms
+budget on this GPU. Both controls fired, which is the only reason it is quotable: an empty target
+costs **0.000 ms**, and a 0.5/1.0/2.0 resolution sweep moves **3.20 / 4.31 / 5.93 ms** with
+non-overlapping min-max bands.
+
+**The sweep is the finding, not just the control.** 16x the pixels buys 1.85x the time, i.e.
+**~3.0 ms fixed against ~0.7 ms of fill**. The arena frame is not fill-bound, so the render-quality
+tiers — whose entire mechanism is removing full-viewport passes and halving resolution — are aimed
+at about a fifth of it. Attribution by hiding one render-group root at a time, against a 4.05 ms
+frame:
+
+| layer | cost | share |
+| --- | --- | --- |
+| `ground` | **2.28 ms** | **56%** |
+| `shadow` | 0.63 ms | 16% |
+| `entities` (294 wall blocks + 124 pillars) | 0.39 ms | 10% |
+
+So **this pass's premise was wrong in the useful direction.** The uncalled culling is worth 0.39 ms;
+the floor is worth six times that, and `ground` measured flat across the full 16x pixel range
+(2.15/2.17/2.76 ms), so it is submission and not fill. `census()` named the mechanism in one line:
+`buildGroundLayer` paints `drawRoomWash` + `drawFloorMottle` + `drawFloorDecals` **per room** into
+two `staticGraphics()` contexts, and with 60 room rects over 4485x3462 px those are **284,966 and
+265,566 floats**. `staticGraphics.ts` states the content its policy was measured against — ~50k for
+the floor's decal pass, ~24k for the wall shadow, where forcing `batch` bought -24 draws for
+-0.08 ms. Here they are 5.7x and 11x larger and submitted whole every frame regardless of camera.
+The policy is not wrong; it is running an order of magnitude outside its measurement.
+
+**Shipped** (`client/src/perf/gpuTimer.ts`, 29 tests): the measurement packaged, for the reason
+`frameProbe.ts` was packaged — retyping the recipe is how each mistake below got made. It carries
+`sweepTrust` (an empty-target floor plus a bands-must-not-overlap check, so a timer returning a
+plausible constant is caught) and `resolutionSplit` (the fixed-vs-fill decomposition, regressing on
+pixel count rather than resolution). Nothing in the game imports it; it is a console instrument.
+
+### What the measuring cost, recorded because each one produced a confident wrong answer
+
+- **Attribute by hiding a render-group ROOT, never a child inside one.** Hiding the 322 floor
+  sprites *inside* `layers.ground` measured **slower** than leaving them visible (4.52 vs 4.14 ms):
+  the toggle invalidates the group, the batcher repacks ~550k floats, and that costs more than the
+  geometry removed. Only the group-root rows in the table above are quotable.
+- **`ticker.FPS` and `PerfMonitor` are both invalid in a background tab, and say nothing about it.**
+  `document.hidden` was true throughout: rAF is throttled, so `FPS` read **60.2** while the sampler
+  had banked 333 ms of frames in six seconds of wall time. Every window is `discarded` by design.
+  60.2 was the throttle, not the game, and it would have been the easiest number in the session to
+  quote.
+- **A blank frame reads as a fast frame.** A re-measurement after `main` moved returned 1.63 ms —
+  a third of the real cost — because that reload's arena never came up: `beginArenaDemoRun()` needs
+  the loop to run before `scene.player` exists, the camera early-returns without it, and the
+  screen-space lighting pass renders black. The luma control caught it (mean luma 48.6 with the
+  world visible against 15.8 without, restoring exactly). This is `frameProbe.ts`'s 2026-08-24
+  lesson arriving again through a different door, and the reason the empty-target control is not
+  optional: a harness measuring nothing agrees with you.
+- **Drive the ticker by hand, but drive it ENOUGH.** With the tab hidden, `app.ticker.update(t)`
+  called 180 times with an advancing timestamp is what actually builds the player and settles the
+  camera (zoom 1 -> 4.29). Calling `GameLoop.updateCamera` directly does not: outside the loop's
+  own sequence the zoom is computed against the whole 121000x95000 world and clamps to 1.
+- **`setTimeout` is clamped to ~1 s in a background tab**, so a query-result poll built on it costs
+  a second per try and presents as a hung page — which is how it presented, as repeated 45 s tool
+  timeouts on a workload that had finished in under two seconds an hour earlier. `gpuTimer` polls
+  synchronously after `gl.finish()`.
+- **A fully-backgrounded tab eventually makes the GPU clock unusable.** The post-merge
+  re-measurement ended with `GPU_DISJOINT_EXT` set on **25 of 25** samples. The harness reporting
+  `ms: null` is the correct outcome and the extension refusing to lie; the fix is to foreground the
+  window, not to relax the check.
+
+### Still open after this
+
+- **The floor's batched geometry is not fixed, only measured and explained** - but it is now
+  GATED. 2.28 ms of a 4.05 ms frame, with a named mechanism and a named policy boundary.
+  Deliberately left unfixed: it is a real optimisation with a design choice inside it (split the
+  per-room passes per district so an off-camera district submits nothing, versus drop
+  `batchMode: 'batch'` on arena-scale floors), and the measurement now exists to judge either.
+  What did land the same day is `scene/groundGeometryBudget.test.ts`: the aggregate was an OFFLINE
+  property all along (the real `GraphicsContextSystem` reports float counts headlessly) and had no
+  reader, so the drift was invisible to 3,284 client tests. It sweeps `ARENA_CATALOG` against a
+  budget anchored to `staticGraphics.ts`'s own ~50k measurement, exempts `arena_launch` by explicit
+  list, asserts the exemption still FAILS the budget (the known defect as the gate's own control),
+  and pins the shipped aggregates exactly off the real `RoomBuilder.build`. Judged mutant-by-mutant
+  against the suite WITHOUT it, four defects it catches were caught by nothing else - including
+  `drawFloorMottle` deleted outright. When the fix lands, DELETE the exemption entry rather than
+  raising it.
+- **The headline number predates this session's merge.** It was taken against `2e09a0e`-era client
+  code; `main` moved to `731575d` mid-session (another session's shield-shell work, which touches
+  the actor filters inside the frame being measured). The re-measurement was attempted and is not
+  available for the disjoint-clock reason above. The attribution is very unlikely to move — `ground`
+  is 56% of the frame and nothing in that merge touches `groundLayer` — but the specific millisecond
+  figures should be re-taken with the window foregrounded before anyone optimises against them.
+- **Still nothing measured on a phone**, and design/04's item 2 is now narrowed rather than closed:
+  `低` attacks the ~20% of the arena frame that is fill, so expect it to help *less* there than in a
+  PvE room, and read that as confirmation rather than surprise.

@@ -1130,6 +1130,83 @@ arena against level 1's 120, which is over `wallComposition.test.ts`'s own
 `< AUTO_BATCH_VERTEX_LIMIT / 2` guard and well under Pixi's actual 400-float line. Join-span count
 drives it, not width — the map's widest run (1760x32) costs 152.
 
+## The arena's frame, measured on a GPU (2026-08-26)
+
+The sections above count draw calls, and `perf/README.md` records four CPU numbers. None of them
+said what the arena's frame actually *costs*, and the standing assumption in design/04's on-device
+list was that a handset was needed to find out. It was not — it needed the right browser surface.
+The in-app browser pane here is a software rasterizer (`Microsoft Basic Render Driver`, no
+`EXT_disjoint_timer_query_webgl2`), which is where "no GPU timing on this machine" came from; real
+Chrome on the same box is an Intel Arc Pro on D3D11 and supports it.
+
+**`arena_launch`, 1920x855, resolution 1.0, camera at zoom 4.29, menus hidden: ~3.8-4.3 ms of GPU
+time per frame, 36 draw calls, 20 program switches, 10 framebuffer binds.** Both controls fired —
+an empty target costs 0.000 ms, and a 0.5/1.0/2.0 resolution sweep moves 3.20/4.31/5.93 ms with
+non-overlapping bands — which is the only reason those are quotable. Method and full caveats live
+in `client/src/perf/README.md`; the tooling is `client/src/perf/gpuTimer.ts`.
+
+Two things follow, and both contradict what the draw-call work above would predict.
+
+**The frame is not fill-bound.** 16x the pixels buys 1.85x the time: ~3.0 ms of the frame is
+resolution-independent, ~0.7 ms is fill. So the render-quality tiers (2026-08-25), whose whole
+mechanism is removing full-viewport passes and halving resolution, are aimed at about a fifth of
+this scene's cost. They are still right for the PvE room they were measured on, where 11 filter
+passes *were* the frame — this is a statement about the arena.
+
+**The walls and pillars are a tenth of the frame; the floor is more than half.** Hiding one
+render-group root at a time, against a 4.05 ms frame: `ground` 2.28 ms (56%), `shadow` 0.63 ms
+(16%), `entities` — all 294 wall blocks and 124 pillars — 0.39 ms (10%). `ground` measured **flat**
+across the full 16x pixel range (2.15/2.17/2.76 ms), so it is submission, not fill.
+
+The mechanism is `buildGroundLayer` meeting a map far larger than the one its policy was tuned on.
+It paints `drawRoomWash` + `drawFloorMottle` + `drawFloorDecals` **per room** into two
+`staticGraphics()` Graphics, and `arena_launch` has 60 room rects over 4485x3462 px of floor, so
+those two contexts are **284,966 and 265,566 floats** (1375 and 1343 fills). `staticGraphics.ts`
+states the content its rule was measured against — *"a room's shared wall-shadow Graphics is ~24k
+floats, the floor's decal pass ~50k"* — and on `ground`/`shadow` forcing `batch` bought -24 draw
+calls for -0.08 ms there. Here the same two passes are 5.7x and 11x larger and are submitted whole
+every frame regardless of where the camera is. The policy is not wrong; it is running an order of
+magnitude outside its measurement. Fixing that is worth roughly **5x** what culling the walls and
+pillars would buy, which is the opposite of where "294 blocks resident, no culling" pointed.
+
+Not yet done, and deliberately so: this is one desktop GPU saying the arena is comfortable (~4 ms
+of a 16.7 ms budget). It does not answer the on-device question, and the reason is now sharper
+rather than vaguer — the dominant cost is geometry submission, which is the half that gets
+relatively *worse* on a mobile GPU.
+
+**And none of it needed a GPU to see, which is the part worth keeping.** The float counts come out
+of the real `GraphicsContextSystem` headlessly - `staticGraphics.test.ts` had been driving it that
+way since 2026-08-24 - so "is this pass inside the envelope its batch policy was measured on" was an
+offline property the whole time, with no test asking it. `scene/groundGeometryBudget.test.ts` now
+does: it sweeps `ARENA_CATALOG` against a per-Graphics budget anchored to `staticGraphics.ts`'s own
+~50k measurement, exempts `arena_launch` through an explicit list, and **asserts that the exemption
+still FAILS the budget** so the known defect is the gate's own control. It also pins the shipped
+aggregates exactly (`ground` 284,966 / 265,566, `shadow` 49,392 - which reproduce the live browser
+census byte-for-byte) off the REAL `RoomBuilder.build` rather than off a mirror of it.
+
+Two things fell out of building that gate, both from judging every mutant twice - once against the
+new file alone, once against the whole pre-existing scene/render/perf suite:
+
+- **Deleting `drawFloorMottle` entirely survived every test in the suite.** So did a 6th mottle band,
+  a doubled rubble density and a doubled stain density. The aggregate simply had no reader.
+- **A 2% tolerance is the wrong shape here.** Removing `drawRoomWash` moves the second pass by 480
+  floats - **0.18%** - which is the size of change a band is worst at seeing. The pins are exact
+  instead: the pipeline is deterministic over fixed content, so a tolerance absorbs no noise and
+  only hides drift. Changing the floor art means re-measuring in the same commit, the way
+  `arenaWallCoverage.test.ts` already treats its 294/124/74 counts.
+
+One thing the gate deliberately does NOT chase: `MOTTLE_PX_PER_BLOB` is **inert on this map**.
+Halving it leaves `arena_launch` byte-identical, because all 60 rooms (82,944-286,720 px, median
+143,360) round to the same count of 2 under either constant - the comment promises "~one blob per
+510x510 of floor", and on the arena the mottle is a flat 2 blobs per polarity per room whatever the
+room's size. Recorded as an asserted equivalence rather than pursued as a coverage hole.
+
+One measurement rule came out of it, recorded because it inverts a result: **attribute by hiding a
+render-group ROOT, never a child inside one.** Hiding the 322 floor sprites *inside* `layers.ground`
+measured slower than leaving them visible (4.52 vs 4.14 ms) — the toggle invalidates the group and
+the batcher repacks ~550k floats, costing more than the geometry removed. That is the same
+invalidation hazard `staticGraphics.ts` documents, seen from the measuring end.
+
 ## A pillar is a sprite now (2026-08-20)
 
 The last item on the scene queue: *"pillars read as smooth cans next to the walls"* — their cap was
