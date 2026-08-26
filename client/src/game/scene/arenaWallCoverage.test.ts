@@ -18,22 +18,27 @@
  * vacuous, or wrong, or merely out of headroom here without anything else noticing.
  *
  * So: `arena_launch` through `buildArenaGeometry` → `wallTier` → `mergeWallRuns` → `wallJoins`
- * (`RoomBuilder.build`'s own sequence for an arena, which is the same sequence minus the door
- * fixtures — see the door section below, where that difference IS the finding), then the same
- * questions the five files ask of the PvE floors. Offline, deterministic, ~1s.
+ * → the passage clip (`RoomBuilder.build`'s own sequence for an arena — the same sequence minus
+ * the door FIXTURES, which stay dungeon-only; see the door section), then the same questions the
+ * five files ask of the PvE floors. Offline, deterministic, ~1s — with one test that drives the
+ * real `RoomBuilder` end to end, because a harness that only mirrors the pipeline cannot notice
+ * the pipeline changing under it.
  *
  * **What this pass found** (full account in ROADMAP's "The Seven Districts"):
  *
- *   1. The three DOOR sweeps have no subject at all here. `GameState` populates `dungeonDoors`
- *      only in dungeon mode, so an arena builds zero door fixtures and `RoomBuilder`'s
- *      `doorRectsPx` is empty — `bordersDoorNorth` never fires, `doorClip`/`effectiveWallHeight`
- *      never run, and 36 of the map's 74 authored passages are completely buried under the cap
- *      of the wall run standing south of them. Measured, with the fix's own invariants checked
- *      against arena geometry: wiring the passages takes that to 10 partly covered, worst 40 px.
+ *   1. The three DOOR sweeps had no subject at all here, and that was a real defect. `GameState`
+ *      populates `dungeonDoors` only in dungeon mode, so `RoomBuilder`'s door-rect list was empty
+ *      on every arena — `bordersDoorNorth` never fired, `doorClip`/`effectiveWallHeight` never
+ *      ran, and 36 of the map's 74 authored passages were completely buried under the cap of the
+ *      wall run standing south of them, 58 covered to some degree. FIXED 2026-08-26 by unioning
+ *      `arenaMap.doors` into that list: 0 buried, 10 still partly covered by a run (worst 40 px
+ *      of a 96 px passage), and the worn floor patch now marks all 74 thresholds. Door FIXTURES
+ *      remain dungeon-only — an arena `Door` is an adjacency record with no lock and no leaf.
  *   2. `occludes` fires for 4 blocks at once at exactly one spot — a 2x2 pillar cluster — where
  *      `occlusionCoverage.test.ts` asserts at most 2. Walls alone still never exceed 2.
- *   3. The arena hides the player three times as often as a PvE floor (11.6% of standable floor
- *      fully hidden vs 3.3%), and takes the deep fade 7x as often (1.37% vs 0.2%).
+ *   3. The arena hides the player more than twice as often as a PvE floor (7.8% of standable
+ *      floor fully hidden vs 3.3%), and takes the deep fade 5x as often (1.07% vs 0.2%). Both
+ *      were higher before finding 1 was fixed (11.6% and 1.37%) — 44 runs got shorter with it.
  *   4. The shading float budget has half the headroom it does in PvE: the worst arena block is
  *      208 floats against a PvE worst of 120, which is over `wallComposition.test.ts`'s own
  *      `< AUTO_BATCH_VERTEX_LIMIT / 2` bound. Still batchable (the line is 400), but the bound
@@ -47,7 +52,7 @@
  * of it LOOKS right. This is the list of places to point a camera at.
  */
 import { describe, it, expect } from 'vitest';
-import { GraphicsContextSystem } from 'pixi.js';
+import { Graphics, GraphicsContextSystem } from 'pixi.js';
 import { createGameState, PLAYER_BASE } from '@dd/engine';
 import { ARENA_CATALOG, ARENA_IDS, type ArenaId } from '../match/arenaCatalog';
 import { fpToPx, PX_PER_GRID } from '../coords';
@@ -72,6 +77,9 @@ import {
 } from './wallRuns';
 import { faceCrownFraction } from './wallTone';
 import { roomRectsPx } from './groundLayer';
+import { Layers } from './layers';
+import { Backdrop } from './Backdrop';
+import { RoomBuilder } from './RoomBuilder';
 import { pillarArtExtent } from './pillarRender';
 import { needsDeepFade, occludes, type Occluder } from './occlusion';
 import { drawBlockShading } from './wallRender';
@@ -141,11 +149,31 @@ function buildArena(id: ArenaId): Arena {
   // Tier FIRST, then merge same-tier neighbours — `RoomBuilder`'s order, and load-bearing
   // (`mergeWallRuns`: a cross-tier merge would give a kerb a perimeter's height).
   const runs = mergeWallRuns(walls.map((rect) => ({ rect, tier: wallTier(rect, roomsPx) })));
-  const joins = wallJoins(runs, CROWN);
   const pillars = s.obstacles.map((o) => ({ gx: fpToPx(o.gx), gy: fpToPx(o.gy), r: fpToPx(o.radius) }));
+  // `Door.passageGrid` is absolute (unlike a room's `solids`, which are room-relative — see
+  // `content/arenas.ts`), so it converts straight to px through the grid size.
+  const passages = map.doors.map((d, i) => ({
+    i,
+    a: d.roomA,
+    b: d.roomB,
+    x: d.passageGrid.x * PX_PER_GRID,
+    y: d.passageGrid.y * PX_PER_GRID,
+    w: d.passageGrid.w * PX_PER_GRID,
+    h: d.passageGrid.h * PX_PER_GRID,
+  }));
+  // The door clip, which `RoomBuilder.build` applies to an arena as of 2026-08-26 — before that
+  // it fed `bordersDoorNorth` a list that was empty on every arena, and this harness had no
+  // `doorClip` in it either because there was none in the pipeline. Both moved together: the
+  // harness is only a sweep of the shipped geometry as long as it stays the same sequence, and
+  // `the real RoomBuilder wires it` below is what stops the two drifting again.
+  const passageRects: RectPx[] = passages.map((p) => ({ x: p.x, y: p.y, w: p.w, h: p.h }));
+  const joins = wallJoins(runs, CROWN).map((j, i) =>
+    bordersDoorNorth(runs[i]!.rect, passageRects) ? { ...j, doorClip: true } : j,
+  );
 
   const blocks: Block[] = runs.map((run, i) => {
-    const height = wallHeight(run.tier);
+    // Height first (it may shrink), then the cap fed THAT result — never the raw tier height.
+    const height = effectiveWallHeight(run.rect, wallHeight(run.tier), joins[i]!);
     const sortY = run.rect.y + run.rect.h;
     return {
       tier: run.tier,
@@ -167,17 +195,6 @@ function buildArena(id: ArenaId): Arena {
       box: { left: p.gx - art.halfW, right: p.gx + art.halfW, top: p.gy + art.top, sortY: p.gy, foldY: p.gy },
     });
   }
-  // `Door.passageGrid` is absolute (unlike a room's `solids`, which are room-relative — see
-  // `content/arenas.ts`), so it converts straight to px through the grid size.
-  const passages = map.doors.map((d, i) => ({
-    i,
-    a: d.roomA,
-    b: d.roomB,
-    x: d.passageGrid.x * PX_PER_GRID,
-    y: d.passageGrid.y * PX_PER_GRID,
-    w: d.passageGrid.w * PX_PER_GRID,
-    h: d.passageGrid.h * PX_PER_GRID,
-  }));
   return { id, runs, joins, blocks, rooms, walls, pillars, passages };
 }
 
@@ -189,13 +206,23 @@ const LAUNCH = ARENAS.find((a) => a.id === 'arena_launch')!;
 const overlapsX = (a: RectPx, b: RectPx): boolean =>
   Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) > 0.75;
 
+/** The height `RoomBuilder` really draws run `i` of `a` at — its tier's, unless a clip shrank it.
+ *  Both shading sweeps below go through this rather than `wallHeight(tier)`: 44 arena runs now
+ *  carry a `doorClip`, and the raw tier height would shade blocks the client never draws. */
+function drawnHeight(a: Arena, i: number): number {
+  const run = a.runs[i]!;
+  return effectiveWallHeight(run.rect, wallHeight(run.tier), a.joins[i]!);
+}
+
 /** The screen-y band a block's art occupies, in world px — mirrors `buildWallBlock`, as
  *  `wallComposition.test.ts` does. */
 function artBand(run: WallRun, joins: WallJoins): [number, number] {
-  const h = wallHeight(run.tier);
+  // Through `effectiveWallHeight` + `blockCapTop` rather than re-deriving the three clips by
+  // hand: the hand-rolled form covered `tuckNorth` only, and since the arena's passages reached
+  // the clip rule (2026-08-26) 44 of these runs carry a `doorClip` it knew nothing about.
+  const h = effectiveWallHeight(run.rect, wallHeight(run.tier), joins);
   const south = run.rect.y + run.rect.h;
-  const top = joins.tuckNorth ? south + Math.min(-h, -run.rect.h - joins.tuckLiftPx) : run.rect.y - h;
-  return [top, south];
+  return [south + blockCapTop(run.rect, h, joins), south];
 }
 
 /* ------------------------------------------------------------------ the content reaches the code */
@@ -505,7 +532,7 @@ describe('arena walls — the shading still batches, with less room to spare', (
     let worstWhere = '';
     for (const a of ARENAS) {
       for (const [i, run] of a.runs.entries()) {
-        const g = drawBlockShading(run.rect, wallHeight(run.tier), a.joins[i]!);
+        const g = drawBlockShading(run.rect, drawnHeight(a, i), a.joins[i]!);
         const gpu = sys.updateGpuContext(g.context);
         const floats = gpu.geometryData.vertices.length;
         expect(
@@ -539,7 +566,7 @@ describe('arena walls — the shading still batches, with less room to spare', (
     let strokes = 0;
     for (const a of ARENAS) {
       for (const [i, run] of a.runs.entries()) {
-        const g = drawBlockShading(run.rect, wallHeight(run.tier), a.joins[i]!);
+        const g = drawBlockShading(run.rect, drawnHeight(a, i), a.joins[i]!);
         for (const ins of g.context.instructions as ReadonlyArray<{ action: string; data: { style?: unknown } }>) {
           if (ins.action === 'stroke') {
             strokes++;
@@ -708,9 +735,17 @@ describe('arena occlusion coverage — the launch map, swept', () => {
 
   it('a PERIMETER run fires only from BEYOND its own end, never from the room floor it bounds', () => {
     // What stops a room's own boundary fading while the player walks along it. On the arena the
-    // "beyond its own end" ground is a door passage between two rooms — 74 of them.
+    // "beyond its own end" ground is a passage between two rooms — 74 of them — and that makes
+    // this count a second reading of the passage clip: it was 3255 samples while a perimeter run's
+    // cap still spilled across the thresholds, and 20 once the clip took those caps back
+    // (2026-08-26). So the invariant is the `insideFootprint` list, and the count is bounded from
+    // ABOVE rather than below: perimeter runs going back to fading over open passages is the
+    // regression this catches, and a floor with no clipped passage at all would read as 0 here
+    // without the emptiness meaning anything. `pillar`/`interior` firings are unaffected (5435 and
+    // 4610), which is what says the drop is the clip and not the sweep losing its subject.
     const hits = SWEPT.flatMap((s) => s.fired.filter((b) => b.tier === 'perimeter').map((b) => ({ s, b })));
-    expect(hits.length).toBeGreaterThan(100); // measured 3255
+    expect(hits.length).toBeLessThan(200); // measured 20, down from 3255
+    expect(SWEPT.flatMap((s) => s.fired).filter((b) => b.tier !== 'perimeter').length).toBeGreaterThan(1000);
     const insideFootprint = hits
       .filter((h) => h.s.gy >= h.b.rect.y)
       .map((h) => `${h.s.room} at (${h.s.gx}, ${h.s.gy})`);
@@ -762,19 +797,21 @@ describe('arena occlusion coverage — the launch map, swept', () => {
     // The fallback that drops a block's front FACE as well as its cap, which reveals whatever is
     // behind the wall. `occlusionCoverage.test.ts` measured 0.2% of the PvE floor and bounds it
     // under 2% so that "walls dissolve near me" never becomes the normal reading. The arena is at
-    // 1.37% — inside that bound, and close enough to it that the bound is now doing work.
+    // 1.07% — inside that bound, and close enough to it that the bound is now doing work. (It was
+    // 1.37% before the passage clip shortened 44 runs; the clip is why it fell, not a retune.)
     const deep = SWEPT.filter((s) =>
       s.fired.some((b) => needsDeepFade(b.box, { x: s.gx, y: s.gy, halfW: HALF_W, bodyH: BODY_H })),
     );
     expect(deep.length).toBeGreaterThan(0); // reachable content, not dead code
     expect(deep.length / SWEPT.length).toBeLessThan(0.02);
-    expect(deep.length / SWEPT.length).toBeGreaterThan(0.005); // measured 1.37%, PvE 0.2%
+    expect(deep.length / SWEPT.length).toBeGreaterThan(0.005); // measured 1.07%, PvE 0.2%
   });
 
   it('reports how much of this map hides the player at all — three times a PvE floor', () => {
     // The number the pass is judged by, kept in the suite rather than only in a commit message:
-    // 16.7% of standable floor leaves the player at least half hidden and 11.6% leaves them
-    // COMPLETELY invisible before the x-ray, against 5.4% and 3.3% on the five PvE floors. The
+    // 12.3% of standable floor leaves the player at least half hidden and 7.8% leaves them
+    // COMPLETELY invisible before the x-ray, against 5.4% and 3.3% on the five PvE floors. Both
+    // were 16.7% and 11.6% until the passage clip (2026-08-26) took a wall height off 44 runs. The
     // arena is denser (124 pillars, 25 interior kits, colonnade rooms whose whole point is
     // cover), so more of it is behind stone by design — what this bounds is the sweep, not the
     // level: zero would mean the x-ray has become dead weight, and half the floor would mean the
@@ -786,7 +823,10 @@ describe('arena occlusion coverage — the launch map, swept', () => {
     expect(full).toBeGreaterThan(0.03);
     expect(full).toBeLessThan(0.25);
     // And where it is concentrated, because that is the camera list: the worst room is a small
-    // colonnade cell whose pillars cover 61% of its own standable floor, and one room has none.
+    // colonnade cell whose pillars cover 44% of its own standable floor (61% before the passage
+    // clip), and three rooms have none. The bound sits well under today's number on purpose — it
+    // is here to catch a room going mostly-hidden, not to be re-transcribed every time the
+    // geometry moves.
     const perRoom = new Map<string, { n: number; full: number }>();
     for (const s of SWEPT) {
       const rec = perRoom.get(s.room) ?? { n: 0, full: 0 };
@@ -798,34 +838,41 @@ describe('arena occlusion coverage — the launch map, swept', () => {
       .filter(([id]) => id !== '(none)')
       .map(([id, r]) => ({ id, frac: r.full / r.n }))
       .sort((a, b) => b.frac - a.frac);
-    expect(ranked[0]!.frac).toBeGreaterThan(0.4); // cisterns_r1c3, 61.5%
-    expect(ranked[ranked.length - 1]!.frac).toBeLessThan(0.05); // kilns_r1c4, 0%
+    expect(ranked[0]!.frac).toBeGreaterThan(0.25); // cisterns_r1c3, 44.4%
+    expect(ranked[0]!.frac).toBeLessThan(0.7); // ...and no room is mostly-hidden floor
+    expect(ranked[ranked.length - 1]!.frac).toBeLessThan(0.05); // atrium_r3c4, 0%
     expect(perRoom.size).toBeGreaterThan(50); // the sweep reached nearly every room
   });
 });
 
-/* --------------------------------------------- the three DOOR sweeps, which have no subject here */
+/* ---------------------------------------- the three DOOR sweeps, now that they have a subject here */
 
-describe('arena doors — the rules that never run, and what that costs', () => {
-  // `doorStandCoverage`, `doorSpillCoverage` and `doorOcclusionCoverage` all sweep the same
-  // subject: `RoomBuilder`'s `doorRectsPx`, built from `s.dungeonDoors`. `GameState` populates
-  // that list only in dungeon mode (`config.dungeon`), so in an arena it is EMPTY — the client
-  // builds no door fixture, `bordersDoorNorth` is asked about an empty list and always answers
-  // no, and `doorClip`/`effectiveWallHeight`/`doorFlankTier` never execute. The map's 74 doors
-  // are holes in the stone with nothing standing in them.
+describe('arena passages — the clip rule that used to be dead code here', () => {
+  // `doorStandCoverage`, `doorSpillCoverage` and `doorOcclusionCoverage` all sweep one subject:
+  // `RoomBuilder`'s door-rect list. That list was built from `s.dungeonDoors` alone, and
+  // `GameState` populates it only in dungeon mode — so on an arena it was EMPTY. `bordersDoorNorth`
+  // was asked about an empty list and always answered no, `doorClip`/`effectiveWallHeight` never
+  // executed, and 58 of the map's 74 authored passages stood under wall art with 36 buried
+  // outright: a 96 px gap in a north-south perimeter wall sat entirely inside the 104 px of art the
+  // run below it painted upward. Photographed before it was fixed, and the finding was that it did
+  // not read as a bug — the courses ran on unbroken, so it looked like a wall somebody meant to
+  // build. That makes it a READABILITY defect rather than a blemish: the map's own connectivity
+  // graph was invisible, and 36 passages were places a player would never try to walk.
   //
-  // That is a finding, not an invariant, so this block does three separate things: state the
-  // structural fact, MEASURE what it costs on real geometry, and check that the fix's own
-  // promises hold on arena geometry — so wiring the passages is a change with a known result
-  // rather than a hope. Nothing here asserts that the current state is correct.
+  // Fixed 2026-08-26: `RoomBuilder.build` unions `s.arenaMap.doors` into that list, which both
+  // clips the runs above a passage and paints `drawDoorWear`'s worn floor patch across it. Door
+  // FIXTURES are deliberately NOT part of that — an arena `Door` is an adjacency record with no
+  // lock and no leaf (design/15), fixtures are built from `DoorRuntime`s that `DoorSystem` locks
+  // and `replay` serializes, and an arena passage is meant to stay open. So `doorFlankTier` is
+  // still unexercised here, and the last test in this block is what keeps that honest.
 
-  it('the map authors 74 passages and the client renders no door at all', () => {
+  it('the map authors 74 passages, and still builds no door FIXTURE for any of them', () => {
     const s = createGameState({ seed: 1, worldW: 1, worldH: 1, waves: [], arena: ARENA_CATALOG.arena_launch });
     expect(s.dungeonDoors).toHaveLength(0);
     expect(s.arenaMap?.doors).toHaveLength(74);
-    // The passages are reachable from the client without any engine change — `s.arenaMap` is the
-    // map itself — which is what makes the fix below a `RoomBuilder` edit rather than a plumbing
-    // project. `passageGrid` is absolute (a room's `solids` are not), so it needs no offset.
+    // Reachable from the client with no engine change — `s.arenaMap` is the map itself — which is
+    // what made the fix a `RoomBuilder` edit rather than a plumbing project. `passageGrid` is
+    // ABSOLUTE (a room's `solids` are not), so it needs no room offset.
     expect(s.arenaMap?.doors[0]!.passageGrid).toBeDefined();
   });
 
@@ -850,17 +897,79 @@ describe('arena doors — the rules that never run, and what that costs', () => 
     }
   });
 
-  it('measures what stands over those passages today: 36 of 74 completely buried', () => {
-    // The cost, on the same geometry `doorOcclusionCoverage.test.ts` measures for PvE — where the
-    // answer is 0 deep runs over a door and a documented residual of 12 shallow ones. Here the
-    // rule that produces that 0 never runs, so a passage is covered by whatever stands south of
-    // it: a 96 px-tall gap in a north-south perimeter wall sits entirely inside the 104 px of art
-    // the run below it paints upward.
+  it('the REAL RoomBuilder clips every one of them: 58 covered passages -> 10, 0 buried', () => {
+    // The call site, not the mirror. Every other test in this file rebuilds `RoomBuilder.build`'s
+    // sequence by hand, which is what makes them readable and what makes them blind: this exact
+    // fix was verified offline against that harness weeks before it was wired, and the harness
+    // reported the same numbers with the shipping code doing nothing at all. So this one drives
+    // the real `build()` against the real map and reads the occluders it registered.
     //
-    // NOT asserted to zero, and not asserted to stay at 36 either. This is tracked backlog with a
-    // measured fix (next test) — the ceiling is set just above today's number so a regression that
-    // made it universal fails, while wiring the fix makes this test fail LOUDLY and demand
-    // rewriting, which is the correct behaviour for a measurement of a known gap.
+    // The occluder list is filled in build order — one per merged wall run, then the doors (none
+    // here), then the pillars — so the first `wallEntities.length` entries are the wall blocks,
+    // which is the subject: what a passage is buried UNDER is the run standing south of it.
+    const layers = new Layers();
+    const rb = new RoomBuilder(layers, new Backdrop(layers));
+    const s = createGameState({ seed: 1, worldW: 1, worldH: 1, waves: [], arena: ARENA_CATALOG.arena_launch });
+    rb.build(s);
+    const inner = rb as unknown as { occluders: Array<{ box: Occluder }>; wallEntities: unknown[] };
+    expect(inner.wallEntities).toHaveLength(294);
+    expect(inner.occluders).toHaveLength(294 + 124); // ...and nothing else: zero door fixtures
+    const wallBoxes = inner.occluders.slice(0, inner.wallEntities.length).map((o) => o.box);
+
+    let covered = 0;
+    let buried = 0;
+    let worst = 0;
+    const worstOf: string[] = [];
+    for (const p of LAUNCH.passages) {
+      let px = 0;
+      for (const b of wallBoxes) {
+        if (b.sortY <= p.y) continue;
+        const ox = Math.min(b.right, p.x + p.w) - Math.max(b.left, p.x);
+        const oy = Math.min(b.sortY, p.y + p.h) - Math.max(b.top, p.y);
+        if (ox > 0.75 && oy > 0.75) px = Math.max(px, oy);
+      }
+      if (px > 0) covered++;
+      if (px >= p.h - 0.75) buried++;
+      if (px > 0) worstOf.push(`${p.i} ${p.a}->${p.b} ${px}px of ${p.h}`);
+      worst = Math.max(worst, px);
+    }
+    // Reverting the union in `RoomBuilder.build` puts these back to 58 / 36 / 104 px, so these
+    // three lines are the fix's own regression test — and the reason they are not a bare `0` is
+    // that 10 passages keep a strip of the run beside them, worst 40 px of a 96 px gap.
+    expect(buried, worstOf.join('; ')).toBe(0);
+    expect(covered).toBeLessThanOrEqual(12); // measured 10
+    expect(worst).toBeLessThanOrEqual(48); // measured 40, from 104
+
+    // ...and the other half of the same fix: the worn floor patch, which is the cue that says a
+    // hole in the stone is a threshold. Asserted by AIM rather than by count — every passage
+    // centre must have its own stack of `drawDoorWear` bands centred on it, so a version that
+    // painted 296 ellipses in the wrong place, or 295 in the right one, fails here.
+    const additive = layers.ground.children.filter((c) => c instanceof Graphics && c.blendMode === 'add');
+    expect(additive).toHaveLength(1);
+    const ellipses = (additive[0] as Graphics).context.instructions.flatMap((ins) => {
+      const path = (ins as unknown as { data?: { path?: { instructions?: Array<{ action: string; data: number[] }> } } })
+        .data?.path?.instructions;
+      return (path ?? []).filter((i) => i.action === 'ellipse').map((i) => ({ cx: i.data[0]!, cy: i.data[1]! }));
+    });
+    const missing: string[] = [];
+    let onPassage = 0;
+    for (const p of LAUNCH.passages) {
+      const cx = p.x + p.w / 2;
+      const cy = p.y + p.h / 2;
+      const bands = ellipses.filter((e) => Math.abs(e.cx - cx) < 0.5 && Math.abs(e.cy - cy) < 0.5).length;
+      onPassage += bands;
+      if (bands < 4) missing.push(`passage ${p.i} (${p.a}->${p.b}) has ${bands} wear bands`);
+    }
+    expect(missing).toEqual([]);
+    expect(onPassage).toBe(4 * LAUNCH.passages.length); // 296 — `WEAR_BANDS` each, and no strays
+  });
+
+  it('and the sweep agrees once the PILLARS are counted too: 58 covered -> 20, none fully', () => {
+    // The same question the harness asks, which differs from the test above in one way that
+    // matters: it counts the pillar art as well, and half the residual is pillars. So the two
+    // numbers are not a discrepancy — 10 passages keep part of a wall run, and 10 more (a
+    // different 10 — no passage is in both lists) stand under the shading of a colonnade pillar
+    // placed beside them by an interior kit. The clip rule cannot fix those; a kit edit could.
     const cover = (p: RectPx): { px: number; kind: string } => {
       let px = 0;
       let kind = '';
@@ -878,73 +987,69 @@ describe('arena doors — the rules that never run, and what that costs', () => 
     const measured = LAUNCH.passages.map((p) => ({ p, ...cover(p) }));
     const buried = measured.filter((m) => m.px >= m.p.h - 0.75);
     const partly = measured.filter((m) => m.px > 0 && m.px < m.p.h - 0.75);
-    expect(buried.length).toBeGreaterThan(20); // measured 36 — the finding
-    expect(buried.length).toBeLessThanOrEqual(40);
-    expect(partly.length).toBeLessThanOrEqual(30); // measured 22
-    // It is WALL art doing it, not the pillars: 50 of the 58 covered passages are worst-covered
-    // by a run, which is what makes `bordersDoorNorth` the fix rather than a kit edit.
-    expect(measured.filter((m) => m.px > 0 && m.kind !== 'pillar').length).toBeGreaterThan(40);
+    expect(buried.map((m) => `${m.p.i} ${m.p.a}->${m.p.b}`)).toEqual([]); // was 36
+    expect(partly.length).toBeLessThanOrEqual(24); // measured 20, from 58
+    // The split, recorded because it is the whole reason the residual is not zero — and bounded
+    // both ways, so a regression that put wall art back over the passages cannot hide inside it.
+    expect(measured.filter((m) => m.px > 0 && m.kind === 'pillar').length).toBeGreaterThan(5); // 10
+    expect(measured.filter((m) => m.px > 0 && m.kind !== 'pillar').length).toBeLessThanOrEqual(12); // 10, from 50
+    expect(Math.max(0, ...measured.map((m) => m.px))).toBeLessThanOrEqual(64); // 55.6, a pillar
+    // "a different 10" as an assertion rather than a claim in a comment: a passage under a pillar
+    // has no wall over it at all, which is what makes the two residuals separate problems.
+    const wallOnly = (p: RectPx): number => {
+      let px = 0;
+      for (const b of LAUNCH.blocks) {
+        if (b.tier === 'pillar' || b.box.sortY <= p.y) continue;
+        const ox = Math.min(b.box.right, p.x + p.w) - Math.max(b.box.left, p.x);
+        const oy = Math.min(b.box.sortY, p.y + p.h) - Math.max(b.box.top, p.y);
+        if (ox > 0.75 && oy > 0.75) px = Math.max(px, oy);
+      }
+      return px;
+    };
+    const both = measured
+      .filter((m) => m.kind === 'pillar' && wallOnly(m.p) > 0)
+      .map((m) => `${m.p.i} ${m.p.a}->${m.p.b}`);
+    expect(both).toEqual([]);
   });
 
-  it('...and the fix that never ran would hold on this geometry: 58 covered passages -> 10', () => {
-    // `bordersDoorNorth` + `doorClip` + `effectiveWallHeight`, fed the passages the client does
-    // not currently give them. Two things are checked, and the second is the one that matters:
-    //
-    //  1. the fix's own invariant — a clipped run's art (face AND cap) never reaches north of its
-    //     own footprint, and its cap is never inverted — on 44 real arena runs rather than on the
-    //     five PvE floors' 12. 21 of those 44 are the SHALLOW case `effectiveWallHeight` exists
-    //     for (a run whose footprint is shallower than its tier stands, whose FACE alone spills
-    //     once the cap is clipped); PvE has 12 in total.
-    //  2. what it would be worth here: the residual drops from 58 covered passages (36 of them
-    //     fully) to 10 partly covered, worst 40 px.
-    const passageRects: RectPx[] = LAUNCH.passages.map((p) => ({ x: p.x, y: p.y, w: p.w, h: p.h }));
-    const bordering = LAUNCH.runs.filter((r) => bordersDoorNorth(r.rect, passageRects));
-    expect(bordering.length).toBeGreaterThan(20); // measured 44 — the rule DOES match this content
+  it("holds the clip's own invariant on 44 arena runs, 21 of them the SHALLOW case", () => {
+    // `doorSpillCoverage.test.ts` checks this on the five PvE floors' 12 clipped runs. Here it is
+    // 44, and 21 of them are the shallow case `effectiveWallHeight` exists for (a run whose
+    // footprint is shallower than its tier stands, whose FACE alone spills once the cap is
+    // clipped) — PvE has 12 in total. Read off `LAUNCH.joins`, which the harness now populates
+    // through `bordersDoorNorth` exactly as `RoomBuilder` does.
+    const clipped = LAUNCH.runs.filter((_, i) => LAUNCH.joins[i]!.doorClip);
+    expect(clipped).toHaveLength(44); // the rule matches this content, and this much of it
     let shallow = 0;
-    for (const run of bordering) {
+    for (const [i, run] of LAUNCH.runs.entries()) {
+      const joins = LAUNCH.joins[i]!;
+      if (!joins.doorClip) continue;
       const tierHeight = wallHeight(run.tier);
       if (run.rect.h <= tierHeight) shallow++;
-      const joins = { ...NO_JOINS, doorClip: true };
-      // The same two calls in the same order `RoomBuilder.build` makes them: the height first
-      // (it may shrink), then the cap fed that result — never the raw tier height.
+      // The same two calls in the same order `RoomBuilder.build` makes them: the height first (it
+      // may shrink), then the cap fed THAT result — never the raw tier height.
       const height = effectiveWallHeight(run.rect, tierHeight, joins);
       const capTop = blockCapTop(run.rect, height, joins);
       expect(run.rect.y + run.rect.h - height).toBeGreaterThanOrEqual(run.rect.y - 0.001); // face
       expect(run.rect.y + run.rect.h + capTop).toBeGreaterThanOrEqual(run.rect.y - 0.001); // cap
       expect(capTop).toBeLessThanOrEqual(-height); // never an inverted cap
     }
-    expect(shallow).toBeGreaterThan(10); // measured 21 of 44
-
-    const clipped = LAUNCH.runs.map((run, i) => {
-      const joins = bordersDoorNorth(run.rect, passageRects)
-        ? { ...LAUNCH.joins[i]!, doorClip: true }
-        : LAUNCH.joins[i]!;
-      const height = effectiveWallHeight(run.rect, wallHeight(run.tier), joins);
-      const sortY = run.rect.y + run.rect.h;
-      return { rect: run.rect, top: sortY + blockCapTop(run.rect, height, joins), sortY };
-    });
-    let covered = 0;
-    let worst = 0;
-    for (const p of passageRects) {
-      let px = 0;
-      for (const b of clipped) {
-        if (b.sortY <= p.y) continue;
-        const ox = Math.min(b.rect.x + b.rect.w, p.x + p.w) - Math.max(b.rect.x, p.x);
-        const oy = Math.min(b.sortY, p.y + p.h) - Math.max(b.top, p.y);
-        if (ox > 0.75 && oy > 0.75) px = Math.max(px, oy);
-      }
-      if (px > 0) covered++;
-      worst = Math.max(worst, px);
-    }
-    expect(covered).toBeLessThanOrEqual(12); // measured 10, from 58
-    expect(worst).toBeLessThanOrEqual(48); // measured 40 px, from 104
+    expect(shallow).toBe(21);
+    // The control this needs to not be vacuous: `NO_JOINS` on the same runs really does spill.
+    const spilling = LAUNCH.runs.filter(
+      (run) => run.rect.y + run.rect.h + blockCapTop(run.rect, wallHeight(run.tier), NO_JOINS) < run.rect.y - 0.001,
+    );
+    expect(spilling.length).toBeGreaterThan(100);
   });
 
-  it('and `doorFlankTier` would answer for every one of them, at all three tiers', () => {
+  it('and `doorFlankTier` WOULD answer for every one of them, at all three tiers', () => {
     // `doorStandCoverage.test.ts`'s subject: the height a door fixture stands at is the SHORTEST
-    // wall it is cut into. Never exercised on the arena, and the arena is where its two branches
-    // are most unbalanced — 36 of the 74 passages are flanked by kerbs (a horizontal boundary
-    // between two vertically stacked rooms), which is the case with the clearance consequence.
+    // wall it is cut into. Still not exercised in an arena — the 2026-08-26 fix wired the passage
+    // CLIP, not fixtures, and this function only has a caller where a fixture is built. Kept as a
+    // conditional measurement, because the arena is where its two branches are most unbalanced —
+    // 36 of the 74 passages are flanked by kerbs (a horizontal boundary between two vertically
+    // stacked rooms), which is the case with the clearance consequence — so if fixtures are ever
+    // wanted here, this says up front that the tier choice already has an answer for all 74.
     const tiers = LAUNCH.passages.map((p) => doorFlankTier({ x: p.x, y: p.y, w: p.w, h: p.h }, LAUNCH.runs));
     expect(tiers.filter((t) => t === null)).toEqual([]); // nothing falls back
     for (const tier of ['perimeter', 'interior', 'kerb'] as const) {

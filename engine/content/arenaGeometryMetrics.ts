@@ -225,13 +225,13 @@ export function measureEnclosure(map: ArenaMap): ArenaEnclosureMetrics {
     (d) => !surroundingCells(d.passageGrid).some((c) => solids.has(c)),
   ).length;
 
-  const doored = new Set(map.doors.map((d) => [d.roomA, d.roomB].sort().join(' ')));
+  const doored = new Set(map.doors.map((d) => [d.roomA, d.roomB].sort().join('\0')));
   let undoorLeaks = 0;
   for (let i = 0; i < map.rooms.length; i++) {
     for (let j = i + 1; j < map.rooms.length; j++) {
       const a = map.rooms[i]!;
       const b = map.rooms[j]!;
-      if (doored.has([a.id, b.id].sort().join(' '))) continue;
+      if (doored.has([a.id, b.id].sort().join('\0'))) continue;
       const others = map.rooms.filter((_, k) => k !== i && k !== j).map((r) => r.rectGrid);
       if (leaksBetween(a.rectGrid, b.rectGrid, others, solids)) undoorLeaks++;
     }

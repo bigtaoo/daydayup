@@ -939,14 +939,16 @@ module and not its caller. Mutating that branch now kills.
 
 | | measured on the arena | the same number on level 1 |
 |---|---|---|
-| passages with wall art over them | **58 of 74** (36 buried to their full depth) | 12 shallow residual, 0 deep |
+| passages with wall art over them | **58 of 74** (36 buried to their full depth) — since fixed, see the next section: 10, none buried | 12 shallow residual, 0 deep |
 | blocks the x-ray fades at once | **4** (walls alone: 2) | 2, asserted as the bound |
-| standable floor fully hiding the player | **11.6%** | 3.3% |
-| ...and the deep face-dropping fade | **1.37%** | 0.2% |
+| standable floor fully hiding the player | **11.6%** (7.8% after the fix below) | 3.3% |
+| ...and the deep face-dropping fade | **1.37%** (1.07% after the fix below) | 0.2% |
 | worst block's shading geometry | **208 floats** | 120 (bound: `< AUTO_BATCH_VERTEX_LIMIT / 2`) |
 | stacked-room boundaries only PARTLY covered | **0**, with its precondition | the case `wallTier` exists to split |
 
-**1. The three door sweeps have no subject here at all, and 36 of 74 passages are buried.**
+**1. The three door sweeps have no subject here at all, and 36 of 74 passages are buried.** *(Fixed
+later the same day — see the next section. Kept in the present tense because it is the measurement
+that produced the fix.)*
 `GameState` populates `dungeonDoors` only in dungeon mode, so an arena builds **zero door
 fixtures**: `RoomBuilder`'s `doorRectsPx` is empty, `bordersDoorNorth` is asked about an empty list
 and always answers no, and `doorClip` / `effectiveWallHeight` / `doorFlankTier` never execute. The
@@ -963,9 +965,9 @@ The fix is reachable without touching the engine — `s.arenaMap` is the map its
 runs match `bordersDoorNorth`, 21 of them the SHALLOW case `effectiveWallHeight` exists for** (all
 five PvE floors have 12 in total), with zero face spills, zero cap spills and no inverted cap, and
 the residual drops to **10 partly-covered passages, worst 40 px**. `doorFlankTier` answers for all
-74 at all three tiers, never null, never out-topping a flank. Deliberately NOT applied in this pass:
-it changes 21 runs' silhouettes and would add a worn floor patch at 74 doorways, which is a look to
-judge rather than a number to fix — first item for the live half.
+74 at all three tiers, never null, never out-topping a flank. NOT applied in this pass: it changes
+21 runs' silhouettes and adds a worn floor patch at 74 doorways, which is a look to judge rather
+than a number to fix. It was judged and applied the same day — next section.
 
 **2. The x-ray fades four blocks at once, where the PvE sweep asserts at most two.** Walls alone
 still never exceed 2 (an L corner, as designed). The four are PILLARS, at exactly **one sample of
@@ -978,12 +980,16 @@ number is recorded with the shape that produces it rather than smoothed into a l
 leaves the character at least half hidden and 11.6% leaves them completely invisible before the
 x-ray, against 5.4% / 3.3% on level 1, and the deep pass — which drops the front face too, revealing
 what is behind the wall — fires on 1.37% against 0.2%, inside its 2% bound but no longer far from
-it. Denser content is the design (124 pillars, 25 interior kits, colonnade rooms whose whole point
+it. **All three of those numbers were partly the item-1 defect**: the passage clip took a wall height
+off 44 runs and they fell to 12.3% / 7.8% / 1.07% (next section), which is where the suite pins them
+now. Denser content is the design (124 pillars, 25 interior kits, colonnade rooms whose whole point
 is cover), so this is a camera list rather than a defect list: worst rooms `cisterns_r1c3` (61.5% of
 its own standable floor fully hidden), `foundry_r7c1` (39.2%), `atrium_r4c3` (32.3%); deep-fade
 hotspots `barracks_r1c7` (11.7%) and `barracks_r1c8` (7.6%); `kilns_r1c4` at 0%. Every guarantee the
 x-ray promises does hold here: **0 blind spots, 0 spurious fires**, a kerb never fires, a perimeter
-run never fires from inside the floor it bounds (3,255 hits, none of them), the character always
+run never fires from inside the floor it bounds (3,255 hits, none of them — 20 hits after the
+passage clip, because nearly all of those 3,255 were a run's cap spilling across a threshold, which
+is a second reading of the same defect), the character always
 keeps more than half of themselves (worst 43.8% — the same worst case as level 1, which is what a
 bound looks like when it really is the geometry's limit rather than one level's property).
 
@@ -1035,11 +1041,130 @@ not survived, and saying so is cheaper than implying 44 when 40 executed.
 
 ### Still open after this
 
-The LIVE half of item 1, unchanged: nobody has looked at the arena, and nobody has measured its
-frame. The sweep says where to look — the buried passages first, then the 2x2 pillar cluster in
-`terraces_r1c0`, then `cisterns_r1c3` — and says nothing at all about frame time: 294 wall blocks
-plus 124 pillars are resident every frame with no culling anywhere in `client/src`, against a PvE
-scene of 27 runs that the draw-call work was tuned on.
+The LIVE half of item 1: the cameras were shot the same day, and the buried passages were the one
+real defect on the list (they read as deliberate stone, which is what made them a READABILITY defect
+worth fixing rather than a blemish) — fixed in the next section. Nobody has measured the arena's
+FRAME, and this machine cannot: the tab does not composite, and in a non-compositing environment a
+`renderer.render` loop measures CPU submission rather than fill rate. Only the GL counts are
+trustworthy (14 draws / 6 programs after the pillar batching fix). That makes it the best-justified
+item on design/04's on-device list — 294 wall blocks plus 124 pillars are resident every frame with
+no culling anywhere in `client/src`, against a PvE scene of 27 runs that the draw-call work was
+tuned on.
+
+
+## The arena's passages reach the clip rule (2026-08-26)
+
+🟢 Client-only: no engine change, no `ENGINE_VERSION` bump. Item 1 of the section above, decided and
+then shipped. The decision it was waiting on was *"does an arena doorway need a fixture"*, and the
+answer is no — an arena `Door` is an adjacency record with no lock and no leaf, fixtures are built
+per `DoorRuntime` (a record `DoorSystem` locks, `ExtractionSystem` clears, `replay.ts` serializes and
+`pveNav` walks), and a PvP arena's passages are meant to stay permanently open. So what shipped is
+the wall clip and the worn floor, and nothing else.
+
+`RoomBuilder.build` now builds a second rect list beside `doorRectsPx`: `passageRectsPx`, the union
+of the dungeon doors and `s.arenaMap.doors`. `passageGrid` is already absolute map grid (unlike a
+room's `solids`), so it converts with a flat `* PX_PER_GRID` and no room offset — which is what kept
+this a `RoomBuilder` edit rather than a plumbing project. Two consumers read the wider list:
+`bordersDoorNorth` (the clip) and `buildGroundLayer`'s `doorRects` (the worn patch). Door fixtures
+keep reading the narrower one, so an arena still builds zero of them and `doorRectsPx` stays
+index-aligned with `s.dungeonDoors` for the lock-state pass.
+
+### What it is worth
+
+| | before | after |
+|---|---|---|
+| passages with wall art over them | 58 of 74 | **10** |
+| ...of those, buried to their full depth | 36 | **0** |
+| worst coverage of a 96 px passage | 104 px | **40 px** |
+| worn floor patch marking a threshold | 0 of 74 | **74 of 74** |
+| standable floor fully hiding the player | 11.6% | **7.8%** |
+| deep face-dropping fade | 1.37% | **1.07%** |
+| perimeter runs fading from a threshold | 3,255 samples | **20** |
+| draw calls | — | **unchanged** |
+
+The clip matches **44 runs, 21 of them the shallow case `effectiveWallHeight` exists for** (all five
+PvE floors have 12 in total), with zero face spills, zero cap spills and no inverted cap. The three
+second-order rows are the same fix seen from the occlusion sweep: 44 runs each lost up to a wall
+height of art, so less of the map hides the player at all. The worn patch is 4 additive ellipses per
+passage — 296 of them — landing on `groundLayer`'s single `floorLight` `staticGraphics`, which is in
+its own render group and already far past Pixi's 400-float auto-batch line from the room mottle, so
+it costs one build-time pack and **no extra draw call**.
+
+**The residual is two separate problems and only one of them is the clip's.** 20 passages still have
+something over them: 10 keep a strip of the wall run beside them (worst 40 px of 96), and 10 stand
+under the shading of a colonnade pillar an interior kit placed next to the opening. The two sets are
+disjoint — asserted, not assumed — so the pillar half is a kit question, not something a better clip
+rule can reach.
+
+### The offline verification had been measuring nothing
+
+Worth recording as a method failure, because it looked like the opposite. This exact fix was verified
+against `arenaWallCoverage.test.ts`'s harness before it was wired, and the harness reported 44 runs /
+21 shallow / 58 -> 10 / worst 40 px — every number the shipped code then reproduced exactly. But that
+harness *replicates* `RoomBuilder.build`'s sequence rather than calling it, so it produced those
+numbers while the shipping pipeline did nothing at all, and wiring the fix left **all 951 scene tests
+green**. The harness could not tell the fix apart from its absence.
+
+So two things landed with it. The harness now applies the clip itself (and `artBand` goes through
+`effectiveWallHeight` + `blockCapTop` instead of re-deriving two of the three clips by hand, which is
+what made it possible for it to know nothing about `doorClip`), and one new test drives the **real**
+`RoomBuilder.build` against the real map, reads back the occluders it registered, and measures the
+passages against those: 294 wall blocks, 418 occluders total (so still zero door fixtures), 0 buried,
+10 covered, worst 40 px. The worn patch is asserted by AIM rather than by count — every passage
+centre must carry its own stack of `drawDoorWear` bands centred on it — so a version painting 296
+ellipses in the wrong place fails, and so does one painting 295 in the right place.
+
+The two tests that measured the defect are now the tests that pin the fix, which is what they were
+built to demand: the old *"36 of 74 completely buried"* test was written with a ceiling just above
+its own finding precisely so that fixing it would fail loudly.
+
+### The battery, and the three mutants it found alive
+
+The first pass was 11 hand-picked mutants over `RoomBuilder.ts` and `wallRuns.ts`, and all 11 died —
+which is the wrong result to be pleased by, because the mutants had been *chosen* to die. So it was
+redone as a coverage MEASUREMENT: **41 mutants scripted over the whole call chain** — the wiring
+(`RoomBuilder.ts`), the rules (`wallRuns.ts`: `bordersDoorNorth` / `blockCapTop` /
+`effectiveWallHeight` / `doorFlankTier` / `abutsAlongGap` / `JOIN_TOLERANCE`), **the worn patch
+(`floorRender.ts`: `drawDoorWear` and all five `WEAR_*` constants)** and the loop that calls it
+(`groundLayer.ts`) — plus 3 comment-only controls, with the WHOLE client suite as the oracle and the
+failing test FILES recorded per mutant, so "the new tests caught it" is distinguished from "something
+already did". Throwaway `git worktree` at HEAD, `node_modules` junctioned (a second Claude session
+was mid-edit in the working tree).
+
+**38 of 41 died on the first run; the 3 survivors were all the same gap, and it was in the half this
+pass added.** `drawDoorWear`'s GEOMETRY was covered (elongation axis, band count, radius ramp,
+centre — five mutants die to `floorRender.test.ts` alone) and its VALUE was covered by nothing:
+`WEAR_ALPHA` 0.05 → 0.01, 0.05 → 0.2, and `WEAR_COLOR` → a floor-coloured hex all survived the
+entire 3,208-test suite. That is the gap that matters most here rather than least — the patch exists
+to say *"this hole in the stone is a threshold"*, and a patch nobody can see is the same as no
+patch, which is the defect it was added to fix.
+
+Closed by asserting the EFFECT rather than the constants (`floorRender.test.ts`, +3 tests): the patch
+lands on `floorLight`, whose `blendMode = 'add'` `groundLayer.test.ts` already pins, so each band
+contributes `luma(colour) × alpha` on top of any floor tone. The faintest band must clear a visible
+step (**3 luma**; measured 5.62) and the centre must stay short of reading as a light source on the
+floor (**45**; measured 22.49 — a little under double the bare neutral floor's own 25.9), re-asked as
+contrast against every floor tone the game can paint, with nothing clipping to white. Bounds argued
+from what a player can see, with today's numbers ~2× inside both, and a third test runs the identical
+arithmetic on the three surviving mutants so the bounds are watched failing rather than assumed
+capable of it. All three now die; the controls still survive. **41 mutants, 41 killed, 0 survivors.**
+
+Two mutants were reported SKIPPED on the first run because their find-strings matched 0× — a fresh
+`git worktree` checkout is CRLF while the working tree's copy of some of these files is LF, so the
+two multi-line patterns missed. Re-run with the target file's own newline: both kill. Unmeasured is
+not survived, and the tally above counts only mutants that actually executed.
+
+### Housekeeping in the same pass
+
+`engine/content/arenaGeometryMetrics.ts` was reported as UTF-16, and it is not: no BOM, 247 CRLF, and
+nothing non-ASCII but three em-dashes. What made `grep` call it a binary file was **two raw NUL
+bytes**, and they were deliberate — two `.sort().join('<NUL>')` calls using a control character as a
+separator no room id can contain. Both are now the escape `'\0'`, identical in value, and the file
+is plain text to every tool. Transcoding it would have been the wrong fix for a premise that was
+wrong.
+
+`RoomBuilder.ts` is at exactly 500 lines after this, with the comment trimmed once to get there. The
+next thing added to it trips `check:filelength`, and the split that file wants is a real one.
 
 
 ## Phase 5 — Presentation & platform

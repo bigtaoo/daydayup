@@ -27,6 +27,7 @@ import {
   unit,
 } from './floorRender';
 import type { RectPx } from './wallGeometry';
+import { biomePalette } from '../theme';
 
 function tex(size: number): Texture {
   return new Texture({ source: new TextureSource({ width: size, height: size }) });
@@ -353,5 +354,95 @@ describe('the variation layers, band by band — the decisions a mutation batter
     for (let i = 1; i < ellipses.length; i++) {
       expect(ellipses[i]!.nums[2]!).toBeLessThan(ellipses[i - 1]!.nums[2]!);
     }
+  });
+});
+
+/**
+ * Rec.709 luma of a packed 0xRRGGBB, on 0..255 — the same coefficients `perf/frameProbe.ts` reads a
+ * real frame with, so a number here and a number off the screen mean the same thing.
+ */
+function lumaOf(hex: number): number {
+  return 0.2126 * ((hex >> 16) & 0xff) + 0.7152 * ((hex >> 8) & 0xff) + 0.0722 * (hex & 0xff);
+}
+
+/** Every floor tone the game can actually paint: `biomePalette` resolves an unknown id to neutral,
+ *  so these two ids are the two distinct palettes reachable from shipped content. */
+const FLOOR_TONES = [undefined, 'ember'].map((id) => ({
+  id: id ?? '(neutral)',
+  luma: lumaOf(biomePalette(id).ground),
+}));
+
+describe('the worn patch across a doorway is VISIBLE — the decision a battery found unmeasured', () => {
+  // `drawDoorWear`'s five constants had their GEOMETRY covered (elongation axis, band count, the
+  // radius ramp, the centre) and its VALUE covered by nothing at all: a 2026-08-26 battery over
+  // this file found `WEAR_ALPHA` 0.05 -> 0.01, 0.05 -> 0.2 and `WEAR_COLOR` -> a floor-coloured
+  // hex all surviving the entire client suite. That matters more here than it looks: the patch
+  // exists to say "this hole in the stone is a threshold you can walk through", which is the whole
+  // reason the arena's 74 passages got one (2026-08-26, `arenaWallCoverage.test.ts`) — and a patch
+  // nobody can see is the same as no patch, which is the defect it was added to fix.
+  //
+  // So the assertion is on the EFFECT, not on the constants: the patch lands on `floorLight`, whose
+  // `blendMode = 'add'` is pinned by `groundLayer.test.ts`, so each band contributes
+  // `luma(colour) * alpha` on top of whatever floor is under it, independent of that floor's tone.
+  // Bounds are argued from what a player can see rather than transcribed from today's numbers, and
+  // today's numbers sit ~2x inside both of them.
+
+  /** A visible step. 1 level is the 8-bit quantisation floor; 3 is the smallest difference that
+   *  reads as a difference rather than as dither, which is the claim being made. */
+  const JND = 3;
+  /** Above this the patch stops reading as worn stone and starts reading as a light source on the
+   *  floor — it would be brighter than the neutral floor's own entire value (25.9). */
+  const LAMP = 45;
+
+  const bandsOf = (door: RectPx): Array<{ color: number; alpha: number }> => {
+    const g = new Graphics();
+    drawDoorWear(g, door);
+    return g.context.instructions.map(
+      (ins) => (ins.data as { style: { color: number; alpha: number } }).style,
+    );
+  };
+
+  it('adds a visible step at its faintest edge, and stays short of reading as a lamp at its centre', () => {
+    const bands = bandsOf({ x: 0, y: 0, w: 64, h: 96 });
+    expect(bands.length).toBeGreaterThan(1); // concentric bands, not one flat blob
+    const perBand = bands.map((s) => lumaOf(s.color) * s.alpha);
+    // The bands are concentric, so the OUTER ring gets exactly one of them — that ring is where the
+    // patch either reads or does not, which makes the faintest single band the visibility case.
+    const faintest = Math.min(...perBand);
+    const centre = perBand.reduce((a, b) => a + b, 0);
+    expect(faintest, `faintest band adds ${faintest.toFixed(2)} luma`).toBeGreaterThan(JND); // 5.62
+    expect(centre, `patch centre adds ${centre.toFixed(2)} luma`).toBeLessThan(LAMP); // 22.49
+    // ...and the centre is a real amount of light, not JND x 4 — the patch has a readable gradient
+    // from its rim to its middle, which is what makes it read as wear rather than as a decal.
+    expect(centre / faintest).toBeGreaterThan(2);
+  });
+
+  it('is visible on every floor tone the game paints, and washes none of them out', () => {
+    // The same two bounds re-asked as CONTRAST against the actual floor, because "3 luma" is only a
+    // visible step relative to something. Both palettes are dark stone (25.9 and 27.0), so the
+    // centre of the patch is a little under double the bare floor — and nothing clips to white.
+    const centre = bandsOf({ x: 0, y: 0, w: 96, h: 64 })
+      .map((s) => lumaOf(s.color) * s.alpha)
+      .reduce((a, b) => a + b, 0);
+    expect(FLOOR_TONES.length).toBeGreaterThan(1); // the sweep is a sweep
+    for (const tone of FLOOR_TONES) {
+      const ratio = centre / tone.luma;
+      expect(ratio, `${tone.id}: patch centre is ${ratio.toFixed(2)}x its floor`).toBeGreaterThan(0.25);
+      expect(ratio, `${tone.id}: patch centre is ${ratio.toFixed(2)}x its floor`).toBeLessThan(2.5);
+      expect(tone.luma + centre, `${tone.id} clips to white`).toBeLessThan(200);
+    }
+  });
+
+  it('and both bounds can really fire — the same arithmetic on the mutants that survived', () => {
+    // The control this pair of bounds needs, for the reason the whole block exists: a bound nobody
+    // has watched fail is a bound that might not be measuring anything. These are the three
+    // surviving mutants, run through the identical computation.
+    const bands = bandsOf({ x: 0, y: 0, w: 64, h: 96 });
+    const colour = bands[0]!.color;
+    const alpha = bands[0]!.alpha;
+    const n = bands.length;
+    expect(lumaOf(colour) * 0.01).toBeLessThan(JND); // WEAR_ALPHA 0.05 -> 0.01: 1.12, invisible
+    expect(lumaOf(colour) * 0.2 * n).toBeGreaterThan(LAMP); // -> 0.2: 89.98, a lamp
+    expect(lumaOf(0x3a3630) * alpha).toBeLessThan(JND); // a floor-coloured WEAR_COLOR: 2.72
   });
 });

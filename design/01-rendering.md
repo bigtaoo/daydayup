@@ -1049,13 +1049,24 @@ now there is, and `client/src/game/scene/arenaWallCoverage.test.ts` runs the sam
 standable samples). Three things above are not true there, and they are here rather than only in
 ROADMAP because they are statements about the RULES, not about that map:
 
-- **`bordersDoorNorth` and everything downstream of it never runs in an arena.** The clip described
-  under "The occlusion x-ray" and "A door is a wall block whose face is an opening" is fed from
-  `GameState.dungeonDoors`, which is populated in dungeon mode only. An arena therefore builds no
-  door fixture and passes an empty door list, so `doorClip`/`effectiveWallHeight` are dead there and
-  58 of `arena_launch`'s 74 passages have wall art over them (36 covered to their full depth). The
-  rule itself is fine — fed the map's own `Door.passageGrid`, it matches 44 runs, 21 of them the
-  shallow case, with no spill in either direction, and the residual falls to 10.
+- **`bordersDoorNorth` used not to run in an arena at all — fixed the same day.** The clip described
+  under "The occlusion x-ray" and "A door is a wall block whose face is an opening" was fed from
+  `GameState.dungeonDoors` alone, which is populated in dungeon mode only, so an arena passed an
+  empty door list: `doorClip`/`effectiveWallHeight` were dead there and 58 of `arena_launch`'s 74
+  passages had wall art over them, 36 covered to their full depth. `RoomBuilder.build` now unions
+  `s.arenaMap.doors` into that list. The rule needed no change to work on this content — it matches
+  44 runs, 21 of them the shallow case, with no spill in either direction — and the residual is 10
+  partly-covered passages, worst 40 px of a 96 px gap, none buried. Door FIXTURES stay dungeon-only:
+  a fixture is built per `DoorRuntime`, an arena `Door` is an adjacency record with no lock and no
+  leaf, and an arena passage is meant to stay open. So `doorFlankTier` is still unexercised there.
+  The passage list feeds `groundLayer`'s worn-floor patch too, which is the cue that a hole in the
+  stone is a threshold — without it the courses ran on unbroken and a buried passage read as a wall
+  somebody meant to build. That patch is additive, so its visibility is `luma(WEAR_COLOR) * WEAR_ALPHA`
+  per band regardless of the floor under it: the faintest band adds 5.62 and the four-band centre 22.49,
+  a little under double the bare neutral floor's own 25.9. Both are pinned in `floorRender.test.ts`
+  against perceptual bounds (a visible step at 3, a reads-as-a-lamp ceiling at 45) rather than against
+  the constants, because the constants only matter through that product — a 2026-08-26 battery found
+  all three value mutants surviving the whole suite while every geometry mutant died.
 - **"at most two blocks fade at once" is a claim about WALLS.** It holds for walls on the arena too,
   and pillars break it: an interior kit's 2x2 colonnade cluster fades four at one spot (1 sample of
   72,686). A pillar fades whole rather than cap-only, so four of them is a different look from four

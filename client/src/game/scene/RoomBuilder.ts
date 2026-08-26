@@ -141,6 +141,23 @@ export class RoomBuilder {
       w: fpToPx(dr.passageAabb.w),
       h: fpToPx(dr.passageAabb.h),
     }));
+    // Every passage the wall pass must keep its art off — NOT the same list: an arena authors its
+    // passages as `arenaMap.doors` and never populates `dungeonDoors` (a `DoorRuntime` is
+    // DoorSystem's lockable-fixture record; an arena passage has no lock and no leaf, design/15).
+    // Until 2026-08-26 that left the list empty on every arena, so `bordersDoorNorth` always
+    // answered no and the clip rule was dead code there — 58 of `arena_launch`'s 74 passages stood
+    // under wall art, 36 buried outright; feeding them here takes it to 10, worst 40 px
+    // (`arenaWallCoverage.test.ts`). `passageGrid` is ABSOLUTE grid, unlike a room's `solids`, so
+    // no room offset. Fixtures still come only from `doorRectsPx`: an arena builds none.
+    const passageRectsPx: RectPx[] = [
+      ...doorRectsPx,
+      ...(s.arenaMap?.doors ?? []).map((d) => ({
+        x: d.passageGrid.x * PX_PER_GRID,
+        y: d.passageGrid.y * PX_PER_GRID,
+        w: d.passageGrid.w * PX_PER_GRID,
+        h: d.passageGrid.h * PX_PER_GRID,
+      })),
+    ];
     // Every wall now stands (2026-08-18 — see `wallGeometry.wallTier` for why the old
     // "east-west runs only" rule was what made a room read flat), at one of three heights.
     // Shadows all land on one shared Graphics, added to `layers.shadow` before the blocks so
@@ -169,7 +186,7 @@ export class RoomBuilder {
     // most of all (see `FACE_CROWN_ROWS`), so this has to come from the room's own biome.
     const joins = wallJoins(merged, faceCrownFraction(element));
     for (const [i, run] of merged.entries()) {
-      if (bordersDoorNorth(run.rect, doorRectsPx)) joins[i] = { ...joins[i]!, doorClip: true };
+      if (bordersDoorNorth(run.rect, passageRectsPx)) joins[i] = { ...joins[i]!, doorClip: true };
     }
     for (const [i, run] of merged.entries()) {
       // `doorClip`ped run whose OWN footprint is shallower than its tier: shrink the height
@@ -202,7 +219,7 @@ export class RoomBuilder {
       rooms: roomsPx,
       floorRegions: floorRegionsPx(s, w, h),
       wallRects: merged.map((run) => run.rect),
-      doorRects: doorRectsPx,
+      doorRects: passageRectsPx,
       palette,
       floorTex,
     });
