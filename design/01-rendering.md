@@ -970,6 +970,38 @@ Everything here is hashed, never `Math.random` — a room must draw the identica
 and on every client (design/06's rule applied to the render layer, as with `Pickup`'s golden-angle
 bob phase).
 
+## The same sweeps, on the arena (2026-08-26)
+
+Everything above this line about walls, doors and the x-ray was measured on `EMBER_L1_FLOORS` — the
+five PvE floors — and so were all five of the content sweeps that guard it (`wallComposition`,
+`occlusionCoverage`, `doorStandCoverage`, `doorSpillCoverage`, `doorOcclusionCoverage`). The PvP
+arena had no walls at all until `arena_launch` was authored, so there was nothing else to sweep;
+now there is, and `client/src/game/scene/arenaWallCoverage.test.ts` runs the same pipeline over it
+(492 wall rects -> 294 blocks, 124 pillars, 44 stacked-room boundaries, 74 passages, 72,686
+standable samples). Three things above are not true there, and they are here rather than only in
+ROADMAP because they are statements about the RULES, not about that map:
+
+- **`bordersDoorNorth` and everything downstream of it never runs in an arena.** The clip described
+  under "The occlusion x-ray" and "A door is a wall block whose face is an opening" is fed from
+  `GameState.dungeonDoors`, which is populated in dungeon mode only. An arena therefore builds no
+  door fixture and passes an empty door list, so `doorClip`/`effectiveWallHeight` are dead there and
+  58 of `arena_launch`'s 74 passages have wall art over them (36 covered to their full depth). The
+  rule itself is fine — fed the map's own `Door.passageGrid`, it matches 44 runs, 21 of them the
+  shallow case, with no spill in either direction, and the residual falls to 10.
+- **"at most two blocks fade at once" is a claim about WALLS.** It holds for walls on the arena too,
+  and pillars break it: an interior kit's 2x2 colonnade cluster fades four at one spot (1 sample of
+  72,686). A pillar fades whole rather than cap-only, so four of them is a different look from four
+  wall caps, and nothing has judged it yet.
+- **`FACE_CROWN_ROWS` is consulted per element, and an arena is `neutral`.** A tuck on the arena
+  stops under a crown line 20% of the wall's height instead of fire's 21.3%, so the corner geometry
+  the four 2026-08-19 reports converged on had never been evaluated at the fraction the arena
+  actually draws with. It holds: 24 tucks, no hole opened, no crown crossed.
+
+One number moved rather than broke: the worst block's shading geometry is **208 floats** on the
+arena against level 1's 120, which is over `wallComposition.test.ts`'s own
+`< AUTO_BATCH_VERTEX_LIMIT / 2` guard and well under Pixi's actual 400-float line. Join-span count
+drives it, not width — the map's widest run (1760x32) costs 152.
+
 ## A pillar is a sprite now (2026-08-20)
 
 The last item on the scene queue: *"pillars read as smooth cans next to the walls"* — their cap was

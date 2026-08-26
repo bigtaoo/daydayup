@@ -773,7 +773,8 @@ geometry sweep used `solidCellSet`, which is solids only). Both now covered — 
 distributionally, since per room the two aims can legitimately invert in a small room whose
 middle is walled. Control mutant survives.
 
-**Still open in this area** — items 2 and 3 closed 2026-08-26, see the section below.
+**Still open in this area** — items 2 and 3 closed 2026-08-26, and item 1's OFFLINE half with
+them; see the two sections below.
 
 1. **Nobody has judged how the arena LOOKS.** Until this pass the arena had no walls at all, so
    the client's whole standing-wall stack — tiering, run merging, kerbs, door blocks, the
@@ -793,7 +794,10 @@ middle is walled. Control mutant survives.
    to point a camera at. **And nobody has measured what the arena COSTS.** There is no culling
    anywhere in `client/src`, so all 492 wall runs are live nodes every frame, while the
    2026-08-24 draw-call work (165 to 108 draws, `enableRenderGroup` + `batchMode` tradeoffs) was
-   tuned on a PvE scene of 27. "No console errors" is not a frame time.
+   tuned on a PvE scene of 27. "No console errors" is not a frame time. **The sweeps ran
+   2026-08-26** and produced the camera list — see "The five wall sweeps had never seen the arena"
+   below. What is still open is the LIVE half: putting a camera on the five places that list names,
+   and measuring the frame.
 2. ~~`arena_prototype_60` stays in `ARENA_CATALOG` as the audit's before-picture. Dropping it,
    with its pinned defect tests, is a follow-up.~~ **Done 2026-08-26.**
 3. ~~`groundLayer.ts`'s arena branch still paints a whole-world floor because the OLD map's rooms
@@ -904,6 +908,134 @@ maps. Full `npm run check` green — typecheck, file-length and every workspace'
 reports **2514**, and `measureEnclosure().solidCells` and `solidCellSet().size` both agree on 2514
 against map files that have not changed since. A transcription slip in a table whose entire purpose
 is that its numbers are measured.
+
+## The five wall sweeps had never seen the arena (2026-08-26, tests only)
+
+🟢 Test-only: one new file, no source change, no `ENGINE_VERSION` bump. The OFFLINE half of
+item 1 of the list above, done before opening a browser — because half the evidence behind the wall
+passes of 2026-08-19/20 is not frames at all but CONTENT SWEEPS, and every one of them swept the
+five PvE floors and nothing else.
+
+`client/src/game/scene/arenaWallCoverage.test.ts` (28 tests, ~2 s) runs `arena_launch` through
+`roomRectsPx` -> `wallTier` -> `mergeWallRuns` -> `wallJoins` — `RoomBuilder.build`'s own sequence
+for an arena — and asks it the questions `wallComposition`, `occlusionCoverage`,
+`doorStandCoverage`, `doorSpillCoverage` and `doorOcclusionCoverage` ask of level 1. Scale reached
+for the first time: **492 authored wall rects merging to 294 drawn blocks**, 124 pillars, 44
+stacked-room boundaries (the five PvE floors have 11 between them), 74 authored passages, 72,686
+standable sample positions.
+
+**Through the call site, not around it.** The harness takes its room rects from `roomRectsPx(s, w, h)`
+rather than reading `s.arenaRoomRects` itself, because that branch (dungeon rects if any, else the
+arena's, else the world box) is the arena's entry into the entire wall stack. This is the lesson of
+the floor-partition battery three sections up, where `cellExtent(s.worldH, s.worldW)` — the world's
+axes swapped **at the call site** — survived the whole suite because the battery had measured the
+module and not its caller. Mutating that branch now kills.
+
+### What it found
+
+| | measured on the arena | the same number on level 1 |
+|---|---|---|
+| passages with wall art over them | **58 of 74** (36 buried to their full depth) | 12 shallow residual, 0 deep |
+| blocks the x-ray fades at once | **4** (walls alone: 2) | 2, asserted as the bound |
+| standable floor fully hiding the player | **11.6%** | 3.3% |
+| ...and the deep face-dropping fade | **1.37%** | 0.2% |
+| worst block's shading geometry | **208 floats** | 120 (bound: `< AUTO_BATCH_VERTEX_LIMIT / 2`) |
+| stacked-room boundaries only PARTLY covered | **0**, with its precondition | the case `wallTier` exists to split |
+
+**1. The three door sweeps have no subject here at all, and 36 of 74 passages are buried.**
+`GameState` populates `dungeonDoors` only in dungeon mode, so an arena builds **zero door
+fixtures**: `RoomBuilder`'s `doorRectsPx` is empty, `bordersDoorNorth` is asked about an empty list
+and always answers no, and `doorClip` / `effectiveWallHeight` / `doorFlankTier` never execute. The
+map's 74 doors are holes in the stone with nothing standing in them. Consequence, measured against
+the same overlap oracle `doorOcclusionCoverage.test.ts` uses: **58 passages have art over them, 36
+of those covered to their full depth** — a 96 px gap in a north-south wall sits entirely inside the
+104 px of art the run below it paints upward — and 50 of the 58 are worst-covered by a wall run
+rather than by a pillar, which is what makes `bordersDoorNorth` the fix rather than a kit edit. This
+is the exact live complaint the clip was built for in the first place (*"门不能被高墙挡住了。门应该是
+随时清晰可见的"*), in a mode that never fed it its doors.
+
+The fix is reachable without touching the engine — `s.arenaMap` is the map itself and
+`Door.passageGrid` is already absolute — and its own invariants hold on this geometry: **44 arena
+runs match `bordersDoorNorth`, 21 of them the SHALLOW case `effectiveWallHeight` exists for** (all
+five PvE floors have 12 in total), with zero face spills, zero cap spills and no inverted cap, and
+the residual drops to **10 partly-covered passages, worst 40 px**. `doorFlankTier` answers for all
+74 at all three tiers, never null, never out-topping a flank. Deliberately NOT applied in this pass:
+it changes 21 runs' silhouettes and would add a worn floor patch at 74 doorways, which is a look to
+judge rather than a number to fix — first item for the live half.
+
+**2. The x-ray fades four blocks at once, where the PvE sweep asserts at most two.** Walls alone
+still never exceed 2 (an L corner, as designed). The four are PILLARS, at exactly **one sample of
+72,686** — `terraces_r1c0`, where an interior kit places a 2x2 colonnade cluster and a character
+standing in its middle is behind all four. A pillar fades WHOLE where a wall keeps its face, so
+whether that reads as four columns going hazy or as a hole in the room is a camera question; the
+number is recorded with the shape that produces it rather than smoothed into a looser bound.
+
+**3. This map hides the player three times as often as a PvE floor.** 16.7% of standable floor
+leaves the character at least half hidden and 11.6% leaves them completely invisible before the
+x-ray, against 5.4% / 3.3% on level 1, and the deep pass — which drops the front face too, revealing
+what is behind the wall — fires on 1.37% against 0.2%, inside its 2% bound but no longer far from
+it. Denser content is the design (124 pillars, 25 interior kits, colonnade rooms whose whole point
+is cover), so this is a camera list rather than a defect list: worst rooms `cisterns_r1c3` (61.5% of
+its own standable floor fully hidden), `foundry_r7c1` (39.2%), `atrium_r4c3` (32.3%); deep-fade
+hotspots `barracks_r1c7` (11.7%) and `barracks_r1c8` (7.6%); `kilns_r1c4` at 0%. Every guarantee the
+x-ray promises does hold here: **0 blind spots, 0 spurious fires**, a kerb never fires, a perimeter
+run never fires from inside the floor it bounds (3,255 hits, none of them), the character always
+keeps more than half of themselves (worst 43.8% — the same worst case as level 1, which is what a
+bound looks like when it really is the geometry's limit rather than one level's property).
+
+**4. Half the shading headroom the PvE bound assumes.** The 2026-08-24 draw-call pass rests on every
+block's shading staying under Pixi's 400-float auto-batch line, and `wallComposition.test.ts` guards
+it at `< AUTO_BATCH_VERTEX_LIMIT / 2` after measuring the worst PvE block at 120 floats. The worst
+arena block is **208** — a 672x64 kerb whose joins split it into three south spans — which is over
+that guard while still comfortably batchable. Nothing is unbatchable and there is no draw-call
+regression; what was wrong is that the number protecting it was measured on the wrong content. Width
+is NOT the driver, which is the useful part: the map's widest run, 1760x32, costs only 152 floats.
+The arena's own ceiling is now pinned separately at 260.
+
+**5. One PvE case genuinely does not occur, and it is asserted WITH its precondition.** A room
+boundary only partly covered by the room above — the pair that gets two different tiers and then
+refuses to merge (`r5_bastion`/`r4_furnace` on floor 2) — has zero instances here, because the slot
+lattice gives two vertically adjacent rooms identical `x` and identical width. Asserting only the
+zero would have been a sweep that stopped looking, so the absence is asserted next to the reason for
+it: every one of the 44 boundaries is checked to span both rooms in full.
+
+Clean on the arena, in the same detail as on level 1: 24 tucks with two distinct lifts, **0 holes
+opened** by a clip and **0 crown courses crossed**; 139 north joins, every one with a tall-enough
+neighbour actually touching; 64 short-northern-neighbour pairs, none of them burying an edge; all 44
+stacked boundaries with stone along them and no block reaching more than one kerb onto the floor
+above; every shading cue still a sampled ramp off 3 shared textures.
+
+### The battery, in a worktree, because another session was editing the same tree
+
+44 mutants over `wallGeometry.ts`, `wallRuns.ts`, `occlusion.ts`, `groundLayer.ts` and
+`content/arenas.ts`, each run first against the new sweep alone and then — if it survived — against
+the whole client suite, so *"nothing caught it"* is distinguished from *"something else did"*.
+**22 killed by the new sweep**, 11 more killed only by the rest of the suite, 3 comment-only CONTROL
+mutants surviving (a battery that kills everything is as broken as one that kills nothing).
+
+It ran in a throwaway `git worktree` at HEAD with `node_modules` junctioned in, because a second
+Claude session was mid-edit in the working tree — including `render/shadeRamp.ts`, which this sweep
+imports. That is worth keeping as the method rather than as an anecdote: mutating shared source
+in a shared tree hands the other session phantom failures, and the isolated checkout also gave a
+clean 170-file / 3,153-test green baseline to measure against, which the working tree could not have
+provided.
+
+**One real survivor, and it is a CONTENT gap rather than a test gap.** `tuckLift` taking its own
+height instead of the neighbour's survives everything, because no shipped map — PvE or arena — has a
+deep run tucking under a STRICTLY taller tier: `min` over the northern neighbours always returns the
+run's own height, so the mutant is equivalent on all real content. Only a fixture can kill it; noted
+rather than written, since a fixture is what `wallRuns.test.ts` is for. **Four mutants never ran at
+all** (their find-strings no longer matched after earlier refactors): `wallHeight` reporting a kerb
+as interior, the two `wallJoins` height filters, and `buildArenaRoomRects`' axis swap. Unmeasured is
+not survived, and saying so is cheaper than implying 44 when 40 executed.
+
+### Still open after this
+
+The LIVE half of item 1, unchanged: nobody has looked at the arena, and nobody has measured its
+frame. The sweep says where to look — the buried passages first, then the 2x2 pillar cluster in
+`terraces_r1c0`, then `cisterns_r1c3` — and says nothing at all about frame time: 294 wall blocks
+plus 124 pillars are resident every frame with no culling anywhere in `client/src`, against a PvE
+scene of 27 runs that the draw-call work was tuned on.
 
 
 ## Phase 5 — Presentation & platform
