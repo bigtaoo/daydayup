@@ -1321,6 +1321,53 @@ sample looked tight; a backgrounded tab degrades gradually over an hour and neve
 twins disagree by more than ~0.1 ms the run is junk, and a `captureScreenshot` that times out is the
 same tab saying the same thing.
 
+### The clip that follows, and where a cut on a floor is allowed to land (2026-08-27)
+
+`scene/floorClip.ts`. A room's blobs no longer paint outside the room, so a piece's cull rect is its
+room instead of its room plus 460 px of spill, and the cull from the day before then drops a
+neighbour's halves on its own — unchanged, still an exact intersection. **0.53-0.93 ms of a ~4.4 ms
+arena frame** across three counterbalanced sessions, on-screen ground pieces 13 -> 7, 19.9% fewer
+floats on the layer, and 66% less submitted by the worst camera. `perf/README.md`'s seventh
+measurement has the arms and the three junk runs that preceded them.
+
+The interesting half is not the millisecond, it is **where a cut on a floor may land**, because
+truncating a smooth field leaves a step of the field's own local value and a straight step on a floor
+is exactly what `floorRender`'s header rejected the per-tile tint for. A hard clip at the room rect
+measures a **29.98 luma** step across a doorway (median 7.24) on a floor whose base luma is 25.9 —
+measured before the shape was chosen, not feared afterwards. Two facts about the shipped content
+decided the design instead, both swept rather than assumed:
+
+- **A room rect includes its own perimeter wall, exactly one grid cell deep.** Sampled 2 / 16 / 30 px
+  inside every room edge of `arena_launch` and all five PvE floors: **100% wall footprint or authored
+  passage, 0% bare floor**; at 34 px in it is floor. So `CLIP_FEATHER_PX` is `PX_PER_GRID` because
+  that is the depth of stone a room rect contains, and any cut inside it is invisible.
+- **The passages are the exception and they are 8-17% of that band.** A doorway is floor on both
+  sides, so no depth of clip is hidden there.
+
+So the clip RAMPS: each of a blob's five nested bands is clipped at its own inset, faintest at the
+room's edge and strongest a full cell in, with a hashed sub-band offset per blob so two blobs never
+cut on the same line. The largest step any single cut can then make is ONE band's alpha — the step
+that band's own rim already makes in the shipped art — which is the bound `floorClipCoverage.test.ts`
+gates against, derived from the mottle rather than transcribed (re-tuning `MOTTLE_LIGHT_ALPHA` moves
+the gate). Measured with the ramp: **2.59 luma** worst, 0.48 median, against a 4.90 bound. Rubble is
+the one class dropped rather than cut — a 2-4 px speck at alpha 0.46/0.13 has nothing to ramp over.
+
+And in a live frame, over all 74 passage floors, the clipped doorway is **smoother** than the
+unclipped one: worst per-pixel step 36.16 -> 18.51, median 24.23 -> 14.65. What used to be roughest
+there was a neighbouring room's rubble speck painted 400 px from home. The 14-18 luma that remains is
+the floor swatch's own texel variation.
+
+Two mutation batteries, each judging every mutant twice — against the new test file alone and against
+the pre-existing suite with that file parked. The first (26 mutants over the call chain:
+`floorClip.ts`, `floorRender.ts`, `groundLayer.ts`, `groundCulling.ts`, `RoomBuilder.ts`) came back
+21 killed / 2 survivors. The sweeps were then widened from `arena_launch` to all six shipped maps,
+which found that the doorway bound had been measured on one of them — PvE floor 2 reads 3.04 luma
+against a JND of 3, so the gate is the derived one-band bound (4.90) and the JND claim is
+distributional. The second battery (17 mutants over what the clip DEPENDS on: `floorPartition.ts`,
+`roomLight.ts`, `render/staticGraphics.ts`, plus the cull's comparison) came back 16 killed / 1
+survivor — a confirmed equivalence. See ROADMAP for all four findings, including the one that was a
+bug in the test rather than in the code.
+
 ## A pillar is a sprite now (2026-08-20)
 
 The last item on the scene queue: *"pillars read as smooth cans next to the walls"* — their cap was

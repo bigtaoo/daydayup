@@ -30,12 +30,16 @@
 //    above it (1.92 ms with the scene-light pass, 1.80 ms without). What is left is per-primitive
 //    fragment work on a lot of small blended primitives.
 //
-// WHAT THAT LEAVES FOR WHOEVER TOUCHES THIS NEXT. The cull is exact and the pieces it keeps are the
-// right ones — but 45% of the floor's cost is the three NEIGHBOURING rooms whose mottle spills onto
-// the screen (they paint 1.31 + 1.91 extra viewports; hiding them is -0.75 ms of a 1.9 ms layer).
-// The fix is upstream of here, in what `groundLayer.ts` paints: clip each room's dark/light halves
-// so a blob cannot reach two viewports into a neighbour. Do NOT "fix" it by shrinking the tagged
-// rect — that is the pop-at-the-screen-edge bug the note below exists to prevent.
+// WHAT THAT LEFT, AND WHAT CLOSED IT (2026-08-27). The cull was exact and the pieces it kept were
+// the right ones — and 45% of the floor's cost was the three NEIGHBOURING rooms whose mottle spilled
+// onto the screen (they painted 1.31 + 1.91 extra viewports). That is fixed upstream, in what
+// `groundLayer.ts` paints: `floorClip.ts` stops a room's blobs painting outside the room at all, so
+// the tagged rects shrank to the room rects and THIS CULL — unchanged, still an exact intersection —
+// now drops a neighbour's halves on its own. Standing in `arena_launch`'s first room, 13 pieces on
+// screen became 7, and the GPU frame moved 0.53-0.93 ms across three counterbalanced sessions
+// (`perf/README.md`'s seventh measurement). Note what did NOT change here: shrinking the tagged rect
+// is still the pop-at-the-screen-edge bug the note below exists to prevent. The rect got smaller
+// because the PAINTING got smaller, which is the only way it is allowed to.
 //
 // Shipped on that footing: it costs nothing measurable, it removes the "one 285k-float Graphics"
 // shape the batch policy in `render/staticGraphics.ts` was never measured at, it cuts real memory,

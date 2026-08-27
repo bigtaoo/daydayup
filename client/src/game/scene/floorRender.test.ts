@@ -277,9 +277,13 @@ describe('the variation layers, band by band — the decisions a mutation batter
   });
 
   it('ramps each mottle blob to nothing at its rim instead of ending on an edge', () => {
+    // A room big enough to hold a whole blob (r reaches 1.8 tiles = 460 px), so the bands arrive as
+    // `ellipse` and this reads the ramp itself rather than the room clip on top of it. The clipped
+    // form — where a band that crosses the room becomes a `poly` — is `floorClipCoverage.test.ts`'s
+    // subject, and it asserts the same ordering survives the clip.
     const dark = new Graphics();
     const light = new Graphics();
-    drawFloorMottle(dark, light, { x: 0, y: 0, w: 512, h: 512 }, 5, 256);
+    drawFloorMottle(dark, light, { x: 0, y: 0, w: 2048, h: 2048 }, 5, 256);
     const ellipses = shapes(dark).filter((sh) => sh.action === 'ellipse');
     expect(ellipses.length).toBeGreaterThanOrEqual(4);
     // Within one blob the outermost band is the faintest and the radii shrink inward: a flat alpha

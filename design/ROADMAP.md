@@ -101,11 +101,13 @@ reachable from any unit test — a full `createGameEngine` end-to-end regression
 `dungeonrun.test.ts` reproducing the reported bug shape directly: one room, two
 real spawned enemies (one beside the player, one clear across the room), driven
 through the real tick order, confirming the near one engages immediately while the
-far one fires zero bullets until it closes the distance. **5208 tests green across all 8
-workspace packages** (engine 845 / client 3312 / server 189 / animator 444 / map-editor 282 /
+far one fires zero bullets until it closes the distance. **5261 tests green across all 8
+workspace packages** (engine 845 / client 3365 / server 189 / animator 444 / map-editor 282 /
 png-pipeline 42 / desktop-shell 81 / root build-script 13, `npm run check`, re-measured
-2026-08-27 after the ground-cull pass (`groundCulling.test.ts` +6, `groundGeometryBudget.test.ts` +7)
-and the two mutation batteries that followed it (+3: the low-tier cull, `cameraFrame`'s room-list
+2026-08-27 after the floor-clip pass (`floorClipCoverage.test.ts` +53, whose sweeps were then widened
+from one map to six) — which followed the
+ground-cull pass earlier the same day (`groundCulling.test.ts` +6, `groundGeometryBudget.test.ts` +7)
+and the two mutation batteries after it (+3: the low-tier cull, `cameraFrame`'s room-list
 precedence, and `roomLight`'s stacked-alpha bound) — and **measure it from the MAIN checkout with no sibling
 worktree checked out**, which is the mechanism that has been corrupting this block rather than
 ordinary drift. The root leg of `npm run test` is `npx vitest run build/versionManifestPlugin.test.mjs`
@@ -838,12 +840,16 @@ them; see the two sections below.
    quads cost 0.10 ms each and scale linearly. What does pay: **45% of the floor is rooms the camera
    is not in.** A mottle blob reaches 460 world px past its room, so four dark and four light halves
    are legitimately on screen where one room is visible, and the three neighbours paint 1.31 and
-   1.91 extra viewports of spill; hiding them takes the frame 4.07 -> 3.32 ms. The next fix is a
-   geometry clip on each room's overlay halves — the shape `arenaWallCoverage.test.ts` already used
-   for the walls — with 0.75 ms as the number to beat. `perf/README.md`'s sixth measurement has the
-   numbers, plus the control that made them quotable: a TWIN arm that applies no change, because a
-   backgrounded tab degrades over an hour and a run where two identical arms read 3.556 and 5.985 ms
-   is the only warning you get.
+   1.91 extra viewports of spill; hiding them takes the frame 4.07 -> 3.32 ms. `perf/README.md`'s
+   sixth measurement has the numbers, plus the control that made them quotable: a TWIN arm that
+   applies no change, because a backgrounded tab degrades over an hour and a run where two identical
+   arms read 3.556 and 5.985 ms is the only warning you get.
+   **The clip shipped 2026-08-27 and cleared the bar** (`scene/floorClip.ts`): 0.53-0.93 ms of a
+   ~4.4 ms frame across three counterbalanced sessions, on-screen ground pieces 13 -> 7, 19.9% fewer
+   floats on the layer. See "The floor stops at its own walls" below — the load-bearing part is not
+   the millisecond but WHERE a cut on a floor is allowed to land, which turned out to be a measured
+   property of every shipped map rather than a taste call. **So the arena's dominant cost is no
+   longer open**; what remains on this thread is the on-device run (design/04).
    Two mutation batteries over the cull closed it out the same day: the feature's own three files
    (29 mutants, 1 survivor) and then the files that CONNECT it (20 mutants, 2 survivors). All three
    are fixed. The one worth carrying forward: the cull sat BELOW `syncCamera`'s low-tier early
@@ -6790,3 +6796,156 @@ pixel count rather than resolution). Nothing in the game imports it; it is a con
 - **Still nothing measured on a phone**, and design/04's item 2 is now narrowed rather than closed:
   `低` attacks the ~20% of the arena frame that is fill, so expect it to help *less* there than in a
   PvE room, and read that as confirmation rather than surprise.
+
+## The floor stops at its own walls (2026-08-27, client-only)
+
+🟢 Render-only, no `ENGINE_VERSION` bump. The fix the 2026-08-26/27 measurements had been circling:
+`layers.ground` was 56% of `arena_launch`'s GPU frame, and 45% of THAT was rooms the camera is not in
+— a mottle blob reaches 460 world px past the room that seeded it, ~1970 screen px at zoom 4.29, so
+standing in one room legitimately put four dark and four light halves on screen with the three
+neighbours painting 1.31 and 1.91 extra viewports of pure spill.
+
+**Shipped: `scene/floorClip.ts`.** A blob is clipped to its own room as it is built, so a piece's cull
+rect is its room instead of its room plus 460 px, and `groundCulling.ts` — unchanged, still an exact
+intersection — then drops a neighbour's halves on its own. Measured on a real GPU, three
+counterbalanced sessions with twin controls at both ends:
+
+| | measured |
+| --- | --- |
+| GPU frame | **0.53-0.93 ms** off a ~4.4 ms frame (every one of 7 clip readings below every one of 7 no-clip readings) |
+| ground pieces on screen at one camera | **13 -> 7** |
+| floats on the layer | 574,692 -> **460,370** (-19.9%) |
+| floats the worst camera submits | 76,646 -> **26,150** (-66%) |
+| ink a room paints outside itself | 42% -> **0%** |
+
+**The load-bearing part is not the millisecond, it is where a cut on a floor is allowed to land.**
+Truncating a smooth field leaves a step of the field's own local value, and a straight step on a floor
+is the thing `floorRender`'s header rejected the per-tile tint for. Measured BEFORE choosing the
+shape: a hard clip at the room rect leaves a **29.98 luma** step across a doorway (median 7.24) on a
+floor whose base is 25.9. Two swept facts about the shipped content decided the design instead:
+
+- **Every room rect includes its own perimeter wall, exactly one grid cell deep.** Sampled 2 / 16 /
+  30 px inside every room edge of `arena_launch` and all five PvE floors: **100% wall footprint or
+  authored passage, 0% bare floor**; at 34 px in it is floor. So `CLIP_FEATHER_PX` is `PX_PER_GRID`
+  because that is the depth of stone a room rect contains — not a tuned number.
+- **The passages are the exception, and they are 8-17% of that band.** A doorway is floor on both
+  sides, so no depth of clip is hidden there.
+
+So the clip RAMPS across that cell: each of a blob's five nested bands is clipped at its own inset,
+faintest at the room's edge, strongest a full cell in, with a hashed sub-band offset per blob so two
+blobs never cut on the same line. The largest step any single cut can make is then ONE band's alpha —
+the step that band's own rim already makes in the shipped art. Measured with the ramp in place:
+**2.59 luma** worst, 0.48 median, against a 4.90 bound derived from the mottle itself rather than
+transcribed. Rubble is the one class dropped rather than cut: a 2-4 px speck at alpha 0.46/0.13 has
+nothing to ramp over.
+
+**And in a live frame the clipped doorway is SMOOTHER than the unclipped one** — worst per-pixel luma
+step across all 74 passage floors 36.16 -> 18.51, median 24.23 -> 14.65. What used to be roughest
+there was a neighbouring room's rubble speck painted 400 px from home. The 14-18 luma that remains is
+the floor swatch's own texel-to-texel variation, which the ramp sits under.
+
+`scene/floorClipCoverage.test.ts` (53 tests) owns those properties: the wall-band sweep over six maps
+with `landing_basic` asserted AS the wall-less exception, "no piece paints outside its room" through
+the real `buildGroundLayer` with the 74 door-wear patches as the stated exception, the ramp's
+ordering read off real geometry, and the doorway bound. `groundGeometryBudget.test.ts`'s exact pins
+were re-measured in the same commit — that file's own doc comment names this as the intended workflow
+— and its `shadowLargest` is UNCHANGED at 49,392, which is the control that says the clip did not
+touch a layer it does not draw on.
+
+### What the measuring cost, and one thing that outranks the twin control
+
+`perf/README.md`'s seventh measurement has all of it. Three of four runs were junk, in three
+different ways, and the useful generalisation is that **a twin control tells you a run is junk but
+not which way it is wrong**:
+
+- Six arms back to back with no throwaway: twins 3.044 / 4.021. Junk.
+- 15 s idle gaps between arms DO restore the clock — but Chrome's intensive timer throttling clamps
+  `setTimeout` to ~a minute after 5 minutes in a background tab, so a gapped run stalls and presents
+  as a hang.
+- Reversed order read 4.508 / 3.988 / 3.729 — a DOWNWARD trend, i.e. **the first arm after a build
+  reads high** (compile, upload, clocks ramping). That bias points the opposite way from the first
+  one, and only running both orders separated them. The accepted design: a throwaway arm first, then
+  alternating arms back to back inside the first ~40 s after a load, twins at both ends.
+- Build both arms' geometry ONCE up front and swap child sets, so no `RoomBuilder.build` runs inside
+  the loop — a rebuild per arm confounds the arm with what a rebuild costs.
+
+And a fourth entry in this repo's running list of frame readers that lie: **three failed here before
+one worked.** `drawImage(app.canvas)` read 72.66 luma with the entire world hidden (the tab never
+composites — `captureScreenshot` timed out on the FIRST call of the session, so that tell is not
+only a late-session one); `extract.pixels` on a render-group ROOT returns its cached texture, giving
+byte-identical output for two arms that render differently; and `extract.pixels` on a plain Container
+takes `frame` relative to that container's own local-bounds origin, which differed between the arms
+(64,64 vs -315,-184) so the two sampled world regions 379x248 px apart — while detached pieces kept
+their `culled` flags and 97% of them never rendered at all.
+
+### The battery
+
+26 mutants over the CALL CHAIN — `floorClip.ts`, `floorRender.ts`, `groundLayer.ts`,
+`groundCulling.ts`, `RoomBuilder.ts` — each judged TWICE: against the new test file alone, and against
+the whole pre-existing suite with that file parked. 23 real mutants + 3 controls; a dry pass first
+proving every find-string matched exactly 1x; run in a throwaway worktree. **21 killed, 3 controls
+survived as designed, 2 survivors**, and the two are different things:
+
+- **`clipHalfPlane`'s `da >= 0` tightened to `da > 0` passed all 3,337 tests** — a real defect, not an
+  equivalence: it drops every vertex sitting exactly on the clip boundary without adding an
+  intersection to replace it, so a blob whose rim is coincident with its clip rect degenerates below
+  the three-point gate and vanishes instead of being drawn. Float coordinates make that measure-zero
+  in the shipped mottle, which is why nothing reached it — so the trigger was made REACHABLE (a
+  polygon clipped by exactly itself must come back whole) rather than the guard relaxed. Replaying the
+  mutant now turns exactly one test red out of 3,338.
+- **`fillClippedEllipse`'s fully-outside early return survives, and that survival is correct**: the
+  clipper answers empty either way, so it is a pure fast path. Confirmed by measuring rather than
+  arguing — the existing "returns nothing for a polygon wholly outside" assertion IS the equivalence
+  proof, and its comment now says so.
+
+Honest reading of the split: only **1 of the 23** was NEW coverage in the strict sense (NEW killed /
+OLD survived). `groundGeometryBudget.test.ts`'s exact float pins kill almost any geometry mutant on
+contact — which is what they are for, and also why they cannot distinguish a defect from an intended
+re-tune. The new file's contribution is the properties: it says why the numbers are what they are,
+and it sweeps a premise (the one-grid-cell wall band across six maps) that no pin covers.
+
+### Then the sweeps were widened, and one of them had been measuring one map
+
+Asked for more tests, the answer came from widening the CONTENT rather than adding assertions about
+`arena_launch`. Three of the four things that turned up were real:
+
+1. **A bound that passed because it was measured on one body of content.** The doorway-step case
+   asserted `worst < JND` (3 luma) as well as the derived one-band bound (4.90). The arena's worst is
+   2.59 — and sweeping the five PvE floors reads **1.14 / 1.17 / 3.04 / 2.76 / 2.73**, so floor 2 is
+   over JND while the real property still holds comfortably. The gate is now the derived bound with
+   the per-map worst in its failure message, and the JND claim is made **distributionally** (the
+   MEDIAN doorway is under it) because the worst case is legitimately allowed to reach one band. This
+   is the "informative bound measured on one body of content" trap, caught by the next body of
+   content instead of by a player.
+2. **A count that was a fact about one map's floor regions.** "The pieces outside a room are exactly
+   the door-wear patches" is true of the arena and of every PvE floor, and false of `landing_basic`,
+   where `floorRegionsPx` falls back to the whole world and the region stamp and grid are legitimately
+   tagged with a rect no room contains. Both branches are now asserted, keyed off whether the regions
+   ARE the rooms, so neither can drift silently. `landing_basic`'s absence from the doorway sweep is
+   asserted too, with its precondition: its two passages join no pair of its room rects.
+3. **A tag-fidelity invariant with no reader.** `groundCulling.ts` intersects against the rect a piece
+   is TAGGED with, and both containment sweeps are blind to a piece tagged with the wrong room — the
+   second battery walked "tag every light half with room 0's rect" straight through them. Now
+   asserted directly (tag vs the piece's own `getLocalBounds`), which also fixed the tolerance
+   question honestly: **half a pixel**, because the 64 px grid is STROKED at width 1 and tagged with
+   its region, so its paint straddles the region rect by 0.5 px while everything painted with fills
+   matches its tag to the float.
+4. And one that was **not** real, recorded because it cost a round: the small-room case first reported
+   NaN vertices, an early return for an empty clip rect was written to fix them — and the NaN was in
+   the test (a `moveTo` instruction carries two numbers and was being read through the ellipse
+   branch). `clipHalfPlane` only divides when the two distances differ in sign, so it cannot go 0/0;
+   the guard changed no output and was removed again. The lesson is the repo's own: check whether YOUR
+   fix is scaffolding before shipping it.
+
+**A second battery over the widened surface** then took the file set out to what the clip DEPENDS on
+rather than what it touches — `floorPartition.ts` (which map gets per-room floor regions),
+`roomLight.ts` (another per-room piece the sweep now polices), `render/staticGraphics.ts` (the batch
+policy the geometry rides on), plus `groundCulling`'s comparison now that adjacent rooms abut
+exactly, plus a re-run of battery 1's two survivors. 17 real mutants + 3 controls: **16 killed,
+1 survivor, 0 controls broken**, and the survivor is battery 1's confirmed equivalence. The re-runs
+came out exactly as predicted — the coincident-boundary test turned survivor 1 into NEW coverage, and
+the fully-outside fast path survived again.
+
+One harness note from it: the dry pass earned its keep. `floorPartition.ts` is CRLF while the working
+tree file the mutant was written against is not, so the one multi-line find-string matched **0x** —
+silently skipping a mutant is exactly how a battery reports a clean sweep it never ran.

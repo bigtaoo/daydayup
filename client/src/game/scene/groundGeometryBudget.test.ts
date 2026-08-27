@@ -18,14 +18,21 @@
  *
  * The change was not to draw less. It was to make what is drawn CULLABLE: the layer is now one piece
  * per room (per region, per door), each tagged with the rect it paints, and `groundCulling.ts`
- * switches the off-screen ones off once per frame from `FxController.updateCamera`. The geometry is
- * unchanged to the float — the sums below reproduce the pre-split browser census exactly — so the
- * exemption is gone not because the content shrank but because no single piece is large any more.
+ * switches the off-screen ones off once per frame from `FxController.updateCamera`. That split left
+ * the geometry unchanged to the float — the sums below reproduced the pre-split browser census
+ * exactly — so the exemption went not because the content shrank but because no single piece is
+ * large any more.
  *
  * What that did and did not buy is recorded in `groundCulling.ts` and `perf/README.md`, and it is
  * not what the first version of this file predicted: the batcher packs 17x less vertex data, and the
  * GPU frame did not measurably move. So the bounds below are bounds on GEOMETRY, which is what they
  * always measured; none of them is evidence about milliseconds.
+ *
+ * **2026-08-27 changed that geometry on purpose**, for the first time since: `floorClip.ts` stops a
+ * room's blobs painting outside the room, which took 19.9% of the layer's floats and 66% of what the
+ * worst camera submits. The `REAL` block below is re-measured, and its own doc comment says which
+ * numbers moved and which one deliberately did not. `floorClipCoverage.test.ts` owns the properties
+ * the clip is FOR; this file still owns what the layer costs.
  *
  * ## The three bounds here, deliberately of different kinds
  *
@@ -294,7 +301,7 @@ describe('every catalog map stays inside the envelope staticGraphics() was measu
     // budget. A version of `buildGroundLayer` that quietly stopped drawing four fifths of the floor
     // would pass every per-piece assertion above and fail here.
     const m = measureArena('arena_launch');
-    expect(m.total / FLOOR_PASS_FLOAT_BUDGET).toBeGreaterThan(8); // measured ~9.0
+    expect(m.total / FLOOR_PASS_FLOAT_BUDGET).toBeGreaterThan(7); // measured 7.41 (9.0 pre-clip)
     expect(m.total / m.largest).toBeGreaterThan(50); // spread over ~98 pieces' worth
   });
 
@@ -405,22 +412,33 @@ describe('what ONE camera submits — the property the per-room split exists for
 });
 
 /**
- * Pinned from the REAL `RoomBuilder.build` on `arena_launch`, 2026-08-26. The two overlay sums
- * reproduce the pre-split live browser `census()` of the same map EXACTLY (284,966 additive /
- * 265,566 multiply on ground, 49,392 on shadow), which is what says the split moved geometry between
- * display objects and did not change a single vertex of it.
+ * Pinned from the REAL `RoomBuilder.build` on `arena_launch`. Re-measured 2026-08-27 for the room
+ * CLIP (`floorClip.ts`), which is the first deliberate change to this geometry since the numbers
+ * were first taken.
+ *
+ * **What these numbers used to mean, and what they mean now.** Until 2026-08-27 they reproduced the
+ * pre-split live browser `census()` of the same map EXACTLY (284,966 additive / 265,566 multiply on
+ * ground, 49,392 on shadow) — that identity is what said the 2026-08-26 per-room split moved
+ * geometry between display objects without changing a single vertex of it. The clip then removed the
+ * blob spill that reached up to 460 px outside every room: **-19.9% of the layer's floats**
+ * (284,966 -> 228,052 additive, 289,726 -> 232,318 rest), and -66% of what the worst camera submits.
+ * So the split's byte-identity is now history rather than a live assertion, and what is live is the
+ * pin itself. `shadowLargest` is UNCHANGED at 49,392, which is the control: the clip is not allowed
+ * to touch a layer it does not draw on.
  */
 const REAL = {
   /** Everything additive: every room's mottle-light + rubble highlights, plus every door's worn
-   *  patch. One Graphics before the split, 134 pieces after it, the same 284,966 floats. */
-  additive: 284_966,
-  /** Everything else on the layer: the dark half (265,566), the fallback flat fill this headless
-   *  build gets in place of a stamped swatch (480), the grid (6,400) and the light pools (17,280). */
-  rest: 289_726,
-  total: 574_692,
-  /** Largest single piece, and the worst any one camera submits. */
-  largestPiece: 5_840,
-  worstCamera: 76_646,
+   *  patch. 284,966 before the room clip. */
+  additive: 228_052,
+  /** Everything else on the layer: the dark half, the fallback flat fill this headless build gets in
+   *  place of a stamped swatch (480), the grid (6,400) and the light pools (17,280). 289,726 before
+   *  the room clip. */
+  rest: 232_318,
+  total: 460_370,
+  /** Largest single piece, and the worst any one camera submits. 5,840 / 76,646 before the clip. */
+  largestPiece: 5_558,
+  worstCamera: 26_150,
+  /** Unchanged by the clip, on purpose — see the note above. */
   shadowLargest: 49_392,
   /** `staticGraphics.ts`'s stated envelope for the wall-shadow pass, for comparison. */
   shadowMeasuredAt: 24_000,
@@ -472,7 +490,7 @@ describe('the REAL builder, not the mirror in this file', () => {
     };
   })();
 
-  it('ground: the same geometry as before the split, to the float', () => {
+  it('ground: the shipped geometry, to the float', () => {
     // Identified by BLEND MODE rather than by child index, so this keeps measuring the same two
     // halves however the pieces are ordered — and both are pinned, because an earlier draft bounded
     // only the larger one and a battery then showed three mutants walking straight through it (a
@@ -487,9 +505,13 @@ describe('the REAL builder, not the mirror in this file', () => {
     expect(built.pieces[0]).toBe(REAL.largestPiece);
     expect(built.pieces).toHaveLength(374);
     expect(built.pieces[0]!).toBeLessThan(FLOOR_PASS_FLOAT_BUDGET);
-    // The total is still 9x the per-piece budget — see the sweep's control above for why that
-    // matters. Stated as a margin rather than as a second copy of the number.
-    expect(REAL.total / FLOOR_PASS_FLOAT_BUDGET).toBeGreaterThan(8);
+    // The total is still 7x the per-piece budget — see the sweep's control above for why that
+    // matters. Stated as a margin rather than as a second copy of the number. It was 9x before the
+    // 2026-08-27 room clip took 19.9% of the layer's floats out; the bound moved with the measured
+    // content and not to whatever the content happens to be, and it is still the assertion that
+    // fails if `buildGroundLayer` ever quietly stops drawing most of the floor (that would read
+    // ~1.8x, not 7).
+    expect(REAL.total / FLOOR_PASS_FLOAT_BUDGET).toBeGreaterThan(7);
   });
 
   it('ground: the worst camera on the map, pinned', () => {

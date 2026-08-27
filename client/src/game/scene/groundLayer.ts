@@ -19,11 +19,17 @@
 // Each stage is mounted as one piece PER ROOM (per region, per door) rather than as one Graphics for
 // the whole floor, and every piece carries the rect it paints so `groundCulling.ts` can switch the
 // off-screen ones off. That is the 2026-08-26 arena pass: the stage order above is unchanged and the
-// geometry is byte-for-byte the same (`groundGeometryBudget.test.ts` pins both halves against the
-// pre-split browser census), but the layer went from "285k floats submitted every frame wherever the
-// camera is" to "whatever the viewport touches" — 17x less packed vertex data on `arena_launch`.
-// Read `groundCulling.ts` before quoting that as a frame-time win: it is not one, and the header
-// there says what the A/B actually measured.
+// geometry was byte-for-byte the same, but the layer went from "285k floats submitted every frame
+// wherever the camera is" to "whatever the viewport touches" — 17x less packed vertex data on
+// `arena_launch`. Read `groundCulling.ts` before quoting that as a frame-time win: it is not one, and
+// the header there says what the A/B actually measured.
+//
+// What DID move the frame is the 2026-08-27 pass on top of it: `floorClip.ts` stops each room's
+// mottle painting outside the room, so a piece's rect is its room instead of its room plus 460 px of
+// spill, and the cull above then drops a neighbour's halves. 0.53-0.93 ms of a ~4.4 ms arena frame,
+// 13 on-screen pieces down to 7, 19.9% fewer floats on the layer. That is the first deliberate
+// change to this geometry since the split, and it is why `groundGeometryBudget.test.ts`'s pins no
+// longer reproduce the pre-split browser census.
 import { Container, Graphics, type Texture } from 'pixi.js';
 import type { AABB, GameState } from '@dd/engine';
 import type { BiomePalette } from '../theme';
@@ -140,10 +146,13 @@ function mountPiece(ground: Container, node: Container, bounds: RectPx): void {
 /**
  * Mount a piece and tag it with what it actually PAINTED, read back off the geometry.
  *
- * Not the room rect: `drawFloorMottle` seeds its blobs inside the room but draws them up to 1.8
- * tiles across, so a 448x384 room's dark pass measures 838x446 px. Tagging the room would cull
- * those blobs while a slice of them was still on screen. Reading the bounds back also means this
- * stays right when the blob constants move, which a hand-derived margin would not.
+ * Not the room rect, even though since 2026-08-27 the two are usually equal. `drawFloorMottle` seeds
+ * its blobs inside the room and used to draw them up to 1.8 tiles across, so a 448x384 room's dark
+ * pass measured 838x446 px; `floorClip.ts` now clips those blobs to the room, so the same pass
+ * measures the room. Reading the bounds back rather than assuming that is the point: it was what kept
+ * the cull exact while the spill existed, and it is what will keep it exact if the clip ever gains a
+ * margin — a hand-derived rect would have to be re-derived, and the door wear (deliberately painted
+ * across a passage into both rooms) is already a piece the room rect would describe wrongly.
  */
 function mountPainted(ground: Container, node: Container): void {
   const b = node.getLocalBounds();

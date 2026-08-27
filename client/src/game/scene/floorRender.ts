@@ -42,6 +42,8 @@
 // visits to the same room, must draw the identical floor.
 import { Graphics, Sprite, Texture, Rectangle, type TextureSource } from 'pixi.js';
 import type { RectPx } from './wallGeometry';
+import { boxInsideRect, fillClippedEllipse, insetRect } from './floorClip';
+import { PX_PER_GRID } from '../coords';
 
 /**
  * **There is deliberately no per-tile tint.** The first version dimmed each tile by a hashed
@@ -66,6 +68,18 @@ const MOTTLE_DARK_ALPHA = 0.055;
 const MOTTLE_LIGHT_ALPHA = 0.05;
 const MOTTLE_LIGHT_COLOR = 0x6b6259; // warm grey: additive, so this lifts without shifting hue much
 const MOTTLE_PX_PER_BLOB = 260_000; // ~one blob per 510x510 of floor, per polarity
+
+/**
+ * How far inside a room the blob clip RAMPS (`floorClip.ts`, 2026-08-27).
+ *
+ * `PX_PER_GRID`, and not as a coincidence: every shipped room rect includes its own perimeter wall
+ * exactly one grid cell deep, measured rather than assumed — 2/16/30 px inside every room edge of
+ * `arena_launch` and all five PvE floors is 100% wall footprint or authored passage and 0% bare
+ * floor (`floorClipCoverage.test.ts`). So a cut anywhere inside this depth is a cut under stone. It
+ * is the ONE distance that is free everywhere except a doorway, which is what the per-band ramp
+ * below exists for.
+ */
+const CLIP_FEATHER_PX = PX_PER_GRID;
 
 /** Per-room wash: the two directions a room can lean, and the alpha band. Deliberately narrow —
  *  `13` "environment desaturated, hazards saturated": a room that reads as a different COLOUR
@@ -214,10 +228,16 @@ export function drawFloorMottle(dark: Graphics, light: Graphics, room: RectPx, s
     const r = tileSize * (MOTTLE_R_MIN + MOTTLE_R_SPAN * unit(s, 3));
     const alpha = isLight ? MOTTLE_LIGHT_ALPHA : MOTTLE_DARK_ALPHA;
     const color = isLight ? MOTTLE_LIGHT_COLOR : 0x000000;
+    // Where this blob's bands are allowed to stop, staggered by a hashed fraction of a band so two
+    // blobs in one room never cut on the same line and their steps cannot add up.
+    const stagger = unit(s, 90);
     for (let b = 0; b < MOTTLE_BANDS; b++) {
       const rr = r * (1 - b / (MOTTLE_BANDS + 1));
-      // Faintest at the rim, so the blob has no edge of its own.
-      g.ellipse(cx, cy, rr, rr * 0.72).fill({ color, alpha: (alpha * (b + 1)) / MOTTLE_BANDS });
+      // Faintest at the rim, so the blob has no edge of its own — and the same ramp decides the
+      // clip: the faintest band may reach the room's own edge, the strongest stops a full grid cell
+      // inside it, so the biggest step any cut can make is one band's alpha (`floorClip.ts`).
+      const clip = insetRect(room, (CLIP_FEATHER_PX * (b + stagger)) / MOTTLE_BANDS);
+      fillClippedEllipse(g, cx, cy, rr, rr * 0.72, clip, { color, alpha: (alpha * (b + 1)) / MOTTLE_BANDS });
     }
   }
 }
@@ -254,7 +274,8 @@ export function drawFloorDecals(
       const r = STAIN_R_MIN + STAIN_R_SPAN * unit(s, 13 + b);
       const dx = (unit(s, 21 + b) - 0.5) * r * 1.6;
       const dy = (unit(s, 31 + b) - 0.5) * r * 1.1;
-      dark.ellipse(cx + dx, cy + dy, r, r * 0.7).fill({ color: 0x000000, alpha: STAIN_ALPHA });
+      const clip = insetRect(room, (CLIP_FEATHER_PX * b) / STAIN_BLOBS);
+      fillClippedEllipse(dark, cx + dx, cy + dy, r, r * 0.7, clip, { color: 0x000000, alpha: STAIN_ALPHA });
     }
   }
 
@@ -265,10 +286,14 @@ export function drawFloorDecals(
     const cy = room.y + unit(s, 42) * room.h;
     if (avoid.some((a) => cx >= a.x - 2 && cx <= a.x + a.w + 2 && cy >= a.y - 2 && cy <= a.y + a.h + 2)) continue;
     const r = RUBBLE_R_MIN + RUBBLE_R_SPAN * unit(s, 43);
-    dark.ellipse(cx, cy, r, r * 0.7).fill({ color: 0x000000, alpha: RUBBLE_DARK_ALPHA });
+    // A speck is DROPPED rather than clipped, body and highlight together: at alpha 0.46/0.13 a cut
+    // through one is a hard step no ramp can hide, and at 2-4 px across there is nothing to ramp
+    // over. The union box is the body's, grown for the highlight's own reach above it.
+    if (!boxInsideRect(room, cx - r, cy - r * 0.8, cx + r, cy + r * 0.7)) continue;
+    fillClippedEllipse(dark, cx, cy, r, r * 0.7, room, { color: 0x000000, alpha: RUBBLE_DARK_ALPHA });
     // Its lit face, up-light: the same fixed upper-left key light the walls, pillars, shadows and
     // the character all agree on.
-    light.ellipse(cx - r * 0.35, cy - r * 0.4, r * 0.55, r * 0.4).fill({ color: 0xffffff, alpha: RUBBLE_LIGHT_ALPHA });
+    fillClippedEllipse(light, cx - r * 0.35, cy - r * 0.4, r * 0.55, r * 0.4, room, { color: 0xffffff, alpha: RUBBLE_LIGHT_ALPHA });
   }
 }
 

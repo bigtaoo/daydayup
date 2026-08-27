@@ -545,10 +545,98 @@ painted for rooms that are off screen.
 
 ### What to do next, and how to measure it
 
-Clip each room's dark/light `Graphics` to a bounded region so one room's mottle cannot paint two
-viewports of its neighbour's screen space. `arenaWallCoverage.test.ts`'s wall-clip fix is the shape
-to copy — a geometry clip, no new fixtures — and the number to beat is the 0.75 ms above, measured
-the same way (twin control, `nearestOnly` becomes the *shipped* state rather than an arm).
+~~Clip each room's dark/light `Graphics` to a bounded region so one room's mottle cannot paint two
+viewports of its neighbour's screen space.~~ **Done 2026-08-27 — see the seventh measurement below.**
+`arenaWallCoverage.test.ts`'s wall-clip fix was the shape to copy — a geometry clip, no new fixtures —
+and the number to beat was the 0.75 ms above, measured the same way (twin control, `nearestOnly`
+becoming the *shipped* state rather than an arm). It came in at 0.53-0.93 ms across three
+counterbalanced sessions.
 
 Do not reach for a cheaper cull margin instead: the pieces are already exactly-intersected, and the
 cost is the painting, not the keeping.
+
+## The seventh measurement: the clip ships, and the instrument needed a throwaway arm (2026-08-27)
+
+The sixth measurement ended by naming the fix and the number to beat: clip each room's overlay halves
+so its mottle cannot paint two viewports into a neighbour, against **0.75 ms**. Shipped as
+`scene/floorClip.ts`. It clears the bar, and getting a number that could be quoted took four runs, of
+which three were junk in three different ways.
+
+### What it measures at
+
+Arms are built ONCE up front — clip on and clip off — and then swapped as whole child sets on
+`layers.ground` (`removeChildren()` + `addChild`). No `RoomBuilder.build` runs inside the measurement
+loop, which matters: a rebuild per arm confounds the arm with whatever a rebuild costs, and the first
+run here did exactly that.
+
+```
+                       A (clip)              B (no clip)          twin spread        paired delta
+session 1        3.853, 3.987          4.795, 4.909        A 0.134 / B 0.114     0.942, 0.922
+session 2        3.547, 3.575          4.238, 4.099        A 0.028 / B 0.139     0.691, 0.524
+session 3   3.843, 3.417, 3.754   4.287, 4.477, 4.229      A 0.426 / B 0.248     0.444, 1.060, 0.475
+```
+
+**Every one of the seven A readings (max 3.987) is below every one of the seven B readings (min
+4.099).** Pooled medians 3.754 vs 4.287; pooled means 3.711 vs 4.433. So the clip is worth
+**0.53-0.93 ms of a ~4.4 ms frame**, and the per-session paired deltas are the honest form of it: the
+absolute level drifts between sessions, the difference does not change sign.
+
+Controls, all of which fired: an empty target **0.000 ms**; `layers.ground.visible = false` 3.346 in
+session 2 (the layer really is being rendered); **0 disjoint samples discarded** in every arm quoted.
+Visible ground pieces at the same camera: **13 -> 7**.
+
+### The three runs that were junk, and what each one taught
+
+1. **Six arms back to back, no throwaway.** Twin A1 3.044 / A2 4.021 — 0.98 ms apart. Thrown away.
+2. **15 s idle gaps between arms restored the clock** (A 3.452 / B 4.283, against 4.2-5.5 for the same
+   arms ungapped) — so the degradation is recoverable, not monotonic tab rot. But Chrome's
+   **intensive timer throttling** kicks in after ~5 minutes in a background tab and clamps
+   `setTimeout` to about a minute, so a gapped run stalls mid-sequence and presents as a hang.
+3. **Reversed order** (B first) read 4.508 / 3.988 / 3.729 — a DOWNWARD trend, i.e. the first arm
+   after a build reads high (shader compile, buffer upload, clocks ramping). That is the opposite bias
+   from (1), and the two together are why the accepted design is: **a throwaway arm first**, then
+   alternating arms back to back inside the first ~40 s after a load, with twins at both ends.
+
+If you take one thing from this section rather than the numbers: **a twin control tells you a run is
+junk, but it does not tell you which way.** Two biases pointing opposite directions were both present
+here, and only running the arms in both orders separated them.
+
+### The doorway, from a live frame
+
+A clip truncates a smooth field, so it leaves a step. Measured before choosing the shape: a HARD clip
+at the room rect would leave a **29.98 luma** step across a doorway (median 7.24) on a floor whose
+base is 25.9. The shipped clip ramps its five bands across the one grid cell of stone every room rect
+contains, and the same offline measurement reads **2.59 / 0.48**.
+
+Then, in a real frame, over all 74 passage floors — worst per-pixel luma step walking across the
+boundary, alpha >= 250 only:
+
+```
+clip (shipped)   coverage 100%    max 18.51    p90 16.72    median 14.65
+no clip          coverage  81.8%  max 36.16    p90 32.66    median 24.23
+clip again       identical to the first, to the hundredth       <- the twin
+```
+
+**The clipped doorway is smoother than the unclipped one**, at every percentile. What used to be
+roughest there was a neighbouring room's rubble speck (alpha 0.46 dark, 0.13 white) painted 400 px
+from home; the clip drops a speck whole rather than cutting one. The 14-18 luma that remains is the
+floor swatch's own texel-to-texel variation, which the ramp sits under.
+
+### Four frame readers, three of which lied first
+
+This is the fifth entry in this file to say it, so it is worth stating as a rule: **on this surface a
+frame reader is guilty until a control fires.** In order:
+
+- **`drawImage(app.canvas)` luma: 72.66 with the entire world hidden, and 72.66 with it visible.**
+  The tab never composites — `Page.captureScreenshot` timed out on the first call of the session, not
+  the last — so the canvas read is stale. That also means **the screenshot timeout is not only a
+  late-session tell**; it is the first thing to check.
+- **`extract.pixels({ target: layers.ground })`: byte-identical output for two arms that render
+  differently.** Extracting from a render-group ROOT returns its cached texture.
+- **`extract.pixels` on a plain Container: `frame` is relative to the target's own LOCAL-BOUNDS
+  origin**, and the two arms' bounds differ (clip 64,64; no clip -315,-184), so the arms sampled
+  world regions 379x248 px apart. On top of that, detached pieces keep their `culled` flags, so 97%
+  of them never rendered and one arm came back 2.4% covered.
+- What finally worked: a throwaway **non**-render-group Container, `culled` cleared on every piece,
+  `frame` offset by that container's own `getLocalBounds()`, and the clip arm measured TWICE so the
+  twin proves the reader is live.
