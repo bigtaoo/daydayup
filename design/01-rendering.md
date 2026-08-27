@@ -1279,6 +1279,19 @@ it. Full numbers, controls and traps in `perf/README.md`'s sixth measurement; th
 The fix that follows is a geometry clip on each room's dark/light `Graphics`, the same shape as
 `arenaWallCoverage.test.ts`'s wall clip, with 0.75 ms as the number to beat.
 
+A mutation battery over the cull's CALL CHAIN — `groundCulling.ts`, `groundLayer.ts`,
+`FxController.ts`, 29 mutants, each judged twice (against the two test files the cull commit added,
+and against the whole client suite with those two removed) — came back **26 killed, 3 controls
+survived as designed, 1 real survivor**. 17 of the kills were NEW coverage, which is what the added
+files bought. The survivor is the one that matters: moving `cullGroundLayer` back **below**
+`syncCamera`'s `if (!activeQuality().sceneLight) return` — the exact shape this method had before
+2026-08-26 — passed all 3,309 client tests. Correct code, connected, and read by nothing, in the
+worst possible place: the low tier is the DEVICE tier, so a phone that drops to it would keep all
+374 of `arena_launch`'s floor pieces resident, and the machine that most needs the cull was the only
+one that would not get it. Closed by `FxController.test.ts`'s "still culls the ground on the low
+tier", which carries the tier as its own control; replaying the mutant with it in place turns
+exactly one test red out of 3,310.
+
 One method note that outranks all of the above, because everything measured before it was suspect:
 **carry a twin control arm.** Two arms that apply no change at all, at opposite ends of the arm
 order. A mid-session run had two identically-rendering arms read 3.556 and 5.985 ms while each
