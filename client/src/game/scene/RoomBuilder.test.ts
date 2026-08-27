@@ -24,6 +24,7 @@ import { fpToPx, PX_PER_GRID } from '../coords';
 import { Entity, SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
 import { Backdrop } from './Backdrop';
 import { pillarTint } from './pillarRender';
+import { propShadowRadius } from './propRender';
 import { biomePalette } from '../theme';
 import type { DoorFixture } from './doorRender';
 
@@ -546,6 +547,38 @@ describe('RoomBuilder — pillars (design/10 legibility fix, 2026-08-02: faux-sh
     const firstCount = layers.entities.children.length;
     rb.build(stateWithOneObstacle());
     expect(layers.entities.children.length).toBe(firstCount);
+  });
+
+  it('draws the body WIDER than the footprint you collide with, at every shipped pillar size', () => {
+    // `roomDressing.buildPillarEntities` widens the drawn body past the collision circle
+    // (`rad * 2 + 16`), and until a 2026-08-27 battery nothing read that: dropping the widening
+    // so the art is exactly as wide as the footprint passed all 3,365 client tests. It is a look
+    // decision, so no geometry assertion in this file could see it — the same shape as
+    // `roomLight`'s `EDGE_ALPHA` survivor, and the same cure: gate the RELATIONSHIP to the other
+    // quantity it is tuned against, never the constant.
+    //
+    // The relationship is that a character pressed against a pillar must not overlap its
+    // silhouette, i.e. the drawn body clears the footprint on both sides. Bounded as a FRACTION of
+    // the footprint because pillar radii vary across shipped content (1 and 1.5 grid = 32 and 48
+    // px in `world/rooms/ember.ts`; the third radius here is deliberately below both). The gate
+    // sits at 15% of the radius per side, well under today's clearance and well over the mutant's
+    // widest reading — see the assertion's own margin check below.
+    const s = createGameState({
+      seed: 1, worldW: 1600, worldH: 1200, waves: [], walls: [],
+      obstacles: [[200, 200, 32], [600, 200, 48], [1000, 200, 20]],
+    });
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    const pillars = (rb as unknown as { pillars: Entity[] }).pillars;
+    expect(pillars).toHaveLength(3);
+    const clearanceFractions = [32, 48, 20].map((radiusPx, i) => {
+      const body = pillars[i]!.children[0] as Graphics;
+      return (body.getLocalBounds().maxX - radiusPx) / radiusPx;
+    });
+    for (const frac of clearanceFractions) expect(frac).toBeGreaterThan(0.15);
+    // ...and the gate has real headroom, so nobody has to transcribe today's tuning to keep it
+    // honest: the tightest of the three sits well clear of the bound.
+    expect(Math.min(...clearanceFractions)).toBeGreaterThan(0.18);
   });
 
   it('clear() removes every pillar and its shadow', () => {
@@ -1630,6 +1663,26 @@ describe('RoomBuilder — decorative props (RoomPiece.props)', () => {
     const [crate, barrel] = propEntities(rb);
     expect(drawsAnEllipse(crate!)).toBe(false);
     expect(drawsAnEllipse(barrel!)).toBe(true);
+  });
+
+  it("sizes each prop's shadow from the AUTHORED kind, not one fixed radius", () => {
+    // The test above only asks that a shadow EXISTS and is on the layer, which is what let a
+    // 2026-08-27 battery replace `propShadowRadius(kind)` with `0` and survive: `makeShadow(0)`
+    // still builds a Graphics and still parents it, so a prop that floats with no shadow at all
+    // passed every assertion in this file. `propRender.test.ts` pins the table's own values
+    // (crate 9 / barrel 8 / rubble 11); what was missing is the WIRING between them, so this
+    // reads the ratio through the real `propShadowRadius` rather than transcribing any of the
+    // three — a re-tune of the table moves both sides together, and only a broken hand-off
+    // (zero, or one fixed radius for every kind) breaks the ratio.
+    const rb = makeRoomBuilder();
+    rb.build(stateWithProps([{ id: 'barrel', x: 1, y: 1 }, { id: 'rubble', x: 5, y: 5 }], 0, 0));
+    const [barrel, rubble] = propEntities(rb);
+    const spanOf = (e: Entity): number => e.shadow!.getLocalBounds().maxX;
+    expect(spanOf(barrel!)).toBeGreaterThan(0);
+    expect(spanOf(rubble!) / spanOf(barrel!)).toBeCloseTo(
+      propShadowRadius('rubble') / propShadowRadius('barrel'),
+      5,
+    );
   });
 
   it('is not registered with the occlusion x-ray — props are short enough not to need it', () => {

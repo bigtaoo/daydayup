@@ -31,8 +31,10 @@ Goal: a fixed tilted view (not pure top-down; slightly forward-leaning, like Sou
     is co-resident — every room stitched into one world by `buildFloorGeometry` — so
     fitting `worldSize` meant fitting a ~2000 px floor into a 1920 px viewport, i.e.
     cover-fit resolved to zoom 1 and the player saw several rooms at once, each small.
-    `GameLoop.cameraFrame` now looks the player's cached `roomId` up in
-    `dungeonRoomRects`/`arenaRoomRects` and passes that rect as `updateCamera`'s `frame`;
+    `GameLoop.cameraFrame` now looks the player's cached `roomId` up in whichever of
+    `dungeonRoomRects`/`arenaRoomRects` the run is using (`engine/state/roomModel.ts`, the one
+    selector the camera, the floor and `EnvironmentSystem` share) and passes that rect as
+    `updateCamera`'s `frame`;
     the whole floor stays the fallback for a mode with no room model. Level 1's rooms are
     ~480 px square, so this lands at ~4x and the room fills the viewport — which is what
     forced the `MAX_ZOOM` raise, since 2.5 bound in literally every room.
@@ -1303,6 +1305,13 @@ ever scoped to the files it mutates. 20 mutants over what CONNECTS the floor and
   `cameraFrame`'s ternary passed all 3,310 tests. If they ever disagreed the camera would frame a
   room out of one model while the floor beneath it was painted from the other. (`EnvironmentSystem`
   makes it three selectors and it uses a *different* rule, `zoneEnabled` — worth knowing.)
+  **Closed 2026-08-27, by deleting the duplication rather than adding a third pin:** all three now
+  call `engine/state/roomModel.ts`, and the invariant the two rules could only disagree about — that
+  `EngineConfig.dungeon` and `.arena` are alternatives, previously asserted only in their own doc
+  comments — is enforced where it is decided (`GameState`'s constructor throws on a config carrying
+  both). The two consumer tests above are what made that refactor safe: both passed unchanged, and
+  they are still the only thing proving each call site READS the shared rule instead of re-inlining
+  its own.
 - **An aesthetic constant under a geometry-shaped suite.** `roomLight.ts`'s `EDGE_ALPHA` went 0.26
   to 0.9 — a near-black ring around every room — and nothing failed. Every existing test in that
   file pins the ramp's *geometry* (monotonic, non-overlapping, inside its own room, scaled to the

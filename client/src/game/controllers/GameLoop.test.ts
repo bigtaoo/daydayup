@@ -543,6 +543,12 @@ describe('GameLoop.updateCamera — the frame rect handed to FxController', () =
     // passed all 3,310 client tests. If the two ever disagreed, the camera would frame a room out
     // of one model while the floor beneath it was painted from the other.
     //
+    // Since 2026-08-27 there is only ONE ternary to reverse: both files call
+    // `engine/state/roomModel.ts roomRects`, and a config can no longer carry both models at all
+    // (`GameState` throws). This test and `groundLayer.test.ts`'s copy are what prove each call
+    // site still READS the shared rule rather than re-inlining its own — they are the reason that
+    // refactor was not a leap of faith, since both passed it unchanged.
+    //
     // The arena decoy deliberately SHARES the dungeon room's id, because that is the only shape
     // where the wrong list still finds a hit and so fails silently rather than falling back.
     const { deps, fx } = buildDeps();

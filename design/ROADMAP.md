@@ -101,10 +101,11 @@ reachable from any unit test — a full `createGameEngine` end-to-end regression
 `dungeonrun.test.ts` reproducing the reported bug shape directly: one room, two
 real spawned enemies (one beside the player, one clear across the room), driven
 through the real tick order, confirming the near one engages immediately while the
-far one fires zero bullets until it closes the distance. **5261 tests green across all 8
-workspace packages** (engine 845 / client 3365 / server 189 / animator 444 / map-editor 282 /
+far one fires zero bullets until it closes the distance. **5272 tests green across all 8
+workspace packages** (engine 854 / client 3367 / server 189 / animator 444 / map-editor 282 /
 png-pipeline 42 / desktop-shell 81 / root build-script 13, `npm run check`, re-measured
-2026-08-27 after the floor-clip pass (`floorClipCoverage.test.ts` +53, whose sweeps were then widened
+2026-08-27 after the room-model unification (`engine/state/roomModel.test.ts` +8, plus +3 from its
+second battery) and, before it the same day, the floor-clip pass (`floorClipCoverage.test.ts` +53, whose sweeps were then widened
 from one map to six) — which followed the
 ground-cull pass earlier the same day (`groundCulling.test.ts` +6, `groundGeometryBudget.test.ts` +7)
 and the two mutation batteries after it (+3: the low-tier cull, `cameraFrame`'s room-list
@@ -7054,3 +7055,128 @@ container drawn over the world (the phase says `playing` and the frame says main
 `mainMenu.onPlay()` → `modeSelect.onSolo()` → `forge.onStart()` instead), and teleporting the player
 around the map to move the camera wakes room after room until a single evaluation runs past the tool
 timeout — reload between batches rather than accumulating.
+
+## Three selectors become one, and a doc comment becomes a guard (2026-08-27, engine + client)
+
+The previous pass's second battery left a survivor it could name precisely: **a duplicated rule,
+pinned in one copy and not the other.** Three places asked "dungeon rooms or arena rooms?" and got
+there two different ways —
+
+| Call site | Rule it used |
+|---|---|
+| `EnvironmentSystem` (stamps `Actor.roomId`) | `zoneEnabled ? arenaRoomRects : dungeonRoomRects` |
+| `GameLoop.cameraFrame` (what the camera fits) | `dungeonRoomRects.length > 0 ? dungeon : arena` |
+| `groundLayer.roomRectsPx` (which rooms get a wash/mottle/light pool) | the same length rule |
+
+— and the only thing keeping the two rules from ever disagreeing was a doc comment on
+`EngineConfig.dungeon` / `.arena` calling each an "ALTERNATIVE to" the other. Nothing enforced it.
+The divergence it was holding back is a silent one: `EnvironmentSystem` would stamp a room id from
+the arena's rooms, the camera would look that id up among the dungeon's, miss, and fall back to
+framing the whole world, while the floor under the player was painted from the other model entirely.
+
+### What shipped
+
+**`engine/state/roomModel.ts`** (CLAUDE.md form ① — one function over `GameState`, no state of its
+own, exported through `engine/index.ts`). `roomModel(s)` returns a tagged `{ kind, rects }` pair
+(`'arena'` / `'dungeon'` / `'none'`) and `roomRects(s)` the common case; all three call sites read it.
+`floorRegionsPx` is the one caller that needs `kind` and not just the rects, because its dungeon and
+arena branches genuinely differ (a dungeon floor answers directly; an arena's floor may stop at its
+rooms only if they are a measured partition of reachable space — the 2026-08-26 pass).
+
+**The invariant is now enforced where it is decided.** `GameState`'s constructor throws on a config
+carrying both models. Thrown rather than silently preferring one: every `EngineConfig` in this repo
+is built by code (`match/offlineConfig.ts`, `match/pvpConfig.ts`, tests) and never deserialized from
+a peer, so a config with both is a programming error at authoring time and not untrusted input this
+could be used to crash. `engine/state/roomModel.test.ts` (8 tests) pins the guard, its control (each
+field alone is fine), and each of the three kinds.
+
+**The kept rule is the client's** — whichever list HAS rooms, not the `zoneEnabled` flag. Under the
+invariant the two are identical for every reachable state (an arena always has rooms; a dungeon's
+list being empty is the between-floors sentinel, and "no rooms" means the same thing to all three
+consumers). The flag version was written first and reverted: it turned 12 tests red across three
+files, because a fixture that hand-pushes rects onto a flat state can fake a room model but not a
+construction-time flag. Keeping the rule the fixtures already exercise is what let the two tests written to catch this
+exact divergence pass **unchanged** — which is the whole proof the unification is behaviour-preserving.
+
+### The battery, and its one survivor
+
+14 mutants over the call chain (`roomModel.ts`, `GameState.ts`, `EnvironmentSystem.ts`,
+`GameLoop.ts`, `groundLayer.ts`), plus 2 behaviour-equivalent controls, the whole engine + client suite as
+the oracle, each mutant judged **twice** — once against the new test file, once against the
+pre-existing suite with it excluded. All 14 killed; NEW coverage is 2 of them (the `'none'` kind
+mislabelled, and the constructor guard deleted), which is what a new file for a new invariant should
+score. Both controls survived.
+
+The one mutant that survived the first run **was not a test gap — it was redundant code.**
+`floorRegionsPx` had an empty-rects early return that duplicated a decision
+`roomsCoverReachableSpace` already makes and documents ("No seed: no rooms at all… the safe
+whole-world answer is the right one", pinned by `floorPartition.test.ts`). Two guards, one case: no
+test can tell them apart because there is nothing to tell apart. The fix was deleting the guard, and
+the mutant that merges the two paths now stays in the battery labelled as a genuine equivalence,
+expected to survive.
+
+### Housekeeping in the same pass
+
+- **`scene/roomDressing.ts`**, split out of `RoomBuilder.ts` (500 → 416 lines; it was sitting exactly
+  ON the limit with no headroom, so the next edit would have tripped the gate). Form ① again, same
+  form `groundLayer.ts` took out of the same file in 2026-08-20: `buildPillarEntities` /
+  `buildPropEntities` / `destroyDressing`. The line the split follows is that walls and doors are the
+  room's *shape* (merged runs, they carve each other, one shared shadow Graphics) while a pillar or a
+  prop is placed at a point from one engine record with nothing depending on where it landed.
+  `RoomBuilder` keeps both lists, because it owns their lifetimes. `destroyDressing` also collapses
+  three copies of the same teardown loop into one — and the second battery below then found that the
+  manual `shadow.destroy()` all three of them carried was itself redundant with `Entity.destroy`, so
+  what landed is shorter than what was extracted. Behaviour-preserving either way:
+  `RoomBuilder.test.ts`'s 109 pillar/prop assertions pass unchanged.
+- **The persistent memory index had grown past its own load limit** (27.1 KB against a 24.4 KB cap,
+  so it was being truncated mid-file and silently losing entries). Rewritten as hooks only — 3.0 KB,
+  one line per topic file — after verifying every distinctive token in the old long-form index still
+  appears in the topic file it pointed at. Same failure mode as this repo's own docs drift: the index
+  had become a second copy of the content it was supposed to point at.
+
+### The second battery: the file the first one never mutated
+
+The first battery measured the *selector's* call chain. The `roomDressing.ts` split shipped in the
+same pass and got **no** mutation measurement at all — "109 pillar/prop assertions pass unchanged"
+says the split preserved behaviour, and says nothing about whether those assertions can SEE the
+code. So a second battery took the files that CONNECT this round's work rather than the ones it
+touches: `roomDressing.ts`, `RoomBuilder.ts`'s wiring of it, and the two engine systems that own
+the `dungeonRoomRects` sentinel `roomModel` reads (`SpawnSystem`, `ExtractionSystem`). 25 mutants,
+2 controls, **4 survivors** — and each one needed a different resolution, which is the point:
+
+1. **An aesthetic constant under a geometry-shaped suite** (`bodyW = rad * 2 + 16`, the pillar's
+   drawn body widened past its collision footprint). Dropping the widening so the art is exactly as
+   wide as the circle you collide with passed all 3,365 tests. Same shape as `roomLight`'s
+   `EDGE_ALPHA` survivor a day earlier, same cure: gate the RELATIONSHIP, not the number. The new
+   test bounds the clearance as a FRACTION of the footprint (pillar radii vary across shipped
+   content — 1 and 1.5 grid), asserts the gate's own headroom so nobody has to transcribe today's
+   tuning, and is swept over three radii including one below anything shipped.
+2. **A test whose name already claimed the property and whose body could not see it.** `propRender.
+   test.ts` pins the per-kind shadow radii exactly; RoomBuilder's own prop test asked only that a
+   shadow EXISTS and is parented. `makeShadow(0)` satisfies both, so a prop floating with no shadow
+   at all was green. The new test reads the ratio through the real `propShadowRadius`, so a re-tune
+   of the table moves both sides and only a broken hand-off breaks it.
+3. **Redundant code, again — and this time the doc comment was WRONG.** `destroyDressing`'s
+   `e.shadow?.destroy()` duplicated what `Entity.destroy` already does (un-parent + destroy its own
+   shadow); the wall path has always relied on exactly that and never carried the extra line. The
+   comment written for it in this same pass claimed "a shadow left behind is a stain on the floor
+   under nothing", a leak that cannot happen. The oracle was not an argument: deleting the line left
+   `RoomBuilder.test.ts`'s "clear() removes every pillar and its shadow" — which asserts
+   `layers.shadow.children.length === 0` — green. Line deleted, comment corrected to say why.
+4. **A defensive clear whose trigger no test could reach.** `SpawnSystem` empties
+   `dungeonRoomRects` before repushing, and so does `ExtractionSystem.resolveDescend`; on floor 0
+   the list is empty at construction and on a descend Extraction got there first. Deleting
+   SpawnSystem's copy is NOT the fix here — unlike (3), it is a system refusing to depend on its
+   caller having tidied up, which is the coupling this engine avoids everywhere. So the trigger was
+   made reachable instead: poke a rect nothing placed into the list the tick before floor 1 places,
+   and assert the list comes back holding exactly floor 1's rooms. It matters precisely because
+   `roomModel` is what turns that list into "which rooms are live" — a leftover would let the camera
+   frame a room that no longer exists, at coordinates the new floor has re-used.
+
+25/25 killed after the fixes, both controls intact, and each of the three new tests was replayed
+against its own mutant: **exactly one test goes red per mutant, and it is the new one** — no
+mutant is being caught incidentally by something else.
+
+`npm run check` green across all 8 workspaces: 5,272 tests (engine 854 / client 3,367 / server 189 /
+animator 444 / map-editor 282 / png-pipeline 42 / desktop-shell 81 / root 13), `tsc --noEmit` clean,
+`check:filelength` clean with nothing new baselined.

@@ -221,6 +221,44 @@ describe('Dungeon mode — DESCEND generates the next floor', () => {
   });
 });
 
+describe('Dungeon mode — placing a floor REPLACES the room-rect list, it never appends to it', () => {
+  it('clears a stale rect the placement did not put there, without depending on who cleared last', () => {
+    // `SpawnSystem`'s dungeon branch clears `dungeonRoomRects` before repushing, and
+    // `ExtractionSystem.resolveDescend` clears it too. A 2026-08-27 battery deleting SpawnSystem's
+    // copy survived the whole suite, because on floor 0 the list is empty at construction and on a
+    // descend ExtractionSystem has already emptied it — the trigger existed and no test could
+    // reach it. It is a DEFENSIVE clear worth keeping rather than deleting: the alternative makes
+    // placement silently depend on its caller having tidied up first, which is exactly the
+    // implicit cross-system coupling this engine avoids everywhere else. So make the trigger
+    // reachable instead.
+    //
+    // It matters because the list is what `state/roomModel.ts` answers "which rooms are live"
+    // from, and every consumer of that (the camera's fit target, the per-room floor wash/mottle/
+    // light pool, `EnvironmentSystem`'s room-membership test) treats a rect in it as a real room.
+    // A leftover from the previous floor would have the camera able to frame a room that no longer
+    // exists, at coordinates the new floor has re-used for something else.
+    const eng = createGameEngine(DUN_CFG);
+    const s = eng.state;
+    eng.step([idle(1)]); // floor 0 places
+    eng.step([idle(2)]); // room 0 activates (empty)
+    teleportPlayerInto(eng, s.dungeonRooms[1]!);
+    eng.step([idle(3)]); // capstone activates and is cleared the same instant
+    eng.step([confirmDescend(4)]); // ExtractionSystem clears the co-resident state
+    expect(s.dungeonRoomRects.length).toBe(0);
+
+    // The poke: a rect nothing placed, sitting in the list the tick before floor 1 is placed.
+    s.dungeonRoomRects.push({
+      id: 'stale_from_floor_0',
+      rect: { x: toFpGrid(0), y: toFpGrid(0), w: toFpGrid(4), h: toFpGrid(4) },
+    });
+
+    eng.step([idle(5)]); // SpawnSystem generates + places floor 1
+    expect(s.dungeonRoomRects.length).toBe(2); // floor 1's two rooms, and only those
+    expect(s.dungeonRoomRects.map((r) => r.id)).toEqual(s.dungeonRooms.map((r) => r.id));
+    expect(s.dungeonRoomRects.some((r) => r.id === 'stale_from_floor_0')).toBe(false);
+  });
+});
+
 describe('Dungeon mode — DESCEND leaves the floor’s stranded enemies behind (ENGINE_VERSION 39)', () => {
   // The checkpoint only asks that the CAPSTONE room be cleared (`capstoneCleared`), and
   // never asks where the player is standing — so a floor can absolutely still be holding

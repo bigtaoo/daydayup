@@ -1,4 +1,4 @@
-import { hashState, PLAYER_BASE, type GameEngine, type GameEvent, type GameState } from '@dd/engine';
+import { hashState, PLAYER_BASE, roomRects, type GameEngine, type GameEvent, type GameState } from '@dd/engine';
 import type { CoopSession } from '../../net/CoopSession';
 import type { InputSource } from '../../platform/types';
 import type { Phase } from '../phase';
@@ -385,7 +385,7 @@ export class GameLoop {
   private cameraFrame(s: GameState | null): { x: number; y: number; w: number; h: number } | null {
     const roomId = s?.players[this.host.localOwner]?.roomId;
     if (!s || roomId === undefined) return null;
-    const rects = s.dungeonRoomRects.length > 0 ? s.dungeonRoomRects : s.arenaRoomRects;
+    const rects = roomRects(s);
     const hit = rects.find((r) => r.id === roomId);
     if (!hit) return null;
     // Grown upward by the TALLEST a wall can be (2026-08-18): the room's walls STAND rather

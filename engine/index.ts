@@ -22,6 +22,7 @@ export * from './state/commands';
 export * from './state/input';
 export * from './state/events';
 export * from './state/GameState';
+export * from './state/roomModel';
 export * from './sim.config';
 export * from './content';
 export * from './balance';

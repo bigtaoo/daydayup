@@ -19,13 +19,14 @@ import { circleOverlapsAabb } from './geom';
 import { isTraitActive, ZONE } from '../content/arenas';
 import { takeDamage } from './combat';
 import type { GameState, ZoneState } from '../state/GameState';
+import { roomRects, type RoomRect } from '../state/roomModel';
 import type { Actor, AABB } from '../state/entities';
 import type { RoomId } from '../content/arenas';
 
 export class EnvironmentSystem {
   tick(state: GameState): void {
     if (!state.zoneEnabled && !state.dungeonEnabled) return;
-    const rects = state.zoneEnabled ? state.arenaRoomRects : state.dungeonRoomRects;
+    const rects = roomRects(state);
     const zone = state.zoneEnabled ? state.zone : undefined;
 
     for (const p of state.players) {
@@ -57,7 +58,7 @@ export class EnvironmentSystem {
    * way. All comparisons are Fp integers (`rects`, pre-converted at load) — no float
    * conversion in this per-tick path.
    */
-  private updateRoomId(a: Actor, rects: readonly { id: RoomId; rect: AABB }[]): void {
+  private updateRoomId(a: Actor, rects: readonly RoomRect[]): void {
     if (a.roomId !== undefined) {
       const cached = rects.find((r) => r.id === a.roomId);
       if (cached && pointInAabb(a.gx, a.gy, cached.rect)) return;

@@ -99,7 +99,10 @@ export interface EngineConfig {
   // config that omits it (every config before this feature) never draws roomgenPrng,
   // never mutates walls/obstacles, and is byte-identical — no ENGINE_VERSION bump.
   // `waves`/`worldW`/`worldH` above are ignored in dungeon mode (each room supplies its
-  // own bounds); pass `waves: []` and any placeholder bounds.
+  // own bounds); pass `waves: []` and any placeholder bounds. MUTUALLY EXCLUSIVE with
+  // `arena` below — since 2026-08-27 that is ENFORCED (`GameState`'s constructor throws on
+  // a config carrying both) rather than only asserted here; see `state/roomModel.ts` for
+  // what the unenforced version cost.
   dungeon?: { config: DungeonConfig; library: readonly RoomPiece[] };
   // PvP arena mode (design/15, ROADMAP 4.2b/c) — an ALTERNATIVE to the flat
   // `walls`/`obstacles`/`worldW`/`worldH` above: every `ArenaRoom` in the map is
@@ -108,7 +111,8 @@ export interface EngineConfig {
   // PRESENCE overrides `walls`/`obstacles`/`worldW`/`worldH` entirely (pass
   // placeholders, same convention as dungeon mode's `waves: []` note above).
   // Additive: a config that omits it (every config before this feature) never
-  // touches this path — byte-identical, no ENGINE_VERSION bump.
+  // touches this path — byte-identical, no ENGINE_VERSION bump. MUTUALLY EXCLUSIVE with
+  // `dungeon` above, enforced at construction (see that field's note).
   arena?: ArenaMap;
   // Which `ARENA_PRESETS` entry (balance/build.ts) every seat's landing-kit weapons +
   // HP/shield scale come from when `arena` is set (ROADMAP 4.2c). One preset for the

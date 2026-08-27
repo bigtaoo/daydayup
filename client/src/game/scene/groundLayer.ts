@@ -31,7 +31,7 @@
 // change to this geometry since the split, and it is why `groundGeometryBudget.test.ts`'s pins no
 // longer reproduce the pre-split browser census.
 import { Container, Graphics, type Texture } from 'pixi.js';
-import type { AABB, GameState } from '@dd/engine';
+import { roomModel, type AABB, type GameState } from '@dd/engine';
 import type { BiomePalette } from '../theme';
 import { fpToPx } from '../coords';
 import type { RectPx } from './wallGeometry';
@@ -162,12 +162,14 @@ function mountPainted(ground: Container, node: Container): void {
 
 /** The floor's room footprints in world px — room IDENTITY (which rooms get their own wash, mottle,
  *  decals and light pool) and the input to `wallGeometry.wallTier`. Dungeon floors and the PvP arena
- *  each keep their own list; a flat `EngineConfig.floors` run populates neither, so the world itself
- *  stands in as the single room (identical answer for a one-room world). */
+ *  each keep their own list, and `engine/state/roomModel.ts` is the one rule for picking between
+ *  them (shared with `EnvironmentSystem` and `GameLoop.cameraFrame`, which used to have their own);
+ *  a flat `EngineConfig.floors` run populates neither, so the world itself stands in as the single
+ *  room (identical answer for a one-room world). */
 export function roomRectsPx(s: GameState, w: number, h: number): RectPx[] {
-  const src = s.dungeonRoomRects.length > 0 ? s.dungeonRoomRects : s.arenaRoomRects;
-  if (src.length === 0) return [{ x: 0, y: 0, w, h }];
-  return src.map(({ rect }) => toPx(rect));
+  const { rects } = roomModel(s);
+  if (rects.length === 0) return [{ x: 0, y: 0, w, h }];
+  return rects.map(({ rect }) => toPx(rect));
 }
 
 /**
@@ -188,14 +190,21 @@ export function roomRectsPx(s: GameState, w: number, h: number): RectPx[] {
  * A PvE dungeon floor keeps its direct answer: `floorCoverage.test.ts` sweeps all five shipped
  * floors for exactly this property (0 cells outside, against a world bounding box 1.41-2.26x the
  * rooms' own area), so re-deriving it on every room transition would buy nothing.
+ *
+ * This is the one caller that needs the room model's KIND and not just its rects, which is why
+ * `roomModel` returns a tagged pair: the dungeon and arena branches genuinely differ. The third
+ * kind, 'none' (a flat config, or a dungeon between floors), gets NO branch of its own on purpose
+ * — it falls through both and lands on the same whole-world answer `roomsCoverReachableSpace`
+ * gives for an empty room list, which that function documents and `floorPartition.test.ts` pins
+ * ("reports no for a map with no rooms"). An early return for it here was the one mutant a
+ * 2026-08-27 battery could not kill, because there was nothing to kill: two guards, one case.
  */
 export function floorRegionsPx(s: GameState, w: number, h: number): RectPx[] {
-  if (s.dungeonRoomRects.length > 0) return s.dungeonRoomRects.map(({ rect }) => toPx(rect));
-  if (s.arenaRoomRects.length > 0) {
-    const rooms = s.arenaRoomRects.map(({ rect }) => rect);
-    if (roomsCoverReachableSpace(cellExtent(s.worldW, s.worldH), s.walls, rooms)) {
-      return rooms.map(toPx);
-    }
+  const model = roomModel(s);
+  const rooms = model.rects.map(({ rect }) => rect);
+  if (model.kind === 'dungeon') return rooms.map(toPx);
+  if (model.kind === 'arena' && roomsCoverReachableSpace(cellExtent(s.worldW, s.worldH), s.walls, rooms)) {
+    return rooms.map(toPx);
   }
   return [{ x: 0, y: 0, w, h }];
 }

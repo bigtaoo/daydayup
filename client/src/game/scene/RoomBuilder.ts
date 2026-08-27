@@ -4,13 +4,12 @@ import type { Layers } from './layers';
 import { Entity } from './Entity';
 import { biomePalette, biomeElementOf, type BiomeElement, type BiomePalette } from '../theme';
 import { fpToPx, PX_PER_GRID } from '../coords';
-import { getFloorTexture, getWallTexture, getWallFaceTexture, getPillarTexture } from '../../render/biomeTiles';
-import { getDoorTexture, getPropTexture } from '../../render/environmentSprites';
-import { wallTier, wallHeight, WALL_HEIGHT, type RectPx } from './wallGeometry';
+import { getFloorTexture, getWallTexture, getWallFaceTexture } from '../../render/biomeTiles';
+import { getDoorTexture } from '../../render/environmentSprites';
+import { wallTier, wallHeight, type RectPx } from './wallGeometry';
 import { buildWallBlock, drawWallShadow } from './wallRender';
 import { staticGraphics } from '../../render/staticGraphics';
-import { buildPillarBody, buildPillarSprite, pillarArtExtent } from './pillarRender';
-import { buildPropBody, propShadowRadius, resolvePropKind } from './propRender';
+import { buildPillarEntities, buildPropEntities, destroyDressing } from './roomDressing';
 import {
   deepXrayLayers,
   fadeableBlock,
@@ -31,7 +30,6 @@ import {
 import { buildDoorBlock, type DoorFixture } from './doorRender';
 import { buildGroundLayer, floorRegionsPx, roomRectsPx } from './groundLayer';
 import { faceCrownFraction } from './wallTone';
-import { SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
 import type { Backdrop } from './Backdrop';
 import { Portal } from './Portal';
 
@@ -230,8 +228,7 @@ export class RoomBuilder {
     this.layers.shadow.addChild(shadows);
     this.wallShadows = shadows;
 
-    this.buildPillars(s, palette, element);
-    this.buildProps(s, palette);
+    this.buildDressing(s, palette, element);
     this.buildPortal(s, w, h);
   }
 
@@ -387,96 +384,19 @@ export class RoomBuilder {
   /** Round pillars for the current room, from the engine's obstacle solids. Tall
    *  Y-sortable objects (occlusion + collision). Rebuilt per room; the drawn body is a
    *  little wider than the collision footprint so the player can stand against it. */
-  private buildPillars(s: GameState, palette: BiomePalette, element: BiomeElement): void {
-    for (const p of this.pillars) {
-      p.shadow?.destroy();
-      p.destroy();
-    }
-    this.pillars.length = 0;
+  /** The pillars and the props are `roomDressing.ts` (split out 2026-08-27, 500-line
+   *  convention). Both lists stay here because this class owns their lifetimes — they live on
+   *  the Y-sorted `entities` layer, which `build()`/`clear()` never sweep wholesale — and the
+   *  pillars' occluders join the wall segments' in the one flat `occluders` list the x-ray
+   *  walks, appended after them so the list stays in the order `build()` produced it. */
+  private buildDressing(s: GameState, palette: BiomePalette, element: BiomeElement): void {
+    destroyDressing(this.pillars);
+    const built = buildPillarEntities(this.layers, s, palette, element);
+    this.pillars.push(...built.pillars);
+    this.occluders.push(...built.occluders);
 
-    const pillarTex = getPillarTexture(element);
-    for (const o of s.obstacles) {
-      const rad = fpToPx(o.radius);
-      const bodyW = rad * 2 + 16; // visual body a touch wider than the footprint
-      const height = WALL_HEIGHT; // one height for every standing thing in a room
-      const p = new Entity();
-      // Real pillar art where it exists (`biome/pillar_neutral.png`, 2026-08-20), else the
-      // hand-toned cylinder that stood in for it — see `pillarRender.buildPillarBody`'s doc
-      // for the four attempts behind that choice, including why sampling the WALL swatches
-      // at pillar scale was tried and was worse.
-      p.addChild(
-        pillarTex
-          ? buildPillarSprite(bodyW, height, palette, pillarTex)
-          : buildPillarBody(bodyW, height, palette),
-      );
-      // A pillar's shadow has to be displaced by hand (2026-08-18): the height that throws
-      // it is the DRAWN body's, and a pillar is drawn upward from a grounded origin rather
-      // than lifted by the transform, so `Entity`'s own height-driven offset sees z = 0.
-      // Same slant constants as an actor's hover shadow and a wall's cast shadow, so all
-      // three agree on where the key light is.
-      p.makeShadow(rad + 12);
-      p.shadowOffsetX = height * SHADOW_SLANT_X;
-      p.shadowOffsetY = height * SHADOW_SLANT_Y;
-      this.layers.entities.addChild(p);
-      this.layers.shadow.addChild(p.shadow!);
-      this.pillars.push(p);
-      const gx = fpToPx(o.gx);
-      const gy = fpToPx(o.gy);
-      p.place(gx, gy);
-      // A pillar hides the character exactly the way a wall block does — it is drawn upward from
-      // its ground point over the same `height` of walkable floor to its north, and it is a
-      // NARROWER target, so the player brushes past its blind side more often, not less. Same
-      // x-ray. (design/01 used to call being hidden behind a pillar intended; a body that
-      // vanishes completely is not, whatever shape the thing hiding it is.)
-      const art = pillarArtExtent(bodyW, height, pillarTex);
-      this.occluders.push(
-        fadeableBlock(
-          // `foldY: gy` — a pillar's whole body is one Graphics and fades together, so it has no
-          // opaque remainder for a deep fade to reach and never asks for one.
-          { left: gx - art.halfW, right: gx + art.halfW, top: gy + art.top, sortY: gy, foldY: gy },
-          p.children,
-        ),
-      );
-    }
-  }
-
-  /**
-   * Decorative room dressing (`RoomPiece.props`) for the current floor's co-resident
-   * rooms — every room stands at once (same "co-resident" model as walls/pillars, design/05),
-   * so this iterates `s.dungeonRooms` rather than a single piece. Grid → px is a plain
-   * `* PX_PER_GRID` (1 grid = 32 px exactly, `coords.ts`), not the engine's `toFpGrid`/`fpToPx`
-   * round trip — that pair exists to cross the sim's fixed-point boundary, and a prop is never
-   * simulated (no `state.obstacles`/`state.walls` entry, ever — this method only reads
-   * `piece.props`, nothing it does can affect collision).
-   *
-   * No occlusion x-ray registration (unlike walls/pillars/doors) and no collision: see
-   * `propRender.ts`'s module doc for why a prop's short art doesn't need the x-ray treatment,
-   * and `content/rooms.ts`'s own doc comment for why the sim never reads this field at all.
-   */
-  private buildProps(s: GameState, palette: BiomePalette): void {
-    this.clearProps();
-    for (const room of s.dungeonRooms) {
-      for (const prop of room.piece.props ?? []) {
-        const kind = resolvePropKind(prop.id);
-        const e = new Entity();
-        e.addChild(buildPropBody(kind, palette, getPropTexture(kind)));
-        e.makeShadow(propShadowRadius(kind));
-        this.layers.entities.addChild(e);
-        this.layers.shadow.addChild(e.shadow!);
-        this.props.push(e);
-        e.place((prop.x + room.offsetXGrid) * PX_PER_GRID, (prop.y + room.offsetYGrid) * PX_PER_GRID);
-      }
-    }
-  }
-
-  /** Destroy the current room's prop Entities — like `pillars`, they live on the Y-sorted
-   *  `entities` layer, which `build()`/`clear()` never sweep wholesale. */
-  private clearProps(): void {
-    for (const p of this.props) {
-      p.shadow?.destroy();
-      p.destroy();
-    }
-    this.props.length = 0;
+    destroyDressing(this.props);
+    this.props.push(...buildPropEntities(this.layers, s, palette));
   }
 
   /** Tear down the current room's ground + pillars (beginRun) so a restart doesn't
@@ -485,13 +405,9 @@ export class RoomBuilder {
     for (const c of [...this.layers.ground.children]) c.destroy();
     this.clearDoors();
     this.clearWalls();
-    this.clearProps();
+    destroyDressing(this.props);
+    destroyDressing(this.pillars);
     this.occluders.length = 0;
-    for (const p of this.pillars) {
-      p.shadow?.destroy();
-      p.destroy();
-    }
-    this.pillars.length = 0;
     this.portal?.shadow?.destroy();
     this.portal?.destroy();
     this.portal = null;

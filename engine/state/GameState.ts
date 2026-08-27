@@ -39,6 +39,7 @@ import type {
   Winner,
 } from './entities';
 import type { GameEvent } from './events';
+import type { RoomRect } from './roomModel';
 import type { DungeonConfig, PlacedRoom } from '../world/dungeon';
 import type { RoomPiece } from '../content/rooms';
 import type {
@@ -174,7 +175,7 @@ export class GameState {
   // Every dungeon room's rect, pre-converted to Fp ONCE (same rule as
   // `arenaRoomRects`) — `EnvironmentSystem`'s room-membership test reads this,
   // never `dungeonRooms` directly.
-  readonly dungeonRoomRects: { id: RoomId; rect: AABB }[] = [];
+  readonly dungeonRoomRects: RoomRect[] = [];
   // O(1) RoomId → index lookup into `dungeonRooms`/`dungeonRoomRuntime` (same
   // sanctioned pattern as `content/arenas.ts computeRoomDistances`'s own
   // `idToIndex` — a pure lookup, never iterated, so Map iteration order never
@@ -199,7 +200,7 @@ export class GameState {
   readonly cellTraits: { trait: CellTrait; rect: AABB }[] = [];
   // Every room's rect, pre-converted to Fp ONCE (same rule) — the room-membership
   // point-in-rect test (`EnvironmentSystem`) reads this, never `arenaMap` directly.
-  readonly arenaRoomRects: { id: RoomId; rect: AABB }[] = [];
+  readonly arenaRoomRects: RoomRect[] = [];
   // The zone's per-match-drawn eye + current stage (design/15) — undefined until
   // ZoneSystem's first tick draws it (PRNG draws happen inside systems, not the
   // constructor, matching `roomgenPrng`'s existing precedent above).
@@ -221,6 +222,20 @@ export class GameState {
   events: GameEvent[] = [];
 
   constructor(config: EngineConfig) {
+    // Dungeon mode and arena mode are ALTERNATIVES to each other, never a pair — each of
+    // `EngineConfig.dungeon` / `.arena` has said so in its own doc comment since it was
+    // added, and both override the flat `waves`/`walls`/`worldW`/`worldH` fields in ways
+    // that cannot both be in effect. Enforced here 2026-08-27, because until then the only
+    // thing holding the invariant up was those two comments, and three call sites had
+    // already drifted into two different rules for picking between the two room-rect lists
+    // (see `state/roomModel.ts`, now the single rule both the engine and the client read).
+    // Thrown rather than silently preferring one: every `EngineConfig` in this repo is
+    // built by code (`match/offlineConfig.ts`, `match/pvpConfig.ts`, tests) and never
+    // deserialized from a peer, so a config carrying both is a programming error at
+    // authoring time, not untrusted input this could be used to crash.
+    if (config.dungeon !== undefined && config.arena !== undefined) {
+      throw new Error('EngineConfig: `dungeon` and `arena` are mutually exclusive room models — pass one, not both');
+    }
     this.seed = config.seed;
     this.aiPrng = new Prng(config.seed ^ SEED_AI);
     this.combatPrng = new Prng(config.seed ^ SEED_COMBAT);
