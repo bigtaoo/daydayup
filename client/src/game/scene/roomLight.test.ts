@@ -11,6 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import { Graphics } from 'pixi.js';
 import { drawRoomLight } from './roomLight';
+import { drawWallShadow } from './wallRender';
 import type { RectPx } from './wallGeometry';
 
 const ROOM: RectPx = { x: 200, y: 300, w: 480, h: 480 };
@@ -80,6 +81,32 @@ describe('drawRoomLight — a room has a centre and it has corners', () => {
     expect(corridor * 2).toBeLessThan(64);
   });
 
+  it('stays fainter than the wall darkening it stacks with, so a corner is ambience and not a hole', () => {
+    // `EDGE_ALPHA`'s own doc says why it is moderate: "a wall's base hug and its cast shadow both
+    // land in this same region, and three dark things stacked in one corner reads as a hole rather
+    // than as ambience". Nothing read that. A 2026-08-27 mutation battery pushed it from 0.26 to
+    // 0.9 and all 3,310 client tests still passed: the band COUNT is geometry and every test above
+    // pins it, the alpha is a look decision, and a geometry-shaped suite structurally cannot see
+    // one. This is the reader.
+    //
+    // Both bounds come out of the REAL `drawWallShadow` rather than being transcribed, so
+    // re-tuning the wall's shadow moves this gate with it instead of leaving it stale.
+    const pool = bands(newLight(ROOM))[0]!.alpha;
+    const wall = new Graphics();
+    drawWallShadow(wall, { x: 0, y: 0, w: 100, h: 100 }, 40);
+    const { cast, hug } = wallDarkening(wall);
+
+    // 1. The pool is the faintest of the three. It is ambience; the crease at the wall's foot is
+    //    the contact cue, and a pool that outshouts it plants the mass nowhere.
+    expect(pool).toBeLessThan(hug); // today 0.24 against 0.34
+
+    // 2. And all three composited still leave floor to see. At EDGE_ALPHA 0.9 this reads 0.93 --
+    //    a black corner. The margin today is 0.71 against the 0.8 bound; if a wall re-tune eats
+    //    that margin, this is the test that says so rather than a screenshot six weeks later.
+    const stacked = 1 - (1 - pool) * (1 - hug) * (1 - cast);
+    expect(stacked).toBeLessThan(0.8);
+  });
+
   it('draws nothing at all for a degenerate rect rather than throwing', () => {
     expect(bands(newLight({ x: 0, y: 0, w: 0, h: 0 }))).toHaveLength(0);
   });
@@ -98,6 +125,19 @@ function newLight(room: RectPx): Graphics {
   const g = new Graphics();
   drawRoomLight(g, room);
   return g;
+}
+
+/** The two darkenings `drawWallShadow` lays on the floor in the same band as a room's light pool:
+ *  the cast shadow's four graduated passes composited, and the strongest base-hug crease stroke. */
+function wallDarkening(g: Graphics): { cast: number; hug: number } {
+  let clear = 1;
+  let hug = 0;
+  for (const i of g.context.instructions as Instr[]) {
+    const alpha = i.data.style?.alpha ?? 0;
+    if (i.action === 'fill') clear *= 1 - alpha;
+    if (i.action === 'stroke') hug = Math.max(hug, alpha);
+  }
+  return { cast: 1 - clear, hug };
 }
 
 /** Total inward reach of the falloff = band count x band width. */

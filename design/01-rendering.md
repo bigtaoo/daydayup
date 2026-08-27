@@ -1292,6 +1292,28 @@ one that would not get it. Closed by `FxController.test.ts`'s "still culls the g
 tier", which carries the tier as its own control; replaying the mutant with it in place turns
 exactly one test red out of 3,310.
 
+A **second battery** then took the layer outside that file set — a battery's survivor count is only
+ever scoped to the files it mutates. 20 mutants over what CONNECTS the floor and its cull
+(`GameLoop.cameraFrame`, `layers.ts`, `RoomBuilder`, `floorRender.ts`, `roomLight.ts`,
+`render/quality.ts`), 3 controls, **2 survivors**, and they are two different kinds of blind spot:
+
+- **A duplicated rule, pinned in one copy and not the other.** `cameraFrame` and
+  `groundLayer.roomRectsPx` both choose between the two co-resident room models with "dungeon
+  first". `groundLayer.test.ts` pins its copy against a state holding both lists; reversing
+  `cameraFrame`'s ternary passed all 3,310 tests. If they ever disagreed the camera would frame a
+  room out of one model while the floor beneath it was painted from the other. (`EnvironmentSystem`
+  makes it three selectors and it uses a *different* rule, `zoneEnabled` — worth knowing.)
+- **An aesthetic constant under a geometry-shaped suite.** `roomLight.ts`'s `EDGE_ALPHA` went 0.26
+  to 0.9 — a near-black ring around every room — and nothing failed. Every existing test in that
+  file pins the ramp's *geometry* (monotonic, non-overlapping, inside its own room, scaled to the
+  short side); the band count is geometry and was covered, the alpha is a look decision and no
+  geometry assertion can see one. The new bound is taken from the real `drawWallShadow` rather than
+  transcribed — the pool must stay fainter than the base-hug crease it stacks with (0.24 vs 0.34),
+  and the three darkenings composited must leave floor to see (0.71 against a 0.8 bound; 0.93 at
+  the mutant's value) — so re-tuning the wall moves the gate instead of stranding it.
+
+Each new test turns exactly one test red out of 3,312 when its mutant is replayed.
+
 One method note that outranks all of the above, because everything measured before it was suspect:
 **carry a twin control arm.** Two arms that apply no change at all, at opposite ends of the arm
 order. A mid-session run had two identically-rendering arms read 3.556 and 5.985 ms while each

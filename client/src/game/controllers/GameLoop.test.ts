@@ -535,6 +535,28 @@ describe('GameLoop.updateCamera — the frame rect handed to FxController', () =
     expect(lastFrame(fx)).toEqual({ x: 640, y: -MAX_WALL_HEIGHT, w: 320, h: 640 + MAX_WALL_HEIGHT });
   });
 
+  it('prefers the DUNGEON list when a state carries both — the precedence `roomRectsPx` also uses', () => {
+    // Two files pick between the two co-resident room models with the same "dungeon first" rule:
+    // `cameraFrame` here, and `scene/groundLayer.ts`'s `roomRectsPx`, which decides which rooms get
+    // their own wash/mottle/light pool. `groundLayer.test.ts` pins its copy against a state holding
+    // both lists; a 2026-08-27 mutation battery found this copy unread — reversing the ternary
+    // passed all 3,310 client tests. If the two ever disagreed, the camera would frame a room out
+    // of one model while the floor beneath it was painted from the other.
+    //
+    // The arena decoy deliberately SHARES the dungeon room's id, because that is the only shape
+    // where the wrong list still finds a hit and so fails silently rather than falling back.
+    const { deps, fx } = buildDeps();
+    const s = stateWithRoomRects();
+    s.arenaRoomRects.push({ id: 'r2', rect: { x: toFp(50), y: toFp(50), w: toFp(4), h: toFp(4) } });
+    s.players[0]!.roomId = 'r2';
+    const loop = new GameLoop(deps, buildHost({ activeState: () => s }));
+
+    loop.update(16);
+
+    // The dungeon r2 (20/0/10/20 grid), not the decoy at 50/50.
+    expect(lastFrame(fx)).toEqual({ x: 640, y: -MAX_WALL_HEIGHT, w: 320, h: 640 + MAX_WALL_HEIGHT });
+  });
+
   it('falls back to the arena room list when there are no dungeon rooms (PvP)', () => {
     const { deps, fx } = buildDeps();
     const s = createGameState({ seed: 1, worldW: 2000, worldH: 1000, waves: [], players: [{ start: [100, 100] }] });
