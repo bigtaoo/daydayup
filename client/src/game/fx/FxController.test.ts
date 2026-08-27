@@ -3,6 +3,8 @@ import { FxController, type CameraTarget } from './FxController';
 import { Layers } from '../scene/layers';
 import { makeLightBuffer } from './lighting';
 import { resetActiveQuality, setActiveQuality } from '../../render/quality';
+import { Container } from 'pixi.js';
+import { tagGroundPiece } from '../scene/groundCulling';
 
 // FxController's filters (fx/filters.ts) build a real WebGL GlProgram at construction
 // time — unavailable under plain vitest (no `document`/canvas), and irrelevant to the
@@ -403,6 +405,38 @@ describe('FxController quality tiers', () => {
     // being off must not stop the world transform from being computed.)
     expect(recorded(fx).region).toEqual([0, 0, 1, 1]);
     expect(layers.world.scale.x).toBeGreaterThan(0);
+  });
+
+  it('still culls the ground on the low tier — the pass is off, the floor still has to be', () => {
+    // The defect this exists for: `syncCamera` computing the camera rect, then returning early on
+    // the low tier BEFORE running the cull. That is what this method used to do, back when the rect
+    // existed only to feed the light shader, and a 2026-08-27 battery found that moving the cull
+    // back below that guard survives all 3,309 client tests — the code comment records the fix and
+    // nothing read it.
+    //
+    // It fails exactly where it hurts most. The low tier is the DEVICE tier: a phone that drops to
+    // it would keep every one of `arena_launch`'s 374 floor pieces resident, so the machine that
+    // most needs the cull is the only one that would not get it.
+    setActiveQuality('low');
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.attach();
+    // Deliberately not near-miss geometry — `updateCamera`'s zoom is not what is under test here.
+    // One piece that overlaps any camera near the origin, one that no camera on this map reaches.
+    const near = new Container();
+    const far = new Container();
+    tagGroundPiece(near, { x: -10_000, y: -10_000, w: 20_000, h: 20_000 });
+    tagGroundPiece(far, { x: 1_000_000, y: 1_000_000, w: 40, h: 40 });
+    layers.ground.addChild(near, far);
+
+    fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 800, h: 600 }, fakePlayer(400, 300));
+
+    expect(far.culled).toBe(true);
+    expect(near.culled).toBe(false);
+    expect(fx.visibleGroundPieces).toBe(1);
+    // Control: this really is the tier whose early return the test is about. If the pass were
+    // mounted, the assertions above would hold on the path that was never in doubt.
+    expect(recorded(fx).region).toEqual([0, 0, 1, 1]);
   });
 
   it('resumes feeding it the moment the tier comes back', () => {

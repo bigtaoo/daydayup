@@ -287,6 +287,11 @@ export class FxController {
    * ground cull needs it on every quality tier, and only the light pass's uniforms are skipped when
    * that pass is unmounted. Before 2026-08-26 the whole method returned early on the low tier, which
    * was right when the region existed only to feed the filter.
+   *
+   * That order is now a TEST, not just a comment — `FxController.test.ts`'s "still culls the ground
+   * on the low tier". A 2026-08-27 mutation battery moved the cull back below the guard and all
+   * 3,309 client tests still passed, which is the worst possible place for that gap: the low tier is
+   * the device tier, so the machine that most needs the cull was the only one that would not get it.
    */
   private syncCamera(viewport: { vw: number; vh: number }): void {
     const world = this.layers.world;
