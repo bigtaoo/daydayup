@@ -25,6 +25,8 @@ import {
   VignetteFilter,
   ChromaticAberrationFilter,
   EnergyShieldFilter,
+  SHELL_SURFACE,
+  SHELL_CLEARANCE,
   OutlineFilter,
   DissolveFilter,
   HeatHazeFilter,
@@ -342,18 +344,26 @@ describe('EnergyShieldFilter shell shape (the claims text is good evidence for)'
     expect(src).toContain('float dist = length(uv)');
   });
 
-  it('encloses the whole character at ~1.9 body radii instead of ballooning past 2.1', () => {
-    // The shell's SIZE, in the only unit that means anything to a player. `Actor` pins this
-    // filter's area to a square `radiusPx * 3` per side, so `uv` spans ±0.5 across 6 body radii
-    // and `dist = length(uv) * sqrt(2)`; a `dist` of D sits `D * 6 / sqrt(2)` body radii out.
-    // Measured before the 2026-08-19 pass: the band peaked at 2.1 body radii, blanketing the
-    // floor around a shielded actor's feet and hiding the ground shadow entirely.
+  it('hugs the body at ~1.5 body radii instead of ballooning past 2.1', () => {
+    // The shell's SIZE, in the only unit that means anything to a player. `dist = length(uv) *
+    // sqrt(2)` over a `uv` that spans the region, so a `dist` of D sits
+    // `D * regionWidthInBodyRadii / sqrt(2)` out — and that width is DERIVED, not the literal 6
+    // this test used to carry. `Actor` solves for the region that puts the surface
+    // `SHELL_CLEARANCE` body radii off the body; hardcoding the old `radiusPx * 3` here meant
+    // this assertion still passed, reporting 1.87 body radii, after the shell was pulled in to
+    // 1.53 on 2026-08-27.
+    //
+    // Two history notes worth keeping: before the 2026-08-19 pass the band peaked at 2.1 body
+    // radii, blanketing the floor around a shielded actor's feet and hiding the ground shadow;
+    // and the "encloses the whole character, mounted weapon included" claim this test used to
+    // make was never true at any of those sizes — the hero's weapons reach ~2.5 body radii out.
     const src = code(new EnergyShieldFilter().glProgram.fragment!);
     const m = /const float SHELL_R = ([0-9.]+);/.exec(src);
     if (!m) throw new Error('shield shader no longer declares `const float SHELL_R`');
-    const radii = (Number(m[1]) * 6) / Math.SQRT2;
-    expect(radii).toBeGreaterThan(1.7); // encloses the whole character, mounted weapon included
-    expect(radii).toBeLessThan(2.1); // ...and is not a pool on the floor
+    const regionBodyRadii = ((1 + SHELL_CLEARANCE) * Math.SQRT2) / SHELL_SURFACE;
+    const radii = (Number(m[1]) * regionBodyRadii) / Math.SQRT2;
+    expect(radii).toBeGreaterThan(1.2); // clears the body rather than sitting on it
+    expect(radii).toBeLessThan(1.8); // ...and hugs it rather than pooling on the floor
   });
 
   it('binds the membrane tile it samples', () => {

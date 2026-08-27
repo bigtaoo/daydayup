@@ -29,7 +29,7 @@ beforeAll(() => {
 });
 
 // eslint-disable-next-line import/first
-import { EnergyShieldFilter } from './shieldFx';
+import { EnergyShieldFilter, SHELL_ASPECT, SHELL_SURFACE, SHELL_CLEARANCE } from './shieldFx';
 
 // ---------------------------------------------------------------------------------------
 // A GLSL-subset evaluator.
@@ -617,8 +617,17 @@ function thickness(f: EnergyShieldFilter): number {
   return Number(m[1]);
 }
 
-/** `Actor` pins the filter area to a square `radiusPx * 3` per side, so `uv` spans 6 radii. */
-const bodyRadii = (dist: number): number => (dist * 6) / Math.SQRT2;
+/** A `dist` expressed in BODY RADII — the only unit that means anything to a player.
+ *
+ *  The conversion depends on how wide `Actor` makes the region, which until 2026-08-27 was a flat
+ *  `radiusPx * 3` and got written into this file as a literal 6. It is derived now: `Actor` solves
+ *  for the region that puts the shell's surface `SHELL_CLEARANCE` body radii off the body, so the
+ *  region's width in body radii is that same inversion. Both this file and `filters.test.ts` kept
+ *  PASSING against the stale 6 when the shell was pulled in to hug the body — they reported 1.87
+ *  body radii for a shell that had become 1.53 — which is the exact shape of drift a literal
+ *  copied out of another file produces. */
+const REGION_BODY_RADII = ((1 + SHELL_CLEARANCE) * Math.SQRT2) / SHELL_SURFACE;
+const bodyRadii = (dist: number): number => (dist * REGION_BODY_RADII) / Math.SQRT2;
 
 // ---------------------------------------------------------------------------------------
 // 2026-08-26. The rewrite these were re-measured for, and the report that forced it:
@@ -753,10 +762,19 @@ describe('EnergyShieldFilter, measured: the wall has thickness', () => {
     for (let i = 1; i < 12; i++) expect(at((i / 12) * Math.PI * 2)).toBeCloseTo(ref, 7);
   });
 
-  it('encloses more than the body it wraps', () => {
-    const f = filter();
-    expect(bodyRadii(shellR(f))).toBeGreaterThan(1.7);
-    expect(bodyRadii(shellR(f))).toBeLessThan(2.1);
+  it('clears the body it wraps, by about half a body radius', () => {
+    // The shell's SIZE, in body radii. 1.53 as shipped (2026-08-27, report: *"整体缩小一点，类似
+    // 紧贴着角色，稍微留点缝隙即可。缝隙的大小我感觉和图里枪的直径差不多即可"*) — down from 1.87,
+    // where the shell stood off the body by most of a body radius. The gap IS that gun: the
+    // weapon art's opaque box is 8.55 world px thick against a 16 px body radius.
+    //
+    // Bounded loosely on purpose. With the region derived from `SHELL_CLEARANCE` this ratio is
+    // that constant plus one by construction, so a tight bound here would only restate the
+    // definition; what it usefully catches is a `SHELL_SURFACE` retuned without a thought for
+    // where the surface then lands. The composition that can actually be WRONG — `Actor`
+    // inverting this shader's geometry to size the region — is pinned in `Actor.test.ts`.
+    expect(bodyRadii(shellR(filter()))).toBeGreaterThan(1.2); // still outside the body, not on it
+    expect(bodyRadii(shellR(filter()))).toBeLessThan(1.8); // ...and hugging it, not standing off it
   });
 
   it('carries a glint that is off-centre, inside the surface, and brighter than the glass', () => {
@@ -1086,18 +1104,66 @@ describe('EnergyShieldFilter, measured: the membrane', () => {
   });
 
   it('fades out before the silhouette, where its own compression would alias', () => {
-    // Measured as the membrane's EFFECT on the wall — `front / density` is the multiplier it
-    // applies — not as the value of the `grain` term. Reading `grain` alone passed with `grain`
-    // computed and then never used (2026-08-26 battery), which is the same shader as one that
-    // has no limb fade at all.
+    // Measured as the membrane's EFFECT on the wall — `front - density` is what it contributes
+    // — not as the value of the `grain` term. Reading `grain` alone passed with `grain` computed
+    // and then never used (2026-08-26 battery), which is the same shader as one that has no limb
+    // fade at all.
+    //
+    // A DIFFERENCE and not the ratio this used to take (2026-08-27): the membrane adds now
+    // rather than multiplying, so `front / density` is no longer the multiplier it applies —
+    // and a ratio would also be read off `density`, which collapses at the silhouette for its
+    // own reasons and would let a membrane with no fade at all pass.
     const f = filter();
-    const boost = (b: number): number => {
+    const lit = (b: number): number => {
       const s = sample(f, { dist: b * shellR(f), scaleTexel: [1, 0.5, 0, 1] });
-      return s.front![0]! / s.density![0]!;
+      return s.front![0]! - s.density![0]!;
     };
-    expect(boost(0.999)).toBeLessThan(1.06); // all but gone at the silhouette
-    expect(boost(0.5)).toBeGreaterThan(1.2); // ...and fully present across the face
+    // `grain`'s own value at b = 0.999 is ~0.11, and that is the number this is measuring —
+    // the membrane is down to a tenth of its face-on strength exactly where the projection's
+    // compression is worst. Monotone as well as small, so a fade with a bump in it fails too.
+    expect(lit(0.999)).toBeLessThan(lit(0.5) * 0.2); // all but gone at the silhouette
+    expect(lit(0.99)).toBeLessThan(lit(0.95));
+    expect(lit(0.5)).toBeGreaterThan(0.1); // ...and fully present across the face
     expect(sample(f, { dist: shellR(f) * 0.5 }).grain![0]!).toBeGreaterThan(0.9);
+  });
+
+  it('carries the pattern ACROSS the face, not only in the wall band', () => {
+    // 2026-08-27, and the whole of the report *"护盾中间的6边形看不清，看起来还是一个圈"*.
+    //
+    // The membrane used to be `density * (1 + k * tile)` — a MULTIPLIER on the shell. `density`
+    // in the interior is ~0.11 by design (it composites over `Entity`'s ground shadow and must
+    // not hide it), so multiplying there had nothing to scale: measured on a rendered frame at
+    // gameplay zoom, the pattern swung the output by 9 of 255 across the whole middle of the
+    // disc and only reached ~30 in a thin annulus at b ~ 0.8. A shell with a pattern in one ring
+    // and nothing inside it is a circle, which is exactly what the report saw.
+    //
+    // So this asserts the property the old form structurally could not have: the membrane's
+    // contribution is roughly FLAT in radius, decoupled from the wall's own profile.
+    const f = filter();
+    const lit = (b: number): number => {
+      const s = sample(f, { dist: b * shellR(f), scaleTexel: [1, 0.5, 0, 1] });
+      return s.front![0]! - s.density![0]!;
+    };
+    expect(lit(0.2)).toBeGreaterThan(lit(0.8) * 0.8);
+    // ...and the old shape's signature — a contribution tracking `density` — is excluded.
+    const dens = (b: number): number => sample(f, { dist: b * shellR(f) }).density![0]!;
+    expect(dens(0.8) / dens(0.2)).toBeGreaterThan(2); // the wall really does have a profile
+    expect(lit(0.8) / lit(0.2)).toBeLessThan(1.3); // ...and the membrane does not follow it
+  });
+
+  it("adds no net light: the tile's neutral is the bare wall, in both directions", () => {
+    // The zero-mean contract in `shieldScales.ts` (`paintScaleTile`) is what buys the additive
+    // form its brightness budget: a cell BORDER adds and a cell INTERIOR subtracts, so over any
+    // patch of membrane the shell is no brighter than the bare wall — the constraint the old
+    // multiplicative version was protecting is still met. A shader that clamped the negative
+    // half away, or that used `tile` rather than `tile - 0.5`, would fail this.
+    const f = filter();
+    const d = shellR(f) * 0.5;
+    const at = (r: number): number => sample(f, { dist: d, scaleTexel: [r, 0.5, 0, 1] }).front![0]!;
+    const bare = sample(f, { dist: d, membrane: 0 }).front![0]!;
+    expect(at(0.5)).toBeCloseTo(bare, 10); // mid-grey is exactly neutral
+    expect(at(1.0)).toBeGreaterThan(bare); // the border line adds...
+    expect(at(0.0)).toBeLessThan(bare); // ...and the cell interior gives it back
   });
 
   it('brightens the shell where the tile is bright, and is switched off by uMembrane', () => {
@@ -1106,8 +1172,39 @@ describe('EnergyShieldFilter, measured: the membrane', () => {
     const dark = sample(f, { dist: d, scaleTexel: [0, 0.5, 0, 1] }).front![0]!;
     const bright = sample(f, { dist: d, scaleTexel: [1, 0.5, 0, 1] }).front![0]!;
     expect(bright).toBeGreaterThan(dark * 1.3);
+    // `uMembrane` 0 leaves exactly the bare wall — measured against the tile's own NEUTRAL
+    // (mid-grey), not against `dark`, which is now a real subtraction rather than an absence.
     const off = sample(f, { dist: d, scaleTexel: [1, 0.5, 0, 1], membrane: 0 }).front![0]!;
-    expect(off).toBeCloseTo(dark, 10); // uMembrane 0 leaves exactly the bare wall
+    expect(off).toBeCloseTo(sample(f, { dist: d, scaleTexel: [0.5, 0.5, 0, 1] }).front![0]!, 10);
+  });
+
+  it("draws the hex line ON the character's art, not only in the light over it", () => {
+    // 2026-08-27, the other half of that report: *"和游戏里实际表现差别有点大"* — the membrane
+    // looked right in isolation and vanished in the game. Every other term this shader has is
+    // ADDITIVE, and the middle of a shielded actor is not empty: it is the hero's near-white
+    // silver body, over which the shell's own green and blue are already past 255. An additive
+    // membrane there is not dim, it is arithmetically absent.
+    //
+    // So the pattern also rides the `veil` MIX toward the shield colour, which has no ceiling.
+    // Measured over opaque body art, at the shell's face where the character actually is.
+    const f = filter();
+    const BODY = [0.86, 0.89, 0.93, 1];
+    const rgb = (r: number): number[] =>
+      sample(f, { dist: shellR(f) * 0.3, texel: BODY, scaleTexel: [r, 0.5, 0, 1] }).finalColor!;
+    const interior = rgb(0.42); // the tile's own negative floor — a cell's middle
+    const border = rgb(1.0);
+    // The red channel is where a pull toward cyan shows; 40 of 255 is well past the ~20 the
+    // additive path alone managed before this, and past the point the report could not see it.
+    expect((interior[0]! - border[0]!) * 255).toBeGreaterThan(40);
+    // And it is a HUE shift, not a dimming: red gives up far more than blue.
+    expect(interior[0]! - border[0]!).toBeGreaterThan((interior[2]! - border[2]!) * 3);
+    // Only the positive half participates, so a cell interior contributes nothing to the veil
+    // at all — asserted on `veil` itself rather than on the composite, where the additive path's
+    // own (small) response to the same texel would blur the claim.
+    const veil = (r: number): number =>
+      sample(f, { dist: shellR(f) * 0.3, texel: BODY, scaleTexel: [r, 0.5, 0, 1] }).veil![0]!;
+    expect(veil(0.42)).toBeCloseTo(veil(0.5), 12);
+    expect(veil(1.0)).toBeGreaterThan(veil(0.5) * 5);
   });
 
   it('keeps the SHAPE when the membrane is off — the cheap tier is still a shell', () => {
@@ -1224,6 +1321,124 @@ function shaderConst(f: EnergyShieldFilter, name: string): number {
   if (!m) throw new Error(`shield shader no longer declares ${name}`);
   return Number(m[1]);
 }
+
+// ---------------------------------------------------------------------------------------
+// The shell's SCREEN aspect (2026-08-27, report: *"现在的盾是正圆的，改成椭圆或许更好，高度上长
+// 一点，看起来会更有立体感"*).
+//
+// The shell is an ellipse taller than wide, and the way it gets there is worth pinning because
+// it is invisible in this file's own numbers: the shader is isotropic in region-NORMALIZED uv,
+// so the ellipse comes entirely from `Actor` sizing `filterArea` to a rect of aspect
+// `SHELL_ASPECT`. Nothing in the GLSL says "ellipse". That is what makes it free — every
+// constant the suite above measures is in normalized space and unchanged — and also what makes
+// it fragile: a square `filterArea` turns the shell back into the circle it was until today,
+// with no other symptom and no test failing anywhere near the shader.
+//
+// So this measures both halves: the shader really is isotropic in uv (a mutant that grew its
+// own aspect term, or reverted to raw `vTextureCoord`, breaks the first test), and the
+// composition of that with the shipped rect really is a TALLER ellipse (the second).
+// ---------------------------------------------------------------------------------------
+
+describe('EnergyShieldFilter, measured: the shell is an ellipse, and the region is why', () => {
+  /** Run the shader at a normalized-uv offset from the region's centre, over a region of
+   *  arbitrary aspect — the square `sample()` above cannot express one. */
+  function atUv(f: EnergyShieldFilter, du: number, dv: number, w: number, h: number): Env {
+    const poolW = 512;
+    const poolH = 512;
+    return evalGlsl(f.glProgram.fragment!, {
+      vTextureCoord: [((0.5 + du) * w) / poolW, ((0.5 + dv) * h) / poolH],
+      uInputSize: [poolW, poolH, 1 / poolW, 1 / poolH],
+      uOutputFrame: [0, 0, w, h],
+      uInputClamp: [0, 0, w / poolW, h / poolH],
+      uColor: (f.resources.shieldUniforms as { uniforms: Record<string, Val> }).uniforms.uColor!,
+      uIntensity: [1],
+      uTime: [0],
+      uMembrane: [0], // the bare wall: the membrane's tile lookup is not what is being measured
+      uHit: [0, -1, HIT_SETTLED()],
+      uShatter: [0],
+      __texel: [0, 0, 0, 0],
+      __scaleTexel: [0.5, 0.5, 0, 1],
+    });
+  }
+
+  /** The normalized-uv offset at which the wall term peaks, along a given axis. */
+  function peakUv(f: EnergyShieldFilter, axis: 'x' | 'y', w: number, h: number): number {
+    let best = -1;
+    let at = 0;
+    for (let i = 1; i <= 200; i++) {
+      const d = (i / 200) * 0.5;
+      const e = axis === 'x' ? atUv(f, d, 0, w, h) : atUv(f, 0, d, w, h);
+      const v = e.density?.[0] ?? 0;
+      if (v > best) {
+        best = v;
+        at = d;
+      }
+    }
+    return at;
+  }
+
+  it('is isotropic in normalized uv — the GLSL itself has no aspect of its own', () => {
+    // Both a square region and a tall one: the uv radius the wall peaks at must be the same
+    // number in every direction and at every region shape, because `dist` is `length(uv)`.
+    const f = filter();
+    for (const [w, h] of [[300, 300], [300, 400]]) {
+      const px = peakUv(f, 'x', w!, h!);
+      const py = peakUv(f, 'y', w!, h!);
+      expect(py).toBeCloseTo(px, 6);
+    }
+  });
+
+  it("therefore draws an ellipse of the REGION's aspect, in screen pixels", () => {
+    // The same uv radius spans `w * r` px horizontally and `h * r` px vertically, so the screen
+    // shape's aspect is exactly h / w. Measured rather than asserted from that arithmetic: this
+    // is the composition the shipped look depends on.
+    const f = filter();
+    const w = 300;
+    const h = 411; // 300 * 1.37, deliberately not SHELL_ASPECT — the claim is general
+    const px = peakUv(f, 'x', w, h) * w;
+    const py = peakUv(f, 'y', w, h) * h;
+    expect(py / px).toBeCloseTo(h / w, 2);
+  });
+
+  it('and SHELL_ASPECT is what `Actor` must size that region with — taller than wide', () => {
+    // The value itself, so a change to it is a deliberate edit to a number with a comment on it
+    // rather than a silent drift. Lower-bounded well above 1 because 1.0 IS the reverted state
+    // (the true circle this replaced), and upper-bounded at the projection-consistent sqrt(2):
+    // past that the shell stops being a sphere's silhouette under this renderer's own shear and
+    // starts being an arbitrary capsule.
+    expect(SHELL_ASPECT).toBeGreaterThan(1.1);
+    expect(SHELL_ASPECT).toBeLessThanOrEqual(Math.SQRT2);
+  });
+
+  it('compensates the membrane for that stretch, so the cells stay hexagons', () => {
+    // The one place the shader DOES have to know the region's aspect. A hex cell inherits the
+    // region's stretch like everything else unless it is undone, and a hexagon stretched 1.3x
+    // vertically stops reading as one — which would spend the same day's *"6边形看不清"* fix to
+    // buy the *"正圆"* one. Measured as: the tile coordinate advances at the same rate per SCREEN
+    // pixel in both axes.
+    const f = filter();
+    const w = 300;
+    const h = w * SHELL_ASPECT;
+    const step = 0.05;
+    const warpAt = (du: number, dv: number): number[] => {
+      const e = evalGlsl(f.glProgram.fragment!, {
+        vTextureCoord: [((0.5 + du) * w) / 512, ((0.5 + dv) * h) / 512],
+        uInputSize: [512, 512, 1 / 512, 1 / 512],
+        uOutputFrame: [0, 0, w, h],
+        uInputClamp: [0, 0, w / 512, h / 512],
+        uColor: (f.resources.shieldUniforms as { uniforms: Record<string, Val> }).uniforms.uColor!,
+        uIntensity: [1], uTime: [0], uMembrane: [1],
+        uHit: [0, -1, HIT_SETTLED()], uShatter: [0],
+        __texel: [0, 0, 0, 0], __scaleTexel: [0.5, 0.5, 0, 1],
+      }).warpF as number[];
+      return e;
+    };
+    // Tile units per screen pixel, along each axis, near the shell's face.
+    const perPxX = Math.abs(warpAt(step, 0)[0]! - warpAt(step / 2, 0)[0]!) / ((step / 2) * w);
+    const perPxY = Math.abs(warpAt(0, step)[1]! - warpAt(0, step / 2)[1]!) / ((step / 2) * h);
+    expect(perPxY).toBeCloseTo(perPxX, 4);
+  });
+});
 
 describe('EnergyShieldFilter, measured: the shell has an exit', () => {
   /** Where the shell's light stops, in `dist` units: the furthest radius still carrying at

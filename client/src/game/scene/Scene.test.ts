@@ -30,7 +30,14 @@ import type { Entity } from './Entity';
 // EnergyShieldFilter/OutlineFilter/DissolveFilter (Actor's setShield/hitFlash/
 // startDissolve) all build a real WebGL GlProgram at construction time — unavailable
 // under plain vitest, same reason Actor.test.ts/FxController.test.ts stub fx/filters.ts.
-vi.mock('../fx/filters', () => ({
+// Spread over `vi.importActual` (the convention RoomBuilder.test.ts/wechatRoomBuild.test.ts
+// already use here): only the filter CLASSES touch GL, while the module also exports plain
+// values the scene layer reads — `SHELL_ASPECT`, the shield shell's screen aspect, which sizes
+// `Actor`'s `filterArea`. Restating one of those in a mock would let it drift away from the
+// shipped number, and a mock that must be edited every time the real module gains an export is
+// its own trap: adding that one constant broke every test in this file.
+vi.mock('../fx/filters', async () => ({
+  ...(await vi.importActual<typeof import('../fx/filters')>('../fx/filters')),
   EnergyShieldFilter: class {
     intensity = 0;
     /** The exit, 0..1 — `ActorFilters` drives it once the pool empties (2026-08-26). */

@@ -15,10 +15,11 @@
  *              matches the item's id — set by the render-side weapon-pickup panel,
  *              CommandBuilder.requestPickup) while within `SIM.lootRevealRadius` —
  *              wider than the tight overlap every other kind uses, since the panel
- *              already showed it from that range. Swaps it into the active slot AND
- *              drops the outgoing weapon back onto the floor as a new pickup at the
- *              player's position (`applyWeapon`) — "no manual drop button," the drop
- *              is only ever a side effect of a swap.
+ *              already showed it from that range. Swaps it into the slot holding the
+ *              same KIND of weapon (ENGINE_VERSION 46; `slotFor`) AND drops the
+ *              outgoing weapon back onto the floor as a new pickup at the player's
+ *              position (`applyWeapon`) — "no manual drop button," the drop is only
+ *              ever a side effect of a swap.
  *   buff     — added to the run-scoped stack. Auto, on overlap.
  *   bandage  — PvP-arena-only (design/05/15's squad follow-up): +1 to the player's
  *              squad-revive currency, spent by ReviveSystem. Auto, on overlap.
@@ -30,11 +31,12 @@ import { SIM } from '../sim.config';
 import { HEAL_PICKUP_AMOUNT, rollArenaDrop } from '../content/drops';
 import { bankKey } from '../content/materials';
 import { WEAPON_SIM_BY_ID, makeWeapon } from '../content/weapons';
+import { PLAYER_BASE } from '../content/players';
 import { PVP_SCALE_FACTOR, scaleWeaponDamage } from '../balance/build';
 import { RUN_BUFFS, sumBuffs } from '../balance/runbuffs';
 import { toFp } from '../math/fixed';
 import type { GameState } from '../state/GameState';
-import type { PickupItem, PlayerActor } from '../state/entities';
+import type { PickupItem, PlayerActor, WeaponSimSpec } from '../state/entities';
 import { circlesOverlap, clampToWalkable, retainAlive } from './geom';
 
 export class PickupSystem {
@@ -157,11 +159,13 @@ export class PickupSystem {
     // from the canonical unscaled spec every equip (never compounding) so drop→re-pickup
     // cycles stay byte-identical regardless of how many hands a weapon passes through.
     const spec = state.zoneEnabled ? scaleWeaponDamage(base, PVP_SCALE_FACTOR) : base;
+    const slot = this.slotFor(p, spec.kind);
     // The outgoing weapon drops back to the floor (design/03:126) BEFORE the slot is
     // overwritten — a fresh PickupItem at the player's own position, same spawn-tick
     // convention as DeathDropsSystem so the just-created item isn't immediately
-    // re-collected this same tick.
-    const outgoing = p.weapons[p.activeSlot];
+    // re-collected this same tick. Absent for a pickup that filled an EMPTY slot
+    // (`slotFor` below), where there is nothing to displace.
+    const outgoing = p.weapons[slot];
     if (outgoing) {
       const pos = clampToWalkable(p.gx, p.gy, SIM.pickupRadius, state);
       state.pickups.push({
@@ -174,9 +178,43 @@ export class PickupSystem {
         weaponId: outgoing.spec.name,
       });
     }
-    // Swap the active slot for a fresh runtime of the picked-up weapon.
+    // Swap that slot for a fresh runtime of the picked-up weapon, and hold it: the player
+    // clicked this item, so the weapon they chose is the one in their hands.
     const w = makeWeapon(spec);
-    p.weapons[p.activeSlot] = w;
+    p.weapons[slot] = w;
+    p.activeSlot = slot;
     p.weapon = w;
+  }
+
+  /**
+   * Which slot a picked-up weapon lands in: the one already holding a weapon of the SAME
+   * kind (ENGINE_VERSION 46, live report — *"不能拾取一把刀，却把枪换掉了，导致玩家拿着
+   * 两把刀"*).
+   *
+   * Until v46 this was unconditionally `p.activeSlot`, which is a real defect and not a
+   * preference: design/03's ranged-vs-melee trade-off rests on "both halves are always
+   * OWNED, neither is ever both-at-once", and `resolveLoadout` / `buildArenaSpecs` go out
+   * of their way to guarantee one weapon of each kind at spawn. Overwriting whichever slot
+   * happened to be active threw that invariant away on the first pickup — grab a melee
+   * weapon while the gun is in hand and you carry two melee weapons, with no gun and no
+   * way back to one. The swap verb then toggles between two of the same thing.
+   *
+   * Matching by kind restores exactly the invariant `resolveLoadout` builds, by the same
+   * test (`w.kind === kind`), so a loadout that spawns one-of-each keeps one-of-each for
+   * the whole run however many weapons pass through it.
+   *
+   * The two fallbacks, in order:
+   *   - a FREE slot, if this player is carrying fewer than `weaponSlots`. A seat built from
+   *     a config that skipped `resolveLoadout` can hold one weapon; filling the gap beats
+   *     overwriting the only weapon it has.
+   *   - `p.activeSlot`, if both slots are the other kind. Not reachable through any shipped
+   *     spawn path, but a total function is one less thing to reason about than a guarantee
+   *     enforced somewhere else.
+   */
+  private slotFor(p: PlayerActor, kind: WeaponSimSpec['kind']): number {
+    const same = p.weapons.findIndex((w) => w.spec.kind === kind);
+    if (same >= 0) return same;
+    if (p.weapons.length < PLAYER_BASE.weaponSlots) return p.weapons.length;
+    return p.activeSlot;
   }
 }

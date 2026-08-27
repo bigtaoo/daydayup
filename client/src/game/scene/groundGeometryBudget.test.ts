@@ -77,7 +77,14 @@ vi.mock('pixi.js', async (importOriginal) => ({
   ...(await importOriginal<typeof import('pixi.js')>()),
   BlurFilter: class { strength = 0; quality = 0; },
 }));
-vi.mock('../fx/filters', () => ({
+// Spread over `vi.importActual` (the convention RoomBuilder.test.ts/wechatRoomBuild.test.ts
+// already use here): only the filter CLASSES touch GL, while the module also exports plain
+// values the scene layer reads — `SHELL_ASPECT`, the shield shell's screen aspect, which sizes
+// `Actor`'s `filterArea`. Restating one of those in a mock would let it drift away from the
+// shipped number, and a mock that must be edited every time the real module gains an export is
+// its own trap: adding that one constant broke every test in this file.
+vi.mock('../fx/filters', async () => ({
+  ...(await vi.importActual<typeof import('../fx/filters')>('../fx/filters')),
   VignetteFilter: class { intensity = 0; radius = 0; },
   ChromaticAberrationFilter: class { amount: number; constructor(amount = 0) { this.amount = amount; } },
   MAX_SCENE_LIGHTS: 8,

@@ -13,4 +13,4 @@
  * split out of config.ts as a same-shape `.ts` file (form ①, independent data
  * module); moved to Markdown the same day once that file itself hit 505 lines.
  */
-export const ENGINE_VERSION = 45;
+export const ENGINE_VERSION = 46;

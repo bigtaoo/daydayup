@@ -32,9 +32,18 @@ const SHADOW_ALPHA_CURVE = 2;
 /** Vertical foreshortening of everything round that lies ON THE GROUND PLANE in this
  *  tilted view (design/01): this shadow and `Actor.setStatus`'s auras, which are flat
  *  discs at the actor's feet and so are compressed by the camera tilt. Shared between them
- *  so they cannot drift apart. `EnergyShieldFilter` deliberately does NOT use it — a shield
- *  is a sphere around the body, not a disc under it, and a sphere reads as a circle from
- *  every angle (2026-08-24, see that filter's own comment). */
+ *  so they cannot drift apart.
+ *
+ *  `EnergyShieldFilter` does NOT use it — a shield is a sphere around the body, not a disc
+ *  under it — but note that this does not make it a CIRCLE, which is what the 2026-08-24
+ *  version of this comment concluded ("a sphere reads as a circle from every angle") and what
+ *  the shell was until 2026-08-27. That is true of a real camera and this renderer is not one:
+ *  the world grid is drawn unsquashed while wall heights are extruded 1:1 upward in px, i.e.
+ *  the shear (x, y, z) -> (x, y - z), under which a sphere's silhouette is an ellipse with
+ *  semi-axes 1 and sqrt(2). The shell is taller than wide now — `SHELL_ASPECT` in
+ *  `fx/filters/shieldFx.ts`, which owns that reasoning; this constant and that one are the two
+ *  halves of how round things read here, and the contrast between them is the point: squashed
+ *  = lying on the ground, taller = standing in the world. */
 export const SHADOW_SQUASH = 0.62;
 
 /** How much a shadow slides away from the key light per world px of height. The key light

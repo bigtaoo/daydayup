@@ -305,12 +305,94 @@ facing continuum, but nothing said it was a **volume standing in a space**.
     times too strong satisfied it.
   - **A generated membrane, not authored art.** A smooth gradient reads as a filter no matter how
     well shaped; the eye needs a repeating detail element before it accepts a surface. The tile is
-    a seamless irregular-scale field computed at boot (`fx/filters/shieldScales.ts`) — see that
+    a seamless HEX-CELL field computed at boot (`fx/filters/shieldScales.ts`) — see that
     file's header for why a generator beats an image model here, and `design/04` for the package
     budget it costs nothing against. Sampled twice with different projections, front and back, so
     the two layers do not coincide; the projection is `uv / (nz + k)` rather than true spherical
     coordinates, which foreshortens the pattern toward the limb for one divide instead of four
     transcendentals and a pole singularity.
+  - **The membrane ADDS, it does not multiply — and it is drawn on the character's art as well as
+    in the light over it** (2026-08-27, report: *"护盾中间的6边形看不清，看起来还是一个圈 … 之前调试
+    效果时看起来挺好的，和游戏里实际表现差别有点大"*). Two separate defects, and the pair is the
+    general lesson for any per-actor overlay here:
+    - The pattern was `density * (1 + k * tile)`, a MULTIPLIER on the shell. The shell's interior
+      brightness is deliberately ~0.11 (it composites over `Entity`'s ground shadow and must not
+      hide it), so across the whole middle of the disc there was nothing for a multiplier to
+      scale: measured on a rendered frame at gameplay zoom, 9 of 255, with the pattern reaching
+      ~30 only in a thin annulus at `b ~ 0.8`. A pattern in one ring with nothing inside it is a
+      circle. Adding instead decouples the pattern's contrast from the shell's own faintness, and
+      the tile's ZERO-MEAN encoding (`paintScaleTile`) makes it free on the brightness budget the
+      multiplicative form was protecting — the lines are bright because the cells around them
+      gave it up. Verified on the live frame, not argued: mean luma over the shell disc is 83.0
+      with the membrane and 83.2 without.
+    - Every other term this shader has is additive, and the middle of a shielded actor is not
+      empty — it is the hero's near-white silver body, over which the shell's own green and blue
+      are already past 255. An additive membrane there is not dim, it is arithmetically ABSENT,
+      whatever its gain. **That is the whole of the "looked right in isolation, wrong in the
+      game" gap**: the debug view had a dark background where the game has a bright character. So
+      the pattern also rides the `veil` MIX toward the shield colour, which has no ceiling; a
+      cell border reads as a cyan hex line laid over the character at any base brightness.
+  - **Taller than wide, not a true circle** (2026-08-27, report: *"现在的盾是正圆的，改成椭圆或许更
+    好，高度上长一点，看起来会更有立体感"*). The 2026-08-24 pass un-squashed this shell to a circle on
+    the grounds that *"a sphere reads as a circle from every angle"*. True of a real camera, and
+    this renderer is not one: the world grid is drawn UNSQUASHED (`layers.world.scale` is 2.667 in
+    both axes) while wall heights are extruded 1:1 upward in px (`wallGeometry.ts`'s `WALL_H_*`
+    are "in world px"), which together is the shear `(x, y, z) -> (x, y - z)`. A sphere's
+    silhouette under a shear is an ellipse with semi-axes 1 and `sqrt(2)`, so a circle was never
+    the projection-consistent shape for "a sphere around the body".
+    - Shipped at **1.30**, not the derived 1.414, chosen on rendered frames: past ~1.35 the shell
+      reads as a pod the character is suspended in rather than a shell wrapped round it, and the
+      hero's drawn silhouette is 74.7 x 32 px — **2.3x wider than tall** — so every unit of extra
+      height is empty egg.
+    - The stronger reason to go taller at all is this scene's own grammar rather than the shear:
+      everything round that lies on the ground is squashed to 0.62 (`Entity.SHADOW_SQUASH` —
+      shadows, status auras), which makes a circle the ambiguous middle and a taller-than-wide
+      silhouette the only one in the scene that cannot be read as lying flat.
+    - **Nothing in the GLSL says "ellipse".** The shader is isotropic in region-normalized `uv`,
+      so the shape comes entirely from `Actor` sizing `filterArea` to a rect of aspect
+      `SHELL_ASPECT` — every constant the measured suite pins (`SHELL_R`, `THICKNESS`, `CULL`) is
+      in that normalized space and unchanged, which is why the ellipse cost one line. The flip
+      side is that a square `filterArea` silently reverts the circle with no other symptom, so
+      both `Actor.test.ts` and `shieldShellModel.test.ts` pin the composition (mutation-checked:
+      a square rect fails 1, `SHELL_ASPECT = 1.0` fails 2).
+    - The ONE place the shader must know the aspect is the membrane: a hex cell inherits the
+      region's stretch like everything else, and a hexagon stretched 1.3x vertically stops
+      reading as one — which would have spent the same day's hexagon fix to buy this one. The
+      tile lookup divides it back out; a third test pins that.
+    - Cost: the region's aspect change alone would be +30% area, shared by all four per-actor
+      filters. The clearance pass below more than pays it back — the region ends up 78.7 x 102.3
+      against the original 96 x 96 square, i.e. **13% SMALLER** than before either change.
+  - **Sized by a stated CLEARANCE, not by a hand-set region** (2026-08-27, report: *"整体缩小一点，
+    类似紧贴着角色，稍微留点缝隙即可。缝隙的大小我感觉和图里枪的直径差不多即可"*). The surface now sits
+    `SHELL_CLEARANCE` = 0.53 body radii outside the body's drawn edge, down from 0.87 — a shell of
+    1.53 body radii rather than 1.87. `Actor` no longer hand-sets `filterArea` to `radiusPx * 3`;
+    it inverts the shader's own geometry to solve for the region that puts the surface there, so
+    retuning `SHELL_SURFACE` or `SHELL_ASPECT` keeps the clearance meaning what it says.
+    - **0.53 is that gun, measured.** The hero's weapon SPRITE is 24 x 16.35 world px, but the art
+      inside it is mostly transparent margin: the opaque box is 15.75 x 8.55, so the visible gun is
+      8.55 px thick — against a 16 px body radius, 0.53. Taking the sprite rect would have set the
+      clearance at 1.02 body radii and left the shell almost exactly where it already was. This is
+      the same class of trap as the `BODY_FILL` mismatch: an art number read off the frame rect
+      instead of off the pixels.
+    - The clearance is uniform on ONE axis only, and no constant fixes that: the body is round
+      (32 x 32 world px) while the shell is a 1.30 ellipse, so 8.5 px at the sides is necessarily
+      ~15.8 above and below. It is set on the SIDES — the tight axis, where "稍微留点缝隙" is a
+      clearance that must not close up. Trading the two off means lowering `SHELL_ASPECT`.
+    - The character's WEAPONS reach outside the shell (~2.5 body radii against a 1.53 surface),
+      and did before this too. The claim that the envelope "encloses the WHOLE character, mounted
+      weapon included" was in both this doc and two tests and has never been true at any of the
+      shell's sizes; enclosing them needs a surface ~3 body radii out, i.e. twice this shell.
+    - Two tests were PASSING on a stale literal here — both computed the shell's size as
+      `SHELL_R * 6 / sqrt(2)`, the old `radiusPx * 3` region copied in as a `6`, and so reported
+      1.87 body radii for a shell that had become 1.53. Both derive the region width now.
+    - Anything that resizes the shell has to revisit `MEMBRANE_TILE`: it is in normalized units,
+      so the cell COUNT across the shell is fixed and a smaller shell means smaller cells. This
+      pass took 20 px cells to 16 and a 4 px border line to 3.3; scaling the tile by the same 0.82
+      (0.80 -> 0.66) put both back.
+    - Cell SIZE has one honest constraint worth writing down: `uv` goes to zero at the shell's
+      pole, so however the tile is projected the middle of the shell gets the fewest cells — and
+      the middle is where the character is and where the eye already is. No projection fixes that
+      (spherical UVs are linear at the pole too); the only lever is overall density.
   - **The damage state changes the SHAPE.** `design/13`'s dual-channel law, which this filter had
     been violating: as the pool drains, whole scales go out one at a time (the tile's green channel
     is that cell's place in a shuffled extinction order) and the tint shifts from cyan toward a hot

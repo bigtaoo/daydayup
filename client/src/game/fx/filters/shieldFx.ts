@@ -12,6 +12,73 @@ import { Filter, GlProgram, UniformGroup, defaultFilterVert } from 'pixi.js';
 import { FRAME_UV, hexToRgb } from './shaderPrelude';
 import { shieldScaleTexture } from './shieldScales';
 
+/**
+ * The shell's screen aspect, VERTICAL / HORIZONTAL (2026-08-27, report: *"现在的盾是正圆的，改成
+ * 椭圆或许更好，高度上长一点，看起来会更有立体感"*).
+ *
+ * This is not applied in the shader. `Actor` sizes `filterArea` to a rect of exactly this aspect
+ * and the shader's `uv` is region-NORMALIZED (`frameUv`), so a circle in `uv` space already draws
+ * as an ellipse of the region's aspect — every constant below (`SHELL_R`, `THICKNESS`, `CULL`) is
+ * in that normalized space and needs no change, which is why the whole measured suite still
+ * describes the same shape. It lives here rather than in `Actor.ts` because it is a property of
+ * this shell, and it is exported so there is exactly one number: a square `filterArea` silently
+ * turns the shell back into a circle.
+ *
+ * Why not 1.0, i.e. why the geometry note in `Entity.ts` (*"a sphere reads as a circle from every
+ * angle"*, which un-squashed this shell on 2026-08-24) does not settle it. That is true of a real
+ * camera, and this renderer is not one: the world grid is drawn UNSQUASHED (`layers.world.scale`
+ * is 2.667 in both axes) while wall heights are extruded 1:1 upward in px (`wallGeometry.ts`'s
+ * WALL_H_* are "in world px"). Taken together that is the shear (x, y, z) -> (x, y - z), and the
+ * silhouette of a world SPHERE under a shear is not a circle — it is an ellipse with semi-axes 1
+ * and sqrt(2). So a circle was never the projection-consistent answer for "a sphere around the
+ * body"; sqrt(2) = 1.414 is.
+ *
+ * 1.30 and not the derived 1.414, decided on rendered frames rather than on the arithmetic: past
+ * ~1.35 the shell reads as a pod the character is suspended in rather than a shell wrapped round
+ * it, and the hero's drawn silhouette is 74.7 x 32 px — 2.3x WIDER than tall — so every unit of
+ * extra height is empty egg. The supporting reason to go taller at all is not really the shear,
+ * it is this scene's own grammar: everything round that lies on the ground is squashed to 0.62
+ * (`Entity.SHADOW_SQUASH` — shadows, status auras), which makes a circle the ambiguous middle and
+ * a taller-than-wide silhouette the only one in the scene that cannot be read as lying flat.
+ */
+export const SHELL_ASPECT = 1.3;
+
+/** The shell's outer surface, as a radius in the shader's own normalized `dist` units. Exported
+ *  (and injected into the GLSL below, so there is one number and not two) because `Actor` has to
+ *  solve for the `filterArea` that puts that surface a given distance off the body — see
+ *  `SHELL_CLEARANCE`. `shieldShellModel.test.ts` still reads it back out of the shader source,
+ *  which is what keeps the injection honest. */
+export const SHELL_SURFACE = 0.44;
+
+/**
+ * How far the shell's surface stands off the character's drawn body, as a fraction of the body's
+ * radius (2026-08-27, report: *"整体缩小一点，类似紧贴着角色，稍微留点缝隙即可。缝隙的大小我感觉和图
+ * 里枪的直径差不多即可"*).
+ *
+ * 0.53 IS that gun, measured rather than eyeballed — and the measurement is the whole reason this
+ * constant is not twice as big. The hero's weapon SPRITE is 24 x 16.35 world px, but the art
+ * inside it is mostly transparent margin: its opaque box is 15.75 x 8.55, so the gun you can
+ * actually see is **8.55 world px** thick. Against the body's drawn radius of 16 (the body bone's
+ * sprite is 32 x 32 world px, spikes included, centred on the same point `Actor` centres the
+ * filter region on) that is 8.55 / 16 = 0.53. Taking the sprite rect instead would have set the
+ * clearance at 1.02 body radii and left the shell almost exactly where it already was.
+ *
+ * A fraction of the radius and not an absolute px count: `Actor` builds this region for bosses
+ * and critters too, and 8.5 px of clearance is a different thing entirely on a radius-30 body.
+ *
+ * One consequence worth stating rather than burying, because it is geometric and no constant can
+ * fix it: the clearance is uniform only on ONE axis. The body is round (32 x 32) while the shell
+ * is a 1.30 ellipse, so a gap of `g` at the sides is necessarily ~1.9 g above and below. This is
+ * set on the SIDES — the tight axis, where "稍微留点缝隙" is a clearance that must not close up.
+ * Bringing the two closer together means lowering `SHELL_ASPECT`, not changing this.
+ *
+ * The character's WEAPONS still reach outside the shell (they extend to ~40 world px from the
+ * centre against a 24.5 px surface, and did before this too — the shader's own comment claiming
+ * the envelope "encloses the WHOLE character" has never been true). Enclosing them would need a
+ * surface ~49 px out, i.e. a shell twice this size, which is the opposite of what was asked for.
+ */
+export const SHELL_CLEARANCE = 0.53;
+
 const shieldFrag = FRAME_UV + /* glsl */ `
 in vec2 vTextureCoord;
 out vec4 finalColor;
@@ -79,7 +146,7 @@ void main(void)
     // radii out: 0.44 is ~1.87 radii, an envelope that encloses the WHOLE character — body,
     // spikes and mounted weapon — while stopping short of pooling on the floor around the
     // feet, where the ground shadow has to stay readable.
-    const float SHELL_R = 0.44;
+    const float SHELL_R = ${SHELL_SURFACE.toFixed(6)};
     // How far the exit throws the outer surface, as a fraction of SHELL_R. Bounded by the
     // filter's own area and not by taste: the region reaches \`dist\` 0.707 along its narrowest
     // axis, and everything the shader draws lives inside CULL surfaces, so the ceiling is
@@ -188,11 +255,19 @@ void main(void)
     float breath = 0.62 + 0.12 * sin(uTime * 0.0018) + 0.38 * max(0.0, ripple);
     // Faded out in the last sliver before the limb: that is where the projection's own
     // compression is worst (so the pattern would alias), and where the wall term is
-    // brightest anyway.
+    // brightest anyway. It is also what keeps the membrane inside the silhouette without a
+    // second \`inside\` factor — beyond b = 1, \`r\` clamps and \`nz\` is 0.
     float grain = smoothstep(0.0, 0.22, nz);
+    // Everything that scales the pattern but is not the pattern. Hoisted out of the branch
+    // because section 7 needs the same envelope for its own use of it.
+    float gate = grain * breath * uMembrane;
     // Declared before the branch so the bare wall is what a membrane-less tier draws.
     float front = density;
     float back = density * 0.5;
+    // The front hemisphere's signed hex pattern, published out of the branch because the
+    // composite below needs it a SECOND time — see \`veil\` in section 7. 0 is "no pattern",
+    // which is what a membrane-less tier composites with.
+    float hexF = 0.0;
     // A UNIFORM branch: every fragment in the draw takes the same side, so there is no divergence
     // to pay for. The first version multiplied \`uMembrane\` into the result instead, which turned
     // the membrane off visually while still sampling the tile twice.
@@ -205,8 +280,30 @@ void main(void)
     // but that case is UNMEASURED (design/04 item 6), so nothing here should be read as a
     // promise about it. The lever that actually pays is the radial cull above: 46%.
     if (uMembrane > 0.0) {
-        const float TILE = 0.55;
-        vec2 warpF = uv * (TILE / (surface * (nz + 0.35)));
+        // Cell size on screen, and the number the report's *"中间的6边形看不清"* is literally
+        // about. \`uv\` goes to zero at the shell's pole, so however this is projected the middle
+        // of the shell gets the fewest cells — and the middle is exactly where the character is
+        // and where the eye already is. There is no projection that fixes that (spherical UVs
+        // are linear at the pole too); the only lever is overall density, which is this.
+        //
+        // Measured at gameplay zoom rather than reasoned about: this puts ~20 px between cell
+        // centres at the wall band, which is small enough to read as a membrane and large enough
+        // that \`LINE_W\`'s border survives at mip 0. It went 0.55 -> 0.80 when the pattern was
+        // still invisible in the middle of the shell, then 0.80 -> 0.66 when \`SHELL_CLEARANCE\`
+        // pulled the shell in to hug the body: this number is in NORMALIZED units, so the cell
+        // count across the shell is fixed and shrinking the shell shrinks the cells with it —
+        // 20 px became 16 px, and a 4 px border line became 3.3. Scaling by the same 0.82 puts
+        // both back. Anything that resizes the shell has to come back here.
+        const float MEMBRANE_TILE = 0.66;
+        // \`uv\` is normalized over a region that is SHELL_ASPECT taller than it is wide, so a
+        // unit of \`uv.y\` is that many more screen pixels than a unit of \`uv.x\`. Undo that here
+        // and only here: everything else in this shader wants the normalized space (that is what
+        // makes the ellipse free), but a hex cell stretched by the region's aspect stops reading
+        // as a hexagon — which would undo the same day's *"6边形看不清"* fix in the name of
+        // fixing *"正圆"*. Measured on rendered frames: uncompensated, 1.3 already reads as
+        // elongated cells and 1.414 reads as a mistake.
+        const float REGION_ASPECT = ${SHELL_ASPECT.toFixed(6)};
+        vec2 warpF = vec2(uv.x, uv.y * REGION_ASPECT) * (MEMBRANE_TILE / (surface * (nz + 0.35)));
         // The back layer is the same projection at a different scale and offset. Not a
         // physically-derived far-side mapping — just a second, non-coincident layer, which is
         // all the volume cue needs.
@@ -231,9 +328,32 @@ void main(void)
         // half of it.
         float liveF = mix(0.25, 1.0, step(1.0 - integrity, sF.g * 0.9 + 0.1));
         float liveB = mix(0.25, 1.0, step(1.0 - integrity, sB.g * 0.9 + 0.1));
-        float membrane = 0.85 * grain * breath * uMembrane;
-        front = density * (1.0 + membrane * sF.r * liveF);
-        back = density * (1.0 + membrane * sB.r * liveB) * 0.5;
+        // The tile's contract (shieldScales.ts \`paintScaleTile\`): the red channel is
+        // \`0.5 + 0.5 * p\` for a ZERO-MEAN \`p\` that peaks at +1 on a cell border and sits
+        // slightly negative across a cell interior. Decoding it back to signed is what lets the
+        // next line ADD rather than multiply.
+        hexF = (sF.r - 0.5) * 2.0 * gate * liveF;
+        float hexB = (sB.r - 0.5) * 2.0 * gate * liveB;
+        // 2026-08-27, and the actual fix for *"看起来还是一个圈"*. The previous version was
+        // \`front = density * (1.0 + membrane * sF.r * liveF)\` — the pattern MULTIPLIED the
+        // shell. Measured at gameplay zoom (shieldShellModel.test.ts, and the report's own
+        // screenshot), that put the whole membrane inside a band at b ~ 0.8 and swung the
+        // output by 9 of 255 across the entire interior, because the interior's \`density\` is
+        // deliberately ~0.11 — it has to composite over \`Entity\`'s ground shadow without
+        // hiding it, so there was nothing there for a multiplier to scale.
+        //
+        // Adding instead decouples the pattern's contrast from the shell's own faintness, and
+        // costs nothing on the brightness budget the old form was protecting: \`p\` is zero-mean
+        // by construction, so over any patch of membrane the light this adds sums to zero. The
+        // lines are bright because the cells around them gave it up, not because the shell got
+        // brighter.
+        //
+        // \`max\` and not a clamp on the sum: the negative half is allowed to eat the interior
+        // veil down to nothing (that hollow IS the cell), just never past it into a negative
+        // alpha.
+        const float LINE = 0.45;
+        front = max(0.0, density + LINE * hexF);
+        back = max(0.0, density + LINE * hexB) * 0.5;
     }
 
     // ---- 6. highlights ---------------------------------------------------------------
@@ -256,7 +376,20 @@ void main(void)
     // A faint tint ON the art, not just light over it — glass with substance. Damped hard,
     // and only where the body is actually opaque: at full strength this flattened the hero's
     // face, the saturated blue eye coming out the same pale cyan as the shell.
-    color.rgb = mix(color.rgb, tint * 0.55, 0.16 * density * energy * color.a);
+    //
+    // 2026-08-27: the hex line rides this term too, and this is the half of the fix that
+    // answers *"和游戏里实际表现差别有点大"* — why the membrane looked right in isolation and
+    // vanished in the game. Every other term this shader has is ADDITIVE, and the middle of a
+    // shielded actor is not empty: it is the hero's near-white silver body. Measured over that
+    // art, the shell's own green and blue are already past 255 before the pattern is added, so
+    // an additive membrane there is not dim — it is arithmetically absent, whatever its gain.
+    // A MIX has no such ceiling: on a cell border the body is pulled further toward the shield
+    // colour, which reads as a cyan hex grid laid over the character at any base brightness.
+    // Only the positive half (the line) participates — pushing the cell interiors back toward
+    // the untinted body is the same statement and costs a second term.
+    const float LINE_VEIL = 0.70;
+    float veil = 0.16 * density + LINE_VEIL * max(0.0, hexF);
+    color.rgb = mix(color.rgb, tint * 0.55, veil * energy * color.a);
     color.rgb += tint * (glow + behind);
     // 0.7 is also the knob deciding how much floor the shield hides — the ground shadow
     // under a shielded actor has to stay readable through the interior.
@@ -284,14 +417,15 @@ export class EnergyShieldFilter extends Filter {
     const scales = shieldScaleTexture();
     super({
       glProgram,
-      // The shell is positioned relative to the filtered REGION's centre, so the
-      // region has to stay the full `Actor.filterArea` square. Pixi otherwise intersects
-      // it with the viewport (`FilterSystem._calculateFilterBounds`), which would crop
-      // the square — and therefore move its centre — for any shielded actor standing
-      // near a screen edge, reintroducing the lopsided glow in exactly that spot. Safe
-      // to disable here because `filterArea` already bounds this filter to a small fixed
-      // square (3× body radius); it is NOT safe for the two screen-wide post-fx above,
-      // which rely on the clip to size themselves to the viewport.
+      // The shell is positioned relative to the filtered REGION's centre, AND takes its
+      // aspect from that region (see SHELL_ASPECT above), so the region has to stay the
+      // full `Actor.filterArea` rect. Pixi otherwise intersects it with the viewport
+      // (`FilterSystem._calculateFilterBounds`), which would crop the rect — moving its
+      // centre and flattening its aspect — for any shielded actor standing near a screen
+      // edge, reintroducing the lopsided glow in exactly that spot. Safe to disable here
+      // because `filterArea` already bounds this filter to a small fixed rect (3× body
+      // radius wide, SHELL_ASPECT× that tall); it is NOT safe for the two screen-wide
+      // post-fx above, which rely on the clip to size themselves to the viewport.
       clipToViewport: false,
       resources: {
         shieldUniforms: new UniformGroup({

@@ -92,6 +92,94 @@ describe('PickupSystem — the in-run power ramp (design/05)', () => {
     expect(p.weapon!.spec.name).toBe('cannon'); // unchanged, did not swap back
   });
 
+  // ── ENGINE_VERSION 46: a pickup replaces the slot holding the SAME KIND ─────────
+  //
+  // Live report: *"拾起武器时，只替换角色身上对应的武器。不能拾取一把刀，却把枪换掉了，导致
+  // 玩家拿着两把刀"*. Until v46 `applyWeapon` overwrote `p.activeSlot` unconditionally, which
+  // is not a preference but a broken invariant: `resolveLoadout` (content/players.ts) and
+  // `buildArenaSpecs` (balance/build.ts) both guarantee one gun and one melee weapon at
+  // spawn — design/03's ranged-vs-melee trade-off is built on it — and the first floor
+  // pickup of the non-active kind destroyed it permanently. The starter pair is
+  // [BLASTER_SIM (ranged), SABER_SIM (melee)] with slot 0 active, so "pick up a melee
+  // weapon" was exactly the reported case.
+
+  it('puts a MELEE pickup in the melee slot, leaving the gun alone', () => {
+    const s = createGameState(CFG);
+    const p = s.players[0]!;
+    expect(p.activeSlot).toBe(0);
+    expect(p.weapons[0]!.spec.kind).toBe('ranged'); // premise: the reported starting state
+    expect(p.weapons[1]!.spec.kind).toBe('melee');
+    const gun = p.weapons[0]!.spec.name;
+
+    dropOnPlayer(s, { kind: 'weapon', weaponId: 'hammer' }); // melee
+    p.pickupTargetId = s.pickups[0]!.id;
+    sys.tick(s);
+
+    expect(p.weapons[1]!.spec.name).toBe('hammer'); // the MELEE slot took it...
+    expect(p.weapons[0]!.spec.name).toBe(gun); // ...and the gun is untouched
+    expect(p.weapon!.spec.name).toBe('hammer'); // the clicked weapon is in hand
+    expect(p.activeSlot).toBe(1);
+    // The displaced weapon is the outgoing MELEE one, not the active gun.
+    expect(s.pickups.map((x) => x.weaponId)).toEqual(['saber']);
+  });
+
+  it('puts a RANGED pickup in the gun slot even while the melee slot is active', () => {
+    const s = createGameState(CFG);
+    const p = s.players[0]!;
+    p.activeSlot = 1; // holding the saber
+    p.weapon = p.weapons[1]!;
+    const melee = p.weapons[1]!.spec.name;
+
+    dropOnPlayer(s, { kind: 'weapon', weaponId: 'cannon' }); // ranged
+    p.pickupTargetId = s.pickups[0]!.id;
+    sys.tick(s);
+
+    expect(p.weapons[0]!.spec.name).toBe('cannon');
+    expect(p.weapons[1]!.spec.name).toBe(melee);
+    expect(p.activeSlot).toBe(0);
+    expect(s.pickups.map((x) => x.weaponId)).toEqual(['blaster']);
+  });
+
+  it('keeps one of EACH kind however many weapons pass through the loadout', () => {
+    // The invariant itself, not one instance of it: the property design/03 rests on and the
+    // one the v45 loadout builder goes out of its way to establish at spawn. A run that
+    // loots a mixed pile must still own both halves at the end of it.
+    const s = createGameState(CFG);
+    const p = s.players[0]!;
+    for (const id of ['hammer', 'spear', 'cannon', 'saber', 'hammer', 'repeater']) {
+      const item: PickupItem = {
+        id: s.nextId(), kind: 'weapon', weaponId: id,
+        gx: p.gx, gy: p.gy, spawnTick: -1, alive: true,
+      };
+      s.pickups.push(item);
+      p.pickupTargetId = item.id;
+      sys.tick(s);
+      const kinds = p.weapons.map((w) => w.spec.kind).sort();
+      expect(kinds).toEqual(['melee', 'ranged']);
+      expect(p.weapon!.spec.name).toBe(id); // and the clicked weapon is always in hand
+      s.pickups.length = 0; // clear the outgoing drops so the next click is unambiguous
+    }
+  });
+
+  it('fills a FREE slot rather than overwriting the only weapon a seat carries', () => {
+    // Not reachable through `resolveLoadout`, which always fills both slots — but a seat
+    // built from a config that skipped it holds one weapon, and overwriting that weapon
+    // with the other kind would leave the player with one again, just a different one.
+    const s = createGameState(CFG);
+    const p = s.players[0]!;
+    p.weapons.length = 1; // gun only
+    p.activeSlot = 0;
+    p.weapon = p.weapons[0]!;
+
+    dropOnPlayer(s, { kind: 'weapon', weaponId: 'hammer' });
+    p.pickupTargetId = s.pickups[0]!.id;
+    sys.tick(s);
+
+    expect(p.weapons.map((w) => w.spec.kind)).toEqual(['ranged', 'melee']);
+    expect(p.activeSlot).toBe(1);
+    expect(s.pickups).toHaveLength(0); // nothing displaced, so nothing dropped
+  });
+
   it('collects a weapon click from beyond pickupRadius but within the wider lootRevealRadius', () => {
     const s = createGameState(CFG);
     const p = s.players[0]!;

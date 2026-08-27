@@ -12,5 +12,5 @@
 export { FRAME_UV, hexToRgb } from './filters/shaderPrelude';
 export { VignetteFilter, ChromaticAberrationFilter } from './filters/screenFx';
 export { OutlineFilter, DissolveFilter, HeatHazeFilter } from './filters/skinFx';
-export { EnergyShieldFilter } from './filters/shieldFx';
+export { EnergyShieldFilter, SHELL_ASPECT, SHELL_SURFACE, SHELL_CLEARANCE } from './filters/shieldFx';
 export { SceneLightFilter, MAX_SCENE_LIGHTS, flatReference, FLAT_KEY, type SceneLightOptions, type SceneLight } from './filters/litFx';

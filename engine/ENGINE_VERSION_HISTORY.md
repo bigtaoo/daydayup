@@ -879,3 +879,44 @@ can reach and which changes every damage number after it. Configs with an ABSENT
 `loadout` (the starter pair) or two resolvable ids are byte-identical on the PvE side.
 EVERY PvP arena stream diverges: the landing kit is a different array, so both seats
 spawn with a second (scaled) weapon and a reachable parry.
+
+v46: a weapon pickup replaces the slot holding the SAME KIND of weapon, not
+whichever slot happened to be active, from a live report — *"拾起武器时，只替换角色
+身上对应的武器。不能拾取一把刀，却把枪换掉了，导致玩家拿着两把刀"*.
+
+`PickupSystem.applyWeapon` overwrote `p.activeSlot` unconditionally. That is not a
+preference call, it silently destroyed the invariant v45 had just been bumped to
+establish. design/03's ranged-vs-melee trade-off is *"both halves are always OWNED;
+neither is ever both-at-once"*, and both spawn paths go out of their way to
+guarantee it — `resolveLoadout` fills every free slot from `PLAYER_BASE.startWeapons`
+with a kind the staged list does not cover, and `landing_basic` is an authored
+gun+melee pair. The starter loadout is `[BLASTER_SIM (ranged), SABER_SIM (melee)]`
+with slot 0 active, so the FIRST floor weapon of a run, if it was melee, left the
+player carrying two melee weapons: no gun, no route back to one, and the swap button
+toggling between two of the same thing. The reported case is the default case.
+
+`slotFor(p, kind)` now picks the slot by `w.spec.kind === kind` — deliberately the
+same test `resolveLoadout` fills slots with, so the two cannot drift apart. Two
+fallbacks, in order: a FREE slot when the player carries fewer than
+`PLAYER_BASE.weaponSlots` (a seat built from a config that skipped `resolveLoadout`
+holds one weapon, and filling the gap beats overwriting the only weapon it has),
+then `p.activeSlot` when both slots are somehow the other kind — unreachable through
+any shipped spawn path, but a total function is one less thing to reason about.
+
+The picked-up weapon still becomes the ACTIVE one (`p.activeSlot = slot`), which is
+the half of the old behaviour that was never broken: the player clicked this item, so
+the weapon they chose belongs in their hands. The change is only WHICH slot is
+overwritten.
+
+Coverage: `engine/systems/pickups.test.ts` asserts both directions (a melee pickup
+while the gun is active, a ranged pickup while the saber is active), that the weapon
+which drops back to the floor is the displaced one and not the active one, the free-
+slot fallback, and the invariant itself as a property — a run of six mixed pickups
+must hold one of each kind after every single one. Three of the four fail against the
+old `p.activeSlot`, checked by mutation rather than assumed.
+
+Replay impact: any stream that picks a weapon up whose kind differs from the active
+slot's diverges from the pickup onward — a different slot is overwritten, a different
+weapon drops to the floor (a new PickupItem with a different `weaponId` at the same
+position), and every damage number after it differs. Streams that only ever pick up
+the active slot's own kind, or never pick a weapon up at all, are byte-identical.

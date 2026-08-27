@@ -1539,7 +1539,7 @@ All copy translated across all 8 locales (new `hud.downed.*`/`hud.ally.reviving`
 `pvpPreview.*`/`settings.controlLayout*` keys). 667 client tests (was 582) + `tsc --noEmit`
 clean; 1234 across the repo. `npm run check` green on all five packages throughout.
 
-- **5.4 Fidelity roadmap** (01): ✅ post-processing (bloom-lite, vignette, chromatic aberration, hit-stop, screen-shake) + particles shipped 2026-07-26; ✅ ALL FOUR custom shaders (energy shield, outline/hit-flash, dissolve-on-death, heat-haze) shipped 2026-08-03 — `game/fx/filters.ts`'s `EnergyShieldFilter`/`OutlineFilter`/`DissolveFilter`/`HeatHazeFilter`, wired into `Actor`'s live shield/hit/death/burn signals (see 01's milestone 5 for the per-shader detail, including the `Scene.reconcile` architecture change dissolve needed and a Pixi-uniform-precision gotcha worth knowing before writing another filter). Shipped clean against today's placeholder art — the "shaders read best after real art lands" sequencing note from earlier turned out not to matter. The shield has since been rewritten three times against user reports (2026-08-24 un-squashed to a true circle, 2026-08-25 ring → filled disc, **2026-08-26 disc → a shell with real thickness whose back hemisphere the body occludes**, plus an elastic dent on impact, refraction, a generated membrane tile and a radial cull that pays for most of the added cost — see "The shell gets thickness" at the end of this file), and **2026-08-26 gained its `shield_break` EXIT** (`EnergyShieldFilter.shatter` — the shell expands, its wall thins to a rim, its scales are thrown outward off the membrane tile's own extinction order and its light collapses to exactly nothing over 200 ms, with the fragments in `ParticleSystem.shieldShards`; see "The shell gets an exit" at the end of this file). Nothing open in the shield.
+- **5.4 Fidelity roadmap** (01): ✅ post-processing (bloom-lite, vignette, chromatic aberration, hit-stop, screen-shake) + particles shipped 2026-07-26; ✅ ALL FOUR custom shaders (energy shield, outline/hit-flash, dissolve-on-death, heat-haze) shipped 2026-08-03 — `game/fx/filters.ts`'s `EnergyShieldFilter`/`OutlineFilter`/`DissolveFilter`/`HeatHazeFilter`, wired into `Actor`'s live shield/hit/death/burn signals (see 01's milestone 5 for the per-shader detail, including the `Scene.reconcile` architecture change dissolve needed and a Pixi-uniform-precision gotcha worth knowing before writing another filter). Shipped clean against today's placeholder art — the "shaders read best after real art lands" sequencing note from earlier turned out not to matter. The shield has since been rewritten four times against user reports (2026-08-24 un-squashed to a true circle, 2026-08-25 ring → filled disc, **2026-08-26 disc → a shell with real thickness whose back hemisphere the body occludes**, plus an elastic dent on impact, refraction, a generated membrane tile and a radial cull that pays for most of the added cost — see "The shell gets thickness" at the end of this file; **2026-08-27 the membrane became visible and the circle became an ellipse** — the tile is real hexagons on a triangular lattice, the pattern ADDS off a zero-mean encoding instead of multiplying a ~0.11 interior that had nothing to scale, it rides a MIX as well as an additive term so it is not arithmetically absent over the hero's near-white body, and the shell is 1.30 taller than wide and pulled in to clear the body by one gun-diameter — see "The membrane was multiplying nothing" at the end of this file), and **2026-08-26 gained its `shield_break` EXIT** (`EnergyShieldFilter.shatter` — the shell expands, its wall thins to a rim, its scales are thrown outward off the membrane tile's own extinction order and its light collapses to exactly nothing over 200 ms, with the fragments in `ParticleSystem.shieldShards`; see "The shell gets an exit" at the end of this file). Two things are open in the shield, both trades the 2026-08-27 reports chose rather than defects: the character's mounted weapons reach ~2.5 body radii and so sit OUTSIDE a 1.53-radius surface (they always have — the "encloses the WHOLE character, mounted weapon included" claim was never true at any of this shell's sizes, and enclosing them needs roughly double the current shell), and the side/vertical clearance is necessarily asymmetric because the body is round while the shell is an ellipse.
 
   **Update (2026-08-03): ✅ dynamic lighting (milestone 2) shipped too — Phase 5.4 has no open items left.** Unblocked the same day 5.3 (above) closed the "AI art is placeholder" question milestone 2 named as its own blocker. Ships as a scoped equivalent of design/01's literal "normal maps + point lights + lightmap (multiply composite)" text, not that architecture verbatim: no `RenderTexture`/deferred-lighting layer exists anywhere in this codebase (confirmed by search) and building one would be disproportionate infrastructure for a fixed-camera 2D sim — so this is a fifth custom `Filter` instead, following the exact template the four milestone-5 shaders above already established. New `NormalLitFilter` (`game/fx/filters.ts`) derives a fake per-pixel normal straight from a sprite's OWN rendered luminance/alpha via 4 neighbour-texel taps — the same technique `OutlineFilter` already uses for alpha-edge detection, just reading brightness into a Sobel-style gradient instead of alpha into an edge test — so **no normal-map texture asset exists or is needed anywhere**, matching the "own the code, own the cost" discipline `VignetteFilter`/`HeatHazeFilter` already established. Shaded against a fixed key light (direction reused from `RoomBuilder.ts`'s existing "lit from upper-left" pillar-shading convention, design/10 2026-08-02) plus a small dynamic point-light registry, `game/fx/lighting.ts`'s `LightRegistry` — the local player's own persistent glow (re-registered each frame, `Game.ts`'s `updateFx` wrapper) and transient muzzle-flash/impact bursts (`FxController.flash` now registers a matching light, no new call site). Deliberately NOT a full lightmap: a handful of lights, linear-scanned, nearest/brightest wins — this project never needs more than that at once. `Actor.ts`'s `litFilter` is built eagerly (unlike the four conditionally-active shaders) and always first in `applySkinFilters()`'s list, since every actor is always lit; `Scene.applyLighting()` shades every live Actor (not bullets/pickups) once per render frame. No `ENGINE_VERSION` impact (render-only, design/08). 18 new tests (`lighting.test.ts`'s full `LightRegistry` coverage, plus extensions to `Actor.test.ts`/`Scene.test.ts`/`FxController.test.ts`), `tsc --noEmit` clean, browser-verified live (visible directional shading on both the player and enemy sprites, a `flash()` call live-confirmed to brighten a nearby enemy's `uPointIntensity` and decay back to 0, zero console errors).
 - **5.5 WeChat device verification** (04): lowest base library, low-end frame rate, real-device touch, WebGL2 fallback — none of this can be done without a physical device or WeChat DevTools install, neither found on this machine as of 2026-07-27.
@@ -7502,3 +7502,143 @@ The diagnostic question when a call-site mutant survives is not "which assertion
 **Five rounds, 79 mutant runs over 51 distinct mutants, 2 controls intact, 8 survivors — 7 now
 tests, 1 an equivalent mutant.** Round 1's survivors were all about the code; every survivor after
 it was about which content the tests run on. Client workspace: **3,450 tests** (3,415 + 35).
+
+## The membrane was multiplying nothing, and a knife replaced the gun (2026-08-27, client + engine)
+
+Two reports in one pass, and the shield half turned out to be three separate defects wearing one
+symptom.
+
+**1. *"护盾中间的6边形看不清，看起来还是一个圈"* — and the tile was never hexagons.**
+`shieldScales.ts` generated a *jittered* Voronoi over a squashed metric, with a test literally
+named *"scales, not a honeycomb"*. The lattice is triangular now and the jitter is gone, because
+the Voronoi diagram of a triangular lattice **is** a tiling of regular hexagons — the generator
+below it is unchanged, only the point placement moved. 7 x 8 cells, so rowSpacing/colSpacing =
+0.875 against the ideal `sqrt(3)/2` = 0.866, i.e. 1% off regular; `CELLS_Y` must stay EVEN or the
+alternating half-column row offset seams at `v = 0`, which is the one failure mode the hex lattice
+has that the jittered grid did not.
+
+**2. The pattern MULTIPLIED the shell, and the shell's interior is deliberately ~0.11.** This is
+the one that made it invisible. `front = density * (1.0 + k * tile)` has nothing to scale where
+`density` is small, and `density` is small on purpose across the whole middle of the disc — it
+composites over `Entity`'s ground shadow and must not hide it. Measured on a rendered frame at
+gameplay zoom (the GLSL interpreter driven over a 160 x 160 grid, the real tile bilinearly sampled,
+composited over stone): **9 of 255** across the interior, reaching ~30 only in a thin annulus at
+`b ~ 0.8`. A pattern in one ring with nothing inside it is a circle, which is exactly what the
+report saw. It ADDS now, and the tile bakes a **zero-mean signed** encoding to pay for it:
+`r = 0.5 + 0.5 * p` with `p`'s mean subtracted by measurement rather than tuned, so over any patch
+of membrane the added light sums to zero and the shadow budget the multiplicative form was
+protecting is still met — the lines are bright because the cells around them gave it up. Verified
+on the live frame, not argued: mean luma over the shell disc is **83.0 with the membrane and 83.2
+without**. Because the mean is subtracted rather than assumed, `p` comes out asymmetric on its own
+— floor ~-0.2, peak +1.0 — which is the right shape for thin bright lines on a dark field.
+
+**3. *"之前调试效果时看起来挺好的，和游戏里实际表现差别有点大"*, and this is the general lesson.**
+Every term this shader has is ADDITIVE, and the middle of a shielded actor is not empty — it is the
+hero's near-white silver body, over which the shell's own green and blue are **already past 255**
+before the pattern is added. An additive membrane there is not dim, it is arithmetically ABSENT,
+whatever its gain. That is the whole of the isolation-vs-game gap: the debug view had a dark
+background where the game has a bright character. The fix is a term with no ceiling — the pattern's
+positive half now rides the `veil` MIX toward the shield colour, so a cell border reads as a cyan
+hex line laid over the character at any base brightness (over body art, R goes 219 -> 162).
+**Any per-actor overlay in this project needs at least one non-additive channel or it cannot be
+seen on the thing it is drawn over.**
+
+**4. *"现在的盾是正圆的，改成椭圆或许更好，高度上长一点，看起来会更有立体感"* — and the comment
+that had made it a circle over-claimed.** The 2026-08-24 pass un-squashed this shell on the grounds
+that *"a sphere reads as a circle from every angle"* (`Entity.SHADOW_SQUASH`'s doc comment). True
+of a real camera; this renderer is not one. Read off the live game: the world grid is drawn
+UNSQUASHED (`layers.world.scale` is 2.667 in **both** axes) while wall heights are extruded 1:1
+upward in px (`wallGeometry.ts`'s `WALL_H_*` are "in world px"), and round things *on the ground*
+get a separate stylistic 0.62. Taken as a projection that is the shear `(x, y, z) -> (x, y - z)`,
+under which a sphere's silhouette is an ellipse with semi-axes 1 and `sqrt(2)` — so a circle was
+never the projection-consistent shape for "a sphere around the body". Shipped at **1.30**, not the
+derived 1.414, chosen on rendered frames: past ~1.35 the shell reads as a pod the character is
+suspended in, and the hero's drawn silhouette is 74.7 x 32 world px — **2.3x wider than tall** — so
+every unit of extra height is empty egg. The stronger argument for going taller at all is this
+scene's own grammar rather than the shear: ground-round is squashed to 0.62, which makes a circle
+the ambiguous middle and taller-than-wide the only round silhouette in the scene that cannot be
+read as lying flat.
+
+**Nothing in the GLSL says "ellipse".** The shader is isotropic in region-normalized `uv`, so the
+shape comes entirely from `Actor` sizing `filterArea` to a rect of aspect `SHELL_ASPECT` — every
+constant the measured suite pins (`SHELL_R`, `THICKNESS`, `CULL`) is in that normalized space and
+unchanged, which is why the ellipse cost one line. The flip side is that a square `filterArea`
+silently reverts the circle with no other symptom, so the composition is pinned in two places. The
+ONE thing that did need compensating is the membrane: a hex cell inherits the region's stretch like
+everything else, and a hexagon stretched 1.3x vertically stops reading as one — which would have
+spent finding (1) to buy this one.
+
+**5. *"整体缩小一点，类似紧贴着角色，稍微留点缝隙即可。缝隙的大小我感觉和图里枪的直径差不多即可"* —
+and measuring the gun is what kept the answer from being twice as big.** The weapon SPRITE is
+24 x 16.35 world px, but the art inside it is mostly transparent margin: `renderer.extract.pixels`
+on the texture puts its opaque box at 15.75 x 8.55, so the gun you can see is **8.55 world px**
+thick. Against the body's drawn radius of 16 (the body bone's sprite is 32 x 32 world px, spikes
+included, on the same centre `Actor` centres the region on) that is `SHELL_CLEARANCE` = **0.53**
+body radii. Taking the sprite rect instead would have set it at 1.02 and left the shell almost
+exactly where it already was — the same class of trap as the `BODY_FILL` mismatch the 2026-08-19
+volume pass found: an art number read off the frame rect instead of off the pixels. The surface
+went 1.87 -> **1.53** body radii, and `Actor` no longer hand-sets `filterArea` to `radiusPx * 3` —
+it inverts the shader's own geometry to solve for the region that puts the surface at the stated
+clearance, so retuning the surface or the aspect keeps the clearance meaning what it says.
+
+Three consequences worth stating rather than burying:
+- The clearance is uniform on ONE axis only and no constant fixes that: the body is round (32 x 32)
+  while the shell is a 1.30 ellipse, so 8.5 px at the sides is necessarily ~15.8 above and below.
+  It is set on the SIDES — the tight axis, where "稍微留点缝隙" is a clearance that must not close
+  up. Trading them off means lowering `SHELL_ASPECT`.
+- Resizing the shell resizes the HEXAGONS. `MEMBRANE_TILE` is in normalized units, so the cell
+  count across the shell is fixed and a smaller shell means smaller cells: this pass took 20 px
+  cells to 16 and a 4 px border line to 3.3, quietly undoing part of finding (1). Scaling the tile
+  by the same 0.82 (0.80 -> 0.66) put both back. Anything that resizes the shell comes back here.
+- Net cost is NEGATIVE. The aspect change alone is +30% region area (shared by all four per-actor
+  filters); the clearance pass more than pays it back, and the region ends at 78.7 x 102.3 against
+  the original 96 x 96 square — **13% smaller than before either change**.
+
+**6. *"拾起武器时，只替换角色身上对应的武器。不能拾取一把刀，却把枪换掉了，导致玩家拿着两把刀"*
+(`ENGINE_VERSION` 46).** `PickupSystem.applyWeapon` overwrote `p.activeSlot` unconditionally, and
+that is a broken invariant rather than a preference. `design/03`'s ranged-vs-melee trade-off is
+*"both halves are always OWNED; neither is ever both-at-once"*, and v45 was bumped specifically to
+establish it — `resolveLoadout` fills every free slot from `PLAYER_BASE.startWeapons` with a kind
+the staged list does not cover, and `landing_basic` is an authored gun+melee pair. The starter
+loadout is `[BLASTER_SIM (ranged), SABER_SIM (melee)]` with slot 0 active, so **the reported case is
+the default case**: the first floor weapon of a run, if melee, left the player with two melee
+weapons, no gun, no route back to one, and a swap button toggling between two of the same thing.
+`slotFor(p, kind)` matches on `w.spec.kind === kind` — deliberately the same test `resolveLoadout`
+fills slots with, so the two cannot drift — then falls back to a FREE slot (a seat built past
+`resolveLoadout` carries one weapon, and filling the gap beats overwriting the only weapon it has)
+and finally to `activeSlot`. The picked-up weapon still becomes active, which is the half of the old
+behaviour that was never broken: the player clicked this item.
+
+**Two tests were PASSING on a stale literal, and that is its own finding.** Both `filters.test.ts`
+and `shieldShellModel.test.ts` computed the shell's size as `SHELL_R * 6 / sqrt(2)` — the old
+`radiusPx * 3` region copied out of `Actor.ts` as a bare `6` — so after the shrink they went on
+reporting **1.87 body radii for a shell that had become 1.53**, green. Both derive the region width
+from the exported constants now. The same audit killed a claim that was in `design/01`, in
+`README.md` and in both of those tests: that the envelope "encloses the WHOLE character, mounted
+weapon included". It never has, at any size this shell has been — the hero's weapons reach ~2.5
+body radii out against a 1.53 surface, and enclosing them needs a shell twice this one, i.e. the
+opposite of report (5).
+
+Coverage: 8 new tests. Shield tile — the signed zero-mean contract to within one 8-bit step, the
+line/cell area split, the on-tile line width, and REGULAR HEXAGONS asserted on the LATTICE (every
+cell has exactly six neighbours within 2% of each other and a >1.3x gap before the seventh, which is
+what makes the cells hexagons; painted bounding boxes would pass for any roundish blob). Shell model
+— the membrane carried ACROSS the face rather than tracking `density`, the tile's neutral being
+exactly the bare wall in both directions, the hex line drawn ON opaque art, isotropy in normalized
+`uv`, the region's aspect becoming the screen ellipse, and the membrane's aspect compensation.
+`Actor` — the region's aspect equalling `SHELL_ASPECT` at three actor sizes, and the surface landing
+exactly `1 + SHELL_CLEARANCE` body radii out (the one piece of real arithmetic in the chain: `Actor`
+inverting the shader's geometry, which the shader suite structurally cannot see because it measures
+normalized `dist`). Pickup — both directions of the kind match, the dropped weapon being the
+displaced one and not the active one, the free-slot fallback, and the invariant as a PROPERTY: six
+mixed pickups, one of each kind after every single one.
+
+Mutation-checked rather than assumed, six mutants, six killed: `slotFor` forced to `activeSlot`
+(3 engine tests), a square `filterArea` (1), `SHELL_ASPECT = 1.0` (2), the dropped membrane aspect
+compensation (1), `filterArea` reverted to `radiusPx * 3` (1), and the `sqrt(2)` dropped from
+`Actor`'s inversion (1).
+
+Open, and named rather than left implicit: the character's weapons sit outside the shell (~2.5 body
+radii against a 1.53 surface) — pre-existing, now more conspicuous, and fixing it means roughly
+doubling the shell; and the side/vertical clearance asymmetry above is geometric, resolvable only by
+lowering `SHELL_ASPECT`. Neither is a defect in this pass; both are the trade the reports asked for.

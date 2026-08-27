@@ -2,6 +2,7 @@ import { Graphics, Rectangle } from 'pixi.js';
 import type { DamageType, StatusState } from '@dd/engine';
 import { THEME, ELEMENT_COLORS } from '../theme';
 import { ActorFilters } from './actorFilters';
+import { SHELL_ASPECT, SHELL_SURFACE, SHELL_CLEARANCE } from '../fx/filters';
 import { Entity } from './Entity';
 import { Skin } from './Skin';
 import { drawHealthBar } from './healthBar';
@@ -203,12 +204,32 @@ export class Actor extends Entity {
     this.skin.setFacing(0, 0, 0, 'idle');
     const restBounds = this.skin.view.getLocalBounds();
     const filterCenterY = restBounds.y + restBounds.height / 2;
-    const filterHalfExtent = radiusPx * 3;
+    // TALLER THAN WIDE, by exactly `SHELL_ASPECT` (2026-08-27). The shield shell takes its
+    // screen aspect from this region and nothing else — its shader works in region-normalized
+    // uv, so a circle there is an ellipse of the region's aspect — which is why `SHELL_ASPECT`
+    // is imported rather than restated: a square region here silently turns the shell back into
+    // the true circle it was until today, with no other symptom. See that constant's own comment
+    // for why a circle was never the projection-consistent shape for a sphere in this renderer.
+    //
+    // The other three per-actor filters share this rect. None of them reads a centre, so none
+    // changes shape: `OutlineFilter` only ever steps by a texel, and `DissolveFilter`'s noise
+    // grid and `HeatHazeFilter`'s stripe frequency stretch vertically with the region — both are
+    // isotropic noise by intent, and a 1.3x stretch of a death dissolve is not a cue anything
+    // reads. What they DO pay is the region's extra area.
+    // Solved from the shell's own geometry rather than hand-set (it was a flat `radiusPx * 3`
+    // until 2026-08-27): the shader draws its surface at `SHELL_SURFACE` in normalized `dist`,
+    // which lands at `SHELL_SURFACE / sqrt(2) * regionWidth` px from the centre, and what we
+    // actually want to state is where that surface sits relative to the BODY —
+    // `SHELL_CLEARANCE` body radii outside it. Inverting that is this line. Expressing the
+    // intent and deriving the region keeps the three of them from drifting: retune the surface
+    // or the aspect and the clearance stays what it says it is.
+    const filterHalfX = (radiusPx * (1 + SHELL_CLEARANCE) * Math.SQRT2) / (2 * SHELL_SURFACE);
+    const filterHalfY = filterHalfX * SHELL_ASPECT;
     this.skin.view.filterArea = new Rectangle(
-      -filterHalfExtent,
-      filterCenterY - filterHalfExtent,
-      filterHalfExtent * 2,
-      filterHalfExtent * 2,
+      -filterHalfX,
+      filterCenterY - filterHalfY,
+      filterHalfX * 2,
+      filterHalfY * 2,
     );
 
     this.weaponGfx.zIndex = 1;
