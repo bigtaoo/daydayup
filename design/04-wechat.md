@@ -34,7 +34,7 @@ The WeChat mini-game is the most constrained target: **no DOM, no full window/do
 >
 > The asset half is likewise verified against the real base library: both entries call the
 > same `render/preloadArt.ts`, `client/public` is mirrored into `platforms/wechat` by
-> package, the main package sits at **3.31 MB / 4.00 MB** with four subpackages, and every
+> package, the main package sits at **3.41 MB / 4.00 MB** with four subpackages, and every
 > registered texture of every loader resolves (checklist item 9). `wx.loadSubpackage` works,
 > and the runtime reports WebGL2.
 >
@@ -179,9 +179,10 @@ standard subpackage has **no individual cap**, an *independent* subpackage ≤ 4
 whole game ≤ **30 MB**. `design/ROADMAP`'s parked note recorded only the 4 MB figure, which
 made the situation look more constrained than it is.
 
-Where it stands after the 2026-08-25 downsampling pass: **main 3.31 MB / 4.00 MB**, of which
-0.90 MB is `js/game.js`, plus four subpackages totalling 0.64 MB (3.95 MB for the whole game
-against the 30 MB ceiling). `client/public` went from **13.66 MB to 3.20 MB** — and the
+Where it stands after the 2026-08-25 downsampling pass and the 2026-08-27 audio pass:
+**main 3.41 MB / 4.00 MB**, of which
+0.90 MB is `js/game.js` and 0.09 MB the 46 SFX assets added on 2026-08-27 (`design/11`), plus
+four subpackages totalling 0.64 MB (4.05 MB for the whole game against the 30 MB ceiling). `client/public` went from **13.66 MB to 3.20 MB** — and the
 dominant cause was never the missing atlas packer `12` had queued, it was source art
 shipped at authoring resolution. `orb-core`'s four bone textures were 1254² while the two
 sibling characters on the same rig had been 256² for months (a 30× difference per file),
@@ -193,7 +194,7 @@ The gate enforces RAW bytes deliberately. WeChat's docs state the 4 MB limit wit
 whether it is measured before or after the package is compressed; community write-ups say
 after, and DevTools' upload dialog is the only authoritative answer. Until someone reads
 that number, raw is the conservative direction — the gate prints the compressed estimate
-(~3.31 MB) alongside it so the real headroom is visible without depending on the guess.
+(~2.77 MB) alongside it so the real headroom is visible without depending on the guess.
 
 Bundle boundaries live in `client/src/render/assetPacks.json`, read by three consumers (the
 runtime's `assetManifest.ts`, the build's `wechatAssetSync.mjs`, and the gate).
@@ -475,7 +476,13 @@ than to what a browser does — that difference is the whole point, since a brow
 is exactly what let both bugs ship.
 
 1. [x] Integrate the adapter; the `client` build boots in WeChat DevTools and renders the tilted-view scene. *(2026-07-07, base lib 3.15.2)*
-2. [ ] Verify on the **lowest target base-library version** (not just the latest).
+2. [ ] Verify on the **lowest target base-library version** (not just the latest). Two audio
+   questions ride on this one: whether `wx.createWebAudioContext()` exists at all (the synth
+   voice table degrades to a true no-op if not, `design/11`), and — new as of 2026-08-27 —
+   whether the 46 shipped **MP3** cue assets decode there. MP3 was chosen partly because
+   `design/11` calls it universally decoded on WeChat, but every measurement behind that
+   choice was taken in a desktop browser. Nothing loads the assets yet, so this is not
+   blocking; it becomes blocking the moment the cue catalogue lands.
 3. [ ] Real-device check: frame rate on low-end Android (target 30 vs 60 fps). **Now readable
    without tooling** (2026-08-25): the frame watchdog (`render/qualityWatchdog.ts`) drops the
    renderer to the low tier after ~6s below 25fps, and the settings screen then reads
@@ -500,7 +507,7 @@ is exactly what let both bugs ship.
    quality setting to `HIGH` and then to `LOW` in the same room and compare.
 7. [x] Real art loads at all, through the real loaders, in a runtime with none of the
    browser globals. *(2026-08-25, `wechatAssetLoad.test.ts` — simulation, not a device.)*
-8. [x] The package fits: main 3.31 MB / 4.00 MB plus four subpackages, gated by
+8. [x] The package fits: main 3.41 MB / 4.00 MB plus four subpackages, gated by
    `npm run check:wechatpackage`. *(2026-08-25)*
 9. [x] **Real art loads in the real simulator.** *(2026-08-25, DevTools 2.01.2510280, appid
    `wx25a3b18a3e83ffce`.)* Everything item 7 could only simulate is now confirmed against the

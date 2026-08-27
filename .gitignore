@@ -26,3 +26,8 @@ server/data/
 Thumbs.db
 .vscode/
 .idea/
+
+# Python (tools/audio-pipeline is the only Python in the repo — see its README)
+__pycache__/
+*.py[cod]
+venv/

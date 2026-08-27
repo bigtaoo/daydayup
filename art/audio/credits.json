@@ -1,0 +1,697 @@
+{
+ "note": "Licence and provenance for every audio asset under client/public/audio/. A credits screen should read this rather than hard-coding names. Upstream pack details (download URL, sha256) are in packs.json.",
+ "all_sources_license": "CC0-1.0 (every pack; commercial use, attribution not required)",
+ "cues": [
+  {
+   "cue": "impact",
+   "variants": 5,
+   "total_bytes": 5716,
+   "gate_class": "sfx",
+   "rationale": "Tightest length match to the 70 ms synth voice; most consistent set.",
+   "files": [
+    {
+     "file": "audio/impact_00.mp3",
+     "source": "impact-sounds/impactGeneric_light_000.ogg",
+     "source_pack": "impact-sounds",
+     "source_channels": 2,
+     "sample_rate": 22050,
+     "duration_ms": 93.0,
+     "trimmed_ms": 45.6,
+     "capped_ms": 0.0,
+     "gain_applied_db": -13.52,
+     "bytes": 1042
+    },
+    {
+     "file": "audio/impact_01.mp3",
+     "source": "impact-sounds/impactGeneric_light_001.ogg",
+     "source_pack": "impact-sounds",
+     "source_channels": 2,
+     "sample_rate": 22050,
+     "duration_ms": 117.5,
+     "trimmed_ms": 0.0,
+     "capped_ms": 0.0,
+     "gain_applied_db": -13.76,
+     "bytes": 1146
+    },
+    {
+     "file": "audio/impact_02.mp3",
+     "source": "impact-sounds/impactGeneric_light_002.ogg",
+     "source_pack": "impact-sounds",
+     "source_channels": 2,
+     "sample_rate": 24000,
+     "duration_ms": 139.6,
+     "trimmed_ms": 0.0,
+     "capped_ms": 0.0,
+     "gain_applied_db": -13.79,
+     "bytes": 1152
+    },
+    {
+     "file": "audio/impact_03.mp3",
+     "source": "impact-sounds/impactGeneric_light_003.ogg",
+     "source_pack": "impact-sounds",
+     "source_channels": 2,
+     "sample_rate": 24000,
+     "duration_ms": 138.0,
+     "trimmed_ms": 0.0,
+     "capped_ms": 0.0,
+     "gain_applied_db": -13.63,
+     "bytes": 1200
+    },
+    {
+     "file": "audio/impact_04.mp3",
+     "source": "impact-sounds/impactGeneric_light_004.ogg",
+     "source_pack": "impact-sounds",
+     "source_channels": 2,
+     "sample_rate": 24000,
+     "duration_ms": 140.3,
+     "trimmed_ms": 0.0,
+     "capped_ms": 0.0,
+     "gain_applied_db": -13.82,
+     "bytes": 1176
+    }
+   ]
+  },
+  {
+   "cue": "deflect",
+   "variants": 5,
+   "total_bytes": 6338,
+   "gate_class": "sfx",
+   "rationale": "Bright and sharp, closest to the 700-1400 Hz triangle shipping now.",
+   "files": [
+    {
+     "file": "audio/deflect_00.mp3",
+     "source": "impact-sounds/impactMetal_light_000.ogg",
+     "source_pack": "impact-sounds",
+     "source_channels": 2,
+     "sample_rate": 24000,
+     "duration_ms": 186.6,
+     "trimmed_ms": 164.9,
+     "capped_ms": 0.0,
+     "gain_applied_db": -13.28,
+     "bytes": 1320
+    },
+    {
+     "file": "audio/deflect_01.mp3",
+     "source": "impact-sounds/impactMetal_light_001.ogg",
+     "source_pack": "impact-sounds",
+     "source_channels": 2,
+     "sample_rate": 24000,
+     "duration_ms": 141.0,
+     "trimmed_ms": 110.8,
+     "capped_ms": 0.0,
+     "gain_applied_db": -13.29,
+     "bytes": 1152
+    },
+    {
+     "file": "audio/deflect_02.mp3",
+     "source": "impact-sounds/impactMetal_light_002.ogg",
+     "source_pack": "impact-sounds",
+     "source_channels": 2,
+     "sample_rate": 22050,
+     "duration_ms": 130.7,
+     "trimmed_ms": 105.1,
+     "capped_ms": 0.0,
+     "gain_applied_db": -12.86,
+     "bytes": 1172
+    },
+    {
+     "file": "audio/deflect_03.mp3",
+     "source": "impact-sounds/impactMetal_light_003.ogg",
+     "source_pack": "impact-sounds",
+     "source_channels": 2,
+     "sample_rate": 16000,
+     "duration_ms": 261.7,
+     "trimmed_ms": 220.3,
+     "capped_ms": 0.0,
+     "gain_applied_db": -12.76,
+     "bytes": 1548
+    },
+    {
+     "file": "audio/deflect_04.mp3",
+     "source": "impact-sounds/impactMetal_light_004.ogg",
+     "source_pack": "impact-sounds",
+     "source_channels": 2,
+     "sample_rate": 22050,
+     "duration_ms": 119.1,
+     "trimmed_ms": 94.3,
+     "capped_ms": 0.0,
+     "gain_applied_db": -12.95,
+     "bytes": 1146
+    }
+   ]
+  },
+  {
+   "cue": "shield.break",
+   "variants": 5,
+   "total_bytes": 7704,
+   "gate_class": "sfx",
+   "rationale": "Best objective fit in the pack; glass is the enemy material.",
+   "files": [
+    {
+     "file": "audio/shield-break_00.mp3",
+     "source": "impact-sounds/impactGlass_heavy_000.ogg",
+     "source_pack": "impact-sounds",
+     "source_channels": 2,
+     "sample_rate": 16000,
+     "duration_ms": 241.2,
+     "trimmed_ms": 0.0,
+     "capped_ms": 0.0,
+     "gain_applied_db": -10.75,
+     "bytes": 1620
+    },
+    {
+     "file": "audio/shield-break_01.mp3",
+     "source": "impact-sounds/impactGlass_heavy_001.ogg",
+     "source_pack": "impact-sounds",
+     "source_channels": 2,
+     "sample_rate": 16000,
+     "duration_ms": 205.1,
+     "trimmed_ms": 223.9,
+     "capped_ms": 0.0,
+     "gain_applied_db": -10.87,
+     "bytes": 1548
+    },
+    {
+     "file": "audio/shield-break_02.mp3",
+     "source": "impact-sounds/impactGlass_heavy_002.ogg",
+     "source_pack": "impact-sounds",
+     "source_channels": 2,
+     "sample_rate": 16000,
+     "duration_ms": 246.0,
+     "trimmed_ms": 1.2,
+     "capped_ms": 0.0,
+     "gain_applied_db": -10.91,
+     "bytes": 1440
+    },
+    {
+     "file": "audio/shield-break_03.mp3",
+     "source": "impact-sounds/impactGlass_heavy_003.ogg",
+     "source_pack": "impact-sounds",
+     "source_channels": 2,
+     "sample_rate": 24000,
+     "duration_ms": 171.5,
+     "trimmed_ms": 0.0,
+     "capped_ms": 0.0,
+     "gain_applied_db": -10.9,
+     "bytes": 1728
+    },
+    {
+     "file": "audio/shield-break_04.mp3",
+     "source": "impact-sounds/impactGlass_heavy_004.ogg",
+     "source_pack": "impact-sounds",
+     "source_channels": 2,
+     "sample_rate": 16000,
+     "duration_ms": 247.7,
+     "trimmed_ms": 151.5,
+     "capped_ms": 0.0,
+     "gain_applied_db": -10.59,
+     "bytes": 1368
+    }
+   ]
+  },
+  {
+   "cue": "muzzle",
+   "variants": 5,
+   "total_bytes": 13161,
+   "gate_class": "sfx",
+   "rationale": "A laser shot is the right semantics for orb-core weapon fire. Capped hard: the pack has no 60 ms shot, and this is the most-emitted cue in the game.",
+   "files": [
+    {
+     "file": "audio/muzzle_00.mp3",
+     "source": "sci-fi-sounds/laserRetro_000.ogg",
+     "source_pack": "sci-fi-sounds",
+     "source_channels": 1,
+     "sample_rate": 48000,
+     "duration_ms": 140.0,
+     "trimmed_ms": 3.5,
+     "capped_ms": 91.9,
+     "gain_applied_db": -17.55,
+     "bytes": 2784
+    },
+    {
+     "file": "audio/muzzle_01.mp3",
+     "source": "sci-fi-sounds/laserRetro_001.ogg",
+     "source_pack": "sci-fi-sounds",
+     "source_channels": 1,
+     "sample_rate": 48000,
+     "duration_ms": 140.0,
+     "trimmed_ms": 3.7,
+     "capped_ms": 91.8,
+     "gain_applied_db": -17.5,
+     "bytes": 3024
+    },
+    {
+     "file": "audio/muzzle_02.mp3",
+     "source": "sci-fi-sounds/laserRetro_002.ogg",
+     "source_pack": "sci-fi-sounds",
+     "source_channels": 1,
+     "sample_rate": 44100,
+     "duration_ms": 140.0,
+     "trimmed_ms": 4.8,
+     "capped_ms": 110.3,
+     "gain_applied_db": -17.49,
+     "bytes": 2869
+    },
+    {
+     "file": "audio/muzzle_03.mp3",
+     "source": "sci-fi-sounds/laserRetro_003.ogg",
+     "source_pack": "sci-fi-sounds",
+     "source_channels": 1,
+     "sample_rate": 48000,
+     "duration_ms": 140.0,
+     "trimmed_ms": 3.2,
+     "capped_ms": 111.6,
+     "gain_applied_db": -17.57,
+     "bytes": 2688
+    },
+    {
+     "file": "audio/muzzle_04.mp3",
+     "source": "sci-fi-sounds/laserRetro_004.ogg",
+     "source_pack": "sci-fi-sounds",
+     "source_channels": 1,
+     "sample_rate": 22050,
+     "duration_ms": 140.0,
+     "trimmed_ms": 26.8,
+     "capped_ms": 111.9,
+     "gain_applied_db": -17.48,
+     "bytes": 1796
+    }
+   ]
+  },
+  {
+   "cue": "clash",
+   "variants": 3,
+   "total_bytes": 4011,
+   "gate_class": "sfx",
+   "rationale": "23-55 ms against a 50 ms target, centroid 3786-7920 vs 4894 - the tightest match found for any cue. Two bullets annihilating is a sharp tick.",
+   "files": [
+    {
+     "file": "audio/clash_00.mp3",
+     "source": "interface-sounds/tick_001.ogg",
+     "source_pack": "interface-sounds",
+     "source_channels": 1,
+     "sample_rate": 48000,
+     "duration_ms": 9.9,
+     "trimmed_ms": 13.3,
+     "capped_ms": 0.0,
+     "gain_applied_db": -14.18,
+     "bytes": 1248
+    },
+    {
+     "file": "audio/clash_01.mp3",
+     "source": "interface-sounds/tick_002.ogg",
+     "source_pack": "interface-sounds",
+     "source_channels": 1,
+     "sample_rate": 44100,
+     "duration_ms": 22.5,
+     "trimmed_ms": 0.7,
+     "capped_ms": 0.0,
+     "gain_applied_db": -13.77,
+     "bytes": 1356
+    },
+    {
+     "file": "audio/clash_02.mp3",
+     "source": "interface-sounds/tick_004.ogg",
+     "source_pack": "interface-sounds",
+     "source_channels": 1,
+     "sample_rate": 22050,
+     "duration_ms": 54.8,
+     "trimmed_ms": 0.0,
+     "capped_ms": 0.0,
+     "gain_applied_db": -14.13,
+     "bytes": 1407
+    }
+   ]
+  },
+  {
+   "cue": "status.shock",
+   "variants": 4,
+   "total_bytes": 4887,
+   "gate_class": "sfx",
+   "rationale": "10-30 ms electric ticks. The semantically obvious zap runs 1019-1228 ms and clips - far too long for a status tick that repeats.",
+   "files": [
+    {
+     "file": "audio/status-shock_00.mp3",
+     "source": "interface-sounds/glitch_001.ogg",
+     "source_pack": "interface-sounds",
+     "source_channels": 2,
+     "sample_rate": 24000,
+     "duration_ms": 20.0,
+     "trimmed_ms": 0.0,
+     "capped_ms": 0.0,
+     "gain_applied_db": -19.19,
+     "bytes": 984
+    },
+    {
+     "file": "audio/status-shock_01.mp3",
+     "source": "interface-sounds/glitch_002.ogg",
+     "source_pack": "interface-sounds",
+     "source_channels": 2,
+     "sample_rate": 44100,
+     "duration_ms": 30.0,
+     "trimmed_ms": 0.0,
+     "capped_ms": 0.0,
+     "gain_applied_db": -19.02,
+     "bytes": 1617
+    },
+    {
+     "file": "audio/status-shock_02.mp3",
+     "source": "interface-sounds/glitch_003.ogg",
+     "source_pack": "interface-sounds",
+     "source_channels": 2,
+     "sample_rate": 48000,
+     "duration_ms": 10.0,
+     "trimmed_ms": 0.0,
+     "capped_ms": 0.0,
+     "gain_applied_db": -19.68,
+     "bytes": 1296
+    },
+    {
+     "file": "audio/status-shock_03.mp3",
+     "source": "interface-sounds/glitch_004.ogg",
+     "source_pack": "interface-sounds",
+     "source_channels": 2,
+     "sample_rate": 22050,
+     "duration_ms": 22.9,
+     "trimmed_ms": 0.0,
+     "capped_ms": 0.0,
+     "gain_applied_db": -19.25,
+     "bytes": 990
+    }
+   ]
+  },
+  {
+   "cue": "status.chill",
+   "variants": 4,
+   "total_bytes": 4173,
+   "gate_class": "sfx",
+   "rationale": "111-125 ms against a 120 ms target. Glass is both the right timbre for ice and the world's own material.",
+   "files": [
+    {
+     "file": "audio/status-chill_00.mp3",
+     "source": "interface-sounds/glass_002.ogg",
+     "source_pack": "interface-sounds",
+     "source_channels": 1,
+     "sample_rate": 24000,
+     "duration_ms": 89.2,
+     "trimmed_ms": 36.1,
+     "capped_ms": 0.0,
+     "gain_applied_db": -19.91,
+     "bytes": 888
+    },
+    {
+     "file": "audio/status-chill_01.mp3",
+     "source": "interface-sounds/glass_003.ogg",
+     "source_pack": "interface-sounds",
+     "source_channels": 1,
+     "sample_rate": 24000,
+     "duration_ms": 123.3,
+     "trimmed_ms": 0.4,
+     "capped_ms": 0.0,
+     "gain_applied_db": -20.0,
+     "bytes": 1488
+    },
+    {
+     "file": "audio/status-chill_02.mp3",
+     "source": "interface-sounds/glass_005.ogg",
+     "source_pack": "interface-sounds",
+     "source_channels": 1,
+     "sample_rate": 22050,
+     "duration_ms": 51.0,
+     "trimmed_ms": 59.8,
+     "capped_ms": 0.0,
+     "gain_applied_db": -20.02,
+     "bytes": 885
+    },
+    {
+     "file": "audio/status-chill_03.mp3",
+     "source": "interface-sounds/glass_006.ogg",
+     "source_pack": "interface-sounds",
+     "source_channels": 1,
+     "sample_rate": 24000,
+     "duration_ms": 58.9,
+     "trimmed_ms": 51.9,
+     "capped_ms": 0.0,
+     "gain_applied_db": -19.97,
+     "bytes": 912
+    }
+   ]
+  },
+  {
+   "cue": "status.poison",
+   "variants": 2,
+   "total_bytes": 2435,
+   "gate_class": "sfx",
+   "rationale": "Centroid 249 and 178 Hz against a 236 Hz target - the closest spectral match in the whole corpus. Only two files exist at this pitch.",
+   "files": [
+    {
+     "file": "audio/status-poison_00.mp3",
+     "source": "digital-audio/lowRandom.ogg",
+     "source_pack": "digital-audio",
+     "source_channels": 1,
+     "sample_rate": 24000,
+     "duration_ms": 260.0,
+     "trimmed_ms": 180.2,
+     "capped_ms": 108.4,
+     "gain_applied_db": -20.02,
+     "bytes": 1368
+    },
+    {
+     "file": "audio/status-poison_01.mp3",
+     "source": "digital-audio/lowDown.ogg",
+     "source_pack": "digital-audio",
+     "source_channels": 1,
+     "sample_rate": 22050,
+     "duration_ms": 260.0,
+     "trimmed_ms": 219.7,
+     "capped_ms": 303.9,
+     "gain_applied_db": -20.2,
+     "bytes": 1067
+    }
+   ]
+  },
+  {
+   "cue": "death",
+   "variants": 3,
+   "total_bytes": 19989,
+   "gate_class": "feedback",
+   "rationale": "Centroid 2223-3386 vs 3556. Capped: an unbounded 2 s tail times many simultaneous deaths is mud.",
+   "files": [
+    {
+     "file": "audio/death_00.mp3",
+     "source": "sci-fi-sounds/explosionCrunch_000.ogg",
+     "source_pack": "sci-fi-sounds",
+     "source_channels": 1,
+     "sample_rate": 44100,
+     "duration_ms": 600.0,
+     "trimmed_ms": 28.0,
+     "capped_ms": 149.4,
+     "gain_applied_db": -16.12,
+     "bytes": 6699
+    },
+    {
+     "file": "audio/death_01.mp3",
+     "source": "sci-fi-sounds/explosionCrunch_001.ogg",
+     "source_pack": "sci-fi-sounds",
+     "source_channels": 1,
+     "sample_rate": 44100,
+     "duration_ms": 600.0,
+     "trimmed_ms": 7.1,
+     "capped_ms": 749.7,
+     "gain_applied_db": -16.11,
+     "bytes": 7194
+    },
+    {
+     "file": "audio/death_02.mp3",
+     "source": "sci-fi-sounds/explosionCrunch_002.ogg",
+     "source_pack": "sci-fi-sounds",
+     "source_channels": 1,
+     "sample_rate": 24000,
+     "duration_ms": 600.0,
+     "trimmed_ms": 29.4,
+     "capped_ms": 626.3,
+     "gain_applied_db": -16.13,
+     "bytes": 6096
+    }
+   ]
+  },
+  {
+   "cue": "pickup.heal",
+   "variants": 2,
+   "total_bytes": 4159,
+   "gate_class": "feedback",
+   "rationale": "Centroid 643 and 808 Hz bracket the 823 Hz target.",
+   "files": [
+    {
+     "file": "audio/pickup-heal_00.mp3",
+     "source": "digital-audio/pepSound3.ogg",
+     "source_pack": "digital-audio",
+     "source_channels": 1,
+     "sample_rate": 24000,
+     "duration_ms": 300.0,
+     "trimmed_ms": 133.0,
+     "capped_ms": 11.1,
+     "gain_applied_db": -16.87,
+     "bytes": 1920
+    },
+    {
+     "file": "audio/pickup-heal_01.mp3",
+     "source": "digital-audio/pepSound5.ogg",
+     "source_pack": "digital-audio",
+     "source_channels": 1,
+     "sample_rate": 22050,
+     "duration_ms": 300.0,
+     "trimmed_ms": 207.3,
+     "capped_ms": 119.6,
+     "gain_applied_db": -16.81,
+     "bytes": 2239
+    }
+   ]
+  },
+  {
+   "cue": "pickup.weapon",
+   "variants": 2,
+   "total_bytes": 8136,
+   "gate_class": "feedback",
+   "rationale": "Chosen on semantics - it is a weapon pickup. Brighter than the chime it replaces, which suits the moment.",
+   "files": [
+    {
+     "file": "audio/pickup-weapon_00.mp3",
+     "source": "rpg-audio/drawKnife3.ogg",
+     "source_pack": "rpg-audio",
+     "source_channels": 2,
+     "sample_rate": 32000,
+     "duration_ms": 278.7,
+     "trimmed_ms": 197.9,
+     "capped_ms": 0.0,
+     "gain_applied_db": -5.49,
+     "bytes": 3816
+    },
+    {
+     "file": "audio/pickup-weapon_01.mp3",
+     "source": "rpg-audio/drawKnife2.ogg",
+     "source_pack": "rpg-audio",
+     "source_channels": 2,
+     "sample_rate": 48000,
+     "duration_ms": 300.0,
+     "trimmed_ms": 94.8,
+     "capped_ms": 51.0,
+     "gain_applied_db": 6.46,
+     "bytes": 4320
+    }
+   ]
+  },
+  {
+   "cue": "pickup.material",
+   "variants": 2,
+   "total_bytes": 5943,
+   "gate_class": "feedback",
+   "rationale": "handleCoins at 7194 Hz against a 6573 Hz target, and it is literally the sound of handling loot. Its sibling file clips; this one does not.",
+   "files": [
+    {
+     "file": "audio/pickup-material_00.mp3",
+     "source": "rpg-audio/handleCoins2.ogg",
+     "source_pack": "rpg-audio",
+     "source_channels": 2,
+     "sample_rate": 44100,
+     "duration_ms": 260.0,
+     "trimmed_ms": 56.5,
+     "capped_ms": 21.7,
+     "gain_applied_db": -7.82,
+     "bytes": 4407
+    },
+    {
+     "file": "audio/pickup-material_01.mp3",
+     "source": "interface-sounds/pluck_002.ogg",
+     "source_pack": "interface-sounds",
+     "source_channels": 2,
+     "sample_rate": 24000,
+     "duration_ms": 98.5,
+     "trimmed_ms": 66.1,
+     "capped_ms": 0.0,
+     "gain_applied_db": -19.54,
+     "bytes": 1536
+    }
+   ]
+  },
+  {
+   "cue": "pickup.buff",
+   "variants": 2,
+   "total_bytes": 4500,
+   "gate_class": "feedback",
+   "rationale": "Centroid 1316 and 1230 Hz against a 1427 Hz target.",
+   "files": [
+    {
+     "file": "audio/pickup-buff_00.mp3",
+     "source": "digital-audio/phaserUp7.ogg",
+     "source_pack": "digital-audio",
+     "source_channels": 2,
+     "sample_rate": 16000,
+     "duration_ms": 295.7,
+     "trimmed_ms": 70.0,
+     "capped_ms": 0.0,
+     "gain_applied_db": -10.05,
+     "bytes": 2340
+    },
+    {
+     "file": "audio/pickup-buff_01.mp3",
+     "source": "digital-audio/phaserUp6.ogg",
+     "source_pack": "digital-audio",
+     "source_channels": 2,
+     "sample_rate": 16000,
+     "duration_ms": 261.1,
+     "trimmed_ms": 78.5,
+     "capped_ms": 0.0,
+     "gain_applied_db": -10.39,
+     "bytes": 2160
+    }
+   ]
+  },
+  {
+   "cue": "wave-clear",
+   "variants": 1,
+   "total_bytes": 2664,
+   "gate_class": "feedback",
+   "rationale": "Centroid 1536 vs 1278 Hz. Fires once per wave, so one variant.",
+   "files": [
+    {
+     "file": "audio/wave-clear_00.mp3",
+     "source": "interface-sounds/confirmation_004.ogg",
+     "source_pack": "interface-sounds",
+     "source_channels": 1,
+     "sample_rate": 24000,
+     "duration_ms": 420.0,
+     "trimmed_ms": 14.6,
+     "capped_ms": 55.8,
+     "gain_applied_db": -13.92,
+     "bytes": 2664
+    }
+   ]
+  },
+  {
+   "cue": "win",
+   "variants": 1,
+   "total_bytes": 3420,
+   "gate_class": "feedback",
+   "rationale": "Centroid 1356 Hz against a 1318 Hz target - near exact. Pizzicato strings over the chiptune and sax alternatives, which fight the flat-cel world.",
+   "files": [
+    {
+     "file": "audio/win_00.mp3",
+     "source": "music-jingles/jingles_PIZZI00.ogg",
+     "source_pack": "music-jingles",
+     "source_channels": 2,
+     "sample_rate": 16000,
+     "duration_ms": 489.8,
+     "trimmed_ms": 4.4,
+     "capped_ms": 0.0,
+     "gain_applied_db": -3.46,
+     "bytes": 3420
+    }
+   ]
+  }
+ ],
+ "kept_on_synth": {
+  "status.burn": "No fire crackle exists in any of the six packs. The closest family (scratch) centres at 6401-12076 Hz against a 2389 Hz target - a high scrape, not a burn - and every other candidate is a 5-second engine loop. The synth voice is a filtered noise burst at 1800 Hz, which is already the right shape."
+ },
+ "processing": "mono + trim(-40 dBFS, faded) + per-cue duration cap (faded) + smallest-bytes MP3 encode among bandwidth-legal sample rates + peak-match to the replaced synth cue. See tools/audio-pipeline/process_all.py."
+}
