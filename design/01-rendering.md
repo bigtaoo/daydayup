@@ -1357,6 +1357,16 @@ unclipped one: worst per-pixel step 36.16 -> 18.51, median 24.23 -> 14.65. What 
 there was a neighbouring room's rubble speck painted 400 px from home. The 14-18 luma that remains is
 the floor swatch's own texel variation.
 
+**And it was finally LOOKED at, 2026-08-27.** Every number above is a luma measurement taken through
+`extract.pixels`, because the tab that could have shown a picture never composited — the clip shipped
+without a frame behind it, which this repo's own rules say is not finished. Frames now exist: the
+floor reads continuous standing in a doorway (including across two DISTRICT seams, where the two
+floors are treated differently and a clip edge would show first), and continuous across all 60 rooms
+in a single whole-map frame. The measurement was right. See ROADMAP's "The camera list, answered" for
+the frames, for the four other verdicts it collected, and for the harness note that matters more than
+any of them: a backgrounded Chrome tab gets FROZEN, which leaves synchronous JS working perfectly
+while every `await` hangs and `drawImage(app.canvas)` silently returns the last presented frame.
+
 Two mutation batteries, each judging every mutant twice — against the new test file alone and against
 the pre-existing suite with that file parked. The first (26 mutants over the call chain:
 `floorClip.ts`, `floorRender.ts`, `groundLayer.ts`, `groundCulling.ts`, `RoomBuilder.ts`) came back

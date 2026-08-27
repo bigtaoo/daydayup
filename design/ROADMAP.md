@@ -856,6 +856,13 @@ them; see the two sections below.
    return in every version before 2026-08-26, and nothing tested it there — the low tier is the
    DEVICE tier, so the machine that most needs the cull was the only one that would not get it.
    design/01 has all three, and what shape of blind spot each one was.
+   **The camera half is now closed for the floor clip too (2026-08-27)**: the clip's doorway
+   evidence had been luma-only, and the five places the sweeps named had still never been seen. All
+   six were shot and all six came back acceptable — see "The camera list, answered" below, which
+   also carries the frozen-tab harness lesson that made them obtainable. It left ONE new open item,
+   an authored-content question rather than a render one: **the map's twelve deliberately-empty grid
+   cells read as hard-edged black rectangles with no rim** from the room beside them, wherever the
+   void is east or west of the player rather than south of it.
 2. ~~`arena_prototype_60` stays in `ARENA_CATALOG` as the audit's before-picture. Dropping it,
    with its pinned defect tests, is a follow-up.~~ **Done 2026-08-26.**
 3. ~~`groundLayer.ts`'s arena branch still paints a whole-world floor because the OLD map's rooms
@@ -1029,6 +1036,9 @@ still never exceed 2 (an L corner, as designed). The four are PILLARS, at exactl
 standing in its middle is behind all four. A pillar fades WHOLE where a wall keeps its face, so
 whether that reads as four columns going hazy or as a hole in the room is a camera question; the
 number is recorded with the shape that produces it rather than smoothed into a looser bound.
+**Answered 2026-08-27: four columns going hazy.** Each of the four keeps a legible silhouette
+outline while its body ghosts out, and a fifth pillar two cells west stays solid in the same frame
+as the contrast — see "The camera list, answered" below.
 
 **3. This map hides the player three times as often as a PvE floor.** 16.7% of standable floor
 leaves the character at least half hidden and 11.6% leaves them completely invisible before the
@@ -6949,3 +6959,98 @@ the fully-outside fast path survived again.
 One harness note from it: the dry pass earned its keep. `floorPartition.ts` is CRLF while the working
 tree file the mutant was written against is not, so the one multi-line find-string matched **0x** —
 silently skipping a mutant is exactly how a battery reports a clean sweep it never ran.
+
+## The camera list, answered (2026-08-27, docs + harness only)
+
+Two passes had ended with the same sentence written in two places. `arenaWallCoverage.test.ts`'s
+header: *"Deliberately NOT here, and the reason this file exists before a browser is opened: whether
+any of it LOOKS right. This is the list of places to point a camera at."* And the floor clip that
+shipped the same week rested on a **29.98 luma** doorway step measured through `extract.pixels`,
+because the tab that could have shown it a picture never composited. Both were correct as far as they
+went, and neither had a frame behind it. This pass took the frames.
+
+**Nothing here changes shipped behaviour** — it is the verdict on five recorded questions, one new
+finding, and the harness that made the frames obtainable at all on this machine.
+
+### The floor clip: invisible, at three scales
+
+`floorClip.ts` cuts every room's mottle at its own walls, and the whole design of `CLIP_FEATHER_PX`
+exists so the cut lands under stone rather than across a doorway. Looked at:
+
+- **Standing in a doorway** (`terraces_r0c0` → `r0c1`, and two district seams — `terraces` →
+  `cisterns`, `cisterns` → `atrium`): the floor reads continuous across the passage. No edge, no
+  band, no tonal step at the room boundary, including where two DISTRICTS with different floor
+  treatments meet.
+- **At map scale** (the whole 3872x3040 px arena in one frame, scene-light filter detached and the
+  cull defeated): 60 rooms of floor with no visible per-room seam anywhere.
+
+The luma measurement was right. This is the first time anyone has seen the map whole.
+
+### The five places the sweeps named
+
+Coordinates came out of `arenaWallCoverage.test.ts`'s own sweeps — a temporary dump of
+`SWEPT`/`LAUNCH.passages`/the shading sweep to JSON, then the camera pointed at each. That matters
+more than it sounds: "the worst spot" is a fact the sweep already knows and the eye cannot find.
+
+| # | What the sweep said | What the camera says |
+|---|---|---|
+| 1 | 4 pillars fade at once, 1 sample of 72,686, `terraces_r1c0` | Four columns going hazy. Outlines survive the fade; a solid pillar two cells away is in frame as the contrast. Not a hole. |
+| 2 | `cisterns_r1c3` hides the player on 44% of its own floor | Character fully visible; the faded block reads as a translucent slab over the stone behind it. |
+| 3 | The deep pass drops the front FACE too, 1.07% of the map | Reads as a **glass block** — a hard-edged translucent rectangle. Acceptable, and the one verdict with a reservation. |
+| 4 | The worst shading block is 208 floats, a 672x64 KERB | Three south spans, no seam between them, ramp smooth. |
+| 5 | 10 passages keep a strip of a run, worst 40 px of 160 | Imperceptible standing in the doorway. |
+
+### The one new finding: the twelve empty cells are holes with no rim
+
+`arena_launch` is a 9x8 grid with 60 rooms in it, so twelve cells are deliberately empty. Nobody had
+judged them. From the room next door they read as a **hard-edged flat black rectangle**, ~20% of a
+16:9 frame, with no rim, no depth cue and no far side.
+
+What makes the difference is which SIDE of the player the void is on, and it is a geometry fact
+rather than a taste one: a void to the SOUTH is seen across a wall run's top surface and dark face,
+which reads correctly as "beyond the wall" (`terraces` r5c3 is the good case). A void to the EAST or
+WEST is seen across the *end* of a wall column, which has no face — the black simply starts. Sampled
+luma agrees with the eye about the direction but not the magnitude: pixels under luma 8 are 1.2% of
+the frame beside a void against 0.24-0.34% in three control rooms, ~4x, because the void is not pure
+black but the dark backdrop. **The frame is the evidence here, not the fraction** — this is the same
+"a number can be right about the direction and useless about the reading" trap the shell-overlay pass
+recorded, arriving from the other side.
+
+Not fixed in this pass: it is a content/art call (give the void's vertical edges the same treatment
+as the map's own outer boundary, author a pit rim, or accept it), and the map's outer silhouette has
+exactly the same property, so "fix the twelve" is not obviously the right scope.
+
+### What it cost to get a frame out of this machine, which is the durable half
+
+`perf/README.md` already records that the in-app browser pane sometimes never composites and that
+real Chrome is the way out. This session found the failure BEYOND that one, and it is worse because
+it degrades silently:
+
+- **A background tab in real Chrome gets FROZEN, and a frozen page runs synchronous JS perfectly
+  while never resolving a single async task.** `window.__game` is there, `extract.canvas` returns a
+  correct frame, arithmetic works — and every `await fetch` hangs until the 45 s CDP timeout, with
+  the tool reporting "the renderer may be frozen or unresponsive" as if it were a guess. It is not a
+  guess. It also cannot be worked around by reloading, by changing port, by `Access-Control-Allow-
+  Private-Network`, or by a synchronous `XMLHttpRequest` (which fails outright, network being gone).
+- **`captureVisibleTab` on such a tab returns a STALE composite, confidently.** The first screenshot
+  of the session showed the main menu; every screenshot after the run started showed the same main
+  menu, pixel for pixel, while the canvas held the arena. The tell is that it is *identical*, not
+  that it is wrong.
+- **`drawImage(app.canvas)` is dead there too** — `preserveDrawingBuffer` is false and a frozen tab
+  never presents, so it copies the last presented frame. It reported the same mean luma with the
+  world container hidden as with it visible. This repo's own rule caught it: the control fired, the
+  zero diff was not a result.
+- **What works: `renderer.extract.canvas({target: app.stage, frame: new Rectangle(0,0,W,H)})`.** It
+  re-renders the scene graph rather than reading the swap chain, so it is immune to all of the above
+  — and its control (hide `layers.world`, extract, restore) moved mean luma 44.25 → 15.51 → 44.25.
+- **Two channels get the bytes out.** A synchronous blob `<a download>` click works exactly ONCE per
+  origin before Chrome's automatic-download block latches, which is enough for one montage and no
+  more. The channel that actually held: **the in-app Browser pane's tab is not frozen** (`fetch`
+  completes in 5 ms there), so it can drive the same game and POST frames to a local sink. Use it
+  for capture even when real Chrome is the right surface for GPU timing.
+
+Two smaller ones worth not rediscovering: driving `beginArenaDemoRun()` directly leaves the menu
+container drawn over the world (the phase says `playing` and the frame says main menu — go through
+`mainMenu.onPlay()` → `modeSelect.onSolo()` → `forge.onStart()` instead), and teleporting the player
+around the map to move the camera wakes room after room until a single evaluation runs past the tool
+timeout — reload between batches rather than accumulating.

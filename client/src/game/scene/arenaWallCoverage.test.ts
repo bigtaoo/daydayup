@@ -50,6 +50,25 @@
  *
  * Deliberately NOT here, and the reason this file exists before a browser is opened: whether any
  * of it LOOKS right. This is the list of places to point a camera at.
+ *
+ * **The camera was pointed at all five, 2026-08-27** (real Chrome, `?arena=arena_launch`, the
+ * coordinates taken from this file's own sweeps rather than hunted for by hand — ROADMAP's "The
+ * camera list, answered" has the method and the frames). Every one came back acceptable:
+ *
+ *   1. The 2x2 colonnade at `terraces_r1c0` (336, 536) reads as **four columns going hazy**, not as
+ *      a hole: each pillar keeps a legible silhouette outline while its body ghosts out, and an
+ *      un-faded pillar two cells away is right there in frame as the contrast.
+ *   2. `cisterns_r1c3`, the worst-hidden room, keeps the character fully visible; the wall block it
+ *      fades reads as a translucent slab over the solid stone behind it.
+ *   3. The deep pass (front FACE dropped too) reads as a glass block with hard edges — the one
+ *      verdict with a reservation, since a ghosted rectangle is more "pane" than "x-rayed stone".
+ *   4. The 208-float 672x64 KERB draws its three south spans with no seam between them.
+ *   5. Passage 63's residual 40 px of 160 is imperceptible standing in the doorway.
+ *
+ * What the same pass DID find is not in this file's remit and is recorded in ROADMAP: the map's 12
+ * deliberately-empty grid cells read as hard-edged black rectangles (~20% of a 16:9 frame from the
+ * room next door) wherever the void is EAST or WEST of the player, because only a void to the SOUTH
+ * puts a wall run's top surface and dark face between the player and it.
  */
 import { describe, it, expect } from 'vitest';
 import { Graphics, GraphicsContextSystem } from 'pixi.js';

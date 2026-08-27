@@ -640,3 +640,53 @@ frame reader is guilty until a control fires.** In order:
 - What finally worked: a throwaway **non**-render-group Container, `culled` cleared on every piece,
   `frame` offset by that container's own `getLocalBounds()`, and the clip arm measured TWICE so the
   twin proves the reader is live.
+
+## The frame that had never been looked at, and the tab that was frozen (2026-08-27)
+
+Not a measurement — a harness note, filed here because the previous seven entries all worked around
+the same surface and this is the failure mode UNDER the one they document. The task was to point a
+camera at what the clip and the arena audit had only ever measured; ROADMAP's "The camera list,
+answered" has the verdicts. This is what it took to get a picture at all.
+
+**The tab is not slow. It is FROZEN.** Chrome freezes a background tab, and a frozen page runs
+injected synchronous JS perfectly while never resolving a single async task. `window.__game` is
+there, arithmetic works, `renderer.extract.canvas` returns a correct frame — and every `await fetch`
+hangs until the CDP call times out at 45 s, with the tool reporting "the renderer may be frozen or
+unresponsive" in a tone that reads like a guess. It is not a guess. None of these help: reloading,
+switching origin (`localhost` → `127.0.0.1`), moving the sink to another port, adding
+`Access-Control-Allow-Private-Network`, or a synchronous `XMLHttpRequest` (that one fails outright —
+the network is gone, not slow). It also arrives PART WAY THROUGH a session: the same POST that
+worked six times in a row stopped working, which is exactly how it presents as "the code broke".
+
+**So the diagnostic order is: does a trivial sync expression return? Does a trivial `await`?** If
+sync works and async does not, stop debugging the page.
+
+The rest of the readers, in the order they lied:
+
+- **`captureVisibleTab` returns a stale composite, and the tell is that it is IDENTICAL.** Screenshot
+  after screenshot came back as the main menu, pixel for pixel, while the canvas held the arena.
+- **`drawImage(app.canvas)` copies the last PRESENTED frame**, because `preserveDrawingBuffer` is
+  false and a frozen tab never presents. Same mean luma with `layers.world` hidden as with it
+  visible — the fourth time this file has recorded that reader failing, now with a fourth cause.
+- **What works: `renderer.extract.canvas({ target: app.stage, frame: new Rectangle(0, 0, W, H) })`.**
+  It re-renders the scene graph instead of reading the swap chain, so freezing cannot touch it. Its
+  control (hide `layers.world`, extract, restore) moved mean luma 44.25 → 15.51 → 44.25.
+
+**Getting the bytes out of a frozen page.** A synchronous blob `<a download>` click works exactly
+ONCE, then Chrome's automatic-download block latches for the origin and the second click is silently
+dropped — enough for a single montage, not for a session. What held instead: **the in-app Browser
+pane's tab is NOT frozen** (a `fetch` to a local sink completes in 5 ms there), so it can drive the
+same dev server and POST frames while real Chrome stays the surface for GPU timing. `Rectangle` is
+reachable without importing Pixi — `app.screen.constructor`.
+
+**Two game-side traps on the way to a frame.** Calling `beginArenaDemoRun()` directly leaves the menu
+container drawn on top: the phase says `playing`, the frame says main menu, and the world is
+rendering underneath it the whole time. Go through `mainMenu.onPlay()` → `modeSelect.onSolo()` →
+`forge.onStart()`. And teleporting the player around the map to move the camera wakes room after room
+until one evaluation runs past the tool timeout; reload between batches. For a whole-map frame, clear
+`culled` recursively AND detach `layers.lit.filters` — otherwise the scene-light pass paints
+everything outside the player's own room black and the result looks like a broken build.
+
+Where to take the coordinates from: the sweeps already know them. `arenaWallCoverage.test.ts`'s
+`SWEPT` / `LAUNCH.passages` / shading sweep were dumped to JSON from a temporary `it()` block, and
+the camera pointed at the worst sample of 72,686 rather than at whatever was on screen.
