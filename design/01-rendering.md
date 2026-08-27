@@ -1251,6 +1251,41 @@ every catalog map through the real `FxController.updateCamera` (worst 76,646 flo
 13%). Its control runs the other way — pull the camera back past the map and every piece must come
 back, or a `groundPieceBounds` returning empty rects would pass everything.
 
+### Both of those experiments came back no, and the floor is half spill (2026-08-27)
+
+Ran. Neither hypothesis survived, and the third thing found on the way is the one with a fix behind
+it. Full numbers, controls and traps in `perf/README.md`'s sixth measurement; the shape of it:
+
+- **The `layers.lit` filter is not the amplifier.** Ground on/off costs 1.92 ms with the scene-light
+  pass mounted and 1.80 ms with `lit.filters = []` — unchanged within noise. The filter itself is
+  0.4 ms, which is 10% of the frame and is what the render-quality tiers are actually aimed at.
+- **The cost is not the area it covers.** `layers.ground` is a render-group root, so scaling it
+  about the screen origin shrinks its covered pixels with byte-identical submission. A quarter of
+  the viewport costs *more* than the whole one (2.51 vs 1.71 ms); a sixteenth still costs 0.92.
+  The same session's calibration — ten full-screen alpha quads, ~0.10 ms each, linear in area —
+  proves the timer resolves area-proportional fill when it is there.
+- So the elimination now reads: not vertex work, not triangle count, not draw calls, not the passes
+  above it, not covered area. What is left is per-primitive fragment work on thousands of small
+  blended primitives, whose triangle setup and 2x2-quad overshading do not shrink with the area
+  they land on. Stated as what the elimination leaves, not as a measured mechanism.
+- **What pays: 45% of the floor is rooms the camera is not in.** A mottle blob reaches 460 world px
+  past its room — ~1970 screen px at zoom 4.29 — so `groundCulling.ts` correctly keeps four dark and
+  four light halves on screen where one room is visible. The room you stand in paints 1.00 of the
+  viewport per stage; its three neighbours paint 1.31 (dark) and 1.91 (light) more, all spill.
+  Hiding just those six pieces: 4.07 to 3.32 ms. The stage split agrees from the other side — the
+  additive light half is 1.03 ms and the dark half 0.68, while the region grid (0.05) and the room
+  light pool (0.03) are free.
+
+The fix that follows is a geometry clip on each room's dark/light `Graphics`, the same shape as
+`arenaWallCoverage.test.ts`'s wall clip, with 0.75 ms as the number to beat.
+
+One method note that outranks all of the above, because everything measured before it was suspect:
+**carry a twin control arm.** Two arms that apply no change at all, at opposite ends of the arm
+order. A mid-session run had two identically-rendering arms read 3.556 and 5.985 ms while each
+sample looked tight; a backgrounded tab degrades gradually over an hour and never says so. If the
+twins disagree by more than ~0.1 ms the run is junk, and a `captureScreenshot` that times out is the
+same tab saying the same thing.
+
 ## A pillar is a sprite now (2026-08-20)
 
 The last item on the scene queue: *"pillars read as smooth cans next to the walls"* — their cap was

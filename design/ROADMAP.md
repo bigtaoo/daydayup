@@ -828,6 +828,20 @@ them; see the two sections below.
    free, it cuts ~6.5 MB of batch buffer, and it un-blocks a per-camera gate — but the arena's
    dominant cost is **open again**, with a named next sweep in `perf/README.md`'s fifth
    measurement. Still genuinely open too: the on-device run (design/04).
+   **Both of that sweep's experiments came back no (2026-08-27), and the third answer is the useful
+   one.** The `layers.lit` filter is not the amplifier (ground on/off is 1.92 ms with the scene-light
+   pass and 1.80 ms without it), and the cost is not the area it covers either — scaling the ground
+   render group to a quarter of the viewport, with byte-identical submission, costs MORE than the
+   whole one (2.51 vs 1.71 ms), against a same-session calibration where ten full-screen alpha
+   quads cost 0.10 ms each and scale linearly. What does pay: **45% of the floor is rooms the camera
+   is not in.** A mottle blob reaches 460 world px past its room, so four dark and four light halves
+   are legitimately on screen where one room is visible, and the three neighbours paint 1.31 and
+   1.91 extra viewports of spill; hiding them takes the frame 4.07 -> 3.32 ms. The next fix is a
+   geometry clip on each room's overlay halves — the shape `arenaWallCoverage.test.ts` already used
+   for the walls — with 0.75 ms as the number to beat. `perf/README.md`'s sixth measurement has the
+   numbers, plus the control that made them quotable: a TWIN arm that applies no change, because a
+   backgrounded tab degrades over an hour and a run where two identical arms read 3.556 and 5.985 ms
+   is the only warning you get.
 2. ~~`arena_prototype_60` stays in `ARENA_CATALOG` as the audit's before-picture. Dropping it,
    with its pinned defect tests, is a follow-up.~~ **Done 2026-08-26.**
 3. ~~`groundLayer.ts`'s arena branch still paints a whole-world floor because the OLD map's rooms

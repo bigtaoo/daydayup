@@ -426,3 +426,129 @@ Two smaller notes from the same sitting, both of which cost a round:
   `setTimeout` fallback is clamped there. It does not corrupt the reading, but it caps a single
   console evaluation at roughly six samples before the CDP call times out — accumulate into a handle
   on `window` and call a stepper repeatedly rather than writing one long loop.
+
+## The sixth measurement: both open experiments, and half the floor is rooms you are not in (2026-08-27)
+
+The fifth measurement ended by naming two experiments and left the arena's dominant cost
+unattributed. Both were run. The answers are, in order: **no**, **no**, and a third thing nobody
+asked for that is worth more than either.
+
+### The twin control, and why every number below has one
+
+Mid-session this harness produced a run where two arms that render **identically** — one that
+touched nothing, one that assigned an identity matrix to `layers.ground` — read **3.556 and 5.985
+ms**, while each individual sample looked tight. Everything measured up to that point was suspect,
+including a clean-looking non-overlapping result that had already been half-written into a finding.
+
+So every run below carries a **twin**: two arms, `A` and `A2`, that apply no change at all, run at
+opposite ends of the arm order. If their medians disagree by more than ~0.1 ms the run is thrown
+away, not interpreted. This is cheaper than it sounds (one extra arm) and it is the only thing that
+distinguishes "the effect is small" from "the instrument has drifted". The twins for the four runs
+quoted here agreed to **0.023 / 0.035 / 0.011 / 0.115 ms**.
+
+Two related surface notes:
+
+- **A backgrounded tab degrades over the session, not all at once.** The first twenty minutes after
+  a load gave bands of ±0.04 ms; an hour in, the same arms read 11-45 ms per frame with zero
+  disjoint samples — plausible-looking numbers, entirely junk. A `location.reload()` restored it.
+- **A `Page.captureScreenshot` that times out is the tell.** When the tab has gone too deep to
+  measure, the renderer also stops compositing, and asking for a screenshot returns a CDP timeout
+  rather than an image. Check that before trusting a late-session number.
+
+### The fill calibration this pass was missing
+
+Ten full-screen 50%-alpha quads, own render group, on the stage **outside** the filter chain:
+
+```
+base            4.31 ms
++10 quads       5.34 ms     -> ~0.10 ms per full-screen alpha-blended layer at 1920x855
++10 quads @1/4 area   +0.29 ms      (linear in area, as fill must be)
++10 quads @1/16 area  +0.15 ms
+```
+
+Two things come out of it. A conversion factor — **the floor's ~1.9 ms is about 19 full-screen
+blended layers' worth of work** — and, more importantly, proof that this timer *does* resolve
+area-proportional fill when it is there. That is what makes the next result readable instead of
+merely negative.
+
+### Experiment 2 (the `layers.lit` filter): answered, no
+
+```
+                     ground on   ground off   delta
+lit filter on          4.301       2.379      1.92 ms
+lit filter off         3.805       2.003      1.80 ms
+SceneLightFilter itself: 0.50 ms (ground on) / 0.38 ms (ground off)
+```
+
+**The floor's cost is its own.** Removing the scene-light pass leaves it within noise of unchanged,
+so it is not "the floor is expensive because five passes above it have to read what it wrote". And
+the filter that was suspected of amplifying it is ~0.4 ms — 10% of the frame. The render-quality
+tiers, whose whole purpose is removing full-viewport passes, are aimed at that 0.4 ms.
+
+### Experiment 1 (on-screen area at fixed resolution): answered, no
+
+`layers.ground` is a render-group root, so assigning a scale to it about the screen origin shrinks
+the area it covers with **byte-identical submission** — same 13 culled-in pieces, same batch, same
+draw calls, only the group's matrix differs:
+
+```
+ground hidden        2.194 ms
+ground, full screen  3.902 ms    delta 1.71 ms   (100% of the viewport)
+ground, 1/4 area     4.708 ms    delta 2.51 ms   <- MORE, at a quarter of the pixels
+ground, 1/16 area    3.115 ms    delta 0.92 ms   (54% of the cost for 6% of the area)
+```
+
+**The floor's cost is not the pixels it covers.** A quarter of the screen costs at least as much as
+all of it; a sixteenth still costs more than half. Taken with the fifth measurement (17x less
+geometry changed nothing) and Experiment 2 (the passes above it are not the amplifier), the floor's
+cost is now bounded away from vertex work, triangle count, draw calls, the filter chain, and covered
+area. What is left is per-primitive fragment work — thousands of small blended primitives whose
+triangle setup and 2x2-quad overshading do not shrink with the area they land on. Not proven here;
+it is what the elimination leaves.
+
+Checked and **not** the explanation: `biome/floor_neutral.png` is 256x256 with `mipLevelCount: 1`
+and `autoGenerateMipmaps: false`, so a minification story was available — but the floor tiles are
+magnified ~4x at the shipped zoom in every arm above, and hiding them does not move the shape.
+
+### What actually pays: 45% of the floor is rooms the camera is not in
+
+`groundCulling.ts` keeps a piece if its **painted** rect touches the viewport, because a mottle blob
+reaches up to 460 world px past the room that seeded it. That is correct — culling against the room
+rect pops blobs off at the screen edge — and it is also expensive, because at zoom 4.29 those 460 px
+are ~1970 screen px. Measured as a fraction of the viewport each on-screen piece paints:
+
+```
+dark halves    1.00   0.693  0.346  0.271     <- 1.31 extra viewports from 3 neighbours
+light halves   1.00   0.807  0.746  0.359     <- 1.91 extra viewports from 3 neighbours
+```
+
+The room you are standing in paints one viewport per stage. Its neighbours paint **1.3 to 1.9 more**
+each, entirely as spill. Hiding just those six neighbour pieces:
+
+```
+all pieces      4.069 ms
+nearest only    3.324 ms      -0.75 ms of a 1.9 ms layer
+```
+
+And the stage decomposition says the same thing from the other side (twin agreed to 0.011 ms):
+
+```
+layer total ~1.9 ms      additive light half  1.03 ms
+                         dark half            0.68 ms
+                         region grid          0.05 ms
+                         room light pool      0.03 ms
+```
+
+The grid and the light pool — the two stages that *look* like overdraw — are free. The wash/mottle/
+decal halves are the floor, the additive half most of all, and roughly half of what they cost is
+painted for rooms that are off screen.
+
+### What to do next, and how to measure it
+
+Clip each room's dark/light `Graphics` to a bounded region so one room's mottle cannot paint two
+viewports of its neighbour's screen space. `arenaWallCoverage.test.ts`'s wall-clip fix is the shape
+to copy — a geometry clip, no new fixtures — and the number to beat is the 0.75 ms above, measured
+the same way (twin control, `nearestOnly` becomes the *shipped* state rather than an arm).
+
+Do not reach for a cheaper cull margin instead: the pieces are already exactly-intersected, and the
+cost is the painting, not the keeping.

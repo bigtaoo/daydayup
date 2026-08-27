@@ -24,8 +24,18 @@
 //    By this repo's own standard for a quotable reading that is a null result, not a 5% win.
 //  - So the layer's ~2 ms of that frame is **not** vertex or triangle work, and the earlier
 //    "resolution-independent, therefore geometry submission" diagnosis does not survive contact
-//    with a 17x cut that changed nothing. What it is instead is the open question this pass leaves
-//    behind; `perf/README.md` records the one control that was wrong and what to sweep instead.
+//    with a 17x cut that changed nothing. `perf/README.md`'s SIXTH measurement (2026-08-27) closed
+//    the rest of the elimination: it is not the covered area either (scaling this layer to a
+//    quarter of the viewport, byte-identical submission, costs MORE), and not the filter passes
+//    above it (1.92 ms with the scene-light pass, 1.80 ms without). What is left is per-primitive
+//    fragment work on a lot of small blended primitives.
+//
+// WHAT THAT LEAVES FOR WHOEVER TOUCHES THIS NEXT. The cull is exact and the pieces it keeps are the
+// right ones — but 45% of the floor's cost is the three NEIGHBOURING rooms whose mottle spills onto
+// the screen (they paint 1.31 + 1.91 extra viewports; hiding them is -0.75 ms of a 1.9 ms layer).
+// The fix is upstream of here, in what `groundLayer.ts` paints: clip each room's dark/light halves
+// so a blob cannot reach two viewports into a neighbour. Do NOT "fix" it by shrinking the tagged
+// rect — that is the pop-at-the-screen-edge bug the note below exists to prevent.
 //
 // Shipped on that footing: it costs nothing measurable, it removes the "one 285k-float Graphics"
 // shape the batch policy in `render/staticGraphics.ts` was never measured at, it cuts real memory,
