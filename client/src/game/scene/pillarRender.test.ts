@@ -189,7 +189,10 @@ describe('buildPillarBody — the shaft is shaded by COLOUR, across the curve', 
 
   it('shares the wall\'s dark silhouette rather than inventing its own', () => {
     const wall = buildWallBlock(RECT, HEIGHT, skin(true));
-    const wallEdge = strokes(wall.children[4] as Graphics).find((s) => s.color !== 0xffffff)!;
+    // The silhouette is the LAST thing a void-free block adds; read from the end because the face
+    // is one piece or two depending on the x-ray's deep reach (`occlusion.deepFadeReach`).
+    const edge = wall.children[wall.children.length - 1] as Graphics;
+    const wallEdge = strokes(edge).find((s) => s.color !== 0xffffff)!;
     const pillarEdge = strokes(buildPillarBody(64, 70, palette)).find((s) => s.color !== 0xffffff)!;
     expect(pillarEdge.color).toBe(wallEdge.color);
     expect(pillarEdge.alpha).toBe(wallEdge.alpha);

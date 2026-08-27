@@ -15,6 +15,7 @@ import { describe, it, expect } from 'vitest';
 import { PLAYER_BASE } from '@dd/engine';
 import { fpToPx } from '../coords';
 import {
+  deepFadeReach,
   fadeableBlock,
   needsDeepFade,
   occludes,
@@ -336,5 +337,60 @@ describe('xrayLayers', () => {
     // The fail-safe direction: a mis-tagged block stays solid (the old bug, visible) instead of
     // silently x-raying its whole self (a new bug, and a subtler one).
     expect(xrayLayers([{ alpha: 1, label: null }])).toEqual([]);
+  });
+});
+
+
+describe('deepFadeReach — how far down the face the deep pass may go', () => {
+  // The number that stops the deep pass reading as a pane of glass. `needsDeepFade` says whether
+  // the front face has to go translucent; this says how much of it, and the answer is a geometric
+  // bound rather than a taste one — see the function's own doc for the derivation.
+
+  it('is the height a body can reach: the art minus the footprint it stands off', () => {
+    expect(deepFadeReach(70, 32)).toBe(38); // the shipped arena's deep case
+    expect(deepFadeReach(104, 32)).toBe(72); // a room boundary over the same footprint
+  });
+
+  it('is ZERO for a face no body can reach — a kerb, and a run deeper than it is tall', () => {
+    // 22 px of art over a 32 px footprint: every reachable body is above the whole elevation. Not
+    // negative, because "the deep pass reaches nothing" is the answer, not "it reaches upward".
+    expect(deepFadeReach(22, 32)).toBe(0);
+    expect(deepFadeReach(70, 224)).toBe(0); // a north-south run, 7 cells deep
+  });
+
+  it('agrees with needsDeepFade: a focus the deep pass fires for is always inside the reach', () => {
+    // The invariant the face split rests on, checked by brute force over the geometry rather than
+    // argued: for every block shape and every ground point NORTH of the footprint, if the rule
+    // asks for a deep fade then the body's lowest row is within the reach. One counterexample
+    // would mean the split buries feet that the old whole-face fade revealed.
+    const f = { x: 0, y: 0, halfW: 12, bodyH: 32 };
+    let fired = 0;
+    for (const height of [22, 70, 104]) {
+      for (const depth of [32, 64, 96, 224]) {
+        const sortY = 1000;
+        const box: Occluder = {
+          left: -100, right: 100, top: sortY - height - depth, sortY, foldY: sortY - height,
+        };
+        const reach = deepFadeReach(height, depth);
+        for (let y = sortY - depth; y > sortY - depth - 40; y -= 1) {
+          if (!needsDeepFade(box, { ...f, y })) continue;
+          fired++;
+          expect(y - box.foldY).toBeLessThanOrEqual(reach);
+        }
+      }
+    }
+    expect(fired).toBeGreaterThan(0); // the sweep really did exercise the deep case
+  });
+
+  it('leaves nothing for the deep pass to reach when the reach is zero', () => {
+    // The other half of the same agreement, and the reason the clamp is load-bearing rather than
+    // defensive: where the reach is 0 the whole face is tagged as never-fading, so if the rule
+    // could still fire there the block would keep a body buried behind opaque stone.
+    const sortY = 1000;
+    const box: Occluder = { left: -100, right: 100, top: sortY - 54, sortY, foldY: sortY - 22 };
+    expect(deepFadeReach(22, 32)).toBe(0);
+    for (let y = sortY - 32; y > sortY - 200; y -= 1) {
+      expect(needsDeepFade(box, { x: 0, y, halfW: 12, bodyH: 32 })).toBe(false);
+    }
   });
 });

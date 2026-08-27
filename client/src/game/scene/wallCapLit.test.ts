@@ -37,13 +37,14 @@ describe('buildWallBlock with the cap key light baked in', () => {
   it('draws the cap ONCE, from the baked texture, with no blend mode anywhere in the block', () => {
     const seg = buildWallBlock(RECT, HEIGHT, skin());
     const tiles = seg.children.filter((c): c is TilingSprite => c instanceof TilingSprite);
-    expect(tiles).toHaveLength(2); // the face, and one cap — not two caps
+    expect(tiles).toHaveLength(3); // the face in two pieces, and ONE cap — not two
     const caps = tiles.filter((t) => t.texture === LIT);
     expect(caps).toHaveLength(1);
     expect(caps[0]!.blendMode).not.toBe(CAP_LIGHT_BLEND);
     for (const c of seg.children) expect(c.blendMode).not.toBe(CAP_LIGHT_BLEND);
-    // Face + cap + shading + silhouette. The fifth child was the additive copy.
-    expect(seg.children).toHaveLength(4);
+    // Face (in its two pieces) + cap + shading + silhouette. There used to be a fifth child here,
+    // the additive copy of the cap, before the bake folded it into the texture.
+    expect(seg.children).toHaveLength(5);
   });
 
   it('leaves the cap at full alpha and full tint — the lift is in the texture now', () => {

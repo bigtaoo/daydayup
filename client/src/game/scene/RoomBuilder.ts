@@ -374,7 +374,6 @@ export class RoomBuilder {
    *  `w/h` already IS the single room's own size, so the old `w/2, h/2` center is kept
    *  as the fallback for that mode. */
   private buildPortal(s: GameState, w: number, h: number): void {
-    this.portal?.shadow?.destroy();
     this.portal?.destroy();
     const portal = new Portal();
     this.layers.entities.addChild(portal);
@@ -423,7 +422,9 @@ export class RoomBuilder {
     destroyDressing(this.props);
     destroyDressing(this.pillars);
     this.occluders.length = 0;
-    this.portal?.shadow?.destroy();
+    // `Entity.destroy` unparents and destroys the shadow itself, so the explicit
+    // `portal.shadow?.destroy()` that used to precede this (at both portal sites) was the same
+    // redundancy `destroyDressing` removed from the pillar and prop lists on 2026-08-27.
     this.portal?.destroy();
     this.portal = null;
     this.portalPx = null;

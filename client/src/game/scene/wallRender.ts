@@ -64,7 +64,7 @@ import { SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
 import type { BiomePalette } from '../theme';
 import type { RectPx } from './wallGeometry';
 import { blockCapTop, NO_JOINS, unjoinedSpans, type WallJoins } from './wallRuns';
-import { XRAY_DEEP_LABEL, XRAY_LABEL } from './occlusion';
+import { deepFadeReach, XRAY_DEEP_LABEL, XRAY_LABEL } from './occlusion';
 import { bakeLitCap } from './capLight';
 import {
   drawBaseContactCrease,
@@ -163,14 +163,16 @@ export function buildWallBlock(
   const capTop = blockCapTop(r, height, joins);
   const capH = -height - capTop;
 
-  addWallFace(seg, r, height, skin);
+  // The face is split so the deep pass reaches only the rows a body can stand in front of; the
+  // rest of it keeps the block's base opaque through the fade (`occlusion.deepFadeReach`).
+  addWallFace(seg, r, height, skin, deepFadeReach(height, r.h));
 
-  const capFrom = seg.children.length;
   addCapLayers(seg, r, capTop, capH, skin);
-  // Everything drawn BEFORE the cap is the front face (one branch or the other above), and the
-  // shading laid over both comes next — the deep group is those two.
-  for (let i = 0; i < capFrom; i++) seg.children[i]!.label = XRAY_DEEP_LABEL;
 
+  // Over both the face and the cap, and in the deep group: the shading is a single Graphics for
+  // the whole block, so unlike the face it cannot keep the base's share of itself at full
+  // strength. Measured on a live frame the loss is not visible — the base's own crease is the
+  // only pass down there and it is subtle against opaque stone.
   const shading = drawBlockShading(r, height, joins);
   shading.label = XRAY_DEEP_LABEL;
   seg.addChild(shading);
@@ -194,22 +196,107 @@ export function buildWallBlock(
  * side of the opening — a door drawing its own darker rectangle there is what made an opening
  * read as a hole punched in the room rather than as stone in shade.
  */
-export function addWallFace(seg: Entity, r: RectPx, height: number, skin: WallSkin): void {
+export function addWallFace(
+  seg: Entity,
+  r: RectPx,
+  height: number,
+  skin: WallSkin,
+  deepReach = height,
+): void {
+  // The fold-down extent the x-ray's deep pass may reach (`occlusion.deepFadeReach`), clamped
+  // into the face. `height` — the default, and what `doorRender` passes — puts the whole face in
+  // the fading group and produces exactly one piece, i.e. the pre-split behaviour.
+  const band = Math.min(height, Math.max(0, deepReach));
   if (skin.face) {
-    const face = new TilingSprite({ texture: skin.face, width: r.w, height });
-    face.position.set(0, -height);
-    face.tileScale.set(height / skin.face.height);
-    face.tint = FACE_TINT;
-    seg.addChild(face);
+    addFacePiece(seg, r, height, skin.face, 0, band, XRAY_DEEP_LABEL);
+    addFacePiece(seg, r, height, skin.face, band, height, FACE_BASE_LABEL);
   } else {
-    // Same lit-from-upper-left banding the pillars use, so a missing swatch still reads as a
-    // standing surface rather than a flat rectangle.
-    const g = new Graphics();
-    g.rect(0, -height, r.w, height).fill({ color: skin.palette.wall });
-    g.rect(0, -height, r.w, height * 0.22).fill({ color: 0xffffff, alpha: 0.08 });
-    g.rect(0, -height * 0.3, r.w, height * 0.3).fill({ color: 0x000000, alpha: 0.22 });
-    seg.addChild(g);
+    addFallbackFace(seg, r, height, skin.palette.wall, 0, band, XRAY_DEEP_LABEL);
+    addFallbackFace(seg, r, height, skin.palette.wall, band, height, FACE_BASE_LABEL);
   }
+}
+
+/**
+ * Marks the part of a face the deep pass must NOT touch: the rows below every body a focus can
+ * put in front of this block, which is the block's own base.
+ *
+ * In neither x-ray group (`occlusion.xrayLayers` / `deepXrayLayers` both filter by label), so it
+ * stays fully opaque through both fades — the same standing the silhouette has, and for the same
+ * reason. A block whose whole face is unreachable (a kerb) is one piece carrying this label.
+ */
+export const FACE_BASE_LABEL = 'face-base';
+
+/**
+ * One horizontal slice of the face, local rows `from..to` measured DOWN from the fold.
+ *
+ * The slice samples the same texture rows the unsplit face would have at those world rows:
+ * a `TilingSprite` maps local px to texture px as `(local - tilePosition) / tileScale`, so
+ * shifting `tilePosition` by the slice's own offset is what keeps the courses running straight
+ * on across the join instead of restarting the swatch at each piece. An empty span draws nothing,
+ * which is how the door path and a kerb both come out as a single piece.
+ */
+function addFacePiece(
+  seg: Entity,
+  r: RectPx,
+  height: number,
+  texture: Texture,
+  from: number,
+  to: number,
+  label: string,
+): void {
+  if (to <= from) return;
+  const piece = new TilingSprite({ texture, width: r.w, height: to - from });
+  piece.position.set(0, -height + from);
+  piece.tileScale.set(height / texture.height);
+  piece.tilePosition.set(0, -from);
+  piece.tint = FACE_TINT;
+  piece.label = label;
+  seg.addChild(piece);
+}
+
+/**
+ * The no-swatch fallback for one slice: the same lit-from-upper-left banding the pillars use, so
+ * a missing swatch still reads as a standing surface rather than a flat rectangle.
+ *
+ * Split on the same rows as the textured path rather than left whole. Not for the look — this is
+ * the dev/degraded path — but so the two paths cannot disagree about which layers fade, which is
+ * the only difference a test on the fallback would otherwise be measuring.
+ */
+function addFallbackFace(
+  seg: Entity,
+  r: RectPx,
+  height: number,
+  wall: number,
+  from: number,
+  to: number,
+  label: string,
+): void {
+  if (to <= from) return;
+  const lo = -height + from;
+  const hi = -height + to;
+  const g = new Graphics();
+  fillBand(g, r, -height, height, lo, hi, { color: wall });
+  fillBand(g, r, -height, height * 0.22, lo, hi, { color: 0xffffff, alpha: 0.08 });
+  fillBand(g, r, -height * 0.3, height * 0.3, lo, hi, { color: 0x000000, alpha: 0.22 });
+  g.label = label;
+  seg.addChild(g);
+}
+
+/** One of the fallback's bands, clipped to a slice's local-y span. Nothing is filled when the
+ *  band misses the slice entirely, so each piece carries only the banding that lands on it. */
+function fillBand(
+  g: Graphics,
+  r: RectPx,
+  y0: number,
+  bandH: number,
+  lo: number,
+  hi: number,
+  style: { color: number; alpha?: number },
+): void {
+  const a = Math.max(y0, lo);
+  const b = Math.min(y0 + bandH, hi);
+  if (b <= a) return;
+  g.rect(0, a, r.w, b - a).fill(style);
 }
 
 /**

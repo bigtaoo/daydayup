@@ -159,6 +159,12 @@ export function buildDoorBlock(
 
   // 1. The wall's own elevation across the WHOLE face: the lintel above the leaf, and the
   //    passage's stone behind it once the recess has darkened it.
+  //
+  //    Deliberately WITHOUT `occlusion.deepFadeReach`, which a wall block passes so the deep pass
+  //    cannot reach its base: that bound is derived from a focus standing NORTH of the footprint,
+  //    and a door's passage floor is inside its own footprint. A character in the doorway stands
+  //    on rows the derivation excludes, so the whole face has to stay in the fading group here —
+  //    the same reason the recess, the leaf and the glow are all in it.
   addWallFace(seg, r, height, skin);
 
   // 2. Recess.

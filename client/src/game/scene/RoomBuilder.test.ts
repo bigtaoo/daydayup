@@ -19,7 +19,7 @@ import { Layers } from './layers';
 import { RoomBuilder } from './RoomBuilder';
 import { WALL_H_PERIMETER, WALL_H_INTERIOR, WALL_H_KERB } from './wallGeometry';
 import { groundPieceBounds } from './groundCulling';
-import { XRAY_LABEL } from './occlusion';
+import { deepFadeReach, XRAY_DEEP_LABEL, XRAY_LABEL } from './occlusion';
 import { fpToPx, PX_PER_GRID } from '../coords';
 import { Entity, SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
 import { Backdrop } from './Backdrop';
@@ -27,6 +27,7 @@ import { pillarTint } from './pillarRender';
 import { propShadowRadius } from './propRender';
 import { biomePalette } from '../theme';
 import type { DoorFixture } from './doorRender';
+import { FACE_BASE_LABEL } from './wallRender';
 
 function makeRoomBuilder(layers = new Layers()): RoomBuilder {
   return new RoomBuilder(layers, new Backdrop(layers));
@@ -133,6 +134,23 @@ function pushDoor(s: GameState, locked: boolean, [x, y, w, h]: [number, number, 
 
 function fakeTexture(w: number, h: number): Texture {
   return new Texture({ source: new TextureSource({ width: w, height: h }) });
+}
+
+/**
+ * The drawn height of a wall block's front elevation, summed over its pieces.
+ *
+ * A block's face is drawn as one piece or TWO, split at the row past which the x-ray's deep pass
+ * can never need to reach (`occlusion.deepFadeReach` / `wallRender.FACE_BASE_LABEL`), so the first
+ * TilingSprite is not the whole elevation. How many pieces it takes is the x-ray's business; how
+ * tall the wall stands is what these tier assertions are about.
+ */
+function faceHeight(seg: Entity): number {
+  return seg.children
+    .filter(
+      (c): c is TilingSprite =>
+        c instanceof TilingSprite && (c.label === XRAY_DEEP_LABEL || c.label === FACE_BASE_LABEL),
+    )
+    .reduce((n, p) => n + p.height, 0);
 }
 
 function stateWithOneWall(biomeId: string | undefined): GameState {
@@ -334,11 +352,17 @@ describe('RoomBuilder — standing walls', () => {
     mocks.wallFaceTex = fakeTexture(256, 128);
     const rb = makeRoomBuilder();
     rb.build(stateWithNorthWall());
-    const [face, cap] = wallEntities(rb)[0]!.children as [TilingSprite, TilingSprite];
+    // The face is TWO pieces here — the x-ray's deep pass may only reach the rows a body can
+    // stand in front of, so the rest of the elevation is a separate never-fading piece
+    // (`occlusion.deepFadeReach`). Both are the same swatch at the same scale; between them they
+    // stack over exactly -height..0.
+    const [face, base, cap] = wallEntities(rb)[0]!.children as [TilingSprite, TilingSprite, TilingSprite];
 
     expect(face.texture).toBe(mocks.wallFaceTex);
-    expect(face.height).toBe(WALL_H_PERIMETER); // a north wall is a room boundary → tallest tier
+    expect(base.texture).toBe(mocks.wallFaceTex);
+    expect(faceHeight(wallEntities(rb)[0]!)).toBe(WALL_H_PERIMETER); // a room boundary → tallest tier
     expect(face.y).toBe(-WALL_H_PERIMETER); // local origin is the south edge; the face rises from it
+    expect(base.y + base.height).toBe(0);
     // Uniform tile scale — the face art is used at exactly one height and must not stretch.
     expect(face.tileScale.y).toBeCloseTo(WALL_H_PERIMETER / 128, 5);
     expect(face.tileScale.x).toBeCloseTo(face.tileScale.y, 5);
@@ -472,9 +496,7 @@ describe('RoomBuilder — standing walls', () => {
 
     const rb = makeRoomBuilder();
     rb.build(s);
-    const heights = wallEntities(rb).map(
-      (seg) => (seg.children.find((c) => c instanceof TilingSprite) as TilingSprite).height,
-    );
+    const heights = wallEntities(rb).map(faceHeight);
     expect(heights).toEqual([WALL_H_PERIMETER, WALL_H_INTERIOR]);
   });
 });
@@ -582,6 +604,10 @@ describe('RoomBuilder — pillars (design/10 legibility fix, 2026-08-02: faux-sh
   });
 
   it('clear() removes every pillar and its shadow', () => {
+    // Also the PORTAL's shadow, which this fixture puts on the same layer (see the shadow-count
+    // test above: 3 children, one of them the portal's). Nothing here calls `shadow.destroy()`
+    // explicitly any more — `Entity.destroy` unparents and destroys it — so this assertion is
+    // what stands behind that removal rather than the call that used to precede it.
     const rb = makeRoomBuilder();
     const layers = (rb as unknown as { layers: Layers }).layers;
     rb.build(stateWithOneObstacle());
@@ -1017,9 +1043,7 @@ describe('RoomBuilder — a whole room of walls', () => {
     mocks.wallFaceTex = fakeTexture(256, 128);
     const rb = makeRoomBuilder();
     rb.build(stateWithFullPerimeter());
-    const heights = (rb as unknown as { wallEntities: Entity[] }).wallEntities.map(
-      (seg) => (seg.children.find((c) => c instanceof TilingSprite) as TilingSprite).height,
-    );
+    const heights = (rb as unknown as { wallEntities: Entity[] }).wallEntities.map(faceHeight);
     expect(heights).toEqual([
       WALL_H_PERIMETER, // north
       WALL_H_KERB, // south — cannot be tall without hiding the player
@@ -1215,9 +1239,7 @@ describe('RoomBuilder — one boundary drawn twice becomes one block', () => {
     mocks.wallFaceTex = fakeTexture(256, 128);
     const rb = makeRoomBuilder();
     rb.build(s);
-    const heights = wallEntities(rb).map(
-      (seg) => (seg.children.find((c) => c instanceof TilingSprite) as TilingSprite).height,
-    );
+    const heights = wallEntities(rb).map(faceHeight);
     expect(heights).toHaveLength(2);
     expect(heights).toContain(WALL_H_PERIMETER);
     expect(heights).toContain(WALL_H_INTERIOR);
@@ -1436,9 +1458,16 @@ describe('RoomBuilder.updateOcclusion — a block that would hide the player get
     const boundary = occluders(rb).find((o) => o.box.sortY === 232)!;
     expect(boundary.box.sortY - boundary.box.foldY).toBe(WALL_H_PERIMETER); // it really is the tall tier
     const seg = blocks(rb).find((e) => e.zIndex === 232)!;
-    const deepLayers = seg.children.filter((c) => c.label === 'xray-deep');
-    expect(deepLayers.length).toBe(2); // the face and the shading over it
-    const silhouette = seg.children.filter((c) => c.label !== 'xray' && c.label !== 'xray-deep');
+    const deepLayers = seg.children.filter((c) => c.label === XRAY_DEEP_LABEL);
+    expect(deepLayers.length).toBe(2); // the face's BAND and the shading over it — not the whole
+    // face: since 2026-08-27 only the rows a body can reach are in this group, and the base below
+    // them is a separate piece in neither group (`occlusion.deepFadeReach`). Named here rather
+    // than left to the `silhouette` filter below, which used to cover it by accident.
+    const base = seg.children.filter((c) => c.label === FACE_BASE_LABEL);
+    expect(base).toHaveLength(1);
+    const silhouette = seg.children.filter(
+      (c) => c.label !== XRAY_LABEL && c.label !== XRAY_DEEP_LABEL && c.label !== FACE_BASE_LABEL,
+    );
     const silBefore = silhouette.map((c) => c.alpha);
 
     // stand one clearance north of the run's footprint: the whole body is below the fold
@@ -1446,8 +1475,118 @@ describe('RoomBuilder.updateOcclusion — a block that would hide the player get
     expect(boundary.cap.fade).toBeLessThan(0.5);
     expect(boundary.deep.fade).toBeLessThan(0.5);
     for (const c of deepLayers) expect(c.alpha).toBeLessThan(0.5);
+    // ...the block's BASE holds full strength through it, which is the whole point of the split
+    expect(base[0]!.alpha).toBe(1);
     // ...and the silhouette still never moves, in either pass
     expect(silhouette.map((c) => c.alpha)).toEqual(silBefore);
+  });
+
+  it('splits the face on the same row the occluder box reports, so the two agree', () => {
+    // Two derivations of one row: `RoomBuilder` computes the occluder's `foldY` from the height it
+    // passes to `buildWallBlock`, and `addWallFace` splits the face from the same height and the
+    // run's own depth. Nothing made them agree except being fed the same numbers — and this repo
+    // has already shipped the failure that shape produces (`blockCapTop` was inlined at two call
+    // sites, so a clip could land in one and not the other). Checked through the real builder,
+    // on a run whose height is the DOOR-CLIPPED effective one where that applies.
+    mocks.wallTex = fakeTexture(256, 256);
+    mocks.wallFaceTex = fakeTexture(256, 128);
+    const s = createGameState({
+      seed: 1, worldW: ROOM, worldH: ROOM, waves: [],
+      // Four shapes on purpose, so both branches below are exercised: a north boundary and a west
+      // stub (104 px over 32 -> split), a 2x2 interior block (70 over 64 -> a 6 px band), and the
+      // south KERB (22 over 32 -> reach 0, one whole never-fading piece).
+      walls: [[0, 0, ROOM, 32], [0, 200, 96, 32], [128, 128, 64, 64], [0, ROOM - 32, ROOM, 32]],
+      obstacles: [],
+    });
+    s.dungeonRoomRects.push({ id: 'r1', rect: { x: pxToFp(0), y: pxToFp(0), w: pxToFp(ROOM), h: pxToFp(ROOM) } });
+    (s as unknown as { dungeonConfig?: { biomeId: string } }).dungeonConfig = { biomeId: 'ember' };
+    // ...and a DOOR immediately north of the 2x2 block, which is the fifth shape and the reason
+    // this fixture is not just the perimeter one: `bordersDoorNorth` fires, so that run is drawn at
+    // `effectiveWallHeight` (min(70, 64) = 64) rather than at its tier height. A build that fed the
+    // occluder box one of those and the block the other is behaviour-IDENTICAL on every fixture
+    // without a door — which is exactly how a mutation battery found this hole on 2026-08-27.
+    pushDoor(s, false, [128, 96, 64, 32]);
+    const rb = makeRoomBuilder();
+    rb.build(s);
+
+    let split = 0;
+    let whole = 0;
+    for (const o of occluders(rb)) {
+      const seg = blocks(rb).find((e) => e.zIndex === o.box.sortY);
+      if (!seg) continue; // a pillar: no face, and no fold either (`foldY === sortY`)
+      const pieces = seg.children.filter(
+        (c): c is TilingSprite =>
+          c instanceof TilingSprite && (c.label === XRAY_DEEP_LABEL || c.label === FACE_BASE_LABEL),
+      );
+      const height = o.box.sortY - o.box.foldY;
+      // The elevation is whole however many pieces it takes, and it starts at the fold.
+      expect(pieces.reduce((n, p) => n + p.height, 0)).toBeCloseTo(height, 6);
+      expect(pieces[0]!.y).toBeCloseTo(-height, 6);
+      if (pieces.length === 2) {
+        expect(pieces[1]!.y).toBeCloseTo(-height + pieces[0]!.height, 6);
+        expect(pieces[1]!.label).toBe(FACE_BASE_LABEL);
+        // The join row, derived from the occluder box's THIRD number rather than from `foldY`
+        // again. `reach = height - depth`, so the base's height IS the footprint depth — and the
+        // box reports that depth independently as its cap's drawn depth, `foldY - top`. A build
+        // that fed the two sides different heights would break this even where the sum above
+        // still came out right.
+        expect(pieces[1]!.height).toBeCloseTo(o.box.foldY - o.box.top, 6);
+        expect(pieces[0]!.height).toBeCloseTo(deepFadeReach(height, pieces[1]!.height), 6);
+        split++;
+      } else {
+        expect(pieces).toHaveLength(1);
+        whole++;
+      }
+    }
+    // The sweep has to be a sweep, and it has to contain BOTH shapes — a room of only-split or
+    // only-whole blocks would let half of this pass vacuously. The kerb on the room's south edge
+    // is the whole-face case (22 px of art over a 32 px footprint, reach 0).
+    expect(split).toBeGreaterThan(0);
+    expect(whole).toBeGreaterThan(0);
+  });
+
+  it('gives a KERB no deep group at all, and a tall run one — with the counts', () => {
+    // The reach is 0 for 22 px of art over a 32 px footprint, so a kerb's whole face is tagged
+    // never-fading and its deep group holds only the shading. That is the same thing
+    // `needsDeepFade` already refuses to do there, said in geometry — and stating it with counts is
+    // what stops "we never wired it" and "it can never come up" from looking identical in a diff.
+    mocks.wallTex = fakeTexture(256, 256);
+    mocks.wallFaceTex = fakeTexture(256, 128);
+    const s = createGameState({
+      seed: 1, worldW: ROOM, worldH: ROOM, waves: [],
+      // A full perimeter: the south run is the kerb tier (it cannot be tall without hiding a
+      // player walking along it), the other three are room boundaries.
+      walls: [
+        [0, 0, ROOM, 32], [0, ROOM - 32, ROOM, 32],
+        [0, 0, 32, ROOM], [ROOM - 32, 0, 32, ROOM],
+      ],
+      obstacles: [],
+    });
+    s.dungeonRoomRects.push({ id: 'r1', rect: { x: pxToFp(0), y: pxToFp(0), w: pxToFp(ROOM), h: pxToFp(ROOM) } });
+    (s as unknown as { dungeonConfig?: { biomeId: string } }).dungeonConfig = { biomeId: 'ember' };
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    let kerbs = 0;
+    let tall = 0;
+    for (const o of occluders(rb)) {
+      const seg = blocks(rb).find((e) => e.zIndex === o.box.sortY);
+      if (!seg) continue;
+      const faces = seg.children.filter(
+        (c): c is TilingSprite =>
+          c instanceof TilingSprite && (c.label === XRAY_DEEP_LABEL || c.label === FACE_BASE_LABEL),
+      );
+      const fading = faces.filter((c) => c.label === XRAY_DEEP_LABEL);
+      if (o.box.sortY - o.box.foldY === WALL_H_KERB) {
+        expect(fading).toHaveLength(0); // nothing of a kerb's face can ever be reached
+        expect(faces).toHaveLength(1);
+        kerbs++;
+      } else {
+        expect(fading).toHaveLength(1);
+        tall++;
+      }
+    }
+    expect(kerbs).toBeGreaterThan(0); // the shipped south kerb
+    expect(tall).toBeGreaterThan(0);
   });
 
   it('fades a pillar the player is standing behind, body and all', () => {

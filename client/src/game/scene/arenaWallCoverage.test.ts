@@ -62,6 +62,11 @@
  *      fades reads as a translucent slab over the solid stone behind it.
  *   3. The deep pass (front FACE dropped too) reads as a glass block with hard edges — the one
  *      verdict with a reservation, since a ghosted rectangle is more "pane" than "x-rayed stone".
+ *      **CLOSED 2026-08-27, and the reservation named the wrong thing**: not the fade value nor the
+ *      edge but the EXTENT. 46% of the face the deep pass dropped is below every body a focus can
+ *      put in front of the block, so it was going translucent for nobody and taking the block's
+ *      base with it. `occlusion.deepFadeReach` bounds it and `wallRender.addWallFace` draws the
+ *      face in two pieces on that row; the two sweeps below assert the bound on real content.
  *   4. The 208-float 672x64 KERB draws its three south spans with no seam between them.
  *   5. Passage 63's residual 40 px of 160 is imperceptible standing in the doorway.
  *
@@ -102,7 +107,7 @@ import { Layers } from './layers';
 import { Backdrop } from './Backdrop';
 import { RoomBuilder } from './RoomBuilder';
 import { pillarArtExtent } from './pillarRender';
-import { needsDeepFade, occludes, XRAY_LABEL, type Occluder } from './occlusion';
+import { deepFadeReach, needsDeepFade, occludes, XRAY_LABEL, type Occluder } from './occlusion';
 import { drawBlockShading } from './wallRender';
 import { addVoidReturns } from './wallVoidReturn';
 import { Entity } from './Entity';
@@ -707,9 +712,17 @@ function hiddenRows(gx: number, gy: number, cands: readonly Block[], fired: read
     if (b.box.sortY <= gy) continue; // sorts behind the character — cannot cover them
     if (gx + HALF_W <= b.box.left || gx - HALF_W >= b.box.right) continue;
     // A block that is not firing stays opaque over all of its art; a firing one keeps everything
-    // from its cap/face fold down, unless it also took the deep pass, which leaves nothing.
+    // from its cap/face fold down, and one that ALSO took the deep pass keeps everything from the
+    // bottom of that pass's reach down — the face is split there and its base never fades
+    // (`occlusion.deepFadeReach`). Before 2026-08-27 this read "the deep pass leaves nothing
+    // opaque", which is no longer what the renderer does; a stale oracle here is worse than no
+    // oracle, because it agrees with the rule for the wrong reason.
     let opaqueTop = b.box.top;
-    if (fired.includes(b)) opaqueTop = needsDeepFade(b.box, focus) ? b.box.sortY : b.box.foldY;
+    if (fired.includes(b)) {
+      opaqueTop = needsDeepFade(b.box, focus)
+        ? b.box.foldY + deepFadeReach(b.box.sortY - b.box.foldY, b.rect.h)
+        : b.box.foldY;
+    }
     for (let y = Math.ceil(Math.max(bodyTop, opaqueTop)); y < Math.min(gy, b.box.sortY); y++) rows.add(y);
   }
   return rows.size / BODY_H;
@@ -895,6 +908,78 @@ describe('arena occlusion coverage — the launch map, swept', () => {
     expect(deep.length).toBeGreaterThan(0); // reachable content, not dead code
     expect(deep.length / SWEPT.length).toBeLessThan(0.02);
     expect(deep.length / SWEPT.length).toBeGreaterThan(0.005); // measured 1.07%, PvE 0.2%
+  });
+
+  it('never fires the deep pass below the band the face split keeps opaque', () => {
+    // The precondition under `occlusion.deepFadeReach` / `wallRender.FACE_BASE_LABEL`: the deep
+    // pass drops only the band of the face a body can stand in front of, so the block keeps its
+    // base, its plinth and its footing through the fade. That is lossless only if no focus the
+    // rule fires for ever has a row BELOW the band — checked here on every sample of the shipped
+    // map that takes the deep pass, rather than on the rects the bound was derived from.
+    const over: string[] = [];
+    let tightest = Infinity;
+    for (const s of SWEPT) {
+      const focus = { x: s.gx, y: s.gy, halfW: HALF_W, bodyH: BODY_H };
+      for (const b of s.fired) {
+        if (!needsDeepFade(b.box, focus)) continue;
+        const reach = deepFadeReach(b.box.sortY - b.box.foldY, b.rect.h);
+        const used = s.gy - b.box.foldY;
+        tightest = Math.min(tightest, reach - used);
+        if (used > reach) over.push(`${s.room} at (${s.gx}, ${s.gy}): ${used} > ${reach}`);
+      }
+    }
+    expect(over).toEqual([]);
+    // How much of the band the shipped content actually uses, and WHY the rest is not slack. This
+    // sweep only ever stands the PLAYER somewhere, so the closest any sample gets to the fold is
+    // its own wall clearance — 16 px — and the deepest it reaches is 22 px of the 38 px band. The
+    // 16 px left over is exactly that clearance, and it is head-room the rule needs rather than
+    // margin it can give back: `foci` includes every live ENEMY, and an enemy keeps its feet
+    // circle against solids (`enemies.ts` — `solidRadius: bp.footprintRadius`, as small as 6 px),
+    // so a mob legitimately stands 10 px closer than anything this sweep can place. Which is why
+    // `deepFadeReach` is derived at clearance ZERO and not from the player's.
+    expect(tightest).toBe(CLEARANCE);
+  });
+
+  it('leaves ZERO rows of the body behind a block that took the deep pass', () => {
+    // The `hiddenAfter` acceptance test above is bounded at half the body, which is the right bound
+    // for the x-ray as a whole and much too loose here: with `deepFadeReach` cut by 24 px the
+    // ORACLE correctly reports 25% of the body still buried and that assertion still passes
+    // (measured 2026-08-27). What the split guarantees is not "less than half" but EXACTLY NOTHING
+    // — the band is the reachable-body envelope — so this asserts it per (sample, block) pair,
+    // through the same rectangle-overlap oracle rather than through the rule.
+    const over: string[] = [];
+    let pairs = 0;
+    for (const s of SWEPT) {
+      const focus = { x: s.gx, y: s.gy, halfW: HALF_W, bodyH: BODY_H };
+      for (const b of s.fired) {
+        if (!needsDeepFade(b.box, focus)) continue;
+        pairs++;
+        const opaqueTop = b.box.foldY + deepFadeReach(b.box.sortY - b.box.foldY, b.rect.h);
+        const rows = Math.min(s.gy, b.box.sortY) - Math.ceil(Math.max(s.gy - BODY_H, opaqueTop));
+        if (rows > 0) over.push(`${s.room} at (${s.gx}, ${s.gy}): ${rows} px of body still buried`);
+      }
+    }
+    expect(over.slice(0, 8)).toEqual([]);
+    expect(pairs).toBeGreaterThan(400); // the sweep has to be a sweep — measured 778 samples
+  });
+
+  it('keeps a real share of every deep-faded face opaque, which is the whole point', () => {
+    // The measurement the look rests on: of the face the old deep pass dropped whole, how much
+    // the split keeps. 32 px of a 70 px elevation — 46% — on every deep block this map has, which
+    // on a live frame is the difference between a translucent slab and stone with a base.
+    const deep = new Map<string, number>();
+    for (const s of SWEPT) {
+      const focus = { x: s.gx, y: s.gy, halfW: HALF_W, bodyH: BODY_H };
+      for (const b of s.fired) {
+        if (!needsDeepFade(b.box, focus)) continue;
+        const height = b.box.sortY - b.box.foldY;
+        deep.set(`${b.rect.x},${b.rect.y}`, (height - deepFadeReach(height, b.rect.h)) / height);
+      }
+    }
+    expect(deep.size).toBeGreaterThan(20); // measured 58 distinct blocks
+    const kept = [...deep.values()];
+    expect(Math.min(...kept)).toBeGreaterThan(0.4);
+    expect(Math.max(...kept)).toBeCloseTo(32 / 70, 6);
   });
 
   it('reports how much of this map hides the player at all — three times a PvE floor', () => {

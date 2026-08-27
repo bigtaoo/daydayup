@@ -47,7 +47,22 @@ import {
   type WallRun,
 } from './wallRuns';
 
+import { Texture, TextureSource, TilingSprite } from 'pixi.js';
+import { buildWallBlock, FACE_BASE_LABEL, type WallSkin } from './wallRender';
+import { deepFadeReach, XRAY_LABEL } from './occlusion';
+import { biomePalette } from '../theme';
+
 const FLOOR_INDICES = Object.keys(EMBER_L1_FLOORS).map(Number);
+
+/** Both swatches present, at the shipped art's own pixel sizes — the face has to be a real
+ *  texture or `addWallFace` takes its palette-Graphics fallback and there is no sprite to read. */
+function skin(): WallSkin {
+  return {
+    palette: biomePalette('ember'),
+    cap: new Texture({ source: new TextureSource({ width: 256, height: 256 }) }),
+    face: new Texture({ source: new TextureSource({ width: 256, height: 128 }) }),
+  };
+}
 
 /** Every merged run on one shipped floor that borders a door to its north, plus the door
  *  rects themselves converted the same way `RoomBuilder` converts `s.dungeonDoors` at runtime
@@ -108,5 +123,48 @@ describe('a run beside a door never spills onto it — shallow or deep, on the r
     // `wallComposition.test.ts` was written against.
     expect(doorBorders).toBeGreaterThan(0);
     expect(shallow).toBeGreaterThan(0);
+  });
+
+  it('splits its face from the EFFECTIVE height, so a clipped run gets no band it cannot use', () => {
+    // The gap a mutation battery found on 2026-08-27 and no fixture could reach: feeding the
+    // occluder box `wallHeight(run.tier)` where the block was drawn at `effectiveWallHeight`
+    // survived the whole suite, because every fixture in `RoomBuilder.test.ts` is a room without a
+    // door — so the two heights are equal there and the mutant is behaviour-identical. The 12
+    // shipped shallow runs beside a door are the only content where they differ.
+    //
+    // Where they differ the consequence is total: `effectiveWallHeight` returns `min(height, r.h)`,
+    // so a door-clipped SHALLOW run stands exactly as tall as its own footprint is deep — which
+    // makes `deepFadeReach` zero and its whole face a single never-fading piece. Drawn at the tier
+    // height instead it would get a band, and the deep pass would dissolve part of a wall that
+    // cannot hide anybody in the first place.
+    let shallowClipped = 0;
+    let deepClipped = 0;
+    for (const index of FLOOR_INDICES) {
+      for (const run of doorBorderingRuns(index)) {
+        const tierHeight = wallHeight(run.tier);
+        const joins = { ...NO_JOINS, doorClip: true };
+        const height = effectiveWallHeight(run.rect, tierHeight, joins);
+        const seg = buildWallBlock(run.rect, height, skin(), joins);
+        const capAt = seg.children.findIndex((c) => c.label === XRAY_LABEL);
+        const faces = seg.children.slice(0, capAt) as TilingSprite[];
+        expect(faces.reduce((n, p) => n + p.height, 0)).toBeCloseTo(height, 6);
+        if (run.rect.h <= tierHeight) {
+          // Shallow: height was shrunk to the footprint depth, so the reach is 0 — one piece,
+          // and it is the never-fading one.
+          expect(deepFadeReach(height, run.rect.h)).toBe(0);
+          expect(faces).toHaveLength(1);
+          expect(faces[0]!.label).toBe(FACE_BASE_LABEL);
+          // ...and it WOULD have had a band at the tier height, i.e. this is a real difference
+          // rather than two arguments that happen to agree.
+          expect(deepFadeReach(tierHeight, run.rect.h)).toBeGreaterThan(0);
+          shallowClipped++;
+        } else {
+          expect(faces.length).toBeGreaterThanOrEqual(1);
+          deepClipped++;
+        }
+      }
+    }
+    expect(shallowClipped).toBeGreaterThan(0); // measured 12 across the five floors
+    expect(shallowClipped + deepClipped).toBeGreaterThan(0);
   });
 });

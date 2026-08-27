@@ -43,7 +43,7 @@ import { wallHeight, wallTier, WALL_HEIGHT, type RectPx, type WallTier } from '.
 import { blockCapTop, mergeWallRuns, wallJoins, type WallJoins, type WallRun } from './wallRuns';
 import { faceCrownFraction } from './wallTone';
 import { pillarArtExtent } from './pillarRender';
-import { needsDeepFade, occludes, type Occluder } from './occlusion';
+import { deepFadeReach, needsDeepFade, occludes, type Occluder } from './occlusion';
 
 /** The drawn character, in world px. `bodyH`/`halfW` are the shipped rig's own measurements
  *  (`Actor.test.ts` pins them off the real skin); `CLEARANCE` is the engine's. */
@@ -192,9 +192,18 @@ function hiddenAfterFraction(f: Floor, gx: number, gy: number, fired: readonly B
     if (b.box.sortY <= gy) continue;
     if (gx + HALF_W <= b.box.left || gx - HALF_W >= b.box.right) continue;
     // A block that is not firing stays opaque over all of its art; one that is firing keeps
-    // everything from its fold down, unless it also took the deep pass, which leaves nothing.
+    // everything from its cap/face fold down, and one that ALSO took the deep pass keeps
+    // everything from the bottom of the deep pass's reach down (`occlusion.deepFadeReach` — the
+    // face is split there and its base never fades). This used to read `? b.box.sortY :`, i.e. "the
+    // deep pass leaves nothing opaque", which stopped being true on 2026-08-27 and was OPTIMISTIC:
+    // it credited the x-ray with visibility the renderer no longer delivers. Modelling the real
+    // opaque band is what makes the acceptance assertions below a gate on the reach.
     let opaqueTop = b.box.top;
-    if (fired.includes(b)) opaqueTop = needsDeepFade(b.box, focus) ? b.box.sortY : b.box.foldY;
+    if (fired.includes(b)) {
+      opaqueTop = needsDeepFade(b.box, focus)
+        ? b.box.foldY + deepFadeReach(b.box.sortY - b.box.foldY, b.rect.h)
+        : b.box.foldY;
+    }
     const from = Math.max(bodyTop, opaqueTop);
     const to = Math.min(gy, b.box.sortY);
     for (let y = Math.ceil(from); y < to; y++) rows.add(y);
@@ -388,6 +397,44 @@ describe('occlusion coverage — how much of the character is left buried afterw
     expect(deep.length).toBeGreaterThan(0); // it is reachable content, not dead code
     expect(deep.length / ALL.length).toBeLessThan(0.02); // measured 0.2%, down from 1.2%: the
     // stacked-room boundaries that used to need it are kerbs now (`wallGeometry.wallTier`).
+  });
+
+  it('leaves ZERO rows of the body behind a block that took the deep pass', () => {
+    // Same exact form `arenaWallCoverage` asserts, on the five shipped floors — see there for why
+    // the half-the-body acceptance bound above cannot stand in for this one.
+    const over: string[] = [];
+    let pairs = 0;
+    for (const s of ALL) {
+      const focus = { x: s.gx, y: s.gy, halfW: HALF_W, bodyH: BODY_H };
+      for (const b of s.fired) {
+        if (!needsDeepFade(b.box, focus)) continue;
+        pairs++;
+        const opaqueTop = b.box.foldY + deepFadeReach(b.box.sortY - b.box.foldY, b.rect.h);
+        const rows = Math.min(s.gy, b.box.sortY) - Math.ceil(Math.max(s.gy - BODY_H, opaqueTop));
+        if (rows > 0) over.push(`floor ${s.f} at (${s.gx}, ${s.gy}): ${rows} px still buried`);
+      }
+    }
+    expect(over.slice(0, 8)).toEqual([]);
+    expect(pairs).toBeGreaterThan(50);
+  });
+
+  it('never fires the deep pass below the band the face split keeps opaque', () => {
+    // Same precondition `arenaWallCoverage` checks on the arena, on the five shipped PvE floors:
+    // the deep pass drops only the face rows a body can stand in front of (`deepFadeReach`), so
+    // the block's base stays opaque. Both maps, because the bound is a property of the projection
+    // and a sweep that only ever ran on one of them would not show that.
+    const over: string[] = [];
+    for (const s of ALL) {
+      const focus = { x: s.gx, y: s.gy, halfW: HALF_W, bodyH: BODY_H };
+      for (const b of s.fired) {
+        if (!needsDeepFade(b.box, focus)) continue;
+        const reach = deepFadeReach(b.box.sortY - b.box.foldY, b.rect.h);
+        if (s.gy - b.box.foldY > reach) {
+          over.push(`floor ${s.f} at (${s.gx}, ${s.gy}): ${s.gy - b.box.foldY} > ${reach}`);
+        }
+      }
+    }
+    expect(over).toEqual([]);
   });
 });
 

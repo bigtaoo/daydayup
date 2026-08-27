@@ -128,6 +128,25 @@ describe('buildDoorBlock — a wall block whose face is an opening', () => {
     expect(band.y).toBeCloseTo(-WALL_H_PERIMETER);
   });
 
+  it('keeps its face ONE piece even on a passage shallower than the wall is tall', () => {
+    // `buildWallBlock` splits a face so the x-ray's deep pass cannot reach the block's base
+    // (`occlusion.deepFadeReach`). A door must not: that bound is derived from a focus standing
+    // NORTH of the footprint, and a door's passage floor is INSIDE its own footprint, so a
+    // character in the doorway stands on rows the derivation excludes and the whole face has to
+    // stay in the fading group. Asserted on a SHALLOW passage on purpose — a deep one clamps the
+    // reach to zero and would come out as one piece however this were wired.
+    const face = tex(256, 128);
+    const shallow: RectPx = { ...PASSAGE, h: 32 };
+    const fixture = buildDoorBlock(shallow, WALL_H_PERIMETER, skin(tex(ART_W, ART_H), face), false);
+    const pieces = fixture.view.children.filter((c): c is TilingSprite => c instanceof TilingSprite);
+    const elevation = pieces.filter((p) => p.texture === face);
+    expect(elevation).toHaveLength(1);
+    expect(elevation[0]!.y).toBeCloseTo(-WALL_H_PERIMETER);
+    expect(elevation[0]!.height).toBeCloseTo(WALL_H_PERIMETER);
+    // ...and all of it fades, i.e. it is in the deep group rather than split out of it.
+    expect(fixture.deepLayers).toContain(elevation[0]);
+  });
+
   it('scales the leaf to the opening width and bottom-anchors it', () => {
     const fixture = buildDoorBlock(PASSAGE, WALL_H_PERIMETER, skin(tex(ART_W, ART_H)), false);
     const leaf = fixture.view.children.find((c) => c instanceof Sprite && !(c instanceof TilingSprite)) as Sprite;

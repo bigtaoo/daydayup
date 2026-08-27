@@ -7000,7 +7000,7 @@ more than it sounds: "the worst spot" is a fact the sweep already knows and the 
 |---|---|---|
 | 1 | 4 pillars fade at once, 1 sample of 72,686, `terraces_r1c0` | Four columns going hazy. Outlines survive the fade; a solid pillar two cells away is in frame as the contrast. Not a hole. |
 | 2 | `cisterns_r1c3` hides the player on 44% of its own floor | Character fully visible; the faded block reads as a translucent slab over the stone behind it. |
-| 3 | The deep pass drops the front FACE too, 1.07% of the map | Reads as a **glass block** — a hard-edged translucent rectangle. Acceptable, and the one verdict with a reservation. |
+| 3 | The deep pass drops the front FACE too, 1.07% of the map | Reads as a **glass block** — a hard-edged translucent rectangle. Acceptable, and the one verdict with a reservation. **Closed 2026-08-27** — the cause was the extent, not the fade: 46% of the face it dropped was never covering anybody. See "The deep pass stops where the body does" below. |
 | 4 | The worst shading block is 208 floats, a 672x64 KERB | Three south spans, no seam between them, ramp smooth. |
 | 5 | 10 passages keep a strip of a run, worst 40 px of 160 | Imperceptible standing in the doorway. |
 
@@ -7329,3 +7329,176 @@ on the property.**
 `npm run check` green across all 8 workspaces: 5,320 tests (engine 854 / client 3,415 / server 189 /
 animator 444 / map-editor 282 / png-pipeline 42 / desktop-shell 81 / root 13), `tsc --noEmit` clean,
 `check:filelength` clean with nothing new baselined.
+
+
+## The pane was never the fade, it was the extent (2026-08-27, client-only)
+
+The 2026-08-27 camera pass closed four of five recorded questions and left one standing: the
+occlusion x-ray's **deep pass** — the fallback that drops a block's front FACE as well as its cap —
+*"reads as a glass block with hard edges, since a ghosted rectangle is more pane than x-rayed
+stone."* The obvious readings of that were the fade value (0.34 is too far) and the edge (a
+full-strength silhouette round a uniform wash frames it like a pane). Both are wrong. **A live frame
+says the defect is the EXTENT, and 46% of what the deep pass dropped was never covering anybody.**
+
+### What the frame showed
+
+Camera at the worst sample the sweep already knew (`catacombs_r4c6`, a 256x32 interior run, from
+`arenaWallCoverage.test.ts`'s own dump rather than hunted for by hand). Three arms at identical
+framing — the shipped deep fade, cap-only, and fully solid — and the arithmetic falls out of the
+geometry once you have the picture beside it:
+
+- The block is 70 px of art over a 32 px footprint. A body standing at the closest legal approach
+  has its feet 48 px above the block's ground line, so it occupies the face's **top 22 px**.
+- The face's other **48 px** is drawn over the floor BETWEEN the character and the wall. Dropping it
+  reveals the room's own floor where the stone met it, and takes the dark base course and the plinth
+  with it.
+- Cap-only, for the same camera, keeps a solid brick elevation and reads correctly as "you are
+  behind this" — and buries everything below the coping, which is the 43.8%-hidden case the deep
+  pass exists for. The two arms bracket the answer: the deep pass has to reach past the fold, and
+  only as far as a body.
+
+### The rule
+
+`occlusion.deepFadeReach(height, footprintDepth)` = `max(0, height - footprintDepth)`, the rows below
+the cap/face fold a body can reach. A focus stands NORTH of the footprint (it cannot overlap it) and
+a body is drawn UPWARD from its ground point, so the lowest face row any body can occupy is
+`height - footprintDepth` below the fold. `wallRender.addWallFace` draws the face as two pieces on
+that row — the band keeps `XRAY_DEEP_LABEL`, the base takes `FACE_BASE_LABEL` and is in neither x-ray
+group, so it stays opaque through both fades. 32 of 70 px on every deep block the launch map has.
+
+Three things about the shape of that rule are worth carrying:
+
+- **Derived at clearance ZERO, deliberately.** The player's own 16 px wall clearance means the sweep
+  never uses more than 22 px of the 38 px band. That leftover is not slack: `foci` includes every
+  live enemy, and an enemy keeps its FEET circle against solids (`enemies.ts`,
+  `solidRadius: bp.footprintRadius`, as low as 6 px), so a mob legitimately stands 10 px closer than
+  anything the sweep can place. The bound is a property of the projection; tightening it to the
+  player's clearance would have been a bug that only a monster could find.
+- **`max(0, …)` is load-bearing content, not defensive decoration.** A kerb is 22 px of art over a
+  32 px footprint, so the reach is 0 and its whole face is tagged never-fading — which is the same
+  thing `needsDeepFade` already refuses to do there, said in geometry. Two mutants confirm it: the
+  clamp removed dies, and so does the kerb case.
+- **A DOOR is excluded, and by omission rather than by a flag.** `buildDoorBlock` passes no reach.
+  Its passage floor is INSIDE its own footprint, so a character in the doorway stands on exactly the
+  rows the derivation excludes.
+
+### The four measurements
+
+| | |
+|---|---|
+| face kept opaque on a deep block | **32 of 70 px (46%)**, on all 58 deep blocks of the launch map |
+| pixels changed at REST by splitting all 227 splittable blocks in frame | **only the one faded block's base rows** — 3.49% of the frame, all inside a single 513x91 box, zero elsewhere |
+| draw calls | **45 → 45** — the extra `TilingSprite` batches |
+| luma step across the new seam | **12.99** (35.3 → 48.3), against **22.73** the same wall already carries at its own cap/face fold when fully solid |
+
+That last row is the whole argument for a hard join rather than a feather. The split's worst per-row
+step anywhere on the face is 13.62, and it lands 9 px BELOW the seam — on a stone course inside the
+now-opaque base. The seam is 57% of a step this surface shows all the time and is not even the
+loudest thing on it. A ramp there would have cost a stack of graduated sub-pieces, because a
+`FadeGroup` scales alpha multiplicatively and there is no way to make one layer land *between*
+`XRAY_FADE` and 1.
+
+**What is NOT split, with its reason.** `drawBlockShading` is one Graphics for the whole block, so it
+cannot keep the base's share of itself at full strength, and splitting it would double a per-block
+Graphics that the draw-call passes budget. On a live frame the base with its shading faded is
+indistinguishable from the base with it solid: the base contact crease is the only pass down there
+and it is subtle against opaque stone. The cast shadow on the floor never faded to begin with.
+
+### The battery: 49 runs, 39 killed, and one of the five survivors was not a gap
+
+42 mutants over `deepFadeReach`, the call site, the two-piece split, the piece geometry, the no-swatch
+fallback's clip, the door's exclusion and the drive-by below; 2 controls, both intact. **Five
+survivors. Four became tests; the fifth is an equivalent mutant and the distinction mattered.**
+
+1. **Both clamps in `addWallFace` were unreachable from any call site** — `deepFadeReach` already
+   clamps and the door passes exactly `height`. That is real dead code by this repo's standard, and
+   the fix is not to delete it: `addWallFace` is exported and `deepReach` is a public parameter, so
+   "the face covers exactly the elevation whatever reach you pass" is a contract worth having. Now
+   tested at four values including −40 and `height + 40`, which is what turns the clamp into covered
+   code instead of decoration.
+2. **The fallback's empty-span guard survived because the fallback was only ever built at one
+   shape.** `RECT`/`HEIGHT` splits into two non-empty spans, so nothing exercised a kerb or a door
+   with no swatch loaded — where the guard is the difference between one piece and one piece plus an
+   empty `Graphics`. An empty display object per block is exactly what the draw-call passes hunt.
+3. **The door's exclusion survived for a reason that is itself worth knowing.** Making
+   `doorRender` pass a reach passed the whole suite, because the existing door fixture's passage
+   (128 px) is DEEPER than the wall is tall (104 px) — so the mutated reach clamps to 0 and comes out
+   as one piece anyway. Killing it needed a shallow passage. Second time this week a mutant survived
+   because the only fixture in the file could not tell the two answers apart.
+4. **`Entity.destroy` leaving the shadow parented survived, and it is not a hole.** Pixi's own
+   `Container.destroy` calls `removeFromParent()` (`Container.mjs:1140`), so the explicit
+   `removeChild` in `Entity.destroy` cannot change behaviour. The survivor is the EVIDENCE for the
+   drive-by below rather than a missing test — and the adjacent mutant (`clear()` not destroying the
+   portal at all) dies on `layers.shadow.children.length === 0`, which is what proves the harness was
+   really looking at that layer.
+
+### Drive-by: the last copy of a redundancy that was removed twice before
+
+`RoomBuilder` called `this.portal?.shadow?.destroy()` before `this.portal?.destroy()` at both portal
+sites — the same redundancy `destroyDressing` removed from the pillar and prop lists earlier the same
+day, and the one the mutant above proves is redundant twice over (`Entity.destroy` unparents and
+destroys the shadow; Pixi's `Container.destroy` would have unparented it anyway). Both copies gone.
+The `clear()` assertion that stands behind it was already there and already counting the portal's
+shadow; its comment now says so, so the next reader does not have to re-derive which call was
+carrying it.
+
+`npm run check` on the client workspace: **3,437 tests** (3,415 + 22 new), `tsc --noEmit` clean,
+`check:filelength` clean with nothing new baselined — `wallRender.ts` at 474 of 500.
+
+### A second round, on what the first round's tests did not point at
+
+The battery only proves the tests that EXIST are load-bearing. Re-reading the pass for where nothing
+had been aimed turned up five places, and one of them was not a gap but an error:
+
+1. **Both coverage oracles still said the deep pass "leaves nothing" opaque.** 170k samples of
+   rectangle-overlap truth, modelling a renderer that had changed under them — and optimistically,
+   crediting the x-ray with visibility it no longer delivers.
+2. **Correcting the oracle did not make it a gate, and that had to be measured rather than assumed.**
+   With `deepFadeReach` cut by 24 px the corrected oracle reports 25% of the body buried and the
+   acceptance assertion it feeds — bounded at HALF the body, the right bound for the x-ray as a
+   whole — passes anyway. The claim "fixing the oracle makes the acceptance test a gate on the
+   reach" was drafted, checked, and found false. What the split guarantees is exact, so both sweeps
+   now assert exactly that: zero rows of the body behind a deep-faded block, per (sample, block)
+   pair. A reach cut by ONE px now fails.
+3. **The split was outside every draw-call budget** — the same shape as the void return's Graphics
+   two passes ago. The live 45 → 45 result holds because the extra piece is a batchable sprite, and
+   nothing pinned it: a base drawn as a `Graphics` fill would look identical, pass everything, and
+   cost a draw call on 227 blocks. Now two sweeps in `wallComposition.test.ts` — no Graphics among a
+   swatch block's face children, and the fallback's pieces inside the auto-batch line.
+4. **The base holding alpha through a real settled fade was covered by accident**, via a filter
+   named `silhouette` that happened to include it. Named now, plus a check that the occluder box and
+   the drawn split agree about the fold row — derived from the box's third number (`foldY - top`)
+   rather than from `foldY` twice, since `reach = height - depth` makes the base's height the
+   footprint depth.
+5. **A tautological label assertion.** `expect(base.label).toBe(FACE_BASE_LABEL)` reads the constant
+   it checks, so `FACE_BASE_LABEL = 'xray'` satisfies it while moving the block's base into the cap
+   fade. Third instance of this shape in two weeks; same cure as always.
+
+Then the survivor that took three rounds to kill, and it is the most useful thing in the pass:
+
+> **`RoomBuilder` feeding the occluder box the TIER height where the block is drawn at
+> `effectiveWallHeight` survived the entire client suite, in three different mutation shapes.**
+
+Not a weak assertion — a missing *fixture*. Every room in `RoomBuilder.test.ts` is a room without a
+door, and `effectiveWallHeight` only differs from the tier height for a `doorClip`ped shallow run:
+12 of them across the five shipped floors, none in any unit fixture. On a door-free room the mutant
+is behaviour-identical, so no assertion anywhere could have caught it. Where the two DO differ the
+consequence is total — `min(height, r.h)` makes a shallow clipped run exactly as tall as its
+footprint is deep, so its reach is 0 and its whole face is one never-fading piece, where the tier
+height would have given it a band and let the deep pass dissolve a wall that cannot hide anybody.
+
+Fixed by adding a door to the fixture (one line) and by sweeping the real 12 in
+`doorSpillCoverage.test.ts` — which also asserts the tier height WOULD have produced a band, so the
+fixture is proved to disagree rather than assumed to. Third time in a week that a call-site mutant
+turned out to be immortal on the only content the file had:
+
+- `cellExtent(worldH, worldW)` — axes swapped, every fixture square.
+- `voidEdges` fed room rects instead of painted floor — only `landing_basic` distinguishes them.
+- this one — only a door-clipped shallow run distinguishes two heights.
+
+The diagnostic question when a call-site mutant survives is not "which assertion is too weak" but
+**"is there any fixture in this file where the two candidate arguments give different answers?"**
+
+**Five rounds, 79 mutant runs over 51 distinct mutants, 2 controls intact, 8 survivors — 7 now
+tests, 1 an equivalent mutant.** Round 1's survivors were all about the code; every survivor after
+it was about which content the tests run on. Client workspace: **3,450 tests** (3,415 + 35).

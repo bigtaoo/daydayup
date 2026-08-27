@@ -102,6 +102,33 @@ export function needsDeepFade(o: Occluder, f: OcclusionFocus): boolean {
 }
 
 /**
+ * How far BELOW the cap/face fold the deep pass can ever need to reach, in px, for a block whose
+ * art is `height` tall over a footprint `footprintDepth` deep.
+ *
+ * This is the number that keeps the deep pass from reading as a pane of glass. `needsDeepFade`
+ * says *whether* a block's front face has to go translucent; it says nothing about *how much of
+ * it*, and dropping the whole face was measured on a live frame to remove the block's base, its
+ * plinth and its contact with the floor — none of which was ever covering the character. On the
+ * shipped arena's deep blocks (70 px of art over a 32 px footprint) the rows a body can actually
+ * occupy are the top 38 px: 46% of the face was going translucent for no one.
+ *
+ * The bound is geometric rather than tuned. A focus is a character standing NORTH of the block —
+ * it cannot overlap the footprint, so its ground point is at most `r.y` (= `sortY - footprintDepth`)
+ * and its own wall clearance only ever pushes it further north — and a body is drawn UPWARD from
+ * its ground point, never below it. So the lowest face row any body can reach is
+ * `sortY - footprintDepth`, i.e. `height - footprintDepth` px below the fold at `sortY - height`.
+ * `occlusionCoverage`/`arenaWallCoverage` assert that on every swept sample the deep pass fires
+ * for, which is what makes this a fact about the projection instead of a margin someone picked.
+ *
+ * Clamped at 0 rather than allowed negative: a kerb is 22 px of art over a 32 px footprint, so its
+ * face is entirely below every reachable body and the deep pass can never touch it at all — which
+ * is the same thing `needsDeepFade` already refuses to do there, said in geometry.
+ */
+export function deepFadeReach(height: number, footprintDepth: number): number {
+  return Math.max(0, height - footprintDepth);
+}
+
+/**
  * How much of its own opacity a block keeps while it is hiding the character.
  *
  * Not zero, and not a hidden block: the point of the last several rendering passes was to make

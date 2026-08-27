@@ -9,10 +9,25 @@
  */
 import { describe, it, expect } from 'vitest';
 import { Graphics, TilingSprite, Texture, TextureSource } from 'pixi.js';
-import { addColors, buildWallBlock, drawBlockShading, drawWallShadow, sweptHull, type WallSkin } from './wallRender';
-import { XRAY_LABEL } from './occlusion';
+import {
+  addColors,
+  addWallFace,
+  buildWallBlock,
+  drawBlockShading,
+  drawWallShadow,
+  sweptHull,
+  FACE_BASE_LABEL,
+  type WallSkin,
+} from './wallRender';
+import {
+  deepFadeReach,
+  deepXrayLayers,
+  xrayLayers,
+  XRAY_DEEP_LABEL,
+  XRAY_LABEL,
+} from './occlusion';
 import { rampProfile, readRampFill } from '../../render/shadeRamp';
-import type { Entity } from './Entity';
+import { Entity } from './Entity';
 import { blockCapTop, NO_JOINS, type WallJoins } from './wallRuns';
 import {
   CAP_BOOST_ALPHA,
@@ -38,7 +53,7 @@ import {
 } from './wallTone';
 import { SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
 import { biomePalette } from '../theme';
-import type { RectPx } from './wallGeometry';
+import { WALL_H_KERB, type RectPx } from './wallGeometry';
 
 /** The colours a Graphics actually filled with, in call order — the only way to read a drawn
  *  look back out of Pixi headlessly (same shape as `Actor.test.ts`'s contour check). */
@@ -51,6 +66,40 @@ function fillColors(g: Graphics): number[] {
 
 const RECT: RectPx = { x: 320, y: 640, w: 480, h: 32 };
 const HEIGHT = 104;
+
+/** The block's silhouette: the last thing `buildWallBlock` adds when it has no void sides. Read
+ *  from the end rather than by index because the face is drawn as one piece or two depending on
+ *  how far the x-ray's deep pass can reach into it (`occlusion.deepFadeReach`). */
+function edgeOf(seg: Entity): Graphics {
+  return seg.children[seg.children.length - 1] as Graphics;
+}
+
+/** The cap's TilingSprites: the surface, then its additive key light where the bake is
+ *  unavailable (headless). By label, so the face's own piece count cannot move them. */
+function capTiles(seg: Entity): TilingSprite[] {
+  return seg.children.filter((c): c is TilingSprite => c instanceof TilingSprite && c.label === XRAY_LABEL);
+}
+
+/** The face's pieces when no swatch has loaded: the Graphics drawn BEFORE the cap. Identified by
+ *  position because the fading piece shares `XRAY_DEEP_LABEL` with the block's shading. */
+function fallbackFacePieces(seg: Entity): Graphics[] {
+  return seg.children.slice(0, seg.children.findIndex((c) => c.label === XRAY_LABEL)) as Graphics[];
+}
+
+/** The face's pieces in draw order: the band the deep pass may reach, then the base it may not. */
+function facePieces(seg: Entity): TilingSprite[] {
+  return seg.children.filter(
+    (c): c is TilingSprite =>
+      c instanceof TilingSprite && (c.label === XRAY_DEEP_LABEL || c.label === FACE_BASE_LABEL),
+  );
+}
+
+/** Texture ROW one face piece samples at local y `ly`. A `TilingSprite` maps local px to texture
+ *  px as `(local - tilePosition) / tileScale`, which is the whole reason a split piece has to
+ *  carry its own `tilePosition` — see `addWallFace`. */
+function faceTexRow(p: TilingSprite, ly: number): number {
+  return (ly - p.y - p.tilePosition.y) / p.tileScale.y;
+}
 
 function tex(): Texture {
   return new Texture({ source: new TextureSource({ width: 16, height: 64 }) });
@@ -96,10 +145,15 @@ describe('buildWallBlock — the extruded block', () => {
   it('stacks the face over -height..0 and the cap the footprint depth above that', () => {
     const seg = buildWallBlock(RECT, HEIGHT, skin(true));
     const tiles = seg.children.filter((c): c is TilingSprite => c instanceof TilingSprite);
-    expect(tiles).toHaveLength(3); // face, cap surface, cap key light (the swatch a second time)
-    const [face, cap] = tiles;
-    expect(face!.y).toBe(-HEIGHT);
-    expect(face!.height).toBe(HEIGHT);
+    // The face is TWO pieces — the deep pass's reach splits it (`occlusion.deepFadeReach`) — then
+    // the cap surface and the cap key light (the swatch a second time).
+    expect(tiles).toHaveLength(4);
+    const [band, base, cap] = tiles;
+    expect(band!.y).toBe(-HEIGHT);
+    expect(base!.y).toBe(-HEIGHT + deepFadeReach(HEIGHT, RECT.h));
+    // ...and between them they still stack over exactly -height..0, no gap and no overlap.
+    expect(band!.height + base!.height).toBe(HEIGHT);
+    expect(base!.y + base!.height).toBe(0);
     expect(cap!.y).toBe(-HEIGHT - RECT.h);
     expect(cap!.height).toBe(RECT.h);
   });
@@ -134,8 +188,9 @@ describe('buildWallBlock — the extruded block', () => {
     // 30..60 swatch is 77..107, i.e. 2:1 becomes 1.4:1, and the cap reads as pale concrete. The
     // same swatch drawn a second time in `add` mode multiplies instead, so the ratio survives.
     const seg = buildWallBlock(RECT, HEIGHT, skin(true));
-    const tiles = seg.children.filter((c): c is TilingSprite => c instanceof TilingSprite);
-    const [, cap, lit] = tiles;
+    // By LABEL rather than by tile index: how many pieces the FACE is drawn as depends on how far
+    // the x-ray's deep pass can reach into it, which has nothing to do with the cap.
+    const [cap, lit] = capTiles(seg);
     expect(lit).toBeDefined();
     expect(lit!.blendMode).toBe(CAP_LIGHT_BLEND);
     expect(lit!.blendMode).toBe('add');
@@ -168,8 +223,9 @@ describe('buildWallBlock — the extruded block', () => {
     // Asserted as the PROPERTY rather than as a literal offset: for any block, the texture
     // coordinate under a given WORLD point must come out the same. That is what makes two blocks
     // agree, it survives the tuck clip moving the sprite, and it fails for a per-block origin.
-    const capOf = (s: Entity) =>
-      s.children.filter((c): c is TilingSprite => c instanceof TilingSprite)[1]!;
+    // By label: a run deep enough that no body can reach its face is drawn with ONE face piece
+    // and a shallow one with two, so the cap is not at a fixed tile index (`deepFadeReach`).
+    const capOf = (s: Entity) => capTiles(s)[0]!;
     /** Texture coordinate this block's cap samples at world (wx, wy). */
     const sampleAt = (rect: RectPx, h: number, j: WallJoins, wx: number, wy: number) => {
       const cap = capOf(buildWallBlock(rect, h, skin(true), j));
@@ -205,17 +261,19 @@ describe('buildWallBlock — the extruded block', () => {
   it('scales every surface with the height it is given, so the three tiers really differ', () => {
     const short = buildWallBlock(RECT, 22, skin(true));
     const tall = buildWallBlock(RECT, 104, skin(true));
-    const faceOf = (s: typeof short) =>
-      s.children.find((c): c is TilingSprite => c instanceof TilingSprite)!;
-    expect(faceOf(short).height).toBe(22);
-    expect(faceOf(tall).height).toBe(104);
+    // Summed over the face's pieces: how many it is drawn as is the deep pass's business, how
+    // tall it stands is this test's.
+    const faceH = (s: typeof short) => facePieces(s).reduce((n, p) => n + p.height, 0);
+    expect(faceH(short)).toBe(22);
+    expect(faceH(tall)).toBe(104);
   });
 
   it('still stands (face + cap + shading + outline) when no swatch has loaded', () => {
     const seg = buildWallBlock(RECT, HEIGHT, skin(false));
     expect(seg.children.filter((c) => c instanceof TilingSprite)).toHaveLength(0);
-    // face fallback, cap fallback (key light summed INTO it, see `addColors`), shading, outline.
-    expect(seg.children.filter((c) => c instanceof Graphics)).toHaveLength(4);
+    // face fallback in its two pieces (the deep pass's reach splits the fallback on the same rows
+    // as the swatch), cap fallback (key light summed INTO it, see `addColors`), shading, outline.
+    expect(seg.children.filter((c) => c instanceof Graphics)).toHaveLength(5);
   });
 
   it('folds the fallback cap key light into one fill rather than an additive second layer', () => {
@@ -243,11 +301,12 @@ describe('buildWallBlock — the extruded block', () => {
 
   it('adds shading and an outline on top of the art, in that order', () => {
     const seg = buildWallBlock(RECT, HEIGHT, skin(true));
-    // face, cap, the cap's additive key light (all TilingSprites), then shading and silhouette.
-    expect(seg.children).toHaveLength(5);
-    expect(seg.children[2]).toBeInstanceOf(TilingSprite);
-    expect(seg.children[3]).toBeInstanceOf(Graphics);
+    // face band, face base, cap, the cap's additive key light (all TilingSprites), then shading
+    // and silhouette.
+    expect(seg.children).toHaveLength(6);
+    expect(seg.children[3]).toBeInstanceOf(TilingSprite);
     expect(seg.children[4]).toBeInstanceOf(Graphics);
+    expect(seg.children[5]).toBeInstanceOf(Graphics);
   });
 });
 
@@ -451,10 +510,11 @@ describe('buildWallBlock — the three height tiers, and per-surface art fallbac
     // environment has none — see `wallCapLit.test.ts` for the baked path's own composition.
     expect(capOnly.children.filter((c) => c instanceof TilingSprite)).toHaveLength(2); // cap + key light
     const faceOnly = buildWallBlock(RECT, HEIGHT, { palette: biomePalette(undefined), cap: undefined, face: t });
-    expect(faceOnly.children.filter((c) => c instanceof TilingSprite)).toHaveLength(1);
-    // Either way the block is still face + cap (+ its key light where unbaked) + shading + outline.
-    expect(capOnly.children).toHaveLength(5);
-    expect(faceOnly.children).toHaveLength(4);
+    expect(faceOnly.children.filter((c) => c instanceof TilingSprite)).toHaveLength(2); // band + base
+    // Either way the block is still face (two pieces) + cap (+ its key light where unbaked) +
+    // shading + outline.
+    expect(capOnly.children).toHaveLength(6);
+    expect(faceOnly.children).toHaveLength(5);
   });
 
   it('outlines the block DARK, and never in the palette\'s light wall-edge colour', () => {
@@ -463,8 +523,7 @@ describe('buildWallBlock — the three height tiers, and per-surface art fallbac
     // camera it read as a bright wireframe box over the art: the loudest thing in the frame.
     const palette = biomePalette('ember');
     const seg = buildWallBlock(RECT, HEIGHT, { palette, cap: tex(), face: tex() });
-    const edge = seg.children[4] as Graphics;
-    const silhouette = strokes(edge).find((s) => s.color !== 0xffffff)!;
+    const silhouette = strokes(edgeOf(seg)).find((s) => s.color !== 0xffffff)!;
     expect(silhouette.color).not.toBe(palette.wallEdge);
     expect(luma(silhouette.color)).toBeLessThan(luma(palette.wallEdge) / 3);
     expect(luma(silhouette.color)).toBeLessThan(32);
@@ -476,8 +535,7 @@ describe('buildWallBlock — the three height tiers, and per-surface art fallbac
     // face art carries its own coping course there, and a second highlight on top of it read as
     // a stray bright bar.
     const seg = buildWallBlock(RECT, HEIGHT, skin(true));
-    const edge = seg.children[4] as Graphics;
-    const light = strokes(edge).filter((s) => s.color === 0xffffff);
+    const light = strokes(edgeOf(seg)).filter((s) => s.color === 0xffffff);
     expect(light).toHaveLength(2);
     for (const l of light) expect(l.alpha).toBeLessThan(0.4); // a rim, not a highlight bar
   });
@@ -762,12 +820,11 @@ describe('buildWallBlock — what the occlusion x-ray is allowed to fade', () =>
     }
   });
 
-  it('leaves the face, the shading and the silhouette untagged', () => {
+  it('leaves the face, the shading and the silhouette out of the CAP group', () => {
     const seg = buildWallBlock(RECT, HEIGHT, skin(true));
     const untagged = seg.children.filter((c) => c.label !== XRAY_LABEL);
-    expect(untagged).toHaveLength(3); // face, shading, silhouette
-    const face = untagged[0]!;
-    expect(layerTop(face)).toBeCloseTo(-HEIGHT, 6); // the front elevation, not the cap
+    expect(untagged).toHaveLength(4); // face band, face base, shading, silhouette
+    expect(layerTop(untagged[0]!)).toBeCloseTo(-HEIGHT, 6); // the front elevation, not the cap
   });
 
   it('tags the cap of a TUCKED run at its clipped top, not its nominal one', () => {
@@ -801,5 +858,185 @@ describe('blockCapTop — one definition of how far north a block reaches', () =
     const deep: RectPx = { x: 0, y: 0, w: 32, h: 224 };
     const joins: WallJoins = { ...NO_JOINS, tuckNorth: true, tuckLiftPx: 10_000 };
     expect(blockCapTop(deep, HEIGHT, joins)).toBeLessThanOrEqual(-HEIGHT);
+  });
+});
+
+
+describe('addWallFace — the deep pass reaches a body and stops there', () => {
+  // WHY THIS EXISTS. `needsDeepFade` says WHETHER a block's front face has to go translucent; it
+  // said nothing about how much of it, and the whole face went. Looked at on a live frame that
+  // reads as a pane of glass — the block loses its base, its plinth and its footing on the floor,
+  // none of which was ever covering the character. `deepFadeReach` bounds it, and these are the
+  // properties the drawing side has to keep for that bound to mean anything.
+
+  it('splits the face at the reach and still stacks over exactly -height..0', () => {
+    const seg = buildWallBlock(RECT, HEIGHT, skin(true));
+    const [band, base] = facePieces(seg);
+    const reach = deepFadeReach(HEIGHT, RECT.h);
+    expect(reach).toBe(72); // 104 px of art over a 32 px footprint
+    expect(band!.height).toBe(reach);
+    expect(band!.y).toBe(-HEIGHT);
+    expect(base!.y).toBe(-HEIGHT + reach);
+    expect(base!.height).toBe(HEIGHT - reach);
+    expect(base!.y + base!.height).toBe(0); // the elevation still reaches the ground line
+  });
+
+  it('gives the base a label that collides with NEITHER group, stated as a relationship', () => {
+    // `expect(base.label).toBe(FACE_BASE_LABEL)` is a tautology: it reads the constant it is
+    // checking, so setting `FACE_BASE_LABEL = 'xray'` satisfies it while quietly moving the
+    // block's base into the CAP fade. What the value has to be TRUE OF is that it collides with
+    // neither group's marker — third time this exact shape has come up (see `VOID_CROWN_ALPHA`).
+    expect(FACE_BASE_LABEL).not.toBe(XRAY_LABEL);
+    expect(FACE_BASE_LABEL).not.toBe(XRAY_DEEP_LABEL);
+    expect(new Set([FACE_BASE_LABEL, XRAY_LABEL, XRAY_DEEP_LABEL]).size).toBe(3);
+  });
+
+  it('puts the band in the deep group and the base in NEITHER group', () => {
+    // The base is the point of the split: it has to survive both fades, which is the standing the
+    // silhouette has. `xrayLayers`/`deepXrayLayers` both filter by label, so an unrecognised label
+    // is exactly "never fades" — asserted through those two functions rather than on the string.
+    const seg = buildWallBlock(RECT, HEIGHT, skin(true));
+    const [band, base] = facePieces(seg);
+    expect(band!.label).toBe(XRAY_DEEP_LABEL);
+    expect(base!.label).toBe(FACE_BASE_LABEL);
+    expect(deepXrayLayers(seg.children)).toContain(band);
+    expect(deepXrayLayers(seg.children)).not.toContain(base);
+    expect(xrayLayers(seg.children)).not.toContain(base);
+  });
+
+  it('keeps the swatch continuous across the join — the base samples what one piece would', () => {
+    // The bug this catches is a piece that restarts the swatch at its own origin, which puts a
+    // mismatched course seam across every splittable wall in the map. A `TilingSprite` maps local
+    // px to texture px as `(local - tilePosition) / tileScale`, so the base has to carry the
+    // band's height as its own offset. Checked against an actual unsplit face rather than against
+    // the formula, so the two cannot drift together.
+    const t = tex();
+    const s: WallSkin = { palette: biomePalette(undefined), cap: undefined, face: t };
+    const split = facePieces(buildWallBlock(RECT, HEIGHT, s));
+    const whole = new TilingSprite({ texture: t, width: RECT.w, height: HEIGHT });
+    whole.position.set(0, -HEIGHT);
+    whole.tileScale.set(HEIGHT / t.height);
+    const reach = deepFadeReach(HEIGHT, RECT.h);
+    for (const ly of [-HEIGHT, -HEIGHT + 1, -HEIGHT + reach - 1, -HEIGHT + reach, -1, 0]) {
+      const piece = ly < -HEIGHT + reach ? split[0]! : split[1]!;
+      expect(faceTexRow(piece, ly)).toBeCloseTo(faceTexRow(whole, ly), 6);
+    }
+    // ...and the two pieces are the same swatch at the same scale, not one stretched to fit.
+    expect(split[1]!.texture).toBe(split[0]!.texture);
+    expect(split[1]!.tileScale.y).toBeCloseTo(split[0]!.tileScale.y, 6);
+  });
+
+  it('is ONE fading piece when the reach covers the whole face — the door path', () => {
+    // `doorRender` passes no reach at all, because its passage floor is INSIDE its own footprint
+    // and a character in the doorway stands on rows the reach derivation excludes. That has to
+    // come out as the pre-split behaviour: one piece, all of it in the deep group.
+    const seg = new Entity();
+    addWallFace(seg, RECT, HEIGHT, skin(true));
+    expect(seg.children).toHaveLength(1);
+    expect(seg.children[0]!.label).toBe(XRAY_DEEP_LABEL);
+    expect((seg.children[0] as TilingSprite).height).toBe(HEIGHT);
+  });
+
+  it('is ONE never-fading piece for a kerb, whose face no body can reach', () => {
+    // 22 px of art over a 32 px footprint: the whole elevation is below every reachable body, so
+    // the reach is 0 and the deep group is empty. `needsDeepFade` already refuses to fire there —
+    // this is the same fact said in geometry, and it is why the clamp at 0 is not decoration.
+    expect(deepFadeReach(WALL_H_KERB, RECT.h)).toBe(0);
+    const seg = buildWallBlock(RECT, WALL_H_KERB, skin(true));
+    const pieces = facePieces(seg);
+    expect(pieces).toHaveLength(1);
+    expect(pieces[0]!.label).toBe(FACE_BASE_LABEL);
+    expect(pieces[0]!.height).toBe(WALL_H_KERB);
+    expect(deepXrayLayers(seg.children)).not.toContain(pieces[0]);
+  });
+
+  it('splits the no-swatch fallback on the same rows, each piece keeping only its own banding', () => {
+    // Not for the look — this is the degraded path — but so the two paths cannot disagree about
+    // which layers fade, which is the only thing a test on the fallback would otherwise measure.
+    // The banding is clipped rather than redrawn per piece: the highlight is the face's top 22%
+    // and the dark base its bottom 30%, so on a 104 px face the band gets the highlight and the
+    // base gets the darkening, and neither gets both.
+    const seg = buildWallBlock(RECT, HEIGHT, skin(false));
+    const faces = fallbackFacePieces(seg);
+    expect(faces).toHaveLength(2);
+    const [band, base] = faces;
+    expect(band!.label).toBe(XRAY_DEEP_LABEL);
+    expect(base!.label).toBe(FACE_BASE_LABEL);
+    const rowsOf = (g: Graphics) => rectFills(g).map((f) => [f.y, f.y + f.h, f.color] as const);
+    // Every fill in each piece lies inside that piece's own span, and the two spans tile the face.
+    const reach = deepFadeReach(HEIGHT, RECT.h);
+    for (const [y0, y1] of rowsOf(band!)) {
+      expect(y0).toBeGreaterThanOrEqual(-HEIGHT);
+      expect(y1).toBeLessThanOrEqual(-HEIGHT + reach);
+    }
+    for (const [y0, y1] of rowsOf(base!)) {
+      expect(y0).toBeGreaterThanOrEqual(-HEIGHT + reach);
+      expect(y1).toBeLessThanOrEqual(0);
+    }
+    // The lit top band landed in the band piece and the dark base in the base piece — i.e. the
+    // clip really is a clip, not each piece drawing the whole profile over its own span.
+    expect(rowsOf(band!).some(([, , c]) => c === 0xffffff)).toBe(true);
+    expect(rowsOf(band!).some(([, , c]) => c === 0x000000)).toBe(false);
+    expect(rowsOf(base!).some(([, , c]) => c === 0x000000)).toBe(true);
+    expect(rowsOf(base!).some(([, , c]) => c === 0xffffff)).toBe(false);
+    // ...and the wall fill itself is present in both, so neither piece is a hole.
+    for (const g of faces) expect(rowsOf(g).some(([, , c]) => c === biomePalette(undefined).wall)).toBe(true);
+  });
+
+  it('covers exactly the elevation whatever reach it is handed', () => {
+    // `addWallFace` is exported and `deepReach` is a public parameter, so the clamp is a contract
+    // rather than decoration: past the height the whole face fades and nothing hangs below the
+    // ground line; below zero nothing fades and nothing hangs ABOVE the fold, which is where an
+    // unclamped negative would put the base piece.
+    for (const reach of [-40, 0, HEIGHT, HEIGHT + 40]) {
+      const seg = new Entity();
+      addWallFace(seg, RECT, HEIGHT, skin(true), reach);
+      const pieces = facePieces(seg);
+      expect(pieces.length).toBeGreaterThan(0);
+      expect(pieces[0]!.y).toBe(-HEIGHT);
+      expect(pieces.reduce((n, p) => n + p.height, 0)).toBe(HEIGHT);
+      const last = pieces[pieces.length - 1]!;
+      expect(last.y + last.height).toBe(0);
+    }
+    // ...and the two ends of that range are the two single-piece cases, in opposite groups.
+    const wide = new Entity();
+    addWallFace(wide, RECT, HEIGHT, skin(true), HEIGHT + 40);
+    expect(facePieces(wide).map((p) => p.label)).toEqual([XRAY_DEEP_LABEL]);
+    const none = new Entity();
+    addWallFace(none, RECT, HEIGHT, skin(true), -40);
+    expect(facePieces(none).map((p) => p.label)).toEqual([FACE_BASE_LABEL]);
+  });
+
+  it('adds no empty piece for a span with nothing in it, swatch or fallback', () => {
+    // An empty `Graphics` per block is exactly the kind of thing the draw-call passes hunt, and
+    // the fallback is where it would hide: `fillBand` clips every band away on a zero-height span,
+    // so without the guard the piece would still be added, just with no instructions in it.
+    for (const withArt of [true, false]) {
+      const kerb = buildWallBlock(RECT, WALL_H_KERB, skin(withArt)); // reach 0 -> no band
+      const doorLike = new Entity();
+      addWallFace(doorLike, RECT, HEIGHT, skin(withArt)); // reach = height -> no base
+      const count = (seg: Entity) =>
+        withArt
+          ? facePieces(seg).length
+          : seg.children.filter((c) => c.label === XRAY_DEEP_LABEL || c.label === FACE_BASE_LABEL).length;
+      expect(count(kerb)).toBe(withArt ? 1 : 2); // the fallback's shading carries the same label
+      expect(count(doorLike)).toBe(1);
+      for (const c of doorLike.children) {
+        if (c instanceof Graphics) expect(c.context.instructions.length).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('draws the same stone at rest as one piece would, at every row', () => {
+    // The split is only allowed to change what a FADE looks like. At rest both pieces are opaque
+    // and sample continuous texture rows, so a frame with the split in it has to be identical to
+    // one without — which is what a live A/B measured (only the one deep-faded block's own base
+    // rows moved; 226 other split blocks were pixel-identical).
+    const seg = buildWallBlock(RECT, HEIGHT, skin(true));
+    for (const p of facePieces(seg)) {
+      expect(p.alpha).toBe(1);
+      expect(p.tint).toBe(FACE_TINT);
+      expect(p.blendMode).toBe('inherit');
+    }
   });
 });

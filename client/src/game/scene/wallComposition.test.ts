@@ -30,7 +30,7 @@
  * survive in a canvas-free vitest run.
  */
 import { describe, it, expect } from 'vitest';
-import { GraphicsContextSystem } from 'pixi.js';
+import { Graphics, GraphicsContextSystem, Texture, TextureSource, TilingSprite } from 'pixi.js';
 import { readdirSync, readFileSync } from 'node:fs';
 import { inflateSync } from 'node:zlib';
 import {
@@ -54,7 +54,23 @@ import {
   SIDE_COLOR,
   faceCrownFraction,
 } from './wallTone';
-import { drawBlockShading } from './wallRender';
+import { buildWallBlock, drawBlockShading, FACE_BASE_LABEL, type WallSkin } from './wallRender';
+import { XRAY_DEEP_LABEL, XRAY_LABEL } from './occlusion';
+import { biomePalette } from '../theme';
+
+/** A skin with both swatches present, at the shipped art's own pixel sizes. */
+function texturedSkin(): WallSkin {
+  return {
+    palette: biomePalette('ember'),
+    cap: new Texture({ source: new TextureSource({ width: 256, height: 256 }) }),
+    face: new Texture({ source: new TextureSource({ width: 256, height: 128 }) }),
+  };
+}
+
+/** The degraded path: neither swatch loaded, so every surface falls back to palette Graphics. */
+function bareSkin(): WallSkin {
+  return { palette: biomePalette('ember'), cap: undefined, face: undefined };
+}
 import { AUTO_BATCH_VERTEX_LIMIT } from '../../perf/drawAttribution';
 import { readRampFill, resetShadeRampCache, shadeRampCacheSize } from '../../render/shadeRamp';
 import { voidEdges, type VoidEdges } from './wallVoidEdge';
@@ -616,6 +632,81 @@ describe('shipped level-1 walls — the shading still batches', () => {
     // shipped block is now 120 floats over 15 fills.
     expect(worstFloats, `worst block: ${worstWhere}`).toBeLessThan(AUTO_BATCH_VERTEX_LIMIT / 2);
     expect(worstFills).toBeLessThan(30);
+  });
+
+  // ------------------------------------------------------------------------------------------
+  // The face split of 2026-08-27 adds a SECOND piece to every block whose face the x-ray's deep
+  // pass can partly reach — 227 of 294 blocks in a built arena. That is exactly the shape of cue
+  // the 2026-08-24 pass found 50 of 107 draw calls in: something added per block, correct in
+  // isolation, and outside every budget in this file. Live measurement said it is free (45 draws
+  // before, 45 after) BECAUSE the piece is a batchable sprite — so these two checks pin the
+  // property the measurement depended on, rather than the number it produced.
+
+  it('adds no GRAPHICS to a block with a swatch — the split rides the sprite batch', () => {
+    // A base piece drawn as a Graphics fill instead of a TilingSprite would look identical, pass
+    // every other test in the suite, and cost a draw call on every splittable wall in the map.
+    // The gate is the COUNT of Graphics per block, which is what a new one would move.
+    let blocks = 0;
+    let splitBlocks = 0;
+    for (const f of FLOORS) {
+      for (const [i, run] of f.runs.entries()) {
+        const height = wallHeight(run.tier);
+        const seg = buildWallBlock(run.rect, height, texturedSkin(), f.joins[i]!, f.voids[i]!);
+        // `addWallFace` runs first, so the face IS the children drawn before the cap — no label
+        // filtering, which matters because the shading shares `XRAY_DEEP_LABEL` and a void return
+        // shares `XRAY_LABEL`. Every one of those children has to be a sprite.
+        const capAt = seg.children.findIndex((c) => c.label === XRAY_LABEL);
+        const faces = seg.children.slice(0, capAt);
+        expect(faces.length, `floor ${f.index} run ${i}`).toBeGreaterThan(0);
+        for (const c of faces) {
+          expect(c, `floor ${f.index} run ${i}`).toBeInstanceOf(TilingSprite);
+          expect(c, `floor ${f.index} run ${i}`).not.toBeInstanceOf(Graphics);
+        }
+        expect(faces.map((c) => c.label), `floor ${f.index} run ${i}`).toEqual(
+          faces.length === 2 ? [XRAY_DEEP_LABEL, FACE_BASE_LABEL] : [FACE_BASE_LABEL],
+        );
+        if (faces.length === 2) splitBlocks++;
+        blocks++;
+      }
+    }
+    expect(blocks).toBeGreaterThan(50);
+    // The sweep has to contain the case it is about: a room of unsplittable blocks would let the
+    // whole thing pass without a single second face piece in it.
+    expect(splitBlocks).toBeGreaterThan(20);
+  });
+
+  it("keeps the no-swatch fallback's face pieces under the auto-batch line too", () => {
+    // The degraded path DOES draw a Graphics per piece, so the split really does add one there —
+    // and it lands inside this budget rather than beside it. Each piece carries only the banding
+    // that carries over its own span (`fillBand` clips), so the pair costs no more fills than the
+    // one whole face did; that is the property, and the float counts are what prove it.
+    const sys = contextSystem();
+    let worstFloats = 0;
+    let pieces = 0;
+    for (const f of FLOORS) {
+      for (const [i, run] of f.runs.entries()) {
+        const height = wallHeight(run.tier);
+        const seg = buildWallBlock(run.rect, height, bareSkin(), f.joins[i]!, f.voids[i]!);
+        const faces = seg.children.filter(
+          (c): c is Graphics =>
+            c instanceof Graphics && (c.label === XRAY_DEEP_LABEL || c.label === FACE_BASE_LABEL),
+        );
+        // The shading carries `XRAY_DEEP_LABEL` as well, so drop it by position: the face is
+        // everything drawn before the cap.
+        const capAt = seg.children.findIndex((c) => c.label === XRAY_LABEL);
+        for (const g of faces.filter((c) => seg.children.indexOf(c) < capAt)) {
+          const gpu = sys.updateGpuContext(g.context);
+          const floats = gpu.geometryData.vertices.length;
+          expect(gpu.isBatchable, `floor ${f.index} run ${i} fallback face, ${floats} floats`).toBe(true);
+          worstFloats = Math.max(worstFloats, floats);
+          pieces++;
+        }
+      }
+    }
+    expect(pieces).toBeGreaterThan(50);
+    // Headroom, stated so the next person adding a band to the fallback can see what it costs.
+    // A face piece is at most three clipped rects, i.e. well under a tenth of the line.
+    expect(worstFloats).toBeLessThan(AUTO_BATCH_VERTEX_LIMIT / 4);
   });
 
   it('draws every graduated cue as a SAMPLED ramp, never as hand-stepped bands', () => {
