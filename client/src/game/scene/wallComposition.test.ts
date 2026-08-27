@@ -57,6 +57,8 @@ import {
 import { drawBlockShading } from './wallRender';
 import { AUTO_BATCH_VERTEX_LIMIT } from '../../perf/drawAttribution';
 import { readRampFill, resetShadeRampCache, shadeRampCacheSize } from '../../render/shadeRamp';
+import { voidEdges, type VoidEdges } from './wallVoidEdge';
+import { VOID_RETURN_PX } from './wallTone';
 
 /** One floor, taken all the way through the sequence `RoomBuilder.build` uses. */
 interface Floor {
@@ -66,6 +68,10 @@ interface Floor {
   /** The floor's room rects, the same ones `wallTier` was given — needed by the checks that ask
    *  where a run stands relative to the rooms around it, not just to its neighbouring blocks. */
   rooms: RectPx[];
+  /** Per merged run, index-aligned with `runs`: which of its east/west sides end at nothing.
+   *  A dungeon floor paints floor exactly at its room rects (`groundLayer.floorRegionsPx`), so
+   *  `rooms` IS the floor model here — unlike an arena, where the two can diverge. */
+  voids: VoidEdges[];
 }
 
 const FLOOR_INDICES = Object.keys(EMBER_L1_FLOORS).map(Number);
@@ -89,7 +95,14 @@ function buildFloor(index: number): Floor {
   // Level 1 is the ember biome, so its corners are placed with fire's crown line — the same
   // per-element lookup `RoomBuilder` does. Passing the default here would test a floor the
   // game never draws.
-  return { index, runs, joins: wallJoins(runs, faceCrownFraction('fire')), rooms: roomsPx };
+  const rects = runs.map((run) => run.rect);
+  return {
+    index,
+    runs,
+    joins: wallJoins(runs, faceCrownFraction('fire')),
+    rooms: roomsPx,
+    voids: rects.map((rect) => voidEdges(rect, rects, roomsPx)),
+  };
 }
 
 const FLOORS: Floor[] = FLOOR_INDICES.map(buildFloor);
@@ -704,5 +717,52 @@ describe('shipped level-1 walls — the shading still batches', () => {
     // them, the block's darkest band would be composited under a 0.86-alpha side panel and the
     // wall would stop meeting the floor.
     expect(baseCrease).toBe(tones.length - 1);
+  });
+});
+
+describe('the sides that end at nothing, on the five shipped floors', () => {
+  const ALL = FLOORS.flatMap((f) =>
+    f.voids.flatMap((v, i) =>
+      [
+        ...v.east.map((span) => ({ side: 'east' as const, span })),
+        ...v.west.map((span) => ({ side: 'west' as const, span })),
+      ].map((e) => ({ ...e, floor: f, rect: f.runs[i]!.rect })),
+    ),
+  );
+
+  it('fires on every floor, not only in the arena it was found in', () => {
+    // The finding came off `arena_launch`'s twelve empty slots, which made it look like a
+    // property of that map's slot grid. It is not: a PvE floor's rooms do not tile a
+    // rectangle either, so the same free sides are there, and they are there on all five.
+    for (const f of FLOORS) {
+      const n = f.voids.filter((v) => v.east.length > 0 || v.west.length > 0).length;
+      expect(n, `floor ${f.index}`).toBeGreaterThan(4);
+    }
+  });
+
+  it('never reaches its return onto a room\'s floor or another block\'s stone', () => {
+    for (const { side, span, rect, floor } of ALL) {
+      const reach = Number.isFinite(span.gap) ? Math.min(VOID_RETURN_PX, span.gap / 2) : VOID_RETURN_PX;
+      const x0 = side === 'east' ? rect.x + rect.w : rect.x - reach;
+      const box = { x: x0, y: rect.y + span.from, w: reach, h: span.to - span.from };
+      for (const other of [...floor.rooms, ...floor.runs.map((r) => r.rect)]) {
+        if (other === rect) continue;
+        const ox = Math.min(box.x + box.w, other.x + other.w) - Math.max(box.x, other.x);
+        const oy = Math.min(box.y + box.h, other.y + other.h) - Math.max(box.y, other.y);
+        expect(Math.min(ox, oy), `floor ${floor.index} ${side} return at ${box.x},${box.y}`)
+          .toBeLessThanOrEqual(0.75);
+      }
+    }
+  });
+
+  it('sits EXACTLY on the reach clamp on floor 2, with no margin at all', () => {
+    // The number that made the clamp worth writing rather than asserting away. Floor 2's
+    // narrowest void is one grid cell — 32 px — which is precisely what two facing returns of
+    // `VOID_RETURN_PX` need, so today's content is at the limit and the next authored room
+    // could cross it with nothing to notice. Both halves are pinned: the clamp is not firing
+    // on anything shipped, AND the margin it would fire on is zero.
+    const tightest = Math.min(...ALL.map((s) => s.span.gap));
+    expect(tightest).toBe(2 * VOID_RETURN_PX);
+    expect(ALL.every((s) => !Number.isFinite(s.span.gap) || s.span.gap / 2 >= VOID_RETURN_PX)).toBe(true);
   });
 });

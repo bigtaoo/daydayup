@@ -19,6 +19,7 @@ import {
   CLEAR,
   RAMP_TEXELS,
   alphaRamp,
+  powerRamp,
   bakedField,
   linearRamp,
   over,
@@ -157,6 +158,44 @@ describe('alphaRamp — the shared 1-D profile', () => {
     // silently invert one of them wherever it is used.
     expect(alphaRamp(0.45, 0)).not.toBe(alphaRamp(0.45, 1));
     expect(rampProfile(alphaRamp(0.45, 0)).at(-1)!).toBeCloseTo(0, 2);
+  });
+
+  it('powerRamp holds its value where a linear one is already half gone', () => {
+    // Why it exists: a `wallVoidReturn` is 16 px of invented stone whose job is to read as a
+    // SIDE, and a linear fade spends half its width already half-gone. The exponent is the
+    // whole cue, so it is the thing asserted rather than the endpoints.
+    const p = rampProfile(powerRamp(2));
+    expect(p[0]!).toBeCloseTo(0, 2);
+    expect(p.at(-1)!).toBeCloseTo(1, 2);
+    expect(p[Math.floor(p.length / 2)]!).toBeCloseTo(0.25, 2);
+    const linear = rampProfile(linearRamp());
+    expect(p[Math.floor(p.length / 2)]!).toBeLessThan(linear[Math.floor(linear.length / 2)]!);
+    // Monotone, and quantised finely enough — but NOT to the linear ramp's own 1/255 bar, and
+    // the difference is worth stating rather than loosening quietly. A ramp with exponent `n`
+    // has `n` times the linear slope at its steep end, so 256 texels buy `n` levels there
+    // instead of one: 2 levels at `power = 2`, still under anything an eye finds on a black
+    // wash, and the bound a larger exponent would have to be checked against.
+    let worst = 0;
+    for (let i = 1; i < p.length; i++) {
+      expect(p[i]!).toBeGreaterThanOrEqual(p[i - 1]!);
+      worst = Math.max(worst, p[i]! - p[i - 1]!);
+    }
+    expect(worst).toBeLessThanOrEqual(2 / (RAMP_TEXELS - 1) + 1e-9);
+    expect(worst).toBeGreaterThan(1 / (RAMP_TEXELS - 1)); // i.e. it really is the steeper case
+  });
+
+  it('powerRamp(1) IS the linear ramp, but keyed separately rather than aliased', () => {
+    // A caller may pass its exponent straight through without a special case; the two keys
+    // costing one extra 1 KB bake is the price of that, and it is stated rather than assumed.
+    const one = rampProfile(powerRamp(1));
+    const linear = rampProfile(linearRamp());
+    for (let i = 0; i < one.length; i++) expect(one[i]!).toBeCloseTo(linear[i]!, 6);
+    expect(powerRamp(1)).not.toBe(linearRamp());
+    // ...and the exponent really is IN the key. It is the only input, so a key that dropped it
+    // would hand every caller whichever profile happened to be baked first — silently, and
+    // correctly for exactly one of them.
+    expect(powerRamp(2)).not.toBe(powerRamp(3));
+    expect(rampProfile(powerRamp(3))[Math.floor(RAMP_TEXELS / 2)]!).toBeCloseTo(0.125, 2);
   });
 
   it('keys the cache on the profile, so two different fields can never collide', () => {

@@ -95,13 +95,18 @@ import {
   type WallRun,
 } from './wallRuns';
 import { faceCrownFraction } from './wallTone';
-import { roomRectsPx } from './groundLayer';
+import { floorRegionsPx, roomRectsPx } from './groundLayer';
+import { voidEdges, type VoidEdges } from './wallVoidEdge';
+import { VOID_RETURN_PX } from './wallTone';
 import { Layers } from './layers';
 import { Backdrop } from './Backdrop';
 import { RoomBuilder } from './RoomBuilder';
 import { pillarArtExtent } from './pillarRender';
-import { needsDeepFade, occludes, type Occluder } from './occlusion';
+import { needsDeepFade, occludes, XRAY_LABEL, type Occluder } from './occlusion';
 import { drawBlockShading } from './wallRender';
+import { addVoidReturns } from './wallVoidReturn';
+import { Entity } from './Entity';
+import { biomePalette } from '../theme';
 import { AUTO_BATCH_VERTEX_LIMIT } from '../../perf/drawAttribution';
 import { readRampFill, resetShadeRampCache, shadeRampCacheSize } from '../../render/shadeRamp';
 
@@ -140,6 +145,10 @@ interface Arena {
   pillars: Array<{ gx: number; gy: number; r: number }>;
   /** Every authored passage, in world px. NOT what the client renders — see the door section. */
   passages: Array<RectPx & { i: number; a: string; b: string }>;
+  /** What the ground layer actually PAINTS, which is what `voidEdges` reads. */
+  floors: RectPx[];
+  /** Per merged run, index-aligned with `runs`: which of its sides end at nothing. */
+  voids: VoidEdges[];
 }
 
 /**
@@ -214,7 +223,10 @@ function buildArena(id: ArenaId): Arena {
       box: { left: p.gx - art.halfW, right: p.gx + art.halfW, top: p.gy + art.top, sortY: p.gy, foldY: p.gy },
     });
   }
-  return { id, runs, joins, blocks, rooms, walls, pillars, passages };
+  const mergedRects = runs.map((run) => run.rect);
+  const floors = floorRegionsPx(s, fpToPx(s.worldW), fpToPx(s.worldH));
+  const voids = mergedRects.map((rect) => voidEdges(rect, mergedRects, floors));
+  return { id, runs, joins, blocks, rooms, walls, pillars, passages, floors, voids };
 }
 
 const ARENAS: Arena[] = ARENA_IDS.map(buildArena);
@@ -604,6 +616,65 @@ describe('arena walls — the shading still batches, with less room to spare', (
     expect(strokes).toBeGreaterThan(0); // the fold is still drawn
     expect(shadeRampCacheSize()).toBeGreaterThan(0);
     expect(shadeRampCacheSize()).toBeLessThanOrEqual(6); // 3 profiles, as in PvE
+  });
+
+  it('and the void return batches too, off ONE more shared texture', () => {
+    // The return is a SECOND Graphics per free side, outside `drawBlockShading` and therefore
+    // outside both gates above — which is exactly how the 2026-08-24 pass found 50 of 107 draw
+    // calls in the first place, a cue added beside the budget rather than inside it. So the same
+    // two questions, asked of the new geometry: does every one batch, and do they all sample the
+    // same bake.
+    //
+    // The texture count is the load-bearing half. `powerRamp` is keyed on its exponent, so a
+    // return whose falloff shape varied with the block (by height, by span length, by reach)
+    // would bake a texture per shape and put all 83 of them in their own batches. One key for
+    // all of them is what makes this cost geometry and not draw calls.
+    resetShadeRampCache();
+    const sys = contextSystem();
+    let returns = 0;
+    let worstFloats = 0;
+    let worstWhere = '';
+    let strokes = 0;
+    for (const a of ARENAS) {
+      for (const [i, run] of a.runs.entries()) {
+        const v = a.voids[i]!;
+        if (v.east.length === 0 && v.west.length === 0) continue;
+        const seg = new Entity();
+        const height = drawnHeight(a, i);
+        addVoidReturns(seg, run.rect, height, blockCapTop(run.rect, height, a.joins[i]), v, {
+          palette: biomePalette(undefined),
+          cap: undefined, // no swatch here: the falloff Graphics is what this measures
+        });
+        for (const g of seg.children.filter((c): c is Graphics => c instanceof Graphics)) {
+          const gpu = sys.updateGpuContext(g.context);
+          const floats = gpu.geometryData.vertices.length;
+          expect(gpu.isBatchable, `${a.id} run ${i} return (${floats} floats)`).toBe(true);
+          if (floats > worstFloats) {
+            worstFloats = floats;
+            worstWhere = `${a.id} ${run.tier} ${run.rect.w}x${run.rect.h}`;
+          }
+          for (const ins of g.context.instructions as ReadonlyArray<{ action: string; data: { style?: unknown } }>) {
+            if (ins.action === 'stroke') {
+              strokes++;
+              continue;
+            }
+            // Same structural gate as the shading: a graduated cue here is a sampled ramp or it
+            // is hand-stepped bands, and only the KIND of fill can tell them apart.
+            expect(ins.action, `${a.id} run ${i} return`).toBe('fill');
+            const ramp = readRampFill(ins.data.style);
+            // The palette fallback surface is a flat fill by design; the FALLOFF never is.
+            if (ramp === null) expect(ins.data.style).toHaveProperty('color');
+          }
+        }
+        returns++;
+      }
+    }
+    expect(returns).toBeGreaterThan(50); // the sweep has to be a sweep — measured 83
+    expect(strokes).toBeGreaterThan(0); // the east arris is still drawn
+    // Tiny beside the shading's 208: a return is one quad and one line per span.
+    expect(worstFloats, `worst return: ${worstWhere}`).toBeLessThan(AUTO_BATCH_VERTEX_LIMIT / 4);
+    // ONE bake for all 83, whatever their heights, spans and reaches.
+    expect(shadeRampCacheSize()).toBe(1);
   });
 });
 
@@ -1093,5 +1164,171 @@ describe('arena passages — the clip rule that used to be dead code here', () =
         }
       }
     }
+  });
+});
+
+describe('arena walls — the sides that end at nothing', () => {
+  const sided = (v: VoidEdges) =>
+    [
+      ...v.east.map((span) => ({ side: 'east' as const, span })),
+      ...v.west.map((span) => ({ side: 'west' as const, span })),
+    ];
+  const ALL = LAUNCH.voids.flatMap((v, i) =>
+    sided(v).map((e) => ({ ...e, rect: LAUNCH.runs[i]!.rect, tier: LAUNCH.runs[i]!.tier })),
+  );
+
+  it('fires, and on both the empty slots and the map\'s own outer silhouette', () => {
+    // The predicate this whole pass rests on, measured against the map it was written for
+    // rather than against the fixture it was designed on — `wallGeometry`'s old `w > h` guard
+    // is this file's founding example of a rule that reads correctly and matches nothing.
+    const east = LAUNCH.voids.filter((v) => v.east.length > 0).length;
+    const west = LAUNCH.voids.filter((v) => v.west.length > 0).length;
+    expect(east, 'runs whose east side ends at nothing').toBeGreaterThan(30);
+    expect(west, 'runs whose west side ends at nothing').toBeGreaterThan(30);
+    // Both halves of the finding are present: the twelve deliberately-empty slots AND the
+    // outer boundary, which is the same rule at the map's edge (`gap` is unbounded there).
+    expect(ALL.some((s) => Number.isFinite(s.span.gap)), 'an interior empty slot').toBe(true);
+    expect(ALL.some((s) => !Number.isFinite(s.span.gap)), 'the outer silhouette').toBe(true);
+  });
+
+  it('finds the END-ON case that a boolean answer would have dropped', () => {
+    // An east-west run meeting an empty slot with its END: part of its side is void and part
+    // abuts stone. This is the "端头" the camera list named, and the only reason `VoidEdges`
+    // carries spans instead of two booleans — so if this count is ever zero, the span
+    // machinery is dead weight and the simpler shape is the right one.
+    const partial = ALL.filter((s) => s.span.to - s.span.from < s.rect.h - 1);
+    expect(partial.length, 'partly-void sides').toBeGreaterThan(5);
+    // ...and they really are the ends of long east-west runs, not slivers of a perimeter.
+    expect(partial.some((s) => s.rect.w > s.rect.h * 4)).toBe(true);
+  });
+
+  it('never reaches its return onto a floor or another block\'s stone', () => {
+    // The property the whole thing has to have: the return is drawn OUTSIDE the footprint, so
+    // a wrong span is stone painted over a room someone is standing in. Checked as geometry
+    // against what the ground layer paints, not by trusting the predicate that produced it.
+    for (const { side, span, rect } of ALL) {
+      const reach = Number.isFinite(span.gap) ? Math.min(VOID_RETURN_PX, span.gap / 2) : VOID_RETURN_PX;
+      const x0 = side === 'east' ? rect.x + rect.w : rect.x - reach;
+      const box = { x: x0, y: rect.y + span.from, w: reach, h: span.to - span.from };
+      for (const other of [...LAUNCH.floors, ...LAUNCH.runs.map((r) => r.rect)]) {
+        if (other === rect) continue;
+        const ox = Math.min(box.x + box.w, other.x + other.w) - Math.max(box.x, other.x);
+        const oy = Math.min(box.y + box.h, other.y + other.h) - Math.max(box.y, other.y);
+        expect(Math.min(ox, oy), `${side} return at ${box.x},${box.y} over ${other.x},${other.y}`)
+          .toBeLessThanOrEqual(0.75);
+      }
+    }
+  });
+
+  it('has room to spare on every void here, so the reach clamp is inert', () => {
+    // Stated as a fact about the CONTENT rather than as a property of the code: the clamp
+    // exists for a map that has not been authored yet. `ember_l1` floor 2 is the one that gets
+    // anywhere near it — see `wallComposition.test.ts`, where the margin is exactly zero.
+    const tightest = Math.min(...ALL.map((s) => s.span.gap));
+    expect(tightest).toBeGreaterThanOrEqual(2 * VOID_RETURN_PX);
+    expect(tightest, 'arena_launch is nowhere near the clamp').toBeGreaterThan(8 * VOID_RETURN_PX);
+  });
+
+  it('is a PERIMETER-tier phenomenon, which is what says the rule is scoped right', () => {
+    // An interior block is surrounded by its own room's floor and can never have a free side;
+    // a kerb has a room's floor immediately north of it, which says nothing about east/west,
+    // so both tiers appearing here would be fine and only `interior` must not.
+    expect(ALL.filter((s) => s.tier === 'interior')).toEqual([]);
+  });
+});
+
+describe('the real RoomBuilder draws the returns, and off the right model', () => {
+  it('builds one on every free side of the launch map, and nowhere else', () => {
+    // The call site, not the pipeline mirror above. Both of this pass's two RoomBuilder mutants
+    // — dropping the `voids` argument, and feeding `voidEdges` the ROOM rects instead of the
+    // painted floor — survived the entire suite until this test and the one below existed: every
+    // other check reaches `voidEdges` directly, so nothing noticed whether `RoomBuilder` called
+    // it at all. Same gap the 2026-08-26 floor-partition battery found with `cellExtent`'s axes
+    // swapped AT the call site.
+    const layers = new Layers();
+    const rb = new RoomBuilder(layers, new Backdrop(layers));
+    const s = createGameState({ seed: 1, worldW: 1, worldH: 1, waves: [], arena: ARENA_CATALOG.arena_launch });
+    rb.build(s);
+    const inner = rb as unknown as { wallEntities: Array<{ children: Array<{ label: string }> }> };
+    // A block's CAP is the only thing tagged `XRAY_LABEL` before the return exists (one layer
+    // here, where no swatch loads); a return adds its surface and its falloff to the same group.
+    const withReturn = inner.wallEntities.filter(
+      (e) => e.children.filter((c) => c.label === XRAY_LABEL).length > 1,
+    ).length;
+    const expected = LAUNCH.voids.filter((v) => v.east.length > 0 || v.west.length > 0).length;
+    expect(expected).toBeGreaterThan(50); // the sweep's own count, so this cannot go vacuous
+    expect(withReturn).toBe(expected);
+  });
+
+  it('asks the FLOOR model, so a mode that paints the whole box grows no returns', () => {
+    // `landing_basic` is the shipped case where `roomRectsPx` and `floorRegionsPx` genuinely
+    // disagree: three 320 px rooms against a 1600 px box of painted floor. It authors no walls,
+    // so one is poked in where no ROOM is but floor certainly is — which is exactly the
+    // configuration that separates the two arguments, and the only reachable one.
+    const layers = new Layers();
+    const rb = new RoomBuilder(layers, new Backdrop(layers));
+    const s = createGameState({ seed: 1, worldW: 1, worldH: 1, waves: [], arena: ARENA_CATALOG.landing_basic });
+    const W = fpToPx(s.worldW);
+    const H = fpToPx(s.worldH);
+    // The precondition, asserted rather than assumed — if a future `landing_basic` covered its
+    // own box this test would pass while checking nothing.
+    expect(floorRegionsPx(s, W, H)).toEqual([{ x: 0, y: 0, w: W, h: H }]);
+    expect(roomRectsPx(s, W, H).length).toBe(3);
+    // fp is 1000 per grid (`engine/math/fixed.FP_SCALE`) and a grid is `PX_PER_GRID` px, so this
+    // is a 1x10 grid wall at grid (20, 20) — px (640, 640, 32, 320), clear of all three rooms.
+    const FP_PER_GRID = 1000;
+    (s.walls as unknown as Array<{ x: number; y: number; w: number; h: number }>).push({
+      x: 20 * FP_PER_GRID, y: 20 * FP_PER_GRID, w: FP_PER_GRID, h: 10 * FP_PER_GRID,
+    });
+    rb.build(s);
+    const inner = rb as unknown as { wallEntities: Array<{ children: Array<{ label: string }> }> };
+    expect(inner.wallEntities).toHaveLength(1);
+    expect(inner.wallEntities[0]!.children.filter((c) => c.label === XRAY_LABEL)).toHaveLength(1);
+    // ...and the room model really would have said otherwise, so the assertion above is a choice
+    // being tested and not a property both arguments happen to share.
+    const rect = { x: 20 * PX_PER_GRID, y: 20 * PX_PER_GRID, w: PX_PER_GRID, h: 10 * PX_PER_GRID };
+    expect(voidEdges(rect, [rect], roomRectsPx(s, W, H)).east).not.toEqual([]);
+  });
+
+  it('fades the return WITH the cap when the x-ray dissolves a block', () => {
+    // `addVoidReturns` tags its children `XRAY_LABEL`; `xrayLayers` filters on that label and
+    // `fadeableBlock` captures each layer's base alpha. Everything about that is a CONTRACT
+    // between three files, and the unit test only pins one end of it — a label. What this asks
+    // is whether a real fade actually reaches the return, because a return left solid beside a
+    // dissolved cap reads as a second object standing in the void.
+    const layers = new Layers();
+    const rb = new RoomBuilder(layers, new Backdrop(layers));
+    const s = createGameState({ seed: 1, worldW: 1, worldH: 1, waves: [], arena: ARENA_CATALOG.arena_launch });
+    rb.build(s);
+    const inner = rb as unknown as {
+      wallEntities: Array<{ children: Array<{ label: string; alpha: number }> }>;
+      occluders: Array<{ cap: { apply(fade: number): void } }>;
+    };
+    const i = inner.wallEntities.findIndex(
+      (e) => e.children.filter((c) => c.label === XRAY_LABEL).length > 1,
+    );
+    expect(i, 'a block with a return to fade').toBeGreaterThanOrEqual(0);
+    const faded = inner.wallEntities[i]!.children.filter((c) => c.label === XRAY_LABEL);
+    expect(faded.every((c) => c.alpha === 1)).toBe(true);
+    inner.occluders[i]!.cap.apply(0.25);
+    // Every one of them, not just the cap that was already in the group before this pass.
+    for (const c of faded) expect(c.alpha).toBeCloseTo(0.25, 6);
+  });
+
+  it('and no shipped passage sits on a free side, so a DOOR needing one cannot arise', () => {
+    // `doorRender.buildDoorBlock` is deliberately not wired to any of this: a door joins two
+    // rooms, so both of its sides have a room's floor against them by construction. Asserted
+    // rather than assumed, WITH the count, because "we did not wire it" and "it can never come
+    // up" look identical in a diff — and if a map ever authors a passage in an outer wall this
+    // goes red the day it lands instead of drawing a doorway that ends in a cliff.
+    const rects = LAUNCH.runs.map((r) => r.rect);
+    let checked = 0;
+    for (const p of LAUNCH.passages) {
+      const v = voidEdges({ x: p.x, y: p.y, w: p.w, h: p.h }, rects, LAUNCH.floors);
+      expect(v.east, `passage ${p.i} ${p.a}->${p.b} east`).toEqual([]);
+      expect(v.west, `passage ${p.i} ${p.a}->${p.b} west`).toEqual([]);
+      checked++;
+    }
+    expect(checked).toBe(74);
   });
 });

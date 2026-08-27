@@ -1387,6 +1387,135 @@ distributional. The second battery (17 mutants over what the clip DEPENDS on: `f
 survivor — a confirmed equivalence. See ROADMAP for all four findings, including the one that was a
 bug in the test rather than in the code.
 
+## The void gets a face (2026-08-27)
+
+The one finding the camera list left open: `arena_launch`'s twelve deliberately-empty grid cells
+read from the room next door as **a hard-edged flat black rectangle with no rim, no depth cue and
+no far side** — about a fifth of a 16:9 frame. It was recorded as an art call ("give the void's
+vertical edges the same treatment as the map's outer boundary, author a pit rim, or accept it"),
+with the note that the map's outer silhouette has the same property, so *"fix the twelve"* was not
+obviously the right scope.
+
+It was not the right scope. **The defect is one rule, and it belongs to the projection.**
+`screen.y = gy - z` has no horizontal component, so a block's east and west sides project to
+exactly zero width — the art simply stops at the footprint's edge. Where the next thing along is
+another room's floor or more stone, that is correct: the neighbour carries the picture on. Where it
+is the void, the stone does not end, it is **cut off**. A void to the SOUTH never reads that way,
+because a whole wall height of lit FACE stands between the floor and it. The twelve cells and the
+map's outer boundary are the same rule answered at two places, and so is every PvE floor's own
+silhouette.
+
+Measured, on a live frame beside empty slot r1c5 (scene-light filter detached, so what is being
+read is geometry rather than the light pass darkening the rooms beyond):
+
+| | luma across the boundary, west → east |
+|---|---|
+| Before | 87 (cap) … 53 → 26 → **6** in three pixels |
+| After | 87 (cap) … 53 → 26 (silhouette) → **83** (arris) → 44 → 2 over 30 |
+
+### The rule, and why it is spans and not a boolean
+
+`scene/wallVoidEdge.ts` answers *which parts of a block's east/west sides face nothing at all*,
+against what the ground layer actually PAINTS (`floorRegionsPx`, not the room rects — the two
+diverge in the fallback case, where a mode with no usable room model paints the whole world box and
+therefore has no interior void for a return to face) plus every wall run on the floor. It reports
+**spans in footprint-local y**, not two booleans, because a run's side is routinely part void and
+part neighbour: `arena_launch`'s east-west runs meet the empty slots END-ON — 32 px of a 64 px side
+— and that end head is exactly the shape the finding was about. A boolean would either paint over
+the neighbour or drop the case.
+
+Each span also carries the **gap**: how much empty world px is out there, `Infinity` at the map's
+own edge. That is the bound on how far a return may reach, because the wall on the far side of the
+same void is drawing its own return inward and the two may at most meet. It is not hypothetical
+headroom — `ember_l1` floor 2's narrowest void is 32 px, exactly twice `VOID_RETURN_PX`, so shipped
+content sits ON the limit with none to spare and the next authored room could cross it silently.
+The renderer clamps to `gap / 2`; both sweeps assert both halves (nothing shipped forces the clamp,
+and floor 2's margin is exactly zero).
+
+### The return, and why it is the CAP's swatch
+
+`scene/wallVoidReturn.ts` carries the cap's own swatch 16 px past the footprint, **in the same
+world-space tiling**, tinted for a vertical surface and ramped out to the backdrop. The tiling is
+most of what sells it: the mortar runs straight on over the arris instead of restarting, so it
+reads as a solid turning a corner rather than as a stripe painted beside one. The face swatch would
+have been the wrong choice — it is an elevation, and its rows are a lit coping over a dark base, a
+vertical order that means nothing on a surface seen edge-on.
+
+Three numbers, each argued from a surface that already exists rather than tuned to taste:
+
+- **16 px** — half a grid cell, one course of the cap swatch, 32 screen px at play zoom. Narrower
+  and the ramp has nowhere to fall (the cap's existing dark bevel is 5 px and reads as part of the
+  void); wider and the wall grows a buttress, which invented mass must not do.
+- **The tints** are the key light's own direction. A cap facing straight up takes the swatch
+  unmodified and a vertical surface takes `FACE_TINT` (0.78), so a WEST return — turned toward the
+  upper-left key — sits between them (0.83) and an EAST return — turned away — sits below both
+  (0.42).
+- **The falloff is squared**, not linear (`render/shadeRamp.powerRamp`, new). A linear fade across
+  16 px is already half gone at its midpoint, which leaves a bright line with a smudge beside it; a
+  squared one holds ~75 % to the midpoint and then plunges, which is what a lit face turning into
+  shadow does. Measured luma at the midpoint: 20 linear against 32 squared.
+
+Only the EAST side draws a lit **arris**. The west already has `addBlockEdge`'s coping stroke and
+`drawSideBands`' chamfer along exactly that line — cues that used to say *"I end here"* and, with a
+return outside them, become the fold's own highlight without changing a pixel. The east had only
+the dark silhouette, which against a luma-6 backdrop is not an edge at all.
+
+The return is added LAST in `buildWallBlock`, after `addBlockEdge`: it sits outside the footprint,
+so it is the block's outermost surface and its arris belongs on top of the dark silhouette rather
+than under it. It is tagged with the CAP's x-ray group, not with the silhouette's — a block the
+occlusion x-ray is fading has to fade whole, and a solid return beside a dissolved cap reads as a
+second object standing there.
+
+### What it fires on
+
+| | runs with a free east side | free west side | spans | of those, partial (end-on) | narrowest gap |
+|---|---|---|---|---|---|
+| `arena_launch` | 42 | 41 | 83 | 13 | 288 px |
+| `ember_l1` floors 0-4 | 8 / 15 / 17 / 11 / 8 | 7 / 14 / 14 / 9 / 5 | 108 | 5 | **32 px** (floor 2) |
+
+So it was never twelve cells: it is 83 free sides on the arena and 108 across the five PvE floors,
+and every one of them is the same rule. Not an `interior`-tier block among them, which is the check
+that says the scoping is right — an interior block is surrounded by its own room's floor and can
+never have a free side.
+
+### Why NORTH is not in this, and how that was checked rather than assumed
+
+A block's north side faces the void just as often (11 runs on `arena_launch`, mostly the map's own
+top edge). It is deliberately left alone, for two reasons, and the second is the one that settles
+it:
+
+1. There is already art between the floor and that void. A block's cap is drawn one full wall
+   height NORTH of its own footprint and its north edge carries a lit coping (`addBlockEdge`'s
+   `openNorth`), so the eye gets a stone top ending at a rim — the same thing the south side gets
+   from its face, and the reason neither direction was in the report.
+2. **The camera cannot get there.** `GameLoop.cameraFrame` grows the framed room upward by exactly
+   `MAX_WALL_HEIGHT`, which is the same distance the block's art reaches, so a player standing hard
+   against their room's north wall sees that wall's cap filling the top of the frame and nothing
+   beyond it. Checked, not reasoned: `foundry_r4c0` at its own north edge (the widest room with an
+   empty slot directly above it, so the lowest zoom and the most overscan available) puts the top
+   of the viewport at world y 1414 against an art top of 1400 — 14 px, and the frame shows
+   unbroken brick.
+
+Which is the honest shape of the rule: **east and west are the directions where this projection
+lets you look past a wall into nothing.** If the camera frame ever grows upward by more than a wall
+height, (2) stops holding and the north side needs the same treatment — the predicate already has
+the shape for it.
+
+### What it costs
+
+`voidEdges` runs once per block at room-build time, against the floor regions and every other run —
+0.64 ms for all 294 of `arena_launch`'s blocks, next to `floorPartition`'s 3 ms in the same phase.
+Per frame it costs geometry rather than draw calls: a free side adds one `TilingSprite` sampling the
+SAME lit cap texture every other block's cap already samples, plus one `Graphics` of a quad and a
+line. `arenaWallCoverage.test.ts` gates both halves of that — every return's Graphics under a
+quarter of Pixi's auto-batch line, and **one** shared ramp bake for all 83 of them, which is the
+part that would quietly break if the falloff's shape ever varied per block.
+
+Nothing here is gated on the quality tier, and that is the existing rule rather than an omission:
+`render/quality.ts`'s low tier turns off everything that costs a render-target PASS (scene light,
+screen fx, bloom, actor shaders) and leaves scene-graph geometry alone — the same treatment every
+other wall cue gets.
+
 ## A pillar is a sprite now (2026-08-20)
 
 The last item on the scene queue: *"pillars read as smooth cans next to the walls"* — their cap was
@@ -1742,6 +1871,12 @@ Otherwise you get the "gun floating on the chest while facing away" artifact.
 
 - One large sprite partially in front of and partially behind a tall object (crossing a thick pillar) → judged wholly front or back, artifact at the seam. Mitigation: split tall objects into segments, tune anchors carefully.
 - A character standing in the band a standing block's art intrudes over (one wall height north of its footprint) is judged wholly BEHIND it, and a 70 px block is taller than the 32 px body — so "partly hidden" is not available and the player simply disappeared. **Reported live 2026-08-20 and now mitigated by the occlusion x-ray above**, which is a stylisation, not a fix to the sort: the case itself is still a limit of the projection.
+- **An east/west side has no projection at all.** `screen.y = gy - z` has no horizontal component, so a
+  block's east and west faces are exactly zero px wide and its art simply stops at the footprint's edge.
+  Harmless where a neighbour's floor or stone carries on; a cliff where the next thing along is the void.
+  Mitigated 2026-08-27 by the void return (above), which is an invention rather than a projection — the
+  limit itself does not go away, and anything else that wants to show an east-west drop has the same
+  problem.
 - Complex multi-layer occlusion → sorting rules must be refined.
 - Continuous slopes / height transitions → approximation only.
 

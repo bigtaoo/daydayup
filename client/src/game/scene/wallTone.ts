@@ -339,3 +339,45 @@ export const TUCK_FACE_SPILL_PX = 7;
 export const LIT_EDGE_PX = 6;
 export const LIT_EDGE_COLOR = 0xfff2e0;
 export const LIT_EDGE_ALPHA = 0.2;
+
+/**
+ * The VOID RETURN — the stone a wall shows where its east or west side ends at nothing
+ * (`wallVoidEdge.ts` decides where that is, `wallVoidReturn.ts` draws it).
+ *
+ * `screen.y = gy - z` gives an east/west side exactly zero projected width, so this is a
+ * stylisation and not a projection: the cap's own swatch is carried one `VOID_RETURN_PX`
+ * past the footprint, in the SAME world-space tiling as the cap it continues (so the stone
+ * runs on across the arris rather than restarting), tinted for a vertical surface and ramped
+ * out to the backdrop. What it buys is what the void was missing — an edge with a lit arris,
+ * a surface with the swatch's own texture on it, and a falloff instead of a cliff.
+ *
+ * 16 px is half a grid cell, and the number is bounded from both sides. Too narrow and the
+ * ramp has nowhere to fall, which is the state before this pass (the cap's dark bevel is 5 px
+ * and reads as part of the void). Too wide and a wall grows a buttress: the return is
+ * invented mass, so it may suggest thickness and must not become architecture. Measured on
+ * `arena_launch` beside empty slot r1c5 at 2x zoom, 16 px is 32 screen px — one course of the
+ * cap swatch, enough that its mortar lines are legible across it.
+ *
+ * The two tints are the key light's own direction (upper left, the same one every shadow in
+ * this project slants by), read off the surfaces that already exist: a cap facing straight up
+ * takes the swatch unmodified, a SOUTH face takes `FACE_TINT` (0.78), so a WEST face — turned
+ * toward the light — sits between the two and an EAST face — turned away — sits below both.
+ */
+export const VOID_RETURN_PX = 16;
+export const VOID_RETURN_TINT_EAST = 0x6a7280;
+export const VOID_RETURN_TINT_WEST = 0xd2d8e4;
+/**
+ * The arris where the cap's top surface folds into the return.
+ *
+ * Only the EAST side draws one. The west already has `addBlockEdge`'s coping stroke and
+ * `drawSideBands`' chamfer along exactly that line — they were the block's "I end here" cues
+ * and, with a return outside them, they become the fold's own highlight without changing a
+ * pixel. The east side had only the dark silhouette, which against a luma-6 backdrop is not
+ * an edge at all. Weaker than `COPING_ALPHA` (0.3) because this arris faces away from the key
+ * light: it is catching sky, not the lamp.
+ */
+export const VOID_CROWN_ALPHA = 0.2;
+/** Exponent of the return's fall to the backdrop (`render/shadeRamp.powerRamp`). 2, because a
+ *  16 px band spent linearly is half-gone by its own midpoint and reads as a smudge beside a
+ *  bright line rather than as a surface — see `powerRamp` for the luma either way. */
+export const VOID_FALLOFF_POWER = 2;

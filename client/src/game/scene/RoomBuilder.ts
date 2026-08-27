@@ -29,6 +29,7 @@ import {
 } from './wallRuns';
 import { buildDoorBlock, type DoorFixture } from './doorRender';
 import { buildGroundLayer, floorRegionsPx, roomRectsPx } from './groundLayer';
+import { voidEdges } from './wallVoidEdge';
 import { faceCrownFraction } from './wallTone';
 import type { Backdrop } from './Backdrop';
 import { Portal } from './Portal';
@@ -186,6 +187,14 @@ export class RoomBuilder {
     for (const [i, run] of merged.entries()) {
       if (bordersDoorNorth(run.rect, passageRectsPx)) joins[i] = { ...joins[i]!, doorClip: true };
     }
+    // ...and which of their east/west sides end at NOTHING, which `wallJoins` cannot answer
+    // because it only ever sees other walls: the question is about the floor as well as the
+    // stone (`wallVoidEdge.ts`). Fed the regions the ground layer actually PAINTS rather than
+    // `roomsPx`, since the two diverge in the fallback case — a mode with no usable room model
+    // paints the whole world box and therefore has no interior void for a return to face.
+    const mergedRects = merged.map((run) => run.rect);
+    const floorsPx = floorRegionsPx(s, w, h);
+    const voids = mergedRects.map((rect) => voidEdges(rect, mergedRects, floorsPx));
     for (const [i, run] of merged.entries()) {
       // `doorClip`ped run whose OWN footprint is shallower than its tier: shrink the height
       // itself, not just the cap — see `effectiveWallHeight` for why a cap-only clip still let
@@ -193,7 +202,13 @@ export class RoomBuilder {
       // no-op for every other run, tier height unchanged.
       const height = effectiveWallHeight(run.rect, wallHeight(run.tier), joins[i]!);
       drawWallShadow(shadows, run.rect, height);
-      const seg = buildWallBlock(run.rect, height, { palette, cap: wallTex, face: faceTex }, joins[i]);
+      const seg = buildWallBlock(
+        run.rect,
+        height,
+        { palette, cap: wallTex, face: faceTex },
+        joins[i],
+        voids[i],
+      );
       this.layers.entities.addChild(seg);
       this.wallEntities.push(seg);
       // The block sorts on its south edge and paints upward from there, so the floor it covers
@@ -215,8 +230,8 @@ export class RoomBuilder {
     }
     buildGroundLayer(this.layers.ground, {
       rooms: roomsPx,
-      floorRegions: floorRegionsPx(s, w, h),
-      wallRects: merged.map((run) => run.rect),
+      floorRegions: floorsPx,
+      wallRects: mergedRects,
       doorRects: passageRectsPx,
       palette,
       floorTex,

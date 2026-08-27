@@ -101,10 +101,13 @@ reachable from any unit test — a full `createGameEngine` end-to-end regression
 `dungeonrun.test.ts` reproducing the reported bug shape directly: one room, two
 real spawned enemies (one beside the player, one clear across the room), driven
 through the real tick order, confirming the near one engages immediately while the
-far one fires zero bullets until it closes the distance. **5272 tests green across all 8
-workspace packages** (engine 854 / client 3367 / server 189 / animator 444 / map-editor 282 /
+far one fires zero bullets until it closes the distance. **5320 tests green across all 8
+workspace packages** (engine 854 / client 3415 / server 189 / animator 444 / map-editor 282 /
 png-pipeline 42 / desktop-shell 81 / root build-script 13, `npm run check`, re-measured
-2026-08-27 after the room-model unification (`engine/state/roomModel.test.ts` +8, plus +3 from its
+2026-08-27 after the void return (+48 client: the two new scene modules, `powerRamp`, the call-site
+tests two battery survivors asked for, and a second round covering the return's batching, its x-ray
+group and the passages that can never need one) and, before it, the room-model unification
+(`engine/state/roomModel.test.ts` +8, plus +3 from its
 second battery) and, before it the same day, the floor-clip pass (`floorClipCoverage.test.ts` +53, whose sweeps were then widened
 from one map to six) — which followed the
 ground-cull pass earlier the same day (`groundCulling.test.ts` +6, `groundGeometryBudget.test.ts` +7)
@@ -7021,6 +7024,16 @@ Not fixed in this pass: it is a content/art call (give the void's vertical edges
 as the map's own outer boundary, author a pit rim, or accept it), and the map's outer silhouette has
 exactly the same property, so "fix the twelve" is not obviously the right scope.
 
+> **Closed 2026-08-27 — and the caveat was the answer.** The scope is not twelve cells: it is the
+> PROJECTION, which gives an east/west side zero width everywhere. The outer silhouette having the
+> same property is not a complication, it is the same rule at a second place, and every PvE floor
+> has it too — 83 free sides on the arena and 108 across the five floors. Fixed as a render rule
+> with a testable precondition (`scene/wallVoidEdge.ts` + `wallVoidReturn.ts`), not as an authoring
+> pass. See "The void gets a face" below. One correction to the account above while it is being
+> closed: **part of that black rectangle was the scene-light pass, not the void** — the same frame
+> with `layers.lit.filters` detached shows lit stone across the top third of it. The finding held;
+> the fraction was measuring two things at once.
+
 ### What it cost to get a frame out of this machine, which is the durable half
 
 `perf/README.md` already records that the in-app browser pane sometimes never composites and that
@@ -7178,5 +7191,141 @@ against its own mutant: **exactly one test goes red per mutant, and it is the ne
 mutant is being caught incidentally by something else.
 
 `npm run check` green across all 8 workspaces: 5,272 tests (engine 854 / client 3,367 / server 189 /
+animator 444 / map-editor 282 / png-pipeline 42 / desktop-shell 81 / root 13), `tsc --noEmit` clean,
+`check:filelength` clean with nothing new baselined.
+
+## The void gets a face (2026-08-27, client-only)
+
+The camera list left exactly one finding open, and it was the only one recorded as *not fixed*:
+`arena_launch`'s twelve deliberately-empty grid cells read from the room next door as **a
+hard-edged flat black rectangle with no rim, no depth cue and no far side**, about a fifth of a
+16:9 frame. It was filed as an art call with a caveat attached — the map's outer silhouette has the
+same property, so *"fix the twelve"* was not obviously the right scope.
+
+The caveat was the answer. **It is one rule, and it belongs to the projection rather than to that
+map.** `screen.y = gy - z` has no horizontal component, so a block's east and west sides project to
+exactly zero width; the art stops at the footprint's edge. Where the next thing along is another
+room's floor or more stone, that is right — the neighbour carries the picture on. Where it is the
+void, the stone does not end, it is cut off. A void to the SOUTH never reads that way because a
+whole wall height of lit FACE stands between the floor and it. The twelve cells, the map's outer
+boundary and every PvE floor's own silhouette are the same question asked in different places, and
+once it is stated that way the answer is a render rule with a testable precondition instead of an
+authoring decision about twelve cells.
+
+Design/01's *"The void gets a face"* has the full account. Two things worth pulling out here.
+
+### The frame was the evidence, and the frame is what caught the mis-attribution
+
+Nobody had a before/after pair for this, only a verdict. Getting one turned up something the
+original finding had folded together: **a large part of that black rectangle is the scene-light
+pass, not the void.** With `layers.lit.filters` detached the same frame shows lit stone across the
+top third of what read as one continuous hole — the rooms beyond the empty slot, darkened because
+the player is not in them. The void itself is real and still the biggest single shape in the frame,
+but "20% of a 16:9 frame" was measuring two different things at once. The same trap this repo has
+now recorded from three directions: a number can be right about the direction and wrong about the
+magnitude, and only the control tells you which.
+
+With the light pass out of the way, a horizontal luma scan across the boundary is unambiguous:
+
+| | west → east across the wall's east edge |
+|---|---|
+| Before | 87 (cap) … 53 → 26 → **6** in three pixels |
+| After | 87 (cap) … 53 → 26 (silhouette) → **83** (arris) → 44 → 2 over 30 |
+
+Two numbers were A/B'd on real frames rather than argued: the lit arris (with it the edge reads as
+a definite lip; without it the return still works but the fold is soft), and the falloff exponent —
+a linear ramp across 16 px is already half gone at its midpoint and leaves a bright line with a
+smudge beside it, so `render/shadeRamp.powerRamp` was added and the return uses a squared one.
+
+### The tightest gap in shipped content is EXACTLY the limit
+
+The renderer reaches `VOID_RETURN_PX` (16) past the footprint into the void. Two walls facing each
+other across the same gap each reach inward, so the gap has to be at least 32 px or they paint over
+each other's stone. Swept: `arena_launch`'s narrowest void is 288 px, and **`ember_l1` floor 2's is
+32 px** — precisely twice the reach, zero margin.
+
+So the sweep would have passed and the next authored room would have crossed it silently, with a
+failure nobody sees because it is 16 px of stone inside a crevice. `VoidSpan` therefore carries the
+measured `gap` and the renderer clamps its reach to `gap / 2`, which makes the property structural;
+and the two sweeps then assert both halves separately — that nothing shipped forces the clamp, and
+that floor 2's margin is exactly zero. Same shape as the pillar-clearance survivor a day earlier:
+**gate the relationship, not the number.**
+
+### What it fires on
+
+| | runs with a free east side | free west side | spans | of those, partial (end-on) | narrowest gap |
+|---|---|---|---|---|---|
+| `arena_launch` | 42 | 41 | 83 | 13 | 288 px |
+| `ember_l1` floors 0-4 | 8 / 15 / 17 / 11 / 8 | 7 / 14 / 14 / 9 / 5 | 108 | 5 | **32 px** (floor 2) |
+
+The 13 + 5 **partial** spans are the reason `VoidEdges` carries intervals rather than two booleans:
+they are east-west runs meeting an empty slot END-ON, 32 px of a 64 px side, which is literally the
+"端头" the finding named. A boolean answer would have painted a return over the neighbour covering
+the rest of that side, or dropped the case — and the case it drops is the one the report was about.
+Both sweeps assert the count is non-zero, so if authoring ever removes the shape the span machinery
+becomes dead weight and says so.
+
+**North is deliberately not in this, and that was checked rather than reasoned.** A block's cap
+already reaches one full wall height north of its own footprint with a lit coping on its far edge,
+and `GameLoop.cameraFrame` grows the framed room upward by exactly `MAX_WALL_HEIGHT` — the same
+distance — so the camera cannot see past it. Verified at `foundry_r4c0`'s north wall, the widest
+room with an empty slot directly above it and therefore the lowest zoom and the most overscan on
+the map: viewport top at world y 1414 against an art top of 1400, and the frame is unbroken brick.
+East and west are the two directions this projection lets you look past a wall into nothing.
+
+### The battery, and the two survivors that were not test gaps
+
+38 mutants over `wallVoidEdge.ts`, `wallVoidReturn.ts`, the two tone constants, `powerRamp`, and —
+new for this pass — `RoomBuilder`'s CALL of the rule. 2 controls, both intact. **9 survivors, all
+resolved, 38/38 killed on the replay, one new test red per mutant and always the new one.** Three
+of the nine are worth carrying:
+
+1. **Two of them were tests that had been written and had never landed.** The clamp pair above was
+   inserted by a scripted edit whose anchor silently did not match, so the suite went green on 25
+   cases instead of 27 and nothing said otherwise. A `replace` that misses is a no-op, not an
+   error; the battery is what noticed, and no amount of re-reading the intended diff would have.
+2. **Two indicted the CALL SITE, not the rule.** Dropping `RoomBuilder`'s `voids` argument
+   entirely, and feeding `voidEdges` the ROOM rects instead of the painted floor, both survived the
+   whole 3,400-test client suite: every other check reached the predicate directly, so nothing drove
+   the real builder over content where the two answers differ. Exactly the 2026-08-26
+   `cellExtent(worldH, worldW)` shape — axes swapped at the call site, rule itself perfect. Killing
+   it needed a fixture where the two candidate arguments genuinely disagree, and there is exactly
+   one shipped: `landing_basic`, whose three 320 px rooms sit inside a 1600 px box of painted floor.
+3. **One was the constant transcribed into its own test.** `VOID_CROWN_ALPHA` → 0 passed, because
+   the assertion read the constant. Re-gated as a relationship — visible at all, and below
+   `COPING_ALPHA`, since this arris faces away from the key light. Third time this exact shape has
+   come up in a week (`EDGE_ALPHA`, the pillar's `bodyW`, now this), and the cure is the same one
+   every time: **assert what the number has to be TRUE OF, not what it currently is.**
+
+### A second round, on what the first round's tests did not point at
+
+The battery only proves the tests that EXIST are load-bearing; it says nothing about where they were
+never aimed. Re-reading the pass for that turned up four places nothing asked about, and the first
+is the one with history:
+
+- **The return's Graphics sat outside both draw-call gates.** `wallComposition`/`arenaWallCoverage`
+  budget `drawBlockShading` and require every graduated cue in it to be a sampled ramp — and the
+  return is a SECOND Graphics per free side, which neither of them sees. That is exactly how the
+  2026-08-24 pass found 50 of 107 draw calls in the first place: a cue added beside the budget
+  rather than inside it. Now swept with the rest (worst return well under a quarter of the line).
+- **Nothing asserted the x-ray actually fades it.** The unit test pins the LABEL; the label is one
+  end of a three-file contract (`addVoidReturns` → `xrayLayers` → `fadeableBlock`). Now driven
+  through the real builder: fade a block, assert every tagged child moved.
+- **Doors.** `buildDoorBlock` is deliberately not wired to any of this, because a passage joins two
+  rooms and has floor on both sides by construction. Asserted with its count (all 74), so "we did
+  not wire it" and "it can never come up" stop looking identical in a diff.
+- **One return per SPAN.** Every existing case used a single span; a `break` in that loop would have
+  left the second stretch of a split side as the bare cliff this pass exists to remove, on a block
+  that looks handled.
+
+Six more mutants for those, and **one of them survived** — the interesting one. The
+"all 83 returns share one ramp bake" assertion is contingent on CONTENT: every shipped reach is the
+full `VOID_RETURN_PX` because no shipped void is narrow enough to clamp, so a key that folded in the
+reach passes on the launch map and fragments the batch the day a map authors a tight gap. Re-gated
+on blocks built to disagree about reach, span and height. Third instance this week of the same
+lesson from a third direction: **an assertion that happens to hold on today's content is not a gate
+on the property.**
+
+`npm run check` green across all 8 workspaces: 5,320 tests (engine 854 / client 3,415 / server 189 /
 animator 444 / map-editor 282 / png-pipeline 42 / desktop-shell 81 / root 13), `tsc --noEmit` clean,
 `check:filelength` clean with nothing new baselined.

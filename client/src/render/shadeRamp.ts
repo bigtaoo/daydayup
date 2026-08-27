@@ -172,6 +172,36 @@ export function linearRamp(): Texture {
   return alphaRamp(0, 1);
 }
 
+/**
+ * A rising 0 -> 1 ramp with alpha `t ** power` — one that HOLDS near `t = 0` and then falls
+ * away, rather than trading brightness evenly across the span.
+ *
+ * Added 2026-08-27 for `wallVoidReturn.ts`, and the difference it makes is the difference
+ * between the cue reading as a surface and reading as an airbrush. A void return is 16 px of
+ * invented stone whose job is to be a SIDE the eye can see; a linear fade to the backdrop
+ * spends half its width already half-gone (measured on `arena_launch` beside empty slot r1c5:
+ * luma 41 at the arris, 20 by the midpoint), so what survives is a thin bright line with a
+ * smudge beside it. At `power = 2` the same 16 px holds ~75% of its value to the midpoint and
+ * then plunges, which is what a lit face turning into shadow does.
+ *
+ * `power = 1` is exactly `linearRamp()` and keys to its own texture, so callers may pass it
+ * without a special case; nothing else about the sampling changes.
+ *
+ * One caveat `RAMP_TEXELS` does not cover on its own: a ramp with exponent `n` has `n` times
+ * the linear slope at its steep end, so 256 texels buy `n` quantisation levels there rather
+ * than the one the linear case gets. Two levels on a black wash is still nothing an eye
+ * finds, but a much larger exponent would want more texels, and `shadeRamp.test.ts` states
+ * the bound so that stays a decision rather than a surprise.
+ */
+export function powerRamp(power: number): Texture {
+  return bakedField(`pow:${power}`, RAMP_TEXELS, 1, (rgba, w) => {
+    for (let i = 0; i < w; i++) {
+      const t = w === 1 ? 0 : i / (w - 1);
+      writeTexel(rgba, i, premul(0xffffff, t ** power));
+    }
+  });
+}
+
 /** Tone applied to a sampled ramp: the fill's flat multiply over the texture's alpha. */
 export interface RampTone {
   color: number;

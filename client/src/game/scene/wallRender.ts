@@ -75,6 +75,8 @@ import {
   drawSideBands,
 } from './wallShadingSurfaces';
 import { drawCornerAO, drawTuckCapCrease, drawTuckFaceCrease } from './wallShadingJoins';
+import { NO_VOID_EDGES, type VoidEdges } from './wallVoidEdge';
+import { addVoidReturns } from './wallVoidReturn';
 import {
   CAP_BOOST_ALPHA,
   CAP_BOOST_TINT,
@@ -155,6 +157,7 @@ export function buildWallBlock(
   height: number,
   skin: WallSkin,
   joins: WallJoins = NO_JOINS,
+  voids: VoidEdges = NO_VOID_EDGES,
 ): Entity {
   const seg = new Entity();
   const capTop = blockCapTop(r, height, joins);
@@ -173,6 +176,9 @@ export function buildWallBlock(
   seg.addChild(shading);
 
   addBlockEdge(seg, r, height, capTop, joins);
+  // LAST, and outside the footprint: the return is the block's outermost surface, and its
+  // arris highlight belongs over the dark silhouette rather than under it (`wallVoidReturn`).
+  addVoidReturns(seg, r, height, capTop, voids, skin);
 
   seg.place(r.x, r.y + r.h);
   return seg;
