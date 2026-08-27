@@ -56,7 +56,13 @@ export class EventReactor {
     // identical events, so we collect the distinct cues here and play each ONCE after
     // the loop (design/11 "coalesce identical cues in the same frame"). fx/score still
     // react per-event below — only sound is deduped.
-    const cues = new Set<AudioCue>();
+    //
+    // The COUNT is kept, not just the fact: design/11 asks for ten hits in one frame to
+    // become one impact "at higher gain, not ten", and the mixer needs the number to do it.
+    const cues = new Map<AudioCue, number>();
+    const cue = (id: AudioCue): void => {
+      cues.set(id, (cues.get(id) ?? 0) + 1);
+    };
     for (const e of events) {
       switch (e.type) {
         case 'bullet_fired': {
@@ -66,7 +72,7 @@ export class EventReactor {
           const facingRad = bradToRad(e.facing);
           this.fx.particles.muzzleFlame(fx, fy - 12, facingRad, THEME.colors.muzzle);
           this.fx.particles.shellCasing(fx, fy - 12, facingRad);
-          cues.add('muzzle');
+          cue('muzzle');
           break;
         }
         case 'hit':
@@ -88,7 +94,7 @@ export class EventReactor {
             this.fx.addShake(0.18);
             this.fx.pulseChromatic(0.006);
           }
-          cues.add('impact');
+          cue('impact');
           break;
         case 'shield_break':
           // A shattered shield — a bright cyan burst (design/07 two-pool break).
@@ -102,13 +108,13 @@ export class EventReactor {
           this.fx.addShake(0.4);
           this.fx.addHitStop(50);
           this.fx.pulseChromatic(0.014);
-          cues.add('shield.break');
+          cue('shield.break');
           break;
         case 'deflect':
           this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), THEME.colors.deflect, 20);
           this.fx.addShake(0.22);
           this.fx.pulseChromatic(0.008);
-          cues.add('deflect');
+          cue('deflect');
           break;
         case 'status': {
           // Elemental fx — a coloured flash by effect (design/03/07).
@@ -118,12 +124,12 @@ export class EventReactor {
             : e.effect === 'shock' ? THEME.colors.statusShock
             : THEME.colors.statusPoison;
           this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), c, 12);
-          cues.add(`status.${e.effect}` as AudioCue);
+          cue(`status.${e.effect}` as AudioCue);
           break;
         }
         case 'clash':
           this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), THEME.colors.clash, 14);
-          cues.add('clash');
+          cue('clash');
           break;
         case 'enrage':
           // A boss crossed its enrage threshold (design/09 traits) — a hard red pulse,
@@ -131,21 +137,21 @@ export class EventReactor {
           this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), THEME.colors.enemy, 40);
           this.fx.addShake(0.35);
           this.fx.pulseChromatic(0.012);
-          cues.add('shield.break'); // reuse the existing sting; no dedicated cue authored yet
+          cue('shield.break'); // reuse the existing sting; no dedicated cue authored yet
           break;
         case 'death':
           if (e.faction === 'enemy') {
             this.host.addScore(SCORE.kill);
             this.fx.particles.explosionDebris(fpToPx(e.gx), fpToPx(e.gy) - 12, THEME.colors.enemy);
             this.fx.addShake(0.15);
-            cues.add('death');
+            cue('death');
           }
           break;
         case 'pickup':
           switch (e.kind) {
             case 'heal':
               this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), THEME.colors.pickupHeal, 20);
-              cues.add('pickup.heal');
+              cue('pickup.heal');
               this.hud.toast(t('toast.heal'), THEME.colors.pickupHeal);
               break;
             case 'weapon': {
@@ -154,7 +160,7 @@ export class EventReactor {
               const spec = e.weaponId ? WEAPON_SIM_BY_ID[e.weaponId] : undefined;
               const c = spec ? rarityColor(spec) : THEME.colors.pickupWeapon;
               this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), c, 24);
-              cues.add('pickup.weapon');
+              cue('pickup.weapon');
               this.hud.toast(spec ? tName(spec.nameKey) : t('toast.newWeapon'), c);
               // Finding a catalogued weapon permanently unlocks its forge blueprint
               // (design/14 "2–3 common blueprints drop from runs") — first-pass: any
@@ -165,7 +171,7 @@ export class EventReactor {
             }
             case 'buff':
               this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), THEME.colors.pickupBuff, 22);
-              cues.add('pickup.buff');
+              cue('pickup.buff');
               {
                 const buff = e.buffId ? RUN_BUFFS[e.buffId] : undefined;
                 // Falls back to the raw id only if `buffId` names something outside the
@@ -178,7 +184,7 @@ export class EventReactor {
             default: { // material
               this.host.addScore(SCORE.material);
               this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), THEME.colors.pickupMaterial, 16);
-              cues.add('pickup.material');
+              cue('pickup.material');
               const mat = e.materialId ? MATERIAL_DEFS[e.materialId] : undefined;
               // Translated fallback only triggers when `materialId` itself is absent —
               // an id present but uncatalogued falls back to the raw id, same shape as
@@ -190,7 +196,7 @@ export class EventReactor {
           break;
         case 'wave_clear':
           this.host.addScore(SCORE.waveClear);
-          cues.add('wave-clear');
+          cue('wave-clear');
           break;
         case 'room_enter': {
           // A new dungeon room went live (ROADMAP 1.3) — mirror its geometry: ground,
@@ -226,7 +232,7 @@ export class EventReactor {
           const p = this.host.activeState()?.players[this.host.localOwner];
           if (p) this.fx.flash(fpToPx(p.gx), fpToPx(p.gy), THEME.colors.extractGlow, 30);
           this.host.addScore(SCORE.waveClear);
-          cues.add('wave-clear');
+          cue('wave-clear');
           break;
         }
         case 'downed':
@@ -236,19 +242,19 @@ export class EventReactor {
           this.fx.addShake(0.55);
           this.fx.addHitStop(80);
           this.fx.pulseChromatic(0.02);
-          cues.add('death');
+          cue('death');
           break;
         case 'revived':
           // A teammate channelled the player back up — a green pulse (co-op only).
           this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), THEME.colors.extractGlow, 28);
-          cues.add('pickup.heal');
+          cue('pickup.heal');
           break;
         case 'win':
-          cues.add('win');
+          cue('win');
           break;
         // 'win' score bonus is handled by the outcome check (win()).
       }
     }
-    for (const cue of cues) this.audio.play(cue);
+    for (const [id, count] of cues) this.audio.play(id, count);
   }
 }

@@ -41,6 +41,7 @@ interface WxFileSystemManager {
    *  is readable but never writable; `wx.env.USER_DATA_PATH` is the writable area. With
    *  'utf8' the result is a string, without an encoding it is an ArrayBuffer. */
   readFileSync(path: string, encoding: 'utf8'): string;
+  readFileSync(path: string): ArrayBuffer;
 }
 
 interface Wx {

@@ -26,6 +26,10 @@ async function boot() {
   const app = await platform.createApp();
   const input = platform.createInput(app);
   const audio = platform.createAudio();
+  // The SFX set (design/11) — deliberately NOT awaited. It is 95 kB and usually lands well
+  // before the first shot, and every cue has a procedural voice to fall back on meanwhile,
+  // so blocking boot on it would buy nothing. Failure is logged per file inside SampleBank.
+  void audio.preload();
 
   await preloadCoreArt();
 

@@ -9,17 +9,11 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { tone, noise, playCue } from './audioSynth';
+// The cue list comes from `audio/cueCatalogue.ts`'s exhaustive `Record` (a type can't be
+// iterated at runtime, but that table can) so every voice in the VOICES table gets
+// exercised, not just the ones a handful of hand-picked assertions happen to touch.
+import { ALL_CUES } from '../audio/cueCatalogue';
 import type { AudioCue } from './types';
-
-// Mirrors types.ts's `AudioCue` union — duplicated here deliberately (a type can't
-// be iterated at runtime) so every voice in the table gets exercised, not just the
-// ones a handful of hand-picked assertions happen to touch.
-const ALL_CUES: AudioCue[] = [
-  'muzzle', 'impact', 'deflect', 'clash', 'shield.break',
-  'status.burn', 'status.chill', 'status.shock', 'status.poison',
-  'death', 'pickup.heal', 'pickup.weapon', 'pickup.material', 'pickup.buff',
-  'wave-clear', 'win',
-];
 
 function fakeParam(initial = 0) {
   return { value: initial, setValueAtTime: vi.fn(), linearRampToValueAtTime: vi.fn() };

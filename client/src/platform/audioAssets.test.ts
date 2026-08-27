@@ -18,7 +18,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import type { AudioCue } from './types';
+import { ALL_CUES } from '../audio/cueCatalogue';
 
 const AUDIO_DIR = new URL('../../public/audio/', import.meta.url);
 const ART_AUDIO = new URL('../../../art/audio/', import.meta.url);
@@ -29,16 +29,11 @@ const ART_AUDIO = new URL('../../../art/audio/', import.meta.url);
 // The set is 95.0 kB at the time of writing.
 const AUDIO_BUDGET_BYTES = 160 * 1024;
 
-// Every cue the game can fire. Kept as a literal rather than derived from the type so that
-// adding a cue to `AudioCue` fails a test here until its audio is decided one way or the
-// other — the whole point of the accounting test below.
-const ALL_CUES: readonly AudioCue[] = [
-  'muzzle', 'impact', 'deflect', 'clash', 'shield.break',
-  'status.burn', 'status.chill', 'status.shock', 'status.poison',
-  'death', 'pickup.heal', 'pickup.weapon', 'pickup.material', 'pickup.buff',
-  'wave-clear', 'win',
-];
-
+// Every cue the game can fire, from `audio/cueCatalogue.ts` — which the compiler holds
+// exhaustive over `AudioCue` (it is a `Record`), so adding a cue to the union cannot reach
+// this file without an audio decision existing for it. Until 2026-08-27 this was a
+// hand-maintained literal here AND in two other test files; the catalogue makes all three
+// one table.
 // Which gate class each cue belongs to. Pinned here because the distinction is easy to lose:
 // a combat cue must feel instant (design/11's tight deflect/hit), a pickup can afford tens of
 // ms of natural onset. `tools/audio-pipeline/audit.py` once routed every `pickup.*` asset to

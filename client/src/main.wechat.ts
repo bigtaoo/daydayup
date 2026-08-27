@@ -43,6 +43,10 @@ async function boot() {
   // is best-effort, so a missing or unreadable asset degrades to the Graphics placeholder
   // this entry used to render exclusively, rather than failing boot.
   setAssetHost(weChatAssetHost);
+  // The SFX set (design/11), same fire-and-forget as the web entry — but note the ordering:
+  // it must come AFTER the host swap, because that is what turns '/audio/impact_00.mp3' into
+  // a code-package path this runtime can read at all.
+  void audio.preload();
   await preloadCoreArt();
 
   const game = new Game(app, input, audio);

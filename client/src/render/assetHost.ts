@@ -47,6 +47,13 @@ export interface AssetHost {
   resolveUrl(path: string): string;
   /** Read and parse a JSON sidecar shipped alongside the art. */
   readJson<T>(path: string): Promise<T>;
+  /** Read a shipped file as raw bytes. Added for audio (design/11's SFX set is mp3, which
+   *  `decodeAudioData` takes as an ArrayBuffer), and it is the same platform split the JSON
+   *  sidecars already have: a `fetch` on web, `FileSystemManager.readFileSync` with no
+   *  encoding on WeChat. Putting it here rather than in the audio module is what lets audio
+   *  inherit design/12's bundle rules — a music subpackage becomes a prefix rule in
+   *  assetPacks.json, with no loader change. */
+  readBinary(path: string): Promise<ArrayBuffer>;
   /** Make a subpackage's files reachable. Absent on web, where there are no subpackages and
    *  every file is simply served; on WeChat this is `wx.loadSubpackage`, and until it has
    *  resolved a path inside that pack's root names nothing. See `packLoader.ts`. */
@@ -59,6 +66,7 @@ export const webAssetHost: AssetHost = {
   assetsInit: {},
   resolveUrl: (path) => path,
   readJson: async <T>(path: string): Promise<T> => (await fetch(path)).json() as Promise<T>,
+  readBinary: async (path: string): Promise<ArrayBuffer> => (await fetch(path)).arrayBuffer(),
 };
 
 let host: AssetHost = webAssetHost;
@@ -83,4 +91,8 @@ export function resolveAssetUrl(path: string): string {
 
 export function readJsonAsset<T>(path: string): Promise<T> {
   return host.readJson<T>(path);
+}
+
+export function readBinaryAsset(path: string): Promise<ArrayBuffer> {
+  return host.readBinary(path);
 }

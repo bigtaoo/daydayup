@@ -1,15 +1,15 @@
 import type { AudioBus, AudioCue } from '../types';
-import { playCue } from '../audioSynth';
+import { SampleBank } from '../../audio/SampleBank';
+import { CueMixer } from '../../audio/CueMixer';
+import { readBinaryAsset } from '../../render/assetHost';
 
 // Web audio backend (design/11).
 //
-// A placeholder SFX bus that SYNTHESISES every cue with the WebAudio API — no asset
-// files, no licensing, no download. This exists to prove the event→sound pipeline
-// (design/08/11) end-to-end on web; real/authored audio replaces the synth voices
-// later behind this same AudioBus interface. Music is reserved (setMusicVolume is a
-// no-op until tracks are authored). The synth voice table itself lives in
-// ../audioSynth.ts — WeChatAudio drives the SAME cues through
-// `wx.createWebAudioContext()`, which implements the identical Web Audio API surface.
+// Owns the WebAudio context and the SFX bus gain node. What a cue actually SOUNDS like is
+// `audio/CueMixer.ts`'s decision — the shipped mp3 set if it has loaded, ../audioSynth.ts's
+// procedural voice if not — shared with WeChatAudio so the two backends differ only in how
+// the context is obtained and how asset bytes are read. Music is reserved (setMusicVolume is
+// a no-op until tracks are authored).
 //
 // Determinism: this reads engine events on the render clock and plays. It never
 // touches GameState, never draws from the sim PRNG (any jitter uses Math.random,
@@ -18,6 +18,8 @@ export class WebAudio implements AudioBus {
   private ctx: AudioContext | null = null;
   private sfx: GainNode | null = null;
   private sfxVolume = 0.5;
+  private bank: SampleBank | null = null;
+  private mixer: CueMixer | null = null;
 
   constructor() {
     // WebAudio starts suspended until a user gesture (autoplay policy). Resume on the
@@ -42,7 +44,17 @@ export class WebAudio implements AudioBus {
     this.sfx = this.ctx.createGain();
     this.sfx.gain.value = this.sfxVolume;
     this.sfx.connect(this.ctx.destination);
+    this.bank = new SampleBank({ ctx: this.ctx, readBinary: readBinaryAsset });
+    this.mixer = new CueMixer({ ctx: this.ctx, bus: this.sfx, bank: this.bank });
     return this.ctx;
+  }
+
+  // Decoding does NOT need the autoplay gate cleared — a suspended context decodes fine — so
+  // this runs at boot and is usually finished long before the first gesture (design/11
+  // "preload the core SFX set at boot").
+  async preload(): Promise<void> {
+    if (!this.ensure() || !this.bank) return;
+    await this.bank.load();
   }
 
   resume(): void {
@@ -59,9 +71,9 @@ export class WebAudio implements AudioBus {
   // can already wire a slider to it.
   setMusicVolume(_v: number): void {}
 
-  play(cue: AudioCue): void {
+  play(cue: AudioCue, count = 1): void {
     const ctx = this.ensure();
-    if (!ctx || !this.sfx || ctx.state !== 'running') return;
-    playCue(cue, ctx, this.sfx);
+    if (!ctx || !this.mixer || ctx.state !== 'running') return;
+    this.mixer.play(cue, count);
   }
 }

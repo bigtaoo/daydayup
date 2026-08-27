@@ -1,5 +1,12 @@
 # Audio (source)
 
+> **Loading (2026-08-27):** these files are read at boot by `client/src/audio/SampleBank.ts`,
+> driven by the cue catalogue in `client/src/audio/cueCatalogue.ts` (design/11, "The cue
+> catalogue & the loading path"). The catalogue derives each path from a cue id + variant
+> count, and `client/src/audio/cueCatalogue.test.ts` checks the generated set against both
+> this directory and `credits.json` — so renaming or dropping a shipped file fails a test
+> rather than going quiet.
+
 Mirrors the `art/` convention: this directory holds the **source** audio and its licence
 paperwork. Nothing here is loaded at runtime — what the game ships is the processed copy
 under `client/public/audio/`.

@@ -35,6 +35,17 @@ export const weChatAssetHost: AssetHost = {
     }
     return JSON.parse(text) as T;
   },
+  // Same call, no encoding — the docs' other documented return type. Synchronous like
+  // `readJson`, and for the same reason: the async signature belongs to the interface so the
+  // web side can stay a real network call.
+  readBinary: async (path: string): Promise<ArrayBuffer> => {
+    const packed = packedPathFor(path);
+    const bytes = wx.getFileSystemManager().readFileSync(packed);
+    if (typeof bytes === 'string') {
+      throw new Error(`readFileSync('${packed}') returned a string, not an ArrayBuffer`);
+    }
+    return bytes;
+  },
   loadPack: (name: string, _root: string): Promise<void> =>
     new Promise((resolve, reject) => {
       wx.loadSubpackage({

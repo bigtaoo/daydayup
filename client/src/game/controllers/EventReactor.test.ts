@@ -32,7 +32,13 @@ function fakeFx(): FxController {
 }
 
 function fakeAudio(): AudioBus {
-  return { play: vi.fn(), setSfxVolume: vi.fn(), setMusicVolume: vi.fn(), resume: vi.fn() };
+  return {
+    play: vi.fn(),
+    preload: vi.fn(async () => {}),
+    setSfxVolume: vi.fn(),
+    setMusicVolume: vi.fn(),
+    resume: vi.fn(),
+  };
 }
 
 function fakeHost(): EventReactorHost {
@@ -335,5 +341,50 @@ describe('EventReactor — force_regroup (design/05 DoorSystem)', () => {
       reactor.consume([{ type: 'force_regroup', roomId: 'r1', playerIds: [7] } as GameEvent]),
     ).not.toThrow();
     expect(host.onForceRegroup).not.toHaveBeenCalled();
+  });
+});
+
+describe('EventReactor — audio cue coalescing (design/11)', () => {
+  function reactorWithAudio() {
+    const hud = new HudView();
+    hud.build(new Layers(), { w: 1280, h: 720 });
+    const audio = fakeAudio();
+    return { reactor: new EventReactor(fakeFx(), hud, audio, fakeHost()), audio };
+  }
+
+  const hit = (gx = 0) => ({
+    type: 'hit', target: 7, faction: 'player', gx, gy: 0, damage: 1, damageType: 'physical',
+  }) as GameEvent;
+
+  it('plays a repeated cue ONCE, carrying how many events collapsed into it', () => {
+    // design/11: ten hits in a frame are one impact at higher gain, not ten impacts. The
+    // COUNT is what lets the mixer do the gain half — dropping it (a plain Set) is the
+    // version this test exists to catch.
+    const { reactor, audio } = reactorWithAudio();
+    reactor.consume([hit(0), hit(1), hit(2)]);
+    expect(audio.play).toHaveBeenCalledTimes(1);
+    expect(audio.play).toHaveBeenCalledWith('impact', 3);
+  });
+
+  it('counts each cue separately, and plays each one once', () => {
+    const { reactor, audio } = reactorWithAudio();
+    reactor.consume([
+      hit(0),
+      hit(1),
+      { type: 'bullet_fired', gx: 0, gy: 0, facing: 0 } as GameEvent,
+      { type: 'clash', gx: 0, gy: 0 } as GameEvent,
+    ]);
+    expect(audio.play).toHaveBeenCalledWith('impact', 2);
+    expect(audio.play).toHaveBeenCalledWith('muzzle', 1);
+    expect(audio.play).toHaveBeenCalledWith('clash', 1);
+    expect(audio.play).toHaveBeenCalledTimes(3);
+  });
+
+  it('starts a fresh count each frame', () => {
+    const { reactor, audio } = reactorWithAudio();
+    reactor.consume([hit(0), hit(1)]);
+    reactor.consume([hit(0)]);
+    expect(audio.play).toHaveBeenNthCalledWith(1, 'impact', 2);
+    expect(audio.play).toHaveBeenNthCalledWith(2, 'impact', 1);
   });
 });

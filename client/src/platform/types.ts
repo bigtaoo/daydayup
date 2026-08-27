@@ -91,13 +91,23 @@ export type AudioCue =
   | 'wave-clear'
   | 'win';
 
-// A swappable audio device, symmetric to InputSource. Web synthesises placeholder
-// cues via WebAudio (no asset files); WeChat needs real assets + InnerAudioContext
-// (stubbed until those land — design/11). All calls are render-clock, fire-and-forget.
+// A swappable audio device, symmetric to InputSource. Both backends now run the SAME cue
+// pipeline (audio/CueMixer.ts — the shipped sample if one is loaded, the procedural voice if
+// not); they differ only in how the AudioContext is obtained and how asset bytes are read.
+// All calls are render-clock, fire-and-forget.
 export interface AudioBus {
-  // Play a one-shot SFX cue. Cheap and idempotent-per-frame — the caller coalesces
-  // duplicate cues within a frame (design/11 "coalesce identical cues in the same frame").
-  play(cue: AudioCue): void;
+  /**
+   * Fetch + decode the shipped SFX set (design/11 "preload the core SFX set at boot").
+   * Best-effort, and boot never awaits it: until it resolves — or if it fails outright —
+   * cues fall back to the procedural voices, which is audible rather than silent. Safe to
+   * call more than once; a second call retries only what has nothing loaded.
+   */
+  preload(): Promise<void>;
+  // Play a one-shot SFX cue. Cheap and idempotent-per-frame — the caller coalesces duplicate
+  // cues within a frame (design/11 "coalesce identical cues in the same frame") and passes
+  // how many events collapsed into this one as `count`, which raises the gain rather than
+  // playing the cue twice.
+  play(cue: AudioCue, count?: number): void;
   // 0..1 gain on the SFX / music buses (design/10 settings). Music is reserved.
   setSfxVolume(v: number): void;
   setMusicVolume(v: number): void;

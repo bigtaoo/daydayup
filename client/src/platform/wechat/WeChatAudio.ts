@@ -1,30 +1,36 @@
 import type { AudioBus, AudioCue } from '../types';
-import { playCue } from '../audioSynth';
+import { SampleBank } from '../../audio/SampleBank';
+import { CueMixer } from '../../audio/CueMixer';
+import { readBinaryAsset } from '../../render/assetHost';
 
 // WeChat audio backend (design/11).
 //
-// Drives the SAME procedural synth voice table as the web backend (../audioSynth.ts)
-// through `wx.createWebAudioContext()` — WeChat's own docs describe it as implementing
-// the standard Web Audio API surface, so no separate voice code is needed per platform.
-// This is still "placeholder audio" in design/11's sense (no asset files, no
-// licensing) — it just extends the SAME placeholder to WeChat instead of leaving it a
-// pure no-op, closing the "the event→sound pipeline is unproven on WeChat" gap.
+// Drives the SAME cue pipeline as the web backend (../../audio/CueMixer.ts — the shipped mp3
+// set if it has loaded, ../audioSynth.ts's procedural voice if not) through
+// `wx.createWebAudioContext()`, which WeChat's own docs describe as implementing the standard
+// Web Audio API surface. Nothing about a cue is decided per platform; only the context, and
+// how sample bytes are read (`FileSystemManager.readFileSync` through the asset host, since a
+// mini-game has no `fetch`).
 //
-// What's still NOT done here (both explicitly flagged by design/11, both needing
-// things this repo cannot produce/verify alone):
-//   1. `wx.createWebAudioContext` isn't guaranteed on every base library (design/11's
-//      own open question) — UNVERIFIED without a real device/DevTools session on the
-//      LOWEST target base library (design/04's checklist item 2, still unchecked).
-//      Absence falls back to a true no-op below, same as before this change.
-//   2. Real authored music/ambience (`InnerAudioContext`-pooled file playback) needs
-//      actual audio ASSETS (mp3s) + a licence check (design/11's "Sourcing" section) —
-//      neither exists in this repo, so that half of design/11 stays a documented gap,
-//      not silently faked here.
+// What's still NOT verified here (design/11's own open items, all needing a device this repo
+// cannot drive):
+//   1. `wx.createWebAudioContext` isn't guaranteed on every base library — UNVERIFIED
+//      without a real device/DevTools session on the LOWEST target base library
+//      (design/04's checklist item 2, still unchecked). Absence falls back to a true no-op
+//      below, same as before.
+//   2. Whether that context's `decodeAudioData` is the promise or the callback form varies
+//      by base library, so `audio/decodeAudio.ts` accepts either. Which one a real device
+//      takes is unverified; a decode failure costs the samples, not the sound — the
+//      procedural voices keep playing.
+//   3. Music/ambience still do not exist as assets, so that half of design/11 stays a
+//      documented gap rather than being silently faked here.
 export class WeChatAudio implements AudioBus {
   private ctx: AudioContext | null = null;
   private sfx: GainNode | null = null;
   private sfxVolume = 0.5;
   private supported = true;
+  private bank: SampleBank | null = null;
+  private mixer: CueMixer | null = null;
 
   private ensure(): AudioContext | null {
     if (this.ctx) return this.ctx;
@@ -34,6 +40,8 @@ export class WeChatAudio implements AudioBus {
       this.sfx = this.ctx.createGain();
       this.sfx.gain.value = this.sfxVolume;
       this.sfx.connect(this.ctx.destination);
+      this.bank = new SampleBank({ ctx: this.ctx, readBinary: readBinaryAsset });
+      this.mixer = new CueMixer({ ctx: this.ctx, bus: this.sfx, bank: this.bank });
       return this.ctx;
     } catch {
       // Base library claims the API but construction failed — degrade to the no-op
@@ -41,8 +49,19 @@ export class WeChatAudio implements AudioBus {
       this.supported = false;
       this.ctx = null;
       this.sfx = null;
+      this.bank = null;
+      this.mixer = null;
       return null;
     }
+  }
+
+  // Reads come off the code package (synchronously, inside the asset host) and decode on the
+  // still-suspended context, so this needs neither the network nor a user gesture. Preloading
+  // matters MORE here than on web: design/11 expects higher input-to-sound latency on this
+  // runtime, and a first-play decode stall is exactly what it warns about.
+  async preload(): Promise<void> {
+    if (!this.ensure() || !this.bank) return;
+    await this.bank.load();
   }
 
   resume(): void {
@@ -59,9 +78,9 @@ export class WeChatAudio implements AudioBus {
   // (design/10) can already wire a slider to it, same as WebAudio.
   setMusicVolume(_v: number): void {}
 
-  play(cue: AudioCue): void {
+  play(cue: AudioCue, count = 1): void {
     const ctx = this.ensure();
-    if (!ctx || !this.sfx || ctx.state !== 'running') return;
-    playCue(cue, ctx, this.sfx);
+    if (!ctx || !this.mixer || ctx.state !== 'running') return;
+    this.mixer.play(cue, count);
   }
 }

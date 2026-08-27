@@ -13,9 +13,26 @@ import { WeChatAudio } from './WeChatAudio';
 vi.mock('../audioSynth', () => ({ playCue: vi.fn() }));
 import { playCue } from '../audioSynth';
 
+// The sample loader reads through the art asset host (render/assetHost.ts), which on this
+// platform is `FileSystemManager.readFileSync` — faked here so these tests stay off both the
+// filesystem and the wx runtime.
+vi.mock('../../render/assetHost', () => ({ readBinaryAsset: vi.fn(async () => new ArrayBuffer(8)) }));
+import { readBinaryAsset } from '../../render/assetHost';
+import { allSfxPaths } from '../../audio/cueCatalogue';
+
 class FakeGainNode {
-  gain = { value: 0 };
-  connect = vi.fn();
+  gain = { value: 0, setValueAtTime: vi.fn(), linearRampToValueAtTime: vi.fn() };
+  // Returns its destination, like the real `AudioNode.connect()`, so the mixer's
+  // `src.connect(gain).connect(bus)` chain works against the fake too.
+  connect = vi.fn((dest: unknown) => dest);
+}
+
+class FakeBufferSource {
+  buffer: unknown = null;
+  playbackRate = { value: 1 };
+  connect = vi.fn((dest: unknown) => dest);
+  start = vi.fn();
+  stop = vi.fn();
 }
 
 const instances: FakeAudioContext[] = [];
@@ -23,10 +40,27 @@ const instances: FakeAudioContext[] = [];
 class FakeAudioContext {
   state: 'suspended' | 'running' | 'closed' = 'suspended';
   destination = {};
+  currentTime = 0;
+  /** Every gain node this context made, in order: the SFX bus first (ensure() builds it
+   *  before anything else), then the mixer's per-voice gains. */
+  gains: FakeGainNode[] = [];
+  sources: FakeBufferSource[] = [];
   resume = vi.fn(async () => {
     this.state = 'running';
   });
-  createGain = vi.fn(() => new FakeGainNode());
+  createGain = vi.fn(() => {
+    const g = new FakeGainNode();
+    this.gains.push(g);
+    return g;
+  });
+  createBufferSource = vi.fn(() => {
+    const s = new FakeBufferSource();
+    this.sources.push(s);
+    return s;
+  });
+  // The promise form; `audio/decodeAudio.test.ts` covers the callback one this runtime may
+  // hand us instead.
+  decodeAudioData = vi.fn(async () => ({ duration: 0.1 }) as unknown as AudioBuffer);
   constructor() {
     instances.push(this);
   }
@@ -112,7 +146,42 @@ describe('WeChatAudio — setSfxVolume', () => {
     await Promise.resolve();
     audio.setSfxVolume(0.75);
     audio.play('muzzle');
-    expect(playCue).toHaveBeenCalledWith('muzzle', expect.anything(), expect.objectContaining({ gain: { value: 0.75 } }));
+    // Same as the web backend: the bus is the context's first gain node, and `muzzle`'s
+    // sub-1.0 catalogue gain means the synth voice reaches it through a trim node.
+    const [bus, trim] = instances[0]!.gains;
+    expect(bus!.gain.value).toBe(0.75);
+    expect(playCue).toHaveBeenCalledWith('muzzle', expect.anything(), trim);
+    expect(trim!.connect).toHaveBeenCalledWith(bus);
+  });
+});
+
+describe('WeChatAudio — preload() (design/11 boot preload)', () => {
+  it('loads the whole shipped set through the asset host', async () => {
+    // Preloading matters more here than on web: design/11 expects a first-play decode stall
+    // on this runtime, which is exactly what a cold `deflect` must not pay.
+    const audio = new WeChatAudio();
+    await audio.preload();
+    expect((readBinaryAsset as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]).sort())
+      .toEqual(allSfxPaths().slice().sort());
+    expect(instances[0]!.decodeAudioData).toHaveBeenCalledTimes(46);
+  });
+
+  it('plays a decoded sample once resumed, instead of the synth voice', async () => {
+    const audio = new WeChatAudio();
+    await audio.preload();
+    audio.resume();
+    await Promise.resolve();
+    audio.play('impact');
+    expect(playCue).not.toHaveBeenCalled();
+    expect(instances[0]!.sources).toHaveLength(1);
+    expect(instances[0]!.sources[0]!.start).toHaveBeenCalled();
+  });
+
+  it('is a no-op on a base library without createWebAudioContext', async () => {
+    vi.stubGlobal('wx', {});
+    const audio = new WeChatAudio();
+    await expect(audio.preload()).resolves.toBeUndefined();
+    expect(readBinaryAsset).not.toHaveBeenCalled();
   });
 });
 

@@ -1268,7 +1268,7 @@ new cases (set-after-import, removed-after-import). 189 server tests, full `npm 
 
 ## Phase 5 — Presentation & platform
 
-- **5.1 Audio finish** (11): ✅ event→sound seam + a procedural/synthesised voice-table backend ship on BOTH web and WeChat (`wx.createWebAudioContext()`, feature-detected, 2026-07-26) — no asset files, no licensing needed for this half. ✅ **SFX sourcing done (2026-08-27)**: 556 files audited across six Kenney CC0 packs, **46 mono MP3s / 95.0 kB** shipped to `client/public/audio/` covering **15 of 16 `AudioCue`s** (`status.burn` keeps its synth voice — no fire crackle exists in the corpus), licence texts + sha256 archived under `art/audio/`, processing pipeline and its self-test under `tools/audio-pipeline/`, invariants gated by `client/src/platform/audioAssets.test.ts` (12 tests, 9/9 mutations caught). **Still open**: (a) **nothing loads those files** — the cue catalogue (`11` "To design") is the blocker, so `audioSynth.ts` still generates every cue and the game sounds unchanged; (b) **music/ambience do not exist**, and CC0 music turned out to be almost entirely chiptune, a style mismatch for `13`; (c) nobody has *listened* to the 46 files — they were picked from spectra; (d) real-device verification of the WeChat audio path, now including MP3 decode (5.5).
+- **5.1 Audio finish** (11): ✅ event→sound seam + a procedural/synthesised voice-table backend ship on BOTH web and WeChat (`wx.createWebAudioContext()`, feature-detected, 2026-07-26) — no asset files, no licensing needed for this half. ✅ **SFX sourcing done (2026-08-27)**: 556 files audited across six Kenney CC0 packs, **46 mono MP3s / 95.0 kB** shipped to `client/public/audio/` covering **15 of 16 `AudioCue`s** (`status.burn` keeps its synth voice — no fire crackle exists in the corpus), licence texts + sha256 archived under `art/audio/`, processing pipeline and its self-test under `tools/audio-pipeline/`, invariants gated by `client/src/platform/audioAssets.test.ts` (12 tests, 9/9 mutations caught). ✅ **Cue catalogue + loading path done (2026-08-27)**: the 46 files are now what plays, on both targets. New module `client/src/audio/` — `cueCatalogue.ts` (exhaustive `Record<AudioCue, CueDef>`: variant count + gain + voice-cap priority; paths derived from the cue id, checked against disk AND `credits.json`), `SampleBank.ts` (best-effort fetch+decode through `render/assetHost.ts`'s new `readBinary` seam, so audio inherits the design/12 bundle rules), `decodeAudio.ts` (one promise over the browser's promise-form and WeChat's callback-form `decodeAudioData`), `VoiceBudget.ts` (12-voice cap, priority-ranked, steal-with-fade, time-based retirement) and `CueMixer.ts` (sample-or-synth ladder, catalogue gain applied to BOTH rungs, coalesce gain, non-repeating variant choice, ±3% render-side pitch jitter). `EventReactor` now coalesces to `Map<AudioCue, number>` so a frame's repeat count becomes gain, not repeats. Browser-measured: 46/46 fetched 200 + decoded; a 3 s firing burst produced **27 sample voices, 0 synth voices** (9 more cues dropped by the cap, all `muzzle`); peak PCM on the SFX bus 0.067 (`deflect` sample) / 0.021 (`status.burn` synth keep) / 0.092→0.136 = **×1.49** for 1 vs 10 coalesced `impact`s. 51 new tests in 5 files + 7 more across the two backends and `EventReactor`; **20/20 injected mutations caught**. **Still open**: (a) **music/ambience do not exist**, and CC0 music turned out to be almost entirely chiptune, a style mismatch for `13`; (b) nobody has *listened* to the 46 files — they were picked from spectra, and now that they actually play this is `11`'s top open item; (c) real-device verification of the WeChat audio path, now including MP3 decode and which `decodeAudioData` shape that runtime takes (5.5); (d) the voice cap (12) is reasoned, not measured on device.
 - **5.2 UI/HUD** (10): ✅ shipped 2026-07-26 — real Pixi widget kit (`Panel`/`Bar`/`ToastQueue`/`Button`/`Slider`), a real in-match HUD, settings screen (SFX/music/master volume + mute), PvP room-graph minimap, forge + ground-pickup compare cards. **2026-07-27: the two remaining items shipped too** — a real in-run pause menu (`game/PauseMenu.ts`, ESC/settings-button entry point) and a real PvE floor-progress minimap (`game/ui/Minimap.ts`/`FloorProgress.ts`, distinct from the PvP room-graph shape — tracks dungeon room-to-room progress, not a synthetic `?arenaDemo=1` stand-in). Nothing open in 5.2.
 
 **2026-08-05: three real touch/WeChat input gaps closed, found by cross-checking the actual
@@ -1745,13 +1745,28 @@ account in design/04-wechat.md's "Adaptation layer" section; summary here:
   `a.connect(b).connect(c)` chains exactly like production code). Covers `tone()`/
   `noise()`'s exact oscillator/gain-envelope/filter parameters and every one of the 16
   `AudioCue` voices in the table (looped, so a future typo'd/missing voice fails loud).
-- **`WebAudio.test.ts`** (12) / **`WeChatAudio.test.ts`** (9) — `../audioSynth`'s
-  `playCue` mocked out so these only exercise the two backends' OWN logic: the
-  autoplay-gesture resume gate, the `ctx.state === 'running'` play gate, the
-  `AudioContext`/`webkitAudioContext` fallback (Web) or `wx.createWebAudioContext`
-  absence (WeChat), volume clamping, and — WeChat-only — the "base library claims
-  `createWebAudioContext` exists but construction throws" permanent-degrade branch
-  (`supported = false`, never retries).
+- **`WebAudio.test.ts`** (16) / **`WeChatAudio.test.ts`** (12) — `../audioSynth`'s
+  `playCue` and `render/assetHost`'s `readBinaryAsset` mocked out so these only exercise the
+  two backends' OWN logic: the autoplay-gesture resume gate, the `ctx.state === 'running'`
+  play gate, the `AudioContext`/`webkitAudioContext` fallback (Web) or
+  `wx.createWebAudioContext` absence (WeChat), volume clamping, and — WeChat-only — the
+  "base library claims `createWebAudioContext` exists but construction throws"
+  permanent-degrade branch (`supported = false`, never retries). Since 2026-08-27 they also
+  cover `preload()`: that it builds the context and decodes all 46 samples WITHOUT waiting
+  for a gesture (a suspended context decodes fine), that a decoded sample then plays instead
+  of the synth voice, and that a total read failure still leaves the synth voice playing.
+- **the `src/audio/` module** (51 tests in 5 files, 2026-08-27) — the cue catalogue and
+  loading path (design/11). `cueCatalogue.test.ts` (9) is the drift gate: generated paths vs
+  the real `public/audio/` listing vs `credits.json`, both directions, plus the priority
+  ladder design/11 states. `decodeAudio.test.ts` (9) covers both `decodeAudioData` shapes
+  including an async callback, a synchronous throw, and a host that fires both paths.
+  `SampleBank.test.ts` (9) is the failure-mode file: a 404 leaves a cue's OTHER variants in
+  order, an all-failed cue stays absent (so the mixer falls back), `load()` never rejects,
+  and a retry re-reads only what has nothing loaded. `VoiceBudget.test.ts` (8) and
+  `CueMixer.test.ts` (16) cover the cap (equal priority loses, the weakest is stolen with a
+  fade, voices retire by time) and the mix (catalogue gain on both rungs, coalesce boost,
+  never-repeat variant choice, a host with no `playbackRate`). 20/20 injected mutations
+  caught across the module, the two backends and `EventReactor`.
 - **`WeChatAdapter.test.ts`** (12) — Pixi's DOM-adapter surface against a fake `wx`.
   The module caches its 2D-context-constructor probe at MODULE scope, so every test
   resets the module fresh via `vi.resetModules()` + a dynamic re-import first — otherwise

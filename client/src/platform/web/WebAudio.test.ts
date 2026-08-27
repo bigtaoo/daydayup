@@ -12,6 +12,12 @@ import { WebAudio } from './WebAudio';
 vi.mock('../audioSynth', () => ({ playCue: vi.fn() }));
 import { playCue } from '../audioSynth';
 
+// The sample loader reads through the art asset host (render/assetHost.ts) — faked here so
+// these tests stay offline, and so the 46 real paths are not fetched 46 times per case.
+vi.mock('../../render/assetHost', () => ({ readBinaryAsset: vi.fn(async () => new ArrayBuffer(8)) }));
+import { readBinaryAsset } from '../../render/assetHost';
+import { allSfxPaths } from '../../audio/cueCatalogue';
+
 type GestureHandler = () => void;
 
 function fakeWindow() {
@@ -27,8 +33,18 @@ function fakeWindow() {
 }
 
 class FakeGainNode {
-  gain = { value: 0 };
-  connect = vi.fn();
+  gain = { value: 0, setValueAtTime: vi.fn(), linearRampToValueAtTime: vi.fn() };
+  // Returns its destination, like the real `AudioNode.connect()`, so the mixer's
+  // `src.connect(gain).connect(bus)` chain works against the fake too.
+  connect = vi.fn((dest: unknown) => dest);
+}
+
+class FakeBufferSource {
+  buffer: unknown = null;
+  playbackRate = { value: 1 };
+  connect = vi.fn((dest: unknown) => dest);
+  start = vi.fn();
+  stop = vi.fn();
 }
 
 const instances: FakeAudioContext[] = [];
@@ -36,10 +52,27 @@ const instances: FakeAudioContext[] = [];
 class FakeAudioContext {
   state: 'suspended' | 'running' | 'closed' = 'suspended';
   destination = {};
+  currentTime = 0;
+  /** Every gain node this context made, in order: the SFX bus first (ensure() builds it
+   *  before anything else), then the mixer's per-voice gains. */
+  gains: FakeGainNode[] = [];
+  sources: FakeBufferSource[] = [];
   resume = vi.fn(async () => {
     this.state = 'running';
   });
-  createGain = vi.fn(() => new FakeGainNode());
+  createGain = vi.fn(() => {
+    const g = new FakeGainNode();
+    this.gains.push(g);
+    return g;
+  });
+  createBufferSource = vi.fn(() => {
+    const s = new FakeBufferSource();
+    this.sources.push(s);
+    return s;
+  });
+  // The promise form; `audio/decodeAudio.test.ts` covers the callback one this runtime may
+  // hand us instead.
+  decodeAudioData = vi.fn(async () => ({ duration: 0.1 }) as unknown as AudioBuffer);
   constructor() {
     instances.push(this);
   }
@@ -149,7 +182,58 @@ describe('WebAudio — setSfxVolume', () => {
     await Promise.resolve();
     audio.setSfxVolume(0.75);
     audio.play('muzzle'); // forces ensure() again to grab the (already-constructed) ctx/gain
-    expect(playCue).toHaveBeenCalledWith('muzzle', expect.anything(), expect.objectContaining({ gain: { value: 0.75 } }));
+    // The SFX bus is the FIRST gain node the context ever made. `muzzle`'s catalogue gain is
+    // not 1.0, so the mixer hands the synth voice a trim node connected to that bus rather
+    // than the bus itself — the volume still has to land on the bus.
+    const [bus, trim] = instances[0]!.gains;
+    expect(bus!.gain.value).toBe(0.75);
+    expect(playCue).toHaveBeenCalledWith('muzzle', expect.anything(), trim);
+    expect(trim!.connect).toHaveBeenCalledWith(bus);
+  });
+});
+
+describe('WebAudio — preload() (design/11 boot preload)', () => {
+  it('loads the whole shipped set through the asset host, WITHOUT waiting for a gesture', async () => {
+    // The point of preloading on a suspended context: decode does not need the autoplay
+    // gate, so the first shot of a run can already be a real sample.
+    const audio = new WebAudio();
+    await audio.preload();
+    expect(instances).toHaveLength(1);
+    expect(instances[0]!.state).toBe('suspended');
+    expect((readBinaryAsset as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]).sort())
+      .toEqual(allSfxPaths().slice().sort());
+    expect(instances[0]!.decodeAudioData).toHaveBeenCalledTimes(46);
+  });
+
+  it('plays a decoded sample once resumed, instead of the synth voice', async () => {
+    const audio = new WebAudio();
+    await audio.preload();
+    audio.resume();
+    await Promise.resolve();
+    audio.play('impact');
+    expect(playCue).not.toHaveBeenCalled();
+    expect(instances[0]!.sources).toHaveLength(1);
+    expect(instances[0]!.sources[0]!.start).toHaveBeenCalled();
+  });
+
+  it('still plays SOMETHING when every read fails', async () => {
+    (readBinaryAsset as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('offline'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const audio = new WebAudio();
+    await expect(audio.preload()).resolves.toBeUndefined();
+    audio.resume();
+    await Promise.resolve();
+    audio.play('impact');
+    expect(playCue).toHaveBeenCalledTimes(1); // the synth voice carries it
+    warn.mockRestore();
+  });
+
+  it('is a no-op (not a throw) where there is no AudioContext at all', async () => {
+    vi.stubGlobal('AudioContext', undefined);
+    vi.stubGlobal('webkitAudioContext', undefined);
+    const audio = new WebAudio();
+    await expect(audio.preload()).resolves.toBeUndefined();
+    expect(readBinaryAsset).not.toHaveBeenCalled();
   });
 });
 
