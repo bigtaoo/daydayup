@@ -101,10 +101,12 @@ reachable from any unit test — a full `createGameEngine` end-to-end regression
 `dungeonrun.test.ts` reproducing the reported bug shape directly: one room, two
 real spawned enemies (one beside the player, one clear across the room), driven
 through the real tick order, confirming the near one engages immediately while the
-far one fires zero bullets until it closes the distance. **5205 tests green across all 8
-workspace packages** (engine 845 / client 3309 / server 189 / animator 444 / map-editor 282 /
+far one fires zero bullets until it closes the distance. **5208 tests green across all 8
+workspace packages** (engine 845 / client 3312 / server 189 / animator 444 / map-editor 282 /
 png-pipeline 42 / desktop-shell 81 / root build-script 13, `npm run check`, re-measured
-2026-08-26 after the ground-cull pass (`groundCulling.test.ts` +6, `groundGeometryBudget.test.ts` +7) — and **measure it from the MAIN checkout with no sibling
+2026-08-27 after the ground-cull pass (`groundCulling.test.ts` +6, `groundGeometryBudget.test.ts` +7)
+and the two mutation batteries that followed it (+3: the low-tier cull, `cameraFrame`'s room-list
+precedence, and `roomLight`'s stacked-alpha bound) — and **measure it from the MAIN checkout with no sibling
 worktree checked out**, which is the mechanism that has been corrupting this block rather than
 ordinary drift. The root leg of `npm run test` is `npx vitest run build/versionManifestPlugin.test.mjs`
 run from the repo root, and `.claude/worktrees/<name>/` lives *inside* the repo, so vitest globs
@@ -842,6 +844,12 @@ them; see the two sections below.
    numbers, plus the control that made them quotable: a TWIN arm that applies no change, because a
    backgrounded tab degrades over an hour and a run where two identical arms read 3.556 and 5.985 ms
    is the only warning you get.
+   Two mutation batteries over the cull closed it out the same day: the feature's own three files
+   (29 mutants, 1 survivor) and then the files that CONNECT it (20 mutants, 2 survivors). All three
+   are fixed. The one worth carrying forward: the cull sat BELOW `syncCamera`'s low-tier early
+   return in every version before 2026-08-26, and nothing tested it there — the low tier is the
+   DEVICE tier, so the machine that most needs the cull was the only one that would not get it.
+   design/01 has all three, and what shape of blind spot each one was.
 2. ~~`arena_prototype_60` stays in `ARENA_CATALOG` as the audit's before-picture. Dropping it,
    with its pinned defect tests, is a follow-up.~~ **Done 2026-08-26.**
 3. ~~`groundLayer.ts`'s arena branch still paints a whole-world floor because the OLD map's rooms
