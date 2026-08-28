@@ -14,9 +14,13 @@ describe('Layers', () => {
     expect(layers.root.children).toEqual([layers.backdrop, layers.world, layers.ui]);
   });
 
-  it('world contains lit, fx, hud in that paint order', () => {
+  it('world contains terrain, lit, fx, hud in that paint order', () => {
+    // `terrain` (2026-08-28, the void's far side) paints FIRST and is deliberately a sibling of
+    // `lit` rather than a child: floor and stone must cover it, so that what still shows through
+    // is exactly the void — and the scene-light pass must not touch it, since that pass is what
+    // was darkening everything beyond the player's room to near-black in the first place.
     const layers = new Layers();
-    expect(layers.world.children).toEqual([layers.lit, layers.fx, layers.hud]);
+    expect(layers.world.children).toEqual([layers.terrain, layers.lit, layers.fx, layers.hud]);
   });
 
   it('lit contains ground, shadow, entities in that paint order', () => {
@@ -121,7 +125,8 @@ describe('Layers', () => {
     expect(layers.lit.children).toContain(layers.entities);
     // Nothing else may sit in that slot pretending to be `entities`.
     expect(layers.lit.children).toHaveLength(3);
-    expect(layers.world.children).toHaveLength(3);
+    // 4 since 2026-08-28: terrain, lit, fx, hud.
+    expect(layers.world.children).toHaveLength(4);
   });
 });
 

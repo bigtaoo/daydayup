@@ -7065,6 +7065,16 @@ exactly the same property, so "fix the twelve" is not obviously the right scope.
 > with `layers.lit.filters` detached shows lit stone across the top third of it. The finding held;
 > the fraction was measuring two things at once.
 
+> **The other half closed 2026-08-28 — and one of the three options was unbuildable.** The note
+> above offered "author a pit rim" as a candidate. It is not one: what sells a pit is the far
+> bank's inner wall, which faces east/west and therefore projects to zero width — the same surface
+> whose absence caused this finding. A pit floor draws but slides SOUTH by its own depth and sorts
+> behind the room down there, so an interior cell's visible depth is about zero. Sky was ruled out
+> for inverting the contrast the new rim depends on. The far side is GROUND: `scene/Terrain.ts`,
+> two draw calls, computing no void geometry at all. The before-number is worth keeping — that
+> rectangle measured **sd = 0, min = max = 27.70**, so "flat" was literal, not rhetorical. See
+> "The void gets a far side" below.
+
 ### What it cost to get a frame out of this machine, which is the durable half
 
 `perf/README.md` already records that the in-app browser pane sometimes never composites and that
@@ -7673,3 +7683,109 @@ Open, and named rather than left implicit: the character's weapons sit outside t
 radii against a 1.53 surface) — pre-existing, now more conspicuous, and fixing it means roughly
 doubling the shell; and the side/vertical clearance asymmetry above is geometric, resolvable only by
 lowering `SHELL_ASPECT`. Neither is a defect in this pass; both are the trade the reports asked for.
+
+## The void gets a far side, and a stale prediction gets retired (2026-08-28, client + docs)
+
+The rim shipped on 2026-08-27 answered *"where does the stone end"* and left the other half open,
+filed as an art call with three candidates: **a pit, open sky, or ground beyond the wall**. Asked to
+pick on final appearance rather than on taste, the answer came out of the projection, and it is the
+same argument that produced the rim in the first place.
+
+**A pit is unbuildable here, for the reason the original bug existed.** What sells a pit is the far
+bank's INNER wall descending from the rim; across an east/west void that wall faces east or west,
+and `screen.y = gy - z` gives it exactly zero projected width. A pit floor does draw, being
+horizontal, but `z < 0` pushes it DOWN the screen, so a pit `d` px deep lands `d` px SOUTH of its own
+footprint while the Y-sort puts it BEHIND the room down there — visible depth is bounded by the empty
+screen space south of the void, which for an interior cell surrounded by rooms is about zero. **Sky**
+works in the projection but inverts the contrast the rim was tuned against (the east arris is lit
+*because* the backdrop is luma ~6) and splits at the two scopes the rim unified, since past the map's
+outer boundary `wallVoidEdge` reports an `Infinity` gap and there is no horizon to key on.
+**Ground** is a horizontal plane at z = 0: no zero-width surface anywhere in it, the backdrop stays
+dark so arris/tints/ramp all stand unchanged, and it is one rule at both scopes. So the earlier
+note's "author a pit rim" option is now explicitly ruled out rather than merely unchosen.
+
+Design/01's *"The void's far side"* has the full account. What is worth pulling out here is the
+evidence, and two defects that only one method each could have found.
+
+### The before row is the finding restated as a measurement
+
+The void beside `r5_extraction`'s east side, ember biome, scene-light attached:
+
+| | mean | sd | range |
+|---|---|---|---|
+| Before (backdrop only) | 27.70 | **0** | 27.70 – 27.70 |
+| After (terrain + fog) | 30.31 | 1.41 | 23.3 – 33.5 |
+| The lit floor, same frame | 47.66 | 19.09 | 4 – 246.9 |
+
+**min = max.** Not one pixel of that rectangle differed from any other — "a hard-edged flat black
+rectangle with no depth cue" was literally true, and sd = 0 is the cleanest before-number this repo
+has recorded. Floor-over-void is 1.57x, so the far side cannot read as somewhere to stand, and the
+floor stays 13x more textured, which is what reads as distance. The boundary scan runs
+cap 76-93 -> **arris 88** -> trough 6 -> terrain 24 -> 28, against the rim's own row that fell to 2
+and stayed there.
+
+### One defect only the frame could find, one only a battery could
+
+**The frame: a legible tile repeat.** The first swatch was 64 px with two octaves, and the dominant
+octave's period IS the tile, so the eye locked onto a grid of identical blobs. Fixed with a 128 px
+tile and a third octave (4/16/32 cells). Every test was green before and after; nothing but a frame
+sees this.
+
+**The battery: the biome derivation, and the assertion guarding it.** `terrain` was tinted from the
+neutral terrain the way every other biome colour is, but mixing the same absolute amount of a bright
+element hex into a darker base lifts it more in relative terms — neutral's terrain/ground sat at
+0.75, ember's at 0.85, and ember is the only biome that ships. Now derived from each palette's own
+`void` and `ground`. The assertion was wrong too, and that is the more reusable half: **any ratio of
+terrain's luma to ground's drifts toward 1 as the hue brightens**, so the bound that survives a hue
+is positional, not proportional.
+
+### The battery, and what it says about where tests stop
+
+76 mutants over the new and changed files: **45/76 on the first run, 58/76 after six more tests.**
+Three real gaps, each a named class rather than a one-off:
+
+1. **Seamless is not continuous.** The tile-wrap test compared column 0 with column TILE and said
+   nothing about the middle. Three mutants kept the wrap and put a hard step at every cell boundary
+   — the same visible-grid defect the frame had already caught once. Measured: shipped field 0.108
+   max adjacent-pixel step, the mutants 0.52 / 0.62 / 0.88.
+2. **A clamp no shipped input reaches is still live at an EXPORTED entry point** — the recurring
+   shape. `Math.min(255, ...)` is dead at every palette colour and reachable through
+   `terrainSwatch(anyColour)`, where a `Uint8Array` wraps 309 to 53 rather than saturating. Fixing
+   it half-way was its own lesson: the re-run killed the RED channel's clamp and left green and
+   blue alive, because the new test read only `buf[i]`.
+3. **Three self-referential constant assertions.** `expect(fog.alpha).toBeCloseTo(TERRAIN_FOG_ALPHA)`
+   is a tautology; the contrast test computed its own bounds from the constant it was checking; and
+   `TERRAIN_MIX <= 0.5` was a boundary that let the constant walk to exactly 0.5 with everything
+   green. All replaced with absolute, argued bounds.
+
+Two further gaps came from reading rather than from the battery, because its operators cannot
+generate them: **the fog must paint OVER the plane** (reversed, the haze does nothing and every
+other assertion still passes), and **`fitTerrain` must receive the camera's world rect, not the
+viewport** (identical at zoom 1, wrong at every other zoom — and the first version of that test ran
+at zoom exactly 1, which its own control caught).
+
+The 18 remaining survivors are recorded rather than chased, and judged by measuring: nine are the
+hash's internals, which produce a **different but equally valid field** (verified: same range, mean,
+continuity and seam behaviour — nothing specifies the exact noise values); two are `<` -> `<=` loop
+bounds, where a `Uint8Array` out-of-range write is a no-op; one is the memo key's radix, still
+injective; four are placeholder sprite dimensions the first fit overwrites; and two are aesthetic
+constants moving 2-3% inside their own argued bands.
+
+### The stale prediction, retired
+
+Design/04's on-device plan still told a person holding a phone that a `render`-side breach in the
+arena meant the floor's batched geometry "needs the fix design/01 describes". That sentence carried
+the FOURTH measurement's inference and the fifth measurement had already falsified it: making the
+floor cullable cut submission 17x and moved the GPU frame **not at all**. The real cost was
+per-primitive fragment work, 45% of it neighbouring rooms' mottle, and `floorClip.ts` shipped for it
+on 2026-08-27. The plan now carries the `[perf]` `update`-vs-`render` reading with **no prediction
+attached**, which is what makes a device breach informative — it would mean something desktop has
+not already eliminated. Same docs-drift shape this repo has recorded before: the measurement moved
+on and the paragraph that quoted it did not.
+
+### Cost
+
+Two display objects and two draw calls, fixed, whatever the map — it computes no void geometry at
+all, because the floor and the walls paint over the plane and what is left showing IS the void. No
+new PNG: the swatch is generated through `shadeRamp.bakedField`, which matters against WeChat's
+3.41 MB of a 4.00 MB main package.

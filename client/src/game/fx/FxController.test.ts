@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { FxController, type CameraTarget } from './FxController';
 import { Layers } from '../scene/layers';
+import { Terrain } from '../scene/Terrain';
 import { makeLightBuffer } from './lighting';
 import { resetActiveQuality, setActiveQuality } from '../../render/quality';
-import { Container } from 'pixi.js';
+import { Container, type Sprite } from 'pixi.js';
 import { tagGroundPiece } from '../scene/groundCulling';
 
 // FxController's filters (fx/filters.ts) build a real WebGL GlProgram at construction
@@ -249,11 +250,18 @@ describe('FxController scene-light sync', () => {
     expect(layers.lit.filterArea).not.toBeNull();
   });
 
-  it('leaves fx and hud out of the pass — a muzzle flash is light, a health bar is a readout', () => {
+  it('leaves terrain, fx and hud out of the pass — three different reasons, one exclusion', () => {
+    // `fx` — a muzzle flash IS light, shading it would dim the thing casting the light.
+    // `hud` — a floating health bar is a readout riding in world space, not a surface.
+    // `terrain` (2026-08-28) — the void's far side. It is excluded because the light pass is
+    //   precisely what was darkening everything beyond the player's room to near-black, which is
+    //   the reading the far side exists to fix; shade it and the feature undoes itself.
+    // Terrain paints FIRST among world's children, so floor and stone cover it and what shows
+    // through is exactly the void.
     const layers = new Layers();
     new FxController(layers).attach();
     expect(layers.lit.children).toEqual([layers.ground, layers.shadow, layers.entities]);
-    expect(layers.world.children).toEqual([layers.lit, layers.fx, layers.hud]);
+    expect(layers.world.children).toEqual([layers.terrain, layers.lit, layers.fx, layers.hud]);
   });
 
   it('hands the pass the world rect the camera is actually showing', () => {
@@ -436,6 +444,63 @@ describe('FxController quality tiers', () => {
     expect(fx.visibleGroundPieces).toBe(1);
     // Control: this really is the tier whose early return the test is about. If the pass were
     // mounted, the assertions above would hold on the path that was never in doubt.
+    expect(recorded(fx).region).toEqual([0, 0, 1, 1]);
+  });
+
+  it('fits the terrain to the CAMERA WORLD RECT, not to the viewport', () => {
+    // The low-tier test below proves `fitTerrain` RAN; it cannot tell which rectangle it was
+    // handed, because any non-degenerate one leaves the plane wider than 1px. Handing it the raw
+    // viewport instead of the inverse-camera rect is the plausible mistake — identical at zoom 1
+    // and wrong at every other zoom, which is the same shape as the bug the scene-light region
+    // already has a test for. At zoom != 1 the two answers differ by the zoom factor.
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.attach();
+    new Terrain(layers);
+
+    // A framed room half the viewport's size, so cover-fit zooms to 2. Without the frame the
+    // zoom lands on exactly 1, the viewport and the world rect coincide, and the test proves
+    // nothing — which is what the control at the bottom caught on the first run.
+    fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 1600, h: 1200 }, fakePlayer(800, 600), {
+      x: 600,
+      y: 450,
+      w: 400,
+      h: 300,
+    });
+
+    const zoom = layers.world.scale.x;
+    const plane = layers.terrain.children[0] as Sprite;
+    expect(plane.x).toBeCloseTo(-layers.world.x / zoom, 6);
+    expect(plane.y).toBeCloseTo(-layers.world.y / zoom, 6);
+    expect(plane.width).toBeCloseTo(800 / zoom, 6);
+    expect(plane.height).toBeCloseTo(600 / zoom, 6);
+    // Control: a zoom of exactly 1 would make the viewport and the world rect the same size and
+    // this test vacuous. Assert the case is real.
+    expect(zoom).not.toBeCloseTo(1, 6);
+  });
+
+  it('still fits the TERRAIN on the low tier — the void must have a far side there too', () => {
+    // Same guard, same reason, different casualty. `fitTerrain` sits above the
+    // `activeQuality().sceneLight` early return in `syncCamera`; move it below and the terrain
+    // plane keeps the 1x1 size it was constructed at, so the void's far side is a single pixel in
+    // the corner and everything else is backdrop again — on the LOW tier, which is the device
+    // tier, i.e. the one machine class where the black-hole reading was reported in the first
+    // place. Nothing else in the render path reads the plane's size, so no other assertion in the
+    // suite would notice.
+    setActiveQuality('low');
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.attach();
+    new Terrain(layers);
+
+    fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 4000, h: 4000 }, fakePlayer(400, 300));
+
+    for (const child of layers.terrain.children) {
+      expect((child as Sprite).width).toBeGreaterThan(1);
+      expect((child as Sprite).height).toBeGreaterThan(1);
+    }
+    // Control: this is the tier whose early return the test is about — if the pass were mounted,
+    // the assertions above would be running on the path that was never in doubt.
     expect(recorded(fx).region).toEqual([0, 0, 1, 1]);
   });
 

@@ -1,5 +1,6 @@
 import { BlurFilter, Container, Graphics, Rectangle } from 'pixi.js';
 import type { Layers } from '../scene/layers';
+import { fitTerrain } from '../scene/Terrain';
 import { VignetteFilter, ChromaticAberrationFilter, SceneLightFilter, MAX_SCENE_LIGHTS } from './filters';
 import { ParticleSystem } from './Particles';
 import { LightRegistry, makeLightBuffer, type ActiveLight } from './lighting';
@@ -301,6 +302,17 @@ export class FxController {
     this.litArea.width = viewport.vw / zoom;
     this.litArea.height = viewport.vh / zoom;
     this.visibleGroundPieces = cullGroundLayer(this.layers.ground, {
+      x: this.litArea.x,
+      y: this.litArea.y,
+      w: this.litArea.width,
+      h: this.litArea.height,
+    });
+    // The void's far side, fitted to the same rect (Terrain.ts, 2026-08-28). ABOVE the tier guard
+    // below, and for exactly the reason the ground cull is: the low tier is the DEVICE tier, and a
+    // terrain plane left un-fitted there would be a 1x1 sprite in the corner — i.e. the void would
+    // go back to being a hole on the only machines that ever read as one. Same shape as the
+    // 2026-08-27 battery survivor this guard already has a test for.
+    fitTerrain(this.layers.terrain, {
       x: this.litArea.x,
       y: this.litArea.y,
       w: this.litArea.width,

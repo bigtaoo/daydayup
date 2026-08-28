@@ -1720,6 +1720,97 @@ Nothing here is gated on the quality tier, and that is the existing rule rather 
 screen fx, bloom, actor shaders) and leaves scene-graph geometry alone — the same treatment every
 other wall cue gets.
 
+## The void's far side (2026-08-28)
+
+The rim above answered *"where does the stone end"*. It left the other half open, and the ROADMAP
+carried it as an art call with three candidates: a pit, open sky, or ground beyond the wall. The
+projection settles it before any of them is built, and the argument is the same one that produced
+the rim.
+
+**A pit is unbuildable here, for the reason the original bug existed.** What sells a pit is the far
+bank's INNER wall descending from the rim, and across an east/west void that wall faces east or
+west — `screen.y = gy - z` gives it exactly zero projected width. The one surface that would carry
+the depth is the one this projection cannot draw. A pit FLOOR does draw, being horizontal, but
+`z < 0` pushes it DOWN the screen: a pit `d` px deep appears `d` px SOUTH of its own footprint, over
+the room below it, while the Y-sort (`zIndex = gy`) puts it BEHIND that room. Visible depth is
+therefore bounded by the empty screen space south of the void, which for an interior empty cell with
+rooms on all sides is about zero. The deeper it is authored, the less of it is seen.
+
+**Sky works in the projection and breaks the rim.** A backdrop owes the projection nothing, so that
+much is free. But `wallVoidReturn` draws the EAST arris LIT precisely because the backdrop is
+luma ~6; against a bright field that arris stops separating and has to invert to a dark silhouette,
+taking `VOID_RETURN_TINT_EAST`/`_WEST` and the squared falloff with it. It also splits at the two
+scopes the rim deliberately unified: an interior cell reads as a light well, but past the map's
+outer boundary there is no horizon to key on — `wallVoidEdge` reports `Infinity` for the gap there,
+so there is nothing to derive one from.
+
+**Ground is a horizontal plane at z = 0.** It draws the way floor draws, so no surface in it has
+zero width; it keeps the backdrop dark, so the lit arris, both tints and the squared ramp stand
+unchanged; and it is ONE rule at both scopes — an interior empty cell becomes a courtyard, past the
+boundary becomes the surrounding land, and an `Infinity` gap needs no special case because the plane
+simply runs to the view's edge.
+
+### What it is, and the two things it does not have to compute
+
+`scene/Terrain.ts` mounts **two display objects on `layers.terrain`**: a `TilingSprite` of
+`terrainSwatch.ts`'s generated noise, and a `Sprite` of `Texture.WHITE` tinted `palette.void` at
+`TERRAIN_FOG_ALPHA` over it. Two draw calls, fixed, whatever the map.
+
+It computes **no void geometry at all**, and that is the point rather than an omission: the floor
+paints over the plane wherever there is floor and the walls paint over it wherever there is stone,
+so what is left showing IS the void, exactly and for free. There is no counterpart to
+`wallVoidEdge`'s span arithmetic on this side. It also computes no per-pixel distance falloff — the
+fog is a flat haze, which is correct rather than lazy, since every part of the void is at the same
+"beyond the wall" remove and aerial perspective at one distance is uniform.
+
+**`layers.terrain` is a child of `world` but a SIBLING of `lit`.** That placement is load-bearing.
+The frame that closed the camera list found that much of what read as "the void" was the scene-light
+pass darkening the rooms beyond, not the void itself; putting this plane inside `lit` hands it
+straight back to the pass that was blacking that area out. It is fitted to the camera's visible
+world rect each frame from `FxController.syncCamera`, **above** the `activeQuality().sceneLight`
+early return — same position and same reason as the ground cull, since the low tier is the device
+tier and an unfitted plane is a 1x1 sprite in the corner.
+
+The swatch is **generated, not a PNG**, for two reasons and the second is binding: every shipped
+`biome/*.png` is masonry, and the far side must not read as more floor; and the WeChat main package
+is at 3.41 MB of a 4.00 MB cap. It goes through `shadeRamp.bakedField` (a `BufferImageSource`), not
+`capLight.ts`'s canvas path, so there is no `DOMAdapter`, no 2D context and no canvas-free fallback
+to maintain — identical bytes under vitest, in a browser, and on the wx runtime.
+
+### Measured, on a live frame
+
+The void beside `r5_extraction`'s east side, ember biome, scene-light attached:
+
+| | mean | sd | range |
+|---|---|---|---|
+| Before (backdrop only) | 27.70 | **0** | 27.70 – 27.70 |
+| After (terrain + fog) | 30.31 | 1.41 | 23.3 – 33.5 |
+| The lit floor, same frame | 47.66 | 19.09 | 4 – 246.9 |
+
+The before row is the finding restated as a measurement: **min = max**, not one pixel of that
+rectangle differed from any other. Floor-over-void is 1.57x, so the far side cannot be mistaken for
+somewhere to stand, and the floor stays 13x more textured — which is what reads as distance.
+
+Horizontal luma scan across the boundary: cap 76-93 -> **arris 88** -> trough 6 -> terrain 24 -> 28.
+Compare the rim's own row above, which fell to 2 and stayed there. The change is the last segment:
+the ramp now lands on a surface instead of bottoming out.
+
+### Two defects found on the way, one by the frame and one by a battery
+
+**The frame caught a legible tile repeat.** The first swatch was 64 px with two octaves, and the
+dominant octave's period IS the tile, so the eye locked onto a regular grid of identical blobs and
+read "texture bug" rather than "ground". Fixed with a 128 px tile and a third octave (4/16/32 cells)
+putting detail at 4 px — below the scale the repeat lives at. Nothing in the suite saw it; it is
+only visible in a frame.
+
+**A battery caught the biome derivation.** `terrain` was first tinted from the neutral terrain the
+way every other biome colour is, but mixing the same absolute amount of a bright element hex into a
+darker base lifts it more in relative terms: neutral's terrain/ground sat at 0.75 and ember's at
+0.85 — and ember is the only biome that ships. It is now derived from each palette's own `void` and
+`ground` (`TERRAIN_MIX`), so the position is invariant by construction. The ASSERTION was wrong too:
+any ratio of terrain's luma to ground's drifts toward 1 as the hue brightens, so the bound that
+survives a hue is positional, not proportional.
+
 ## A pillar is a sprite now (2026-08-20)
 
 The last item on the scene queue: *"pillars read as smooth cans next to the walls"* — their cap was

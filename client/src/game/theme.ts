@@ -105,7 +105,36 @@ export interface BiomePalette {
   // Deliberately darker than `ground`, not just the same fill, so the room itself
   // still reads as a distinct rect rather than bleeding into "more floor".
   void: number;
+  // The void's far side (Terrain.ts, 2026-08-28) — the ground BEYOND the wall, tiled by
+  // `terrainSwatch`. Deliberately between `void` and `ground`: it must be far enough under the
+  // lit floor that it can never be mistaken for somewhere the player can stand, and far enough
+  // over the backdrop that it reads as a surface rather than as more hole.
+  terrain: number;
 }
+
+const NEUTRAL_VOID = mixHex(THEME.colors.ground, 0x000000, 0.45);
+
+/**
+ * Where `terrain` sits between a palette's own `void` and its own `ground`.
+ *
+ * Derived from the pair rather than tinted from the neutral terrain like every other biome
+ * colour, and that is a fix rather than a stylistic choice. Tinting a dark base toward a BRIGHT
+ * element hex lifts it more in relative terms than it lifts an already-lighter one, so
+ * `mixHex(NEUTRAL_PALETTE.terrain, hex, 0.1)` pushed fire's terrain to 84% of its own ground's
+ * luma while neutral's sat at 74% — i.e. the "never approaches the floor" bound held on the
+ * biome it was measured against and quietly failed on the only biome that ships ('ember' is the
+ * sole entry in `BIOME_ID_TO_ELEMENT`). Deriving from each palette's own two ends makes the
+ * ratio invariant by construction instead of something a future hue can break.
+ *
+ * Note what the invariant is NOT: a ratio of terrain's luma to `ground`'s. Every biome colour is
+ * `mixHex(neutral, hex, 0.1)`, which adds the SAME absolute amount of a bright hue to both terms,
+ * and adding a constant to a numerator and denominator drags any such ratio toward 1 — fire's hex
+ * has luma ~151, enough to move terrain/ground from 0.75 on neutral to 0.85 on ember while
+ * nothing about the design changed. The bound that survives a hue is positional: terrain sits
+ * `TERRAIN_MIX` of the way from a palette's own void to its own ground, on the VOID side of the
+ * midpoint. `scene/terrainSwatch.test.ts` sweeps every reachable biome id for that.
+ */
+export const TERRAIN_MIX = 0.4;
 
 const NEUTRAL_PALETTE: BiomePalette = {
   ground: THEME.colors.ground,
@@ -114,7 +143,8 @@ const NEUTRAL_PALETTE: BiomePalette = {
   pillarTop: THEME.colors.pillarTop,
   wall: THEME.colors.wall,
   wallEdge: THEME.colors.wallEdge,
-  void: mixHex(THEME.colors.ground, 0x000000, 0.45),
+  void: NEUTRAL_VOID,
+  terrain: mixHex(NEUTRAL_VOID, THEME.colors.ground, TERRAIN_MIX),
 };
 
 const BIOME_PALETTES: Record<BiomeElement, BiomePalette> = {
@@ -130,6 +160,11 @@ const BIOME_PALETTES: Record<BiomeElement, BiomePalette> = {
         wall: mixHex(NEUTRAL_PALETTE.wall, hex, 0.14),
         wallEdge: mixHex(NEUTRAL_PALETTE.wallEdge, hex, 0.22),
         void: mixHex(NEUTRAL_PALETTE.void, hex, 0.1),
+        terrain: mixHex(
+          mixHex(NEUTRAL_PALETTE.void, hex, 0.1),
+          mixHex(NEUTRAL_PALETTE.ground, hex, 0.1),
+          TERRAIN_MIX,
+        ),
       },
     ]),
   ) as Record<Exclude<BiomeElement, 'neutral'>, BiomePalette>),

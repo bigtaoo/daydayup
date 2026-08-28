@@ -356,12 +356,20 @@ of fill**, with `layers.ground` alone accounting for 56% of the frame and all 29
   removes full-viewport passes and halves resolution, i.e. it attacks the ~20% of the arena frame
   that is fill. Expect it to help less there than it does in a PvE room, and treat "`低` barely
   helped in the arena" as a CONFIRMATION of the measurement rather than a surprise.
-- The thing actually worth reporting from the arena is whether the **resolution-independent** half
-  holds, because that is draw submission and vertex work — the half that gets relatively worse on a
-  mobile GPU, not better. On 真机调试 the `[perf]` warning already names `update` vs `render`; a
-  `render`-side breach in the arena with `低` pinned is the signal that the floor's batched geometry
-  (285k + 266k floats, submitted whole every frame regardless of camera) needs the fix design/01
-  describes, and is not something a quality tier can reach.
+- ~~The thing actually worth reporting from the arena is whether the **resolution-independent**
+  half holds, because that is draw submission and vertex work.~~ **Superseded 2026-08-28.** That
+  sentence carried the FOURTH measurement's inference, and the fifth measurement falsified it:
+  making the floor cullable cut submission 17x (1,730,364 -> 101,304 floats) and moved the GPU
+  frame **not at all** (4.07 vs 4.28 ms, min/max bands overlapping). The arena floor's cost is not
+  vertex or triangle work and never was — it is per-primitive fragment work on many small blended
+  primitives, 45% of which was NEIGHBOURING rooms' mottle spilling on screen. `floorClip.ts`
+  shipped for that on 2026-08-27 and moved the frame 0.53-0.93 ms. The fourth measurement's split
+  is still the right *number* and the wrong *diagnosis*; see `client/src/perf/README.md`'s fifth,
+  sixth and seventh measurements before quoting it at a device.
+- So what is worth carrying to the phone is the `[perf]` warning's `update` vs `render` naming
+  itself, with **no prediction attached**. A `render`-side breach with `低` pinned now means
+  something this repo has *not* already eliminated on desktop — which is exactly what makes it
+  worth a device, and why there is no longer an off-device fix waiting for it to justify.
 
 **Setup.** 微信开发者工具 → 预览 to get a QR code, scan with the test account. For anything that
 needs a console, use **真机调试** instead of 预览 — it mirrors the device's `console` into the

@@ -32,6 +32,7 @@ import { buildGroundLayer, floorRegionsPx, roomRectsPx } from './groundLayer';
 import { voidEdges } from './wallVoidEdge';
 import { faceCrownFraction } from './wallTone';
 import type { Backdrop } from './Backdrop';
+import { Terrain } from './Terrain';
 import { Portal } from './Portal';
 
 // Standing walls used to optionally take a per-segment `NormalLitFilter` on top of their
@@ -90,10 +91,19 @@ export class RoomBuilder {
   // first room ever loads. Game reads this to gate the popup's proximity check.
   portalPx: { x: number; y: number } | null = null;
 
+  /** The void's far side (Terrain.ts). Owned here rather than by `Game`, because its whole
+   *  lifecycle is the room's — unlike `Backdrop`, nothing outside this class ever touches it
+   *  (`FxController` fits the plane per frame through `layers.terrain`, not through this object).
+   *  Assigned in the constructor body, not as a field initializer, so it cannot depend on
+   *  parameter-property assignment order. */
+  private readonly terrain: Terrain;
+
   constructor(
     private readonly layers: Layers,
     private readonly backdrop: Backdrop,
-  ) {}
+  ) {
+    this.terrain = new Terrain(layers);
+  }
 
   /** Rebuild the ground, AABB walls, and pillars for the CURRENTLY LOADED room. */
   build(s: GameState): void {
@@ -114,6 +124,10 @@ export class RoomBuilder {
     const floorTex = getFloorTexture(element);
     const wallTex = getWallTexture(element);
     this.backdrop.setPalette(palette);
+    // The far-side ground under the whole world (Terrain.ts). Recoloured with the backdrop
+    // because the fog over it IS `palette.void` — the two have to move together or the plane
+    // stops resolving into the backdrop at the view's edge.
+    this.terrain.setPalette(palette);
 
     // The ground layer — floor, its variation, the grid, the room light — is `groundLayer.ts`
     // (split out 2026-08-20, 500-line convention). It is painted AFTER the wall/door geometry below

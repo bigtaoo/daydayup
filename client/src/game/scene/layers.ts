@@ -21,6 +21,15 @@ export class Layers {
   // Introduced 2026-08-24 when lighting moved off the individual actors — see litFx.ts.
   readonly lit = new Container();
 
+  // The void's FAR SIDE (Terrain.ts, 2026-08-28) — the ground beyond the wall, in WORLD space so
+  // it pans and zooms with everything else, but a SIBLING of `lit` rather than a child of it, so
+  // `SceneLightFilter` never shades it. That placement is the point: the 2026-08-27 frame that
+  // closed the camera list found much of what read as "the void" was the light pass darkening what
+  // lay beyond, so putting this plane inside `lit` would hand it back to the pass that was
+  // blacking that area out. Added to `world` before `lit`, so floor and stone paint over it and
+  // what still shows through is exactly the void.
+  readonly terrain = new Container();
+
   readonly ground = new Container();
   readonly shadow = new Container();
   readonly entities = new Container(); // Y-sort
@@ -60,7 +69,7 @@ export class Layers {
     this.entities.sortableChildren = true;
 
     this.lit.addChild(this.ground, this.shadow, this.entities);
-    this.world.addChild(this.lit, this.fx, this.hud);
+    this.world.addChild(this.terrain, this.lit, this.fx, this.hud);
     this.root.addChild(this.backdrop, this.world, this.ui);
     this.ui.addChild(this.hudOverlay, this.menu);
 
