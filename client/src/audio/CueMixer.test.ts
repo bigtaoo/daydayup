@@ -167,11 +167,11 @@ describe('CueMixer — variant choice', () => {
 
   it('can still reach every variant of a 5-way cue', () => {
     const seen = new Set<number>();
-    // A small LCG rather than a fixed step: a periodic sequence (r += 0.17) walks only a
-    // few of the five slots and would fail this for a reason that is the test‘s, not the
-    // code‘s — the first version of this test did exactly that.
-    // Lehmer, whose multiplier keeps every product inside 2^53 — the textbook
-    // (1103515245 * seed) loses its low bits to float precision in JS and stops spreading.
+    // A real pseudo-random stream, and specifically a Lehmer one. Two earlier versions of
+    // this test failed for reasons that were the TEST's and not the code's: a fixed step
+    // (r += 0.17) is periodic and only ever walks a few of the five slots, and the textbook
+    // (1103515245 * seed) multiplier overflows 2^53 in JS, losing the low bits that carry
+    // the spread. Lehmer keeps every product exact.
     let seed = 1;
     const lcg = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
     const { ctx, mixer } = rig(
