@@ -34,8 +34,15 @@ export interface CellRect {
  * whose interior kit splits it into disconnected pockets is still fully covered, and so is a room
  * the door graph happens to strand.
  *
- * Cells are tested at their CENTRE against the wall rects, matching how the engine's own
- * collision sees a cell; a cell straddling a wall edge counts as solid.
+ * Cells are tested at their CENTRE against the bare wall rects; a cell straddling a wall edge
+ * counts as solid. This is deliberately COARSER than the engine's own collision, and the
+ * difference is not a rounding detail: `MovementSystem.resolveWalls` is circle-vs-rect with the
+ * actor's `solidRadius`, plus `WALL_NORTH_BRIM` on a free-standing block's north face, so real
+ * standable floor is strictly smaller than what this marks free. That is the right trade HERE —
+ * this decides which floor tiles get PAINTED, and painting a tile no one can stand on is
+ * invisible, while failing to paint one they can reach is a hole in the world. Do not reuse this
+ * rasterizer to answer "can an actor be here"; use the engine's own predicate (design/18 G5,
+ * which counts this as one of three independent solid-cell rasterizers in the repo).
  */
 export function roomsCoverReachableSpace(
   sizeCells: { w: number; h: number },

@@ -1064,3 +1064,64 @@ this specific numbers-check does not rule out. `clampToWalkable` now inflates a 
 north edge by the brim exactly like `resolveWalls` does, both for the broadphase query and the
 push-out itself, so a drop can never land closer to a free-standing block's north face than any
 actor's own `solidRadius` circle could.
+
+## v49: the brim reaches the campaign, and four boundary bugs the test pass found (2026-08-30)
+
+Five changes, all outcome-moving, shipped together because they are one investigation:
+`design/18-test-strategy.md`'s Layer 0–3 build-out. Every one of them was found by a new
+test rather than by a report, and each is pinned by the test that found it.
+
+**1. PvE level 1 finally gets the v47/v48 north brim.** The two previous versions built the
+free-standing brim and tuned it — against the launch arena, which flags every kit solid. The
+five shipped ember floors flagged *none*: all 14 `world/dungeons/ember/pieces/*.json` carried
+zero `freeStanding`, so 34 rects that the renderer stands at `WALL_H_INTERIOR` (70 px) reserved
+no extra floor at all and a character north of one was buried by the full pre-v47 amount. Two
+versions of work were inert over the entire campaign. 18 solids across 7 pieces are now flagged
+(they resolve to those 34 placements). Route safety was measured the way `launchArena.test.ts`
+measures it for the arena — flood-filled standable floor with and without the brim, per floor:
+regions unchanged, every room still reachable, 0.3–1.6% of floor area lost.
+
+**2. `MovementSystem` re-separates from solids after the pair push.** Wall resolution used to
+run before `resolveActorPairs`, so a pair shove was the last thing a tick did and could push an
+actor back into stone. The comment tradition said this was "corrected on the following tick",
+and for a glancing shove it was — but two bodies pinned together against a wall re-apply the
+shove every tick, so the wall pass never got the last word and the pair reached a *stable*
+standoff inside the wall. `smoke.test.ts` measured 103 consecutive ticks (~3.4 s) at up to
+189 fp — 6 px of body in stone — on the launch arena. `reseparateFromSolids` gives solids the
+final word. Accepted trade, and the right way round per design/07: two actors may now overlap
+each other slightly more than the pair push intended, because overlapping a solid "reads as
+sinking into it" while overlapping another actor "reads as a crowd".
+
+**3. `clampToWalkable` iterates, with the world clamp inside the loop.** Two defects at once.
+The world clamp ran last and won, parking a point back inside the wall the push had just
+cleared — in dungeon mode the world bounds ARE the floor extent, whose edge is the one-cell
+perimeter ring, while the clamp parks at exactly `radius` from the edge. 247 of 23,509
+standable samples on shipped floor 1 came back unstandable. Reordering alone does not fix it:
+clamping first sends a point inside the perimeter ring out by its *nearest* edge, which at the
+map boundary is the outer one, so hundreds of samples per floor landed outside the world. The
+two constraints genuinely conflict at the edge, so walls, obstacles and the clamp now alternate
+inside one bounded loop (`MAX_SEPARATION_PASSES` = 4, an exact-equality early exit, clamp last
+within a pass so a degenerate pocket ends in-world rather than off-map). The repeat also closes
+this function's own documented "a point wedged in a deep concave corner could want a second
+pass" caveat, which shipped content had started producing. Measured after: zero out-of-world
+results anywhere, and zero standable inputs turned unstandable on any ember floor (163 of
+116,984 remain on the launch arena, in pockets narrower than a player, where no correct answer
+exists).
+
+**4. `DeathDropsSystem` clamps a spawned minion by its solid clearance.** It used
+`footprintRadius` under a comment that already said "a spawned actor needs its own solid
+clearance" — right intent, wrong radius, because solids stopped pushing `footprintRadius` in
+v43 (players) and v48 (enemies) and nothing re-checked the comment. Every minion clamped tight
+teleported on its first tick, by the gap between the two radii, worst on the biggest bodies —
+i.e. worst on exactly the bosses whose deaths spawn minions.
+
+**5. `DoorSystem.inLockingDoorway` tests the passage by the same radius that displaces.** Same
+stale premise, same fix. The predicate under-reported: a player whose body was in the restored
+passage but whose feet circle was clear was judged "not in the doorway", was not regrouped, and
+was then shoved out by the very push-out the doc-comment exists to describe — reopening the v41
+permanent-lock softlock from a narrower angle.
+
+Also in this pass, without bumping (behaviour-preserving, and the golden fixture recorded
+before the extraction still matched after it — which is what proves it):
+`engine/systems/solidBounds.ts` and `engine/state/actorRadius.ts` collapse three independent
+copies of the wall-boundary rule into one.

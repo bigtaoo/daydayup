@@ -45,6 +45,7 @@ import type { GameState } from '../state/GameState';
 import type { PlayerActor } from '../state/entities';
 import type { PlacedRoom } from '../world/dungeon';
 import { circleOverlapsAabb } from './geom';
+import { blockingRadius } from '../state/actorRadius';
 
 export class DoorSystem {
   tick(state: GameState): void {
@@ -128,13 +129,22 @@ export class DoorSystem {
    * and it is what "the door locks you IN the fight" (design/05) was always meant to
    * mean.
    *
-   * Uses `footprintRadius` (the feet circle solids actually push out, design/07),
-   * not `radius` — the test has to match the thing that would displace them.
+   * Uses `blockingRadius` — the radius by which `MovementSystem` would actually displace them,
+   * which is the only radius that makes this predicate agree with the push-out described above.
+   *
+   * Through v48 this read `p.footprintRadius`, on the strength of a comment calling that "the
+   * feet circle solids actually push out". That stopped being true in ENGINE_VERSION 43
+   * (players) and 48 (enemies) — `resolveWalls` pushes `solidRadius`, more than twice as wide
+   * for a player (16 px vs 7) — and nothing re-checked the comment when the rule moved. The
+   * predicate therefore UNDER-reported: a player whose body was in the restored passage but
+   * whose feet circle was clear was judged "not in the doorway", was not regrouped, and was then
+   * shoved out by exactly the push-out this doc-comment exists to describe — reopening the
+   * permanent-lock softlock from a narrower angle. Fixed in v49 (design/18 G4).
    */
   private inLockingDoorway(state: GameState, roomId: string, p: PlayerActor): boolean {
     for (const dr of state.dungeonDoors) {
       if (dr.door.roomA !== roomId && dr.door.roomB !== roomId) continue;
-      if (circleOverlapsAabb(p.gx, p.gy, p.footprintRadius, dr.passageAabb)) return true;
+      if (circleOverlapsAabb(p.gx, p.gy, blockingRadius(p), dr.passageAabb)) return true;
     }
     return false;
   }

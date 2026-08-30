@@ -28,7 +28,10 @@
     "dev:animator": "npm run dev -w tools/animator",
     "dev:map-editor": "npm run dev -w tools/map-editor",
     "dev:desktop-shell": "npm run start -w tools/desktop-shell",
-    "build": "npm run build -w client"
+    "build": "npm run build -w client",
+    "record:golden": "npm run record:golden -w engine",
+    "test:sims": "npm run test:pvp-sim && npm run test:pve-sim",
+    "check:full": "npm run check && npm run test:sims"
   },
   "devDependencies": {
     "typescript": "^5.7.2",

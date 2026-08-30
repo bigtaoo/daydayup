@@ -138,7 +138,7 @@ Drops spawned this tick are **not collectable until next tick's pickup pass** (s
 - ✅ All angles integer brad; arc/aim/reflect via `06`'s `cos_fp/sin_fp/atan2Brad` tables; **zero `Math.atan2/sin/cos`**.
 - ✅ Crit/drop rolls via injected `combatPrng`/`dropPrng`; **zero `Math.random`**.
 - ✅ Broad-phase & pair resolution iterate by ascending id / cell index; no `Set`/`Map` order leaks.
-- ✅ Swept tests (no float endpoint check) so behavior is speed-independent and can't tunnel.
+- ⚠️ Swept tests are the *design* here, and step 5 above describes them — but `ProjectileStepSystem` currently ships an **endpoint** test (`circleOverlapsAabb(b.gx, b.gy, b.radius, w)` at the post-move position, its own comment conceding "swept test is 07"). Behaviour is therefore speed-dependent and a fast enough bullet CAN tunnel a thin wall. Tracked in `design/18-test-strategy.md` (G6); the checkmark returns when the swept test lands, which is an outcome-moving change and bumps `ENGINE_VERSION`.
 - ✅ Golden-replay: same seed + same input stream → identical hits, deaths, drops (`06` step-5 check). Any change here that alters outcomes bumps `ENGINE_VERSION` (`08`).
 
 ## Relationship to the other docs

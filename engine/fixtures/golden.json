@@ -1,0 +1,141 @@
+{
+  "engineVersion": 49,
+  "scenarios": [
+    {
+      "name": "arena-waves",
+      "pins": "the flat wave path: fire cadence, crit/drop rolls, actor pairs, win condition",
+      "ticks": 500,
+      "hash": 3486444629,
+      "witness": {
+        "tick": 185,
+        "phase": "gameover",
+        "winner": "0",
+        "seats": 1,
+        "enemiesAlive": 0,
+        "projectiles": 3,
+        "pickups": 3,
+        "floorIndex": 0,
+        "hpTotal": 6,
+        "prngCursors": 13756062046,
+        "events": {
+          "bullet_fired": 22,
+          "clash": 1,
+          "hit": 10,
+          "death": 3,
+          "wave_clear": 2,
+          "win": 1
+        }
+      }
+    },
+    {
+      "name": "walls-and-pillars",
+      "pins": "MovementSystem's rect/circle push-out and its tie-breaks — the geometry half of design/18",
+      "ticks": 600,
+      "hash": 944211725,
+      "witness": {
+        "tick": 600,
+        "phase": "playing",
+        "winner": "null",
+        "seats": 1,
+        "enemiesAlive": 1,
+        "projectiles": 2,
+        "pickups": 1,
+        "floorIndex": 0,
+        "hpTotal": 6,
+        "prngCursors": 8398389838,
+        "events": {
+          "bullet_fired": 51,
+          "hit": 5,
+          "death": 1
+        }
+      }
+    },
+    {
+      "name": "ember-dungeon-floor1",
+      "pins": "authored floor-1 roomgen + room entry + door lock/unlock + freeStanding north brim + pickup clamping",
+      "ticks": 1500,
+      "hash": 146864160,
+      "witness": {
+        "tick": 1500,
+        "phase": "playing",
+        "winner": "null",
+        "seats": 1,
+        "enemiesAlive": 2,
+        "projectiles": 0,
+        "pickups": 7,
+        "floorIndex": 0,
+        "hpTotal": 2.2,
+        "prngCursors": 10317226436,
+        "events": {
+          "bullet_fired": 172,
+          "room_enter": 2,
+          "door_locked": 2,
+          "hit": 60,
+          "clash": 7,
+          "death": 15,
+          "deflect": 6,
+          "shield_break": 1,
+          "pickup": 8,
+          "door_unlocked": 1,
+          "force_regroup": 1
+        }
+      }
+    },
+    {
+      "name": "brim-grinder",
+      "pins": "WALL_NORTH_BRIM itself: a free-standing block's brimmed north face vs its three bare ones",
+      "ticks": 800,
+      "hash": 1781716264,
+      "witness": {
+        "tick": 800,
+        "phase": "playing",
+        "winner": "null",
+        "seats": 1,
+        "enemiesAlive": 0,
+        "projectiles": 0,
+        "pickups": 2,
+        "floorIndex": 0,
+        "hpTotal": 6,
+        "prngCursors": 12671871648,
+        "events": {
+          "bullet_fired": 68,
+          "room_enter": 1,
+          "door_locked": 1,
+          "hit": 6,
+          "death": 2,
+          "door_unlocked": 1
+        }
+      }
+    },
+    {
+      "name": "launch-arena-pvp",
+      "pins": "arena geometry + zone shrink + two hostile seats + per-skin arena stat scaling",
+      "ticks": 900,
+      "hash": 2932315869,
+      "witness": {
+        "tick": 900,
+        "phase": "playing",
+        "winner": "null",
+        "seats": 2,
+        "enemiesAlive": 2,
+        "projectiles": 0,
+        "pickups": 5,
+        "floorIndex": 0,
+        "hpTotal": -169,
+        "prngCursors": 12909832894,
+        "events": {
+          "bullet_fired": 116,
+          "clash": 2,
+          "hit": 52,
+          "shield_break": 3,
+          "downed": 1,
+          "deflect": 1,
+          "death": 4,
+          "zone_warn": 2,
+          "pickup": 1,
+          "zone_close": 1
+        }
+      }
+    }
+  ]
+}

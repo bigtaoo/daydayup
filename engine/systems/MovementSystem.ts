@@ -16,9 +16,11 @@
 import { addFp, isqrt } from '../math/fixed';
 import type { Fp } from '../math/fixed';
 import { PLAYER_BASE } from '../content/players';
-import { KNOCKBACK_FRICTION_PERMILLE, KNOCKBACK_SNAP_FP, WALL_NORTH_BRIM } from '../config';
+import { KNOCKBACK_FRICTION_PERMILLE, KNOCKBACK_SNAP_FP } from '../config';
 import type { GameState } from '../state/GameState';
 import type { Actor } from '../state/entities';
+import { blockingRadius } from '../state/actorRadius';
+import { pushOutOfObstacle, pushOutOfWall, queryRadiusFor, type Point } from './solidBounds';
 
 export class MovementSystem {
   // Reused every tick instead of allocating fresh in resolveActorPairs below —
@@ -41,6 +43,41 @@ export class MovementSystem {
       this.resolveWalls(state, e);
     }
     this.resolveActorPairs(state);
+    this.reseparateFromSolids(state);
+  }
+
+  /**
+   * Re-resolve every actor against the static solids AFTER the pair push (ENGINE_VERSION 49).
+   *
+   * The pair push used to be the last thing a tick did, which meant it could shove an actor
+   * back into stone with nothing left to correct it. The tradition around that ordering held
+   * that it was "corrected on the following tick", and for a glancing shove it is — but two
+   * bodies pinned together against a wall re-apply the shove every tick, so the wall pass never
+   * gets the last word and the pair reaches a STABLE standoff inside the wall.
+   * `engine/smoke.test.ts` measured it on the launch arena before this fix: one episode of 103
+   * consecutive ticks (~3.4 s at 30 Hz) at up to 189 fp — a full 6 px of body inside stone,
+   * the same order as the v47/v48 reports about characters looking buried in walls.
+   *
+   * The trade is explicit and is the right way round per design/07: after this pass two actors
+   * may overlap each other slightly more than the pair push intended, because a solid gets the
+   * final say over a body. Overlapping a solid "reads as sinking into it"; overlapping another
+   * actor "reads as a crowd" (see `Actor.solidRadius`). A crowd is the acceptable artifact.
+   *
+   * Players are re-clamped to the world here too, for the same reason — `clampToWorld` ran
+   * inside the player loop and had the same problem.
+   */
+  private reseparateFromSolids(state: GameState): void {
+    for (const p of state.players) {
+      if (!p.alive) continue;
+      this.resolveObstacles(state, p);
+      this.resolveWalls(state, p);
+      this.clampToWorld(state, p);
+    }
+    for (const e of state.enemies) {
+      if (!e.alive) continue;
+      this.resolveObstacles(state, e);
+      this.resolveWalls(state, e);
+    }
   }
 
   private integrate(a: Actor): void {
@@ -83,27 +120,16 @@ export class MovementSystem {
    * Iterated in fixed array order — deterministic when solids overlap.
    */
   private resolveObstacles(state: GameState, a: Actor): void {
-    for (const idx of state.spatialIndex.queryObstacles(a.gx, a.gy, a.solidRadius)) {
-      const o = state.obstacles[idx]!;
-      const dx = a.gx - o.gx;
-      const dy = a.gy - o.gy;
-      // `solidRadius`, not the feet circle — see Actor.solidRadius (v43): overlapping
-      // a solid reads as sinking into it, where overlapping another body reads as a crowd.
-      const minDist = a.solidRadius + o.radius;
-      const distSq = dx * dx + dy * dy;
-      if (distSq >= minDist * minDist) continue; // no overlap
-      const dist = isqrt(distSq);
-      if (dist === 0) {
-        // Exactly concentric — no defined push direction; nudge along +x by the
-        // full clearance so the choice is deterministic across clients.
-        a.gx = addFp(a.gx, minDist as Fp);
-        continue;
-      }
-      const pen = minDist - dist; // fp penetration depth
-      // (dx,dy)/dist is the unit outward normal; × pen gives the fp displacement.
-      a.gx = (a.gx + Math.trunc((dx * pen) / dist)) as Fp;
-      a.gy = (a.gy + Math.trunc((dy * pen) / dist)) as Fp;
+    // `solidRadius`, not the feet circle — see Actor.solidRadius (v43): overlapping a solid
+    // reads as sinking into it, where overlapping another body reads as a crowd. The push
+    // itself lives in `solidBounds.pushOutOfObstacle`, shared with `geom.clampToWalkable`.
+    const r = blockingRadius(a);
+    const p: Point = { x: a.gx, y: a.gy };
+    for (const idx of state.spatialIndex.queryObstacles(a.gx, a.gy, r)) {
+      pushOutOfObstacle(p, r, state.obstacles[idx]!);
     }
+    a.gx = p.x;
+    a.gy = p.y;
   }
 
   /**
@@ -118,48 +144,19 @@ export class MovementSystem {
    *     client picks the same edge (mirrors the round-pillar concentric-overlap rule).
    */
   private resolveWalls(state: GameState, a: Actor): void {
-    // Broadphase with the brim ADDED to the query radius, never to the stored rects: the index
-    // is built over the authored footprints (and is shared with the projectile/LOS queries,
-    // which must keep hitting the real stone), so the only safe way to see a wall an actor
-    // overlaps only through its brim is to ask a little wider here. Over-querying costs a
-    // rejected narrowphase test; under-querying would silently drop the push.
-    for (const idx of state.spatialIndex.queryWalls(a.gx, a.gy, (a.solidRadius + WALL_NORTH_BRIM) as Fp)) {
-      const w = state.walls[idx]!;
-      const r = a.solidRadius;
-      // The wall's collision rect, which is its authored rect with its NORTH edge pulled out by
-      // `WALL_NORTH_BRIM` on a free-standing block (v47, see that constant): such a block's art
-      // rises a full wall height north of `w.y`, and without the brim an actor standing there is
-      // drawn entirely inside stone. Inflating the EDGE (rather than special-casing a
-      // north-approach) keeps this one rect-vs-circle test, so the corner cases — sliding along
-      // the block's east face past its north end, being pushed out of an overlap — stay the same
-      // code and the same tie-breaks they already were.
-      const top = (w.freeStanding ? w.y - WALL_NORTH_BRIM : w.y) as Fp;
-      const right = (w.x + w.w) as Fp;
-      const bottom = (w.y + w.h) as Fp;
-      const closestX = Math.max(w.x, Math.min(a.gx, right)) as Fp;
-      const closestY = Math.max(top, Math.min(a.gy, bottom)) as Fp;
-      const dx = a.gx - closestX;
-      const dy = a.gy - closestY;
-      const distSq = dx * dx + dy * dy;
-      if (distSq > 0) {
-        if (distSq >= r * r) continue; // no overlap
-        const dist = isqrt(distSq);
-        const pen = r - dist;
-        a.gx = (a.gx + Math.trunc((dx * pen) / dist)) as Fp;
-        a.gy = (a.gy + Math.trunc((dy * pen) / dist)) as Fp;
-        continue;
-      }
-      // Centre is inside the rect: push out along the nearest single edge.
-      const pushLeft = (a.gx - w.x) as number;
-      const pushRight = (right - a.gx) as number;
-      const pushTop = (a.gy - top) as number;
-      const pushBottom = (bottom - a.gy) as number;
-      const min = Math.min(pushLeft, pushRight, pushTop, pushBottom);
-      if (min === pushRight) a.gx = (right + r) as Fp;
-      else if (min === pushLeft) a.gx = (w.x - r) as Fp;
-      else if (min === pushBottom) a.gy = (bottom + r) as Fp;
-      else a.gy = (top - r) as Fp;
+    // Both the widened broadphase and the brimmed collision rect live in `solidBounds` — see
+    // there for why the brim goes on the QUERY and not on the stored rects, and for the
+    // tie-break rules this loop depends on. Sharing them with `geom.clampToWalkable` is the
+    // point: they were duplicated line for line until design/18's G3 pass.
+    const r = blockingRadius(a);
+    const p: Point = { x: a.gx, y: a.gy };
+    for (const idx of state.spatialIndex.queryWalls(a.gx, a.gy, queryRadiusFor(r))) {
+      // Each wall is resolved against the position the PREVIOUS wall pushed us to — the cursor
+      // preserves that ordering exactly, which is why it is threaded rather than recomputed.
+      pushOutOfWall(p, r, state.walls[idx]!);
     }
+    a.gx = p.x;
+    a.gy = p.y;
   }
 
   /**

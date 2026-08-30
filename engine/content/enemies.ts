@@ -280,9 +280,9 @@ export function buildEnemyActor(state: GameState, gx: Fp, gy: Fp, type?: string)
     ticksSinceHit: 0,
     radius: bp.radius,
     footprintRadius: bp.footprintRadius,
-    // Body radius, matching PLAYER_BASE.solidRadius's own convention (ENGINE_VERSION 43/49) —
+    // Body radius, matching PLAYER_BASE.solidRadius's own convention (ENGINE_VERSION 43/48) —
     // an actor stops at the silhouette it draws, not the smaller feet circle, so it reads as
-    // standing AGAINST a wall or pillar rather than sunk into one. Through v48 mobs deliberately
+    // standing AGAINST a wall or pillar rather than sunk into one. Through v47 mobs deliberately
     // kept the feet circle here (`bp.footprintRadius`) on the grounds that widening it moves
     // every chase path that hugs a wall — a balance change to garrisons measured against the
     // paths in `client/sim/pveLevelSim.sim.ts`. Reversed in v48 (live report: *"怪物也要遵守

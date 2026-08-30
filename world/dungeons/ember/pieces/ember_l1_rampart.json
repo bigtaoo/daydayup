@@ -12,13 +12,15 @@
       "x": 4,
       "y": 6,
       "w": 3,
-      "h": 2
+      "h": 2,
+      "freeStanding": true
     },
     {
       "x": 13,
       "y": 10,
       "w": 3,
-      "h": 2
+      "h": 2,
+      "freeStanding": true
     },
     {
       "x": 0,

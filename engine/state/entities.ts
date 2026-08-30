@@ -430,10 +430,20 @@ export interface AABB {
    * optional rather than required — a door passage folded into `state.walls` by `DoorSystem`
    * and a flat `EngineConfig.walls` entry both correctly answer "no".
    *
-   * The ONE thing that reads it is `MovementSystem.resolveWalls`, which gives such a block's
-   * NORTH face `config.WALL_NORTH_BRIM` of extra clearance (ENGINE_VERSION 47). Nothing else
-   * may branch on it: the rect's own numbers are the collision AND the drawn footprint, and a
-   * flag that started moving geometry would silently desync the two.
+   * What reads it, and nothing else may join them without a note here (design/18 G5 — this
+   * list was stale for a whole version, claiming a single reader after there were three):
+   *   - `MovementSystem.resolveWalls` — gives such a block's NORTH face
+   *     `config.WALL_NORTH_BRIM` of extra clearance (ENGINE_VERSION 47);
+   *   - `geom.clampToWalkable` — the same brimmed edge, so a dropped pickup can never settle
+   *     inside a band no actor may stand in (ENGINE_VERSION 48);
+   *   - `world/dungeon/floorGeometry.carveDoorGaps` — propagates the flag across the
+   *     rect-minus-rect carve; it decides nothing, it only avoids losing the bit.
+   *
+   * Deliberately NOT read by the bare `circleOverlapsAabb` path (bullets, doorway tests, zone
+   * traits): those must keep hitting the real stone. That asymmetry is intended, and
+   * `boundaryParity.test.ts` is where it is declared rather than left to this comment. The
+   * rect's own numbers stay the collision AND the drawn footprint — a flag that started
+   * *moving* geometry would silently desync the two.
    */
   freeStanding?: boolean;
 }

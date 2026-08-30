@@ -1,0 +1,56 @@
+# Repo-wide verification. Until this existed, `.github/workflows/` held only deploy
+# workflows — nothing ran the tests on a push, so every gate in the repo was a gate only
+# for whoever remembered to run it locally.
+#
+# Two jobs, split by cost rather than by kind:
+#
+#   check  — typecheck, the 500-line drift gate, the WeChat package-size gate, and the full
+#            unit suite across every workspace. Seconds, so it runs on everything.
+#   sims   — the three `.sim.ts` suites (`test:pvp-sim`, `test:pve-sim`). They play real
+#            bot-driven matches and carry the level's survivability gates (design/05 "Room
+#            encounter budget"), which is exactly what a geometry or enemy change can break
+#            without failing a single unit test. Minutes, so it runs on pushes to main and
+#            on pull requests, and can be triggered by hand.
+#
+# See design/18-test-strategy.md for what each layer of the suite is for.
+name: check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # A second push to the same branch supersedes the first — no point finishing a run whose
+  # commit is already stale.
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # `npm ci` runs postinstall scripts that this repo gates behind npm 11's allowScripts
+      # (electron's binary download, esbuild's platform binary). The allow list lives in the
+      # root package.json, so a plain `npm ci` is enough.
+      - run: npm ci
+      - run: npm run check
+
+  sims:
+    runs-on: ubuntu-latest
+    # Independent of `check` on purpose: when a geometry change breaks a balance gate we want
+    # to see BOTH results, not have the slow one skipped because the fast one went red.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run test:sims

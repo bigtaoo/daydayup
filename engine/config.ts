@@ -119,6 +119,24 @@ export const INTEGRITY_KICK_STREAK = 2;
  * brimmed band — on screen, but past where any actor's own `solidRadius` will ever let them stand
  * (live report: *"角色根本无法拾取掉落的物品"*). `clampToWalkable` now pushes a point out of the
  * brimmed top edge exactly like `MovementSystem.resolveWalls` does for a live actor.
+ *
+ * **It did nothing at all in the PvE campaign until v49.** Everything above was built in v47,
+ * widened in v48, and tuned against the LAUNCH ARENA — which flags every kit solid. The five
+ * shipped ember floors flagged none: all 14 `world/dungeons/ember/pieces/*.json` carried zero
+ * `freeStanding`, so the 34 rects the renderer stands at `WALL_H_INTERIOR` reserved no extra
+ * floor and a character north of one was buried by the full pre-v47 amount. Two versions of
+ * work were inert over the entire campaign, and nothing said so, because the flag is authored
+ * content and the constant is code. v49 authored it (18 piece-local solids → those 34
+ * placements); `client/.../simRenderParity.test.ts` now fails if level 1 ever loses them again.
+ *
+ * **Where this value is actually pinned**, since a doc comment is not a guard: the wall-vs-pillar
+ * cover assertion is `client/src/game/scene/occlusion.test.ts` ("buries a character LESS than a
+ * pillar does"), the no-route-sealed ceiling is `engine/world/arenas/launchArena.test.ts` ("what
+ * the north brim costs the launch map"), the standoff itself is `engine/systems/rooms.test.ts`'s
+ * computed `NORTH_STANDOFF`, and the sim-vs-render agreement is `simRenderParity.test.ts`. The
+ * v47 comment cited a `client/.../standingCoverParity.test.ts` for this; that file was never
+ * created — the assertion it named landed in `occlusion.test.ts` instead. See
+ * design/18-test-strategy.md.
  */
 export const WALL_NORTH_BRIM = Math.round((23 / 32) * FP_SCALE) as Fp;
 

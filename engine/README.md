@@ -18,10 +18,15 @@ Break one of these and two clients desync — silently, minutes into a match.
   compiler, not by review: `tsconfig.base.json` sets `lib: ["ES2020"]` and this package —
   unlike `client/` — never adds `DOM` back, while its own `tsconfig.json` narrows `paths` to
   itself alone. Touching a browser global or importing another package is a type error.
-- **No floats in stored state.** Positions, velocities and angles are fixed-point (`Fp`,
+- **No floats in stored GEOMETRY.** Positions, velocities and angles are fixed-point (`Fp`,
   `math/fixed.ts`) and brad angles (`math/trig.ts`, table-driven trig). Content is *authored*
   in human units (seconds, grid-units/second, degrees) and converted exactly once at
-  construction (`content/convert.ts`). Raw floats never survive past construction.
+  construction (`content/convert.ts`). Two fields are deliberately NOT integral — `hp` and
+  `shield`, because regen and healing add sub-unit amounts — and that is safe for the reason
+  the rule exists: IEEE 754 specifies `+ - * /` as correctly rounded, so the same operations in
+  the same order are bit-identical everywhere. What the rule really guards is transcendentals
+  and *accumulated* error, and the fields that accumulate tick over tick are all integers.
+  `smoke.test.ts` asserts exactly that split, so a third fractional field fails loudly.
 - **No ambient randomness.** `Math.random` does not appear. Every draw comes from a seeded
   `Prng` stream on `GameState` (`math/prng.ts`), and a stream is only drawn from when the
   outcome actually depends on it — a conditional draw changes every later draw.
@@ -32,7 +37,7 @@ Break one of these and two clients desync — silently, minutes into a match.
   iteration order, a rounding rule, or a hashed field.
 
 Any change that moves outcomes — or moves the replay hash at all — bumps `ENGINE_VERSION`
-(`versionHistory.ts`, currently **39**, with the full per-bump history in
+(`versionHistory.ts`, currently **49**, with the full per-bump history in
 `ENGINE_VERSION_HISTORY.md`). `replay.ts` refuses to replay a mismatched version rather than
 produce garbage.
 
@@ -79,13 +84,27 @@ anti-cheat checkpoint (`design/15`).
 ## Working on it
 
 ```bash
-npm test -w engine          # vitest, 568 tests
-npm run typecheck -w engine # tsc --noEmit, DOM-free
+npm test -w engine            # vitest
+npm run typecheck -w engine   # tsc --noEmit, DOM-free
+npm run record:golden -w engine  # re-record fixtures/golden.json after an intended bump
 ```
 
-Every engine change ships with unit tests. Determinism itself is covered by self-consistency
-checks — two fresh runs of the same seed + input stream must hash identically — rather than a
-committed golden fixture, so there is no fixture to regenerate.
+Every engine change ships with unit tests. Determinism is covered from two directions, and they
+fail for opposite reasons:
+
+- **self-consistency** (`replay.test.ts`) — two fresh runs of the same seed + input stream must
+  hash identically. Catches nondeterminism; blind to a behaviour change, since both runs move
+  together.
+- **a committed golden fixture** (`goldenHash.test.ts` + `fixtures/golden.json`) — five scripted
+  scenarios pinned to recorded hashes. Catches a behaviour change, which is what obliges the
+  `ENGINE_VERSION` bump. When it goes red the fix is a decision, not a re-record:
+  bump the version, add a `## vN:` entry to `ENGINE_VERSION_HISTORY.md`, then
+  `npm run record:golden`. `versionContract.test.ts` closes the loophole of re-recording
+  without bumping.
+
+`smoke.test.ts` is the third leg: real runs with per-tick invariants (nothing inside a wall,
+no float in a geometry field, no enemy without a `roomId`). It asks whether behaviour is
+CORRECT, where the golden gate only asks whether it CHANGED.
 
 `GameState.test.ts`, `systems/*.test.ts` and `replay.test.ts` are the places to look first
 when adding a system; `content/*.test.ts` and `balance/*.test.ts` guard the data model and the

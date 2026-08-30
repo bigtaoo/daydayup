@@ -12,25 +12,29 @@
       "x": 4,
       "y": 4,
       "w": 2,
-      "h": 2
+      "h": 2,
+      "freeStanding": true
     },
     {
       "x": 14,
       "y": 4,
       "w": 2,
-      "h": 2
+      "h": 2,
+      "freeStanding": true
     },
     {
       "x": 4,
       "y": 11,
       "w": 2,
-      "h": 2
+      "h": 2,
+      "freeStanding": true
     },
     {
       "x": 14,
       "y": 11,
       "w": 2,
-      "h": 2
+      "h": 2,
+      "freeStanding": true
     },
     {
       "x": 0,

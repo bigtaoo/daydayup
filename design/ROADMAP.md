@@ -5,7 +5,7 @@ closed loop the design docs describe, and the running record of how each phase a
 landed. Phases are written top-to-bottom in dependency order; each one keeps its dated
 shipped-notes underneath it, so a phase section is both the plan and the history.
 
-**Current built state (engine notes below written 2026-08-20; content/render passes have landed since — 2026-08-25 the hand-authored PvP launch arena `arena_launch` plus the arena audit, 2026-08-26 the arena floor stopping at its rooms and the retirement of `arena_prototype_60`, 2026-08-30 an open door reading as a passage instead of a black wall (2026-08-30b: still not enough on its own, so the recess now shows the room's own floor and the open state got an illustrated warm-gold light-curtain asset of its own — `door_curtain_raw.png` — to match the locked hazard leaf's visual weight), 2026-08-30 a wall standing over a dropped item now fades permanently instead of only while the player happens to be near it — none of which touches the tick order or bumps a version). **Two engine bumps have landed since: 2026-08-30's `ENGINE_VERSION` 47**, a north-face brim on free-standing wall blocks so a character stops beside one the way they already stop beside a pillar — see "The wall swallowed the character and the pillar did not" below — **and the same day's `ENGINE_VERSION` 48**, live feedback on 47 itself (circled screenshot: half the character still read as sunk into a free-standing block, wanted down to about a quarter; a monster's own tiny wall clearance let it stand visibly closer than any player could; a dropped kill's loot could land inside the band no actor's collision would ever let them reach): the brim widened from 16 to 23 px (the largest value the shipped arena's tightest corridor tolerates before a route seals — see "what the north brim costs the launch map" in `launchArena.test.ts`), every enemy blueprint now stops at its own body radius against a wall or pillar instead of the smaller feet circle (re-verified against the PvE bot sim — every balance gate still passes, no softlock), and `geom.clampToWalkable` (where a death drop and an arena crate land) was made brim-aware to match. See `ENGINE_VERSION_HISTORY.md`'s v48 entry for the full account, including the one thing it does NOT fix (a room-boundary/kerb wall's own worst-case coverage, untouched by a constant that only ever governs a free-standing block's north face). The number in this heading has drifted before and is not the authority — `engine/versionHistory.ts` is. `ENGINE_VERSION` **43** (32: ground-weapon pickup is
+**Current built state (engine notes below written 2026-08-20; content/render passes have landed since — 2026-08-25 the hand-authored PvP launch arena `arena_launch` plus the arena audit, 2026-08-26 the arena floor stopping at its rooms and the retirement of `arena_prototype_60`, 2026-08-30 an open door reading as a passage instead of a black wall (2026-08-30b: still not enough on its own, so the recess now shows the room's own floor and the open state got an illustrated warm-gold light-curtain asset of its own — `door_curtain_raw.png` — to match the locked hazard leaf's visual weight), 2026-08-30 a wall standing over a dropped item now fades permanently instead of only while the player happens to be near it — none of which touches the tick order or bumps a version). **Two engine bumps have landed since: 2026-08-30's `ENGINE_VERSION` 47**, a north-face brim on free-standing wall blocks so a character stops beside one the way they already stop beside a pillar — see "The wall swallowed the character and the pillar did not" below — **and the same day's `ENGINE_VERSION` 48**, live feedback on 47 itself (circled screenshot: half the character still read as sunk into a free-standing block, wanted down to about a quarter; a monster's own tiny wall clearance let it stand visibly closer than any player could; a dropped kill's loot could land inside the band no actor's collision would ever let them reach): the brim widened from 16 to 23 px (the largest value the shipped arena's tightest corridor tolerates before a route seals — see "what the north brim costs the launch map" in `launchArena.test.ts`), every enemy blueprint now stops at its own body radius against a wall or pillar instead of the smaller feet circle (re-verified against the PvE bot sim — every balance gate still passes, no softlock), and `geom.clampToWalkable` (where a death drop and an arena crate land) was made brim-aware to match. See `ENGINE_VERSION_HISTORY.md`'s v48 entry for the full account, including the one thing it does NOT fix (a room-boundary/kerb wall's own worst-case coverage, untouched by a constant that only ever governs a free-standing block's north face). **And the same day's `ENGINE_VERSION` 49**, which came out of a test pass rather than a report — `design/18-test-strategy.md`, written to answer "what stops a change to a wall's blocking range or a bullet's spawn point from silently desyncing the logic". Building its gates found five things, all fixed in 49: the v47/v48 brim was **inert over the whole PvE campaign** (the shipped ember JSON pieces carried no `freeStanding` at all, so two versions of tuning applied only to the launch arena — 34 interior blocks are now flagged, route-safety measured per floor); a pair shove could park an actor 6 px inside a wall for 103 consecutive ticks, because wall resolution ran before `resolveActorPairs` and the "corrected next tick" belief was false for two bodies pinned against stone; `clampToWalkable`'s world clamp undid its own push-out at the map edge; and `DeathDropsSystem`/`DoorSystem` each clamped by `footprintRadius` under a comment asserting the opposite, a premise that had been stale since v43/v48. The number in this heading has drifted before and is not the authority — `engine/versionHistory.ts` is. `ENGINE_VERSION` **43** (32: ground-weapon pickup is
 click-driven; 33: manual aim removed entirely; 34: co-resident PvE room/door model, engine +
 client rendering; 35: fully-realized branching — see the Room & door model section below;
 same-day map-editor door placement, the `layout: 'graph2d'` real-2D-layout follow-up, AND the
@@ -8156,3 +8156,61 @@ passing on abstract arithmetic alone. `Scene.test.ts`'s existing wiring test was
 way (`bullet.gx` advanced + `reconcile()` in place of a bare `frameDt`). Full suite: 3727/3727,
 `tsc --noEmit` clean across every workspace.
 
+
+## The tests that were green while the fix did nothing (2026-08-30, engine + content, `ENGINE_VERSION` 49)
+
+Not a bug report. The question was *"do you have logic-synchronisation tests? changing a wall or
+pillar's blocking range, or a bullet's spawn point, could silently desync the logic"* — and the
+honest first answer was that the repo had one narrow parity test per past incident and no general
+mechanism. `design/18-test-strategy.md` is the resulting plan; this is what building it found.
+
+### The gate that could not see its own constant
+
+The first thing built was a committed golden-hash fixture, because every determinism assertion in
+the repo compared **two runs in the same process**. That catches nondeterminism and nothing else:
+change `WALL_NORTH_BRIM`, an actor's `solidRadius` or a weapon's `muzzleOffset` and both runs move
+together, so all 885 engine tests stayed green while replay compatibility broke. `replay.ts`'s own
+comment said as much, as a *reason a field was safe to add*.
+
+Four scenarios built from shipped content, and the mutation check found that 23 px → 24 px on the
+brim moved **none** of their hashes. Three structural reasons, each worth keeping:
+
+- `EngineConfig.walls` is a flat `[x, y, w, h]` tuple and **cannot express `freeStanding`**, so no
+  flat-config scenario can ever exercise the brim;
+- a pseudo-random stick wandered past the one face under test for 1500 ticks;
+- and the obvious fix — a smoothly *rotating* stick — was worse in an instructive way. It toured
+  gx 2076–18324 and gy 3252–19500 of a 21 000-fp room and still spent **0 of 800 ticks** near that
+  face, because a smooth orbit traces a circle and a circle is very good at going around things.
+
+Only a deliberately *held* direction made contact (`engine/fixtures/brimGrinderFloor.ts`). The
+general lesson: **emergent motion cannot be relied on to reach a specific target — measure that a
+scenario touches what it claims to, never infer it from how thorough it looks.**
+
+### Five findings, all fixed in v49
+
+Full account in `ENGINE_VERSION_HISTORY.md`. The one worth repeating here is the first, because it
+is a whole class: **the v47/v48 brim was inert over the entire PvE campaign.** Two versions of work
+and two live reports had tuned a constant against the launch arena, which flags every kit solid,
+while all 14 shipped ember JSON pieces carried zero `freeStanding` — so the 34 rects the renderer
+stands at `WALL_H_INTERIOR` reserved no floor at all. Nothing said so, because the flag is authored
+*content* and the constant is *code*, and no test crossed that line. `simRenderParity.test.ts` now
+asserts `freeStanding ⟺ wallTier === interior` in both directions over all five floors.
+
+The other four: a pair shove could park an actor 6 px inside a wall for 103 consecutive ticks (the
+"corrected on the following tick" belief is false when two bodies are pinned against stone);
+`clampToWalkable`'s world clamp undid its own push-out at the map edge, and simply reordering sends
+points *out of the world* instead, so the clamp had to move inside a bounded iteration; and
+`DeathDropsSystem`/`DoorSystem` each clamped by `footprintRadius` under a comment asserting the
+opposite — a premise stale since v43/v48, which is why `state/actorRadius.ts` now names the choice.
+
+### What it cost and what it bought
+
+Engine 885 → 1064 tests, still ~2.5 s; repo-wide 5,885, `npm run check` green, both `.sim.ts`
+balance suites still passing (the level-1 no-stall gate is what a geometry change breaks first).
+`.github/workflows/check.yml` runs them — until it existed the repo had only deploy workflows, so
+every gate was a gate for whoever remembered to run it.
+
+The refactor that collapsed three copies of the wall-boundary rule into `systems/solidBounds.ts`
+shipped **without** a bump, and the golden fixture recorded before it is what proves that rather
+than asserting it. That is the whole workflow the document exists to install, and it paid for
+itself on its first use.

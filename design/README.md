@@ -22,6 +22,7 @@ This directory records **decisions** and **architecture**. It is the single sour
 | [15-pvp-arena.md](15-pvp-arena.md) | PvP arena: 8-player solo-or-squad battle royale, room-graph shrinking zone, `ArenaMap`/`CellTrait` map-editor schema, team/hostility model, PvP HP/weapon scaling, periodic cross-client anti-cheat checkpoints, sparse held-input net sync |
 | [16-accounts.md](16-accounts.md) | Accounts: username/password login (SQLite + scrypt + opaque bearer sessions), never required to play, and the two things bound to an account — PvP ladder rating and forge blueprints/materials/loadout |
 | [17-i18n.md](17-i18n.md) | Internationalization: English-canonical `t()` with compile-time key checking, the locale files, what is deliberately left untranslated, and the repo's English-only rule for code/comments/docs |
+| [18-test-strategy.md](18-test-strategy.md) | Test strategy: the two meanings of "out of sync" — replay divergence, and systems disagreeing inside one build — the six gaps that were measured, and the four layers that closed them (contract gates incl. the committed golden hash, unit tests, parity sweeps, invariant smoke runs) |
 
 ## Where the plan lives
 

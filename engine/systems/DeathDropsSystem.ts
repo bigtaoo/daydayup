@@ -17,6 +17,7 @@ import { cosFp, sinFp, BRAD_FULL } from '../math/trig';
 import { SIM } from '../sim.config';
 import type { GameState } from '../state/GameState';
 import type { PickupItem } from '../state/entities';
+import { blockingRadius } from '../state/actorRadius';
 import { clampToWalkable, retainAlive } from './geom';
 
 export class DeathDropsSystem {
@@ -39,9 +40,16 @@ export class DeathDropsSystem {
           const rawGx = addFp(e.gx, mulFp(cosFp(ang), e.radius));
           const rawGy = addFp(e.gy, mulFp(sinFp(ang), e.radius));
           const minion = buildEnemyActor(state, rawGx, rawGy, e.onDeathSpawn.type);
-          // Clamp by the MINION's own footprint (not the constant SIM.pickupRadius
-          // used for pickups above — a spawned actor needs its own solid clearance).
-          const pos = clampToWalkable(rawGx, rawGy, minion.footprintRadius, state);
+          // Clamp by the minion's own SOLID clearance — the radius `MovementSystem` will push
+          // it out by — not by the constant `SIM.pickupRadius` the pickups above use, and not
+          // by its feet circle. This said `minion.footprintRadius` through v48, under a comment
+          // that already claimed "a spawned actor needs its own solid clearance": the intent was
+          // right and the radius was wrong, because solids stopped pushing `footprintRadius` in
+          // v43 (players) / v48 (enemies) and nothing re-checked the comment. The consequence
+          // was a guaranteed first-tick teleport for any minion clamped tight — placed with a
+          // 9 px feet circle against a wall that then displaced its 20 px body. Fixed in v49;
+          // `clearanceParity.test.ts` measures it rather than restating the radii.
+          const pos = clampToWalkable(rawGx, rawGy, blockingRadius(minion), state);
           minion.gx = pos.gx;
           minion.gy = pos.gy;
           // Inherit the dying boss's own roomId DIRECTLY (never left to next tick's
