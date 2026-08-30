@@ -14,6 +14,7 @@ import { ORB_CORE_RIG } from './orbCoreRig';
 import { CRITTER_CORE_RIG } from './critterCoreRig';
 import { BOSS_CORE_RIG } from './bossCoreRig';
 import { RigSkin, barrelReach } from './RigSkin';
+import { RECOIL_BODY_PX, RECOIL_MODULE_PX, RECOIL_MS } from './rigRecoil';
 import type { RigSkinBundle } from './taoBundle';
 import type { AnimationClip, SpriteBinding } from './types';
 
@@ -1007,5 +1008,120 @@ describe('the front-only bone set — design/12\'s last facing-model gap', () =>
     expect(visibility(skin).belly).toBe(false);
     skin.setBodyFacing(Math.PI / 2);
     expect(visibility(skin).belly).toBe(true);
+  });
+});
+
+/**
+ * The fire recoil landing on a real rig (2026-08-30, user report *"角色射击时，没有射击动画"*).
+ * `rigRecoil.test.ts` covers the envelope and `rigWeaponMount.test.ts` the mount arithmetic;
+ * what is only visible HERE is that one `kick()` moves all four things that have to move
+ * together — the module sprite, the socket ring it is mounted on, the body, and the muzzle
+ * point the bullet and the fx are anchored to — and that all four come back.
+ */
+describe('RigSkin — the fire recoil', () => {
+  const modulesOf = (skin: RigSkin) =>
+    skin as unknown as { weaponSprite: { x: number; y: number } | null };
+
+  function armed(): RigSkin {
+    const skin = makeSkin();
+    skin.setWeaponKind('ranged', 'repeater');
+    skin.setBodyFacing(0);
+    skin.setAim(0);
+    skin.update();
+    return skin;
+  }
+
+  /** Lay the rig out at the peak of the envelope (RECOIL_MS * RECOIL_ATTACK). */
+  function atPeak(skin: RigSkin): void {
+    skin.kick();
+    skin.advanceRecoil(RECOIL_MS * 0.22);
+    skin.update();
+  }
+
+  it('kicks the module, its socket ring and the body back along the aim, together', () => {
+    const skin = armed();
+    const restModule = modulesOf(skin).weaponSprite!.x;
+    const restSocket = spritesOf(skin).get('socket_r')!.x;
+    atPeak(skin);
+    expect(modulesOf(skin).weaponSprite!.x).toBeLessThan(restModule);
+    // The ring goes with the gun, or the gun slides out of its own housing.
+    expect(spritesOf(skin).get('socket_r')!.x).toBeLessThan(restSocket);
+    expect(skin.view.x).toBeLessThan(0);
+  });
+
+  it('leans the body LESS than it kicks the gun', () => {
+    const skin = armed();
+    const restModule = modulesOf(skin).weaponSprite!.x;
+    atPeak(skin);
+    const gunKick = restModule - modulesOf(skin).weaponSprite!.x;
+    expect(Math.abs(skin.view.x)).toBeLessThan(gunKick);
+  });
+
+  // Stated as the EXACT composed distance, not just a direction. A survivor of the 2026-08-30
+  // battery is why: `muzzleLocal` dropping `+ view.position` — i.e. reporting a barrel tip that
+  // does not carry the body's own lean — left every assertion here passing, because the 10 px
+  // module kick swamps the 3 px body shove and the muzzle still moved backwards. The fx and the
+  // next shot's spawn correction both read this point, so the ~1 world px it loses is a real
+  // (small) mis-anchor, and only the arithmetic can see it.
+  it('moves the muzzle by the module kick AND the body lean, not just the kick', () => {
+    const skin = armed();
+    const rest = skin.muzzleLocal()!;
+    atPeak(skin);
+    const kicked = skin.muzzleLocal()!;
+    expect(rest.x - kicked.x).toBeCloseTo(RECOIL_MODULE_PX + RECOIL_BODY_PX, 6);
+    expect(kicked.y).toBeCloseTo(rest.y, 6); // aiming +x, so the whole displacement is -x
+  });
+
+  it('follows the aim rather than kicking in a fixed screen direction', () => {
+    const skin = armed();
+    skin.setAim(Math.PI / 2); // straight down-screen
+    skin.update();
+    // Read the fields out rather than spreading: `x`/`y` are prototype accessors on a Pixi
+    // Sprite, so a spread copy silently loses them (and every assertion below with it).
+    const restX = modulesOf(skin).weaponSprite!.x;
+    const restY = modulesOf(skin).weaponSprite!.y;
+    atPeak(skin);
+    expect(modulesOf(skin).weaponSprite!.y).toBeLessThan(restY); // back UP the screen
+    expect(modulesOf(skin).weaponSprite!.x).toBeCloseTo(restX, 6);
+  });
+
+  it('returns everything to exactly its rest pose once the envelope is spent', () => {
+    const skin = armed();
+    const restX = modulesOf(skin).weaponSprite!.x;
+    const restY = modulesOf(skin).weaponSprite!.y;
+    const restSocketX = spritesOf(skin).get('socket_r')!.x;
+    const restMuzzle = skin.muzzleLocal()!;
+    atPeak(skin);
+    skin.advanceRecoil(1000);
+    skin.update();
+    expect(modulesOf(skin).weaponSprite!.x).toBeCloseTo(restX, 10);
+    expect(modulesOf(skin).weaponSprite!.y).toBeCloseTo(restY, 10);
+    expect(spritesOf(skin).get('socket_r')!.x).toBeCloseTo(restSocketX, 10);
+    expect(skin.view.x).toBeCloseTo(0, 10); // closeTo, not toBe: `-cos(0) * 0` is -0
+    expect(skin.view.y).toBeCloseTo(0, 10);
+    expect(skin.muzzleLocal()!.x).toBeCloseTo(restMuzzle.x, 10);
+  });
+
+  // A rig with no `attack` clip must still visibly fire — that is the whole reason the recoil
+  // is an envelope over the current clip rather than a clip swap (see rigRecoil.ts). Every
+  // enemy bundle is in this case.
+  it('kicks a held-mount rig (an enemy) too, which ships no attack clip at all', () => {
+    const skin = makeSkin(CRITTER_CORE_RIG);
+    skin.setWeaponKind('ranged', 'enemygun');
+    skin.setBodyFacing(0);
+    skin.setAim(0);
+    skin.update();
+    const rest = skin.muzzleLocal()!;
+    atPeak(skin);
+    expect(skin.muzzleLocal()!.x).toBeLessThan(rest.x);
+  });
+
+  it('is inert until something actually fires', () => {
+    const skin = armed();
+    const restX = modulesOf(skin).weaponSprite!.x;
+    skin.advanceRecoil(16);
+    skin.update();
+    expect(modulesOf(skin).weaponSprite!.x).toBe(restX);
+    expect(skin.view.x).toBeCloseTo(0, 10);
   });
 });

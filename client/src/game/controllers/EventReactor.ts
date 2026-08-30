@@ -26,14 +26,23 @@ export interface EventReactorHost {
   onForceRegroup(): void;
   /** A catalogued weapon was picked up — unlock its forge blueprint if not already. */
   onWeaponPickup(weaponId: string): void;
-  /** The specific actor view a `hit` event's `target` id names — for a reaction that
-   *  must target ONE actor (the hit-flash outline, design/01 milestone 5), not just
-   *  flash at a world position the way `fx.flash()` does. Undefined for a bullet/pickup
-   *  id, or an actor that's already gone. Duck-typed (not `Actor`) so this file still
-   *  never imports scene/ — same decoupling as the rest of this interface. */
-  /** The narrow view of an `Actor` this reactor needs: where it is on screen (world px, so an
-   *  event's own position can be turned into a delta from its centre) and the hit reaction. */
-  actorAt(id: number): { hitFlash(dx?: number, dy?: number): void; x: number; y: number } | undefined;
+  /** The specific actor view an event's id names — a `hit`'s `target`, or a `bullet_fired`'s
+   *  `ownerId` — for a reaction that must land on ONE actor rather than just at a world
+   *  position the way `fx.flash()` does. Undefined for a bullet/pickup id, or an actor that's
+   *  already gone. Duck-typed (not `Actor`) so this file still never imports scene/ — same
+   *  decoupling as the rest of this interface.
+   *
+   *  The narrow view this reactor needs: where the actor is on screen (world px, so an event's
+   *  own position can be turned into a delta from its centre), the hit reaction, the fire
+   *  reaction, and where its DRAWN barrel tip is — the muzzle fx has to be anchored there, and
+   *  `muzzlePos()` is null for a skin that mounts no weapon module (`Skin.muzzleAnchor`). */
+  actorAt(id: number): {
+    hitFlash(dx?: number, dy?: number): void;
+    onFired(): void;
+    muzzlePos(): { x: number; y: number } | null;
+    x: number;
+    y: number;
+  } | undefined;
 }
 
 /**
@@ -66,12 +75,24 @@ export class EventReactor {
     for (const e of events) {
       switch (e.type) {
         case 'bullet_fired': {
-          const fx = fpToPx(e.gx);
-          const fy = fpToPx(e.gy);
-          this.fx.flash(fx, fy, THEME.colors.muzzle, 12);
+          // Anchored on the SHOOTER, not on the event's own position (2026-08-30, user report
+          // *"角色射击时，没有射击动画，枪口也没有射击特效"*). `gx/gy` is the sim's muzzle —
+          // `muzzleOffset` along the aim ray on the GROUND plane — which is not where the rig
+          // draws the gun, so every muzzle fx used to burst near the character's middle and read
+          // as "no muzzle effect at all". `Actor.muzzlePos()` is the drawn barrel tip, i.e. the
+          // exact point `Scene` already spawns the bullet view from, so shot, flare and sparks
+          // now all leave the same place. It is null for a skin with no mounted module (the
+          // boss, the Graphics placeholder, the frames before the weapon texture preloads) —
+          // those keep the old sim position plus the same 12 px lift `flash()`/`trailDot()` use.
+          const shooter = this.host.actorAt(e.ownerId);
+          shooter?.onFired(); // the recoil — render-only, see Actor.onFired
+          const drawn = shooter?.muzzlePos() ?? null;
+          const fx = drawn ? drawn.x : fpToPx(e.gx);
+          const fy = drawn ? drawn.y : fpToPx(e.gy) - 12;
           const facingRad = bradToRad(e.facing);
-          this.fx.particles.muzzleFlame(fx, fy - 12, facingRad, THEME.colors.muzzle);
-          this.fx.particles.shellCasing(fx, fy - 12, facingRad);
+          this.fx.muzzleFlare(fx, fy, facingRad, THEME.colors.muzzle);
+          this.fx.particles.muzzleFlame(fx, fy, facingRad, THEME.colors.muzzle);
+          this.fx.particles.shellCasing(fx, fy, facingRad);
           cue('muzzle');
           break;
         }

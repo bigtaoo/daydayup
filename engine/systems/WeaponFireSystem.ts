@@ -140,6 +140,6 @@ export class WeaponFireSystem {
       lifestealPermille: spec.lifestealPermille,
       ricochetsLeft: spec.ricochetCount,
     });
-    state.events.push({ type: 'bullet_fired', faction: a.faction, gx, gy, facing: dir });
+    state.events.push({ type: 'bullet_fired', ownerId: a.id, faction: a.faction, gx, gy, facing: dir });
   }
 }

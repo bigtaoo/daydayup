@@ -10,7 +10,14 @@ import type { DamageType } from '../content/damage';
 import type { DamageSrc, Faction, PickupKind, Winner } from './entities';
 
 export type GameEvent =
-  | { type: 'bullet_fired'; faction: Faction; gx: Fp; gy: Fp; facing: Brad }
+  // `ownerId` is the actor that pulled the trigger. Purely so the RENDER layer can find
+  // the shooter's own view: the muzzle fx has to be drawn at the DRAWN barrel tip and the
+  // recoil has to be played on that one rig, and `gx/gy` (the sim's flat `muzzleOffset`
+  // along the aim ray, on the ground plane) is neither of those. Same field, same reason,
+  // as `Projectile.ownerId`, which `Scene` already resolves this exact way for the bullet's
+  // own barrel-tip spawn correction. Additive and inert for the sim: events are never read
+  // back by a later system and never enter `serializeState`/`hashState`, so no bump.
+  | { type: 'bullet_fired'; ownerId: number; faction: Faction; gx: Fp; gy: Fp; facing: Brad }
   // `faction` is a DamageSrc, not just Faction — zone/hazard-tile damage (design/15,
   // ROADMAP 4.2d) reports 'environment' here, since there is no attacker on the other side.
   | { type: 'hit'; target: number; faction: DamageSrc; gx: Fp; gy: Fp; damage: number; damageType: DamageType; shieldRemaining?: number }

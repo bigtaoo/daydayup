@@ -19,11 +19,15 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** `muzzleFlame`'s two authored populations, at budget 1 (see that method). */
+const EMBERS = 3;
+const GAS = 2;
+
 describe('ParticleSystem.muzzleFlame', () => {
-  it('spawns exactly 3 additive-blended particles at the muzzle', () => {
+  it('spawns 3 embers then 2 gas puffs, all additive, at the muzzle', () => {
     const ps = new ParticleSystem();
     withRandom(0.5, () => ps.muzzleFlame(10, 20, 0, 0xffffff));
-    expect(ps.view.children.length).toBe(3);
+    expect(ps.view.children.length).toBe(EMBERS + GAS);
     for (const child of ps.view.children) {
       expect(child.blendMode).toBe('add');
     }
@@ -31,14 +35,29 @@ describe('ParticleSystem.muzzleFlame', () => {
 
   it('fires particles outward along the given facing direction', () => {
     const ps = new ParticleSystem();
-    // spread = (0.5-0.5)*0.9 = 0, speed = 90+0.5*70 = 125 — straight along facingRad
-    // with no gravity, so a single update step moves purely along that direction.
-    // lifeMs = 70+0.5*50 = 95ms, so keep dt well under that or the particle is culled.
+    // At random=0.5 the ember jitter is (0.5-0.5)*0.34 = 0 — straight along facingRad, with
+    // no gravity, so a single update step moves purely along that direction. speed =
+    // 150+0.5*120 = 210, lifeMs = 60+0.5*60 = 90ms, so keep dt well under that or the
+    // particle is culled before it can be read.
     withRandom(0.5, () => ps.muzzleFlame(0, 0, 0, 0xffffff));
     const g = ps.view.children[0]!;
     ps.update(50);
-    expect(g.x).toBeCloseTo(6.25);
+    expect(g.x).toBeCloseTo(10.5);
     expect(g.y).toBeCloseTo(0);
+  });
+
+  it('throws the gas slower than the embers — the two populations are not one spray', () => {
+    // The whole point of splitting the burst (2026-08-30): fast collimated embers that carry
+    // the shot's direction, and slow wide gas behind them. A regression that collapses the two
+    // back into one mid-speed spray passes every other test in this block, so it is asserted
+    // here directly — at random=0.5 the ember runs at 210 px/s and the gas at 35+0.5*55 = 62.5.
+    const ps = new ParticleSystem();
+    withRandom(0.5, () => ps.muzzleFlame(0, 0, 0, 0xffffff));
+    ps.update(50);
+    const ember = ps.view.children[0]!;
+    const gas = ps.view.children[EMBERS]!;
+    expect(gas.x).toBeCloseTo(3.125);
+    expect(gas.x).toBeLessThan(ember.x / 2);
   });
 });
 
@@ -230,7 +249,7 @@ describe('ParticleSystem.clear', () => {
   it('destroys and removes every live particle', () => {
     const ps = new ParticleSystem();
     withRandom(0.5, () => ps.muzzleFlame(0, 0, 0, 0xffffff));
-    expect(ps.view.children.length).toBe(3);
+    expect(ps.view.children.length).toBe(EMBERS + GAS);
     const destroySpies = ps.view.children.map((c) => vi.spyOn(c, 'destroy'));
     ps.clear();
     expect(ps.view.children.length).toBe(0);
@@ -264,12 +283,12 @@ describe('ParticleSystem.setBudget', () => {
 
   it('never silences a burst entirely, however small the budget', () => {
     // A muzzle flash that emits ZERO particles reads as the gun failing to fire — a legibility
-    // regression, not a quality one. At budget 0.01 the arithmetic alone rounds to 0; the floor
-    // is what keeps one particle alive.
+    // regression, not a quality one. At budget 0.01 the arithmetic alone rounds to 0 for both
+    // of muzzleFlame's populations; the floor is what keeps one of each alive.
     const p = new ParticleSystem();
     p.setBudget(0.01);
     withRandom(0.5, () => p.muzzleFlame(0, 0, 0, 0xffffff));
-    expect(p.view.children.length).toBe(1);
+    expect(p.view.children.length).toBe(2);
   });
 
   it('emits nothing at a budget of exactly 0 — the only value allowed to', () => {

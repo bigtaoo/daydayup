@@ -9,9 +9,10 @@ import { MODULE_BEHIND_SCALE, MODULE_BEHIND_SHADE, SHADE_MIN_BODY_R, drawModuleC
 import { drawTethers, hasTetheredBone } from './rigTethers';
 import {
   AIM_TRACKING_BONES, ACTIVE_WEAPON_SOCKET, IDLE_WEAPON_SOCKET, MODULE_Z_BEHIND,
-  activeModuleMount, barrelReach, idleModuleMount, resolveWeaponMount,
+  activeModuleMount, barrelReach, idleModuleMount, moduleMuzzleLocal, resolveWeaponMount,
   type ModuleMount, type WeaponMountMode,
 } from './rigWeaponMount';
+import { Recoil } from './rigRecoil';
 
 // `barrelReach` moved to ./rigWeaponMount with the rest of the mount geometry; re-exported
 // here so the original import path stays valid for callers and tests (500-line convention:
@@ -112,6 +113,10 @@ export class RigSkin {
   private aimRad = 0;
   private weaponKind: WeaponVisualKind | null = null;
   private weaponName: string | undefined = undefined;
+  /** Render-only fire recoil (`rigRecoil.ts`) — layered OVER whatever clip is playing rather
+   *  than being one, so it covers the four enemy bundles that ship no `attack` clip and never
+   *  interrupts the idle hover bob. See that file for why it is not a clip. */
+  private readonly recoil = new Recoil();
   private weaponSprite: Sprite | null = null; // the ACTIVE socket's module (aim-tracking)
   private idleModuleSprite: Sprite | null = null; // the other arm's decorative module
   private weaponTint = 0xffffff;
@@ -185,6 +190,16 @@ export class RigSkin {
     this.clipT = this.clip?.loop && this.clip.duration > 0 ? tSec % this.clip.duration : tSec;
   }
 
+  /** A shot just left this rig — start (or restart) the recoil envelope. */
+  kick(): void {
+    this.recoil.kick();
+  }
+
+  /** Advance the recoil envelope by one render frame. Call before `update()`. */
+  advanceRecoil(dtMs: number): void {
+    this.recoil.advance(dtMs);
+  }
+
   /** Body/legs facing (radians, standard math convention, y-down screen space) —
    *  drives the whole-rig L/R flip + front/back hemisphere. Independent of `setAim`
    *  below: this is movement direction for a player, not the aim/shot direction. */
@@ -252,6 +267,12 @@ export class RigSkin {
     const worldPose = this.rig.computeFK(0, 0, transforms);
     const canonicalSocketDeg = (this.canonicalSocketAngleRad() * 180) / Math.PI;
 
+    // The body leans back along the SCREEN aim, not the canonical one: this is the container's
+    // own position, which `view.scale.x` does not mirror. Small by design (`RECOIL_BODY_PX`).
+    const shove = this.recoil.bodyPx;
+    this.view.x = -Math.cos(this.aimRad) * shove;
+    this.view.y = -Math.sin(this.aimRad) * shove;
+
     this.sprites.forEach((sprite, boneId) => {
       const pose = worldPose.get(boneId);
       const binding = this.bundle.bindings.get(boneId)!;
@@ -274,7 +295,16 @@ export class RigSkin {
       // `pose.wa` already carries the clip's own rotation for this bone (Rig.computeFK
       // folds it in), so it is NOT added a second time here.
       const restAngleDeg = this.rig.boneMap.get(boneId)?.rwa ?? 0;
-      const angleDeg = AIM_TRACKING_BONES.has(boneId) ? canonicalSocketDeg : pose.wa - restAngleDeg;
+      const aimTracking = AIM_TRACKING_BONES.has(boneId);
+      // The ring the module is mounted on kicks back WITH it, or the gun would slide out of
+      // its own housing. Canonical space, like every other offset in this loop, so the
+      // whole-rig flip lands it on the correct side.
+      if (aimTracking && this.recoil.modulePx !== 0) {
+        const a = this.canonicalSocketAngleRad();
+        sprite.x -= Math.cos(a) * this.recoil.modulePx;
+        sprite.y -= Math.sin(a) * this.recoil.modulePx;
+      }
+      const angleDeg = aimTracking ? canonicalSocketDeg : pose.wa - restAngleDeg;
       sprite.rotation = ((angleDeg + binding.rotation) * Math.PI) / 180;
       let scaleMul = 1;
       if (boneId === EYE_BONE_ID) {
@@ -379,7 +409,9 @@ export class RigSkin {
     const texture = this.weaponKind ? getWeaponTexture(this.weaponName, this.weaponKind) : undefined;
     const canonical = this.canonicalSocketAngleRad();
     const activeMount = texture
-      ? activeModuleMount(this.weaponMount, worldPose, transforms, canonical, this.heldMountBody())
+      ? activeModuleMount(
+          this.weaponMount, worldPose, transforms, canonical, this.heldMountBody(), this.recoil.modulePx,
+        )
       : null;
     const idleMount = texture ? idleModuleMount(this.weaponMount, worldPose) : null;
     if (!texture) {
@@ -442,49 +474,27 @@ export class RigSkin {
   }
 
   /**
-   * Where the mounted weapon's business end actually is, in this rig's PARENT space
-   * (i.e. `view`'s own scale.x flip already applied, the wrapper's uniform scale not
-   * yet — `Skin.muzzleAnchor` finishes the job). Null when nothing is mounted, which
-   * covers a rig whose `weaponMount` is 'none' (`boss-core`) and the frames before the
-   * weapon texture finishes preloading. It is NOT null for enemies any more: since
-   * 2026-08-21 they mount a real module on the 'held' path, so their bullets get the same
-   * barrel-tip spawn correction the hero's always had.
-   *
-   * Exists because the bullet spawns at the SIM's muzzle — `RangedSimSpec.muzzleOffset`,
-   * a flat distance along the aim ray from the actor's centre — and the drawn gun's
-   * barrel tip is somewhere else entirely: the module hangs off a socket bone that
-   * orbits the core (52 authoring-px out on `orb-core`) and then extends its own texture
-   * beyond that again, so the sim's 30px landed roughly mid-gun and shots visibly left
-   * the middle of the housing rather than the muzzle (user report, 2026-08-17: "子弹要从
-   * 枪口打出"). `Scene` uses this as the bullet view's FIRST position and lets the normal
-   * interpolation carry it to the authoritative sim position over that tick — the sim is
-   * untouched, so nothing here can affect hit detection or determinism, and deliberately
-   * so: pushing the sim's spawn point out to the barrel tip instead would let a player
-   * standing flush against a wall spawn bullets on the far side of it.
-   *
-   * The geometry, all in the rig's own authoring-px space:
-   *   - the module's own mounted position (`sprite.x/y`, i.e. whatever `rigWeaponMount`
-   *     resolved this frame — a socket bone's tip, or the body's drawn edge);
-   *   - the barrel points along `canonicalSocketAngleRad()` — the sprite's rotation is
-   *     that angle PLUS the texture's `rotationOffsetRad`, and the offset exists exactly
-   *     to cancel each texture's own baked pointing direction, so the two cancel and the
-   *     business end lies along the canonical aim angle;
-   *   - its distance is how far the texture's own rect reaches from its anchor in that
-   *     baked direction (`barrelReach`), scaled by the sprite's scale.
+   * Where the mounted weapon's business end is this frame, or null when nothing is mounted (a
+   * rig whose `weaponMount` is 'none' — `boss-core` — and the frames before the weapon texture
+   * preloads; NOT null for enemies, which have mounted a real 'held' module since 2026-08-21).
+   * The geometry is `rigWeaponMount.moduleMuzzleLocal` (split out 2026-08-30, 500-line
+   * convention) — see there for why the barrel tip is not the sim's muzzle. Because the recoil
+   * moves the MOUNT, this point recoils with the gun; `+ view.position` adds the recoil's
+   * whole-body shove, which lives on the container rather than on any bone, since the result is
+   * stated in the rig's PARENT space.
    */
   muzzleLocal(): { x: number; y: number } | null {
     const sprite = this.weaponSprite;
     if (!sprite || !sprite.visible || !this.weaponKind) return null;
-    const angle = this.canonicalSocketAngleRad();
-    const reach = barrelReach(
-      sprite.texture.width,
-      sprite.texture.height,
+    const local = moduleMuzzleLocal(
+      sprite,
+      this.canonicalSocketAngleRad(),
+      this.flipX,
+      sprite.texture,
       getWeaponAnchor(this.weaponName, this.weaponKind),
       getWeaponRotationOffset(this.weaponName, this.weaponKind),
-    ) * getWeaponScale(this.weaponName, this.weaponKind);
-    return {
-      x: this.flipX * (sprite.x + Math.cos(angle) * reach),
-      y: sprite.y + Math.sin(angle) * reach,
-    };
+      getWeaponScale(this.weaponName, this.weaponKind),
+    );
+    return { x: local.x + this.view.x, y: local.y + this.view.y };
   }
 }

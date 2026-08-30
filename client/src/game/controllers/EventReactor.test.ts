@@ -22,6 +22,7 @@ import { setLocale, resetLocaleForTests } from '../../i18n';
 function fakeFx(): FxController {
   return {
     flash: vi.fn(),
+    muzzleFlare: vi.fn(),
     addShake: vi.fn(),
     addHitStop: vi.fn(),
     pulseChromatic: vi.fn(),
@@ -386,5 +387,104 @@ describe('EventReactor — audio cue coalescing (design/11)', () => {
     reactor.consume([hit(0)]);
     expect(audio.play).toHaveBeenNthCalledWith(1, 'impact', 2);
     expect(audio.play).toHaveBeenNthCalledWith(2, 'impact', 1);
+  });
+});
+
+/**
+ * `bullet_fired` (2026-08-30, user report *"角色射击时，没有射击动画，枪口也没有射击特效"*).
+ *
+ * The old handler burst at the event's OWN position — the sim's muzzle, a flat `muzzleOffset`
+ * along the aim ray on the GROUND plane — lifted by a hardcoded 12 px. That lands near the
+ * character's middle, not at the gun the rig draws, which is why a muzzle effect that had
+ * existed since 2026-07-26 read as absent. These pin the two things that changed: the fx are
+ * anchored on the SHOOTER's drawn barrel tip, and the shot is reported back to that actor so
+ * it can recoil.
+ */
+describe('EventReactor — a shot leaves the shooter, not the event position', () => {
+  const SHOT = { type: 'bullet_fired', ownerId: 7, gx: pxToFp(100), gy: pxToFp(200), facing: 0 } as GameEvent;
+
+  function shooter(muzzle: { x: number; y: number } | null) {
+    return {
+      hitFlash: vi.fn(), onFired: vi.fn(), muzzlePos: vi.fn(() => muzzle), x: 100, y: 200,
+    };
+  }
+
+  function reactorWith(actor: ReturnType<typeof shooter> | undefined) {
+    const fx = fakeFx();
+    const host = { ...fakeHost(), actorAt: vi.fn(() => actor) };
+    const hud = new HudView();
+    hud.build(new Layers(), { w: 1280, h: 720 });
+    return { fx, host, actor, reactor: new EventReactor(fx, hud, fakeAudio(), host) };
+  }
+
+  it('tells the shooter it fired, so the rig can recoil', () => {
+    const actor = shooter({ x: 140, y: 150 });
+    const { reactor, host } = reactorWith(actor);
+    reactor.consume([SHOT]);
+    expect(host.actorAt).toHaveBeenCalledWith(7);
+    expect(actor.onFired).toHaveBeenCalledTimes(1);
+  });
+
+  it('anchors flare, sparks and casing on the DRAWN barrel tip — all three at the same point', () => {
+    const actor = shooter({ x: 140, y: 150 });
+    const { reactor, fx } = reactorWith(actor);
+    reactor.consume([SHOT]);
+    expect(fx.muzzleFlare).toHaveBeenCalledWith(140, 150, 0, expect.any(Number));
+    expect(fx.particles.muzzleFlame).toHaveBeenCalledWith(140, 150, 0, expect.any(Number));
+    expect(fx.particles.shellCasing).toHaveBeenCalledWith(140, 150, 0);
+  });
+
+  it('points the flare along the shot, not along a fixed direction', () => {
+    const actor = shooter({ x: 0, y: 0 });
+    const { reactor, fx } = reactorWith(actor);
+    reactor.consume([{ ...SHOT, facing: 16384 } as GameEvent]); // a quarter turn in brad
+    const angle = (fx.muzzleFlare as unknown as ReturnType<typeof vi.fn>).mock.calls[0]![2];
+    expect(angle).toBeCloseTo(Math.PI / 2, 6);
+  });
+
+  // A skin that mounts no module at all (design/13's boss), one still on the Graphics
+  // placeholder, and the frames before a weapon texture finishes preloading all report null.
+  // Those must keep the pre-2026-08-30 behaviour rather than bursting at the origin.
+  it('falls back to the sim position (lifted 12 px) when the skin mounts no weapon', () => {
+    const { reactor, fx } = reactorWith(shooter(null));
+    reactor.consume([SHOT]);
+    expect(fx.muzzleFlare).toHaveBeenCalledWith(100, 200 - 12, 0, expect.any(Number));
+    expect(fx.particles.shellCasing).toHaveBeenCalledWith(100, 200 - 12, 0);
+  });
+
+  it('still fires the fx when the shooter’s view is already gone', () => {
+    const { reactor, fx } = reactorWith(undefined);
+    expect(() => reactor.consume([SHOT])).not.toThrow();
+    expect(fx.muzzleFlare).toHaveBeenCalledWith(100, 200 - 12, 0, expect.any(Number));
+  });
+});
+
+/**
+ * A shotgun volley — `SCATTERGUN_SIM` emits one `bullet_fired` PER PELLET in a single frame,
+ * all from one actor (`engine/systems/ballistics.test.ts` pins that end). Worth its own test
+ * because it is the only shape where the three reactions this handler runs disagree about
+ * counting: the recoil must fire per pellet (each one restarts the same envelope, which is what
+ * a fast weapon should look like), the fx must be per pellet, and the AUDIO must coalesce to
+ * one cue carrying the count — design/11's "ten hits in one frame are one impact at higher
+ * gain, not ten impacts".
+ */
+describe('EventReactor — a multi-pellet volley in one frame', () => {
+  it('recoils and flares per pellet, but plays exactly one muzzle cue carrying the count', () => {
+    const actor = { hitFlash: vi.fn(), onFired: vi.fn(), muzzlePos: vi.fn(() => ({ x: 12, y: 34 })), x: 0, y: 0 };
+    const fx = fakeFx();
+    const audio = fakeAudio();
+    const hud = new HudView();
+    hud.build(new Layers(), { w: 1280, h: 720 });
+    const reactor = new EventReactor(fx, hud, audio, { ...fakeHost(), actorAt: vi.fn(() => actor) });
+
+    const volley = [0, 1, 2, 3, 4].map((i) => ({
+      type: 'bullet_fired', ownerId: 3, gx: pxToFp(0), gy: pxToFp(0), facing: 1000 * i,
+    }) as GameEvent);
+    reactor.consume(volley);
+
+    expect(actor.onFired).toHaveBeenCalledTimes(5);
+    expect(fx.muzzleFlare).toHaveBeenCalledTimes(5);
+    expect(audio.play).toHaveBeenCalledTimes(1);
+    expect(audio.play).toHaveBeenCalledWith('muzzle', 5);
   });
 });

@@ -21,7 +21,8 @@ import { CRITTER_CORE_RIG } from './critterCoreRig';
 import { BOSS_CORE_RIG } from './bossCoreRig';
 import {
   ACTIVE_WEAPON_SOCKET, AIM_TRACKING_BONES, HELD_MOUNT_R, HELD_MOUNT_SQUASH, IDLE_WEAPON_SOCKET,
-  MODULE_Z_BEHIND, activeModuleMount, barrelReach, idleModuleMount, resolveWeaponMount,
+  MODULE_Z_BEHIND, activeModuleMount, barrelReach, idleModuleMount, moduleMuzzleLocal,
+  resolveWeaponMount,
 } from './rigWeaponMount';
 import type { ResolvedBoneTransform, WorldPose, WorldPositions } from './types';
 
@@ -256,5 +257,99 @@ describe('barrelReach — how far a weapon texture extends from its anchor', () 
   it('handles an axis-aligned direction without dividing by zero', () => {
     expect(Number.isFinite(barrelReach(100, 50, { x: 0.5, y: 0.5 }, -Math.PI / 2))).toBe(true);
     expect(barrelReach(100, 50, { x: 0.5, y: 0.5 }, -Math.PI / 2)).toBeCloseTo(25, 6);
+  });
+});
+
+/**
+ * The recoil offset (2026-08-30, user report *"角色射击时，没有射击动画"*). `rigRecoil.ts` owns
+ * the envelope; what belongs here is that the number it produces slides the mount straight
+ * back down the BARREL, on both mount paths, and that it is the identity at rest.
+ */
+describe('activeModuleMount — the fire recoil', () => {
+  const socketPose = poses({ socket_r: { ex: 52, ey: -46, wa: 0 } });
+  const bodyPose = poses({ body: { sx: 7, sy: 11, ex: 0, ey: -40, wa: -90 } });
+  const heldBody = { boneId: 'body', drawnR: 35 };
+
+  it('is the exact identity at rest, on both paths', () => {
+    expect(activeModuleMount('socket', socketPose, noTransforms, 0.7, null, 0))
+      .toEqual(activeModuleMount('socket', socketPose, noTransforms, 0.7, null));
+    expect(activeModuleMount('held', bodyPose, noTransforms, 0.7, heldBody, 0))
+      .toEqual(activeModuleMount('held', bodyPose, noTransforms, 0.7, heldBody));
+  });
+
+  it('slides the socket module BACK along its own aim, never forward', () => {
+    const m = activeModuleMount('socket', socketPose, noTransforms, 0, null, 10)!;
+    expect(m.x).toBeCloseTo(52 - 10, 10); // aiming +x, so the kick is -x
+    expect(m.y).toBeCloseTo(-46, 10);
+    expect(m.angle).toBeCloseTo(0, 10); // the gun recoils, it does not re-aim
+  });
+
+  it('follows the aim around the circle rather than kicking in a fixed direction', () => {
+    const down = activeModuleMount('socket', socketPose, noTransforms, Math.PI / 2, null, 10)!;
+    expect(down.x).toBeCloseTo(52, 10);
+    expect(down.y).toBeCloseTo(-46 - 10, 10); // straight back UP the screen from a down-aim
+  });
+
+  // The held path's own outward offset IS squashed (a walk across the body's surface in a
+  // tilted view); the recoil runs along the barrel, which is drawn unsquashed. Applying
+  // HELD_MOUNT_SQUASH to both would slide an enemy's gun off its own axis as it fired.
+  it('is UNSQUASHED on the held path, unlike that path’s own outward offset', () => {
+    const rest = activeModuleMount('held', bodyPose, noTransforms, Math.PI / 2, heldBody)!;
+    const kicked = activeModuleMount('held', bodyPose, noTransforms, Math.PI / 2, heldBody, 10)!;
+    expect(kicked.y).toBeCloseTo(rest.y - 10, 10);
+    expect(kicked.y).not.toBeCloseTo(rest.y - 10 * HELD_MOUNT_SQUASH, 3);
+  });
+
+  it('moves the mount by exactly the distance it is given', () => {
+    const rest = activeModuleMount('socket', socketPose, noTransforms, 0.7, null)!;
+    const kicked = activeModuleMount('socket', socketPose, noTransforms, 0.7, null, 10)!;
+    expect(Math.hypot(kicked.x - rest.x, kicked.y - rest.y)).toBeCloseTo(10, 10);
+  });
+
+  it('still returns null for an unposed bone — a recoil cannot conjure a mount', () => {
+    expect(activeModuleMount('socket', poses({}), noTransforms, 0, null, 10)).toBeNull();
+    expect(activeModuleMount('none', socketPose, noTransforms, 0, heldBody, 10)).toBeNull();
+  });
+});
+
+/**
+ * `moduleMuzzleLocal` — the drawn barrel tip. The bullet spawns here, the muzzle fx burst
+ * here, and (since 2026-08-30) it recoils with the gun because the recoil is applied to the
+ * MOUNT this reads, not to the sprite afterwards.
+ */
+describe('moduleMuzzleLocal — the drawn barrel tip', () => {
+  // A texture baked pointing +x, anchored 0.2 in: `barrelReach` = 0.8 * 100 = 80, halved by
+  // the 0.5 sprite scale = 40 px of reach from the anchor.
+  const tex = { width: 100, height: 50 };
+  const anchor = { x: 0.2, y: 0.5 };
+
+  it('steps from the mount along the aim by the texture reach, scaled', () => {
+    const m = moduleMuzzleLocal({ x: 52, y: -46 }, 0, 1, tex, anchor, 0, 0.5);
+    expect(m.x).toBeCloseTo(52 + 40, 6);
+    expect(m.y).toBeCloseTo(-46, 6);
+  });
+
+  it('steps UNSQUASHED — the barrel is drawn at the full canonical angle', () => {
+    const m = moduleMuzzleLocal({ x: 0, y: 0 }, Math.PI / 2, 1, tex, anchor, 0, 0.5);
+    expect(m.y).toBeCloseTo(40, 6);
+    expect(m.x).toBeCloseTo(0, 6);
+  });
+
+  // `RigSkin.view.scale.x` mirrors the whole rig, so the X half of the result — and ONLY the
+  // X half — has to come back through that flip to be stated in the rig's parent space.
+  it('mirrors X (and only X) for a flipped rig', () => {
+    const right = moduleMuzzleLocal({ x: 52, y: -46 }, 0, 1, tex, anchor, 0, 0.5);
+    const left = moduleMuzzleLocal({ x: 52, y: -46 }, 0, -1, tex, anchor, 0, 0.5);
+    expect(left.x).toBeCloseTo(-right.x, 6);
+    expect(left.y).toBeCloseTo(right.y, 6);
+  });
+
+  it('recoils with the gun, because it reads the already-kicked mount', () => {
+    const socketPose = poses({ socket_r: { ex: 52, ey: -46, wa: 0 } });
+    const rest = activeModuleMount('socket', socketPose, noTransforms, 0, null)!;
+    const kicked = activeModuleMount('socket', socketPose, noTransforms, 0, null, 10)!;
+    const tipRest = moduleMuzzleLocal(rest, 0, 1, tex, anchor, 0, 0.5);
+    const tipKicked = moduleMuzzleLocal(kicked, 0, 1, tex, anchor, 0, 0.5);
+    expect(tipRest.x - tipKicked.x).toBeCloseTo(10, 6);
   });
 });

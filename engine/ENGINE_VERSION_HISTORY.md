@@ -920,3 +920,29 @@ slot's diverges from the pickup onward — a different slot is overwritten, a di
 weapon drops to the floor (a new PickupItem with a different `weaponId` at the same
 position), and every damage number after it differs. Streams that only ever pick up
 the active slot's own kind, or never pick a weapon up at all, are byte-identical.
+
+---
+
+## `bullet_fired.ownerId` — additive, NO bump (2026-08-30)
+
+`GameEvent`'s `bullet_fired` gained `ownerId: number`, stamped from the firing actor's own
+`id` in `WeaponFireSystem.spawnBullet` — the same `a.id` already frozen onto the projectile.
+
+**No `ENGINE_VERSION` bump, on the same grounds as the other entries above that shipped
+without one.** The event queue is the engine→render channel and nothing else (design/08): it
+is cleared and rebuilt every step, never read back by a later system in the same tick, and
+`serializeState`/`hashState` do not touch it. A recorded input stream replays byte-identically
+across this change — every position, every PRNG draw and every damage number is untouched.
+
+**Why the field exists.** Render needs to know WHO fired, not just where. `bullet_fired`'s
+`gx/gy` is the SIM's muzzle — `muzzleOffset` along the aim ray on the GROUND plane — which is
+12–14 world px from the barrel tip the rig actually draws (measured on live shots), so the
+muzzle fx anchored to it read as absent, and the firing recoil has to play on one specific
+rig. `Scene` already resolved `Projectile.ownerId` this exact way for the bullet view's
+barrel-tip spawn correction; this puts the same fact on the event, so the fx and the shot
+leave the same point.
+
+Coverage: `engine/systems/ballistics.test.ts` — the player path, the enemy path, every pellet
+of a multi-pellet shot, and two simultaneous shooters told apart in one frame.
+
+---

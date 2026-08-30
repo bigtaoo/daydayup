@@ -11,7 +11,7 @@ import { THEME } from '../theme';
 import { Bullet } from './Bullet';
 import { SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
 
-const enum Child { Glow, Core }
+const enum Child { Glow, Core, Flare }
 function glowOf(b: Bullet): Graphics {
   return b.children[Child.Glow] as Graphics;
 }
@@ -20,10 +20,11 @@ function coreOf(b: Bullet): Graphics {
 }
 
 describe('Bullet — construction', () => {
-  it('builds exactly glow + core (2 children) plus a soft shadow', () => {
+  it('builds exactly glow + core + spawn flare (3 children) plus a soft shadow', () => {
     const b = new Bullet(6);
-    expect(b.children.length).toBe(2);
+    expect(b.children.length).toBe(3);
     expect(glowOf(b).blendMode).toBe('add');
+    expect(b.children[Child.Flare]!.blendMode).toBe('add');
     expect(b.shadow).not.toBeNull();
   });
 });
@@ -172,5 +173,101 @@ describe('Bullet.setMuzzleOrigin — easing from the barrel tip onto the sim lin
     b.interpolate(1, 30);
     expect(b.x - 140).toBeGreaterThan(0); // still offset from the NEW sim position...
     expect(b.x - 140).toBeLessThan(midEase); // ...but by less than before
+  });
+});
+
+/**
+ * The spawn pop (2026-08-30, user report *"子弹出现的也很突兀"*). A round used to be drawn
+ * identically on the frame it came into existence and on every frame after — nothing in the
+ * picture separated "fired" from "in flight", so it read as popping into the air. These pin
+ * that the two temporal cues exist, and — the part that actually matters — that both END,
+ * exactly, at the round's true drawn size: a pop that settles at anything but scale 1 is a
+ * bullet permanently the wrong size relative to its own hitbox.
+ */
+describe('Bullet — the spawn pop', () => {
+  function flareOf(b: Bullet): Graphics {
+    return b.children[Child.Flare] as Graphics;
+  }
+
+  it('starts oversize with a bright flare', () => {
+    const b = new Bullet(4);
+    b.place(0, 0, 0);
+    b.interpolate(1, 0); // first drawn frame, nothing elapsed
+    expect(coreOf(b).scale.x).toBeGreaterThan(1);
+    expect(flareOf(b).visible).toBe(true);
+    expect(flareOf(b).alpha).toBeCloseTo(1, 6);
+  });
+
+  // The test above samples at dt = 0, where the DURATION cancels out of the ease entirely — so
+  // it passed unchanged against a 0.0001 ms pop, i.e. against no pop at all. That mutant
+  // survived the 2026-08-30 battery, and this is what kills it: the cue has to still be there
+  // after a real frame has elapsed, on a 60 Hz display and on a 30 Hz one, or nobody ever sees
+  // a single frame of it.
+  it('is still plainly oversize after a REAL frame — a pop shorter than one frame is no pop', () => {
+    for (const frameMs of [16.7, 33.3]) {
+      const b = new Bullet(4);
+      b.place(0, 0, 0);
+      b.interpolate(1, frameMs);
+      expect(coreOf(b).scale.x, `${frameMs}ms frame`).toBeGreaterThan(1.2);
+      expect(flareOf(b).visible).toBe(true);
+      expect(flareOf(b).alpha).toBeGreaterThan(0.25);
+    }
+  });
+
+  it('spans several frames rather than resolving inside one', () => {
+    const b = new Bullet(4);
+    b.place(0, 0, 0);
+    // A do-while, not a while: the constructor leaves `scale.x` at its default 1 and the first
+    // `interpolate` is what sets the oversize, so a pre-checked loop reads "already settled" and
+    // counts zero frames — which is what the first version of this test did.
+    let frames = 0;
+    do {
+      b.interpolate(1, 16.7);
+      frames++;
+    } while (coreOf(b).scale.x !== 1 && frames < 60);
+    // Enough frames to read as motion. Two would be a flicker; 60 would mean it never ends.
+    expect(frames).toBeGreaterThanOrEqual(4);
+    expect(frames).toBeLessThan(12);
+  });
+
+  it('settles to EXACTLY its true size, with the flare gone', () => {
+    const b = new Bullet(4);
+    b.place(0, 0, 0);
+    b.interpolate(1, 90); // the whole pop in one frame
+    expect(coreOf(b).scale.x).toBe(1);
+    expect(coreOf(b).scale.y).toBe(1);
+    expect(glowOf(b).scale.x).toBe(1);
+    expect(flareOf(b).visible).toBe(false);
+  });
+
+  it('never re-grows once settled, however long the bullet lives', () => {
+    const b = new Bullet(4);
+    b.place(0, 0, 0);
+    b.interpolate(1, 90);
+    for (let i = 0; i < 20; i++) b.interpolate(1, 16);
+    expect(coreOf(b).scale.x).toBe(1);
+    expect(flareOf(b).visible).toBe(false);
+  });
+
+  it('shrinks monotonically, and is over well inside the muzzle ease', () => {
+    const b = new Bullet(4);
+    b.place(0, 0, 0);
+    const scales: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      b.interpolate(1, 16);
+      scales.push(coreOf(b).scale.x);
+    }
+    for (let i = 1; i < scales.length; i++) expect(scales[i]!).toBeLessThanOrEqual(scales[i - 1]!);
+    // 6 x 16 = 96ms > SPAWN_POP_MS (90) but < MUZZLE_EASE_MS (120): the pop is finished while
+    // the barrel-tip correction is still running, which is what keeps the two from fighting.
+    expect(scales[scales.length - 1]!).toBe(1);
+  });
+
+  it('does not survive a backgrounded tab as a stuck oversize round', () => {
+    const b = new Bullet(4);
+    b.place(0, 0, 0);
+    b.interpolate(1, 5000);
+    expect(coreOf(b).scale.x).toBe(1);
+    expect(flareOf(b).visible).toBe(false);
   });
 });

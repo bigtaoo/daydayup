@@ -7,7 +7,15 @@ import { LightRegistry, makeLightBuffer, type ActiveLight } from './lighting';
 import { activeQuality } from '../../render/quality';
 import { cullGroundLayer } from '../scene/groundCulling';
 
-const FX_LIFE_MS = 170; // flash/trail lifetime
+const FX_LIFE_MS = 170; // flash/trail lifetime (the default for a `_life`-tagged fx child)
+/** Muzzle-flare lifetime. Much shorter than a flash: a gun's flare is a single frame of real
+ *  light, and at 170 ms a weapon firing every 200 ms would have one on screen essentially
+ *  permanently, which reads as a glowing barrel rather than as shots. */
+const MUZZLE_FLARE_MS = 85;
+/** Muzzle-flare geometry, world px (an actor's own radius is ~16, so the cone reaches about a
+ *  gun's length past the barrel). Drawn along +x and rotated onto the shot direction. */
+const FLARE_R = 5;
+const FLARE_LEN = 17;
 const MAX_SHAKE_PX = 14; // camera-shake offset at full trauma (design/01 milestone 3)
 // Cap on updateCamera's fill zoom — raised from 1.8 (design/10's original legibility
 // fix) to 2.5 (user report, 2026-08-12): a floor whose combined room width is well
@@ -167,17 +175,57 @@ export class FxController {
     this.lights.addTransient({ x, y, color, radius: radius * 3, intensity: 0.7 }, FX_LIFE_MS);
   }
 
+  /**
+   * The shot leaving the barrel (2026-08-30, user report *"枪口也没有射击特效"*): a directional
+   * flare drawn AT the drawn muzzle and pointed along the shot, plus its own transient light.
+   *
+   * Replaces the radial `flash()` this event used to call for three reasons, all of which made
+   * the previous fx read as absent rather than as small. It was anchored at the SIM's muzzle
+   * (`bullet_fired`'s `gx/gy` — a flat offset along the aim ray on the GROUND plane) lifted by
+   * a hardcoded 12 px, which lands near the character's middle rather than at the gun the rig
+   * actually draws; it was round, so it carried no direction at all; and it expanded over
+   * 170 ms, i.e. it was still on screen when the next shot of a 200 ms-cooldown weapon went
+   * out. This one is anchored on `Actor.muzzlePos()` — the same barrel tip the bullet already
+   * spawns from — points along `angleRad`, and collapses in 85 ms.
+   *
+   * Shape: a forward cone (the blast), a shorter perpendicular cross-flash (what makes it read
+   * as a flash and not a beam), and a near-white core so the flare has a value peak instead of
+   * one flat hue. Additive, so `layers.fx`'s bloom pass picks it up.
+   */
+  muzzleFlare(x: number, y: number, angleRad: number, color: number): void {
+    const g = new Graphics();
+    g.moveTo(0, -FLARE_R * 0.75).lineTo(FLARE_LEN, 0).lineTo(0, FLARE_R * 0.75).closePath()
+      .fill({ color, alpha: 0.5 });
+    g.moveTo(0, -FLARE_R * 1.9).lineTo(FLARE_R * 0.75, 0).lineTo(0, FLARE_R * 1.9)
+      .lineTo(-FLARE_R * 0.75, 0).closePath().fill({ color, alpha: 0.3 });
+    g.circle(0, 0, FLARE_R).fill({ color, alpha: 0.55 });
+    g.circle(0, 0, FLARE_R * 0.5).fill({ color: 0xffffff, alpha: 0.7 });
+    g.blendMode = 'add';
+    g.position.set(x, y);
+    g.rotation = angleRad;
+    Object.assign(g, { _life: MUZZLE_FLARE_MS, _lifeMax: MUZZLE_FLARE_MS, _grow: -0.35 });
+    this.layers.fx.addChild(g);
+    // The room lights up for exactly as long as the flare is on screen — the same pairing
+    // `flash()` makes, kept here so dropping that call cost nothing.
+    this.lights.addTransient({ x, y, color, radius: 46, intensity: 0.85 }, MUZZLE_FLARE_MS);
+  }
+
   /** Fade/expire every `_life`-tagged fx child, step ambient dust, and decay the
    *  chromatic pulse + shake trauma. `dustBounds` is undefined outside a live room
    *  (dungeon mode resizes per room, ROADMAP 1.3); `dustRate` is particles/sec (0
    *  when not actually playing). */
   updateFx(dt: number, dustRate: number, dustBounds: { x: number; y: number; w: number; h: number } | undefined): void {
     for (const child of [...this.layers.fx.children] as Container[]) {
-      const holder = child as unknown as { _life?: number };
+      const holder = child as unknown as { _life?: number; _lifeMax?: number; _grow?: number };
       if (typeof holder._life !== 'number') continue; // e.g. `particles.view` — not a _life-tagged glow
       holder._life -= dt;
-      child.alpha = Math.max(0, holder._life / FX_LIFE_MS);
-      child.scale.set(1 + (1 - child.alpha) * 0.6);
+      // `_lifeMax`/`_grow` default to the flash/trail values, so every existing call site is
+      // untouched. A NEGATIVE `_grow` shrinks instead of expanding — a dissipating burst grows
+      // as it fades, but a muzzle flare collapses back into the barrel, and drawing that as an
+      // expanding ring is most of what made the old one read as a stray glow near the body.
+      const max = holder._lifeMax ?? FX_LIFE_MS;
+      child.alpha = Math.max(0, holder._life / max);
+      child.scale.set(1 + (1 - child.alpha) * (holder._grow ?? 0.6));
       if (holder._life <= 0) {
         this.layers.fx.removeChild(child);
         child.destroy();

@@ -1675,3 +1675,43 @@ describe('Actor filters — quality tier gate', () => {
     expect((a as unknown as { skin: { view: { alpha: number } } }).skin.view.alpha).toBe(1);
   });
 });
+
+/**
+ * `Actor.onFired` — the shot reaching the view (2026-08-30). One line of wiring, but it is
+ * the ONLY thing standing between the engine's `bullet_fired` event and any firing feedback
+ * at all, and it has to survive the placeholder skin every actor renders as until its bundle
+ * finishes preloading. `render/rigRecoil.test.ts` and `render/RigSkin.test.ts` cover what the
+ * recoil then does.
+ */
+describe('Actor.onFired — the firing recoil reaches the skin', () => {
+  afterEach(() => {
+    skinRegistryMocks.loaded = undefined;
+  });
+
+  it('forwards the shot to the skin', () => {
+    skinRegistryMocks.loaded = loadedOrbCoreRig();
+    const a = new Actor('player', 20, undefined, false, 'char_vanguard');
+    const fire = vi.spyOn((a as unknown as { skin: { fire: () => void } }).skin, 'fire');
+    a.onFired();
+    expect(fire).toHaveBeenCalledTimes(1);
+  });
+
+  it('is safe on a placeholder skin — the first frames of every run render as one', () => {
+    const a = new Actor('enemy', 12);
+    expect(() => a.onFired()).not.toThrow();
+    expect(() => a.interpolate(1, 16)).not.toThrow();
+  });
+
+  it('settles on its own from the render clock, with no second call from the caller', () => {
+    skinRegistryMocks.loaded = loadedOrbCoreRig();
+    const a = new Actor('player', 20, undefined, false, 'char_vanguard');
+    a.place(0, 0, 0);
+    a.onFired();
+    // 200ms of frames — past RECOIL_MS (150), so the envelope must be fully spent purely
+    // because `interpolate` kept handing the skin its frame dt.
+    for (let i = 0; i < 12; i++) a.interpolate(1, 17);
+    const rig = (a as unknown as { skin: { rig?: { advanceRecoil(ms: number): void } } }).skin.rig!;
+    expect(rig).toBeDefined();
+    expect((rig as unknown as { recoil: { amount: number } }).recoil.amount).toBe(0);
+  });
+});

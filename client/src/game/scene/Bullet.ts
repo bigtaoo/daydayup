@@ -17,10 +17,33 @@ import type { Faction } from './Actor';
 // departure rather than a one-frame jump, short enough that it is all spent within the
 // first ~40 world px of flight, well before the bullet is anywhere near a target.
 const MUZZLE_EASE_MS = 120;
+/**
+ * How long a bullet's spawn "pop" lasts (2026-08-30, user report *"子弹出现的也很突兀"*).
+ *
+ * A round used to appear at full size, full opacity, on one frame — nothing about the picture
+ * distinguished the frame it came into existence from the frames it merely travelled through,
+ * so it read as popping into the air rather than as being fired. Two overlapping cues fix
+ * that, both purely temporal: the core is thrown a little OVERSIZE and settles to its true
+ * radius, and a bright additive flare rides the round out of the barrel and collapses.
+ *
+ * ~2.7 sim ticks, i.e. it is finished well inside `MUZZLE_EASE_MS`'s own correction, so the
+ * whole "leaving the gun" read (barrel-tip origin + pop) is over within the first few frames
+ * of flight and the bullet spends the rest of its life drawn exactly as before.
+ */
+const SPAWN_POP_MS = 90;
+/** How much oversize the core starts at, as a fraction of its radius. Small on purpose — this
+ *  is a punch, not a growing ball; at much more than this the round reads as changing size
+ *  mid-flight, which is a lie about a bullet whose hitbox never changes. */
+const SPAWN_POP_SCALE = 0.9;
+/** The departure flare's radius, in bullet radii. Bigger than the pop because it is a glow
+ *  around the round rather than the round itself. */
+const SPAWN_FLARE_R = 3.2;
 
 export class Bullet extends Entity {
   private glow = new Graphics(); // additive halo, behind the core (elemental only)
   private gfx = new Graphics();
+  private flare = new Graphics(); // one-shot departure glow (see SPAWN_POP_MS)
+  private popMs = SPAWN_POP_MS; // remaining spawn-pop time; 0 = drawn at its true size
   private radiusPx: number;
   private faction: Faction | null = null;
   private damageType: DamageType = 'physical';
@@ -32,7 +55,14 @@ export class Bullet extends Entity {
     super();
     this.radiusPx = radiusPx;
     this.glow.blendMode = 'add';
-    this.addChild(this.glow, this.gfx);
+    // The flare's geometry never changes (it is sized off the radius alone, which is fixed for
+    // a given bullet), so it is drawn once here — only its scale and alpha animate. Drawn in
+    // white rather than in `color`, because `setFaction`/`setElement` land AFTER construction
+    // and a departure flash is a value spike either way.
+    this.flare.circle(0, 0, radiusPx * SPAWN_FLARE_R).fill({ color: 0xffffff, alpha: 0.5 });
+    this.flare.circle(0, 0, radiusPx * SPAWN_FLARE_R * 0.45).fill({ color: 0xffffff, alpha: 0.5 });
+    this.flare.blendMode = 'add';
+    this.addChild(this.glow, this.gfx, this.flare);
     this.makeShadow(radiusPx * 0.8);
   }
 
@@ -98,6 +128,18 @@ export class Bullet extends Entity {
 
   override interpolate(alpha: number, frameDt: number): void {
     super.interpolate(alpha, frameDt);
+    if (this.popMs > 0) {
+      this.popMs = Math.max(0, this.popMs - frameDt);
+      const k = this.popMs / SPAWN_POP_MS; // 1 at the shot → 0 once settled
+      const ease = k * k; // same ease-out shape as the muzzle correction below
+      const s = 1 + SPAWN_POP_SCALE * ease;
+      this.gfx.scale.set(s);
+      this.glow.scale.set(s);
+      // The flare runs the other way: it starts at full size and collapses into the round.
+      this.flare.scale.set(0.25 + 0.75 * ease);
+      this.flare.alpha = ease;
+      this.flare.visible = this.popMs > 0;
+    }
     if (this.originMs <= 0) return;
     this.originMs = Math.max(0, this.originMs - frameDt);
     const k = this.originMs / MUZZLE_EASE_MS;

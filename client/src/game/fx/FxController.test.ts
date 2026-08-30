@@ -551,3 +551,79 @@ describe('FxController.updateFx — the particle system is actually advanced', (
     expect(fx.particles.view.children.length).toBe(0);
   });
 });
+
+/**
+ * `muzzleFlare` (2026-08-30, user report *"枪口也没有射击特效"*) — the directional flash that
+ * replaced a radial `flash()` at this event. The three properties that made the old one read
+ * as absent are the three asserted here: it must land exactly where it is told (no hidden 12 px
+ * lift, since `EventReactor` now hands it the drawn barrel tip), it must POINT, and it must be
+ * gone before the next shot of a fast weapon — the starter blaster fires every 200 ms.
+ */
+describe('FxController.muzzleFlare', () => {
+  const flares = (fx: FxController) => (fx as unknown as {
+    layers: { fx: { children: { x: number; y: number; rotation: number; alpha: number; scale: { x: number } }[] } };
+  }).layers.fx.children.filter((c) => '_life' in c);
+
+  it('draws at exactly the point it is given — no hidden lift', () => {
+    const fx = new FxController(new Layers());
+    fx.muzzleFlare(140, 150, 0, 0xffe08a);
+    const g = flares(fx)[0]!;
+    expect([g.x, g.y]).toEqual([140, 150]);
+  });
+
+  it('points along the shot', () => {
+    const fx = new FxController(new Layers());
+    fx.muzzleFlare(0, 0, Math.PI / 2, 0xffe08a);
+    expect(flares(fx)[0]!.rotation).toBeCloseTo(Math.PI / 2, 10);
+  });
+
+  it('lights the room for as long as it is on screen, then stops', () => {
+    const fx = new FxController(new Layers());
+    fx.muzzleFlare(140, 150, 0, 0xffe08a);
+    const lit = activeLights(fx);
+    expect(lit).toHaveLength(1);
+    expect([lit[0]!.x, lit[0]!.y]).toEqual([140, 150]);
+    expect(lit[0]!.color).toBe(0xffe08a);
+    fx.updateFx(86, 0, undefined); // past MUZZLE_FLARE_MS (85)
+    expect(activeLights(fx)).toEqual([]);
+  });
+
+  it('is gone well before a 200ms-cooldown weapon fires again', () => {
+    const fx = new FxController(new Layers());
+    fx.muzzleFlare(0, 0, 0, 0xffe08a);
+    fx.updateFx(100, 0, undefined);
+    expect(flares(fx)).toHaveLength(0);
+  });
+
+  it('COLLAPSES as it fades, where a flash expands', () => {
+    // The whole difference between "a gun fired" and "something is glowing near the body".
+    // `_grow` is negative here and positive for `flash()`, and this is what pins that apart.
+    const fx = new FxController(new Layers());
+    fx.muzzleFlare(0, 0, 0, 0xffe08a);
+    fx.updateFx(42, 0, undefined); // ~half its life
+    const flare = flares(fx)[0]!;
+    expect(flare.scale.x).toBeLessThan(1);
+    expect(flare.alpha).toBeLessThan(1);
+
+    const other = new FxController(new Layers());
+    other.flash(0, 0, 0xffe08a, 12);
+    other.updateFx(42, 0, undefined);
+    expect(flares(other)[0]!.scale.x).toBeGreaterThan(1);
+  });
+
+  // `flash()` and `trailDot()` predate the per-child lifetime and must keep FX_LIFE_MS. Both
+  // are checked, not just the one this event used to call: `_lifeMax`/`_grow` are read off EVERY
+  // child in `updateFx`, so a wrong default silently retimes the bullet trails too.
+  it.each([
+    ['flash', (fx: FxController) => fx.flash(0, 0, 0xffe08a, 12)],
+    ['trailDot', (fx: FxController) => fx.trailDot(0, 0, 0xffe08a, 3)],
+  ])('does not change how a %s fades — 170ms, still expanding', (_label, spawn) => {
+    const fx = new FxController(new Layers());
+    spawn(fx);
+    fx.updateFx(100, 0, undefined); // past a flare's 85ms, well inside the old 170ms
+    expect(flares(fx)).toHaveLength(1);
+    expect(flares(fx)[0]!.scale.x).toBeGreaterThan(1); // grows, the opposite of the flare
+    fx.updateFx(80, 0, undefined);
+    expect(flares(fx)).toHaveLength(0);
+  });
+});

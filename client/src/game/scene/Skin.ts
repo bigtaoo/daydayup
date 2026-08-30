@@ -87,13 +87,15 @@ export class Skin {
   // for a player — see Actor's upper/lower body split); `aimRad` is the weapon's own
   // aim/shot direction, tracked independently of the body. `frameDt`/`clipName` drive
   // a real rig's animation clock + which clip plays (design/12's "render clock" —
-  // idle/move only for now; attack/hurt/death need GameState signals Actor doesn't
-  // carry yet, deliberately left for later). The Graphics placeholder only has a body
+  // idle/move only; firing is `fire()`'s procedural recoil layered on top rather than a
+  // clip swap, and hurt/death need GameState signals Actor doesn't carry yet, deliberately
+  // left for later). The Graphics placeholder only has a body
   // front-indicator (its cosmetic weapon Graphics is rotated separately by Actor), so
   // it ignores `aimRad`/`frameDt`/`clipName`.
   setFacing(bodyRad: number, aimRad: number, frameDt = 0, clipName = 'idle') {
     if (this.rig) {
       this.clock += frameDt;
+      this.rig.advanceRecoil(frameDt);
       this.rig.playClip(clipName, this.clock);
       this.rig.setBodyFacing(bodyRad);
       this.rig.setAim(aimRad);
@@ -101,6 +103,15 @@ export class Skin {
     } else {
       this.front!.rotation = bodyRad;
     }
+  }
+
+  /** A shot just left this skin (`Actor.onFired`, driven by the engine's `bullet_fired`
+   *  event — design/08's one render channel). Kicks the weapon module back along its own
+   *  barrel and leans the body with it; no-op on the Graphics placeholder, which has no
+   *  mounted module to recoil. See `render/rigRecoil.ts` for the envelope and for why this
+   *  is layered over the current clip instead of playing the authored `attack` one. */
+  fire(): void {
+    this.rig?.kick();
   }
 
   // Hand anchor (in actor-local coords). Fixed in the demo; later driven by animation frames.

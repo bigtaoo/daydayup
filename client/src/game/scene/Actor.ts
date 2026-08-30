@@ -444,6 +444,12 @@ export class Actor extends Entity {
     return { x: this.x + local.x, y: this.y + this.skin.view.y + local.y };
   }
 
+  /** This actor just fired (`EventReactor`, off `bullet_fired`'s `ownerId` — design/08's one
+   *  engine→render channel): the module kicks back along its barrel and the body leans with it,
+   *  so a shot reads as something the CHARACTER did. It also moves the drawn barrel tip that
+   *  `muzzlePos()` reports, so the muzzle fx recoil with the gun. See `render/rigRecoil.ts`. */
+  onFired(): void { this.skin.fire(); }
+
   /** Keeps `healthBar` tracking this actor's own screen position at its fixed offset — it is
    *  deliberately not a child (see the constructor's doc comment), so nothing else moves it.
    *  Every position update funnels through here: `place()` (unused by Actor, but inherited)
@@ -473,8 +479,8 @@ export class Actor extends Entity {
       this.visualZ = this.hover.base + this.hover.amp * Math.sin((this.hoverT / this.hover.periodMs) * Math.PI * 2);
     }
     super.interpolate(alpha, frameDt);
-    // Cheap idle/move clip pick straight from Entity's own interpolation buffers —
-    // attack/hurt/death need real GameState signals Actor doesn't receive yet. A caller
+    // Cheap idle/move clip pick straight from Entity's own interpolation buffers — firing
+    // rides on top (`onFired`); hurt/death need signals Actor doesn't receive yet. A caller
     // that collapses prev onto cur mid-motion (`Scene.positionLocal`'s predicted-pose
     // snap) sets `movingOverride` explicitly since the buffer delta alone would always
     // read as stationary in that case.

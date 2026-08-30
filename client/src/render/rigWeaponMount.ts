@@ -115,10 +115,11 @@ export function activeModuleMount(
   transforms: Map<string, ResolvedBoneTransform>,
   canonicalAngle: number,
   body: { boneId: string; drawnR: number } | null,
+  recoilPx = 0,
 ): ModuleMount | null {
   if (mode === 'socket') {
     const pose = worldPose.get(ACTIVE_WEAPON_SOCKET);
-    return pose ? { x: pose.ex, y: pose.ey, angle: canonicalAngle } : null;
+    return pose ? recoiled({ x: pose.ex, y: pose.ey, angle: canonicalAngle }, recoilPx) : null;
   }
   if (mode !== 'held' || !body) return null;
   const pose = worldPose.get(body.boneId);
@@ -127,10 +128,33 @@ export function activeModuleMount(
   const cx = pose.ex + (t?.translateX ?? 0);
   const cy = pose.ey + (t?.translateY ?? 0);
   const reach = body.drawnR * HELD_MOUNT_R;
-  return {
+  return recoiled({
     x: cx + Math.cos(canonicalAngle) * reach,
     y: cy + Math.sin(canonicalAngle) * reach * HELD_MOUNT_SQUASH,
     angle: canonicalAngle,
+  }, recoilPx);
+}
+
+/**
+ * Slide a resolved mount straight back down its own barrel by `px` (`rigRecoil.ts`'s
+ * envelope supplies the number; 0 is the identity and the only value at rest).
+ *
+ * UNSQUASHED, unlike the held path's own outward offset above: that offset walks across the
+ * body's surface, which the tilted view foreshortens, while this one runs along the BARREL,
+ * which is drawn at the full canonical angle (`mount.angle`, straight into `sprite.rotation`).
+ * Squashing it would slide the gun off its own axis. Same reason `moduleMuzzleLocal` steps
+ * unsquashed to reach the business end.
+ *
+ * Applied to the MOUNT rather than to the sprite, so `moduleMuzzleLocal` reads it for free —
+ * the barrel tip, the bullet's spawn correction and the muzzle fx all recoil with the gun
+ * instead of hanging in the air where it used to be.
+ */
+function recoiled(mount: ModuleMount, px: number): ModuleMount {
+  if (px === 0) return mount;
+  return {
+    x: mount.x - Math.cos(mount.angle) * px,
+    y: mount.y - Math.sin(mount.angle) * px,
+    angle: mount.angle,
   };
 }
 
@@ -175,4 +199,52 @@ export function barrelReach(
   const tx = dx > 1e-6 ? right / dx : dx < -1e-6 ? left / dx : Infinity;
   const ty = dy > 1e-6 ? bottom / dy : dy < -1e-6 ? top / dy : Infinity;
   return Math.min(tx, ty);
+}
+
+
+/**
+ * Where the mounted weapon's business end actually is, in the rig's PARENT space (i.e.
+ * `RigSkin.view`'s own `scale.x` flip already applied via `flipX`, the wrapper's uniform
+ * scale not yet — `Skin.muzzleAnchor` finishes the job).
+ *
+ * Exists because the bullet spawns at the SIM's muzzle — `RangedSimSpec.muzzleOffset`, a flat
+ * distance along the aim ray from the actor's centre — and the drawn gun's barrel tip is
+ * somewhere else entirely: the module hangs off a socket bone that orbits the core (52
+ * authoring-px out on `orb-core`) and then extends its own texture beyond that again, so the
+ * sim's 30 px landed roughly mid-gun and shots visibly left the middle of the housing rather
+ * than the muzzle (user report, 2026-08-17: "子弹要从枪口打出"). `Scene` uses this as the bullet
+ * view's FIRST position and lets the normal interpolation carry it to the authoritative sim
+ * position over that tick; `EventReactor` anchors the muzzle flash/flame/casing to the same
+ * point. The sim is untouched, so nothing here can affect hit detection or determinism, and
+ * deliberately so: pushing the sim's spawn point out to the barrel tip instead would let a
+ * player standing flush against a wall spawn bullets on the far side of it.
+ *
+ * The geometry, all in the rig's own authoring-px space:
+ *   - the module's own mounted position (`sprite.x/y`, i.e. whatever `activeModuleMount`
+ *     resolved this frame — a socket bone's tip or the body's drawn edge, minus this frame's
+ *     recoil);
+ *   - the barrel points along the canonical aim angle — the sprite's rotation is that angle
+ *     PLUS the texture's `rotationOffsetRad`, and the offset exists exactly to cancel each
+ *     texture's own baked pointing direction, so the two cancel;
+ *   - its distance is how far the texture's own rect reaches from its anchor in that baked
+ *     direction (`barrelReach`), scaled by the sprite's scale.
+ *
+ * Split out of RigSkin.ts 2026-08-30 (500-line convention, form ①): it is mount geometry over
+ * a posed rig with no Pixi state of its own, which is this file's whole subject, and
+ * `barrelReach` — the one thing it computes with — already lives here.
+ */
+export function moduleMuzzleLocal(
+  sprite: { x: number; y: number },
+  canonicalAngle: number,
+  flipX: 1 | -1,
+  tex: { width: number; height: number },
+  anchor: { x: number; y: number },
+  rotationOffsetRad: number,
+  scale: number,
+): { x: number; y: number } {
+  const reach = barrelReach(tex.width, tex.height, anchor, rotationOffsetRad) * scale;
+  return {
+    x: flipX * (sprite.x + Math.cos(canonicalAngle) * reach),
+    y: sprite.y + Math.sin(canonicalAngle) * reach,
+  };
 }

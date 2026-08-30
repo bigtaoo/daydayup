@@ -39,7 +39,7 @@ import { HudView } from './ui/HudView';
 import { TouchControlsView } from './ui/TouchControlsView';
 import { CommandBuilder } from './controllers/CommandBuilder';
 import { AllyController } from './controllers/AllyController';
-import { EventReactor } from './controllers/EventReactor';
+import { EventReactor, type EventReactorHost } from './controllers/EventReactor';
 import { TutorialHintController } from './controllers/TutorialHintController';
 import { RoomBuilder } from './scene/RoomBuilder';
 import { Backdrop } from './scene/Backdrop';
@@ -965,7 +965,7 @@ export class Game {
     }
   }
 
-  actorAt(id: number): { hitFlash(dx?: number, dy?: number): void; x: number; y: number } | undefined {
+  actorAt(id: number): ReturnType<EventReactorHost['actorAt']> {
     return this.scene.actorAt(id);
   }
 

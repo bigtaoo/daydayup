@@ -144,6 +144,28 @@ funny is a lane auto-battler (units only face left/right); DayDayUp aims in **36
 
 Animation is time-driven on the **render clock**, not the sim clock. Sim is 30 Hz (`08`); art plays at any authoring fps and interpolates via `sampleClip`. Which clip plays is a pure function of `GameState` (moving? attacking? `hp<=0`?) each render frame — it holds no authoritative data.
 
+> **Firing is NOT a clip (2026-08-30, user report *"角色射击时，没有射击动画... 看起来非常死板"*).**
+> `attack` is authored in the three `char_*` bundles and has never been played, and the reason
+> it stayed that way is structural rather than an oversight: clips here are sampled WHOLE
+> (`RigSkin.playClip` swaps `this.clip` outright — there is no additive layer), and the four
+> ENEMY bundles ship no `attack` clip at all. So playing it would (a) do nothing for any mob,
+> and (b) for a hero, drop every bone the clip does not track back to rest for its duration —
+> orb-core's `attack` touches only `socket_r`, so the shell/eye/belly hover bob authored into
+> `idle` would snap to 0 the instant a shot went out and snap back 350 ms later. The starter
+> blaster's 6-tick (200 ms) cooldown is shorter than the clip, so held fire would pin the body
+> at bob 0 and release would pop it.
+>
+> What ships instead is `render/rigRecoil.ts`: a one-shot 0→1→0 envelope (150 ms, fast kick,
+> slower settle) layered **over** whatever clip is playing, triggered by `bullet_fired`'s
+> `ownerId` through `Actor.onFired`. It slides the active weapon module and its socket ring
+> back along the BARREL (aim space, which the authored clip's rig-space `translateX` could not
+> do) and leans the whole body a third as far. Because it moves the MOUNT rather than the
+> sprite, `muzzleLocal` recoils with it for free — the drawn barrel tip, the bullet's spawn
+> correction and the muzzle fx all follow the gun. One path covers all seven rigs.
+>
+> The authored `attack` clips are left in the bundles. They are still the right home for a real
+> per-character firing pose, once every rig has one and there is a blend to play it through.
+
 ## Atlas / spritesheet format
 
 - **Packed texture atlases** (Pixi spritesheet JSON + a single page image per skin, multi-page if it overflows max texture size). One atlas per skin keeps swaps to a single texture bind.

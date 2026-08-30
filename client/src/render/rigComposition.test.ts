@@ -28,7 +28,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { Texture } from 'pixi.js';
-import { PLAYER_BASE } from '@dd/engine';
+import { BASIC_ENEMY, PLAYER_BASE } from '@dd/engine';
 import { fpToPx } from '../game/coords';
 import { BODY_FILL, BODY_FILL_DEFAULT, RIG_DEFS } from './skinRegistry';
 import { CHAR_BUNDLES } from './preloadArt';
@@ -36,6 +36,7 @@ import { RigSkin } from './RigSkin';
 import { deserializeClip, type AnimationJson } from './taoBundle';
 import { KIND_DEFAULTS, WEAPON_DEFS, MODULE_SCALE, type WeaponVisualDef } from './weaponSkins';
 import { HELD_MOUNT_R, barrelReach, resolveWeaponMount } from './rigWeaponMount';
+import { RECOIL_BODY_PX, RECOIL_MODULE_PX } from './rigRecoil';
 import type { Rig } from './Rig';
 import type { RigSkinBundle } from './taoBundle';
 import type { AnimationClip, BoneDef, SpriteBinding, WorldPose } from './types';
@@ -480,5 +481,125 @@ describe('BODY_FILL — the recorded body art fill matches the shipped pixels', 
     // A shadow slightly too big is a look note; a missing one is a character that floats.
     expect(BODY_FILL_DEFAULT).toBe(1);
     expect(BODY_FILL['not-a-skin']).toBeUndefined();
+  });
+});
+
+/**
+ * The fire recoil, against the art that actually ships (2026-08-30).
+ *
+ * `rigRecoil.test.ts` pins the envelope and `RigSkin.test.ts` pins what it moves, but both run
+ * on a FAKE bundle where every binding scale is 1 — the exact blind spot this file's header
+ * describes. What only real data can answer is whether the authored kick DISTANCE is right for
+ * these seven bodies: it is one constant in rig authoring-px, applied to bodies whose drawn
+ * radii range from 27.6 to 50 of those px and whose rigs range from a 40 to a 70 reference
+ * radius. A number that reads well on the hero can be invisible on one rig and bury the gun in
+ * another, and no fake-bundle test can see either.
+ *
+ * Measured in the authored-table space (`WEAPON_DEFS` + the real PNG's IHDR), NOT through
+ * `getWeaponAnchor`/`getWeaponScale`, for the reason the held-mount block above documents:
+ * unpreloaded, those silently fall back to the KIND default and stop testing the real gun.
+ */
+describe('rig composition — the fire recoil against every shipped body', () => {
+  const ENEMY_GUN = WEAPON_DEFS.enemygun!;
+  const gunPath = ENEMY_GUN.path.replace(/^\//, '');
+  /** Anchor -> muzzle along the aim, in rig authoring-px, as `muzzleLocal` measures it. */
+  const gunForward =
+    barrelReach(pngWidth(gunPath), pngHeight(gunPath), ENEMY_GUN.anchor, ENEMY_GUN.rotationOffsetRad ?? 0)
+    * ENEMY_GUN.scale * MODULE_SCALE;
+  /** Anchor -> back of the housing, i.e. how much gun tucks INTO the body. */
+  const gunBackward = ENEMY_GUN.anchor.x * pngWidth(gunPath) * ENEMY_GUN.scale * MODULE_SCALE;
+
+  const HELD = BUNDLES.filter(({ name }) => resolveWeaponMount(RIG_DEFS[name]!.rig) === 'held');
+  const SOCKET = BUNDLES.filter(({ name }) => resolveWeaponMount(RIG_DEFS[name]!.rig) === 'socket');
+
+  // Every check here is stated at the PEAK of the envelope, and that is the worst case for all
+  // of them: the recoil pulls the module straight back down its own barrel, so the closer the
+  // gun gets to the body the more of it is behind the silhouette.
+  it.each(HELD)('$name: the barrel still clears the body at the peak of the recoil', ({ name }) => {
+    const drawnR = RIG_DEFS[name]!.rig.boneMap.get('body')!.bodyR! * BODY_FILL[name]!;
+    const tipAtPeak = drawnR * HELD_MOUNT_R - RECOIL_MODULE_PX + gunForward;
+    // A shot has to leave the silhouette on the frame it is fired — that is the one frame the
+    // muzzle flare, the sparks and the bullet's own spawn point are all anchored on. A margin,
+    // not a hairline: 1.2x is the same bar the rest-pose check next door uses.
+    expect(tipAtPeak, `${name}: barrel tip ${tipAtPeak.toFixed(1)} vs drawn radius ${drawnR}`)
+      .toBeGreaterThan(drawnR * 1.2);
+  });
+
+  it.each(HELD)('$name: the recoil never drives the housing through the body centre', ({ name }) => {
+    const drawnR = RIG_DEFS[name]!.rig.boneMap.get('body')!.bodyR! * BODY_FILL[name]!;
+    const housingBack = drawnR * HELD_MOUNT_R - RECOIL_MODULE_PX - gunBackward;
+    // Still on the near side of the body's own centre. Past 0 the gun would have slid out the
+    // FAR side of the creature, and the smallest shipped body (critter-core, drawn radius 35)
+    // is the one with the least room — 4 authoring px of it at the peak.
+    expect(housingBack, `${name}: housing back at peak, drawn radius ${drawnR}`).toBeGreaterThan(0);
+    // ...and still tucked in, so it goes on reading as carried rather than as floating alongside.
+    expect(housingBack).toBeLessThan(drawnR);
+  });
+
+  it.each(SOCKET)('$name: the orbiting module stays outside the core at the peak', ({ name }) => {
+    const rig = RIG_DEFS[name]!.rig;
+    const drawnR = rig.boneMap.get('shell')!.bodyR! * BODY_FILL[name]!;
+    // The socket path mounts on the bone's TIP, which FK fixes at `len` from the body's own
+    // tip; the recoil is the only thing that ever shortens that reach.
+    const anchorAtPeak = rig.boneMap.get('socket_r')!.len - RECOIL_MODULE_PX;
+    expect(anchorAtPeak, `${name}: module anchor at peak vs drawn radius ${drawnR}`).toBeGreaterThan(drawnR);
+  });
+
+  // A recoil smaller than a screen pixel is a recoil nobody sees — which IS the bug this pass
+  // exists to fix — and it is invisible to every other test, because they all work in authoring
+  // px where the constant is simply whatever it says it is.
+  it.each(BUNDLES)('$name: the kick survives the scale down to world px', ({ name }) => {
+    if (resolveWeaponMount(RIG_DEFS[name]!.rig) === 'none') return; // boss-core draws no gun
+    const actorR = fpToPx(name.startsWith('char_') ? PLAYER_BASE.radius : BASIC_ENEMY.radius);
+    // `Skin`'s own normalization: a rig's authoring px are scaled by radius / referenceRadius.
+    const toWorld = actorR / RIG_DEFS[name]!.referenceRadius;
+    expect(RECOIL_MODULE_PX * toWorld, `${name}: module kick in world px`).toBeGreaterThan(1);
+    expect(RECOIL_BODY_PX * toWorld, `${name}: body lean in world px`).toBeGreaterThan(0.3);
+    // ...and not so large it reads as the character being shoved rather than as a gun cycling:
+    // the kick stays under half the body's own drawn half-width.
+    const drawnHalfW = RIG_DEFS[name]!.referenceRadius * (BODY_FILL[name] ?? BODY_FILL_DEFAULT);
+    expect(RECOIL_MODULE_PX).toBeLessThan(drawnHalfW / 2);
+  });
+});
+
+/**
+ * The clip inventory that makes firing procedural rather than a clip (design/12's "Firing is
+ * NOT a clip"). This is a DATA claim, and the design note rests entirely on it: clips here are
+ * sampled WHOLE, so playing `attack` would blank every bone the clip does not track, and it
+ * would do nothing at all for a rig that ships without one.
+ *
+ * A tripwire rather than a coordinate check. If either fact below flips — an enemy bundle gains
+ * an `attack`, or the hero's `attack` starts carrying the bones `idle` bobs — the reason the
+ * recoil is an envelope has changed, and that decision deserves re-reading rather than silently
+ * standing on a premise that no longer holds.
+ */
+describe('rig composition — why firing is an envelope and not the authored attack clip', () => {
+  const clipsOf = (dir: string): Record<string, { keyframes: { bones: Record<string, unknown> }[] }> =>
+    readJson<AnimationJson>(`skins/${dir}/animation.json`).animations as unknown as
+      Record<string, { keyframes: { bones: Record<string, unknown> }[] }>;
+
+  it('the four enemy bundles ship no attack clip at all — an envelope is the only path that covers them', () => {
+    const enemies = BUNDLES.filter(({ name }) => !name.startsWith('char_'));
+    expect(enemies.map(b => b.name).sort())
+      .toEqual(['boss-core', 'brute-core', 'critter-core', 'floater-core']);
+    for (const { name, dir } of enemies) {
+      expect(Object.keys(clipsOf(dir)).sort(), `${name} clip inventory`)
+        .toEqual(['death', 'hurt', 'idle', 'spawn']);
+    }
+  });
+
+  it('the hero attack clip exists but tracks ONLY the socket — playing it would blank the hover bob', () => {
+    for (const { name, dir } of BUNDLES.filter(b => b.name.startsWith('char_'))) {
+      const clips = clipsOf(dir);
+      expect(clips.attack, `${name} ships an attack clip`).toBeDefined();
+      const bonesIn = (clip: string): string[] =>
+        [...new Set(clips[clip]!.keyframes.flatMap(k => Object.keys(k.bones)))].sort();
+      // The whole argument in one assertion: `idle` animates the body parts, `attack` does not
+      // touch a single one of them, and a whole-clip swap therefore drops them all to rest.
+      expect(bonesIn('attack')).toEqual(['socket_r']);
+      const dropped = bonesIn('idle').filter(b => !bonesIn('attack').includes(b));
+      expect(dropped, `${name}: bones idle animates that attack would blank`).toContain('shell');
+      expect(dropped.length).toBeGreaterThan(2);
+    }
   });
 });

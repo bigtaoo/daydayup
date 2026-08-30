@@ -115,6 +115,7 @@ function fakeCtx() {
 function fakeFx(): FxController {
   return {
     flash: vi.fn(),
+    muzzleFlare: vi.fn(),
     addShake: vi.fn(),
     addHitStop: vi.fn(),
     pulseChromatic: vi.fn(),

@@ -108,6 +108,64 @@ describe('Emission — spread (WeaponFireSystem)', () => {
   });
 });
 
+/**
+ * `bullet_fired.ownerId` (2026-08-30). The render layer needs to know WHO fired, not just
+ * where: the muzzle fx are anchored on the shooter's drawn barrel tip and the recoil has to
+ * play on that one rig (`client/game/controllers/EventReactor`). fx-only and never read back
+ * by a later system, exactly like the rest of the event queue (design/08) — so this is the
+ * kind of additive field that ships without an ENGINE_VERSION bump, and what has to be pinned
+ * is that it names the real shooter on every emission path rather than defaulting to 0.
+ */
+describe('Emission — every bullet_fired names its shooter', () => {
+  const fired = (s: GameState) => s.events.filter((e) => e.type === 'bullet_fired');
+
+  it('reports the firing PLAYER, not a bullet id or a default', () => {
+    const s = state();
+    const p = s.players[0]!;
+    p.weapon = makeWeapon(BLASTER_SIM);
+    p.firing = true;
+    new WeaponFireSystem().tick(s);
+    expect(fired(s)).toHaveLength(1);
+    expect(fired(s)[0]!.ownerId).toBe(p.id);
+    // Same id the projectile itself carries, so `Scene` and `EventReactor` resolve the same
+    // actor view for the same shot.
+    expect(s.projectiles[0]!.ownerId).toBe(p.id);
+  });
+
+  it('reports the firing ENEMY — a mob’s shots recoil the same way', () => {
+    const s = state();
+    const e = addEnemy(s, 100, 100);
+    e.weapon = makeWeapon(BLASTER_SIM);
+    e.firing = true;
+    new WeaponFireSystem().tick(s);
+    expect(fired(s)).toHaveLength(1);
+    expect(fired(s)[0]!.ownerId).toBe(e.id);
+  });
+
+  it('stamps EVERY pellet of a multi-pellet shot, not just the first', () => {
+    const s = state();
+    const p = s.players[0]!;
+    p.weapon = makeWeapon(SCATTERGUN_SIM);
+    p.firing = true;
+    const events = (new WeaponFireSystem().tick(s), fired(s));
+    expect(events).toHaveLength(SCATTERGUN_SIM.bullets);
+    for (const e of events) expect(e.ownerId).toBe(p.id);
+  });
+
+  it('tells two simultaneous shooters apart in the same frame', () => {
+    const s = state();
+    const p = s.players[0]!;
+    p.weapon = makeWeapon(BLASTER_SIM);
+    p.firing = true;
+    const e = addEnemy(s, 300, 300);
+    e.weapon = makeWeapon(BLASTER_SIM);
+    e.firing = true;
+    new WeaponFireSystem().tick(s);
+    expect(fired(s).map((ev) => ev.ownerId).sort((a, b) => a - b)).toEqual([p.id, e.id].sort((a, b) => a - b));
+    expect(p.id).not.toBe(e.id);
+  });
+});
+
 describe('Emission — radial (WeaponFireSystem)', () => {
   it('fires `bullets` pellets in an even ring, deterministically, drawing NO combat PRNG', () => {
     const s = state();

@@ -7789,3 +7789,143 @@ Two display objects and two draw calls, fixed, whatever the map — it computes 
 all, because the floor and the walls paint over the plane and what is left showing IS the void. No
 new PNG: the swatch is generated through `shadeRamp.bakedField`, which matters against WeChat's
 3.41 MB of a 4.00 MB main package.
+
+## The gun never moved, and the flash was aimed at the floor (2026-08-30, client + engine)
+
+One user report, three symptoms: *"角色射击时，没有射击动画，枪口也没有射击特效，看起来非常死板，
+而且子弹出现的也很突兀。"* All three were real, and none of them was a missing feature — every
+piece already existed and each was wired to the wrong thing.
+
+### 1. The muzzle fx were 12–14 world px from the muzzle
+
+`Particles.muzzleFlame`/`shellCasing` and a radial `flash()` have fired on `bullet_fired` since
+2026-07-26. They were anchored on the event's own `gx/gy` — the SIM's muzzle, i.e.
+`RangedSimSpec.muzzleOffset` along the aim ray on the GROUND plane — lifted by a hardcoded
+12 px. That is not where the rig draws the gun, and the gap is not subtle: sampling the
+correction `Scene` already applies to the bullet VIEW (`Bullet.setMuzzleOrigin`, shipped
+2026-08-17 for exactly this reason) on real shots in a live room gives **12.4 / 14.2 / 14.3
+world px**, most of a body radius, ~35 screen px at the room camera's measured 2.67x. So the fx
+burst beside the character's middle and the report reads correctly: there was no muzzle effect,
+because there was nothing at the muzzle.
+
+The fix is to stop having two answers to "where is the gun". `bullet_fired` gained `ownerId`
+(fx-only, no `ENGINE_VERSION` bump — see `engine/ENGINE_VERSION_HISTORY.md` for the argument),
+`EventReactor` resolves the shooter's view and anchors flare, sparks and casing on
+`Actor.muzzlePos()` — the same drawn barrel tip the bullet has spawned from for two weeks.
+A skin that mounts no module (design/13's boss, the Graphics placeholder, the frames before a
+weapon texture preloads) still reports null and keeps the old sim position exactly.
+
+### 2. The flash was round, and outlived the weapon's own cooldown
+
+`flash()` is a radial glow that EXPANDS over 170 ms. A gun's flash carries direction and is a
+single frame of real light; and at 170 ms the starter blaster — 6-tick / 200 ms cooldown — has
+one on screen essentially permanently, which reads as a glowing barrel rather than as shots.
+`FxController.muzzleFlare` replaces it at this event: a forward cone, a shorter perpendicular
+cross-flash, a near-white core so the flare has a value peak instead of one flat hue, rotated
+onto the shot direction, collapsing over 85 ms. `updateFx` gained per-child `_lifeMax`/`_grow`
+to allow that (both default to the old values, so `flash()`/`trailDot()` are untouched); a
+negative `_grow` is the whole difference between "a gun fired" and "something is glowing".
+`muzzleFlame` also split into two populations — fast collimated embers that carry the shot's
+direction, slow wide gas behind them. The single mid-speed ±0.45 rad spray it was is the
+average of the two and looks like neither.
+
+### 3. "No shooting animation" — and why the answer is not the `attack` clip
+
+An `attack` clip is authored in all three `char_*` bundles and has never been played. It stays
+unplayed, and that is the finding rather than the shortcut: clips here are sampled WHOLE
+(`RigSkin.playClip` swaps `this.clip` outright, no additive layer), and the four ENEMY bundles
+ship no `attack` clip at all. Playing it would do nothing for any mob, and for a hero would drop
+every bone the clip does not track back to rest for its duration — orb-core's `attack` touches
+only `socket_r`, so `idle`'s hover bob would snap to 0 on every shot and snap back 350 ms later,
+and at a 200 ms cooldown held fire would pin the body at bob 0 and release would pop it. The
+clip also kicks in RIG space (`translateX: -10`), not along the aim, and `activeModuleMount`
+never read its translation, so the mounted gun would not have moved even where it did play.
+
+`render/rigRecoil.ts` is a one-shot 0→1→0 envelope (150 ms, 22% kick / 78% settle) layered over
+whatever clip is playing. It slides the active module and its socket ring back along the BARREL
+and leans the body a third as far. Because the offset is applied to the MOUNT and not to the
+sprite afterwards, `muzzleLocal` recoils with it for free — barrel tip, bullet spawn correction
+and muzzle fx all follow the gun. One path, all seven rigs, no authoring change.
+
+### 4. The bullet was drawn identically on the frame it was born
+
+Nothing in the picture separated "fired" from "in flight". `Bullet` now throws the core a little
+oversize and settles it, with a bright additive flare riding the round out of the barrel and
+collapsing — 90 ms, finished inside `MUZZLE_EASE_MS`'s own 120 ms correction, so the whole
+"leaving the gun" read is over in the first few frames and the round is drawn exactly as before
+for the rest of its life. Both cues end at *exactly* scale 1: a pop that settles anywhere else is
+a bullet permanently the wrong size against its own hitbox, which is what the tests pin.
+
+### Verified live, and where verification stopped
+
+Driven through `window.__game` against a real dungeon run (the pane cannot present frames, so
+pixel readback is not evidence here — the known dead end recorded in the 2026-08-18 pass), what
+was measured instead is the render tree itself:
+
+- Real `bullet_fired` events off real enemy fire carry an `ownerId` that resolves to a live
+  `Actor` view (4/4 sampled, ids 4 and 9 against a roster of 8).
+- After one shot at aim 0.893 rad, the module kicks **-6.25** authoring px in x at the peak
+  (`cos(0.893) x 10` = 6.27 ✓), the drawn muzzle **-3.25** world px, the body **-1.87**, and all
+  three read exactly 0 again by 150 ms with the render clock as the only input.
+- The flare lands at `muzzlePos()` to the pixel, rotated to the aim, additive.
+- Fresh bullet views carry `coreScale 1.6`, flare visible, `popMs` counting down.
+- Zero console errors, zero dev-server errors.
+
+### Cost and coverage
+
+Two new files (`render/rigRecoil.ts`, its test), one new fx display object per shot with its own
+85 ms transient light, two extra particles per burst at budget 1, and one extra `Graphics` per
+bullet view (the departure flare, hidden rather than destroyed once spent — Pixi early-outs on
+an invisible child, and a bullet-hell frame pays a hidden node, not a draw call). **+78 tests**:
+`rigComposition` (18, over the REAL shipped bundles — see the battery below), `rigRecoil` (10),
+`rigWeaponMount` (10), `RigSkin` (7), `FxController` (7), `EventReactor` (6), `Bullet` (7),
+`Skin` (5), `Actor` (3), `Particles` (1, that the two populations are not one spray) and
+`engine/systems/ballistics` (4, the `ownerId` contract). Typecheck and the 500-line gate clean —
+`RigSkin.ts` was at 490 and paid for the change by moving `muzzleLocal`'s geometry to
+`rigWeaponMount.ts`, where `barrelReach` and the rest of the mount math already live.
+
+### The battery, and the two tests that were not evidence
+
+Per this repo's convention for a visual fix, each half was reverted and the suite re-run rather
+than assumed. **18 mutants, 16 killed on the first pass, 2 survivors — and both survivors were
+real holes rather than equivalent mutants:**
+
+| survivor | why it lived |
+|---|---|
+| `muzzleLocal` drops `+ view.position` | The muzzle test asserted a DIRECTION (`kicked.x < rest.x`), and the 10 px module kick swamps the 3 px body lean — so a barrel tip that had stopped carrying the body's own displacement still moved backwards and still passed. The fx and the next shot's spawn correction both read that point, so it is a real ~1 world px mis-anchor during every recoil. |
+| `SPAWN_POP_MS = 90` -> `0.0001` | The "starts oversize" test samples at `interpolate(1, 0)`, where the duration cancels out of the ease entirely. A pop shorter than one frame — i.e. no pop at all — passed it unchanged. |
+
+The second is the more instructive one: **`dt = 0` is a convenient sampling point and a blind
+one**, because every duration constant in a time-normalized ease divides out at t=0. Both are
+now pinned by arithmetic instead of by direction — the muzzle must move exactly
+`RECOIL_MODULE_PX + RECOIL_BODY_PX`, and the pop must still be plainly oversize after a real
+16.7 ms *and* 33.3 ms frame, and take 4–11 frames to settle.
+
+A second battery over the new tests (the two former survivors, plus retunes the first battery
+could not generate — a sub-pixel kick, a kick large enough to bury the gun, a `trailDot` that
+silently inherits the flare's short lifetime, a volley that recoils once instead of per pellet,
+a `muzzleAnchor` that forgets the wrapper scale, and an enemy bundle "gaining" an `attack`
+clip) killed **10 of 10**.
+
+### What only the real bundles could answer
+
+Every recoil test above this point runs on a FAKE bundle where each binding scale is 1 — the
+blind spot `rigComposition.test.ts` exists for. The kick is ONE constant in rig authoring-px
+applied to seven bodies whose drawn radii span 27.6–50 of those px, so it was checked against
+the shipped PNGs and `WEAPON_DEFS`, at the PEAK of the envelope (the worst case, since the
+recoil pulls the module back down its own barrel):
+
+- **The barrel still clears every body.** Tip-to-drawn-radius goes 1.81–2.15x at rest to
+  **1.61–1.86x at the peak** — a shot leaves the silhouette on the frame it is fired, which is
+  the one frame the flare, the sparks and the bullet spawn are all anchored on.
+- **The housing never crosses the body centre.** The smallest shipped body (critter-core, drawn
+  radius 35) has the least room and keeps 4 authoring px of it.
+- **The kick survives the scale down to world px**: 4.0 world px on a hero, 1.2 for the body
+  lean — 11–16 screen px at the room camera's measured 2.67–4x. A recoil under a pixel is a
+  recoil nobody sees, and that is invisible to every test working in authoring px.
+
+Two more pin the DATA the design rests on, as a tripwire rather than a coordinate: the four
+enemy bundles ship no `attack` clip at all (`idle`/`hurt`/`death`/`spawn`), and the hero's
+`attack` tracks `socket_r` and nothing else — so a whole-clip swap really would blank the
+shell/eye/belly that `idle` bobs. If either flips, the reason firing is an envelope has changed
+and design/12's note deserves re-reading rather than standing on a premise that no longer holds.

@@ -100,17 +100,35 @@ export class ParticleSystem {
 
   // ---- named spawners (design/01 milestone 4) ----
 
-  /** A quick warm burst at the muzzle, jittered around the fire direction. */
+  /**
+   * The burst at the muzzle, thrown along the fire direction. Two populations, because one
+   * was what made this read as a vague smudge beside the character (2026-08-30 pass): fast
+   * near-collimated EMBERS that sell the direction of the shot, and slower, wider, dimmer
+   * GAS that lingers a beat behind them. A single mid-speed, ±0.45 rad spray — what this was
+   * until now — is the average of the two and looks like neither.
+   *
+   * `FxController.muzzleFlare` is the bright directional flash itself; this is the debris
+   * around it. Both are anchored on the rig's DRAWN barrel tip, not the sim's muzzle.
+   */
   muzzleFlame(x: number, y: number, facingRad: number, color: number) {
-    const count = this.scaled(3);
-    for (let i = 0; i < count; i++) {
-      const spread = (Math.random() - 0.5) * 0.9;
-      const speed = 90 + Math.random() * 70;
-      const a = facingRad + spread;
+    const embers = this.scaled(3);
+    for (let i = 0; i < embers; i++) {
+      const a = facingRad + (Math.random() - 0.5) * 0.34;
+      const speed = 150 + Math.random() * 120;
       this.spawn({
         x, y, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
-        color, size: 3 + Math.random() * 2, lifeMs: 70 + Math.random() * 50,
-        additive: true, alpha: 0.9,
+        color, size: 2 + Math.random() * 2, lifeMs: 60 + Math.random() * 60,
+        additive: true, alpha: 0.95,
+      });
+    }
+    const gas = this.scaled(2);
+    for (let i = 0; i < gas; i++) {
+      const a = facingRad + (Math.random() - 0.5) * 1.3;
+      const speed = 35 + Math.random() * 55;
+      this.spawn({
+        x, y, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
+        color, size: 4 + Math.random() * 3, lifeMs: 130 + Math.random() * 90,
+        additive: true, alpha: 0.35,
       });
     }
   }
