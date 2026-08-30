@@ -82,7 +82,7 @@ export class LoginScreen {
     this.logoutBtn = new Button(t('auth.logout'), { w: 160, h: 36, fontSize: 13, color: 0x742a2a });
     this.logoutBtn.onTap = () => void this.doLogout();
     this.logoutBtn.setIcon(getUiTexture('icon_logout'));
-    this.backBtn = new Button(t('auth.back'), { w: 120, h: 32, fontSize: 13 });
+    this.backBtn = new Button(t('auth.back'), { w: 120, h: 32, fontSize: 13, sound: 'ui.back' });
     this.backBtn.onTap = () => this.onBack?.();
     this.backBtn.setIcon(getUiTexture('icon_back'));
 

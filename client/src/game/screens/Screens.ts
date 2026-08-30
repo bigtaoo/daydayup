@@ -60,7 +60,7 @@ export class Screens {
     // "the button this screen wants you to press").
     this.confirmBtn = new Button(t('results.confirmButton'), { w: 220, h: 44, fontSize: 17, color: 0x2f855a, borderColor: 0x68d391 });
     this.confirmBtn.onTap = () => this.onConfirm?.();
-    this.menuBtn = new Button(t('results.mainMenuButton'), { w: 150, h: 32, fontSize: 13 });
+    this.menuBtn = new Button(t('results.mainMenuButton'), { w: 150, h: 32, fontSize: 13, sound: 'ui.back' });
     this.menuBtn.onTap = () => this.onMenu?.();
 
     this.resultIcon.anchor.set(0.5);

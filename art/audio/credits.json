@@ -688,10 +688,94 @@
      "bytes": 3420
     }
    ]
+  },
+  {
+   "cue": "ui.tap",
+   "variants": 1,
+   "total_bytes": 990,
+   "gate_class": "ui",
+   "rationale": "43 ms at 2629 Hz: the shortest clean file in the pack that still has a body. The 10 ms click_00x pair carries measurable DC bias, and a 10 ms transient peak-matched against a 190 ms buzz reads far quieter than its peak claims. \"select\" is the pack's own name for a selection blip.",
+   "files": [
+    {
+     "file": "audio/ui-tap_00.mp3",
+     "source": "interface-sounds/select_002.ogg",
+     "source_pack": "interface-sounds",
+     "source_channels": 2,
+     "sample_rate": 22050,
+     "duration_ms": 43.3,
+     "trimmed_ms": 0.0,
+     "capped_ms": 0.0,
+     "gain_applied_db": -19.95,
+     "bytes": 990
+    }
+   ]
+  },
+  {
+   "cue": "ui.back",
+   "variants": 1,
+   "total_bytes": 1224,
+   "gate_class": "ui",
+   "rationale": "70 ms at 1833 Hz - the lowest centroid among the clean short files, so leaving a screen sits UNDER entering one. Named for the job by the pack itself.",
+   "files": [
+    {
+     "file": "audio/ui-back_00.mp3",
+     "source": "interface-sounds/back_002.ogg",
+     "source_pack": "interface-sounds",
+     "source_channels": 1,
+     "sample_rate": 16000,
+     "duration_ms": 55.5,
+     "trimmed_ms": 14.3,
+     "capped_ms": 0.0,
+     "gain_applied_db": -19.95,
+     "bytes": 1224
+    }
+   ]
+  },
+  {
+   "cue": "ui.toggle",
+   "variants": 1,
+   "total_bytes": 1728,
+   "gate_class": "ui",
+   "rationale": "66 ms at 6399 Hz with a 0.1 ms attack: brightest and shortest of the toggle family (its siblings run 139 ms, which outlasts a settings tap). A state change is the one UI event that should read as \"something happened\".",
+   "files": [
+    {
+     "file": "audio/ui-toggle_00.mp3",
+     "source": "interface-sounds/toggle_004.ogg",
+     "source_pack": "interface-sounds",
+     "source_channels": 1,
+     "sample_rate": 48000,
+     "duration_ms": 59.8,
+     "trimmed_ms": 6.3,
+     "capped_ms": 0.0,
+     "gain_applied_db": -21.0,
+     "bytes": 1728
+    }
+   ]
+  },
+  {
+   "cue": "ui.denied",
+   "variants": 1,
+   "total_bytes": 3120,
+   "gate_class": "ui",
+   "rationale": "192 ms at 4270 Hz, crest 12.2 - a sustained buzz rather than a transient, which is what separates \"refused\" from \"pressed\". The only error file that is both mono and clean: error_002 clips at +0.6 dBFS, error_003/005/006 run 500 ms behind 10-35 ms of lead, error_001/004 are dual-mono.",
+   "files": [
+    {
+     "file": "audio/ui-denied_00.mp3",
+     "source": "interface-sounds/error_007.ogg",
+     "source_pack": "interface-sounds",
+     "source_channels": 1,
+     "sample_rate": 48000,
+     "duration_ms": 192.0,
+     "trimmed_ms": 0.0,
+     "capped_ms": 0.0,
+     "gain_applied_db": -19.11,
+     "bytes": 3120
+    }
+   ]
   }
  ],
  "kept_on_synth": {
   "status.burn": "No fire crackle exists in any of the six packs. The closest family (scratch) centres at 6401-12076 Hz against a 2389 Hz target - a high scrape, not a burn - and every other candidate is a 5-second engine loop. The synth voice is a filtered noise burst at 1800 Hz, which is already the right shape."
  },
- "processing": "mono + trim(-40 dBFS, faded) + per-cue duration cap (faded) + smallest-bytes MP3 encode among bandwidth-legal sample rates + peak-match to the replaced synth cue. See tools/audio-pipeline/process_all.py."
+ "processing": "mono + trim(-40 dBFS, faded) + per-cue duration cap (faded) + smallest-bytes MP3 encode among bandwidth-legal sample rates + peak-match to the replaced synth cue. See tools/audio-pipeline/process_all.py. The four ui.* cues run the same steps through tools/audio-pipeline/process_ui.py, whose only difference is where the peak-match reference comes from: a UI synth voice is a single tone(), so its peak IS its gain argument and needs no re-render to measure."
 }

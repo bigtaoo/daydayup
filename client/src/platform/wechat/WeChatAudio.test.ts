@@ -163,7 +163,7 @@ describe('WeChatAudio — preload() (design/11 boot preload)', () => {
     await audio.preload();
     expect((readBinaryAsset as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]).sort())
       .toEqual(allSfxPaths().slice().sort());
-    expect(instances[0]!.decodeAudioData).toHaveBeenCalledTimes(46);
+    expect(instances[0]!.decodeAudioData).toHaveBeenCalledTimes(50);
   });
 
   it('plays a decoded sample once resumed, instead of the synth voice', async () => {

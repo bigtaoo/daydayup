@@ -1,6 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { Container, Graphics, Text, Texture } from 'pixi.js';
 import { Panel, Button, Slider } from './widgets';
+import { setUiAudio } from '../../audio/uiSound';
+import type { AudioBus } from '../../platform/types';
 
 // Panel's border option (design/10 legibility fix, 2026-08-02): a flat near-black fill
 // at low alpha reads as invisible over the app's own black backdrop — borderColor
@@ -260,5 +262,152 @@ describe('Slider — drag lifecycle', () => {
     fire(surface, 'pointercancel');
     move(surface, 200);
     expect(s.get()).toBe(0);
+  });
+});
+
+/**
+ * UI sound (design/11's screen-layer cues, added 2026-08-30). These widgets are where ~40
+ * buttons across ~14 screens get their click, so what is pinned here is the DEFAULT (audible
+ * without opting in) and the two opt-outs that carry meaning, plus the call ORDER, which is
+ * not cosmetic: the settings mute button is one of these, and its handler is what applies the
+ * new volume.
+ */
+describe('Button — the UI cue', () => {
+  const emitTap = (view: { emit: (event: string) => void }) => view.emit('pointertap');
+
+  /** Records cues in the order they reach the bus, interleaved with anything the test pushes
+   *  itself — the sequence is the assertion in the ordering case below. */
+  function recorder() {
+    const log: string[] = [];
+    const bus: AudioBus = {
+      preload: async () => {},
+      play: (cue) => { log.push(cue); },
+      setSfxVolume: () => {},
+      setMusicVolume: () => {},
+      resume: () => {},
+    };
+    setUiAudio(bus);
+    return log;
+  }
+
+  afterEach(() => setUiAudio(null));
+
+  it('plays ui.tap by default, once per press', () => {
+    const log = recorder();
+    const b = new Button('PLAY', { w: 100, h: 40 });
+    emitTap(b.view);
+    emitTap(b.view);
+    expect(log).toEqual(['ui.tap', 'ui.tap']);
+  });
+
+  it('plays a button’s own cue when it means something else', () => {
+    const log = recorder();
+    emitTap(new Button('BACK', { w: 100, h: 40, sound: 'ui.back' }).view);
+    emitTap(new Button('MUTE', { w: 100, h: 40, sound: 'ui.toggle' }).view);
+    expect(log).toEqual(['ui.back', 'ui.toggle']);
+  });
+
+  it('stays silent when the OUTCOME decides the sound (forge craft rows, ACQUIRE)', () => {
+    // Not "this button has no sound" — `ForgeActions` plays ui.tap or ui.denied depending on
+    // whether the transaction did anything, which the widget cannot know.
+    const log = recorder();
+    const b = new Button('CRAFT', { w: 100, h: 40, sound: 'silent' });
+    b.onTap = () => {};
+    emitTap(b.view);
+    expect(log).toEqual([]);
+  });
+
+  it('runs onTap BEFORE the cue, so muting ends in silence instead of a beep', () => {
+    // The settings mute button applies the new volume in `onTap`. Reversed, the click would be
+    // played at the OLD volume: audible when you mute, silent when you unmute — backwards.
+    const log = recorder();
+    const b = new Button('MUTE', { w: 100, h: 40, sound: 'ui.toggle' });
+    b.onTap = () => log.push('handler');
+    emitTap(b.view);
+    expect(log).toEqual(['handler', 'ui.toggle']);
+  });
+
+  it('still clicks with no handler attached', () => {
+    // A button wired to nothing is a UI bug, but it should not also be a silent one — the
+    // press is still feedback that the hit area was found.
+    const log = recorder();
+    emitTap(new Button('X', { w: 40, h: 40 }).view);
+    expect(log).toEqual(['ui.tap']);
+  });
+
+  it('makes no sound at all with no bus attached (every widget test, and a headless boot)', () => {
+    setUiAudio(null);
+    const b = new Button('X', { w: 40, h: 40 });
+    expect(() => emitTap(b.view)).not.toThrow();
+  });
+});
+
+describe('Slider — the commit cue', () => {
+  const down = (view: { emit: (e: string, ev?: unknown) => void }, x: number) =>
+    view.emit('pointerdown', { global: { x, y: 0 } });
+  const move = (target: { emit: (e: string, ev?: unknown) => void }, x: number) =>
+    target.emit('globalpointermove', { global: { x, y: 0 } });
+  const fire = (target: { emit: (e: string) => void }, name: string) => target.emit(name);
+
+  function recorder() {
+    const log: string[] = [];
+    setUiAudio({
+      preload: async () => {}, play: (cue) => { log.push(cue); },
+      setSfxVolume: () => {}, setMusicVolume: () => {}, resume: () => {},
+    });
+    return log;
+  }
+
+  afterEach(() => setUiAudio(null));
+
+  it('ticks once on release, not once per pixel of travel', () => {
+    // The tick is also the level preview: it plays through the bus the slider just changed,
+    // so releasing the SFX slider is how you hear what you set it to.
+    const log = recorder();
+    const s = new Slider({ w: 200 });
+    down(s.view, 40);
+    move(s.view, 80);
+    move(s.view, 120);
+    expect(log).toEqual([]); // nothing during the drag
+    fire(s.view, 'pointerup');
+    expect(log).toEqual(['ui.toggle']);
+  });
+
+  it('ticks on a release that lands outside the track', () => {
+    const log = recorder();
+    const s = new Slider({ w: 200 });
+    down(s.view, 40);
+    fire(s.view, 'pointerupoutside');
+    expect(log).toEqual(['ui.toggle']);
+  });
+
+  it('says nothing when an OS interruption cancels the drag', () => {
+    // An incoming call is not the player committing a value.
+    const log = recorder();
+    const s = new Slider({ w: 200 });
+    down(s.view, 40);
+    fire(s.view, 'pointercancel');
+    expect(log).toEqual([]);
+  });
+
+  it('only the slider being dragged ticks, though all three share a drag surface', () => {
+    // Settings.ts gives its three sliders one `dragSurface`, so EVERY pointerup on that screen
+    // reaches all three. Without the `dragging` guard, one release would tick three times.
+    const log = recorder();
+    const surface = new Container();
+    const master = new Slider({ w: 200, dragSurface: surface });
+    const sfx = new Slider({ w: 200, dragSurface: surface });
+    const music = new Slider({ w: 200, dragSurface: surface });
+    expect([master, sfx, music]).toHaveLength(3);
+    down(sfx.view, 100);
+    fire(surface, 'pointerup');
+    expect(log).toEqual(['ui.toggle']);
+  });
+
+  it('a release with no drag in progress is silent', () => {
+    const log = recorder();
+    const s = new Slider({ w: 200 });
+    fire(s.view, 'pointerup');
+    expect(log).toEqual([]);
   });
 });

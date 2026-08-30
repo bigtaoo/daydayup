@@ -26,7 +26,7 @@ const ART_AUDIO = new URL('../../../art/audio/', import.meta.url);
 // Total budget for the SFX set. It sits inside the WeChat main package (design/04's 4 MB),
 // which `build/checkWeChatPackage.mjs` gates as a whole; this is the finer drift check, so
 // audio creeping upward shows up here as itself rather than as an anonymous package overrun.
-// The set is 95.0 kB at the time of writing.
+// The set is 101.9 kB at the time of writing (46 engine cues + 4 UI, 2026-08-30).
 const AUDIO_BUDGET_BYTES = 160 * 1024;
 
 // Every cue the game can fire, from `audio/cueCatalogue.ts` — which the compiler holds
@@ -44,7 +44,14 @@ const COMBAT_CUES = new Set<string>([
   'status.burn', 'status.chill', 'status.shock', 'status.poison',
 ]);
 
-const MAX_MS = { sfx: 500, feedback: 800 } as const;
+// The third class, added with the UI cues (2026-08-30). It is the tightest of the three on
+// length and the loosest on peak: a button click is the one cue the player triggers directly,
+// so a tail that outlasts the press reads as lag, while the level is a mix decision made in
+// the voice table rather than something an asset gate should second-guess.
+// `ui.*` is a prefix rule, not a list, so a fifth UI cue inherits it.
+const isUiCue = (cue: string): boolean => cue.startsWith('ui.');
+
+const MAX_MS = { sfx: 500, feedback: 800, ui: 350 } as const;
 
 interface CreditsFile {
   file: string;
@@ -248,12 +255,12 @@ describe('the shipped SFX set', () => {
     expect(total).toBeLessThanOrEqual(AUDIO_BUDGET_BYTES);
   });
 
-  it('holds combat cues to the voice cap and feedback cues to their own', () => {
+  it('holds combat cues to the voice cap, and feedback and UI cues to their own', () => {
     // design/11 caps simultaneous voices, so a long tail on a cue that fires constantly is
     // the expensive kind of mistake. `muzzle` and `death` are capped by the pipeline for
     // exactly this reason.
     for (const c of credits.cues) {
-      const expected = COMBAT_CUES.has(c.cue) ? 'sfx' : 'feedback';
+      const expected = isUiCue(c.cue) ? 'ui' : COMBAT_CUES.has(c.cue) ? 'sfx' : 'feedback';
       expect(c.gate_class, `${c.cue} gate class`).toBe(expected);
       for (const f of c.files) {
         expect(f.duration_ms, `${f.file} duration`).toBeLessThanOrEqual(MAX_MS[expected]);

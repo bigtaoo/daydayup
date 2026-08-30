@@ -150,6 +150,9 @@ CUE_CLASS = {
     "muzzle": "sfx", "impact": "sfx", "deflect": "sfx", "clash": "sfx",
     "shield-break": "sfx", "status": "sfx",
     "pickup": "feedback", "death": "feedback", "wave-clear": "feedback", "win": "feedback",
+    # The screen-layer cues (design/11 UI cues, 2026-08-30). One prefix covers all of them,
+    # the same way "status"/"pickup" do, so a fifth `ui.*` cue inherits the gate.
+    "ui": "ui",
 }
 
 

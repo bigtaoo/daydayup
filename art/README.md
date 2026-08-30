@@ -2,7 +2,7 @@
 
 > **Audio lives alongside this, under [`art/audio/`](audio/README.md)** — same convention (source
 > and licence paperwork here, the processed copy under `client/public/`), different medium. As of
-> 2026-08-27 it holds the CC0 source behind 46 shipped SFX assets plus `credits.json` /
+> 2026-08-30 it holds the CC0 source behind 50 shipped SFX/UI assets plus `credits.json` /
 > `packs.json`; nothing loads them yet (`design/11`).
 
 > **Direction locked (2026-07-23):** flat-cel orb-core hero + universal-mount weapons +

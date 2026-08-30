@@ -1,6 +1,7 @@
 import { Container, Graphics, Sprite } from 'pixi.js';
 import type { WeaponSimSpec } from '@dd/engine';
 import { getWeaponTexture } from '../../render/weaponSkins';
+import { playUiCue } from '../../audio/uiSound';
 import { rarityColor } from '../theme';
 
 /**
@@ -29,7 +30,13 @@ export class WeaponSlotChip {
     this.view.addChild(this.chip);
     this.view.eventMode = 'static';
     this.view.cursor = 'pointer';
-    this.view.on('pointertap', () => this.onTap?.());
+    // Sounded like a Button (widgets.ts) even though it is not one: it is a HUD control the
+    // player presses mid-fight, and a swap that makes no sound is the one case where "did it
+    // register?" actually costs something.
+    this.view.on('pointertap', () => {
+      this.onTap?.();
+      playUiCue('ui.tap');
+    });
     // Same double-fire guard Button uses (widgets.ts) — harmless here since nothing
     // else currently sits under the HUD panel, but keeps the convention consistent.
     this.view.on('pointerdown', (e) => e.stopPropagation());

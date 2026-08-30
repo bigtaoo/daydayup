@@ -5,11 +5,12 @@
  * conventions) through the exact craft/cycle/acquire/clear/browse transactions
  * Game.ts used to inline.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { DOMAdapter } from 'pixi.js';
 import { defaultMetaState, purchasableBlueprints, MemoryMetaStore, type MetaState } from '../../meta';
 import { Forge } from '../screens/Forge';
 import { ForgeActions } from './ForgeActions';
+import { setUiAudio } from '../../audio/uiSound';
 
 // `Forge.render()` reads `Text.height` to flow its layout, which lazily measures text
 // on a real `<canvas>` 2D context — absent under this repo's plain-node vitest
@@ -134,5 +135,73 @@ describe('ForgeActions', () => {
 
     expect(forge.selectedIndex).not.toBe(before);
     expect(store.load()).toEqual(defaultMetaState()); // untouched
+  });
+});
+
+/**
+ * The UI cue this controller owns (design/11 UI cues, 2026-08-30). Every other button in the
+ * client gets its click from the widget (`ui/widgets.ts`), because pressing it always does
+ * something. These two do not: a craft can be unaffordable, locked or on a full loadout, and
+ * ACQUIRE can have nothing left to buy. So both are built `sound: 'silent'` and the sound is
+ * chosen HERE, from the outcome — otherwise a press that changes nothing is audibly identical
+ * to one that works, which is the state this pass found the forge in.
+ */
+describe('ForgeActions — the UI cue follows the outcome', () => {
+  function recorder() {
+    const log: string[] = [];
+    setUiAudio({
+      preload: async () => {}, play: (cue) => { log.push(cue); },
+      setSfxVolume: () => {}, setMusicVolume: () => {}, resume: () => {},
+    });
+    return log;
+  }
+
+  afterEach(() => setUiAudio(null));
+
+  it('craftAt: ui.tap when the craft lands', () => {
+    const log = recorder();
+    const forge = new Forge();
+    const actions = new ForgeActions(forge, new MemoryMetaStore());
+    actions.craftAt(craftableMeta(), forge.order.indexOf('repeater'), 800, 600);
+    expect(log).toEqual(['ui.tap']);
+  });
+
+  it('craftAt: ui.denied when it cannot be afforded', () => {
+    const log = recorder();
+    const forge = new Forge();
+    const actions = new ForgeActions(forge, new MemoryMetaStore());
+    actions.craftAt(defaultMetaState(), forge.order.indexOf('repeater'), 800, 600);
+    expect(log).toEqual(['ui.denied']);
+  });
+
+  it('craftAt: ui.denied on an empty row, where there is no blueprint at all', () => {
+    // The row taps are bounds-guarded upstream, but the digit keys reach this directly.
+    const log = recorder();
+    const forge = new Forge();
+    const actions = new ForgeActions(forge, new MemoryMetaStore());
+    actions.craftAt(craftableMeta(), forge.order.length + 5, 800, 600);
+    expect(log).toEqual(['ui.denied']);
+  });
+
+  it('acquireBlueprint: ui.tap when something was acquired, ui.denied when the shelf is empty', () => {
+    const log = recorder();
+    const forge = new Forge();
+    const actions = new ForgeActions(forge, new MemoryMetaStore());
+    let meta = defaultMetaState();
+    expect(purchasableBlueprints(meta).length).toBeGreaterThan(0);
+    // Buy everything on offer, then press once more against an empty shelf.
+    while (purchasableBlueprints(meta).length > 0) meta = actions.acquireBlueprint(meta, 800, 600);
+    const bought = log.length;
+    expect(log.every((c) => c === 'ui.tap')).toBe(true);
+    const after = actions.acquireBlueprint(meta, 800, 600);
+    expect(after).toBe(meta); // nothing changed...
+    expect(log.slice(bought)).toEqual(['ui.denied']); // ...and it says so
+  });
+
+  it('says nothing at all with no audio attached — the forge still works headless', () => {
+    setUiAudio(null);
+    const forge = new Forge();
+    const actions = new ForgeActions(forge, new MemoryMetaStore());
+    expect(() => actions.craftAt(craftableMeta(), forge.order.indexOf('repeater'), 800, 600)).not.toThrow();
   });
 });

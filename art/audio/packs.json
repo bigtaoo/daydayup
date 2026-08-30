@@ -40,7 +40,9 @@
    "license": "CC0-1.0",
    "license_text": "art/audio/licenses/interface-sounds-LICENSE.txt",
    "files_used": [
+    "back_002.ogg",
     "confirmation_004.ogg",
+    "error_007.ogg",
     "glass_002.ogg",
     "glass_003.ogg",
     "glass_005.ogg",
@@ -50,9 +52,11 @@
     "glitch_003.ogg",
     "glitch_004.ogg",
     "pluck_002.ogg",
+    "select_002.ogg",
     "tick_001.ogg",
     "tick_002.ogg",
-    "tick_004.ogg"
+    "tick_004.ogg",
+    "toggle_004.ogg"
    ]
   },
   {

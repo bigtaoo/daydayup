@@ -54,10 +54,10 @@ describe('SampleBank — a clean load', () => {
     const { bank, reads } = harness();
     return bank.load().then(() => {
       expect(reads.slice().sort()).toEqual(allSfxPaths().slice().sort());
-      expect(reads).toHaveLength(46);
+      expect(reads).toHaveLength(50);
       expect(bank.variantsOf('status.burn')).toBeUndefined();
-      expect(bank.loadedCues).toBe(15);
-      expect(bank.loadedVariants).toBe(46);
+      expect(bank.loadedCues).toBe(19);
+      expect(bank.loadedVariants).toBe(50);
     });
   });
 
@@ -96,14 +96,14 @@ describe('SampleBank — per-file failure', () => {
     const { bank } = harness(variantPaths('clash') as string[]);
     await bank.load();
     expect(bank.variantsOf('clash')).toBeUndefined();
-    expect(bank.loadedCues).toBe(14);
+    expect(bank.loadedCues).toBe(18);
   });
 
   it('never rejects, even when the whole set fails', async () => {
     const { bank, warn } = harness(allSfxPaths() as string[]);
     await expect(bank.load()).resolves.toBeUndefined();
     expect(bank.loadedCues).toBe(0);
-    expect(warn).toHaveBeenCalledTimes(46);
+    expect(warn).toHaveBeenCalledTimes(50);
   });
 });
 
@@ -114,7 +114,7 @@ describe('SampleBank — repeat calls', () => {
     const b = bank.load();
     expect(a).toBe(b);
     await Promise.all([a, b]);
-    expect(reads).toHaveLength(46);
+    expect(reads).toHaveLength(50);
   });
 
   it('retries only what has nothing loaded', async () => {

@@ -1,4 +1,5 @@
 import { Game } from './game/Game';
+import { setUiAudio } from './audio/uiSound';
 import type { Phase } from './game/phase';
 import { WebPlatform } from './platform/web/WebPlatform';
 import { installAutoReload } from './platform/web/autoReload';
@@ -30,6 +31,12 @@ async function boot() {
   // before the first shot, and every cue has a procedural voice to fall back on meanwhile,
   // so blocking boot on it would buy nothing. Failure is logged per file inside SampleBank.
   void audio.preload();
+  // The other half of design/11's cue vocabulary: the cues a SCREEN makes (button taps), as
+  // opposed to the ones an engine event makes. `EventReactor` gets the bus from `Game`; the
+  // ~20 widget/screen classes take no dependencies at all, so they reach it through this one
+  // module sink instead (audio/uiSound.ts explains the choice). Boot is where the device is
+  // created, so boot is where it is attached.
+  setUiAudio(audio);
 
   await preloadCoreArt();
 

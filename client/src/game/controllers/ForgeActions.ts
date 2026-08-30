@@ -1,4 +1,5 @@
 import type { MetaState, MetaStore } from '../../meta';
+import { playUiCue } from '../../audio/uiSound';
 import { acquireBlueprint, clearLoadout, craft, purchasableBlueprints, selectCharacter } from '../../meta';
 import { SKIN_DEFS } from '@dd/engine';
 import type { Forge } from '../screens/Forge';
@@ -22,7 +23,11 @@ export class ForgeActions {
 
   /** Craft blueprint `i` into the loadout (digit key or a Loadout-screen row tap) —
    * also moves the browse cursor onto it, so the compare card previews what was just
-   * crafted. Silently ignores locked/unaffordable/full, same as before. */
+   * crafted. Still ignores locked/unaffordable/full, but no longer *silently*: this is
+   * where the UI cue is chosen, because the widget cannot know which happened (the row
+   * card is constructed with no sound of its own for exactly this reason). A press that
+   * changes nothing used to be indistinguishable from a press the game never received —
+   * `ui.denied` is the difference (design/11 UI cues). */
   craftAt(meta: MetaState, i: number, w: number, h: number): MetaState {
     this.forge.selectedIndex = i;
     const id = this.forge.order[i];
@@ -34,6 +39,7 @@ export class ForgeActions {
         this.store.save(next);
       }
     }
+    playUiCue(next === meta ? 'ui.denied' : 'ui.tap');
     this.forge.render(next, w, h);
     return next;
   }
@@ -55,7 +61,13 @@ export class ForgeActions {
    *  `demo: free grant` scaffold (2.4) — real billing is a platform adapter's job. */
   acquireBlueprint(meta: MetaState, w: number, h: number): MetaState {
     const buyable = purchasableBlueprints(meta);
-    if (!buyable[0]) return meta;
+    if (!buyable[0]) {
+      // Nothing left to buy. Same reasoning as `craftAt`: the ACQUIRE button is built
+      // `sound: 'silent'` so this branch can say so.
+      playUiCue('ui.denied');
+      return meta;
+    }
+    playUiCue('ui.tap');
     const next = acquireBlueprint(meta, buyable[0]);
     this.store.save(next);
     this.forge.render(next, w, h);

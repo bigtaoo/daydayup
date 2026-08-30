@@ -12,16 +12,26 @@ Two Python scripts behind the audio assets under `client/public/audio/`. The cou
 
       python audit.py <file-or-dir>... [--class sfx|ui|loop] [--json out.json]
 
-- **`process.py`** — the one-time conversion that produced the shipped set: mono, trim,
+- **`process_all.py`** — the one-time conversion that produced the shipped combat set: mono, trim,
   per-family resample, peak-match to the synth cue being replaced, MP3 encode. Reads
   `synth.json` (an audit of the synth cues) to know what peak to match.
+
+- **`process_ui.py`** — the same conversion for the four `ui.*` cues (2026-08-30), importing
+  the helpers above rather than duplicating them. It is a separate driver for one reason: it
+  needs no `synth.json`. A UI voice in `platform/audioSynth.ts` is a single `tone()`, so its
+  peak is exactly its `gain` argument, and the peak-match reference is derived from the voice
+  table instead of measured off a re-render. Its module docstring also records the thing a
+  reader would otherwise assume wrongly — for these four the *sample* was picked first and the
+  synth voice written to match it, the reverse of the combat set.
 
 - **`selftest.py`** — 15 cases over the measurement and gating layer, plain asserts, no
   pytest. Measurement is checked against synthetic signals with known ground truth (a 1 kHz
   sine must read as a 1 kHz centroid; 50 ms of leading zeros must read as 50 ms of lead), and
   the two bugs that actually shipped in `audit.py` are pinned so they cannot come back: the
   `sfx` peak floor that failed 40 of 46 correctly peak-matched files, and the `class_for`
-  separator bug that held every `pickup.*` asset to the combat gate.
+  separator bug that held every `pickup.*` asset to the combat gate. The `ui.*` cues route by
+  the same prefix rule and have their own cases there, since a UI file that fell through to the
+  default would be gated by the loosest rule that applies to it rather than the tightest.
 
       ./venv/Scripts/python selftest.py
 

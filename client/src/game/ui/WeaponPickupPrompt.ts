@@ -54,7 +54,7 @@ export class WeaponPickupPrompt {
     });
     this.titleText.position.set(PAD, 8);
 
-    this.closeBtn = new Button('×', { w: CLOSE_SIZE, h: CLOSE_SIZE, fontSize: 14, color: 0x2a3140 });
+    this.closeBtn = new Button('×', { w: CLOSE_SIZE, h: CLOSE_SIZE, fontSize: 14, color: 0x2a3140, sound: 'ui.back' });
     this.closeBtn.onTap = () => {
       this.closedForKey = this.lastKey;
       this.view.visible = false;

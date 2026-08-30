@@ -121,7 +121,7 @@ export class Forge {
     this.pageLabel = new Text({ text: '', style: { fill: 0x90cdf4, fontSize: 12, fontFamily: 'monospace', padding: 14 } });
     this.pageLabel.anchor.set(0.5);
 
-    this.backBtn = new Button(t('forge.backButton'), { w: 90, h: 30, fontSize: 12 });
+    this.backBtn = new Button(t('forge.backButton'), { w: 90, h: 30, fontSize: 12, sound: 'ui.back' });
     this.backBtn.onTap = () => this.onBack?.();
 
     this.charText = new Text({ text: '', style: { fill: 0xf7fafc, fontSize: 17, fontFamily: 'monospace', fontWeight: 'bold', padding: 18 } });
@@ -151,7 +151,10 @@ export class Forge {
     this.startBtn = new Button(t('forge.startRun'), { w: 220, h: 44, fontSize: 17 });
     this.startBtn.onTap = () => this.onStart?.();
     this.startBtn.setIcon(getUiTexture('icon_play'));
-    this.acquireBtn = new Button(t('forge.acquireButton'), { w: 160, h: 30, fontSize: 12 });
+    // `silent` at the widget: whether this press did anything is decided by the
+    // transaction (there may be nothing left to buy), so ForgeActions plays `ui.tap` or
+    // `ui.denied` instead — see its `acquireBlueprint`.
+    this.acquireBtn = new Button(t('forge.acquireButton'), { w: 160, h: 30, fontSize: 12, sound: 'silent' });
     this.acquireBtn.onTap = () => this.onAcquire?.();
 
     this.npcSprite.anchor.set(0.5, 1);

@@ -81,6 +81,12 @@ def cue_class_handles_dash_separator() -> None:
         'death_02.mp3': 'feedback',
         'wave-clear_00.mp3': 'feedback',
         'win_00.mp3': 'feedback',
+        # The UI cues route by the same prefix rule (2026-08-30). Worth a case of its own:
+        # a UI click is held to a SHORTER length than a combat cue, so a `ui.*` file that
+        # fell through to the default would be gated by the loosest rule that applies to it.
+        'ui-tap_00.mp3': 'ui',
+        'ui-denied_00.mp3': 'ui',
+        'ui.toggle_00.mp3': 'ui',
     }
     for name, want in cases.items():
         got = audit.class_for(name, 'sfx')

@@ -1,5 +1,6 @@
 import { Container, Graphics, Text, Rectangle, Sprite, type Texture } from 'pixi.js';
 import { getUiTexture } from '../../render/uiSkins';
+import { playUiCue, type UiCue } from '../../audio/uiSound';
 import { estimateMonoWidth } from './textWidth';
 
 // A minimal Pixi widget kit (design/10 "build vs. a tiny in-house layer" — kept small,
@@ -198,14 +199,21 @@ export class Button {
   // label text is translated and can outgrow the width picked for English (settings.md
   // 2026-08-14, Russian "ВКЛЮЧИТЬ ЗВУК"/"УПРАВЛЕНИЕ: ЛЕВША" overflowing their box).
   private readonly autoWidth: boolean;
+  // Which UI cue this button makes when pressed (design/11's screen-layer cues). Defaults to
+  // `ui.tap`, so every one of the ~40 buttons in the client is audible without opting in —
+  // the opt-INs are the exceptions that mean something else: `ui.back` for the button that
+  // leaves a screen, `ui.toggle` for one that flips a setting under your finger, and
+  // `'silent'` for the handful whose OUTCOME decides the sound (a forge craft row plays
+  // `ui.tap` or `ui.denied` from `ForgeActions`, since only the transaction knows which).
+  private readonly sound: UiCue | 'silent';
   onTap: (() => void) | null = null;
 
   // Border (opt-in, same convention as Panel's — design/10 legibility fix,
   // 2026-08-02): a flat fill alone reads as low-contrast wherever a button sits over
   // a background image darker/lighter than the fill itself (e.g. MainMenu's hub art).
   // A crisp stroke keeps the button legible regardless of what's behind it.
-  constructor(text: string, opts: { w: number; h: number; color?: number; textColor?: number; fontSize?: number; borderColor?: number; borderAlpha?: number; autoWidth?: boolean }) {
-    const { w, h, color = 0x2a3140, textColor = 0xe2e8f0, fontSize = 15, borderColor, borderAlpha = 0.9, autoWidth = false } = opts;
+  constructor(text: string, opts: { w: number; h: number; color?: number; textColor?: number; fontSize?: number; borderColor?: number; borderAlpha?: number; autoWidth?: boolean; sound?: UiCue | 'silent' }) {
+    const { w, h, color = 0x2a3140, textColor = 0xe2e8f0, fontSize = 15, borderColor, borderAlpha = 0.9, autoWidth = false, sound = 'ui.tap' } = opts;
     this.minW = w;
     this.w = w;
     this.h = h;
@@ -214,6 +222,7 @@ export class Button {
     this.borderColor = borderColor;
     this.borderAlpha = borderAlpha;
     this.autoWidth = autoWidth;
+    this.sound = sound;
     // `padding` works around a real font-metrics mismatch observed in headless/sandboxed
     // Chromium: Pixi's own text measurement can come in narrower than the canvas's actual
     // paint-time glyph width for bold text, clipping the last character(s) — Pixi's own
@@ -224,7 +233,13 @@ export class Button {
     this.redraw();
     this.view.eventMode = 'static';
     this.view.cursor = 'pointer';
-    this.view.on('pointertap', () => this.onTap?.());
+    // Handler FIRST, then the cue — not for ordering's sake but because the settings mute
+    // button is one of these: `onTap` is what applies the new volume, so running it first
+    // makes muting end in silence and unmuting announce itself, instead of the reverse.
+    this.view.on('pointertap', () => {
+      this.onTap?.();
+      if (this.sound !== 'silent') playUiCue(this.sound);
+    });
     // A button nested inside a screen that ALSO has its own full-panel `pointerdown`
     // handler (e.g. Screens.ts's tap-anywhere-to-confirm) would otherwise double-fire —
     // pointerdown bubbles to ancestors regardless of what consumes the later tap. Stop
@@ -332,13 +347,28 @@ export class Slider {
     surface.on('globalpointermove', (e) => {
       if (this.dragging) this.seekFromGlobal(e.global.x, e.global.y);
     });
-    surface.on('pointerup', () => { this.dragging = false; });
-    surface.on('pointerupoutside', () => { this.dragging = false; });
+    // Release ENDS a drag and is where the cue plays — one tick per adjustment, not one per
+    // pixel of travel. On the volume sliders this is doing double duty: the tick is played
+    // through the bus the slider just changed, so releasing the SFX slider is also how you
+    // hear what you set it to (design/10's settings screen, design/11's "playable silent" —
+    // a volume control you cannot audition is a guess).
+    surface.on('pointerup', () => this.endDrag(true));
+    surface.on('pointerupoutside', () => this.endDrag(true));
     // An OS-level interruption (e.g. an incoming call/notification mid-drag) delivers
     // pointercancel instead of pointerup — without this, `dragging` gets stuck true, and
     // when several sliders share one `dragSurface` (Settings.ts), the NEXT unrelated
     // pointer move over that surface silently drags this slider's value again.
-    surface.on('pointercancel', () => { this.dragging = false; });
+    // Silent: an incoming call is not the player committing a value.
+    surface.on('pointercancel', () => this.endDrag(false));
+  }
+
+  /** End a drag, optionally with the commit cue. Guarded on `dragging` because these
+   * listeners live on a SHARED drag surface — every pointerup anywhere on the settings
+   * screen reaches all three sliders, and only the one being dragged has anything to say. */
+  private endDrag(commit: boolean) {
+    if (!this.dragging) return;
+    this.dragging = false;
+    if (commit) playUiCue('ui.toggle');
   }
 
   private seekFromGlobal(gx: number, gy: number) {

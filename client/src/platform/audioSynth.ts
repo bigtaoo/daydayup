@@ -85,6 +85,25 @@ const VOICES: Record<AudioCue, (ctx: AudioContext, bus: GainNode) => void> = {
   'pickup.buff': (c, b) => { tone(c, b, 587, 'triangle', 0.12, 0.12); chordNote(c, b, 880, 0.12, 0.1); },
   'wave-clear': (c, b) => { tone(c, b, 523, 'triangle', 0.12, 0.14); chordNote(c, b, 784, 0.12, 0.09); },
   win: (c, b) => { tone(c, b, 523, 'triangle', 0.16, 0.15); chordNote(c, b, 659, 0.16, 0.12); chordNote(c, b, 784, 0.2, 0.12); },
+
+  // UI cues (design/11's screen-layer cues, fired by `audio/uiSound.ts`). Two properties are
+  // deliberate and are what `tools/audio-pipeline/process_ui.py` peak-matched the shipped
+  // files against:
+  //   * each is a SINGLE `tone()`, so the voice's peak is exactly its `gain` argument. That
+  //     is what let the UI pass skip the re-render-and-measure step the combat pass needed.
+  //   * all four sit at 0.08-0.10, under every combat voice (impact 0.18, deflect 0.20,
+  //     muzzle 0.12) and level with the status stings. A button has to be heard over a quiet
+  //     menu, never startle over a loud fight.
+  // Frequencies imitate the picked samples' measured centroids, in that order of authorship
+  // (art/audio/README.md): sample first, voice written to match it — the reverse of the
+  // combat table, which had no sample when it was written.
+  'ui.tap': (c, b) => tone(c, b, 1500, 'square', 0.035, 0.09),
+  // Down-glide, and the lowest of the four: leaving a screen reads under entering one.
+  'ui.back': (c, b) => tone(c, b, 900, 'square', 0.06, 0.09, 620),
+  'ui.toggle': (c, b) => tone(c, b, 2600, 'square', 0.05, 0.08),
+  // A sustained saw buzz, not a click — length and density are what separate "refused" from
+  // "pressed", since both are answers to the same press.
+  'ui.denied': (c, b) => tone(c, b, 320, 'sawtooth', 0.18, 0.1, 260),
 };
 
 /** Play one cue through `ctx`/`bus` — the single entry point both WebAudio and

@@ -4,6 +4,7 @@
 // renderer is constructed. Web keeps the faster eval path (not imported there).
 import 'pixi.js/unsafe-eval';
 import { Game } from './game/Game';
+import { setUiAudio } from './audio/uiSound';
 import { WeChatPlatform } from './platform/wechat/WeChatPlatform';
 import { weChatAssetHost } from './platform/wechat/weChatAssetHost';
 import { setAssetHost } from './render/assetHost';
@@ -47,6 +48,10 @@ async function boot() {
   // it must come AFTER the host swap, because that is what turns '/audio/impact_00.mp3' into
   // a code-package path this runtime can read at all.
   void audio.preload();
+  // UI cues (design/11), same one-line wiring as the web entry — and it matters more here:
+  // `WeChatAudio` registers none of the window listeners `WebAudio` uses to clear the
+  // autoplay gate, so a menu tap is this runtime's first chance to resume the context.
+  setUiAudio(audio);
   await preloadCoreArt();
 
   const game = new Game(app, input, audio);

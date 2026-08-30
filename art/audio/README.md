@@ -11,7 +11,16 @@ Mirrors the `art/` convention: this directory holds the **source** audio and its
 paperwork. Nothing here is loaded at runtime — what the game ships is the processed copy
 under `client/public/audio/`.
 
-> **Status (2026-08-27): the SFX pass is complete — 15 of 16 cues have assets; nothing
+> **Status (2026-08-30): 19 of 20 cues have assets, and all of them play.** The set is
+> **50 processed MP3s, 101.9 kB** under `client/public/audio/`. The 2026-08-28 pass wired the
+> original 46 up (`client/src/audio/`, above); the 2026-08-30 pass added the **four `ui.*`
+> cues** — `ui.tap`, `ui.back`, `ui.toggle`, `ui.denied` — which are the sounds a *screen*
+> makes rather than the ones an engine event makes (design/11's "The UI cues"). Only
+> `status.burn` is still deliberately synth-only. **Nobody has listened to any of the 50.**
+>
+> <details><summary>The original 2026-08-27 status, kept for the record</summary>
+>
+> **The SFX pass is complete — 15 of 16 cues have assets; nothing
 > loads them yet.** `client/public/audio/` holds **46 processed MP3s, 95.0 kB total**,
 > covering every cue in `platform/audioSynth.ts`'s voice table except `status.burn`, which
 > deliberately stays on its synth voice (reason below). No code references any of them:
@@ -19,10 +28,12 @@ under `client/public/audio/`.
 > that `design/11-audio.md` still lists under "To design" (where cue ids → files live: a
 > `content/audio.ts` map, or the `12` manifest). Until that exists these files are staged,
 > not shipped. Music and ambience remain untouched.
+>
+> </details>
 
 ## Provenance
 
-Six CC0 packs from Kenney. **Only the 46 files actually used are archived here**, under
+Six CC0 packs from Kenney. **Only the 50 files actually used are archived here**, under
 `sources/<pack>/` — the full zips come to 10.7 MB against 447 kB of used source, so
 `packs.json` records each pack's download URL and **sha256** instead, making the whole pack
 re-fetchable and verifiable. Every `licenses/<pack>-LICENSE.txt` was read out of the pack
@@ -31,7 +42,7 @@ itself and checked to contain CC0.
 | Pack | Files | Used for |
 |---|---|---|
 | Impact Sounds | 130 | `impact`, `deflect`, `shield.break` |
-| Interface Sounds | 100 | `clash`, `status.shock`, `status.chill`, `pickup.material`, `wave-clear` |
+| Interface Sounds | 100 | `clash`, `status.shock`, `status.chill`, `pickup.material`, `wave-clear`, and all four `ui.*` |
 | Sci-Fi Sounds | 73 | `muzzle`, `death` |
 | Digital Audio | 63 | `status.poison`, `pickup.heal`, `pickup.buff` |
 | RPG Audio | 52 | `pickup.weapon`, `pickup.material` |
@@ -84,6 +95,28 @@ chiptune is a style judgement made from spectra alone.
 | `wave-clear` | `confirmation` | 1 | Centroid 1536 vs 1278 Hz. Fires once per wave. |
 | `win` | `jingles_PIZZI` | 1 | Centroid 1356 Hz against 1318 Hz — near exact. Pizzicato over the chiptune and sax alternatives, which fight the flat-cel world. |
 
+### The UI cues (2026-08-30)
+
+Picked the other way round from everything above. There was no synth voice to match — the UI
+had no sound at all — so the **sample was chosen first**, on `audit.py`'s `ui` gate (≤350 ms,
+≤5 ms of lead, mono, no clipping) plus what the pack's own family names mean, and the synth
+voice in `platform/audioSynth.ts` was then written to imitate the file's measured duration and
+centroid. All four are **one variant**: a UI cue answers the player's own finger and must read
+as the same affordance every press, which is the opposite of the repetition-fatigue argument
+that gives `muzzle` five.
+
+The four sit in a deliberate pitch order — `back` (1833 Hz) under `tap` (2629) under `denied`
+(4270) under `toggle` (6399) — so leaving a screen sounds lower than entering one, and a state
+change sounds brightest. `denied` is separated from `tap` by **length and density** rather than
+pitch: 192 ms of sustained buzz against a 43 ms transient.
+
+| Cue | Source | Variants | Why |
+|---|---|---|---|
+| `ui.tap` | `select_002.ogg` | 1 | 43 ms at 2629 Hz — the shortest clean file in the pack that still has a body. The 10 ms `click_00x` pair carries measurable DC bias (0.004–0.005), and a 10 ms transient peak-matched against a 190 ms buzz reads far quieter than its peak claims. |
+| `ui.back` | `back_002.ogg` | 1 | 70 ms at 1833 Hz, the lowest centroid among the clean short files. Named for the job by the pack itself. |
+| `ui.toggle` | `toggle_004.ogg` | 1 | 66 ms at 6399 Hz with a 0.1 ms attack: brightest and shortest of the toggle family — its siblings run 139 ms, which outlasts a settings tap. |
+| `ui.denied` | `error_007.ogg` | 1 | 192 ms at 4270 Hz, crest 12.2 — a sustained buzz, not a click. The only error file that is both mono and clean: `error_002` peaks at **+0.6 dBFS** (clipped), `error_003/005/006` run 500 ms behind 10–35 ms of lead, `error_001/004` are dual-mono. |
+
 ### Kept on the synth voice
 
 - **`status.burn`** — no fire crackle exists in any of the six packs. The closest family
@@ -114,10 +147,18 @@ Run via `tools/audio-pipeline/process_all.py`. Every step fixes a measured defec
    range from −20.2 dB to +6.5 dB; the one positive gain (`drawKnife2`, a quiet −22.95 dBFS
    recording) raises its noise floor with it.
 
+The four `ui.*` files run the same five steps through `tools/audio-pipeline/process_ui.py`,
+which differs in exactly one place: **where the peak-match reference comes from**.
+`process_all.py` reads `synth.json`, an audit of re-rendered synth voices, because those voices
+stack several `tone()` calls and their peak cannot be read off the table. Every UI voice is a
+*single* `tone()`, whose envelope ramps 0 → `gain` → 0 over a unit-amplitude oscillator, so its
+peak **is** its `gain` argument (0.08–0.10, about −21 dBFS). No render, no measurement, and no
+scratch input that has to survive between sessions.
+
 ### Verification
 
-- `audit.py --by-cue`: **46 / 46 pass**, routed 33 to the strict `sfx` gate and 13 to
-  `feedback`. Zero clipping, zero dual-mono, zero stereo, zero DC offset.
+- `audit.py --by-cue`: **50 / 50 pass**, routed 33 to the strict `sfx` gate, 13 to `feedback`
+  and 4 to `ui`. Zero clipping, zero dual-mono, zero stereo, zero DC offset.
 - Decoded in a real browser: **46 / 46**, duration error ≤ 0.1 ms (mean 0.01 ms), all mono,
   peaks −23.5…−9.7 dBFS.
 - WeChat main package: 3.31 → **3.41 MB / 4.00 MB**.

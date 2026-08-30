@@ -66,7 +66,7 @@ export class PvpPreview {
 
     this.queueBtn = new Button('', { w: 220, h: 48, fontSize: 18, color: 0x9b2c2c, borderColor: 0xfc8181 });
     this.queueBtn.onTap = () => this.onQueue?.();
-    this.backBtn = new Button('', { w: 140, h: 34, fontSize: 13 });
+    this.backBtn = new Button('', { w: 140, h: 34, fontSize: 13, sound: 'ui.back' });
     this.backBtn.onTap = () => this.onBack?.();
 
     this.view.addChild(

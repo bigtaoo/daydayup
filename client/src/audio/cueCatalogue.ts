@@ -82,6 +82,27 @@ export const CUE_CATALOGUE: Record<AudioCue, CueDef> = {
   'wave-clear': { variants: 1, gain: 0.95, priority: 100 },
   // Once per run. Nothing may steal it.
   win: { variants: 1, gain: 1.0, priority: 120 },
+
+  // --- UI: not engine events at all (see `AudioCue`), fired by audio/uiSound.ts ---
+  //
+  // ONE variant each, against the "a cue that fires often needs several" rule above — on
+  // purpose. That rule exists because repetition fatigue is audible across a set; a UI cue is
+  // the opposite case, a direct answer to the player's own finger that has to read as the
+  // SAME affordance every press. Two buttons that sound different are a bug, not variety.
+  // CueMixer's +/-3% pitch jitter is all the variation these get.
+  //
+  // Gain 1.0 across the board: the UI mix decision is already made in the voice table's
+  // amplitudes (~-21 dBFS, below every combat cue), and the shipped files were peak-matched
+  // to those, so a second knob here would only obscure where the level comes from.
+  //
+  // Priority 110 — above every combat cue, below `win`. A cue the player caused by pressing
+  // a button must not be the one the voice cap drops: a silent press reads as a missed input
+  // (design/10's HUD legibility argument, in audio), where a dropped `muzzle` reads as
+  // nothing at all. They are rare enough that outranking combat costs the mix nothing.
+  'ui.tap': { variants: 1, gain: 1.0, priority: 110 },
+  'ui.back': { variants: 1, gain: 1.0, priority: 110 },
+  'ui.toggle': { variants: 1, gain: 1.0, priority: 110 },
+  'ui.denied': { variants: 1, gain: 1.0, priority: 110 },
 };
 
 /** Every cue, at runtime. Derived from the catalogue so it cannot drift from the union the

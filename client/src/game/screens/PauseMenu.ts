@@ -25,13 +25,13 @@ export class PauseMenu {
     this.title = new Text({ text: t('pauseMenu.title'), style: { fill: 0xf7fafc, fontSize: 34, fontWeight: 'bold', fontFamily: 'sans-serif' } });
     this.title.anchor.set(0.5, 0);
 
-    this.resumeBtn = new Button(t('pauseMenu.resume'), { w: 200, h: 40 });
+    this.resumeBtn = new Button(t('pauseMenu.resume'), { w: 200, h: 40, sound: 'ui.back' });
     this.resumeBtn.onTap = () => this.onResume?.();
     this.resumeBtn.setIcon(getUiTexture('icon_play'));
     this.settingsBtn = new Button(t('pauseMenu.settings'), { w: 200, h: 40 });
     this.settingsBtn.onTap = () => this.onSettings?.();
     this.settingsBtn.setIcon(getUiTexture('icon_settings'));
-    this.quitBtn = new Button(t('pauseMenu.quit'), { w: 200, h: 40 });
+    this.quitBtn = new Button(t('pauseMenu.quit'), { w: 200, h: 40, sound: 'ui.back' });
     this.quitBtn.onTap = () => this.onQuit?.();
     this.quitBtn.setIcon(getUiTexture('icon_quit'));
 

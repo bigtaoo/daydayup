@@ -487,7 +487,7 @@ is exactly what let both bugs ship.
 2. [ ] Verify on the **lowest target base-library version** (not just the latest). Two audio
    questions ride on this one: whether `wx.createWebAudioContext()` exists at all (the synth
    voice table degrades to a true no-op if not, `design/11`), and — new as of 2026-08-27 —
-   whether the 46 shipped **MP3** cue assets decode there. MP3 was chosen partly because
+   whether the 50 shipped **MP3** cue assets decode there. MP3 was chosen partly because
    `design/11` calls it universally decoded on WeChat, but every measurement behind that
    choice was taken in a desktop browser. Nothing loads the assets yet, so this is not
    blocking; it becomes blocking the moment the cue catalogue lands.

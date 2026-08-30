@@ -86,10 +86,10 @@ export class PartyScreen {
     this.startBtn = new Button(t('party.startMatching'), { w: 200, h: 44, fontSize: 15, color: 0x2f855a });
     this.startBtn.onTap = () => void this.doStart();
     this.startBtn.setIcon(getUiTexture('icon_play'));
-    this.leaveBtn = new Button(t('party.leave'), { w: 160, h: 36, fontSize: 13, color: 0x742a2a });
+    this.leaveBtn = new Button(t('party.leave'), { w: 160, h: 36, fontSize: 13, color: 0x742a2a, sound: 'ui.back' });
     this.leaveBtn.onTap = () => void this.doLeave();
     this.leaveBtn.setIcon(getUiTexture('icon_party_leave'));
-    this.backBtn = new Button(t('party.back'), { w: 120, h: 32, fontSize: 13 });
+    this.backBtn = new Button(t('party.back'), { w: 120, h: 32, fontSize: 13, sound: 'ui.back' });
     this.backBtn.onTap = () => this.onBack?.();
     this.backBtn.setIcon(getUiTexture('icon_back'));
 

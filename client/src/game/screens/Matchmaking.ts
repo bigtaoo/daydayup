@@ -60,11 +60,11 @@ export class Matchmaking {
     this.statusText = new Text({ text: '', style: { fill: 0x90cdf4, fontSize: 16, fontFamily: 'monospace', padding: 16 } });
     this.statusText.anchor.set(0.5, 0);
 
-    this.cancelBtn = new Button(t('matchmaking.cancel'), { w: 160, h: 40, fontSize: 14, color: 0x742a2a });
+    this.cancelBtn = new Button(t('matchmaking.cancel'), { w: 160, h: 40, fontSize: 14, color: 0x742a2a, sound: 'ui.back' });
     this.cancelBtn.onTap = () => this.cancel();
     this.retryBtn = new Button(t('matchmaking.retry'), { w: 160, h: 40, fontSize: 14, color: 0x2f855a });
     this.retryBtn.onTap = () => this.retry();
-    this.backBtn = new Button(t('matchmaking.back'), { w: 160, h: 40, fontSize: 14 });
+    this.backBtn = new Button(t('matchmaking.back'), { w: 160, h: 40, fontSize: 14, sound: 'ui.back' });
     this.backBtn.onTap = () => this.cancel();
     this.backBtn.setIcon(getUiTexture('icon_back'));
 

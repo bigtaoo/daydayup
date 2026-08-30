@@ -112,14 +112,14 @@ export class Settings {
     // i18n.md) and a fixed pixel width sized for English overflows once a locale's
     // string runs longer (e.g. Russian "ВКЛЮЧИТЬ ЗВУК", "УПРАВЛЕНИЕ: ЛЕВША"); the `w`
     // passed here becomes a minimum, not a fixed size — see widgets.ts's Button.
-    this.muteBtn = new Button('', { w: 120, h: 34, autoWidth: true });
+    this.muteBtn = new Button('', { w: 120, h: 34, autoWidth: true, sound: 'ui.toggle' });
     this.muteBtn.onTap = () => this.update({ ...this.state, muted: !this.state.muted });
 
     // Language cycle button (design/17-i18n.md) — same tappable pattern as muteBtn
     // (design/10 "no DOM widgets"), stepping through `LOCALES` in declared order on
     // each tap; `setLocale` takes effect immediately so this button's own next
     // `syncWidgets()` already reads in the new language.
-    this.languageBtn = new Button('', { w: 160, h: 34, autoWidth: true });
+    this.languageBtn = new Button('', { w: 160, h: 34, autoWidth: true, sound: 'ui.toggle' });
     this.languageBtn.onTap = () => {
       const next = nextLocale(this.state.locale);
       setLocale(next);
@@ -130,7 +130,7 @@ export class Settings {
     // pattern as languageBtn; only meaningfully affects touch play (TouchControls'
     // stick/button geometry), but lives here rather than being hidden behind a touch-
     // only check, since a desktop player may still be setting this up for later.
-    this.controlLayoutBtn = new Button('', { w: 200, h: 34, autoWidth: true });
+    this.controlLayoutBtn = new Button('', { w: 200, h: 34, autoWidth: true, sound: 'ui.toggle' });
     this.controlLayoutBtn.onTap = () => {
       const next = nextControlLayout(this.state.controlLayout);
       this.update({ ...this.state, controlLayout: next });
@@ -140,12 +140,12 @@ export class Settings {
     // about the DEVICE rather than about taste, which is why 'auto' is the default and is
     // listed first: most players should never have to think about it, and the ones on hardware
     // that cannot hold 60fps get the drop without asking for it.
-    this.qualityBtn = new Button('', { w: 200, h: 34, autoWidth: true });
+    this.qualityBtn = new Button('', { w: 200, h: 34, autoWidth: true, sound: 'ui.toggle' });
     this.qualityBtn.onTap = () => {
       this.update({ ...this.state, quality: nextQuality(this.state.quality) });
     };
 
-    this.backBtn = new Button(t('settings.back'), { w: 120, h: 34, autoWidth: true });
+    this.backBtn = new Button(t('settings.back'), { w: 120, h: 34, autoWidth: true, sound: 'ui.back' });
     this.backBtn.onTap = () => this.onBack?.();
 
     this.view.addChild(

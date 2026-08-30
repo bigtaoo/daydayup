@@ -110,7 +110,7 @@ The concrete shape of `05`/`04`'s twin-stick, and where `08`'s `PlayerCommand` i
 
 ## To design
 
-- ~~**Widget kit:** a minimal Pixi UI component set (button, stick, bar, toast, panel) — build vs. a tiny in-house layer.~~ **Resolved (5.2, shipped):** a small in-house kit, not a framework — `client/src/game/ui/widgets.ts`'s `Panel`/`Bar`/`ToastQueue`/`Button`/`Slider`, used throughout the HUD, `Settings.ts`, and `PauseMenu.ts`.
+- ~~**Widget kit:** a minimal Pixi UI component set (button, stick, bar, toast, panel) — build vs. a tiny in-house layer.~~ **Resolved (5.2, shipped):** a small in-house kit, not a framework — `client/src/game/ui/widgets.ts`'s `Panel`/`Bar`/`ToastQueue`/`Button`/`Slider`, used throughout the HUD, `Settings.ts`, and `PauseMenu.ts`. **The kit also owns the UI sound (2026-08-30, `11`'s "The UI cues"):** `Button` plays `ui.tap` by default — so every button in the client is audible without opting in — and takes `sound: 'ui.back' | 'ui.toggle' | 'silent'` where the press means something else; `Slider` ticks once on release, through the bus it just changed, which is what makes the volume sliders auditionable. The cue plays AFTER the button's own handler, because the mute button is one of these and its handler is what applies the new volume.
 - **HUD data contract:** the exact read-only view of `GameState` the HUD needs, so it never reaches into engine internals (mirror `08`'s interpolation-snapshot idea for UI).
 - ~~Loadout/preset screen data — how much detail (stats, previews) to show.~~ **Resolved
   (5.2):** a forge compare card (`client/src/game/ui/compareCard.ts`) diffs the browse

@@ -34,6 +34,7 @@ import { weChatAssetHost } from '../platform/wechat/weChatAssetHost';
 import { setAssetHost, resetAssetHost } from '../render/assetHost';
 import { PACKS, packedPathFor } from '../render/assetManifest';
 import { ALL_CUES, CUE_CATALOGUE, allSfxPaths, variantPaths } from './cueCatalogue';
+import { setUiAudio, playUiCue } from './uiSound';
 import type { AudioCue } from '../platform/types';
 
 const PUBLIC = new URL('../../public/', import.meta.url);
@@ -179,7 +180,7 @@ afterAll(() => {
 describe('WeChat runtime — how the shipped SFX were reached', () => {
   it('read every catalogued file, and asked for nothing else', () => {
     expect(reads.slice().sort()).toEqual(allSfxPaths().map(packedPathFor).sort());
-    expect(reads).toHaveLength(46);
+    expect(reads).toHaveLength(50);
   });
 
   it('asked only for package-relative paths that name real files', () => {
@@ -196,7 +197,7 @@ describe('WeChat runtime — how the shipped SFX were reached', () => {
     // The assertion that cannot be made on a device without listening: that what came out of
     // `readFileSync` is the actual audio file and not an empty buffer, a truncation, or a
     // string. Checked as bytes — an mp3 starts with an ID3 tag or a frame sync.
-    expect(decoded).toHaveLength(46);
+    expect(decoded).toHaveLength(50);
     for (const { path, bytes } of decoded) {
       const onDisk = readFileSync(fileURLToPath(diskPathFor(path)));
       expect(bytes.byteLength, `${path} byte length`).toBe(onDisk.byteLength);
@@ -219,7 +220,7 @@ describe('WeChat runtime — how the shipped SFX were reached', () => {
     // `decodeAudio.ts` adopts that shape: a promise-only implementation would hang here, load
     // zero samples, and leave the mini-game on its synth voices for ever, silently.
     const bank = (audio as unknown as { bank: { loadedCues: number; loadedVariants: number } }).bank;
-    expect(bank.loadedVariants).toBe(46);
+    expect(bank.loadedVariants).toBe(50);
     expect(bank.loadedCues).toBe(ALL_CUES.filter((c) => CUE_CATALOGUE[c].variants > 0).length);
   });
 });
@@ -254,6 +255,45 @@ describe('WeChat runtime — what a cue actually plays here', () => {
     audio.play('status.burn'); // no fire crackle exists in the corpus (credits.json)
     expect(synthVoices).toBeGreaterThan(0);
     expect(voicesPlayed.filter((v) => v.buffer?.fromPath)).toEqual([]);
+  });
+});
+
+describe('WeChat runtime — a UI press is this platform’s only autoplay gate', () => {
+  it('resumes the context from a press, then plays the shipped ui.tap sample', () => {
+    // On web, `WebAudio`'s constructor registers pointerdown/keydown/touchstart listeners that
+    // clear the autoplay gate. This runtime has no `window` at all — it is deleted above,
+    // exactly as on a device — so `uiSound.playUiCue`'s resume is the FIRST thing in a
+    // mini-game session that can start the context. Before the UI cues existed, the earliest
+    // sound in a session waited for a `Game.confirm()`, several screens in.
+    //
+    // The cue then has to arrive as a decoded sample like any other, through this platform's
+    // callback-form decoder — which is the half no device check can make without listening.
+    voicesPlayed.length = 0;
+    synthVoices = 0;
+    fakeCtx.state = 'suspended';
+    fakeCtx.resume.mockClear();
+    setUiAudio(audio);
+    try {
+      fakeCtx.currentTime += 1;
+      playUiCue('ui.tap');
+      expect(fakeCtx.resume, 'a press did not clear the gate').toHaveBeenCalled();
+      expect(voicesFor('ui.tap')).toBe(1);
+      expect(synthVoices).toBe(0);
+    } finally {
+      setUiAudio(null);
+      fakeCtx.state = 'running';
+    }
+  });
+
+  it('detaching the sink leaves this runtime silent rather than throwing', () => {
+    // `setUiAudio(null)` is the state a mini-game is in between `boot()` starting and the sink
+    // being attached; a button pressed in that window must do nothing at all.
+    voicesPlayed.length = 0;
+    synthVoices = 0;
+    setUiAudio(null);
+    expect(() => playUiCue('ui.tap')).not.toThrow();
+    expect(voicesPlayed).toEqual([]);
+    expect(synthVoices).toBe(0);
   });
 });
 
@@ -293,7 +333,7 @@ describe('WeChat runtime — the failure shapes this platform has and web does n
     });
     expect(r.samples).toBe(0);
     expect(r.synth).toBeGreaterThan(0); // the game still makes a sound
-    expect(r.warned).toBe(46);
+    expect(r.warned).toBe(50);
   });
 
   it('survives a base library that returns a STRING for an un-encoded read', async () => {
@@ -305,7 +345,7 @@ describe('WeChat runtime — the failure shapes this platform has and web does n
     const r = await withBrokenRead(() => 'not an ArrayBuffer');
     expect(r.samples).toBe(0);
     expect(r.synth).toBeGreaterThan(0);
-    expect(r.warned).toBe(46);
+    expect(r.warned).toBe(50);
     expect(r.messages[0]).toContain('not an ArrayBuffer');
   });
 });

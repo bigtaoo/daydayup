@@ -89,7 +89,23 @@ export type AudioCue =
   | 'pickup.material'
   | 'pickup.buff'
   | 'wave-clear'
-  | 'win';
+  | 'win'
+  // UI cues. Unlike everything above, these are NOT driven by engine events — they come
+  // from the screen layer's own wall-clock interactions (design/11's "UI-side cues (button
+  // tap, screen transition, extract/descend commit, result screen) come from 10's
+  // ScreenManager, not the engine"). They share this union, the catalogue, the voice cap
+  // and both backends, because the only thing that differs is who fires them: a UI cue is a
+  // response to the player's finger rather than to a simulated event. They reach the bus
+  // through `audio/uiSound.ts`, never through EventReactor.
+  //
+  // Four, not one, because they answer four different questions the player is asking:
+  // `tap` = heard you, `back` = you are leaving this screen, `toggle` = the setting under
+  // your finger changed, `denied` = that press did nothing (an unaffordable craft), which
+  // was previously indistinguishable from a dropped input.
+  | 'ui.tap'
+  | 'ui.back'
+  | 'ui.toggle'
+  | 'ui.denied';
 
 // A swappable audio device, symmetric to InputSource. Both backends now run the SAME cue
 // pipeline (audio/CueMixer.ts — the shipped sample if one is loaded, the procedural voice if

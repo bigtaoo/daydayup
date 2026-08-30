@@ -61,7 +61,7 @@ export class ModeSelect {
     this.recommendedTag = new Text({ text: t('modeSelect.recommended'), style: { fill: 0xfbd38d, fontSize: 12, fontFamily: 'monospace', fontWeight: 'bold' } });
     this.recommendedTag.visible = false;
 
-    this.backBtn = new Button(t('modeSelect.back'), { w: 140, h: 34, fontSize: 13 });
+    this.backBtn = new Button(t('modeSelect.back'), { w: 140, h: 34, fontSize: 13, sound: 'ui.back' });
     this.backBtn.onTap = () => this.onBack?.();
     this.backBtn.setIcon(getUiTexture('icon_back'));
 

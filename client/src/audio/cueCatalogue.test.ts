@@ -33,7 +33,8 @@ describe('cue catalogue', () => {
     // Cheap, but it is the guarantee the whole module rests on: `CUE_CATALOGUE` is a
     // `Record<AudioCue, ...>`, so this passing means no cue can reach the mixer without a
     // decision. (`ALL_CUES` is derived from it, so the real assertion is the count.)
-    expect(ALL_CUES).toHaveLength(16);
+    // 16 engine cues + the 4 `ui.*` screen cues added 2026-08-30.
+    expect(ALL_CUES).toHaveLength(20);
     expect(new Set(ALL_CUES).size).toBe(ALL_CUES.length);
     for (const cue of ALL_CUES) expect(CUE_CATALOGUE[cue]).toBeDefined();
   });
