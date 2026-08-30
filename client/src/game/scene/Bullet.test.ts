@@ -7,7 +7,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import type { Graphics } from 'pixi.js';
+import { TICK_RATE, fromFp, WEAPON_SIM_BY_ID, type RangedSimSpec } from '@dd/engine';
 import { THEME } from '../theme';
+import { PX_PER_GRID } from '../coords';
 import { Bullet } from './Bullet';
 import { SHADOW_SLANT_X, SHADOW_SLANT_Y } from './Entity';
 
@@ -92,10 +94,13 @@ describe('Bullet redraw — glow-halo branch', () => {
   });
 });
 
-// setMuzzleOrigin (2026-08-17) — the render-only correction that makes a shot leave the
+// setMuzzleOrigin (2026-08-17, retuned 2026-08-30 to spend by DISTANCE TRAVELLED rather than
+// wall-clock time — user report *"子弹的弹道，现在会从枪口曲线跑到角色身前再继续飞向目标"*, a slow
+// weapon's fixed 120ms budget covered so little ground that the correction dominated its early
+// flight and read as a visible bend). The render-only correction makes a shot leave the
 // shooter's drawn barrel tip instead of the engine's ground-plane muzzle point. See the
-// method's own doc for the geometry; Scene.test.ts covers the wiring, this covers the
-// curve itself.
+// method's own doc for the geometry; Scene.test.ts covers the wiring, this covers the curve
+// itself. `MUZZLE_EASE_DISTANCE_PX` is 40 (not exported — pinned here by behaviour instead).
 describe('Bullet.setMuzzleOrigin — easing from the barrel tip onto the sim line', () => {
   /** A bullet parked at a fixed sim position, so every drawn offset below is the ease. */
   function parked(x = 100, y = 200, z = 0): Bullet {
@@ -111,39 +116,61 @@ describe('Bullet.setMuzzleOrigin — easing from the barrel tip onto the sim lin
     expect(b.y).toBe(200);
   });
 
-  it('starts fully at the muzzle and lands exactly on the sim position once spent', () => {
+  it('starts fully at the muzzle and lands exactly on the sim position once 40px is travelled', () => {
     const b = parked();
     b.setMuzzleOrigin(30, -18);
 
-    b.interpolate(1, 0); // first drawn frame, nothing elapsed
+    b.interpolate(1, 0); // first drawn frame, no travel yet
     expect(b.x).toBeCloseTo(130, 6);
     expect(b.y).toBeCloseTo(182, 6);
 
-    b.interpolate(1, 120); // the whole 120ms ease in one frame
-    expect(b.x).toBeCloseTo(100, 6);
+    b.pushState(140, 200, 0, 0); // the sim moved the bullet 40 world px — the whole budget
+    b.interpolate(1, 16);
+    expect(b.x).toBeCloseTo(140, 6);
     expect(b.y).toBeCloseTo(200, 6);
   });
 
-  it('decays monotonically, front-loaded (ease-out) rather than linearly', () => {
+  it('a slow bullet that covers little ground per frame keeps most of its offset early on — ' +
+     'the exact complaint this retune fixes', () => {
+    const b = parked();
+    b.setMuzzleOrigin(30, -18);
+    b.interpolate(1, 0); // full offset at spawn, as always
+
+    // A slow weapon: only 5 world px of travel this tick (vs. the 40px budget) — nowhere near
+    // enough to have meaningfully left the muzzle under the old fixed-time budget either, but
+    // the OLD implementation would still have drained a fixed fraction of 120ms regardless.
+    b.pushState(105, 200, 0, 0);
+    b.interpolate(1, 16);
+    // Still most of the way toward the muzzle — this is what "curving in front of the
+    // character" used to look like before the correction had covered real ground.
+    expect(b.x - 105).toBeGreaterThan(20);
+  });
+
+  it('decays monotonically, front-loaded (ease-out) rather than linearly, as travel accrues', () => {
     const b = parked();
     b.setMuzzleOrigin(120, 0);
+    b.interpolate(1, 0); // spend the "no travel yet" frame first
     const offsets: number[] = [];
+    let traveled = 0;
     for (let i = 0; i < 4; i++) {
-      b.interpolate(1, 30); // 4 x 30ms = the full 120ms
-      offsets.push(b.x - 100);
+      traveled += 10; // 4 x 10 world px = the full 40px budget
+      b.pushState(100 + traveled, 200, 0, 0);
+      b.interpolate(1, 16);
+      offsets.push(b.x - (100 + traveled));
     }
     // Strictly shrinking...
     for (let i = 1; i < offsets.length; i++) expect(offsets[i]!).toBeLessThan(offsets[i - 1]!);
-    // ...and past halfway in time, well past halfway in distance (k² not k).
+    // ...and past halfway in distance, well past halfway of the offset itself (k² not k).
     expect(offsets[1]!).toBeLessThan(120 * 0.5);
     expect(offsets[offsets.length - 1]!).toBe(0);
   });
 
-  it('never overshoots past the sim position, however long the frame', () => {
+  it('never overshoots past the sim position, however far the bullet jumps in one tick', () => {
     const b = parked();
     b.setMuzzleOrigin(30, -18);
-    b.interpolate(1, 5000); // a tab that was backgrounded, or a debugger pause
-    expect(b.x).toBe(100);
+    b.pushState(10100, 200, 0, 0); // a tab that was backgrounded and fast-forwarded on resume
+    b.interpolate(1, 16);
+    expect(b.x).toBe(10100);
     expect(b.y).toBe(200);
   });
 
@@ -160,19 +187,79 @@ describe('Bullet.setMuzzleOrigin — easing from the barrel tip onto the sim lin
     expect(b.shadow!.y).toBeCloseTo(200 + 40 * SHADOW_SLANT_Y, 6);
   });
 
-  it('keeps easing across the tick boundary, not just within one tick\'s interpolation', () => {
-    // The correction outlives a single pushState: the offset is time-based, so a bullet
-    // that gets a fresh sim position mid-ease keeps the remainder of its curve.
+  it('keeps easing across a pushState, not just within one interpolate() call', () => {
+    // The correction outlives a single pushState: the budget is TRAVEL, not per-call, so a
+    // bullet that gets a fresh sim position mid-ease keeps the remainder of its curve.
     const b = parked();
     b.setMuzzleOrigin(60, 0);
-    b.interpolate(1, 30);
-    const midEase = b.x - 100;
-    expect(midEase).toBeGreaterThan(0);
+    b.interpolate(1, 16); // no travel yet — full offset
 
-    b.pushState(140, 200, 0, 0); // next sim tick — the bullet has flown on
-    b.interpolate(1, 30);
-    expect(b.x - 140).toBeGreaterThan(0); // still offset from the NEW sim position...
-    expect(b.x - 140).toBeLessThan(midEase); // ...but by less than before
+    b.pushState(120, 200, 0, 0); // 20 of the 40px budget spent
+    b.interpolate(1, 16);
+    const midEase = b.x - 120;
+    expect(midEase).toBeGreaterThan(0);
+    expect(midEase).toBeLessThan(60);
+
+    b.pushState(140, 200, 0, 0); // another 20px — the whole budget now spent
+    b.interpolate(1, 16);
+    expect(b.x - 140).toBeGreaterThanOrEqual(0);
+    expect(b.x - 140).toBeLessThan(midEase); // ...strictly less than before
+  });
+
+  it('measures travel as true 2D distance (hypot), not axis-summed drift', () => {
+    const b = parked();
+    b.setMuzzleOrigin(80, 0);
+    b.interpolate(1, 0); // no travel yet
+
+    // A 12/16/20 right triangle: the real distance travelled is 20 world px (half the
+    // 40px budget), but |dx| + |dy| is 28 — an axis-summed implementation would (wrongly)
+    // drain more of the budget than the bullet actually covered.
+    b.pushState(112, 216, 0, 0);
+    b.interpolate(1, 16);
+    // remaining = 40 - 20 = 20 -> k = 0.5 -> ease = 0.25 -> offset = 80 * 0.25 = 20
+    expect(b.x - 112).toBeCloseTo(20, 5);
+  });
+
+  it("measures travel along the bullet's own path, independent of the offset's direction", () => {
+    const b = parked();
+    b.setMuzzleOrigin(0, 50); // pure vertical offset — perpendicular to the travel below
+    b.interpolate(1, 0);
+
+    b.pushState(120, 200, 0, 0); // 20 world px of purely HORIZONTAL travel
+    b.interpolate(1, 16);
+    // If "travel" were measured as a projection onto the offset's own direction instead of
+    // the bullet's actual path, this horizontal move would look like ~0 progress (it is
+    // perpendicular to the vertical offset) and the correction would still be fully applied.
+    // remaining = 40 - 20 = 20 -> k = 0.5 -> ease = 0.25 -> offset = 50 * 0.25 = 12.5
+    expect(b.y - 200).toBeCloseTo(12.5, 5);
+  });
+
+  // Ties the distance-based budget to a REAL shipped weapon (design/07 elemental frame),
+  // rather than only to synthetic numbers — so a future change to either the correction's
+  // 40px budget or this weapon's own pace shows up here as a concrete before/after, not just
+  // as an abstract "the math still works" pass.
+  it('frostseeker (the slowest ranged weapon in the roster) still shows most of its offset ' +
+     'after one real 30Hz sim tick — the exact case this retune targets', () => {
+    const frostseeker = WEAPON_SIM_BY_ID.frostseeker as RangedSimSpec;
+    // `bulletSpeed` on the SIM spec is already fp-displacement-PER-TICK (weapons.ts'
+    // `toFpPerTick`), not the authored grid/s — fromFp() undoes the fp scale, `PX_PER_GRID`
+    // the grid-to-px one, and TICK_RATE plays no part since the conversion already is per-tick.
+    const pxPerTick = fromFp(frostseeker.bulletSpeed) * PX_PER_GRID;
+
+    const b = parked();
+    b.setMuzzleOrigin(30, -18); // the real drawn-muzzle offset measured on live shots (18582fa)
+    b.interpolate(1, 0);
+
+    b.pushState(100 + pxPerTick, 200, 0, 0); // exactly one sim tick of this weapon's own travel
+    b.interpolate(1, 1000 / TICK_RATE);
+    const remainingFraction = (b.x - (100 + pxPerTick)) / 30;
+    // A weapon this slow only dents the 40px budget by ~6px in one tick — most of the offset
+    // (well over half) is still visible, by design: it finishes over several ticks rather than
+    // vanishing in one, which is what keeps the correction reading as a departure rather than a
+    // snap. What the OLD, time-based budget got wrong wasn't "still visible after tick one" —
+    // it's that this same fraction used to persist for the SAME 120ms regardless of how little
+    // ground a slow bullet had actually covered by then.
+    expect(remainingFraction).toBeGreaterThan(0.6);
   });
 });
 
@@ -258,8 +345,9 @@ describe('Bullet — the spawn pop', () => {
       scales.push(coreOf(b).scale.x);
     }
     for (let i = 1; i < scales.length; i++) expect(scales[i]!).toBeLessThanOrEqual(scales[i - 1]!);
-    // 6 x 16 = 96ms > SPAWN_POP_MS (90) but < MUZZLE_EASE_MS (120): the pop is finished while
-    // the barrel-tip correction is still running, which is what keeps the two from fighting.
+    // 6 x 16 = 96ms > SPAWN_POP_MS (90): the pop is finished on its own fixed clock regardless
+    // of how the (now distance-based) barrel-tip correction is progressing, which is what keeps
+    // the two from fighting — this test never even fires that correction (no setMuzzleOrigin).
     expect(scales[scales.length - 1]!).toBe(1);
   });
 

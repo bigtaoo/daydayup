@@ -12,11 +12,25 @@ import type { Faction } from './Actor';
 // hue with a soft additive glow halo, so a fire/ice/lightning/poison shot reads at a
 // glance — distinct from a plain (faction-coloured) physical round. The world-space
 // motion trail is spawned by Game (fx layer), keyed off the same element colour.
-// How long a bullet takes to ease from its shooter's drawn muzzle onto its true sim
-// line (setMuzzleOrigin). ~3.6 sim ticks — long enough that the correction is a smooth
-// departure rather than a one-frame jump, short enough that it is all spent within the
-// first ~40 world px of flight, well before the bullet is anywhere near a target.
-const MUZZLE_EASE_MS = 120;
+/**
+ * How far (in world px of TRAVEL, not wall-clock time) a bullet eases from its shooter's
+ * drawn muzzle onto its true sim line (setMuzzleOrigin) before the correction is fully spent.
+ *
+ * Was a fixed 120ms budget until 2026-08-30 (user report *"子弹的弹道，现在会从枪口曲线跑到角色
+ * 身前再继续飞向目标"*): at the ~10 grid/s (320 world px/s) most weapons fire, 120ms covers
+ * ~38 world px, which read fine — but a slow weapon like frostbrand (`bulletSpeed: 6`, 192
+ * world px/s) only covers ~23 px in the same 120ms, so the ~12-14 px offset measured on real
+ * shots (the commit that introduced this correction, "most of a body radius") ate over half of
+ * its early flight instead of a third. A slow bullet lingered right in front of the shooter
+ * while the offset drained, which read as the shot curving there before straightening out
+ * toward the target, rather than as leaving the barrel cleanly.
+ *
+ * Budgeting by distance travelled instead keeps the correction's visual footprint (offset px
+ * over budget px) the same fraction of early flight for every `bulletSpeed` — a slow bullet
+ * just takes longer, in ms, to cover the same 40 px, instead of spending its whole time budget
+ * over a shorter distance.
+ */
+const MUZZLE_EASE_DISTANCE_PX = 40;
 /**
  * How long a bullet's spawn "pop" lasts (2026-08-30, user report *"子弹出现的也很突兀"*).
  *
@@ -26,9 +40,10 @@ const MUZZLE_EASE_MS = 120;
  * that, both purely temporal: the core is thrown a little OVERSIZE and settles to its true
  * radius, and a bright additive flare rides the round out of the barrel and collapses.
  *
- * ~2.7 sim ticks, i.e. it is finished well inside `MUZZLE_EASE_MS`'s own correction, so the
- * whole "leaving the gun" read (barrel-tip origin + pop) is over within the first few frames
- * of flight and the bullet spends the rest of its life drawn exactly as before.
+ * ~2.7 sim ticks — comfortably inside how long even the SLOWEST weapon takes to spend
+ * `MUZZLE_EASE_DISTANCE_PX`'s own correction, so the whole "leaving the gun" read (barrel-tip
+ * origin + pop) is over within the first few frames of flight and the bullet spends the rest
+ * of its life drawn exactly as before.
  */
 const SPAWN_POP_MS = 90;
 /** How much oversize the core starts at, as a fraction of its radius. Small on purpose — this
@@ -49,7 +64,13 @@ export class Bullet extends Entity {
   private damageType: DamageType = 'physical';
   private originDx = 0; // muzzle-origin correction (see setMuzzleOrigin)
   private originDy = 0;
-  private originMs = 0; // remaining ease time; 0 = drawn exactly at the sim position
+  private originRemainingPx = 0; // world px of travel left to spend; 0 = drawn exactly at the sim position
+  // Last-seen un-offset (sim-interpolated) position, for measuring how far the bullet has
+  // actually travelled since `setMuzzleOrigin` — seeded there from curX/curY, not lazily on
+  // the first interpolate() call, so a fast-forwarded catch-up (several sim ticks landing
+  // before the view's first render frame) is measured too instead of read as "no travel yet".
+  private lastBaseX = 0;
+  private lastBaseY = 0;
 
   constructor(radiusPx: number) {
     super();
@@ -104,8 +125,9 @@ export class Bullet extends Entity {
   /**
    * Draw this bullet leaving the shooter's actual barrel tip (`Scene` supplies the
    * offset from the engine's spawn point to the drawn muzzle) and ease onto the
-   * authoritative sim line over `MUZZLE_EASE_MS`. Render-only, applied on top of the
-   * interpolated sim position — nothing here is ever read back into the sim.
+   * authoritative sim line over `MUZZLE_EASE_DISTANCE_PX` of travel. Render-only,
+   * applied on top of the interpolated sim position — nothing here is ever read back
+   * into the sim.
    *
    * A decaying offset rather than just a different starting point, because the two
    * lines are PARALLEL, not merely offset at their origins: the sim places its muzzle
@@ -115,7 +137,8 @@ export class Bullet extends Entity {
    * swings down the screen — so a bullet that merely STARTED at the muzzle would still
    * fly along a visibly separate line below it (~16 world px, and this camera zooms 4x).
    * Easing the offset out instead lets the shot leave the barrel and rejoin its true
-   * path within the first ~40 px of flight, by which point the gap is invisible.
+   * path within the first `MUZZLE_EASE_DISTANCE_PX` of flight, by which point the gap
+   * is invisible.
    *
    * The shadow is deliberately left on the un-offset ground point: it marks where the
    * bullet actually is in the world, which is the sim position, not the drawn one.
@@ -123,7 +146,9 @@ export class Bullet extends Entity {
   setMuzzleOrigin(dx: number, dy: number): void {
     this.originDx = dx;
     this.originDy = dy;
-    this.originMs = MUZZLE_EASE_MS;
+    this.originRemainingPx = MUZZLE_EASE_DISTANCE_PX;
+    this.lastBaseX = this.curX;
+    this.lastBaseY = this.curY;
   }
 
   override interpolate(alpha: number, frameDt: number): void {
@@ -140,9 +165,23 @@ export class Bullet extends Entity {
       this.flare.alpha = ease;
       this.flare.visible = this.popMs > 0;
     }
-    if (this.originMs <= 0) return;
-    this.originMs = Math.max(0, this.originMs - frameDt);
-    const k = this.originMs / MUZZLE_EASE_MS;
+    if (this.originRemainingPx <= 0) return;
+    // The GROUND-space interpolated position (same formula `Entity.interpolate` used to write
+    // `this.x/y`, computed again here rather than read back off `this.x/y`): the latter is
+    // already screen space, `y` shifted up by this frame's `z` lift, which would read every
+    // z-height change as extra "travel" and drain the budget for a reason that has nothing to
+    // do with how far the bullet has actually flown. Diffing against the same point last frame
+    // (or, on the first call, against the spawn position `setMuzzleOrigin` seeded from
+    // curX/curY) measures actual world-px travel, not elapsed time, so the budget below drains
+    // at the bullet's own speed rather than a fixed wall-clock rate.
+    const baseX = this.prevX + (this.curX - this.prevX) * alpha;
+    const baseY = this.prevY + (this.curY - this.prevY) * alpha;
+    const traveled = Math.hypot(baseX - this.lastBaseX, baseY - this.lastBaseY);
+    this.originRemainingPx = Math.max(0, this.originRemainingPx - traveled);
+    this.lastBaseX = baseX;
+    this.lastBaseY = baseY;
+    if (this.originRemainingPx <= 0) return;
+    const k = this.originRemainingPx / MUZZLE_EASE_DISTANCE_PX;
     const ease = k * k; // ease-out: most of the correction is spent in the first frames
     this.x += this.originDx * ease;
     this.y += this.originDy * ease;

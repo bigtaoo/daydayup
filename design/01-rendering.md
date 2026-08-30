@@ -67,11 +67,17 @@ drawn barrel swings down the screen, leaving the two on visibly *parallel* lines
 px apart, and this camera zooms 4x). `RigSkin.muzzleLocal` reports the mounted module's
 business end (socket-bone tip + a ray/rect measure of how far the texture reaches from its
 anchor in its own baked direction), `Actor.muzzlePos` lifts that into world space, and
-`Bullet.setMuzzleOrigin` eases the difference out over the first ~120 ms of flight. Fixed
-on the VIEW, not by moving the sim's own muzzle: the sim position stays authoritative for
-hit detection, and a longer sim muzzle would let a player standing flush against a wall
-spawn shots on its far side. Null for anything with no rig-mounted module — every enemy,
-whose placeholder barrel already ends within a pixel of its own sim muzzle.
+`Bullet.setMuzzleOrigin` eases the difference out over the first 40 world px of *travel*
+(2026-08-30 retune, live report *"子弹的弹道，现在会从枪口曲线跑到角色身前再继续飞向目标"*: a fixed
+120ms budget spent itself fine for a normal-paced weapon (~38px covered) but a slow one
+(frostseeker's 6 grid/s) only covers ~23px in the same 120ms, so the ~12-14px offset ate
+over half its early flight instead of a third, and read as the shot curving in front of the
+shooter before straightening out — budgeting by distance instead keeps that fraction the
+same for every `bulletSpeed`). Fixed on the VIEW, not by moving the sim's own muzzle: the
+sim position stays authoritative for hit detection, and a longer sim muzzle would let a
+player standing flush against a wall spawn shots on its far side. Null for anything with no
+rig-mounted module — every enemy, whose placeholder barrel already ends within a pixel of
+its own sim muzzle.
 
 ## Standing walls (2026-08-18)
 

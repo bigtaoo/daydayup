@@ -402,12 +402,19 @@ describe('Scene.reconcile — death-dissolve lingering view (design/01 fidelity 
     expect(view.x).toBeCloseTo(330, 5);
     expect(view.y).toBeCloseTo(292, 5);
 
-    scene.interpolate(1, 60); // halfway through the 120ms ease: 0.5^2 of the offset left
-    expect(view.x).toBeCloseTo(300 + 30 * 0.25, 5);
+    // The correction is spent by DISTANCE TRAVELLED (Bullet.ts, retuned 2026-08-30), not by
+    // elapsed time — advance the engine's own bullet position and reconcile so the view gets a
+    // fresh pushState, the same way a real sim tick would move it.
+    bullet.gx = pxToFp(320); // 20 of the 40px budget
+    scene.reconcile(s, p.id);
+    scene.interpolate(1, 16); // halfway through the 40px ease: 0.5^2 of the offset left
+    expect(view.x).toBeCloseTo(320 + 30 * 0.25, 5);
     expect(view.y).toBeCloseTo(300 - 8 * 0.25, 5);
 
-    scene.interpolate(1, 120); // past it: exactly the engine position from here on
-    expect(view.x).toBeCloseTo(300, 5);
+    bullet.gx = pxToFp(340); // the other 20px — the whole 40px budget now spent
+    scene.reconcile(s, p.id);
+    scene.interpolate(1, 16); // past it: exactly the engine position from here on
+    expect(view.x).toBeCloseTo(340, 5);
     expect(view.y).toBeCloseTo(300, 5);
   });
 

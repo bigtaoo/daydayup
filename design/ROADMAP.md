@@ -8089,3 +8089,48 @@ window/document/body/canvas moved the player, in a game that was visibly running
 bullets firing, screenshots compositing). Cause not established, and not guessed at. `38 px` is one
 constant away from any other answer if the frame disagrees with the arithmetic.
 
+## A slow bullet's curve, budgeted by distance instead of a clock (2026-08-30, client)
+
+User report: *"子弹的弹道，现在会从枪口曲线跑到角色身前再继续飞向目标"*. The mechanism this landed on
+(`Bullet.setMuzzleOrigin`, `MUZZLE_EASE_MS`, shipped 2026-08-17 and re-anchored by the muzzle-fx
+fix above) was never in question — a shot has to leave the drawn barrel tip and ease onto the
+sim's own line, and moving the sim's spawn point instead was already rejected for the wall-clip
+reason `01`'s doc comment gives. What was wrong was the unit the 120 ms budget was spent in.
+
+### The gap the fixed-time budget didn't account for
+
+The measured drawn-muzzle offset is 12–14 world px (the number the fx fix above sampled on real
+shots — "most of a body radius"). At the ~10 grid/s most weapons fire, 320 world px/s, 120 ms
+covers ~38 px, and the offset is a modest fraction of that — fine. But `frostseeker`
+(`bulletSpeed: 6`, the slowest ranged weapon in the roster, "ice's own deliberate pace") moves at
+192 world px/s: the same 120 ms budget covers only ~23 px, so the offset now eats over half of the
+bullet's early flight instead of a third. A slow round visibly lingered near the shooter while the
+correction drained on its own clock, independent of whether the round had actually gone anywhere —
+which is exactly "curves in front of the character, then flies to the target."
+
+### The fix
+
+`MUZZLE_EASE_DISTANCE_PX = 40` replaces `MUZZLE_EASE_MS = 120`. `Bullet.interpolate` now measures
+its own GROUND-space displacement each frame (`Entity`'s `prevX/curX` interpolation formula,
+computed directly rather than read back off the already-z-lifted `this.x/y`, so a bullet's cosmetic
+height never counts as travel) and drains the budget by that, not by `frameDt`. The ease-out shape
+(`k²`) is unchanged; only what `k` counts down against moved from milliseconds to world px. A fast
+weapon's correction still finishes in a couple of frames, same as before; a slow weapon's now takes
+proportionally longer in wall-clock time to cover the same 40 px, instead of spending its whole
+time budget over a shorter distance and leaving the gap most visible near the gun.
+
+### Verification
+
+`Bullet.test.ts`'s whole `setMuzzleOrigin` suite was rewritten to drive the budget by `pushState`
+displacement instead of `frameDt` (the old tests parked the bullet and varied only elapsed time,
+which the new implementation cannot pass — that mismatch is the point). Two of the added cases
+target the two ways a distance measurement can be wrong without failing an axis-aligned test: a
+12/16/20 right triangle where the true distance (20) and the axis sum (28) disagree, and an offset
+perpendicular to the direction of travel, which would read as ~zero progress under a
+projection-onto-offset measurement. A third ties the budget to real content — `WEAPON_SIM_BY_ID.
+frostseeker`'s own converted `bulletSpeed`, run through one real 30 Hz tick — so a future change to
+either the 40 px constant or this weapon's pace shows up as a concrete before/after rather than
+passing on abstract arithmetic alone. `Scene.test.ts`'s existing wiring test was updated the same
+way (`bullet.gx` advanced + `reconcile()` in place of a bare `frameDt`). Full suite: 3727/3727,
+`tsc --noEmit` clean across every workspace.
+
