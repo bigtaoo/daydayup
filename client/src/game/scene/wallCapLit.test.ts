@@ -82,6 +82,8 @@ describe('buildDoorBlock — the other caller of addCapLayers gets the same bake
     palette: biomePalette('ember'),
     cap: swatch(),
     face: swatch(),
+    floor: undefined,
+    curtain: undefined,
     leaf: new Texture({ source: new TextureSource({ width: 147, height: 217 }) }),
   });
 

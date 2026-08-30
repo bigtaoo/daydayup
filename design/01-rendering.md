@@ -1360,6 +1360,55 @@ wrong in the same way: `wallCapLit` counted "exactly one additive child" and `Ro
 called `find(blendMode === 'add')` "the hazard bloom", both of which would have gone on passing
 while testing the wrong layer.
 
+### The recess itself is still shared stone, and then it is a whole illustrated curtain (2026-08-30b)
+
+Two more passes the same day, both against the same live complaint: *"可以通过时的门，好了一些，但离我
+想要的效果还差很远"* (better, but still far from wanted) followed, once the first fix had shipped, by
+*"依然不行...被阻挡时的火焰很明显，但是可以通过的效果太弱了"* (still no good — the locked flame reads
+clearly, the passable one doesn't come close).
+
+**Pass one: the recess itself.** Everything above added LIGHT on top of the recess, but the recess's
+own base — `drawRecess`'s bands — was still the same near-black used for BOTH states, darkening the
+same wall-stone elevation `addWallFace` draws underneath it. An open door and a locked one differed
+only in how much warmth was added over an otherwise identical dark tunnel. Fix: the open state now
+draws the room's own FLOOR swatch (`DoorSkin.floor`, tiled) across the opening instead of more wall
+stone, darkened by the same ramp shape at a far lighter pair of alphas (`OPEN_RECESS_ALPHA_TOP/FLOOR`
+0.42/0.04, against the locked pair's 0.72/0.34) — a real floor texture is visible in the passage
+rather than a flat tone. No swatch loaded falls back to a flat tone between the room floor and
+`RECESS_COLOR`, same optional-swatch contract as everywhere else on `DoorSkin`.
+
+**Pass two: the recess needed to be a whole illustrated thing, not a gradient.** The floor-tile pass
+was a real improvement and still wasn't enough — the reason, once named, is structural rather than
+tonal: the LOCKED leaf (`door_locked_raw.png`) is a whole hand-illustrated hazard panel, so nothing
+built out of alpha ramps over a floor tile was ever going to match its visual weight. The open state
+needed an illustrated asset of its own. `door_curtain_raw.png` — a vertical curtain of warm-gold
+energy, generated as a VFX overlay rather than a masked prop (its alpha is a genuine soft graduated
+glow, which `alpha-audit.mjs` correctly flags as HAZE for a normal prop and just as correctly does
+NOT apply to an additive light asset) — sits in the same additive slot `through` occupied and
+REPLACES it once loaded, sized by the exact same `doorLeafFrame` fit-by-width/crop-from-top rule the
+leaf uses (pulled out into `doorLeaf.fitArtToOpening` so both share one implementation): a kerb door
+crops to the curtain's own BOTTOM, which is its brightest, densest band, not an arbitrary slice. No
+curtain art loaded falls back to the procedural `through` ramp untouched — same optional-swatch
+contract as `leaf`/`floor`.
+
+**A same-day bug this pass is worth naming: a correctly-sized, correctly-visible, correctly-additive
+sprite that was still invisible in play.** `fitArtToOpening` sets texture/width/height only, the way
+`applyLeaf` always had it — but the leaf sprite is explicitly `position.set(0, -leafDrawH)` BEFORE
+that call runs, and the curtain wiring copied the sizing call without copying the position line. The
+sprite defaulted to `(0, 0)` and drew from the threshold DOWNWARD into the room floor instead of
+upward into the opening — present in the display tree, `visible: true`, additive, the right pixel
+dimensions, and completely absent from the rendered frame. No existing assertion could have caught
+it: every test here checks size and visibility, none checks *where* a sprite stands. Found by
+dumping the live fixture's children on a real frame rather than by the suite, and now pinned two
+ways: `doorRender.test.ts` ("stands the curtain on the threshold reaching UP into the opening") on
+the one hand-built opening, and `doorCurtainCoverage.test.ts` — sibling of
+`doorStandCoverage`/`doorSpillCoverage`/`doorLightCoverage` — sweeping the same position claim
+across all 24 shipped doors, since a hand-built opening is a shape *this session chose* and this
+repo has shipped a shape-dependent variant of that exact class of bug before. A second, unrelated
+gap closed the same pass: nothing proved `RoomBuilder` actually wires `getFloorTexture()`/
+`getDoorCurtainTexture()` into the door skin at all — confirmed real by deleting both from the call
+site first (the full suite stayed green), then closed in `RoomBuilder.test.ts`.
+
 ## The floor stops at its rooms (2026-08-20)
 
 The floor was one `TilingSprite` of a 256 px swatch over the world, and measured on a live

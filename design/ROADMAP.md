@@ -5,7 +5,7 @@ closed loop the design docs describe, and the running record of how each phase a
 landed. Phases are written top-to-bottom in dependency order; each one keeps its dated
 shipped-notes underneath it, so a phase section is both the plan and the history.
 
-**Current built state (engine notes below written 2026-08-20; content/render passes have landed since — 2026-08-25 the hand-authored PvP launch arena `arena_launch` plus the arena audit, 2026-08-26 the arena floor stopping at its rooms and the retirement of `arena_prototype_60`, 2026-08-30 an open door reading as a passage instead of a black wall, 2026-08-30 a wall standing over a dropped item now fades permanently instead of only while the player happens to be near it — none of which touches the tick order or bumps a version). **Two engine bumps have landed since: 2026-08-30's `ENGINE_VERSION` 47**, a north-face brim on free-standing wall blocks so a character stops beside one the way they already stop beside a pillar — see "The wall swallowed the character and the pillar did not" below — **and the same day's `ENGINE_VERSION` 48**, live feedback on 47 itself (circled screenshot: half the character still read as sunk into a free-standing block, wanted down to about a quarter; a monster's own tiny wall clearance let it stand visibly closer than any player could; a dropped kill's loot could land inside the band no actor's collision would ever let them reach): the brim widened from 16 to 23 px (the largest value the shipped arena's tightest corridor tolerates before a route seals — see "what the north brim costs the launch map" in `launchArena.test.ts`), every enemy blueprint now stops at its own body radius against a wall or pillar instead of the smaller feet circle (re-verified against the PvE bot sim — every balance gate still passes, no softlock), and `geom.clampToWalkable` (where a death drop and an arena crate land) was made brim-aware to match. See `ENGINE_VERSION_HISTORY.md`'s v48 entry for the full account, including the one thing it does NOT fix (a room-boundary/kerb wall's own worst-case coverage, untouched by a constant that only ever governs a free-standing block's north face). The number in this heading has drifted before and is not the authority — `engine/versionHistory.ts` is. `ENGINE_VERSION` **43** (32: ground-weapon pickup is
+**Current built state (engine notes below written 2026-08-20; content/render passes have landed since — 2026-08-25 the hand-authored PvP launch arena `arena_launch` plus the arena audit, 2026-08-26 the arena floor stopping at its rooms and the retirement of `arena_prototype_60`, 2026-08-30 an open door reading as a passage instead of a black wall (2026-08-30b: still not enough on its own, so the recess now shows the room's own floor and the open state got an illustrated warm-gold light-curtain asset of its own — `door_curtain_raw.png` — to match the locked hazard leaf's visual weight), 2026-08-30 a wall standing over a dropped item now fades permanently instead of only while the player happens to be near it — none of which touches the tick order or bumps a version). **Two engine bumps have landed since: 2026-08-30's `ENGINE_VERSION` 47**, a north-face brim on free-standing wall blocks so a character stops beside one the way they already stop beside a pillar — see "The wall swallowed the character and the pillar did not" below — **and the same day's `ENGINE_VERSION` 48**, live feedback on 47 itself (circled screenshot: half the character still read as sunk into a free-standing block, wanted down to about a quarter; a monster's own tiny wall clearance let it stand visibly closer than any player could; a dropped kill's loot could land inside the band no actor's collision would ever let them reach): the brim widened from 16 to 23 px (the largest value the shipped arena's tightest corridor tolerates before a route seals — see "what the north brim costs the launch map" in `launchArena.test.ts`), every enemy blueprint now stops at its own body radius against a wall or pillar instead of the smaller feet circle (re-verified against the PvE bot sim — every balance gate still passes, no softlock), and `geom.clampToWalkable` (where a death drop and an arena crate land) was made brim-aware to match. See `ENGINE_VERSION_HISTORY.md`'s v48 entry for the full account, including the one thing it does NOT fix (a room-boundary/kerb wall's own worst-case coverage, untouched by a constant that only ever governs a free-standing block's north face). The number in this heading has drifted before and is not the authority — `engine/versionHistory.ts` is. `ENGINE_VERSION` **43** (32: ground-weapon pickup is
 click-driven; 33: manual aim removed entirely; 34: co-resident PvE room/door model, engine +
 client rendering; 35: fully-realized branching — see the Room & door model section below;
 same-day map-editor door placement, the `layout: 'graph2d'` real-2D-layout follow-up, AND the
@@ -85,6 +85,28 @@ door is lit from beyond" in design/01. `doorLightCoverage.test.ts` is its covera
 lineage of `doorStandCoverage`/`doorSpillCoverage`: all 24 shipped doors through the real pipeline,
 confirming the lit band is 55.1 px on each of the 13 perimeter doors and 13.2 px on each of the 11
 kerb ones rather than a sliver on most of them. 19 mutants across the two rounds, no survivors.
+
+**Update, same day (2026-08-30b):** the lighting pass above still wasn't enough — two more live
+reports, in sequence. First: the recess itself was still the SAME near-black wall-stone darkening
+for both states, only the light on top of it differed, so the open state now draws the room's own
+floor swatch across the opening (darkened by a far lighter version of the same ramp) instead of more
+wall stone. Second, after that had shipped: *"依然不行...被阻挡时的火焰很明显，但是可以通过的效果太弱
+了"* — the locked leaf is a whole illustrated hazard panel, and no amount of gradient tuning was ever
+going to match that visual weight with a procedural ramp. `door_curtain_raw.png`, a new illustrated
+warm-gold light-curtain asset, now fills the opening in the same additive slot the through-light
+occupied, replacing it when loaded. Shipped with one real bug along the way: the curtain sprite was
+sized correctly and visible but never positioned, so it drew below the threshold into the room floor
+instead of into the opening — present, additive, invisible. See "The recess itself is still shared
+stone, and then it is a whole illustrated curtain" in design/01, and `design/13`'s environment
+fixture list for the art itself.
+
+Two coverage gaps closed the same day, both confirmed real by mutation first: `RoomBuilder.test.ts`
+had no test proving `RoomBuilder` actually passes `getFloorTexture()`/`getDoorCurtainTexture()` into
+the door skin at all (deleting both from the call site left the full suite green), and
+`doorCurtainCoverage.test.ts` — sibling of `doorStandCoverage`/`doorSpillCoverage`/`doorLightCoverage`
+— sweeps the curtain's position across all 24 shipped doors rather than trusting the one hand-built
+opening `doorRender.test.ts` uses, since that is exactly the kind of shape-dependent bug this repo has
+shipped before.
 
 Also render-only: 2026-08-20's **drop and portal art** — the five in-run pickup kinds and the
 extraction gate's masonry arch become sprites. See "The drops and the gate get real art" below. That

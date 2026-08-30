@@ -5,7 +5,7 @@ import { Entity } from './Entity';
 import { biomePalette, biomeElementOf, type BiomeElement, type BiomePalette } from '../theme';
 import { fpToPx, PX_PER_GRID } from '../coords';
 import { getFloorTexture, getWallTexture, getWallFaceTexture } from '../../render/biomeTiles';
-import { getDoorTexture } from '../../render/environmentSprites';
+import { getDoorCurtainTexture, getDoorTexture } from '../../render/environmentSprites';
 import { wallTier, wallHeight, type RectPx } from './wallGeometry';
 import { buildWallBlock, drawWallShadow } from './wallRender';
 import { staticGraphics } from '../../render/staticGraphics';
@@ -253,7 +253,15 @@ export class RoomBuilder {
 
     // Doors before the shadow Graphics is mounted, because a door is a piece of the wall it is
     // cut into and throws its own cast shadow onto the same shared Graphics.
-    this.buildDoors(s, merged, doorRectsPx, roomsPx, { palette, cap: wallTex, face: faceTex }, shadows, element);
+    this.buildDoors(
+      s,
+      merged,
+      doorRectsPx,
+      roomsPx,
+      { palette, cap: wallTex, face: faceTex, floor: floorTex, curtain: getDoorCurtainTexture() },
+      shadows,
+      element,
+    );
     this.layers.shadow.addChild(shadows);
     this.wallShadows = shadows;
 
@@ -306,7 +314,13 @@ export class RoomBuilder {
     runs: readonly WallRun[],
     doorRects: readonly RectPx[],
     roomsPx: readonly RectPx[],
-    skin: { palette: BiomePalette; cap: Texture | undefined; face: Texture | undefined },
+    skin: {
+      palette: BiomePalette;
+      cap: Texture | undefined;
+      face: Texture | undefined;
+      floor: Texture | undefined;
+      curtain: Texture | undefined;
+    },
     shadows: Graphics,
     element: string,
   ): void {

@@ -39,18 +39,33 @@
 // shows the leaf's own base — its frame feet and the bottom hazard stripe — at the same stone
 // scale as everything else in the room. `doorLeafFrame` is the pure half of that rule, tested
 // without a canvas.
-import { Graphics, Rectangle, Sprite, Texture, type TextureSource } from 'pixi.js';
+import { Graphics, Sprite, Texture, TilingSprite } from 'pixi.js';
 import { Entity } from './Entity';
 import type { RectPx } from './wallGeometry';
 import { addBlockEdge, addCapLayers, addWallFace, drawBlockShading, type WallSkin } from './wallRender';
 import { blockCapTop, NO_JOINS, type WallJoins } from './wallRuns';
 import { XRAY_DEEP_LABEL, XRAY_LABEL, type FadeLayer } from './occlusion';
+import { applyLeaf, doorLeafFrame, fitArtToOpening, leafHeight } from './doorLeaf';
+
+// Re-exported so the pre-split import path (`import { doorLeafFrame } from './doorRender'`, used
+// by doorRender.test.ts and doorLightCoverage.test.ts) stays valid — CLAUDE.md's "keep the
+// original path alive as a thin re-export" rule for a file-length split.
+export { doorLeafFrame };
 
 /** Textures a door is drawn from: the wall's own two swatches (so the stone around the opening
  *  is the room's stone) plus the two leaf elevations. Any of them missing falls back to palette
  *  Graphics, the same contract as every other swatch in this layer. */
 export interface DoorSkin extends WallSkin {
   leaf: Texture | undefined;
+  /** The room's own floor swatch. Drawn, tiled, across the OPEN state's recess (see
+   *  `buildOpenFloorTile`) so a passable door's tunnel visibly continues the room's floor instead
+   *  of being a flat colour — undefined falls back to a flat tone, the same optional-swatch
+   *  contract every other field here has. */
+  floor: Texture | undefined;
+  /** The open state's own illustrated curtain-of-light (2026-08-30b) — see the constant block
+   *  above `buildOpenFloorTile` for why the floor tile alone still wasn't enough. Undefined falls
+   *  back to the procedural `drawThroughLight` ramp, same optional-swatch contract as `leaf`. */
+  curtain: Texture | undefined;
 }
 
 /**
@@ -70,6 +85,31 @@ const RECESS_COLOR = 0x05070a;
 const RECESS_BANDS = 8;
 const RECESS_ALPHA_TOP = 0.72;
 const RECESS_ALPHA_FLOOR = 0.34;
+
+/**
+ * The OPEN state's own recess alphas — the same band shape as a locked door's, over the room's own
+ * floor swatch instead of over more wall stone (`buildOpenFloorTile`).
+ *
+ * **Why this exists (2026-08-30, second pass the same day as the through/spill/rim lighting
+ * above).** That pass gave an open door light, but the base it sits on top of was left untouched:
+ * `drawRecess`'s default alphas darken the SAME wall-stone elevation for both states, so a
+ * passable door and a locked one differ only in how much light is added on top of an otherwise
+ * identical dark tunnel. Live report, after the lighting pass had already shipped: *"可以通过时的门，
+ * 好了一些，但离我想要的效果还差很远"* (better, but still far from the effect wanted) — circling the
+ * opening itself, not the light. The tunnel needs to say "floor" before the light says "lit".
+ *
+ * Numbers are far lighter than the locked pair: the floor swatch is what has to read, and the
+ * locked alphas (0.72/0.34) would bury it under almost the same near-black wash the flat colour
+ * used to be. Kept as bands rather than one flat alpha for the same reason as every other ramp in
+ * this file — a single value draws its own hard edge at the top of the opening.
+ */
+const OPEN_RECESS_ALPHA_TOP = 0.42;
+const OPEN_RECESS_ALPHA_FLOOR = 0.04;
+
+/** No-floor-art fallback for the open recess: a flat tone between the room floor and the near-black
+ *  `RECESS_COLOR`, so degraded content (no swatches loaded at all) still tells a locked tunnel from
+ *  an open one at the base layer, not only via the light layered on top of it. */
+const OPEN_RECESS_FALLBACK_COLOR = 0x2a2f3a;
 
 /** The sill: a hairline of lit stone along the opening's own floor line, the one cue that says
  *  the passage's floor is a step rather than a continuation of the room. Same white-coping trick
@@ -196,32 +236,6 @@ export interface DoorFixture {
 }
 
 /**
- * The source rect of the leaf art and the size it is drawn at, for an opening `w × h`.
- *
- * Scale is fixed by WIDTH; the art keeps its aspect ratio and whatever does not fit vertically is
- * cropped off the TOP (a doorway's base is the half that carries the hazard stripe and the frame's
- * feet, and the top is the half a lintel would hide anyway). If the art is SHORTER than the
- * opening at that scale, it is bottom-anchored and the leftover band above it is lintel stone —
- * never stretched to reach the top.
- *
- * Pure: no Pixi, no textures, just the four numbers. `srcY`/`srcH` are in texture pixels,
- * `drawH` in world px.
- */
-export function doorLeafFrame(
-  openingW: number,
-  openingH: number,
-  artW: number,
-  artH: number,
-): { srcY: number; srcH: number; drawH: number } {
-  if (artW <= 0 || artH <= 0) return { srcY: 0, srcH: 0, drawH: 0 };
-  const scale = openingW / artW;
-  const naturalH = artH * scale;
-  if (naturalH <= openingH) return { srcY: 0, srcH: artH, drawH: naturalH };
-  const srcH = openingH / scale;
-  return { srcY: artH - srcH, srcH, drawH: openingH };
-}
-
-/**
  * One dungeon door as a standing fixture, ready to add to the Y-sorted `entities` layer.
  *
  * Same coordinate contract as `wallRender.buildWallBlock`: the container is placed on the
@@ -253,18 +267,58 @@ export function buildDoorBlock(
   //    the same reason the recess, the leaf and the glow are all in it.
   addWallFace(seg, r, height, skin);
 
-  // 2. Recess.
-  const recess = new Graphics();
-  drawRecess(recess, r.w, leafDrawH);
-  seg.addChild(recess);
+  // 2. Recess — the tunnel behind the leaf. A LOCKED door draws the full-depth dark bands only,
+  //    same as before; an OPEN one instead shows the room's own floor tiled across the opening,
+  //    faintly darkened by the same ramp at a much lighter pair of alphas, so the passage floor
+  //    visibly continues past the threshold instead of reading as a hole in the wall — see
+  //    `OPEN_RECESS_ALPHA_TOP` for why. Both built up front and toggled by `.visible`, same
+  //    pattern as glow/through/spill below, so `setLocked` never rebuilds.
+  const recessLocked = new Graphics();
+  drawRecess(recessLocked, r.w, leafDrawH);
+  recessLocked.visible = locked;
+  seg.addChild(recessLocked);
+
+  const openFloor = buildOpenFloorTile(r.w, leafDrawH, skin.floor);
+  openFloor.visible = !locked;
+  seg.addChild(openFloor);
+
+  const openShade = new Graphics();
+  drawOpenRecessShade(openShade, r.w, leafDrawH);
+  openShade.visible = !locked;
+  seg.addChild(openShade);
 
   // 3. The light from the room beyond (open only), UNDER the leaf: the arch art's own stone is
   //    what shapes it, so it reaches the floor of the passage and no part of the frame.
   const through = new Graphics();
   drawThroughLight(through, r.w, leafDrawH);
   through.blendMode = 'add';
-  through.visible = !locked;
   seg.addChild(through);
+
+  // 3b. The open state's own illustrated curtain-of-light (2026-08-30b, live report after the
+  //     floor-tile pass above had already shipped: *"依然不行...被阻挡时的火焰很明显，但是可以通过
+  //     的效果太弱了"* — the locked leaf is a whole illustrated hazard panel, so nothing built out
+  //     of gradients was ever going to match its weight). Same additive slot as `through` (behind
+  //     the leaf, confined to the opening by its transparent middle for free) — when this art is
+  //     loaded it REPLACES `through` rather than layering over it, and `through` falls back to
+  //     carrying the cue alone when the art hasn't loaded yet, same optional-swatch contract as
+  //     `leaf`/`floor`. Fit by the same `doorLeafFrame` rule as the leaf: a kerb door crops to the
+  //     curtain's own BOTTOM, which is its brightest, densest band, not an arbitrary slice.
+  let curtain: Sprite | undefined;
+  if (skin.curtain) {
+    curtain = new Sprite();
+    // `fitArtToOpening` sets texture/width/height only — same as the leaf below, whose sprite
+    // is positioned BEFORE `applyLeaf` runs. Missing this left the curtain's default (0, 0)
+    // anchor drawing it from the threshold DOWNWARD into the room floor instead of upward into
+    // the opening, invisible in play despite being visible/additive/correctly sized — caught by
+    // dumping the live fixture's children rather than by any test, since no assertion here
+    // checks a sprite's POSITION (only its size and the state machine around it).
+    curtain.position.set(0, -leafDrawH);
+    fitArtToOpening(curtain, r.w, leafDrawH, skin.curtain);
+    curtain.blendMode = 'add';
+    seg.addChild(curtain);
+  }
+  through.visible = !locked && !curtain;
+  if (curtain) curtain.visible = !locked;
 
   // 4. Leaf.
   const leaf = new Sprite();
@@ -318,51 +372,15 @@ export function buildDoorBlock(
     deepLayers,
     setLocked(next: boolean, tex: Texture | undefined): void {
       applyLeaf(leaf, r.w, leafDrawH, tex, next);
+      recessLocked.visible = next;
+      openFloor.visible = !next;
+      openShade.visible = !next;
       glow.visible = next;
-      through.visible = !next;
+      through.visible = !next && !curtain;
+      if (curtain) curtain.visible = !next;
       spill.visible = !next;
     },
   };
-}
-
-/** How tall the leaf is drawn — the whole rule lives in `doorLeafFrame`; with no art at all the
- *  opening is the full height of the fixture (the recess alone then reads as the doorway). */
-function leafHeight(openingW: number, height: number, leaf: Texture | undefined): number {
-  if (!leaf) return height;
-  return doorLeafFrame(openingW, height, leaf.width, leaf.height).drawH;
-}
-
-/** The leaf sprite: art cropped by `doorLeafFrame` (never squashed), or — with no swatch loaded —
- *  the same flat hazard-red / inert-grey rect `RoomBuilder` used to fall back to, now standing up
- *  instead of lying on the floor. */
-function applyLeaf(
-  sprite: Sprite,
-  openingW: number,
-  drawH: number,
-  leaf: Texture | undefined,
-  locked: boolean,
-): void {
-  if (leaf) {
-    const { srcY, srcH } = doorLeafFrame(openingW, drawH, leaf.width, leaf.height);
-    sprite.texture = cropTop(leaf, srcY, srcH);
-    sprite.tint = 0xffffff;
-  } else {
-    sprite.texture = Texture.WHITE;
-    sprite.tint = locked ? 0xe53e3e : 0x4c566a;
-  }
-  sprite.width = openingW;
-  sprite.height = drawH;
-}
-
-/** `leaf` with its top `srcY` rows dropped, sharing the same GPU source. A no-op (the texture
- *  itself) when nothing needs cropping, so the common tall-door case allocates nothing. */
-function cropTop(leaf: Texture, srcY: number, srcH: number): Texture {
-  if (srcY <= 0.5) return leaf;
-  const f = leaf.frame;
-  return new Texture({
-    source: leaf.source as TextureSource,
-    frame: new Rectangle(f.x, f.y + srcY, f.width, srcH),
-  });
 }
 
 /** The sill: one lit hairline along the opening's own floor line. Its own function so the assembly
@@ -373,16 +391,59 @@ export function drawSill(g: Graphics, openingW: number): void {
   g.moveTo(0, 0).lineTo(openingW, 0).stroke({ color: 0xffffff, width: 1, alpha: SILL_ALPHA });
 }
 
-/** The tunnel behind the leaf: bands darkening upward over the opening. Exported for tests. */
-export function drawRecess(g: Graphics, openingW: number, openingH: number): void {
+/**
+ * The tunnel behind the leaf: bands darkening upward over the opening, from `alphaFloor` at the
+ * threshold to `alphaTop` at the lintel. Defaults are the LOCKED pair; the open state calls this
+ * with the far lighter `OPEN_RECESS_ALPHA_*` pair instead, over the floor tile rather than more
+ * wall stone (`buildOpenFloorTile`) — same shape, so the two states share one ramp function and
+ * differ only in what they darken and by how much. Exported for tests.
+ */
+export function drawRecess(
+  g: Graphics,
+  openingW: number,
+  openingH: number,
+  alphaTop: number = RECESS_ALPHA_TOP,
+  alphaFloor: number = RECESS_ALPHA_FLOOR,
+): void {
   if (openingH <= 0) return;
   const bandH = openingH / RECESS_BANDS;
   for (let i = 0; i < RECESS_BANDS; i++) {
     // t: 1 at the top of the opening (deepest), → 0 at the floor.
     const t = 1 - (i + 0.5) / RECESS_BANDS;
-    const alpha = RECESS_ALPHA_FLOOR + (RECESS_ALPHA_TOP - RECESS_ALPHA_FLOOR) * t;
+    const alpha = alphaFloor + (alphaTop - alphaFloor) * t;
     g.rect(0, -openingH + i * bandH, openingW, bandH).fill({ color: RECESS_COLOR, alpha });
   }
+}
+
+/** The open recess's own darkening ramp — `drawRecess` at the far lighter `OPEN_RECESS_ALPHA_*`
+ *  pair, over the floor tile rather than more wall stone. Its own function, same pattern as every
+ *  other composited layer in this file (`drawGlow`/`drawThroughLight`/`drawSpill`), so a test can
+ *  match it by digest rather than re-deriving the constants. Exported for tests. */
+export function drawOpenRecessShade(g: Graphics, openingW: number, openingH: number): void {
+  drawRecess(g, openingW, openingH, OPEN_RECESS_ALPHA_TOP, OPEN_RECESS_ALPHA_FLOOR);
+}
+
+/**
+ * The open state's own floor: the room's floor swatch tiled across the opening, bottom-anchored at
+ * the threshold. No swatch loaded falls back to `OPEN_RECESS_FALLBACK_COLOR`, the same
+ * optional-swatch contract as every other field on `DoorSkin`. A zero-height opening (the
+ * `drawRecess` guard's own case) returns an empty, harmless Graphics rather than a degenerate
+ * zero-size `TilingSprite`.
+ */
+function buildOpenFloorTile(
+  openingW: number,
+  openingH: number,
+  floorTex: Texture | undefined,
+): TilingSprite | Graphics {
+  if (openingH <= 0) return new Graphics();
+  if (floorTex) {
+    const tile = new TilingSprite({ texture: floorTex, width: openingW, height: openingH });
+    tile.position.set(0, -openingH);
+    return tile;
+  }
+  const g = new Graphics();
+  g.rect(0, -openingH, openingW, openingH).fill({ color: OPEN_RECESS_FALLBACK_COLOR });
+  return g;
 }
 
 /** A locked door's bloom: a graduated pool on the floor around the threshold plus a wash over the

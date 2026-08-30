@@ -11,6 +11,13 @@ import { resolveAssetUrl } from './assetHost';
 export const ENV_SPRITE_ASSETS: Readonly<Record<string, string>> = {
   door_locked: '/environment/door_locked_raw.png',
   door_open: '/environment/door_open_raw.png',
+  // The open state's own "this is loud too" signal (2026-08-30, live report: the hazard
+  // flame reads instantly, the passable state didn't come close at a glance). A vertical
+  // curtain of warm-gold energy filling the opening, additive — see `doorRender.ts`'s
+  // `drawOpenRecessShade`/curtain wiring for why it needed to be a whole illustrated asset
+  // rather than another procedural gradient: the hazard leaf IS a full illustrated panel,
+  // and nothing procedural was ever going to match that weight.
+  door_curtain: '/environment/door_curtain_raw.png',
   // In-run drops (design/09's pickup vocabulary). `weapon` has no file here on purpose —
   // a weapon drop draws the mounted weapon's OWN business-end art (render/weaponSkins.ts),
   // so that it reads as "that specific gun", not as a generic loot icon.
@@ -65,6 +72,12 @@ export async function preloadEnvironmentSprites(): Promise<void> {
  *  falls back to a flat tinted rect. */
 export function getDoorTexture(locked: boolean): Texture | undefined {
   return textures.get(locked ? 'door_locked' : 'door_open');
+}
+
+/** The open state's curtain-of-light overlay (`doorRender.ts`). Undefined until preloaded —
+ *  the door falls back to the plain floor-tile recess it drew before this art existed. */
+export function getDoorCurtainTexture(): Texture | undefined {
+  return textures.get('door_curtain');
 }
 
 /** An in-run drop's sprite, by `PickupKind`. Undefined for `weapon` (which draws the real

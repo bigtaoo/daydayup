@@ -10,6 +10,7 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   preloadEnvironmentSprites,
   getDoorTexture,
+  getDoorCurtainTexture,
   getPickupTexture,
   getPortalArchTexture,
   getPropTexture,
@@ -40,9 +41,10 @@ describe('environmentSprites — every key a caller can ask for is actually regi
     expect(ENV_SPRITE_ASSET_KEYS).toContain(`pickup_${kind}`);
   });
 
-  it('registers the two door states and the portal arch', () => {
+  it('registers the two door states, the open curtain, and the portal arch', () => {
     expect(ENV_SPRITE_ASSET_KEYS).toContain('door_locked');
     expect(ENV_SPRITE_ASSET_KEYS).toContain('door_open');
+    expect(ENV_SPRITE_ASSET_KEYS).toContain('door_curtain');
     expect(ENV_SPRITE_ASSET_KEYS).toContain('portal_arch');
   });
 
@@ -65,10 +67,11 @@ describe('environmentSprites — every key a caller can ask for is actually regi
 });
 
 describe('environmentSprites — the getters before any preload', () => {
-  it('returns undefined for every drop kind and for the arch', () => {
+  it('returns undefined for every drop kind, the curtain, and the arch', () => {
     for (const kind of ['material', 'heal', 'buff', 'crate', 'bandage', 'weapon']) {
       expect(getPickupTexture(kind)).toBeUndefined();
     }
+    expect(getDoorCurtainTexture()).toBeUndefined();
     expect(getPortalArchTexture()).toBeUndefined();
   });
 });
@@ -105,6 +108,7 @@ describe('environmentSprites — each getter resolves the key it registered, aft
       const at = (t: { source: { label: string } } | undefined) => t?.source.label;
       expect(at(getDoorTexture(true))).toBe('/environment/door_locked_raw.png');
       expect(at(getDoorTexture(false))).toBe('/environment/door_open_raw.png');
+      expect(at(getDoorCurtainTexture())).toBe('/environment/door_curtain_raw.png');
       expect(at(getPortalArchTexture())).toBe('/environment/portal_arch.png');
       for (const kind of ['material', 'heal', 'buff', 'crate', 'bandage']) {
         expect(at(getPickupTexture(kind))).toBe(`/environment/pickup_${kind}.png`);

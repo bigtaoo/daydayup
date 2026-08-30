@@ -20,6 +20,7 @@ import {
   buildDoorBlock,
   doorLeafFrame,
   drawGlow,
+  drawOpenRecessShade,
   drawRecess,
   drawSill,
   drawSpill,
@@ -38,10 +39,18 @@ function tex(w: number, h: number): Texture {
 const ART_W = 147;
 const ART_H = 217;
 
-const skin = (leaf: Texture | undefined, face?: Texture, cap?: Texture): DoorSkin => ({
+const skin = (
+  leaf: Texture | undefined,
+  face?: Texture,
+  cap?: Texture,
+  floor?: Texture,
+  curtain?: Texture,
+): DoorSkin => ({
   palette: biomePalette('ember'),
   cap,
   face,
+  floor,
+  curtain,
   leaf,
 });
 
@@ -248,9 +257,11 @@ describe('the pieces that make an opening read as a hole rather than a panel', (
     expect(g.context.instructions).toHaveLength(0);
   });
 
-  it('the built fixture actually contains that recess', () => {
+  it('the built LOCKED fixture actually contains the full-depth recess', () => {
     // The whole point of the layer, and the mutant that removed it passed every other test here.
-    const fixture = buildDoorBlock(PASSAGE, WALL_H_PERIMETER, skin(tex(ART_W, ART_H), tex(256, 128)), false);
+    // Locked, not open: since 2026-08-30b the two states no longer share one recess (see the open
+    // recess describe block below) — the default-alpha bands are the locked door's own.
+    const fixture = buildDoorBlock(PASSAGE, WALL_H_PERIMETER, skin(tex(ART_W, ART_H), tex(256, 128)), true);
     const expected = new Graphics();
     drawRecess(expected, PASSAGE.w, doorLeafFrame(PASSAGE.w, WALL_H_PERIMETER, ART_W, ART_H).drawH);
     expect(digest(expected)).not.toBe(''); // or an empty child would match an empty expectation
@@ -421,6 +432,150 @@ describe('an open door is lit from beyond, rather than being a locked door minus
     // The pool's reach is set by the opening's WIDTH, so a kerb door — the wide one — gets the
     // biggest pool of all, which is what has to carry it.
     expect(spill.getLocalBounds().width).toBeGreaterThan(kerb.w);
+  });
+});
+
+/**
+ * 2026-08-30b: the light pass above still left the tunnel itself sharing one dark base with the
+ * locked state — live report, after that pass had already shipped, circling the OPENING rather
+ * than the light: *"可以通过时的门，好了一些，但离我想要的效果还差很远"* (better, but still far from the
+ * effect wanted). This block is that base's own state machine, mirroring the through/spill block
+ * above it.
+ */
+describe("an open door's recess shows the room's own floor, not more wall stone", () => {
+  it('tiles the floor swatch across the opening only while open', () => {
+    const floor = tex(48, 48);
+    const openFixture = buildDoorBlock(PASSAGE, WALL_H_PERIMETER, skin(tex(ART_W, ART_H), undefined, undefined, floor), false);
+    const openTile = openFixture.view.children.find(
+      (c): c is TilingSprite => c instanceof TilingSprite && c.texture === floor,
+    );
+    expect(openTile).toBeDefined();
+    expect(openTile!.visible).toBe(true);
+
+    const lockedFixture = buildDoorBlock(PASSAGE, WALL_H_PERIMETER, skin(tex(ART_W, ART_H), undefined, undefined, floor), true);
+    const lockedTile = lockedFixture.view.children.find(
+      (c): c is TilingSprite => c instanceof TilingSprite && c.texture === floor,
+    );
+    expect(lockedTile).toBeDefined();
+    expect(lockedTile!.visible).toBe(false);
+  });
+
+  it('falls back to a flat Graphics fill with no floor swatch loaded, not a degenerate sprite', () => {
+    const fixture = buildDoorBlock(PASSAGE, WALL_H_PERIMETER, skin(tex(ART_W, ART_H)), false);
+    // No TilingSprite at all when no floor art was loaded — the fallback path is Graphics-only.
+    expect(fixture.view.children.some((c) => c instanceof TilingSprite)).toBe(false);
+  });
+
+  it('darkens the open recess far less than a locked one, over the SAME opening', () => {
+    const openShade = new Graphics();
+    drawOpenRecessShade(openShade, 64, 104);
+    const locked = new Graphics();
+    drawRecess(locked, 64, 104);
+    const openA = alphas(openShade);
+    const lockedA = alphas(locked);
+    // Same band count (one ramp function, two alpha pairs), every band lighter than its locked
+    // counterpart — if these ever converge, the floor tile underneath would be buried the same way
+    // the flat colour used to bury the stone.
+    expect(openA.length).toBe(lockedA.length);
+    for (let i = 0; i < openA.length; i++) expect(openA[i]!).toBeLessThan(lockedA[i]!);
+    // Still a real ramp, not "so light it might as well be a flat wash" — the lintel end must stay
+    // visibly darker than the threshold.
+    expect(openA[0]!).toBeGreaterThan(openA[openA.length - 1]! * 1.5);
+  });
+
+  it('the built fixture carries that shade only while open, alongside the through-light', () => {
+    const fixture = buildDoorBlock(PASSAGE, WALL_H_PERIMETER, skin(tex(ART_W, ART_H)), false);
+    const shade = lightOf(fixture, drawOpenRecessShade);
+    expect(shade.visible).toBe(true);
+    fixture.setLocked(true, tex(ART_W, ART_H));
+    expect(shade.visible).toBe(false);
+  });
+});
+
+/**
+ * 2026-08-30b (second pass, same day): the floor-tile recess above still wasn't enough — live
+ * report *"依然不行...被阻挡时的火焰很明显，但是可以通过的效果太弱了"* (still no good — the locked
+ * state's flame reads clearly, the passable one doesn't come close). The locked leaf is a whole
+ * illustrated hazard panel; no amount of gradient tuning was ever going to match that weight, so
+ * the open state gets an illustrated asset of its own — a curtain-of-light sprite that REPLACES
+ * `through` when loaded, sized by the same `doorLeafFrame` rule as the leaf.
+ */
+describe("an open door's curtain-of-light replaces the procedural through-light when its art is loaded", () => {
+  /** The curtain sprite: the one Sprite besides the leaf, found by texture identity rather than
+   *  position — both are plain `Sprite`s (not `TilingSprite`s), so `leafOf`'s "first Sprite"
+   *  search cannot tell them apart once a curtain is loaded. */
+  const curtainOf = (fixture: ReturnType<typeof buildDoorBlock>, curtainArt: Texture): Sprite | undefined =>
+    fixture.view.children.find(
+      (c): c is Sprite => c instanceof Sprite && !(c instanceof TilingSprite) && c.texture.source === curtainArt.source,
+    );
+
+  it('adds no curtain sprite at all when no curtain art is loaded — through carries the cue alone', () => {
+    const fixture = buildDoorBlock(PASSAGE, WALL_H_PERIMETER, skin(tex(ART_W, ART_H)), false);
+    const sprites = fixture.view.children.filter((c): c is Sprite => c instanceof Sprite && !(c instanceof TilingSprite));
+    expect(sprites).toHaveLength(1); // the leaf, and nothing else
+    expect(lightOf(fixture, drawThroughLight).visible).toBe(true);
+  });
+
+  it('adds an additive curtain sprite when its art is loaded, visible only while open', () => {
+    const curtainArt = tex(200, 400);
+    const fixture = buildDoorBlock(PASSAGE, WALL_H_PERIMETER, skin(tex(ART_W, ART_H), undefined, undefined, undefined, curtainArt), true);
+    const curtain = curtainOf(fixture, curtainArt);
+    expect(curtain).toBeDefined();
+    expect(curtain!.blendMode).toBe('add');
+    expect(curtain!.visible).toBe(false); // locked
+    fixture.setLocked(false, tex(156, 224));
+    expect(curtain!.visible).toBe(true);
+  });
+
+  it('hides the procedural through-light whenever curtain art is loaded, in both states', () => {
+    const curtainArt = tex(200, 400);
+    const fixture = buildDoorBlock(PASSAGE, WALL_H_PERIMETER, skin(tex(ART_W, ART_H), undefined, undefined, undefined, curtainArt), false);
+    const through = lightOf(fixture, drawThroughLight);
+    expect(through.visible).toBe(false); // curtain has the slot, open
+    fixture.setLocked(true, tex(ART_W, ART_H));
+    expect(through.visible).toBe(false); // and locked — through never comes back on its own
+  });
+
+  it('sizes the curtain by the same doorLeafFrame rule as the leaf: fit by width, crop off the top', () => {
+    const curtainArt = tex(200, 400); // taller (relative to width) than the opening — will crop
+    const fixture = buildDoorBlock(PASSAGE, WALL_H_PERIMETER, skin(tex(ART_W, ART_H), undefined, undefined, undefined, curtainArt), false);
+    const curtain = curtainOf(fixture, curtainArt)!;
+    const drawH = doorLeafFrame(PASSAGE.w, WALL_H_PERIMETER, ART_W, ART_H).drawH; // same height as the leaf
+    const { srcY, srcH } = doorLeafFrame(PASSAGE.w, drawH, curtainArt.width, curtainArt.height);
+    expect(curtain.width).toBeCloseTo(PASSAGE.w);
+    expect(curtain.height).toBeCloseTo(drawH);
+    expect(curtain.texture.frame.height).toBeCloseTo(srcH);
+    expect(curtain.texture.frame.y).toBeCloseTo(srcY);
+    expect(srcY).toBeGreaterThan(0); // the crop actually fired — or this test proves nothing
+  });
+
+  it('stands the curtain on the threshold reaching UP into the opening, not down into the room', () => {
+    // The bug this pins: `fitArtToOpening` sets texture/width/height only, never position — the
+    // curtain shipped with no `.position.set()` at all, so it defaulted to (0, 0) and drew from
+    // the threshold DOWNWARD into the room floor. Additive, visible, correctly sized, and
+    // completely invisible in play, because every existing assertion here checks SIZE and
+    // VISIBILITY, never where the sprite actually stands — caught live, not by this suite.
+    const curtainArt = tex(200, 400);
+    const fixture = buildDoorBlock(PASSAGE, WALL_H_PERIMETER, skin(tex(ART_W, ART_H), undefined, undefined, undefined, curtainArt), false);
+    const curtain = curtainOf(fixture, curtainArt)!;
+    const drawH = doorLeafFrame(PASSAGE.w, WALL_H_PERIMETER, ART_W, ART_H).drawH;
+    expect(curtain.x).toBeCloseTo(0);
+    expect(curtain.y).toBeCloseTo(-drawH);
+  });
+
+  it('keeps the curtain behind the leaf and in the deep x-ray group, like through', () => {
+    const curtainArt = tex(200, 400);
+    const fixture = buildDoorBlock(PASSAGE, WALL_H_PERIMETER, skin(tex(ART_W, ART_H), tex(256, 128), undefined, undefined, curtainArt), false);
+    const curtain = curtainOf(fixture, curtainArt)!;
+    // `leafOf` picks the first plain Sprite, which is the curtain itself once one is loaded (both
+    // are plain Sprites) — the real leaf here is the OTHER one, found by excluding the curtain's
+    // own texture source.
+    const leaf = fixture.view.children.find(
+      (c): c is Sprite => c instanceof Sprite && !(c instanceof TilingSprite) && c.texture.source !== curtainArt.source,
+    )!;
+    const at = (c: unknown): number => fixture.view.children.indexOf(c as never);
+    expect(at(curtain)).toBeLessThan(at(leaf));
+    expect(fixture.deepLayers).toContain(curtain);
   });
 });
 

@@ -53,6 +53,7 @@ vi.mock('../../render/biomeTiles', () => ({
 
 vi.mock('../../render/environmentSprites', () => ({
   getDoorTexture: () => undefined,
+  getDoorCurtainTexture: () => undefined,
   getPortalArchTexture: () => undefined,
   getPickupTexture: () => undefined,
   getPropTexture: () => undefined,

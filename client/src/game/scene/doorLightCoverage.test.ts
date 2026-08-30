@@ -53,6 +53,11 @@ const skin = (): DoorSkin => ({
   palette: biomePalette('ember'),
   cap: tex(256, 256),
   face: tex(256, 128),
+  floor: tex(64, 64),
+  // No curtain art here on purpose: this file sweeps the PROCEDURAL through/spill ramp across
+  // every shipped door, which `through.visible` only carries when no curtain art has replaced
+  // it — the curtain's own state machine is doorRender.test.ts's job.
+  curtain: undefined,
   leaf: tex(OPEN_ART_W, OPEN_ART_H),
 });
 

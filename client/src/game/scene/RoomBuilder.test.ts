@@ -90,6 +90,7 @@ const mocks = vi.hoisted(() => ({
   pillarTexElement: undefined as string | undefined,
   doorLockedTex: undefined as Texture | undefined,
   doorOpenTex: undefined as Texture | undefined,
+  curtainTex: undefined as Texture | undefined,
 }));
 
 vi.mock('../../render/biomeTiles', () => ({
@@ -104,6 +105,11 @@ vi.mock('../../render/biomeTiles', () => ({
 
 vi.mock('../../render/environmentSprites', () => ({
   getDoorTexture: (locked: boolean) => (locked ? mocks.doorLockedTex : mocks.doorOpenTex),
+  // Undefined by default — the open door falls back to its procedural through-light, and
+  // doorRender.test.ts owns the curtain's own state machine. `mocks.curtainTex` lets the one
+  // test below that cares (RoomBuilder actually WIRES this getter's result into the door skin)
+  // set it without touching every other door test's assumed default.
+  getDoorCurtainTexture: () => mocks.curtainTex,
   // RoomBuilder builds a Portal per room, and Portal reaches into this same module for its
   // arch (2026-08-20). Left unloaded here so a portal keeps its Graphics fallback — this
   // file's subject is the room, and Portal.test.ts owns both of the arch's paths.
@@ -651,6 +657,15 @@ describe('RoomBuilder — grid overlay and rebuild', () => {
 });
 
 describe('RoomBuilder — doors (design/05 "Room & door model", 2026-08-04; standing 2026-08-20)', () => {
+  // `mocks.curtainTex` is only ever set non-undefined by the one test below that needs it — every
+  // other door test in this block (and `leafOf`, which cannot tell a curtain sprite from the leaf
+  // once one exists) implicitly assumes it stays undefined. Reset here rather than at the top of
+  // each test, since every OTHER field in `mocks` already follows that convention and this is the
+  // one field that would otherwise leak forward across tests by declaration order.
+  afterEach(() => {
+    mocks.curtainTex = undefined;
+  });
+
   it("excludes a locked door's passage rect from the generic wall loop", () => {
     mocks.wallTex = undefined;
     const s = stateWithOneWall('ember'); // one real wall at [100,100,64,64]
@@ -743,6 +758,43 @@ describe('RoomBuilder — doors (design/05 "Room & door model", 2026-08-04; stan
     const rb = makeRoomBuilder();
     rb.build(s);
     expect(leafOf(rb, 0).texture.source).toBe(mocks.doorOpenTex!.source);
+  });
+
+  /**
+   * `doorRender.test.ts` builds a `DoorSkin` by hand and thoroughly pins what `buildDoorBlock`
+   * does with `floor`/`curtain` once they arrive — but nothing there proves RoomBuilder actually
+   * PASSES its own `getFloorTexture()`/`getDoorCurtainTexture()` results into that skin at all.
+   * Confirmed by mutation before writing this pair: deleting `floor: floorTex` and
+   * `curtain: getDoorCurtainTexture()` from `RoomBuilder.buildDoors`'s call site left the entire
+   * suite green, because every other door test here runs with both left at their `undefined`
+   * default, which is indistinguishable from "never wired at all".
+   */
+  it("wires the room's own floor swatch into an open door's recess", () => {
+    mocks.floorTex = fakeTexture(64, 64);
+    const s = stateWithOneWall('ember');
+    pushDoor(s, false, [300, 100, 20, 64]);
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    const tiles = doorFixtures(rb)[0]!.view.children.filter(
+      (c): c is TilingSprite => c instanceof TilingSprite && c.texture.source === mocks.floorTex!.source,
+    );
+    expect(tiles.length).toBeGreaterThan(0);
+  });
+
+  it('wires a loaded curtain texture into an open door, additive and visible', () => {
+    mocks.curtainTex = fakeTexture(48, 96);
+    const s = stateWithOneWall('ember');
+    pushDoor(s, false, [300, 100, 20, 64]);
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    // Both the curtain and the leaf are plain `Sprite`s once curtain art is loaded — matched by
+    // texture identity, not position, for the same reason `doorRender.test.ts`'s `curtainOf` is.
+    const curtain = doorFixtures(rb)[0]!.view.children.find(
+      (c): c is Sprite => c instanceof Sprite && !(c instanceof TilingSprite) && c.texture.source === mocks.curtainTex!.source,
+    );
+    expect(curtain).toBeDefined();
+    expect(curtain!.blendMode).toBe('add');
+    expect(curtain!.visible).toBe(true);
   });
 
   it('falls back to a tinted rect (hazard-red locked / grey open) when no door art is loaded', () => {
