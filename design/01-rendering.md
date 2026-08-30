@@ -103,6 +103,22 @@ extruded block on the `entities` layer — `scene/wallRender.ts` owns the drawin
   thick and the player cannot overlap it, so their ground point is always at least that far
   north of the south edge. Height *variety* is itself the cue — a room where everything
   vertical is the same size gives the eye no relative measure.
+- **A free-standing block's north face reserves an extra body radius** (`config.WALL_NORTH_BRIM`,
+  ENGINE_VERSION 47). The height model above has a consequence the collision model has to answer
+  for: a standing shape paints its footprint *plus one drawn height of walkable floor to its
+  north*, so how deep a character sinks into that art is `drawn height - the floor the shape
+  reserves`. The two standing shapes in a room used to disagree about the second term — a pillar
+  reserves `radius + solidRadius` (48 px) against 88 px of art and sinks a character 40 px, an
+  interior block reserved `solidRadius` alone (16 px) against 70 px and sank them **54 px**, which
+  is more than the whole silhouette. The live report was exactly that pair, seen side by side:
+  *"角色整个跑到墙里面了"* against *"柱子...只有半个身子被覆盖"*. `MovementSystem.resolveWalls`
+  now pulls a `freeStanding` block's north edge out by 16 px, putting its sink at 38 px — the
+  pillar's number, within 2 px. Only that one face, and only blocks flagged as free-standing at
+  authoring time: a perimeter ring is what door passages are carved through, and a kerb's whole
+  point is that a character CAN stand tangent to it. The rect itself never moves — the drawn
+  footprint, `blockedCells`, spawn placement and the projectile/LOS queries all still see the
+  authored numbers. The x-ray below is unchanged and still fires at that pose, exactly as it does
+  for a pillar; what moved is where the character is allowed to stand, not when the fade helps.
   - **The kerb rule is about where a wall STANDS, not about whose wall it is** (generalized
     2026-08-20). It used to read "the room's own **south** boundary", resolved against the one
     room the wall's centre falls in — and where two rooms stack vertically the boundary between
@@ -1066,9 +1082,15 @@ deep block on the launch map that keeps **32 of 70 px, 46% of the face**, opaque
 Four properties make the split honest rather than a tuning knob:
 
 - **It cannot bury anything the old fade revealed.** The band is exactly the reachable-body
-  envelope, so `f.y <= foldY + reach` for every focus the rule fires for — checked on all 778
-  deep-firing samples of the arena's 72,686 and on the five PvE floors, not on the rects the rule
-  was derived from. The x-ray's own acceptance numbers (worst case 43.8% still hidden, the head
+  envelope, so `f.y <= foldY + reach` for every focus the rule fires for — checked on the five PvE
+  floors, not on the rects the rule was derived from. (**Was also checked on all 778 deep-firing
+  samples of the arena's 72,686, and no longer is: v47's north brim took the arena's deep-pass rate
+  to ZERO**, because every one of those 778 was an interior kit block — 70 px of art over a
+  one-cell footprint, precisely `needsDeepFade`'s shape — and the brim moves the player out of the
+  band. `arenaWallCoverage.test.ts` now asserts the zero against a brim-disabled control instead;
+  the PvE floors still carry this claim on real content, because their deep cases are on PERIMETER
+  runs, which are never free-standing and so never brimmed. See "A free-standing block's north face
+  reserves an extra body radius" above.) The x-ray's own acceptance numbers (worst case 43.8% still hidden, the head
   always kept) are unchanged, because nothing that was see-through stopped being see-through.
 - **The bound is derived at clearance ZERO on purpose.** The player's own 16 px wall clearance means
   the sweep never uses more than 22 px of the 38 px band, and that leftover 16 px is head-room

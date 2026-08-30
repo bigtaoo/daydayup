@@ -47,13 +47,19 @@ function subtractRect(wall: AABB, hole: AABB): AABB[] {
   const hy1 = addFp(hole.y, hole.h);
   if (hx1 <= wx0 || hx0 >= wx1 || hy1 <= wy0 || hy0 >= wy1) return [wall];
 
+  // A residual piece is still the same object it was carved out of, so it keeps `freeStanding`
+  // (v47). In practice a door only ever cuts a perimeter ring, which carries no flag — but a
+  // piece that silently LOST the flag would be a block whose north brim disappeared the moment
+  // a passage happened to clip its corner, which is exactly the kind of one-room-in-sixty
+  // inconsistency this map has been bitten by before.
+  const keep = wall.freeStanding ? { freeStanding: true as const } : {};
   const out: AABB[] = [];
-  if (hx0 > wx0) out.push({ x: wx0, y: wy0, w: subFp(hx0, wx0), h: wall.h });
-  if (hx1 < wx1) out.push({ x: hx1, y: wy0, w: subFp(wx1, hx1), h: wall.h });
+  if (hx0 > wx0) out.push({ x: wx0, y: wy0, w: subFp(hx0, wx0), h: wall.h, ...keep });
+  if (hx1 < wx1) out.push({ x: hx1, y: wy0, w: subFp(wx1, hx1), h: wall.h, ...keep });
   const midX0 = (wx0 > hx0 ? wx0 : hx0) as Fp; // Math.max would drop the Fp brand
   const midX1 = (wx1 < hx1 ? wx1 : hx1) as Fp; // Math.min, same reason
-  if (hy0 > wy0 && midX1 > midX0) out.push({ x: midX0, y: wy0, w: subFp(midX1, midX0), h: subFp(hy0, wy0) });
-  if (hy1 < wy1 && midX1 > midX0) out.push({ x: midX0, y: hy1, w: subFp(midX1, midX0), h: subFp(wy1, hy1) });
+  if (hy0 > wy0 && midX1 > midX0) out.push({ x: midX0, y: wy0, w: subFp(midX1, midX0), h: subFp(hy0, wy0), ...keep });
+  if (hy1 < wy1 && midX1 > midX0) out.push({ x: midX0, y: hy1, w: subFp(midX1, midX0), h: subFp(wy1, hy1), ...keep });
   return out;
 }
 

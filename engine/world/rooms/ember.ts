@@ -105,7 +105,10 @@ export const EMBER_ROOMS: readonly RoomPiece[] = [
     tags: ['ember'],
     sizeGrid: { w: 20, h: 14 },
     // A stub wall jutting from the north edge (interior flavor), plus the perimeter.
-    solids: [{ x: 8, y: 0, w: 4, h: 3 }, ...perimeterWalls(20, 14)],
+    // `freeStanding` marks the stub as an interior block for the v47 north brim
+    // (config's `WALL_NORTH_BRIM`); inert on this one, whose north edge is buried in the
+    // perimeter ring, but the flag describes what the solid IS, not where it happens to sit.
+    solids: [{ x: 8, y: 0, w: 4, h: 3, freeStanding: true }, ...perimeterWalls(20, 14)],
     spawns: { player: [{ x: 2, y: 7 }], enemy: [{ x: 14, y: 4, type: 'floater' }, { x: 14, y: 10 }] },
     exits: [{ edge: 'west' }, { edge: 'east' }],
   },
@@ -127,9 +130,11 @@ export const EMBER_ROOMS: readonly RoomPiece[] = [
     id: 'ember_cross',
     tags: ['ember'],
     sizeGrid: { w: 16, h: 16 },
+    // The two stubs are the room's only interior cover, and the only ones in this pool with
+    // open floor to their north — so they are what the v47 brim actually does something to here.
     solids: [
-      { x: 0, y: 7, w: 5, h: 2 },
-      { x: 11, y: 7, w: 5, h: 2 },
+      { x: 0, y: 7, w: 5, h: 2, freeStanding: true },
+      { x: 11, y: 7, w: 5, h: 2, freeStanding: true },
       ...perimeterWalls(16, 16),
     ],
     spawns: { player: [{ x: 8, y: 2 }], enemy: [{ x: 4, y: 12, type: 'brute' }, { x: 12, y: 12 }] },

@@ -423,6 +423,19 @@ export interface AABB {
   y: Fp;
   w: Fp;
   h: Fp;
+  /**
+   * This rect is a FREE-STANDING block inside a room (an interior cover block), rather than a
+   * segment of a room's perimeter ring or a door passage. Set once at authoring time and
+   * carried through `roomGeometry`/`carveDoorGaps`; absent everywhere else, which is why it is
+   * optional rather than required — a door passage folded into `state.walls` by `DoorSystem`
+   * and a flat `EngineConfig.walls` entry both correctly answer "no".
+   *
+   * The ONE thing that reads it is `MovementSystem.resolveWalls`, which gives such a block's
+   * NORTH face `config.WALL_NORTH_BRIM` of extra clearance (ENGINE_VERSION 47). Nothing else
+   * may branch on it: the rect's own numbers are the collision AND the drawn footprint, and a
+   * flag that started moving geometry would silently desync the two.
+   */
+  freeStanding?: boolean;
 }
 
 // design/09 vocabulary: heal (flat +1 HP) · material (carry-out currency) · weapon ·

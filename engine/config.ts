@@ -72,6 +72,41 @@ export const CHECKPOINT_QUORUM = 3;
 // multiplier than an actual state fork, design/15).
 export const INTEGRITY_KICK_STREAK = 2;
 
+// ── Standing-wall north brim (design/01 height model, v47) ────────────────────────
+/**
+ * Extra clearance, in fp, between an actor and the NORTH face of a FREE-STANDING wall block
+ * (`AABB.freeStanding`). 500 fp = 0.5 grid = 16 px = exactly one player body radius, so against
+ * that one face an actor stops a full body WIDTH out (16 px of `solidRadius` + this) instead of
+ * tangent to the stone.
+ *
+ * **This exists because of how tall things are DRAWN, not because of what they are.** Everything
+ * in this view is drawn upward from a grounded origin (`screen.y = gy - z`), so a standing block
+ * paints its own footprint PLUS one full wall height of floor to its north
+ * (`client/.../wallGeometry.ts`, `occlusion.ts`'s `Occluder.top`). How far an actor ends up
+ * buried in that art is therefore `drawn height - clearance`, and until v47 the two standing
+ * shapes in a room disagreed about it by a body's worth:
+ *
+ *   - a PILLAR reserves `radius + solidRadius` = 32 + 16 = 48 px of floor north of its centre
+ *     and paints 88 px above it (`pillarArtExtent`: an 84 px-wide sprite at the shipped 1.1667
+ *     aspect, less `PILLAR_BASE_PX`) — the actor sinks 40 px into it, which draws as a body
+ *     covered to about the waist;
+ *   - a WALL reserved `solidRadius` = 16 px and paints `WALL_H_INTERIOR` = 70 px above its own
+ *     north edge — the actor sinks 54 px, which on a body drawn 32-48 px tall is the WHOLE
+ *     silhouette. From the report: *"角色整个跑到墙里面了"*, against *"柱子...只有半个身子被覆盖"*.
+ *
+ * 16 px closes exactly that gap: a wall's sink becomes 70 - 32 = 38 px, within 2 px of the
+ * pillar's 40, so the two shapes finally hide a character by the same amount. Pinned as a
+ * parity assertion (not a magic number) in `client/.../standingCoverParity.test.ts`.
+ *
+ * **Only free-standing blocks.** A perimeter wall must keep exact-footprint collision: its ring
+ * is what door passages are carved through (`carveDoorGaps`) and a brim on it would narrow every
+ * passage from both sides, and a room's SOUTH boundary is drawn as a 22 px kerb
+ * (`WALL_H_KERB`) whose whole purpose is that an actor CAN stand tangent to it — brimming that
+ * would re-open the v43 report ("角色...感觉陷进去了") from the opposite side, floating the
+ * character off a lip that was never covering them.
+ */
+export const WALL_NORTH_BRIM = (FP_SCALE / 2) as Fp;
+
 /**
  * World scale — the anchor for every human-unit → fp/brad conversion (design/09).
  * 1 grid unit = 32 px. The demo slice runs render @60fps; the sim runs @30Hz.

@@ -37,6 +37,11 @@ export interface AabbGrid {
   y: number;
   w: number;
   h: number;
+  /** This solid is a FREE-STANDING block inside a room, not part of a room's perimeter ring.
+   *  Purely a collision hint (`config.WALL_NORTH_BRIM`, ENGINE_VERSION 47) — it never changes
+   *  the rect itself, so the drawn footprint, `blockedCells`, spawn placement and every
+   *  geometry metric see exactly the rect that was authored. See `AABB.freeStanding`. */
+  freeStanding?: boolean;
 }
 
 /** A static round solid, human grid units (design/07 round pillars). */
@@ -124,6 +129,10 @@ export function roomGeometry(
     y: toFpGrid(s.y + offsetYGrid),
     w: toFpGrid(s.w),
     h: toFpGrid(s.h),
+    // Carried across the one grid -> fp conversion rather than re-derived: whether a solid is
+    // free-standing is an AUTHORING fact (which list it came from), not something the rect's
+    // own numbers can be asked about afterwards.
+    ...(s.freeStanding ? { freeStanding: true as const } : {}),
   }));
   const obstacles: Obstacle[] = (piece.pillars ?? []).map((p) => ({
     gx: toFpGrid(p.center.x + offsetXGrid),

@@ -77,7 +77,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { Graphics, GraphicsContextSystem } from 'pixi.js';
-import { createGameState, PLAYER_BASE } from '@dd/engine';
+import { createGameState, PLAYER_BASE, WALL_NORTH_BRIM } from '@dd/engine';
 import { ARENA_CATALOG, ARENA_IDS, type ArenaId } from '../match/arenaCatalog';
 import { fpToPx, PX_PER_GRID } from '../coords';
 import {
@@ -126,6 +126,8 @@ const CROWN = faceCrownFraction(ARENA_ELEMENT);
 const BODY_H = 32;
 const HALF_W = 12.96;
 const CLEARANCE = fpToPx(PLAYER_BASE.solidRadius);
+/** ...and the extra clearance a free-standing block's NORTH face gets on top of it (v47). */
+const BRIM = fpToPx(WALL_NORTH_BRIM);
 /** Sweep step in world px — a quarter of a grid cell, as in the PvE sweep. */
 const STEP = 8;
 const HIDDEN_FRACTION = 0.5;
@@ -145,8 +147,11 @@ interface Arena {
   /** Room rects in world px, with their authored ids — the ids are what makes a finding a place
    *  a camera can be pointed at rather than a coordinate. */
   rooms: Array<RectPx & { id: string }>;
-  /** The raw (pre-merge) wall rects, which is what the player collides with. */
-  walls: RectPx[];
+  /** The raw (pre-merge) wall rects, which is what the player collides with — each carrying
+   *  whether it is a free-standing block, because that is what decides whether its north face
+   *  gets the v47 brim in `standable`. Dropping it here would leave the sweep standing the player
+   *  in poses the engine no longer allows, and reporting blind spots that cannot happen. */
+  walls: Array<RectPx & { freeStanding?: boolean }>;
   pillars: Array<{ gx: number; gy: number; r: number }>;
   /** Every authored passage, in world px. NOT what the client renders — see the door section. */
   passages: Array<RectPx & { i: number; a: string; b: string }>;
@@ -176,8 +181,9 @@ function buildArena(id: ArenaId): Arena {
   // alongside, index-aligned, and the guard below pins that they really are.
   const roomsPx: RectPx[] = roomRectsPx(s, fpToPx(s.worldW), fpToPx(s.worldH));
   const rooms = roomsPx.map((r, i) => ({ ...r, id: s.arenaRoomRects[i]?.id ?? `(unnamed ${i})` }));
-  const walls: RectPx[] = s.walls.map((w) => ({
+  const walls: Array<RectPx & { freeStanding?: boolean }> = s.walls.map((w) => ({
     x: fpToPx(w.x), y: fpToPx(w.y), w: fpToPx(w.w), h: fpToPx(w.h),
+    ...(w.freeStanding ? { freeStanding: true as const } : {}),
   }));
   // Tier FIRST, then merge same-tier neighbours — `RoomBuilder`'s order, and load-bearing
   // (`mergeWallRuns`: a cross-tier merge would give a kerb a perimeter's height).
@@ -687,9 +693,13 @@ describe('arena walls — the shading still batches, with less room to spare', (
 
 /** Can the player's body stand centred here? Conservative on purpose, as in the PvE sweep:
  *  anything this accepts is somewhere the player can genuinely be. */
-function standable(a: Arena, gx: number, gy: number): boolean {
+function standable(a: Arena, gx: number, gy: number, brim = BRIM): boolean {
   for (const w of a.walls) {
-    if (gx + CLEARANCE > w.x && gx - CLEARANCE < w.x + w.w && gy + CLEARANCE > w.y && gy - CLEARANCE < w.y + w.h) {
+    // The NORTH edge, brimmed on a free-standing block (ENGINE_VERSION 47) — the engine's own rule.
+    // `brim` is a parameter ONLY so the deep-pass test can run a pre-v47 control past it; every
+    // other caller takes the default, which is the shipped engine's number.
+    const top = w.freeStanding ? w.y - brim : w.y;
+    if (gx + CLEARANCE > w.x && gx - CLEARANCE < w.x + w.w && gy + CLEARANCE > top && gy - CLEARANCE < w.y + w.h) {
       return false;
     }
   }
@@ -782,6 +792,46 @@ function sweep(a: Arena): Sample[] {
 }
 
 const SWEPT: Sample[] = sweep(LAUNCH);
+
+/**
+ * Every standable position that takes the DEEP pass, at a given north brim — the control the
+ * deep-pass test below needs, and deliberately not a second `sweep()`: it skips the oracle
+ * (`hiddenRows`, the expensive half) because the only question here is which samples the RULE
+ * fires the deep pass for, not how much of the body survives it.
+ *
+ * Same grid and same bucketing as `sweep`, so a sample this reports is one that sweep would have
+ * reported too — sharing `standable` is what makes the two comparable.
+ */
+function deepPassHits(brim: number): Array<{ gx: number; gy: number; blocks: Block[] }> {
+  const a = LAUNCH;
+  const BUCKET = 128;
+  const width = Math.max(...a.rooms.map((r) => r.x + r.w)) + BUCKET;
+  const nBuckets = Math.ceil(width / BUCKET) + 1;
+  const buckets: Block[][] = Array.from({ length: nBuckets }, () => []);
+  for (const b of a.blocks) {
+    const from = Math.max(0, Math.floor((b.box.left - HALF_W) / BUCKET));
+    const to = Math.min(nBuckets - 1, Math.floor((b.box.right + HALF_W) / BUCKET));
+    for (let i = from; i <= to; i++) buckets[i]!.push(b);
+  }
+  const out: Array<{ gx: number; gy: number; blocks: Block[] }> = [];
+  const focus = { x: 0, y: 0, halfW: HALF_W, bodyH: BODY_H };
+  const minX = Math.min(...a.rooms.map((r) => r.x));
+  const maxX = Math.max(...a.rooms.map((r) => r.x + r.w));
+  const minY = Math.min(...a.rooms.map((r) => r.y));
+  const maxY = Math.max(...a.rooms.map((r) => r.y + r.h));
+  for (let gy = minY; gy <= maxY; gy += STEP) {
+    for (let gx = minX; gx <= maxX; gx += STEP) {
+      if (!standable(a, gx, gy, brim)) continue;
+      focus.x = gx;
+      focus.y = gy;
+      const blocks = buckets[Math.min(nBuckets - 1, Math.floor(gx / BUCKET))]!.filter(
+        (b) => occludes(b.box, focus) && needsDeepFade(b.box, focus),
+      );
+      if (blocks.length > 0) out.push({ gx, gy, blocks });
+    }
+  }
+  return out;
+}
 
 describe('arena occlusion coverage — the launch map, swept', () => {
   it('is looking at a real amount of floor, and the x-ray bucketing cannot miss a block', () => {
@@ -896,91 +946,47 @@ describe('arena occlusion coverage — the launch map, swept', () => {
     expect(headless).toEqual([]);
   });
 
-  it('takes the deep pass rarely — but seven times as often as a PvE floor', () => {
-    // The fallback that drops a block's front FACE as well as its cap, which reveals whatever is
-    // behind the wall. `occlusionCoverage.test.ts` measured 0.2% of the PvE floor and bounds it
-    // under 2% so that "walls dissolve near me" never becomes the normal reading. The arena is at
-    // 1.07% — inside that bound, and close enough to it that the bound is now doing work. (It was
-    // 1.37% before the passage clip shortened 44 runs; the clip is why it fell, not a retune.)
-    const deep = SWEPT.filter((s) =>
-      s.fired.some((b) => needsDeepFade(b.box, { x: s.gx, y: s.gy, halfW: HALF_W, bodyH: BODY_H })),
-    );
-    expect(deep.length).toBeGreaterThan(0); // reachable content, not dead code
-    expect(deep.length / SWEPT.length).toBeLessThan(0.02);
-    expect(deep.length / SWEPT.length).toBeGreaterThan(0.005); // measured 1.07%, PvE 0.2%
+  it('no longer takes the deep pass ANYWHERE — the v47 brim removed every case this map had', () => {
+    // The deep pass is the fallback that drops a block's front FACE as well as its cap, revealing
+    // whatever stands behind the wall. It is the ugliest thing the x-ray can do, and until v47 the
+    // launch arena was where it happened most: 1.07% of standable floor, seven times a PvE floor's
+    // 0.2% (`occlusionCoverage.test.ts`, which still measures it there).
+    //
+    // It is now ZERO here, and that is a CONSEQUENCE, not a target. `needsDeepFade` fires on tall
+    // art over a shallow footprint, and on this map that shape is exactly the interior kit block:
+    // 70 px of art over a footprint one grid cell deep. The v47 north brim moves the player far
+    // enough out that a block's front face stops covering any of them, so the cap fade alone now
+    // does the whole job — on a map where 106 of 492 wall rects are free-standing.
+    //
+    // A test that only asserted `=== 0` would stay green if the sweep silently stopped finding
+    // anything at all, which is the failure mode this file exists to catch. So it is asserted
+    // against a CONTROL: the same scan with the brim disabled, i.e. the pre-v47 reachability.
+    const withBrim = deepPassHits(BRIM);
+    const control = deepPassHits(0);
+    expect(withBrim).toHaveLength(0);
+
+    // The control has to find the cases the brim removed, at roughly the rate this file recorded
+    // before — otherwise the zero above is measuring a broken sweep, not a fixed map.
+    expect(control.length).toBeGreaterThan(0);
+    expect(control.length / SWEPT.length).toBeGreaterThan(0.005);
+    expect(control.length / SWEPT.length).toBeLessThan(0.02);
+
+    // ...and every one of them is an INTERIOR block, which is WHY the brim could remove them all:
+    // a perimeter run or a kerb is not free-standing and keeps its exact-footprint collision, so a
+    // single deep-pass case on one of those would have survived into `withBrim`.
+    const tiers = new Set(control.flatMap((h) => h.blocks.map((b) => b.tier)));
+    expect([...tiers]).toEqual(['interior']);
   });
 
-  it('never fires the deep pass below the band the face split keeps opaque', () => {
-    // The precondition under `occlusion.deepFadeReach` / `wallRender.FACE_BASE_LABEL`: the deep
-    // pass drops only the band of the face a body can stand in front of, so the block keeps its
-    // base, its plinth and its footing through the fade. That is lossless only if no focus the
-    // rule fires for ever has a row BELOW the band — checked here on every sample of the shipped
-    // map that takes the deep pass, rather than on the rects the bound was derived from.
-    const over: string[] = [];
-    let tightest = Infinity;
-    for (const s of SWEPT) {
-      const focus = { x: s.gx, y: s.gy, halfW: HALF_W, bodyH: BODY_H };
-      for (const b of s.fired) {
-        if (!needsDeepFade(b.box, focus)) continue;
-        const reach = deepFadeReach(b.box.sortY - b.box.foldY, b.rect.h);
-        const used = s.gy - b.box.foldY;
-        tightest = Math.min(tightest, reach - used);
-        if (used > reach) over.push(`${s.room} at (${s.gx}, ${s.gy}): ${used} > ${reach}`);
-      }
-    }
-    expect(over).toEqual([]);
-    // How much of the band the shipped content actually uses, and WHY the rest is not slack. This
-    // sweep only ever stands the PLAYER somewhere, so the closest any sample gets to the fold is
-    // its own wall clearance — 16 px — and the deepest it reaches is 22 px of the 38 px band. The
-    // 16 px left over is exactly that clearance, and it is head-room the rule needs rather than
-    // margin it can give back: `foci` includes every live ENEMY, and an enemy keeps its feet
-    // circle against solids (`enemies.ts` — `solidRadius: bp.footprintRadius`, as small as 6 px),
-    // so a mob legitimately stands 10 px closer than anything this sweep can place. Which is why
-    // `deepFadeReach` is derived at clearance ZERO and not from the player's.
-    expect(tightest).toBe(CLEARANCE);
-  });
-
-  it('leaves ZERO rows of the body behind a block that took the deep pass', () => {
-    // The `hiddenAfter` acceptance test above is bounded at half the body, which is the right bound
-    // for the x-ray as a whole and much too loose here: with `deepFadeReach` cut by 24 px the
-    // ORACLE correctly reports 25% of the body still buried and that assertion still passes
-    // (measured 2026-08-27). What the split guarantees is not "less than half" but EXACTLY NOTHING
-    // — the band is the reachable-body envelope — so this asserts it per (sample, block) pair,
-    // through the same rectangle-overlap oracle rather than through the rule.
-    const over: string[] = [];
-    let pairs = 0;
-    for (const s of SWEPT) {
-      const focus = { x: s.gx, y: s.gy, halfW: HALF_W, bodyH: BODY_H };
-      for (const b of s.fired) {
-        if (!needsDeepFade(b.box, focus)) continue;
-        pairs++;
-        const opaqueTop = b.box.foldY + deepFadeReach(b.box.sortY - b.box.foldY, b.rect.h);
-        const rows = Math.min(s.gy, b.box.sortY) - Math.ceil(Math.max(s.gy - BODY_H, opaqueTop));
-        if (rows > 0) over.push(`${s.room} at (${s.gx}, ${s.gy}): ${rows} px of body still buried`);
-      }
-    }
-    expect(over.slice(0, 8)).toEqual([]);
-    expect(pairs).toBeGreaterThan(400); // the sweep has to be a sweep — measured 778 samples
-  });
-
-  it('keeps a real share of every deep-faded face opaque, which is the whole point', () => {
-    // The measurement the look rests on: of the face the old deep pass dropped whole, how much
-    // the split keeps. 32 px of a 70 px elevation — 46% — on every deep block this map has, which
-    // on a live frame is the difference between a translucent slab and stone with a base.
-    const deep = new Map<string, number>();
-    for (const s of SWEPT) {
-      const focus = { x: s.gx, y: s.gy, halfW: HALF_W, bodyH: BODY_H };
-      for (const b of s.fired) {
-        if (!needsDeepFade(b.box, focus)) continue;
-        const height = b.box.sortY - b.box.foldY;
-        deep.set(`${b.rect.x},${b.rect.y}`, (height - deepFadeReach(height, b.rect.h)) / height);
-      }
-    }
-    expect(deep.size).toBeGreaterThan(20); // measured 58 distinct blocks
-    const kept = [...deep.values()];
-    expect(Math.min(...kept)).toBeGreaterThan(0.4);
-    expect(Math.max(...kept)).toBeCloseTo(32 / 70, 6);
-  });
+  // The three tests that used to live here — that the deep pass never fires below the band
+  // `deepFadeReach` keeps opaque, that it leaves ZERO rows of the body buried, and how much of the
+  // face it keeps — measured the deep pass against real content. They moved out rather than being
+  // loosened: with no deep-pass sample left on this map they would assert over an empty set and
+  // pass no matter what the rule did. All three are still made against real content by the PvE
+  // sweep (`occlusionCoverage.test.ts`, which still reports deep-pass samples because a PvE
+  // floor's cases are on PERIMETER runs — 104 px over a 32 px footprint — and a perimeter run
+  // never carries `freeStanding`, so the brim does not reach it), and the rule itself stays
+  // unit-tested in `occlusion.test.ts`.
 
   it('reports how much of this map hides the player at all — three times a PvE floor', () => {
     // The number the pass is judged by, kept in the suite rather than only in a commit message:

@@ -14,6 +14,7 @@ import { circleOverlapsAabb } from '@dd/engine/systems/geom';
 import { roomGeometry, type RoomPiece } from '@dd/engine/content/rooms';
 import { buildEnemyActor } from '@dd/engine/content/enemies';
 import { MovementSystem, ProjectileStepSystem } from '@dd/engine/systems';
+import { WALL_NORTH_BRIM } from '@dd/engine/config';
 import { ENEMY_TEAM_ID, type AABB, type Faction, type Projectile } from '@dd/engine/state/entities';
 
 const CFG = { seed: 1, worldW: 1600, worldH: 1200, waves: [] as const };
@@ -65,6 +66,119 @@ describe('MovementSystem — AABB wall push-out', () => {
     const before = p.gx;
     new MovementSystem().tick(s);
     expect(p.gx).toBe(before);
+  });
+});
+
+/**
+ * The north brim (ENGINE_VERSION 47, `config.WALL_NORTH_BRIM`). A FREE-STANDING block's art
+ * rises a full wall height north of its own footprint, so an actor allowed to stand tangent to
+ * that face is drawn entirely inside stone — the report was *"角色整个跑到墙里面了"*, against a
+ * pillar, which reserves enough floor that only about half a body goes under it.
+ *
+ * Every test here places the wall SOUTH of the player's spawn (800,600 px) and walks the push
+ * out of it, because "which face" is the whole point: the brim is one-sided, and a version that
+ * inflated the rect instead of the north EDGE would pass a north-approach test and quietly move
+ * the other three faces too.
+ */
+describe('MovementSystem — free-standing block north brim (v47)', () => {
+  /** A wall pushed straight onto `state.walls` (not through `EngineConfig.walls`, which has no
+   *  field for the flag), with the broadphase rebuilt the way SpawnSystem.loadRoom does. */
+  function withWall(rect: AABB): GameState {
+    const s = createGameState({ ...CFG });
+    s.walls.push(rect);
+    s.rebuildSpatialIndex();
+    return s;
+  }
+
+  const px = (n: number) => pxToFp(n);
+
+  it('stops an actor one brim FURTHER north than the same rect unflagged', () => {
+    // Footprint north edge at 610px — 10px south of the player's spawn, so they start
+    // overlapping and get pushed back out along -y in both cases.
+    const plain = withWall({ x: px(700), y: px(610), w: px(200), h: px(64) });
+    const brimmed = withWall({ x: px(700), y: px(610), w: px(200), h: px(64), freeStanding: true });
+    const mv = new MovementSystem();
+    mv.tick(plain);
+    mv.tick(brimmed);
+    expect(plain.players[0]!.gy).toBe(px(610 - 16)); // tangent: solidRadius only
+    expect(brimmed.players[0]!.gy).toBe(px(610 - 32)); // solidRadius + WALL_NORTH_BRIM
+    // Stated as the difference too, so this fails loudly if the constant moves without the
+    // parity test (`client/.../standingCoverParity.test.ts`) being revisited.
+    expect((plain.players[0]!.gy as number) - (brimmed.players[0]!.gy as number)).toBe(WALL_NORTH_BRIM);
+  });
+
+  it('leaves the SOUTH face tangent — the brim is one-sided', () => {
+    // Wall's south edge at 605px, 5px into the player's clearance from the north side of
+    // nothing: the actor is south of the wall and pushed further south.
+    const s = withWall({ x: px(700), y: px(500), w: px(200), h: px(105), freeStanding: true });
+    new MovementSystem().tick(s);
+    expect(s.players[0]!.gy).toBe(px(605 + 16)); // solidRadius, no brim
+  });
+
+  it('leaves the EAST face tangent — the brim is one-sided', () => {
+    const s = withWall({ x: px(600), y: px(560), w: px(190), h: px(80), freeStanding: true });
+    new MovementSystem().tick(s);
+    expect(s.players[0]!.gx).toBe(px(790 + 16)); // solidRadius, no brim
+    expect(s.players[0]!.gy).toBe(px(600)); // purely along x
+  });
+
+  it('resolves a fully-engulfed actor out of the BRIMMED north edge', () => {
+    // A block the actor is standing dead inside, closest to its north edge (spawn 600px;
+    // rect 592..792px y, so 8px to the north edge and 192px to the south). The axis-separation
+    // branch has to use the same inflated edge, or an actor shoved into a block by knockback
+    // would pop out to a line the walking path can never reach.
+    const s = withWall({ x: px(700), y: px(592), w: px(200), h: px(200), freeStanding: true });
+    new MovementSystem().tick(s);
+    expect(s.players[0]!.gy).toBe(px(592 - 32));
+  });
+
+  it('does NOT hold a BULLET off — a shot still reaches the real stone', () => {
+    // `ProjectileStepSystem` has its own wall query, and it must keep hitting the authored
+    // footprint: the brim is about where a BODY may stand, not about where the wall is. If it
+    // leaked into the projectile path every shot near an interior block would die 16 px early —
+    // visible as bullets popping in mid-air, and a real change to cover.
+    const s = withWall({ x: px(700), y: px(600), w: px(200), h: px(64), freeStanding: true });
+    const bullet: Projectile = {
+      id: s.nextId(), faction: 'player', teamId: 0,
+      gx: px(800), gy: px(566), z: toFp(0),
+      vx: toFp(0), vy: px(20), radius: px(2), damage: 1, damageType: 'physical',
+      lifeTicks: 90, alive: true,
+    };
+    s.projectiles.push(bullet);
+    const ps = new ProjectileStepSystem();
+    // The start position is chosen so ONE tick lands the bullet between the two candidate edges:
+    // 566 + 20 = 586, which is past the brimmed edge (584) and short of the real one (600). A brim
+    // that leaked into this system would kill the bullet here; the real footprint does not.
+    ps.tick(s);
+    expect(bullet.alive).toBe(true);
+    // ...and it does still die on the stone itself, one tick later — so this is a test about WHERE
+    // the bullet stops, not a bullet that was never going to hit anything.
+    ps.tick(s);
+    expect(bullet.alive).toBe(false);
+  });
+
+  it("applies to an ENEMY too — the rule is the resolver's, not the player's", () => {
+    // Same code path, and it has to be: an enemy that could stand where the player cannot would
+    // hide inside a block's art, which is the same defect from the other side. Enemies keep a
+    // SMALLER solid radius than the player, so this also pins that the brim is added to whatever
+    // radius the actor brought rather than replacing it.
+    const s = withWall({ x: px(700), y: px(610), w: px(200), h: px(64), freeStanding: true });
+    // x = 880, not the world centre: the player spawns at (800, 600) and actor-vs-actor push-out
+    // would otherwise move the enemy before the wall ever got to it.
+    const e = buildEnemyActor(s, px(880), px(600));
+    s.enemies.push(e);
+    new MovementSystem().tick(s);
+    expect(e.solidRadius).toBeLessThan(s.players[0]!.solidRadius); // smaller radius, same brim
+    expect(e.gy).toBe((px(610) - WALL_NORTH_BRIM - e.solidRadius) as Fp);
+  });
+
+  it('finds a block the actor overlaps ONLY through its brim (broadphase widened)', () => {
+    // 20px north of the footprint: outside `solidRadius` (16), inside solidRadius+brim (32).
+    // If the query radius had been left at solidRadius this cell could fall outside the
+    // queried band and the push would silently never happen.
+    const s = withWall({ x: px(700), y: px(620), w: px(200), h: px(64), freeStanding: true });
+    new MovementSystem().tick(s);
+    expect(s.players[0]!.gy).toBe(px(620 - 32));
   });
 });
 
@@ -122,6 +236,23 @@ describe('roomGeometry (content/rooms) — pure RoomPiece → sim-geometry conve
     const bare: RoomPiece = { ...piece, pillars: undefined };
     const { obstacles } = roomGeometry(bare);
     expect(obstacles).toHaveLength(0);
+  });
+
+  it('carries `freeStanding` across the conversion, and never invents it (v47)', () => {
+    // The single grid -> fp crossing every authored solid makes. Whether a solid is free-standing
+    // is an AUTHORING fact — which list it came from — and nothing downstream can re-derive it
+    // from the rect's own numbers, so if it is dropped here the v47 brim is simply gone.
+    const mixed: RoomPiece = {
+      ...piece,
+      solids: [{ x: 0, y: 0, w: 10, h: 1 }, { x: 3, y: 3, w: 2, h: 2, freeStanding: true }],
+    };
+    const { walls } = roomGeometry(mixed, 20, 30);
+    expect(walls[1]!.freeStanding).toBe(true);
+    // The perimeter solid must come out with the key ABSENT, not `false` — `toEqual` above pins
+    // the exact shape of a converted rect, and a stray key would make every unflagged wall a
+    // different object than the one the rest of the suite compares against.
+    expect(walls[0]!.freeStanding).toBeUndefined();
+    expect('freeStanding' in walls[0]!).toBe(false);
   });
 });
 

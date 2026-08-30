@@ -5,7 +5,7 @@ closed loop the design docs describe, and the running record of how each phase a
 landed. Phases are written top-to-bottom in dependency order; each one keeps its dated
 shipped-notes underneath it, so a phase section is both the plan and the history.
 
-**Current built state (engine notes below written 2026-08-20; content/render passes have landed since — 2026-08-25 the hand-authored PvP launch arena `arena_launch` plus the arena audit, 2026-08-26 the arena floor stopping at its rooms and the retirement of `arena_prototype_60`, 2026-08-30 an open door reading as a passage instead of a black wall — none of which touches the tick order or bumps a version).** The number in this heading has drifted before and is not the authority — `engine/versionHistory.ts` is. `ENGINE_VERSION` **43** (32: ground-weapon pickup is
+**Current built state (engine notes below written 2026-08-20; content/render passes have landed since — 2026-08-25 the hand-authored PvP launch arena `arena_launch` plus the arena audit, 2026-08-26 the arena floor stopping at its rooms and the retirement of `arena_prototype_60`, 2026-08-30 an open door reading as a passage instead of a black wall — none of which touches the tick order or bumps a version). **One engine bump has landed since: 2026-08-30's `ENGINE_VERSION` 47**, a north-face brim on free-standing wall blocks so a character stops beside one the way they already stop beside a pillar — see "The wall swallowed the character and the pillar did not" below.** The number in this heading has drifted before and is not the authority — `engine/versionHistory.ts` is. `ENGINE_VERSION` **43** (32: ground-weapon pickup is
 click-driven; 33: manual aim removed entirely; 34: co-resident PvE room/door model, engine +
 client rendering; 35: fully-realized branching — see the Room & door model section below;
 same-day map-editor door placement, the `layout: 'graph2d'` real-2D-layout follow-up, AND the
@@ -1022,7 +1022,7 @@ module and not its caller. Mutating that branch now kills.
 | passages with wall art over them | **58 of 74** (36 buried to their full depth) — since fixed, see the next section: 10, none buried | 12 shallow residual, 0 deep |
 | blocks the x-ray fades at once | **4** (walls alone: 2) | 2, asserted as the bound |
 | standable floor fully hiding the player | **11.6%** (7.8% after the fix below) | 3.3% |
-| ...and the deep face-dropping fade | **1.37%** (1.07% after the fix below) | 0.2% |
+| ...and the deep face-dropping fade | **1.37%** (1.07% after the fix below; **0% since v47's north brim**, 2026-08-30) | 0.2% |
 | worst block's shading geometry | **208 floats** | 120 (bound: `< AUTO_BATCH_VERTEX_LIMIT / 2`) |
 | stacked-room boundaries only PARTLY covered | **0**, with its precondition | the case `wallTier` exists to split |
 
@@ -1161,7 +1161,7 @@ index-aligned with `s.dungeonDoors` for the lock-state pass.
 | worst coverage of a 96 px passage | 104 px | **40 px** |
 | worn floor patch marking a threshold | 0 of 74 | **74 of 74** |
 | standable floor fully hiding the player | 11.6% | **7.8%** |
-| deep face-dropping fade | 1.37% | **1.07%** |
+| deep face-dropping fade | 1.37% | **1.07%** (and **0%** since v47's north brim, 2026-08-30) |
 | perimeter runs fading from a threshold | 3,255 samples | **20** |
 | draw calls | — | **unchanged** |
 
@@ -7046,7 +7046,7 @@ more than it sounds: "the worst spot" is a fact the sweep already knows and the 
 |---|---|---|
 | 1 | 4 pillars fade at once, 1 sample of 72,686, `terraces_r1c0` | Four columns going hazy. Outlines survive the fade; a solid pillar two cells away is in frame as the contrast. Not a hole. |
 | 2 | `cisterns_r1c3` hides the player on 44% of its own floor | Character fully visible; the faded block reads as a translucent slab over the stone behind it. |
-| 3 | The deep pass drops the front FACE too, 1.07% of the map | Reads as a **glass block** — a hard-edged translucent rectangle. Acceptable, and the one verdict with a reservation. **Closed 2026-08-27** — the cause was the extent, not the fade: 46% of the face it dropped was never covering anybody. See "The deep pass stops where the body does" below. |
+| 3 | The deep pass drops the front FACE too, 1.07% of the map | Reads as a **glass block** — a hard-edged translucent rectangle. Acceptable, and the one verdict with a reservation. **Closed 2026-08-27** — the cause was the extent, not the fade: 46% of the face it dropped was never covering anybody. See "The deep pass stops where the body does" below. **Moot on this map since 2026-08-30**: v47's north brim took the arena's deep-pass rate from 1.07% to **0** — all 778 firing samples were on interior kit blocks, and the brim moves the player out of the band. The pass survives for the PvE floors, whose deep cases are on perimeter runs. See "The wall swallowed the character and the pillar did not". |
 | 4 | The worst shading block is 208 floats, a 672x64 KERB | Three south spans, no seam between them, ramp smooth. |
 | 5 | 10 passages keep a strip of a run, worst 40 px of 160 | Imperceptible standing in the doorway. |
 
@@ -7944,3 +7944,124 @@ enemy bundles ship no `attack` clip at all (`idle`/`hurt`/`death`/`spawn`), and 
 `attack` tracks `socket_r` and nothing else — so a whole-clip swap really would blank the
 shell/eye/belly that `idle` bobs. If either flips, the reason firing is an envelope has changed
 and design/12's note deserves re-reading rather than standing on a premise that no longer holds.
+
+## The wall swallowed the character and the pillar did not (2026-08-30, engine, `ENGINE_VERSION` 47)
+
+Two screenshots and one sentence: *"房间中间的墙壁，能让角色只进入到墙壁的一半吗？"*, then —
+after a first answer that reached for the wrong knob — *"你看房间里面的柱子，角色大概只有半个身子
+被柱子覆盖。能把墙也做成类似的效果吗？…这个截图里，角色整个跑到墙里面了。"*
+
+The report hands over its own oracle, and that is the whole shape of this pass. The question is
+not "how much should a wall cover a character" — it is "why do the two standing things in the
+same room disagree", which has an arithmetic answer.
+
+### The measurement
+
+Everything here is drawn upward from a grounded origin (`screen.y = gy - z`), so a standing shape
+paints its own footprint PLUS one drawn height of walkable floor to its north. How far a character
+ends up buried in that art is therefore one subtraction — **drawn height minus the floor the shape
+reserves** — and the two shapes had never agreed on the second term:
+
+| | reserves | paints north of it | sink |
+|---|---|---|---|
+| pillar (`radius: 1` grid) | `32 + 16` = 48 px | 88.95 px (`pillarArtExtent`, the shipped 326x384 art at `bodyW + 4`) | **40.95 px** |
+| interior block, pre-v47 | `16` px | 70 px (`WALL_H_INTERIOR`) | **54 px** |
+
+A body is drawn 20–48 px tall. 41 px of sink is a body covered to about the waist — the pillar the
+report points at as correct. 54 px is more than the whole silhouette, at every size in the band —
+the wall the report points at as wrong. The two readings are 13 px apart, and both numbers are
+pinned by tests that already existed; nothing had to be eyeballed to get here.
+
+### The fix, and why it is one-sided and flagged
+
+`config.WALL_NORTH_BRIM` (500 fp = 16 px = one player body radius). `MovementSystem.resolveWalls`
+treats a wall carrying `AABB.freeStanding` as if its NORTH edge were that much further north, which
+puts a block's sink at `70 - 32 = 38` px, within 2 px of the pillar's. The rect itself never
+moves: the drawn footprint, `blockedCells`, spawn placement, `geom`'s line-of-sight and the
+projectile query all still see the authored numbers, and the broadphase query in that one function
+widens by the brim to compensate for asking about an edge the shared index was not built on.
+
+**One face**, because the other three were already right — v43 set the east/west clearance to the
+body radius deliberately, so the silhouette lands tangent, and a character standing SOUTH of a wall
+overlapping its face is the depth cue, not a defect.
+
+**Flagged per solid rather than given to every wall**, for two concrete reasons:
+
+- a perimeter ring is what door passages are carved through (`carveDoorGaps`), and a brim on it
+  narrows every east–west passage from the south side;
+- a room's south boundary is drawn as a 22 px kerb (`WALL_H_KERB`) whose entire purpose is that a
+  character CAN stand tangent to it. Brimming that re-opens v43's *"太靠墙了，感觉陷进去了"* from
+  the opposite direction — a character floating off a lip that was never covering them.
+
+The flag is set where the distinction still exists (`launchArena.furnish`, which has
+`perimeterSolids` and `kit.solids` as two separate lists; `world/rooms/ember.ts`'s two stub walls),
+carried across the single grid→fp conversion in `roomGeometry` and through `subtractRect`'s
+residual pieces, and read in exactly one place.
+
+### What it costs, measured rather than argued
+
+The obvious objection is that this makes 16 px of floor north of every block unwalkable, and floor
+that was only just wide enough before is floor that is sealed now. So it was rasterized: standable
+floor over the whole launch map at 8 px, flood-filled, with the brim and without.
+
+| | without brim | with brim |
+|---|---|---|
+| connected regions | 45 | **45** |
+| rooms in the largest region | 38 | **38** |
+| standable cells | 56,464 | 54,540 (**−3.41%**) |
+
+**It removes floor and never a route.** It does narrow seven gaps past the player — and the shape
+of those seven is why that is acceptable: every one is a pair of blocks overlapping in x by exactly
+ONE cell, i.e. the diagonal notch where two blocks nearly touch at a corner, which a player walks
+one cell aside and past. All three numbers are now assertions (`launchArena.test.ts`), and the
+pinch test names the overlap width so a kit retune that turns a notch into a real passage fails.
+
+The bound has real headroom but not unlimited: raising the brim to 2 grid cells **fails the
+connectivity assertion**, so 16 px is comfortably inside a limit that genuinely exists.
+
+### The side effect worth more than the fix
+
+The arena's **deep pass rate went 1.07% → 0**, and it took four failing tests to notice.
+
+`needsDeepFade` — the fallback that drops a block's front FACE as well as its cap, revealing
+whatever stands behind the wall, and the ugliest thing the x-ray can do — fires on tall art over a
+shallow footprint. On this map that shape *is* the interior kit block: 70 px of art over a one-cell
+footprint. All 778 firing samples were free-standing blocks, and the brim moves the player out of
+the band, so the cap fade alone now does the whole job. The PvE floors keep theirs, because their
+deep cases are on PERIMETER runs, which are never brimmed — which is also why the rule keeps
+real-content coverage rather than becoming untested.
+
+The tests that measured the deep pass on this map were not loosened, they were **moved out and
+replaced with the new fact**: a bare `expect(0)` stays green when a sweep silently stops finding
+anything, so the zero is asserted against a **control** — the same scan with the brim disabled,
+which must still find the old 1.07% and must find every case on an `interior`-tier block.
+
+### The battery, and the two coverage holes it found
+
+Five mutants, all killed, but the useful part is which tests did not exist until a mutant asked
+for them:
+
+- **`subtractRect` dropping `freeStanding` killed nothing.** A door only ever cuts a perimeter ring
+  on the shipped maps, so the copy could be deleted with the entire suite green — and would have
+  surfaced the day a passage clipped a kit block, as one block silently losing its brim, in one
+  room, on one map. Now covered on all four residual shapes, in both directions.
+- **The first bullet test could not have caught a brim leak into the projectile path.** The
+  geometry happened to give the same alive/dead answer either way. The start position is now chosen
+  so one tick lands the bullet BETWEEN the brimmed edge (584) and the real one (600) — the brim is
+  about where a body may stand, not about where the stone is, and a leak would kill every shot near
+  a block 16 px early.
+
+Also new: the two 70k-sample coverage sweeps modelled "can the player stand here" with
+`solidRadius` alone, so after the brim they were sampling poses the engine no longer allows. Both
+now use the engine's own rule.
+
+### Where verification stopped
+
+The arithmetic is pinned — the parity against `pillarArtExtent` lives in `occlusion.test.ts` as an
+assertion rather than a literal, so changing the brim, the interior tier or the pillar art moves
+whichever one drifted back into agreement. **The LOOK is not verified.** Driving the running game
+to walk a character up to a wall failed: neither real key events nor synthetic `KeyboardEvent`s on
+window/document/body/canvas moved the player, in a game that was visibly running (enemies walking,
+bullets firing, screenshots compositing). Cause not established, and not guessed at. `38 px` is one
+constant away from any other answer if the frame disagrees with the arithmetic.
+

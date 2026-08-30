@@ -16,7 +16,7 @@
 import { addFp, isqrt } from '../math/fixed';
 import type { Fp } from '../math/fixed';
 import { PLAYER_BASE } from '../content/players';
-import { KNOCKBACK_FRICTION_PERMILLE, KNOCKBACK_SNAP_FP } from '../config';
+import { KNOCKBACK_FRICTION_PERMILLE, KNOCKBACK_SNAP_FP, WALL_NORTH_BRIM } from '../config';
 import type { GameState } from '../state/GameState';
 import type { Actor } from '../state/entities';
 
@@ -118,13 +118,26 @@ export class MovementSystem {
    *     client picks the same edge (mirrors the round-pillar concentric-overlap rule).
    */
   private resolveWalls(state: GameState, a: Actor): void {
-    for (const idx of state.spatialIndex.queryWalls(a.gx, a.gy, a.solidRadius)) {
+    // Broadphase with the brim ADDED to the query radius, never to the stored rects: the index
+    // is built over the authored footprints (and is shared with the projectile/LOS queries,
+    // which must keep hitting the real stone), so the only safe way to see a wall an actor
+    // overlaps only through its brim is to ask a little wider here. Over-querying costs a
+    // rejected narrowphase test; under-querying would silently drop the push.
+    for (const idx of state.spatialIndex.queryWalls(a.gx, a.gy, (a.solidRadius + WALL_NORTH_BRIM) as Fp)) {
       const w = state.walls[idx]!;
       const r = a.solidRadius;
+      // The wall's collision rect, which is its authored rect with its NORTH edge pulled out by
+      // `WALL_NORTH_BRIM` on a free-standing block (v47, see that constant): such a block's art
+      // rises a full wall height north of `w.y`, and without the brim an actor standing there is
+      // drawn entirely inside stone. Inflating the EDGE (rather than special-casing a
+      // north-approach) keeps this one rect-vs-circle test, so the corner cases — sliding along
+      // the block's east face past its north end, being pushed out of an overlap — stay the same
+      // code and the same tie-breaks they already were.
+      const top = (w.freeStanding ? w.y - WALL_NORTH_BRIM : w.y) as Fp;
       const right = (w.x + w.w) as Fp;
       const bottom = (w.y + w.h) as Fp;
       const closestX = Math.max(w.x, Math.min(a.gx, right)) as Fp;
-      const closestY = Math.max(w.y, Math.min(a.gy, bottom)) as Fp;
+      const closestY = Math.max(top, Math.min(a.gy, bottom)) as Fp;
       const dx = a.gx - closestX;
       const dy = a.gy - closestY;
       const distSq = dx * dx + dy * dy;
@@ -139,13 +152,13 @@ export class MovementSystem {
       // Centre is inside the rect: push out along the nearest single edge.
       const pushLeft = (a.gx - w.x) as number;
       const pushRight = (right - a.gx) as number;
-      const pushTop = (a.gy - w.y) as number;
+      const pushTop = (a.gy - top) as number;
       const pushBottom = (bottom - a.gy) as number;
       const min = Math.min(pushLeft, pushRight, pushTop, pushBottom);
       if (min === pushRight) a.gx = (right + r) as Fp;
       else if (min === pushLeft) a.gx = (w.x - r) as Fp;
       else if (min === pushBottom) a.gy = (bottom + r) as Fp;
-      else a.gy = (w.y - r) as Fp;
+      else a.gy = (top - r) as Fp;
     }
   }
 

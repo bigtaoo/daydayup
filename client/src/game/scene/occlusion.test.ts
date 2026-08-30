@@ -12,7 +12,7 @@
  *    a literal here would defeat the point, so they are all imported.
  */
 import { describe, it, expect } from 'vitest';
-import { PLAYER_BASE } from '@dd/engine';
+import { PLAYER_BASE, WALL_NORTH_BRIM } from '@dd/engine';
 import { fpToPx } from '../coords';
 import {
   deepFadeReach,
@@ -28,6 +28,8 @@ import {
   type Occluder,
 } from './occlusion';
 import { WALL_H_INTERIOR, WALL_H_KERB, WALL_H_PERIMETER } from './wallGeometry';
+import { pillarArtExtent } from './pillarRender';
+import { Texture, TextureSource } from 'pixi.js';
 
 /** How wide/tall the character is DRAWN, in world px. A band rather than a point: the shipped
  *  rig measures 32 px tall at the player's gameplay radius and the Graphics placeholder 39, and
@@ -43,6 +45,25 @@ const BODY_HALF_W = 13;
 
 /** The player's closest legal approach to a wall, in world px — the engine's own number. */
 const CLEARANCE = fpToPx(PLAYER_BASE.solidRadius);
+/** The EXTRA clearance a free-standing block's north face gets on top of it (ENGINE_VERSION 47,
+ *  `config.WALL_NORTH_BRIM`). Zero on a perimeter wall and on a kerb, which is why these stay two
+ *  constants and not one merged number: every claim below has to say which of the two it uses. */
+const BRIM = fpToPx(WALL_NORTH_BRIM);
+/** ...so this is the closest legal approach to the north face of an interior block. */
+const NORTH_STANDOFF = CLEARANCE + BRIM;
+
+/** The pillar the interior blocks are calibrated against. `roomDressing` builds one per
+ *  `state.obstacles` circle at `bodyW = radius * 2 + 16`, and every shipped kit authors
+ *  `radius: 1` grid = 32 px; the art is scaled by WIDTH, so the shipped file's aspect is what
+ *  decides how far north of the ground point it paints (`pillarRender.test.ts` owns those
+ *  dimensions and asserts the art still matches the shape it was drawn for). */
+const PILLAR_RADIUS_PX = 32;
+const PILLAR_BODY_W = PILLAR_RADIUS_PX * 2 + 16;
+const SHIPPED_PILLAR_TEX = new Texture({ source: new TextureSource({ width: 326, height: 384 }) });
+/** How deep a standing shape buries a character at their closest legal approach: the px of art
+ *  painted above their feet. THE number a block and a pillar have to agree on. */
+const pillarSink = (): number =>
+  -pillarArtExtent(PILLAR_BODY_W, WALL_H_INTERIOR, SHIPPED_PILLAR_TEX).top - (PILLAR_RADIUS_PX + CLEARANCE);
 
 /** One standing block's occluder box, from the geometry `wallRender` actually draws it at: the
  *  container sits on the south edge and paints `height + depth` px northward from there, with the
@@ -93,26 +114,40 @@ describe('occludes — which block is drawing over the character', () => {
   });
 });
 
-describe('occludes — the three-layer geometry that produced the bug', () => {
+describe('occludes — the three-layer geometry, and what the north brim did to it', () => {
   // The repro, in numbers: a 96 x 64 interior block, and a player pressed as far north as the
   // engine lets them stand.
   const DEPTH = 64;
   const SOUTH = 224;
   const b = block(SOUTH, WALL_H_INTERIOR, DEPTH);
-  const closestY = SOUTH - DEPTH - CLEARANCE;
+  const closestY = SOUTH - DEPTH - NORTH_STANDOFF;
 
-  it('an interior block covers the WHOLE drawn body at the player\'s closest legal approach', () => {
-    // This is the bug, stated as geometry: the art reaches `height - clearance` px above the
-    // player's feet, which is more than the character is tall — so per-object Y-sorting draws
-    // them entirely behind the stone and nothing of them is left on screen. If a future edit
-    // makes this false (a shorter interior tier, a wider clearance, taller art), the x-ray
-    // becomes a nicety rather than a necessity, and this test is where that shows up.
-    const covered = closestY - b.top;
-    expect(covered).toBeCloseTo(WALL_H_INTERIOR - CLEARANCE, 6);
-    expect(covered).toBeGreaterThan(BODY_H_MAX);
+  it('buries a character by the same depth a PILLAR does — the v47 calibration', () => {
+    // The report this pins: *"柱子...只有半个身子被覆盖"* against *"角色整个跑到墙里面了"*.
+    // Both shapes are drawn upward from a grounded origin over floor a character can stand on, so
+    // the only thing deciding how much of them goes under stone is how much floor each RESERVES —
+    // and until v47 the two disagreed by a body's worth (a wall sank a character 54 px, a pillar
+    // 41). `WALL_NORTH_BRIM` exists to close exactly this gap and nothing else, so this is the
+    // assertion that owns the constant's value: change the brim, the interior tier or the pillar
+    // art, and whichever moved has to move back into agreement here.
+    const wallSink = closestY - b.top;
+    expect(wallSink).toBeCloseTo(WALL_H_INTERIOR - NORTH_STANDOFF, 6);
+    expect(Math.abs(wallSink - pillarSink())).toBeLessThanOrEqual(4);
   });
 
-  it('...so the x-ray fires there, for every body size in the band', () => {
+  it('...and no longer covers the WHOLE drawn body, which is what the brim bought', () => {
+    // Pre-v47 this read `> BODY_H_MAX`: the art reached further above the player's feet than the
+    // character was tall, at every size in the band, so per-object Y-sorting left nothing of them
+    // on screen and the x-ray was the only thing standing between the player and invisibility.
+    // Now the tallest body in the band keeps a real margin out in the open.
+    expect(closestY - b.top).toBeLessThan(BODY_H_MAX);
+  });
+
+  it('...but the x-ray still fires there, for every body size in the band', () => {
+    // Deliberately unchanged. Half a body behind stone is still worth dissolving the cap for — it
+    // is what a pillar already does at the same sink — so `MIN_COVER_FRACTION` was left alone and
+    // the brim stays ONE change. What moved is where the character may stand, not when the fade
+    // decides to help them.
     for (const bodyH of [BODY_H_MIN, 24, 32, 39, BODY_H_MAX]) {
       expect(occludes(b, focus(1, closestY, bodyH))).toBe(true);
     }
@@ -122,6 +157,10 @@ describe('occludes — the three-layer geometry that produced the bug', () => {
     // The room's south boundary is deliberately short (`WALL_H_KERB`) precisely because it
     // stands between the camera and the player. Fading the whole southern lip of the room
     // every time the player walks along it would be a worse artifact than the few px it fixes.
+    // `CLEARANCE`, not `NORTH_STANDOFF`: a kerb is part of a room's perimeter ring and so never
+    // carries `AABB.freeStanding` — the v47 brim does not apply to it. That is the whole reason
+    // the brim is flagged per solid rather than handed to every wall: floating the character off
+    // a 22 px lip that was never covering them would re-open the v43 report from the other side.
     const kerb = block(SOUTH, WALL_H_KERB, 32);
     const flush = SOUTH - 32 - CLEARANCE;
     expect(flush - kerb.top).toBeLessThan(BODY_H_MIN * 0.45);

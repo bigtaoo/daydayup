@@ -209,7 +209,15 @@ function furnish(
   const profile = DISTRICTS[slot.district]!;
   const variant = slot.row * 3 + slot.col;
   const kit = INTERIOR_KITS[slot.kit](innerOf(slot.rect), variant);
-  const solids = [...perimeterSolids(slot.rect, openings), ...kit.solids];
+  // The kit's blocks are the room's FREE-STANDING cover; the perimeter ring is not. That
+  // distinction is only knowable here, where the two lists are still separate, and it is the
+  // one input to the north brim `MovementSystem` gives a standing block (config's
+  // `WALL_NORTH_BRIM`, v47). Marked rather than re-derived downstream: once the lists are
+  // concatenated no rect can be asked which one it came from.
+  const solids = [
+    ...perimeterSolids(slot.rect, openings),
+    ...kit.solids.map((s) => ({ ...s, freeStanding: true as const })),
+  ];
   const blocked = blockedCells(solids, kit.pillars, kit.cellTraits);
 
   const centre = { x: Math.floor(slot.rect.w / 2), y: Math.floor(slot.rect.h / 2) };

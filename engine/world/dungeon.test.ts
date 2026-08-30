@@ -1011,6 +1011,32 @@ describe('carveDoorGaps', () => {
     expect(result.filter((r) => r.x === fp(200))).toHaveLength(1);
     expect(result.filter((r) => r.x === fp(0))).toHaveLength(2);
   });
+
+  it('keeps `freeStanding` on every residual piece, and never invents it (v47)', () => {
+    // A carved piece is still the same solid it came out of, so it keeps the flag that decides
+    // whether `MovementSystem` gives its north face the v47 brim. Untested, this is invisible: a
+    // door only ever cuts a PERIMETER ring on the shipped maps, which carries no flag, so a
+    // dropped copy would leave every current test green and only surface the day a passage
+    // clipped a kit block — as one block that silently lost its brim, in one room, on one map.
+    // All four residual shapes are exercised: a hole in the middle of a wall produces the
+    // left/right pair, and a hole overhanging one end produces a top/bottom strip.
+    const block = { ...fpRect(0, 0, 10, 100), freeStanding: true as const };
+    const bisected = carveDoorGaps([block], [fpRect(-5, 40, 20, 20)]);
+    expect(bisected).toHaveLength(2);
+    expect(bisected.every((r) => r.freeStanding === true)).toBe(true);
+
+    const wide = { ...fpRect(0, 0, 100, 10), freeStanding: true as const };
+    const clipped = carveDoorGaps([wide], [fpRect(40, -5, 20, 8)]);
+    expect(clipped.length).toBeGreaterThanOrEqual(3);
+    expect(clipped.every((r) => r.freeStanding === true)).toBe(true);
+
+    // ...and the other direction, which matters just as much: a perimeter wall must not come out
+    // of the carve claiming to be free-standing, or every door frame on the map grows a brim.
+    const perimeter = fpRect(0, 0, 10, 100);
+    for (const piece of carveDoorGaps([perimeter], [fpRect(-5, 40, 20, 20)])) {
+      expect(piece.freeStanding).toBeUndefined();
+    }
+  });
 });
 
 describe('buildFloorGeometry', () => {

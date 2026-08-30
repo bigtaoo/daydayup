@@ -946,3 +946,53 @@ Coverage: `engine/systems/ballistics.test.ts` — the player path, the enemy pat
 of a multi-pellet shot, and two simultaneous shooters told apart in one frame.
 
 ---
+
+## v47: a free-standing block's NORTH face reserves an extra body radius (2026-08-30)
+
+`MovementSystem.resolveWalls` now treats a wall whose rect carries `AABB.freeStanding` as if
+its north edge were `config.WALL_NORTH_BRIM` (500 fp = 16 px = one player body radius) further
+north than it is. The three other faces, every perimeter wall, every door passage folded into
+`state.walls` by `DoorSystem`, and every flat `EngineConfig.walls` entry are untouched.
+
+**Replay impact: any stream that walks an actor up to the north side of an interior cover block
+diverges from that contact onward** — the actor stops 32 px out instead of 16, so its position,
+every subsequent shot's origin, and every AI decision keyed off a distance differ. Streams on a
+floor with no free-standing solids at all, or that never touch one from the north, are
+byte-identical. Enemies use the same resolver and get the same brim: a chase path that hugged
+the north side of a block now hugs it a body-radius further out.
+
+**Why.** Live report, with two screenshots: *"角色整个跑到墙里面了"* — the character walked north
+of a mid-room wall and was drawn wholly inside it — held against the pillar three metres away,
+*"角色大概只有半个身子被柱子覆盖"*. Both shapes are drawn upward from a grounded origin
+(`screen.y = gy - z`), so each paints a band of walkable floor north of its own footprint, and
+how deep a character sinks into that band is `drawn height - reserved floor`. The two shapes had
+never agreed on the second term:
+
+| | reserves | paints north of it | sink |
+|---|---|---|---|
+| pillar (`radius: 1` grid) | `32 + 16` = 48 px | 88 px (`pillarArtExtent`, shipped art) | 40 px |
+| interior block (pre-v47) | `16` px | 70 px (`WALL_H_INTERIOR`) | **54 px** |
+
+40 px of sink is a body covered to about the waist; 54 px is more than the whole silhouette
+(drawn 20-48 px tall), which is why one read as cover and the other as the character falling
+into the geometry. The brim makes the block's sink 38 px, within 2 px of the pillar's.
+
+**Why a per-solid flag and not a rule for every wall.** A perimeter ring is what door passages
+are carved through (`carveDoorGaps`), and brimming it would narrow every east-west passage from
+the south side; a room's south boundary is drawn as a 22 px kerb (`WALL_H_KERB`) whose entire
+purpose is that an actor CAN stand tangent to it, so brimming that would re-open v43's
+*"太靠墙了，感觉陷进去了"* from the opposite direction — a character floating off a lip that was
+never covering them. The flag is set where the distinction still exists (`launchArena.furnish`
+splits `perimeterSolids` from `kit.solids`; `world/rooms/ember.ts` marks its two stub walls),
+carried through the one grid→fp conversion in `roomGeometry` and through `subtractRect`'s
+residual pieces, and read in exactly one place.
+
+The rect itself never moves: `blockedCells`, spawn placement, the geometry metrics, the drawn
+footprint and the projectile/LOS queries all still see the authored numbers. Only the actor
+push-out reads the flag, and the broadphase query in that one function widens by the brim to
+match (the shared index is still built over the real footprints).
+
+Coverage: `engine/systems/rooms.test.ts` (the north face moves, the other three do not, the
+engulfed-actor axis separation uses the inflated edge, and the widened broadphase finds a block
+an actor overlaps only through its brim) and `client/src/game/scene/occlusion.test.ts`, which
+owns the constant's VALUE as a parity assertion against `pillarArtExtent` rather than a literal.

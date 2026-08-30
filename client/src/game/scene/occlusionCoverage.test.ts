@@ -33,6 +33,7 @@ import {
   EMBER_L1_FLOORS,
   EMBER_L1_ROOMS,
   PLAYER_BASE,
+  WALL_NORTH_BRIM,
   buildFloorGeometry,
   placeAuthoredFloor,
   toFpGrid,
@@ -50,6 +51,8 @@ import { deepFadeReach, needsDeepFade, occludes, type Occluder } from './occlusi
 const BODY_H = 32;
 const HALF_W = 12.96;
 const CLEARANCE = fpToPx(PLAYER_BASE.solidRadius);
+/** ...and the extra clearance a free-standing block's NORTH face gets on top of it (v47). */
+const BRIM = fpToPx(WALL_NORTH_BRIM);
 
 /** How finely the reachable floor is swept, in world px. 8 px is a quarter of a grid cell and
  *  about a third of the drawn body — fine enough that a blind spot cannot hide between samples,
@@ -72,7 +75,10 @@ interface Block {
 interface Floor {
   index: number;
   blocks: Block[];
-  walls: RectPx[];
+  /** The collision rects, each carrying whether it is a free-standing block — `standable` needs
+   *  that to apply the v47 north brim, and a sweep that dropped it would keep standing the player
+   *  in poses the engine no longer allows and reporting blind spots that cannot happen. */
+  walls: Array<RectPx & { freeStanding?: boolean }>;
   pillars: Array<{ gx: number; gy: number; r: number }>;
   rooms: RectPx[];
 }
@@ -94,8 +100,9 @@ function buildFloor(index: number): Floor {
     w: fpToPx(toFpGrid(r.piece.sizeGrid.w)),
     h: fpToPx(toFpGrid(r.piece.sizeGrid.h)),
   }));
-  const walls: RectPx[] = geo.walls.map((w) => ({
+  const walls: Array<RectPx & { freeStanding?: boolean }> = geo.walls.map((w) => ({
     x: fpToPx(w.x), y: fpToPx(w.y), w: fpToPx(w.w), h: fpToPx(w.h),
+    ...(w.freeStanding ? { freeStanding: true as const } : {}),
   }));
   const runs: WallRun[] = mergeWallRuns(walls.map((rect) => ({ rect, tier: wallTier(rect, rooms) })));
   const joins: WallJoins[] = wallJoins(runs, faceCrownFraction('fire')); // level 1 is ember
@@ -136,7 +143,10 @@ const FLOORS: Floor[] = Object.keys(EMBER_L1_FLOORS).map(Number).map(buildFloor)
  *  can genuinely be, which is what makes a blind spot found here a real one. */
 function standable(f: Floor, gx: number, gy: number): boolean {
   for (const w of f.walls) {
-    if (gx + CLEARANCE > w.x && gx - CLEARANCE < w.x + w.w && gy + CLEARANCE > w.y && gy - CLEARANCE < w.y + w.h) {
+    // The NORTH edge, brimmed on a free-standing block (ENGINE_VERSION 47) — the engine's own
+    // rule, so a pose this accepts is still one the player can actually reach.
+    const top = w.freeStanding ? w.y - BRIM : w.y;
+    if (gx + CLEARANCE > w.x && gx - CLEARANCE < w.x + w.w && gy + CLEARANCE > top && gy - CLEARANCE < w.y + w.h) {
       return false;
     }
   }

@@ -13,6 +13,9 @@ import { DISTRICTS, DISTRICT_MAP, SPAWN_SLOTS, EYE_SLOTS } from './launchArenaPl
 import { measureArena } from '../../content/arenaMetrics';
 import { measureEnclosure, measurePlacement, solidCellSet } from '../../content/arenaGeometryMetrics';
 import { buildArenaGeometry } from '../../content/arenas';
+import { PLAYER_BASE } from '../../content/players';
+import { WALL_NORTH_BRIM } from '../../config';
+import { toFpGrid } from '../../content/convert';
 
 const metrics = measureArena(LAUNCH_ARENA);
 const placement = measurePlacement(LAUNCH_ARENA);
@@ -266,5 +269,169 @@ describe('the drop is fair, and the zone can reach everyone', () => {
 
   it('leaves no room stranded far from every possible final circle', () => {
     expect(metrics.maxHopsToEye).toBeLessThanOrEqual(8);
+  });
+
+  it("marks the kits' blocks free-standing, and ONLY those, all the way onto the built map", () => {
+    // The v47 north brim (`config.WALL_NORTH_BRIM`) does nothing at all unless the flag survives
+    // `furnish` -> `roomGeometry` -> `buildArenaGeometry`, and a flag that quietly arrived `false`
+    // everywhere would still leave every test above green — this map has shipped that exact class
+    // of defect before (58 of 74 passages with a clip rule that was dead code). So assert it on
+    // the ASSEMBLED geometry, the same arrays `state.walls` is built from.
+    const geo = buildArenaGeometry(LAUNCH_ARENA);
+    const flagged = geo.walls.filter((w) => w.freeStanding);
+    expect(flagged.length).toBeGreaterThan(20); // real coverage, not one stray room
+    expect(flagged.length).toBeLessThan(geo.walls.length); // and never the perimeter ring
+
+    // Every flagged rect is strictly INSIDE some room's inner floor — that is what
+    // "free-standing" claims, and a perimeter segment that leaked the flag would fail here.
+    for (const w of flagged) {
+      const room = LAUNCH_ARENA.rooms.find((r) => {
+        const x0 = toFpGrid(r.rectGrid.x + 1);
+        const y0 = toFpGrid(r.rectGrid.y + 1);
+        const x1 = toFpGrid(r.rectGrid.x + r.rectGrid.w - 1);
+        const y1 = toFpGrid(r.rectGrid.y + r.rectGrid.h - 1);
+        return w.x >= x0 && w.y >= y0 && w.x + w.w <= x1 && w.y + w.h <= y1;
+      });
+      expect(room).toBeDefined();
+    }
+  });
+});
+
+/**
+ * The one way the v47 north brim could do real damage: it makes 16 px of floor north of every
+ * free-standing block unstandable, and floor that was *only just* wide enough before is floor
+ * that is sealed now. A player needs `2 * solidRadius` (32 px = one grid cell) to pass between two
+ * solids; north of a free-standing block they now need `2 * solidRadius + WALL_NORTH_BRIM` (48 px).
+ *
+ * Asserted on the ASSEMBLED map rather than reasoned about from the kit functions: a kit is a
+ * function of the room's inner size and the map instantiates 60 of them at sizes the kit author
+ * never enumerated — which is how this map shipped 90 of 120 features off the board once already.
+ */
+describe('what the north brim costs the launch map', () => {
+  const geo = buildArenaGeometry(LAUNCH_ARENA);
+  const R = PLAYER_BASE.solidRadius; // the player is the widest thing that has to fit
+  // Plain numbers, not `Fp`: this whole block is a rasterizer doing arithmetic on coordinates, and
+  // the fp brand exists to stop exactly that from happening by accident in the SIM. Converting once
+  // here keeps the brand meaningful everywhere it matters instead of casting at twenty call sites.
+  const roomsFp = LAUNCH_ARENA.rooms.map((r) => ({
+    id: r.id,
+    x: toFpGrid(r.rectGrid.x) as number, y: toFpGrid(r.rectGrid.y) as number,
+    w: toFpGrid(r.rectGrid.w) as number, h: toFpGrid(r.rectGrid.h) as number,
+  }));
+
+  /**
+   * Standable floor, rasterized at 8 px, as connected regions.
+   *
+   * Deliberately crude, and only ever read as a DIFFERENCE between two calls: the absolute counts
+   * are artifacts of the raster (a cell is blocked if a solid's bounding square expanded by the
+   * player radius covers it, which over-blocks at every rounded corner), so "45 regions" is a
+   * statement about this function, NOT a claim that the map has 45 disconnected pieces. What the
+   * raster is exact about is the comparison — both calls over-block identically, so anything that
+   * moves between them moved because of the brim.
+   */
+  function floorRegions(brim: number): { cells: number; regions: number; reachedRooms: string[] } {
+    const STEP: number = toFpGrid(0.25); // 8 px
+    const minX = Math.min(...roomsFp.map((r) => r.x));
+    const minY = Math.min(...roomsFp.map((r) => r.y));
+    const nx = Math.ceil((Math.max(...roomsFp.map((r) => r.x + r.w)) - minX) / STEP) + 1;
+    const ny = Math.ceil((Math.max(...roomsFp.map((r) => r.y + r.h)) - minY) / STEP) + 1;
+    const at = (ix: number, iy: number) => iy * nx + ix;
+    const ixOf = (x: number) => Math.round((x - minX) / STEP);
+    const iyOf = (y: number) => Math.round((y - minY) / STEP);
+    const open = new Uint8Array(nx * ny);
+    for (const r of roomsFp) {
+      for (let y = r.y; y < r.y + r.h; y += STEP) for (let x = r.x; x < r.x + r.w; x += STEP) open[at(ixOf(x), iyOf(y))] = 1;
+    }
+    const blockBox = (x0: number, y0: number, x1: number, y1: number): void => {
+      for (let iy = Math.max(0, Math.ceil((y0 - minY) / STEP)); iy <= Math.min(ny - 1, Math.floor((y1 - minY) / STEP)); iy++) {
+        for (let ix = Math.max(0, Math.ceil((x0 - minX) / STEP)); ix <= Math.min(nx - 1, Math.floor((x1 - minX) / STEP)); ix++) open[at(ix, iy)] = 0;
+      }
+    };
+    for (const w of geo.walls) blockBox(w.x - R, (w.freeStanding ? w.y - brim : w.y) - R, w.x + w.w + R, w.y + w.h + R);
+    for (const o of geo.obstacles) blockBox(o.gx - o.radius - R, o.gy - o.radius - R, o.gx + o.radius + R, o.gy + o.radius + R);
+
+    const seen = new Uint8Array(nx * ny);
+    let regions = 0;
+    let cells = 0;
+    let bestSize = -1;
+    let best: number[] = [];
+    for (let i = 0; i < open.length; i++) {
+      if (!open[i] || seen[i]) continue;
+      regions++;
+      const stack = [i];
+      const members: number[] = [];
+      seen[i] = 1;
+      while (stack.length > 0) {
+        const c = stack.pop()!;
+        members.push(c);
+        cells++;
+        const ix = c % nx;
+        const iy = (c / nx) | 0;
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          const jx = ix + dx;
+          const jy = iy + dy;
+          if (jx < 0 || jy < 0 || jx >= nx || jy >= ny) continue;
+          const j = at(jx, jy);
+          if (open[j] === 1 && seen[j] === 0) { seen[j] = 1; stack.push(j); }
+        }
+      }
+      if (members.length > bestSize) { bestSize = members.length; best = members; }
+    }
+    const inBest = new Set(best);
+    const reachedRooms = roomsFp
+      .filter((r) => {
+        for (let y = r.y; y < r.y + r.h; y += STEP) for (let x = r.x; x < r.x + r.w; x += STEP) {
+          if (inBest.has(at(ixOf(x), iyOf(y)))) return true;
+        }
+        return false;
+      })
+      .map((r) => r.id);
+    return { cells, regions, reachedRooms };
+  }
+
+  const without = floorRegions(0);
+  const withBrim = floorRegions(WALL_NORTH_BRIM);
+
+  it('removes floor but never a ROUTE — same regions, same rooms reachable', () => {
+    // The gate. A brim that sealed a corridor would split a region in two or drop a room out of
+    // the largest one, and neither happens: what it removes is floor along a wall's north face,
+    // which is floor already painted as stone.
+    expect(withBrim.regions).toBe(without.regions);
+    expect(withBrim.reachedRooms).toEqual(without.reachedRooms);
+    // ...and the comparison is only meaningful if the raster found a real map to begin with.
+    expect(without.regions).toBeGreaterThan(0);
+    expect(without.reachedRooms.length).toBeGreaterThan(20);
+  });
+
+  it('costs about 3% of standable floor, and that number is now bounded', () => {
+    // Measured 3.4%. The bound is what turns a future edit into a failure rather than a slow
+    // leak: raise `WALL_NORTH_BRIM`, or author a kit that packs blocks tighter, and the floor this
+    // quietly eats shows up here instead of in a playtest.
+    const lost = (without.cells - withBrim.cells) / without.cells;
+    expect(lost).toBeGreaterThan(0); // it does cost something — not a no-op wired up wrong
+    expect(lost).toBeLessThan(0.05);
+  });
+
+  it('narrows 7 gaps past the player, and every one is a CORNER, not a corridor', () => {
+    // The pairs where a channel that took exactly one grid cell no longer fits a body. Sealing one
+    // is only acceptable because of the shape: all seven overlap in x by a single cell, so they
+    // are the diagonal notch where two blocks nearly touch at a corner — the player walks one cell
+    // aside and past. A pair overlapping by more than that would be a real passage, and is what
+    // this assertion exists to catch if a kit is ever retuned.
+    const pinches: Array<{ where: string; overlap: number }> = [];
+    for (const w of geo.walls) {
+      if (!w.freeStanding) continue;
+      for (const o of geo.walls) {
+        if (o === w || !(o.x < w.x + w.w && o.x + o.w > w.x)) continue;
+        const gap = w.y - (o.y + o.h);
+        if (gap < 2 * R || gap >= 2 * R + WALL_NORTH_BRIM) continue;
+        pinches.push({
+          where: `(${w.x},${w.y}) vs (${o.x},${o.y})`,
+          overlap: Math.min(w.x + w.w, o.x + o.w) - Math.max(w.x, o.x),
+        });
+      }
+    }
+    expect(pinches).toHaveLength(7);
+    expect(pinches.filter((p) => p.overlap > toFpGrid(1))).toEqual([]);
   });
 });
