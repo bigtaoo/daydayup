@@ -48,7 +48,7 @@ function addUnawareEnemy(s: GameState, xpx: number, ypx: number, roomId?: string
     gx: pxToFp(xpx), gy: pxToFp(ypx), z: toFp(0), vx: toFp(0), vy: toFp(0),
     knockVx: toFp(0), knockVy: toFp(0),
     facing: 0 as Brad, hp: BASIC_ENEMY.maxHp, maxHp: BASIC_ENEMY.maxHp, shield: 0, maxShield: 0,
-    ticksSinceHit: 0, radius: BASIC_ENEMY.radius, footprintRadius: BASIC_ENEMY.footprintRadius, solidRadius: BASIC_ENEMY.footprintRadius,
+    ticksSinceHit: 0, radius: BASIC_ENEMY.radius, footprintRadius: BASIC_ENEMY.footprintRadius, solidRadius: BASIC_ENEMY.radius,
     alive: true, weapon: null, firing: false, status: freshStatus(), enraged: false, aggroed: false, roomId,
   };
   s.enemies.push(e);

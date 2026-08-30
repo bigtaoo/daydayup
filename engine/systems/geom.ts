@@ -4,6 +4,7 @@
  * Fp arithmetic on plain `+`/`-`/`*` is fine here: we only compare, never store.
  */
 import { isqrt, type Fp } from '../math/fixed';
+import { WALL_NORTH_BRIM } from '../config';
 import type { AABB } from '../state/entities';
 import type { GameState } from '../state/GameState';
 
@@ -45,12 +46,23 @@ export function clampToWalkable(gx: Fp, gy: Fp, radius: Fp, state: GameState): {
   let x = gx;
   let y = gy;
 
-  for (const idx of state.spatialIndex.queryWalls(x, y, radius)) {
+  // Broadphase widened by the brim for the same reason MovementSystem.resolveWalls widens its
+  // own query: the index is built over authored footprints, so a point that only overlaps a
+  // free-standing block's BRIMMED north face (never the real stone) is invisible to a
+  // radius-only query unless we ask a little wider here too.
+  for (const idx of state.spatialIndex.queryWalls(x, y, (radius + WALL_NORTH_BRIM) as Fp)) {
     const w = state.walls[idx]!;
+    // Same brimmed top edge as resolveWalls: a free-standing block's art rises a full wall
+    // height north of `w.y`, and a point clamped only against the bare rect can land inside
+    // that art — reachable on screen but, per resolveWalls, physically unreachable by any
+    // actor (design/07 pickups: "would otherwise drop the pickup somewhere the player can't
+    // reach"). Perimeter/kerb rects are never freeStanding, so they keep exact-footprint
+    // clamping, same as their collision.
+    const top = (w.freeStanding ? w.y - WALL_NORTH_BRIM : w.y) as Fp;
     const right = (w.x + w.w) as Fp;
     const bottom = (w.y + w.h) as Fp;
     const closestX = Math.max(w.x, Math.min(x, right)) as Fp;
-    const closestY = Math.max(w.y, Math.min(y, bottom)) as Fp;
+    const closestY = Math.max(top, Math.min(y, bottom)) as Fp;
     const dx = x - closestX;
     const dy = y - closestY;
     const distSq = dx * dx + dy * dy;
@@ -66,13 +78,13 @@ export function clampToWalkable(gx: Fp, gy: Fp, radius: Fp, state: GameState): {
     // deterministic tie-break as MovementSystem.resolveWalls).
     const pushLeft = (x - w.x) as number;
     const pushRight = (right - x) as number;
-    const pushTop = (y - w.y) as number;
+    const pushTop = (y - top) as number;
     const pushBottom = (bottom - y) as number;
     const min = Math.min(pushLeft, pushRight, pushTop, pushBottom);
     if (min === pushRight) x = (right + radius) as Fp;
     else if (min === pushLeft) x = (w.x - radius) as Fp;
     else if (min === pushBottom) y = (bottom + radius) as Fp;
-    else y = (w.y - radius) as Fp;
+    else y = (top - radius) as Fp;
   }
 
   for (const idx of state.spatialIndex.queryObstacles(x, y, radius)) {

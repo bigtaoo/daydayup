@@ -66,7 +66,7 @@ function addEnemy(s: GameState, xpx: number, ypx: number, facing: Brad): EnemyAc
     knockVx: toFp(0), knockVy: toFp(0),
     facing, hp: BASIC_ENEMY.maxHp, maxHp: BASIC_ENEMY.maxHp,
     shield: 0, maxShield: 0, ticksSinceHit: 0,
-    radius: BASIC_ENEMY.radius, footprintRadius: BASIC_ENEMY.footprintRadius, solidRadius: BASIC_ENEMY.footprintRadius,
+    radius: BASIC_ENEMY.radius, footprintRadius: BASIC_ENEMY.footprintRadius, solidRadius: BASIC_ENEMY.radius,
     alive: true, weapon: null, firing: false, status: freshStatus(), enraged: false, aggroed: false,
   };
   s.enemies.push(e);

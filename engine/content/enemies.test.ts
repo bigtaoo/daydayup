@@ -107,29 +107,37 @@ describe('buildEnemyActor — perception radius (ENGINE_VERSION 42)', () => {
   });
 });
 
-describe('buildEnemyActor — solid clearance (ENGINE_VERSION 43)', () => {
+describe('buildEnemyActor — solid clearance (ENGINE_VERSION 43, reversed in 48)', () => {
   // v43 gave the PLAYER a wall clearance equal to its body radius; mobs deliberately kept
-  // the feet circle, because widening a mob's clearance moves every chase path that hugs a
-  // wall and that is a balance change to garrisons measured against the current paths
-  // (client/sim/pveLevelSim.sim.ts). These pin the opt-out for every shipped blueprint, so
-  // a new mob can't quietly inherit the player's number either.
-  it('every blueprint builds an actor whose solid clearance is still its feet circle', () => {
+  // the feet circle through v47, because widening a mob's clearance moves every chase path
+  // that hugs a wall — a balance change to garrisons measured against the paths in
+  // `client/sim/pveLevelSim.sim.ts`. v48 reverses that opt-out (live report: *"怪物也要遵守
+  // 同样的规则"* — a monster reads as sunk into a wall or pillar exactly where its own tiny
+  // clearance let it stand, which the player's own v43 fix was supposed to have ended for
+  // everybody). `npm run test:pve-sim` was re-run against the wider clearance and every
+  // balance gate ("nothing softlocks", the entrance-room reaction window, the focus-fire
+  // ceiling) still passes — the chase paths shifted, the level did not stop being clearable.
+  it('every blueprint now stops at its own BODY radius against a solid, same as the player', () => {
     for (const type of Object.keys(ENEMY_BLUEPRINTS)) {
       const e = buildEnemyActor(state(), pxToFp(400), pxToFp(400), type);
-      expect(e.solidRadius, `${type} widened its wall clearance`).toBe(e.footprintRadius);
+      expect(e.solidRadius, `${type} did not adopt the body-radius clearance`).toBe(e.radius);
     }
   });
 
-  it('every blueprint keeps a clearance SMALLER than its body — mobs still overlap a solid', () => {
-    // The fake-3D depth cue design/07 describes is still on for enemies: the sprite may sit
-    // against a pillar its body overlaps. This is what v43 changed for the player only.
+  it('every blueprint keeps the SMALLER feet circle for actor-vs-actor push-out — only the solid clearance moved', () => {
+    // The fake-3D depth cue design/07 describes still applies between two BODIES (a mob may
+    // crowd another mob it visually overlaps) — v48 only changed the wall/pillar side.
     for (const type of Object.keys(ENEMY_BLUEPRINTS)) {
       const e = buildEnemyActor(state(), pxToFp(400), pxToFp(400), type);
-      expect(e.solidRadius, `${type}'s clearance is not below its body radius`).toBeLessThan(e.radius);
+      expect(e.footprintRadius, `${type}'s feet circle grew too`).toBeLessThan(e.radius);
     }
   });
 
-  it('a mob\'s clearance is narrower than the player\'s — the asymmetry is intentional, not drift', () => {
+  it('a basic mob\'s clearance still lands narrower than the player\'s — same rule, a smaller body', () => {
+    // Not "the asymmetry is intentional" any more (v48 removed that asymmetry) — this is just
+    // BASIC_ENEMY's own radius (15 px) being one grid-notch under PLAYER_BASE.radius (16 px).
+    // A bigger blueprint (`brute`, `boss`) legitimately gets MORE clearance than the player,
+    // for the same reason the player gets more than a small mob: its own body is wider.
     const e = buildEnemyActor(state(), pxToFp(400), pxToFp(400), 'basic');
     expect(e.solidRadius).toBeLessThan(PLAYER_BASE.solidRadius);
   });

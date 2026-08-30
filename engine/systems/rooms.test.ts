@@ -15,6 +15,7 @@ import { roomGeometry, type RoomPiece } from '@dd/engine/content/rooms';
 import { buildEnemyActor } from '@dd/engine/content/enemies';
 import { MovementSystem, ProjectileStepSystem } from '@dd/engine/systems';
 import { WALL_NORTH_BRIM } from '@dd/engine/config';
+import { PLAYER_BASE } from '@dd/engine/content/players';
 import { ENEMY_TEAM_ID, type AABB, type Faction, type Projectile } from '@dd/engine/state/entities';
 
 const CFG = { seed: 1, worldW: 1600, worldH: 1200, waves: [] as const };
@@ -80,7 +81,7 @@ describe('MovementSystem — AABB wall push-out', () => {
  * inflated the rect instead of the north EDGE would pass a north-approach test and quietly move
  * the other three faces too.
  */
-describe('MovementSystem — free-standing block north brim (v47)', () => {
+describe('MovementSystem — free-standing block north brim (v47, widened v48)', () => {
   /** A wall pushed straight onto `state.walls` (not through `EngineConfig.walls`, which has no
    *  field for the flag), with the broadphase rebuilt the way SpawnSystem.loadRoom does. */
   function withWall(rect: AABB): GameState {
@@ -91,6 +92,10 @@ describe('MovementSystem — free-standing block north brim (v47)', () => {
   }
 
   const px = (n: number) => pxToFp(n);
+  // solidRadius + WALL_NORTH_BRIM (v48: 16 + 23 px) — a player's closest legal approach to a
+  // free-standing block's north face. Computed, not restated, so a future brim/solidRadius
+  // change moves this file's expectations along with it rather than silently drifting stale.
+  const NORTH_STANDOFF = (PLAYER_BASE.solidRadius + WALL_NORTH_BRIM) as Fp;
 
   it('stops an actor one brim FURTHER north than the same rect unflagged', () => {
     // Footprint north edge at 610px — 10px south of the player's spawn, so they start
@@ -101,9 +106,9 @@ describe('MovementSystem — free-standing block north brim (v47)', () => {
     mv.tick(plain);
     mv.tick(brimmed);
     expect(plain.players[0]!.gy).toBe(px(610 - 16)); // tangent: solidRadius only
-    expect(brimmed.players[0]!.gy).toBe(px(610 - 32)); // solidRadius + WALL_NORTH_BRIM
+    expect(brimmed.players[0]!.gy).toBe((px(610) - NORTH_STANDOFF) as Fp); // solidRadius + WALL_NORTH_BRIM
     // Stated as the difference too, so this fails loudly if the constant moves without the
-    // parity test (`client/.../standingCoverParity.test.ts`) being revisited.
+    // parity test (`client/.../occlusion.test.ts`) being revisited.
     expect((plain.players[0]!.gy as number) - (brimmed.players[0]!.gy as number)).toBe(WALL_NORTH_BRIM);
   });
 
@@ -129,7 +134,7 @@ describe('MovementSystem — free-standing block north brim (v47)', () => {
     // would pop out to a line the walking path can never reach.
     const s = withWall({ x: px(700), y: px(592), w: px(200), h: px(200), freeStanding: true });
     new MovementSystem().tick(s);
-    expect(s.players[0]!.gy).toBe(px(592 - 32));
+    expect(s.players[0]!.gy).toBe((px(592) - NORTH_STANDOFF) as Fp);
   });
 
   it('does NOT hold a BULLET off — a shot still reaches the real stone', () => {
@@ -173,12 +178,12 @@ describe('MovementSystem — free-standing block north brim (v47)', () => {
   });
 
   it('finds a block the actor overlaps ONLY through its brim (broadphase widened)', () => {
-    // 20px north of the footprint: outside `solidRadius` (16), inside solidRadius+brim (32).
+    // 20px north of the footprint: outside `solidRadius` (16), inside solidRadius+brim (v48: 39).
     // If the query radius had been left at solidRadius this cell could fall outside the
     // queried band and the push would silently never happen.
     const s = withWall({ x: px(700), y: px(620), w: px(200), h: px(64), freeStanding: true });
     new MovementSystem().tick(s);
-    expect(s.players[0]!.gy).toBe(px(620 - 32));
+    expect(s.players[0]!.gy).toBe((px(620) - NORTH_STANDOFF) as Fp);
   });
 });
 
@@ -271,7 +276,7 @@ describe('Additive, no-bump (design/09 "unknown field ignored" precedent)', () =
  * asserts what the pre-v43 feet-circle answer would have been, so reverting the
  * resolvers to `footprintRadius` fails here rather than silently re-shipping the bug.
  */
-describe('MovementSystem — solidRadius vs footprintRadius against a solid (v43)', () => {
+describe('MovementSystem — solidRadius vs footprintRadius against a solid (v43; enemies joined in v48)', () => {
   it('a player rests at its BODY radius from a wall face, not at its feet circle', () => {
     // The character's rendered body is exactly `radius` × 2 wide (design/12's rig
     // normalization), so this clearance is what puts its silhouette tangent to the
@@ -296,15 +301,19 @@ describe('MovementSystem — solidRadius vs footprintRadius against a solid (v43
     expect(dx - ((p.footprintRadius + pxToFp(30)) as number)).toBeGreaterThan(pxToFp(8));
   });
 
-  it('an ENEMY still rests at its feet circle — mob paths along a wall are unchanged from v42', () => {
+  it('an ENEMY now rests at its BODY radius too (v48) — mob paths along a wall moved with the player\'s', () => {
+    // Through v47 a mob kept the pre-v43 feet-circle answer here (`e.footprintRadius`) —
+    // reversed in v48 (live report: *"怪物也要遵守同样的规则"*), so a mob now stops at the same
+    // silhouette-tangent distance the player's own v43 fix gave them.
     const s = createGameState({ ...CFG, walls: [[780, 590, 15, 20]] as const });
     s.players[0]!.gx = pxToFp(200); // out of the way — an actor↔actor push would mask the wall's
     const e = buildEnemyActor(s, pxToFp(800), pxToFp(600));
     s.enemies.push(e);
-    expect(e.solidRadius).toBe(e.footprintRadius); // premise: enemies opted out of the widening
+    expect(e.solidRadius).toBe(e.radius); // premise: enemies now match the player's convention
     new MovementSystem().tick(s);
     const wallRight = addFp(pxToFp(780), pxToFp(15));
-    expect(e.gx).toBe(addFp(wallRight, e.footprintRadius));
+    expect(e.gx).toBe(addFp(wallRight, e.radius));
+    expect(e.gx).not.toBe(addFp(wallRight, e.footprintRadius)); // the pre-v48 resting place
   });
 
   it('actor↔actor push-out still uses the feet circle — a crowd is judged by feet, a wall by the body', () => {

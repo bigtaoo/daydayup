@@ -280,13 +280,16 @@ export function buildEnemyActor(state: GameState, gx: Fp, gy: Fp, type?: string)
     ticksSinceHit: 0,
     radius: bp.radius,
     footprintRadius: bp.footprintRadius,
-    // Enemies keep the feet circle against solids too — deliberately NOT the body
-    // radius the player now uses (PLAYER_BASE.solidRadius). Widening a mob's wall
-    // clearance moves every chase path that hugs a wall, which is a balance change
-    // to a level whose garrisons were measured against the current paths
-    // (`client/sim/pveLevelSim.sim.ts`), and no report has ever been about a mob
-    // looking sunk into stone — the player's own body is the one the camera sits on.
-    solidRadius: bp.footprintRadius,
+    // Body radius, matching PLAYER_BASE.solidRadius's own convention (ENGINE_VERSION 43/49) —
+    // an actor stops at the silhouette it draws, not the smaller feet circle, so it reads as
+    // standing AGAINST a wall or pillar rather than sunk into one. Through v48 mobs deliberately
+    // kept the feet circle here (`bp.footprintRadius`) on the grounds that widening it moves
+    // every chase path that hugs a wall — a balance change to garrisons measured against the
+    // paths in `client/sim/pveLevelSim.sim.ts`. Reversed in v48 (live report: *"怪物也要遵守
+    // 同样的规则"* — a monster standing where its own tiny clearance let it should hide behind a
+    // wall no more than the player does) — see ENGINE_VERSION_HISTORY for what the sim re-run
+    // found.
+    solidRadius: bp.radius,
     alive: true,
     weapon,
     firing: false,

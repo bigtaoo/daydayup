@@ -110,21 +110,39 @@ extruded block on the `entities` layer — `scene/wallRender.ts` owns the drawin
   north of the south edge. Height *variety* is itself the cue — a room where everything
   vertical is the same size gives the eye no relative measure.
 - **A free-standing block's north face reserves an extra body radius** (`config.WALL_NORTH_BRIM`,
-  ENGINE_VERSION 47). The height model above has a consequence the collision model has to answer
-  for: a standing shape paints its footprint *plus one drawn height of walkable floor to its
-  north*, so how deep a character sinks into that art is `drawn height - the floor the shape
-  reserves`. The two standing shapes in a room used to disagree about the second term — a pillar
-  reserves `radius + solidRadius` (48 px) against 88 px of art and sinks a character 40 px, an
-  interior block reserved `solidRadius` alone (16 px) against 70 px and sank them **54 px**, which
-  is more than the whole silhouette. The live report was exactly that pair, seen side by side:
-  *"角色整个跑到墙里面了"* against *"柱子...只有半个身子被覆盖"*. `MovementSystem.resolveWalls`
-  now pulls a `freeStanding` block's north edge out by 16 px, putting its sink at 38 px — the
-  pillar's number, within 2 px. Only that one face, and only blocks flagged as free-standing at
+  ENGINE_VERSION 47, widened in 48). The height model above has a consequence the collision model
+  has to answer for: a standing shape paints its footprint *plus one drawn height of walkable
+  floor to its north*, so how deep a character sinks into that art is `drawn height - the floor
+  the shape reserves`. The two standing shapes in a room used to disagree about the second term —
+  a pillar reserves `radius + solidRadius` (48 px) against 88 px of art and sinks a character
+  40 px, an interior block reserved `solidRadius` alone (16 px) against 70 px and sank them
+  **54 px**, which is more than the whole silhouette. The live report was exactly that pair, seen
+  side by side: *"角色整个跑到墙里面了"* against *"柱子...只有半个身子被覆盖"*.
+  `MovementSystem.resolveWalls` v47 pulled a `freeStanding` block's north edge out by 16 px,
+  putting its sink at 38 px — the pillar's number, within 2 px.
+
+  **v48 widened the brim again, and this time deliberately did NOT chase the pillar.** A second
+  live report, circled screenshot, on the v47 result itself: *"角色被挡住的部分...大概当前角色的一
+  半可以进入墙...改为1/4的位置"* — even matching the pillar still read as "sunk in." The brim moved
+  from 16 to 23 px, dropping the sink to 31 px; 23, not a naive double to 32, is the largest value
+  `launchArena.test.ts`'s route-connectivity sweep measures as safe on the shipped map before a
+  single-cell gap seals shut — a ceiling set by room geometry, not a target. A wall now covers
+  noticeably LESS of a character than a pillar standing beside it does; nobody has filed the
+  pillar version of this report, so that gap was left open rather than pulling the pillar down to
+  match. Same version, **enemies stopped opting out of the widened clearance entirely**
+  (`content/enemies.ts`, live report *"怪物也要遵守同样的规则"*) — every blueprint now stops at its
+  own body radius against a wall or pillar, the same rule the player has had since v43, rather
+  than the old feet-circle answer that let a mob stand visibly closer than any player ever could.
+
+  Only the block's own NORTH face gets the brim, and only blocks flagged free-standing at
   authoring time: a perimeter ring is what door passages are carved through, and a kerb's whole
   point is that a character CAN stand tangent to it. The rect itself never moves — the drawn
   footprint, `blockedCells`, spawn placement and the projectile/LOS queries all still see the
   authored numbers. The x-ray below is unchanged and still fires at that pose, exactly as it does
-  for a pillar; what moved is where the character is allowed to stand, not when the fade helps.
+  for a pillar; what moved is where the character (and now the enemy) is allowed to stand, not
+  when the fade helps. `geom.clampToWalkable` (where a dropped pickup or a spawned crate lands)
+  was widened to respect the same brim in the same version — a drop clamped only against the bare
+  footprint could settle inside a band no actor's own collision would ever let them enter.
   - **The kerb rule is about where a wall STANDS, not about whose wall it is** (generalized
     2026-08-20). It used to read "the room's own **south** boundary", resolved against the one
     room the wall's centre falls in — and where two rooms stack vertically the boundary between
@@ -1110,11 +1128,16 @@ Four properties make the split honest rather than a tuning knob:
   runs, which are never free-standing and so never brimmed. See "A free-standing block's north face
   reserves an extra body radius" above.) The x-ray's own acceptance numbers (worst case 43.8% still hidden, the head
   always kept) are unchanged, because nothing that was see-through stopped being see-through.
-- **The bound is derived at clearance ZERO on purpose.** The player's own 16 px wall clearance means
-  the sweep never uses more than 22 px of the 38 px band, and that leftover 16 px is head-room
-  rather than slack: `foci` includes every live enemy, and an enemy keeps its FEET circle against
-  solids (`enemies.ts`, `solidRadius: bp.footprintRadius`, as low as 6 px), so a mob legitimately
-  stands 10 px closer than anything the sweep can place.
+- **The bound is derived at clearance ZERO on purpose.** The player's own wall clearance means the
+  sweep never uses the full band the bound allows, and that leftover margin used to be head-room
+  for a real gap this doc had to account for: through v47, `foci` included every live enemy, and
+  an enemy kept its FEET circle against solids (`enemies.ts`, `solidRadius: bp.footprintRadius`, as
+  low as 6 px) — smaller than the player's own clearance the sweep assumes — so a mob legitimately
+  stood closer than anything the sweep could place. **v48 closed that gap at the source**: enemies
+  now stop at their own body radius against a wall or pillar, the same rule the player has (see "A
+  free-standing block's north face reserves an extra body radius" above), so this margin is no
+  longer covering for an asymmetry that no longer exists — it is now genuinely unused head-room,
+  the same way it always was for the player.
 - **It is invisible at rest.** Both pieces are the same swatch at the same `tileScale`, and the base
   carries the band's height as its own `tilePosition` so the courses run straight on across the
   join. A live A/B that split all 227 splittable blocks in frame moved pixels **only inside the one

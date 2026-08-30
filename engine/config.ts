@@ -72,31 +72,40 @@ export const CHECKPOINT_QUORUM = 3;
 // multiplier than an actual state fork, design/15).
 export const INTEGRITY_KICK_STREAK = 2;
 
-// ── Standing-wall north brim (design/01 height model, v47) ────────────────────────
+// ── Standing-wall north brim (design/01 height model, v47; widened v48) ───────────
 /**
  * Extra clearance, in fp, between an actor and the NORTH face of a FREE-STANDING wall block
- * (`AABB.freeStanding`). 500 fp = 0.5 grid = 16 px = exactly one player body radius, so against
- * that one face an actor stops a full body WIDTH out (16 px of `solidRadius` + this) instead of
- * tangent to the stone.
+ * (`AABB.freeStanding`).
  *
  * **This exists because of how tall things are DRAWN, not because of what they are.** Everything
  * in this view is drawn upward from a grounded origin (`screen.y = gy - z`), so a standing block
  * paints its own footprint PLUS one full wall height of floor to its north
  * (`client/.../wallGeometry.ts`, `occlusion.ts`'s `Occluder.top`). How far an actor ends up
  * buried in that art is therefore `drawn height - clearance`, and until v47 the two standing
- * shapes in a room disagreed about it by a body's worth:
+ * shapes in a room disagreed about it by a body's worth (a pillar sinking an actor 40 px, a wall
+ * sinking the WHOLE silhouette at 54 px — see ENGINE_VERSION_HISTORY for that account). v47's
+ * 16 px brim closed that gap (wall sink 70 - 32 = 38 px, matching the pillar's 40).
  *
- *   - a PILLAR reserves `radius + solidRadius` = 32 + 16 = 48 px of floor north of its centre
- *     and paints 88 px above it (`pillarArtExtent`: an 84 px-wide sprite at the shipped 1.1667
- *     aspect, less `PILLAR_BASE_PX`) — the actor sinks 40 px into it, which draws as a body
- *     covered to about the waist;
- *   - a WALL reserved `solidRadius` = 16 px and paints `WALL_H_INTERIOR` = 70 px above its own
- *     north edge — the actor sinks 54 px, which on a body drawn 32-48 px tall is the WHOLE
- *     silhouette. From the report: *"角色整个跑到墙里面了"*, against *"柱子...只有半个身子被覆盖"*.
+ * **Widened from 16 to 23 px in v48** (live report, circled screenshot: *"角色被挡住的部分...大概
+ * 当前角色的一半可以进入墙...改为1/4的位置"* — a free-standing block was still reading as burying
+ * about half the character; wanted down to about a quarter). Wall sink against `WALL_H_INTERIOR`
+ * drops from 38 to 31 px (`occlusion.test.ts`'s wall/pillar geometry assertion pins the new
+ * number) — a real reduction, though **not** the full doubling a naive "half to a quarter" read
+ * would suggest: 23 px is not a target, it is a CEILING. `launchArena.test.ts`'s "what the north
+ * brim costs the launch map" suite rasterizes the shipped arena's standable floor with and without
+ * the brim and asserts the two connect the same rooms into the same regions — at 24 px one of the
+ * map's single-grid-cell gaps stops fitting a player and a route seals; 23 is the largest value
+ * that still measures zero lost routes there. Widening further needs the room/kit geometry itself
+ * loosened (more spacing around a free-standing block), not just this constant. `solidRadius`
+ * itself was deliberately left alone — widening THAT floats a character off a wall's east/west
+ * face, which v43 tuned to land exactly tangent.
  *
- * 16 px closes exactly that gap: a wall's sink becomes 70 - 32 = 38 px, within 2 px of the
- * pillar's 40, so the two shapes finally hide a character by the same amount. Pinned as a
- * parity assertion (not a magic number) in `client/.../standingCoverParity.test.ts`.
+ * **This constant does not touch every case a character can read as "sunk into a wall."** It only
+ * ever applies to a FREE-STANDING block's north face — see "Only free-standing blocks" below. The
+ * shipped floors' worst-case occlusion sample (`occlusionCoverage.test.ts`, 43.75%) is a position
+ * no block's `occludes()` rule fires for at all (just under `MIN_COVER_FRACTION`) and is untouched
+ * by this widening; a screenshot of a character against a room's own boundary wall or a kerb is a
+ * different case than the one this constant governs.
  *
  * **Only free-standing blocks.** A perimeter wall must keep exact-footprint collision: its ring
  * is what door passages are carved through (`carveDoorGaps`) and a brim on it would narrow every
@@ -104,8 +113,14 @@ export const INTEGRITY_KICK_STREAK = 2;
  * (`WALL_H_KERB`) whose whole purpose is that an actor CAN stand tangent to it — brimming that
  * would re-open the v43 report ("角色...感觉陷进去了") from the opposite side, floating the
  * character off a lip that was never covering them.
+ *
+ * **Since v48 this also governs where a dropped pickup may land** (`geom.clampToWalkable`): a
+ * point clamped only against a free-standing block's bare footprint could settle inside this same
+ * brimmed band — on screen, but past where any actor's own `solidRadius` will ever let them stand
+ * (live report: *"角色根本无法拾取掉落的物品"*). `clampToWalkable` now pushes a point out of the
+ * brimmed top edge exactly like `MovementSystem.resolveWalls` does for a live actor.
  */
-export const WALL_NORTH_BRIM = (FP_SCALE / 2) as Fp;
+export const WALL_NORTH_BRIM = Math.round((23 / 32) * FP_SCALE) as Fp;
 
 /**
  * World scale — the anchor for every human-unit → fp/brad conversion (design/09).

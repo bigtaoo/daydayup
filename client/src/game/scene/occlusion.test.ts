@@ -122,17 +122,21 @@ describe('occludes — the three-layer geometry, and what the north brim did to 
   const b = block(SOUTH, WALL_H_INTERIOR, DEPTH);
   const closestY = SOUTH - DEPTH - NORTH_STANDOFF;
 
-  it('buries a character by the same depth a PILLAR does — the v47 calibration', () => {
-    // The report this pins: *"柱子...只有半个身子被覆盖"* against *"角色整个跑到墙里面了"*.
-    // Both shapes are drawn upward from a grounded origin over floor a character can stand on, so
-    // the only thing deciding how much of them goes under stone is how much floor each RESERVES —
-    // and until v47 the two disagreed by a body's worth (a wall sank a character 54 px, a pillar
-    // 41). `WALL_NORTH_BRIM` exists to close exactly this gap and nothing else, so this is the
-    // assertion that owns the constant's value: change the brim, the interior tier or the pillar
-    // art, and whichever moved has to move back into agreement here.
+  it('buries a character LESS than a pillar does — the v48 widening, deliberately no longer parity', () => {
+    // The v47 report this used to pin: *"柱子...只有半个身子被覆盖"* against *"角色整个跑到墙里面了"*,
+    // closed by making a wall's sink match a pillar's (both ~38-41 px). v48 is a SECOND report,
+    // against the v47 result itself: *"角色被挡住的部分...大概当前角色的一半可以进入墙...改为1/4的
+    // 位置"* — even the matched amount still read as "sunk in," not "standing behind." `WALL_NORTH_BRIM`
+    // widened from 16 to 23 px in response (`config.ts` — 23, not the naive double to 32, is the
+    // most `launchArena.test.ts`'s tightest shipped corridor tolerates before a route seals), which
+    // this time deliberately reopens the wall/pillar gap rather than closing it: nothing here
+    // touched the pillar's own reservation, so a wall now covers noticeably LESS of a character
+    // than a pillar standing beside it does. Left as a known, intentional asymmetry rather than
+    // chased further — pulling the pillar down to match would be a separate change to
+    // `pillarArtExtent`/`PILLAR_BASE_PX`, on a shape nobody has filed this report about.
     const wallSink = closestY - b.top;
     expect(wallSink).toBeCloseTo(WALL_H_INTERIOR - NORTH_STANDOFF, 6);
-    expect(Math.abs(wallSink - pillarSink())).toBeLessThanOrEqual(4);
+    expect(wallSink).toBeLessThan(pillarSink() - 4);
   });
 
   it('...and no longer covers the WHOLE drawn body, which is what the brim bought', () => {

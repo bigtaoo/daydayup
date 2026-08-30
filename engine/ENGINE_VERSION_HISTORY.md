@@ -996,3 +996,71 @@ Coverage: `engine/systems/rooms.test.ts` (the north face moves, the other three 
 engulfed-actor axis separation uses the inflated edge, and the widened broadphase finds a block
 an actor overlaps only through its brim) and `client/src/game/scene/occlusion.test.ts`, which
 owns the constant's VALUE as a parity assertion against `pillarArtExtent` rather than a literal.
+
+## v48: the north brim widens, enemies join it, and dropped loot respects it (2026-08-30)
+
+Three changes shipped together because they are the same report answered from three angles —
+live feedback on v47 itself, with a circled screenshot: *"角色被挡住的部分再上移一些，大概当前角色
+的一半可以进入墙。也就是现在感觉在1/2的位置，改为1/4的位置。怪物也要遵守同样的规则，截图中，角色根本
+无法拾取掉落的物品。"*
+
+**1. `config.WALL_NORTH_BRIM`: 16 → 23 px.** v47 made a wall's sink (38 px) match a pillar's
+(40 px) — both still read as "sunk in," not "standing behind." The naive fix is to double the
+brim to 32 px (one full body width); that was tried first and rejected by
+`launchArena.test.ts`'s "what the north brim costs the launch map" suite, which rasterizes the
+shipped arena's standable floor with and without the brim and asserts the same rooms stay
+connected into the same regions: at 24 px one of the map's single-grid-cell gaps stops fitting a
+player and a route seals (45 regions become 61 — a real disconnect, not a raster artifact). 23 px
+is the largest value that measures zero lost routes on the shipped content, and drops a wall's
+sink from 38 to 31 px — real, but a ceiling set by room geometry, not the quarter the report
+asked for. Getting further needs the room/kit authoring itself loosened (more clearance around a
+free-standing block), which is out of scope here. `solidRadius` itself was left alone — widening
+it would float a character off a wall's east/west face, which v43 tuned to land exactly tangent.
+The wall/pillar sink parity `occlusion.test.ts` used to assert is deliberately NOT preserved:
+nothing here touched the pillar's own reservation, so a wall now covers noticeably less of a
+character than a pillar does. Known, and left that way — nobody has filed the pillar version of
+this report.
+
+Note what this does NOT fix: the shipped floors' worst measured occlusion sample (43.75% hidden,
+`occlusionCoverage.test.ts`) is a position no block's `occludes()` rule fires for at all (just
+under `MIN_COVER_FRACTION`), on what measurement showed to be kerb/perimeter geometry — untouched
+by a constant that only ever applies to a free-standing block's north face.
+
+**2. `EnemyBlueprint`-built actors: `solidRadius: bp.footprintRadius` → `solidRadius: bp.radius`.**
+v43 gave the player a wall clearance equal to its own body radius; mobs were deliberately left on
+the old feet-circle answer, on the grounds that widening a mob's clearance moves every chase path
+that hugs a wall — a balance change to garrisons measured against `client/sim/pveLevelSim.sim.ts`.
+The live report is explicit that this asymmetry is itself the bug now (*"怪物也要遵守同样的规
+则"*): a monster reads as buried in a wall or pillar exactly where its own tiny clearance let it
+stand, which was supposed to have ended with v43. Reversed for every blueprint uniformly (no
+per-type opt-out) — `content/enemies.test.ts`'s three pinned tests were rewritten for the new
+premise rather than deleted, so a future mob can't quietly regress to the feet circle either.
+`footprintRadius` (actor-vs-actor push-out) is untouched — only the wall/pillar side moved.
+
+**Replay impact:** any stream with an enemy that approaches a wall or pillar from the outside
+diverges from that contact onward, same shape of impact as v47's for players. Re-ran
+`npm run test:pve-sim` (the bot-driven 5-floor dungeon sim) against the new clearance: every
+balance gate still passes, including "nothing softlocks" — the chase paths shifted, the level did
+not stop being clearable.
+
+**3. `geom.clampToWalkable` now respects the same brim `MovementSystem.resolveWalls` does.** Same
+live report names an item the player could not pick up at all; this is the mechanism that class of
+bug would go through — a dropped pickup's landing spot (`DeathDropsSystem`, the weapon-swap drop
+in `PickupSystem`, arena crate placement in `SpawnSystem`) was clamped only against a free-standing
+block's bare authored footprint, never the brimmed band no actor is allowed to stand in. `geom.ts`
+had zero direct test coverage before this — every caller only ever exercised it as a side effect of
+a bigger system test — so the gap was real regardless of whether it is what the screenshot showed.
+**One honest caveat, found while writing the regression test** (`systems.test.ts`, "the reachability
+margin..."): at TODAY's shipped numbers (`WALL_NORTH_BRIM` 23 px, `PLAYER_BASE.solidRadius` 16 px,
+`SIM.pickupRadius` 15 px) a single free-standing block with no neighbour never actually crossed
+into truly-unreachable territory even pre-fix — the collect reach (`pickupRadius + PLAYER_BASE.
+radius` = 31 px) covers the worst-case gap (24 px) with room to spare. The fix is still correct and
+worth having: it is what keeps that margin from silently vanishing the next time `WALL_NORTH_BRIM`
+is widened further (flagged as the likely next move once room geometry allows it — see point 1),
+and a compounding case this session did not fully chase down — two free-standing blocks' brims
+overlapping near a corner, or `clampToWalkable`'s own documented single-pass limitation on a point
+"wedged in a deep concave corner" — remains a plausible source of a genuinely unreachable drop that
+this specific numbers-check does not rule out. `clampToWalkable` now inflates a free-standing wall's
+north edge by the brim exactly like `resolveWalls` does, both for the broadphase query and the
+push-out itself, so a drop can never land closer to a free-standing block's north face than any
+actor's own `solidRadius` circle could.

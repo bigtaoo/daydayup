@@ -10,6 +10,8 @@ import { freshStatus } from '@dd/engine/content/damage';
 import { PLAYER_BASE } from '@dd/engine/content/players';
 import { resolveSkin } from '@dd/engine/content/skins';
 import { BASIC_ENEMY } from '@dd/engine/content/enemies';
+import { WALL_NORTH_BRIM } from '@dd/engine/config';
+import { SIM } from '@dd/engine/sim.config';
 
 // The default character's defensive stats (systems tests spawn the default player).
 const DEFAULT_SKIN = resolveSkin();
@@ -36,7 +38,10 @@ function addEnemy(s: GameState, xpx: number, ypx: number, hp: number = BASIC_ENE
     knockVx: toFp(0), knockVy: toFp(0),
     facing: 0 as Brad, hp, maxHp: BASIC_ENEMY.maxHp, shield: 0, maxShield: 0,
     ticksSinceHit: 0, radius: BASIC_ENEMY.radius,
-    footprintRadius: BASIC_ENEMY.footprintRadius, solidRadius: BASIC_ENEMY.footprintRadius,
+    // solidRadius === radius, matching buildEnemyActor (ENGINE_VERSION 48) — this fixture builds
+    // an EnemyActor by hand rather than through buildEnemyActor (for direct control over spawn
+    // position), so it has to track that formula itself rather than silently drifting from it.
+    footprintRadius: BASIC_ENEMY.footprintRadius, solidRadius: BASIC_ENEMY.radius,
     alive: true, weapon: null, firing: false, status: freshStatus(), enraged: false, aggroed: false,
   };
   s.enemies.push(e);
@@ -395,6 +400,59 @@ describe('DeathDropsSystem (step 8)', () => {
     const outsideRect =
       item.gx < wall.x || item.gx > ((wall.x + wall.w) as number) || item.gy < wall.y || item.gy > ((wall.y + wall.h) as number);
     expect(outsideRect).toBe(true);
+  });
+
+  it('a drop next to a FREE-STANDING block\'s north face is collectible from the CLOSEST legal stance (v48)', () => {
+    // End-to-end companion to `geom.test.ts`'s unit coverage of the clamp itself: kill an enemy
+    // pressed against the block's own footprint, walk a player to the closest position
+    // MovementSystem will EVER let them stand (footprint north edge, minus the brim, minus the
+    // player's own solid clearance), and tick PickupSystem for real — the item must actually be
+    // collected, not merely "outside the rect" (the property the pre-v48 clamp only checked).
+    //
+    // What this does NOT prove: at the shipped constants (`WALL_NORTH_BRIM` 23 px,
+    // `PLAYER_BASE.solidRadius` 16 px, `SIM.pickupRadius` 15 px), the pre-v48 clamp already
+    // landed a drop within `SIM.pickupRadius + PLAYER_BASE.radius` (31 px) of this exact closest
+    // stance for a single free-standing block with no neighbour — the margin below is why. This
+    // test is a live characterization of the fixed behaviour, not a reproduction of a case that
+    // was provably broken at today's numbers; the margin test below is what actually guards
+    // against the numbers drifting into broken territory.
+    const s = createGameState({ ...CFG });
+    s.walls.push({ x: pxToFp(700), y: pxToFp(610), w: pxToFp(200), h: pxToFp(64), freeStanding: true });
+    s.rebuildSpatialIndex();
+    // The enemy dies pressed against the block's own footprint (a knockback shove, or simply
+    // having chased the player right up to it) — well inside the band a bare-footprint clamp
+    // would have called "clear".
+    addEnemy(s, 800, 615, 0);
+    new DeathDropsSystem().tick(s);
+    expect(s.pickups).toHaveLength(1);
+
+    s.tick = 6; // past the drop's spawnTick guard
+    const p = s.players[0]!;
+    p.gx = pxToFp(800);
+    // The closest legal north approach for ANY actor (MovementSystem.resolveWalls): the
+    // footprint's north edge, minus the brim, minus the player's own solid clearance.
+    p.gy = (pxToFp(610) - WALL_NORTH_BRIM - PLAYER_BASE.solidRadius) as Fp;
+    new PickupSystem().tick(s);
+    expect(s.pickups).toHaveLength(0); // collected, not left behind
+    expect(s.events.some((ev) => ev.type === 'pickup')).toBe(true);
+  });
+
+  it('the reachability margin against a free-standing block\'s brim is real, not a coincidence of today\'s numbers', () => {
+    // The invariant that makes the test above pass, stated directly so it fails loudly (rather
+    // than as a mysterious PickupSystem miss two layers away) the day someone widens
+    // `WALL_NORTH_BRIM` further, shrinks `SIM.pickupRadius`, or shrinks `PLAYER_BASE.solidRadius`
+    // enough to erode it. `WALL_NORTH_BRIM`'s own doc comment already flags 23 px as a CEILING set
+    // by the shipped map's tightest corridor, not a target — the natural next move if the report
+    // reopens is to raise it further once room geometry allows, and that is exactly the change
+    // this guards.
+    //
+    // Derivation: the worst case for a drop pushed out of a free-standing block's brimmed north
+    // edge lands `SIM.pickupRadius` short of the brimmed edge; the closest any actor may ever
+    // stand is `solidRadius + WALL_NORTH_BRIM` short of the true footprint edge. The gap between
+    // those two points must stay under the collect reach (`SIM.pickupRadius + PLAYER_BASE.radius`)
+    // — i.e. `WALL_NORTH_BRIM < 2 * SIM.pickupRadius + PLAYER_BASE.radius - PLAYER_BASE.solidRadius`,
+    // which simplifies (solidRadius === radius for the player) to `WALL_NORTH_BRIM < 2 * pickupRadius`.
+    expect((WALL_NORTH_BRIM as number)).toBeLessThan(2 * (SIM.pickupRadius as number));
   });
 });
 
