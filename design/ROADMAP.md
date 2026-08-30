@@ -5,7 +5,7 @@ closed loop the design docs describe, and the running record of how each phase a
 landed. Phases are written top-to-bottom in dependency order; each one keeps its dated
 shipped-notes underneath it, so a phase section is both the plan and the history.
 
-**Current built state (engine notes below written 2026-08-20; content/render passes have landed since — 2026-08-25 the hand-authored PvP launch arena `arena_launch` plus the arena audit, 2026-08-26 the arena floor stopping at its rooms and the retirement of `arena_prototype_60`, neither of which touches the tick order or bumps a version).** The number in this heading has drifted before and is not the authority — `engine/versionHistory.ts` is. `ENGINE_VERSION` **43** (32: ground-weapon pickup is
+**Current built state (engine notes below written 2026-08-20; content/render passes have landed since — 2026-08-25 the hand-authored PvP launch arena `arena_launch` plus the arena audit, 2026-08-26 the arena floor stopping at its rooms and the retirement of `arena_prototype_60`, 2026-08-30 an open door reading as a passage instead of a black wall — none of which touches the tick order or bumps a version).** The number in this heading has drifted before and is not the authority — `engine/versionHistory.ts` is. `ENGINE_VERSION` **43** (32: ground-weapon pickup is
 click-driven; 33: manual aim removed entirely; 34: co-resident PvE room/door model, engine +
 client rendering; 35: fully-realized branching — see the Room & door model section below;
 same-day map-editor door placement, the `layout: 'graph2d'` real-2D-layout follow-up, AND the
@@ -71,6 +71,21 @@ out of the way, from a report that the character *"跑到墙下面去了"*; the 
 (`occlusionCoverage.test.ts`) measured 5.5% of level 1's standable floor as having made the player
 *completely* invisible, and none of it leaves more than half hidden now. See "The character
 disappeared behind a wall" below. That sweep is also what turned up v44's four wall runs.
+Also render-only (no `ENGINE_VERSION` bump — 🟢): 2026-08-30's **open-door lighting**, from a
+report with a screenshot circling one — the locked state reads as a fire door, but *"when it is
+passable it looks like a black wall."* It was: every cue the standing-door fixture carried was
+`visible = locked`, so "you can walk through here" was rendered as the ABSENCE of one, and what
+remained measured as the darkest thing in view. An open door now gets three additive layers of its
+own — a lit passage floor ramped up from the threshold and masked by the arch art's own stone, a
+warm floor pool sharing the hazard bloom's exact geometry, and a lit reveal up both jambs. Every
+number swept on a live frame; the one that mattered was cross-state, and alpha turned out to be the
+wrong quantity to compare (the warm white is 2.3x the hazard red's luma at equal alpha, so the
+quiet state was shouting 1.5x louder until it was set by `alpha x colour` instead). See "An open
+door is lit from beyond" in design/01. `doorLightCoverage.test.ts` is its coverage half, in the
+lineage of `doorStandCoverage`/`doorSpillCoverage`: all 24 shipped doors through the real pipeline,
+confirming the lit band is 55.1 px on each of the 13 perimeter doors and 13.2 px on each of the 11
+kerb ones rather than a sliver on most of them. 19 mutants across the two rounds, no survivors.
+
 Also render-only: 2026-08-20's **drop and portal art** — the five in-run pickup kinds and the
 extraction gate's masonry arch become sprites. See "The drops and the gate get real art" below. That
 entry called itself "the last of the scene's Graphics placeholders" and was wrong by one:

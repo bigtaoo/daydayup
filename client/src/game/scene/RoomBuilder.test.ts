@@ -58,12 +58,20 @@ function leafOf(rb: RoomBuilder, i: number): Sprite {
   return kid as Sprite;
 }
 
-/** The hazard bloom of door `i` — the only additively-blended child. */
-function glowOf(rb: RoomBuilder, i: number): Graphics {
-  const kid = doorFixtures(rb)[i]!.view.children.find(
-    (c) => c instanceof Graphics && c.blendMode === 'add',
-  );
-  return kid as Graphics;
+/**
+ * Which of door `i`'s lock-state lights are live, in child order.
+ *
+ * A door's additive children are its two states' signals — the locked hazard bloom, and (since
+ * 2026-08-30) the open state's through-light and spill — and exactly one state's worth is visible
+ * at a time. This used to `find()` the first additive child and call it "the hazard bloom", which
+ * silently became the through-light the moment a second one existed; the vector is what
+ * `RoomBuilder` is actually responsible for anyway, since all it owns is that `updateDoors` drives
+ * the swap at all. `doorRender.test.ts` is where the individual layers are pinned.
+ */
+function stateLightsOf(rb: RoomBuilder, i: number): boolean[] {
+  return doorFixtures(rb)[i]!
+    .view.children.filter((c) => c instanceof Graphics && c.blendMode === 'add')
+    .map((c) => c.visible);
 }
 
 /** How tall door `i` was built — read back off its occluder's cap/face fold rather than from a
@@ -759,7 +767,8 @@ describe('RoomBuilder — doors (design/05 "Room & door model", 2026-08-04; stan
     const fixture = doorFixtures(rb)[0]!;
     const childCount = fixture.view.children.length;
     expect(leafOf(rb, 0).texture.source).toBe(mocks.doorLockedTex!.source);
-    expect(glowOf(rb, 0).visible).toBe(true);
+    const beforeLights = stateLightsOf(rb, 0);
+    expect(beforeLights.filter(Boolean)).toHaveLength(1); // the hazard bloom, alone
 
     // Mirror DoorSystem: the door unlocks, its passageAabb drops out of s.walls.
     s.dungeonDoors[0]!.locked = false;
@@ -769,7 +778,10 @@ describe('RoomBuilder — doors (design/05 "Room & door model", 2026-08-04; stan
     expect(doorFixtures(rb)[0]).toBe(fixture); // same fixture instance, not rebuilt
     expect(fixture.view.children.length).toBe(childCount);
     expect(leafOf(rb, 0).texture.source).toBe(mocks.doorOpenTex!.source);
-    expect(glowOf(rb, 0).visible).toBe(false);
+    // Every state light flipped: the locked one off, the open ones on. Asserting only that the
+    // bloom went dark would pass on a fixture whose open lights never came up — which is the
+    // whole defect the 2026-08-30 pass fixed, arriving through this exact call path.
+    expect(stateLightsOf(rb, 0)).toEqual(beforeLights.map((v) => !v));
   });
 
   it('updateDoors() is a no-op before any build() has populated the fixtures', () => {

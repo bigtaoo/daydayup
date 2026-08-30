@@ -1229,6 +1229,74 @@ all four doors of level 1's first floor: a focus standing in the doorway takes t
 `XRAY_FADE` 0.34 and it returns to 1 when the focus leaves. The kerb door correctly fades its cap
 only — a 22 px opening puts the body above the cap/face fold, where `needsDeepFade` is false.
 
+## An open door is lit from beyond (2026-08-30)
+
+The standing-door pass above gave a LOCKED door everything and a passable one nothing. Every cue
+the fixture carried was `visible = locked` — the hazard bloom, the red leaf — so "you can walk
+through here" was rendered as the *absence* of a signal, and what was left measured as the darkest
+thing in view: the arch's interior at luma 19 against a 37 floor, framed by stone the same value as
+the wall it is cut into, sitting in the darkest band `roomLight` paints (its falloff darkens toward
+a room's edge, and a door is always on one). A black rectangle in a stone frame is what a WALL
+looks like. Live report with a screenshot circling one: the fire-door read for the locked state is
+good, but *"when it is passable it looks like a black wall — it is hard to tell at once that this
+is a door you can walk through."*
+
+**The cue is light, not a second saturated colour.** `13` is "environment desaturated, hazards
+saturated": a locked door is allowed to shout because "you cannot leave yet" is urgent, a doorway is
+not. A passage leads to a lit room, so light comes OUT of it — one physical claim, three pieces in
+`doorRender.ts`, all additive and all `visible = !locked`:
+
+- **through** — the passage's own floor, ramped up from the threshold over the bottom 60% of the
+  opening. Drawn BEHIND the leaf, which is the part that needed no fudge factor: the arch
+  elevation is opaque stone around a transparent middle, so letting it mask this layer confines
+  the light to the opening exactly, with no inset constant keyed to where a particular PNG's jambs
+  sit. It is the inverse of `drawRecess`'s ramp and drawn over it — the recess makes the opening a
+  hole, this puts a lit floor at the bottom of it.
+- **spill** — a pool on the room floor south of the threshold: `GLOW_POOL`'s nine graduated rings
+  verbatim, in warm white. Deliberately the same SHAPE as the hazard pool, so "a pool at the door"
+  is one symbol the player learns once and colour says which state. It is also what carries a KERB
+  door, where a 22 px opening leaves no room for the ramp — 11 of the 24 shipped doors.
+- **rim** — warm bands up both jambs, brightest at the threshold. What stops the arch reading as
+  flush with the flat wall beside it. Not across the lintel's underside: the top of the opening is
+  where the recess is deliberately darkest, and a lit line there would flatten the depth cue.
+
+**Every number was swept on a live frame, and the sweep is the argument.** Reach 0.45 lit only the
+sill and the fixture still read as mostly-dark; 0.75 looked like haze in the passage rather than
+light on its floor; 0.60 puts the bright end on the floor and lets it die by mid-opening. Alpha then
+set the value the floor lands at, all else held: 0.15 → 61, 0.20 → 69, **0.22 → 72**, 0.26 → 78,
+against a room floor of 49 beside that door and 66 out in the open and a lit cap crown of 56. 0.26
+made the doorway the brightest thing in the frame — brighter than the crown, which this document
+calls what the eye reads a back wall by; 0.22 clears the near floor by +23 and sits just above the
+open floor. That is the read wanted: the brightest thing in the DOORWAY, not in the room. The top of
+the opening measures 19.6 in both states, untouched. On the shipped constants, a perimeter door's
+opening goes **12.1 → 62.5** at its threshold with the layers hidden and shown.
+
+**Alpha is not the comparable quantity between the two states, and assuming it was is how the first
+version came out shouting.** `GLOW_COLOR` is a saturated red at luma 98 and the warm white is 221,
+so ring for ring the open pool lands 2.3x harder at the same alpha. A/B'd over the same 200x90
+region the hazard pool was measured on, on the same KERB fixture: at 0.024 the open lights moved it
+by a mean of **+22.5** luma against the hazard bloom's **+14.8** — the state that is not allowed to
+shout was shouting 1.5x louder, and the floor around it went visibly tan. At **0.018** it lands at
++14.4, the same magnitude as the hazard, carried by warmth instead of red, with the floor keeping
+its own colour. On a perimeter door the same pair reads +6.1 (open) against +5.0 (hazard).
+
+The rim is the weakest of the three by some distance and is documented as such: at alpha 0.2 it is
+not visible on a live frame at 6x, at 0.6 it stops being a lit edge and becomes a bright bar with
+its own hard side running down the flanking wall. 0.34 separates the arch from the wall and does
+not draw a line.
+
+**What the tests pin is the state machine, not the colours.** The defect here was an ABSENCE — no
+per-layer assertion could have caught "the open state has no layers of its own" — so
+`doorRender.test.ts` asserts that the open state carries its own lights, that the two states are
+mutually exclusive in BOTH directions, that the swap costs no rebuild, that both open layers join
+the deep x-ray group, and the one ordering claim the approach rests on: the through-light is behind
+the leaf and the spill in front of it. Eight mutants, including a reversed ramp, a swapped draw
+order, a height-gated spill that would have silently dropped every kerb door's only cue, and a
+`setLocked` that never flips back — all killed. Two assertions elsewhere had to change and were
+wrong in the same way: `wallCapLit` counted "exactly one additive child" and `RoomBuilder.test`
+called `find(blendMode === 'add')` "the hazard bloom", both of which would have gone on passing
+while testing the wrong layer.
+
 ## The floor stops at its rooms (2026-08-20)
 
 The floor was one `TilingSprite` of a 256 px swatch over the world, and measured on a live

@@ -93,15 +93,20 @@ describe('buildDoorBlock — the other caller of addCapLayers gets the same bake
     expect(caps[0]!.tint).toBe(CAP_TINT);
   });
 
-  it('leaves the door with exactly one additive child — its hazard glow, not a cap light', () => {
-    // A door legitimately HAS an additive layer (`drawGlow`, the locked-state bloom), which is why
-    // "no blend modes at all" is the wrong assertion here and why this needs its own case: the cap
-    // light hid behind that glow in every count. One additive child is correct; two is the
-    // regression, and it is worth 3 draw calls per door.
+  it('leaves the door no additive cap TILE — every additive child is a state light', () => {
+    // A door legitimately has additive layers (`drawGlow`'s hazard bloom, and since 2026-08-30 the
+    // open state's through-light and spill), which is why "no blend modes at all" is the wrong
+    // assertion here and why this needs its own case: the cap light hid behind them in every
+    // count. What the bake actually promises is that none of them is a copy of the cap SWATCH, so
+    // that is what is asserted — a count alone quietly went stale the moment the open state got
+    // lights of its own, and would have gone on passing had it been written as `toHaveLength(3)`.
     const view = buildDoorBlock(PASSAGE, WALL_H_PERIMETER, doorSkin(), true).view;
     const additive = view.children.filter((c) => c.blendMode === CAP_LIGHT_BLEND);
-    expect(additive).toHaveLength(1);
-    expect(additive[0]).toBeInstanceOf(Graphics); // the glow is drawn geometry, not a cap tile
+    expect(additive.length).toBeGreaterThan(0); // or a fixture that lost them all would pass
+    expect(additive.every((c) => c instanceof Graphics)).toBe(true); // drawn geometry, not a tile
+    expect(additive.some((c) => c instanceof TilingSprite)).toBe(false);
+    // ...and exactly one of them is live in a given state: they are two mutually exclusive sets.
+    expect(additive.filter((c) => c.visible)).toHaveLength(1);
   });
 
   it('still tags exactly one x-ray cap layer, so a character in the doorway stays visible', () => {
