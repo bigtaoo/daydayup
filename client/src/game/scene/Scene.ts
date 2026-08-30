@@ -30,6 +30,8 @@ export class Scene {
   // a room with any real number of mobs. Cleared and refilled each call, never read
   // across calls, and never returned by reference to anything that outlives the call.
   private readonly enemiesScratch: Actor[] = [];
+  // Same pattern again, for `pickups` below.
+  private readonly pickupsScratch: Pickup[] = [];
 
   constructor(private readonly layers: Layers) {}
 
@@ -56,6 +58,19 @@ export class Scene {
     this.enemiesScratch.length = 0;
     for (const v of this.views.values()) if (v instanceof Enemy) this.enemiesScratch.push(v);
     return this.enemiesScratch;
+  }
+
+  /** Every currently live pickup view, for the same occlusion x-ray `enemies` feeds — live
+   *  report *"被墙挡住的物品，只有角色走到墙下的时候才显示"*: a drop never moves once it lands, so
+   *  unlike a player/enemy focus it isn't standing IN the hidden band on its own account, it's
+   *  simply placed there by the room/drop table. Feeding it in as a focus anyway (`GameLoop.
+   *  updateFx`) makes the wall over it fade permanently rather than only while a character
+   *  happens to be close enough to trigger the same fade for themselves. Order is whatever the
+   *  underlying Map iterates in, not meaningful. */
+  get pickups(): readonly Pickup[] {
+    this.pickupsScratch.length = 0;
+    for (const v of this.views.values()) if (v instanceof Pickup) this.pickupsScratch.push(v);
+    return this.pickupsScratch;
   }
 
   /**

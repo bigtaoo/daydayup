@@ -284,6 +284,41 @@ describe('Scene.enemies — every live enemy view (occlusion x-ray, GameLoop.upd
   });
 });
 
+describe('Scene.pickups — every live pickup view (occlusion x-ray, GameLoop.updateFx, live report "被墙挡住的物品，只有角色走到墙下的时候才显示")', () => {
+  it('returns every live pickup, positioned at its own drop', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    addPickup(s, 60, 60);
+    addPickup(s, 70, 70);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+
+    expect(scene.pickups.length).toBe(2);
+    // Order isn't meaningful, so compare the set of ground positions rather than array identity.
+    const positions = scene.pickups.map((p) => [p.curX, p.curY]).sort((a, b) => a[0]! - b[0]!);
+    expect(positions[0]![0]).toBeCloseTo(60, 1);
+    expect(positions[0]![1]).toBeCloseTo(60, 1);
+    expect(positions[1]![0]).toBeCloseTo(70, 1);
+    expect(positions[1]![1]).toBeCloseTo(70, 1);
+  });
+
+  it('is empty when the room has no pickups', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+    expect(scene.pickups).toEqual([]);
+  });
+
+  it('excludes bullets and actors — only Pickup views count', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    addEnemy(s, 300, 300, 0 as Brad);
+    addBullet(s, 50, 50);
+    addPickup(s, 60, 60);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+    expect(scene.pickups.length).toBe(1);
+  });
+});
+
 describe('Scene.actorAt — actor-lookup by id (EventReactor hit-flash, design/01 milestone 5)', () => {
   it('resolves a live enemy/player id to its Actor view', () => {
     const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });

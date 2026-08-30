@@ -593,3 +593,20 @@ describe('Pickup — a weapon drop carries its rarity and its element (design/13
     }
   });
 });
+
+describe('Pickup.bodySilhouette — what the occlusion x-ray measures a wall against (live report "被墙挡住的物品，只有角色走到墙下的时候才显示")', () => {
+  it('is measured off the drawn art, never zero — an empty silhouette would never trigger the x-ray', () => {
+    for (const kind of ALL_KINDS) {
+      const { halfW, bodyH } = new Pickup(kind).bodySilhouette;
+      expect(halfW, kind).toBeGreaterThan(0);
+      expect(bodyH, kind).toBeGreaterThan(0);
+    }
+  });
+
+  it('is at least as wide as the glow ring every kind carries (design/10)', () => {
+    const GLOW_RADIUS = 13;
+    for (const kind of ALL_KINDS) {
+      expect(new Pickup(kind).bodySilhouette.halfW, kind).toBeGreaterThanOrEqual(GLOW_RADIUS - 1e-9);
+    }
+  });
+});

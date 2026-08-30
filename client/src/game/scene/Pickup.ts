@@ -198,6 +198,16 @@ export class Pickup extends Entity {
     this.makeShadow(9);
   }
 
+  /** Half-width/height of the drawn body in world px — the same shape `Actor.bodySilhouette`
+   *  exposes, and read by the same occlusion x-ray (`scene/occlusion.ts`, `GameLoop.updateFx`).
+   *  Measured off the assembled art at rest rather than restated, same reason `Skin.bodyDrawnH`
+   *  is measured and not derived: the glow ring, the rarity pips and the element badge all
+   *  reach different amounts past the shape they decorate. */
+  get bodySilhouette(): { halfW: number; bodyH: number } {
+    const b = this.getLocalBounds();
+    return { halfW: Math.max(-b.x, b.x + b.width), bodyH: Math.max(-b.y, b.y + b.height) };
+  }
+
   override interpolate(alpha: number, frameDt: number): void {
     this.bob += frameDt * BOB_RATE;
     const swing = Math.sin(this.bob);

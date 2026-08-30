@@ -46,6 +46,7 @@ function fakeScene() {
       | { curX: number; curY: number; bodySilhouette: { halfW: number; bodyH: number } }
       | undefined,
     enemies: [] as ReadonlyArray<{ curX: number; curY: number; bodySilhouette: { halfW: number; bodyH: number } }>,
+    pickups: [] as ReadonlyArray<{ curX: number; curY: number; bodySilhouette: { halfW: number; bodyH: number } }>,
     interpolate: vi.fn(),
     reconcile: vi.fn(),
     positionLocal: vi.fn(),
@@ -682,6 +683,39 @@ describe('GameLoop — the occlusion x-ray is driven every render frame', () => 
       [
         { x: 40, y: 60, halfW: 12.96, bodyH: 32 },
         { x: 1200, y: 140.8, halfW: 12.96, bodyH: 32 },
+      ],
+      16,
+    );
+  });
+
+  it('includes every live pickup even with no player/enemy in the room at all (live report *"被墙挡住的物品，只有角色走到墙下的时候才显示"*) — a drop can\'t walk into the hidden band itself, so it has to be a focus on its own account', () => {
+    const { deps, scene, roomBuilder } = buildDeps();
+    scene.player = undefined;
+    scene.pickups = [{ curX: 25, curY: 50, bodySilhouette: silhouette }];
+    const loop = new GameLoop(deps, buildHost({ getPhase: () => 'playing' }));
+
+    loop.update(16);
+
+    expect(roomBuilder.updateOcclusion).toHaveBeenCalledWith(
+      [{ x: 25, y: 50, halfW: 12.96, bodyH: 32 }],
+      16,
+    );
+  });
+
+  it('passes the player, every enemy and every pickup together, pickups last', () => {
+    const { deps, scene, roomBuilder } = buildDeps();
+    scene.player = { curX: 1200, curY: 140.8, bodySilhouette: silhouette };
+    scene.enemies = [{ curX: 40, curY: 60, bodySilhouette: silhouette }];
+    scene.pickups = [{ curX: 25, curY: 50, bodySilhouette: silhouette }];
+    const loop = new GameLoop(deps, buildHost({ getPhase: () => 'playing' }));
+
+    loop.update(16);
+
+    expect(roomBuilder.updateOcclusion).toHaveBeenCalledWith(
+      [
+        { x: 40, y: 60, halfW: 12.96, bodyH: 32 },
+        { x: 1200, y: 140.8, halfW: 12.96, bodyH: 32 },
+        { x: 25, y: 50, halfW: 12.96, bodyH: 32 },
       ],
       16,
     );

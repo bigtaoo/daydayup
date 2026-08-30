@@ -349,6 +349,12 @@ export class GameLoop {
     // x-ray at all when it, rather than the player, stood in the hidden band). Piggy-backs on
     // this wrapper for exactly the reason the lighting above does — it is already called from
     // every render path (playing/paused/menu/offline/online), and it already has this frame's dt.
+    //
+    // Every live pickup is a focus too (live report *"被墙挡住的物品，只有角色走到墙下的时候才显示"*):
+    // a drop can't walk into the hidden band the way a player/enemy does, but a wall doesn't care
+    // WHY something behind it needs to stay visible — feeding its position in the same way makes
+    // the wall over it fade unconditionally instead of only while a character is also close
+    // enough to trigger that fade for themselves.
     const foci = this.occlusionFociScratch;
     let n = 0;
     const putFocus = (x: number, y: number, sil: { halfW: number; bodyH: number }): void => {
@@ -361,6 +367,7 @@ export class GameLoop {
     };
     for (const e of this.deps.scene.enemies) putFocus(e.curX, e.curY, e.bodySilhouette);
     if (player) putFocus(player.curX, player.curY, player.bodySilhouette);
+    for (const p of this.deps.scene.pickups) putFocus(p.curX, p.curY, p.bodySilhouette);
     foci.length = n; // drop any stale slots left over from a frame with more foci than this one
     this.deps.roomBuilder.updateOcclusion(foci, dt);
   }

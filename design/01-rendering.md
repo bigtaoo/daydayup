@@ -936,6 +936,18 @@ every live enemy view alongside `scene.player`), and a block fades if it hides A
 cap and deep-fade decisions are each an OR across the whole list, not "whichever focus happens to
 be checked first."
 
+**Since 2026-08-30 a dropped item is a focus too, and unlike the two above it never moves** — live
+report *"现在被墙挡住的物品，只有角色走到墙下的时候才显示，改为始终显示"* (an item hidden behind a wall
+only showed once the player walked into the block's own hidden band, because that is the only thing
+that ever asked the wall to fade). A `Pickup` never enters the band on its own account — it is
+simply placed there by the room or the drop table — so gating its visibility on a player/enemy
+also standing in that same band left it invisible for however long neither did. `Scene.pickups`
+(sibling of `scene.enemies`) feeds every live drop's ground point and drawn `bodySilhouette` into
+the same `foci` list `GameLoop.updateFx` already builds, which makes the fade over a drop
+**permanent** rather than conditional on anyone being nearby to trigger it — the wall between the
+camera and a piece of loot is translucent from the moment the drop lands to the moment it's picked
+up, full stop.
+
 **Only the CAP fades — and where that is not enough, the face follows.** Measured both ways on a
 live frame: fading the whole block loses the stone and the block reads as a hole in the room, so
 the default pass moves the cap layers only (`occlusion.xrayLayers`, tagged in `buildWallBlock`) and
