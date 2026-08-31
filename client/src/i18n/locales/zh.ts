@@ -221,6 +221,9 @@ export const zh: Translations<typeof en> = {
     materialFallback: '材料',
     reconnecting: '正在重新连接…',
     reconnected: '已重新连接',
+    replaySaved: '录像已保存：{name}',
+    replayNoRun: '当前没有可保存的对局',
+    replayUnsupported: '该设备无法保存文件',
   },
   compareCard: {
     damage: '伤害',

@@ -436,6 +436,9 @@ export class GameLoop {
       selectedSkin: this.host.selectedSkinId(),
       showAlly: this.host.isCoop() || this.host.isArenaDemo(),
       allySkinId: this.host.allySkinId(),
+      // Offline only: an online match's record is the server's confirmed stream, and a
+      // replay-driven session is already replaying somebody else's file.
+      canSaveReplay: !this.host.isOnline() && this.host.replayStopTick() === null,
     });
     this.deps.pickupDebugOverlay?.update(s);
 

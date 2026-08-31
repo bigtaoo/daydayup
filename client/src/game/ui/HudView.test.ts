@@ -23,6 +23,7 @@ const CTX: HudContext = {
   selectedSkin: 'skirmisher',
   showAlly: false,
   allySkinId: '',
+  canSaveReplay: true,
 };
 
 const PVE_CFG: EngineConfig = { seed: 1, worldW: 800, worldH: 600, waves: [] };
@@ -529,6 +530,59 @@ describe('HudView — pause button (a real touch/WeChat gap this pass closed)', 
   it('does nothing (no throw) when onPause is never wired', () => {
     const hud = newHud();
     expect(() => hud.pauseBtn.onTap?.()).not.toThrow();
+  });
+});
+
+describe('HudView — record button (the same touch/WeChat gap, one layer over)', () => {
+  // The save-a-replay verb shipped as an F9 hotkey, which is unusable on exactly the
+  // platform a bug report is most likely to come FROM. Same shape as the pause button
+  // above, and the same reason.
+  it('exists and is part of the HUD', () => {
+    const hud = newHud();
+    expect(hud.view.children).toContain(hud.replayBtn.view);
+  });
+
+  it('sits beside the pause button, not under it — the minimap owns that space', () => {
+    const hud = newHud();
+    expect(hud.replayBtn.view.position.y).toBe(hud.pauseBtn.view.position.y);
+    expect(hud.replayBtn.view.position.x).toBeLessThan(hud.pauseBtn.view.position.x);
+    // and clear of it: 36 wide, so the gap must exceed the button's own width
+    expect(hud.pauseBtn.view.position.x - hud.replayBtn.view.position.x).toBeGreaterThanOrEqual(36);
+    // and above the minimap, like its neighbour
+    expect(hud.replayBtn.view.position.y).toBeLessThan(hud.minimap.view.position.y);
+  });
+
+  it('renders the record glyph, needing no translation', () => {
+    const hud = newHud();
+    expect((hud.replayBtn as unknown as { label: { text: string } }).label.text).toBe('●');
+  });
+
+  it('re-anchors on reposition, same as the rest of the HUD', () => {
+    const hud = newHud();
+    hud.reposition({ w: 640, h: 480 });
+    expect(hud.replayBtn.view.position.x).toBeCloseTo(640 - 20 - 36 - 42);
+  });
+
+  it('tapping it fires onSaveReplay — Game wires this to the same saveReplay() F9 calls', () => {
+    const hud = newHud();
+    let fired = 0;
+    hud.onSaveReplay = () => { fired++; };
+    hud.replayBtn.onTap?.();
+    expect(fired).toBe(1);
+  });
+
+  it('does nothing (no throw) when onSaveReplay is never wired', () => {
+    const hud = newHud();
+    expect(() => hud.replayBtn.onTap?.()).not.toThrow();
+  });
+
+  it('hides itself when the run cannot be saved, rather than offering a dead control', () => {
+    const hud = newHud();
+    const s = pveState();
+    hud.update(s, 16, { ...CTX, canSaveReplay: false });
+    expect(hud.replayBtn.view.visible).toBe(false);
+    hud.update(s, 16, { ...CTX, canSaveReplay: true });
+    expect(hud.replayBtn.view.visible).toBe(true);
   });
 });
 

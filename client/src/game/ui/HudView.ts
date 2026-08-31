@@ -24,6 +24,10 @@ export interface HudContext {
   /** Co-op teammate line (ROADMAP 3.1) — shown for a local bot ally or the arenaDemo harness. */
   showAlly: boolean;
   allySkinId: string;
+  /** Whether a replay of THIS run could actually be saved (`replayBtn`) — false for an
+   *  online match, whose record is the server's confirmed stream, not ours. A control
+   *  that cannot work should not be on screen. */
+  canSaveReplay: boolean;
 }
 
 type ChipKey = 'floor' | 'room' | 'enemies' | 'banked' | 'score' | 'buffs' | 'stage' | 'alive';
@@ -98,6 +102,13 @@ export class HudView {
   // above the minimap; '‖' reads as a universal pause glyph with no translation needed
   // (same single-glyph-label convention Forge's ‹/› cycle buttons already use).
   readonly pauseBtn = new Button('‖', { w: 36, h: 36, fontSize: 16 });
+  // Save a marked replay of the run so far (design/08 "Getting a replay OUT of a live
+  // session"). Exactly the same defect the pause button above exists for, one layer over:
+  // the save verb shipped as an F9 hotkey, and a touch/WeChat player has no keyboard at
+  // all — which is the platform a bug report is most likely to come FROM. '●' is the
+  // transport-control record glyph, needs no translation, and sits directly under '‖'
+  // so the two read as one control column. Hidden unless the run is recordable (update()).
+  readonly replayBtn = new Button('●', { w: 36, h: 36, fontSize: 14, sound: 'ui.tap' });
   /** Wired by Game to the same `pause()` its Escape/P keyboard handler already calls —
    *  one source of truth for both input paths, matching Forge's onX callback shape. */
   onPause: (() => void) | null = null;
@@ -105,6 +116,9 @@ export class HudView {
    *  already trigger — see WeaponSlotChip's own doc comment for why "tap the idle
    *  slot" and "cycle the active slot" are the same action with a two-weapon loadout. */
   onSwapWeapon: (() => void) | null = null;
+  /** Wired by Game to the same `saveReplay()` its F9 keyboard handler already calls —
+   *  one verb, two entry points, matching `onPause`'s shape exactly. */
+  onSaveReplay: (() => void) | null = null;
 
   private statsPanel!: Panel;
   private readonly dividers = new Graphics();
@@ -116,6 +130,7 @@ export class HudView {
     this.statsPanel = new Panel({ radius: 10, color: 0x0b0e14, alpha: 0.66, borderColor: 0x4c566a, borderAlpha: 0.55 });
     this.toasts = new ToastQueue({ w: 220 });
     this.pauseBtn.onTap = () => this.onPause?.();
+    this.replayBtn.onTap = () => this.onSaveReplay?.();
     this.weaponSlotChip.onTap = () => this.onSwapWeapon?.();
 
     this.statsPanel.view.position.set(4, 4);
@@ -141,6 +156,7 @@ export class HudView {
       this.weaponPickupPrompt.view,
       this.downedBanner.view,
       this.pauseBtn.view,
+      this.replayBtn.view,
     );
     // NOTE: `view` itself is NOT added to `layers.ui` here — the caller (Game) mounts
     // it inside its own visibility-toggled `hudView` container.
@@ -162,11 +178,15 @@ export class HudView {
     this.toasts.view.position.set(screenPx.w / 2 - 110, screenPx.h * 0.22);
     this.minimap.view.position.set(screenPx.w - 140 - 20, 60);
     this.pauseBtn.view.position.set(screenPx.w - 20 - 36, 12); // top-right corner, above the minimap
+    // Beside the pause button, not under it: the minimap starts at y=60 on the same
+    // right edge, so a second row would land on top of it.
+    this.replayBtn.view.position.set(screenPx.w - 20 - 36 - 42, 12);
     this.downedBanner.reposition(screenPx);
   }
 
   update(s: GameState, dt: number, ctx: HudContext): void {
     const p = s.players[ctx.localOwner];
+    this.replayBtn.view.visible = ctx.canSaveReplay;
 
     this.playerCard.set(ctx.selectedSkin, p?.hp ?? 0, p?.maxHp ?? 0, p?.shield ?? 0, p?.maxShield ?? 0);
     this.playerCard.update(dt);

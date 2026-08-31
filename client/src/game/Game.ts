@@ -393,6 +393,11 @@ export class Game {
     this.hud.onSwapWeapon = () => {
       if (this.phase === 'playing') this.builder.requestSwap();
     };
+    // The HUD's record button — the same verb as the F9 hotkey below, so a touch/WeChat
+    // player (no keyboard at all) can hand over a repro too. Not phase-guarded: an
+    // offline run stays packable after it ends, and the button is only mounted while the
+    // HUD is up anyway.
+    this.hud.onSaveReplay = () => this.saveReplay();
 
     this.input.attach(this.app.canvas as unknown as InputCanvas);
     // Discrete actions route through the shell: during a run they latch a one-tick
@@ -929,9 +934,14 @@ export class Game {
     }
   }
 
-  /** F9: export the run so far, marked at this tick (match/replayDownload.ts). */
+  /** Export the run so far, marked at this tick (match/replayDownload.ts) — the verb
+   *  behind BOTH the F9 hotkey and the HUD's record button, so the two can never drift.
+   *  The wording is localised here rather than in the module that does the work. */
   private saveReplay() {
-    this.hud.toast(saveMarkedReplay(this.recorder, this.engine?.state.tick ?? 0, Date.now()), THEME.colors.pickupHeal);
+    const r = saveMarkedReplay(this.recorder, this.engine?.state.tick ?? 0, Date.now());
+    if (r.ok) this.hud.toast(t('toast.replaySaved', { name: r.name }), THEME.colors.pickupHeal);
+    else if (r.reason === 'no-run') this.hud.toast(t('toast.replayNoRun'), THEME.colors.enemy);
+    else this.hud.toast(t('toast.replayUnsupported'), THEME.colors.enemy);
   }
 
   // ---- Online co-op (ROADMAP 3.3): matchmaking → socket → CoopSession ----

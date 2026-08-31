@@ -228,6 +228,9 @@ export const en = {
     materialFallback: 'material',
     reconnecting: 'Reconnecting…',
     reconnected: 'Reconnected',
+    replaySaved: 'Replay saved: {name}',
+    replayNoRun: 'Nothing to save yet',
+    replayUnsupported: 'This device cannot save files',
   },
   compareCard: {
     damage: 'Damage',

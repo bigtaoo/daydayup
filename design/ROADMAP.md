@@ -8513,3 +8513,63 @@ as good as its worst line, because a reader cannot tell which lines were re-chec
 durable lesson is that the drift shows up specifically in the **scheduling** sentences ("deferred",
 "still open", "needs X"), not in the descriptive ones: a section's body gets updated when the work
 lands, and the line that promised it does not.
+
+## The save verb gets a button, and the tests that were still missing (2026-08-31, client)
+
+*"你把f9的功能，做一个按钮放到界面上。然后看看有测试可以加吗"* — and the first half is the same
+gap `HudView.pauseBtn` was built for in August: the save-a-replay verb shipped as an **F9 hotkey**,
+which is unusable on exactly the platform a bug report is most likely to come from. A phone has no
+F9 key.
+
+### What shipped
+
+`HudView.replayBtn` ('●', immediately left of `pauseBtn`, above the minimap), calling the same
+`Game.saveReplay()` the keyboard does — one verb, two entry points, never two implementations. Two
+rules came with it:
+
+- **It hides itself when the run cannot be saved.** `HudContext.canSaveReplay` is
+  `!isOnline() && replayStopTick() === null`: an online match's record is the server's confirmed
+  stream, and a `?replay=` session is already watching somebody else's file. A control that cannot
+  work should not be on screen.
+- **All three outcomes are localised.** `saveMarkedReplay` now returns a typed
+  `{ ok, name, tick } | { ok: false, reason: 'no-run' | 'unsupported' }` instead of an English
+  sentence, and `Game` renders it through `t()` — three new keys across all eight locales. The
+  reason it matters is not tidiness: whoever presses this is pressing it BECAUSE something already
+  went wrong, so a false "saved" costs a whole report cycle. The device that cannot save
+  (WeChat: no Blob, no anchor) has to say so in the player's own language.
+
+### "有测试可以加吗" — 21 new tests, and what they were actually for
+
+The honest answer was that the verb had good unit coverage and **no coverage of its wiring**, which
+is the exact shape that let `beginReplayRun` ship yesterday with `this.engine` never assigned:
+every `GameLoop` test injects its own engine, so nothing noticed.
+
+`client/src/game/gameReplaySave.test.ts` closes that, against a **real `Game`** (the
+`gameWeaponSwap.test.ts` harness: captured ticker, hand-driven frames) with the browser's own
+download seam faked — an anchor, a Blob, an object URL — so the test captures **the actual bytes**
+that would reach disk. The claim it makes is not "a file was produced" but *these bytes reconstruct
+the run that was being played*: parse, `runReplay`, compare `hashState` against the live engine.
+Then: the mark lands on the tick pressed, F9 and the button produce identical files, a second press
+is not one-shot and remembers both marks, a fresh run replaces the recording, and each of the three
+outcomes produces its own toast text.
+
+Plus `HudView.test.ts` (mounted, placed clear of `pauseBtn` and the minimap, glyph, re-anchors on
+resize, fires its callback, hides when `canSaveReplay` is false) and `GameLoop.test.ts` (the flag
+is true offline, false online, false while replaying).
+
+**The battery, extended to 48 mutants: 47 executed, 47 killed, 0 survivors** (one honest SKIP whose
+target — the redundant pre-step observation — no longer exists). One survivor on the first run, and
+it was the interesting one: *"always claims success"* survived because nothing asserted the toast
+TEXT, only that a file appeared. The three toast tests exist because a mutant found their absence.
+
+### Verified live
+
+Real dev server, run driven by hand: button at x=702 against the pause button's 744 on an 800-wide
+viewport (no overlap, 42 px pitch), above the minimap, '●' renders, and re-anchoring holds at
+844x390 / 390x844 / 1920x911. A real tap produced `ddreplay-dungeon-<ms>.json` off a blob URL with
+the toast `Replay saved: …`, and the same key renders as `录像已保存：…` / `Запись сохранена: …` /
+`Wiederholung gespeichert: …` / `Zapisano powtórkę: …` when the locale changes.
+
+Client 3820 → 3841 tests, 5,976 repo-wide, `npm run check` green (`Game.ts` baseline 1104 → 1114,
+documented: one callback beside the existing HUD-callback block, plus `saveReplay()` growing to
+localise its three outcomes).

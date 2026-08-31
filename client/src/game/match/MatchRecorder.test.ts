@@ -96,38 +96,52 @@ describe('MatchRecorder (an offline run records itself, for free)', () => {
   });
 });
 
-describe('saveMarkedReplay (the F9 flow, without a host)', () => {
-  it('marks the tick, saves the file, and names it in the message', () => {
+describe('saveMarkedReplay (the save verb, without a host)', () => {
+  it('marks the tick, saves the file, and reports the name back', () => {
     const recorder = new MatchRecorder();
     play(DUNGEON, recorder, 250);
 
     let saved: ReplayFile | null = null;
-    const msg = saveMarkedReplay(recorder, 250, 1_700_000_000_000, (f) => {
+    const r = saveMarkedReplay(recorder, 250, 1_700_000_000_000, (f) => {
       saved = f;
       return 'ddreplay-dungeon-1700000000000.json';
     });
 
-    expect(msg).toContain('ddreplay-dungeon-1700000000000.json');
-    expect(msg).toContain('tick 250');
-    // The mark is what tells the harness where to look — the whole point of the key.
+    expect(r).toEqual({ ok: true, name: 'ddreplay-dungeon-1700000000000.json', tick: 250 });
+    // The mark is what tells the harness where to look — the whole point of the control.
     expect(saved!.marks).toEqual([{ tick: 250, note: 'hotkey at tick 250' }]);
     expect(saved!.ticks).toBe(250);
   });
 
-  it('says so when there is no offline run, instead of doing nothing', () => {
+  it('reports no-run when there is no offline run, instead of doing nothing', () => {
     const recorder = new MatchRecorder();
     let called = false;
-    const msg = saveMarkedReplay(recorder, 10, 0, () => {
+    const r = saveMarkedReplay(recorder, 10, 0, () => {
       called = true;
       return 'x';
     });
-    expect(msg).toBe('No offline run to save');
+    expect(r).toEqual({ ok: false, reason: 'no-run' });
     expect(called).toBe(false);
   });
 
-  it('says so when the host cannot download (WeChat: no Blob, no anchor)', () => {
+  it('reports unsupported when the host cannot download (WeChat: no Blob, no anchor)', () => {
     const recorder = new MatchRecorder();
     play(DUNGEON, recorder, 20);
-    expect(saveMarkedReplay(recorder, 20, 0, () => null)).toBe('Cannot save a replay on this platform');
+    expect(saveMarkedReplay(recorder, 20, 0, () => null)).toEqual({ ok: false, reason: 'unsupported' });
+  });
+
+  it('every reason is distinguishable — a caller can localise all three outcomes', () => {
+    // The whole reason this returns a result instead of a sentence: two failures that
+    // read the same to a player ("nothing happened") need different words, and the
+    // module that writes the file has no business choosing them.
+    const empty = new MatchRecorder();
+    const live = new MatchRecorder();
+    play(DUNGEON, live, 5);
+    const outcomes = [
+      saveMarkedReplay(empty, 1, 0, () => 'n'),
+      saveMarkedReplay(live, 5, 0, () => null),
+      saveMarkedReplay(live, 5, 0, () => 'n'),
+    ];
+    expect(outcomes.map((o) => (o.ok ? 'ok' : o.reason))).toEqual(['no-run', 'unsupported', 'ok']);
   });
 });

@@ -221,6 +221,9 @@ export const es: Translations<typeof en> = {
     materialFallback: 'material',
     reconnecting: 'Reconectando…',
     reconnected: 'Reconectado',
+    replaySaved: 'Repetición guardada: {name}',
+    replayNoRun: 'Nada que guardar todavía',
+    replayUnsupported: 'Este dispositivo no puede guardar archivos',
   },
   compareCard: {
     damage: 'Daño',

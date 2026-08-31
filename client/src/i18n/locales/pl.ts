@@ -221,6 +221,9 @@ export const pl: Translations<typeof en> = {
     materialFallback: 'surowiec',
     reconnecting: 'Ponowne łączenie…',
     reconnected: 'Połączono ponownie',
+    replaySaved: 'Zapisano powtórkę: {name}',
+    replayNoRun: 'Nie ma jeszcze czego zapisać',
+    replayUnsupported: 'To urządzenie nie może zapisywać plików',
   },
   compareCard: {
     damage: 'Obrażenia',

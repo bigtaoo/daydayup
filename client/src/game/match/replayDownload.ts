@@ -35,27 +35,39 @@ export function downloadReplayFile(file: ReplayFile): string | null {
 }
 
 /**
- * The hotkey's whole job: mark this tick, pack the run, save it, and return the one
- * line to show the player. Separated from `Game` so the flow is testable without a
- * Pixi app, and takes `download` as a parameter for the same reason — the default is
- * the real one above.
+ * What a save attempt did. A structured result rather than a sentence, because both
+ * entry points (the F9 hotkey and the HUD button) show it to a PLAYER: the wording is
+ * `Game`'s to localise (design/17 — `t()`, never an English literal in a widget), and
+ * this file has no business knowing which language it is being read in.
+ */
+export type ReplaySaveResult =
+  | { ok: true; name: string; tick: number }
+  /** Nothing is being recorded — an online match, or no run started yet. */
+  | { ok: false; reason: 'no-run' }
+  /** The host cannot hand a file to the player (WeChat: no Blob, no anchor). */
+  | { ok: false; reason: 'unsupported' };
+
+/**
+ * The save verb behind both entry points: mark this tick, pack the run, hand it over.
+ * Separated from `Game` so the flow is testable without a Pixi app, and takes `download`
+ * as a parameter for the same reason — the default is the real one above.
  *
- * Returns a message either way. A failure here must never be silent: the player is
- * pressing this key BECAUSE something already went wrong, and a hotkey that quietly
- * does nothing would cost a whole report cycle to notice.
+ * A failure must never be silent: whoever is pressing this is doing it BECAUSE something
+ * already went wrong, and a control that quietly does nothing costs a whole report cycle
+ * to notice. Hence a result for every path, and a toast on every one of them.
  */
 export function saveMarkedReplay(
   recorder: MatchRecorder,
   tick: number,
   nowMs: number,
   download: (file: ReplayFile) => string | null = downloadReplayFile,
-): string {
+): ReplaySaveResult {
   // No `recorder.recording` early-out: `pack` already returns null in exactly that case
-  // and this returns the same message either way. A mutation battery found the guard
+  // and this returns the same result either way. A mutation battery found the guard
   // survived being deleted, which is what a redundant check looks like.
   recorder.mark(tick, `hotkey at tick ${tick}`);
   const file = recorder.pack(tick, nowMs);
-  if (!file) return 'No offline run to save';
+  if (!file) return { ok: false, reason: 'no-run' };
   const name = download(file);
-  return name ? `Replay saved: ${name} (tick ${tick})` : 'Cannot save a replay on this platform';
+  return name ? { ok: true, name, tick } : { ok: false, reason: 'unsupported' };
 }

@@ -286,6 +286,47 @@ describe('GameLoop — offline sim stepping (advanceSim/stepSim)', () => {
     expect(() => loop.update(SIM_DT_MS_FOR_TESTS)).toThrow(/read-only/);
   });
 
+  // The HUD's record button is only offered when a replay of THIS run could actually be
+  // saved, and updateHud is where that gets decided.
+  const hudCtx = (hud: { update: { mock: { calls: unknown[][] } } }) =>
+    hud.update.mock.calls[0]![2] as { canSaveReplay: boolean };
+
+  it('offers the record button in an ordinary offline run', () => {
+    const { deps, hud } = buildDeps();
+    const engine = createGameEngine(CFG);
+    // `activeState` is what updateHud reads; the default fake host returns null, which
+    // would make this assertion vacuous rather than false.
+    const loop = new GameLoop(deps, buildHost({ getEngine: () => engine, activeState: () => engine.state }));
+    loop.update(SIM_DT_MS_FOR_TESTS);
+    expect(hud.update).toHaveBeenCalled();
+    expect(hudCtx(hud).canSaveReplay).toBe(true);
+  });
+
+  it("does NOT offer it online - the server holds that match's record, not the client", () => {
+    const { deps, hud } = buildDeps();
+    const engine = createGameEngine(CFG);
+    const session = { started: true, state: engine.state, frame: 1, submit: vi.fn(), drive: () => [] };
+    const host = buildHost({
+      isOnline: () => true,
+      getEngine: () => engine,
+      getSession: () => session as unknown as CoopSession,
+      activeState: () => engine.state,
+    });
+    new GameLoop(deps, host).update(SIM_DT_MS_FOR_TESTS);
+    expect(hudCtx(hud).canSaveReplay).toBe(false);
+  });
+
+  it("does NOT offer it while watching a replay - that file is somebody else's already", () => {
+    const { deps, hud } = buildDeps();
+    const engine = createGameEngine(REPLAY_CFG, new ReplayInputSource(recordedReplay(10)));
+    const loop = new GameLoop(deps, buildHost({
+      getEngine: () => engine, replayStopTick: () => 10, activeState: () => engine.state,
+    }));
+    loop.update(SIM_DT_MS_FOR_TESTS);
+    expect(hud.update).toHaveBeenCalled();
+    expect(hudCtx(hud).canSaveReplay).toBe(false);
+  });
+
   it('feeds this tick\'s events to EventReactor and (while tutorialActive) TutorialHintController', () => {
     const { deps, events, tutorialHints } = buildDeps();
     const engine = createGameEngine(CFG);

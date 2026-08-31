@@ -226,6 +226,9 @@ export const ru: Translations<typeof en> = {
     materialFallback: 'материал',
     reconnecting: 'Переподключение…',
     reconnected: 'Переподключено',
+    replaySaved: 'Запись сохранена: {name}',
+    replayNoRun: 'Пока нечего сохранять',
+    replayUnsupported: 'Это устройство не может сохранять файлы',
   },
   compareCard: {
     damage: 'Урон',

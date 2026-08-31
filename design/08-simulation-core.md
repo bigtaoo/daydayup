@@ -180,9 +180,18 @@ back clean (ROADMAP v50): the missing evidence was the moment, not more content.
 - **Recording is free and always on** (`client/src/game/match/MatchRecorder.ts`).
   `LocalInputSource` has always retained every command it was handed — an offline run was
   already holding its own replay in memory — so the recorder only keeps the config beside
-  it and packs the two on demand. That is what makes the **F9** hotkey work: the moment
-  worth recording is one nobody planned for, so an opt-in flag is exactly what fails.
-  Online runs are excluded: their authoritative record is the server's confirmed stream.
+  it and packs the two on demand. That is what makes the save control work at all: the
+  moment worth recording is one nobody planned for, so an opt-in flag is exactly what
+  fails. Online runs are excluded: their authoritative record is the server's confirmed
+  stream.
+- **Two entry points, one verb**: the **F9** hotkey and a **record button on the HUD**
+  (`ui/HudView.ts`'s `replayBtn`, '●', beside the pause button). The button exists for the
+  same reason the pause button does — a touch/WeChat player has no keyboard at all, and
+  that is the platform a bug report is most likely to come FROM. It hides itself when the
+  run cannot be saved (online, or while watching a replay) rather than offering a dead
+  control, and `saveMarkedReplay` returns a typed result so all three outcomes — saved /
+  nothing to save / this device cannot — are localised through `t()` (design/17) rather
+  than baked into the module that writes the file as an English sentence.
 - **Playback runs inside the real client** (`?replay=<url>`, `match/replayPlayback.ts`),
   because the open half of that report is a render-vs-sim disagreement and no headless
   re-run can see a frame. `GameLoop` submits nothing while a recording drives the engine
