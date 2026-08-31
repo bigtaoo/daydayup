@@ -5,7 +5,7 @@ This directory records **decisions** and **architecture**. It is the single sour
 | Doc | Contents |
 |-----|----------|
 | [00-tech-stack.md](00-tech-stack.md) | Tech-stack decision record (why single-engine Pixi; why not Three.js / Cocos) |
-| [01-rendering.md](01-rendering.md) | Rendering & depth: tilted view, Y-sort, height/shadow separation, layers, fake-3D techniques and limits |
+| [01-rendering.md](01-rendering.md) | Rendering & depth — **index + fidelity roadmap + quality tiers**. The mechanisms are in [rendering/](rendering/): [foundations](rendering/01-foundations.md) (view, coordinates, layers, limits), [walls](rendering/02-walls.md), [occlusion & doors](rendering/03-occlusion-and-doors.md), [floor/arena/void](rendering/04-floor-arena-void.md), [character & objects](rendering/05-character-and-objects.md). `design/01 milestone N` in a code comment still reads the roadmap in the index. |
 | [02-entity-model.md](02-entity-model.md) | Entity model: Actor / Skin / Weapon three-layer split |
 | [03-weapon-system.md](03-weapon-system.md) | Weapon system: ranged, melee, block/deflect, extensibility |
 | [04-wechat.md](04-wechat.md) | WeChat mini-game adaptation, base-library version notes, verification checklist |
@@ -26,10 +26,21 @@ This directory records **decisions** and **architecture**. It is the single sour
 
 ## Where the plan lives
 
-[ROADMAP.md](ROADMAP.md) is the ordered implementation plan and the running record of what
-actually shipped, phase by phase, with dates. The docs above answer *what was decided and
-why*; ROADMAP answers *what is built right now*. When a milestone closes, both get written
-back to — a decision doc that still describes a shipped system as unbuilt is a bug.
+[ROADMAP.md](ROADMAP.md) is the ordered implementation plan and the index to the running
+record of what actually shipped. The docs above answer *what was decided and why*; ROADMAP
+answers *what is built right now*. When a milestone closes, both get written back to — a
+decision doc that still describes a shipped system as unbuilt is a bug.
+
+It comes in three parts, because as one file it had reached 8,575 lines and eighty-six
+sections with the plan and the log interleaved in no particular order:
+
+- **[ROADMAP.md](ROADMAP.md)** — the phase spine (Phases 0–7, what `ROADMAP 3.1` in a code
+  comment refers to), the dependency summary, and the log index by date and by theme.
+- **[roadmap/](roadmap/)** — the work log itself, one volume per stretch of dates, each
+  under 1000 lines. New passes append to the highest-numbered volume; the rules are in
+  ROADMAP.md's *Appending to the log*.
+- **[roadmap/current-state.md](roadmap/current-state.md)** — the running "what is built
+  right now" note. Not the authority on `ENGINE_VERSION`; `engine/versionHistory.ts` is.
 
 ## Decision format
 
