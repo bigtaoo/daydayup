@@ -106,8 +106,17 @@ pins the limit itself, and pins that one authored grid cell is *exactly* two pla
 raising `PLAYER_BASE.solidRadius` by one fp seals every single-cell corridor in the game.
 
 **Still open.** The report itself. Nothing in the engine now explains it, which is a result and
-not a resolution: the remaining candidates are all on the render side of the boundary, and the
-next round needs the seed and floor the screenshot came from rather than another sweep.
+not a resolution: the remaining candidates are all on the render side of the boundary.
+
+**And "the seed and floor" was the wrong ask (2026-08-31).** A seed does not reproduce a drop
+position — a monster dies where the player pushed it to, so the whole run's input stream is the
+repro. The engine could always replay one (`Replay = seed + config + input stream`, Stage E) and
+nothing outside a test had ever recorded one. Now it does: **F9** in any offline run writes a
+`ddreplay-*.json` marked at that tick, `?replay=<url>&pickupDebug=1` plays it back through the real
+renderer and holds at the mark, and `DD_REPLAY=<path> npm run replay:inspect` reports every drop's
+closest approach, swept path, gate and `pickup` event. See `design/08`'s "Getting a replay OUT of a
+live session" and ROADMAP's entry — including the two ways the harness lied on its first run, both
+of the shape this document exists for.
 
 ## Why this doc exists
 

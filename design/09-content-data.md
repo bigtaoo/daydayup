@@ -271,8 +271,13 @@ door, a real walk-through-the-door choice (see `05`'s matching section for the f
 draw-sequence/placement design). ✅ **PvE minimap adapter shipped the same day:**
 `FloorProgress` is retired — PvE now shares PvP's own `Minimap` widget via two new
 `minimapLayout.ts` converters (`dungeonToArenaMap`/`dungeonRoomStatus`). See `design/05`'s
-"Room & door model" section and `ROADMAP.md` for the full account. **Still open:**
-map-editor door placement, same as noted in `05`.
+"Room & door model" section and `ROADMAP.md` for the full account. ~~**Still open:**
+map-editor door placement, same as noted in `05`.~~ **Closed 2026-08-05** — see `05`'s
+"Hand-authored PvE floors": `tools/map-editor` gained a third mode ("PvE Dungeon Floor")
+that hand-places a `RoomPiece` instance with a door at a chosen position, and level 1's
+five floors are authored through it (`world/dungeons/ember/`). This line survived the fix
+by 26 days: the same docs-drift shape `ROADMAP.md` records under "the measurement moved on
+and the paragraph that quoted it did not".
 
 ### Dungeon assembly (`05` hybrid) ✅ generation shipped 2026-07-24 (ROADMAP 1.3, additive — no `ENGINE_VERSION` bump)
 

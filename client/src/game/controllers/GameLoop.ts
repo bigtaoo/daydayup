@@ -66,6 +66,12 @@ export interface GameLoopHost {
   isCoop(): boolean;
   isArenaDemo(): boolean;
   isTutorialActive(): boolean;
+  /** `?replay=` playback only (design/06 replay, match/replayPlayback.ts): the tick the
+   *  recording is being watched AT. Non-null means the run's input comes from the
+   *  recorded stream, so nothing here may submit a live command — and once that tick is
+   *  reached the sim stops advancing while the render loop keeps running, which is what
+   *  makes the reported moment inspectable. Null in every normal session. */
+  replayStopTick(): number | null;
   readonly localOwner: number;
   getEngine(): GameEngine | null;
   getSession(): CoopSession | null;
@@ -203,15 +209,23 @@ export class GameLoop {
     const localOwner = this.host.localOwner;
     const p = s.players[localOwner];
 
+    // Replay playback: the recorded stream IS the input, so a live command must not be
+    // submitted over it (ReplayInputSource would throw — it is read-only by design), and
+    // the sim holds still once the watched tick is reached.
+    const replayStop = this.host.replayStopTick();
+    if (replayStop !== null && s.tick >= replayStop) return;
+
     const frame = s.tick + 1;
-    engine.submit(this.deps.builder.build(frame, localOwner));
-    // Local co-op (ROADMAP 3.1) — and the `?arenaDemo=1` dev harness, which reuses this
-    // exact path: every non-local seat is driven by the bot ally, whose command goes
-    // through the exact same submit path a networked teammate's would — the engine
-    // can't tell a local bot from a remote player.
-    if (this.host.isCoop() || this.host.isArenaDemo()) {
-      for (let owner = 0; owner < s.players.length; owner++) {
-        if (owner !== localOwner) engine.submit(this.deps.ally.build(s, owner, localOwner, frame));
+    if (replayStop === null) {
+      engine.submit(this.deps.builder.build(frame, localOwner));
+      // Local co-op (ROADMAP 3.1) — and the `?arenaDemo=1` dev harness, which reuses this
+      // exact path: every non-local seat is driven by the bot ally, whose command goes
+      // through the exact same submit path a networked teammate's would — the engine
+      // can't tell a local bot from a remote player.
+      if (this.host.isCoop() || this.host.isArenaDemo()) {
+        for (let owner = 0; owner < s.players.length; owner++) {
+          if (owner !== localOwner) engine.submit(this.deps.ally.build(s, owner, localOwner, frame));
+        }
       }
     }
     const events = engine.advance(frame) ?? [];

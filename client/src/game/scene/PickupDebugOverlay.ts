@@ -41,17 +41,28 @@ const DOT_MISS = 0xf87171; // red — it is not
  * `crate` — `update()` filters both before calling this.
  */
 export function pickupDebugGate(state: GameState, item: PickupItem): { nearestPx: number; collectible: boolean } {
-  const isWeapon = item.kind === 'weapon';
   let nearestPx = Infinity;
   let collectible = false;
   for (const p of state.players) {
     if (!p.alive) continue;
     const d = Math.hypot(fpToPx((item.gx - p.gx) as Fp), fpToPx((item.gy - p.gy) as Fp));
     if (d < nearestPx) nearestPx = d;
-    const gatePx = fpToPx((isWeapon ? SIM.lootRevealRadius : SIM.pickupRadius + p.radius) as Fp);
-    if (d <= gatePx) collectible = true;
+    if (d <= pickupGatePx(item, p)) collectible = true;
   }
   return { nearestPx, collectible };
+}
+
+/**
+ * The collect distance, world px, for one drop against one player — the single
+ * definition of the threshold, so nothing anywhere re-derives it (design/18 G6). A
+ * `weapon` is gated on the panel's ring; every auto-collect kind on the player's OWN
+ * radius plus the sim's padding, which is why this takes the player rather than a
+ * constant. Read by `pickupDebugGate` above and by `sim/replay/inspect.ts`.
+ */
+export function pickupGatePx(item: PickupItem, player: { radius: Fp }): number {
+  return fpToPx(
+    (item.kind === 'weapon' ? SIM.lootRevealRadius : SIM.pickupRadius + player.radius) as Fp,
+  );
 }
 
 export class PickupDebugOverlay {

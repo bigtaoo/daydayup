@@ -1,7 +1,9 @@
 import { Application, Container } from 'pixi.js';
 import {
   createGameEngine,
+  ReplayInputSource,
   SKIN_DEFS,
+  type EngineConfig,
   type GameEngine,
   type GameState,
 } from '@dd/engine';
@@ -10,6 +12,9 @@ import { connectOnlineSession } from './match/onlineConnect';
 import { buildDungeonRunConfig, buildArenaDemoConfig } from './match/offlineConfig';
 import type { ArenaId } from './match/arenaCatalog';
 import { buildTutorialConfig } from './match/tutorialConfig';
+import { MatchRecorder } from './match/MatchRecorder';
+import { saveMarkedReplay } from './match/replayDownload';
+import { loadReplayFile, replayStopTick } from './match/replayPlayback';
 import {
   defaultMetaState, bankMaterials, clearLoadout, selectCharacter,
   unlockBlueprint, createAccountSyncMetaStore, pullAccountMeta, type MetaState, type MetaStore,
@@ -81,6 +86,13 @@ export class Game {
 
   private scene = new Scene(this.layers);
   private engine: GameEngine | null = null;
+  // Every offline run records its own input stream (see MatchRecorder) so F9 can hand
+  // over a real repro. Free: LocalInputSource retained the stream already.
+  private recorder = new MatchRecorder();
+  // `?replay=<url>` (dev) — the recorded run being watched, and the tick playback holds
+  // at. Both null in a normal session. See match/replayPlayback.ts.
+  private replayUrl: string | null = null;
+  private replayStop: number | null = null;
   private builder: CommandBuilder;
 
   // In-match HUD (design/10 widget kit, extracted into HudView 2026-07-28): composed
@@ -271,6 +283,7 @@ export class Game {
       if (q.matchBaseUrl !== null) this.matchBaseUrl = q.matchBaseUrl;
       if (q.lagMs !== null) this.lagMs = q.lagMs;
       if (q.loadoutOverride) this.meta = { ...this.meta, loadout: q.loadoutOverride };
+      this.replayUrl = q.replayUrl;
       if (q.pickupDebug) {
         this.pickupDebugOverlay = new PickupDebugOverlay();
         this.layers.hud.addChild(this.pickupDebugOverlay.view);
@@ -402,6 +415,10 @@ export class Game {
         if (!this.online) {
           if (this.phase === 'playing' && (e.code === 'Escape' || e.code === 'KeyP')) this.pause();
           else if (this.phase === 'paused' && (e.code === 'Escape' || e.code === 'KeyP')) this.resume();
+          // Save a marked replay of the run so far (see saveReplay). Deliberately always
+          // available rather than behind a `?replay=1` flag: the moment worth recording is
+          // one nobody planned for, so opting in beforehand is exactly what fails.
+          if (e.code === 'F9') this.saveReplay();
         }
       });
     }
@@ -417,6 +434,8 @@ export class Game {
 
     this.showMenu();
     this.app.ticker.add((t) => this.update(t.deltaMS));
+    // `?replay=` — skip the menu and watch the recording instead (dev only).
+    if (this.replayUrl) void this.beginReplayRun(this.replayUrl);
   }
 
   // ---- Scene construction (static) ----
@@ -812,7 +831,7 @@ export class Game {
 
     // Carry the chosen character + the crafted loadout into the run (design/14) — see
     // offlineConfig.ts's buildDungeonRunConfig doc comment for the coop/single-player shape.
-    this.engine = createGameEngine(buildDungeonRunConfig({
+    this.startOfflineEngine('dungeon', buildDungeonRunConfig({
       seed: SEED_BASE + this.runCount,
       coop: this.coop,
       localSeat: { skinId: this.meta.selectedSkin, loadout: this.meta.loadout },
@@ -850,13 +869,9 @@ export class Game {
     this.resetRunRenderState();
     this.tutorialActive = true;
     this.tutorialHints.reset();
-    this.engine = createGameEngine(buildTutorialConfig({ skinId: this.meta.selectedSkin }));
+    const tutorial = this.startOfflineEngine('tutorial', buildTutorialConfig({ skinId: this.meta.selectedSkin }));
     this.runCount++;
-    this.roomBuilder.build(this.engine.state);
-    this.phase = 'playing';
-    this.hudView.visible = true;
-    this.modeSelect.hide();
-    this.screens.hide();
+    this.enterPrimedRun(tutorial, () => this.modeSelect.hide());
   }
 
   /** Dev-only (see `arenaDemo` field doc comment): a catalog ArenaMap + two local seats
@@ -865,18 +880,58 @@ export class Game {
    * the view, so `buildRoom` is called once here directly. The second seat is driven by
    * the existing coop bot-ally submit path (stepSim), not a real opponent. */
   private beginArenaDemoRun() {
-    this.engine = createGameEngine(buildArenaDemoConfig({
+    const arena = this.startOfflineEngine('arena', buildArenaDemoConfig({
       seed: SEED_BASE + this.runCount,
       arenaId: this.arenaDemo ?? 'landing_basic',
       localSkinId: this.meta.selectedSkin,
       allySkinId: this.allySkinId(),
     }));
     this.runCount++;
-    this.roomBuilder.build(this.engine.state);
+    this.enterPrimedRun(arena);
+  }
+
+  /** The tail every run whose scene is primed up front shares (arena/tutorial/replay):
+   *  build the geometry once, then hand the screen over. Dungeon runs do NOT come here —
+   *  their first room primes on tick 1's `room_enter` (see beginRun's note). */
+  private enterPrimedRun(engine: GameEngine, hide: () => void = () => this.forge.hide()) {
+    this.roomBuilder.build(engine.state);
     this.phase = 'playing';
     this.hudView.visible = true;
-    this.forge.hide();
+    hide();
     this.screens.hide();
+  }
+
+  /** Offline engine on a RECORDED input source, so F9 can export the run
+   *  (match/MatchRecorder.ts). Every offline entry point goes through here — a hotkey
+   *  that only works if you started the run the right way would be useless. */
+  private startOfflineEngine(label: string, config: EngineConfig): GameEngine {
+    this.engine = createGameEngine(config, this.recorder.begin(label, config));
+    return this.engine;
+  }
+
+  /** `?replay=<url>`: watch a recording instead of playing (match/replayPlayback.ts).
+   *  Failures land in a toast, not a throw — a wrong path or a stream from another
+   *  ENGINE_VERSION is the normal way this gets used wrong, and a black screen would be
+   *  the worst way to say so. */
+  private async beginReplayRun(url: string) {
+    try {
+      const file = await loadReplayFile(url);
+      this.resetRunRenderState();
+      this.tutorialActive = false;
+      this.recorder.end(); // the stream is the file's, not a live run's
+      this.replayStop = replayStopTick(file);
+      this.engine = createGameEngine(file.replay.config, new ReplayInputSource(file.replay));
+      this.enterPrimedRun(this.engine);
+      this.hud.toast(`Replay ${file.label} v${file.engineVersion}, held at tick ${this.replayStop}`, THEME.colors.pickupHeal);
+    } catch (e) {
+      this.replayStop = null;
+      this.hud.toast((e as Error).message, THEME.colors.enemy);
+    }
+  }
+
+  /** F9: export the run so far, marked at this tick (match/replayDownload.ts). */
+  private saveReplay() {
+    this.hud.toast(saveMarkedReplay(this.recorder, this.engine?.state.tick ?? 0, Date.now()), THEME.colors.pickupHeal);
   }
 
   // ---- Online co-op (ROADMAP 3.3): matchmaking → socket → CoopSession ----
@@ -893,6 +948,9 @@ export class Game {
   private finalizeOnlineRun(session: CoopSession) {
     this.resetRunRenderState();
     this.tutorialActive = false;
+    // Drop the last offline run's stream: online input arrives on the confirmed net
+    // stream, so nothing here records it and F9 must not export a stale file.
+    this.recorder.end();
     this.session?.close();
     this.session = session;
     this.gameLoop.resetOnlinePrediction(); // re-anchors on the first confirmed frame of the new run
@@ -1021,6 +1079,10 @@ export class Game {
 
   isTutorialActive(): boolean {
     return this.tutorialActive;
+  }
+
+  replayStopTick(): number | null {
+    return this.replayStop;
   }
 
   getEngine(): GameEngine | null {

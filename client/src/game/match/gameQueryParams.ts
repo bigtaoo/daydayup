@@ -15,6 +15,7 @@ export interface GameQueryParams {
   loadoutOverride: string[] | null;
   perf: boolean;
   pickupDebug: boolean;
+  replayUrl: string | null;
 }
 
 /** Game's constructor calls this instead of `parseGameQueryParams(location.search)`
@@ -57,5 +58,10 @@ export function parseGameQueryParams(search: string): GameQueryParams {
     // GameState directly (scene/PickupDebugOverlay.ts) — the "unpickable drops" investigation's
     // instrument for telling "looks reachable" from "the sim agrees it's reachable".
     pickupDebug: params.get('pickupDebug') === '1',
+    // Dev: play a recorded run back through the real client instead of playing one
+    // (match/replayPlayback.ts). The value is a URL the client can fetch — in practice a
+    // file dropped into `client/public/`, e.g. `?replay=/ddreplay-dungeon-123.json`.
+    // Pairs with `?pickupDebug=1`: that is the whole reason this exists.
+    replayUrl: params.get('replay'),
   };
 }

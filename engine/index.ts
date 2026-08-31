@@ -30,4 +30,5 @@ export * from './world';
 export * from './systems';
 export * from './GameEngine';
 export * from './replay';
+export * from './replayFile';
 export * from './net';

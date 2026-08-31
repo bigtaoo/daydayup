@@ -19,7 +19,15 @@ describe('parseGameQueryParams', () => {
       loadoutOverride: null,
       perf: false,
       pickupDebug: false,
+      replayUrl: null,
     });
+  });
+
+  it('reads ?replay= as the recorded-run URL to play back', () => {
+    expect(parseGameQueryParams('?replay=/ddreplay-dungeon-17.json').replayUrl).toBe(
+      '/ddreplay-dungeon-17.json',
+    );
+    expect(parseGameQueryParams('?pickupDebug=1').replayUrl).toBeNull();
   });
 
   it('reads skin/mm/wpn as passthrough strings when present', () => {

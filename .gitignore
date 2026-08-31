@@ -14,6 +14,11 @@ client/ios/
 # via a DevTools "new mini-game project" + `npm run build:wechat`. See design/04-wechat.md.
 platforms/
 
+# Recorded runs (engine/replayFile.ts). A repro file is dropped into client/public/ so
+# `?replay=/ddreplay-….json` can fetch it — it is evidence for one bug, never source, and
+# it would otherwise be bundled into every build.
+client/public/ddreplay-*.json
+
 # Logs
 *.log
 npm-debug.log*

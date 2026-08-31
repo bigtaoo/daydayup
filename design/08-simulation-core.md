@@ -156,6 +156,49 @@ Reuse funny's seam unchanged (`net/InputSource.ts`):
 - **Replay = `seed + config + input stream`, never state** (funny `Replay`); a fresh engine on the same seed reconstructs every frame. `runHeadless(config, input, maxTicks)` is the shared authoritative loop for post-match re-judge / anti-cheat backstop (`06`).
 - **`ENGINE_VERSION`** guards replays: bump it whenever a change to the core could make an old recorded stream diverge (system reorder, fp/brad table change, new PRNG draw site). `ReplayInputSource` refuses a mismatched version — fails loud instead of replaying garbage.
 
+### Getting a replay OUT of a live session ✅ (2026-08-31)
+
+Everything above shipped in Stage E and then sat unused for months: **nothing in `client/`
+or `server/` ever called `toReplay`**, so the engine could replay a match nobody could
+record. A bug report could carry a seed, and a seed is not a repro — where a monster dies,
+and therefore where its loot lands, is a function of the input stream. That gap is what
+made the recurring "无法拾取的掉落物" report unanswerable after the engine sweeps came
+back clean (ROADMAP v50): the missing evidence was the moment, not more content.
+
+- **`engine/replayFile.ts`** — the file envelope: `kind`/`fileVersion`/`engineVersion`,
+  wall-clock metadata, human-supplied `marks` (a tick plus a note: "it happened HERE"),
+  and the `Replay` itself. `parseReplayFile`/`parseReplayFileText` validate an untrusted
+  file field by field and throw rather than replaying a malformed stream as idle-hold —
+  the same "fail loud, never replay garbage" rule `ReplayInputSource` already applied to
+  the version. Pure data, no host API, so the engine stays host-free.
+- **The whole `EngineConfig` is embedded**, not a "how to rebuild it" descriptor. It costs
+  ~18 kB and buys the property the format exists for: the geometry in the file IS the
+  geometry the run had. A descriptor would rebuild the world from today's content, and
+  content is not covered by `ENGINE_VERSION`, so nothing else would catch the drift.
+  Measured: ~100 B/tick for the stream, i.e. ~360 kB/minute, ~7 MB for a 20-minute run,
+  both budgets gated in `replayFile.test.ts`.
+- **Recording is free and always on** (`client/src/game/match/MatchRecorder.ts`).
+  `LocalInputSource` has always retained every command it was handed — an offline run was
+  already holding its own replay in memory — so the recorder only keeps the config beside
+  it and packs the two on demand. That is what makes the **F9** hotkey work: the moment
+  worth recording is one nobody planned for, so an opt-in flag is exactly what fails.
+  Online runs are excluded: their authoritative record is the server's confirmed stream.
+- **Playback runs inside the real client** (`?replay=<url>`, `match/replayPlayback.ts`),
+  because the open half of that report is a render-vs-sim disagreement and no headless
+  re-run can see a frame. `GameLoop` submits nothing while a recording drives the engine
+  (`ReplayInputSource` is read-only and throws — the guard is enforced by a real source,
+  not by a spy), and the sim **holds at the marked tick** while the render loop keeps
+  running, which is what a screenshot of the reported moment needs. Pair it with
+  `?pickupDebug=1`.
+- **Offline analysis**: `DD_REPLAY=<path> npm run replay:inspect`
+  (`client/sim/replayInspect.sim.ts`) reports, per drop, how close the player ever got,
+  how close their PATH came, the gate it was judged against, and whether the engine's own
+  `pickup` event ever fired for it. Two traps found by running it rather than reading it:
+  `PickupSystem` collects DURING a tick, so the one tick a drop was collectible is the one
+  tick a post-step observer cannot see it — the first run called four collected drops
+  "never collectible"; and the per-tick sample is not the closest the player's path came,
+  which is a distinct answer to "I walked right over it".
+
 ## Engine assembly
 
 Mirror funny's mixin chain (`GameEngine.ts`) *only if* the engine grows past one file; start as a single `GameEngineImpl` and split by domain (loop / commands / spawns / wincondition / helpers) when it does. The factory `createGameEngine(config, input?)` defaults `input` to `LocalInputSource` so single-player and tests need no net setup. Keep `GameEngineBase` holding construction/mode setup; systems are separate classes (`MovementSystem`, `CombatSystem`, …) each with a `tick(state)` method, instantiated once and called in the fixed order above.

@@ -8337,3 +8337,95 @@ The refactor that collapsed three copies of the wall-boundary rule into `systems
 shipped **without** a bump, and the golden fixture recorded before it is what proves that rather
 than asserting it. That is the whole workflow the document exists to install, and it paid for
 itself on its first use.
+
+## A seed was never a repro, and nothing had ever recorded a run (2026-08-31, engine + client)
+
+Asked whether there were recordings of the unpickable-loot report, with the reason spelled out:
+*"单纯的起始种子还不够，因为怪物死亡时的位置和角色的位置有关"* — a monster dies where the player
+pushed it to, so the drop position is a function of the input stream, not of the seed.
+
+That is exactly right, and the honest answer was worse than expected. The engine has been able to
+replay a match since Stage E — `Replay = seed + config + input stream`, `runHeadless`, `hashState`,
+`ReplayInputSource` refusing a version mismatch — and **nothing in `client/` or `server/` had ever
+called `toReplay`**. Every consumer was a test. The capability existed and was unreachable from a
+real session, which is why four rounds of this report (v47/v48/v49/v50) were each answered with a
+fresh sweep instead of the moment itself.
+
+### What shipped
+
+- **`engine/replayFile.ts`** — the file envelope (`kind`/`fileVersion`/`engineVersion`/`marks`/
+  `Replay`), with a validating parser that throws field by field rather than replaying a malformed
+  stream as idle-hold. The whole `EngineConfig` is embedded rather than a rebuild descriptor, on
+  purpose: the geometry in the file IS the geometry the run had, and content is not covered by
+  `ENGINE_VERSION`, so a descriptor would silently rebuild the level from today's content. Measured
+  ~18 kB of config plus ~100 B/tick of stream (~360 kB per minute of play), both gated.
+- **`client/src/game/match/MatchRecorder.ts` + F9** — recording costs nothing and is always on,
+  because `LocalInputSource` already retained every command it was handed: an offline run has been
+  holding its own replay in memory this whole time. F9 marks the current tick and downloads the run.
+  Deliberately not behind a flag — the moment worth recording is one nobody planned for, so opting
+  in beforehand is precisely the thing that fails. Online runs are excluded (the server's confirmed
+  stream is their record).
+- **`?replay=<url>` playback in the real client** — because the remaining candidates for this report
+  are all on the render side of the sim boundary, and no headless re-run can see a frame. `GameLoop`
+  submits nothing while a recording drives the engine, and the sim **holds at the marked tick** while
+  the render loop keeps running. Pair with `?pickupDebug=1` and the reported moment is a frame you
+  can look at as long as you like.
+- **`DD_REPLAY=<path> npm run replay:inspect`** — the offline half. Per drop: closest the player
+  ever got, closest their PATH came, the gate it was judged against, and whether the engine's own
+  `pickup` event ever fired for it.
+
+### Two traps the harness only revealed by being run
+
+Both would have produced a confident wrong answer on the first real report:
+
+1. **`PickupSystem` collects DURING a tick**, so the one tick a drop was inside the gate is the one
+   tick a post-step observer cannot see it being collectible. The first run of the harness called
+   **7 of 8 drops "never collectible"**, four of which had plainly been picked up. Fixed by observing
+   both sides of the step AND attributing the engine's own `pickup` event; `vanished` now exists as
+   an anomaly channel for a drop that left the state with no event to explain it (empty on shipped
+   content, asserted).
+2. **A per-tick sample is not the closest the player's path came.** A player moves 6.4 px/tick
+   against a 31 px gate, so a tangential pass can miss every sample and still cross the ring —
+   a distinct answer to "I walked right over it". `sweptClosestPx` measures the segment.
+
+### What it found on a bot-driven run, and what that is worth
+
+8 drops, 5 collected, 3 left lying. The closest miss: a **heal the player passed at 31.9 px sampled /
+31.8 px swept, against a 31.0 px gate** — 0.8 px short, never collected, still on the floor when the
+run ended. Not a code defect (the path genuinely never crossed the ring, so it is not a sampling
+miss either) and not proof of the report. It is a measurement of how tight that gate is in ordinary
+movement, and a reminder that 31.9 px and 31.0 px are indistinguishable to a player. Also recorded,
+because it is the same class: a **weapon** drop is claimable from 80 px (`lootRevealRadius`, the
+panel's own ring) while a heal at the identical apparent distance needs 31 px — two drops that look
+equally underfoot behave differently.
+
+### Verification
+
+Full repo `npm run check` green: engine 1064 → 1083, client 3778 → 3816, 5,950 repo-wide, `tsc
+--noEmit` clean, `check:filelength` clean (`Game.ts` 1042 → 1103, documented in the baseline JSON —
+assembly-shell wiring plus one run-lifecycle entry point, net of a dedup that folded the
+arena/tutorial/replay run-entry tails into `enterPrimedRun`).
+
+Then verified live, which is where the one real bug turned up: `beginReplayRun` set the phase and the
+stop tick but **never assigned `this.engine`** — the refactor that deduped the run-entry tail dropped
+the assignment, and nothing in the test suite noticed because every test drives `GameLoop` with an
+engine it constructed itself. Found in the browser in under a minute.
+
+The live evidence, once fixed, is three independent readers agreeing on one frame: driving the
+recorded run to its mark in the real client puts the player at gx 56653 fp = 1812.9 px, and the
+`?pickupDebug=1` overlay's own labels read `heal 47px / weapon 23px / material 122px / material 141px
+/ heal 143px` — the same five drops, the same distances, as the offline harness printed for tick 1200
+(46.8 / 23.2 / 122.4 / 140.8 / 143.2). F9 was fired as a real `keydown` in that session and produced
+`ddreplay-dungeon-<ms>.json` off a blob URL; the packed file carries 201 commands for 201 ticks, the
+mark at 201, and all 14 authored room pieces.
+
+One environment limit, unchanged from every prior pass: the Browser pane does not composite when
+hidden, so `requestAnimationFrame` never fires and playback had to be driven by hand through
+`window.__game.gameLoop.update(...)`. That drives the real loop, so it is evidence about the loop —
+it is not evidence about frame pacing, and no screenshot was taken.
+
+### Still open
+
+- **The report itself, unchanged.** Nothing here explains it; what changed is that the next
+  occurrence produces a file instead of a description. What is needed is one F9 press at the moment
+  it happens.

@@ -10,7 +10,7 @@
  * by design, never imports.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { createGameEngine, createGameState, buildEnemyActor, toFp, EMBER_DUNGEON, EMBER_ROOMS, type DungeonConfig } from '@dd/engine';
+import { createGameEngine, createGameState, buildEnemyActor, makeCommand, quantizeMove, ReplayInputSource, toFp, toReplay, EMBER_DUNGEON, EMBER_ROOMS, type DungeonConfig } from '@dd/engine';
 import type { CoopSession } from '../../net/CoopSession';
 import type { InputSource, InputState, TouchVisual } from '../../platform/types';
 import { CommandBuilder } from './CommandBuilder';
@@ -109,6 +109,7 @@ function buildHost(overrides: Partial<GameLoopHost> = {}): GameLoopHost & { loca
     isCoop: () => false,
     isArenaDemo: () => false,
     isTutorialActive: () => false,
+    replayStopTick: () => null,
     localOwner: 0,
     getEngine: () => null,
     getSession: () => null,
@@ -234,6 +235,55 @@ describe('GameLoop — offline sim stepping (advanceSim/stepSim)', () => {
     loop.update(SIM_DT_MS_FOR_TESTS);
 
     expect(submitSpy).toHaveBeenCalledTimes(1);
+  });
+
+  // `?replay=` playback (match/replayPlayback.ts). ReplayInputSource is read-only by
+  // design — `submit` THROWS — so "the loop must not submit over the recording" is a
+  // claim a real source can enforce rather than a spy having to notice.
+  // CFG has no waves, and a wave-less run reaches `gameover` on tick 1 (its tick then
+  // stops advancing) — useless for asserting WHERE playback stops. This one keeps running.
+  const REPLAY_CFG = { ...CFG, waves: [[[520, 400] as const]] };
+  const recordedReplay = (ticks: number) =>
+    toReplay(
+      REPLAY_CFG,
+      Array.from({ length: ticks }, (_, i) =>
+        makeCommand({ owner: 0, tick: i + 1, ...quantizeMove(1, 0), buttons: 0 }),
+      ),
+    );
+
+  it('replay playback: drives the engine from the recording without submitting over it', () => {
+    const { deps, scene } = buildDeps();
+    const engine = createGameEngine(REPLAY_CFG, new ReplayInputSource(recordedReplay(10)));
+    const host = buildHost({ getEngine: () => engine, replayStopTick: () => 10 });
+    const loop = new GameLoop(deps, host);
+
+    loop.update(SIM_DT_MS_FOR_TESTS);
+
+    expect(engine.state.tick).toBe(1);
+    expect(scene.reconcile).toHaveBeenCalledTimes(1);
+  });
+
+  it('replay playback: holds the sim at the marked tick while the render loop keeps going', () => {
+    const { deps, scene } = buildDeps();
+    const engine = createGameEngine(REPLAY_CFG, new ReplayInputSource(recordedReplay(10)));
+    const host = buildHost({ getEngine: () => engine, replayStopTick: () => 3 });
+    const loop = new GameLoop(deps, host);
+
+    for (let i = 0; i < 10; i++) loop.update(SIM_DT_MS_FOR_TESTS);
+
+    expect(engine.state.tick).toBe(3); // frozen AT the mark, not run to the stream's end
+    expect(scene.interpolate).toHaveBeenCalledTimes(10); // still rendering every frame
+  });
+
+  it('THE CONTROL: without the replay guard the same setup throws, so the guard is load-bearing', () => {
+    const { deps } = buildDeps();
+    const engine = createGameEngine(REPLAY_CFG, new ReplayInputSource(recordedReplay(10)));
+    // replayStopTick null = a normal run, so the loop submits a live command — which is
+    // exactly what a read-only source refuses.
+    const host = buildHost({ getEngine: () => engine, replayStopTick: () => null });
+    const loop = new GameLoop(deps, host);
+
+    expect(() => loop.update(SIM_DT_MS_FOR_TESTS)).toThrow(/read-only/);
   });
 
   it('feeds this tick\'s events to EventReactor and (while tutorialActive) TutorialHintController', () => {
