@@ -11,6 +11,8 @@ Mirrors the `art/` convention: this directory holds the **source** audio and its
 paperwork. Nothing here is loaded at runtime — what the game ships is the processed copy
 under `client/public/audio/`.
 
+> **Status (2026-08-31): the SFX set is complete and playing; MUSIC now has files that nothing plays yet.** Two loops ship under `client/public/audio/music/` (`menu.mp3` 69.0 s / 511.8 kB, `boss.mp3` 64.5 s / 603.4 kB), cut from AI-generated masters in `sources/suno/` — see "Music" below. They are **not** CC0 library material like everything else here, and no client code reads them. Nobody has listened to them either.
+>
 > **Status (2026-08-30): 19 of 20 cues have assets, and all of them play.** The set is
 > **50 processed MP3s, 101.9 kB** under `client/public/audio/`. The 2026-08-28 pass wired the
 > original 46 up (`client/src/audio/`, above); the 2026-08-30 pass added the **four `ui.*`
@@ -179,3 +181,47 @@ leading silence, so MP3's encoder delay is not a latency problem here. This agre
 **Still unverified:** MP3 decoding on a real WeChat device at the lowest base library — the
 same open checklist item as `design/04` item 2. OGG/Vorbis remains the right choice for music
 loops, where the fixed header amortises away.
+
+## Music (2026-08-31)
+
+Two loops, from **AI-generated masters (Suno)** rather than the CC0 library material every cue here
+came from — CC0 music turned out to be almost entirely chiptune, a direct style mismatch for
+`design/13`'s flat-cel direction. Masters are kept in `sources/suno/`, one directory per source
+exactly like the Kenney packs. `tools/audio-pipeline/process_music.py` cuts them; `audit.py --class
+music` gates them.
+
+| shipped | from | region | length | bytes | rate | xfade band-diff | mid-band |
+|---|---|---|---|---|---|---|---|
+| `music/menu.mp3` | `Crystal Menu.mp3` (322.7 s) | 218.5 s + 69.0 s | 69.0 s | 511.8 kB | 24 kHz stereo | 1.15 dB | -30.00 dBFS |
+| `music/boss.mp3` | `Frozen Resonance.mp3` (248.0 s) | 145.0 s + 64.5 s | 64.5 s | 603.4 kB | 24 kHz stereo | 1.63 dB | -30.00 dBFS |
+
+**Per-track selection rationale.**
+
+- **`menu`** — the second generation, after the first came back in the wrong register (below). Best
+  loop region in the whole track at any length. Energy sits 160 Hz-1.2 kHz; 40-49 Hz reads -66 dBFS,
+  so no shelf was needed. The requested high sparkle above 4 kHz never arrived (-70 dBFS and below):
+  not a defect, an open taste question.
+- **`boss`** — generated against the **menu** brief and measured as something else entirely: 90% of
+  its energy below 109 Hz, 95% below 198 Hz, nothing above 2 kHz, with the 40-49 Hz band 13 dB above
+  every other. That is dread, not a calm hub, so it became the boss bed. A 4th-order zero-phase shelf
+  at 80 Hz / -14 dB took its 20-250 Hz RMS from -11.1 to -26.7 dBFS. Its 33.5 s region at 103.0 s
+  ties on seam quality at half the bytes, but a boss fight would hear it turn over.
+- **`dungeon.ember`** — no master yet. It is the only one of the three that has to survive real
+  combat density, so its brief depends on how the two above actually sound in the game.
+
+**Level.** Both are normalised so their 250-2000 Hz RMS is -30 dBFS, which leaves every cue's peak
+9.1-15.7 dB above the bed in the band they share (`ui-tap` +9.1, `muzzle` +13.4, `impact` +15.3,
+`deflect` +15.7). The masters arrived at -0.1 dBFS peak, roughly 20 dB hotter than the cue set, which
+was deliberately peak-matched down to the quiet synth voices it replaced. Expect every AI master to
+need 13-15 dB off.
+
+**Licensing.** AI-generated, so the CC0 paperwork in `licenses/` does not cover these two. The
+service's commercial-use terms were accepted as adequate by the project owner for purely
+instrumental output; no licence text is archived for them yet and no `credits.json` entry exists —
+both are open items, and the music files are outside `client/src/platform/audioAssets.test.ts`
+altogether (it reads `public/audio/` non-recursively).
+
+**Why MP3 here too, against this file's own earlier note.** The OGG-vs-MP3 section below ends by
+saying Vorbis is the right choice for music loops. On bytes it is; on decode support it is not —
+ogg/Vorbis is unreliable on iOS Safari and absent from WeChat `InnerAudioContext`'s documented format
+list. A few tens of kB is not worth a chance of silence on two major targets.

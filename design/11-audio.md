@@ -10,7 +10,9 @@ How the game sounds, and — more importantly for a deterministic-lockstep title
 >
 > **Update (2026-08-30): the UI now makes sound too.** Everything above is about cues the ENGINE causes; the four `ui.*` cues are the ones the player's own finger causes, and they close this doc's own "UI-side cues (button tap, screen transition, extract/descend commit, result screen) come from `10`'s ScreenManager, not the engine". `ui.tap` / `ui.back` / `ui.toggle` / `ui.denied` are ordinary members of `AudioCue`, so they inherit the catalogue, the voice cap, the mixer's sample-or-synth ladder and both backends unchanged — what differs is only who fires them (`client/src/audio/uiSound.ts`, a module sink attached at boot, instead of `EventReactor`). Four more CC0 files ship for them (**50 files, 101.9 kB**), cut from the same Kenney Interface Sounds pack `clash`/`status.chill`/`wave-clear` already came from. Measured in a real browser rather than assumed: 50/50 variants decoded, a real mouse click on SETTINGS produced **one decoded 43 ms voice and zero oscillators**, and peak PCM on the SFX bus reads **ui.tap 0.046, ui.back 0.045, ui.toggle 0.042, ui.denied 0.057** against **muzzle 0.055, pickup.heal 0.064, impact 0.091, deflect 0.111** — the UI sits at or below the quietest combat cue, which is the mix this doc asks for. The WeChat half is unverified on a device, like the rest of that platform's audio.
 >
-> **Still open — none of it a wiring problem any more:** music/ambience do not exist as assets (below, and the sourcing note at the end); the WeChat path remains unverified on a real device, including which shape that runtime's `decodeAudioData` actually takes; the voice cap (12) is a first pass rather than a measurement; and **nobody has listened to the 50 files**. They were selected by measurement — fit against the synth voice each replaces — plus the material the world already specifies (`13`: crystal-mirror enemies, so glass). That rules out defects and matches loudness; it cannot say a sound is *right*, and the weakest pick on that basis is `win`. Now that the samples actually play, this is the open item that a person, not a test, has to close. The game stays fully playable silent, so none of it blocks anything.
+> **Update (2026-08-31): music exists as ASSETS, and still does not play.** Two loops ship under `client/public/audio/music/` — `menu.mp3` (69.0 s, 511.8 kB) and `boss.mp3` (64.5 s, 603.4 kB), **1.09 MB** total — cut from two AI-generated masters (Suno) kept in `art/audio/sources/suno/`, by the new `tools/audio-pipeline/process_music.py`. **Nothing in the client reads them**: `setMusicVolume` is still `(_v) => {}` in both backends, there is no `MusicPlayer`, no subpackage rule, and no focus/blur handling. The settings screen's music slider has always moved a number that goes nowhere, and that is unchanged. See "Music & ambience" below for what the two files already commit to, and "To design" for what the runtime still owes.
+>
+> **Still open — none of it a wiring problem any more:** the music RUNTIME does not exist (above); the third launch track (`dungeon.ember`) has no master yet; the WeChat path remains unverified on a real device, including which shape that runtime's `decodeAudioData` actually takes; the voice cap (12) is a first pass rather than a measurement; and **nobody has listened to the 50 files**. They were selected by measurement — fit against the synth voice each replaces — plus the material the world already specifies (`13`: crystal-mirror enemies, so glass). That rules out defects and matches loudness; it cannot say a sound is *right*, and the weakest pick on that basis is `win`. Now that the samples actually play, this is the open item that a person, not a test, has to close. The game stays fully playable silent, so none of it blocks anything.
 
 ## The decisions (locked)
 
@@ -94,6 +96,64 @@ Same principle as the section above — the failure is inaudible, so the tests a
 
 ## Music & ambience
 
+> **Assets built 2026-08-31; the runtime is not.** Two of the three planned launch loops exist as
+> shipped files and pass a gate. Nothing plays them. The decisions the two files already commit to
+> are below; everything under "Still design" is unchanged from before and unbuilt.
+
+### What the two shipped loops commit to
+
+- **Three tracks for launch, not eight.** `menu` (menu + forge outpost), `dungeon.ember` and `boss`.
+  The original plan below is one loop per elemental biome, but `theme.ts`'s `BIOME_ID_TO_ELEMENT`
+  maps the only authored dungeon to `fire`, and ice/lightning/poison have art with no dungeon
+  pointing at them. Same standard `assetPacks.json` already applies to art: do not pay bytes or
+  authoring time for content a run cannot reach. `menu` and `boss` ship; `dungeon.ember` does not
+  exist yet, and until it does the runtime should substitute an existing loop rather than fall silent.
+- **A loop is a REGION of a longer master, chosen by measurement.** An AI service returns a 4-6
+  minute song with an intro and a fade-out, not a loop. `process_music.py --search` ranks every
+  20-90 s region by how well its two ends match across the player's crossfade window; the chosen
+  region and its measured figures are recorded per track in that file's `TRACKS` table.
+- **The loop is closed by the PLAYER, not by the file.** `el.loop = true` is not usable here — MP3
+  frame padding denies sample-exact wrapping. The player instead starts a second deck at
+  `length - 2 s` and equal-power crossfades into it: the same mechanism a track-to-track change
+  needs, reused for the loop itself. Consequence for the assets, and it is a large one: head and
+  tail have to be *tonally compatible over 2 s*, not sample-continuous — a much weaker and much
+  more achievable requirement. `menu` measures **1.15 dB** mean energy-weighted per-band difference
+  across that window; `boss` **1.63 dB**.
+- **Level is set by a band target, and that target IS the mix decision.** The shipped cue set was
+  deliberately peak-matched DOWN to the synth voices it replaced and sits at **-14..-21 dBFS peak**;
+  both AI masters arrived at **-0.1 dBFS**, about 20 dB hot. Music is normalised so its **250-2000 Hz
+  RMS lands at -30 dBFS** — the band `impact` (-33.7), `muzzle` (-22.9) and `ui.tap` (-34.8) all peak
+  in. That leaves every cue's peak **9.1 to 15.7 dB above** the music's continuous level in the band
+  they share. Measured against the cues' PEAKS rather than their RMS on purpose: RMS-to-RMS would
+  demand a ~25 dB cut and bury the music, because a 43 ms transient and a 69 s bed are not
+  comparable as averages.
+- **Music is MP3, which REVERSES this doc's own earlier conclusion.** The SFX pass ended with
+  *"OGG/Vorbis remains the right choice for music loops, where the fixed header amortises away"* —
+  correct on bytes (the ~3.6 kB Vorbis codebook header does amortise past ~2 s) and incomplete on
+  decode support: ogg/Vorbis is unreliable on iOS Safari and is absent from `InnerAudioContext`'s
+  documented format list. Trading a few tens of kB against a chance of silence on two major targets
+  is the wrong trade. The byte reasoning in that note still stands; its conclusion for music does not.
+- **Music stays STEREO, where every cue is mono.** `audit.py`'s `sfx`/`ui` gates fail a stereo file
+  ("wastes bytes") because a 100 ms cue's second channel is pure overhead. Music streams, so its
+  bytes amortise over 69 s and the RAM argument for mono does not apply — which matters, because a
+  decoded 69 s stereo AudioBuffer at 48 kHz is **26 MB of RAM**. That figure is the reason music
+  streams through long-lived decks instead of going through `SampleBank` like every cue.
+- **A per-track low shelf is a legitimate processing step.** `boss` arrived with its 40-49 Hz band
+  **13 dB above every other band** — inaudible on a phone speaker, the only thing audible on
+  headphones, and costly in MP3 bits either way. A 4th-order zero-phase shelf at 80 Hz / -14 dB
+  brought its 20-250 Hz RMS from -11.1 to -26.7 dBFS. Every filter in the pipeline is a single
+  zero-phase multiply over the *whole region's* spectrum, i.e. circular convolution — and a loop
+  region *is* circular, so filtering cannot introduce an endpoint discontinuity the way a
+  windowed/overlap-add filter would.
+- **The gate is a new `audit.py` class, `music`, not the existing `loop`.** `loop` requires
+  `step_db <= -50` (what `el.loop = true` needs) and forbids stereo; `music` drops both, and adds
+  `xfade_band_diff <= 2.5` and `mid_band_dbfs` within `[-31, -29]`. Files route to it **by
+  directory** (`audio/music/*`), not by name: a track called `menu.mp3` matches no cue prefix, fell
+  through to the combat gate, and both beds were duly reported as "too long" and "stereo wastes
+  bytes".
+
+### Still design, not built
+
 - **Biome themes.** One loop per elemental biome (`05`/`13`), lazy-loaded with that biome's asset bundle (`12`). Cross-fade on floor transition.
 - **Boss stinger + combat layer.** Entering the boss room (`blightlord`, `09`) swaps to a boss track; an optional intensity layer can rise with on-screen enemy count read from `state` (render-side, no sim read-back).
 - **Outpost / menu.** A calm hub loop for the forge outpost (`14`/`13`) and menus (`10`).
@@ -138,7 +198,7 @@ Same principle as the section above — the failure is inaudible, so the tests a
 ## To design
 
 - ~~**Cue catalogue** — the cue-id list + per-cue gain/priority/variation-count, authored as data.~~ **Built (2026-08-27):** `client/src/audio/cueCatalogue.ts` plus the loading path — see the section above. It landed as its own module rather than in `content/` or the `12` manifest, for the reason recorded there.
-- **Music track list & transitions** — how many biome themes, boss/menu/outpost tracks, cross-fade rules, and the optional intensity layering source.
+- **Music track list & transitions** — **partly answered 2026-08-31**: three launch tracks rather than eight, and the cross-fade rule is settled by the double-deck loop mechanism above (2 s equal-power, serving both the loop and track-to-track). What the RUNTIME still owes: `MusicPlayer` plus one streaming deck implementation per platform (web `Audio` + `MediaElementAudioSourceNode` into a music gain node; WeChat two long-lived `InnerAudioContext`s whose `.volume` carries bus × fade, since they cannot be routed through a gain node), a `musicDirector` deriving the wanted track from screen/biome/boss-room state **each frame** rather than from events (idempotent, so it needs no dedupe and clears the autoplay gate by itself), a real `setMusicVolume` in both backends, focus/blur pause (`visibilitychange` / `wx.onAudioInterruptionBegin` — the audio side has neither today), and a TS-side byte budget and provenance record for the music files. The `assetPacks.json` prefix rule making `audio/music/` a subpackage **is done** (2026-08-31) — the WeChat byte gate forced it the moment the files existed, since without a rule they fall to `main` and took it from 4.00 to 5.09 MB against a hard 4.00 MB limit. One caution for whoever writes the runtime: with music moved out, **main sits at 4,191,575 / 4,194,304 bytes — 2,729 spare**, so the runtime's own code will not fit until something leaves main or the uncompressed-vs-compressed measure is settled (the checker reports main as ~3.36 MB gzipped). That last one is a real hole: `platform/audioAssets.test.ts` reads `public/audio/` **non-recursively** and filters `.mp3`, so the two loops sit outside every gate it holds, including the 160 KiB budget.
 - **Voice-count budget** on WeChat low-end (`04`) — the priority table and the coalescing curve now exist and are enforced (above), but the cap itself (12) was reasoned from what a frame can ask for, **not measured on a device**. That measurement is what is left.
 - ~~**Sourcing** — AI-generated vs. licensed library vs. commissioned, and the commercial-use licence check for a monetised title (`14`).~~ **Resolved for SFX (2026-08-27):** CC0-only, from free libraries, no AI generation and no commission. Six Kenney CC0 packs, licence texts archived under `art/audio/licenses/` and asserted by test. Still open **for music** — see the sourcing note below, where CC0 music turned out to be almost entirely chiptune, a style mismatch for `13`'s flat-cel direction.
 - ~~**Placeholder audio** — a tiny free/procedural SFX set to wire the event→sound path early.~~ **Resolved (2026-07-26):** `platform/audioSynth.ts` is that set, and it is still what plays. The 2026-08-27 asset pass did not replace it; it produced the files that will, once the catalogue above exists.
@@ -148,6 +208,7 @@ Same principle as the section above — the failure is inaudible, so the tests a
 - **`InnerAudioContext` pool size vs. latency** on the lowest base library (`04`) — is `wx.createWebAudioContext` reliable enough to prefer for SFX, or is the `InnerAudioContext` pool the safe floor?
 - **Predicted-vs-confirmed cue policy** per cue (play-on-predict then suppress, or play-on-confirm only) — decide against real RTT (`06`).
 - **Adaptive/interactive music** (intensity layers, stingers) vs. flat loops — worth the mixing complexity on WeChat, or ship flat loops first?
+- **Does `menu`'s missing high register matter?** Both AI masters were prompted for crystalline bell/glass timbres and both placed their energy about two octaves below what was asked: the first put 90% of it under 109 Hz (which is why it became `boss` instead), and the second, after `sub-bass`/`drone` went into the exclude list, reached 160 Hz-1.2 kHz but still produced nothing above 4 kHz (-70 dBFS and below). Neither file is *defective*; the question is whether a bed with no sparkle reads as the cold crystal hub `13` describes. Only listening answers it, and as of this pass nobody has listened to the music either.
 - ~~**Total audio budget** against WeChat package limits (`04`) — how much goes in the boot core vs. lazy sub-packages, and what compression bitrate holds up.~~ **Answered for SFX (2026-08-27, re-measured 2026-08-30):** the whole 50-file set is **101.9 kB** and sits in the boot core, with the main package at **3.42 MB / 4.00 MB** (the four UI cues added 6.9 kB). Bitrate is not a fixed setting — each file is encoded at whichever sample rate on a 16–48 kHz ladder yields the **smallest** MP3 while still clearing 2.2× its own measured 95% rolloff, because MP3 bytes are not monotonic in sample rate. A `client/src/platform/audioAssets.test.ts` budget of 160 KiB now gates drift. **Still open for music**, which is where the real bytes are and which belongs in lazy subpackages, not the core.
 - **Who signs off on how it sounds.** The 50 shipped files were chosen from spectra, not by ear (status block). Measurement cannot close this; a person has to listen — and as of 2026-08-27 these files are what actually plays, so "the synth voices are what plays anyway" is no longer the reason it can wait. It is still not *blocking* (the game is playable silent), but it is now the top open item on this doc.
 - **Does WeChat's `decodeAudioData` take the promise or the callback form** on the lowest target base library? `audio/decodeAudio.ts` accepts either, so the answer only decides which branch is dead code — but a decode that fails silently costs every sample on that platform, and the fallback (synth voices) is quiet about it.

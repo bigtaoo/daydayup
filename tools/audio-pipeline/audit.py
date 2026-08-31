@@ -33,6 +33,105 @@ def spectral(mono: np.ndarray, sr: int) -> tuple[float, float]:
     return centroid, rolloff
 
 
+# Log-band analysis, added 2026-08-31 for the music loops. A single spectral CENTROID
+# (spectral() above) is enough to compare two 100 ms cues, and far too coarse to say whether
+# two 2 s windows of a 69 s bed will wrap without lurching -- on a real candidate it read
+# 0.945 where the per-band measure read 2.4 dB.
+BAND_N, BAND_LO, BAND_HI = 30, 40.0, 16000.0
+BAND_FLOOR_DB = -120.0     # an EMPTY band must read a number: -inf - -inf = nan downstream
+XFADE_S = 2.0              # MusicPlayer's crossfade length; the window this measure compares
+
+
+def band_edges() -> np.ndarray:
+    return np.geomspace(BAND_LO, BAND_HI, BAND_N + 1)
+
+
+def band_profile(x: np.ndarray, sr: int) -> np.ndarray:
+    """Per-band RMS in dBFS over BAND_N log-spaced bands, floored at BAND_FLOOR_DB.
+
+    Accepts mono or (n, ch) -- `process_music.py` measures stereo regions with these.
+    """
+    mono = x.mean(axis=1) if x.ndim > 1 else x
+    spec = np.fft.rfft(mono)
+    freqs = np.fft.rfftfreq(len(mono), 1.0 / sr)
+    edges = band_edges()
+    out = np.full(BAND_N, BAND_FLOOR_DB)
+    n = len(mono)
+    # Parseval, one-sided: 2*sum|X_k|^2 / n^2 is the mean square of the band-limited signal.
+    for b in range(BAND_N):
+        sel = (freqs >= edges[b]) & (freqs < edges[b + 1])
+        if sel.any():
+            ms = 2.0 * float(np.sum(np.abs(spec[sel]) ** 2)) / (n * n)
+            out[b] = max(db(np.sqrt(ms)), BAND_FLOOR_DB)
+    return out
+
+
+def band_rms(x: np.ndarray, sr: int, lo: float, hi: float) -> float:
+    """RMS of the signal restricted to [lo, hi), in dBFS, over the whole signal."""
+    mono = x.mean(axis=1) if x.ndim > 1 else x
+    spec = np.fft.rfft(mono)
+    freqs = np.fft.rfftfreq(len(mono), 1.0 / sr)
+    spec[(freqs < lo) | (freqs >= min(hi, sr / 2.0))] = 0
+    y = np.fft.irfft(spec, len(mono))
+    return db(float(np.sqrt(np.mean(y ** 2))))
+
+
+def profile_diff(a: np.ndarray, b: np.ndarray) -> float:
+    """Energy-weighted mean |dB| difference between two band profiles.
+
+    ONE function, because this quantity is used twice: to rank candidate loop regions
+    (`process_music.py --search`) and to accept the shipped file (the `music` gate). Both
+    times it drifted apart from the other when they each computed it -- first at different
+    window resolutions (a region ranked 3.01 dB measured 5.61 dB), then with and without
+    this weighting (a region ranked 2.44 dB measured 3.39 dB). A search whose metric is not
+    literally the acceptance metric keeps handing back candidates that do not survive.
+    """
+    weight = 10.0 ** (np.maximum(a, b) / 10.0)
+    total = float(weight.sum())
+    if total <= 0.0:
+        return 0.0
+    return float(np.sum(weight * np.abs(b - a)) / total)
+
+
+def xfade_band_diff(x: np.ndarray, sr: int, xfade_s: float = XFADE_S) -> float:
+    """Per-band dB difference between the head and tail crossfade windows, ENERGY-WEIGHTED.
+
+    The weighting is not a refinement, it is what makes the measure mean anything. An
+    unweighted mean over 30 bands gives a band sitting at -100 dBFS the same vote as the
+    one carrying the music, and in a band that holds no signal the only thing left is FFT
+    leakage whose phase differs between the two windows. Measured: a two-sine bed whose head
+    and tail are *identical by construction* read 6.12 dB unweighted -- enough to fail a
+    3.5 dB gate on nothing at all.
+
+    Weighting each band by the louder of its two windows' energy makes the number mean
+    "how different are the parts you can hear", which is the question the crossfade poses.
+    """
+    w = int(xfade_s * sr)
+    if len(x) < 4 * w:
+        return float("nan")
+    return profile_diff(band_profile(x[:w], sr), band_profile(x[-w:], sr))
+
+
+def music_measures(mono: np.ndarray, sr: int) -> dict:
+    """The two numbers the `music` gate is about, or Nones when the file is too short.
+
+    `xfade_band_diff` replaces `step_db` for music: MusicPlayer fades a second deck in over
+    the tail, so head and tail are heard TOGETHER and only have to be tonally compatible --
+    sample continuity is neither required nor achievable, since MP3 frame padding denies it.
+
+    `mid_band_dbfs` is the mix decision made measurable. The shipped cues sit at -14..-21
+    dBFS peak, an AI master arrives at 0, and this is the band impact/muzzle/ui.tap all peak
+    in -- so it is the one number that decides whether combat still reads over the bed.
+    """
+    w = int(XFADE_S * sr)
+    if len(mono) < 4 * w:
+        return {"xfade_band_diff": None, "mid_band_dbfs": None}
+    return {
+        "xfade_band_diff": round(xfade_band_diff(mono, sr), 2),
+        "mid_band_dbfs": round(band_rms(mono, sr, 250.0, 2000.0), 2),
+    }
+
+
 def loop_seam(mono: np.ndarray, sr: int) -> dict:
     """How badly a naive end->start loop would click.
 
@@ -101,6 +200,7 @@ def analyse(path: str) -> dict:
             round(float(np.corrcoef(l, r_)[0, 1]), 3) if sl > 1e-9 and sr_ > 1e-9 else None
         )
     out.update(loop_seam(mono, sr))
+    out.update(music_measures(mono, sr))
     return out
 
 
@@ -143,6 +243,23 @@ GATES = {
         ("clipped_samples", None, 0, "clipped"),
         ("kbps", None, 128, "over budget for a lazy-loaded music subpackage"),
     ],
+    # `music` is `loop` for the player this project actually built (2026-08-31). The two
+    # differences are the whole point of the class, so changing one back is a design change:
+    #   * no `step_db`. That gate assumes `el.loop = true`, which MP3 frame padding makes
+    #     unusable anyway; MusicPlayer crossfades a second deck over the tail instead, so
+    #     `xfade_band_diff` is what decides whether the wrap is audible.
+    #   * no `channels` limit. The sfx/ui gates forbid stereo because a 100 ms cue's second
+    #     channel is pure overhead. A 69 s bed streams; the bytes amortise.
+    # The peak window is far below the sfx one: an AI master arrives at ~0 dBFS and has to
+    # come down ~15 dB before it belongs in a mix whose cues peak at -14..-21.
+    "music": [
+        ("duration_ms", 20000, 90000, "loop outside 20-90s -- shorter tires, longer wastes subpackage bytes"),
+        ("xfade_band_diff", None, 2.5, "head and tail differ tonally across the crossfade -- the wrap will lurch"),
+        ("mid_band_dbfs", -31.0, -29.0, "250-2000 Hz level off target: combat/UI cues stop reading over the bed"),
+        ("peak_dbfs", -24, -3.0, "peak outside usable range (inaudible / no headroom over the cue set)"),
+        ("clipped_samples", None, 0, "clipped"),
+        ("kbps", None, 128, "over budget for a lazy-loaded music subpackage"),
+    ],
 }
 
 # Which gate a shipped cue asset is held to, keyed by the cue-name prefix of its filename.
@@ -157,11 +274,21 @@ CUE_CLASS = {
 
 
 def class_for(filename: str, default: str) -> str:
-    """Pick the gate from a shipped asset's cue name (`deflect_02.mp3` -> sfx).
+    """Pick the gate from a shipped asset's path (`deflect_02.mp3` -> sfx).
 
     Shipped filenames flatten the cue id's dot to a dash (`pickup.weapon` ->
     `pickup-weapon_00.mp3`), so both separators have to match a prefix.
+
+    DIRECTORY FIRST, added 2026-08-31 with the music loops. Music ships as
+    `audio/music/<track>.mp3` -- names with no cue prefix at all, which fell through to the
+    caller's default and got a 69 s stereo bed held to the COMBAT gate ("too long", "stereo
+    wastes bytes"). A music track's class is decided by where it ships, exactly as its
+    WeChat package membership is (`assetPacks.json` prefix rules), and routing on the
+    directory means a track added later cannot inherit the wrong gate by being named badly.
     """
+    parts = os.path.normpath(filename).replace("\\", "/").split("/")
+    if "music" in parts[:-1]:
+        return "music"
     stem = os.path.splitext(os.path.basename(filename))[0]
     name = stem.rsplit("_", 1)[0] if "_" in stem else stem
     for prefix, cls in CUE_CLASS.items():

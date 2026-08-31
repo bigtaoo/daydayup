@@ -20,6 +20,14 @@
     "    (PvP, arena) falls to 'neutral'. So fire and neutral must stay in main and the other",
     "    three elements cannot be reached at all today.",
     "  - boss: 'blightlord' is the only user of skins/boss-core, and it spawns on floor 5 only.",
+    "  - music: the two shipped loops (design/11 'Music & ambience', 2026-08-31). This one is",
+    "    NOT justified by unreachability -- `menu` is wanted on the very first screen. It is",
+    "    justified by bytes: 1.09 MB of audio in main takes the FIRST download from 4.00 to",
+    "    5.09 MB, over the hard limit, and music is the one asset class a game can start",
+    "    without. Nothing in the client reads these files yet, so today the pack is declared",
+    "    and its contents are inert; when a player lands it should fetch this pack",
+    "    fire-and-forget at boot -- the same non-blocking shape as `audio.preload()` -- rather",
+    "    than awaiting it.",
     "Explicitly NOT deferred: brute-core and floater-core. `brute` and `floater` both spawn on",
     "FLOOR 1 (world/dungeons/ember/ember_l1_floor_1.json), so a pack holding them would be a",
     "lie the moment anyone made it lazy.",
@@ -70,6 +78,12 @@
       "root": "packs/boss",
       "limitBytes": 2097152,
       "note": "skins/boss-core — 'blightlord' only, floor 5 only."
+    },
+    {
+      "name": "music",
+      "root": "packs/music",
+      "limitBytes": 3145728,
+      "note": "audio/music/*.mp3 — the design/11 loops. 1.09 MB shipped (menu + boss); the third launch track (dungeon.ember) has no master yet, and the limit leaves room for it and not for much else."
     }
   ],
   "rules": [
@@ -82,6 +96,7 @@
     { "prefix": "/biome/floor_poison.png", "pack": "biome-poison" },
     { "prefix": "/biome/wall_poison.png", "pack": "biome-poison" },
     { "prefix": "/biome/wallface_poison.png", "pack": "biome-poison" },
-    { "prefix": "/skins/boss-core/", "pack": "boss" }
+    { "prefix": "/skins/boss-core/", "pack": "boss" },
+    { "prefix": "/audio/music/", "pack": "music" }
   ]
 }
