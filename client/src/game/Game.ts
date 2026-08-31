@@ -43,6 +43,7 @@ import { EventReactor, type EventReactorHost } from './controllers/EventReactor'
 import { TutorialHintController } from './controllers/TutorialHintController';
 import { RoomBuilder } from './scene/RoomBuilder';
 import { Backdrop } from './scene/Backdrop';
+import { PickupDebugOverlay } from './scene/PickupDebugOverlay';
 import { PortalPrompt } from './ui/PortalPrompt';
 import { RunOutcome } from './controllers/RunOutcome';
 import { ForgeActions } from './controllers/ForgeActions';
@@ -92,6 +93,10 @@ export class Game {
   // shares the exact same phase-driven visibility as the rest of the in-run HUD.
   private readonly touchControlsView = new TouchControlsView();
   private settingsBtn!: Button;
+
+  // `?pickupDebug=1` only (gameQueryParams.ts) — null in a normal session; mounted on
+  // `layers.hud` (world-space) below, since it draws collect-radius rings, not HUD text.
+  private pickupDebugOverlay: PickupDebugOverlay | null = null;
 
   private screens = new Screens();
   private forge = new Forge();
@@ -266,6 +271,10 @@ export class Game {
       if (q.matchBaseUrl !== null) this.matchBaseUrl = q.matchBaseUrl;
       if (q.lagMs !== null) this.lagMs = q.lagMs;
       if (q.loadoutOverride) this.meta = { ...this.meta, loadout: q.loadoutOverride };
+      if (q.pickupDebug) {
+        this.pickupDebugOverlay = new PickupDebugOverlay();
+        this.layers.hud.addChild(this.pickupDebugOverlay.view);
+      }
     }
     app.stage.eventMode = 'static'; // let the overlay receive pointer taps (web)
     app.stage.addChild(this.layers.root);
@@ -316,7 +325,7 @@ export class Game {
       touchControlsView: this.touchControlsView, portalPrompt: this.portalPrompt,
       partyScreen: this.partyScreen, builder: this.builder, ally: this.ally,
       input: this.input, events: this.events, runOutcome: this.runOutcome,
-      tutorialHints: this.tutorialHints,
+      tutorialHints: this.tutorialHints, pickupDebugOverlay: this.pickupDebugOverlay,
     }, this);
     this.mainMenu.onPlay = () => this.showModeSelect();
     this.mainMenu.onSquad = () => this.showSquad();

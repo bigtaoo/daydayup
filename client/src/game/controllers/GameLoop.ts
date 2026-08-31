@@ -20,6 +20,7 @@ import type { HudView } from '../ui/HudView';
 import type { TouchControlsView } from '../ui/TouchControlsView';
 import type { PortalPrompt } from '../ui/PortalPrompt';
 import type { PartyScreen } from '../screens/PartyScreen';
+import type { PickupDebugOverlay } from '../scene/PickupDebugOverlay';
 
 const SIM_DT_MS = 1000 / 30; // fixed sim step: the engine runs at 30 Hz (design/06)
 const MAX_STEPS = 5; // catch-up cap per render frame → no spiral of death
@@ -47,6 +48,9 @@ export interface GameLoopDeps {
   events: EventReactor;
   runOutcome: RunOutcome;
   tutorialHints: TutorialHintController;
+  /** `?pickupDebug=1` only — see gameQueryParams.ts and PickupDebugOverlay's own doc
+   *  comment. Null in every normal session. */
+  pickupDebugOverlay: PickupDebugOverlay | null;
 }
 
 /** The bits of Game the main loop needs but doesn't own itself — `phase`/`engine`/
@@ -419,6 +423,7 @@ export class GameLoop {
       showAlly: this.host.isCoop() || this.host.isArenaDemo(),
       allySkinId: this.host.allySkinId(),
     });
+    this.deps.pickupDebugOverlay?.update(s);
 
     // Portal popup (design/10 legibility fix, 2026-08-02) — replaces the old E-key
     // text prompt. "Checkpoint eligible" is shared between the portal's own open/

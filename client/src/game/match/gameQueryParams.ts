@@ -14,6 +14,7 @@ export interface GameQueryParams {
   lagMs: number | null;
   loadoutOverride: string[] | null;
   perf: boolean;
+  pickupDebug: boolean;
 }
 
 /** Game's constructor calls this instead of `parseGameQueryParams(location.search)`
@@ -52,5 +53,9 @@ export function parseGameQueryParams(search: string): GameQueryParams {
     // OTHER kind (ENGINE_VERSION 45) — `?wpn=<a gun>` spawns that gun + the saber.
     loadoutOverride: wpn ? [wpn] : null,
     perf: params.get('perf') === '1', // dev toggle: on-screen perf readout + GL draw-call probe (src/perf)
+    // Dev toggle: on-screen collect-radius rings + per-drop distance readout, drawn from
+    // GameState directly (scene/PickupDebugOverlay.ts) — the "unpickable drops" investigation's
+    // instrument for telling "looks reachable" from "the sim agrees it's reachable".
+    pickupDebug: params.get('pickupDebug') === '1',
   };
 }

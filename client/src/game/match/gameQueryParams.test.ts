@@ -18,6 +18,7 @@ describe('parseGameQueryParams', () => {
       lagMs: null,
       loadoutOverride: null,
       perf: false,
+      pickupDebug: false,
     });
   });
 
