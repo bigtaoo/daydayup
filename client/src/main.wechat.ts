@@ -5,6 +5,7 @@
 import 'pixi.js/unsafe-eval';
 import { Game } from './game/Game';
 import { setUiAudio } from './audio/uiSound';
+import { setMusicAudio } from './game/musicDirector';
 import { WeChatPlatform } from './platform/wechat/WeChatPlatform';
 import { weChatAssetHost } from './platform/wechat/weChatAssetHost';
 import { setAssetHost } from './render/assetHost';
@@ -52,6 +53,12 @@ async function boot() {
   // `WeChatAudio` registers none of the window listeners `WebAudio` uses to clear the
   // autoplay gate, so a menu tap is this runtime's first chance to resume the context.
   setUiAudio(audio);
+  // ...and the third road to the bus (design/11 "Music & ambience"): the same module-sink
+  // shape, for the same reason plus one — its per-frame caller is `GameLoop`, which would have
+  // to be handed the device by `Game.ts`, and that file's length is pinned by the drift gate.
+  // Nothing plays yet: `game/musicDirector.ts` derives the track from the situation on the
+  // first frame `Game` renders.
+  setMusicAudio(audio);
   await preloadCoreArt();
 
   const game = new Game(app, input, audio);

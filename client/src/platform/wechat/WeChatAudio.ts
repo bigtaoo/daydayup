@@ -1,7 +1,10 @@
-import type { AudioBus, AudioCue } from '../types';
+import type { AudioBus, AudioCue, MusicTrack } from '../types';
 import { SampleBank } from '../../audio/SampleBank';
 import { CueMixer } from '../../audio/CueMixer';
+import { MusicPlayer } from '../../audio/MusicPlayer';
+import { WeChatMusicDeck } from './weChatMusicDeck';
 import { readBinaryAsset } from '../../render/assetHost';
+import { packedPathFor } from '../../render/assetManifest';
 
 // WeChat audio backend (design/11).
 //
@@ -22,8 +25,26 @@ import { readBinaryAsset } from '../../render/assetHost';
 //      by base library, so `audio/decodeAudio.ts` accepts either. Which one a real device
 //      takes is unverified; a decode failure costs the samples, not the sound — the
 //      procedural voices keep playing.
-//   3. Music/ambience still do not exist as assets, so that half of design/11 stays a
-//      documented gap rather than being silently faked here.
+//   3. That `InnerAudioContext` accepts a path inside a loaded SUBPACKAGE. The music files live
+//      in the `music` pack (`render/assetPacks.json`), so their real src is
+//      `packs/music/audio/music/menu.mp3`. Package files are package files and
+//      `wx.loadSubpackage` has already resolved by the time `Game` exists, so this should
+//      simply work — but "should" is the word every other item on this list started with.
+//      A failure here is one `onError` line per deck and a silent bed, not a crash.
+//
+// MUSIC (design/11 "Music & ambience", built 2026-08-31) does NOT go through the context above.
+// It runs on two long-lived `InnerAudioContext` streams (`weChatMusicDeck.ts`) driven by the
+// same platform-agnostic `audio/MusicPlayer.ts` the web backend uses. Three consequences worth
+// stating, because each is a place the two platforms genuinely diverge:
+//
+//   - **A base library with no `createWebAudioContext` loses the SFX samples and keeps the
+//     music.** The two paths share no object, so item 1 above cannot take the bed down with it.
+//   - **There is no audio graph, so there is no music bus node.** `setMusicVolume` multiplies
+//     into each deck's own `.volume` alongside its crossfade level, which is why the two
+//     backends' implementations of that one method can never be shared.
+//   - **There is no autoplay gate on this path.** `WeChatAudio.play` waits for
+//     `ctx.state === 'running'`; `updateMusic` does not have to wait for anything, so on this
+//     target the menu bed starts on the first frame rather than on the first tap.
 export class WeChatAudio implements AudioBus {
   private ctx: AudioContext | null = null;
   private sfx: GainNode | null = null;
@@ -31,6 +52,26 @@ export class WeChatAudio implements AudioBus {
   private supported = true;
   private bank: SampleBank | null = null;
   private mixer: CueMixer | null = null;
+  private musicVolume = 0.5;
+  private player: MusicPlayer | null = null;
+  private decks: readonly WeChatMusicDeck[] = [];
+  /** Mirrors `supported` above, for the music path — see `ensureMusic`'s catch. */
+  private musicSupported = true;
+
+  constructor() {
+    // Focus/interruption (design/11 "Focus/blur & interruption", never wired until 2026-08-31).
+    // An incoming call is the case: this runtime has no DOM, so `visibilitychange` does not
+    // exist and these two callbacks are the ONLY signal. Registered in the constructor rather
+    // than lazily beside the decks, because an interruption can begin before any music has
+    // played and the resume half has to be armed for it.
+    //
+    // Music is held, not stopped, exactly as on web. The cues need nothing: the longest is
+    // 350 ms and would have finished before the handler ran.
+    if (typeof wx !== 'undefined') {
+      wx.onAudioInterruptionBegin?.(() => this.player?.setPaused(true));
+      wx.onAudioInterruptionEnd?.(() => this.player?.setPaused(false));
+    }
+  }
 
   private ensure(): AudioContext | null {
     if (this.ctx) return this.ctx;
@@ -74,9 +115,51 @@ export class WeChatAudio implements AudioBus {
     if (this.sfx) this.sfx.gain.value = this.sfxVolume;
   }
 
-  // Music not authored yet (design/11 reserved) — accept + ignore so settings
-  // (design/10) can already wire a slider to it, same as WebAudio.
-  setMusicVolume(_v: number): void {}
+  setMusicVolume(v: number): void {
+    this.musicVolume = Math.max(0, Math.min(1, v));
+    // No bus node to write once — see this class's header. Every deck re-derives
+    // `.volume = bus * fade` from the pair.
+    for (const deck of this.decks) deck.setBusVolume(this.musicVolume);
+  }
+
+  updateMusic(track: MusicTrack | null, dtMs: number): void {
+    const player = this.ensureMusic();
+    player?.update(track, dtMs);
+  }
+
+  /** Builds the two streaming decks on first use. Separate from `ensure()` on purpose: music
+   *  must not be gated on `createWebAudioContext`, which is the one audio API on this platform
+   *  design/11 records as unverified on the lowest base library. */
+  private ensureMusic(): MusicPlayer | null {
+    if (this.player) return this.player;
+    if (!this.musicSupported) return null;
+    if (typeof wx === 'undefined' || typeof wx.createInnerAudioContext !== 'function') return null;
+    try {
+      const deck = () =>
+        new WeChatMusicDeck({
+          create: () => wx.createInnerAudioContext!(),
+          // The path rewrite that makes music reachable here at all: `/audio/music/menu.mp3`
+          // is in the `music` subpackage, so this returns `packs/music/audio/music/menu.mp3`.
+          resolveSrc: packedPathFor,
+        });
+      const decks = [deck(), deck()] as const;
+      for (const d of decks) d.setBusVolume(this.musicVolume);
+      this.decks = decks;
+      this.player = new MusicPlayer({ decks });
+      return this.player;
+    } catch (err) {
+      // Same degrade rule as `ensure()`: give up on music for the session rather than retrying
+      // construction on every frame. A silent bed is survivable; a per-frame throw is not.
+      console.warn('music: InnerAudioContext unavailable, the game runs without a bed', err);
+      // The latch, without which the comment above would be a lie: `player` stays null on
+      // failure, so with nothing else to stop it this would re-attempt construction — and log —
+      // on every one of 60 frames a second.
+      this.musicSupported = false;
+      this.decks = [];
+      this.player = null;
+      return null;
+    }
+  }
 
   play(cue: AudioCue, count = 1): void {
     const ctx = this.ensure();

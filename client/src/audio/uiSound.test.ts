@@ -18,6 +18,7 @@ function fakeBus() {
     play: (cue, count) => { calls.push(count === undefined ? `play:${cue}` : `play:${cue}:${count}`); },
     setSfxVolume: () => {},
     setMusicVolume: () => {},
+    updateMusic: () => {},
     resume: () => { calls.push('resume'); },
   };
   return { bus, calls };

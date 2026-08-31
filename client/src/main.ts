@@ -1,5 +1,6 @@
 import { Game } from './game/Game';
 import { setUiAudio } from './audio/uiSound';
+import { setMusicAudio } from './game/musicDirector';
 import type { Phase } from './game/phase';
 import { WebPlatform } from './platform/web/WebPlatform';
 import { installAutoReload } from './platform/web/autoReload';
@@ -37,6 +38,12 @@ async function boot() {
   // module sink instead (audio/uiSound.ts explains the choice). Boot is where the device is
   // created, so boot is where it is attached.
   setUiAudio(audio);
+  // ...and the third road to the bus (design/11 "Music & ambience"): the same module-sink
+  // shape, for the same reason plus one — its per-frame caller is `GameLoop`, which would have
+  // to be handed the device by `Game.ts`, and that file's length is pinned by the drift gate.
+  // Nothing plays yet: `game/musicDirector.ts` derives the track from the situation on the
+  // first frame `Game` renders.
+  setMusicAudio(audio);
 
   await preloadCoreArt();
 

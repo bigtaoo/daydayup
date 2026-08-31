@@ -182,10 +182,15 @@ describe('WebAudio — setSfxVolume', () => {
     await Promise.resolve();
     audio.setSfxVolume(0.75);
     audio.play('muzzle'); // forces ensure() again to grab the (already-constructed) ctx/gain
-    // The SFX bus is the FIRST gain node the context ever made. `muzzle`'s catalogue gain is
-    // not 1.0, so the mixer hands the synth voice a trim node connected to that bus rather
-    // than the bus itself — the volume still has to land on the bus.
-    const [bus, trim] = instances[0]!.gains;
+    // The SFX bus is the FIRST gain node the context ever made, and the MUSIC bus (2026-08-31)
+    // is the second — design/11's "two buses + settings volume", so a player can mute the bed
+    // and keep the combat feedback. `muzzle`'s catalogue gain is not 1.0, so the mixer hands the
+    // synth voice a trim node connected to the SFX bus rather than the bus itself; the volume
+    // still has to land on the bus. Taken as first/last rather than by index so adding a node
+    // between them fails on the assertion that is actually wrong, not on this destructuring.
+    const gains = instances[0]!.gains;
+    const bus = gains[0];
+    const trim = gains.at(-1);
     expect(bus!.gain.value).toBe(0.75);
     expect(playCue).toHaveBeenCalledWith('muzzle', expect.anything(), trim);
     expect(trim!.connect).toHaveBeenCalledWith(bus);

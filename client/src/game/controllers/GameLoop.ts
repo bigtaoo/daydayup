@@ -2,6 +2,7 @@ import { hashState, PLAYER_BASE, roomRects, type GameEngine, type GameEvent, typ
 import type { CoopSession } from '../../net/CoopSession';
 import type { InputSource } from '../../platform/types';
 import type { Phase } from '../phase';
+import { updateMusicForFrame } from '../musicDirector';
 import { fpToPx, bradToRad } from '../coords';
 import { ELEMENT_COLORS } from '../theme';
 import { totalFloorCount, checkpointReached } from '../match/floorCount';
@@ -150,6 +151,16 @@ export class GameLoop {
 
   update(dt: number): void {
     const phase = this.host.getPhase();
+    // Music (design/11), before the branch so it runs in EVERY phase — the menu bed is as much
+    // a case as the dungeon one. `musicDirector` derives the track from the situation and
+    // setting the one already playing is a no-op, so there is no transition to detect here and
+    // nothing to keep in step with the phase branches below. It reaches the audio device through
+    // a module sink rather than a dep for the reason that file's header records: wiring one
+    // would have to land in `Game.ts`, whose length the drift gate pins.
+    updateMusicForFrame(
+      { phase, state: this.host.activeState(), localOwner: this.host.localOwner },
+      dt,
+    );
     if (phase === 'playing') {
       if (this.host.isOnline()) this.advanceOnline(dt);
       else this.advanceSim(dt);

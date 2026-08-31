@@ -179,10 +179,21 @@ standard subpackage has **no individual cap**, an *independent* subpackage ≤ 4
 whole game ≤ **30 MB**. `design/ROADMAP`'s parked note recorded only the 4 MB figure, which
 made the situation look more constrained than it is.
 
-Where it stands after the 2026-08-25 downsampling pass and the 2026-08-27 audio pass:
-**main 3.41 MB / 4.00 MB**, of which
-0.90 MB is `js/game.js` and 0.09 MB the 46 SFX assets added on 2026-08-27 (`design/11`), plus
-four subpackages totalling 0.64 MB (4.05 MB for the whole game against the 30 MB ceiling). `client/public` went from **13.66 MB to 3.20 MB** — and the
+Where it stands after the 2026-08-25 downsampling pass, the 2026-08-27 audio pass and the
+2026-08-31 music passes: **main 3.42 MB / 4.00 MB**, of which 0.91 MB is `js/game.js` and 0.10 MB
+the 50 SFX assets (`design/11`), plus **six** subpackages totalling 2.30 MB (5.72 MB for the whole
+game against the 30 MB ceiling). Two of those six are new and are justified on BYTES rather than on
+unreachability, which `assetPacks.json`'s `$comment` says explicitly: `music` (1.09 MB, the two
+design/11 loops) and `oversized` (one file — `environment/door_curtain_raw.png`, 606 kB, twelve
+times the next door state for a single fixture).
+
+**Do not trust the figure above; run the gate.** On 2026-08-31 main was found at **4,191,575 /
+4,194,304 bytes — 2,729 bytes of headroom, 99.93% full** — having last been recorded at 3.42 MB the
+day before. Roughly 770 kB had arrived from unrelated work with nobody noticing, and the next code
+change of any size would have failed the gate. `node build/checkWeChatPackage.mjs --verbose` prints
+the current numbers and the twenty largest files.
+
+`client/public` went from **13.66 MB to 3.20 MB** — and the
 dominant cause was never the missing atlas packer `12` had queued, it was source art
 shipped at authoring resolution. `orb-core`'s four bone textures were 1254² while the two
 sibling characters on the same rig had been 256² for months (a 30× difference per file),
@@ -194,7 +205,15 @@ The gate enforces RAW bytes deliberately. WeChat's docs state the 4 MB limit wit
 whether it is measured before or after the package is compressed; community write-ups say
 after, and DevTools' upload dialog is the only authoritative answer. Until someone reads
 that number, raw is the conservative direction — the gate prints the compressed estimate
-(~2.77 MB) alongside it so the real headroom is visible without depending on the guess.
+(~2.78 MB) alongside it so the real headroom is visible without depending on the guess.
+
+**This question was reached and deliberately left closed (2026-08-31.)** When main hit 2,729 bytes
+of headroom it became the difference between "there is an emergency" and "the emergency is with our
+measure", so it was worth settling — and it is not settleable from here. Reading the upload dialog
+needs a registered appid, a logged-in DevTools session, and pressing a button that **publishes the
+package**. So bytes were moved instead (the `oversized` pack above), and this stays on the
+needs-a-device list beside every other item in the checklist below. Anyone who does open that dialog
+should record the number here.
 
 Bundle boundaries live in `client/src/render/assetPacks.json`, read by three consumers (the
 runtime's `assetManifest.ts`, the build's `wechatAssetSync.mjs`, and the gate).
@@ -484,13 +503,24 @@ than to what a browser does — that difference is the whole point, since a brow
 is exactly what let both bugs ship.
 
 1. [x] Integrate the adapter; the `client` build boots in WeChat DevTools and renders the tilted-view scene. *(2026-07-07, base lib 3.15.2)*
-2. [ ] Verify on the **lowest target base-library version** (not just the latest). Two audio
-   questions ride on this one: whether `wx.createWebAudioContext()` exists at all (the synth
-   voice table degrades to a true no-op if not, `design/11`), and — new as of 2026-08-27 —
-   whether the 50 shipped **MP3** cue assets decode there. MP3 was chosen partly because
-   `design/11` calls it universally decoded on WeChat, but every measurement behind that
-   choice was taken in a desktop browser. Nothing loads the assets yet, so this is not
-   blocking; it becomes blocking the moment the cue catalogue lands.
+2. [ ] Verify on the **lowest target base-library version** (not just the latest). **This is now
+   blocking-shaped rather than hypothetical**: the condition an earlier version of this item set —
+   "it becomes blocking the moment the cue catalogue lands" — was met on 2026-08-27, and every
+   audio asset in the game is loaded on this platform today. Five questions ride on it:
+   - whether `wx.createWebAudioContext()` exists at all (the sampled cues degrade to the synth
+     voice table if not, `design/11`; **music is deliberately independent of it**, so a base
+     library without it keeps the bed and loses the samples);
+   - whether the 50 shipped **MP3** cue assets decode there. MP3 was chosen partly because
+     `design/11` calls it universally decoded on WeChat, but every measurement behind that choice
+     was taken in a desktop browser;
+   - which shape that context's `decodeAudioData` takes — `audio/decodeAudio.ts` accepts both the
+     promise and the callback form, and only a device says which one is real;
+   - whether `wx.createInnerAudioContext()` accepts a path inside a **loaded subpackage**
+     (`packs/music/audio/music/menu.mp3`). Package files are package files and `wx.loadSubpackage`
+     has resolved long before `Game` exists, so this should simply work — but a failure is one
+     `onError` line and a silent bed, which is exactly the shape nothing else here catches;
+   - how `InnerAudioContext.currentTime` behaves across a real audio interruption, since that
+     value is what `MusicPlayer` decides the loop wrap from.
 3. [ ] Real-device check: frame rate on low-end Android (target 30 vs 60 fps). **Now readable
    without tooling** (2026-08-25): the frame watchdog (`render/qualityWatchdog.ts`) drops the
    renderer to the low tier after ~6s below 25fps, and the settings screen then reads

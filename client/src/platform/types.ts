@@ -107,6 +107,25 @@ export type AudioCue =
   | 'ui.toggle'
   | 'ui.denied';
 
+// Music vocabulary (design/11 "Music & ambience") — the three launch loops, and a closed
+// union for the same reason `AudioCue` is one: `audio/musicCatalogue.ts` holds an exhaustive
+// `Record<MusicTrack, TrackDef>`, so adding a track here is a COMPILE error until it has a
+// music decision (which file, how long that file is, and whether the file is really its own).
+//
+// Three, not eight. design/11's original plan is one loop per elemental biome, but
+// `game/theme.ts`'s `BIOME_ID_TO_ELEMENT` maps the only authored dungeon to `fire`, and
+// ice/lightning/poison have art with no dungeon pointing at them — the same standard
+// `assetPacks.json` already applies to art: do not pay bytes for content a run cannot reach.
+//
+// Unlike a cue, a track is never triggered by an engine event. `game/musicDirector.ts`
+// DERIVES which one should be playing from the situation every render frame, so there is no
+// trigger to miss, nothing to de-duplicate against prediction rollback (design/06), and no
+// gap while the autoplay gate is still closed.
+export type MusicTrack =
+  | 'menu' // menus, the forge outpost, and every result screen
+  | 'dungeon.ember' // the fire biome's run bed — NO MASTER YET, see musicCatalogue.ts
+  | 'boss';
+
 // A swappable audio device, symmetric to InputSource. Both backends now run the SAME cue
 // pipeline (audio/CueMixer.ts — the shipped sample if one is loaded, the procedural voice if
 // not); they differ only in how the AudioContext is obtained and how asset bytes are read.
@@ -124,9 +143,35 @@ export interface AudioBus {
   // how many events collapsed into this one as `count`, which raises the gain rather than
   // playing the cue twice.
   play(cue: AudioCue, count?: number): void;
-  // 0..1 gain on the SFX / music buses (design/10 settings). Music is reserved.
+  // 0..1 gain on the SFX / music buses (design/10 settings). Both are real now: `game/
+  // settingsBinding.ts` has always computed and pushed the music value, and until 2026-08-31
+  // both backends threw it away in a `(_v) => {}`, so the settings screen's music slider moved
+  // a number that reached nothing.
+  //
+  // The two implementations are necessarily different, and not as an accident of style: web
+  // puts a `GainNode` between the music decks and the destination, while WeChat's decks are
+  // `InnerAudioContext`s with no audio graph at all, so there the bus value has to be
+  // MULTIPLIED into each deck's own `.volume` alongside that deck's crossfade level.
   setSfxVolume(v: number): void;
   setMusicVolume(v: number): void;
+  /**
+   * Render-clock music tick (design/11 "Music & ambience"): which track SHOULD be sounding
+   * this frame, and how much wall-clock time the last frame took.
+   *
+   * Called EVERY frame, in every phase, by `game/musicDirector.ts` — passing the track that is
+   * already playing is a no-op, so no caller ever has to detect a transition. That shape is
+   * immune to the two failure modes an event-driven music trigger has: a moment nobody
+   * remembered to hook, and a moment that fires twice. It also crosses the autoplay gate for
+   * free — while the gate is closed this call has nothing it can do, and the frame after the
+   * context reaches `running` it simply starts.
+   *
+   * `dtMs` drives the crossfade envelope only. WHERE the loop wrap happens is read back from
+   * the deck's own reported position, never accumulated here, so a stalled frame, a
+   * backgrounded tab or an audio interruption cannot drift it.
+   *
+   * `null` means "nothing should be playing", and fades out over the same window.
+   */
+  updateMusic(track: MusicTrack | null, dtMs: number): void;
   // Resume after the browser/WeChat autoplay gate; call on a user gesture (design/11).
   resume(): void;
 }

@@ -284,6 +284,7 @@ describe('Button — the UI cue', () => {
       play: (cue) => { log.push(cue); },
       setSfxVolume: () => {},
       setMusicVolume: () => {},
+      updateMusic: () => {},
       resume: () => {},
     };
     setUiAudio(bus);
@@ -353,7 +354,7 @@ describe('Slider — the commit cue', () => {
     const log: string[] = [];
     setUiAudio({
       preload: async () => {}, play: (cue) => { log.push(cue); },
-      setSfxVolume: () => {}, setMusicVolume: () => {}, resume: () => {},
+      setSfxVolume: () => {}, setMusicVolume: () => {}, updateMusic: () => {}, resume: () => {},
     });
     return log;
   }

@@ -78,13 +78,13 @@ function newGame() {
     {
       preload: async () => {},
       play: (cue: AudioCue) => { cues.push(cue); },
-      setSfxVolume: () => {}, setMusicVolume: () => {}, resume: () => {},
+      setSfxVolume: () => {}, setMusicVolume: () => {}, updateMusic: () => {}, resume: () => {},
     } as never,
   );
   setUiAudio({
     preload: async () => {},
     play: (cue: AudioCue) => { cues.push(cue); },
-    setSfxVolume: () => {}, setMusicVolume: () => {}, resume: () => {},
+    setSfxVolume: () => {}, setMusicVolume: () => {}, updateMusic: () => {}, resume: () => {},
   });
   game.start();
   return { game, cues, screens: game as unknown as GameScreens };

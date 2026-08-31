@@ -73,13 +73,30 @@ describe('what is deferred', () => {
     }
   });
 
-  it('leaves UI, environment and every weapon in main', () => {
+  it('leaves UI, environment and every weapon in main — bar the one file deferred on bytes', () => {
     // All of them are reachable from the first screen or the first room, so none may be
-    // deferred — and a broad accidental rule (say a `/ui` prefix) would show up right here.
+    // deferred for REACHABILITY — and a broad accidental rule (say a `/ui` prefix) would show
+    // up right here.
+    //
+    // The single exception is listed by name rather than by prefix, on purpose. The door
+    // curtain sits in `oversized` because main had 2,729 bytes of headroom, not because
+    // anything about it is late content (see assetPacks.json's $comment) — so this test still
+    // has to fail if a rule ever defers a SECOND reachable environment sprite, which is
+    // exactly how a symptom-named pack turns into a dumping ground.
+    const BYTES_DEFERRED: Record<string, string> = {
+      '/environment/door_curtain_raw.png': 'oversized',
+    };
     for (const path of Object.values(UI_ASSETS)) expect(packOf(path)).toBe('main');
-    for (const path of Object.values(ENV_SPRITE_ASSETS)) expect(packOf(path)).toBe('main');
+    for (const path of Object.values(ENV_SPRITE_ASSETS)) {
+      expect(packOf(path), path).toBe(BYTES_DEFERRED[path] ?? 'main');
+    }
     for (const def of [...Object.values(WEAPON_DEFS), ...Object.values(KIND_DEFAULTS)]) {
       expect(packOf(def!.path)).toBe('main');
+    }
+    // And every name in that exception list is a real shipped path, so the escape hatch
+    // cannot outlive the file it was opened for.
+    for (const path of Object.keys(BYTES_DEFERRED)) {
+      expect(Object.values(ENV_SPRITE_ASSETS), `${path} is no longer shipped`).toContain(path);
     }
   });
 });

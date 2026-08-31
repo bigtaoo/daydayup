@@ -1,17 +1,19 @@
 # Audio (source)
 
-> **Loading (2026-08-27):** these files are read at boot by `client/src/audio/SampleBank.ts`,
-> driven by the cue catalogue in `client/src/audio/cueCatalogue.ts` (design/11, "The cue
-> catalogue & the loading path"). The catalogue derives each path from a cue id + variant
-> count, and `client/src/audio/cueCatalogue.test.ts` checks the generated set against both
-> this directory and `credits.json` — so renaming or dropping a shipped file fails a test
-> rather than going quiet.
+> **Loading — two different paths, on purpose.** The **cues** are fetched and DECODED at boot by
+> `client/src/audio/SampleBank.ts`, driven by `client/src/audio/cueCatalogue.ts` (design/11, "The
+> cue catalogue & the loading path"): the catalogue derives each path from a cue id + variant
+> count, and `cueCatalogue.test.ts` checks the generated set against both this directory and
+> `credits.json`, so renaming or dropping a shipped file fails a test rather than going quiet.
+> The **music** is never decoded — a 69 s stereo loop is ~26 MB of `AudioBuffer`, so it STREAMS
+> through two long-lived decks (`client/src/audio/MusicPlayer.ts`, 2026-08-31), catalogued
+> separately in `musicCatalogue.ts` and gated separately in `musicAssets.test.ts`.
 
 Mirrors the `art/` convention: this directory holds the **source** audio and its licence
 paperwork. Nothing here is loaded at runtime — what the game ships is the processed copy
 under `client/public/audio/`.
 
-> **Status (2026-08-31): the SFX set is complete and playing; MUSIC now has files that nothing plays yet.** Two loops ship under `client/public/audio/music/` (`menu.mp3` 69.0 s / 511.8 kB, `boss.mp3` 64.5 s / 603.4 kB), cut from AI-generated masters in `sources/suno/` — see "Music" below. They are **not** CC0 library material like everything else here, and no client code reads them. Nobody has listened to them either.
+> **Status (2026-08-31): the SFX set is complete and playing, and so is MUSIC.** Two loops ship under `client/public/audio/music/` (`menu.mp3` 69.0 s / 511.8 kB, `boss.mp3` 64.5 s / 603.4 kB), cut from AI-generated masters in `sources/suno/` — see "Music" below. They are **not** CC0 library material like everything else here, so their provenance is a separate `music`/`music_terms` block in `credits.json` rather than an entry in `packs.json`. Two passes the same day: the first cut and gated the files, the second built the runtime that plays them (`client/src/audio/musicCatalogue.ts` + `MusicPlayer.ts`, a deck per platform, and `client/src/game/musicDirector.ts`). **Nobody has listened to them, or to the 50 cues.** That is the one open item on this set a measurement cannot close.
 >
 > **Status (2026-08-30): 19 of 20 cues have assets, and all of them play.** The set is
 > **50 processed MP3s, 101.9 kB** under `client/public/audio/`. The 2026-08-28 pass wired the
@@ -207,7 +209,15 @@ music` gates them.
   at 80 Hz / -14 dB took its 20-250 Hz RMS from -11.1 to -26.7 dBFS. Its 33.5 s region at 103.0 s
   ties on seam quality at half the bytes, but a boss fight would hear it turn over.
 - **`dungeon.ember`** — no master yet. It is the only one of the three that has to survive real
-  combat density, so its brief depends on how the two above actually sound in the game.
+  combat density, so its brief depends on how the two above actually sound in the game. **The
+  runtime plays `menu.mp3` in its place**, declared as such in the catalogue
+  (`TrackDef.borrowedFrom: 'menu'`) rather than left as a comment, so `PLACEHOLDER_TRACKS` is
+  derived and a test asserts exactly which tracks are standing in. It borrows `menu` and NOT `boss`
+  even though `boss` is the closer match in mood: with one file on both sides of the boss-room
+  threshold the switch would be inaudible, and a transition nobody can hear reads as a broken
+  feature, where a bed that is wrong for the room reads as a bed that is wrong for the room.
+  Closing this is one file plus one catalogue line — drop the master in `sources/suno/`, re-cut with
+  `process_music.py`, and change `path`/`lengthS`/`borrowedFrom`.
 
 **Level.** Both are normalised so their 250-2000 Hz RMS is -30 dBFS, which leaves every cue's peak
 9.1-15.7 dB above the bed in the band they share (`ui-tap` +9.1, `muzzle` +13.4, `impact` +15.3,
@@ -217,9 +227,26 @@ need 13-15 dB off.
 
 **Licensing.** AI-generated, so the CC0 paperwork in `licenses/` does not cover these two. The
 service's commercial-use terms were accepted as adequate by the project owner for purely
-instrumental output; no licence text is archived for them yet and no `credits.json` entry exists —
-both are open items, and the music files are outside `client/src/platform/audioAssets.test.ts`
-altogether (it reads `public/audio/` non-recursively).
+instrumental output. **As of the runtime pass (2026-08-31) there IS a `credits.json` entry** — a
+`music` array plus a `music_terms` block, kept deliberately separate from `cues` and outside
+`packs.json`, because that file declares every SFX source pack CC0 and a test asserts it of every
+entry: filing a Suno master there would either break that gate or quietly weaken it. Two gaps remain
+and are now **declared rather than absent**: no licence text is archived (`license_text_archived:
+false`) and the verbatim prompt was never captured (`prompt: null`, `prompt_archived: false`, with
+the brief recorded instead). `client/src/audio/musicAssets.test.ts` gates the record and asserts
+those two flags are false, so filling either one is a visible change — a reconstructed prompt would
+be a guess that reads like a record.
+
+**What gates these files.** Not `client/src/platform/audioAssets.test.ts`: it reads `public/audio/`
+**non-recursively**, so the moment music shipped into a subdirectory it fell out of that file's byte
+budget, credits cross-check, format check and licence sweep, silently and all at once.
+`client/src/audio/musicAssets.test.ts` is the music counterpart, and three of its rules are
+inversions rather than copies — **stereo is required** where the cue gate requires mono (if those two
+assertions ever agree, one is broken); the catalogue **length** is checked against each file's real
+audible duration to 50 ms, because that number is where `MusicPlayer` places the crossfade; and
+`XFADE_S` is read out of `tools/audio-pipeline/audit.py` and asserted equal to the player's, since
+the 1.15 / 1.63 dB figures in the table above ARE a measurement over a window of exactly that
+width.
 
 **Why MP3 here too, against this file's own earlier note.** The OGG-vs-MP3 section below ends by
 saying Vorbis is the right choice for music loops. On bytes it is; on decode support it is not —

@@ -9,13 +9,15 @@
  * convention as controllers/ally.test.ts), never against Game.ts, which this file,
  * by design, never imports.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createGameEngine, createGameState, buildEnemyActor, makeCommand, quantizeMove, ReplayInputSource, toFp, toReplay, EMBER_DUNGEON, EMBER_ROOMS, type DungeonConfig } from '@dd/engine';
 import type { CoopSession } from '../../net/CoopSession';
 import type { InputSource, InputState, TouchVisual } from '../../platform/types';
 import { CommandBuilder } from './CommandBuilder';
 import { AllyController } from './AllyController';
 import { GameLoop, type GameLoopDeps, type GameLoopHost } from './GameLoop';
+import { setMusicAudio } from '../musicDirector';
+import type { AudioBus, MusicTrack } from '../../platform/types';
 import { MAX_WALL_HEIGHT } from '../scene/wallGeometry';
 
 const CFG = { seed: 3, worldW: 1600, worldH: 1200, waves: [] as const };
@@ -123,6 +125,85 @@ function buildHost(overrides: Partial<GameLoopHost> = {}): GameLoopHost & { loca
     ...overrides,
   };
 }
+
+/** A bus that records only what music asks of it. Everything else on `AudioBus` is unused
+ *  here — the cue path reaches the bus through `deps.events`, which is already faked. */
+function recordingMusicBus(): { calls: { track: MusicTrack | null; dtMs: number }[]; bus: AudioBus } {
+  const calls: { track: MusicTrack | null; dtMs: number }[] = [];
+  return {
+    calls,
+    bus: {
+      preload: async () => {},
+      play: () => {},
+      setSfxVolume: () => {},
+      setMusicVolume: () => {},
+      updateMusic: (track, dtMs) => calls.push({ track, dtMs }),
+      resume: () => {},
+    },
+  };
+}
+
+// The music tick (design/11 "Music & ambience", 2026-08-31). GameLoop's only involvement is one
+// unconditional call, and that is exactly what needs a test: the decision itself lives in
+// `game/musicDirector.ts` with its own suite, but nothing there can see whether the main loop
+// actually calls it — and the failure mode is a game with no music and a green suite, which is
+// what the whole month before this pass looked like.
+describe('GameLoop.update — the music tick', () => {
+  afterEach(() => setMusicAudio(null));
+
+  it('drives music in EVERY phase, not only while playing', () => {
+    // The bug this forecloses: putting the call inside the `playing` branch, which is where every
+    // other per-frame concern in this file lives. The menu bed would then never play, and the
+    // dungeon bed would stop the moment the player paused.
+    const { deps } = buildDeps();
+    const { calls, bus } = recordingMusicBus();
+    setMusicAudio(bus);
+    for (const phase of ['menu', 'forge', 'playing', 'paused', 'victory'] as const) {
+      const loop = new GameLoop(deps, buildHost({ getPhase: () => phase }));
+      loop.update(16);
+    }
+    expect(calls).toHaveLength(5);
+  });
+
+  it('passes the render dt through unchanged — music runs on the wall clock', () => {
+    // Not the sim clock. `dtMs` is the crossfade envelope's only input, and design/11 puts audio
+    // on render/display time precisely so it may lag or drop without touching the match.
+    const { deps } = buildDeps();
+    const { calls, bus } = recordingMusicBus();
+    setMusicAudio(bus);
+    const loop = new GameLoop(deps, buildHost({ getPhase: () => 'menu' }));
+    loop.update(16);
+    loop.update(97); // a stalled frame
+    expect(calls.map((c) => c.dtMs)).toEqual([16, 97]);
+  });
+
+  it('derives the track from the host situation, not from a stored one', () => {
+    // A live dungeon run answers with the run bed; the same loop on a menu phase answers with the
+    // menu bed. This is what proves the situation actually reaches the director rather than a
+    // constant being passed.
+    const { deps } = buildDeps();
+    const { calls, bus } = recordingMusicBus();
+    setMusicAudio(bus);
+    const s = createGameState({
+      seed: 1, worldW: 800, worldH: 800, waves: [],
+      dungeon: { config: EMBER_DUNGEON, library: EMBER_ROOMS },
+    });
+    s.phase = 'playing';
+    new GameLoop(deps, buildHost({ getPhase: () => 'playing', activeState: () => s })).update(16);
+    new GameLoop(deps, buildHost({ getPhase: () => 'menu' })).update(16);
+    expect(calls.map((c) => c.track)).toEqual(['dungeon.ember', 'menu']);
+  });
+
+  it('runs the frame normally with no audio device attached', () => {
+    // Unset is the safe state, and it is the state every other test in this file runs in — so
+    // this is the assertion that keeps them honest rather than accidentally passing.
+    const { deps, scene } = buildDeps();
+    setMusicAudio(null);
+    const loop = new GameLoop(deps, buildHost({ getPhase: () => 'menu' }));
+    expect(() => loop.update(16)).not.toThrow();
+    expect(scene.interpolate).toHaveBeenCalled();
+  });
+});
 
 describe('GameLoop.update — top-level phase dispatch', () => {
   it('paused: freezes the sim (no engine.submit) but keeps fx/interpolate animating', () => {

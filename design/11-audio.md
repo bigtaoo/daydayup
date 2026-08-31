@@ -2,7 +2,9 @@
 
 How the game sounds, and — more importantly for a deterministic-lockstep title — **how audio stays entirely outside the simulation**. Audio is a *consumer* of the engine's per-frame `events` queue (`08`), exactly like the render/fx layer (`01`) and the animation runtime (`12`): it reads what already happened and plays a sound. It **never** feeds `GameState`, never advances a tick, never gates an outcome. This doc is the source of truth for **what makes sound, what event triggers it, how it loads, and the WeChat audio constraints** (`04`).
 
-> **Status (2026-08-28): the shipped SFX set is now what plays, on BOTH web and WeChat. Music still does not exist.** The seam is unchanged — engine `events` → `controllers/EventReactor.ts` → the `AudioBus` platform seam (`platform/types.ts`) — and the procedural voice table (`platform/audioSynth.ts`) still ships. What changed is that a cue now resolves to a **shipped sample first**, and to its synth voice only as a fallback.
+> **Status (current): every shipped sound in the game plays, on BOTH web and WeChat — cues, UI cues and music.** The dated `Update:` paragraphs below carry the history in order; this headline is the summary and is kept rewritten rather than appended to, because a stale first sentence under a stack of accurate updates is this repo's own named docs-drift failure mode.
+>
+> **Status (2026-08-28): the shipped SFX set is what plays, on BOTH web and WeChat.** The seam is unchanged — engine `events` → `controllers/EventReactor.ts` → the `AudioBus` platform seam (`platform/types.ts`) — and the procedural voice table (`platform/audioSynth.ts`) still ships. What changed is that a cue now resolves to a **shipped sample first**, and to its synth voice only as a fallback.
 >
 > The new module is `client/src/audio/`: **`cueCatalogue.ts`** (the catalogue — per-cue variant count, gain and priority, and the id→path rule), **`SampleBank.ts`** (fetch + decode, best-effort per file, through `render/assetHost.ts`'s new `readBinary` — the same platform seam the art loaders use, so audio inherits the design/12 bundle rules), **`decodeAudio.ts`** (one promise over two runtimes' `decodeAudioData` shapes), **`VoiceBudget.ts`** (the concurrency cap, priority-ranked) and **`CueMixer.ts`** (sample-or-synth, catalogue gain, coalesce gain, variant choice, pitch jitter). Both entries call `audio.preload()` at boot, fire-and-forget: 95 kB decodes long before the first shot, and until it lands the synth voices carry the mix. WeChat runs the identical module, reading bytes with `FileSystemManager.readFileSync` instead of `fetch`.
 >
@@ -10,9 +12,9 @@ How the game sounds, and — more importantly for a deterministic-lockstep title
 >
 > **Update (2026-08-30): the UI now makes sound too.** Everything above is about cues the ENGINE causes; the four `ui.*` cues are the ones the player's own finger causes, and they close this doc's own "UI-side cues (button tap, screen transition, extract/descend commit, result screen) come from `10`'s ScreenManager, not the engine". `ui.tap` / `ui.back` / `ui.toggle` / `ui.denied` are ordinary members of `AudioCue`, so they inherit the catalogue, the voice cap, the mixer's sample-or-synth ladder and both backends unchanged — what differs is only who fires them (`client/src/audio/uiSound.ts`, a module sink attached at boot, instead of `EventReactor`). Four more CC0 files ship for them (**50 files, 101.9 kB**), cut from the same Kenney Interface Sounds pack `clash`/`status.chill`/`wave-clear` already came from. Measured in a real browser rather than assumed: 50/50 variants decoded, a real mouse click on SETTINGS produced **one decoded 43 ms voice and zero oscillators**, and peak PCM on the SFX bus reads **ui.tap 0.046, ui.back 0.045, ui.toggle 0.042, ui.denied 0.057** against **muzzle 0.055, pickup.heal 0.064, impact 0.091, deflect 0.111** — the UI sits at or below the quietest combat cue, which is the mix this doc asks for. The WeChat half is unverified on a device, like the rest of that platform's audio.
 >
-> **Update (2026-08-31): music exists as ASSETS, and still does not play.** Two loops ship under `client/public/audio/music/` — `menu.mp3` (69.0 s, 511.8 kB) and `boss.mp3` (64.5 s, 603.4 kB), **1.09 MB** total — cut from two AI-generated masters (Suno) kept in `art/audio/sources/suno/`, by the new `tools/audio-pipeline/process_music.py`. **Nothing in the client reads them**: `setMusicVolume` is still `(_v) => {}` in both backends, there is no `MusicPlayer`, no subpackage rule, and no focus/blur handling. The settings screen's music slider has always moved a number that goes nowhere, and that is unchanged. See "Music & ambience" below for what the two files already commit to, and "To design" for what the runtime still owes.
+> **Update (2026-08-31, second pass the same day): MUSIC PLAYS.** The runtime landed on top of the assets. Two loops ship under `client/public/audio/music/` — `menu.mp3` (69.0 s, 511.8 kB) and `boss.mp3` (64.5 s, 603.4 kB), **1.09 MB** total — cut from two AI-generated masters (Suno) kept in `art/audio/sources/suno/` by `tools/audio-pipeline/process_music.py`, and they are now what a player hears. The new modules are `client/src/audio/musicCatalogue.ts` (an exhaustive `Record<MusicTrack, TrackDef>`, same discipline as the cue catalogue) and `client/src/audio/MusicPlayer.ts` (two decks, one equal-power crossfade, used both to change track and to CLOSE THE LOOP), with a deck per platform (`platform/web/webMusicDeck.ts`, `platform/wechat/weChatMusicDeck.ts`) and `client/src/game/musicDirector.ts` deriving the track from the situation every render frame. `setMusicVolume` is real in both backends, and the settings screen's music slider — which had always moved a number that went nowhere — now moves the music bus. See "The music runtime" below.
 >
-> **Still open — none of it a wiring problem any more:** the music RUNTIME does not exist (above); the third launch track (`dungeon.ember`) has no master yet; the WeChat path remains unverified on a real device, including which shape that runtime's `decodeAudioData` actually takes; the voice cap (12) is a first pass rather than a measurement; and **nobody has listened to the 50 files**. They were selected by measurement — fit against the synth voice each replaces — plus the material the world already specifies (`13`: crystal-mirror enemies, so glass). That rules out defects and matches loudness; it cannot say a sound is *right*, and the weakest pick on that basis is `win`. Now that the samples actually play, this is the open item that a person, not a test, has to close. The game stays fully playable silent, so none of it blocks anything.
+> **Still open — and none of it is a wiring problem any more:** `dungeon.ember` has no master, so it plays `menu.mp3` as a declared placeholder (`TrackDef.borrowedFrom`); the WeChat path remains unverified on a real device, now including whether `InnerAudioContext` takes a subpackage path and which shape that runtime's `decodeAudioData` has; the voice cap (12) is a first pass rather than a measurement; **nobody has listened to the 50 cues or the 2 loops**; and the AI masters still have no archived licence text and no captured prompt (recorded as declared gaps in `credits.json`, gated as such). The cues were selected by measurement — fit against the synth voice each replaces — plus the material the world already specifies (`13`: crystal-mirror enemies, so glass). That rules out defects and matches loudness; it cannot say a sound is *right*, and the weakest pick on that basis is `win`. Now that everything actually plays, listening is the open item that a person, not a test, has to close. The game stays fully playable silent, so none of it blocks anything.
 
 ## The decisions (locked)
 
@@ -96,9 +98,10 @@ Same principle as the section above — the failure is inaudible, so the tests a
 
 ## Music & ambience
 
-> **Assets built 2026-08-31; the runtime is not.** Two of the three planned launch loops exist as
-> shipped files and pass a gate. Nothing plays them. The decisions the two files already commit to
-> are below; everything under "Still design" is unchanged from before and unbuilt.
+> **Assets AND runtime built 2026-08-31, in two passes the same day.** Two of the three planned
+> launch loops exist as shipped files, pass a gate, and are what the game plays. What the two files
+> commit to is immediately below; what the runtime does with them is under "The music runtime";
+> what is still only a design is under "Still design, not built", which is now a much shorter list.
 
 ### What the two shipped loops commit to
 
@@ -112,10 +115,10 @@ Same principle as the section above — the failure is inaudible, so the tests a
   minute song with an intro and a fade-out, not a loop. `process_music.py --search` ranks every
   20-90 s region by how well its two ends match across the player's crossfade window; the chosen
   region and its measured figures are recorded per track in that file's `TRACKS` table.
-- **The loop is closed by the PLAYER, not by the file.** `el.loop = true` is not usable here — MP3
-  frame padding denies sample-exact wrapping. The player instead starts a second deck at
-  `length - 2 s` and equal-power crossfades into it: the same mechanism a track-to-track change
-  needs, reused for the loop itself. Consequence for the assets, and it is a large one: head and
+- **The loop is closed by the PLAYER, not by the file** (built; `audio/MusicPlayer.ts`).
+  `el.loop = true` is not usable here — MP3 frame padding denies sample-exact wrapping. The player
+  instead starts a second deck at `length - 2 s` and equal-power crossfades into it: the same
+  mechanism a track-to-track change needs, reused for the loop itself. Consequence for the assets, and it is a large one: head and
   tail have to be *tonally compatible over 2 s*, not sample-continuous — a much weaker and much
   more achievable requirement. `menu` measures **1.15 dB** mean energy-weighted per-band difference
   across that window; `boss` **1.63 dB**.
@@ -152,12 +155,137 @@ Same principle as the section above — the failure is inaudible, so the tests a
   through to the combat gate, and both beds were duly reported as "too long" and "stereo wastes
   bytes".
 
+### The music runtime (built 2026-08-31)
+
+The half that turns two files on disk into something a player hears. Every decision here exists
+because music's failure mode is **silence**, which is exactly what shipped for a month while the
+assets, the gate, the subpackage rule and the documentation all existed and nothing was connected.
+
+- **The catalogue is `client/src/audio/musicCatalogue.ts`**, and `MusicTrack` lives in
+  `platform/types.ts` beside `AudioCue` — the same split, for the same reason. Adding a track to the
+  union is a COMPILE error until it has an entry: which file, how long that file is, its mix gain,
+  and whether the file is really its own.
+- **`TrackDef.lengthS` is load-bearing, not descriptive.** The player starts the next deck at
+  `length - XFADE_S`, so a length that drifts from the shipped file moves the crossfade off the seam
+  the asset was measured at — audible as a badly cut loop, invisible everywhere else.
+  `audio/musicAssets.test.ts` checks it against the file's real audible duration (parsed at the MPEG
+  frame level, no decoder) to within 50 ms.
+- **`XFADE_S = 2.0` is shared with the asset pipeline and must not move on one side alone.**
+  `tools/audio-pipeline/audit.py`'s `XFADE_S` is the width of the two windows `xfade_band_diff`
+  compares, and the shipped figures (menu 1.15 dB, boss 1.63 dB) ARE that measurement. Widen it here
+  alone and the player crossfades material whose compatibility was never checked; narrow it and
+  measured seam quality is left on the table. Both sides stay internally consistent either way,
+  which is why a test now reads `audit.py` and asserts the two numbers agree — the same class of
+  drift the pipeline pass hit three times in one afternoon between its own search and its own gate.
+- **`dungeon.ember` has no master, so it plays `menu.mp3` — and says so in a FIELD, not a comment.**
+  `TrackDef.borrowedFrom` names the track whose file is being borrowed, so `PLACEHOLDER_TRACKS` is
+  derived and testable. **It borrows `menu` and not `boss`**, which is the worse fit and the right
+  choice: with one file on both sides of the boss-room threshold there is no audible change at all,
+  and "the music never switches" is indistinguishable from "the music feature is broken". A bed that
+  is wrong for the room is a taste complaint; a transition nobody can hear is a bug report. Closing
+  it is one file plus one catalogue line.
+- **Music STREAMS; it never goes through `SampleBank` like a cue.** A 69 s stereo loop decodes to
+  ~26 MB of `AudioBuffer` at 48 kHz. Hence two long-lived decks per platform, re-pointed rather than
+  rebuilt — and on web that is also forced: `createMediaElementSource` may be called only once per
+  element, so a deck built per track would throw on the first loop wrap, a minute into the menu.
+- **The two decks are the only per-platform code, and they differ structurally.** Web is
+  `Audio` element → `createMediaElementSource` → deck gain → **music bus gain** → destination.
+  WeChat is an `InnerAudioContext` with **no audio graph at all**, so there is no bus node: the
+  settings volume has to be multiplied into each stream's own `.volume` together with that deck's
+  crossfade level. That is why `setMusicVolume`'s two implementations can never be shared, and it is
+  the answer to why the interface has that method rather than a gain node.
+- **On WeChat, music is deliberately independent of `wx.createWebAudioContext`** — the one audio API
+  on that platform this doc records as unverified on the lowest base library. A base library without
+  it loses the sampled cues (the synth voices carry them) and keeps the bed.
+- **`musicDirector.ts` derives the track EVERY FRAME; nothing triggers it.** From (render phase,
+  live `GameState`, our seat's room) it answers `menu` / `dungeon.<biome>` / `boss`, and setting the
+  track already playing is a no-op inside the player. Three properties follow that an event-driven
+  director would each have to earn: no moment can be missed (a new screen or run entry point changes
+  the situation, and the situation is what is read), nothing fires twice (so a prediction rollback
+  re-emitting events, `06`, cannot restart a bed), and **the autoplay gate crosses itself** — while
+  the context is suspended the call has nothing it can do, and the frame after the first gesture
+  resumes it, the same call starts the bed.
+- **Boss music keys off the ROOM, not off a live boss.** `RoomPiece.role === 'boss'` for the room our
+  seat's `roomId` names. The bed therefore changes as the threshold is crossed rather than when the
+  first spawn lands, and stays changed while the player collects the boss's death drops instead of
+  snapping back over the corpse. A player straddling a door passage has no `roomId` at all, which
+  reads as "not the boss room" — that keeps the bed on the doorway frame, where remembering the last
+  known room would hold boss music through the door OUT of it.
+- **Where the loop wrap happens is READ BACK from the deck, never accumulated.** `dtMs` drives the
+  crossfade envelope only. An internal clock drifts from the stream on every stalled frame,
+  backgrounded tab and audio interruption, and it drifts silently — the symptom would be a fade that
+  starts before or after the seam, i.e. something that sounds like a badly cut asset.
+- **The settings slider is wired at last.** `game/settingsBinding.ts` had always computed
+  `effectiveVolume(state, 'music')` and pushed it into `setMusicVolume`; both backends threw it away
+  in a `(_v) => {}`. Mute is a gain of 0 and NOT a stop, so unmuting reveals where the bed had
+  reached rather than restarting it.
+- **Focus/blur is wired on both platforms, for the first time on either.** Web listens to
+  `visibilitychange` and holds the decks (position survives, so a tab-away and back does not replay
+  the opening bar); WeChat has no DOM, so it uses `wx.onAudioInterruptionBegin`/`End`, registered in
+  the constructor rather than beside the decks because an interruption can begin before any music has
+  played. A held player also stops making wrap decisions — a deck paused ON the wrap point would
+  otherwise fire the instant it was released, on evidence gathered while it was silent. Cues are
+  deliberately NOT held: the longest is 350 ms and would have finished before the handler ran.
+- **`Game.ts` was not touched.** The per-frame call sits in `GameLoop.update`, ahead of the
+  playing/paused/idle branch so the menu bed is driven at all, and reaches the device through a
+  module sink (`setMusicAudio`, attached at boot in both entries) rather than a constructor dep —
+  the same shape and the same reason as `audio/uiSound.ts`, plus one hard constraint: `Game.ts` is
+  this repo's one tracked 500-line offender and the drift gate pins its length.
+
+#### What guards it
+
+Same principle as the cue sections above, and a stronger version of it: a cue that fails to load
+still SOUNDS, because `CueMixer` falls back to a synth voice. Music has no fallback, so every broken
+link is silence — and silence is what a month of green tests looked like.
+
+- **`audio/musicAssets.test.ts`** — the gate the loops never had. `platform/audioAssets.test.ts`
+  reads `public/audio/` **non-recursively**, so the moment music shipped into a subdirectory it fell
+  out of that file's byte budget, credits cross-check, format check and licence sweep all at once.
+  The new file holds a music byte budget, generated-paths ↔ files-on-disk in both directions, the
+  catalogue length against the real file, **stereo required** (the exact inverse of the cue rule —
+  if the two assertions ever agree, one is broken), the shared `XFADE_S`, and the provenance record.
+- **Provenance for AI-generated masters, filed OUTSIDE the CC0 path.** `packs.json` declares every
+  SFX source pack CC0 and a test asserts that of every entry, so a Suno master filed there would
+  either break that gate or quietly weaken it. `credits.json` grew `music` / `music_terms` instead,
+  and what the test checks is that the record exists and stays **honest about what it lacks**: the
+  verbatim prompt was never captured (`prompt: null`, `prompt_archived: false`) and no licence text
+  is archived (`license_text_archived: false`). Both are pinned as declared gaps, because a test
+  demanding they be filled would only invite them to be filled with a guess.
+- **`audio/musicPipeline.test.ts`** (web) and **`audio/wechatMusicLoad.test.ts`** (WeChat) —
+  integration, in the shape `audioPipeline.test.ts`/`wechatAudioLoad.test.ts` established. Real
+  director → real backend → real player → real deck, with only the `AudioContext` / `Audio` element /
+  `wx` faked. They assert the CONNECTIONS in the order a player meets them: a track reaches a real
+  element's `src`, the graph is deck → music bus → destination (a deck wired to the destination
+  bypasses the settings volume; wired to the SFX bus makes two sliders one slider), the autoplay gate
+  opens by itself, the situation changes the file, the loop closes at `length - 2 s`, and a tab-away
+  holds it. The WeChat file additionally pins that the src is the **packed subpackage path** and that
+  it names a real file on disk, that volume is a product of bus × fade, and that music survives
+  `createWebAudioContext` being absent entirely.
+- **Source-level guards** on the boot wiring and on where the tick sits in `GameLoop`, for the reason
+  the `preload` guard exists: every test attaches the sink itself, so deleting that line from an
+  entry would leave the whole suite green and the game silent.
+- **Measured in a real browser, because I cannot hear it.** After the first gesture: `menu.mp3`
+  fetched as a **206 Partial Content** range request (i.e. genuinely streaming), one deck live with
+  `duration: 69` exactly matching the catalogue, `loop: false`, deck gain rising 0.10 → 1.00 across
+  2 s of frames; `setMusicVolume(0.2)` moved the music bus to 0.2 and left the SFX bus at 0.5 and the
+  deck fade at 1.0; a switch to `boss` stopped deck 0 and streamed `boss.mp3` on deck 1 at gain 1.0;
+  zero console errors. One incidental finding worth keeping: in that embedded pane `requestAnimationFrame`
+  is suspended while `document.hidden` stays false, so the whole game loop freezes while audio keeps
+  streaming — the bed ran to its end and went quiet, and the **wrap recovered on the first frame that
+  ran**, which is the position-read design paying for itself.
+- **66 injected mutations, 65 caught.** The three first-round survivors were all worth the trip: two
+  were real gaps (the web deck's `position()` was unguarded by any test, and `ensureMusic`'s
+  "give up for the session" latch was only covered on the *other* degrade path), and the third is a
+  genuine EQUIVALENT mutant — deleting the biome→track lookup changes nothing, because the only biome
+  that exists maps to `dungeon.ember`, which IS the fallback. That one is recorded in the test rather
+  than hidden, with the assertion that will start biting the moment a second biome loop ships.
+
 ### Still design, not built
 
-- **Biome themes.** One loop per elemental biome (`05`/`13`), lazy-loaded with that biome's asset bundle (`12`). Cross-fade on floor transition.
-- **Boss stinger + combat layer.** Entering the boss room (`blightlord`, `09`) swaps to a boss track; an optional intensity layer can rise with on-screen enemy count read from `state` (render-side, no sim read-back).
-- **Outpost / menu.** A calm hub loop for the forge outpost (`14`/`13`) and menus (`10`).
-- **Ambience per biome** — low crystal hum / blight drone, desaturated to match the "environment desaturated, hazards saturated" law (`13`): the world bed stays quiet so combat cues pop.
+- **Ambience per biome** — low crystal hum / blight drone, desaturated to match the "environment desaturated, hazards saturated" law (`13`): the world bed stays quiet so combat cues pop. A second, independent bus-level layer, not a track: it plays UNDER whichever bed the director chose.
+- **A combat intensity layer.** The boss bed swaps on room entry (built), but the optional layer that rises with on-screen enemy count read from `state` (render-side, no sim read-back) does not exist. It needs a second simultaneous stream per platform, which the two-deck player deliberately does not have room for — three decks, or a separate ambience player.
+- **Biome themes beyond `ember`.** `BIOME_ID_TO_TRACK` is the one-entry table a new biome adds to, and `assetPacks.json`'s `music` pack has room for roughly one more loop before its own limit. Lazy-loading a biome's loop with that biome's asset bundle (`12`) is still eager-at-boot like every other pack.
+- **A distinct boss STINGER** — a one-shot on room entry over the bed change, as opposed to the bed change itself.
 - Music is **not** determinism-relevant, so it may use free wall-clock timing, dynamic mixing, and any RNG.
 
 ## WeChat audio constraints (from `04`)
@@ -166,7 +294,7 @@ Same principle as the section above — the failure is inaudible, so the tests a
 - **Format & size.** Prefer **mp3** (universally decoded); watch total package size against WeChat's main/sub-package limits (`04`) — audio is heavy, so biome tracks belong in **lazy sub-packages / downloaded bundles** (`12`), not the boot core.
 - **Decode/latency.** First play of a clip may stall on decode; **preload** the core SFX set at boot. Expect higher input-to-sound latency than web — the deflect/hit cues must still feel tight, so keep those clips tiny and pre-decoded.
 - **No `eval`, no DOM (`04`).** Nothing here uses `new Function`/`document`; the adapter surface is `wx.createInnerAudioContext` / `wx.createWebAudioContext` only.
-- **Focus/blur & interruption.** Pause/duck music on `wx.onAudioInterruptionBegin` / hide, resume on end/show — and mirror it on web (`visibilitychange`). This is a `ScreenManager` concern (`10`), not the engine's.
+- **Focus/blur & interruption.** Pause/duck music on `wx.onAudioInterruptionBegin` / hide, resume on end/show — and mirror it on web (`visibilitychange`). **Built 2026-08-31**, and NOT in `ScreenManager` after all: it landed in each audio backend, because both signals are platform APIs and the thing being held is the platform's own stream. Cues are not held (the longest is 350 ms).
 
 ## Asset pipeline & loading (with `12`)
 
