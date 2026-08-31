@@ -54,6 +54,8 @@ a shipped feature.
 | `?skin=` / `?wpn=` | Override the character / the starting weapon |
 | `?lag=` | Inject synthetic one-way latency (ms) to feel the online predictor |
 | `?mm=` | Override the matchsvc origin |
+| `?pickupDebug=1` | Draw the sim's own collect radii + per-drop distances (`scene/PickupDebugOverlay.ts`) |
+| `?replay=<url>` | Watch a recorded run instead of playing one, held at its marked tick (`match/replayPlayback.ts`) |
 
 ## What the render layer is responsible for
 
@@ -101,7 +103,9 @@ src/
 │  │                  (CommandBuilder, Ally/PvpBot controllers, LocalPredictor,
 │  │                  EventReactor, RunOutcome)
 │  ├─ match/          how a run is configured and connected (arenaCatalog, matchConfig,
-│  │                  offlineConfig, pvpConfig, onlineConnect, gameQueryParams)
+│  │                  offlineConfig, pvpConfig, onlineConnect, gameQueryParams),
+│  │                  plus recording one (MatchRecorder/replayDownload/replayPlayback
+│  │                  — see design/08 "Getting a replay OUT of a live session")
 │  ├─ ui/             HUD + widget kit + menuLayer (the fit-scale that keeps every
 │  │                  full-screen menu inside a short landscape-phone viewport;
 │  │                  Layers.menu carries it, Layers.hudOverlay deliberately does not)
@@ -126,8 +130,10 @@ src/
    ├─ web/            WebPlatform + WebInput (keyboard + mouse, and touch)
    └─ wechat/         WeChatPlatform + WeChatAdapter + WeChatInput (wx canvas + touch)
 
-sim/                  offline harnesses (PvP balance sim). Outside src/ on purpose:
-                      nothing shipped can import them.
+sim/                  offline harnesses (PvP/PvE balance sims, the arena audit, and
+                      replay/ — the recorded-run inspector behind
+                      `DD_REPLAY=<path> npm run replay:inspect`). Outside src/ on
+                      purpose: nothing shipped can import them.
 ```
 
 `Game` takes a `Platform`-provided `InputSource`; it never references `window`,

@@ -51,6 +51,8 @@ sim.config.ts        TICK_RATE and the sim-wide constants
 GameEngine.ts        the orchestrator: step(commands) in the frozen order, plus the
                      InputSource-driven advance(frame) used by replay and netcode
 replay.ts            headless run + state serialization/hashing, version-guarded
+replayFile.ts        the on-disk envelope around a Replay (marks, metadata) + a
+                     validating parser — how a recorded run leaves a live session
 
 math/                fixed-point, seeded PRNG, brad angles + table trig
 state/               GameState, entities, per-tick PlayerCommand, input quantization, events
