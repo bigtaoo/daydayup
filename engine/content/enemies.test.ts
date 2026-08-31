@@ -107,39 +107,69 @@ describe('buildEnemyActor — perception radius (ENGINE_VERSION 42)', () => {
   });
 });
 
-describe('buildEnemyActor — solid clearance (ENGINE_VERSION 43, reversed in 48)', () => {
+describe('buildEnemyActor — solid clearance (v43, reversed in 48, floored in 50)', () => {
   // v43 gave the PLAYER a wall clearance equal to its body radius; mobs deliberately kept
   // the feet circle through v47, because widening a mob's clearance moves every chase path
   // that hugs a wall — a balance change to garrisons measured against the paths in
-  // `client/sim/pveLevelSim.sim.ts`. v48 reverses that opt-out (live report: *"怪物也要遵守
-  // 同样的规则"* — a monster reads as sunk into a wall or pillar exactly where its own tiny
-  // clearance let it stand, which the player's own v43 fix was supposed to have ended for
-  // everybody). `npm run test:pve-sim` was re-run against the wider clearance and every
-  // balance gate ("nothing softlocks", the entrance-room reaction window, the focus-fire
-  // ceiling) still passes — the chase paths shifted, the level did not stop being clearable.
-  it('every blueprint now stops at its own BODY radius against a solid, same as the player', () => {
+  // `client/sim/pveLevelSim.sim.ts`. v48 reversed that opt-out (live report: *"怪物也要遵守
+  // 同样的规则"*). v50 finished the sentence: "the same rule" also has to mean a mob can never
+  // stand somewhere the PLAYER cannot follow, and for four of the eight blueprints the mob's
+  // own body is narrower than the player's, so the rule alone did not deliver that.
+  // `npm run test:pve-sim` was re-run at each step and every balance gate still passes.
+  it('no blueprint clears a solid by less than the player does', () => {
+    // The v50 rule itself, as one sentence over the whole registry. This is the assertion the
+    // live report *"怪物不能跑进阻挡区域"* asks for: any band a mob can stand in, the player's
+    // own body can enter too.
     for (const type of Object.keys(ENEMY_BLUEPRINTS)) {
       const e = buildEnemyActor(state(), pxToFp(400), pxToFp(400), type);
-      expect(e.solidRadius, `${type} did not adopt the body-radius clearance`).toBe(e.radius);
+      expect(
+        e.solidRadius as number,
+        `${type} clears a solid by ${e.solidRadius} against the player's ${PLAYER_BASE.solidRadius}`,
+      ).toBeGreaterThanOrEqual(PLAYER_BASE.solidRadius as number);
+    }
+  });
+
+  it('a body WIDER than the player still stops at its own silhouette — the floor only ever widens', () => {
+    // The half v43/v48 were about, and the reason this is `Math.max` rather than a flat
+    // assignment: a brute or a boss sunk into stone by the difference between its body and the
+    // player's would be the original report all over again, from the other side.
+    const wide = Object.values(ENEMY_BLUEPRINTS).filter(
+      (bp) => (bp.radius as number) > (PLAYER_BASE.solidRadius as number),
+    );
+    expect(wide.length, 'no blueprint is wider than the player — this test proves nothing').toBeGreaterThan(0);
+    for (const bp of wide) {
+      const e = buildEnemyActor(state(), pxToFp(400), pxToFp(400), bp.type);
+      expect(e.solidRadius, `${bp.type} lost its own body clearance`).toBe(e.radius);
+    }
+  });
+
+  it('the floor actually BINDS — some blueprint really is narrower than the player', () => {
+    // The anti-vacuity guard for the rule above. If every mob were already player-sized or
+    // bigger, `Math.max` would be dead code and the first test would pass for the wrong reason.
+    // Four blueprints are narrower today (critter 13 px; basic/emberling/frostling/venom 15 px
+    // against the player's 16), and each of them is a mob that used to be able to tuck into a
+    // 31 fp band and die there.
+    const narrow = Object.values(ENEMY_BLUEPRINTS).filter(
+      (bp) => (bp.radius as number) < (PLAYER_BASE.solidRadius as number),
+    );
+    expect(narrow.map((bp) => bp.type).sort().length, 'the v50 floor is inert — no mob is narrower than the player').toBeGreaterThan(0);
+    for (const bp of narrow) {
+      const e = buildEnemyActor(state(), pxToFp(400), pxToFp(400), bp.type);
+      expect(e.solidRadius, `${bp.type} was not raised to the floor`).toBe(PLAYER_BASE.solidRadius);
+      expect(e.solidRadius as number).toBeGreaterThan(bp.radius as number);
     }
   });
 
   it('every blueprint keeps the SMALLER feet circle for actor-vs-actor push-out — only the solid clearance moved', () => {
     // The fake-3D depth cue design/07 describes still applies between two BODIES (a mob may
-    // crowd another mob it visually overlaps) — v48 only changed the wall/pillar side.
+    // crowd another mob it visually overlaps) — v48/v50 only changed the wall/pillar side.
     for (const type of Object.keys(ENEMY_BLUEPRINTS)) {
       const e = buildEnemyActor(state(), pxToFp(400), pxToFp(400), type);
       expect(e.footprintRadius, `${type}'s feet circle grew too`).toBeLessThan(e.radius);
+      expect(e.footprintRadius as number, `${type}'s feet circle grew to the solid clearance`).toBeLessThan(
+        e.solidRadius as number,
+      );
     }
-  });
-
-  it('a basic mob\'s clearance still lands narrower than the player\'s — same rule, a smaller body', () => {
-    // Not "the asymmetry is intentional" any more (v48 removed that asymmetry) — this is just
-    // BASIC_ENEMY's own radius (15 px) being one grid-notch under PLAYER_BASE.radius (16 px).
-    // A bigger blueprint (`brute`, `boss`) legitimately gets MORE clearance than the player,
-    // for the same reason the player gets more than a small mob: its own body is wider.
-    const e = buildEnemyActor(state(), pxToFp(400), pxToFp(400), 'basic');
-    expect(e.solidRadius).toBeLessThan(PLAYER_BASE.solidRadius);
   });
 });
 

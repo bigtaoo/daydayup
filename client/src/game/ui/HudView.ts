@@ -2,7 +2,7 @@ import { Container, Graphics } from 'pixi.js';
 import { THEME } from '../theme';
 import type { Layers } from '../scene/layers';
 import { Panel, ToastQueue, Button } from './widgets';
-import { nearbyWeaponPickups } from './pickupProximity';
+import { nearbyWeaponPickups, WEAPON_PROMPT_RADIUS_FP } from './pickupProximity';
 import { WeaponPickupPrompt } from './WeaponPickupPrompt';
 import { Minimap, type MinimapPlayer } from './Minimap';
 import { dungeonRoomStatus, dungeonToArenaMap, roomStatus } from './minimapLayout';
@@ -12,17 +12,9 @@ import { WeaponSlotChip } from './WeaponSlotChip';
 import { StatChip } from './StatChip';
 import { DownedBanner } from './DownedBanner';
 import type { HudIconId } from './hudIcons';
-import { SIM, type GameState } from '@dd/engine';
+import type { GameState } from '@dd/engine';
 import { t, type TranslationKey } from '../../i18n';
 import { totalFloorCount } from '../match/floorCount';
-
-// Weapon-pickup panel proximity ring (design/03) — wider than PickupSystem's own tight
-// collect radius (SIM.pickupRadius) so the panel has a beat to show before it's even
-// clickable. Same constant PickupSystem's weapon-kind branch itself gates collection
-// on (SIM.lootRevealRadius) — sharing it means "if the panel shows it, you can click
-// it," and also the constant used to resolve an arena crate, so a resolved weapon
-// pickup is always already known by the time the panel would want to show it.
-const WEAPON_PROMPT_RADIUS_FP = SIM.lootRevealRadius;
 
 /** The bits of Game's own state updateHud needs that aren't already on GameState. */
 export interface HudContext {

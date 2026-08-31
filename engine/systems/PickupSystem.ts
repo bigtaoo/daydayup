@@ -37,6 +37,7 @@ import { RUN_BUFFS, sumBuffs } from '../balance/runbuffs';
 import { toFp } from '../math/fixed';
 import type { GameState } from '../state/GameState';
 import type { PickupItem, PlayerActor, WeaponSimSpec } from '../state/entities';
+import { dropClearance } from '../state/actorRadius';
 import { circlesOverlap, clampToWalkable, retainAlive } from './geom';
 
 export class PickupSystem {
@@ -167,7 +168,11 @@ export class PickupSystem {
     // (`slotFor` below), where there is nothing to displace.
     const outgoing = p.weapons[slot];
     if (outgoing) {
-      const pos = clampToWalkable(p.gx, p.gy, SIM.pickupRadius, state);
+      // Same `dropClearance()` every other drop site uses (ENGINE_VERSION 50) — a swapped-out
+      // weapon has to be re-collectable on the same terms as one a mob dropped, and the player
+      // it falls from is standing on a legal spot already, so in practice this is a no-op that
+      // exists to keep the three sites from drifting apart again.
+      const pos = clampToWalkable(p.gx, p.gy, dropClearance(), state);
       state.pickups.push({
         id: state.nextId(),
         kind: 'weapon',

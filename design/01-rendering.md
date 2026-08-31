@@ -142,7 +142,11 @@ extruded block on the `entities` layer — `scene/wallRender.ts` owns the drawin
   for a pillar; what moved is where the character (and now the enemy) is allowed to stand, not
   when the fade helps. `geom.clampToWalkable` (where a dropped pickup or a spawned crate lands)
   was widened to respect the same brim in the same version — a drop clamped only against the bare
-  footprint could settle inside a band no actor's own collision would ever let them enter.
+  footprint could settle inside a band no actor's own collision would ever let them enter. In
+  ENGINE_VERSION 50 those drop sites also stopped clamping by the pickup's own collect padding
+  (`SIM.pickupRadius`, 15 px) and now use the PLAYER's clearance (`dropClearance()`, 16 px): the
+  question a placement clamp is really asking is "can a player's body be here", so a drop now
+  comes to rest somewhere a player could stand rather than merely somewhere they could reach.
   - **The kerb rule is about where a wall STANDS, not about whose wall it is** (generalized
     2026-08-20). It used to read "the room's own **south** boundary", resolved against the one
     room the wall's centre falls in — and where two rooms stack vertically the boundary between
@@ -1133,11 +1137,17 @@ Four properties make the split honest rather than a tuning knob:
   for a real gap this doc had to account for: through v47, `foci` included every live enemy, and
   an enemy kept its FEET circle against solids (`enemies.ts`, `solidRadius: bp.footprintRadius`, as
   low as 6 px) — smaller than the player's own clearance the sweep assumes — so a mob legitimately
-  stood closer than anything the sweep could place. **v48 closed that gap at the source**: enemies
-  now stop at their own body radius against a wall or pillar, the same rule the player has (see "A
-  free-standing block's north face reserves an extra body radius" above), so this margin is no
-  longer covering for an asymmetry that no longer exists — it is now genuinely unused head-room,
-  the same way it always was for the player.
+  stood closer than anything the sweep could place. **v48 narrowed that gap and v50 closed it.**
+  v48 gave enemies the player's RULE — stop at your own body radius against a wall or pillar (see
+  "A free-standing block's north face reserves an extra body radius" above) — but left them their
+  own NUMBER, and four of the eight blueprints draw a body narrower than the player's (critter
+  13 px; basic/emberling/frostling/venom 15 px, against 16). So a 31 fp remnant of exactly this
+  asymmetry survived v48, and this paragraph overstated the fix for two versions. v50 floors every
+  mob's `solidRadius` at `PLAYER_BASE.solidRadius`, so the sweep's assumption is now literally
+  true of every actor in the game and the margin is genuinely unused head-room, the same way it
+  always was for the player. `engine/smoke.test.ts`'s "no enemy stands where a player could not
+  follow" is what keeps it that way — it judges every mob by the PLAYER's circle, which is the
+  assumption this bound actually rests on, rather than by the mob's own.
 - **It is invisible at rest.** Both pieces are the same swatch at the same `tileScale`, and the base
   carries the band's height as its own `tilePosition` so the courses run straight on across the
   join. A live A/B that split all 227 splittable blocks in frame moved pixels **only inside the one

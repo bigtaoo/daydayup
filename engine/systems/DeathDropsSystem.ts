@@ -14,10 +14,9 @@ import { buildEnemyActor } from '../content/enemies';
 import { DOWNED_BLEEDOUT_TICKS } from '../config';
 import { toFp, addFp, mulFp } from '../math/fixed';
 import { cosFp, sinFp, BRAD_FULL } from '../math/trig';
-import { SIM } from '../sim.config';
 import type { GameState } from '../state/GameState';
 import type { PickupItem } from '../state/entities';
-import { blockingRadius } from '../state/actorRadius';
+import { blockingRadius, dropClearance } from '../state/actorRadius';
 import { clampToWalkable, retainAlive } from './geom';
 
 export class DeathDropsSystem {
@@ -41,7 +40,7 @@ export class DeathDropsSystem {
           const rawGy = addFp(e.gy, mulFp(sinFp(ang), e.radius));
           const minion = buildEnemyActor(state, rawGx, rawGy, e.onDeathSpawn.type);
           // Clamp by the minion's own SOLID clearance — the radius `MovementSystem` will push
-          // it out by — not by the constant `SIM.pickupRadius` the pickups above use, and not
+          // it out by — not by the `dropClearance()` the pickups below use, and not
           // by its feet circle. This said `minion.footprintRadius` through v48, under a comment
           // that already claimed "a spawned actor needs its own solid clearance": the intent was
           // right and the radius was wrong, because solids stopped pushing `footprintRadius` in
@@ -72,7 +71,12 @@ export class DeathDropsSystem {
       // Clamp off the dying enemy's own position — a knockback or a large
       // footprint can leave that position on/behind a wall, which would otherwise
       // drop the pickup somewhere the player can't reach (design/07 pickups).
-      const pos = clampToWalkable(e.gx, e.gy, SIM.pickupRadius, state);
+      //
+      // By the PLAYER'S OWN clearance, not the pickup's collect padding (`dropClearance`,
+      // ENGINE_VERSION 50): the thing that has to reach this spot is a player's body, so the
+      // spot has to be one a player's body can occupy. See `state/actorRadius.ts` for the
+      // report and for the measurement that says the old radius was tight rather than broken.
+      const pos = clampToWalkable(e.gx, e.gy, dropClearance(), state);
       const item: PickupItem = {
         id: state.nextId(),
         kind: drop.kind,

@@ -26,6 +26,7 @@ import {
 } from '../world/dungeon';
 import type { EnemyActor, PickupItem } from '../state/entities';
 import type { ArenaRoomRuntime, DungeonRoomRuntime, GameState, WaveDef } from '../state/GameState';
+import { dropClearance } from '../state/actorRadius';
 import { clampToWalkable } from './geom';
 
 /** One expanded, timed spawn entry — shared shape between dungeon's single global
@@ -342,10 +343,13 @@ export class SpawnSystem {
     for (const marker of room.lootMarkers ?? []) {
       // Clamp the authored marker point too — a defensive backstop against a
       // map-editor marker that ends up on/behind a wall (design/07 pickups).
+      // By `dropClearance()` (ENGINE_VERSION 50), same as every other drop site: an
+      // authored marker is the one of the three most likely to be off, so it is the
+      // one that most wants the guarantee that what lands there is standable.
       const pos = clampToWalkable(
         toFpGrid(marker.point.x + room.rectGrid.x),
         toFpGrid(marker.point.y + room.rectGrid.y),
-        SIM.pickupRadius,
+        dropClearance(),
         state,
       );
       const item: PickupItem = {

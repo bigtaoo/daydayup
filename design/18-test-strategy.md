@@ -20,8 +20,8 @@
 | **−1** one boundary, one function | `engine/systems/solidBounds.ts`, `engine/state/actorRadius.ts` | ✅ G3 closed; three copies of the brim rule became one |
 | **0** contract gates | `goldenHash.test.ts` + `fixtures/golden.json` + `scripts/recordGolden.mjs`, `versionContract.test.ts`, `determinismLint.test.ts` | ✅ G1, G2 closed |
 | **1** unit tests | `solidBounds.test.ts`, `MovementSystem.test.ts`, `WeaponFireSystem.test.ts`, `ProjectileStepSystem.test.ts` | ✅ the last three had **no test file at all** before this |
-| **2** parity sweeps | `boundaryParity.test.ts`, `clearanceParity.test.ts`, `client/.../simRenderParity.test.ts`, `client/src/render/muzzleParity.test.ts` | ✅ G4, G5, G6 closed |
-| **3** smoke + CI | `engine/smoke.test.ts`, root `npm run check:full`, `.github/workflows/check.yml` | ✅ 5 real runs, 5 invariants, every tick |
+| **2** parity sweeps | `boundaryParity.test.ts`, `clearanceParity.test.ts`, `client/.../simRenderParity.test.ts`, `client/src/render/muzzleParity.test.ts`, `client/.../pickupProximity.test.ts` (v50) | ✅ G4, G5, G6 closed; v50 adds the panel-offers-vs-sim-accepts pair, the one gap that straddles the sim boundary |
+| **3** smoke + CI | `engine/smoke.test.ts`, root `npm run check:full`, `.github/workflows/check.yml` | ✅ 5 real runs, 7 invariants, every tick (v50 added the two loot/monster placement rules) |
 
 `check:full` = `check` + the `.sim.ts` suites. `.github/workflows/check.yml` runs both in CI —
 until it existed, `.github/workflows/` held only deploy workflows, so nothing ran the tests on
@@ -48,6 +48,66 @@ ring has no single barrel direction, so a tighter emission radius is a defensibl
 choice rather than an obvious slip. `muzzleParity.test.ts` fences it from both sides: it fails
 if the gap grows, and it fails if the weapon is ever changed upstream, so the exception cannot
 rot.
+
+## What v50 added, and what it did NOT find
+
+The third round of *"无法拾取"* (2026-08-31) arrived with its own diagnosis attached:
+*"怪物不能跑进阻挡区域，掉落物品也不能掉在阻挡区域"* — monsters must not run into the blocking
+region, and drops must not land in it. Both rules are right. Neither turned out to be the bug.
+
+**What the measurement said, before anything was changed.** Two sweeps, both new:
+
+- Static: every death cell on shipped floor 1 and on the launch arena, clamped and then checked
+  for a reachable player-standable point in the player's own connected region. Zero unreachable.
+- Real runs: 903 drops across 16 bot-driven runs of all five floors, re-checked at drop time
+  *and* again on every change to the wall set (so a door locking over an existing drop is
+  covered). Zero unreachable, zero embedded in stone; the nearest standable point to any drop
+  was never further than 116 fp against a 969 fp collect reach.
+
+A first pass reported 14.5% of drops "hidden under wall art" and that number was wrong — it
+assumed `WALL_H_PERIMETER` for every non-`freeStanding` rect. Re-run against the renderer's own
+`wallTier`, where a wall with room floor immediately north of it is a 22 px kerb, the figure is
+**0 of 796**. Recorded here because the wrong version was believed for an afternoon, and the
+thing that corrected it was calling the real tier function instead of re-deriving its answer —
+G6's lesson arriving a second time.
+
+**What shipped anyway.** Both of the reporter's rules, as constructions rather than margins:
+
+1. **Every enemy's `solidRadius` is floored at the player's.** v48 gave mobs the player's RULE
+   and left them their own NUMBER, which for four of eight blueprints is smaller — so a mob
+   could stand, die and drop inside a 31 fp band no player could enter. This is a real defect
+   the smoke suite now catches; it is also far too small to be the report.
+2. **All three drop sites clamp by `dropClearance()`** (the player's own `solidRadius`) instead
+   of `SIM.pickupRadius`. The clamp now asks "can a player's body be here", which is the
+   question a placement site is actually answering.
+
+**The new gates, and which one catches what.** Worth spelling out, because two of the three
+were green before the fix as well as after:
+
+| Gate | Discriminates? |
+|---|---|
+| `smoke.test.ts` "no enemy stands where a player could not follow" | **Yes** — reverting the floor reports a mob 31 fp inside a solid at t326 of the ember run |
+| `smoke.test.ts` "every alive pickup sits where a player body could stand" | **No, by measurement** — a CONTENT gate. Shipped rooms are authored on a 1000 fp lattice and 1000 fp is exactly two player radii, so no pocket exists that separates the two radii |
+| `clearanceParity.test.ts` "the real death drop comes to rest somewhere a player body can stand" | **Yes** — on a 970 fp slot built to separate them, run end-to-end through `DeathDropsSystem` |
+| `client/.../pickupProximity.test.ts` "the panel never offers a pickup the sim will refuse" | **Yes** — doubling the panel radius names the exact fp distances that betray the click |
+
+That last one is the gap none of this doc's six covered, because it straddles the sim boundary:
+the render layer decides whether to SHOW a clickable weapon row, `PickupSystem` independently
+decides whether to HONOUR the click, and each half can be correct while the pair is not. Both
+packages' suites stay green through it. It is also the only *shape* of "I can see it and cannot
+pick it up" that the engine measurements above cannot rule out.
+
+**The honest limit.** `clampToWalkable` separates, it does not escape: in a pocket narrower than
+the clamp radius each wall pushes the point into the other, the pass makes no net movement, and
+the early exit reports "settled" on a point still inside stone. So v50 is not a proof — what
+keeps drops standable is that no shipped room has such a pocket, which is a content property,
+which is why it is the smoke suite and not a unit test that enforces it. `clearanceParity.test.ts`
+pins the limit itself, and pins that one authored grid cell is *exactly* two player radii — so
+raising `PLAYER_BASE.solidRadius` by one fp seals every single-cell corridor in the game.
+
+**Still open.** The report itself. Nothing in the engine now explains it, which is a result and
+not a resolution: the remaining candidates are all on the render side of the boundary, and the
+next round needs the seed and floor the screenshot came from rather than another sweep.
 
 ## Why this doc exists
 
@@ -134,7 +194,8 @@ Nothing asserts the two correspond, in either direction. Observed drift right no
 
 - `engine/README.md:35` says "currently **39**".
 - `engine/content/enemies.ts:283` says "ENGINE_VERSION 43/49" three lines above a comment
-  that says "Reversed in v48". There is no v49.
+  that says "Reversed in v48". There is no v49. *(Snapshot taken at v48. v49 and v50 have
+  shipped since; that comment now reads "v43, reversed in 48, floored in 50".)*
 - `design/ROADMAP.md:8` says 47, and concedes "The number in this heading has drifted
   before and is not the authority."
 
@@ -470,6 +531,7 @@ All fixed in the same pass. Verified against the tree:
 
 - `engine/README.md:35` — "currently **39**", actual 48.
 - `engine/content/enemies.ts:283` — "ENGINE_VERSION 43/49"; there is no v49, should be 48.
+  *(Snapshot taken at v48 — v49 and v50 exist now, and the comment was rewritten in v50.)*
 - `engine/state/entities.ts:421` — `AABB`'s doc says *"The ONE thing that reads it is
   `MovementSystem.resolveWalls`… Nothing else may branch on it"*. `geom.ts` branches on
   it; so does `floorGeometry.ts`.

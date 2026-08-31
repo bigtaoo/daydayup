@@ -164,16 +164,20 @@ describe('MovementSystem — free-standing block north brim (v47, widened v48)',
 
   it("applies to an ENEMY too — the rule is the resolver's, not the player's", () => {
     // Same code path, and it has to be: an enemy that could stand where the player cannot would
-    // hide inside a block's art, which is the same defect from the other side. Enemies keep a
-    // SMALLER solid radius than the player, so this also pins that the brim is added to whatever
-    // radius the actor brought rather than replacing it.
+    // hide inside a block's art, which is the same defect from the other side.
+    //
+    // Through v49 this also pinned that the brim is ADDED to whatever radius the actor brought
+    // rather than replacing it, by asserting a `basic` mob's clearance is smaller than the
+    // player's. v50 floors every mob's clearance at the player's, so `basic` is no longer the
+    // blueprint that shows it — a `brute` is, from the other side (20 px body, wider than the
+    // player's 16), and the additive property is the same property either way.
     const s = withWall({ x: px(700), y: px(610), w: px(200), h: px(64), freeStanding: true });
     // x = 880, not the world centre: the player spawns at (800, 600) and actor-vs-actor push-out
     // would otherwise move the enemy before the wall ever got to it.
-    const e = buildEnemyActor(s, px(880), px(600));
+    const e = buildEnemyActor(s, px(880), px(600), 'brute');
     s.enemies.push(e);
     new MovementSystem().tick(s);
-    expect(e.solidRadius).toBeLessThan(s.players[0]!.solidRadius); // smaller radius, same brim
+    expect(e.solidRadius as number).toBeGreaterThan(s.players[0]!.solidRadius as number); // different radius, same brim
     expect(e.gy).toBe((px(610) - WALL_NORTH_BRIM - e.solidRadius) as Fp);
   });
 
@@ -305,9 +309,13 @@ describe('MovementSystem — solidRadius vs footprintRadius against a solid (v43
     // Through v47 a mob kept the pre-v43 feet-circle answer here (`e.footprintRadius`) —
     // reversed in v48 (live report: *"怪物也要遵守同样的规则"*), so a mob now stops at the same
     // silhouette-tangent distance the player's own v43 fix gave them.
+    //
+    // A `brute`, so the resting place is the mob's OWN body and not v50's floor: with a 15 px
+    // blueprint this assertion would now be measuring `PLAYER_BASE.solidRadius` and would keep
+    // passing if `solidRadius` stopped tracking the body altogether.
     const s = createGameState({ ...CFG, walls: [[780, 590, 15, 20]] as const });
     s.players[0]!.gx = pxToFp(200); // out of the way — an actor↔actor push would mask the wall's
-    const e = buildEnemyActor(s, pxToFp(800), pxToFp(600));
+    const e = buildEnemyActor(s, pxToFp(800), pxToFp(600), 'brute');
     s.enemies.push(e);
     expect(e.solidRadius).toBe(e.radius); // premise: enemies now match the player's convention
     new MovementSystem().tick(s);

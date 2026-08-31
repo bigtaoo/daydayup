@@ -5,7 +5,7 @@ closed loop the design docs describe, and the running record of how each phase a
 landed. Phases are written top-to-bottom in dependency order; each one keeps its dated
 shipped-notes underneath it, so a phase section is both the plan and the history.
 
-**Current built state (engine notes below written 2026-08-20; content/render passes have landed since — 2026-08-25 the hand-authored PvP launch arena `arena_launch` plus the arena audit, 2026-08-26 the arena floor stopping at its rooms and the retirement of `arena_prototype_60`, 2026-08-30 an open door reading as a passage instead of a black wall (2026-08-30b: still not enough on its own, so the recess now shows the room's own floor and the open state got an illustrated warm-gold light-curtain asset of its own — `door_curtain_raw.png` — to match the locked hazard leaf's visual weight), 2026-08-30 a wall standing over a dropped item now fades permanently instead of only while the player happens to be near it — none of which touches the tick order or bumps a version). **Two engine bumps have landed since: 2026-08-30's `ENGINE_VERSION` 47**, a north-face brim on free-standing wall blocks so a character stops beside one the way they already stop beside a pillar — see "The wall swallowed the character and the pillar did not" below — **and the same day's `ENGINE_VERSION` 48**, live feedback on 47 itself (circled screenshot: half the character still read as sunk into a free-standing block, wanted down to about a quarter; a monster's own tiny wall clearance let it stand visibly closer than any player could; a dropped kill's loot could land inside the band no actor's collision would ever let them reach): the brim widened from 16 to 23 px (the largest value the shipped arena's tightest corridor tolerates before a route seals — see "what the north brim costs the launch map" in `launchArena.test.ts`), every enemy blueprint now stops at its own body radius against a wall or pillar instead of the smaller feet circle (re-verified against the PvE bot sim — every balance gate still passes, no softlock), and `geom.clampToWalkable` (where a death drop and an arena crate land) was made brim-aware to match. See `ENGINE_VERSION_HISTORY.md`'s v48 entry for the full account, including the one thing it does NOT fix (a room-boundary/kerb wall's own worst-case coverage, untouched by a constant that only ever governs a free-standing block's north face). **And the same day's `ENGINE_VERSION` 49**, which came out of a test pass rather than a report — `design/18-test-strategy.md`, written to answer "what stops a change to a wall's blocking range or a bullet's spawn point from silently desyncing the logic". Building its gates found five things, all fixed in 49: the v47/v48 brim was **inert over the whole PvE campaign** (the shipped ember JSON pieces carried no `freeStanding` at all, so two versions of tuning applied only to the launch arena — 34 interior blocks are now flagged, route-safety measured per floor); a pair shove could park an actor 6 px inside a wall for 103 consecutive ticks, because wall resolution ran before `resolveActorPairs` and the "corrected next tick" belief was false for two bodies pinned against stone; `clampToWalkable`'s world clamp undid its own push-out at the map edge; and `DeathDropsSystem`/`DoorSystem` each clamped by `footprintRadius` under a comment asserting the opposite, a premise that had been stale since v43/v48. The number in this heading has drifted before and is not the authority — `engine/versionHistory.ts` is. `ENGINE_VERSION` **43** (32: ground-weapon pickup is
+**Current built state (engine notes below written 2026-08-20; content/render passes have landed since — 2026-08-25 the hand-authored PvP launch arena `arena_launch` plus the arena audit, 2026-08-26 the arena floor stopping at its rooms and the retirement of `arena_prototype_60`, 2026-08-30 an open door reading as a passage instead of a black wall (2026-08-30b: still not enough on its own, so the recess now shows the room's own floor and the open state got an illustrated warm-gold light-curtain asset of its own — `door_curtain_raw.png` — to match the locked hazard leaf's visual weight), 2026-08-30 a wall standing over a dropped item now fades permanently instead of only while the player happens to be near it — none of which touches the tick order or bumps a version). **Four engine bumps have landed since: 2026-08-30's `ENGINE_VERSION` 47**, a north-face brim on free-standing wall blocks so a character stops beside one the way they already stop beside a pillar — see "The wall swallowed the character and the pillar did not" below — **and the same day's `ENGINE_VERSION` 48**, live feedback on 47 itself (circled screenshot: half the character still read as sunk into a free-standing block, wanted down to about a quarter; a monster's own tiny wall clearance let it stand visibly closer than any player could; a dropped kill's loot could land inside the band no actor's collision would ever let them reach): the brim widened from 16 to 23 px (the largest value the shipped arena's tightest corridor tolerates before a route seals — see "what the north brim costs the launch map" in `launchArena.test.ts`), every enemy blueprint now stops at its own body radius against a wall or pillar instead of the smaller feet circle (re-verified against the PvE bot sim — every balance gate still passes, no softlock), and `geom.clampToWalkable` (where a death drop and an arena crate land) was made brim-aware to match. See `ENGINE_VERSION_HISTORY.md`'s v48 entry for the full account, including the one thing it does NOT fix (a room-boundary/kerb wall's own worst-case coverage, untouched by a constant that only ever governs a free-standing block's north face). **And the same day's `ENGINE_VERSION` 49**, which came out of a test pass rather than a report — `design/18-test-strategy.md`, written to answer "what stops a change to a wall's blocking range or a bullet's spawn point from silently desyncing the logic". Building its gates found five things, all fixed in 49: the v47/v48 brim was **inert over the whole PvE campaign** (the shipped ember JSON pieces carried no `freeStanding` at all, so two versions of tuning applied only to the launch arena — 34 interior blocks are now flagged, route-safety measured per floor); a pair shove could park an actor 6 px inside a wall for 103 consecutive ticks, because wall resolution ran before `resolveActorPairs` and the "corrected next tick" belief was false for two bodies pinned against stone; `clampToWalkable`'s world clamp undid its own push-out at the map edge; and `DeathDropsSystem`/`DoorSystem` each clamped by `footprintRadius` under a comment asserting the opposite, a premise that had been stale since v43/v48. **And 2026-08-31's `ENGINE_VERSION` 50**, the third round of the unpickable-loot report (*“依然有掉落的物品无法拾取”*), which arrived with the reporter's own diagnosis: *“怪物不能跑进阻挡区域，掉落物品也不能掉在阻挡区域”*. Both rules shipped — every enemy's `solidRadius` is now floored at the player's own (v48 gave mobs the player's rule and left them their own smaller number, so four of eight blueprints could stand, die and drop inside a 31 fp band no player could enter), and all three drop-placement sites clamp by the player's clearance instead of the pickup's collect padding. **Neither is the reported bug**: 903 real drops across 16 bot-driven runs of all five floors, plus a static sweep of every death cell on floor 1 and the launch arena, found zero unreachable and zero embedded in stone before the change. What v50 really buys is that both rules are now invariants checked every tick rather than margins that happen to hold — see “The rules were right and the bug was somewhere else” below, and `design/18-test-strategy.md`'s “What v50 added” for which of the new gates actually discriminate. The number in this heading has drifted before and is not the authority — `engine/versionHistory.ts` is. `ENGINE_VERSION` **43** (32: ground-weapon pickup is
 click-driven; 33: manual aim removed entirely; 34: co-resident PvE room/door model, engine +
 client rendering; 35: fully-realized branching — see the Room & door model section below;
 same-day map-editor door placement, the `layout: 'graph2d'` real-2D-layout follow-up, AND the
@@ -8156,6 +8156,85 @@ passing on abstract arithmetic alone. `Scene.test.ts`'s existing wiring test was
 way (`bullet.gx` advanced + `reconcile()` in place of a bare `frameDt`). Full suite: 3727/3727,
 `tsc --noEmit` clean across every workspace.
 
+
+## The rules were right and the bug was somewhere else (2026-08-31, engine + client, `ENGINE_VERSION` 50)
+
+Third round of the same report — *"依然有掉落的物品无法拾取"*, with a circled screenshot of loot
+visible through a wall's x-ray fade — and this time the reporter supplied the diagnosis:
+*"你要判断一下怪物不能跑进阻挡区域，掉落物品也不能掉在阻挡区域"*.
+
+### Measuring the diagnosis before implementing it
+
+Both rules are correct, so the temptation was to implement them and call it fixed. Instead they
+were measured first, and both already held:
+
+- **Static sweep.** Every death cell on shipped floor 1 and on the launch arena, run through
+  `clampToWalkable` and then checked for a player-standable point inside the player's own
+  connected region. Zero unreachable. Zero cells where a mob fits and the player does not.
+- **Real runs.** 903 drops across 16 bot-driven runs (8 seeds × 2 profiles × all five floors),
+  each checked at the moment it landed *and* again on every change to the wall set — so a door
+  locking over a drop that was already lying there is covered. Zero unreachable, zero embedded in
+  stone. Worst nearest-standable-point distance: 116 fp, against a 969 fp collect reach.
+
+One intermediate finding was wrong and is worth recording: a first pass reported **14.5% of drops
+sitting under a wall's painted art**, which would have been the whole answer. It assumed
+`WALL_H_PERIMETER` (104 px) for every wall not flagged `freeStanding`. Re-run against the
+renderer's own `wallTier` — where a wall with room floor immediately north of it is a 22 px kerb,
+not a 104 px tower — the figure is **0 of 796**. The correction came from calling the real tier
+function instead of re-deriving its answer, which is design/18's G6 lesson turning up again in a
+measurement rather than in shipped code.
+
+### What shipped
+
+Both of the reporter's rules, as constructions instead of margins:
+
+1. **`buildEnemyActor` floors every mob's `solidRadius` at `PLAYER_BASE.solidRadius`.** v48 gave
+   mobs the player's *rule* ("stop at your own silhouette, not your feet") and left them their
+   own *number*, and four of the eight blueprints draw a body narrower than the player's —
+   critter 13 px, basic/emberling/frostling/venom 15 px, against 16. Those could stand, die and
+   drop inside a band no player could enter. A floor rather than a flat assignment, so brute and
+   boss keep their own wider silhouette; it only ever widens a clearance, so it cannot re-open
+   the sunk-into-stone reading from the other side. Route safety needs no new sweep, and that is
+   the point of the value: every mob now clears a solid by at least what the player does, so any
+   gap a player fits through a mob fits through. `test:pve-sim` re-run, all five balance gates
+   green including "nothing softlocks".
+2. **All three drop sites clamp by `dropClearance()`** — `DeathDropsSystem`, `PickupSystem`'s
+   weapon-swap drop, `SpawnSystem`'s authored arena crate. The old radius (`SIM.pickupRadius`,
+   469 fp) answered "how close must a player be to collect me"; a placement clamp is actually
+   asking "can a player's body be *here*", and the body is 500 fp.
+
+### The four new gates, and which of them actually discriminate
+
+Recorded honestly, because two were green before the fix as well as after:
+
+| Gate | Catches the regression? |
+|---|---|
+| smoke: "no enemy stands where a player could not follow" | **Yes** — reverting the floor names a mob 31 fp inside a solid at t326 of the ember run |
+| smoke: "every alive pickup sits where a player body could stand" | **No** — a *content* gate. Shipped rooms are on a 1000 fp lattice and 1000 fp is exactly two player radii, so nothing separates the two radii |
+| `clearanceParity`: the real death drop lands somewhere a body fits | **Yes** — on a 970 fp slot built to separate them, end-to-end through `DeathDropsSystem` |
+| `pickupProximity`: the panel never offers what the sim refuses | **Yes** — doubling the panel radius names the exact fp distances that betray the click |
+
+The last one is new territory: the weapon-pickup panel decides whether to *show* a clickable row
+and `PickupSystem` independently decides whether to *honour* the click, so each half can be
+correct while the pair is not, and both packages' suites stay green through it. That is a real
+"I clicked and nothing happened" mechanism with no previous test. Today the sim's reach strictly
+contains the panel's — asserted as that implication over a swept range, not as an equality
+between two constants, since equating them would forbid the margin that makes it safe.
+
+### The honest limit, and what is still open
+
+`clampToWalkable` separates; it does not escape. In a pocket narrower than the clamp radius each
+wall pushes the point into the other, the pass makes no net movement, and the fixed-point exit
+reports "settled" on a point still inside stone. So v50 is not a proof — what keeps drops
+standable is that no shipped room contains such a pocket, which is why the enforcing test is the
+per-tick smoke invariant and not a unit test. `clearanceParity.test.ts` pins the limit itself,
+and pins that **one authored grid cell is exactly two player radii**: raising
+`PLAYER_BASE.solidRadius` by a single fp seals every single-cell corridor in the game, the same
+wall v48 hit when it tried a 24 px north brim.
+
+And the report itself is **not explained**. Nothing left in the engine produces an unreachable
+drop. The remaining candidates are all on the render side of the sim boundary, and the next round
+needs the seed and floor the screenshot came from rather than another sweep.
 
 ## The tests that were green while the fix did nothing (2026-08-30, engine + content, `ENGINE_VERSION` 49)
 

@@ -37,7 +37,7 @@ Break one of these and two clients desync — silently, minutes into a match.
   iteration order, a rounding rule, or a hashed field.
 
 Any change that moves outcomes — or moves the replay hash at all — bumps `ENGINE_VERSION`
-(`versionHistory.ts`, currently **49**, with the full per-bump history in
+(`versionHistory.ts`, currently **50**, with the full per-bump history in
 `ENGINE_VERSION_HISTORY.md`). `replay.ts` refuses to replay a mismatched version rather than
 produce garbage.
 
@@ -103,8 +103,9 @@ fail for opposite reasons:
   without bumping.
 
 `smoke.test.ts` is the third leg: real runs with per-tick invariants (nothing inside a wall,
-no float in a geometry field, no enemy without a `roomId`). It asks whether behaviour is
-CORRECT, where the golden gate only asks whether it CHANGED.
+no float in a geometry field, no enemy without a `roomId`, no enemy standing where a player
+could not follow, no pickup resting where a player body could not stand). It asks whether
+behaviour is CORRECT, where the golden gate only asks whether it CHANGED.
 
 `GameState.test.ts`, `systems/*.test.ts` and `replay.test.ts` are the places to look first
 when adding a system; `content/*.test.ts` and `balance/*.test.ts` guard the data model and the

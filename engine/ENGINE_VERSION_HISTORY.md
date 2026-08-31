@@ -1125,3 +1125,49 @@ Also in this pass, without bumping (behaviour-preserving, and the golden fixture
 before the extraction still matched after it — which is what proves it):
 `engine/systems/solidBounds.ts` and `engine/state/actorRadius.ts` collapse three independent
 copies of the wall-boundary rule into one.
+
+## v50: a monster may not stand where the player cannot, and a drop lands where a body fits (2026-08-31)
+
+Two changes, one sentence each, both taken verbatim from the third round of the same live
+report — *"依然有掉落的物品无法拾取。你要判断一下怪物不能跑进阻挡区域，掉落物品也不能掉在阻挡
+区域"*.
+
+**1. Every enemy's `solidRadius` is floored at `PLAYER_BASE.solidRadius`.** v48 gave mobs the
+player's RULE (stop at your own silhouette, not your feet circle) and left them with their own
+NUMBER, which for four of the eight blueprints is smaller than the player's: critter 13 px,
+basic/ember/frost/venom 15 px, against the player's 16. Those mobs could therefore stand — and
+die, and drop loot — in a band no player could enter. `Math.max(bp.radius, …)`, not a flat
+assignment, so brute (20 px) and boss (30 px) keep stopping at their own silhouette; the change
+only ever widens a clearance.
+
+Route safety needs no new sweep, and that is the point of the floor's value rather than an
+omission: every mob now clears a solid by at least what the player clears it by, so any gap a
+player fits through a mob fits through, and the player's own connectivity across all shipped
+content is what v48/v49 already measured and pinned.
+
+**Replay impact: any stream with a small mob that touches a wall or pillar diverges from that
+contact onward** — same shape as v47's and v48's. Re-ran `npm run test:pve-sim`: every balance
+gate still passes.
+
+**2. All three drop-placement sites clamp by `dropClearance()` (= the player's own
+`solidRadius`, 500 fp) instead of `SIM.pickupRadius` (469 fp).** `DeathDropsSystem`'s death
+drop, `PickupSystem.applyWeapon`'s swap drop, `SpawnSystem.spawnArenaLoot`'s authored crate.
+The old radius answered "how close must a player be to collect me"; the question a placement
+clamp actually asks is "can a player's BODY be here", and the player's body is wider. The two
+differ by 31 fp along a flat face — and by an entire pocket wherever geometry is tight, since
+the set of points a 469 fp circle fits in is strictly larger, and differently CONNECTED, than
+the set a 500 fp circle fits in.
+
+**Honest scope, because the measurement came before the change.** At today's numbers the old
+radius stranded nothing. A sweep of 903 real drops across 16 bot-driven runs of all five shipped
+floors found zero unreachable and zero embedded in stone, the nearest standable point never
+further than 116 fp against a 969 fp collect reach; a separate static sweep of every death cell
+on floor 1 and the launch arena found zero too. The 14.5% of drops that a first pass flagged as
+"under wall art" was an artifact of assuming `WALL_H_PERIMETER` for every non-`freeStanding`
+rect — re-run against the renderer's own `wallTier`, where a wall with room floor north of it is
+a 22 px kerb, the figure is **0 of 903**. So this version does not fix a measured strand; it
+replaces a margin with a construction, which is what lets `smoke.test.ts` assert it per tick
+(*"every alive pickup sits where a player's body could stand"*) — and an invariant is what
+survives the next time `WALL_NORTH_BRIM` or a body radius moves. The report itself is therefore
+NOT yet explained by anything in the engine; see the smoke suite's new pickup invariants for
+what is now ruled out by construction rather than by sampling.

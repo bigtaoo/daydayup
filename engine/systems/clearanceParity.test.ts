@@ -36,6 +36,10 @@ import { blockingRadius } from '../state/actorRadius';
 import type { Fp } from '../math/fixed';
 import type { AABB } from '../state/entities';
 import { circlesOverlap, clampToWalkable } from './geom';
+import { blockingRect } from './solidBounds';
+import { dropClearance } from '../state/actorRadius';
+import { DeathDropsSystem } from './DeathDropsSystem';
+import { toFpGrid } from '../content/convert';
 
 const px = (n: number): Fp => pxToFp(n);
 
@@ -59,10 +63,15 @@ describe('the three radii are genuinely different, so which one you pick matters
     expect(offenders).toEqual([]);
   });
 
-  it('a built enemy blocks by its BODY radius, not its feet (v48)', () => {
+  it('a built enemy blocks by its BODY radius, floored at the player\'s (v48, v50)', () => {
     const s = createGameState({ seed: 1, worldW: 800, worldH: 800, waves: [] });
+    // `basic` is one of the four blueprints the v50 floor binds on (15 px body vs the player's
+    // 16), so the assertion is the floor rather than the body here — see
+    // `content/enemies.test.ts` for the same rule stated over the whole registry, including the
+    // wide bodies that do keep their own silhouette.
     const e = buildEnemyActor(s, px(400), px(400), 'basic');
-    expect(blockingRadius(e)).toBe(e.radius);
+    expect(blockingRadius(e)).toBe(PLAYER_BASE.solidRadius);
+    expect(blockingRadius(e) as number).toBeGreaterThanOrEqual(e.radius as number);
     expect(blockingRadius(e)).not.toBe(e.footprintRadius);
   });
 
@@ -135,29 +144,51 @@ describe('the RULE: clamp an actor by the radius that will push it', () => {
   });
 });
 
-describe('a pickup is a different case, and correctly so', () => {
-  it('is clamped by SIM.pickupRadius, and nothing ever pushes it afterwards', () => {
-    // Worth pinning so the rule above is not "fixed" by making every site use `solidRadius`.
-    // A pickup is not an actor: `MovementSystem` never touches it, so its clamp radius answers
-    // "can the player reach me", not "will I be displaced". Different question, different
-    // radius, deliberately.
+describe('a drop lands where a PLAYER BODY fits (ENGINE_VERSION 50)', () => {
+  it('is clamped by dropClearance(), and settles in one pass', () => {
     const s = withWall({ x: px(700), y: px(600), w: px(200), h: px(64), freeStanding: true });
-    const out = clampToWalkable(px(800), px(595), SIM.pickupRadius, s);
-    const again = clampToWalkable(out.gx, out.gy, SIM.pickupRadius, s);
+    const out = clampToWalkable(px(800), px(595), dropClearance(), s);
+    const again = clampToWalkable(out.gx, out.gy, dropClearance(), s);
     expect(again).toEqual(out); // idempotent — it settles in one pass and stays there
+  });
+
+  it("dropClearance() IS the player's own solid clearance, and it is wider than the collect padding", () => {
+    // The premise. Through v49 the drop sites used `SIM.pickupRadius`, on the reasoning that a
+    // pickup is not an actor and its clamp answers "can the player reach me". Right question,
+    // wrong radius: the thing that has to reach it is a player's BODY.
+    expect(dropClearance()).toBe(PLAYER_BASE.solidRadius);
+    expect(dropClearance() as number).toBeGreaterThan(SIM.pickupRadius as number);
+  });
+
+  it('MEASURED: the real death drop comes to rest somewhere a player body can stand', () => {
+    // End-to-end through `DeathDropsSystem`, not through the clamp in isolation — the defect
+    // class this whole file exists for is a placement SITE citing the wrong radius, so the
+    // assertion has to run the site.
+    //
+    // The geometry is chosen to separate the two radii, because shipped content does not: the
+    // ember floors are authored on a 1000 fp lattice, so their narrowest gap is exactly
+    // 2 x PLAYER_BASE.solidRadius and a 469 fp circle is never the only thing that fits. A
+    // 970 fp slot is the smallest interesting case — a 469 fp drop settles happily inside it,
+    // a 500 fp player body does not fit at all.
+    const s = slotState(970);
+    const mob = buildEnemyActor(s, 4485 as Fp, 7500 as Fp, 'basic');
+    mob.hp = 0;
+    s.enemies.push(mob);
+    new DeathDropsSystem().tick(s);
+    const drop = s.pickups[0];
+    expect(drop, 'the mob died without dropping anything — pick a seed whose roll produces one').toBeDefined();
+    // Pre-v50 this landed at (4485, 7500) untouched, because a 469 fp circle clears both faces
+    // by 16 fp. Post-v50 the clamp is a 500 fp circle and the slot pushes it.
+    expect({ gx: drop!.gx as number, gy: drop!.gy as number }).not.toEqual({ gx: 4485, gy: 7500 });
   });
 
   it('a drop clamped against a wall is still within collection range of where the player can stand', () => {
     // The invariant the v48 report (*"角色根本无法拾取掉落的物品"*) is really about, stated
-    // end-to-end instead of as a comparison between two constants.
-    //
-    // Note `SIM.pickupRadius` (469 fp, 15 px) is SMALLER than `PLAYER_BASE.solidRadius`
-    // (500 fp, 16 px), so a drop legitimately settles 1 px closer to a wall than the player's
-    // centre can ever get. A naive `expect(pickupRadius).toBeGreaterThanOrEqual(solidRadius)`
-    // therefore FAILS while the game is completely fine — the shortfall is 31 fp against a
-    // collection range of 969 fp (pickupRadius + the player's body). Assert reach, not radii.
+    // end-to-end instead of as a comparison between two constants. Kept from v49 — it is now
+    // implied by the stronger property above on open geometry, but it is the statement that
+    // stays meaningful if the collect radius is ever retuned independently.
     const s = withWall({ x: px(700), y: px(600), w: px(200), h: px(64), freeStanding: true });
-    const drop = clampToWalkable(px(800), px(595), SIM.pickupRadius, s);
+    const drop = clampToWalkable(px(800), px(595), dropClearance(), s);
     // The closest the player's own body may ever come to this face, brim included.
     const playerClosest = clampToWalkable(px(800), px(599), PLAYER_BASE.solidRadius, s);
     expect(
@@ -166,3 +197,83 @@ describe('a pickup is a different case, and correctly so', () => {
     ).toBe(true);
   });
 });
+
+describe('the honest limit: a clamp separates, it does not escape', () => {
+  /**
+   * `clampToWalkable` pushes a point out of what it overlaps, repeated to a fixed point. In a
+   * pocket NARROWER than the clamp radius there is nothing to converge on: each wall pushes the
+   * point into the other, the pass makes no net movement, and the early exit reports "settled"
+   * on a point that is still inside stone.
+   *
+   * That is not a bug to fix in the clamp — no radius produces a standable answer in a slot no
+   * body fits — but it IS what stops v50 from being a construction proof. What actually keeps
+   * drops standable on shipped floors is that no shipped floor has such a pocket, and that is a
+   * CONTENT property. `smoke.test.ts`'s "every alive pickup sits where a player body could
+   * stand" is where it is enforced, per tick, on every shipped scenario.
+   *
+   * Recorded here so the next person to widen a body radius or author a tighter room knows
+   * which test will catch them, and why it is that one and not this file.
+   */
+  it('a slot narrower than a player admits no standable point, at any clamp radius', () => {
+    const s = slotState(970);
+    for (const r of [SIM.pickupRadius, dropClearance()]) {
+      const out = clampToWalkable(4485 as Fp, 7500 as Fp, r, s);
+      expect(
+        deepestWallOverlap(s, out.gx, out.gy, PLAYER_BASE.solidRadius),
+        `a ${r} fp clamp found a player-standable spot in a 970 fp slot — geometry says there is none`,
+      ).toBeGreaterThan(0);
+    }
+  });
+
+  it('one authored grid cell is EXACTLY two player radii — the margin content relies on', () => {
+    // 1000 fp of gap, 500 fp of body each side. Every shipped room is authored on this lattice
+    // (`world/dungeons/ember/pieces/*.json`, `world/rooms/ember.ts`), so a single-cell corridor
+    // is passable by exactly tangency and no more. Raising PLAYER_BASE.solidRadius by ONE fp
+    // seals every one of them — the same wall v48 hit when it tried a 24 px north brim and
+    // `launchArena.test.ts` reported 45 regions becoming 61.
+    //
+    // Asserted as the relationship, not as the two numbers, so it reads as the constraint it is.
+    expect((PLAYER_BASE.solidRadius as number) * 2).toBe(toFpGrid(1) as number);
+  });
+
+  it('the slot fixture really is the discriminating case — a 1000 fp gap is fine for both', () => {
+    // Anti-vacuity for the pair above: if `slotState` were subtly wrong (walls not where the
+    // numbers say) every clamp would report "inside stone" and both tests would pass for free.
+    const s = slotState(1000);
+    const out = clampToWalkable(4500 as Fp, 7500 as Fp, dropClearance(), s);
+    expect(out).toEqual({ gx: 4500, gy: 7500 });
+    expect(deepestWallOverlap(s, out.gx, out.gy, PLAYER_BASE.solidRadius)).toBeLessThanOrEqual(0);
+  });
+});
+
+/**
+ * A dead-end slot `gap` fp wide, open to the north: two blocks whose facing edges are `gap`
+ * apart, and a cap across the south end. The slot's centre line is x = 4000 + gap/2.
+ */
+function slotState(gap: number): GameState {
+  const s = createGameState({ seed: 1, worldW: 20000, worldH: 20000, waves: [] });
+  s.walls.push({ x: 0 as Fp, y: 6000 as Fp, w: 4000 as Fp, h: 4000 as Fp });
+  s.walls.push({ x: (4000 + gap) as Fp, y: 6000 as Fp, w: 4000 as Fp, h: 4000 as Fp });
+  s.walls.push({ x: 4000 as Fp, y: 9000 as Fp, w: gap as Fp, h: 1000 as Fp });
+  s.rebuildSpatialIndex();
+  return s;
+}
+
+/**
+ * How far a circle of radius `r` at (gx, gy) reaches into the nearest wall. Positive means
+ * overlap. Deliberately geometric rather than "does the clamp move it": in a too-narrow pocket
+ * the clamp's own fixed-point exit reports no movement while the point is still inside stone,
+ * which is the trap the two tests above are about.
+ */
+function deepestWallOverlap(s: GameState, gx: Fp, gy: Fp, r: Fp): number {
+  let worst = -Infinity;
+  for (const w of s.walls) {
+    const b = blockingRect(w);
+    const cx = Math.max(b.left as number, Math.min(gx as number, b.right as number));
+    const cy = Math.max(b.top as number, Math.min(gy as number, b.bottom as number));
+    const dx = (gx as number) - cx;
+    const dy = (gy as number) - cy;
+    worst = Math.max(worst, (r as number) - Math.sqrt(dx * dx + dy * dy));
+  }
+  return worst;
+}

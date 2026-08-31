@@ -18,6 +18,7 @@ import type { GameState } from '../state/GameState';
 import type { DamageType, ResistMap } from './damage';
 import { freshStatus } from './damage';
 import { pxToFp } from './convert';
+import { PLAYER_BASE } from './players';
 import { ENEMY_GUN_SIM, makeWeapon } from './weapons';
 import { curveAt } from '../world/dungeon';
 
@@ -289,7 +290,24 @@ export function buildEnemyActor(state: GameState, gx: Fp, gy: Fp, type?: string)
     // 同样的规则"* — a monster standing where its own tiny clearance let it should hide behind a
     // wall no more than the player does) — see ENGINE_VERSION_HISTORY for what the sim re-run
     // found.
-    solidRadius: bp.radius,
+    //
+    // FLOORED at the player's own clearance in v50, which is the other half of that same
+    // sentence and the half v48 did not deliver. Four of the eight blueprints draw a body
+    // SMALLER than the player's (critter 13 px, basic/ember/frost/venom 15 px vs the player's
+    // 16), so "the same rule" still left them able to stand — and to die, and to drop loot —
+    // in a band no player could enter. The reporter stated it directly in the third round of
+    // this report: *"怪物不能跑进阻挡区域"*. A floor rather than a flat `PLAYER_BASE.solidRadius`
+    // keeps the bigger bodies (brute 20 px, boss 30 px) stopping at their own silhouette, which
+    // is what v43/v48 were about; it only ever WIDENS a mob's clearance, so it cannot re-open
+    // the sunk-into-stone reading from the other side.
+    //
+    // Route safety is a non-question rather than a measurement here, and that is the point of
+    // the floor's VALUE: every mob now clears a solid by at least what the player clears it by,
+    // so any gap a player can walk through a mob can walk through, and the player's own
+    // connectivity over all shipped content is what v48/v49 already measured and pinned
+    // (`launchArena.test.ts`, the per-floor region sweep). Chase paths do move — see the
+    // ENGINE_VERSION_HISTORY entry for the `test:pve-sim` re-run.
+    solidRadius: Math.max(bp.radius as number, PLAYER_BASE.solidRadius as number) as Fp,
     alive: true,
     weapon,
     firing: false,
