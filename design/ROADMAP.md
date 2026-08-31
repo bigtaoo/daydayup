@@ -8429,3 +8429,33 @@ it is not evidence about frame pacing, and no screenshot was taken.
 - **The report itself, unchanged.** Nothing here explains it; what changed is that the next
   occurrence produces a file instead of a description. What is needed is one F9 press at the moment
   it happens.
+
+## The re-measurement that its own control threw away (2026-08-31, docs + measurement only)
+
+The standing item from "The arena finally has a frame time": the headline GPU numbers predate two
+merges, and *"should be re-taken with the window foregrounded before anyone optimises against
+them."* Re-taken today on the right surface (real Chrome, Intel Arc, timer extension present, the
+same arena/zoom/resolution setup) but with the window BEHIND another app, because a terminal
+session cannot foreground it.
+
+**The run is void, and the only thing that says so is the twin control.** Four medians of arms
+that render identically — 3.844, 3.753, 3.637, 2.709 — and the closing twin of the last run read
+3.945 against its opening twin's 2.709: **1.24 ms apart** on a ~3.8 ms frame, against a ±0.1 ms
+tolerance. Every individual sample was tight and none were discarded. The intermediate `-ground`
+arm read a plausible 2.68 ms, which would have produced the confident finding *"ground now costs
+nothing, `floorClip` fixed it"* — from a run whose own control proves it measured nothing.
+
+Recorded in `client/src/perf/README.md` ("The re-measurement that had to be thrown away") with the
+two new mechanism notes: a backgrounded tab has a **dishonest** failure mode as well as the
+documented honest one (undiscarded, self-consistent samples that drift by a third of a frame
+between arms), and every attempt to dodge the 1-second `setTimeout` clamp — microtask,
+`MessageChannel`, real-time busy spin at 5 ms and 50 ms — returns `GPU_DISJOINT_EXT` on **every**
+sample. The clamp is not the obstacle; the preempted GPU context is. There is no wait function
+that makes a hidden tab measurable.
+
+### Still open
+
+- **Unchanged, with a sharper prerequisite.** The arena's per-layer attribution needs re-taking on
+  current `main`, and the requirement is not "real Chrome" (the fourth measurement's conclusion) but
+  real Chrome **with the window in the foreground** — which needs a person at the keyboard. Until
+  then the fourth and fifth measurements' numbers stand as the record.

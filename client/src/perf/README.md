@@ -690,3 +690,51 @@ everything outside the player's own room black and the result looks like a broke
 Where to take the coordinates from: the sweeps already know them. `arenaWallCoverage.test.ts`'s
 `SWEPT` / `LAUNCH.passages` / shading sweep were dumped to JSON from a temporary `it()` block, and
 the camera pointed at the worst sample of 72,686 rather than at whatever was on screen.
+
+## The re-measurement that had to be thrown away (2026-08-31)
+
+ROADMAP had a standing item: the headline millisecond figures above were taken against
+`2e09a0e`-era client code, `main` has moved on (shield-shell work, then `floorClip.ts`), and
+*"the specific millisecond figures should be re-taken with the window foregrounded before anyone
+optimises against them."* This is what happened when they were re-taken **without** that
+condition, recorded so nobody spends the round again.
+
+Real Chrome on the same box, same surface as the fourth measurement
+(`ANGLE (Intel, Intel(R) Arc(TM) Pro Graphics, D3D11)`, `EXT_disjoint_timer_query_webgl2`
+present), same setup: `?arena=arena_launch&perf=1`, 60 rooms / 492 walls / 124 pillars / 374
+ground pieces, camera settled at zoom 4.29, 1920x911 at resolution 1.0, ticker stopped, renders
+driven by hand. The one difference: `document.hidden === true` throughout — the window was behind
+another app and could not be foregrounded from a terminal session.
+
+**Every reading looked fine and the run is void.** Four medians of arms that render *identically*,
+across the session:
+
+```
+A   3.844   A   3.753   A   3.637   A   2.709   A2  3.945
+                                    ^-------- twin pair, same run: 1.24 ms apart
+```
+
+The twin rule this harness adopted after the 2026-08-27 session (two no-change arms at opposite
+ends of the arm order, run discarded if their medians differ by more than ~0.1 ms) is what caught
+it — and it is the ONLY thing that caught it: every individual sample was tight (`min` within
+0.05 ms of the median), none were discarded, and the intermediate `-ground` arm read a perfectly
+plausible 2.68-2.71 ms. Believing it would have produced the finding "ground now costs ~0 ms,
+`floorClip` fixed everything" from a run whose own control says it measured nothing.
+
+Two mechanism notes, both new:
+
+- **A backgrounded tab does not only produce `ms: null`.** The section above records the honest
+  failure mode (25 of 25 samples discarded). This is the dishonest one: with the default
+  `setTimeout` wait the samples come back undiscarded and self-consistent, and drift by more than
+  a third of the frame between arms minutes apart. Discarded samples are safe; these are not.
+- **Do not "fix" the poll wait to get around the clamp.** `setTimeout` is clamped to ~1 s in a
+  hidden tab, which makes each arm take tens of seconds and wedges the third arm outright (the
+  poll budget runs out). Both faster waits were tried — a microtask (`Promise.resolve`), a
+  `MessageChannel` macrotask, and a real-time busy spin at 5 ms and 50 ms — and **all three return
+  `GPU_DISJOINT_EXT` on every single sample** (0 kept of 5, three times over). The clamp is not the
+  problem; the preempted GPU context is. There is no wait function that makes a hidden tab
+  measurable.
+
+So the numbers in the fourth and fifth measurements above stand as the current record, and the
+ROADMAP item stays open with a sharper prerequisite than "real Chrome": real Chrome **with the
+window in the foreground**, which needs a person at the keyboard.
