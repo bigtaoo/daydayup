@@ -132,15 +132,18 @@ export function inspectReplay(file: ReplayFile): InspectReport {
   let lastTick = 0;
 
   for (let frame = 1; frame <= file.ticks; frame++) {
-    // Observed BEFORE and AFTER the step, and this is not belt-and-braces. `PickupSystem`
-    // collects DURING the tick, so a drop is already `alive: false` by the time the
-    // post-step state is readable: the very tick a player stood inside the gate is the one
-    // tick the drop cannot be seen being collectible. Measured — the first run of this
-    // harness reported 7 of 8 drops "never collectible", four of which had plainly been
-    // picked up. Reading both sides brackets the moment the sim compared (movement runs
-    // before collection, so the truth lies between the two), and the `pickup` event below
-    // settles it outright.
-    observePickups(engine.state, traces, prevPositions);
+    // One observation per tick, AFTER the step, plus the `pickup` event below — and the
+    // event is what makes it correct rather than the sampling. `PickupSystem` collects
+    // DURING a tick, so a drop is already `alive: false` by the time the post-step state
+    // is readable: the very tick a player stood inside its gate is the one tick it cannot
+    // be seen being collectible. Measured — the first run of this harness reported 7 of 8
+    // drops "never collectible", four of which had plainly been picked up.
+    //
+    // A pre-step observation was tried as the fix and is NOT here, because a mutation
+    // battery showed removing it changed nothing: the pre-step state at frame N *is* the
+    // post-step state of frame N-1, which was already observed. It reads like extra
+    // evidence and is a duplicate. The event stream is the only thing that sees the
+    // collecting tick.
     const events = engine.advance(frame);
     if (events === null) break;
     const s = engine.state;
@@ -173,11 +176,19 @@ export function inspectReplay(file: ReplayFile): InspectReport {
 /**
  * Attribute one `pickup` event to a trace. The event carries kind + position but no id
  * (state/events.ts), and a drop never moves, so exact fp position + kind identifies it.
- * Two drops of one kind at the identical fp point would be ambiguous — the first
+ * Two drops of THE SAME kind at the identical fp point would be ambiguous — the first
  * unattributed match wins, which is why `vanished` exists to surface anything this
  * failed to explain rather than assuming it got them all.
+ *
+ * Exported for its own test: no shipped run puts two different-kind drops on one fp
+ * point, so the `kind` half of the match is unreachable from a real replay and a battery
+ * kills it only against a fixture.
  */
-function markCollected(traces: Map<number, PickupTrace>, e: { kind: string; gx: Fp; gy: Fp }, tick: number): void {
+export function markCollected(
+  traces: Map<number, PickupTrace>,
+  e: { kind: string; gx: Fp; gy: Fp },
+  tick: number,
+): void {
   const x = fpToPx(e.gx);
   const y = fpToPx(e.gy);
   for (const t of traces.values()) {

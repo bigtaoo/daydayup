@@ -8459,3 +8459,32 @@ that makes a hidden tab measurable.
   current `main`, and the requirement is not "real Chrome" (the fourth measurement's conclusion) but
   real Chrome **with the window in the foreground** — which needs a person at the keyboard. Until
   then the fourth and fifth measurements' numbers stand as the record.
+
+### The battery on the recorder, and the two redundancies it indicted (2026-08-31, same pass)
+
+40 authored mutants over the seven files the pass touched, each find-string asserted to match
+exactly once (a 0-match replacement is UNMEASURED, not a survivor). **35 killed, 5 survivors**,
+and the interesting half is that only three of the five were test gaps:
+
+- **Two were redundant CODE, not missing tests.** `saveMarkedReplay`'s `if (!recorder.recording)`
+  early-out survived deletion because `pack()` already returns null in exactly that case and the
+  function returns the same message either way. And the *pre-step* `observePickups` call in the
+  inspector — added deliberately, with a doc comment arguing it "brackets the moment the sim
+  compared" — survived removal because the pre-step state at frame N **is** the post-step state of
+  frame N-1, already observed. The comment was wrong and the code was a duplicate; the `pickup`
+  event is the only thing that sees the collecting tick. Both deleted, and the comment now records
+  what the battery found rather than what the author assumed.
+- **One was a message, not a behaviour.** Deleting `if (!Array.isArray(replay.commands)) throw`
+  survived because `.map` throws anyway — what the guard actually buys is a message naming the
+  field instead of "map is not a function". Now pinned as that.
+- **One was unreachable in real content.** `markCollected` matching on `kind` as well as position
+  cannot be killed from a replay: no shipped run puts two different-kind drops on one fp point. The
+  function is exported for its own fixture rather than left unmeasured — the distinction the memory
+  notes insist on (equivalent / unreachable-in-content / genuinely uncovered) decided all three
+  endings here.
+- **One was a genuine gap.** The point-to-segment clamp: every test placed the drop beside the path,
+  so an unclamped projection onto the infinite line was never exercised. A drop *behind* the start
+  of a walk now pins it.
+
+Re-run after the fixes: **38 executed, 38 killed, 0 survived**, plus one honest SKIP whose target
+code no longer exists. Repo-wide 5,955 tests, `npm run check` green.

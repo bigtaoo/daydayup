@@ -25,6 +25,7 @@ import { buildDungeonRunConfig } from '../../src/game/match/offlineConfig';
 import {
   APPARENT_CONTACT_PX,
   inspectReplay,
+  markCollected,
   observePickups,
   selectSuspects,
   type PickupTrace,
@@ -116,6 +117,43 @@ describe('the suspect rule fires on the case it exists for, and only on it', () 
   });
 });
 
+describe('markCollected attributes an event to the right drop', () => {
+  // No shipped run puts two different-kind drops on one fp point, so the `kind` half of the
+  // match is unreachable from a real replay — a battery kills it only against this fixture.
+  const twoAtOnePoint = () => {
+    const traces = new Map<number, PickupTrace>();
+    observePickups(
+      stateAt([900, 900], [
+        { kind: 'heal', gx: pxToFp(100), gy: pxToFp(100) },
+        { kind: 'material', gx: pxToFp(100), gy: pxToFp(100) },
+      ]),
+      traces,
+    );
+    return traces;
+  };
+
+  it('matches on kind as well as position', () => {
+    const traces = twoAtOnePoint();
+    markCollected(traces, { kind: 'material', gx: pxToFp(100), gy: pxToFp(100) }, 42);
+    const byKind = new Map([...traces.values()].map((t) => [t.kind, t.collectedTick]));
+    expect(byKind.get('material')).toBe(42);
+    expect(byKind.get('heal')).toBeNull();
+  });
+
+  it('leaves everything alone when nothing matches the position', () => {
+    const traces = twoAtOnePoint();
+    markCollected(traces, { kind: 'heal', gx: pxToFp(500), gy: pxToFp(500) }, 42);
+    expect([...traces.values()].every((t) => t.collectedTick === null)).toBe(true);
+  });
+
+  it('attributes one event to one drop, not to every match', () => {
+    const traces = twoAtOnePoint();
+    markCollected(traces, { kind: 'heal', gx: pxToFp(100), gy: pxToFp(100) }, 7);
+    markCollected(traces, { kind: 'heal', gx: pxToFp(100), gy: pxToFp(100) }, 9);
+    expect([...traces.values()].filter((t) => t.collectedTick !== null)).toHaveLength(1);
+  });
+});
+
 describe('the swept path answers "I walked right over it"', () => {
   it('records the segment minimum, not just the per-tick samples', () => {
     // Two ticks, the drop off to one side of the line walked between them: both sampled
@@ -146,6 +184,19 @@ describe('the swept path answers "I walked right over it"', () => {
   it("degenerates to the sampled distance on a drop's first tick", () => {
     const t = trace([stateAt([100, 100], [{ gx: pxToFp(150), gy: pxToFp(100) }], 1)]);
     expect(t[0]!.sweptClosestPx).toBeCloseTo(t[0]!.closestPx, 5);
+  });
+
+  it('never reports closer than the walk actually came — the segment is not an infinite line', () => {
+    // The player walks AWAY from the drop, so the closest point on the infinite line through
+    // their path lies behind where they started. Unclamped, the projection would report that
+    // phantom point; the clamp keeps the answer on the segment they actually walked.
+    const t = trace([
+      stateAt([200, 100], [{ gx: pxToFp(100), gy: pxToFp(100) }], 1),
+      stateAt([300, 100], [{ gx: pxToFp(100), gy: pxToFp(100) }], 2),
+      stateAt([400, 100], [{ gx: pxToFp(100), gy: pxToFp(100) }], 3),
+    ]);
+    expect(t[0]!.closestPx).toBeCloseTo(100, 1);
+    expect(t[0]!.sweptClosestPx).toBeCloseTo(100, 1); // not 0, and not negative
   });
 
   it('records the gate the drop was actually judged against, per kind', () => {

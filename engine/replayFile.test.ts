@@ -163,6 +163,15 @@ describe('parseReplayFile fails loud rather than replaying garbage (design/08)',
     expect(() => parseReplayFile(g)).toThrow(/replay\.commands\[2\]\.type is not "input"/);
   });
 
+  it('rejects a commands field that is not an array, by name', () => {
+    // Without the guard `.map` still throws, so the mutant survived on "it throws at all".
+    // What the guard buys is a message that names the field instead of "map is not a
+    // function", which is the difference between a two-minute and a twenty-minute diagnosis.
+    const f = good();
+    (f.replay as Record<string, unknown>).commands = { 0: 'nope' };
+    expect(() => parseReplayFile(f)).toThrow(/replay\.commands is not an array/);
+  });
+
   it('rejects an out-of-range brad instead of letting trig read past its table', () => {
     const f = good();
     const cmds = (f.replay as Record<string, unknown>).commands as Record<string, unknown>[];

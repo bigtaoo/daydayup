@@ -50,7 +50,9 @@ export function saveMarkedReplay(
   nowMs: number,
   download: (file: ReplayFile) => string | null = downloadReplayFile,
 ): string {
-  if (!recorder.recording) return 'No offline run to save';
+  // No `recorder.recording` early-out: `pack` already returns null in exactly that case
+  // and this returns the same message either way. A mutation battery found the guard
+  // survived being deleted, which is what a redundant check looks like.
   recorder.mark(tick, `hotkey at tick ${tick}`);
   const file = recorder.pack(tick, nowMs);
   if (!file) return 'No offline run to save';
