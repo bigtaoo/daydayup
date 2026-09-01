@@ -520,19 +520,51 @@ runs.
 
 ### What this does NOT claim, and the device questions it adds
 
-- **Progress is per-pack, not per-byte.** WeChat's `wx.loadSubpackage` returns a
-  `LoadSubpackageTask` carrying `onProgressUpdate`, which would give real bytes — it is not in this
-  repo's `wx.d.ts` and has never been exercised here, so the progress screen counts completed units
-  (packs + loaders) instead. The byte-accurate version is a device-verification item, not a code
-  problem.
-- **Concurrent `wx.loadSubpackage` is undocumented.** The 分包 docs do not state whether several
-  in-flight loads are safe. All `run`-phase packs are kicked together, which is the same thing
-  `ensureAllPacks()` already did at boot and was verified working in the simulator on 2026-08-25 —
-  so this is not a new risk, but it is not a *documented* guarantee either.
-- **Background download while the lobby renders is untested on a handset.** The download is native,
-  but image decode lands on the main thread, and a menu that hitches while art streams in is the
-  plausible failure. If it appears, the fix is serialising the `run`-phase kicks and lowering their
-  priority, not undoing the tiering.
+Three of these were measured in the real simulator on 2026-09-01, about half an hour after the
+phases shipped — DevTools 2.01.2510280, **base library 3.17.1**, appid `wx25a3b18a3e83ffce`, 844x390
+landscape. Four runs: two with `beginDeferredArt()` and two matched controls with the call
+skipped. The method and the full numbers are in `04`'s **The phased boot on the real base
+library**; what each bullet claimed before, and what is left, is below.
+
+- **The phased boot works on the real base library** (was: untested). Every breadcrumb stage
+  fired with no `fatal`, and the two things a device-less test cannot see both hold: after
+  `preloadLobbyArt()` **17/17** `UI_ASSET_KEYS` resolve through `getUiTexture` at real
+  dimensions, and after the run phase **7/7** `CHAR_BUNDLES` reach `getRigSkin` with all five
+  biome floors, both sampled weapon textures and both sampled environment sprites defined. The
+  specific fear — `wx.loadSubpackage` resolving while a `/ui/` path still names nothing for a
+  frame — did not reproduce. Nor did the other half of it: the `run` packs settled ~850 ms
+  **after** `game.start()`, so their loaders ran against a live render loop, and everything
+  still resolved. `isRunArtReady()` was false for the first 1.4–1.7 s of the menu and then
+  flipped, which is also the first direct evidence that the gate arms on this platform.
+- **Concurrent `wx.loadSubpackage` works, and stays undocumented.** All seven `background` +
+  `run` packs were in flight at once (the instrumented `inFlightAtStart` climbed 1→7, the calls
+  issued within 6 ms of each other) and all seven reported `success`, 885–951 ms later, with
+  every texture resolving afterwards. So `ensurePacks` is **not** being serialised. The 分包 docs
+  still do not promise this — it is now a measurement rather than an assumption, which is a
+  different thing from a guarantee, and a handset is still unmeasured.
+- **The background download does not hitch the lobby** — measured, not eyeballed, and the
+  control is what makes it an answer. Over an 8 s window from the first menu frame the two
+  deferring runs delivered *more* frames than the two controls (324/313 vs 298/304) at a lower
+  mean (24.4/24.8 ms vs 26.9/26.5) and a much lower median (19.9/19.8 vs 30.2/29.8), with p95
+  identical (~31.8 ms). Their only excess is two extra frames over 33 ms per window, all inside
+  the first 1.7 s, where both controls carry long frames too. So there is nothing to serialise
+  and nothing to de-prioritise. Two caveats keep this simulator-only: the median inversion is
+  unexplained and says the simulator's frame pacing is not stable enough to read absolute
+  numbers off, and **there is no real download here** — packs come off local disk in ~900 ms, so
+  what was measured is the decode-and-loader cost on the main thread (the mechanism the risk
+  named) and not a slow network or a slow CPU.
+- **Progress stays per-pack, not per-byte — and that is now a decision, not a gap.**
+  `wx.loadSubpackage`'s `LoadSubpackageTask` and its `onProgressUpdate` are typed in
+  `platform/wechat/wx.d.ts` as of this pass, because the API is real: the return value is an
+  object, the handler registers without throwing, and it fires. But its numbers are unusable.
+  Each pack fires **exactly one** event, always `progress: 50`, with
+  `totalBytesExpectedToWrite` between 3,750 and 3,833 — for payloads spanning 118 kB (`boss`) to
+  2.39 MB (`run`), whose generated stubs are 403 bytes. The figure describes neither the pack nor
+  anything in it and never reaches 100, so a bar fed it would fill to half of 3.7 kB and stop.
+  `packLoader.ts` therefore keeps counting completed units, and `wechatRuntimeFake.ts` now
+  reproduces the useless event rather than an idealised one. What a device would have to show for
+  the byte-accurate bar to be worth wiring: more than one event per pack, and an expected-bytes
+  figure that tracks the pack's real size.
 - **Web gets the same tiering for free and has nothing to verify.** There are no subpackages there;
   `AssetHost.loadPack` is absent and `ensurePack` resolves immediately, so on web this pass is
   purely "which `Assets.load` calls happen before the first paint" — a real first-paint win

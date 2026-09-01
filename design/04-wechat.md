@@ -53,11 +53,23 @@ The WeChat mini-game is the most constrained target: **no DOM, no full window/do
 >   from the live scene in the simulator changes a large fraction of the frame, so the pass is
 >   compiling and doing real work on the real base library. See **Verification**.
 >
+> **Update (2026-09-01, sixth pass): the two-phase asset boot is verified here.** The first
+> download became code only earlier the same morning (`design/12`), which moved the whole asset path onto
+> three claims a wx-shaped fake cannot test. All three now hold on base library 3.17.1: the phased
+> boot resolves every texture in both phases (17/17 UI, 7/7 rigs) including packs that land ~850 ms
+> into a live render loop; seven concurrent `wx.loadSubpackage` calls all succeed; and the
+> background download does not hitch the lobby, measured against a matched control rather than
+> eyeballed. Item 17 — and the three measurement traps it walked into are worth more than the
+> result.
+>
 > Still open before this platform is shippable: everything that needs a real handset —
 > lowest base library (item 2), low-end frame rate (item 3), touch feel (item 5) — plus the
 > raw-vs-compressed package-limit question (item 11). Item 3 is now answerable **without any
 > tooling on the device**: if the frame watchdog fires, the settings screen's quality button
-> reads `AUTO (LOW)` / `自动 (低)`, which is a low-end device reporting itself.
+> reads `AUTO (LOW)` / `自动 (低)`, which is a low-end device reporting itself. **A device also
+> now owes two narrower answers than before**: whether `onProgressUpdate` reports real bytes once
+> there is a real download, and whether a pack's files are genuinely unreachable before its load
+> (the simulator answers neither — item 17's traps (a) and (b)).
 >
 > See **Asset loading** for the three mechanisms, **Viewport** for the landscape-phone
 > layout constraint, and **Verification** for exactly what is and is not proven.
@@ -524,6 +536,73 @@ and `client/src/game/scene/wechatRoomBuild.test.ts` (the room build, through the
 than to what a browser does — that difference is the whole point, since a browser-shaped fake
 is exactly what let both bugs ship.
 
+**The phased boot on the real base library (2026-09-01).** `design/12`'s two-phase asset boot
+shipped earlier the same morning with three questions no device-less test could reach, and
+`render/wechatPhasedBoot.test.ts` proving only the ORDERING against a wx-shaped fake. Measured
+here on **base library 3.17.1** (DevTools 2.01.2510280, appid `wx25a3b18a3e83ffce`) with a
+temporary in-bundle probe on the same USER_DATA_PATH breadcrumb channel as items 10/12/15 — a
+stage marker written BEFORE each phase, so a missing report distinguishes "boot failed" from
+"the last call is unsupported here". This is checklist item 17. A representative boot:
+
+| ms | stage |
+|---|---|
+| 130 | `platform.createApp()` returned |
+| 858 | boot progress screen on the stage |
+| 915 → 1698 | `wx.loadSubpackage('lobby')` — the one wait a player sees |
+| 1870 | `preloadLobbyArt()` resolved, **17/17 UI textures** |
+| 1903 → 1926 | `beginDeferredArt()`, of which **6 ms** is the seven `wx.loadSubpackage` calls |
+| 1995 | `game.start()` — the menu paints |
+| 2810 → 2876 | the seven background/run packs resolve, ~850 ms into a live render loop |
+| 3689 | `ensureRunArt()` resolved, **7/7 rig bundles** |
+
+What that establishes, question by question:
+
+- **The phased boot works.** After the lobby await, 17/17 `UI_ASSET_KEYS` resolve through
+  `getUiTexture` at real dimensions (`hub` 384x288, `icon_play` 127x128); after the run phase,
+  7/7 `CHAR_BUNDLES` reach `getRigSkin`, and all five biome floors plus `wall_fire`,
+  `getWeaponTexture` for both sampled weapons, `getDoorCurtainTexture()` and
+  `getPortalArchTexture()` are defined. A pack fetched while the game is already rendering
+  behaves like one fetched before `Application.init` — the run packs settled ~850 ms after
+  `game.start()` and their loaders still filled every map. `isRunArtReady()` was false for the
+  first 1.4–1.7 s and then flipped, so the gate genuinely arms here.
+- **Seven concurrent `wx.loadSubpackage` calls are fine.** The instrumented in-flight count
+  climbed 1 to 7, all seven reported `success` 885–951 ms later, and every texture out of them
+  resolved. So `packLoader.ts`'s `ensurePacks` is not being serialised. Undocumented remains
+  undocumented.
+- **The background download does not hitch the lobby**, and only the control makes that an
+  answer. Over an 8 s window from the first menu frame, with instrumentation matched between
+  arms:
+
+| | frames | mean | p50 | p95 | >33 ms | >50 ms |
+|---|---|---|---|---|---|---|
+| deferring, run A | 324 | 24.4 | 19.9 | 31.6 | 5 | 5 |
+| deferring, run B | 313 | 24.8 | 19.8 | 31.9 | 5 | 4 |
+| control (no kick), run A | 298 | 26.9 | 30.2 | 31.9 | 3 | 3 |
+| control (no kick), run B | 304 | 26.5 | 29.8 | 31.8 | 3 | 3 |
+
+  The deferring runs are *better* on every central measure and carry two extra long frames per
+  window, all inside the first 1.7 s — where both controls have long frames too. Nothing to
+  serialise, nothing to de-prioritise. `deltaMS` is clamped by Pixi's `minFPS` of 10, so a
+  reported max of 100 is a ceiling and not a measurement. The median inversion is unexplained,
+  which is itself the reason to read these as simulator numbers only.
+
+**Three traps this probe walked into, all worth reusing.** (a) **`writeFileSync` costs ~28 ms a
+call on this runtime.** The first clean-looking result said `beginDeferredArt()` blocked the main
+thread for 199 ms; removing the probe's own seven report writes from inside it took that to
+**6 ms**. A breadcrumb probe that flushes inside the thing it is timing fabricates exactly the
+hitch it went looking for — write breadcrumbs around a measured span, never inside it.
+(b) **The before/after readability control is VOID in the simulator.** Reading a pack's file with
+`readFileSync` *before* its `loadSubpackage` was supposed to throw and did not: every one of the
+eight returned full bytes, because the simulator serves the whole project directory off disk. So
+nothing here — including item 9's 2026-08-25 claim that `wx.loadSubpackage` "works for real" —
+distinguishes "the load made these files reachable" from "they were never unreachable". The
+texture-resolution counts are still evidence that the phase ORDER is right; they are not evidence
+about what `loadSubpackage` does. That separation needs a device. (c) **Control and treatment must
+carry the same instrumentation.** The first control run was taken with the per-pack file reads
+still enabled — ~1 MB of synchronous reads inside the measured window — which made it
+incomparable with the treatment runs and briefly pointed the wrong way. Both arms were re-run
+with identical probe builds before the table above was believed.
+
 1. [x] Integrate the adapter; the `client` build boots in WeChat DevTools and renders the tilted-view scene. *(2026-07-07, base lib 3.15.2)*
 2. [ ] Verify on the **lowest target base-library version** (not just the latest). **This is now
    blocking-shaped rather than hypothetical**: the condition an earlier version of this item set —
@@ -567,8 +646,10 @@ is exactly what let both bugs ship.
    quality setting to `HIGH` and then to `LOW` in the same room and compare.
 7. [x] Real art loads at all, through the real loaders, in a runtime with none of the
    browser globals. *(2026-08-25, `wechatAssetLoad.test.ts` — simulation, not a device.)*
-8. [x] The package fits: main 3.41 MB / 4.00 MB plus four subpackages, gated by
-   `npm run check:wechatpackage`. *(2026-08-25)*
+8. [x] The package fits, gated by `npm run check:wechatpackage`. Main was 3.41 MB / 4.00 MB
+   plus four subpackages when this was ticked *(2026-08-25)*; since 2026-09-01 it is
+   **0.95 MB / 4.00 MB plus eight subpackages** and the art arrives in phases — see
+   **Package budget** for the live table, and item 17 for the device check on the phases.
 9. [x] **Real art loads in the real simulator.** *(2026-08-25, DevTools 2.01.2510280, appid
    `wx25a3b18a3e83ffce`.)* Everything item 7 could only simulate is now confirmed against the
    actual base library: 7/7 rig bundles, 5/5 biome element sets, 17/17 UI textures, 11/11
@@ -704,6 +785,19 @@ is exactly what let both bugs ship.
    a bad answer had no remedy attached. `render/quality.ts` is the remedy (see `01`'s **Render
    quality tiers**), and the compile question was settled by measurement rather than by
    inference — see **Verification** below for the probe and its controls.
+
+17. [x] **`design/12`'s two-phase asset boot works on the real base library, seven concurrent
+   subpackage loads are safe, and the background download does not hitch the lobby
+   (2026-09-01, base library 3.17.1).** The main package is `js/game.js` alone (0.95 MB / 4.00 MB)
+   with eight subpackages, and `platforms/wechat` carries no stale top-level `ui/` / `skins/` /
+   `biome/` / `weapons/` / `environment/` copy — the prune-by-exclusion holds on a real build.
+   All three answers, the boot timeline, the frame-time table and the three measurement traps are
+   under **The phased boot on the real base library** above. Two things did NOT come out of it:
+   the byte-accurate progress bar (`LoadSubpackageTask.onProgressUpdate` is real and now typed,
+   but reports one event at `progress: 50` with an expected size of ~3.7 kB for every pack, so the
+   bar keeps counting units — see `design/12`), and any separation of "`loadSubpackage` made these
+   files reachable" from "they were always on disk", which this simulator structurally cannot give
+   (trap (b) above, and it retroactively narrows item 9).
 
 **How to get diagnostics out of a mini-game at all.** There is no automation API worth the
 name: `miniprogram-automator` *connects* to `cli auto --auto-port` (use `ws://127.0.0.1:…`,

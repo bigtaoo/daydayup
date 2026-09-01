@@ -121,6 +121,21 @@ export function installWeChatRuntimeFake(): WeChatRuntimeFake {
     loadSubpackage: ({ name, success }: { name: string; success?: () => void }) => {
       packLoads.push(name);
       queueMicrotask(() => success?.());
+      // Shaped to what the REAL runtime returns, not to what a progress bar would want —
+      // measured 2026-09-01 in the DevTools simulator (base library 3.17.1) and recorded on
+      // `WxLoadSubpackageTask` in platform/wechat/wx.d.ts. A task object is returned (returning
+      // `undefined`, as this fake did until then, would let a future `.onProgressUpdate(...)`
+      // typecheck and pass every test while crashing on device), and the handler fires exactly
+      // ONCE at `progress: 50` with byte counts unrelated to the pack's real size. Reproducing
+      // the useless numbers is the point: a consumer written against this fake is written
+      // against the behaviour that actually exists.
+      return {
+        onProgressUpdate: (cb: (res: Record<string, number>) => void) => {
+          queueMicrotask(() =>
+            cb({ progress: 50, totalBytesWritten: 1881, totalBytesExpectedToWrite: 3763 }),
+          );
+        },
+      };
     },
   };
 

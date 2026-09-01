@@ -130,17 +130,61 @@ directory.
   stale while `FPS` still read 56. The game itself was frozen too, which is what said the spinner
   was fine and the harness was not.
 
-### Still open
+### Answered the same morning in the real simulator (2026-09-01)
 
-- **Per-byte progress.** WeChat's `wx.loadSubpackage` returns a `LoadSubpackageTask` carrying
-  `onProgressUpdate`, which would give real bytes. It is not in this repo's `wx.d.ts` and has never
-  been exercised, so the bar counts completed units (packs, then loaders). A device item.
-- **Concurrent `wx.loadSubpackage` is undocumented.** All `run`-phase packs are kicked together —
-  the same thing `ensureAllPacks()` already did and which was verified working in the simulator on
-  2026-08-25, so not a new risk, but not a documented guarantee either.
-- **Background download while the lobby renders is untested on a handset.** The download is native;
-  image decode is not. If the menu hitches, the fix is serialising the kicks, not undoing the
-  tiering.
+This entry shipped with four open questions and closed all four within the hour. Three of them — the
+ones a wx-shaped fake could not reach — were measured against **base library 3.17.1** (DevTools
+2.01.2510280, appid `wx25a3b18a3e83ffce`) through a temporary in-bundle probe on the
+USER_DATA_PATH breadcrumb channel; the full account is in `design/04-wechat.md`, **The phased boot
+on the real base library** and checklist item 17. The fourth, the curtain re-encode, was settled by
+looking at it rather than measured — see below, and the entry after this one.
+
+- **The phased boot works, including packs that land mid-render.** 17/17 `UI_ASSET_KEYS` resolve
+  through `getUiTexture` after the lobby await; 7/7 `CHAR_BUNDLES` reach `getRigSkin` after the
+  run phase, with all five biome floors, both sampled weapons and both sampled environment
+  sprites defined. The feared shape — `wx.loadSubpackage` resolving while a `/ui/` path still
+  names nothing — did not reproduce, and neither did its twin: the `run` packs settled ~850 ms
+  *after* `game.start()`, so their loaders ran against a live render loop and still filled every
+  map. `isRunArtReady()` was false for the first 1.4–1.7 s and then flipped, which is the first
+  direct evidence the gate arms on this platform at all.
+- **Seven concurrent `wx.loadSubpackage` calls all succeed.** The in-flight count climbed 1 to 7
+  (the calls issued within 6 ms of each other) and every one reported `success` 885–951 ms later,
+  with every texture out of them resolving. `ensurePacks` is not being serialised. Still
+  undocumented by 分包 — a measurement is not a guarantee.
+- **The background download does not hitch the lobby.** Over an 8 s window from the first menu
+  frame, with instrumentation matched between arms, the two deferring runs delivered *more* frames
+  than the two controls (324/313 vs 298/304) at a lower mean (24.4/24.8 ms vs 26.9/26.5) and a
+  much lower median (19.9/19.8 vs 30.2/29.8), p95 identical at ~31.8 ms. Their only excess is two
+  extra frames over 33 ms per window, all inside the first 1.7 s, where both controls carry long
+  frames too. Nothing to serialise, nothing to de-prioritise.
+- **Per-byte progress stays off, and that is now a decision.** `LoadSubpackageTask` and
+  `onProgressUpdate` are typed in `platform/wechat/wx.d.ts` as of this pass, because the API is
+  real — the return value is an object, registration does not throw, the handler fires. Its
+  numbers are not: exactly one event per pack, always `progress: 50`, with
+  `totalBytesExpectedToWrite` between 3,750 and 3,833 for payloads spanning 118 kB (`boss`) to
+  2.39 MB (`run`), whose stubs are 403 bytes. A bar fed that fills to half of 3.7 kB and stops, so
+  `packLoader.ts` keeps counting units and `wechatRuntimeFake.ts` now reproduces the useless event
+  rather than an idealised one.
+
+**Three measurement traps, worth more than the results.** (a) A first clean-looking reading said
+`beginDeferredArt()` blocked the main thread for 199 ms; removing the probe's own seven report
+writes from inside the timed span took it to **6 ms**. `writeFileSync` costs ~28 ms a call on this
+runtime, so a breadcrumb probe that flushes inside what it is timing fabricates exactly the hitch
+it went looking for — write breadcrumbs *around* a measured span. (b) The before/after readability
+control is **void in the simulator**: reading a pack's file before its `loadSubpackage` was
+supposed to throw and returned full bytes for all eight, because the whole project directory is
+served off disk. Nothing here — including 2026-08-25's claim that `wx.loadSubpackage` "works for
+real" — separates "the load made these files reachable" from "they were never unreachable". (c)
+The first control run carried instrumentation the treatment runs did not (~1 MB of synchronous
+reads inside the measured window), which made it incomparable and briefly pointed the wrong way;
+both arms were re-run with identical probe builds before the table was believed.
+
+### Shipped open, settled the same day
+
+Nothing from this entry is still open. The three device questions are above; the fourth is here,
+kept struck-through rather than deleted because the reasoning that framed it is what made the
+answer a taste call instead of an arithmetic one.
+
 - ~~**The curtain re-encode is now a plain question with no gate behind it.**~~ **Settled the same
   day, in the negative — the file stays at 468x832.** It was put to the owner as a render comparison
   rather than argued from bytes, because the only lever is pixel count and every setting of it

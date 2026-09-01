@@ -77,6 +77,37 @@ interface WxInnerAudioContext {
   onError(cb: (res: { errMsg?: string; errCode?: number }) => void): void;
 }
 
+/**
+ * What `wx.loadSubpackage` hands back (design/12, "Progress is per-pack, not per-byte").
+ *
+ * The API is real on this runtime — MEASURED 2026-09-01 in the DevTools simulator, base
+ * library 3.17.1: the return value is an object, `typeof task.onProgressUpdate === 'function'`,
+ * registering a handler does not throw, and the handler fires. That is why it is typed here at
+ * all, and why `onProgressUpdate` is NOT optional the way `createWebAudioContext` is.
+ *
+ * **It is deliberately not wired to the progress bar, and the measurement is the reason.** In
+ * the simulator each pack fires exactly ONE event, always `progress: 50`, with
+ * `totalBytesExpectedToWrite` between 3,750 and 3,833 for every pack — for payloads that range
+ * from 118 kB (`boss`) to 2.39 MB (`run`), whose generated stubs are 403 bytes. So the numbers
+ * describe neither the pack nor anything else in it, never reach 100, and a bar fed them would
+ * fill to half of 3.7 kB and stop. `render/packLoader.ts` therefore still counts completed
+ * packs and loaders, which is honest on both platforms.
+ *
+ * The simulator has no real download, so this says nothing about a handset. What a device would
+ * have to show for the byte-accurate bar to be worth wiring: more than one event per pack, and a
+ * `totalBytesExpectedToWrite` that tracks the pack's actual size.
+ */
+interface WxLoadSubpackageTask {
+  onProgressUpdate(
+    cb: (res: {
+      /** Percent complete, 0..100. */
+      progress: number;
+      totalBytesWritten: number;
+      totalBytesExpectedToWrite: number;
+    }) => void,
+  ): void;
+}
+
 interface Wx {
   createCanvas(): WxCanvas;
   createImage(): WxImage;
@@ -85,12 +116,16 @@ interface Wx {
   getFileSystemManager(): WxFileSystemManager;
   /** Fetches and runs a subpackage declared in game.json's `subpackages` (design/04's
    *  package budget). Its files do not resolve before this succeeds. Resolved by NAME —
-   *  the `root` lives in game.json, which build/wechatAssetSync.mjs generates. */
+   *  the `root` lives in game.json, which build/wechatAssetSync.mjs generates.
+   *
+   *  Returns a `WxLoadSubpackageTask`. The declaration used to say `void`, because nothing
+   *  here used the task and its `onProgressUpdate` had never been exercised — see that type
+   *  for what it actually reports, which is why `packLoader.ts` still counts whole packs. */
   loadSubpackage(opts: {
     name: string;
     success?: () => void;
     fail?: (res: { errMsg?: string }) => void;
-  }): void;
+  }): WxLoadSubpackageTask;
   getWindowInfo(): WxWindowInfo;
   onTouchStart(cb: (e: WxTouchEvent) => void): void;
   onTouchMove(cb: (e: WxTouchEvent) => void): void;
