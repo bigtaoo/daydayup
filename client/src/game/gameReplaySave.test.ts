@@ -126,6 +126,13 @@ function newGame(opts: { canDownload?: boolean } = {}) {
     };
     showForge(): void;
     beginRun(): void;
+    // The other two offline entry points, and the online transition — all private, all
+    // reached here exactly the way a player reaches them (a ModeSelect button / a match
+    // starting), because the thing under test is whether each one leaves an exportable
+    // stream behind.
+    beginTutorialRun(): void;
+    beginArenaDemoRun(): void;
+    finalizeOnlineRun(session: unknown): void;
   };
   let ms = 0;
   const frames = (n: number) => {
@@ -255,5 +262,70 @@ describe('Game — saving a replay, from a real run to real bytes', () => {
     expect(second.marks).toHaveLength(1); // the first run's mark did not survive
     // And the second file still reconstructs the second run.
     expect(hashState(runReplay(second.replay, second.ticks).state)).toBe(hashState(h.inner.engine!.state));
+  });
+});
+
+describe('every offline entry point leaves an exportable run behind', () => {
+  // `startOfflineEngine` exists so a hotkey that "only works if you started the run the
+  // right way" cannot happen — but only ONE of the three callers was ever driven here, so
+  // that guarantee rested on reading the code. A new offline entry point that built its
+  // engine with `createGameEngine` directly would leave F9 silently dead on exactly the
+  // mode it was added for, and the whole suite would stay green.
+  const ENTRIES = [
+    {
+      name: 'dungeon (Enter from the forge)',
+      label: 'dungeon',
+      start: (i: ReturnType<typeof newGame>['inner']) => { i.showForge(); i.beginRun(); },
+    },
+    {
+      name: 'tutorial (ModeSelect’s TUTORIAL button)',
+      label: 'tutorial',
+      start: (i: ReturnType<typeof newGame>['inner']) => i.beginTutorialRun(),
+    },
+    {
+      name: 'arena demo (?arena=, the dev harness)',
+      label: 'arena',
+      start: (i: ReturnType<typeof newGame>['inner']) => i.beginArenaDemoRun(),
+    },
+  ];
+
+  for (const entry of ENTRIES) {
+    it(`${entry.name} records, and the file says which mode it was`, () => {
+      const h = newGame();
+      entry.start(h.inner);
+      h.frames(90);
+
+      h.inner.hud.replayBtn.onTap!();
+      expect(h.saved).toHaveLength(1);
+      expect(h.saved[0]!.name).toMatch(new RegExp(`^ddreplay-${entry.label}-\\d+\\.json$`));
+
+      const file = parseReplayFileText(h.saved[0]!.text);
+      // The label is what orients whoever opens the file — a tutorial repro read as a
+      // dungeon one sends the reader to the wrong config entirely.
+      expect(file.label).toBe(entry.label);
+      // And the same claim the dungeon case makes: these bytes ARE the run.
+      expect(file.replay.commands.length).toBeGreaterThan(0);
+      expect(hashState(runReplay(file.replay, file.ticks).state)).toBe(hashState(h.inner.engine!.state));
+    });
+  }
+});
+
+describe('an online match is not exportable — and neither is the run before it', () => {
+  it('finalizeOnlineRun drops the offline stream, so F9 cannot hand over a stale file', () => {
+    // Online input arrives on the server's confirmed stream (`NetInputSource`), so nothing
+    // here records it and the authoritative record is `FrameBroadcast`'s. Without
+    // `recorder.end()` on this transition, F9 in an online match would cheerfully save the
+    // LAST OFFLINE RUN — a file that reconstructs a match nobody is looking at, labelled
+    // and dated as if it were the current one. That is worse than no file: it costs a whole
+    // report cycle before anyone notices the repro is of the wrong run.
+    const h = startedRun();
+    h.inner.hud.replayBtn.onTap!();
+    expect(h.saved).toHaveLength(1); // exportable right up to the transition
+
+    h.inner.finalizeOnlineRun({ close: () => {} });
+
+    h.pressF9();
+    expect(h.saved).toHaveLength(1); // nothing new reached the disk
+    expect(h.toasts[h.toasts.length - 1]).toBe(t('toast.replayNoRun'));
   });
 });

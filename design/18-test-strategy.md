@@ -60,9 +60,12 @@ region, and drops must not land in it. Both rules are right. Neither turned out 
 - Static: every death cell on shipped floor 1 and on the launch arena, clamped and then checked
   for a reachable player-standable point in the player's own connected region. Zero unreachable.
 - Real runs: 903 drops across 16 bot-driven runs of all five floors, re-checked at drop time
-  *and* again on every change to the wall set (so a door locking over an existing drop is
-  covered). Zero unreachable, zero embedded in stone; the nearest standable point to any drop
-  was never further than 116 fp against a 969 fp collect reach.
+  *and* again on every change to the wall set. Zero unreachable, zero embedded in stone; the
+  nearest standable point to any drop was never further than 116 fp against a 969 fp collect
+  reach. **The wall-set trigger reported zero because the case never arose, not because it
+  held** — see "What v51 found" below, where a door locking over an existing drop turned out to
+  be a live bug. This bullet read "(so a door locking over an existing drop is covered)" until
+  2026-09-01.
 
 A first pass reported 14.5% of drops "hidden under wall art" and that number was wrong — it
 assumed `WALL_H_PERIMETER` for every non-`freeStanding` rect. Re-run against the renderer's own
@@ -117,6 +120,54 @@ renderer and holds at the mark, and `DD_REPLAY=<path> npm run replay:inspect` re
 closest approach, swept path, gate and `pickup` event. See `design/08`'s "Getting a replay OUT of a
 live session" and ROADMAP's entry — including the two ways the harness lied on its first run, both
 of the shape this document exists for.
+
+## What v51 found, in the sentence v50 wrote about it (2026-09-01)
+
+The section above says the v50 sweep re-checked every drop *"again on every change to the wall
+set (so a door locking over an existing drop is covered)"*. The trigger was real. The
+parenthesis was not: **the case never once occurred in those runs**, so "covered" described the
+harness rather than the content, and a zero came back that nobody had a reason to doubt.
+
+It was a live bug. `DoorSystem.rebuildWalls` pushes each locked door's `passageAabb` into
+`state.walls`; nothing re-clamped a pickup already lying there. Nothing touches a pickup after
+its drop tick, and `PickupSystem` collects on a radius test that never consults walls — so
+whether the item stayed reachable came down to whether a player's body could get within
+`pickupRadius + p.radius` of a point buried in a passage rect. Fixed in v51 by re-clamping every
+alive pickup at `dropClearance()` after the rebuild.
+
+**The lesson is about the shape of the measurement, not the arithmetic.** v50's whole discipline
+was to replace margins with constructions, and it did that for the two rules the reporter named.
+But both of those rules — and every gate built for them — are about the moment of the drop. The
+wall set changing *underneath* a resting item is a different question, and the sweep that
+appeared to ask it only ever asked it of runs where the answer was trivially yes. A trigger that
+fires 142 times and encounters the case zero times reports the same zero as a trigger that
+works.
+
+So: **a sweep's zero is only as strong as its evidence that the case arose.** The v50 write-up
+recorded its per-drop counts, which is what made this checkable at all; what it lacked was a
+count of the interesting sub-case. `client/sim/dropReachability.sim.ts` now reports both — 796
+drops and 142 wall-set changes under live loot — and it is written to say plainly that neither
+v50's clamp nor v51's re-clamp changes a single position on today's content. Its value is the
+next tighter room piece, not this fix.
+
+**Which gate discriminates v51**, in the format of the table above:
+
+| Gate | Discriminates? |
+|---|---|
+| `systems/doors.test.ts` "a door that locks over a dropped item must not seal it inside stone" | **Yes** — three cases on a 2-room fixture: the sealed item is re-seated, an item across the room does not move by one fp, and the re-seated item is not parked on the far side of the closed door |
+| `sim/dropReachability.sim.ts` | **No, by measurement** — a content gate, like the smoke pickup invariant it extends; no door in 16 bot-driven runs ever closed over a drop |
+
+**Still open, restated.** The report is no longer unexplained by anything in the engine — v51 is
+a mechanism that produces exactly the reported symptom, from an ordinary sequence (a mob dies on
+a threshold, or a weapon is swapped in a doorway, and then the room activates). Whether it is
+*the* report is still unknown and still needs a recorded run; a replay is the only thing that can
+close it. What changed is that the engine now has one candidate too many rather than none.
+
+**A gate-reading gotcha, recorded because it inverts what the gate appears to say.**
+`goldenHash` passed with the v51 fix applied and `ENGINE_VERSION` still at 50 — that, and only
+that, is the evidence the change moves no shipped scenario. The moment the version is bumped
+every scenario's hash changes, dungeon or not, because `serializeState` hashes `version` itself.
+Run the hash gate BEFORE the bump, or it tells you nothing at all.
 
 ## Why this doc exists
 

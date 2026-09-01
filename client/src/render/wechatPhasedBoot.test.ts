@@ -161,6 +161,29 @@ describe('phase one — the only wait a player sees', () => {
       expect(kick, `${entry}: the gate is armed too late`).toBeLessThan(construct);
     }
   });
+
+  it('brackets the WeChat boot wait with the screen that covers it', () => {
+    // Only `main.wechat.ts` mounts a Pixi progress screen: web already has one that paints before
+    // the WebGL context exists (`index.html`'s `#boot-loading`). So this is a one-entry check, and
+    // a source-order one for the same reason as the case above — `showBootLoading` takes an
+    // `Application`, which cannot be constructed here.
+    //
+    // Both orderings are load-bearing and both fail silently. A `showBootLoading` after the await
+    // shows a spinner for the frame AFTER the only wait it exists to cover; a `done()` after
+    // `new Game(...)` leaves an opaque, tap-swallowing, full-viewport scrim above the whole game
+    // (see loadingScreen.ts's scrim note) — and on this platform the wait is real, because
+    // `lobby` is a subpackage `wx.loadSubpackage` has to fetch before any `/ui/` path names a
+    // file at all.
+    const src = readFileSync(new URL('../main.wechat.ts', import.meta.url), 'utf8');
+    const at = (needle: string): number => {
+      const i = src.indexOf(needle);
+      expect(i, `main.wechat.ts: no ${needle}`).toBeGreaterThan(-1);
+      return i;
+    };
+    expect(at('showBootLoading(app)')).toBeLessThan(at('await preloadLobbyArt('));
+    expect(at('await preloadLobbyArt(')).toBeLessThan(at('loading.done();'));
+    expect(at('loading.done();')).toBeLessThan(at('new Game(app, input, audio)'));
+  });
 });
 
 describe('phase two — the run gate', () => {
@@ -196,10 +219,23 @@ describe('phase two — the run gate', () => {
   });
 
   it('is memoised: a second gate re-runs no download and no loader', async () => {
-    const before = fake.packLoads.length;
+    // The name claimed "and no loader" while only the DOWNLOAD was counted, which made
+    // `runArt ??= ...` → `runArt = ...` a survivor: `packLoader` memoises each pack on its own,
+    // so the pack count is flat either way. The loaders are what a repeat costs — and
+    // `preloadRigSkin` is the one this module's header flags as NOT free, because it re-reads its
+    // two JSON sidecars per bundle rather than skipping a bundle it already holds. Seven bundles,
+    // fourteen reads, every time a gate opens.
+    const before = {
+      packs: fake.packLoads.length,
+      json: fake.jsonRequests.length,
+      images: fake.imageRequests.length,
+    };
+    expect(before.json).toBeGreaterThan(0); // the first pass really did read them
     await ensureRunArt();
     await ensureRunArt();
-    expect(fake.packLoads.length).toBe(before);
+    expect(fake.packLoads.length).toBe(before.packs);
+    expect(fake.jsonRequests.length).toBe(before.json);
+    expect(fake.imageRequests.length).toBe(before.images);
   });
 });
 

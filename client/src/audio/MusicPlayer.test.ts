@@ -239,6 +239,34 @@ describe('MusicPlayer — interruptions', () => {
     expect([a, b].filter((d) => !d.playing)[0]!.fade).toBe(0);
   });
 
+  it('retires the deck a fade-to-silence was still draining when a track arrives', () => {
+    // The OTHER mid-transition case, and the one with no `liveIdx` to hand the incoming end to:
+    // `updateMusic(null, …)` starts a fade to silence, and a track is asked for again before it
+    // has finished. Two lines carry it, and both survived the suite until this test existed:
+    //
+    //   - `freeDeck`'s `busy` branch, which is the only thing that keeps the incoming stream off
+    //     the deck the abandoned fade is still draining — without it the new bed hard-cuts the
+    //     old one on the same stream instead of crossfading over it.
+    //   - `begin`'s stale-retirement loop, without which the draining deck is orphaned at
+    //     whatever partial gain it had reached, with nothing left driving it. That is not a
+    //     transient: nothing ever writes that deck's level again, so two beds are audible for
+    //     the rest of the session.
+    run('menu', 5000);
+    run(null, 500); // the fade to silence is in flight, and still clearly audible
+    expect(a.playing, 'the fade-to-silence deck should still be streaming').toBe(true);
+    expect(a.fade).toBeGreaterThan(0);
+
+    run('menu', XFADE_S * 1000 + FRAME_MS * 2);
+    // The incoming end takes the OTHER deck, so the abandoned fade is not cut short on its own
+    // stream...
+    expect(b.playedPaths).toEqual([MUSIC_CATALOGUE.menu.path]);
+    expect(b.fade).toBeCloseTo(MUSIC_CATALOGUE.menu.gain, 5);
+    // ...and the deck it left behind is silenced and stopped rather than left running.
+    expect(a.fade).toBe(0);
+    expect(a.playing).toBe(false);
+    expect([a, b].filter((d) => d.playing)).toHaveLength(1);
+  });
+
   it('stop() silences both decks with no fade and forgets the track', () => {
     run('menu', 5000);
     player.stop();
@@ -270,6 +298,66 @@ describe('MusicPlayer — a deck that throws', () => {
     run('menu', 3000);
     expect(() => run('boss', 3000)).not.toThrow();
     expect(b.fade).toBeCloseTo(MUSIC_CATALOGUE.boss.gain, 5);
+  });
+
+  it('contains a deck that cannot be HELD, and still holds the other one', () => {
+    // `setPaused` is the one entry point that is not called from the render loop: on web it runs
+    // inside the `visibilitychange` handler, on WeChat inside `wx.onAudioInterruptionBegin`. A
+    // throw escaping there is an unhandled exception in a DOM/runtime callback — no frame to
+    // lose, and no stack anybody would connect to audio — and it also abandons the loop, so the
+    // OTHER deck is never held either and keeps streaming under the incoming call.
+    a.setPaused = () => {
+      throw new Error('the media element is detached');
+    };
+    run('menu', 1000);
+    expect(() => player.setPaused(true)).not.toThrow();
+    expect(b.paused, 'the second deck was never reached').toBe(true);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('failed to pause'), expect.anything());
+  });
+
+  it('contains a deck that cannot be STOPPED on an explicit stop(), and still stops the other', () => {
+    // Same argument as `setPaused` above for the same reason it is the same loop: `stop()` is a
+    // teardown path, so its caller has no frame to protect and no obvious place to catch.
+    a.stop = () => {
+      throw new Error('the stream is already gone');
+    };
+    run('menu', 1000);
+    expect(() => player.stop()).not.toThrow();
+    expect(b.stops).toBe(1);
+    expect(player.current).toBeNull();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('failed to stop'), expect.anything());
+  });
+
+  it('contains a deck that cannot be stopped at the END of a crossfade', () => {
+    // A different try/catch from the one above (`silence`, not `stop`), and the one on the hot
+    // path: every settled transition and every wrap retires the outgoing deck through it, so a
+    // throw here lands in `GameLoop.update` ahead of the sim step — once per minute, forever,
+    // from the loop closing itself.
+    a.stop = () => {
+      throw new Error('the stream is already gone');
+    };
+    run('menu', 3000);
+    expect(() => run('boss', XFADE_S * 1000 + FRAME_MS * 2)).not.toThrow();
+    expect(b.fade).toBeCloseTo(MUSIC_CATALOGUE.boss.gain, 5);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('failed to stop'), expect.anything());
+  });
+
+  it('falls back to console.warn when no warn is injected — which is the PRODUCTION path', () => {
+    // Both real constructors — `WebAudio.buildPlayer` and `WeChatAudio.ensureMusic` — build
+    // `new MusicPlayer({ decks })` with no `warn`, and every other test in this file injects one.
+    // So deleting the `else` branch loses every music diagnostic in the shipped game while the
+    // suite stays green, and the failure it would have reported is silence: the one symptom that
+    // looks identical to "no music was written yet". (`weChatMusicDeck.test.ts` pins the same
+    // fallback for its own deck.)
+    const spy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const bare = new MusicPlayer({ decks: [a, b] });
+    a.play = () => {
+      throw new Error('no media element');
+    };
+    bare.update('menu', FRAME_MS);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(String(spy.mock.calls[0]![0])).toContain('failed to start');
+    spy.mockRestore();
   });
 });
 

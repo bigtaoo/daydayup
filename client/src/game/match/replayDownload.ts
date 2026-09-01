@@ -26,6 +26,16 @@ export function downloadReplayFile(file: ReplayFile): string | null {
     // every browser this client targets, and appending would mutate the page the game
     // canvas lives in for the duration of the click.
     a.click();
+  } catch (e) {
+    // The header's promise ("reports failure by returning null instead of throwing") has
+    // to hold for a host that HAS all three capabilities and still refuses — a sandboxed
+    // iframe, a hardened CSP, an extension that replaced `createElement`. Before this
+    // catch existed the guards above covered only the ABSENT-capability shape and a throw
+    // from here propagated straight out of the F9 keydown handler, killing the frame the
+    // player pressed it on. Returning null routes it to the same "this device cannot save"
+    // toast the WeChat shape already gets: the player is told, and the run keeps running.
+    console.warn('replay download failed', e);
+    return null;
   } finally {
     // Revoked on a later task, not immediately: Safari has historically cancelled an
     // in-flight download whose object URL was revoked in the same turn as the click.

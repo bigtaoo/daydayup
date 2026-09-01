@@ -19,6 +19,7 @@ import { GameLoop, type GameLoopDeps, type GameLoopHost } from './GameLoop';
 import { setMusicAudio } from '../musicDirector';
 import type { AudioBus, MusicTrack } from '../../platform/types';
 import { MAX_WALL_HEIGHT } from '../scene/wallGeometry';
+import type { PickupDebugOverlay } from '../scene/PickupDebugOverlay';
 
 const CFG = { seed: 3, worldW: 1600, worldH: 1200, waves: [] as const };
 // A single sim tick's worth of render dt (matches GameLoop's own internal SIM_DT_MS,
@@ -81,7 +82,9 @@ function fakePortalPrompt() {
   return { update: vi.fn(), isOpen: false };
 }
 
-function buildDeps() {
+/** `extra` overrides a dep for the one test that needs a non-default: `pickupDebugOverlay` is
+ *  null in every normal session (`?pickupDebug=1` only), so null is what the shared default is. */
+function buildDeps(extra: Partial<GameLoopDeps> = {}) {
   const scene = fakeScene();
   const fx = fakeFx();
   const hud = fakeHud();
@@ -99,6 +102,8 @@ function buildDeps() {
   const deps: GameLoopDeps = {
     scene, fx, hud, touchControlsView, portalPrompt, roomBuilder, partyScreen,
     builder, ally, input, events, runOutcome, tutorialHints,
+    pickupDebugOverlay: null,
+    ...extra,
   } as unknown as GameLoopDeps;
 
   return { deps, scene, fx, hud, roomBuilder, portalPrompt, touchControlsView, partyScreen, input, builder, ally, events, runOutcome, tutorialHints };
@@ -193,6 +198,37 @@ describe('GameLoop.update — the music tick', () => {
     new GameLoop(deps, buildHost({ getPhase: () => 'playing', activeState: () => s })).update(16);
     new GameLoop(deps, buildHost({ getPhase: () => 'menu' })).update(16);
     expect(calls.map((c) => c.track)).toEqual(['dungeon.ember', 'menu']);
+  });
+
+  it('reports OUR seat as the situation, not seat 0', () => {
+    // `localOwner` is the third field of the situation and the only one every other case in this
+    // block leaves at `buildHost()`'s default of 0 — so hard-coding it to 0 here survived. In
+    // co-op that is the audible bug: sitting in seat 1, the bed would follow the HOST's room, so
+    // a teammate walking into the boss room would score OUR quiet corridor and walking in
+    // ourselves would change nothing. The decision itself (`inBossRoom` reads `players[owner]`)
+    // has its own tests; what this pins is that the seat reaching it is ours.
+    const { deps } = buildDeps();
+    const { calls, bus } = recordingMusicBus();
+    setMusicAudio(bus);
+    const s = createGameState({
+      seed: 1, worldW: 800, worldH: 800, waves: [],
+      dungeon: { config: EMBER_DUNGEON, library: EMBER_ROOMS },
+    });
+    // A real boss-role piece from the shipped library, and seat 0 standing in it.
+    s.dungeonRooms.push({
+      id: 'r1',
+      piece: EMBER_ROOMS.find((p) => p.role === 'boss')!,
+      offsetXGrid: 0, offsetYGrid: 0, entranceGrid: { x: 1, y: 1 },
+    });
+    s.dungeonRoomIndexById.set('r1', 0);
+    s.phase = 'playing';
+    s.players[0]!.roomId = 'r1';
+    s.players.push({ ...s.players[0]!, roomId: undefined }); // our seat, between rooms
+    const host = buildHost({ getPhase: () => 'playing', activeState: () => s, localOwner: 1 });
+
+    new GameLoop(deps, host).update(16);
+
+    expect(calls.map((c) => c.track)).toEqual(['dungeon.ember']);
   });
 
   it('runs the frame normally with no audio device attached', () => {
@@ -952,6 +988,35 @@ describe('GameLoop — the occlusion x-ray is driven every render frame', () => 
       [{ x: 5, y: 6, halfW: 12.96, bodyH: 32 }],
       16,
     );
+  });
+});
+
+// The `?pickupDebug=1` overlay (scene/PickupDebugOverlay.ts). Same argument commit b4b384d
+// records for the render-loop line it pinned: the overlay has a thorough suite of its own and
+// `gameQueryParams.ts` decides whether it is built at all, but nothing anywhere could see whether
+// the loop actually DRIVES it — deleting the one call leaves it mounted and empty, redrawing
+// never, with the whole suite green. It rides `updateHud` because that is where the live state has
+// already been fetched and where `phase === 'playing'` has already been established.
+describe('GameLoop — the pickup debug overlay', () => {
+  it('redraws the overlay with this frame\'s live state', () => {
+    const overlay = { update: vi.fn() };
+    const { deps } = buildDeps({ pickupDebugOverlay: overlay as unknown as PickupDebugOverlay });
+    const engine = createGameEngine(CFG);
+    const loop = new GameLoop(deps, buildHost({ getEngine: () => engine, activeState: () => engine.state }));
+
+    loop.update(16);
+
+    // The state itself, not a copy: the overlay reads `state.pickups` and every entity id it
+    // labels comes out of that object.
+    expect(overlay.update).toHaveBeenCalledWith(engine.state);
+  });
+
+  it('runs the frame with no overlay at all — which is every normal session', () => {
+    const { deps } = buildDeps(); // pickupDebugOverlay is null unless `?pickupDebug=1`
+    const engine = createGameEngine(CFG);
+    const loop = new GameLoop(deps, buildHost({ getEngine: () => engine, activeState: () => engine.state }));
+
+    expect(() => loop.update(16)).not.toThrow();
   });
 });
 

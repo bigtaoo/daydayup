@@ -30,6 +30,22 @@ describe('parseGameQueryParams', () => {
     expect(parseGameQueryParams('?pickupDebug=1').replayUrl).toBeNull();
   });
 
+  // The only assertion in the suite that says this flag can ever be ON. The defaults
+  // block above lists `pickupDebug: false`, and the line right here uses
+  // `?pickupDebug=1` solely as a "some other param is present" foil for replayUrl —
+  // between them, hardcoding the field to `false` kept the whole client suite green
+  // while making `scene/PickupDebugOverlay.ts` unreachable in every session. For a
+  // debug-only instrument that is a silent loss: the flag not working looks exactly
+  // like the flag not being passed.
+  it('reads ?pickupDebug=1 as ON — the collect-ring overlay is reachable at all', () => {
+    expect(parseGameQueryParams('?pickupDebug=1').pickupDebug).toBe(true);
+    // Same "1"-only convention as coop/online/pvp above, stated so a truthiness
+    // relaxation (`!== null`, `Boolean(...)`) is a failure rather than a silent widening.
+    expect(parseGameQueryParams('?pickupDebug=0').pickupDebug).toBe(false);
+    expect(parseGameQueryParams('?pickupDebug=true').pickupDebug).toBe(false);
+    expect(parseGameQueryParams('?pickupDebug').pickupDebug).toBe(false);
+  });
+
   it('reads skin/mm/wpn as passthrough strings when present', () => {
     const p = parseGameQueryParams('?skin=juggernaut&mm=https://mm.example&wpn=shotgun');
     expect(p.skinOverride).toBe('juggernaut');

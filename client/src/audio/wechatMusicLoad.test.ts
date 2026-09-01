@@ -34,7 +34,7 @@ import { WeChatAudio } from '../platform/wechat/WeChatAudio';
 import { packedPathFor } from '../render/assetManifest';
 import { MUSIC_CATALOGUE, XFADE_S, musicPaths } from './musicCatalogue';
 import type { MusicSituation } from '../game/musicDirector';
-import { setMusicAudio, updateMusicForFrame } from '../game/musicDirector';
+import { invalidateMusicTrack, setMusicAudio, updateMusicForFrame } from '../game/musicDirector';
 
 const PUBLIC = new URL('../../public/', import.meta.url);
 
@@ -335,6 +335,57 @@ describe('WeChat music — independent of the platform’s least certain audio A
     expect(warn.mock.calls[0]![0]).toContain('packs/music/audio/music/menu.mp3');
     expect(() => run(MENU, 1000)).not.toThrow();
     warn.mockRestore();
+  });
+});
+
+describe('WeChat music — the invalidate the phased boot pushes', () => {
+  // `WeChatAudio.invalidateMusic` had NO test until this block, on either platform: every
+  // `invalidateMusic` the suite exercised was a hand-written fake, so "the phased boot calls it"
+  // (`render/preloadArt.ts`, when the `music` pack finishes downloading) and "a player forgets
+  // its track when asked" were both pinned, with nothing joining them to a deck that re-points.
+  // An empty body survived everything — commit 8cf60e2's shape: every piece passing its own
+  // check, and the game silent. This target is where the case is REAL rather than defensive:
+  // design/12 defers the `music` pack precisely so the first frame does not wait for it, so a
+  // deck genuinely can be handed a subpackage path before that pack has landed.
+
+  it('re-points a deck that was pointed into a pack before it landed', () => {
+    // The observable is a second `play()` on a stopped stream rather than a new `src`: the packed
+    // path does not change, and re-assigning `src` is what rewinds on this runtime, so the deck
+    // stops and starts the same src instead.
+    setMusicAudio(new WeChatAudio());
+    run(MENU, 1000);
+    const inner = live()[0]!;
+    expect(inner.plays).toBe(1);
+
+    invalidateMusicTrack();
+    expect(live(), 'the invalidate never reached the deck').toHaveLength(0);
+
+    run(MENU, 100);
+    expect(FakeInner.all).toHaveLength(2); // the same two long-lived streams
+    expect(live()).toEqual([inner]);
+    expect(inner.plays).toBe(2);
+    expect(inner.srcHistory).toEqual([packedPathFor(MUSIC_CATALOGUE.menu.path)]);
+    expect(inner.currentTime).toBeLessThan(0.5); // from the top, not from where it had got to
+  });
+
+  it('never opens a stream of its own — the reason it reads `player` and not `ensureMusic()`', () => {
+    // The mutation this forbids is one line long and looks like tidying: routing this through
+    // `ensureMusic()?.invalidate()` the way `updateMusic` does. On this platform that would
+    // ALLOCATE two `InnerAudioContext` streams from inside a `wx.loadSubpackage` completion
+    // callback — before any frame has asked for music, possibly in a session where the player
+    // never gets a bed at all — and then hand them to a player whose track is null, so nothing
+    // would ever stop them. With no player built there is by definition nothing playing to
+    // forget, which is why the guard is the right one rather than merely the cheap one.
+    const audio = new WeChatAudio();
+    expect(() => audio.invalidateMusic()).not.toThrow();
+    expect(FakeInner.all).toHaveLength(0);
+    setMusicAudio(audio);
+    invalidateMusicTrack();
+    expect(FakeInner.all, 'the invalidate built the decks itself').toHaveLength(0);
+    // ...and the first frame that actually wants music still gets it.
+    run(MENU, 100);
+    expect(FakeInner.all).toHaveLength(2);
+    expect(live()).toHaveLength(1);
   });
 });
 

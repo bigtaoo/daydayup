@@ -193,6 +193,15 @@ export function syncAssets(repoRoot, log = console.log) {
   for (const top of ownedTopLevel) {
     const dir = join(target, top);
     if (!existsSync(dir)) continue;
+    // A top-level entry derived by exclusion can be a plain FILE, not just a directory — and
+    // `walk` readdirs whatever it is given, so a stray note dropped into `platforms/wechat`
+    // used to abort the whole build with ENOTDIR. Unreserved and unplanned makes it stale by
+    // the same rule as a stale texture, so prune it and move on. (`RESERVED_TOP_LEVEL` is
+    // filtered out above, which is what keeps `game.js` — also a file — off this path.)
+    if (!statSync(dir).isDirectory()) {
+      rmSync(dir);
+      continue;
+    }
     for (const abs of walk(dir)) {
       const rel = relative(target, abs).split('\\').join('/');
       if (!owned.has(rel)) rmSync(abs);

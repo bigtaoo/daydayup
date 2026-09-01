@@ -8,13 +8,19 @@
  * build and the byte gate, so the two are checked against each other at the bottom.
  */
 import { describe, it, expect } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   PACKS, SUBPACKS, DEFAULT_PACK, MAIN_PACK, TOTAL_LIMIT_BYTES,
   packOf, packDef, packedPathFor, packsForPhase, type PackPhase,
 } from './assetManifest';
+// The build's own copy of these rules, in plain Node — imported rather than re-implemented, so
+// the bottom case below compares two SHIPPED implementations. There is no `.d.mts` beside it
+// (unlike tools/png-pipeline/pngCodec.mjs), hence the suppression; the shapes are declared at the
+// call site instead.
+// @ts-expect-error — untyped .mjs, deliberately: build/ is plain Node with no declarations.
+import { loadAssetPacks, packOf as rawPackOf } from '../../../build/wechatAssetSync.mjs';
 import { BIOME_TILE_ASSETS } from './biomeTiles';
 import { UI_ASSETS } from './uiSkins';
 import { ENV_SPRITE_ASSETS } from './environmentSprites';
@@ -206,12 +212,14 @@ describe('the build reimplements packOf, and the two must agree', () => {
     // neither of which can import TypeScript), so `packOf` genuinely exists twice. Both read
     // the same JSON; this checks they read it the same WAY — the first-match-wins ordering is
     // the part that could silently diverge.
-    const table = JSON.parse(readFileSync(new URL('./assetPacks.json', import.meta.url), 'utf8')) as {
-      defaultPack: string;
-      rules: Array<{ prefix: string; pack: string }>;
-    };
-    const buildPackOf = (webPath: string): string =>
-      table.rules.find((r) => webPath.startsWith(r.prefix))?.pack ?? table.defaultPack;
+    //
+    // The BUILD's real function, imported, not a hand-copy of it. Until 2026-09-01 this case
+    // re-implemented those two lines inline, which pinned the SHAPE of the rule and not the
+    // shipped code at all: mutating the real `packOf` (`find` → `findLast`, `startsWith` →
+    // `includes`) left both this test and build/wechatAssetSync.test.mjs green. `loadAssetPacks`
+    // comes along for the ride so the table is read through the build's own loader too.
+    const buildPacks = loadAssetPacks(fileURLToPath(new URL('../../../', import.meta.url)));
+    const buildPackOf = (webPath: string): string => rawPackOf(buildPacks, webPath);
 
     const everyPath = [
       ...Object.values(BIOME_TILE_ASSETS),
@@ -222,5 +230,24 @@ describe('the build reimplements packOf, and the two must agree', () => {
     ];
     expect(everyPath.length).toBeGreaterThan(60);
     for (const path of everyPath) expect(buildPackOf(path), path).toBe(packOf(path));
+  });
+
+  it('agrees on paths chosen to break "first matching PREFIX wins"', () => {
+    // Every shipped path above matches at most one rule and matches it at position 0, so the
+    // sweep is blind to HOW either implementation matches: `startsWith` → `includes` changes the
+    // answer for none of them. These do — each carries a real rule prefix somewhere other than
+    // the front, which is the shape a generated or nested asset directory would actually take.
+    const buildPacks = loadAssetPacks(fileURLToPath(new URL('../../../', import.meta.url)));
+    const buildPackOf = (webPath: string): string => rawPackOf(buildPacks, webPath);
+    const adversarial = [
+      '/skins/orb-core/ui/eye.png', // contains '/ui/', starts with it nowhere
+      '/generated/weapons/gun_blaster.png', // contains '/weapons/'
+      '/audio/sfx/audio/music/impact.mp3', // contains '/audio/music/'
+      '/skins/critter-core/skins/boss-core/frames.json', // contains '/skins/boss-core/'
+      '/nobody/has/written/a/rule/for/this.png', // and one that matches nothing at all
+    ];
+    for (const path of adversarial) expect(buildPackOf(path), path).toBe(packOf(path));
+    // The whole set has to fall to the default, or the two could agree by both being wrong.
+    for (const path of adversarial) expect(packOf(path), path).toBe(DEFAULT_PACK);
   });
 });

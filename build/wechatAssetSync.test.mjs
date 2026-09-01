@@ -17,7 +17,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { syncAssets } from './wechatAssetSync.mjs';
+import { planPackage, syncAssets } from './wechatAssetSync.mjs';
 
 let root;
 
@@ -113,6 +113,40 @@ describe('syncAssets — the prune', () => {
     expect(readdirSync(join(target, 'packs', 'lobby'))).toEqual(['game.js']);
   });
 
+  it('prunes a stray top-level FILE instead of crashing on it', () => {
+    // `ownedTopLevel` is derived by EXCLUSION from a readdir — that is the whole point of the
+    // 2026-09-01 change, since a plan-derived set cannot clean up a directory the plan used to
+    // own. But exclusion also admits plain files, and the sweep below handed each entry straight
+    // to `walk()`, which readdirs it: `ENOTDIR: not a directory, scandir '.../stray-note.txt'`,
+    // out of `npm run build:wechat`. Reachable without contrivance — `platforms/` is git-ignored
+    // scratch that DevTools and a developer both write into, and every previous test here seeded
+    // only directories, so nothing looked.
+    seedRepo(TABLE, { 'ui/hub.png': 100 });
+    const target = join(root, 'platforms', 'wechat');
+    mkdirSync(target, { recursive: true });
+    writeFileSync(join(target, 'stray-note.txt'), 'scratch');
+
+    expect(() => syncAssets(root, () => {})).not.toThrow();
+
+    // Unplanned and unreserved, so it is stale by the same rule as a stale texture.
+    expect(existsSync(join(target, 'stray-note.txt'))).toBe(false);
+    expect(existsSync(join(target, 'packs', 'lobby', 'ui', 'hub.png'))).toBe(true);
+  });
+
+  it('keeps a reserved top-level file that is a FILE, not a directory', () => {
+    // The other side of the same readdir: `game.js` is reserved and is a file. Broadening the
+    // sweep to cope with files must not broaden it to cope with THOSE files — deleting the
+    // bundle entry every build is the failure mode a naive fix reaches for.
+    seedRepo(TABLE, { 'ui/hub.png': 100 });
+    const target = join(root, 'platforms', 'wechat');
+    mkdirSync(target, { recursive: true });
+    writeFileSync(join(target, 'game.js'), 'entry');
+
+    syncAssets(root, () => {});
+
+    expect(readFileSync(join(target, 'game.js'), 'utf8')).toBe('entry');
+  });
+
   it('declares every subpackage in game.json, the default pack included', () => {
     // `subpackageEntries` filters on `mainPack`, not `defaultPack`. Filtering on the latter — as
     // it did until the two became different values — drops `run` from game.json and leaves
@@ -122,5 +156,81 @@ describe('syncAssets — the prune', () => {
     const gameJson = JSON.parse(readFileSync(join(root, 'platforms', 'wechat', 'game.json'), 'utf8'));
     expect(gameJson.subpackages.map((s) => s.name).sort()).toEqual(['lobby', 'run']);
     for (const sub of gameJson.subpackages) expect(sub.root.endsWith('/')).toBe(true);
+  });
+});
+
+/** `byPack`, keyed — the shape the byte gate actually reads. */
+function packsByName(plan) {
+  return Object.fromEntries(plan.byPack.map((p) => [p.name, p]));
+}
+
+describe('planPackage — the number the byte gate exists for', () => {
+  it("charges js/game.js to the MAIN package, not to whichever pack is the default", () => {
+    // The gate's whole job is "does WeChat's FIRST download fit in 4 MB", and since 2026-09-01
+    // that download is `js/game.js` and nothing else — so this one attribution IS the gate.
+    // Nothing exercised it: `seedRepo` creates `client/wechat/js/` but never a `game.js` inside
+    // it, so `hasBundle` was false in every case above and `planPackage` was never called
+    // directly at all. Reverting `pack: packs.mainPack` to `packs.defaultPack` therefore passed,
+    // and that mutant reports the main package as 0 bytes against a 4 MB cap while quietly
+    // charging ~0.95 MB of code to the `run` subpackage.
+    seedRepo(TABLE, { 'ui/hub.png': 100, 'biome/floor.png': 50 });
+    const BUNDLE_BYTES = 4321;
+    writeFileSync(join(root, 'client', 'wechat', 'js', 'game.js'), 'x'.repeat(BUNDLE_BYTES));
+
+    const plan = planPackage(root);
+    const byName = packsByName(plan);
+
+    expect(plan.hasBundle).toBe(true);
+    expect(byName.main.count).toBe(1);
+    expect(byName.main.bytes).toBe(BUNDLE_BYTES);
+    // ...and it is charged ONCE: the default pack still holds only the art no rule claimed.
+    expect(byName.run.count).toBe(1);
+    expect(byName.run.bytes).toBe(50);
+    expect(byName.lobby.bytes).toBe(100);
+    expect(plan.totalBytes).toBe(BUNDLE_BYTES + 150);
+    // The bundle's destination is the project root's `js/`, which is what `game.json` and every
+    // `packedPathFor` result assume (see this module's layout note).
+    expect(plan.files.find((f) => f.webPath === null).dest).toBe('js/game.js');
+  });
+
+  it('says the main package is empty rather than pretending it is small', () => {
+    // Before the first `build:wechat` there is no bundle. The plan has to report that, because a
+    // gate that silently weighed art only would go green on a package it had not measured.
+    seedRepo(TABLE, { 'ui/hub.png': 100 });
+
+    const plan = planPackage(root);
+
+    expect(plan.hasBundle).toBe(false);
+    expect(packsByName(plan).main.count).toBe(0);
+    expect(packsByName(plan).main.bytes).toBe(0);
+  });
+});
+
+/** A table with two OVERLAPPING prefixes, the narrower first. The real `assetPacks.json` has no
+ *  such pair, which makes its documented "first matching prefix wins" rule unfalsifiable there —
+ *  `find` → `findLast` changes the answer for no shipped path. This is the pair that gives the
+ *  claim teeth, and the only place it can live is a fixture table. */
+const OVERLAPPING = {
+  ...TABLE,
+  rules: [
+    { prefix: '/ui/hub.png', pack: 'lobby' },
+    { prefix: '/ui/', pack: 'run' },
+  ],
+};
+
+describe('packOf — first matching prefix wins', () => {
+  it('lets the NARROWER rule win when it is listed first', () => {
+    seedRepo(OVERLAPPING, { 'ui/hub.png': 100, 'ui/other.png': 60 });
+
+    const plan = planPackage(root);
+    const byName = packsByName(plan);
+
+    expect([byName.lobby.count, byName.lobby.bytes]).toEqual([1, 100]);
+    expect([byName.run.count, byName.run.bytes]).toEqual([1, 60]);
+    // ...and the split really reaches the mirrored tree, not just the plan's arithmetic.
+    syncAssets(root, () => {});
+    const target = join(root, 'platforms', 'wechat');
+    expect(existsSync(join(target, 'packs', 'lobby', 'ui', 'hub.png'))).toBe(true);
+    expect(existsSync(join(target, 'packs', 'run', 'ui', 'other.png'))).toBe(true);
   });
 });

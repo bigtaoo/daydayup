@@ -67,7 +67,7 @@ export interface TrackDef {
    * masters (`art/audio/README.md`'s Music table); `dungeon.ember` does not, and "the runtime
    * should substitute an existing loop rather than fall silent" is design/11's own
    * instruction. A substitution recorded only in a comment is a substitution that ships
-   * forever: `musicCatalogue.test.ts` asserts exactly which tracks are standing in, so
+   * forever: `musicAssets.test.ts` asserts exactly which tracks are standing in, so
    * replacing this entry with a real master is a visible, one-line change rather than an
    * archaeology exercise.
    */

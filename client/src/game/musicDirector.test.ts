@@ -10,6 +10,7 @@
  * `ExtractionSystem`), but the piece, the role and the lookup are the shipped ones.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   createGameState,
   EMBER_DUNGEON,
@@ -33,6 +34,26 @@ const MENU_PHASES: Phase[] = [
   'victory',
   'defeat',
 ];
+
+/** The other side of the same partition — `musicDirector`'s own private `IN_RUN_PHASES`, which
+ *  every test in the two blocks below exercises one member of. */
+const IN_RUN_PHASES: Phase[] = ['playing', 'paused', 'settings'];
+
+/**
+ * Every value `Phase` admits, read out of `phase.ts` ITSELF.
+ *
+ * Deliberately not a third hand-written list: the point of the exhaustiveness test below is that
+ * a list can drift from the type, and a second list drifts the same way. TypeScript cannot hand a
+ * union's members to a runtime test and `Phase` has no runtime array anywhere in the client, so
+ * the declaration is the only source of truth there is. Parsing it is cheap and the failure mode
+ * is loud: a parse that found nothing makes the set equality below fail rather than pass.
+ */
+function declaredPhases(): string[] {
+  const src = readFileSync(new URL('./phase.ts', import.meta.url), 'utf8');
+  const start = src.indexOf('export type Phase =');
+  const decl = src.slice(start, src.indexOf(';', start));
+  return [...decl.matchAll(/'([A-Za-z]+)'/g)].map((m) => m[1]!);
+}
 
 /** A dungeon state with one placed room, whose piece is taken from the real library by role. */
 function dungeonState(role: 'boss' | 'extraction' | 'normal', biomeId?: string): GameState {
@@ -70,6 +91,19 @@ describe('trackFor — the menu bed', () => {
     for (const phase of MENU_PHASES) {
       expect(trackFor({ phase, state: null, localOwner: 0 }), phase).toBe('menu');
     }
+  });
+
+  it('accounts for EVERY phase the type admits, between the two lists', () => {
+    // An exhaustiveness line, not a live bug: a new `Phase` falls into `trackFor`'s first branch
+    // and takes the menu bed, which is the right default. What it is not is a DECISION — nobody
+    // asked whether the new screen should be scored, and the answer arrives silently. This is the
+    // gate that turns "the list above happens to be complete" into "the list above is checked",
+    // and the reason it goes here rather than in `phase.ts`'s own tests is that music is the only
+    // consumer that has to partition the whole set.
+    const covered = [...MENU_PHASES, ...IN_RUN_PHASES].sort();
+    expect(covered).toEqual([...declaredPhases()].sort());
+    // ...and nothing above is vacuous: both lists really are exercised by the cases in this file.
+    expect(MENU_PHASES.length).toBeGreaterThan(0);
   });
 
   it('plays the menu bed on a screen phase even while a run state is still around', () => {

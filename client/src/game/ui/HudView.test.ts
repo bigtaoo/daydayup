@@ -3,6 +3,8 @@ import type { Container } from 'pixi.js';
 import { createGameState } from '@dd/engine/state/GameState';
 import type { GameState, EngineConfig } from '@dd/engine/state/GameState';
 import type { PlacedRoom } from '@dd/engine/world/dungeon';
+import type { Fp } from '@dd/engine/math/fixed';
+import { WEAPON_PROMPT_RADIUS_FP } from './pickupProximity';
 import { Layers } from '../scene/layers';
 import { HudView, type HudContext } from './HudView';
 import { StatChip } from './StatChip';
@@ -363,6 +365,74 @@ describe('HudView — weapon-pickup panel placement (design/03)', () => {
     hud.update(s, 16, CTX);
 
     expect(hud.weaponPickupPrompt.isOpen).toBe(true);
+  });
+
+  /**
+   * What the panel is FED, not where it is put — `HudView.updateWeaponPickupPrompt` is the
+   * one and only production call site of `nearbyWeaponPickups`, and until these two cases
+   * nothing anywhere asserted the arguments it passes.
+   *
+   * That gap is not academic, it is exactly the *"无法拾取"* shape: the panel decides whether
+   * a weapon gets a clickable row and `PickupSystem` independently decides whether to honour
+   * the click, so the two can disagree with both packages green. `pickupProximity.test.ts`
+   * proves the panel ring agrees with the sim's gate, but it calls
+   * `nearbyWeaponPickups(..., WEAPON_PROMPT_RADIUS_FP)` itself — so what it pins is a
+   * property of the CONSTANT. Moving the constant out of `HudView` (2026-08-31) removed the
+   * duplicate definition and left the USE unpinned; all three of these survived:
+   *
+   *   - radius → `SIM.pickupRadius` (469 fp): the panel goes silent at the very distances the
+   *     report was filed at, 469..2500 fp, and there is no other way to collect a floor weapon;
+   *   - radius → `SIM.lootRevealRadius * 3`: the panel offers rows `PickupSystem` refuses,
+   *     which is the same bug read from the other side — a row that does nothing when tapped;
+   *   - `p.gx, p.gy` → `p.gy, p.gx`: proximity measured from a mirrored point. Invisible on
+   *     any fixture where the player sits on the diagonal, which is why the default spawn
+   *     (12500, 9375) is used as-is rather than moved somewhere tidy.
+   */
+  const nearFar = (s: GameState) => {
+    const p = s.players[0]!;
+    // Straddling the ring by 50 fp either side: close enough that only the radius ARGUMENT
+    // separates them, far enough that fp rounding cannot.
+    const near = { id: s.nextId(), kind: 'weapon' as const, weaponId: 'blaster', gx: (p.gx + (WEAPON_PROMPT_RADIUS_FP as number) - 50) as Fp, gy: p.gy, spawnTick: -1, alive: true };
+    const far = { id: s.nextId(), kind: 'weapon' as const, weaponId: 'saber', gx: (p.gx + (WEAPON_PROMPT_RADIUS_FP as number) + 50) as Fp, gy: p.gy, spawnTick: -1, alive: true };
+    s.pickups.push(near, far);
+    return { near, far };
+  };
+
+  /** Which items the panel actually offers, in row order — read by firing each row's own
+   *  tap handler, i.e. through the same `onPick` path `Game` wires to `requestPickup`. A
+   *  row that reports no id is not a row a player can collect with. */
+  const offeredIds = (hud: HudView): number[] => {
+    const ids: number[] = [];
+    hud.weaponPickupPrompt.onPick = (id) => ids.push(id);
+    for (const row of (hud.weaponPickupPrompt as unknown as { rows: Array<{ onTap: (() => void) | null }> }).rows) {
+      row.onTap?.();
+    }
+    return ids;
+  };
+
+  it('offers the weapon inside the panel ring and not the one outside it', () => {
+    const hud = newHud();
+    const s = pveState();
+    const { near } = nearFar(s);
+
+    hud.update(s, 16, CTX);
+
+    expect(hud.weaponPickupPrompt.isOpen).toBe(true);
+    expect(offeredIds(hud)).toEqual([near.id]);
+  });
+
+  it('offers BOTH once the far one is inside too — the single row above is a decision, not a cap', () => {
+    // Anti-vacuity control for the case above: if the panel could only ever show one row (or
+    // if `nearFar`'s far item were malformed and silently skipped), `[near.id]` would pass for
+    // free and the "radius is too wide" mutation would survive on a technicality.
+    const hud = newHud();
+    const s = pveState();
+    const { near, far } = nearFar(s);
+    far.gx = (near.gx - 100) as Fp; // now nearer than `near`, so row ORDER is observable too
+
+    hud.update(s, 16, CTX);
+
+    expect(offeredIds(hud)).toEqual([far.id, near.id]); // nearest first
   });
 });
 

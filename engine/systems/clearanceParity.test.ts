@@ -39,6 +39,10 @@ import { circlesOverlap, clampToWalkable } from './geom';
 import { blockingRect } from './solidBounds';
 import { dropClearance } from '../state/actorRadius';
 import { DeathDropsSystem } from './DeathDropsSystem';
+import { PickupSystem } from './PickupSystem';
+import { SpawnSystem } from './SpawnSystem';
+import { EnvironmentSystem } from './EnvironmentSystem';
+import { ZoneSystem } from './ZoneSystem';
 import { toFpGrid } from '../content/convert';
 
 const px = (n: number): Fp => pxToFp(n);
@@ -182,6 +186,108 @@ describe('a drop lands where a PLAYER BODY fits (ENGINE_VERSION 50)', () => {
     expect({ gx: drop!.gx as number, gy: drop!.gy as number }).not.toEqual({ gx: 4485, gy: 7500 });
   });
 
+  /**
+   * ALL THREE placement sites, on the one fixture built to separate the two radii.
+   *
+   * The case above runs `DeathDropsSystem` only, and that was the whole behavioural coverage
+   * of v50's second half. The other two sites were free: reverting `PickupSystem.applyWeapon`
+   * or `SpawnSystem.spawnArenaLoot` to `SIM.pickupRadius` — or deleting `applyWeapon`'s clamp
+   * outright — left both packages green, because
+   *
+   *   - `pickups.test.ts` exercises the weapon swap for the SLOT it lands in and the item it
+   *     leaves behind, never for that item's POSITION, and its CFG has no walls at all;
+   *   - `arenaSpawn.test.ts` asserts the marker lands at `toFpGrid(2)` in a wall-free map, so
+   *     the clamp is a no-op there and any radius passes.
+   *
+   * `PickupSystem.ts:171-174` says the call "exists to keep the three sites from drifting
+   * apart again". This is the thing that enforces it. Each row drives the real system and is
+   * checked BOTH ways: it must land where `dropClearance()` puts it, and it must NOT land
+   * where `SIM.pickupRadius` would — the second half is what makes the row a measurement of
+   * the radius rather than a restatement of "some clamp ran".
+   */
+  const SRC = { gx: 4485 as Fp, gy: 7500 as Fp };
+
+  interface Site {
+    name: string;
+    /** Runs the real placement site with its source at `SRC`, returning the state it ran
+     *  against (so the two reference clamps below are computed on the SAME geometry) and
+     *  where the drop actually came to rest. */
+    run: () => { s: GameState; pos: { gx: number; gy: number } };
+  }
+
+  const SITES: Site[] = [
+    {
+      name: 'DeathDropsSystem — a mob dies inside the slot',
+      run: () => {
+        const s = slotState(970);
+        const mob = buildEnemyActor(s, SRC.gx, SRC.gy, 'basic');
+        mob.hp = 0;
+        s.enemies.push(mob);
+        new DeathDropsSystem().tick(s);
+        const drop = s.pickups[0];
+        expect(drop, 'the mob died without dropping anything — pick a seed whose roll produces one').toBeDefined();
+        return { s, pos: { gx: drop!.gx as number, gy: drop!.gy as number } };
+      },
+    },
+    {
+      name: 'PickupSystem.applyWeapon — the weapon a swap knocks out of the player\'s hands',
+      run: () => {
+        const s = slotState(970);
+        const p = s.players[0]!;
+        p.gx = SRC.gx;
+        p.gy = SRC.gy;
+        expect(p.weapons.length, 'the swap only drops something if the slot was already full').toBeGreaterThan(0);
+        // A ranged weapon, so `slotFor` picks the slot the starter blaster is in and the
+        // blaster is the thing that gets displaced. Collected through the real click path:
+        // `pickupTargetId` set, `spawnTick` in the past, inside `lootRevealRadius`.
+        const offered = { id: s.nextId(), kind: 'weapon' as const, weaponId: 'repeater', gx: SRC.gx, gy: SRC.gy, spawnTick: 0, alive: true };
+        s.pickups.push(offered);
+        s.tick = 1;
+        p.pickupTargetId = offered.id;
+        new PickupSystem().tick(s);
+        const dropped = s.pickups.filter((q) => q.id !== offered.id);
+        expect(dropped.length, 'the swap did not drop the outgoing weapon at all').toBe(1);
+        return { s, pos: { gx: dropped[0]!.gx as number, gy: dropped[0]!.gy as number } };
+      },
+    },
+    {
+      name: 'SpawnSystem.spawnArenaLoot — an authored arena loot marker',
+      run: () => {
+        const s = arenaSlotState();
+        // Room A covers the whole map, so standing anywhere clear of the slot activates it;
+        // `EnvironmentSystem` is what assigns room membership, exactly as `arenaSpawn.test.ts`
+        // drives it.
+        const p = s.players[0]!;
+        p.gx = 1000 as Fp;
+        p.gy = 1000 as Fp;
+        new ZoneSystem().tick(s);
+        new EnvironmentSystem().tick(s);
+        new SpawnSystem().tick(s);
+        expect(s.pickups.length, 'the room never activated, so no loot was placed').toBe(1);
+        const item = s.pickups[0]!;
+        return { s, pos: { gx: item.gx as number, gy: item.gy as number } };
+      },
+    },
+  ];
+
+  for (const site of SITES) {
+    it(`${site.name} — lands where dropClearance() puts it, not where SIM.pickupRadius would`, () => {
+      const { s, pos } = site.run();
+      const byBody = clampToWalkable(SRC.gx, SRC.gy, dropClearance(), s);
+      const byPadding = clampToWalkable(SRC.gx, SRC.gy, SIM.pickupRadius, s);
+
+      // Per-row anti-vacuity: on THIS geometry the two radii must actually disagree, or
+      // the `not.toEqual` below would hold for a site with no clamp at all.
+      expect(
+        { gx: byBody.gx as number, gy: byBody.gy as number },
+        'the fixture stopped discriminating the two radii — the rows below prove nothing',
+      ).not.toEqual({ gx: byPadding.gx as number, gy: byPadding.gy as number });
+
+      expect(pos).toEqual({ gx: byBody.gx as number, gy: byBody.gy as number });
+      expect(pos).not.toEqual({ gx: byPadding.gx as number, gy: byPadding.gy as number });
+    });
+  }
+
   it('a drop clamped against a wall is still within collection range of where the player can stand', () => {
     // The invariant the v48 report (*"角色根本无法拾取掉落的物品"*) is really about, stated
     // end-to-end instead of as a comparison between two constants. Kept from v49 — it is now
@@ -246,6 +352,46 @@ describe('the honest limit: a clamp separates, it does not escape', () => {
   });
 });
 
+/**
+ * The SAME slot, reached through the arena pipeline — the only way to drive
+ * `SpawnSystem.spawnArenaLoot`, which reads its source point off an authored `lootMarker`
+ * rather than taking one. One room covering the whole map, one marker on the slot's centre
+ * line (grid 4.485 = 4485 fp, matching `SRC`), and `slotState`'s own wall list swapped in for
+ * the map's (empty) geometry, so all three sites are measured against literally the same
+ * stone instead of a second hand-built approximation of it.
+ */
+function arenaSlotState(): GameState {
+  const s = createGameState({
+    seed: 1,
+    worldW: 0,
+    worldH: 0,
+    waves: [],
+    arena: {
+      id: 'clearance_slot',
+      sizeGrid: { w: 20, h: 20 },
+      rooms: [
+        {
+          id: 'A',
+          rectGrid: { x: 0, y: 0, w: 20, h: 20 },
+          solids: [],
+          lootMarkers: [{ point: { x: 4.485, y: 7.5 }, tableId: 'common' }],
+        },
+      ],
+      doors: [],
+      spawns: [{ x: 1, y: 1 }],
+      eyeCandidates: [{ roomId: 'A' }],
+    },
+  });
+  s.walls.length = 0;
+  s.walls.push(...slotState(970).walls);
+  s.rebuildSpatialIndex();
+  return s;
+}
+
+/**
+ * A dead-end slot `gap` fp wide, open to the north: two blocks whose facing edges are `gap`
+ * apart, and a cap across the south end. The slot's centre line is x = 4000 + gap/2.
+ */
 /**
  * A dead-end slot `gap` fp wide, open to the north: two blocks whose facing edges are `gap`
  * apart, and a cap across the south end. The slot's centre line is x = 4000 + gap/2.

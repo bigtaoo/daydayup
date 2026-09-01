@@ -198,6 +198,95 @@ describe('parseReplayFile fails loud rather than replaying garbage (design/08)',
   });
 });
 
+describe('what the parser tolerates ON PURPOSE — an old file is still readable', () => {
+  const good = () => JSON.parse(JSON.stringify(record(FLAT, 30).file)) as Record<string, unknown>;
+
+  it("reads a file recorded by an OLDER engine instead of refusing it", () => {
+    // Deliberate, and stated in parseReplayFile's doc comment: reading an old file's
+    // METADATA is legitimate — it is how you find out which version a report came from —
+    // and `ReplayInputSource` is the thing that refuses to REPLAY it. Nothing pinned that
+    // tolerance, only the self-agreement check next door, so adding a strict
+    // `engineVersion !== ENGINE_VERSION` throw here survived the suite: every existing
+    // fixture is packed at today's version and so never exercises the older-file path.
+    const old = ENGINE_VERSION - 1;
+    const f = good();
+    f.engineVersion = old;
+    (f.replay as Record<string, unknown>).version = old;
+
+    const parsed = parseReplayFile(f);
+    // Round-trips as recorded, not silently normalised to today's version — a report
+    // relabelled with the reader's version is a report that lies about its own origin.
+    expect(parsed.engineVersion).toBe(old);
+    expect(parsed.replay.version).toBe(old);
+  });
+
+  it('derives ticks from the HIGHEST tick in the stream, not from how many commands there are', () => {
+    // The round-trip fixtures above submit exactly one command per tick, so
+    // `max(tick)` and `commands.length` are the same number there and a
+    // `return commands.length` mutant is invisible. A sparse two-owner stream separates
+    // them: three commands, highest tick 9. (An ascending stream also kills the
+    // comparison being reversed — with `<` the running max never leaves 0.)
+    const f = good();
+    delete f.ticks;
+    (f.replay as Record<string, unknown>).commands = [
+      makeCommand({ owner: 0, tick: 5, ...quantizeMove(1, 0), buttons: 0 }),
+      makeCommand({ owner: 1, tick: 5, ...quantizeMove(0, 1), buttons: 0 }),
+      makeCommand({ owner: 0, tick: 9, ...quantizeMove(-1, 0), buttons: 0 }),
+    ];
+
+    const parsed = parseReplayFile(f);
+    expect(parsed.replay.commands).toHaveLength(3);
+    expect(parsed.ticks).toBe(9);
+  });
+
+  it('a file with no recordedAtMs reads as 0, not as "now"', () => {
+    // A `Date.now()` fallback survives everything else in this file: no test asserted the
+    // value, and a wall-clock default would silently re-date every old file to the moment
+    // it was READ — destroying the one field that tells two reports of the same bug apart.
+    const f = good();
+    delete f.recordedAtMs;
+    expect(parseReplayFile(f).recordedAtMs).toBe(0);
+  });
+
+  it('rejects a mark whose tick is not an integer, rather than carrying it into a report', () => {
+    // Marks are the whole reason the format has them (a bug report is a tick, not a run),
+    // and `replayStopTick` does arithmetic on this value: a string tick would freeze
+    // playback at NaN, which is the "replay garbage" outcome design/08 forbids.
+    const f = good();
+    f.marks = [{ tick: 'later', note: 'here' }];
+    expect(() => parseReplayFile(f)).toThrow(/marks\[0\]\.tick is not an integer/);
+  });
+});
+
+describe('packReplayFile snapshots what it is handed', () => {
+  it('copies the marks array — the recorder goes on mutating its own', () => {
+    // `MatchRecorder.pack` hands over its LIVE `marks` array and keeps collecting into it
+    // after the save (that is what makes F9 pressable twice). Passing `opts.marks` straight
+    // through would alias it into the already-packed file, so the SECOND press would
+    // retroactively add a mark to the FIRST file's bytes — for a format whose only job is
+    // to say "it happened here", a mark that appears after the fact is the worst defect
+    // available. Copying each mark, not just slicing the array, is the same argument one
+    // level down.
+    const marks = [{ tick: 10, note: 'first' }];
+    const file = packReplayFile({
+      config: FLAT, commands: [], ticks: 10, label: 'x', marks, recordedAtMs: 0,
+    });
+
+    marks.push({ tick: 20, note: 'second' });
+    marks[0]!.note = 'edited';
+
+    expect(file.marks).toEqual([{ tick: 10, note: 'first' }]);
+    expect(file.marks[0]).not.toBe(marks[0]);
+  });
+
+  it('packs an empty mark list when none was supplied', () => {
+    const file = packReplayFile({
+      config: FLAT, commands: [], ticks: 0, label: 'x', recordedAtMs: 0,
+    });
+    expect(file.marks).toEqual([]);
+  });
+});
+
 describe('replayFileName', () => {
   it('is filesystem-safe and carries the label and the clock', () => {
     expect(replayFileName('dungeon', 1700000000000)).toBe('ddreplay-dungeon-1700000000000.json');

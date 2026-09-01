@@ -1171,3 +1171,47 @@ replaces a margin with a construction, which is what lets `smoke.test.ts` assert
 survives the next time `WALL_NORTH_BRIM` or a body radius moves. The report itself is therefore
 NOT yet explained by anything in the engine; see the smoke suite's new pickup invariants for
 what is now ruled out by construction rather than by sampling.
+
+*(Superseded 2026-09-01 by v51: there WAS a mechanism in the engine, and this version could not
+have found it. Every rule and gate above is about the moment of the drop; a locking door moving
+a wall under a drop that had already come to rest is a different question. The sweep quoted here
+did re-check on every wall-set change — the case simply never arose in those runs, so it
+reported the same zero a working check reports.)*
+
+## v51: a locking door re-seats the loot it closes over (2026-09-01)
+
+The fourth round of the same live report — *"依然有掉落的物品无法拾取"* — and this time with a
+mechanism, found by asking a question v50 never asked.
+
+v50 made every drop SITE legal: all three placement sites clamp by `dropClearance()`, so the
+point an item is created at is a point a player's body could occupy. `smoke.test.ts` asserts
+that per tick across the five shipped scenarios. Both statements are about the moment of the
+drop, and neither says anything about what happens to a resting place afterwards.
+
+`DoorSystem.rebuildWalls` is the only thing in this engine that changes the wall set mid-run.
+When a room activates, every locked door's `passageAabb` is pushed into `state.walls` — and an
+item already lying in that passage is now inside stone, with no mitigation anywhere: nothing
+re-clamps a pickup after its drop tick, and `PickupSystem` collects on a radius test that does
+not consult walls at all. Whether the item was still reachable came down to whether a player's
+body could get within `pickupRadius + p.radius` of a point buried in a passage rect.
+
+A doorway is not an exotic place for a drop to be. It is where fights happen: a mob dies on the
+threshold (`DeathDropsSystem`), or a player swaps a weapon while standing in it
+(`PickupSystem.applyWeapon`), and then their own step across the line activates the room and the
+door closes over it. The v50 sweep of 903 drops could not have seen this — it sampled drop sites,
+and this bug happens strictly after the drop.
+
+**The fix**: `rebuildWalls` now ends with a re-clamp pass over every alive pickup, at
+`dropClearance()`, after `rebuildSpatialIndex()`. Unconditional rather than "only the ones in a
+passage", because the predicate for "is this one affected" is the same solid query
+`clampToWalkable` already performs, and it is exactly a no-op on a clear point — so testing
+first would only compute the answer twice. Idempotent, so a repeated rebuild cannot walk an item
+across the floor, and it runs only on the rare tick a lock actually changed.
+
+**Replay impact: any stream in which a door locks over a dropped item diverges from that tick
+onward.** Narrow by construction — a run with no item in a closing passage is byte-identical,
+which is why `fixtures/golden.json`'s hash did not move and the re-record only restamps the
+version. That unchanged hash is also the honest measure of what the golden scenarios cover here:
+they never produce the case, which is why the regression lives in `systems/doors.test.ts` as
+three named cases (sealed item re-seated, distant item not moved by a single fp, re-seated item
+not parked on the far side of the closed door) rather than resting on the fixture.

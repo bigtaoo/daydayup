@@ -22,7 +22,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { WebAudio } from '../platform/web/WebAudio';
-import { setMusicAudio, updateMusicForFrame, type MusicSituation } from '../game/musicDirector';
+import {
+  invalidateMusicTrack,
+  setMusicAudio,
+  updateMusicForFrame,
+  type MusicSituation,
+} from '../game/musicDirector';
 import { MUSIC_CATALOGUE, XFADE_S } from './musicCatalogue';
 import { parseMp3 } from './mp3Frames';
 
@@ -444,6 +449,56 @@ describe('the music pipeline — losing focus', () => {
     run(MENU, 10_000);
     expect(FakeAudioElement.all.filter((e) => e.playing)).toHaveLength(0);
     expect(FakeAudioElement.all.reduce((n, e) => n + e.srcHistory.length, 0)).toBe(1);
+  });
+});
+
+describe('the music pipeline — the invalidate the phased boot pushes', () => {
+  // `WebAudio.invalidateMusic` had NO test on either platform until this one. Every
+  // `invalidateMusic` under test was a hand-written fake (`GameLoop.test.ts`'s recording bus,
+  // `musicDirector.test.ts`'s sink), so the suite knew the phased boot CALLS it
+  // (`render/preloadArt.ts`, when the background `music` pack lands) and knew `MusicPlayer`
+  // FORGETS its track when asked — and nothing joined the two. An empty body on this one method
+  // survived the whole suite, which is commit 8cf60e2's failure shape exactly: every piece
+  // passing its own check, and the game silent.
+  //
+  // Reached through `invalidateMusicTrack()` rather than the method directly, because the module
+  // sink is what the real caller holds.
+
+  it('re-points a deck that had been handed a path with no file behind it yet', () => {
+    // The case design/12 records: on web the `music` pack is a background download, so a deck
+    // can be pointed at a URL that 404s while this player goes on believing the track is live.
+    // (What does NOT change is `src`: the deck rewinds instead of re-assigning an identical url
+    // — `webMusicDeck.ts` avoids re-downloading a megabyte once a minute — so the observable
+    // re-point is a second `play()` on a stream that had been stopped.)
+    bootedAudio();
+    run(MENU, 1000);
+    const el = FakeAudioElement.all.find((e) => e.playing)!;
+    expect(el.plays).toBe(1);
+
+    invalidateMusicTrack();
+    expect(playingFiles(), 'the invalidate never reached the deck').toEqual([]);
+
+    run(MENU, 100);
+    // The same two long-lived decks — an invalidate that rebuilt them would throw on the next
+    // `createMediaElementSource` for the same element.
+    expect(FakeAudioElement.all).toHaveLength(2);
+    expect(playingFiles()).toEqual([MUSIC_CATALOGUE.menu.path]);
+    expect(el.plays).toBe(2);
+    expect(el.currentTime).toBeLessThan(0.5); // from the top of the file, not where it had got to
+  });
+
+  it('is harmless before the context or the decks exist', () => {
+    // The real ordering on web has no guarantee: a small `music` pack can land before the player
+    // has ever cleared the autoplay gate, so this call arrives with no player built at all.
+    const audio = new WebAudio();
+    setMusicAudio(audio);
+    expect(() => invalidateMusicTrack()).not.toThrow();
+    expect(FakeAudioElement.all).toHaveLength(0);
+    // ...and the frame after the gate opens still starts the bed.
+    audio.resume();
+    ctx.state = 'running';
+    run(MENU, 100);
+    expect(playingFiles()).toEqual([MUSIC_CATALOGUE.menu.path]);
   });
 });
 

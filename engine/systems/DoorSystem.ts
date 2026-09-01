@@ -44,8 +44,8 @@ import { toFp } from '../math/fixed';
 import type { GameState } from '../state/GameState';
 import type { PlayerActor } from '../state/entities';
 import type { PlacedRoom } from '../world/dungeon';
-import { circleOverlapsAabb } from './geom';
-import { blockingRadius } from '../state/actorRadius';
+import { circleOverlapsAabb, clampToWalkable } from './geom';
+import { blockingRadius, dropClearance } from '../state/actorRadius';
 
 export class DoorSystem {
   tick(state: GameState): void {
@@ -160,5 +160,41 @@ export class DoorSystem {
       if (dr.locked) state.walls.push(dr.passageAabb);
     }
     state.rebuildSpatialIndex();
+    this.reclampPickups(state);
+  }
+
+  /**
+   * Re-seat any pickup the rebuild just moved a wall on top of (ENGINE_VERSION 51).
+   *
+   * `dropClearance()` (v50) makes every drop SITE legal at the moment it is created, which
+   * is the whole of what the v50 sweep measured and the whole of what `smoke.test.ts`
+   * asserts per tick. This is the case neither covers: a resting place that was legal when
+   * the item landed and stopped being legal afterwards, because the wall set changed under
+   * it. `rebuildWalls` is the only thing in the engine that does that mid-run, and a door
+   * passage is exactly where a drop comes from — a mob dies on the threshold
+   * (`DeathDropsSystem`), or a player swaps a weapon standing in it
+   * (`PickupSystem.applyWeapon`), and then the room activates and the door closes over it.
+   *
+   * The item was then inside stone with no mitigation anywhere: nothing re-clamps a pickup
+   * after its drop tick, and `PickupSystem` collects on a radius test that does not care
+   * about walls — so whether it was still reachable came down to whether the player's body
+   * could get within `pickupRadius + p.radius` of a point buried in a passage rect. That is
+   * the shape of the report v50 closed as unexplained (*"依然有掉落的物品无法拾取"*,
+   * 2026-08-31); the 903-drop sweep behind v50 could not have seen it, because it sampled
+   * drop sites and this bug happens strictly after the drop.
+   *
+   * Unconditional over every alive pickup rather than "only the ones in a passage": the
+   * predicate for "is this one affected" is a solid query, which is what `clampToWalkable`
+   * already does, and it is exactly a no-op for a point that is clear — so testing first
+   * would only duplicate the answer. Idempotent, so the rare repeated rebuild cannot walk
+   * an item across the floor, and it runs only on a lock change.
+   */
+  private reclampPickups(state: GameState): void {
+    for (const item of state.pickups) {
+      if (!item.alive) continue;
+      const at = clampToWalkable(item.gx, item.gy, dropClearance(), state);
+      item.gx = at.gx;
+      item.gy = at.gy;
+    }
   }
 }

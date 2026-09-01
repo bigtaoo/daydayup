@@ -57,13 +57,24 @@ export function pickupDebugGate(state: GameState, item: PickupItem): { nearestPx
  * definition of the threshold, so nothing anywhere re-derives it (design/18 G6). A
  * `weapon` is gated on the panel's ring; every auto-collect kind on the player's OWN
  * radius plus the sim's padding, which is why this takes the player rather than a
- * constant. Read by `pickupDebugGate` above and by `sim/replay/inspect.ts`.
+ * constant. Read by `pickupDebugGate` above, by `update()`'s drawn rings below, and by
+ * `sim/replay/inspect.ts`.
+ *
+ * Takes only `kind` off the item so `update()` can ask it for each RING (a threshold with
+ * no item behind it yet) through the same function that answers for a real drop.
  */
-export function pickupGatePx(item: PickupItem, player: { radius: Fp }): number {
+export function pickupGatePx(item: Pick<PickupItem, 'kind'>, player: { radius: Fp }): number {
   return fpToPx(
     (item.kind === 'weapon' ? SIM.lootRevealRadius : SIM.pickupRadius + player.radius) as Fp,
   );
 }
+
+// The two rings `update()` draws are exactly the two branches of `pickupGatePx`, asked for
+// by the cheapest item shape that selects each one. Drawing them through the function
+// instead of re-deriving the arithmetic is the point: a ring that disagrees with the dot
+// colour beside it makes this tool lie about the very thing it was built to measure.
+const AUTO_RING_PROBE: Pick<PickupItem, 'kind'> = { kind: 'heal' };
+const WEAPON_RING_PROBE: Pick<PickupItem, 'kind'> = { kind: 'weapon' };
 
 export class PickupDebugOverlay {
   readonly view = new Container();
@@ -86,9 +97,11 @@ export class PickupDebugOverlay {
       const py = fpToPx(p.gy);
       this.rings.circle(px, py, 3).fill({ color: 0xffffff }); // the ground point itself
       this.rings
-        .circle(px, py, fpToPx((SIM.pickupRadius + p.radius) as Fp))
+        .circle(px, py, pickupGatePx(AUTO_RING_PROBE, p))
         .stroke({ color: RING_AUTO, width: 1.5, alpha: 0.9 });
-      this.rings.circle(px, py, fpToPx(SIM.lootRevealRadius)).stroke({ color: RING_WEAPON, width: 1.5, alpha: 0.6 });
+      this.rings
+        .circle(px, py, pickupGatePx(WEAPON_RING_PROBE, p))
+        .stroke({ color: RING_WEAPON, width: 1.5, alpha: 0.6 });
     }
 
     for (const item of state.pickups) {

@@ -11,7 +11,10 @@
 import { describe, it, expect } from 'vitest';
 import { createGameEngine } from '@dd/engine/GameEngine';
 import { MovementSystem } from '@dd/engine/systems';
-import type { EngineConfig } from '@dd/engine/state/GameState';
+import type { EngineConfig, GameState } from '@dd/engine/state/GameState';
+import type { PickupItem } from '@dd/engine/state/entities';
+import { clampToWalkable } from '@dd/engine/systems/geom';
+import { dropClearance } from '@dd/engine/state/actorRadius';
 import { makeCommand } from '@dd/engine/state/input';
 import type { Brad } from '@dd/engine/math/trig';
 import type { Fp } from '@dd/engine/math/fixed';
@@ -420,6 +423,151 @@ describe('DoorSystem — force-regroup targets every OTHER online, non-downed pl
     expect(pDowned!.roomId).not.toBe(target.id); // left exactly where they were — never yanked
     expect(events.some((e) => e.type === 'force_regroup' && e.roomId === target.id && e.playerIds.includes(pBystander!.id))).toBe(true);
     expect(events.some((e) => e.type === 'force_regroup' && e.playerIds.includes(pDowned!.id))).toBe(false);
+  });
+});
+
+/**
+ * The other half of `rebuildWalls`, and the one nobody went looking for: the wall set
+ * changing UNDER an item that is already lying there.
+ *
+ * `dropClearance()` (v50) makes every drop SITE legal at the moment of the drop, and
+ * `smoke.test.ts` asserts that per tick on the five shipped scenarios. Neither says
+ * anything about a resting place that was legal when the item landed and stopped being
+ * legal afterwards — and a locking door is exactly that: `rebuildWalls` pushes
+ * `passageAabb` into `state.walls`, and an item lying in the passage is now inside stone
+ * with nothing re-clamping it.
+ *
+ * Reachable without contrivance, since a doorway is where fights happen: a mob dies on
+ * the threshold (`DeathDropsSystem`), or a player swaps a weapon while standing in it
+ * (`PickupSystem.applyWeapon`), and then the room activates. This is the mechanism the
+ * v50 write-up left open when it closed *"依然有掉落的物品无法拾取"* as unexplained by
+ * the 903-drop sweep — the sweep measured drop SITES, which is where it was looking.
+ */
+describe('DoorSystem — a door that locks over a dropped item must not seal it inside stone', () => {
+  const OPEN_START: RoomPiece = {
+    id: 'seal_start', tags: ['seal'], sizeGrid: { w: 20, h: 16 }, solids: [],
+    spawns: { player: [{ x: 2, y: 8 }], enemy: [] }, exits: [{ edge: 'east' }],
+  };
+  const GUARDED_END: RoomPiece = {
+    id: 'seal_end', role: 'boss', sizeGrid: { w: 20, h: 16 }, solids: [],
+    spawns: { player: [{ x: 2, y: 8 }], enemy: [{ x: 16, y: 8, type: 'basic' }] }, exits: [{ edge: 'west' }],
+  };
+  const SEAL_DUN: DungeonConfig = {
+    biomeId: 'seal', nameKey: 'seal', floorCount: 1, roomsPerFloor: { min: 2, max: 2 },
+    pieceTags: ['seal'], layout: 'linear', extractionPieceId: 'seal_end', bossPieceId: 'seal_end',
+    difficultyCurve: { base: 1, perFloor: 0 },
+  };
+  const SEAL_CFG: EngineConfig = {
+    seed: 21, worldW: 640, worldH: 640, waves: [],
+    dungeon: { config: SEAL_DUN, library: [OPEN_START, GUARDED_END] },
+  };
+
+  /** Is `item` resting somewhere a player's body could stand? Asked through the SHIPPED rule
+   *  (`clampToWalkable` at `dropClearance()` is a no-op iff the spot is already clear) rather
+   *  than by re-deriving "inside a solid" here — the same predicate `smoke.test.ts` measures
+   *  with its own `deepestSolidPenetration`, sourced from the code instead of restated. */
+  const restsLegally = (s: GameState, item: PickupItem): boolean => {
+    const at = clampToWalkable(item.gx, item.gy, dropClearance(), s);
+    return at.gx === item.gx && at.gy === item.gy;
+  };
+
+  /** A weapon drop at the exact centre of the (still open) door passage. Weapon-kind on
+   *  purpose: it needs `pickupTargetId`, so `PickupSystem` cannot quietly auto-collect it
+   *  out from under the assertion the way a `material` would the tick the player walks past. */
+  const dropInDoorway = (s: GameState): PickupItem => {
+    const pass = s.dungeonDoors[0]!.passageAabb;
+    const item: PickupItem = {
+      id: s.nextId(),
+      kind: 'weapon',
+      gx: (pass.x + pass.w / 2) as Fp,
+      gy: (pass.y + pass.h / 2) as Fp,
+      spawnTick: s.tick,
+      alive: true,
+      weaponId: 'pistol',
+    };
+    s.pickups.push(item);
+    return item;
+  };
+
+  it('re-clamps it onto a standable spot when the passage becomes a wall', () => {
+    const eng = createGameEngine(SEAL_CFG);
+    const s = eng.state;
+    eng.step([idle(0, 1)]); // floor places
+    eng.step([idle(0, 2)]); // start room activates (enemy-free → no lock)
+    expect(s.dungeonDoors[0]!.locked).toBe(false);
+
+    const item = dropInDoorway(s);
+    // Anti-vacuity, and the reason the case exists at all: while the door is OPEN the middle
+    // of the passage is a perfectly legal resting place, so this is where a real drop lands.
+    expect(restsLegally(s, item)).toBe(true);
+
+    // Walk the player over the threshold — the capstone activates, its guard spawns, and the
+    // door locks over the item. Driven through the real systems, not by setting `dr.locked`.
+    const end = s.dungeonRooms[1]!;
+    s.players[0]!.gx = toFpGrid(end.piece.spawns.player[0]!.x + end.offsetXGrid);
+    s.players[0]!.gy = toFpGrid(end.piece.spawns.player[0]!.y + end.offsetYGrid);
+    eng.step([idle(0, 3)]);
+    expect(s.dungeonDoors[0]!.locked).toBe(true); // the passage is stone now
+
+    expect(item.alive).toBe(true); // still on the floor — the fix moves it, never deletes it
+    expect(restsLegally(s, item)).toBe(true);
+  });
+
+  it('leaves an item that was already clear of the passage exactly where it was', () => {
+    // The other direction, so the fix cannot be "re-clamp every pickup every rebuild and let
+    // the arithmetic land where it lands". An item nowhere near the door must not move by a
+    // single fp — a drop that visibly hops when a door closes across the room is its own bug.
+    const eng = createGameEngine(SEAL_CFG);
+    const s = eng.state;
+    eng.step([idle(0, 1)]);
+    eng.step([idle(0, 2)]);
+
+    const start = s.dungeonRooms[0]!;
+    const item: PickupItem = {
+      id: s.nextId(),
+      kind: 'weapon',
+      gx: toFpGrid(start.offsetXGrid + start.piece.sizeGrid.w / 2),
+      gy: toFpGrid(start.offsetYGrid + start.piece.sizeGrid.h / 2),
+      spawnTick: s.tick,
+      alive: true,
+      weaponId: 'pistol',
+    };
+    s.pickups.push(item);
+    const at = { gx: item.gx, gy: item.gy };
+    expect(restsLegally(s, item)).toBe(true);
+
+    const end = s.dungeonRooms[1]!;
+    s.players[0]!.gx = toFpGrid(end.piece.spawns.player[0]!.x + end.offsetXGrid);
+    s.players[0]!.gy = toFpGrid(end.piece.spawns.player[0]!.y + end.offsetYGrid);
+    eng.step([idle(0, 3)]);
+    expect(s.dungeonDoors[0]!.locked).toBe(true);
+
+    expect(item.gx).toBe(at.gx);
+    expect(item.gy).toBe(at.gy);
+  });
+
+  it('puts it back within reach of the room it was dropped in, not on the far side of the wall', () => {
+    // A re-clamp that satisfies "not inside stone" by parking the item on the OTHER side of the
+    // now-closed door would be worse than the bug: the player who dropped it is sealed in with
+    // the fight, and the item is outside. `clampToWalkable` pushes out by the nearest edge, so
+    // the honest assertion is the weaker, true one — it stays within one passage-depth of where
+    // it lay, i.e. it is nudged out of the doorway rather than teleported anywhere.
+    const eng = createGameEngine(SEAL_CFG);
+    const s = eng.state;
+    eng.step([idle(0, 1)]);
+    eng.step([idle(0, 2)]);
+
+    const pass = s.dungeonDoors[0]!.passageAabb;
+    const item = dropInDoorway(s);
+    const at = { gx: item.gx, gy: item.gy };
+
+    const end = s.dungeonRooms[1]!;
+    s.players[0]!.gx = toFpGrid(end.piece.spawns.player[0]!.x + end.offsetXGrid);
+    s.players[0]!.gy = toFpGrid(end.piece.spawns.player[0]!.y + end.offsetYGrid);
+    eng.step([idle(0, 3)]);
+
+    const moved = Math.hypot((item.gx as number) - (at.gx as number), (item.gy as number) - (at.gy as number));
+    expect(moved).toBeLessThanOrEqual(Math.max(pass.w, pass.h) + (dropClearance() as number));
   });
 });
 

@@ -17,8 +17,9 @@ import { readFileSync } from 'node:fs';
 import { ArtGate } from './ArtGate';
 import { setAssetHost, resetAssetHost, webAssetHost, type AssetHost } from '../../render/assetHost';
 import { resetPackLoader } from '../../render/packLoader';
-import { beginDeferredArt, resetPreloadArt } from '../../render/preloadArt';
+import { beginDeferredArt, resetPreloadArt, runArtUnitCount } from '../../render/preloadArt';
 import { pinTextMeasurementToPaintCanvas } from '../../render/textMetrics';
+import { LoadingScreen } from '../ui/loadingScreen';
 
 /** A host whose pack downloads never settle until released — the only way to observe a gate
  *  that is actually waiting, rather than one that has already let go. */
@@ -141,6 +142,37 @@ describe('a genuine wait', () => {
     await vi.waitFor(() => expect(retry).toHaveBeenCalledTimes(1));
     expect(gate.waiting).toBe(false);
     expect(overlay.children.length).toBe(0);
+  });
+
+  it('moves the bar with the download it is waiting on', async () => {
+    // The progress wiring was pinned by nothing: replacing
+    // `ensureRunArt((done, total) => screen.setProgress(done, total))` with a bare
+    // `ensureRunArt()` left every other case here passing — the gate still opens, still tears the
+    // screen down, still retries. The bar simply never moves, on the one screen whose entire job
+    // is to say the wait is going somewhere.
+    //
+    // The zero calls are the decoy — `defer` sizes the bar itself, and `ensureRunArt` replays
+    // where the download is as the listener registers (nowhere yet, since nothing has settled).
+    // Both are asserted to be zero first, so the filter below cannot be satisfied by either.
+    const setProgress = vi.spyOn(LoadingScreen.prototype, 'setProgress');
+    const { host, release } = blockingHost();
+    setAssetHost(host);
+    const { gate } = gateWith();
+    beginDeferredArt();
+
+    gate.defer(() => {});
+    const total = runArtUnitCount();
+    expect(setProgress.mock.calls.length).toBeGreaterThan(0);
+    for (const call of setProgress.mock.calls) expect(call).toEqual([0, total]);
+
+    release();
+    await vi.waitFor(() => expect(gate.waiting).toBe(false));
+
+    const moved = setProgress.mock.calls.filter(([done]) => done > 0);
+    expect(moved.length).toBeGreaterThan(0);
+    // ...and it arrives at the end before the screen goes away, rather than being torn down
+    // half-drawn.
+    expect(moved[moved.length - 1]).toEqual([total, total]);
   });
 
   it('leaves no ticker callback behind when the wait ends', async () => {

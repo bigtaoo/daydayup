@@ -695,10 +695,11 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 
 - **09-01** [The first download becomes code only](roadmap/13-2026-09-01-asset-phases.md#the-first-download-becomes-code-only-2026-09-01-client--build--docs) — The pack table had bought nothing it was capable of buying: every pack was fetched at boot. `platform` `art` `test` `docs`
 - **09-01** [The curtain re-encode, settled by looking at it](roadmap/13-2026-09-01-asset-phases.md#the-curtain-re-encode-settled-by-looking-at-it-2026-09-01-docs-only) — 606 kB for one fixture, put to the owner as a render comparison instead of argued from bytes; it stays. `art` `docs`
+- **09-01** [Two days of features, audited for what the tests did not say](roadmap/13-2026-09-01-asset-phases.md#two-days-of-features-audited-for-what-the-tests-did-not-say-2026-09-01-engine--client--build-engine_version-5051) — Two bugs the green suite could not see: a locking door sealed the loot it closed over (v51), and a stray file crashed the WeChat build. Then ~30 test gaps, each verified by mutation. `engine` `test` `tools` `platform` `docs`
 
 ## The work log — by theme
 
-The same 81 entries, grouped. An entry with more than one tag appears more than once.
+The same 82 entries, grouped. An entry with more than one tag appears more than once.
 
 **`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(43)*
 
@@ -778,7 +779,7 @@ The same 81 entries, grouped. An entry with more than one tag appears more than 
 - 08-27 [The floor stops at its own walls](roadmap/10-2026-08-27.md#the-floor-stops-at-its-own-walls-2026-08-27-client-only)
 - 08-31 [The re-measurement that its own control threw away](roadmap/11-2026-08-28--08-31.md#the-re-measurement-that-its-own-control-threw-away-2026-08-31-docs--measurement-only)
 
-**`engine`** — the deterministic sim — anything that can bump `ENGINE_VERSION` *(15)*
+**`engine`** — the deterministic sim — anything that can bump `ENGINE_VERSION` *(16)*
 
 - 08-04 [Room & door model — co-resident PvE floors](roadmap/01-2026-07-24--08-05.md#room--door-model--co-resident-pve-floors--2026-08-04-engine_version-3334)
 - 08-12 [Boss-room instant-extract bug fix](roadmap/02-2026-08-12--08-15.md#boss-room-instant-extract-bug-fix--2026-08-12)
@@ -795,6 +796,7 @@ The same 81 entries, grouped. An entry with more than one tag appears more than 
 - 08-30 [The tests that were green while the fix did nothing](roadmap/11-2026-08-28--08-31.md#the-tests-that-were-green-while-the-fix-did-nothing-2026-08-30-engine--content-engine_version-49)
 - 08-31 [The rules were right and the bug was somewhere else](roadmap/11-2026-08-28--08-31.md#the-rules-were-right-and-the-bug-was-somewhere-else-2026-08-31-engine--client-engine_version-50)
 - 08-31 [A seed was never a repro, and nothing had ever recorded a run](roadmap/11-2026-08-28--08-31.md#a-seed-was-never-a-repro-and-nothing-had-ever-recorded-a-run-2026-08-31-engine--client)
+- 09-01 [Two days of features, audited for what the tests did not say](roadmap/13-2026-09-01-asset-phases.md#two-days-of-features-audited-for-what-the-tests-did-not-say-2026-09-01-engine--client--build-engine_version-5051)
 
 **`arena`** — the PvP launch map and its audit *(7)*
 
@@ -813,7 +815,7 @@ The same 81 entries, grouped. An entry with more than one tag appears more than 
 - 08-25 [The Seven Districts: the launch arena gets authored](roadmap/06-2026-08-25.md#the-seven-districts-the-launch-arena-gets-authored-2026-08-25-content)
 - 08-25 [The three parked rules that had only shipped half](roadmap/06-2026-08-25.md#the-three-parked-rules-that-had-only-shipped-half-2026-08-25-client--one-render-only-engine-field)
 
-**`test`** — coverage sweeps, gates, mutation batteries *(17)*
+**`test`** — coverage sweeps, gates, mutation batteries *(18)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 08-05 [Platform-layer test coverage pass](roadmap/01-2026-07-24--08-05.md#platform-layer-test-coverage-pass--2026-08-05-全部加测试)
@@ -832,6 +834,7 @@ The same 81 entries, grouped. An entry with more than one tag appears more than 
 - 08-31 [Everything existed and nothing was connected](roadmap/12-2026-08-31-audio.md#everything-existed-and-nothing-was-connected-2026-08-31-client-runtime)
 - 09-01 [The parser every audio gate trusted had no test, and its own header was wrong](roadmap/12-2026-08-31-audio.md#the-parser-every-audio-gate-trusted-had-no-test-and-its-own-header-was-wrong-2026-09-01-tests)
 - 09-01 [The first download becomes code only](roadmap/13-2026-09-01-asset-phases.md#the-first-download-becomes-code-only-2026-09-01-client--build--docs)
+- 09-01 [Two days of features, audited for what the tests did not say](roadmap/13-2026-09-01-asset-phases.md#two-days-of-features-audited-for-what-the-tests-did-not-say-2026-09-01-engine--client--build-engine_version-5051)
 
 **`audio`** — cues, music, the engine to sound channel *(3)*
 
@@ -839,7 +842,7 @@ The same 81 entries, grouped. An entry with more than one tag appears more than 
 - 08-31 [Everything existed and nothing was connected](roadmap/12-2026-08-31-audio.md#everything-existed-and-nothing-was-connected-2026-08-31-client-runtime)
 - 09-01 [The parser every audio gate trusted had no test, and its own header was wrong](roadmap/12-2026-08-31-audio.md#the-parser-every-audio-gate-trusted-had-no-test-and-its-own-header-was-wrong-2026-09-01-tests)
 
-**`platform`** — web / WeChat / Electron targets and deploys *(7)*
+**`platform`** — web / WeChat / Electron targets and deploys *(8)*
 
 - 08-05 [Platform-layer test coverage pass](roadmap/01-2026-07-24--08-05.md#platform-layer-test-coverage-pass--2026-08-05-全部加测试)
 - 08-15 [Web client auto-reloads on deploy — ported from `funny`](roadmap/02-2026-08-12--08-15.md#web-client-auto-reloads-on-deploy--ported-from-funny-2026-08-15)
@@ -848,6 +851,7 @@ The same 81 entries, grouped. An entry with more than one tag appears more than 
 - 08-26 [A 5-second timeout was a cold import, not a test](roadmap/09-2026-08-26.md#a-5-second-timeout-was-a-cold-import-not-a-test-2026-08-26-server-tests-only)
 - 08-31 [Everything existed and nothing was connected](roadmap/12-2026-08-31-audio.md#everything-existed-and-nothing-was-connected-2026-08-31-client-runtime)
 - 09-01 [The first download becomes code only](roadmap/13-2026-09-01-asset-phases.md#the-first-download-becomes-code-only-2026-09-01-client--build--docs)
+- 09-01 [Two days of features, audited for what the tests did not say](roadmap/13-2026-09-01-asset-phases.md#two-days-of-features-audited-for-what-the-tests-did-not-say-2026-09-01-engine--client--build-engine_version-5051)
 
 **`ui`** — HUD, screens, widgets *(9)*
 
@@ -861,7 +865,7 @@ The same 81 entries, grouped. An entry with more than one tag appears more than 
 - 08-26 [A character carries a gun AND a blade — in both modes](roadmap/09-2026-08-26.md#a-character-carries-a-gun-and-a-blade--in-both-modes-2026-08-26-engine_version-45)
 - 08-31 [The save verb gets a button, and the tests that were still missing](roadmap/11-2026-08-28--08-31.md#the-save-verb-gets-a-button-and-the-tests-that-were-still-missing-2026-08-31-client)
 
-**`tools`** — sims, profilers, editors, build scripts *(9)*
+**`tools`** — sims, profilers, editors, build scripts *(10)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-12 [File-length convention pass](roadmap/02-2026-08-12--08-15.md#file-length-convention-pass--2026-08-12)
@@ -872,8 +876,9 @@ The same 81 entries, grouped. An entry with more than one tag appears more than 
 - 08-25 [WeChat loads real art, and the 14 MB becomes 3.2 MB](roadmap/07-2026-08-25-wechat.md#wechat-loads-real-art-and-the-14-mb-becomes-32-mb-2026-08-25-client--build--art)
 - 08-31 [A render-side instrument for the still-open report](roadmap/11-2026-08-28--08-31.md#a-render-side-instrument-for-the-still-open-report-2026-08-31-client-only-no-engine-bump)
 - 08-31 [A seed was never a repro, and nothing had ever recorded a run](roadmap/11-2026-08-28--08-31.md#a-seed-was-never-a-repro-and-nothing-had-ever-recorded-a-run-2026-08-31-engine--client)
+- 09-01 [Two days of features, audited for what the tests did not say](roadmap/13-2026-09-01-asset-phases.md#two-days-of-features-audited-for-what-the-tests-did-not-say-2026-09-01-engine--client--build-engine_version-5051)
 
-**`docs`** — design docs and this log itself *(13)*
+**`docs`** — design docs and this log itself *(14)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-02 [Documentation pass](roadmap/01-2026-07-24--08-05.md#documentation-pass--2026-08-02)
@@ -888,6 +893,7 @@ The same 81 entries, grouped. An entry with more than one tag appears more than 
 - 09-01 [The parser every audio gate trusted had no test, and its own header was wrong](roadmap/12-2026-08-31-audio.md#the-parser-every-audio-gate-trusted-had-no-test-and-its-own-header-was-wrong-2026-09-01-tests)
 - 09-01 [The first download becomes code only](roadmap/13-2026-09-01-asset-phases.md#the-first-download-becomes-code-only-2026-09-01-client--build--docs)
 - 09-01 [The curtain re-encode, settled by looking at it](roadmap/13-2026-09-01-asset-phases.md#the-curtain-re-encode-settled-by-looking-at-it-2026-09-01-docs-only)
+- 09-01 [Two days of features, audited for what the tests did not say](roadmap/13-2026-09-01-asset-phases.md#two-days-of-features-audited-for-what-the-tests-did-not-say-2026-09-01-engine--client--build-engine_version-5051)
 
 **`net`** — matchmaking, sockets, reconnect *(1)*
 

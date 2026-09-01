@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 import {
   Button,
   LocalInputSource,
+  SIM,
   createGameEngine,
   hashState,
   makeCommand,
@@ -17,17 +18,22 @@ import {
   pxToFp,
   quantizeMove,
   runHeadless,
+  runReplay,
   type Fp,
   type GameState,
   type PickupItem,
 } from '@dd/engine';
+import { fpToPx } from '../../src/game/coords';
+import { pickupDebugGate } from '../../src/game/scene/PickupDebugOverlay';
 import { buildDungeonRunConfig } from '../../src/game/match/offlineConfig';
 import {
   APPARENT_CONTACT_PX,
+  formatInspectReport,
   inspectReplay,
   markCollected,
   observePickups,
   selectSuspects,
+  type InspectReport,
   type PickupTrace,
 } from './inspect';
 
@@ -298,6 +304,114 @@ describe('inspectReplay end to end, on a real recorded dungeon run', () => {
     const b = inspectReplay(file);
     expect(b.finalHash).toBe(a.finalHash); // and it is repeatable, which is the point
   });
+
+  /** The same recording, marked at a tick of this test's choosing. */
+  function markedAt(tick: number) {
+    const { file } = recorded();
+    return packReplayFile({
+      config: CONFIG,
+      commands: file.replay.commands,
+      ticks: TICKS,
+      label: 'dungeon',
+      marks: [{ tick, note: `hotkey at tick ${tick}` }],
+      recordedAtMs: 0,
+    });
+  }
+
+  it('a mark readout carries the real per-drop numbers, measured against the sim itself', () => {
+    // Tick 70 measured on this fixture: pickup #25 (a heal) is lying on the floor there.
+    // A mark at 600 (the fixture above) happens to land on a tick with no live drop, so
+    // every existing assertion about `marks` is satisfied by an EMPTY pickup list — which
+    // is how the readout's numbers came to be unpinned in the first place.
+    const MARK_TICK = 70;
+    const file = markedAt(MARK_TICK);
+    const report = inspectReplay(file);
+    // Independent oracle: the same recording replayed to that tick by the engine's own
+    // `runHeadless`, judged by the same `pickupDebugGate` the client's overlay uses. Not a
+    // restatement of the rule (design/18 G6) — the point is that the readout reports THIS
+    // state's numbers rather than a plausible-looking summary of some other tick.
+    const oracle = runReplay(file.replay, MARK_TICK).state;
+    expect(oracle.tick).toBe(MARK_TICK);
+
+    const m = report.marks[0]!;
+    expect(m.tick).toBe(MARK_TICK);
+    expect(m.note).toBe(`hotkey at tick ${MARK_TICK}`);
+    expect(m.pickups.length).toBeGreaterThan(0); // the tick really does have a drop on it
+    expect(m.pickups).toEqual(
+      oracle.pickups
+        .filter((item) => item.alive && item.kind !== 'crate')
+        .map((item) => {
+          const { nearestPx, collectible } = pickupDebugGate(oracle, item);
+          return {
+            id: item.id,
+            kind: item.kind,
+            x: fpToPx(item.gx),
+            y: fpToPx(item.gy),
+            nearestPx,
+            collectible,
+          };
+        }),
+    );
+
+    // The player row, field by field. `autoGatePx` is the one that had no witness: it is
+    // the sim's padding PLUS this player's own radius (~15 px each, ~31 px together), and
+    // dropping the radius term leaves the bare padding — a readout that would tell a
+    // reader the drop needed to be twice as close as it really did, which is exactly the
+    // number this whole investigation turns on.
+    expect(m.players).toHaveLength(1);
+    expect(m.players[0]!.id).toBe(oracle.players[0]!.id);
+    expect(m.players[0]!.x).toBe(fpToPx(oracle.players[0]!.gx));
+    expect(m.players[0]!.y).toBe(fpToPx(oracle.players[0]!.gy));
+    expect(m.players[0]!.autoGatePx).toBeCloseTo(31, 1);
+    expect(m.players[0]!.autoGatePx).toBeGreaterThan(fpToPx(SIM.pickupRadius) * 1.9);
+  });
+
+  it('stops where the ENGINE stops — a run that ended is not inspected past its end', () => {
+    // An idle stream: the player never moves and never fires, and the run is over long
+    // before the 6000 ticks the file declares.
+    const idle = new LocalInputSource();
+    for (let t = 1; t <= 6000; t++) {
+      idle.submit(makeCommand({ owner: 0, tick: t, ...quantizeMove(0, 0), buttons: 0 }));
+    }
+    const pack = (marks: { tick: number; note: string }[]) => packReplayFile({
+      config: CONFIG, commands: idle.recorded(), ticks: 6000, label: 'dungeon-idle', marks, recordedAtMs: 0,
+    });
+
+    const oracle = runReplay(pack([]).replay, 6000); // runHeadless has the same break, by design
+    expect(oracle.state.phase).toBe('gameover');
+    expect(oracle.state.tick).toBeLessThan(6000); // the run really did end early
+    const end = oracle.state.tick;
+
+    expect(inspectReplay(pack([])).ticks).toBe(end);
+    expect(inspectReplay(pack([])).finalHash).toBe(hashState(oracle.state));
+
+    // The observable that actually needs the `break`, and the reason those two lines above
+    // are not enough on their own: `GameEngine.step` NO-OPS once the phase is gameover
+    // (design/08 — it does not even clear events), so the tick and the hash freeze whether
+    // the loop stops or not. What does not freeze is the mark check: with the run held at
+    // its final tick, a mark ON that tick matches again on every remaining frame, and the
+    // report would carry ~5800 copies of one moment.
+    const marked = inspectReplay(pack([{ tick: end, note: 'the last tick of the run' }]));
+    expect(marked.marks).toHaveLength(1);
+    expect(marked.marks[0]!.tick).toBe(end);
+  });
+
+  it('marks a collected drop as having left the run, and one still lying there as not', () => {
+    // `disappeared` was asserted only through `vanished === []`, which an ALWAYS-FALSE
+    // value satisfies just as well as the real one — and always-false is precisely the
+    // mutation that would blind the anomaly channel this field exists to feed. Both
+    // directions are pinned here: what got collected is gone, what nobody took is not.
+    const { file } = recorded();
+    const report = inspectReplay(file);
+
+    const collected = report.traces.filter((t) => t.collectedTick !== null);
+    expect(collected.length).toBeGreaterThan(0);
+    for (const t of collected) expect(t.disappeared).toBe(true);
+
+    const untaken = report.traces.filter((t) => t.collectedTick === null);
+    expect(untaken.length).toBeGreaterThan(0);
+    expect(untaken.every((t) => !t.disappeared)).toBe(true);
+  });
 });
 
 describe('createGameEngine sanity for the fixture above', () => {
@@ -315,5 +429,114 @@ describe('createGameEngine sanity for the fixture above', () => {
     // The first floor loads on sim tick 1 (SpawnSystem.loadRoom), not at construction.
     engine.step([]);
     expect(engine.state.dungeonRooms.length).toBeGreaterThan(0);
+  });
+});
+
+describe('formatInspectReport — the text a human actually reads', () => {
+  // The harness prints exactly this and nothing else, so every judgement the analysis
+  // reached reaches a person through these lines. It had no test at all: a report that
+  // labels a collectible drop MISS, or omits the tunnelling flag, is indistinguishable
+  // from a correct one to every other test in this file — and it is the ONLY output the
+  // person reading a bug report ever sees.
+  const lineFor = (text: string, needle: string) =>
+    text.split('\n').find((l) => l.includes(needle)) ?? `<no line containing ${needle}>`;
+
+  const report = (over: Partial<InspectReport> = {}): InspectReport => ({
+    label: 'dungeon',
+    engineVersion: 51,
+    ticks: 900,
+    finalHash: 1234,
+    marks: [],
+    traces: [],
+    suspects: [],
+    vanished: [],
+    ...over,
+  });
+
+  const suspect = (over: Partial<PickupTrace>): PickupTrace => ({
+    id: 1,
+    kind: 'heal',
+    x: 100,
+    y: 200,
+    firstTick: 10,
+    lastTick: 90,
+    closestPx: 50,
+    closestTick: 40,
+    sweptClosestPx: 50,
+    gatePx: 31,
+    everCollectible: false,
+    collectedTick: null,
+    disappeared: false,
+    ...over,
+  });
+
+  const MARK = {
+    tick: 600,
+    note: 'hotkey at tick 600',
+    players: [{ id: 1, x: 100.25, y: 200.5, autoGatePx: 31.008 }],
+    pickups: [
+      { id: 7, kind: 'heal' as const, x: 110, y: 200, nearestPx: 12.34, collectible: true },
+      { id: 9, kind: 'weapon' as const, x: 400, y: 200, nearestPx: 300.44, collectible: false },
+    ],
+  };
+
+  it('opens with the file it read and how much of it it saw', () => {
+    const text = formatInspectReport(report({ traces: [suspect({ id: 1 }), suspect({ id: 2 })] }));
+    const lines = text.split('\n');
+    expect(lines[0]).toBe('replay: label=dungeon engineVersion=51 ticks=900 finalHash=1234');
+    expect(lines[1]).toBe(
+      `drops seen: 2  (auto-collect gate ~31px, apparent-contact band ${APPARENT_CONTACT_PX}px)`,
+    );
+  });
+
+  it('labels OK vs MISS on the drop each verdict belongs to', () => {
+    // Swapping the two labels changes nothing else about the report — same ids, same
+    // distances, same line count — and inverts every conclusion drawn from it. #7 is
+    // 12.3 px out and collectible; #9 is 300 px out and is not.
+    const text = formatInspectReport(report({ marks: [MARK] }));
+
+    expect(lineFor(text, '#7')).toBe('  OK   #7 heal at (110.0, 200.0) nearest=12.3px');
+    expect(lineFor(text, '#9')).toBe('  MISS #9 weapon at (400.0, 200.0) nearest=300.4px');
+    expect(lineFor(text, 'MARK')).toBe('--- MARK tick 600 (hotkey at tick 600) ---');
+    expect(lineFor(text, 'player 1')).toBe('  player 1 at (100.3, 200.5)  autoGate=31.0px');
+  });
+
+  it('says so when a marked tick had no live drops, rather than printing nothing', () => {
+    // The reported moment with an empty list under it is a real and informative answer
+    // ("there was nothing there to pick up"); a marked tick with silence under it reads
+    // like the harness failed.
+    const text = formatInspectReport(report({ marks: [{ ...MARK, pickups: [] }] }));
+    expect(text).toContain('  no live pickups at this tick');
+    expect(lineFor(text, 'player 1')).toContain('autoGate=31.0px'); // the player row still prints
+  });
+
+  it('flags WALKED-THROUGH-THE-GATE on the suspect whose PATH crossed it, and only that one', () => {
+    // #3's swept distance is exactly its gate — the boundary is inside the flag, since a
+    // path that grazes the ring is a path the sim should have collected on. #4 passed 14 px
+    // outside its gate and was never collectible: a near miss, not a tunnelling.
+    const text = formatInspectReport(report({
+      suspects: [
+        suspect({ id: 3, sweptClosestPx: 31, gatePx: 31, closestPx: 42.4, disappeared: false }),
+        suspect({ id: 4, sweptClosestPx: 45, gatePx: 31, closestPx: 50, disappeared: true }),
+      ],
+    }));
+
+    expect(text).toContain(
+      `SUSPECTS (never collected, player got within ${APPARENT_CONTACT_PX}px), closest first:`,
+    );
+    expect(lineFor(text, '#3')).toContain('  WALKED-THROUGH-THE-GATE');
+    expect(lineFor(text, '#4')).not.toContain('WALKED-THROUGH-THE-GATE');
+    // And the rest of a suspect line, so the numbers can't quietly go missing with it.
+    expect(lineFor(text, '#3')).toBe(
+      '  #3 heal at (100.0, 200.0) sampled=42.4px swept=31.0px gate=31.0px at tick 40' +
+        '  alive 10..90 (still there)  WALKED-THROUGH-THE-GATE',
+    );
+    expect(lineFor(text, '#4')).toContain('(gone by the end)');
+  });
+
+  it('says "no suspects" in words when there are none — an empty section reads as a crash', () => {
+    const text = formatInspectReport(report({ traces: [suspect({})] }));
+    expect(text).toContain('no suspects: every drop the player came near was collectible at some point.');
+    expect(text).not.toContain('SUSPECTS');
   });
 });

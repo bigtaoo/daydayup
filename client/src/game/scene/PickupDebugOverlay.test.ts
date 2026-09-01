@@ -9,10 +9,11 @@
  * distance.
  */
 import { describe, it, expect } from 'vitest';
+import type { Graphics } from 'pixi.js';
 import { createGameState, PickupSystem, SIM } from '@dd/engine';
 import type { PickupItem, Fp } from '@dd/engine';
 import { nearbyWeaponPickups, WEAPON_PROMPT_RADIUS_FP } from '../ui/pickupProximity';
-import { pickupDebugGate } from './PickupDebugOverlay';
+import { PickupDebugOverlay, pickupDebugGate, pickupGatePx } from './PickupDebugOverlay';
 
 function stateWithPickupAt(kind: PickupItem['kind'], dx: number, dy = 0): { s: ReturnType<typeof createGameState>; item: PickupItem } {
   const s = createGameState({ seed: 1, worldW: 40000, worldH: 40000, waves: [] });
@@ -114,5 +115,96 @@ describe('pickupDebugGate — weapon kind', () => {
     const justOutside = stateWithPickupAt('weapon', (SIM.lootRevealRadius as number) + 1);
     expect(pickupDebugGate(justInside.s, justInside.item).collectible).toBe(true);
     expect(pickupDebugGate(justOutside.s, justOutside.item).collectible).toBe(false);
+  });
+});
+
+/**
+ * The RINGS, i.e. what a human actually reads off the screen. Everything above drives
+ * `pickupDebugGate` and nothing drove `update()`, which until this section re-derived both
+ * thresholds inline (`fpToPx(SIM.pickupRadius + p.radius)`, `fpToPx(SIM.lootRevealRadius)`)
+ * twenty-five lines below `pickupGatePx`'s own doc comment claiming to be "the single
+ * definition of the threshold, so nothing anywhere re-derives it (design/18 G6)".
+ *
+ * Consequence of that gap, not a style complaint: dropping `+ p.radius` from the drawn ring
+ * survived the whole client suite, and it makes the overlay disagree with the dot colour it
+ * draws in the same frame — a drop shown OUTSIDE the blue ring yet coloured green. This tool
+ * exists to tell "looks reachable" from "the sim agrees it is reachable", so a ring that is
+ * wrong by a player radius is worse than no ring: it is the instrument confirming the bug
+ * report it was sent to disprove.
+ *
+ * Asserted against `pickupGatePx` (the production function) rather than against a restated
+ * formula — `update()` now calls it, so this pins the CALL, and any change to the threshold
+ * moves both sides together on purpose instead of one side by accident.
+ */
+describe('PickupDebugOverlay.update — the drawn rings are the same threshold the dots are coloured by', () => {
+  type PathInstr = { action: string; data: unknown[] };
+  type Instr = { action: string; data: { style?: { color?: number }; path?: { instructions: PathInstr[] } } };
+
+  /** Every STROKED circle in the rings Graphics, in draw order, as `{ r, color }`. The filled
+   *  circles (the ground point, and one dot per pickup) are deliberately excluded — a ring is
+   *  the only thing drawn as a stroke. */
+  function strokedRings(overlay: PickupDebugOverlay): Array<{ r: number; color: number }> {
+    const g = overlay.view.children[0] as Graphics;
+    return (g.context.instructions as unknown as Instr[])
+      .filter((ins) => ins.action === 'stroke')
+      .flatMap((ins) =>
+        (ins.data.path?.instructions ?? [])
+          .filter((pi) => pi.action === 'circle')
+          .map((pi) => {
+            const nums = pi.data.filter((v): v is number => typeof v === 'number');
+            return { r: nums[2]!, color: ins.data.style?.color ?? 0 };
+          }),
+      );
+  }
+
+  it('draws exactly the auto-collect gate and the weapon gate, per alive player', () => {
+    const { s, item } = stateWithPickupAt('heal', 0);
+    const p = s.players[0]!;
+    const weapon: PickupItem = { ...item, id: s.nextId(), kind: 'weapon', weaponId: 'repeater' };
+    const overlay = new PickupDebugOverlay();
+
+    overlay.update(s);
+
+    const rings = strokedRings(overlay);
+    expect(rings.map((r) => r.r)).toEqual([pickupGatePx(item, p), pickupGatePx(weapon, p)]);
+  });
+
+  it('the two rings are genuinely different sizes — otherwise the case above proves nothing', () => {
+    // Anti-vacuity: if the auto and weapon gates happened to coincide, drawing either one
+    // twice would satisfy the assertion above and the "wrong ring" mutation would survive.
+    const { s, item } = stateWithPickupAt('heal', 0);
+    const p = s.players[0]!;
+    const weapon: PickupItem = { ...item, kind: 'weapon', weaponId: 'repeater' };
+    expect(pickupGatePx(item, p)).toBeGreaterThan(0);
+    expect(pickupGatePx(weapon, p)).not.toBe(pickupGatePx(item, p));
+  });
+
+  it("the auto ring includes the PLAYER's own radius, so it tracks a wider body", () => {
+    // The specific survivor: `fpToPx(SIM.pickupRadius)` instead of
+    // `fpToPx(SIM.pickupRadius + p.radius)`. Stated as a measured consequence — widen the
+    // body and the drawn ring has to widen with it — rather than as the sum, which would
+    // just restate the arithmetic the code performs.
+    const { s } = stateWithPickupAt('heal', 0);
+    const narrow = new PickupDebugOverlay();
+    narrow.update(s);
+    const narrowAuto = strokedRings(narrow)[0]!.r;
+
+    s.players[0]!.radius = ((s.players[0]!.radius as number) + 1000) as Fp;
+    const wide = new PickupDebugOverlay();
+    wide.update(s);
+    const wideAuto = strokedRings(wide)[0]!.r;
+
+    expect(wideAuto).toBeGreaterThan(narrowAuto);
+    // And the WEAPON ring must NOT move — it is gated on the panel's unpadded ring, which
+    // is the asymmetry that makes the two rings mean different things.
+    expect(strokedRings(wide)[1]!.r).toBe(strokedRings(narrow)[1]!.r);
+  });
+
+  it('skips a dead player entirely — no rings for a body that cannot collect', () => {
+    const { s } = stateWithPickupAt('heal', 0);
+    s.players[0]!.alive = false;
+    const overlay = new PickupDebugOverlay();
+    overlay.update(s);
+    expect(strokedRings(overlay)).toEqual([]);
   });
 });

@@ -258,3 +258,112 @@ straight from the file buffer with no literals, so `doorCurtainCoverage.test.ts`
 of this class landing — one 606 kB additive sheet is a fixture, four are a policy. The 3.9 MB master
 under `art/environment/` stays either way, so the downsample remains one `compress.mjs` invocation
 plus one test constant if that day comes.
+
+## Two days of features, audited for what the tests did not say (2026-09-01, engine + client + build, ENGINE_VERSION 50→51)
+
+Asked to look over the features from 2026-08-31/09-01 for missing tests. Four parallel audits over
+the music runtime, the phased asset boot, replay recording, and the v50 radius work. The suite was
+green throughout — 344 files, ~5,650 tests — so everything below was found by asking *"would this
+test fail if the behaviour were broken"* rather than by anything being red.
+
+Two of the findings were not test gaps.
+
+### The build crash: a stray file in `platforms/wechat` (build)
+
+`syncAssets`'s prune derives `ownedTopLevel` by EXCLUSION from a `readdir` — deliberately, since a
+plan-derived set cannot clean up a directory the plan used to own, which is exactly what the
+2026-09-01 asset move created. But exclusion also admits plain FILES, and each entry went straight
+to `walk()`, which readdirs whatever it is handed: `ENOTDIR: not a directory, scandir
+'platforms/wechat/stray-note.txt'`, out of `npm run build:wechat`. `platforms/` is git-ignored
+scratch that DevTools and a developer both write into, so it is reachable without contrivance;
+every existing prune test seeded only directories, so nothing looked. Fixed by pruning a
+non-directory top-level entry (unreserved and unplanned makes it stale by the same rule as a stale
+texture), and pinned from both sides — the stray file goes, and the reserved `game.js`, also a
+file, stays. The second case matters more than it looks: deleting the bundle entry every build is
+the failure mode a naive widening of that sweep reaches for.
+
+### v51: a locking door sealed the loot it closed over (engine)
+
+The mechanism v50 left open, and the one it could not have found. `DoorSystem.rebuildWalls` is the
+only thing in this engine that changes the wall set mid-run; an item already lying in a passage was
+then inside stone, with nothing re-clamping it — nothing touches a pickup after its drop tick, and
+`PickupSystem` collects on a radius test that never consults walls.
+
+v50 made every drop SITE legal and `smoke.test.ts` asserts that per tick. Both statements are about
+the moment of the drop. This happens strictly afterwards, which is why the 903-drop sweep behind
+v50 could not see it: the sweep sampled drop sites. A doorway is not an exotic place for a drop to
+be — it is where fights happen, and a mob dying on a threshold or a weapon swapped in one, followed
+by the room activating, is an ordinary sequence. **This is a plausible mechanism for
+*"依然有掉落的物品无法拾取"*, which v50 closed as unexplained.**
+
+Fixed with a re-clamp pass at `dropClearance()` over every alive pickup, after
+`rebuildSpatialIndex()`. Unconditional rather than "only the ones in a passage", because the
+predicate for "is this one affected" is the same solid query `clampToWalkable` already performs and
+it is exactly a no-op on a clear point; idempotent, so a repeated rebuild cannot walk an item
+across the floor; and it runs only on the rare tick a lock changed.
+
+Written as a failing test first. Three cases in `systems/doors.test.ts`: the sealed item is
+re-seated, an item across the room does not move by a single fp (so the fix cannot be "re-clamp
+everything and let the arithmetic land where it lands"), and the re-seated item is not parked on the
+far side of the closed door — which would be worse than the bug, sealing the player in with the
+fight and the loot outside.
+
+**A gotcha worth writing down, because it inverts what the gate appears to say.** `goldenHash`
+passed *with the fix applied and before the bump* — that, and only that, is the evidence the change
+does not move the shipped scenarios. After the bump every scenario's hash changes, dungeon or not,
+because `serializeState` hashes `version` itself. So the order matters: run the hash gate BEFORE
+bumping, or it tells you nothing.
+
+### The test backlog
+
+~30 gaps closed across 21 files (+1,592 lines), each verified by applying the named mutation,
+watching the test go red, and reverting. Highlights, all of which survived the full suite before:
+
+- **`Game.beginReplayRun` had zero coverage** — the function that shipped broken (`this.engine`
+  never assigned), caught at the time only by live verification. Re-applying that exact mutation now
+  fails 4 tests.
+- **`invalidateMusic` was untested on both backends.** An empty body survived everywhere: every
+  `invalidateMusic` under test was a hand-written fake, so nothing joined "the phased boot calls it"
+  to "a deck actually re-points". The same shape as the bug that made every music piece pass its own
+  check while the game stayed silent.
+- **`void ensureRunArt()` in `beginDeferredArt` was pinned by nothing** — deleting it reverts the
+  asset-phase feature's central claim (no background download; the full ~4.7 MB wait returns to the
+  forge) and stayed green, because every test created the promise itself.
+- **The bundle's pack attribution was never exercised** — no test ever wrote a `game.js`, so
+  reverting to `defaultPack` survived while making the byte gate report the main package as 0 bytes.
+  That gate exists for that number.
+- **`updateWeaponPickupPrompt`'s radius** — `nearbyWeaponPickups`'s only production call site, with
+  nothing asserting what it passes. Moving the constant out of `HudView` removed the duplicate
+  definition and left the USE unpinned; the surviving mutant silences the panel at exactly the
+  distances 无法拾取 was reported at.
+- Two of the three `dropClearance()` sites had no behavioural test; `formatInspectReport` — the
+  harness that gets pointed at a real bug report once and has to be right — had none at all.
+
+Three results worth more than the tests:
+
+1. **Two existing tests claimed more than they pinned.** `assetManifest.test.ts` hand-copied the
+   build's `packOf` instead of importing it — and importing it was *not enough*, because no shipped
+   path matches two rules, so "first matching prefix wins" was unfalsifiable in both directions
+   until an adversarial fixture table was added. `wechatPhasedBoot.test.ts` said "no download and no
+   loader" while only counting pack loads.
+2. **`client/sim/dropReachability.sim.ts`** turns v50's ad-hoc 903-drop sweep — which was never
+   committed — into a re-runnable gate: 16 runs, 796 drops, 142 wall-set changes under live loot,
+   10,477 checks, ~6 s (`npm run test:drop-sim`, folded into `test:sims`). **It does not
+   discriminate either fix on shipped content, and says so in its own header**: reverting v50's
+   clamp gives byte-identical positions for all 796 drops, because every room is authored on a
+   1000 fp lattice and that is exactly two player radii; and no door in those 16 runs ever closed
+   over a drop. It is a CONTENT gate, like `smoke.test.ts` — its value is the next tighter room
+   piece or wider body. An oversized-probe assertion is retained permanently to prove it can fail.
+   Incidental measurement: real drops rest *touching* stone, worst reach 1 fp — the truncation
+   residue, no slack.
+3. **Two guards could not be pinned and were left uncovered rather than faked.** `preloadArt`'s
+   listener-leak guards have no consequence observable from outside the module (`runArt` is memoised
+   after resolve, so a retained listener can never fire again), and pinning them would mean adding
+   an inspection seam to production code for a guard that is currently inert. The limitation is
+   written into the neighbouring test's comment so the next reader does not mistake it for coverage.
+
+**One process finding.** A `ReferenceError: SIM is not defined` inside `DeathDropsSystem.tick`
+looked like a module-graph flake and was not: `SIM` does not appear in that file at all, so the only
+way to throw it there is to be running while another concurrent mutation check has temporarily
+rewritten the file to use `SIM.pickupRadius` without an import. Two parallel agents mutation-testing
+in one shared working tree see each other's mutations. Mutation batteries need their own worktree.

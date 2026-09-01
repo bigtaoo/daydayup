@@ -14,7 +14,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { WebMusicDeck } from './webMusicDeck';
 
-function build(opts: { seekThrows?: boolean } = {}) {
+function build(opts: { seekThrows?: boolean; playRejects?: boolean } = {}) {
   const el = {
     loop: true, // wrong on purpose, so the constructor setting it false is observable
     preload: '',
@@ -40,8 +40,12 @@ function build(opts: { seekThrows?: boolean } = {}) {
       this._time = v;
     },
     play: vi.fn(async function (this: { playing: boolean; plays: number }) {
-      this.playing = true;
       this.plays++;
+      // A REJECTING `play()` is a real element's answer whenever the autoplay gate is still
+      // closed — and it rejects rather than throwing, so the deck only learns about it a
+      // microtask later. The element stays stopped.
+      if (opts.playRejects) throw new Error('NotAllowedError: play() failed');
+      this.playing = true;
     }),
     pause: vi.fn(function (this: { playing: boolean; pauses: number }) {
       this.playing = false;
@@ -91,6 +95,20 @@ describe('WebMusicDeck — position, the value the loop wrap is decided from', (
     deck.play('/audio/music/menu.mp3');
     expect(deck.position()).toBe(0);
     deck.stop();
+    expect(deck.position()).toBe(null);
+  });
+
+  it('stops claiming a position once play() has been REFUSED', async () => {
+    // No fake element anywhere in the suite rejected `play()` until this one, so deleting
+    // `this.playing = false` from that `.catch` survived — and the consequence is the worst kind
+    // of silence, because it is stable. A refused deck would report position 0 instead of null,
+    // so `MusicPlayer` records the track as live and starts counting toward a wrap that can never
+    // arrive: the bed is silent until something calls `invalidate()`, and nothing else will.
+    // (`WebAudio` only drives the player once its context is `running`, so this is not the
+    // expected path — but "not expected" is what the whole autoplay gate is made of.)
+    const { deck } = build({ playRejects: true });
+    deck.play('/audio/music/menu.mp3');
+    await Promise.resolve(); // the rejection lands a microtask after play() returns
     expect(deck.position()).toBe(null);
   });
 

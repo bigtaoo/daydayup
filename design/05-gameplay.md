@@ -233,6 +233,22 @@ a negative offset and this is a deliberate no-op for them. 2 new regression test
 (`engine/systems/doors.test.ts`, `engine/world/dungeon.test.ts`) — 2631 tests green across
 all 7 workspace packages, `tsc --noEmit` clean.
 
+✅ **Bug fix shipped 2026-09-01 (`ENGINE_VERSION` 51):** a door that locks re-seats the loot
+it closes over. `DoorSystem.rebuildWalls` pushes each locked door's `passageAabb` into
+`state.walls`, and an item already lying in that passage was then inside stone with nothing
+re-clamping it — nothing in the engine touches a pickup after its drop tick, and `PickupSystem`
+collects on a radius test that never consults walls. So "the door locks you IN the fight"
+(above) could also mean "and the loot you were standing on is now in the wall". Reachable from an
+ordinary sequence, since a doorway is where fights happen: a mob dies on the threshold
+(`DeathDropsSystem`), or a player swaps a weapon while standing in it
+(`PickupSystem.applyWeapon`), and then their own step across the line activates the room. Fixed
+by re-clamping every alive pickup at `dropClearance()` after `rebuildSpatialIndex()` —
+unconditional (the "is this one affected" predicate is the same solid query `clampToWalkable`
+already performs, and a no-op on a clear point) and idempotent, so a repeated rebuild cannot walk
+an item across the floor. Three regression cases in `engine/systems/doors.test.ts`. This is a
+candidate mechanism for the *"依然有掉落的物品无法拾取"* report that v50 closed as unexplained by the
+engine — see `design/18`'s "What v51 found, in the sentence v50 wrote about it".
+
 See `ROADMAP.md`'s "Room & door model" section for the full file list — including
 hand-authored PvE floor placement (map editor), shipped 2026-08-05, see the
 "Hand-authored PvE floors" subsection below.
