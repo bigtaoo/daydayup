@@ -141,9 +141,76 @@ directory.
 - **Background download while the lobby renders is untested on a handset.** The download is native;
   image decode is not. If the menu hitches, the fix is serialising the kicks, not undoing the
   tiering.
-- **The curtain re-encode is now a plain question with no gate behind it.** 468x832 of translucent
-  gradient at 1.56 B/px; a lossless re-encode with this repo's own codec is byte-identical and the
-  alpha bbox is the full canvas, so the only lever is pixel count (416 long-axis → 174 kB). It is
-  drawn ~64 world px wide at a ~4x room zoom and resolution 2, so the file sits at roughly 1:1 with
-  its own maximum on-screen density — which is why softening it is a judgement about whether the
-  "you can pass here" cue survives, not a measurement.
+- ~~**The curtain re-encode is now a plain question with no gate behind it.**~~ **Settled the same
+  day, in the negative — the file stays at 468x832.** It was put to the owner as a render comparison
+  rather than argued from bytes, because the only lever is pixel count and every setting of it
+  magnifies an additively blended gradient that already sits at ~1:1 with its on-screen density. See
+  [The curtain re-encode, settled by looking at it](#the-curtain-re-encode-settled-by-looking-at-it-2026-09-01-docs-only)
+  below.
+
+## The curtain re-encode, settled by looking at it (2026-09-01, docs only)
+
+The question the entry above left open, asked and answered the same day. **`door_curtain_raw.png`
+stays at 468x832 / 606,730 bytes.** No code, no asset and no test changed; what changed is that the
+question is closed and written down, in `design/12-art-animation.md` under "the curtain re-encode,
+settled".
+
+The reason it needed an owner rather than a number is that **the only lever was pixel count and
+every setting of it is an upscale.** A lossless re-encode with this repo's own codec returns a
+byte-identical file — `pngCodec.mjs` is what produced the shipped one — and the alpha bounding box
+is the full canvas (14.9% of pixels fully transparent, *none* fully opaque, mean alpha 122), so
+`trimAlphaBoundingBox` reclaims nothing and `--no-trim` is belt-and-braces here rather than
+load-bearing. Downsampling gives 250 kB at long-axis 512, 174 kB at 416, 110 kB at 320 — but the
+curtain is drawn 549x788 DEVICE px on a perimeter door (64 world px, room zoom 4.29, renderer
+resolution 2) against a 468x672 source band, so it already sits at roughly 1:1 and everything below
+832 magnifies an additively blended translucent gradient.
+
+**The comparison was built in the real renderer, which is the part worth reusing.** Variants into a
+scratch directory, then swapped into the LIVE scene through the real `doorLeaf.fitArtToOpening` —
+reachable in the page because the Vite dev server serves the actual source modules, so the fit rule
+under test is the shipped one and not a re-derivation of it — and each frame pulled with
+`renderer.extract.canvas` at 1:1 device pixels. Same door, same camera, same additive blend; the
+drawn rect is identical geometry in all four panels and only the source file differs. Both shipped
+door shapes were covered. One trap cost five calls: `layers.lit` carries a `filterArea` set from
+the previous camera frame, so moving the world transform by hand without running the loop clips the
+entire world out of the extract and returns a confidently blank frame with every container still
+reporting `visible: true`.
+
+Then measured, because looking is not the end of the ladder. Over the curtain's own 549x788 rect,
+with `detail RMS` the Laplacian energy:
+
+| | source | file | detail RMS | vs A | mean abs diff vs A | mean luma |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | 468x832 | 592 kB | 15.71 | 100% | — | 105.23 |
+| B | 288x512 | 250 kB | 12.39 | 79% | 2.29 | 105.48 |
+| C | 234x416 | 174 kB | 11.46 | 73% | 1.78 | 105.51 |
+| D | 180x320 | 110 kB | 10.80 | 69% | 2.66 | 105.62 |
+
+Three things fell out of it that outlive the decision:
+
+- **Mean luma is flat across every variant** (105.23 → 105.62). Downsampling costs this asset no
+  brightness at all — the "you can pass here" cue itself is untouched, and only the fine filament
+  and sparkle structure degrades. The 592 kB buys *texture*, not signal, which is exactly why it was
+  a taste call and not an arithmetic one.
+- **416 is an exact 2:1 halving of the master** (832→416, 468→234), so `boxDownsample` averages on
+  whole pixel boundaries; it lands *closer* to the original per-pixel (1.78) than the larger 512
+  variant (2.29) at 30% fewer bytes. 512 (1.625x) and 320 (2.6x) phase-shift the filaments.
+  `--long-axis` is therefore not a monotonic quality dial: when a downsample has to look right,
+  prefer 1/2 or 1/4 of the master over a rounder number.
+- **The kerb door does not discriminate, despite looking like the harder test.** It is the bigger
+  upscale (128 world px = 1098 device px from the same 468-wide source, 2.35x), yet all four
+  variants land within 3% of the original, because `doorLeafFrame` crops it to the curtain's
+  blown-out bottom bloom, which has half the detail energy to lose. Picking the wrong case would
+  have produced four indistinguishable frames and a false "it makes no difference".
+
+Checks re-run against the unchanged asset: `client` typecheck clean, `check:filelength` clean, the
+five door/curtain/asset test files green (86 tests), WeChat package budget OK — the curtain is now
+the second-largest file in the game behind `boss.mp3` (603 kB), inside `run` at 2.28 MB / 4.00 MB.
+`wechatAssetLoad.test.ts` was verified rather than assumed to follow a re-encode: it reads IHDR
+straight from the file buffer with no literals, so `doorCurtainCoverage.test.ts`'s `CURTAIN_ART_W`/
+`CURTAIN_ART_H` are the only place carrying 468/832.
+
+**What would reopen it**: byte pressure returning to the `run` pack, or a second illustrated overlay
+of this class landing — one 606 kB additive sheet is a fixture, four are a policy. The 3.9 MB master
+under `art/environment/` stays either way, so the downsample remains one `compress.mjs` invocation
+plus one test constant if that day comes.

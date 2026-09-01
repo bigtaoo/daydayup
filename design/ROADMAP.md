@@ -694,10 +694,11 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 **[2026-09-01 — the asset phases](roadmap/13-2026-09-01-asset-phases.md)**
 
 - **09-01** [The first download becomes code only](roadmap/13-2026-09-01-asset-phases.md#the-first-download-becomes-code-only-2026-09-01-client--build--docs) — The pack table had bought nothing it was capable of buying: every pack was fetched at boot. `platform` `art` `test` `docs`
+- **09-01** [The curtain re-encode, settled by looking at it](roadmap/13-2026-09-01-asset-phases.md#the-curtain-re-encode-settled-by-looking-at-it-2026-09-01-docs-only) — 606 kB for one fixture, put to the owner as a render comparison instead of argued from bytes; it stays. `art` `docs`
 
 ## The work log — by theme
 
-The same 80 entries, grouped. An entry with more than one tag appears more than once.
+The same 81 entries, grouped. An entry with more than one tag appears more than once.
 
 **`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(43)*
 
@@ -746,7 +747,7 @@ The same 80 entries, grouped. An entry with more than one tag appears more than 
 - 08-30 [A slow bullet's curve, budgeted by distance instead of a clock](roadmap/11-2026-08-28--08-31.md#a-slow-bullets-curve-budgeted-by-distance-instead-of-a-clock-2026-08-30-client)
 - 08-31 [A render-side instrument for the still-open report](roadmap/11-2026-08-28--08-31.md#a-render-side-instrument-for-the-still-open-report-2026-08-31-client-only-no-engine-bump)
 
-**`art`** — authored assets and the art pipeline *(12)*
+**`art`** — authored assets and the art pipeline *(13)*
 
 - 08-12 [Shield-centering follow-up + rig-art aliasing fix](roadmap/02-2026-08-12--08-15.md#shield-centering-follow-up--rig-art-aliasing-fix--2026-08-12)
 - 08-17 [The rigged characters were assembled wrong on screen](roadmap/03-2026-08-17--08-19.md#the-rigged-characters-were-assembled-wrong-on-screen-2026-08-17-user-report)
@@ -760,6 +761,7 @@ The same 80 entries, grouped. An entry with more than one tag appears more than 
 - 08-25 [WeChat loads real art, and the 14 MB becomes 3.2 MB](roadmap/07-2026-08-25-wechat.md#wechat-loads-real-art-and-the-14-mb-becomes-32-mb-2026-08-25-client--build--art)
 - 08-27 [The void gets a face](roadmap/10-2026-08-27.md#the-void-gets-a-face-2026-08-27-client-only)
 - 09-01 [The first download becomes code only](roadmap/13-2026-09-01-asset-phases.md#the-first-download-becomes-code-only-2026-09-01-client--build--docs)
+- 09-01 [The curtain re-encode, settled by looking at it](roadmap/13-2026-09-01-asset-phases.md#the-curtain-re-encode-settled-by-looking-at-it-2026-09-01-docs-only)
 
 **`perf`** — frame time, draw calls, geometry budgets *(12)*
 
@@ -871,7 +873,7 @@ The same 80 entries, grouped. An entry with more than one tag appears more than 
 - 08-31 [A render-side instrument for the still-open report](roadmap/11-2026-08-28--08-31.md#a-render-side-instrument-for-the-still-open-report-2026-08-31-client-only-no-engine-bump)
 - 08-31 [A seed was never a repro, and nothing had ever recorded a run](roadmap/11-2026-08-28--08-31.md#a-seed-was-never-a-repro-and-nothing-had-ever-recorded-a-run-2026-08-31-engine--client)
 
-**`docs`** — design docs and this log itself *(12)*
+**`docs`** — design docs and this log itself *(13)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-02 [Documentation pass](roadmap/01-2026-07-24--08-05.md#documentation-pass--2026-08-02)
@@ -885,6 +887,7 @@ The same 80 entries, grouped. An entry with more than one tag appears more than 
 - 08-31 [Everything existed and nothing was connected](roadmap/12-2026-08-31-audio.md#everything-existed-and-nothing-was-connected-2026-08-31-client-runtime)
 - 09-01 [The parser every audio gate trusted had no test, and its own header was wrong](roadmap/12-2026-08-31-audio.md#the-parser-every-audio-gate-trusted-had-no-test-and-its-own-header-was-wrong-2026-09-01-tests)
 - 09-01 [The first download becomes code only](roadmap/13-2026-09-01-asset-phases.md#the-first-download-becomes-code-only-2026-09-01-client--build--docs)
+- 09-01 [The curtain re-encode, settled by looking at it](roadmap/13-2026-09-01-asset-phases.md#the-curtain-re-encode-settled-by-looking-at-it-2026-09-01-docs-only)
 
 **`net`** — matchmaking, sockets, reconnect *(1)*
 

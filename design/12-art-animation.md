@@ -400,8 +400,9 @@ does not remove any, and the win is "the lobby appears after 0.95 MB + 387 kB in
 
 `oversized` is **deleted**, as its note asked. The curtain lands in `run` by domain (it is a floor-1
 door fixture) rather than by size, so the re-encode question that note raised is now a plain
-"should the player download 606 kB for one fixture" call with no gate pressing on it. See the
-previous section for the measurements; nothing about that decision changed except its urgency.
+"should the player download 606 kB for one fixture" call with no gate pressing on it. Nothing
+about that decision changed except its urgency — **settled the same day, in the negative: see
+"the curtain re-encode, settled" below.**
 
 ### The rule that keeps this from becoming a bug farm
 
@@ -536,6 +537,82 @@ runs.
   `AssetHost.loadPack` is absent and `ensurePack` resolves immediately, so on web this pass is
   purely "which `Assets.load` calls happen before the first paint" — a real first-paint win
   (0.95 MB of code instead of code plus 3.42 MB of art) with no new failure mode.
+
+## Update (2026-09-01b): the curtain re-encode, settled — it stays at 468x832
+
+The question the section above handed forward ("should the player download 606 kB for one
+fixture", now that no gate presses on it) was put to the owner as a render comparison and
+**answered: leave it alone.** `client/public/environment/door_curtain_raw.png` ships unchanged at
+468x832 RGBA, 606,730 bytes, 1.56 B/px. Written down here so it is not re-litigated by whoever
+next notices that this file is 12x the next-largest door state.
+
+**There was never a free lever.** A lossless re-encode at the source resolution returns a
+byte-identical file — `pngCodec.mjs`'s encoder is already what produced it. The alpha bounding box
+is the FULL canvas (only 14.9% of pixels are fully transparent, *none* are fully opaque, mean alpha
+122), so `trimAlphaBoundingBox` reclaims nothing and `--no-trim` is belt-and-braces here rather
+than load-bearing. The only thing that moves the number is pixel count:
+
+| long axis | source | file | vs. 592 kB |
+| --- | --- | --- | --- |
+| 832 (shipped) | 468x832 | 592 kB | — |
+| 512 | 288x512 | 250 kB | -59% |
+| 416 | 234x416 | 174 kB | -71% |
+| 320 (pipeline default) | 180x320 | 110 kB | -81% |
+
+**Why that is not a free win either, and why it needed an eye rather than a number.** The curtain
+is fit by width into the door opening (`doorLeaf.fitArtToOpening`, overflow cropped off the top),
+the room camera zooms 4.29, and the renderer runs at resolution 2 — so on a perimeter door the
+sprite occupies 549x788 DEVICE px against a 468x672 source band, about 1:1. Every variant below
+832 is therefore an *upscale* of an additively blended translucent gradient, which is the
+combination where softening and banding show most. And this asset exists to carry exactly one cue:
+it was authored because procedural gradients had already been tried and the report was
+*"依然不行...被阻挡时的火焰很明显，但是可以通过的效果太弱了"*. The acceptance test is "does this still read
+as 'you can pass here' at a glance", which no measurement answers.
+
+**How the comparison was produced** (reusable — this is the honest form for any "can we shrink this
+asset" question): variants built into a scratch directory, then swapped into the LIVE scene through
+the real `fitArtToOpening`, and each frame pulled with `renderer.extract.canvas` at 1:1 device
+pixels. No flat image files, no mock-up: same door, same camera, same blend, only the source file
+differs — the drawn rect is identical geometry in all four. Both shipped door shapes were covered.
+One trap worth knowing: `layers.lit` carries a `filterArea` set from the previous camera frame, so
+moving the world transform by hand without running the loop clips the entire world out of the
+extract and yields a confidently blank frame.
+
+Measured over the curtain's own 549x788 rect on a perimeter door — `detail RMS` is the Laplacian
+energy, i.e. how much fine filament structure survives:
+
+| | source | detail RMS | vs A | mean abs diff vs A | mean luma |
+| --- | --- | --- | --- | --- | --- |
+| A | 468x832 | 15.71 | 100% | — | 105.23 |
+| B | 288x512 | 12.39 | 79% | 2.29 | 105.48 |
+| C | 234x416 | 11.46 | 73% | 1.78 | 105.51 |
+| D | 180x320 | 10.80 | 69% | 2.66 | 105.62 |
+
+Three findings, all of which survive the decision and are worth keeping:
+
+1. **Mean luma is flat across every variant** (105.23 -> 105.62). Downsampling costs the asset no
+   brightness at all — the "you can pass" cue itself is untouched. What degrades is only the fine
+   filament and sparkle structure. So the 592 kB is being spent on *texture*, not on the signal,
+   which is precisely why this was a taste call and not an arithmetic one.
+2. **416 is an exact 2:1 halving of the master** (832->416, 468->234), so its box average lands on
+   whole pixel boundaries; it measures *closer* to the original per-pixel (1.78) than the larger
+   512 variant does (2.29), at 30% fewer bytes. 512 (1.625x) and 320 (2.6x) land on fractional
+   ratios and phase-shift the filaments. **General rule for this pipeline: when downsampling matters
+   visually, prefer an integer ratio of the source over the next size up.**
+3. **The kerb door does not discriminate and must not be used to judge this class.** It is the
+   *harder* upscale (128 world px = 1098 device px from the same 468-wide source, 2.35x), yet all
+   four variants land within 3% of the original (detail RMS 7.85 -> 7.62-7.70), because
+   `doorLeafFrame` crops it to the curtain's blown-out bottom bloom, which has half the detail
+   energy to lose in the first place. The perimeter door is the deciding case.
+
+**What would reopen this**: byte pressure returning to the `run` pack, or a second illustrated
+overlay of this class landing (one 606 kB additive sheet is a fixture; four are a policy). Neither
+is true today — `run` is background-loaded and awaited at the run boundary, and total is 5.72 MB of
+30 MB. The 3.9 MB master at `art/environment/door_curtain_raw.png` stays either way, so the
+downsample remains a one-command change if that day comes:
+`node tools/png-pipeline/compress.mjs --long-axis=<N> --no-trim client/public/environment/door_curtain_raw.png`
+— followed by updating `doorCurtainCoverage.test.ts`'s `CURTAIN_ART_W`/`CURTAIN_ART_H`, which
+hardcode 468/832 and would otherwise stay green against a fiction.
 
 ## Open questions
 
