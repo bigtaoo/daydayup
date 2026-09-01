@@ -21,6 +21,12 @@ import { join, relative, dirname } from 'node:path';
 /** Web-only files under client/public that must never enter the mini-game package. */
 const WEB_ONLY = new Set(['_headers']);
 
+/** Top-level entries in `platforms/wechat` that this sync never touches. Everything else there
+ *  is plan-owned and is pruned to match — see `syncAssets`. `project.config.json` /
+ *  `project.private.config.json` carry the real appid and DevTools' own local state; `game.js`
+ *  and `js/` are the bundle, written by the vite build rather than by the asset plan. */
+const RESERVED_TOP_LEVEL = new Set(['game.js', 'game.json', 'js', 'project.config.json', 'project.private.config.json']);
+
 export function loadAssetPacks(repoRoot) {
   const path = join(repoRoot, 'client', 'src', 'render', 'assetPacks.json');
   return JSON.parse(readFileSync(path, 'utf8'));
@@ -82,7 +88,7 @@ export function planPackage(repoRoot) {
     files.push({
       abs: bundle,
       webPath: null,
-      pack: packs.defaultPack,
+      pack: packs.mainPack,
       dest: 'js/game.js',
       size: statSync(bundle).size,
     });
@@ -105,10 +111,15 @@ export function planPackage(repoRoot) {
 }
 
 /** Non-main packs become `subpackages` entries in game.json. With a single pack this is an
- *  empty list and the file is copied through unchanged. */
+ *  empty list and the file is copied through unchanged.
+ *
+ *  Filters on `mainPack`, NOT `defaultPack` — the two are different ideas and have been
+ *  different values since 2026-09-01 (see assetPacks.json's $comment). `defaultPack` is now
+ *  `run`, a real subpackage, so the old filter would have dropped it from game.json and left
+ *  `wx.loadSubpackage('run')` naming nothing. */
 export function subpackageEntries(packs) {
   return packs.packs
-    .filter((p) => p.name !== packs.defaultPack)
+    .filter((p) => p.name !== packs.mainPack)
     .map((p) => ({ name: p.name, root: p.root.endsWith('/') ? p.root : `${p.root}/` }));
 }
 
@@ -146,9 +157,8 @@ function pruneEmptyDirs(dir) {
  * Mirror the planned art into `platforms/wechat`, pruning anything left over from a previous
  * build. Pruning matters more here than in a normal copy step: a renamed or deleted texture
  * that stays behind is invisible on web (nothing requests it) but keeps costing package
- * bytes, which is exactly the drift this whole pass exists to stop. Only directories the
- * plan owns are pruned — `game.js`, `game.json`, `js/` and `project.config.json` (which
- * carries the real appid) are never touched here.
+ * bytes, which is exactly the drift this whole pass exists to stop. Everything in the target is
+ * pruned to match the plan EXCEPT `RESERVED_TOP_LEVEL` — the bundle and the appid config.
  */
 export function syncAssets(repoRoot, log = console.log) {
   const plan = planPackage(repoRoot);
@@ -160,11 +170,23 @@ export function syncAssets(repoRoot, log = console.log) {
   const entries = subpackageEntries(plan.packs).map((e) => `${e.root}game.js`);
   for (const e of entries) owned.add(e);
 
-  // Prune the top-level directories the plan owns. Every subpackage root is included even if
-  // it currently has no files, so emptying a pack removes its old contents rather than
-  // leaving them to be downloaded forever.
+  // Prune every top-level entry in the target EXCEPT the reserved ones. Derived by exclusion,
+  // not from the plan, and that is the whole point: a set built from what the plan owns TODAY
+  // cannot clean up a directory the plan used to own. Moving all the art out of the main package
+  // (2026-09-01, design/12) does exactly that — `biome/`, `ui/`, `skins/`, `weapons/` and
+  // `environment/` stop appearing in any `dest`, so a plan-derived sweep skips them and leaves a
+  // full stale copy of the old main package sitting in the FIRST download, invisible to the byte
+  // gate (which weighs `client/public` through the rules, never the built tree).
   const ownedTopLevel = new Set([
-    ...artFiles.map((f) => f.dest.split('/')[0]),
+    // `existsSync` first: on a fresh checkout this is the build that CREATES the directory, and
+    // a bare readdir there is an ENOENT out of the first `npm run build:wechat` anyone runs.
+    ...(existsSync(target)
+      ? readdirSync(target, { withFileTypes: true })
+        .filter((e) => !RESERVED_TOP_LEVEL.has(e.name))
+        .map((e) => e.name)
+      : []),
+    // Every subpackage root, even one with no files today, so emptying a pack removes its old
+    // contents rather than leaving them to be downloaded forever.
     ...plan.packs.packs.filter((p) => p.root).map((p) => p.root.split('/')[0]),
   ]);
 
@@ -176,6 +198,13 @@ export function syncAssets(repoRoot, log = console.log) {
       if (!owned.has(rel)) rmSync(abs);
     }
     pruneEmptyDirs(dir);
+    // ...and the top-level directory itself once it holds nothing, which the sweep alone cannot
+    // do (`pruneEmptyDirs` never removes its own argument). This is the visible half of the
+    // 2026-09-01 move: with every asset now under `packs/`, `ui/` and `skins/` would otherwise
+    // sit there empty beside `packs/lobby/ui/` — no package bytes, but exactly the "which of
+    // these two is the live copy" question this pruning exists to prevent. Safe because the copy
+    // pass below re-creates whatever it needs with `mkdirSync(..., { recursive: true })`.
+    if (readdirSync(dir).length === 0) rmSync(dir, { recursive: true });
   }
 
   let copied = 0;

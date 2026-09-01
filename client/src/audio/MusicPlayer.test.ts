@@ -272,3 +272,44 @@ describe('MusicPlayer — a deck that throws', () => {
     expect(b.fade).toBeCloseTo(MUSIC_CATALOGUE.boss.gain, 5);
   });
 });
+
+describe('MusicPlayer — invalidate', () => {
+  it('forgets a track whose file was not there yet, so the next frame starts it for real', () => {
+    // The deferred-asset case (design/12, "Music is loaded but never awaited"): the `music`
+    // subpackage had not downloaded, so the deck was handed a path naming no file. It played
+    // nothing and this player recorded the track as current anyway — which is exactly the
+    // deliberate no-thrash behaviour the case above pins. `invalidate()` is the only way out.
+    a.play = () => {
+      throw new Error('no such file');
+    };
+    player.update('menu', FRAME_MS);
+    expect(player.current).toBe('menu');
+    expect(a.playedPaths).toEqual([]); // nothing is playing, whatever the player believes
+
+    delete (a as Partial<FakeDeck>).play; // the pack landed; the prototype's real play is back
+    player.invalidate();
+    expect(player.current).toBeNull();
+    expect([a.stops, b.stops]).toEqual([1, 1]); // no fade: there is nothing audible to fade
+
+    player.update('menu', FRAME_MS);
+    expect(player.current).toBe('menu');
+    expect(a.playedPaths).toEqual([MUSIC_CATALOGUE.menu.path]);
+  });
+
+  it('is harmless when nothing is playing', () => {
+    // The real ordering on web: the pack can land before the first `updateMusic` ever runs.
+    expect(() => player.invalidate()).not.toThrow();
+    expect(player.current).toBeNull();
+    player.update('menu', FRAME_MS);
+    expect(a.playedPaths).toEqual([MUSIC_CATALOGUE.menu.path]);
+  });
+
+  it('drops a crossfade in flight rather than leaving a deck driving itself', () => {
+    run('menu', 3000);
+    run('boss', XFADE_S * 1000 / 4); // mid-fade
+    expect(player.isCrossfading).toBe(true);
+    player.invalidate();
+    expect(player.isCrossfading).toBe(false);
+    expect(player.current).toBeNull();
+  });
+});

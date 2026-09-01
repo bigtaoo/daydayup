@@ -14,6 +14,12 @@ export const en = {
     settings: 'SETTINGS',
     greeting: 'Hi, {username}',
   },
+  // The two progress screens (design/12 asset phases): boot waits for the `lobby` pack,
+  // the run gate waits for the `run` ones.
+  loading: {
+    boot: 'LOADING',
+    art: 'LOADING ART',
+  },
   pauseMenu: {
     title: 'PAUSED',
     resume: 'RESUME',

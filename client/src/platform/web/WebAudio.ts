@@ -119,6 +119,12 @@ export class WebAudio implements AudioBus {
     this.player.update(track, dtMs);
   }
 
+  /** `AudioBus.invalidateMusic` — no-op before the player exists, since nothing can be
+   *  playing yet. */
+  invalidateMusic(): void {
+    this.player?.invalidate();
+  }
+
   /** Null when this host cannot build media elements — jsdom-less vitest, SSR. Music is then
    *  simply absent, the same best-effort rule the art and SFX preloads follow, rather than a
    *  throw out of the audio constructor. */

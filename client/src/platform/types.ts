@@ -172,6 +172,18 @@ export interface AudioBus {
    * `null` means "nothing should be playing", and fades out over the same window.
    */
   updateMusic(track: MusicTrack | null, dtMs: number): void;
+  /**
+   * Forget which track is playing, so the next `updateMusic` starts it again from scratch
+   * (design/12, "Music is loaded but never awaited").
+   *
+   * The one caller is `render/preloadArt.ts`, when the `music` subpackage finishes its
+   * background download. Until it lands, a path inside that pack names no file on WeChat: the
+   * deck reports an error, plays nothing, and `updateMusic` has already recorded the track as
+   * the current one — so the per-frame derivation that normally needs no retry logic has
+   * nothing left to notice. This is the one thing that has to be told, and all it is told is
+   * "your answer was wrong, ask again".
+   */
+  invalidateMusic(): void;
   // Resume after the browser/WeChat autoplay gate; call on a user gesture (design/11).
   resume(): void;
 }

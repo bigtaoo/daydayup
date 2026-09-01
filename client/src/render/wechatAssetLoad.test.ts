@@ -33,126 +33,37 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { readFileSync, existsSync } from 'node:fs';
-import { Assets, DOMAdapter, Texture } from 'pixi.js';
+import { Assets, Texture } from 'pixi.js';
 import { WeChatAdapter } from '../platform/wechat/WeChatAdapter';
 import { weChatAssetHost } from '../platform/wechat/weChatAssetHost';
-import { setAssetHost, resetAssetHost } from './assetHost';
-import { PACKS, SUBPACKS, packedPathFor } from './assetManifest';
-import { resetPackLoader } from './packLoader';
-import { preloadCoreArt, CHAR_BUNDLES } from './preloadArt';
+import { SUBPACKS, packedPathFor } from './assetManifest';
+import { diskPathFor, installWeChatRuntimeFake, PUBLIC, type WeChatRuntimeFake } from './wechatRuntimeFake';
+import { preloadCoreArt, CHAR_BUNDLES, resetPreloadArt } from './preloadArt';
 import { getRigSkin } from './skinRegistry';
 import { BIOME_TILE_ASSETS, getFloorTexture, getWallTexture, getWallFaceTexture, getPillarTexture } from './biomeTiles';
 import { UI_ASSETS, getUiTexture } from './uiSkins';
 import { ENV_SPRITE_ASSETS, getPickupTexture, getDoorTexture, getPortalArchTexture, getPropTexture } from './environmentSprites';
 import { WEAPON_DEFS, KIND_DEFAULTS, getWeaponTexture } from './weaponSkins';
 
-const PUBLIC = new URL('../../public/', import.meta.url);
-
-/** Undo `packedPathFor`: map a code-package path back to the file on disk it must name.
- *  Derived from the same pack table the runtime uses, so a future subpackage root is
- *  followed here automatically rather than hardcoded. */
-function diskPathFor(packed: string): URL {
-  const roots = PACKS.map((p) => p.root).filter((r) => r !== '').sort((a, b) => b.length - a.length);
-  const root = roots.find((r) => packed.startsWith(`${r}/`));
-  return new URL(root ? packed.slice(root.length + 1) : packed, PUBLIC);
-}
-
-/** Requests the fake runtime saw, so the assertions can talk about what actually happened
- *  rather than only about what came back. */
-const imageRequests: string[] = [];
-const jsonRequests: string[] = [];
-/** Subpackages `wx.loadSubpackage` was called for, in order, with duplicates kept — the
- *  memoisation in packLoader.ts is only meaningful if a repeat would have shown up here. */
-const packLoads: string[] = [];
-
-/** The fake enforces WeChat's actual rule: a file inside a subpackage does not exist until
- *  that subpackage has been loaded. Without this the ordering constraint in preloadCoreArt
- *  would be untested — the assets would resolve either way and the `await ensureAllPacks()`
- *  could be deleted with the suite still green. */
-function unloadedPackFor(packed: string): string | undefined {
-  return SUBPACKS.find((p) => packed.startsWith(`${p.root}/`) && !packLoads.includes(p.name))?.name;
-}
-
-interface FakeImage {
-  src: string;
-  width: number;
-  height: number;
-  onload: (() => void) | null;
-  onerror: (() => void) | null;
-}
-
-function makeFakeImage(): FakeImage {
-  const img: FakeImage = { src: '', width: 0, height: 0, onload: null, onerror: null };
-  return new Proxy(img, {
-    set(target, prop, value) {
-      if (prop === 'src') {
-        const packed = String(value);
-        imageRequests.push(packed);
-        const disk = diskPathFor(packed);
-        if (unloadedPackFor(packed) || !existsSync(disk)) {
-          // Same shape as the device: a missing package file is an onerror, not a throw.
-          queueMicrotask(() => target.onerror?.());
-          target.src = packed;
-          return true;
-        }
-        // Real dimensions off the real file's IHDR — the sizes the loaders' scale maths
-        // are calibrated against. A fake that reported a made-up size would let a
-        // re-encoded texture drift without anything noticing.
-        const buf = readFileSync(disk);
-        target.width = buf.readUInt32BE(16);
-        target.height = buf.readUInt32BE(20);
-        target.src = packed;
-        queueMicrotask(() => target.onload?.());
-        return true;
-      }
-      return Reflect.set(target, prop, value);
-    },
-  });
-}
-
-const originals: Record<string, unknown> = {};
-function stashAndDelete(name: string): void {
-  originals[name] = (globalThis as Record<string, unknown>)[name];
-  delete (globalThis as Record<string, unknown>)[name];
-}
+// The runtime, the request logs and the disk-path mapping all live in `wechatRuntimeFake.ts`
+// now — `wechatPhasedBoot.test.ts` drives the same runtime through the two-phase boot the entry
+// point actually uses, and neither file can borrow the other's `beforeAll`.
+let fake: WeChatRuntimeFake;
+let imageRequests: readonly string[];
+let jsonRequests: readonly string[];
+let packLoads: readonly string[];
 
 beforeAll(async () => {
-  // A mini-game has none of these. `fetch` in particular exists in Node, so a loader that
-  // still called it would pass a naive version of this test while crashing on device.
-  for (const g of ['fetch', 'createImageBitmap', 'document', 'window', 'Image', 'XMLHttpRequest']) {
-    stashAndDelete(g);
-  }
-
-  (globalThis as Record<string, unknown>).wx = {
-    createCanvas: () => ({ width: 0, height: 0, getContext: () => ({}) }),
-    createImage: () => makeFakeImage(),
-    getFileSystemManager: () => ({
-      readFileSync: (path: string, encoding: string) => {
-        expect(encoding).toBe('utf8');
-        jsonRequests.push(path);
-        const pending = unloadedPackFor(path);
-        if (pending) throw new Error(`readFileSync before wx.loadSubpackage('${pending}')`);
-        return readFileSync(diskPathFor(path), 'utf8');
-      },
-    }),
-    loadSubpackage: ({ name, success }: { name: string; success?: () => void }) => {
-      packLoads.push(name);
-      queueMicrotask(() => success?.());
-    },
-  };
-
-  DOMAdapter.set(WeChatAdapter);
-  setAssetHost(weChatAssetHost);
+  fake = installWeChatRuntimeFake();
+  ({ imageRequests, jsonRequests, packLoads } = fake);
+  // The all-at-once path (every pack, every loader), which is what this file is about. The
+  // PHASED path both entries take is `wechatPhasedBoot.test.ts`.
   await preloadCoreArt();
 });
 
 afterAll(() => {
-  for (const [name, value] of Object.entries(originals)) {
-    if (value !== undefined) (globalThis as Record<string, unknown>)[name] = value;
-  }
-  delete (globalThis as Record<string, unknown>).wx;
-  resetAssetHost();
-  resetPackLoader();
+  fake.restore();
+  resetPreloadArt();
 });
 
 /** Every texture this bundle/loader produced, keyed for a readable failure message. */
@@ -294,8 +205,10 @@ describe('WeChat runtime — subpackaged art', () => {
   it('addresses a subpackaged asset under its pack root, not at the project root', () => {
     expect(packedPathFor('/biome/floor_ice.png')).toBe('packs/biome-ice/biome/floor_ice.png');
     expect(packedPathFor('/skins/boss-core/core.png')).toBe('packs/boss/skins/boss-core/core.png');
-    // ...and leaves main-pack art exactly where it was.
-    expect(packedPathFor('/biome/floor_fire.png')).toBe('biome/floor_fire.png');
+    // ...and since 2026-09-01 there is no art at the project root at all: the main package is
+    // js/game.js alone, so the reachable-today swatches address under `packs/run` rather than
+    // bare (design/12, "the first download is code only").
+    expect(packedPathFor('/biome/floor_fire.png')).toBe('packs/run/biome/floor_fire.png');
   });
 
   it('resolved the three deferred biomes, which live behind three separate subpackages', () => {
@@ -313,12 +226,12 @@ describe('WeChat runtime — subpackaged art', () => {
     expect(jsonRequests).toContain('packs/boss/skins/boss-core/animation.json');
   });
 
-  it('kept every floor-1 enemy body in the main package', () => {
+  it('kept every floor-1 enemy body in the pack the run gate awaits, not behind the boss pack', () => {
     // `brute` and `floater` both spawn on floor 1 (world/dungeons/ember/ember_l1_floor_1.json),
-    // so deferring them would be wrong the moment a pack became lazy. Pinned here because the
-    // mistake is invisible while every pack loads at boot.
+    // so putting them anywhere the run gate does not await would be wrong. `run` is awaited;
+    // `boss` is too today, but it is the pack that exists to be made genuinely lazy first.
     for (const dir of ['critter-core', 'brute-core', 'floater-core']) {
-      expect(packedPathFor(`/skins/${dir}/body.png`)).toBe(`skins/${dir}/body.png`);
+      expect(packedPathFor(`/skins/${dir}/body.png`)).toBe(`packs/run/skins/${dir}/body.png`);
     }
   });
 });

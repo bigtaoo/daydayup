@@ -127,6 +127,13 @@ export class WeChatAudio implements AudioBus {
     player?.update(track, dtMs);
   }
 
+  /** `AudioBus.invalidateMusic` — reads `this.player` directly rather than `ensureMusic()`:
+   *  with no player built yet nothing is playing, and this call must not be the thing that
+   *  creates two `InnerAudioContext` streams. */
+  invalidateMusic(): void {
+    this.player?.invalidate();
+  }
+
   /** Builds the two streaming decks on first use. Separate from `ensure()` on purpose: music
    *  must not be gated on `createWebAudioContext`, which is the one audio API on this platform
    *  design/11 records as unverified on the lowest base library. */

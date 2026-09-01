@@ -19,6 +19,7 @@ function fakeBus() {
     setSfxVolume: () => {},
     setMusicVolume: () => {},
     updateMusic: () => {},
+    invalidateMusic: () => {},
     resume: () => { calls.push('resume'); },
   };
   return { bus, calls };

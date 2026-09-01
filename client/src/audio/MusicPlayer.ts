@@ -156,6 +156,19 @@ export class MusicPlayer {
     }
   }
 
+  /**
+   * Forget what is playing (`AudioBus.invalidateMusic`) — the same reset as `stop`, under the
+   * name that says why it is called.
+   *
+   * Deliberately NOT a fade: nothing is audible to fade. The case this exists for is a deck
+   * that was handed a path inside a subpackage that had not downloaded yet, reported an error
+   * and produced silence, while this player went on believing the track was live. Clearing
+   * `track` is what makes the next `update` treat the desired track as a change again.
+   */
+  invalidate(): void {
+    this.stop();
+  }
+
   // ---- transitions ------------------------------------------------------------------------
 
   private change(next: MusicTrack | null): void {

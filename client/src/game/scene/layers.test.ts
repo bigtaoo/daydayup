@@ -135,10 +135,20 @@ describe('Layers', () => {
 // siblings in `ui` whose order came from *when* Game happened to add each one —
 // `buildHud()` first, menu screens after, so menus painted on top. Getting that backwards
 // is invisible in every unit test and shows up only as a pause menu drawn behind the HUD.
-describe('Layers — the two screen-space sub-layers inside ui', () => {
-  it('paints menus OVER the in-run HUD', () => {
+describe('Layers — the three screen-space sub-layers inside ui', () => {
+  it('paints menus OVER the in-run HUD, and the art-loading overlay over both', () => {
     const layers = new Layers();
-    expect(layers.ui.children).toEqual([layers.hudOverlay, layers.menu]);
+    expect(layers.ui.children).toEqual([layers.hudOverlay, layers.menu, layers.overlay]);
+  });
+
+  it('keeps the art-loading overlay unscaled, like the HUD and unlike the menus', () => {
+    // The run gate's progress screen (design/12) is not menu content: it must not shrink with
+    // MenuLayer's fit-scale, and it must sit above every screen's own full-viewport Panel.
+    const layers = new Layers();
+    expect(layers.overlay).not.toBeInstanceOf(MenuLayer);
+    layers.menu.fit({ w: 844, h: 390 });
+    expect(layers.overlay.scale.x).toBe(1);
+    expect(layers.ui.children.indexOf(layers.overlay)).toBeGreaterThan(layers.ui.children.indexOf(layers.menu));
   });
 
   it('keeps the in-run HUD out of the scaled menu layer', () => {

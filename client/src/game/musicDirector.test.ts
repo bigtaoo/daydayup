@@ -17,7 +17,7 @@ import {
   type GameState,
   type RoomPiece,
 } from '@dd/engine';
-import { setMusicAudio, trackFor, updateMusicForFrame } from './musicDirector';
+import { invalidateMusicTrack, setMusicAudio, trackFor, updateMusicForFrame } from './musicDirector';
 import { BIOME_ID_TO_TRACK, DEFAULT_RUN_TRACK } from '../audio/musicCatalogue';
 import type { AudioBus, MusicTrack } from '../platform/types';
 import type { Phase } from './phase';
@@ -205,6 +205,7 @@ describe('trackFor — the settings screen, which is reachable from both sides',
 
 describe('the module sink', () => {
   const calls: { track: MusicTrack | null; dtMs: number }[] = [];
+  let invalidations = 0;
   const bus = {
     preload: async () => {},
     play: () => {},
@@ -213,11 +214,15 @@ describe('the module sink', () => {
     updateMusic: (track: MusicTrack | null, dtMs: number) => {
       calls.push({ track, dtMs });
     },
+    invalidateMusic: () => {
+      invalidations++;
+    },
     resume: () => {},
   } satisfies AudioBus;
 
   beforeEach(() => {
     calls.length = 0;
+    invalidations = 0;
   });
   afterEach(() => {
     setMusicAudio(null);
@@ -258,6 +263,32 @@ describe('the module sink', () => {
       ).not.toThrow();
     }
     expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('forwards an invalidate to the bus, and does nothing without one', () => {
+    // The one push a per-frame derivation still needs (design/12): the `music` subpackage lands
+    // in the background, and until then the deck was handed a path that named no file.
+    setMusicAudio(bus);
+    invalidateMusicTrack();
+    expect(invalidations).toBe(1);
+    setMusicAudio(null);
+    expect(() => invalidateMusicTrack()).not.toThrow();
+    expect(invalidations).toBe(1);
+  });
+
+  it('contains a throwing invalidate rather than taking the caller down', () => {
+    // The caller is a `.then()` on a subpackage download, so an escaping throw would become an
+    // unhandled rejection during boot — on the platform with no reload button.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    setMusicAudio({
+      ...bus,
+      invalidateMusic: () => {
+        throw new Error('the deck is gone');
+      },
+    });
+    expect(() => invalidateMusicTrack()).not.toThrow();
+    expect(warn).toHaveBeenCalledOnce();
     warn.mockRestore();
   });
 

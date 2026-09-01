@@ -179,13 +179,25 @@ standard subpackage has **no individual cap**, an *independent* subpackage ≤ 4
 whole game ≤ **30 MB**. `design/ROADMAP`'s parked note recorded only the 4 MB figure, which
 made the situation look more constrained than it is.
 
-Where it stands after the 2026-08-25 downsampling pass, the 2026-08-27 audio pass and the
-2026-08-31 music passes: **main 3.42 MB / 4.00 MB**, of which 0.91 MB is `js/game.js` and 0.10 MB
-the 50 SFX assets (`design/11`), plus **six** subpackages totalling 2.30 MB (5.72 MB for the whole
-game against the 30 MB ceiling). Two of those six are new and are justified on BYTES rather than on
-unreachability, which `assetPacks.json`'s `$comment` says explicitly: `music` (1.09 MB, the two
-design/11 loops) and `oversized` (one file — `environment/door_curtain_raw.png`, 606 kB, twelve
-times the next door state for a single fixture).
+**The main package is code and nothing else, as of 2026-09-01** (`design/12`, "the first download
+is code only"). It holds `js/game.js` — **0.95 MB / 4.00 MB** — and every asset lives in one of
+**eight** subpackages totalling 4.77 MB (5.72 MB for the whole game against the 30 MB ceiling).
+Until that pass main was 3.42 MB, of which 2.49 MB was art, which is why a 2,729-byte headroom
+crisis was reachable at all.
+
+| Pack | Contents | Bytes | Fetched |
+|---|---|---|---|
+| `main` | `js/game.js` | 0.95 MB | first download |
+| `lobby` | `ui/*` | 0.38 MB | awaited at boot, behind a progress screen |
+| `music` | `audio/music/*` | 1.09 MB | background, never awaited |
+| `forge` | `weapons/*` | 0.43 MB | background, awaited at the run boundary |
+| `run` | rigs, fire/neutral biome, environment, SFX — the default pack | 2.28 MB | background, awaited at the run boundary |
+| `biome-ice` / `-lightning` / `-poison` / `boss` | see the table below | 0.64 MB | background, awaited at the run boundary |
+
+`mainPack` and `defaultPack` in `assetPacks.json` are now different values (`main` / `run`), and
+that is a safety property rather than bookkeeping: **an asset added with no rule can no longer
+silently enlarge the first download.** A rule is required to opt into `main`, and
+`assetManifest.test.ts` sweeps the real `client/public` tree asserting nothing does.
 
 **Do not trust the figure above; run the gate.** On 2026-08-31 main was found at **4,191,575 /
 4,194,304 bytes — 2,729 bytes of headroom, 99.93% full** — having last been recorded at 3.42 MB the
@@ -205,14 +217,17 @@ The gate enforces RAW bytes deliberately. WeChat's docs state the 4 MB limit wit
 whether it is measured before or after the package is compressed; community write-ups say
 after, and DevTools' upload dialog is the only authoritative answer. Until someone reads
 that number, raw is the conservative direction — the gate prints the compressed estimate
-(~2.78 MB) alongside it so the real headroom is visible without depending on the guess.
+(0.27 MB for the code-only main package, as of 2026-09-01) alongside it so the real headroom is
+visible without depending on the guess.
 
 **This question was reached and deliberately left closed (2026-08-31.)** When main hit 2,729 bytes
 of headroom it became the difference between "there is an emergency" and "the emergency is with our
 measure", so it was worth settling — and it is not settleable from here. Reading the upload dialog
 needs a registered appid, a logged-in DevTools session, and pressing a button that **publishes the
-package**. So bytes were moved instead (the `oversized` pack above), and this stays on the
-needs-a-device list beside every other item in the checklist below. Anyone who does open that dialog
+package**. So bytes were moved instead — a bytes-justified `oversized` pack holding one 606 kB file — and this
+stays on the needs-a-device list beside every other item in the checklist below. That pack is
+**gone** as of 2026-09-01: with the first download down to 0.95 MB there was no pressure left to pay
+off, and its own note had said to delete it rather than refill it with whatever was largest next. Anyone who does open that dialog
 should record the number here.
 
 Bundle boundaries live in `client/src/render/assetPacks.json`, read by three consumers (the
@@ -230,13 +245,20 @@ Explicitly NOT deferred: `brute-core` and `floater-core`. Both `brute` and `floa
 **floor 1** (`world/dungeons/ember/ember_l1_floor_1.json`), so a pack holding them would be a
 lie the moment anyone made it lazy. `assetManifest.test.ts` pins that.
 
-**They all load at boot**, once, from `preloadCoreArt` (`render/packLoader.ts`). That is not
-the same thing as leaving them in the main package: WeChat's 4 MB limit is a rule about the
-FIRST download, so a subpackage satisfies it even when fetched moments later, and the game can
-start rendering while the rest arrives. What it avoids is the cost of real laziness — an
-`await` on the path into a room, and a frame where a biome has no stone. Making a pack
-genuinely lazy later is `await ensurePack('biome-ice')` at the point of use plus dropping it
-from the boot set; no loader, manifest entry or call site moves.
+**They no longer all load at boot.** They did until 2026-09-01, from `preloadCoreArt`, and that
+satisfied the 4 MB rule while buying nothing from it — every byte still arrived before the first
+frame, and art still held 2.49 MB of the main package. Now `lobby` is awaited at boot, everything
+else is kicked in the background from the lobby, and the `run`-phase packs are awaited again at the
+run boundary by `game/controllers/ArtGate.ts` behind the same progress screen. Each pack declares
+its `phase` in `assetPacks.json`, so `render/preloadArt.ts` reads the table rather than naming
+packs.
+
+The four packs in this table are awaited with the rest of the run phase even though nothing can
+reach them today (654 kB), because the rule that keeps this from becoming a bug farm is that **the
+set of available textures changes only at a phase boundary** — `RoomBuilder` builds a room's sprites
+once, so a texture that lands mid-room does not fix the sprite built without it. Making one
+genuinely lazy is still `await ensurePack('biome-ice')` at the point of use plus dropping it from
+the phase; no loader, manifest entry or call site moves.
 
 Every subpackage also gets a generated no-op `game.js` at its root. The 分包 docs describe
 `root` as "a directory whose `game.js` is the entry file" and never document a resource-only

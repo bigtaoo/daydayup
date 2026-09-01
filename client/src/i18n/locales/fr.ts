@@ -15,6 +15,10 @@ export const fr: Translations<typeof en> = {
     settings: 'PARAMÈTRES',
     greeting: 'Salut, {username}',
   },
+  loading: {
+    boot: 'CHARGEMENT',
+    art: 'CHARGEMENT DES GRAPHISMES',
+  },
   pauseMenu: {
     title: 'EN PAUSE',
     resume: 'REPRENDRE',

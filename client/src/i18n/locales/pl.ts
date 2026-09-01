@@ -15,6 +15,10 @@ export const pl: Translations<typeof en> = {
     settings: 'USTAWIENIA',
     greeting: 'Cześć, {username}',
   },
+  loading: {
+    boot: 'WCZYTYWANIE',
+    art: 'WCZYTYWANIE GRAFIKI',
+  },
   pauseMenu: {
     title: 'WSTRZYMANO',
     resume: 'WZNÓW',

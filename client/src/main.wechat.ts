@@ -9,7 +9,8 @@ import { setMusicAudio } from './game/musicDirector';
 import { WeChatPlatform } from './platform/wechat/WeChatPlatform';
 import { weChatAssetHost } from './platform/wechat/weChatAssetHost';
 import { setAssetHost } from './render/assetHost';
-import { preloadCoreArt } from './render/preloadArt';
+import { beginDeferredArt, preloadLobbyArt } from './render/preloadArt';
+import { showBootLoading } from './game/ui/loadingScreen';
 import { disableBrokenLetterSpacing, pinTextMeasurementToPaintCanvas } from './render/textMetrics';
 import { reportWeChatBootFailure } from './bootError';
 import { installPerf } from './perf';
@@ -59,7 +60,21 @@ async function boot() {
   // Nothing plays yet: `game/musicDirector.ts` derives the track from the situation on the
   // first frame `Game` renders.
   setMusicAudio(audio);
-  await preloadCoreArt();
+
+  // Phase one of design/12's two asset phases, behind a progress screen. Unlike web there is no
+  // DOM splash to fall back on, and unlike web this is a real wait: `lobby` is a subpackage that
+  // `wx.loadSubpackage` has to fetch before any `/ui/` path names a file at all. Drawn with
+  // Graphics + Text only, because at this point in boot there IS no art (ui/loadingScreen.ts).
+  const loading = showBootLoading(app);
+  await preloadLobbyArt(loading.onProgress);
+  loading.done();
+
+  // Phase two, kicked and not awaited — the `run` packs plus `music`. On this platform that is
+  // where most of the game's bytes are: the main package is now js/game.js alone (~0.95 MB of the
+  // 4.00 MB ceiling), and everything else arrives while the menu is up. `Game.artGate` awaits it
+  // at the run boundary. Before `new Game(...)` for the same load-bearing reason as the web
+  // entry: this call is what arms the gate. See main.ts.
+  beginDeferredArt();
 
   const game = new Game(app, input, audio);
   game.start();

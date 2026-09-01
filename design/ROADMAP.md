@@ -691,6 +691,10 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 - **08-31** [Everything existed and nothing was connected](roadmap/12-2026-08-31-audio.md#everything-existed-and-nothing-was-connected-2026-08-31-client-runtime) — Every piece existed, passed its own check, and nothing was connected. `audio` `platform` `test` `docs`
 - **09-01** [The parser every audio gate trusted had no test, and its own header was wrong](roadmap/12-2026-08-31-audio.md#the-parser-every-audio-gate-trusted-had-no-test-and-its-own-header-was-wrong-2026-09-01-tests) — The frame walker behind every audio asset gate had no test, and the claim in its header was false. `audio` `test` `docs`
 
+**[2026-09-01 — the asset phases](roadmap/13-2026-09-01-asset-phases.md)**
+
+- **09-01** [The first download becomes code only](roadmap/13-2026-09-01-asset-phases.md#the-first-download-becomes-code-only-2026-09-01-client--build--docs) — The pack table had bought nothing it was capable of buying: every pack was fetched at boot. `platform` `art` `test` `docs`
+
 ## The work log — by theme
 
 The same 80 entries, grouped. An entry with more than one tag appears more than once.
@@ -742,7 +746,7 @@ The same 80 entries, grouped. An entry with more than one tag appears more than 
 - 08-30 [A slow bullet's curve, budgeted by distance instead of a clock](roadmap/11-2026-08-28--08-31.md#a-slow-bullets-curve-budgeted-by-distance-instead-of-a-clock-2026-08-30-client)
 - 08-31 [A render-side instrument for the still-open report](roadmap/11-2026-08-28--08-31.md#a-render-side-instrument-for-the-still-open-report-2026-08-31-client-only-no-engine-bump)
 
-**`art`** — authored assets and the art pipeline *(11)*
+**`art`** — authored assets and the art pipeline *(12)*
 
 - 08-12 [Shield-centering follow-up + rig-art aliasing fix](roadmap/02-2026-08-12--08-15.md#shield-centering-follow-up--rig-art-aliasing-fix--2026-08-12)
 - 08-17 [The rigged characters were assembled wrong on screen](roadmap/03-2026-08-17--08-19.md#the-rigged-characters-were-assembled-wrong-on-screen-2026-08-17-user-report)
@@ -755,6 +759,7 @@ The same 80 entries, grouped. An entry with more than one tag appears more than 
 - 08-24 [Room props get real art, and three loaders that were never mip-mapped](roadmap/05-2026-08-21--08-24.md#room-props-get-real-art-and-three-loaders-that-were-never-mip-mapped-2026-08-24-client-only)
 - 08-25 [WeChat loads real art, and the 14 MB becomes 3.2 MB](roadmap/07-2026-08-25-wechat.md#wechat-loads-real-art-and-the-14-mb-becomes-32-mb-2026-08-25-client--build--art)
 - 08-27 [The void gets a face](roadmap/10-2026-08-27.md#the-void-gets-a-face-2026-08-27-client-only)
+- 09-01 [The first download becomes code only](roadmap/13-2026-09-01-asset-phases.md#the-first-download-becomes-code-only-2026-09-01-client--build--docs)
 
 **`perf`** — frame time, draw calls, geometry budgets *(12)*
 
@@ -806,7 +811,7 @@ The same 80 entries, grouped. An entry with more than one tag appears more than 
 - 08-25 [The Seven Districts: the launch arena gets authored](roadmap/06-2026-08-25.md#the-seven-districts-the-launch-arena-gets-authored-2026-08-25-content)
 - 08-25 [The three parked rules that had only shipped half](roadmap/06-2026-08-25.md#the-three-parked-rules-that-had-only-shipped-half-2026-08-25-client--one-render-only-engine-field)
 
-**`test`** — coverage sweeps, gates, mutation batteries *(16)*
+**`test`** — coverage sweeps, gates, mutation batteries *(17)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 08-05 [Platform-layer test coverage pass](roadmap/01-2026-07-24--08-05.md#platform-layer-test-coverage-pass--2026-08-05-全部加测试)
@@ -824,6 +829,7 @@ The same 80 entries, grouped. An entry with more than one tag appears more than 
 - 08-31 [The save verb gets a button, and the tests that were still missing](roadmap/11-2026-08-28--08-31.md#the-save-verb-gets-a-button-and-the-tests-that-were-still-missing-2026-08-31-client)
 - 08-31 [Everything existed and nothing was connected](roadmap/12-2026-08-31-audio.md#everything-existed-and-nothing-was-connected-2026-08-31-client-runtime)
 - 09-01 [The parser every audio gate trusted had no test, and its own header was wrong](roadmap/12-2026-08-31-audio.md#the-parser-every-audio-gate-trusted-had-no-test-and-its-own-header-was-wrong-2026-09-01-tests)
+- 09-01 [The first download becomes code only](roadmap/13-2026-09-01-asset-phases.md#the-first-download-becomes-code-only-2026-09-01-client--build--docs)
 
 **`audio`** — cues, music, the engine to sound channel *(3)*
 
@@ -831,7 +837,7 @@ The same 80 entries, grouped. An entry with more than one tag appears more than 
 - 08-31 [Everything existed and nothing was connected](roadmap/12-2026-08-31-audio.md#everything-existed-and-nothing-was-connected-2026-08-31-client-runtime)
 - 09-01 [The parser every audio gate trusted had no test, and its own header was wrong](roadmap/12-2026-08-31-audio.md#the-parser-every-audio-gate-trusted-had-no-test-and-its-own-header-was-wrong-2026-09-01-tests)
 
-**`platform`** — web / WeChat / Electron targets and deploys *(6)*
+**`platform`** — web / WeChat / Electron targets and deploys *(7)*
 
 - 08-05 [Platform-layer test coverage pass](roadmap/01-2026-07-24--08-05.md#platform-layer-test-coverage-pass--2026-08-05-全部加测试)
 - 08-15 [Web client auto-reloads on deploy — ported from `funny`](roadmap/02-2026-08-12--08-15.md#web-client-auto-reloads-on-deploy--ported-from-funny-2026-08-15)
@@ -839,6 +845,7 @@ The same 80 entries, grouped. An entry with more than one tag appears more than 
 - 08-25 [Fifth update, same session: the missing lever, and the shader question nobody had asked](roadmap/07-2026-08-25-wechat.md#fifth-update-same-session-the-missing-lever-and-the-shader-question-nobody-had-asked)
 - 08-26 [A 5-second timeout was a cold import, not a test](roadmap/09-2026-08-26.md#a-5-second-timeout-was-a-cold-import-not-a-test-2026-08-26-server-tests-only)
 - 08-31 [Everything existed and nothing was connected](roadmap/12-2026-08-31-audio.md#everything-existed-and-nothing-was-connected-2026-08-31-client-runtime)
+- 09-01 [The first download becomes code only](roadmap/13-2026-09-01-asset-phases.md#the-first-download-becomes-code-only-2026-09-01-client--build--docs)
 
 **`ui`** — HUD, screens, widgets *(9)*
 
@@ -864,7 +871,7 @@ The same 80 entries, grouped. An entry with more than one tag appears more than 
 - 08-31 [A render-side instrument for the still-open report](roadmap/11-2026-08-28--08-31.md#a-render-side-instrument-for-the-still-open-report-2026-08-31-client-only-no-engine-bump)
 - 08-31 [A seed was never a repro, and nothing had ever recorded a run](roadmap/11-2026-08-28--08-31.md#a-seed-was-never-a-repro-and-nothing-had-ever-recorded-a-run-2026-08-31-engine--client)
 
-**`docs`** — design docs and this log itself *(11)*
+**`docs`** — design docs and this log itself *(12)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-02 [Documentation pass](roadmap/01-2026-07-24--08-05.md#documentation-pass--2026-08-02)
@@ -877,6 +884,7 @@ The same 80 entries, grouped. An entry with more than one tag appears more than 
 - 08-31 [Two docs become indexes, and the split nearly ate a concurrent session's entry](roadmap/11-2026-08-28--08-31.md#two-docs-become-indexes-and-the-split-nearly-ate-a-concurrent-sessions-entry-2026-08-31-docs-only)
 - 08-31 [Everything existed and nothing was connected](roadmap/12-2026-08-31-audio.md#everything-existed-and-nothing-was-connected-2026-08-31-client-runtime)
 - 09-01 [The parser every audio gate trusted had no test, and its own header was wrong](roadmap/12-2026-08-31-audio.md#the-parser-every-audio-gate-trusted-had-no-test-and-its-own-header-was-wrong-2026-09-01-tests)
+- 09-01 [The first download becomes code only](roadmap/13-2026-09-01-asset-phases.md#the-first-download-becomes-code-only-2026-09-01-client--build--docs)
 
 **`net`** — matchmaking, sockets, reconnect *(1)*
 

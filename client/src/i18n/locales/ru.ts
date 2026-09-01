@@ -20,6 +20,10 @@ export const ru: Translations<typeof en> = {
     settings: 'НАСТРОЙКИ',
     greeting: 'Привет, {username}',
   },
+  loading: {
+    boot: 'ЗАГРУЗКА',
+    art: 'ЗАГРУЗКА ГРАФИКИ',
+  },
   pauseMenu: {
     title: 'ПАУЗА',
     resume: 'ПРОДОЛЖИТЬ',

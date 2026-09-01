@@ -6,7 +6,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { setAssetHost, resetAssetHost, webAssetHost, type AssetHost } from './assetHost';
 import { SUBPACKS } from './assetManifest';
-import { ensurePack, ensureAllPacks, resetPackLoader } from './packLoader';
+import { ensurePack, ensurePacks, ensureAllPacks, resetPackLoader } from './packLoader';
+import { packsForPhase } from './assetManifest';
 
 function hostWith(loadPack: AssetHost['loadPack']): AssetHost {
   return { ...webAssetHost, loadPack };
@@ -73,6 +74,42 @@ describe('ensurePack', () => {
     // a working fallback, and a retry loop on every room entry would be worse than the gap.
     expect(loadPack).toHaveBeenCalledOnce();
     warn.mockRestore();
+  });
+});
+
+describe('ensurePacks', () => {
+  it('ticks once per pack, including for one that failed to download', async () => {
+    // The progress screen's bar is driven by these ticks (design/12). A failed download must
+    // still tick, or a dead subpackage leaves the bar short of the end forever while the gate
+    // it belongs to has in fact already opened.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const packs = packsForPhase('run');
+    setAssetHost(hostWith(async (name) => {
+      if (name === packs[0]!.name) throw new Error('network is down');
+    }));
+    let ticks = 0;
+    await ensurePacks(packs, () => { ticks++; });
+    expect(packs.length).toBeGreaterThan(1); // otherwise "including one that failed" is the only case
+    expect(ticks).toBe(packs.length);
+    warn.mockRestore();
+  });
+
+  it('ticks nothing extra for a pack that was already in flight', async () => {
+    // The background kick and the gate ask for the same packs; the memo is on the promise, so
+    // the second caller gets one tick per pack and not one per REQUEST.
+    setAssetHost(hostWith(async () => {}));
+    const packs = packsForPhase('run');
+    await ensurePacks(packs);
+    let ticks = 0;
+    await ensurePacks(packs, () => { ticks++; });
+    expect(ticks).toBe(packs.length);
+  });
+
+  it('accepts an empty list without waiting on anything', async () => {
+    const loadPack = vi.fn(async () => {});
+    setAssetHost(hostWith(loadPack));
+    await expect(ensurePacks([])).resolves.toBeUndefined();
+    expect(loadPack).not.toHaveBeenCalled();
   });
 });
 

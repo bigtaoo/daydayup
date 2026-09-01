@@ -4,7 +4,7 @@ import { setMusicAudio } from './game/musicDirector';
 import type { Phase } from './game/phase';
 import { WebPlatform } from './platform/web/WebPlatform';
 import { installAutoReload } from './platform/web/autoReload';
-import { preloadCoreArt } from './render/preloadArt';
+import { beginDeferredArt, preloadLobbyArt } from './render/preloadArt';
 import { disableBrokenLetterSpacing, pinTextMeasurementToPaintCanvas } from './render/textMetrics';
 import { reportWebBootFailure } from './bootError';
 import { installPerf } from './perf';
@@ -45,7 +45,24 @@ async function boot() {
   // first frame `Game` renders.
   setMusicAudio(audio);
 
-  await preloadCoreArt();
+  // Phase one of design/12's two asset phases: the `lobby` pack and the UI loader, which is
+  // everything a menu-shaped screen draws. Everything a RUN draws is kicked below, after the
+  // lobby is live. No progress screen is created here — web already has one that paints EARLIER
+  // than Pixi can, before the WebGL context even exists (`index.html`'s `#boot-loading`, removed
+  // further down); the Pixi `LoadingScreen` is for the WeChat entry, which has no DOM, and for
+  // the run gate on both.
+  await preloadLobbyArt();
+
+  // Phase two, kicked and not awaited: the rig/weapon/biome/environment art and the music,
+  // downloaded while the player is reading the menu. `Game.artGate` awaits it at the run
+  // boundary, so nothing downstream has to know whether it has landed.
+  //
+  // BEFORE `new Game(...)`, not after `start()`, and that ordering is load-bearing: this call is
+  // what ARMS the gate (`isRunArtReady()` answers true until something has actually deferred, so
+  // that no test which never opted in ever sees a gate). `start()` can enter a run on its very
+  // first line — the `?replay=` path does — and a gate that is not armed yet would let that run
+  // begin with placeholder art. Pinned in render/wechatPhasedBoot.test.ts.
+  beginDeferredArt();
 
   const game = new Game(app, input, audio);
   game.start();

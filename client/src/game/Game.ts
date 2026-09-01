@@ -49,6 +49,7 @@ import { TutorialHintController } from './controllers/TutorialHintController';
 import { RoomBuilder } from './scene/RoomBuilder';
 import { Backdrop } from './scene/Backdrop';
 import { PickupDebugOverlay } from './scene/PickupDebugOverlay';
+import { ArtGate } from './controllers/ArtGate';
 import { PortalPrompt } from './ui/PortalPrompt';
 import { RunOutcome } from './controllers/RunOutcome';
 import { ForgeActions } from './controllers/ForgeActions';
@@ -173,6 +174,9 @@ export class Game {
   // Reached from the forge outpost only — see openSettings/closeSettings.
   // Persisted settings + the four places a change to them lands — see `settingsBinding.ts`.
   private readonly settingsBinding: SettingsBinding;
+  /** The run-boundary art gate (design/12). Inert in any session that did not defer art —
+   *  every unit test in this repo included; see `controllers/ArtGate.ts`. */
+  private readonly artGate: ArtGate;
   // Render quality — the tier's whole wiring lives in `renderQuality.ts`; this is the handle.
   private readonly quality: RenderQualityController;
 
@@ -262,6 +266,12 @@ export class Game {
       screenSize: () => this.screenSize(),
     });
     this.settingsBinding = new SettingsBinding({ audio, input, quality: this.quality });
+    // Same "needs `app`" reason as `quality` above.
+    this.artGate = new ArtGate({
+      overlay: this.layers.overlay,
+      ticker: app.ticker,
+      screenSize: () => this.screenSize(),
+    });
     // Built here (not as a field initializer) — it needs `this.audio`, which isn't
     // assigned yet when field initializers run.
     this.events = new EventReactor(this.fx, this.hud, this.audio, this);
@@ -610,6 +620,7 @@ export class Game {
    * phase.ts's doc comment on 'pvpPreview' for why.
    */
   private showPvpPreview() {
+    if (this.artGate.defer(() => this.showPvpPreview())) return; // character art (design/12)
     this.phase = 'pvpPreview';
     const { w, h } = this.layers.menu.fit(this.screenSize());
     this.screenFlow.showPvpPreview(w, h, this.meta.selectedSkin);
@@ -638,6 +649,7 @@ export class Game {
    * first so Cancel/Back knows where to go back to.
    */
   private showMatchmaking() {
+    if (this.artGate.defer(() => this.showMatchmaking())) return; // the run on the far side of it
     this.phase = 'matchmaking';
     const { w, h } = this.layers.menu.fit(this.screenSize());
     this.screenFlow.showMatchmaking(w, h, (signal) => this.connectForMatchmaking(signal));
@@ -719,6 +731,9 @@ export class Game {
   // current meta (bank / blueprints / loadout / character); Fire, Enter, or the START
   // RUN button descends into a run.
   private showForge() {
+    // The run-art boundary (design/12): the forge is where a player CHOOSES with weapon art, so
+    // it is gated rather than START RUN. Returns false — and costs nothing — once the art is in.
+    if (this.artGate.defer(() => this.showForge())) return;
     this.phase = 'forge';
     const { w, h } = this.layers.menu.fit(this.screenSize());
     this.screenFlow.showForge(w, h, this.meta);
@@ -871,6 +886,7 @@ export class Game {
    * the PvP arena demo (which has the same property, being all co-resident from tick 0).
    */
   private beginTutorialRun() {
+    if (this.artGate.defer(() => this.beginTutorialRun())) return; // a run, with no screen between
     this.resetRunRenderState();
     this.tutorialActive = true;
     this.tutorialHints.reset();
@@ -885,6 +901,7 @@ export class Game {
    * the view, so `buildRoom` is called once here directly. The second seat is driven by
    * the existing coop bot-ally submit path (stepSim), not a real opponent. */
   private beginArenaDemoRun() {
+    if (this.artGate.defer(() => this.beginArenaDemoRun())) return; // a run, with no screen between
     const arena = this.startOfflineEngine('arena', buildArenaDemoConfig({
       seed: SEED_BASE + this.runCount,
       arenaId: this.arenaDemo ?? 'landing_basic',
@@ -919,6 +936,7 @@ export class Game {
    *  ENGINE_VERSION is the normal way this gets used wrong, and a black screen would be
    *  the worst way to say so. */
   private async beginReplayRun(url: string) {
+    if (this.artGate.defer(() => void this.beginReplayRun(url))) return; // a run, with no screen between
     try {
       const file = await loadReplayFile(url);
       this.resetRunRenderState();

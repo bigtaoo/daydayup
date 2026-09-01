@@ -15,6 +15,10 @@ export const zh: Translations<typeof en> = {
     settings: '设置',
     greeting: '你好，{username}',
   },
+  loading: {
+    boot: '加载中',
+    art: '正在加载素材',
+  },
   pauseMenu: {
     title: '已暂停',
     resume: '继续',

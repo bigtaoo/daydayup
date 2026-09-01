@@ -116,6 +116,23 @@ export function setMusicAudio(next: AudioBus | null): void {
 }
 
 /**
+ * Tell the attached bus its current answer was wrong (`AudioBus.invalidateMusic`).
+ *
+ * Called once per session, by `render/preloadArt.ts`, when the background `music` subpackage
+ * lands — see design/12's "Music is loaded but never awaited" for why a per-frame derivation
+ * still needs this one push. It decides nothing: the next frame re-derives the same track it
+ * already wanted, and this time the file is there. Detached bus: a no-op, like every other
+ * function in this module.
+ */
+export function invalidateMusicTrack(): void {
+  try {
+    bus?.invalidateMusic();
+  } catch (err) {
+    console.warn('[audio] music invalidate failed; the menu bed may stay silent:', err);
+  }
+}
+
+/**
  * One render frame of music. Called unconditionally from `GameLoop.update`, in every phase.
  *
  * Failures are contained rather than allowed out: this runs inside the main loop, ahead of the

@@ -138,6 +138,7 @@ function recordingMusicBus(): { calls: { track: MusicTrack | null; dtMs: number 
       setSfxVolume: () => {},
       setMusicVolume: () => {},
       updateMusic: (track, dtMs) => calls.push({ track, dtMs }),
+      invalidateMusic: () => {},
       resume: () => {},
     },
   };

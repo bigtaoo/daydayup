@@ -151,7 +151,7 @@ describe('ForgeActions — the UI cue follows the outcome', () => {
     const log: string[] = [];
     setUiAudio({
       preload: async () => {}, play: (cue) => { log.push(cue); },
-      setSfxVolume: () => {}, setMusicVolume: () => {}, updateMusic: () => {}, resume: () => {},
+      setSfxVolume: () => {}, setMusicVolume: () => {}, updateMusic: () => {}, invalidateMusic: () => {}, resume: () => {},
     });
     return log;
   }

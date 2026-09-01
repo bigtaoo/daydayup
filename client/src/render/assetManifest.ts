@@ -11,23 +11,46 @@
 // has run — see `packLoader.ts` for when that happens.
 import packs from './assetPacks.json';
 
+/** WHEN a pack is fetched (design/12 "the first download is code only"). Read by
+ *  `render/preloadArt.ts`, so the boot sequence cannot drift from the pack table:
+ *
+ *   - 'main'       the first download. Code only; no art rule points here.
+ *   - 'lobby'      awaited at boot, before `new Game(...)`. The one wait a player sees.
+ *   - 'background' kicked from the lobby and never awaited by anything.
+ *   - 'run'        kicked from the lobby, awaited at the run boundary (`controllers/ArtGate.ts`).
+ */
+export type PackPhase = 'main' | 'lobby' | 'background' | 'run';
+
 export interface PackDef {
   name: string;
   /** Directory prefix inside the WeChat project. '' for the main package. */
   root: string;
+  /** When this pack is fetched — see `PackPhase`. */
+  phase: PackPhase;
   /** Hard byte ceiling for this package (WeChat: 4 MB main / independent subpackage). */
   limitBytes: number;
   note?: string;
 }
 
-export const PACKS: readonly PackDef[] = packs.packs;
+export const PACKS: readonly PackDef[] = packs.packs as readonly PackDef[];
+/** The package whose root is '' — WeChat's first download. NOT the same idea as
+ *  `DEFAULT_PACK`, which is only about where an unmatched path lands; the two were one field
+ *  until 2026-09-01, when the default flipped to a subpackage so that a new asset added with
+ *  no rule can no longer silently enlarge the first download. */
+export const MAIN_PACK: string = packs.mainPack;
 export const DEFAULT_PACK: string = packs.defaultPack;
 /** Ceiling for main + every subpackage together (WeChat: 30 MB). */
 export const TOTAL_LIMIT_BYTES: number = packs.totalLimitBytes;
 
 /** Every pack that is NOT the main one, i.e. every WeChat subpackage. These are the packs
  *  whose files do not exist until `wx.loadSubpackage` has run for them. */
-export const SUBPACKS: readonly PackDef[] = PACKS.filter((p) => p.name !== packs.defaultPack);
+export const SUBPACKS: readonly PackDef[] = PACKS.filter((p) => p.name !== MAIN_PACK);
+
+/** The subpackages fetched in one phase, in table order. `preloadArt.ts` reads this rather
+ *  than naming packs, so adding a pack is a row in `assetPacks.json` and nothing else. */
+export function packsForPhase(phase: PackPhase): readonly PackDef[] {
+  return SUBPACKS.filter((p) => p.phase === phase);
+}
 
 interface PackRule {
   prefix: string;

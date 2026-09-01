@@ -5,23 +5,27 @@
 // treat as "not generated yet" and silently fall back on. So the load has to be ordered
 // ahead of the preload, not raced with it.
 //
-// **Today every pack is loaded once at boot**, by `ensureAllPacks()` from `preloadCoreArt`.
-// That is deliberate and it is not the same thing as putting everything in the main package:
-// WeChat's 4 MB limit is a rule about the FIRST download, so moving art into a subpackage
-// satisfies it even when the subpackage is fetched moments later, and the game can start
-// rendering while the rest arrives. What it avoids is the cost of real laziness — an `await`
-// on the path into a room, and a frame where a biome has no stone.
+// **Which packs are fetched WHEN is declared in `assetPacks.json`, not here** (design/12,
+// "the first download is code only"): each pack carries a `phase`, and `preloadArt.ts` asks
+// `packsForPhase()` for the list. Until 2026-09-01 this module's only caller was
+// `ensureAllPacks()` from `preloadCoreArt` — every pack at boot, which satisfied WeChat's
+// first-download rule while buying nothing else, because the bytes still all arrived before
+// the first frame. Now the `lobby` pack is awaited at boot and the rest are kicked from the
+// lobby, with the `run`-phase ones awaited again at the run boundary
+// (`game/controllers/ArtGate.ts`).
 //
-// Making a pack genuinely lazy later is `await ensurePack('biome-ice')` at the point of use
-// plus dropping it from the boot set. Nothing else moves: not the manifest, not a loader, not
-// a call site. That is the whole reason this indirection exists while every pack is eager.
+// `ensureAllPacks()` survives as the "everything, now" path: `preloadCoreArt` still offers the
+// old one-call shape, which is what the loader tests and any caller that does not want to
+// think about phases run against.
 //
-// On web this is all no-ops — there are no subpackages, the files are just served.
+// On web this is all no-ops — there are no subpackages, the files are just served, and
+// `AssetHost.loadPack` is absent.
 import { getAssetHost } from './assetHost';
-import { SUBPACKS } from './assetManifest';
+import { SUBPACKS, type PackDef } from './assetManifest';
 
-/** Memoised per pack: the SAME promise is returned to every caller, so two rooms entering at
- *  once cannot start two downloads, and a pack already loaded costs nothing to re-request. */
+/** Memoised per pack: the SAME promise is returned to every caller, so a background kick and
+ *  a later gate cannot start two downloads, and a pack already loaded costs nothing to
+ *  re-request. This is what makes the run gate free once the background load has finished. */
 const inFlight = new Map<string, Promise<void>>();
 
 export function ensurePack(name: string): Promise<void> {
@@ -51,7 +55,22 @@ async function loadPack(name: string, root: string): Promise<void> {
   }
 }
 
-/** Every declared subpackage, in parallel. Called once from `preloadCoreArt`. */
+/**
+ * A whole phase's packs, in parallel, with `onEach` called as each one settles.
+ *
+ * `onEach` exists for the progress screen (`game/ui/loadingScreen.ts`) and is the honest
+ * granularity available on both platforms: one tick per pack. WeChat's `wx.loadSubpackage`
+ * returns a `LoadSubpackageTask` whose `onProgressUpdate` would give real bytes, but that is
+ * not in this repo's `wx.d.ts` and has never been exercised on a device — see design/12's
+ * "What this does NOT claim". A pack that fails still ticks: `loadPack` swallows the error, so
+ * a dead download must not leave the progress bar short of the end forever.
+ */
+export async function ensurePacks(defs: readonly PackDef[], onEach?: () => void): Promise<void> {
+  await Promise.all(defs.map((d) => ensurePack(d.name).then(() => onEach?.())));
+}
+
+/** Every declared subpackage, in parallel — the pre-phase "everything, now" path, still used
+ *  by `preloadCoreArt`. */
 export async function ensureAllPacks(): Promise<void> {
   await Promise.all(SUBPACKS.map((s) => ensurePack(s.name)));
 }

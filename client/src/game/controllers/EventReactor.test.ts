@@ -39,6 +39,7 @@ function fakeAudio(): AudioBus {
     setSfxVolume: vi.fn(),
     setMusicVolume: vi.fn(),
     updateMusic: vi.fn(),
+    invalidateMusic: vi.fn(),
     resume: vi.fn(),
   };
 }

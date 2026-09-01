@@ -46,7 +46,7 @@ export class Layers {
   readonly hud = new Container();
   readonly ui = new Container();
 
-  // `ui` splits into exactly two screen-space sub-layers, in this paint order:
+  // `ui` splits into exactly three screen-space sub-layers, in this paint order:
   //
   //  hudOverlay — the in-run HUD + touch controls (Game.buildHud's `hudView`). NOT the
   //    `hud` layer above: that one is world-space floating health bars, this one is
@@ -64,6 +64,19 @@ export class Layers {
   readonly hudOverlay = new Container();
   readonly menu = new MenuLayer();
 
+  // ...and one more above both, added 2026-09-01 with the asset phases (design/12): the art
+  // progress screen the run gate puts up (`ui/loadingScreen.ts`, via
+  // `controllers/ArtGate.ts`). It has to be its own layer for the same reason the split above
+  // exists — a full-screen wait mounted into `menu` would paint UNDER whichever screen's own
+  // full-viewport Panel was already up, which is exactly how the forge's SETTINGS button spent
+  // months invisible. Unscaled like `hudOverlay`: a spinner is not menu content, and it must be
+  // the same physical size on a 390 px-tall phone as on a desktop window.
+  //
+  // Empty in almost every frame of a session. While it is not, its spinner redraws each frame
+  // and so invalidates `ui`'s render group — which is fine for the second or two a gate lasts,
+  // and is why nothing here gets a render group of its own.
+  readonly overlay = new Container();
+
   constructor() {
     // entities are sorted by zIndex (= gy) for top-down depth occlusion
     this.entities.sortableChildren = true;
@@ -71,7 +84,7 @@ export class Layers {
     this.lit.addChild(this.ground, this.shadow, this.entities);
     this.world.addChild(this.terrain, this.lit, this.fx, this.hud);
     this.root.addChild(this.backdrop, this.world, this.ui);
-    this.ui.addChild(this.hudOverlay, this.menu);
+    this.ui.addChild(this.hudOverlay, this.menu, this.overlay);
 
     // Own render group per structurally-STATIC layer (2026-08-24 draw-call pass).
     //

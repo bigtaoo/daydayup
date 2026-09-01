@@ -8,18 +8,25 @@
  * build and the byte gate, so the two are checked against each other at the bottom.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { PACKS, SUBPACKS, DEFAULT_PACK, TOTAL_LIMIT_BYTES, packOf, packDef, packedPathFor } from './assetManifest';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { join, relative, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import {
+  PACKS, SUBPACKS, DEFAULT_PACK, MAIN_PACK, TOTAL_LIMIT_BYTES,
+  packOf, packDef, packedPathFor, packsForPhase, type PackPhase,
+} from './assetManifest';
 import { BIOME_TILE_ASSETS } from './biomeTiles';
 import { UI_ASSETS } from './uiSkins';
 import { ENV_SPRITE_ASSETS } from './environmentSprites';
 import { WEAPON_DEFS, KIND_DEFAULTS } from './weaponSkins';
 import { CHAR_BUNDLES } from './preloadArt';
+import { MUSIC_CATALOGUE } from '../audio/musicCatalogue';
+import { allSfxPaths } from '../audio/cueCatalogue';
 
 describe('the pack table', () => {
   it('has a main pack at the project root and gives every pack a distinct name and root', () => {
-    expect(DEFAULT_PACK).toBe('main');
-    expect(packDef('main').root).toBe('');
+    expect(MAIN_PACK).toBe('main');
+    expect(packDef(MAIN_PACK).root).toBe('');
     expect(new Set(PACKS.map((p) => p.name)).size).toBe(PACKS.length);
     expect(new Set(PACKS.map((p) => p.root)).size).toBe(PACKS.length);
   });
@@ -39,19 +46,101 @@ describe('the pack table', () => {
   it('fits every pack limit inside the whole-game ceiling', () => {
     expect(PACKS.reduce((n, p) => n + p.limitBytes, 0)).toBeLessThanOrEqual(TOTAL_LIMIT_BYTES);
   });
+
+  it('sends an unmatched path to a SUBPACKAGE, not to the first download', () => {
+    // The safety property of the 2026-09-01 split (design/12): `mainPack` and `defaultPack`
+    // used to be the same field and the same value, so a new asset added with no rule silently
+    // enlarged the package WeChat downloads before the first frame. Now a rule is required to
+    // opt into `main`, and the fallback is a background pack.
+    expect(DEFAULT_PACK).not.toBe(MAIN_PACK);
+    expect(SUBPACKS.map((p) => p.name)).toContain(DEFAULT_PACK);
+    expect(packOf('/something/nobody/has/written/a/rule/for.png')).toBe(DEFAULT_PACK);
+  });
 });
 
-describe('what is deferred', () => {
-  it('keeps fire and neutral in main — the only elements a run can actually reach', () => {
+describe('the load phases', () => {
+  it('gives every pack a declared phase, and only the main pack the main phase', () => {
+    const PHASES: readonly PackPhase[] = ['main', 'lobby', 'background', 'run'];
+    for (const p of PACKS) expect(PHASES, `${p.name}`).toContain(p.phase);
+    expect(PACKS.filter((p) => p.phase === 'main').map((p) => p.name)).toEqual([MAIN_PACK]);
+  });
+
+  it('has exactly one pack in the one phase a player waits for', () => {
+    // `preloadLobbyArt` awaits this phase before `new Game(...)`, so every pack added to it is
+    // added to the boot wait. One is the shape design/12 argues for; a second needs a reason.
+    expect(packsForPhase('lobby').map((p) => p.name)).toEqual(['lobby']);
+  });
+
+  it('never awaits music, and awaits everything a run draws', () => {
+    // Music is the one asset class a game can start without, and the deck cannot retry a path
+    // whose pack was not there — see MusicPlayer.invalidate / design/12.
+    expect(packsForPhase('background').map((p) => p.name)).toEqual(['music']);
+    expect(packsForPhase('run').map((p) => p.name).sort()).toEqual(
+      ['biome-ice', 'biome-lightning', 'biome-poison', 'boss', 'forge', 'run'],
+    );
+  });
+
+  it('accounts for every subpackage in exactly one phase', () => {
+    const counted = (['lobby', 'background', 'run'] as const).flatMap((ph) => packsForPhase(ph));
+    expect(counted.length).toBe(SUBPACKS.length);
+    expect(new Set(counted.map((p) => p.name)).size).toBe(SUBPACKS.length);
+  });
+});
+
+describe('what the first download contains', () => {
+  it('puts NO shipped asset in the main package', () => {
+    // The invariant of design/12's "the first download is code only": `main` holds js/game.js
+    // and nothing else. Swept over the real `client/public` tree rather than the loader tables,
+    // because the failure this has to catch is a file nobody remembered to add to a table —
+    // which is exactly the file that would land in `main` by accident if the default flipped
+    // back. `_headers` is web-only and never enters the mini-game package
+    // (build/wechatAssetSync.mjs's WEB_ONLY).
+    const WEB_ONLY = new Set(['_headers']);
+    const root = fileURLToPath(new URL('../../public/', import.meta.url));
+    const walk = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+        e.isDirectory() ? walk(join(dir, e.name)) : [join(dir, e.name)],
+      );
+    const shipped = walk(root)
+      .map((abs) => relative(root, abs).split(sep).join('/'))
+      .filter((rel) => !WEB_ONLY.has(rel));
+    expect(shipped.length).toBeGreaterThan(150); // a sweep over an empty list proves nothing
+    for (const rel of shipped) expect(packOf(`/${rel}`), rel).not.toBe(MAIN_PACK);
+    // ...and the tree really is what the byte gate weighs, so this list is the same list.
+    expect(shipped.every((rel) => statSync(join(root, rel)).size > 0)).toBe(true);
+  });
+
+  it('holds the whole menu-shaped UI in the one pack the boot wait covers', () => {
+    // Everything `preloadUiArt` asks for has to be in `lobby`: it is loaded immediately after
+    // that pack and before `new Game(...)`, so a UI file deferred anywhere else would leave a
+    // menu on its flat-colour fallback for as long as the background download takes.
+    for (const path of Object.values(UI_ASSETS)) expect(packOf(path), path).toBe('lobby');
+  });
+
+  it('defers every weapon to the forge pack, which the forge gate awaits', () => {
+    for (const def of [...Object.values(WEAPON_DEFS), ...Object.values(KIND_DEFAULTS)]) {
+      expect(packOf(def!.path), def!.path).toBe('forge');
+    }
+  });
+
+  it('defers both music tracks and no SFX to the never-awaited pack', () => {
+    // SFX are ~102 kB across 50 files and every cue has a procedural voice, so they ride along
+    // in `run` rather than needing a phase of their own. Music is 1.09 MB and is the pack
+    // nothing awaits.
+    for (const def of Object.values(MUSIC_CATALOGUE)) expect(packOf(def.path), def.path).toBe('music');
+    for (const path of allSfxPaths()) expect(packOf(path), path).toBe(DEFAULT_PACK);
+  });
+
+  it('keeps fire and neutral out of the element subpackages — the only elements a run can reach', () => {
     // theme.ts's BIOME_ID_TO_ELEMENT maps the one authored dungeon ('ember') to 'fire', and
-    // anything without a dungeonConfig (PvP, arena) falls to 'neutral'. Deferring either one
-    // would blank the stone on floor 1.
+    // anything without a dungeonConfig (PvP, arena) falls to 'neutral'. Both must be in the
+    // pack the run gate awaits, not in one of the unreachable-element packs.
     for (const el of ['fire', 'neutral'] as const) {
       for (const kind of ['floor', 'wall', 'wallface'] as const) {
-        expect(packOf(BIOME_TILE_ASSETS[`${kind}_${el}`])).toBe('main');
+        expect(packOf(BIOME_TILE_ASSETS[`${kind}_${el}`])).toBe(DEFAULT_PACK);
       }
     }
-    expect(packOf(BIOME_TILE_ASSETS.pillar_neutral)).toBe('main');
+    expect(packOf(BIOME_TILE_ASSETS.pillar_neutral)).toBe(DEFAULT_PACK);
   });
 
   it('defers ice, lightning and poison, each to its own subpackage', () => {
@@ -62,53 +151,42 @@ describe('what is deferred', () => {
     }
   });
 
-  it('defers only the boss rig, and keeps every floor-1 enemy body in main', () => {
+  it('separates the boss rig from every floor-1 enemy body', () => {
     // `brute` and `floater` spawn on floor 1; `blightlord` (boss-core) is floor 5 only. This is
     // the assertion that would catch a pack renamed "elite" quietly swallowing the wrong rigs.
     const packOfBundle = (name: string): string =>
       packOf(`${CHAR_BUNDLES.find(([n]) => n === name)![1]}/animation.json`);
     expect(packOfBundle('boss-core')).toBe('boss');
     for (const name of ['char_vanguard', 'char_skirmisher', 'char_juggernaut', 'critter-core', 'brute-core', 'floater-core']) {
-      expect(packOfBundle(name), name).toBe('main');
+      expect(packOfBundle(name), name).toBe(DEFAULT_PACK);
     }
   });
 
-  it('leaves UI, environment and every weapon in main — bar the one file deferred on bytes', () => {
-    // All of them are reachable from the first screen or the first room, so none may be
-    // deferred for REACHABILITY — and a broad accidental rule (say a `/ui` prefix) would show
-    // up right here.
-    //
-    // The single exception is listed by name rather than by prefix, on purpose. The door
-    // curtain sits in `oversized` because main had 2,729 bytes of headroom, not because
-    // anything about it is late content (see assetPacks.json's $comment) — so this test still
-    // has to fail if a rule ever defers a SECOND reachable environment sprite, which is
-    // exactly how a symptom-named pack turns into a dumping ground.
-    const BYTES_DEFERRED: Record<string, string> = {
-      '/environment/door_curtain_raw.png': 'oversized',
-    };
-    for (const path of Object.values(UI_ASSETS)) expect(packOf(path)).toBe('main');
+  it('has no pack named for a symptom, and defers no environment sprite on its own', () => {
+    // `oversized` existed for one 606 kB file because main had 2,729 bytes of headroom, and its
+    // own note said to DELETE it rather than refill it once the pressure was off. It is gone;
+    // the curtain sits in the run pack by domain, with every other door and fixture.
+    expect(PACKS.map((p) => p.name)).not.toContain('oversized');
     for (const path of Object.values(ENV_SPRITE_ASSETS)) {
-      expect(packOf(path), path).toBe(BYTES_DEFERRED[path] ?? 'main');
-    }
-    for (const def of [...Object.values(WEAPON_DEFS), ...Object.values(KIND_DEFAULTS)]) {
-      expect(packOf(def!.path)).toBe('main');
-    }
-    // And every name in that exception list is a real shipped path, so the escape hatch
-    // cannot outlive the file it was opened for.
-    for (const path of Object.keys(BYTES_DEFERRED)) {
-      expect(Object.values(ENV_SPRITE_ASSETS), `${path} is no longer shipped`).toContain(path);
+      expect(packOf(path), path).toBe(DEFAULT_PACK);
     }
   });
 });
 
 describe('packedPathFor', () => {
-  it('drops the leading slash for main-pack art and prepends the root for a subpackage', () => {
-    expect(packedPathFor('/biome/floor_fire.png')).toBe('biome/floor_fire.png');
+  it("prepends the pack root — which since 2026-09-01 every shipped asset has", () => {
+    // The bare-relative form (no root, main package) is still what this returns for main-pack
+    // content and is what `wx.createImage`/`readFileSync` want; there is simply no ASSET left
+    // that takes that branch, because the first download is code only. A rule that opts a file
+    // back into `main` would exercise it again.
+    expect(packedPathFor('/biome/floor_fire.png')).toBe('packs/run/biome/floor_fire.png');
     expect(packedPathFor('/biome/floor_ice.png')).toBe('packs/biome-ice/biome/floor_ice.png');
+    expect(packedPathFor('/ui/hub_bg.png')).toBe('packs/lobby/ui/hub_bg.png');
+    expect(packedPathFor('/weapons/gun_blaster.png')).toBe('packs/forge/weapons/gun_blaster.png');
   });
 
   it('accepts a path that already has no leading slash', () => {
-    expect(packedPathFor('biome/floor_fire.png')).toBe('biome/floor_fire.png');
+    expect(packedPathFor('biome/floor_fire.png')).toBe('packs/run/biome/floor_fire.png');
   });
 
   it('never emits a leading slash or a "./" segment', () => {

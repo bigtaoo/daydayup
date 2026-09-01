@@ -213,6 +213,8 @@ Authoring rules so 2D art produces the fake-3D feel and doesn't hit `01`'s known
 
   The sizing answer was the opposite of what this list assumed. It queued "bundle boundaries" and "atlas packing" together, as if the 13.66 MB of `client/public` were a packing problem. It was not: `orb-core`'s bone textures were still 1254² while the two sibling characters on the *same rig* had shipped at 256² for months, and six byte-identical 650 KB `socket_*.png` copies were 3.9 MB on their own. Downsampling alone took it to 3.20 MB. **Atlas packing would have saved almost none of those bytes** — merging RGBA PNGs removes no pixels — so it stays queued for its real benefit (draw calls) rather than for size, and it is not urgent while render p50 is 2.1 ms of 16.7.
 
+  **Half of this is superseded as of 2026-09-01** — see "the first download is code only" at the bottom of this doc. The table, the three consumers and the reachability arguments all still stand; what changed is WHEN a pack is fetched. `main` is now code alone, `lobby` is awaited at boot behind a progress screen, and everything a run draws is downloaded in the background and awaited at the run boundary. The paragraph above describing the boot core bundle as `main` at 3.31 MB is history.
+
   Two rules the pass established for re-encoding shipped art:
   - **Never trim a rig bone's canvas.** `animation.json` binds it as `scale = authoringPx / sourceWidth` with the pivot at the canvas centre, so cropping the transparent margin resizes AND re-pivots the bone. `processPNG`'s `trim: false` (and `compress.mjs --no-trim`) exist for this; untrimmed output also happens to be *smaller*, since fully transparent rows cost almost nothing once deflated.
   - **Prefer exact 2:1 steps.** 320 → 160 and 256 → 128 make every output texel the mean of exactly four inputs, with no resampling phase error. Measured through the live renderer at real on-screen size, the exactly-halved families (UI icons, weapons) came back essentially pixel-identical to the originals (p50 ≤ 0.2/255, p95 ≤ 3.3/255); the rig art's non-integer 1254 → 256 step reads p50 0.7–4.5 and p95 15–21, concentrated on silhouette edges.
@@ -367,6 +369,173 @@ of the object that never moves.
 
 Full account, including the three rejected generations and what each one cost, is in
 `art/environment/prompts.md`; the render-side geometry is in `design/01`'s "The drops and the gate".
+
+## Update (2026-09-01): the first download is code only
+
+The pack table shipped on 2026-08-25 satisfied WeChat's 4 MB rule and bought **nothing else**,
+because `preloadCoreArt` called `ensureAllPacks()` — all six packs, at boot, in parallel. That is
+defensible as far as the rule goes (the 4 MB ceiling is about the FIRST download, so a pack fetched
+one moment later is compliant) and it is what the previous section argued. What it left in place was
+a **byte tax on code**: art occupied 2.49 MB of a 4.00 MB main package, so `js/game.js` had 2,729
+bytes of headroom on 2026-08-31, and the next code change of any size — the music runtime, as it
+happened — failed the gate. The `oversized` pack (one file, the 606 kB door curtain) was that
+failure being paid off by moving a byte, and its own note said so.
+
+This pass makes the deferral real. **The main package is now code and nothing else.**
+
+| pack | contents | files | bytes | when |
+| --- | --- | --- | --- | --- |
+| `main` | `js/game.js` | 1 | 995 kB | the first download |
+| `lobby` | `/ui/` | 17 | 387 kB | awaited at boot, behind a progress screen |
+| `music` | `/audio/music/` | 2 | 1,115 kB | background, never awaited |
+| `forge` | `/weapons/` | 27 | 443 kB | background, awaited at the run boundary |
+| `run` | everything unmatched: `/skins/`, `/biome/` fire+neutral, `/environment/`, SFX | 104 | 2,335 kB | background, awaited at the run boundary |
+| `biome-ice` / `biome-lightning` / `biome-poison` / `boss` | unchanged, still justified by unreachability | 14 | 654 kB | background, awaited at the run boundary |
+
+First download: **3.42 MB → 0.95 MB** (measured after this pass's own code landed; it was
+3.42 MB with 2,729 bytes free before it), and the headroom that matters is now 3.05 MB of room
+for code rather than two and a half kilobytes. Total is unchanged at 5.72 MB / 30 MB — this moves bytes in TIME, it
+does not remove any, and the win is "the lobby appears after 0.95 MB + 387 kB instead of after
+3.42 MB", not a smaller game.
+
+`oversized` is **deleted**, as its note asked. The curtain lands in `run` by domain (it is a floor-1
+door fixture) rather than by size, so the re-encode question that note raised is now a plain
+"should the player download 606 kB for one fixture" call with no gate pressing on it. See the
+previous section for the measurements; nothing about that decision changed except its urgency.
+
+### The rule that keeps this from becoming a bug farm
+
+**The set of available textures may change only at a phase boundary.** Before this pass
+`getUiTexture`/`getWeaponTexture`/`getBiomeTexture`/`getEnvTexture` were total within a session:
+every pack was in before the first frame, so any call site could assume its texture either existed
+forever or never. Deferral makes availability a function of TIME, which is the bug class this
+codebase has the worst record with — the curtain's own first bug was correct size, correct
+visibility, correct blend mode and a default (0, 0) position, with green tests and a live report.
+
+So there are exactly **two art phases**, not per-asset laziness:
+
+- **LOBBY** — `preloadLobbyArt()`: `Assets.init`, then the `lobby` pack, then `preloadUiArt()`.
+  Awaited by both entries before `new Game(...)`, behind a Graphics-drawn progress screen
+  (`game/ui/loadingScreen.ts` — no art in it, because there is no art yet). Login, main menu, mode
+  select, settings, party and account screens are UI chrome only and are fully dressed here.
+- **RUN** — `ensureRunArt()`: every remaining `run`-phase pack, then the four remaining loaders
+  (`preloadRigSkin` per bundle, weapons, biome tiles, environment sprites) exactly once. Memoised,
+  so it is one transition per session no matter how many gates ask for it.
+
+Re-running a loader after its pack lands is safe and nearly free by construction: the four sprite
+loaders are idempotent map-fillers over a static path table with a per-item `try/catch`, and Pixi's
+`Assets` memoises by URL, so a second run re-resolves the already-decoded textures and fills in the
+ones that were missing. That property is why this works without touching a single loader. The rig
+loader is the one that is not free — `preloadRigSkin` re-reads its two JSON sidecars rather than
+skipping a bundle it already has — which is precisely why it is called in the run phase and not in
+the lobby one, where it would be paid for twice.
+
+The RUN phase deliberately includes the packs that are unreachable today (`biome-ice` and friends,
+654 kB). Gating on only what the next room needs would mean re-running `preloadBiomeTiles` once per
+pack and reasoning about a map that is partially filled — the exact partial-availability state the
+rule above exists to forbid. One transition costs a bounded 654 kB of art the player may not see;
+it buys "either the run has all its art, or the player is still looking at a spinner".
+
+### The gate, and why it is invisible almost always
+
+Entering the **forge** is the boundary, not START RUN. The forge is where a player *chooses* using
+weapon art, so weapons must be dressed before it paints — and by then the background load has had
+the whole login/menu/mode-select sequence to finish. Gated sites: `showForge`, `showPvpPreview`,
+`showMatchmaking`, `beginTutorialRun`, `beginArenaDemoRun`, `beginReplayRun`. Everything left
+ungated (`showMenu`, `showModeSelect`, `showAccount`, `showSquad`, settings) draws from the `lobby`
+pack alone.
+
+`controllers/ArtGate.ts` owns it, and it has two properties worth stating because they are what
+keep the change small:
+
+1. **Synchronous when the art is in.** The gate asks `isRunArtReady()` first and reports "not
+   deferred" if so, leaving the caller's transition exactly as synchronous as it was. Only a
+   genuine wait defers, and then the spinner goes up and the same transition re-runs on the other
+   side.
+2. **Inert unless something actually deferred.** `isRunArtReady()` answers `true` until
+   `beginDeferredArt()` has been called, and only the two entry points call it. Every unit test
+   that drives `Game` therefore sees the pre-2026-09-01 behaviour with no changes, and the gate
+   cannot silently swallow a transition in a test that never opted into deferral.
+
+`beginDeferredArt()` is called BEFORE `new Game(...)` in both entries, and that ordering is
+load-bearing rather than tidy: the call is what ARMS the gate, and `Game.start()` can enter a run
+on its own first pass (the `?replay=` path does). Placed after `start()`, as it was first written,
+that run begins with placeholder art and no gate at all. `render/wechatPhasedBoot.test.ts` pins the
+order in both entry files by reading their source, because there is no way to observe it from
+inside a module.
+
+The spinner lives on a new `Layers.overlay` — a third screen-space sub-layer of `ui`, above `menu`,
+unscaled. Pinned in `layers.test.ts` for the same reason the `hudOverlay`/`menu` split was: paint
+order that comes from add-order is a landmine here, and a progress screen that renders *under* the
+forge's full-viewport hub Panel would be invisible in exactly the way the forge's own SETTINGS
+button was for months.
+
+### Music is loaded but never awaited
+
+`audio/MusicPlayer.ts` hands a deck a path; on WeChat a path inside an unfetched subpackage names no
+file, and the deck reports an error and plays nothing. Nothing retries — `musicDirector`'s per-frame
+derivation is a no-op once `current` already names the track it asked for. So a background `music`
+pack would have meant permanent silence in the menu.
+
+`music` still is not in the blocking path (it is 1,115 kB, and the assetPacks note's argument that
+music is the one asset class a game can start without has not changed). Instead it is the FIRST
+background pack kicked, and when it resolves the loader calls `MusicPlayer.invalidate()`, which
+clears `current` so the next frame's derivation starts the bed it already wanted. That is one hook
+at one place, which is the smallest thing that can work here — and `musicDirector`'s "nothing to
+hook, so no moment can be missed" property survives it, because the hook decides nothing; it only
+forgets a failed answer.
+
+### `mainPack` and `defaultPack` had to stop being the same field
+
+`assetPacks.json` used one field for two ideas: "the package whose root is `''`, which WeChat
+downloads first" and "where a path no rule matches ends up". They were both `main` and the
+distinction never came up. Now `mainPack: "main"` and `defaultPack: "run"`, because the flip is the
+whole safety property: **a new asset added with no rule can no longer silently enlarge the first
+download** — it lands in the background pack, and a rule is required to opt INTO `main`. `SUBPACKS`
+(the list `wx.loadSubpackage` is called for, and the list that becomes `game.json`'s `subpackages`)
+now filters on `mainPack`, which is what it always meant.
+
+Each pack also declares a `phase` (`main` | `lobby` | `background` | `run`) so the boot code cannot
+drift from the table: `packsForPhase('run')` is what `ensureRunArt` awaits, and adding a pack means
+adding a row, not editing TypeScript.
+
+### The build had to learn to clean up after a pack move
+
+`build/wechatAssetSync.mjs` prunes `platforms/wechat` to match the plan, and it derived the
+directories to sweep FROM the plan — every `dest`'s first path segment, plus every pack root. That
+works for a renamed texture and fails for exactly this change: once no `dest` begins with `ui/` or
+`skins/`, the sweep never visits those directories, and the previous build's full copy of the old
+main package stays on disk — inside the FIRST download, the one place bytes are actually capped.
+The byte gate cannot see it either, because it weighs `client/public` through the rules and never
+looks at the built tree.
+
+The sweep is now derived by EXCLUSION: everything in the target is plan-owned except the bundle
+(`game.js`, `js/`) and the appid config (`project.config.json`, `project.private.config.json`).
+A top-level directory left empty by the sweep is removed too, so `ui/` does not sit hollow beside
+`packs/lobby/ui/` inviting the question of which one is live. `build/wechatAssetSync.test.mjs` is
+new and covers this against a temp repo — including the fresh-checkout case, where the directory
+being swept does not exist yet and a bare `readdirSync` is an ENOENT out of the first build anyone
+runs.
+
+### What this does NOT claim, and the device questions it adds
+
+- **Progress is per-pack, not per-byte.** WeChat's `wx.loadSubpackage` returns a
+  `LoadSubpackageTask` carrying `onProgressUpdate`, which would give real bytes — it is not in this
+  repo's `wx.d.ts` and has never been exercised here, so the progress screen counts completed units
+  (packs + loaders) instead. The byte-accurate version is a device-verification item, not a code
+  problem.
+- **Concurrent `wx.loadSubpackage` is undocumented.** The 分包 docs do not state whether several
+  in-flight loads are safe. All `run`-phase packs are kicked together, which is the same thing
+  `ensureAllPacks()` already did at boot and was verified working in the simulator on 2026-08-25 —
+  so this is not a new risk, but it is not a *documented* guarantee either.
+- **Background download while the lobby renders is untested on a handset.** The download is native,
+  but image decode lands on the main thread, and a menu that hitches while art streams in is the
+  plausible failure. If it appears, the fix is serialising the `run`-phase kicks and lowering their
+  priority, not undoing the tiering.
+- **Web gets the same tiering for free and has nothing to verify.** There are no subpackages there;
+  `AssetHost.loadPack` is absent and `ensurePack` resolves immediately, so on web this pass is
+  purely "which `Assets.load` calls happen before the first paint" — a real first-paint win
+  (0.95 MB of code instead of code plus 3.42 MB of art) with no new failure mode.
 
 ## Open questions
 
