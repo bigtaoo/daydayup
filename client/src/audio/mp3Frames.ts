@@ -13,6 +13,15 @@
 // trusting the first, so a truncated file, a re-encode that changes rate mid-stream, or a
 // container with garbage appended fails as itself instead of passing on its first 4 bytes.
 //
+// Truncation is caught by a frame that declares more bytes than the file has left, plus a
+// trailing stub too short to be a header. Until 2026-09-01 it was caught by NEITHER: frames are
+// a fixed length at a constant bitrate, so a cut always leaves an intact header at the last
+// boundary, and the walk stepped straight past the end of the buffer and reported the stub as a
+// whole frame. All 52 shipped files end on an exact frame boundary (measured, both masters too),
+// so the strict rule costs nothing. One shape stays invisible on purpose: a cut AT a boundary is
+// a valid shorter file and nothing in the bitstream can say otherwise — the byte-size
+// cross-check against `credits.json` is what owns that.
+//
 // The reason `durationMs` is exact rather than frame-rounded: the first frame is usually a
 // Xing/Info tag carrying LAME's encoder delay and end padding, and those are READ here.
 // Rounding to whole frames instead would sit up to 64 ms high — meaningless slack on a 69 s
@@ -73,7 +82,26 @@ export function parseMp3(bytes: Uint8Array): Mp3Info {
     // with `padding` above, which is the LAME tag's end padding in samples.
     const padBit = (bytes[i + 2] >> 1) & 0x01;
     const len = Math.floor(((perFrame / 8) * kbps * 1000) / rate) + padBit;
-    if (len <= 4) throw new Error(`degenerate frame length ${len} at byte ${i}`);
+    // A frame declaring more bytes than remain. THE truncation check — see this file's header
+    // for why nothing else here can be one.
+    if (i + len > bytes.length) {
+      throw new Error(
+        `truncated: frame at byte ${i} declares ${len} bytes, ${bytes.length - i} remain`,
+      );
+    }
+    // A frame length that would not advance the walk. No test can reach this — the shortest
+    // frame any combination this parser accepts can describe is 24 bytes (MPEG 2, 8 kbps,
+    // 24 kHz), pinned over the whole table in `mp3Frames.test.ts` — and it STAYS anyway, which
+    // was settled by evidence rather than taste: it was briefly deleted as unreachable on
+    // 2026-09-01, and the mutation that disables the reserved-index check above then turned a
+    // failing test into an INFINITE LOOP (a free-format bitrate index gives `len` 0, so `i += len`
+    // never moves). A hang is a far worse failure than a branch no test covers, and the guard
+    // costs one comparison per frame.
+    //
+    // Written `!(len > 4)` rather than `len <= 4`: both reserved indices together make `len` NaN,
+    // and `NaN <= 4` is false, so the original form let NaN through to `i += NaN` — which exits
+    // the walk quietly and reports a frame count and a duration computed from a zero sample rate.
+    if (!(len > 4)) throw new Error(`degenerate frame length ${len} at byte ${i}`);
 
     // The first frame may be a Xing/Info tag: structurally a frame, but carrying no audio —
     // and, in its LAME extension, the encoder delay and end padding a gapless-aware decoder
@@ -98,6 +126,11 @@ export function parseMp3(bytes: Uint8Array): Mp3Info {
     i += len;
   }
   if (!frames) throw new Error('no frames found');
+  // The other half of the truncation check: the loop can only stop with 0-3 bytes left, so
+  // anything at all here is a stub that is neither a frame nor the end of the file.
+  if (i !== bytes.length) {
+    throw new Error(`${bytes.length - i} trailing byte(s) after the last frame at byte ${i}`);
+  }
   const audible = Math.max(samples - delay - padding, 0);
   return {
     sampleRate,

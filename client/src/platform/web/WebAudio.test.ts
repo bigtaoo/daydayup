@@ -243,8 +243,29 @@ describe('WebAudio — preload() (design/11 boot preload)', () => {
 });
 
 describe('WebAudio — setMusicVolume', () => {
-  it('accepts a value and does nothing (music not authored yet)', () => {
+  // The rest of this method's behaviour — the value landing on the MUSIC bus, being retained
+  // when set before the context exists, clamping, and a muted bus still running the decks — is
+  // owned by `audio/musicPipeline.test.ts`, which has the whole graph to assert against. Until
+  // 2026-09-01 the case here asserted "accepts a value and does nothing (music not authored
+  // yet)", which stopped being true when music shipped: a passing test naming a contract the
+  // class no longer has is worse than no case at all.
+
+  it('does not build a context — the volume arrives at boot, the gesture has not happened', () => {
+    // `settingsBinding.load()` calls this before any user gesture. Constructing the context here
+    // would create a suspended one at boot and move where the autoplay gate is decided, and on
+    // the WeChat side the equivalent slip opens two streams into a subpackage that may not have
+    // landed. Cheap to assert, invisible if it regresses.
     const audio = new WebAudio();
-    expect(() => audio.setMusicVolume(0.5)).not.toThrow();
+    // NOT 0.5, which is the field's own default: the first version of this case used it, and a
+    // mutation deleting the assignment entirely survived, because the bus was going to read 0.5
+    // either way. A test value has to differ from the value the code would produce by doing
+    // nothing (daydayup-test-assertion-craft memory).
+    audio.setMusicVolume(0.3);
+    expect(instances).toHaveLength(0);
+    // ...and the value is not lost: the first real ensure() writes it to the music bus, which is
+    // the SECOND gain node the context makes (the SFX bus is first).
+    audio.resume();
+    audio.play('muzzle');
+    expect(instances[0]!.gains[1]!.gain.value).toBe(0.3);
   });
 });

@@ -14,6 +14,8 @@ How the game sounds, and — more importantly for a deterministic-lockstep title
 >
 > **Update (2026-08-31, second pass the same day): MUSIC PLAYS.** The runtime landed on top of the assets. Two loops ship under `client/public/audio/music/` — `menu.mp3` (69.0 s, 511.8 kB) and `boss.mp3` (64.5 s, 603.4 kB), **1.09 MB** total — cut from two AI-generated masters (Suno) kept in `art/audio/sources/suno/` by `tools/audio-pipeline/process_music.py`, and they are now what a player hears. The new modules are `client/src/audio/musicCatalogue.ts` (an exhaustive `Record<MusicTrack, TrackDef>`, same discipline as the cue catalogue) and `client/src/audio/MusicPlayer.ts` (two decks, one equal-power crossfade, used both to change track and to CLOSE THE LOOP), with a deck per platform (`platform/web/webMusicDeck.ts`, `platform/wechat/weChatMusicDeck.ts`) and `client/src/game/musicDirector.ts` deriving the track from the situation every render frame. `setMusicVolume` is real in both backends, and the settings screen's music slider — which had always moved a number that went nowhere — now moves the music bus. See "The music runtime" below.
 >
+> **Update (2026-09-01): a test pass over the music work found a real bug in the thing all three asset gates trust.** Nothing about what plays changed; what changed is that the shipped-file parser is now itself under test. `audio/mp3Frames.ts` — the MPEG frame walker that tells `platform/audioAssets.test.ts`, `audio/musicAssets.test.ts` and one `musicPipeline` case what a shipped file *is* — had **no test of its own**, because every caller feeds it the 52 files that are already correct, leaving every rejection branch and the LAME delay/padding arithmetic unexercised. It turned out its header's claim that a truncated file "fails as itself" was **false**: constant-bitrate frames are fixed length, so a cut always leaves an intact header at the last boundary and the walk stepped past the end of the buffer counting the stub as a whole frame. Now caught, by a frame declaring more bytes than remain plus a trailing stub too short to be a header — after measuring that all 52 shipped files and both masters end on an exact frame boundary, so the strict rule rejects nothing real. A second fix in the same file: the frame-length guard is now `!(len > 4)` rather than `len <= 4`, because both reserved header indices together make the length `NaN` and `NaN <= 4` is false — the old form let NaN through to `i += NaN`, which ends the walk quietly and reports a duration divided by a zero sample rate. Two new suites came with it (`audio/mp3Frames.test.ts`, `platform/wechat/weChatMusicDeck.test.ts`) and two stale cases were replaced; see "What guards it" below.
+>
 > **Still open — and none of it is a wiring problem any more:** `dungeon.ember` has no master, so it plays `menu.mp3` as a declared placeholder (`TrackDef.borrowedFrom`); the WeChat path remains unverified on a real device, now including whether `InnerAudioContext` takes a subpackage path and which shape that runtime's `decodeAudioData` has; the voice cap (12) is a first pass rather than a measurement; **nobody has listened to the 50 cues or the 2 loops**; and the AI masters still have no archived licence text and no captured prompt (recorded as declared gaps in `credits.json`, gated as such). The cues were selected by measurement — fit against the synth voice each replaces — plus the material the world already specifies (`13`: crystal-mirror enemies, so glass). That rules out defects and matches loudness; it cannot say a sound is *right*, and the weakest pick on that basis is `win`. Now that everything actually plays, listening is the open item that a person, not a test, has to close. The game stays fully playable silent, so none of it blocks anything.
 
 ## The decisions (locked)
@@ -251,6 +253,26 @@ link is silence — and silence is what a month of green tests looked like.
   verbatim prompt was never captured (`prompt: null`, `prompt_archived: false`) and no licence text
   is archived (`license_text_archived: false`). Both are pinned as declared gaps, because a test
   demanding they be filled would only invite them to be filled with a guess.
+- **`audio/mp3Frames.test.ts` (2026-09-01) — the gate ON the gates.** The frame walker every rule
+  above rests on had no test of its own, and it is the one place here where being wrong is silent in
+  both directions: a parser that mis-reads a duration makes the catalogue assertion compare two wrong
+  numbers, and a rejection branch that never fires lets a malformed file ship. It is now driven by
+  synthetic streams whose answers are known by construction — the spec tables and the frame-length
+  formula are deliberately restated in the test, so a walker computing a different length lands
+  off-sync and fails rather than agreeing with a shared constant. That found the missing truncation
+  check and the `NaN`-blind frame-length guard described in the status block. One shape stays
+  uncatchable on purpose: a cut AT a frame boundary is byte-for-byte a valid shorter file, which is
+  precisely why `credits.json`'s byte-size cross-check is not redundant beside a parser that walks
+  every frame. It also pins, over all 252 accepted version/bitrate/rate combinations, that the
+  shortest describable frame is 24 bytes — the invariant the walk's progress depends on.
+- **`platform/wechat/weChatMusicDeck.test.ts` (2026-09-01)** — the counterpart of
+  `webMusicDeck.test.ts`, which that platform's deck did not have. The integration file above drives
+  it from outside (paths, volume products, interruption, degrade), which leaves exactly what the web
+  deck's own battery had found missing on its side: `position()`'s null-when-idle contract, currently
+  unobservable because the player only reads the LIVE deck, and the small `playing` state machine
+  deciding whether `stop`/`setPaused`/`position` do anything. It also pins the one behaviour with no
+  web counterpart — restarting an unchanged `src` via `stop()` then `play()`, because assigning `src`
+  is the only rewind `InnerAudioContext` offers, and that IS how the second deck begins the loop wrap.
 - **`audio/musicPipeline.test.ts`** (web) and **`audio/wechatMusicLoad.test.ts`** (WeChat) —
   integration, in the shape `audioPipeline.test.ts`/`wechatAudioLoad.test.ts` established. Real
   director → real backend → real player → real deck, with only the `AudioContext` / `Audio` element /
@@ -279,6 +301,18 @@ link is silence — and silence is what a month of green tests looked like.
   genuine EQUIVALENT mutant — deleting the biome→track lookup changes nothing, because the only biome
   that exists maps to `dungeon.ember`, which IS the fallback. That one is recorded in the test rather
   than hidden, with the assertion that will start biting the moment a second biome loop ships.
+- **A further 45 mutations on 2026-09-01**, over the two new suites and the walker's own fixes: 41
+  caught, and the 4 survivors are of two shapes, both the same kind as the biome one above — a clamp
+  on `setBusVolume` that `applyVolume` clamps again (with its twin in `WeChatAudio.setMusicVolume`),
+  and the frame-length guard, which no input can reach in either the old or the fixed form. All
+  recorded in the tests as equivalent mutants rather than killed by reaching into private fields. **The battery earned its keep twice.** Once by catching a
+  test that pinned nothing — the new web volume case used `0.5`, which is the field's own default, so
+  deleting the assignment under test survived it. And once by refuting a change I had already made:
+  the frame-length guard was deleted as unreachable dead code, and the mutant that disables the
+  reserved-index check then **hung the suite** instead of failing a test, because a free-format index
+  gives a frame length of 0 and `i += len` never advances. The guard is back, and the lesson
+  generalises past audio: an unreachable branch that turns a hang into a thrown error earns its line,
+  and when a guard looks dead the question is what happens to the LOOP without it.
 
 ### Still design, not built
 

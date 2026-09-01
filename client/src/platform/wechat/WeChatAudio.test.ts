@@ -186,8 +186,36 @@ describe('WeChatAudio — preload() (design/11 boot preload)', () => {
 });
 
 describe('WeChatAudio — setMusicVolume', () => {
-  it('accepts a value and does nothing (music not authored yet)', () => {
+  // As on web, the substance of this method — the settings volume multiplied into each stream's
+  // own `.volume` alongside that deck's crossfade level, applied to decks built later, and a
+  // muted stream that keeps running — is owned by `audio/wechatMusicLoad.test.ts`, which has
+  // both real files and a `wx` fake. Until 2026-09-01 the case here asserted "accepts a value
+  // and does nothing (music not authored yet)": no longer true, and green.
+
+  it('does not open a stream — the volume arrives at boot, before the subpackage has landed', () => {
+    // The decks are built lazily on the first `updateMusic` for a reason: their `src` lives in
+    // the `music` subpackage and does not resolve until `wx.loadSubpackage` has run. Opening
+    // them from the settings slider instead would put two `InnerAudioContext` streams — and two
+    // onError logs — ahead of the pack that makes them playable.
+    const createInnerAudioContext = vi.fn();
+    vi.stubGlobal('wx', { createWebAudioContext: () => new FakeAudioContext(), createInnerAudioContext });
     const audio = new WeChatAudio();
+    audio.setMusicVolume(0.5);
+    expect(createInnerAudioContext).not.toHaveBeenCalled();
+    expect(instances).toHaveLength(0); // nor the SFX context, which is a separate path entirely
+  });
+
+  // Not asserted, because it cannot be: this method's own `Math.max/min` clamp is unobservable.
+  // Every value it stores reaches the streams through `WeChatMusicDeck.setBusVolume`, which
+  // clamps again, and through `applyVolume`, which clamps the product — so deleting the clamp
+  // here changes nothing any test can see. An equivalent mutant, left recorded rather than
+  // killed by reaching into a private field. `weChatMusicDeck.test.ts` owns the clamp that does
+  // the work.
+
+  it('survives being told a volume on a base library with no streaming API at all', () => {
+    vi.stubGlobal('wx', { createWebAudioContext: () => new FakeAudioContext() });
+    const audio = new WeChatAudio();
+    audio.updateMusic('menu', 16); // takes the degrade path: no decks exist and none will
     expect(() => audio.setMusicVolume(0.5)).not.toThrow();
   });
 });
