@@ -6,6 +6,7 @@ import { ParticleSystem } from './Particles';
 import { LightRegistry, makeLightBuffer, type ActiveLight } from './lighting';
 import { activeQuality } from '../../render/quality';
 import { cullGroundLayer } from '../scene/groundCulling';
+import { acquireSlashArc, releaseSlashArc, type SlashArc, type SlashArcPose } from './slashArc';
 
 const FX_LIFE_MS = 170; // flash/trail lifetime (the default for a `_life`-tagged fx child)
 /** Muzzle-flare lifetime. Much shorter than a flash: a gun's flare is a single frame of real
@@ -93,6 +94,9 @@ export class FxController {
   private readonly litArea = new Rectangle(0, 0, 1, 1);
   /** Reused scratch for `LightRegistry.snapshot` — one slot per shader light slot. */
   private readonly lightBuffer: ActiveLight[] = makeLightBuffer(MAX_SCENE_LIGHTS);
+  /** Melee sector arcs currently sweeping (`slashArc`). Tracked in a list of its own rather than
+   *  through `_life` because each one animates its geometry, not just its alpha — `updateFx`. */
+  private readonly slashes: SlashArc[] = [];
   private shakeTrauma = 0;
   private hitStopMs = 0;
   /** Current world→screen zoom applied in updateCamera — CommandBuilder needs this
@@ -210,6 +214,29 @@ export class FxController {
     this.lights.addTransient({ x, y, color, radius: 46, intensity: 0.85 }, MUZZLE_FLARE_MS);
   }
 
+  /**
+   * The melee counterpart of `muzzleFlare`: the swing's own SECTOR, swept once at the weapon's
+   * true arc and reach (2026-09-02, asked for: an fx that shows the attack's sector). See
+   * `fx/slashArc.ts` for the geometry and for why this one fx is a Mesh.
+   *
+   * Kept off the `_life` machinery below on purpose. That loop fades alpha and SCALES a child by
+   * `_grow`, and scaling an arc would grow it past the reach it exists to state — the sweep is
+   * this fx's animation, and it owns its own clock (`SlashArc.advance`).
+   */
+  slashArc(pose: SlashArcPose): void {
+    const arc = acquireSlashArc(pose);
+    this.layers.fx.addChild(arc);
+    this.slashes.push(arc);
+    // The room lights up while the swing is out, the same pairing `flash`/`muzzleFlare` make.
+    // It starts on the ANNOUNCE rather than on the strike (a transient light has no delay of its
+    // own), so the wind-up gets the leading edge of the decay — which is the right way round: a
+    // light that snapped on at the strike would flash after the blade had already moved.
+    this.lights.addTransient(
+      { x: pose.x, y: pose.y, color: pose.color, radius: pose.outerPx * 1.5, intensity: 0.6 },
+      pose.delayMs + pose.sweepMs + pose.fadeMs,
+    );
+  }
+
   /** Fade/expire every `_life`-tagged fx child, step ambient dust, and decay the
    *  chromatic pulse + shake trauma. `dustBounds` is undefined outside a live room
    *  (dungeon mode resizes per room, ROADMAP 1.3); `dustRate` is particles/sec (0
@@ -230,6 +257,16 @@ export class FxController {
         this.layers.fx.removeChild(child);
         child.destroy();
       }
+    }
+
+    // Melee sector arcs, each stepping its own sweep. Walked backwards so a finished one can be
+    // spliced out mid-loop, and handed back to the pool rather than destroyed (`slashArc.ts`).
+    for (let i = this.slashes.length - 1; i >= 0; i--) {
+      const arc = this.slashes[i]!;
+      if (arc.advance(dt)) continue;
+      this.slashes.splice(i, 1);
+      this.layers.fx.removeChild(arc);
+      releaseSlashArc(arc);
     }
 
     this.particles.update(dt, dustRate, dustBounds);
@@ -402,6 +439,13 @@ export class FxController {
   resetForNewRun(): void {
     this.particles.clear();
     this.lights.clear();
+    // A `_life` glow is small and gone in 170 ms, so those are left to expire across a run
+    // boundary; a sector arc is the size of a weapon's whole reach and lasts longer, and one
+    // hanging over the first frames of a new run reads as that run's own swing.
+    for (const arc of this.slashes.splice(0)) {
+      this.layers.fx.removeChild(arc);
+      releaseSlashArc(arc);
+    }
     this.shakeTrauma = 0;
     this.hitStopMs = 0;
     this.chromatic.amount = 0;

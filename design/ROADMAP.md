@@ -707,11 +707,15 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 - **09-02** [Standing next to loot stops disarming the player](roadmap/14-2026-09-02-muzzle.md#standing-next-to-loot-stops-disarming-the-player-2026-09-02-client-only-no-engine-bump) — The weapon-pickup panel opens mid-fight and gated the whole fire button, so a player standing in their own loot could not shoot; it swallows the presses that land on it instead. `ui` `test` `docs`
 - **09-02** [The swing that was one frame long, because the field that said otherwise was never read](roadmap/14-2026-09-02-muzzle.md#the-swing-that-was-one-frame-long-because-the-field-that-said-otherwise-was-never-read-2026-09-02-engine--client-engine_version-5253) — `MeleeSpec.swingSec` was authored on all seven blades, documented as design/07's active hit window, and read by nothing; the window is now real, the parry shares it, and `prngCursors` proves the crit still rolls once. `engine` `render` `test` `docs`
 
+**[2026-09-02 — the melee sector](roadmap/15-2026-09-02-melee-sector.md)**
+
+- **09-02** [The swing shows the sector it actually hits](roadmap/15-2026-09-02-melee-sector.md#the-swing-shows-the-sector-it-actually-hits-2026-09-02-client-only-no-engine-bump) — The animation's amplitude was one hardcoded 68° sweep against authored sectors from 60° to 220°, and the parry reads that same arc; the weapon now sizes and paces the swing, and a baked-brush Mesh draws the sector it really hits. `render` `test` `docs`
+
 ## The work log — by theme
 
-The same 86 entries, grouped. An entry with more than one tag appears more than once.
+The same 92 entries, grouped. An entry with more than one tag appears more than once.
 
-**`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(45)*
+**`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(47)*
 
 - 08-12 [Live-play bug-fix pass](roadmap/02-2026-08-12--08-15.md#live-play-bug-fix-pass--2026-08-12-user-report-from-a-dungeon-mode-screenshot)
 - 08-12 [Viewport-fill bug-fix pass](roadmap/02-2026-08-12--08-15.md#viewport-fill-bug-fix-pass--2026-08-12)
@@ -760,6 +764,7 @@ The same 86 entries, grouped. An entry with more than one tag appears more than 
 - 09-02 [The gun steps onto the line its own bullets fly along](roadmap/14-2026-09-02-muzzle.md#the-gun-steps-onto-the-line-its-own-bullets-fly-along-2026-09-02-client-only)
 - 09-02 [The character gets an attack, and the sim finally says when](roadmap/14-2026-09-02-muzzle.md#the-character-gets-an-attack-and-the-sim-finally-says-when-2026-09-02-engine--client--art-engine_version-5152)
 - 09-02 [The other three clips finally get a signal](roadmap/14-2026-09-02-muzzle.md#the-other-three-clips-finally-get-a-signal-2026-09-02-client-only)
+- 09-02 [The swing shows the sector it actually hits](roadmap/15-2026-09-02-melee-sector.md#the-swing-shows-the-sector-it-actually-hits-2026-09-02-client-only-no-engine-bump)
 - 09-02 [The swing that was one frame long, because the field that said otherwise was never read](roadmap/14-2026-09-02-muzzle.md#the-swing-that-was-one-frame-long-because-the-field-that-said-otherwise-was-never-read-2026-09-02-engine--client-engine_version-5253)
 
 **`art`** — authored assets and the art pipeline *(15)*
@@ -796,7 +801,7 @@ The same 86 entries, grouped. An entry with more than one tag appears more than 
 - 08-27 [The floor stops at its own walls](roadmap/10-2026-08-27.md#the-floor-stops-at-its-own-walls-2026-08-27-client-only)
 - 08-31 [The re-measurement that its own control threw away](roadmap/11-2026-08-28--08-31.md#the-re-measurement-that-its-own-control-threw-away-2026-08-31-docs--measurement-only)
 
-**`engine`** — the deterministic sim — anything that can bump `ENGINE_VERSION` *(17)*
+**`engine`** — the deterministic sim — anything that can bump `ENGINE_VERSION` *(18)*
 
 - 08-04 [Room & door model — co-resident PvE floors](roadmap/01-2026-07-24--08-05.md#room--door-model--co-resident-pve-floors--2026-08-04-engine_version-3334)
 - 08-12 [Boss-room instant-extract bug fix](roadmap/02-2026-08-12--08-15.md#boss-room-instant-extract-bug-fix--2026-08-12)
@@ -814,6 +819,7 @@ The same 86 entries, grouped. An entry with more than one tag appears more than 
 - 08-31 [The rules were right and the bug was somewhere else](roadmap/11-2026-08-28--08-31.md#the-rules-were-right-and-the-bug-was-somewhere-else-2026-08-31-engine--client-engine_version-50)
 - 08-31 [A seed was never a repro, and nothing had ever recorded a run](roadmap/11-2026-08-28--08-31.md#a-seed-was-never-a-repro-and-nothing-had-ever-recorded-a-run-2026-08-31-engine--client)
 - 09-01 [Two days of features, audited for what the tests did not say](roadmap/13-2026-09-01-asset-phases.md#two-days-of-features-audited-for-what-the-tests-did-not-say-2026-09-01-engine--client--build-engine_version-5051)
+- 09-02 [The swing that was one frame long, because the field that said otherwise was never read](roadmap/14-2026-09-02-muzzle.md#the-swing-that-was-one-frame-long-because-the-field-that-said-otherwise-was-never-read-2026-09-02-engine--client-engine_version-5253)
 - 09-02 [The character gets an attack, and the sim finally says when](roadmap/14-2026-09-02-muzzle.md#the-character-gets-an-attack-and-the-sim-finally-says-when-2026-09-02-engine--client--art-engine_version-5152)
 
 **`arena`** — the PvP launch map and its audit *(7)*
@@ -833,7 +839,7 @@ The same 86 entries, grouped. An entry with more than one tag appears more than 
 - 08-25 [The Seven Districts: the launch arena gets authored](roadmap/06-2026-08-25.md#the-seven-districts-the-launch-arena-gets-authored-2026-08-25-content)
 - 08-25 [The three parked rules that had only shipped half](roadmap/06-2026-08-25.md#the-three-parked-rules-that-had-only-shipped-half-2026-08-25-client--one-render-only-engine-field)
 
-**`test`** — coverage sweeps, gates, mutation batteries *(23)*
+**`test`** — coverage sweeps, gates, mutation batteries *(25)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 08-05 [Platform-layer test coverage pass](roadmap/01-2026-07-24--08-05.md#platform-layer-test-coverage-pass--2026-08-05-全部加测试)
@@ -856,9 +862,11 @@ The same 86 entries, grouped. An entry with more than one tag appears more than 
 - 09-02 [The gun steps onto the line its own bullets fly along](roadmap/14-2026-09-02-muzzle.md#the-gun-steps-onto-the-line-its-own-bullets-fly-along-2026-09-02-client-only)
 - 09-02 [The character gets an attack, and the sim finally says when](roadmap/14-2026-09-02-muzzle.md#the-character-gets-an-attack-and-the-sim-finally-says-when-2026-09-02-engine--client--art-engine_version-5152)
 - 09-02 [The other three clips finally get a signal](roadmap/14-2026-09-02-muzzle.md#the-other-three-clips-finally-get-a-signal-2026-09-02-client-only)
+- 09-02 [The swing shows the sector it actually hits](roadmap/15-2026-09-02-melee-sector.md#the-swing-shows-the-sector-it-actually-hits-2026-09-02-client-only-no-engine-bump)
 - 09-02 [The four clips finally get a sound](roadmap/14-2026-09-02-muzzle.md#the-four-clips-finally-get-a-sound-2026-09-02-client--assets--tooling-no-engine-bump)
 - 09-02 [The victory sting stops playing over defeat screens](roadmap/14-2026-09-02-muzzle.md#the-victory-sting-stops-playing-over-defeat-screens-2026-09-02-client-only-no-engine-bump)
 - 09-02 [Standing next to loot stops disarming the player](roadmap/14-2026-09-02-muzzle.md#standing-next-to-loot-stops-disarming-the-player-2026-09-02-client-only-no-engine-bump)
+- 09-02 [The swing that was one frame long, because the field that said otherwise was never read](roadmap/14-2026-09-02-muzzle.md#the-swing-that-was-one-frame-long-because-the-field-that-said-otherwise-was-never-read-2026-09-02-engine--client-engine_version-5253)
 
 **`audio`** — cues, music, the engine to sound channel *(5)*
 
@@ -906,7 +914,7 @@ The same 86 entries, grouped. An entry with more than one tag appears more than 
 - 09-01 [Two days of features, audited for what the tests did not say](roadmap/13-2026-09-01-asset-phases.md#two-days-of-features-audited-for-what-the-tests-did-not-say-2026-09-01-engine--client--build-engine_version-5051)
 - 09-02 [The four clips finally get a sound](roadmap/14-2026-09-02-muzzle.md#the-four-clips-finally-get-a-sound-2026-09-02-client--assets--tooling-no-engine-bump)
 
-**`docs`** — design docs and this log itself *(19)*
+**`docs`** — design docs and this log itself *(21)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-02 [Documentation pass](roadmap/01-2026-07-24--08-05.md#documentation-pass--2026-08-02)
@@ -924,9 +932,11 @@ The same 86 entries, grouped. An entry with more than one tag appears more than 
 - 09-01 [Two days of features, audited for what the tests did not say](roadmap/13-2026-09-01-asset-phases.md#two-days-of-features-audited-for-what-the-tests-did-not-say-2026-09-01-engine--client--build-engine_version-5051)
 - 09-02 [The gun steps onto the line its own bullets fly along](roadmap/14-2026-09-02-muzzle.md#the-gun-steps-onto-the-line-its-own-bullets-fly-along-2026-09-02-client-only)
 - 09-02 [The other three clips finally get a signal](roadmap/14-2026-09-02-muzzle.md#the-other-three-clips-finally-get-a-signal-2026-09-02-client-only)
+- 09-02 [The swing shows the sector it actually hits](roadmap/15-2026-09-02-melee-sector.md#the-swing-shows-the-sector-it-actually-hits-2026-09-02-client-only-no-engine-bump)
 - 09-02 [The four clips finally get a sound](roadmap/14-2026-09-02-muzzle.md#the-four-clips-finally-get-a-sound-2026-09-02-client--assets--tooling-no-engine-bump)
 - 09-02 [The victory sting stops playing over defeat screens](roadmap/14-2026-09-02-muzzle.md#the-victory-sting-stops-playing-over-defeat-screens-2026-09-02-client-only-no-engine-bump)
 - 09-02 [Standing next to loot stops disarming the player](roadmap/14-2026-09-02-muzzle.md#standing-next-to-loot-stops-disarming-the-player-2026-09-02-client-only-no-engine-bump)
+- 09-02 [The swing that was one frame long, because the field that said otherwise was never read](roadmap/14-2026-09-02-muzzle.md#the-swing-that-was-one-frame-long-because-the-field-that-said-otherwise-was-never-read-2026-09-02-engine--client-engine_version-5253)
 
 **`net`** — matchmaking, sockets, reconnect *(1)*
 

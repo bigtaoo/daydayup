@@ -1707,15 +1707,20 @@ describe('Actor.onAttack — the firing recoil reaches the skin', () => {
     expect(fire).toHaveBeenCalledTimes(1);
   });
 
-  it('forwards the KIND through, not just the fact — a swing must not recoil like a gun', () => {
+  it('forwards the KIND and the WEAPON through, not just the fact', () => {
     // One line of wiring, but it is the line the whole unified rule funnels through: the two
-    // envelopes are opposite motions (`render/rigAttackMotion.ts`), so a dropped argument would
-    // make every sword swing shove the character backwards.
+    // envelopes are opposite motions (`render/rigAttackMotion.ts`), so a dropped `kind` would
+    // make every sword swing shove the character backwards — and since 2026-09-02 a dropped
+    // `swing` would silently fall the blade back to the starter saber's sector on every weapon
+    // in the game, which is exactly the bug that pass fixed.
     skinRegistryMocks.loaded = loadedOrbCoreRig();
     const a = new Actor('player', 20, undefined, false, 'char_vanguard');
     const attack = vi.spyOn((a as unknown as { skin: { attack: () => void } }).skin, 'attack');
     a.onAttack('melee');
-    expect(attack).toHaveBeenCalledWith('melee');
+    expect(attack).toHaveBeenCalledWith('melee', undefined);
+    const shape = { arcDeg: 220, recoveryMs: 667 };
+    a.onAttack('melee', shape);
+    expect(attack).toHaveBeenLastCalledWith('melee', shape);
   });
 
   it('is safe on a placeholder skin — the first frames of every run render as one', () => {

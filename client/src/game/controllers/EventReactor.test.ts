@@ -6,7 +6,7 @@
  * HudView.test.ts.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { pxToFp, type GameEvent, type GameState } from '@dd/engine';
+import { pxToFp, WEAPON_SIM_BY_ID, type GameEvent, type GameState, type MeleeSimSpec } from '@dd/engine';
 import { createGameState } from '@dd/engine/state/GameState';
 import type { ArenaMap } from '@dd/engine/content/arenas';
 import { EventReactor, type EventReactorHost } from './EventReactor';
@@ -15,6 +15,9 @@ import { HudView } from '../ui/HudView';
 import { Layers } from '../scene/layers';
 import type { AudioBus } from '../../platform/types';
 import { setLocale, resetLocaleForTests } from '../../i18n';
+import { THEME } from '../theme';
+import type { SlashArcPose } from '../fx/slashArc';
+import { swingSchedule, type SwingShape } from '../../render/rigAttackMotion';
 
 // `FxController`'s real constructor builds WebGL filters (VignetteFilter/
 // ChromaticAberrationFilter), which need an actual `document`/GL context this repo's
@@ -25,6 +28,7 @@ function fakeFx(): FxController {
   return {
     flash: vi.fn(),
     muzzleFlare: vi.fn(),
+    slashArc: vi.fn(),
     addShake: vi.fn(),
     addHitStop: vi.fn(),
     pulseChromatic: vi.fn(),
@@ -727,7 +731,7 @@ describe('EventReactor — a shot leaves the shooter, not the event position', (
     const { reactor, host } = reactorWith(actor);
     reactor.consume([SWING]);
     expect(host.actorAt).toHaveBeenCalledWith(7);
-    expect(actor.onAttack).toHaveBeenCalledWith('melee');
+    expect(actor.onAttack).toHaveBeenCalledWith('melee', undefined);
   });
 
   it('a swing draws no muzzle fx and costs no cue — a blade has no muzzle', () => {
@@ -775,7 +779,10 @@ describe('EventReactor — a shot leaves the shooter, not the event position', (
     new EventReactor(fakeFx(), hud, fakeAudio(), host).consume([
       { type: 'melee_swing', ownerId: 9, gx: pxToFp(0), gy: pxToFp(0), facing: 0 } as GameEvent,
     ]);
-    expect(b.onAttack).toHaveBeenCalledWith('melee');
+    // `undefined` is the second argument: `fakeHost().activeState()` is null, so no weapon can
+    // be resolved and the rig falls back to `DEFAULT_SWING`. The weapon-carrying path has its
+    // own block at the bottom of this file.
+    expect(b.onAttack).toHaveBeenCalledWith('melee', undefined);
     expect(a.onAttack).not.toHaveBeenCalled();
   });
 
@@ -840,5 +847,122 @@ describe('EventReactor — a multi-pellet volley in one frame', () => {
     expect(fx.muzzleFlare).toHaveBeenCalledTimes(5);
     expect(audio.play).toHaveBeenCalledTimes(1);
     expect(audio.play).toHaveBeenCalledWith('muzzle', 5);
+  });
+});
+
+/**
+ * The melee sector arc's WIRING (2026-09-02). `fx/slashArc.test.ts` owns the geometry; what is
+ * asserted here is the translation, which is the half that can silently be wrong: the event
+ * carries no weapon, so this reactor resolves the swinger's spec out of `GameState` and converts
+ * brad→rad, fp→px and ticks→ms on the way to the fx. Every one of those conversions is a place a
+ * plausible-looking arc can end up at the wrong size.
+ */
+describe('EventReactor — the melee swing carries the weapon that swung', () => {
+  const SABER = WEAPON_SIM_BY_ID.saber as MeleeSimSpec;
+  const HAMMER = WEAPON_SIM_BY_ID.hammer as MeleeSimSpec;
+  const SPEAR = WEAPON_SIM_BY_ID.spear as MeleeSimSpec;
+
+  /** A state holding one player at `id` with `spec` equipped — the narrow slice `meleeSwinger`
+   *  reads (`players[].id/radius/weapon.spec`), faked rather than driven through a real engine
+   *  because what is under test is the translation, not the sim. */
+  function stateWith(id: number, spec: MeleeSimSpec | undefined): GameState {
+    return {
+      players: [{ id, radius: pxToFp(16), weapon: spec ? { spec } : null }],
+    } as unknown as GameState;
+  }
+
+  function swingWith(spec: MeleeSimSpec | undefined, facing = 0) {
+    const fx = fakeFx();
+    const actor = { onHurt: vi.fn(), onAttack: vi.fn(), muzzlePos: vi.fn(() => null), x: 100, y: 200 };
+    const host = {
+      ...fakeHost(),
+      activeState: () => stateWith(7, spec),
+      actorAt: vi.fn(() => actor),
+    };
+    const hud = new HudView();
+    hud.build(new Layers(), { w: 1280, h: 720 });
+    new EventReactor(fx, hud, fakeAudio(), host).consume([
+      { type: 'melee_swing', ownerId: 7, gx: pxToFp(80), gy: pxToFp(120), facing } as GameEvent,
+    ]);
+    const pose = (fx.slashArc as unknown as { mock: { calls: [SlashArcPose][] } }).mock.calls[0]?.[0];
+    return { fx, actor, pose };
+  }
+
+  it('draws the arc at the weapon own sector and reach, not at a constant', () => {
+    const { pose } = swingWith(SABER);
+    // 162° authored → 81° each side, and 1.44 grid → 46 px. Both restated from
+    // `weaponSpecs/starter.ts` rather than recomputed from the spec, so a spec change has to be
+    // acknowledged here instead of the assertion following it silently.
+    expect(pose!.arcHalfRad).toBeCloseTo((81 * Math.PI) / 180, 3);
+    expect(pose!.outerPx).toBeCloseTo(46, 0);
+    expect(pose!.innerPx).toBeCloseTo(16, 6); // the actor's own radius — the arc's inner edge
+  });
+
+  it('gives the hammer a wider arc and the spear a longer reach — the specs, not the animation', () => {
+    // The two extremes of the roster, and the concrete statement of what this pass fixed: they
+    // used to be drawn identically.
+    const hammer = swingWith(HAMMER).pose!;
+    const spear = swingWith(SPEAR).pose!;
+    expect(hammer.arcHalfRad).toBeGreaterThan(spear.arcHalfRad * 3);
+    expect(spear.outerPx).toBeGreaterThan(hammer.outerPx);
+  });
+
+  it('anchors the arc on the SIM swing origin, lifted to blade height', () => {
+    // Not on the drawn body (which `muzzleFlare` uses): `meleeArc` measures `range` from the
+    // actor's own gx/gy, and this fx exists to agree with the hit test.
+    const { pose } = swingWith(SABER);
+    expect(pose!.x).toBeCloseTo(80, 6);
+    expect(pose!.y).toBeCloseTo(120 - 12, 6);
+  });
+
+  it('sweeps with the mirrored body when the swing points left', () => {
+    expect(swingWith(SABER, 0).pose!.flipX).toBe(1);
+    // Half a turn in brad — `facingFromAngle` reads the cosine's sign, so this is the mirror case.
+    expect(swingWith(SABER, 32768).pose!.flipX).toBe(-1);
+  });
+
+  it('tints the arc by element, and falls back to the blade glow for physical', () => {
+    expect(swingWith(SABER).pose!.color).toBe(THEME.colors.swordGlow); // the saber is physical
+    expect(swingWith(WEAPON_SIM_BY_ID.emberblade as MeleeSimSpec).pose!.color)
+      .toBe(THEME.colors.statusBurn);
+  });
+
+  it('schedules the arc inside the strike window of that weapon own envelope', () => {
+    const { pose } = swingWith(SABER);
+    const schedule = swingSchedule({ arcDeg: 162, recoveryMs: (11 * 1000) / 30 });
+    expect(pose!.delayMs).toBeCloseTo(schedule.strikeStartMs, 6);
+    expect(pose!.sweepMs).toBeCloseTo(schedule.strikeEndMs - schedule.strikeStartMs, 6);
+    // The whole fx has to be gone before the next swing of a held trigger starts one.
+    expect(pose!.delayMs + pose!.sweepMs + pose!.fadeMs).toBeLessThan((11 * 1000) / 30);
+  });
+
+  it('hands the rig the same weapon shape it hands the arc', () => {
+    // One spec, two consumers. If these ever disagreed the blade and the light on the ground
+    // would sweep different arcs at different speeds, and each on its own would look fine.
+    const { actor } = swingWith(HAMMER);
+    const shape = (actor.onAttack as unknown as { mock: { calls: [string, SwingShape][] } })
+      .mock.calls[0]![1]!;
+    expect(shape.arcDeg).toBeCloseTo(220, 0);
+    expect(shape.recoveryMs).toBeCloseTo((20 * 1000) / 30, 0);
+  });
+
+  it('animates but draws no sector for a swinger whose weapon cannot be resolved', () => {
+    // The normal case for an enemy: `meleeArc` only runs over `state.players`, and no enemy in
+    // the roster carries a melee weapon. The clip and the cue must still fire — a swing that
+    // animates nothing is worse than one drawn at a default size.
+    const { fx, actor } = swingWith(undefined);
+    expect(actor.onAttack).toHaveBeenCalledWith('melee', undefined);
+    expect(fx.slashArc).not.toHaveBeenCalled();
+  });
+
+  it('draws no sector on a menu frame draining a stale swing', () => {
+    // `activeState()` is null between runs, and the same queue is drained there.
+    const fx = fakeFx();
+    const hud = new HudView();
+    hud.build(new Layers(), { w: 1280, h: 720 });
+    new EventReactor(fx, hud, fakeAudio(), fakeHost()).consume([
+      { type: 'melee_swing', ownerId: 7, gx: pxToFp(0), gy: pxToFp(0), facing: 0 } as GameEvent,
+    ]);
+    expect(fx.slashArc).not.toHaveBeenCalled();
   });
 });

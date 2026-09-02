@@ -55,9 +55,12 @@ export const RECOIL_BODY_PX = 3;
 
 // ── Melee: the swing ──────────────────────────────────────────────────────────
 
-/** Total time one swing takes, ms. Sits inside the starter saber's own recovery
+/** Total time one swing takes, ms, FOR THE STARTER SABER — the reference shape every constant
+ *  in this section was tuned against, and the fallback for a caller with no weapon to hand
+ *  (see `DEFAULT_SWING`). Sits inside the saber's own recovery
  *  (`SABER_SIM.swingCooldownTicks` = 11 ticks = ~367 ms), so a held trigger reads as
- *  discrete swings with a beat between them rather than a continuous blur. */
+ *  discrete swings with a beat between them rather than a continuous blur. Any other weapon
+ *  scales off its own recovery in `swingSchedule`. */
 export const SWING_MS = 260;
 /** Fraction of `SWING_MS` spent winding UP (rotating back past the aim), and the fraction by
  *  which the strike itself has landed. The rest is the recovery back to the aim line. */
@@ -79,8 +82,87 @@ export const SWING_LUNGE_PX = 5;
  *  without it the lunge starts from a dead stop and reads as a twitch rather than a swing. */
 const SWING_WINDUP_LUNGE = 0.35;
 
+// ── Melee: the weapon the swing belongs to ────────────────────────────────────
+//
+// Why the swing is data-driven at all (2026-09-02, asked directly: is the melee attack
+// animation's amplitude tied to the weapon's own attack sector? — it was not). The authored sectors
+// from the spear's 60° to the hammer's 220°, a 3.7x spread, against ONE hardcoded 68° sweep: the
+// spear's animation was WIDER than the sector it can actually hit in, and the hammer drew 31% of
+// its own. That is not a missing flourish — the same `arcHalf` also decides which bullets a swing
+// deflects (`DeflectSystem` reads the identical field), so a fixed sweep actively misinformed the
+// player about their own parry. The weapon now sets the SIZE and the SPEED of the motion; the
+// motion keeps its own shape (the phase split, the wind-up share, the lunge), which is a property
+// of how a body swings, not of what it is holding.
+
+/** The weapon-side inputs the swing's shape is derived from — the two `MeleeSimSpec` fields that
+ *  say how wide and how slow the attack is, restated in render units so this file needs no
+ *  engine import (brad/tick conversion belongs at the read site, `game/coords.ts`). */
+export interface SwingShape {
+  /** The weapon's FULL hit sector, degrees — `MeleeSimSpec.arcHalf` × 2. */
+  arcDeg: number;
+  /** The weapon's recovery between swings, ms — `swingCooldownTicks` at the sim's tick rate. */
+  recoveryMs: number;
+}
+
+/** The starter saber (`weaponSpecs/starter.ts`: 162°, 11 ticks @ 30 Hz). Both scale factors below
+ *  are defined AS the ratio between this shape and the tuned constants above, so
+ *  `swingSchedule(DEFAULT_SWING)` — and therefore every caller with no spec to hand, i.e. the
+ *  Graphics placeholder and any enemy, none of which carry a melee weapon — reproduces the
+ *  pre-2026-09-02 envelope exactly rather than approximately. */
+export const DEFAULT_SWING: SwingShape = { arcDeg: 162, recoveryMs: (11 * 1000) / 30 };
+
+const SWEEP_DEG = SWING_ARC_DEG - SWING_WINDUP_DEG; // 68° — the saber's full travel
+const SWEEP_PER_ARC_DEG = SWEEP_DEG / DEFAULT_SWING.arcDeg;
+const WINDUP_SHARE = -SWING_WINDUP_DEG / SWEEP_DEG;
+const MS_PER_RECOVERY_MS = SWING_MS / DEFAULT_SWING.recoveryMs;
+/** Bounds on the DERIVED travel, degrees. The blade is drawn from an aim-tracking socket, so a
+ *  sweep much past ~100° swings it through the body rather than around it; and a sector narrow
+ *  enough to derive under ~26° stops reading as a swing at the ~13-20 px an actor occupies. The
+ *  sector FX (`game/fx/slashArc.ts`) shows the weapon's TRUE arc, unclamped — these two bounds
+ *  are about the body's motion staying legible, not about hiding the sector's real size. */
+const SWEEP_MIN_DEG = 26;
+const SWEEP_MAX_DEG = 104;
+/** Bounds on the derived envelope length, ms. The upper one binds on the hammer (667 ms recovery
+ *  would derive 473 ms), where a longer arc than this reads as slow motion rather than as weight. */
+const SWING_MIN_MS = 130;
+const SWING_MAX_MS = 400;
+
+/** One swing's fully-derived timing and travel. Shared with the sector FX, which schedules
+ *  itself off `strikeStartMs`/`strikeEndMs` so the arc on the ground and the blade in the air
+ *  are the same event rather than two effects that happen to overlap. */
+export interface SwingSchedule {
+  /** Total envelope length, ms. */
+  totalMs: number;
+  /** Degrees BEHIND the aim line the module cocks to (negative). */
+  windupDeg: number;
+  /** Degrees PAST the aim line the strike carries to (positive). */
+  strikeDeg: number;
+  /** ms into the envelope at which the blade leaves the cock and starts crossing the aim line. */
+  strikeStartMs: number;
+  /** ms into the envelope at which it reaches `strikeDeg` — the sector is fully swept by here. */
+  strikeEndMs: number;
+}
+
+/** Derive one swing's schedule. Pure, and cheap enough to call per swing (two clamps and four
+ *  multiplies) — nothing caches it, so a weapon retune needs no invalidation anywhere. */
+export function swingSchedule(shape: SwingShape = DEFAULT_SWING): SwingSchedule {
+  const sweep = clamp(shape.arcDeg * SWEEP_PER_ARC_DEG, SWEEP_MIN_DEG, SWEEP_MAX_DEG);
+  const totalMs = clamp(shape.recoveryMs * MS_PER_RECOVERY_MS, SWING_MIN_MS, SWING_MAX_MS);
+  return {
+    totalMs,
+    windupDeg: -sweep * WINDUP_SHARE,
+    strikeDeg: sweep * (1 - WINDUP_SHARE),
+    strikeStartMs: totalMs * SWING_WINDUP,
+    strikeEndMs: totalMs * SWING_STRIKE,
+  };
+}
+
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * t;
+}
+
+function clamp(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v;
 }
 
 /**
@@ -96,11 +178,18 @@ function lerp(a: number, b: number, t: number): number {
 export class AttackMotion {
   private ms = 0;
   private kind: AttackKind = 'ranged';
+  /** The swing currently in flight, re-derived by each melee `kick`. Held rather than
+   *  recomputed per getter so all four read sites of one frame agree even if a weapon swap
+   *  lands between them. */
+  private swing: SwingSchedule = swingSchedule();
 
-  /** An attack just left this rig — start (or restart) the envelope for that kind. */
-  kick(kind: AttackKind): void {
+  /** An attack just left this rig — start (or restart) the envelope for that kind. `shape` is
+   *  the melee weapon that swung; omitted (a shot, or a caller with no melee spec) it falls
+   *  back to `DEFAULT_SWING`, the starter saber's own shape. */
+  kick(kind: AttackKind, shape?: SwingShape): void {
     this.kind = kind;
-    this.ms = kind === 'melee' ? SWING_MS : RECOIL_MS;
+    if (kind === 'melee') this.swing = swingSchedule(shape);
+    this.ms = kind === 'melee' ? this.swing.totalMs : RECOIL_MS;
   }
 
   /** Advance by one render frame's `dt` (ms). Safe to call with 0. */
@@ -113,7 +202,7 @@ export class AttackMotion {
    *  second flag (every public getter below already returns a resting value in that case). */
   private get progress(): number {
     if (this.ms <= 0) return -1;
-    return 1 - this.ms / (this.kind === 'melee' ? SWING_MS : RECOIL_MS);
+    return 1 - this.ms / (this.kind === 'melee' ? this.swing.totalMs : RECOIL_MS);
   }
 
   /** The RANGED recoil envelope: 0 at rest, 1 at the peak of the kick. Zero for a swing, which
@@ -143,13 +232,15 @@ export class AttackMotion {
   }
 
   /** Extra rotation added to the weapon socket's aim angle this frame, DEGREES in canonical
-   *  (pre-mirror) space. Melee only — a gun does not sweep. */
+   *  (pre-mirror) space. Melee only — a gun does not sweep. Travel comes from the swinging
+   *  WEAPON (`swingSchedule`); the three phases and their split are the motion's own. */
   get swingDeg(): number {
     const u = this.progress;
     if (u < 0 || this.kind !== 'melee') return 0;
-    if (u < SWING_WINDUP) return lerp(0, SWING_WINDUP_DEG, u / SWING_WINDUP);
-    if (u < SWING_STRIKE) return lerp(SWING_WINDUP_DEG, SWING_ARC_DEG, (u - SWING_WINDUP) / (SWING_STRIKE - SWING_WINDUP));
-    return lerp(SWING_ARC_DEG, 0, (u - SWING_STRIKE) / (1 - SWING_STRIKE));
+    const { windupDeg, strikeDeg } = this.swing;
+    if (u < SWING_WINDUP) return lerp(0, windupDeg, u / SWING_WINDUP);
+    if (u < SWING_STRIKE) return lerp(windupDeg, strikeDeg, (u - SWING_WINDUP) / (SWING_STRIKE - SWING_WINDUP));
+    return lerp(strikeDeg, 0, (u - SWING_STRIKE) / (1 - SWING_STRIKE));
   }
 
   /** The swing's body-travel profile, same three phases as `swingDeg`: drift back through the

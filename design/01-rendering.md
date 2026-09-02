@@ -88,6 +88,24 @@ The things standing on the ground rather than the ground itself.
 3. **[shipped 2026-07-26]** Post-processing: bloom-lite (`BlurFilter` on the additive `fx` layer — a cheap approximation, not real multi-pass bloom), custom `VignetteFilter`/`ChromaticAberrationFilter` (`game/fx/filters.ts`, hand-written GLSL, no third-party filter package), hit-stop (brief sim-tick freeze, offline-only) + screen-shake (decaying trauma, `game/Game.ts`).
 4. **[shipped 2026-07-26]** Particle system: `game/fx/Particles.ts` — muzzle flames + shell casings (on `bullet_fired`), explosion debris (on enemy `death`), ambient drifting dust. Graphics-only (no textures), same events-queue-driven render-only discipline as the rest of this doc.
    **Re-anchored and re-shaped 2026-08-30** (user report *"枪口也没有射击特效，而且子弹出现的也很突兀"*): the fx for a shot were being burst at the event's own `gx/gy` — the SIM's muzzle, a flat `muzzleOffset` along the aim ray on the ground plane — lifted by a hardcoded 12 px. Measured on real shots in a live room that lands **12–14 world px** from the gun the rig actually draws, i.e. most of a body radius, so an fx that had existed since 2026-07-26 read as absent. They now anchor on `Actor.muzzlePos()`, the same drawn barrel tip the bullet view has spawned from since 2026-08-17 (`bullet_fired` gained an `ownerId` so render can find the shooter; fx-only, no `ENGINE_VERSION` bump). The radial `flash()` at that event was replaced by `FxController.muzzleFlare` — a directional cone + cross-flash + near-white core that COLLAPSES over 85 ms rather than expanding over 170, because at 170 ms a 200 ms-cooldown weapon has one on screen essentially permanently, which reads as a glowing barrel rather than as shots. `muzzleFlame` split into two populations (fast collimated embers, slow wide gas); a single mid-speed spray is the average of the two and looks like neither.
+   **The melee counterpart, 2026-09-02** (asked for directly: an fx that shows the attack's
+   fan-shaped range): a shot had a flare since 2026-07-26 and a swing had nothing, while the
+   sector a swing hits — and parries bullets in — varies 60°-220° across the roster and was on
+   screen nowhere. `game/fx/slashArc.ts` sweeps that sector once per swing, at the weapon's own
+   `arcHalf`/`range` resolved out of `GameState` (no event field, no `ENGINE_VERSION` bump),
+   scheduled off the same `swingSchedule` strike window the blade's own envelope uses. It is the
+   **only `Mesh` in this renderer**, and deliberately: the look needs alpha varying radially (a rim
+   at the reach limit, transparent at the body) AND along the sweep (hot at the blade, fading
+   through the wake), which is two dimensions, where a `Graphics` carries one — `shadeRamp.rampFill`
+   maps a linear gradient through a texture matrix and a matrix cannot express a polar mapping, so
+   the Graphics form of this is N constant-alpha sub-wedges, the banded shape `shadeRamp.ts` exists
+   to have deleted. Its brush is a `bakedField` (256×64 POT, mipmapped, premultiplied, tinted per
+   element, zero asset bytes) parametrised on fractions, so one bake serves every arc width without
+   stretching; the unswept part of the sector is drawn as zero-area triangles rather than at alpha
+   0, which is what gives the leading edge a hard boundary. Verified by an A/B `extract` diff on a
+   frozen live frame, not by looking — the arc sweeps around a character already wearing a cyan
+   shield shell, and no screenshot separates the two. See `design/12` and roadmap volume `15`.
+
 5. **[shipped 2026-08-03] Custom shaders — all four items done:** dissolve on death,
    outline, energy shield, heat-haze distortion. All four are hand-written-GLSL custom
    Pixi `Filter`s in `game/fx/filters.ts`, applied to `Skin.view` only (not the whole

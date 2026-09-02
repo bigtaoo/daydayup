@@ -3,7 +3,7 @@ import { RigSkin } from '../../render/RigSkin';
 import { getRigSkin } from '../../render/skinRegistry';
 import type { WeaponVisualKind } from '../../render/weaponSkins';
 import { resolveWeaponMount } from '../../render/rigWeaponMount';
-import type { AttackKind } from '../../render/rigAttackMotion';
+import type { AttackKind, SwingShape } from '../../render/rigAttackMotion';
 
 // Appearance layer (see design/02-entity-model.md).
 // A skin is either the Graphics placeholder (default — no real art preloaded
@@ -113,8 +113,8 @@ export class Skin {
    *  (`render/rigClipLayer.ts`) and the same aim-relative envelope, which only differs by kind
    *  (`render/rigAttackMotion.ts` — a gun kicks back, a blade sweeps forward). No-op on the
    *  Graphics placeholder, which has neither a clip nor a mounted module to move. */
-  attack(kind: AttackKind): void {
-    this.rig?.attack(kind);
+  attack(kind: AttackKind, swing?: SwingShape): void {
+    this.rig?.attack(kind, swing);
   }
 
   /** The other three engine signals a rig animates (`Actor.onHurt`/`onSpawn`/`onDeath`), each

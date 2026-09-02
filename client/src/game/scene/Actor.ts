@@ -8,6 +8,7 @@ import { Skin } from './Skin';
 import { drawHealthBar } from './healthBar';
 import { auraMaskOf, drawStatusAura, AURA_BIT_BURN } from './statusAura';
 import { BODY_LIFT_R, HOVER } from './actorLift';
+import type { SwingShape } from '../../render/rigAttackMotion';
 
 export type Faction = 'player' | 'enemy';
 export type WeaponKind = 'ranged' | 'melee';
@@ -419,8 +420,11 @@ export class Actor extends Entity {
   /** This actor just attacked (`EventReactor`, off `bullet_fired`/`melee_swing`'s `ownerId` —
    *  design/08's one engine→render channel). One call for both kinds: each plays the rig's own
    *  `attack` clip over idle/move plus an aim-relative envelope — a shot kicks the module back
-   *  (taking `muzzlePos()` with it), a swing sweeps forward. See `render/rigAttackMotion.ts`. */
-  onAttack(kind: WeaponKind): void { this.skin.attack(kind); }
+   *  (taking `muzzlePos()` with it), a swing sweeps forward. See `render/rigAttackMotion.ts`.
+   *
+   *  `swing` is the melee weapon's own sector and recovery, which is what SIZES and PACES the
+   *  sweep; omitted for a shot, and for a swinging actor whose weapon could not be resolved. */
+  onAttack(kind: WeaponKind, swing?: SwingShape): void { this.skin.attack(kind, swing); }
 
   /** Keeps `healthBar` tracking this actor's own screen position at its fixed offset — it is
    *  deliberately not a child (see the constructor's doc comment), so nothing else moves it.

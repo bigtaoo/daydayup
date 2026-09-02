@@ -13,7 +13,7 @@ import {
   resolveWeaponMount,
   type ModuleMount, type WeaponMountMode,
 } from './rigWeaponMount';
-import { AttackMotion, type AttackKind } from './rigAttackMotion';
+import { AttackMotion, type AttackKind, type SwingShape } from './rigAttackMotion';
 import { ClipLayers } from './rigClipLayer';
 
 // `barrelReach` moved to ./rigWeaponMount with the rest of the mount geometry; re-exported
@@ -168,8 +168,8 @@ export class RigSkin {
   /** An attack just left this rig — one entry point for both kinds, which is the whole point:
    *  a shot and a swing start the same authored `attack` clip and the same envelope, and only
    *  the envelope's SHAPE differs by kind. */
-  attack(kind: AttackKind): void {
-    this.motion.kick(kind);
+  attack(kind: AttackKind, swing?: SwingShape): void {
+    this.motion.kick(kind, swing);
     this.layers.attack();
   }
 

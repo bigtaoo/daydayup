@@ -1,7 +1,12 @@
-import { WEAPON_SIM_BY_ID, BLUEPRINT_CATALOG, MATERIAL_DEFS, RUN_BUFFS, type GameEvent, type GameState } from '@dd/engine';
-import { THEME, rarityColor } from '../theme';
+import {
+  WEAPON_SIM_BY_ID, BLUEPRINT_CATALOG, MATERIAL_DEFS, RUN_BUFFS, TICK_RATE,
+  type GameEvent, type GameState, type MeleeSimSpec,
+} from '@dd/engine';
+import { THEME, rarityColor, ELEMENT_COLORS } from '../theme';
 import { SCORE } from '../score';
 import { fpToPx, bradToRad } from '../coords';
+import { facingFromAngle } from '../../render/facing';
+import { swingSchedule, type SwingShape } from '../../render/rigAttackMotion';
 import type { FxController } from '../fx/FxController';
 import type { HudView } from '../ui/HudView';
 import type { AudioBus, AudioCue } from '../../platform/types';
@@ -43,7 +48,7 @@ export interface EventReactorHost {
    *  off its own diff. This reactor only carries what an EVENT announces. */
   actorAt(id: number): {
     onHurt(dx?: number, dy?: number): void;
-    onAttack(kind: 'ranged' | 'melee'): void;
+    onAttack(kind: 'ranged' | 'melee', swing?: SwingShape): void;
     muzzlePos(): { x: number; y: number } | null;
     x: number;
     y: number;
@@ -133,17 +138,23 @@ export class EventReactor {
           cue('muzzle');
           break;
         }
-        case 'melee_swing':
+        case 'melee_swing': {
           // The melee half of the SAME reaction the ranged branch above opens with, and the
           // reason `melee_swing` exists at all (ENGINE_VERSION 52): a swing is announced whether
-          // or not it connects, so the blade animates over empty air too. No VISUAL fx of its
-          // own — `deflect` already flashes a parry and `hit` a connection, and a swing that
-          // reads only as a flash of light is the thing this replaces. It does get a cue, for
-          // the same reason it gets a clip: a stroke through empty air is a real action the
-          // player took, and until 2026-09-02 it was the only one they could not hear.
-          this.host.actorAt(e.ownerId)?.onAttack('melee');
+          // or not it connects, so the blade animates over empty air too. It gets a cue for the
+          // same reason it gets a clip: a stroke through empty air is a real action the player
+          // took, and until 2026-09-02 it was the only one they could not hear.
+          //
+          // Both fx below need the swinging WEAPON, which the event deliberately does not carry
+          // (design/08 keeps events to what the sim announces, and every client already holds
+          // the whole `GameState` — the netcode broadcasts inputs, not entities). Resolved from
+          // there rather than added to the event, so no engine/protocol shape changes.
+          const swinger = this.meleeSwinger(e.ownerId);
+          this.host.actorAt(e.ownerId)?.onAttack('melee', swinger && swingShapeOf(swinger.spec));
+          if (swinger) this.slashSector(swinger, bradToRad(e.facing), fpToPx(e.gx), fpToPx(e.gy));
           cue('swing');
           break;
+        }
         case 'hit':
           this.fx.flash(fpToPx(e.gx), fpToPx(e.gy),
             e.faction === 'enemy' ? THEME.colors.enemy : THEME.colors.swordGlow, 16);
@@ -385,4 +396,65 @@ export class EventReactor {
     }
     for (const [id, count] of cues) this.audio.play(id, count);
   }
+
+  /**
+   * The melee weapon an actor swung, plus its own body radius — the arc's inner edge.
+   *
+   * Only PLAYERS can carry one: `HitResolveSystem.meleeArc` is called over `state.players`, and
+   * every enemy in the roster is built on the generic ranged AI (`content/enemies.ts`: "no
+   * ranged/melee AI split exists yet"). So a lookup that misses is the normal case for an
+   * enemy's `melee_swing`, not an error — both callers treat it as "no spec, keep the default".
+   */
+  private meleeSwinger(ownerId: number): { spec: MeleeSimSpec; radiusPx: number } | undefined {
+    const p = this.host.activeState()?.players.find(q => q.id === ownerId);
+    const spec = p?.weapon?.spec;
+    if (!p || spec?.kind !== 'melee') return undefined;
+    return { spec, radiusPx: fpToPx(p.radius) };
+  }
+
+  /**
+   * The swing's sector, swept once (`fx/slashArc.ts`). Anchored on the SIM's own swing origin
+   * (the event's `gx/gy`, which is exactly what `meleeArc` measures `range` from) rather than on
+   * the drawn body the way `muzzleFlare` is: this fx exists to state where the weapon reaches,
+   * so it has to agree with the hit test, and the body is mid-lunge for the whole of the sweep.
+   */
+  private slashSector(
+    swinger: { spec: MeleeSimSpec; radiusPx: number },
+    facingRad: number,
+    x: number,
+    y: number,
+  ): void {
+    const { spec, radiusPx } = swinger;
+    const schedule = swingSchedule(swingShapeOf(spec));
+    this.fx.slashArc({
+      x,
+      // Lifted off the ground point by the same 12 px `flash()` uses, so the arc reads as a
+      // sweep at blade height rather than as a decal around the character's feet.
+      y: y - 12,
+      facingRad,
+      arcHalfRad: bradToRad(spec.arcHalf),
+      innerPx: radiusPx,
+      outerPx: fpToPx(spec.range),
+      // The element's own hue, with `swordGlow` for physical — `ELEMENT_COLORS` deliberately
+      // omits that entry (a physical bullet takes the FACTION colour, see theme.ts), and the
+      // faction colour is wrong here: the sector is the blade's light, not a team marker.
+      color: ELEMENT_COLORS[spec.damageType] ?? THEME.colors.swordGlow,
+      flipX: facingFromAngle(facingRad).flipX,
+      delayMs: schedule.strikeStartMs,
+      sweepMs: schedule.strikeEndMs - schedule.strikeStartMs,
+      // The arc outlives the strike by the length of the strike itself: the blade has moved on
+      // and what is left is the light going out, which is what makes a sector legible at all
+      // (the sweep window alone is ~65 ms on the starter saber — three frames).
+      fadeMs: (schedule.strikeEndMs - schedule.strikeStartMs) * 2,
+    });
+  }
+}
+
+/** The two `MeleeSimSpec` fields the swing envelope is derived from, in render units:
+ *  `arcHalf` is brad (half-sector), `swingCooldownTicks` is sim ticks. */
+function swingShapeOf(spec: MeleeSimSpec): SwingShape {
+  return {
+    arcDeg: (bradToRad(spec.arcHalf) * 360) / Math.PI,
+    recoveryMs: (spec.swingCooldownTicks * 1000) / TICK_RATE,
+  };
 }
