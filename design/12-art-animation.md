@@ -144,27 +144,65 @@ funny is a lane auto-battler (units only face left/right); DayDayUp aims in **36
 
 Animation is time-driven on the **render clock**, not the sim clock. Sim is 30 Hz (`08`); art plays at any authoring fps and interpolates via `sampleClip`. Which clip plays is a pure function of `GameState` (moving? attacking? `hp<=0`?) each render frame — it holds no authoritative data.
 
-> **Firing is NOT a clip (2026-08-30, user report *"角色射击时，没有射击动画... 看起来非常死板"*).**
-> `attack` is authored in the three `char_*` bundles and has never been played, and the reason
-> it stayed that way is structural rather than an oversight: clips here are sampled WHOLE
-> (`RigSkin.playClip` swaps `this.clip` outright — there is no additive layer), and the four
-> ENEMY bundles ship no `attack` clip at all. So playing it would (a) do nothing for any mob,
-> and (b) for a hero, drop every bone the clip does not track back to rest for its duration —
-> orb-core's `attack` touches only `socket_r`, so the shell/eye/belly hover bob authored into
-> `idle` would snap to 0 the instant a shot went out and snap back 350 ms later. The starter
-> blaster's 6-tick (200 ms) cooldown is shorter than the clip, so held fire would pin the body
-> at bob 0 and release would pop it.
->
-> What ships instead is `render/rigRecoil.ts`: a one-shot 0→1→0 envelope (150 ms, fast kick,
-> slower settle) layered **over** whatever clip is playing, triggered by `bullet_fired`'s
-> `ownerId` through `Actor.onFired`. It slides the active weapon module and its socket ring
-> back along the BARREL (aim space, which the authored clip's rig-space `translateX` could not
-> do) and leans the whole body a third as far. Because it moves the MOUNT rather than the
-> sprite, `muzzleLocal` recoils with it for free — the drawn barrel tip, the bullet's spawn
-> correction and the muzzle fx all follow the gun. One path covers all seven rigs.
->
-> The authored `attack` clips are left in the bundles. They are still the right home for a real
-> per-character firing pose, once every rig has one and there is a blend to play it through.
+### Attacking: one rule, two layers (2026-09-02)
+
+From a live question — *"角色现在有攻击动画吗？射击的和拿刀时的"* — whose honest answer was
+"half a shooting one, and nothing at all for a blade". **Every attack now drives the same two
+layers**, whether it is a shot or a swing, on every one of the seven shipped rigs:
+
+| layer | file | what it owns | why it cannot be the other layer |
+|---|---|---|---|
+| authored `attack` clip, layered **additively** over `idle`/`move` | `render/rigClipLayer.ts` | squash/stretch, the body's jolt, a boss's shard rings flaring — everything statable in the rig's own bone space, per body plan | it is per-character art; there is nothing to compute |
+| aim-relative envelope | `render/rigAttackMotion.ts` | a gun's kick back along the BARREL + body lean; a blade's 68° sweep + forward lunge | it is a function of the live aim angle — see below |
+
+Both are started by one call, `Actor.onAttack(kind)`, from one place: `EventReactor`, off
+`bullet_fired` or `melee_swing`. Only the envelope's SHAPE differs by kind.
+
+**Why the aim-relative half cannot be authored data**, which is the part worth remembering:
+
+1. a clip's `translateX` is applied in RIG space (`RigSkin.update`: `sprite.x = pose.ex +
+   transform.translateX`), so an authored `-10` slides the gun LEFT, not backwards along its own
+   barrel — that is exactly what the hero's original `attack` clip did; and
+2. the weapon sockets are **aim-tracking bones** — `RigSkin` overwrites their rotation with the
+   aim angle every frame — so an authored swing arc is discarded in silence. A blade can only be
+   swung procedurally.
+
+**The additive contract** the clip layer runs on: `rotation`/`translate` ADD, `scale`/`alpha`
+MULTIPLY, and a bone the attack clip does not name is left on its base clip untouched. That is
+what makes an `attack` playable at all (see the superseded note below). It puts one real rule on
+the art: **an `attack` clip must start and end at identity**, or the layer steps the pose on the
+frame it triggers and again on the frame it expires. `rigComposition.test.ts` asserts that per
+bundle, plus that every bundle carries the full six-clip vocabulary and that every looping clip
+returns to its own first pose.
+
+**The enemy bundles gained `move` and `attack` in the same pass** (`boss-core`, `brute-core`,
+`critter-core`, `floater-core` — they had only `idle`/`hurt`/`death`/`spawn`). The missing `move`
+was a live bug on its own, not just a gap: `Actor` has always asked for `'move'` while an actor
+is moving, and `playClip` resolves an unknown name to NO clip, so a walking mob fell back to a
+bare rest pose and lost even its idle bob.
+
+**The melee half needed an engine change** (`ENGINE_VERSION` 52): there was no signal at all that
+a swing had happened. `deflect` only fires when a swing catches a bullet and `hit` only when it
+connects, so a sword swung at empty air reached the render layer as nothing. `WeaponFireSystem`
+now emits `melee_swing` with the identical field list to `bullet_fired`. It is an EVENT rather
+than a render-side read of `weapon.justSwung` — which is already hashed sim state — because
+`justSwung` is a one-tick latch and `GameLoop.advanceOnline` drains every confirmed frame the
+server has ready before reconciling the scene ONCE; any swing on an intermediate frame would
+simply not be in the state the render layer sees. See `ENGINE_VERSION_HISTORY.md` v52.
+
+> **Superseded: "Firing is NOT a clip" (2026-08-30, user report *"角色射击时，没有射击动画...
+> 看起来非常死板"*).** Kept because its reasoning is still the reason the layer above is ADDITIVE.
+> At the time, `attack` was authored in the three `char_*` bundles and had never been played, and
+> that was structural rather than an oversight: clips are sampled WHOLE, `RigSkin.playClip`
+> swapped `this.clip` outright with no additive layer, and the four ENEMY bundles shipped no
+> `attack` clip at all. So playing it would (a) do nothing for any mob, and (b) for a hero, drop
+> every bone the clip does not track back to rest for its duration — orb-core's `attack` touched
+> only `socket_r`, so the shell/eye/belly hover bob authored into `idle` snapped to 0 the instant
+> a shot went out and snapped back 350 ms later; and the starter blaster's 6-tick (200 ms)
+> cooldown is shorter than the clip, so held fire pinned the body at bob 0 and release popped it.
+> That note ended by saying the clips were "still the right home for a real per-character firing
+> pose, once every rig has one and there is a blend to play it through" — 2026-09-02 supplied
+> both. The envelope did not go away; it became the aim-relative layer of the table above.
 
 ## Atlas / spritesheet format
 

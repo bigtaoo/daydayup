@@ -148,7 +148,13 @@ async function main() {
     const animationJson = {
       version: 2,
       bindings: runtimeBindings,
-      animations: editorJson.animations,
+      // Same ground-truth argument as `orbWorldWidth` above, and found the same way: the
+      // .editortao zip's editor.json and the SHIPPED bundle have drifted, and it is the
+      // shipped bundle that is real. Sourcing clips from editor.json meant a re-run of this
+      // script silently reverted every clip authored against the runtime bundle since the
+      // zip was last rebuilt -- which is exactly what would have happened to the 2026-09-02
+      // additive `attack` layer had this still read `editorJson.animations`.
+      animations: orbRuntimeJson.animations,
     };
     writeFileSync(path.join(skinOutDir, 'animation.json'), JSON.stringify(animationJson, null, 2));
     const framesJson = {

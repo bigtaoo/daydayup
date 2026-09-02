@@ -18,6 +18,20 @@ export type GameEvent =
   // own barrel-tip spawn correction. Additive and inert for the sim: events are never read
   // back by a later system and never enter `serializeState`/`hashState`, so no bump.
   | { type: 'bullet_fired'; ownerId: number; faction: Faction; gx: Fp; gy: Fp; facing: Brad }
+  // A melee weapon started its swing this tick — `WeaponFireSystem`'s melee branch, the exact
+  // counterpart of `bullet_fired`'s ranged one, with the identical field list so the render
+  // layer can treat "this actor just attacked" as ONE reaction (see `EventReactor`'s shared
+  // `onAttack` path). It carries no damage: the swing's actual hits arrive as `hit` events
+  // from `HitResolveSystem` at step 7, and a parry as `deflect` from step 6.
+  //
+  // Why an event and not a render-side read of `weapon.justSwung`, which is already sim state
+  // and already hashed: `justSwung` is a ONE-TICK latch, and the online loop
+  // (`GameLoop.advanceOnline`) drains every confirmed frame the server has ready and then
+  // reconciles the scene ONCE against the last of them. Every swing on an intermediate tick
+  // would be invisible under any latency that made the client drain two frames in a render
+  // frame. Events survive that by construction — `session.drive()` returns the whole drained
+  // batch — which is design/08's reason for the channel existing in the first place.
+  | { type: 'melee_swing'; ownerId: number; faction: Faction; gx: Fp; gy: Fp; facing: Brad }
   // `faction` is a DamageSrc, not just Faction — zone/hazard-tile damage (design/15,
   // ROADMAP 4.2d) reports 'environment' here, since there is no attacker on the other side.
   | { type: 'hit'; target: number; faction: DamageSrc; gx: Fp; gy: Fp; damage: number; damageType: DamageType; shieldRemaining?: number }

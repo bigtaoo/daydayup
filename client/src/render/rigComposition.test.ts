@@ -28,18 +28,19 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { Texture } from 'pixi.js';
-import { BASIC_ENEMY, PLAYER_BASE } from '@dd/engine';
+import { BASIC_ENEMY, BLASTER_SIM, PLAYER_BASE } from '@dd/engine';
 import { fpToPx } from '../game/coords';
 import { BODY_FILL, BODY_FILL_DEFAULT, RIG_DEFS } from './skinRegistry';
 import { CHAR_BUNDLES } from './preloadArt';
 import { RigSkin } from './RigSkin';
 import { deserializeClip, type AnimationJson } from './taoBundle';
+import { sampleClip } from './interpolate';
 import { KIND_DEFAULTS, WEAPON_DEFS, MODULE_SCALE, type WeaponVisualDef } from './weaponSkins';
 import { HELD_MOUNT_R, barrelReach, resolveWeaponMount } from './rigWeaponMount';
-import { RECOIL_BODY_PX, RECOIL_MODULE_PX } from './rigRecoil';
+import { RECOIL_BODY_PX, RECOIL_MODULE_PX } from './rigAttackMotion';
 import type { Rig } from './Rig';
 import type { RigSkinBundle } from './taoBundle';
-import type { AnimationClip, BoneDef, SpriteBinding, WorldPose } from './types';
+import type { AnimationClip, BoneDef, ResolvedBoneTransform, SpriteBinding, WorldPose } from './types';
 
 const PUBLIC = new URL('../../public/', import.meta.url);
 const read = (path: string): Buffer => readFileSync(new URL(path, PUBLIC));
@@ -487,7 +488,7 @@ describe('BODY_FILL — the recorded body art fill matches the shipped pixels', 
 /**
  * The fire recoil, against the art that actually ships (2026-08-30).
  *
- * `rigRecoil.test.ts` pins the envelope and `RigSkin.test.ts` pins what it moves, but both run
+ * `rigAttackMotion.test.ts` pins the envelope and `RigSkin.test.ts` pins what it moves, but both run
  * on a FAKE bundle where every binding scale is 1 — the exact blind spot this file's header
  * describes. What only real data can answer is whether the authored kick DISTANCE is right for
  * these seven bodies: it is one constant in rig authoring-px, applied to bodies whose drawn
@@ -563,43 +564,281 @@ describe('rig composition — the fire recoil against every shipped body', () =>
 });
 
 /**
- * The clip inventory that makes firing procedural rather than a clip (design/12's "Firing is
- * NOT a clip"). This is a DATA claim, and the design note rests entirely on it: clips here are
- * sampled WHOLE, so playing `attack` would blank every bone the clip does not track, and it
- * would do nothing at all for a rig that ships without one.
+ * The new clips against the art that actually SHIPS (2026-09-02) — the sibling of the recoil
+ * block above, and it exists for the same reason that one does.
  *
- * A tripwire rather than a coordinate check. If either fact below flips — an enemy bundle gains
- * an `attack`, or the hero's `attack` starts carrying the bones `idle` bobs — the reason the
- * recoil is an envelope has changed, and that decision deserves re-reading rather than silently
- * standing on a premise that no longer holds.
+ * `rigClipLayer.test.ts` and `RigSkin.test.ts` both run on hand-built clips and a fake bundle
+ * where every binding scale is 1. They can prove the blend is arithmetically right and prove
+ * nothing about whether the authored NUMBERS read on a real body: `move` and `attack` were
+ * written once and dropped onto seven bundles whose reference radii are 40 / 50 / 70 and whose
+ * actors are 15-16 world px, so the same authoring-px delta arrives on screen at 0.214x on the
+ * boss and 0.400x on a hero — nearly a factor of two.
+ *
+ * Measured on the shipped JSON at 60 samples per clip, world px = `authoring x actorR / ref`
+ * (`Skin`'s own normalization), before the room camera's further ~4x:
+ *
+ *   char_* (x3)     move 5.00ap = 2.00wp   attack 1.96ap = 0.78wp   scale swing 18%
+ *   critter/brute/floater  move 5.22ap = 1.57wp   attack 9.06ap = 2.72wp   scale swing 14%
+ *   boss-core       move 4.00ap = 0.86wp   attack 3.00ap = 0.64wp   scale swing 12%
+ *
+ * ## Mutation battery — DATA mutants, which is the only kind that can reach this block
+ *
+ * Recorded 2026-09-02: eight edits to the SHIPPED `animation.json` files, run against the full
+ * client suite, reverted. No source-level test can see any of them.
+ *
+ *   KILLED   an attack clip stops ending at identity ...................... 2 failing tests
+ *   KILLED   a move clip stops looping cleanly ............................ 1
+ *   KILLED   a move clip stops looping at all ............................. 2
+ *   KILLED   brute-core drifts from critter-core .......................... 1
+ *   KILLED   an attack clip changes duration on one bundle ................ 1
+ *   KILLED   an attack clip names a bone the rig does not have ............ 1
+ *   KILLED   an enemy lunge is authored past its own silhouette ........... 2
+ *   KILLED   the enemy lunge shrinks below the readability bar ............ 3  (after the fix below)
+ *
+ * The last row SURVIVED at first, and the survivor was a real weakness in this block rather than
+ * an equivalent: the readability check was a single `or` across three channels, so scaling every
+ * enemy translation to 5% — a 2.72 wp lunge reduced to 0.14 wp, invisible — went on passing on the
+ * 14% squash alone. The `or` is still there (boss-core genuinely expresses its attack without
+ * translating), with a second assertion beside it: a clip that translates AT ALL has to keep that
+ * translation above the bar.
+ *
+ * The two-tier bar below is NOT invented here — it is the one the recoil block already uses and
+ * the reason it uses it: a MODULE kick under one world px is "a recoil nobody sees" (>1wp),
+ * while a body-level ACCENT is allowed to be subtler (`RECOIL_BODY_PX` is 1.2wp and asserted at
+ * >0.3). Every clip here is a body accent, so the 0.3 bar applies to translation — and the
+ * boss's real read is not translation at all, which is why the scale/rotation channel is
+ * checked as an alternative rather than as an extra.
  */
-describe('rig composition — why firing is an envelope and not the authored attack clip', () => {
-  const clipsOf = (dir: string): Record<string, { keyframes: { bones: Record<string, unknown> }[] }> =>
-    readJson<AnimationJson>(`skins/${dir}/animation.json`).animations as unknown as
-      Record<string, { keyframes: { bones: Record<string, unknown> }[] }>;
+describe('rig composition — the move/attack clips against every shipped body', () => {
+  /** Largest per-bone translation the clip ever reaches, in rig authoring px. */
+  const peakTranslate = (clip: AnimationClip): number => {
+    let peak = 0;
+    for (let i = 0; i <= 60; i++) {
+      for (const [, tr] of sampleClip(clip, (clip.duration * i) / 60)) {
+        peak = Math.max(peak, Math.hypot(tr.translateX, tr.translateY));
+      }
+    }
+    return peak;
+  };
+  /** Largest scale departure from 1 and largest rotation, the two non-translation channels a
+   *  body plan can express an attack through (boss-core does exactly that). */
+  const peakShape = (clip: AnimationClip): { scale: number; rotationDeg: number } => {
+    let scale = 0, rotationDeg = 0;
+    for (let i = 0; i <= 60; i++) {
+      for (const [, tr] of sampleClip(clip, (clip.duration * i) / 60)) {
+        scale = Math.max(scale, Math.abs(tr.scaleX - 1), Math.abs(tr.scaleY - 1));
+        rotationDeg = Math.max(rotationDeg, Math.abs(tr.rotation));
+      }
+    }
+    return { scale, rotationDeg };
+  };
+  const toWorld = (name: string): number =>
+    fpToPx(name.startsWith('char_') ? PLAYER_BASE.radius : BASIC_ENEMY.radius) / RIG_DEFS[name]!.referenceRadius;
 
-  it('the four enemy bundles ship no attack clip at all — an envelope is the only path that covers them', () => {
-    const enemies = BUNDLES.filter(({ name }) => !name.startsWith('char_'));
-    expect(enemies.map(b => b.name).sort())
-      .toEqual(['boss-core', 'brute-core', 'critter-core', 'floater-core']);
-    for (const { name, dir } of enemies) {
-      expect(Object.keys(clipsOf(dir)).sort(), `${name} clip inventory`)
-        .toEqual(['death', 'hurt', 'idle', 'spawn']);
+  it.each(BUNDLES)('$name: the attack clip is visible at world scale, on some channel', ({ name, dir }) => {
+    const clip = load(name, dir).clips.get('attack')!;
+    const wp = peakTranslate(clip) * toWorld(name);
+    const shape = peakShape(clip);
+    // Either it moves the body a readable distance, or it changes its SHAPE readably. boss-core
+    // is the case that forces the "or": its whole attack read is the shard rings, at 0.64 wp of
+    // translation but 12% scale and 22 deg of ring rotation.
+    const readable = wp > 0.3 || shape.scale >= 0.1 || shape.rotationDeg >= 8;
+    expect(readable, `${name}: attack peak ${wp.toFixed(2)}wp, scale ${(shape.scale * 100).toFixed(0)}%, rot ${shape.rotationDeg.toFixed(0)}deg`)
+      .toBe(true);
+    // ...and a clip that DOES translate has to keep that translation readable, not shrink it to
+    // a rounding error while coasting on the scale channel. Found by mutation: scaling every
+    // enemy translate to 5% (2.72wp -> 0.14wp, a lunge nobody could see) passed the `or` above
+    // on its 14% squash alone. The `> 0` guard keeps this from inventing a rule for a body plan
+    // that legitimately expresses its attack without moving — boss-core still would, at 0.64wp.
+    if (peakTranslate(clip) > 0) {
+      expect(wp, `${name}: attack translates, but only ${wp.toFixed(2)} world px of it`).toBeGreaterThan(0.3);
     }
   });
 
-  it('the hero attack clip exists but tracks ONLY the socket — playing it would blank the hover bob', () => {
+  it.each(BUNDLES)('$name: the move clip is visible at world scale', ({ name, dir }) => {
+    const wp = peakTranslate(load(name, dir).clips.get('move')!) * toWorld(name);
+    expect(wp, `${name}: move peak in world px`).toBeGreaterThan(0.3);
+  });
+
+  it.each(BUNDLES)('$name: no clip throws the body outside its own silhouette', ({ name, dir }) => {
+    // The other end of the band, and the one an eyeball on a still frame cannot judge: a lunge
+    // authored for a 50-radius blob applied to a 40-radius hero would read as teleporting, not
+    // as attacking. Half the drawn body half-width is the same proportion the recoil block caps
+    // `RECOIL_MODULE_PX` at.
+    const a = load(name, dir);
+    const drawnHalfW = RIG_DEFS[name]!.referenceRadius * (BODY_FILL[name] ?? BODY_FILL_DEFAULT);
+    for (const clipName of ['move', 'attack']) {
+      const peak = peakTranslate(a.clips.get(clipName)!);
+      expect(peak, `${name} ${clipName}: peak ${peak.toFixed(1)}ap vs drawn half-width ${drawnHalfW.toFixed(1)}`)
+        .toBeLessThan(drawnHalfW / 2);
+    }
+  });
+
+  it.each(BUNDLES)('$name: the real attack over the real idle blanks nothing idle animates', ({ name, dir }) => {
+    // The end-to-end version of the bug the additive layer exists for, on SHIPPED data and
+    // through a real `RigSkin` rather than a hand-built clip pair. Before the layer, playing
+    // `attack` dropped every bone it does not name back to rest for the clip's whole duration.
+    const a = load(name, dir);
+    const rig = a.skin as unknown as { layers: { playBase(n: string, t: number): void; attack(): void; advance(ms: number): void; sample(): Map<string, ResolvedBoneTransform> } };
+    const idleBones = new Set<string>();
+    for (let i = 0; i <= 20; i++) {
+      for (const [bone, tr] of sampleClip(a.clips.get('idle')!, (a.clips.get('idle')!.duration * i) / 20)) {
+        if (tr.translateX !== 0 || tr.translateY !== 0 || tr.rotation !== 0) idleBones.add(bone);
+      }
+    }
+    expect(idleBones.size, `${name}: idle animates nothing, so this test proves nothing`).toBeGreaterThan(0);
+
+    // Park idle at its own extreme (t = half the loop, where every shipped idle is at its peak),
+    // then run the attack over it and check each of those bones still carries idle's pose.
+    const half = a.clips.get('idle')!.duration / 2;
+    rig.layers.playBase('idle', half * 1000);
+    const alone = rig.layers.sample();
+    rig.layers.attack();
+    rig.layers.advance(a.clips.get('attack')!.duration * 1000 * 0.5); // mid-clip, the worst case
+    const layered = rig.layers.sample();
+    for (const bone of idleBones) {
+      const before = alone.get(bone)!, after = layered.get(bone)!;
+      expect(after, `${name}: ${bone} vanished from the pose under the attack layer`).toBeDefined();
+      // The attack may ADD to it; what it must never do is put the bone back at rest.
+      const idleOffset = Math.hypot(before.translateX, before.translateY) + Math.abs(before.rotation);
+      const stillCarried = Math.hypot(after.translateX, after.translateY) + Math.abs(after.rotation);
+      expect(stillCarried, `${name}: ${bone} was blanked (idle ${idleOffset.toFixed(2)} -> ${stillCarried.toFixed(2)})`)
+        .toBeGreaterThan(idleOffset * 0.4);
+    }
+  });
+
+  it('the three one-bone enemy bundles ship byte-identical animations', () => {
+    // `critter-core` is the only one of the three with a build script; `brute-core` and
+    // `floater-core` are hand-maintained copies sharing its one `Rig`, and that script's header
+    // now tells the next reader to copy any clip change across. Nothing enforced it until here,
+    // so a change to one could silently give three creatures on the same skeleton three gaits.
+    const clipsOf = (dir: string) => readJson<AnimationJson>(`skins/${dir}/animation.json`).animations;
+    const critter = JSON.stringify(clipsOf('critter-core'));
+    for (const dir of ['brute-core', 'floater-core']) {
+      expect(JSON.stringify(clipsOf(dir)), `${dir} has drifted from critter-core`).toBe(critter);
+    }
+  });
+
+  it('the vocabulary has one cadence across every bundle', () => {
+    // The DATA half of "one render-side rule drives all seven rigs": a `move` that loops on six
+    // bundles and plays once on the seventh, or an `attack` twice as long on one body plan,
+    // would make the shared rule mean something different per rig without any code disagreeing.
+    for (const { name, dir } of BUNDLES) {
+      const a = load(name, dir);
+      const move = a.clips.get('move')!, attack = a.clips.get('attack')!, idle = a.clips.get('idle')!;
+      expect([move.duration, move.loop], `${name} move`).toEqual([0.6, true]);
+      expect([attack.duration, attack.loop], `${name} attack`).toEqual([0.35, false]);
+      expect(idle.loop, `${name} idle`).toBe(true);
+    }
+  });
+
+  it('an attack clip outlives the fastest weapon that can retrigger it', () => {
+    // Not a defect — it is the case the additive layer was built to survive, and it is worth
+    // stating as a number so nobody "fixes" it by shortening the clip. The starter blaster
+    // fires every 6 ticks (200 ms) against a 350 ms clip, so held fire restarts the overlay
+    // before it ends and it is never seen through to its own last frame.
+    const attackMs = load(BUNDLES[0]!.name, BUNDLES[0]!.dir).clips.get('attack')!.duration * 1000;
+    const blasterMs = (BLASTER_SIM.fireRateTicks * 1000) / 30;
+    expect(blasterMs).toBeLessThan(attackMs);
+  });
+});
+
+/**
+ * The shared clip VOCABULARY, and the authoring contract that makes the additive attack layer
+ * safe (`render/rigClipLayer.ts`). Both are DATA claims about the seven shipped bundles, and
+ * the render layer's one unified rule rests entirely on them — no amount of correct code can
+ * rescue a bundle that is missing a clip, or an attack clip that does not start at identity.
+ *
+ * ## What this block used to assert, and why it was rewritten (2026-09-02)
+ *
+ * It read "why firing is an envelope and not the authored attack clip", and pinned the two
+ * facts that argument stood on: the four enemy bundles shipped NO `attack` clip, and the hero's
+ * `attack` tracked only `socket_r`, so a whole-clip swap would have blanked the bones `idle`
+ * bobs. Its own header called itself a tripwire — *"if either fact below flips ... that decision
+ * deserves re-reading rather than silently standing on a premise that no longer holds"*. Both
+ * flipped deliberately in the same pass: every bundle now ships `move` + `attack`, and the
+ * overlay is additive instead of a swap, so an untracked bone is untouched rather than blanked.
+ * The tripwire did its job — this is the re-read, not a silenced assertion.
+ *
+ * The envelope did NOT go away, and is still the only path for the aim-relative half; see
+ * `rigAttackMotion.ts` for the two reasons a clip cannot express it (rig-space `translateX`,
+ * and `RigSkin` overwriting every aim-tracking bone's rotation).
+ */
+describe('rig composition — the shared clip vocabulary and the additive-overlay contract', () => {
+  const clipsOf = (dir: string): Record<string, { keyframes: { time: number; bones: Record<string, Record<string, number>> }[] }> =>
+    readJson<AnimationJson>(`skins/${dir}/animation.json`).animations as unknown as
+      Record<string, { keyframes: { time: number; bones: Record<string, Record<string, number>> }[] }>;
+
+  it('every bundle — hero and enemy alike — ships the same six clips', () => {
+    // The premise of ONE render-side rule for all seven rigs. Before 2026-09-02 the four enemy
+    // bundles had neither `move` nor `attack`, which had a live consequence beyond the missing
+    // attack: `Actor` has always asked for `'move'` while an actor is moving, and `playClip`
+    // resolves an unknown name to NO clip — so a walking enemy fell back to a bare rest pose and
+    // lost even its idle bob.
+    for (const { name, dir } of BUNDLES) {
+      expect(Object.keys(clipsOf(dir)).sort(), `${name} clip inventory`)
+        .toEqual(['attack', 'death', 'hurt', 'idle', 'move', 'spawn']);
+    }
+  });
+
+  it("every bundle's attack clip starts AND ends at identity — the additive layer pops otherwise", () => {
+    // The authoring contract `rigClipLayer.layerAdditive` cannot enforce from code: it ADDS
+    // translate/rotation and MULTIPLIES scale/alpha onto the base pose, so a first or last
+    // keyframe away from identity is a step change on the frame the overlay starts and on the
+    // frame it expires. Asserted on the raw keyframes rather than through a sampler, because
+    // this is a claim about what the artist committed.
+    const IDENTITY: Record<string, number> = {
+      rotation: 0, translateX: 0, translateY: 0, scaleX: 1, scaleY: 1, alpha: 1,
+    };
+    for (const { name, dir } of BUNDLES) {
+      const attack = clipsOf(dir).attack!;
+      const frames = [...attack.keyframes].sort((a, b) => a.time - b.time);
+      for (const edge of [frames[0]!, frames[frames.length - 1]!]) {
+        for (const [boneId, channels] of Object.entries(edge.bones)) {
+          for (const [channel, value] of Object.entries(channels)) {
+            expect(value, `${name} attack t=${edge.time} ${boneId}.${channel}`).toBe(IDENTITY[channel]);
+          }
+        }
+      }
+    }
+  });
+
+  it('an attack clip only ever touches bones its own rig actually has', () => {
+    // The layer writes whatever the overlay names, so a stale bone id would silently create a
+    // transform for a bone no sprite reads — invisible on screen and invisible to a sampler test.
+    for (const { name, dir } of BUNDLES) {
+      const known = new Set(RIG_DEFS[name]!.rig.boneDefs.map(b => b.id));
+      const bones = new Set(clipsOf(dir).attack!.keyframes.flatMap(k => Object.keys(k.bones)));
+      for (const boneId of bones) expect(known.has(boneId), `${name} attack bone '${boneId}'`).toBe(true);
+      expect(bones.size, `${name} attack animates nothing`).toBeGreaterThan(0);
+    }
+  });
+
+  it('the hero attack no longer slides the socket — that is the envelope\'s job, and it would double up', () => {
+    // The one overlap the two layers could have had. `rigAttackMotion` kicks the module back by
+    // RECOIL_MODULE_PX along the BARREL; the hero clip used to carry `translateX: -10` on the
+    // same bone, in rig space, which is both the wrong direction and the same magnitude. Playing
+    // both would have doubled the kick, so the clip's translate was dropped when the layer landed.
     for (const { name, dir } of BUNDLES.filter(b => b.name.startsWith('char_'))) {
-      const clips = clipsOf(dir);
-      expect(clips.attack, `${name} ships an attack clip`).toBeDefined();
-      const bonesIn = (clip: string): string[] =>
-        [...new Set(clips[clip]!.keyframes.flatMap(k => Object.keys(k.bones)))].sort();
-      // The whole argument in one assertion: `idle` animates the body parts, `attack` does not
-      // touch a single one of them, and a whole-clip swap therefore drops them all to rest.
-      expect(bonesIn('attack')).toEqual(['socket_r']);
-      const dropped = bonesIn('idle').filter(b => !bonesIn('attack').includes(b));
-      expect(dropped, `${name}: bones idle animates that attack would blank`).toContain('shell');
-      expect(dropped.length).toBeGreaterThan(2);
+      const socketChannels = new Set(
+        clipsOf(dir).attack!.keyframes.flatMap(k => Object.keys(k.bones.socket_r ?? {})),
+      );
+      expect([...socketChannels].sort(), `${name} attack socket_r channels`).toEqual(['scaleX', 'scaleY']);
+      expect(socketChannels.has('translateX'), `${name}: would double the recoil kick`).toBe(false);
+    }
+  });
+
+  it('a looping base clip returns to its own first pose, so the loop seam does not jump', () => {
+    // `move` was authored for four new bundles in one pass; a loop whose last keyframe differs
+    // from its first snaps once per cycle, which is exactly the kind of thing that reads as
+    // "the animation is broken" and is invisible in a still.
+    for (const { name, dir } of BUNDLES) {
+      for (const clipName of ['idle', 'move']) {
+        const clip = clipsOf(dir)[clipName]!;
+        const frames = [...clip.keyframes].sort((a, b) => a.time - b.time);
+        expect(JSON.stringify(frames[0]!.bones), `${name} ${clipName} loop seam`)
+          .toBe(JSON.stringify(frames[frames.length - 1]!.bones));
+      }
     }
   });
 });

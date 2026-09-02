@@ -84,6 +84,170 @@
         }
       ]
     },
+    "move": {
+      "duration": 0.6,
+      "loop": true,
+      "keyframes": [
+        {
+          "time": 0,
+          "bones": {
+            "core": {
+              "translateY": 0
+            },
+            "ring_a": {
+              "translateY": 0,
+              "rotation": 0
+            },
+            "ring_b": {
+              "translateY": 0,
+              "rotation": 0
+            }
+          }
+        },
+        {
+          "time": 0.15,
+          "bones": {
+            "core": {
+              "translateY": -4
+            },
+            "ring_a": {
+              "translateY": -3,
+              "rotation": 9
+            },
+            "ring_b": {
+              "translateY": -3,
+              "rotation": -9
+            }
+          }
+        },
+        {
+          "time": 0.3,
+          "bones": {
+            "core": {
+              "translateY": 0
+            },
+            "ring_a": {
+              "translateY": 0,
+              "rotation": 0
+            },
+            "ring_b": {
+              "translateY": 0,
+              "rotation": 0
+            }
+          }
+        },
+        {
+          "time": 0.45,
+          "bones": {
+            "core": {
+              "translateY": -4
+            },
+            "ring_a": {
+              "translateY": -3,
+              "rotation": -9
+            },
+            "ring_b": {
+              "translateY": -3,
+              "rotation": 9
+            }
+          }
+        },
+        {
+          "time": 0.6,
+          "bones": {
+            "core": {
+              "translateY": 0
+            },
+            "ring_a": {
+              "translateY": 0,
+              "rotation": 0
+            },
+            "ring_b": {
+              "translateY": 0,
+              "rotation": 0
+            }
+          }
+        }
+      ]
+    },
+    "attack": {
+      "duration": 0.35,
+      "loop": false,
+      "keyframes": [
+        {
+          "time": 0,
+          "bones": {
+            "core": {
+              "translateY": 0
+            },
+            "ring_a": {
+              "rotation": 0,
+              "scaleX": 1,
+              "scaleY": 1
+            },
+            "ring_b": {
+              "rotation": 0,
+              "scaleX": 1,
+              "scaleY": 1
+            }
+          }
+        },
+        {
+          "time": 0.07,
+          "bones": {
+            "core": {
+              "translateY": 3
+            },
+            "ring_a": {
+              "rotation": -16,
+              "scaleX": 0.92,
+              "scaleY": 0.92
+            },
+            "ring_b": {
+              "rotation": 16,
+              "scaleX": 0.92,
+              "scaleY": 0.92
+            }
+          }
+        },
+        {
+          "time": 0.18,
+          "bones": {
+            "core": {
+              "translateY": -2
+            },
+            "ring_a": {
+              "rotation": 22,
+              "scaleX": 1.12,
+              "scaleY": 1.12
+            },
+            "ring_b": {
+              "rotation": -22,
+              "scaleX": 1.12,
+              "scaleY": 1.12
+            }
+          }
+        },
+        {
+          "time": 0.35,
+          "bones": {
+            "core": {
+              "translateY": 0
+            },
+            "ring_a": {
+              "rotation": 0,
+              "scaleX": 1,
+              "scaleY": 1
+            },
+            "ring_b": {
+              "rotation": 0,
+              "scaleX": 1,
+              "scaleY": 1
+            }
+          }
+        }
+      ]
+    },
     "hurt": {
       "duration": 0.3,
       "loop": false,

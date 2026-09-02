@@ -1215,3 +1215,47 @@ version. That unchanged hash is also the honest measure of what the golden scena
 they never produce the case, which is why the regression lives in `systems/doors.test.ts` as
 three named cases (sealed item re-seated, distant item not moved by a single fp, re-seated item
 not parked on the far side of the closed door) rather than resting on the fixture.
+## v52: a melee swing announces itself (2026-09-02)
+
+From a live question — *"角色现在有攻击动画吗？射击的和拿刀时的"* — whose honest answer was "half".
+A ranged shot had one (`bullet_fired` -> the render layer's recoil envelope); a melee swing had
+nothing at all, because **the sim never told the render layer a swing happened**. `deflect` fires
+only when a swing catches a bullet and `hit` only when it connects; a swing at empty air produced
+no event of any kind, so a sword could never animate.
+
+`WeaponFireSystem`'s melee branch now pushes `melee_swing` (`ownerId`/`faction`/`gx`/`gy`/`facing`
+— deliberately the identical field list to `bullet_fired`, so the render layer answers both with
+one reaction), beside the `justSwung` latch it already set.
+
+**Why an event, when `justSwung` is already hashed sim state the render layer could just read.**
+Because it is a ONE-TICK latch, and the online loop does not look at every tick.
+`GameLoop.advanceOnline` calls `session.drive()` — which drains every confirmed frame the server
+has ready — and then reconciles the scene ONCE, against the last of them. Any swing on an
+intermediate frame is simply not in the state the render layer ever sees, and how often that
+happens is a function of latency. `drive()` returns the whole drained event batch, so an event
+cannot be skipped that way. This is the property design/08 built the channel for.
+
+**Replay impact: no sim outcome moves.** `state.events` is never read back by a later system and
+never enters `serializeState`/`hashState` — exactly as `bullet_fired`'s own comment records, which
+is why adding its `ownerId` field needed no bump at all.
+
+That was **measured, not assumed**, and the measurement only means anything BEFORE the bump: this
+engine serializes `version: ENGINE_VERSION` into the hashed state, so bumping alone moves all five
+scenario hashes and a post-bump run cannot tell "the event changed the sim" from "the version
+changed". Run against the v51 fixture with the emit in place, **all five hashes still matched**;
+the only failures were the five `witness` assertions, each gaining exactly one key:
+
+```
+arena-waves           melee_swing: 7      ember-dungeon-floor1  melee_swing: 67
+walls-and-pillars     melee_swing: 27     brim-grinder          melee_swing: 36
+launch-arena-pvp      melee_swing: 44
+```
+
+So the bump buys nothing about divergence; it is what `versionContract.test.ts` demands before the
+witness re-record is accepted, and it is still the right answer, because a v51 client and a v52
+client disagree about what a stream *emits* — `ReplayInputSource` refusing the mismatch is cheaper
+than discovering it as a desync.
+
+Those counts are also the first evidence the melee path is exercised by the golden set at all:
+before this, nothing in the fixture distinguished a run that swung 67 times from one whose melee
+weapon was never off cooldown.

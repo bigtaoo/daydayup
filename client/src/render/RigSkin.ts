@@ -1,18 +1,18 @@
 import { Container, Graphics, Sprite, type Texture } from 'pixi.js';
 import type { Rig } from './Rig';
 import type { RigSkinBundle } from './taoBundle';
-import type { AnimationClip, ResolvedBoneTransform, WorldPositions } from './types';
-import { sampleClip } from './interpolate';
-import { facingFromAngle } from './facing';
+import type { ResolvedBoneTransform, WorldPositions } from './types';
+import { canonicalAimRad, facingFromAngle } from './facing';
 import { getWeaponAnchor, getWeaponRotationOffset, getWeaponScale, getWeaponTexture, type WeaponVisualKind } from './weaponSkins';
-import { MODULE_BEHIND_SCALE, MODULE_BEHIND_SHADE, SHADE_MIN_BODY_R, drawModuleContacts, drawSphereShading, shadeHex } from './rigShading';
+import { MODULE_BEHIND_SCALE, MODULE_BEHIND_SHADE, SHADE_MIN_BODY_R, drawSphereShading, paintModuleContacts, shadeHex } from './rigShading';
 import { drawTethers, hasTetheredBone } from './rigTethers';
 import {
   AIM_TRACKING_BONES, ACTIVE_WEAPON_SOCKET, IDLE_WEAPON_SOCKET, MODULE_Z_BEHIND,
   activeModuleMount, barrelReach, idleModuleMount, moduleMuzzleLocal, resolveWeaponMount,
   type ModuleMount, type WeaponMountMode,
 } from './rigWeaponMount';
-import { Recoil } from './rigRecoil';
+import { AttackMotion, type AttackKind } from './rigAttackMotion';
+import { ClipLayers } from './rigClipLayer';
 
 // `barrelReach` moved to ./rigWeaponMount with the rest of the mount geometry; re-exported
 // here so the original import path stays valid for callers and tests (500-line convention:
@@ -106,17 +106,16 @@ export class RigSkin {
   private readonly weaponMount: WeaponMountMode;
   private tetherGeometry = ''; // last-drawn endpoint signature (skip the rebuild if unchanged)
   private tetherTint = 0xffffff; // multiply-tint over the tether hue; white = as authored
-  private clip: AnimationClip | null = null;
-  private clipT = 0;
   private showBack = false;
   private flipX: 1 | -1 = 1;
   private aimRad = 0;
   private weaponKind: WeaponVisualKind | null = null;
   private weaponName: string | undefined = undefined;
-  /** Render-only fire recoil (`rigRecoil.ts`) — layered OVER whatever clip is playing rather
-   *  than being one, so it covers the four enemy bundles that ship no `attack` clip and never
-   *  interrupts the idle hover bob. See that file for why it is not a clip. */
-  private readonly recoil = new Recoil();
+  /** The two halves of one attack, both driven by `attack()` below: the authored `attack` clip
+   *  layered ADDITIVELY over idle/move (`rigClipLayer.ts`), and the aim-relative recoil/swing a
+   *  clip cannot express (`rigAttackMotion.ts`). See either file for the split. */
+  private readonly layers: ClipLayers;
+  private readonly motion = new AttackMotion();
   private weaponSprite: Sprite | null = null; // the ACTIVE socket's module (aim-tracking)
   private idleModuleSprite: Sprite | null = null; // the other arm's decorative module
   private weaponTint = 0xffffff;
@@ -133,6 +132,7 @@ export class RigSkin {
     private readonly bodyFill = 1,
   ) {
     this.weaponMount = resolveWeaponMount(rig);
+    this.layers = new ClipLayers(bundle.clips);
     // Tethers paint behind every bone sprite: they run from the core's centre out to a
     // module, so the half nearest the core belongs UNDER the body, not across it.
     this.tethers = hasTetheredBone(rig.boneDefs) ? new Graphics() : null;
@@ -182,22 +182,25 @@ export class RigSkin {
     this.view.sortableChildren = true;
   }
 
-  /** Select which clip plays and at what local time (ms — converted to the seconds
-   *  clip.duration/keyframe.time are authored in, tools/animator's AnimationController). */
+  /** Select which BASE clip plays (idle/move) and at what local time (ms — converted to the
+   *  seconds clip.duration/keyframe.time are authored in, tools/animator's AnimationController).
+   *  The attack overlay is independent of this and rides on top; see `attack()`. */
   playClip(name: string, tMs: number): void {
-    this.clip = this.bundle.clips.get(name) ?? null;
-    const tSec = tMs / 1000;
-    this.clipT = this.clip?.loop && this.clip.duration > 0 ? tSec % this.clip.duration : tSec;
+    this.layers.playBase(name, tMs);
   }
 
-  /** A shot just left this rig — start (or restart) the recoil envelope. */
-  kick(): void {
-    this.recoil.kick();
+  /** An attack just left this rig — one entry point for both kinds, which is the whole point:
+   *  a shot and a swing start the same authored `attack` clip and the same envelope, and only
+   *  the envelope's SHAPE differs by kind. */
+  attack(kind: AttackKind): void {
+    this.motion.kick(kind);
+    this.layers.attack();
   }
 
-  /** Advance the recoil envelope by one render frame. Call before `update()`. */
-  advanceRecoil(dtMs: number): void {
-    this.recoil.advance(dtMs);
+  /** Advance the attack clip overlay + envelope by one render frame. Call before `update()`. */
+  advanceAttack(dtMs: number): void {
+    this.motion.advance(dtMs);
+    this.layers.advance(dtMs);
   }
 
   /** Body/legs facing (radians, standard math convention, y-down screen space) —
@@ -253,23 +256,28 @@ export class RigSkin {
     if (this.idleModuleSprite) this.idleModuleSprite.tint = color;
   }
 
-  /** The canonical (pre-mirror) local rotation, in RADIANS, that renders as the true
-   *  world aim angle once `view.scale.x` possibly flips the whole rig (see class doc). */
+  /** Where the AIM points, canonically (`facing.canonicalAimRad`) — the eye tracks its target
+   *  along this, and the recoil pushes along it, during a swing as well as outside one. */
   private canonicalSocketAngleRad(): number {
-    return this.flipX === 1 ? this.aimRad : Math.PI - this.aimRad;
+    return canonicalAimRad(this.aimRad, this.flipX);
+  }
+
+  /** Where the WEAPON points: the aim plus the melee swing's arc. Separate from the aim above
+   *  on purpose — the eye follows the target, not the blade. Equal to it for a gun. */
+  private canonicalWeaponAngleRad(): number {
+    return this.canonicalSocketAngleRad() + (this.motion.swingDeg * Math.PI) / 180;
   }
 
   /** Recompute FK from the current clip sample and push it onto the sprites. Call once per render frame. */
   update(): void {
-    const transforms: Map<string, ResolvedBoneTransform> = this.clip
-      ? sampleClip(this.clip, this.clipT)
-      : new Map();
+    const transforms: Map<string, ResolvedBoneTransform> = this.layers.sample();
     const worldPose = this.rig.computeFK(0, 0, transforms);
-    const canonicalSocketDeg = (this.canonicalSocketAngleRad() * 180) / Math.PI;
+    const canonicalWeaponDeg = (this.canonicalWeaponAngleRad() * 180) / Math.PI;
 
-    // The body leans back along the SCREEN aim, not the canonical one: this is the container's
-    // own position, which `view.scale.x` does not mirror. Small by design (`RECOIL_BODY_PX`).
-    const shove = this.recoil.bodyPx;
+    // The body moves along the SCREEN aim, not the canonical one: this is the container's own
+    // position, which `view.scale.x` does not mirror. `bodyPx` is SIGNED — positive shoves back
+    // off a shot, negative lunges into a swing — so one formula covers both.
+    const shove = this.motion.bodyPx;
     this.view.x = -Math.cos(this.aimRad) * shove;
     this.view.y = -Math.sin(this.aimRad) * shove;
 
@@ -299,12 +307,12 @@ export class RigSkin {
       // The ring the module is mounted on kicks back WITH it, or the gun would slide out of
       // its own housing. Canonical space, like every other offset in this loop, so the
       // whole-rig flip lands it on the correct side.
-      if (aimTracking && this.recoil.modulePx !== 0) {
+      if (aimTracking && this.motion.modulePx !== 0) {
         const a = this.canonicalSocketAngleRad();
-        sprite.x -= Math.cos(a) * this.recoil.modulePx;
-        sprite.y -= Math.sin(a) * this.recoil.modulePx;
+        sprite.x -= Math.cos(a) * this.motion.modulePx;
+        sprite.y -= Math.sin(a) * this.motion.modulePx;
       }
-      const angleDeg = aimTracking ? canonicalSocketDeg : pose.wa - restAngleDeg;
+      const angleDeg = aimTracking ? canonicalWeaponDeg : pose.wa - restAngleDeg;
       sprite.rotation = ((angleDeg + binding.rotation) * Math.PI) / 180;
       let scaleMul = 1;
       if (boneId === EYE_BONE_ID) {
@@ -345,39 +353,12 @@ export class RigSkin {
         this.tethers, this.rig.boneDefs, worldPose, transforms, this.tetherGeometry, this.tetherTint,
       );
     }
-    this.updateModuleContacts(worldPose, transforms);
+    if (this.moduleAO && this.shadeBoneId) {
+      paintModuleContacts(
+        this.moduleAO, this.shadeBoneId, this.rig.boneDefs, worldPose, transforms, this.drawnBodyR(),
+      );
+    }
     this.updateWeaponSprites(worldPose, transforms);
-  }
-
-  /** Repaint the module contact shades from this frame's socket-bone tips, in the body
-   *  bone's own space (the same space `drawSphereShading` draws in), so the whole overlay
-   *  rides the body's hover bob exactly as the shading does. */
-  private updateModuleContacts(worldPose: WorldPositions, transforms: Map<string, ResolvedBoneTransform>): void {
-    const g = this.moduleAO;
-    if (!g || !this.shadeBoneId) return;
-    const body = worldPose.get(this.shadeBoneId);
-    if (!body) {
-      g.visible = false;
-      return;
-    }
-    const bodyTransform = transforms.get(this.shadeBoneId);
-    const bx = body.ex + (bodyTransform?.translateX ?? 0);
-    const by = body.ey + (bodyTransform?.translateY ?? 0);
-    const mounts: Array<{ x: number; y: number }> = [];
-    for (const bone of this.rig.boneDefs) {
-      if (!bone.outerW || !bone.innerW) continue;
-      const pose = worldPose.get(bone.id);
-      const t = transforms.get(bone.id);
-      if (!pose || (t?.alpha ?? 1) <= 0) continue;
-      // `+ translate` for the same reason the sprite loop above does it: `computeFK` folds a
-      // clip's ROTATION into a bone's tip but not its translation, so a module the clip slides
-      // (the attack clip's recoil kick) would otherwise leave its contact shade behind.
-      mounts.push({ x: pose.ex + (t?.translateX ?? 0) - bx, y: pose.ey + (t?.translateY ?? 0) - by });
-    }
-    g.visible = true;
-    g.position.set(bx, by);
-    g.alpha = bodyTransform?.alpha ?? 1;
-    drawModuleContacts(g, mounts, this.drawnBodyR());
   }
 
   /** The body art's real drawn radius in authoring px — the shade bone's declared `bodyR` times
@@ -407,10 +388,10 @@ export class RigSkin {
    *  its own drawn edge; the boss gets none. */
   private updateWeaponSprites(worldPose: WorldPositions, transforms: Map<string, ResolvedBoneTransform>): void {
     const texture = this.weaponKind ? getWeaponTexture(this.weaponName, this.weaponKind) : undefined;
-    const canonical = this.canonicalSocketAngleRad();
+    const canonical = this.canonicalWeaponAngleRad();
     const activeMount = texture
       ? activeModuleMount(
-          this.weaponMount, worldPose, transforms, canonical, this.heldMountBody(), this.recoil.modulePx,
+          this.weaponMount, worldPose, transforms, canonical, this.heldMountBody(), this.motion.modulePx,
         )
       : null;
     const idleMount = texture ? idleModuleMount(this.weaponMount, worldPose) : null;

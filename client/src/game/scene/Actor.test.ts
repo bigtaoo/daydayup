@@ -1677,13 +1677,13 @@ describe('Actor filters — quality tier gate', () => {
 });
 
 /**
- * `Actor.onFired` — the shot reaching the view (2026-08-30). One line of wiring, but it is
+ * `Actor.onAttack` — the shot reaching the view (2026-08-30). One line of wiring, but it is
  * the ONLY thing standing between the engine's `bullet_fired` event and any firing feedback
  * at all, and it has to survive the placeholder skin every actor renders as until its bundle
- * finishes preloading. `render/rigRecoil.test.ts` and `render/RigSkin.test.ts` cover what the
+ * finishes preloading. `render/rigAttackMotion.test.ts` and `render/RigSkin.test.ts` cover what the
  * recoil then does.
  */
-describe('Actor.onFired — the firing recoil reaches the skin', () => {
+describe('Actor.onAttack — the firing recoil reaches the skin', () => {
   afterEach(() => {
     skinRegistryMocks.loaded = undefined;
   });
@@ -1691,14 +1691,25 @@ describe('Actor.onFired — the firing recoil reaches the skin', () => {
   it('forwards the shot to the skin', () => {
     skinRegistryMocks.loaded = loadedOrbCoreRig();
     const a = new Actor('player', 20, undefined, false, 'char_vanguard');
-    const fire = vi.spyOn((a as unknown as { skin: { fire: () => void } }).skin, 'fire');
-    a.onFired();
+    const fire = vi.spyOn((a as unknown as { skin: { attack: () => void } }).skin, 'attack');
+    a.onAttack('ranged');
     expect(fire).toHaveBeenCalledTimes(1);
+  });
+
+  it('forwards the KIND through, not just the fact — a swing must not recoil like a gun', () => {
+    // One line of wiring, but it is the line the whole unified rule funnels through: the two
+    // envelopes are opposite motions (`render/rigAttackMotion.ts`), so a dropped argument would
+    // make every sword swing shove the character backwards.
+    skinRegistryMocks.loaded = loadedOrbCoreRig();
+    const a = new Actor('player', 20, undefined, false, 'char_vanguard');
+    const attack = vi.spyOn((a as unknown as { skin: { attack: () => void } }).skin, 'attack');
+    a.onAttack('melee');
+    expect(attack).toHaveBeenCalledWith('melee');
   });
 
   it('is safe on a placeholder skin — the first frames of every run render as one', () => {
     const a = new Actor('enemy', 12);
-    expect(() => a.onFired()).not.toThrow();
+    expect(() => a.onAttack('ranged')).not.toThrow();
     expect(() => a.interpolate(1, 16)).not.toThrow();
   });
 
@@ -1706,12 +1717,12 @@ describe('Actor.onFired — the firing recoil reaches the skin', () => {
     skinRegistryMocks.loaded = loadedOrbCoreRig();
     const a = new Actor('player', 20, undefined, false, 'char_vanguard');
     a.place(0, 0, 0);
-    a.onFired();
+    a.onAttack('ranged');
     // 200ms of frames — past RECOIL_MS (150), so the envelope must be fully spent purely
     // because `interpolate` kept handing the skin its frame dt.
     for (let i = 0; i < 12; i++) a.interpolate(1, 17);
-    const rig = (a as unknown as { skin: { rig?: { advanceRecoil(ms: number): void } } }).skin.rig!;
+    const rig = (a as unknown as { skin: { rig?: { advanceAttack(ms: number): void } } }).skin.rig!;
     expect(rig).toBeDefined();
-    expect((rig as unknown as { recoil: { amount: number } }).recoil.amount).toBe(0);
+    expect((rig as unknown as { motion: { amount: number } }).motion.amount).toBe(0);
   });
 });

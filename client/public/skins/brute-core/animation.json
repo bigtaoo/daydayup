@@ -42,6 +42,112 @@
         }
       ]
     },
+    "move": {
+      "duration": 0.6,
+      "loop": true,
+      "keyframes": [
+        {
+          "time": 0,
+          "bones": {
+            "body": {
+              "translateY": 0,
+              "translateX": 0,
+              "rotation": 0
+            }
+          }
+        },
+        {
+          "time": 0.15,
+          "bones": {
+            "body": {
+              "translateY": -5,
+              "translateX": 1.5,
+              "rotation": -3
+            }
+          }
+        },
+        {
+          "time": 0.3,
+          "bones": {
+            "body": {
+              "translateY": 0,
+              "translateX": 0,
+              "rotation": 0
+            }
+          }
+        },
+        {
+          "time": 0.45,
+          "bones": {
+            "body": {
+              "translateY": -5,
+              "translateX": -1.5,
+              "rotation": 3
+            }
+          }
+        },
+        {
+          "time": 0.6,
+          "bones": {
+            "body": {
+              "translateY": 0,
+              "translateX": 0,
+              "rotation": 0
+            }
+          }
+        }
+      ]
+    },
+    "attack": {
+      "duration": 0.35,
+      "loop": false,
+      "keyframes": [
+        {
+          "time": 0,
+          "bones": {
+            "body": {
+              "translateX": 0,
+              "translateY": 0,
+              "scaleX": 1,
+              "scaleY": 1
+            }
+          }
+        },
+        {
+          "time": 0.06,
+          "bones": {
+            "body": {
+              "translateX": -3,
+              "translateY": -1,
+              "scaleX": 0.92,
+              "scaleY": 1.08
+            }
+          }
+        },
+        {
+          "time": 0.16,
+          "bones": {
+            "body": {
+              "translateX": 9,
+              "translateY": 2,
+              "scaleX": 1.14,
+              "scaleY": 0.88
+            }
+          }
+        },
+        {
+          "time": 0.35,
+          "bones": {
+            "body": {
+              "translateX": 0,
+              "translateY": 0,
+              "scaleX": 1,
+              "scaleY": 1
+            }
+          }
+        }
+      ]
+    },
     "hurt": {
       "duration": 0.3,
       "loop": false,

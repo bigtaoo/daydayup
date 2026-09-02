@@ -3,6 +3,7 @@ import { RigSkin } from '../../render/RigSkin';
 import { getRigSkin } from '../../render/skinRegistry';
 import type { WeaponVisualKind } from '../../render/weaponSkins';
 import { resolveWeaponMount } from '../../render/rigWeaponMount';
+import type { AttackKind } from '../../render/rigAttackMotion';
 
 // Appearance layer (see design/02-entity-model.md).
 // A skin is either the Graphics placeholder (default — no real art preloaded
@@ -86,16 +87,16 @@ export class Skin {
   // `bodyRad` is the body/legs orientation (world-space radians, movement direction
   // for a player — see Actor's upper/lower body split); `aimRad` is the weapon's own
   // aim/shot direction, tracked independently of the body. `frameDt`/`clipName` drive
-  // a real rig's animation clock + which clip plays (design/12's "render clock" —
-  // idle/move only; firing is `fire()`'s procedural recoil layered on top rather than a
-  // clip swap, and hurt/death need GameState signals Actor doesn't carry yet, deliberately
-  // left for later). The Graphics placeholder only has a body
+  // a real rig's animation clock + which clip plays (design/12's "render clock").
+  // `clipName` is the BASE layer only — idle/move; an attack rides on top of it as its own
+  // layer (`attack()`), and hurt/death need GameState signals Actor doesn't carry yet,
+  // deliberately left for later. The Graphics placeholder only has a body
   // front-indicator (its cosmetic weapon Graphics is rotated separately by Actor), so
   // it ignores `aimRad`/`frameDt`/`clipName`.
   setFacing(bodyRad: number, aimRad: number, frameDt = 0, clipName = 'idle') {
     if (this.rig) {
       this.clock += frameDt;
-      this.rig.advanceRecoil(frameDt);
+      this.rig.advanceAttack(frameDt);
       this.rig.playClip(clipName, this.clock);
       this.rig.setBodyFacing(bodyRad);
       this.rig.setAim(aimRad);
@@ -105,13 +106,14 @@ export class Skin {
     }
   }
 
-  /** A shot just left this skin (`Actor.onFired`, driven by the engine's `bullet_fired`
-   *  event — design/08's one render channel). Kicks the weapon module back along its own
-   *  barrel and leans the body with it; no-op on the Graphics placeholder, which has no
-   *  mounted module to recoil. See `render/rigRecoil.ts` for the envelope and for why this
-   *  is layered over the current clip instead of playing the authored `attack` one. */
-  fire(): void {
-    this.rig?.kick();
+  /** An attack just left this skin (`Actor.onAttack`, driven by the engine's `bullet_fired`
+   *  or `melee_swing` event — design/08's one render channel). ONE entry point for both, by
+   *  design: either kind starts the same authored `attack` clip layered over idle/move
+   *  (`render/rigClipLayer.ts`) and the same aim-relative envelope, which only differs by kind
+   *  (`render/rigAttackMotion.ts` — a gun kicks back, a blade sweeps forward). No-op on the
+   *  Graphics placeholder, which has neither a clip nor a mounted module to move. */
+  attack(kind: AttackKind): void {
+    this.rig?.attack(kind);
   }
 
   // Hand anchor (in actor-local coords). Fixed in the demo; later driven by animation frames.

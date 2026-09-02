@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { facingFromAngle, turnToward } from './facing';
+import { canonicalAimRad, facingFromAngle, turnToward } from './facing';
 
 describe('facingFromAngle (design/12 two-hemisphere billboard model, drives body facing)', () => {
   it('facing right (0 rad) is unflipped, front hemisphere (dy=0 counts as front)', () => {
@@ -57,5 +57,101 @@ describe('turnToward', () => {
 
   it('never moves further than maxStep for a half-turn, the worst case', () => {
     expect(Math.abs(turnToward(0, Math.PI, 0.27))).toBeCloseTo(0.27, 6);
+  });
+});
+
+/**
+ * `canonicalAimRad` — the pre-mirror space every body-space offset in a rig has to be stated
+ * in. It was a private on `RigSkin` until 2026-09-02, reachable only through a posed Pixi rig;
+ * four separate call sites now depend on it (socket rotation, the eye slide, the recoil push,
+ * the melee swing arc), so it is asserted directly.
+ *
+ * The property that matters is not the formula, it is what the formula BUYS: after the rig's
+ * `view.scale.x = flipX` mirror, an offset built from this angle lands on the same side of the
+ * body whichever way the character faces, with the vertical component NOT mirrored.
+ */
+describe('canonicalAimRad — offsets survive the whole-rig mirror', () => {
+  const screen = (rad: number, flipX: 1 | -1) => {
+    const a = canonicalAimRad(rad, flipX);
+    return { x: flipX * Math.cos(a), y: Math.sin(a) }; // what `view.scale.x` renders
+  };
+
+  it('is the identity for a right-facing rig', () => {
+    for (const rad of [0, 0.7, -1.2, Math.PI / 2]) expect(canonicalAimRad(rad, 1)).toBe(rad);
+  });
+
+  it('a unit offset lands on the TRUE world direction after the mirror, either way round', () => {
+    // The whole contract in one assertion, and the bug it prevents: without the pi- reflection a
+    // left-facing character's gun points at the mirror image of its reticle.
+    for (const rad of [0.3, 1.9, -2.4, Math.PI]) {
+      for (const flipX of [1, -1] as const) {
+        const s = screen(rad, flipX);
+        expect(s.x).toBeCloseTo(Math.cos(rad), 12);
+        expect(s.y).toBeCloseTo(Math.sin(rad), 12);
+      }
+    }
+  });
+
+  it('mirrors the horizontal component and leaves the vertical one alone', () => {
+    const a = canonicalAimRad(0.6, -1);
+    expect(Math.cos(a)).toBeCloseTo(-Math.cos(0.6), 12);
+    expect(Math.sin(a)).toBeCloseTo(Math.sin(0.6), 12);
+  });
+
+  it('composes with the facing decision the rig actually makes', () => {
+    // `facingFromAngle` is what chooses `flipX`, so the two are only correct together.
+    for (const rad of [0.4, 2.2, -0.9, -2.8]) {
+      const s = screen(rad, facingFromAngle(rad).flipX);
+      expect(s.x).toBeCloseTo(Math.cos(rad), 12);
+      expect(s.y).toBeCloseTo(Math.sin(rad), 12);
+    }
+  });
+});
+
+/**
+ * `canonicalAimRad` — the pre-mirror space every body-space offset in a rig has to be stated
+ * in. It was a private on `RigSkin` until 2026-09-02, reachable only through a posed Pixi rig;
+ * four separate call sites now depend on it (socket rotation, the eye slide, the recoil push,
+ * the melee swing arc), so it is asserted directly.
+ *
+ * The property that matters is not the formula, it is what the formula BUYS: after the rig's
+ * `view.scale.x = flipX` mirror, an offset built from this angle lands on the same side of the
+ * body whichever way the character faces, with the vertical component NOT mirrored.
+ */
+describe('canonicalAimRad — offsets survive the whole-rig mirror', () => {
+  const screen = (rad: number, flipX: 1 | -1) => {
+    const a = canonicalAimRad(rad, flipX);
+    return { x: flipX * Math.cos(a), y: Math.sin(a) }; // what `view.scale.x` renders
+  };
+
+  it('is the identity for a right-facing rig', () => {
+    for (const rad of [0, 0.7, -1.2, Math.PI / 2]) expect(canonicalAimRad(rad, 1)).toBe(rad);
+  });
+
+  it('a unit offset lands on the TRUE world direction after the mirror, either way round', () => {
+    // The whole contract in one assertion, and the bug it prevents: without the pi- reflection a
+    // left-facing character's gun points at the mirror image of its reticle.
+    for (const rad of [0.3, 1.9, -2.4, Math.PI]) {
+      for (const flipX of [1, -1] as const) {
+        const s = screen(rad, flipX);
+        expect(s.x).toBeCloseTo(Math.cos(rad), 12);
+        expect(s.y).toBeCloseTo(Math.sin(rad), 12);
+      }
+    }
+  });
+
+  it('mirrors the horizontal component and leaves the vertical one alone', () => {
+    const a = canonicalAimRad(0.6, -1);
+    expect(Math.cos(a)).toBeCloseTo(-Math.cos(0.6), 12);
+    expect(Math.sin(a)).toBeCloseTo(Math.sin(0.6), 12);
+  });
+
+  it('composes with the facing decision the rig actually makes', () => {
+    // `facingFromAngle` is what chooses `flipX`, so the two are only correct together.
+    for (const rad of [0.4, 2.2, -0.9, -2.8]) {
+      const s = screen(rad, facingFromAngle(rad).flipX);
+      expect(s.x).toBeCloseTo(Math.cos(rad), 12);
+      expect(s.y).toBeCloseTo(Math.sin(rad), 12);
+    }
   });
 });

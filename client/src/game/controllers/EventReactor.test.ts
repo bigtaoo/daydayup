@@ -407,7 +407,7 @@ describe('EventReactor — a shot leaves the shooter, not the event position', (
 
   function shooter(muzzle: { x: number; y: number } | null) {
     return {
-      hitFlash: vi.fn(), onFired: vi.fn(), muzzlePos: vi.fn(() => muzzle), x: 100, y: 200,
+      hitFlash: vi.fn(), onAttack: vi.fn(), muzzlePos: vi.fn(() => muzzle), x: 100, y: 200,
     };
   }
 
@@ -424,7 +424,69 @@ describe('EventReactor — a shot leaves the shooter, not the event position', (
     const { reactor, host } = reactorWith(actor);
     reactor.consume([SHOT]);
     expect(host.actorAt).toHaveBeenCalledWith(7);
-    expect(actor.onFired).toHaveBeenCalledTimes(1);
+    expect(actor.onAttack).toHaveBeenCalledWith('ranged');
+    expect(actor.onAttack).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The melee half (ENGINE_VERSION 52). Before `melee_swing` existed the render layer was never
+   * told a swing happened at all: `deflect` fires only when a swing catches a bullet and `hit`
+   * only when it connects, so swinging at empty air reached the view as nothing.
+   */
+  it('tells the swinger it swung, off the melee event, with the melee kind', () => {
+    const SWING = { type: 'melee_swing', ownerId: 7, gx: pxToFp(100), gy: pxToFp(200), facing: 0 } as GameEvent;
+    const actor = shooter(null);
+    const { reactor, host } = reactorWith(actor);
+    reactor.consume([SWING]);
+    expect(host.actorAt).toHaveBeenCalledWith(7);
+    expect(actor.onAttack).toHaveBeenCalledWith('melee');
+  });
+
+  it('a swing draws no muzzle fx and costs no cue — a blade has no muzzle', () => {
+    // The reason this is its own case and not folded into the one above: the two events carry
+    // IDENTICAL fields, so the easy mistake is to route the swing through the ranged branch and
+    // get a muzzle flare, flame, shell casing and a gunshot cue out of a sword.
+    const SWING = { type: 'melee_swing', ownerId: 7, gx: pxToFp(100), gy: pxToFp(200), facing: 0 } as GameEvent;
+    const { reactor, fx } = reactorWith(shooter({ x: 140, y: 150 }));
+    reactor.consume([SWING]);
+    expect(fx.muzzleFlare).not.toHaveBeenCalled();
+    expect(fx.particles.muzzleFlame).not.toHaveBeenCalled();
+    expect(fx.particles.shellCasing).not.toHaveBeenCalled();
+  });
+
+  it('survives a swinger whose view is already gone', () => {
+    const SWING = { type: 'melee_swing', ownerId: 7, gx: pxToFp(0), gy: pxToFp(0), facing: 0 } as GameEvent;
+    const { reactor } = reactorWith(undefined);
+    expect(() => reactor.consume([SWING])).not.toThrow();
+  });
+
+  it('a swing plays no cue — there is no whoosh in the catalogue, and a gunshot would be wrong', () => {
+    // Deliberate, and worth pinning rather than leaving as an absence: the two events carry the
+    // same fields, so routing a swing through the ranged branch would give a sword the `muzzle`
+    // cue. If a swing cue is ever authored (design/11), this test is the one that has to change,
+    // which is the point — it makes the silence a decision instead of an oversight.
+    const SWING = { type: 'melee_swing', ownerId: 7, gx: pxToFp(0), gy: pxToFp(0), facing: 0 } as GameEvent;
+    const audio = fakeAudio();
+    const hud = new HudView();
+    hud.build(new Layers(), { w: 1280, h: 720 });
+    const host = { ...fakeHost(), actorAt: vi.fn(() => shooter({ x: 1, y: 2 })) };
+    new EventReactor(fakeFx(), hud, audio, host).consume([SWING]);
+    expect(audio.play).not.toHaveBeenCalled();
+  });
+
+  it('lands on the swinger the event names, not on whoever swung last', () => {
+    // `actorAt(e.ownerId)` — the same resolution the ranged branch does. In a PvP arena eight
+    // players can swing on one tick, and a dropped `ownerId` would animate one of them eight times.
+    const a = shooter(null), b = shooter(null);
+    const byId = new Map([[7, a], [9, b]]);
+    const host = { ...fakeHost(), actorAt: vi.fn((id: number) => byId.get(id)) };
+    const hud = new HudView();
+    hud.build(new Layers(), { w: 1280, h: 720 });
+    new EventReactor(fakeFx(), hud, fakeAudio(), host).consume([
+      { type: 'melee_swing', ownerId: 9, gx: pxToFp(0), gy: pxToFp(0), facing: 0 } as GameEvent,
+    ]);
+    expect(b.onAttack).toHaveBeenCalledWith('melee');
+    expect(a.onAttack).not.toHaveBeenCalled();
   });
 
   it('anchors flare, sparks and casing on the DRAWN barrel tip — all three at the same point', () => {
@@ -472,7 +534,7 @@ describe('EventReactor — a shot leaves the shooter, not the event position', (
  */
 describe('EventReactor — a multi-pellet volley in one frame', () => {
   it('recoils and flares per pellet, but plays exactly one muzzle cue carrying the count', () => {
-    const actor = { hitFlash: vi.fn(), onFired: vi.fn(), muzzlePos: vi.fn(() => ({ x: 12, y: 34 })), x: 0, y: 0 };
+    const actor = { hitFlash: vi.fn(), onAttack: vi.fn(), muzzlePos: vi.fn(() => ({ x: 12, y: 34 })), x: 0, y: 0 };
     const fx = fakeFx();
     const audio = fakeAudio();
     const hud = new HudView();
@@ -484,7 +546,7 @@ describe('EventReactor — a multi-pellet volley in one frame', () => {
     }) as GameEvent);
     reactor.consume(volley);
 
-    expect(actor.onFired).toHaveBeenCalledTimes(5);
+    expect(actor.onAttack).toHaveBeenCalledTimes(5);
     expect(fx.muzzleFlare).toHaveBeenCalledTimes(5);
     expect(audio.play).toHaveBeenCalledTimes(1);
     expect(audio.play).toHaveBeenCalledWith('muzzle', 5);

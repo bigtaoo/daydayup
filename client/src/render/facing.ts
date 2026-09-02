@@ -36,6 +36,25 @@ export function turnToward(from: number, to: number, maxStep: number): number {
   return from + Math.sign(delta) * maxStep;
 }
 
+/**
+ * The canonical (pre-mirror) local angle, in RADIANS, that renders as the true world angle
+ * `rad` once `view.scale.x` has possibly mirrored the whole rig (`facingFromAngle().flipX`).
+ *
+ * Every offset a rig computes in body space — a socket's aim rotation, the eye's slide inside
+ * the shell, the recoil's push along the barrel, the melee swing's arc — has to be stated in
+ * this space, or the flip lands it on the wrong side of the body. `cos(pi - a) = -cos(a)`
+ * unflips to `+cos(a)` while `sin` is unchanged, which is exactly right: the horizontal
+ * component mirrors and the vertical one must not.
+ *
+ * Lives here rather than as a private on `RigSkin` (moved 2026-09-02, 500-line convention)
+ * because it is the same pure facing decision this file already owns, and because a rule four
+ * separate call sites depend on deserves its own test instead of only being exercised
+ * indirectly through a posed Pixi rig.
+ */
+export function canonicalAimRad(rad: number, flipX: 1 | -1): number {
+  return flipX === 1 ? rad : Math.PI - rad;
+}
+
 export function facingFromAngle(rad: number): FacingState {
   const dx = Math.cos(rad);
   const dy = Math.sin(rad);

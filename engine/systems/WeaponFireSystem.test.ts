@@ -64,7 +64,7 @@ import { createGameState, type GameState } from '@dd/engine/state/GameState';
 import type { PlayerActor, RangedSimSpec, WeaponSimSpec } from '@dd/engine/state/entities';
 import { ENEMY_TEAM_ID } from '@dd/engine/state/entities';
 import { pxToFp } from '@dd/engine/content/convert';
-import { buildEnemyActor, BLIGHTLORD } from '@dd/engine/content/enemies';
+import { buildEnemyActor, BLIGHTLORD, ENEMY_BLUEPRINTS } from '@dd/engine/content/enemies';
 import {
   makeWeapon,
   BLASTER_SIM,
@@ -400,6 +400,122 @@ describe('melee vs ranged branch (design/03 — the swing IS the parry)', () => 
     p.alive = false;
     new WeaponFireSystem().tick(s);
     expect(p.weapon!.justSwung).toBe(false);
+  });
+});
+
+/**
+ * ENGINE_VERSION 52. Until then a swing was invisible to the render layer: `deflect` only
+ * fires when a swing catches a bullet and `hit` only when it connects, so a sword swung at
+ * empty air produced no event at all and could never animate. These assert the SWING is
+ * announced, independently of whether it touched anything — the whole point of the event.
+ *
+ * Deliberately mirrors the `bullet_fired` suite below rather than inventing its own shape:
+ * the render layer answers both with one reaction, so the two events have to agree on their
+ * fields (`EventReactor`'s shared `onAttack` path reads `ownerId` on either).
+ */
+describe('melee_swing announces the swing itself (design/08 fx channel, ENGINE_VERSION 52)', () => {
+  const swings = (s: GameState) => s.events.filter((e) => e.type === 'melee_swing');
+
+  it('one swing emits exactly one event, mirroring the swinger', () => {
+    const s = state();
+    const p = armed(s, SABER_SIM, 4096); // 45 deg
+    new WeaponFireSystem().tick(s);
+
+    expect(swings(s)).toEqual([
+      { type: 'melee_swing', ownerId: p.id, faction: p.faction, gx: p.gx, gy: p.gy, facing: p.facing },
+    ]);
+  });
+
+  it('the event fires even though the swing hit nothing — there is no enemy in this state at all', () => {
+    // The regression this exists for. `hit`/`deflect` are the two events a swing used to be
+    // visible through, and both are conditional on the swing CONNECTING; an animation is not.
+    const s = state();
+    armed(s, SABER_SIM);
+    new WeaponFireSystem().tick(s);
+
+    expect(s.enemies).toHaveLength(0);
+    expect(s.projectiles).toHaveLength(0);
+    expect(s.events.filter((e) => e.type === 'hit' || e.type === 'deflect')).toHaveLength(0);
+    expect(swings(s)).toHaveLength(1);
+  });
+
+  it('a ranged shot emits none, and a swing emits no bullet_fired — the two branches stay disjoint', () => {
+    const ranged = state();
+    armed(ranged, BLASTER_SIM);
+    new WeaponFireSystem().tick(ranged);
+    expect(swings(ranged)).toHaveLength(0);
+    expect(ranged.events.filter((e) => e.type === 'bullet_fired')).toHaveLength(1);
+
+    const melee = state();
+    armed(melee, SABER_SIM);
+    new WeaponFireSystem().tick(melee);
+    expect(swings(melee)).toHaveLength(1);
+    expect(melee.events.filter((e) => e.type === 'bullet_fired')).toHaveLength(0);
+  });
+
+  it('a swing still on cooldown emits nothing — the event tracks the swing, not the held trigger', () => {
+    // `justSwung` and the event have to latch together. A trigger held down through the
+    // recovery would otherwise re-announce the same swing every tick and the animation would
+    // re-trigger at 30 Hz instead of once per swing.
+    const s = state();
+    const p = armed(s, SABER_SIM);
+    p.weapon!.cooldownTicks = 5;
+    new WeaponFireSystem().tick(s);
+
+    expect(p.weapon!.justSwung).toBe(false);
+    expect(swings(s)).toHaveLength(0);
+  });
+
+  it('holding the trigger emits one event per swing, on the tick the cooldown clears', () => {
+    const s = state();
+    const p = armed(s, SABER_SIM);
+    const sys = new WeaponFireSystem();
+    let emitted = 0;
+    for (let t = 0; t < SABER_SIM.swingCooldownTicks * 3; t++) {
+      s.events.length = 0;
+      sys.tick(s);
+      emitted += swings(s).length;
+      expect(swings(s).length, `tick ${t}`).toBe(p.weapon!.justSwung ? 1 : 0);
+    }
+    expect(emitted).toBe(3);
+  });
+
+  it('a dead swinger emits nothing, even holding the trigger off cooldown', () => {
+    const s = state();
+    const p = armed(s, SABER_SIM);
+    p.alive = false;
+    new WeaponFireSystem().tick(s);
+    expect(swings(s)).toHaveLength(0);
+  });
+
+  it('an ENEMY swinging emits with its own id and faction, not the player seat one', () => {
+    // No shipped enemy carries a melee weapon (the tripwire below), but `actor()` is one code
+    // path for both rosters and the event carries whatever it is handed. If an enemy ever gains
+    // a blade, this is the assertion that says the render layer will be told the truth about who
+    // swung -- `EventReactor` resolves the swinger's view by `ownerId` alone.
+    const s = state();
+    const e = buildEnemyActor(s, pxToFp(400), pxToFp(400), 'blightlord');
+    e.weapon = makeWeapon(SABER_SIM); // no shipped blueprint carries one; hand it a blade directly
+    e.weapon.cooldownTicks = 0;
+    e.firing = true;
+    s.enemies.push(e);
+    new WeaponFireSystem().tick(s);
+
+    const mine = swings(s).filter((ev) => ev.ownerId === e.id);
+    expect(mine).toHaveLength(1);
+    expect(mine[0]).toMatchObject({ ownerId: e.id, faction: e.faction });
+    expect(e.faction).not.toBe(s.players[0]!.faction);
+  });
+
+  it('no SHIPPED enemy blueprint carries a melee weapon — the swing is a player/PvP read today', () => {
+    // A tripwire, not a rule. Every blueprint's `weapon` is typed `RangedSimSpec`, so this cannot
+    // drift silently in TypeScript -- but the reason it MATTERS is a render fact the type says
+    // nothing about: an enemy body mounts its module on the 'held' path (off the body's own drawn
+    // edge, not a socket tip) and boss-core mounts none at all, so the swing arc has never been
+    // seen on either. If this ever goes red, `rigWeaponMount`'s held path needs the same pass the
+    // socket path got, and boss-core needs an answer for a weapon it deliberately does not draw.
+    const melee = Object.entries(ENEMY_BLUEPRINTS).filter(([, bp]) => (bp.weapon as { kind: string }).kind !== 'ranged');
+    expect(melee.map(([id]) => id)).toEqual([]);
   });
 });
 

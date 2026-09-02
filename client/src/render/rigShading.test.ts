@@ -30,6 +30,7 @@ import type { Graphics } from 'pixi.js';
 import {
   drawModuleContacts,
   drawSphereShading,
+  paintModuleContacts,
   shadeHex,
   sphereFormShadowAlpha,
   sphereShadeAt,
@@ -48,6 +49,7 @@ import {
 import { AUTO_BATCH_VERTEX_LIMIT } from '../perf/drawAttribution';
 import { GraphicsContextSystem } from 'pixi.js';
 import { BODY_FILL, RIG_DEFS } from './skinRegistry';
+import type { BoneDef, ResolvedBoneTransform } from './types';
 
 /**
  * Pixi's own batching decision, run for real against the smallest fake renderer
@@ -507,6 +509,120 @@ describe('drawModuleContacts — seating an orbiting module against the core', (
   it('handles two mounts independently — one contact per orbiting module', () => {
     const one = fills(contacts([{ x: 30, y: 0 }])).length;
     expect(fills(contacts([{ x: 30, y: 0 }, { x: -30, y: 4 }]))).toHaveLength(one * 2);
+  });
+});
+
+/**
+ * ## Mutation battery (`paintModuleContacts`)
+ *
+ * Recorded 2026-09-02, against the full client suite. 6 mutants, 6 killed — but only after the
+ * body-relative row was rewritten: its first version bounded the drawn x (`< 30` for a mount 30 px
+ * out) and the mutant SURVIVED, because `drawModuleContacts` pulls each ellipse so far in from its
+ * mount that a rig-space 40 still cleared the bar. Restated as an invariance — same relative
+ * geometry at a different absolute position must draw identically — it kills.
+ *
+ *   KILLED   body position ignores the clip translate ..................... 1 failing test
+ *   KILLED   mounts stated in rig space, not body-relative ................ 1  (after the rewrite)
+ *   KILLED   gathers every bone, module or not ............................ 1
+ *   KILLED   shades a module the clip faded out ............................ 1
+ *   KILLED   overlay ignores the body alpha ................................ 2
+ *   KILLED   a module the clip slid leaves its shade behind ............... 2
+ *
+ * `paintModuleContacts` — the GATHERING half, moved out of `RigSkin.updateModuleContacts`
+ * (2026-09-02, 500-line convention). It had no test of its own before the move, because as a
+ * private on `RigSkin` the only way to reach it was through a fully-assembled Pixi rig; what
+ * `RigSkin.test.ts` asserted about it was the one thing visible from outside (that `moduleAO`
+ * exists at all). These pin the selection and space conversion it actually performs, which is
+ * where its two real failure modes live: picking the wrong bones, and forgetting that
+ * `computeFK` folds a clip's ROTATION into a bone tip but not its TRANSLATION.
+ */
+describe('paintModuleContacts — gathering this frame\'s mounts from a posed rig', () => {
+  const BODY = 'body';
+  const pose = (id: string, ex: number, ey: number) => [id, { sx: 0, sy: 0, ex, ey, wa: 0 }] as const;
+  const rest: ResolvedBoneTransform = { rotation: 0, scaleX: 1, scaleY: 1, translateX: 0, translateY: 0, alpha: 1 };
+  const bone = (id: string, orbiting: boolean): BoneDef => ({
+    id, parent: 'root', len: 10, rwa: 0, rla: 0, label: id,
+    ...(orbiting ? { outerW: 4, innerW: 2 } : {}),
+  });
+
+  function paint(
+    bones: BoneDef[],
+    poses: ReadonlyArray<readonly [string, { sx: number; sy: number; ex: number; ey: number; wa: number }]>,
+    transforms: Array<[string, ResolvedBoneTransform]> = [],
+  ): Graphics {
+    const g = drawSphereShading(40); // any Graphics; cleared by the painter
+    paintModuleContacts(g, BODY, bones, new Map(poses), new Map(transforms), 40);
+    return g;
+  }
+
+  it('parks the whole overlay on the body bone, so it rides the hover bob', () => {
+    const g = paint([bone(BODY, false), bone('socket_r', true)], [pose(BODY, 0, -12), pose('socket_r', 30, -12)]);
+    expect(g.visible).toBe(true);
+    expect({ x: g.x, y: g.y }).toEqual({ x: 0, y: -12 });
+  });
+
+  it("includes the body bone's own clip translation in that position", () => {
+    // `computeFK` does not fold translation into a tip, so the sphere shading and these contact
+    // shades would drift off the art by exactly the idle bob if this were dropped.
+    const g = paint(
+      [bone(BODY, false), bone('socket_r', true)],
+      [pose(BODY, 0, 0), pose('socket_r', 30, 0)],
+      [[BODY, { ...rest, translateY: -6 }]],
+    );
+    expect(g.y).toBe(-6);
+  });
+
+  it('states each mount RELATIVE to the body, not in rig space', () => {
+    // The overlay is POSITIONED at the body, so a mount left in rig space is painted at the sum
+    // of the two — the shade drifts off the module by however far the body is from the origin.
+    //
+    // Asserted by invariance rather than by a bound, which the first version of this test got
+    // wrong and a mutation battery caught: `drawModuleContacts` pulls each ellipse a long way in
+    // from its mount, so a rig-space 40 still landed under a naive `< 30` check and the mutant
+    // survived. Same relative geometry, different absolute position => identical drawing is the
+    // claim itself, and it cannot be satisfied by an accident of the pull-in factor.
+    const bones = [bone(BODY, false), bone('socket_r', true)];
+    const atOrigin = fills(paint(bones, [pose(BODY, 0, 0), pose('socket_r', 30, 0)]));
+    const shifted = fills(paint(bones, [pose(BODY, 10, -4), pose('socket_r', 40, -4)]));
+    expect(atOrigin.length).toBeGreaterThan(0);
+    expect(shifted).toEqual(atOrigin);
+  });
+
+  it('follows a mount bone the attack clip has slid, not just one FK moved', () => {
+    const still = fills(paint([bone(BODY, false), bone('socket_r', true)], [pose(BODY, 0, 0), pose('socket_r', 30, 0)]));
+    const slid = fills(paint(
+      [bone(BODY, false), bone('socket_r', true)],
+      [pose(BODY, 0, 0), pose('socket_r', 30, 0)],
+      [['socket_r', { ...rest, translateX: -10 }]],
+    ));
+    expect(slid[0]!.data[0]!).toBeLessThan(still[0]!.data[0]!);
+  });
+
+  it('only gathers bones that actually carry a module', () => {
+    // `outerW`/`innerW` is the marker for an orbiting mount (`rigTethers` uses the same one).
+    // A rig whose bones are all plain body parts must paint nothing at all.
+    expect(fills(paint([bone(BODY, false), bone('eye', false)], [pose(BODY, 0, 0), pose('eye', 8, 2)]))).toHaveLength(0);
+  });
+
+  it('drops a mount the clip has faded out, rather than shading an invisible module', () => {
+    const bones = [bone(BODY, false), bone('socket_r', true)];
+    const poses = [pose(BODY, 0, 0), pose('socket_r', 30, 0)];
+    expect(fills(paint(bones, poses)).length).toBeGreaterThan(0);
+    expect(fills(paint(bones, poses, [['socket_r', { ...rest, alpha: 0 }]]))).toHaveLength(0);
+  });
+
+  it('hides itself when the body bone is missing from this frame\'s pose', () => {
+    const g = paint([bone(BODY, false), bone('socket_r', true)], [pose('socket_r', 30, 0)]);
+    expect(g.visible).toBe(false);
+  });
+
+  it("takes the body's own alpha, so it fades with a death dissolve instead of floating", () => {
+    const g = paint(
+      [bone(BODY, false), bone('socket_r', true)],
+      [pose(BODY, 0, 0), pose('socket_r', 30, 0)],
+      [[BODY, { ...rest, alpha: 0.25 }]],
+    );
+    expect(g.alpha).toBe(0.25);
   });
 });
 

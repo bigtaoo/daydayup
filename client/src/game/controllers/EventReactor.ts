@@ -33,12 +33,12 @@ export interface EventReactorHost {
    *  decoupling as the rest of this interface.
    *
    *  The narrow view this reactor needs: where the actor is on screen (world px, so an event's
-   *  own position can be turned into a delta from its centre), the hit reaction, the fire
+   *  own position can be turned into a delta from its centre), the hit reaction, the attack
    *  reaction, and where its DRAWN barrel tip is — the muzzle fx has to be anchored there, and
    *  `muzzlePos()` is null for a skin that mounts no weapon module (`Skin.muzzleAnchor`). */
   actorAt(id: number): {
     hitFlash(dx?: number, dy?: number): void;
-    onFired(): void;
+    onAttack(kind: 'ranged' | 'melee'): void;
     muzzlePos(): { x: number; y: number } | null;
     x: number;
     y: number;
@@ -85,7 +85,7 @@ export class EventReactor {
           // boss, the Graphics placeholder, the frames before the weapon texture preloads) —
           // those keep the old sim position plus the same 12 px lift `flash()`/`trailDot()` use.
           const shooter = this.host.actorAt(e.ownerId);
-          shooter?.onFired(); // the recoil — render-only, see Actor.onFired
+          shooter?.onAttack('ranged'); // clip + recoil — render-only, see Actor.onAttack
           const drawn = shooter?.muzzlePos() ?? null;
           const fx = drawn ? drawn.x : fpToPx(e.gx);
           const fy = drawn ? drawn.y : fpToPx(e.gy) - 12;
@@ -96,6 +96,14 @@ export class EventReactor {
           cue('muzzle');
           break;
         }
+        case 'melee_swing':
+          // The melee half of the SAME reaction the ranged branch above opens with, and the
+          // reason `melee_swing` exists at all (ENGINE_VERSION 52): a swing is announced whether
+          // or not it connects, so the blade animates over empty air too. No fx of its own —
+          // `deflect` already flashes a parry and `hit` a connection, and a swing that reads
+          // only as a flash of light is the thing this replaces.
+          this.host.actorAt(e.ownerId)?.onAttack('melee');
+          break;
         case 'hit':
           this.fx.flash(fpToPx(e.gx), fpToPx(e.gy),
             e.faction === 'enemy' ? THEME.colors.enemy : THEME.colors.swordGlow, 16);

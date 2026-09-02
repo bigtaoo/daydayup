@@ -1,5 +1,6 @@
 import { Graphics, type Texture } from 'pixi.js';
 import { CLEAR, bakedField, over, premul, writeTexel, type Premul } from './shadeRamp';
+import type { BoneDef, ResolvedBoneTransform, WorldPositions } from './types';
 
 // Split out of RigSkin.ts (2026-08-18, 500-line convention): the DEPTH-CUE marks a rig
 // draws on top of its own flat-cel art — the sphere shading over its body bone, and the
@@ -334,6 +335,52 @@ export function drawSphereShading(drawnR: number): Graphics {
  * redrawn per frame (the mounts orbit), which is why this takes a Graphics instead of
  * returning one.
  */
+/**
+ * Repaint one rig's module contact shades from this frame's posed bones — the GATHERING half of
+ * `drawModuleContacts` below, which only knows how to paint a list of mount points.
+ *
+ * Everything is computed in the BODY BONE's own space (the same space `drawSphereShading` draws
+ * in) and the whole overlay is then positioned at that bone, so it rides the body's hover bob
+ * exactly as the sphere shading does instead of sliding against it.
+ *
+ * Moved out of `RigSkin.updateModuleContacts` (2026-09-02, 500-line convention) as form (1): it
+ * is pure geometry over a posed rig plus a caller-owned `Graphics`, the same shape as
+ * `rigTethers.drawTethers` and as the painter it delegates to, and it never needed anything
+ * from `RigSkin` beyond the six values it is now handed.
+ */
+export function paintModuleContacts(
+  g: Graphics,
+  shadeBoneId: string,
+  boneDefs: readonly BoneDef[],
+  worldPose: WorldPositions,
+  transforms: ReadonlyMap<string, ResolvedBoneTransform>,
+  drawnR: number,
+): void {
+  const body = worldPose.get(shadeBoneId);
+  if (!body) {
+    g.visible = false;
+    return;
+  }
+  const bodyTransform = transforms.get(shadeBoneId);
+  const bx = body.ex + (bodyTransform?.translateX ?? 0);
+  const by = body.ey + (bodyTransform?.translateY ?? 0);
+  const mounts: Array<{ x: number; y: number }> = [];
+  for (const bone of boneDefs) {
+    if (!bone.outerW || !bone.innerW) continue;
+    const pose = worldPose.get(bone.id);
+    const t = transforms.get(bone.id);
+    if (!pose || (t?.alpha ?? 1) <= 0) continue;
+    // `+ translate` for the same reason RigSkin's sprite loop does it: `computeFK` folds a
+    // clip's ROTATION into a bone's tip but not its translation, so a module the attack clip
+    // slides would otherwise leave its contact shade behind.
+    mounts.push({ x: pose.ex + (t?.translateX ?? 0) - bx, y: pose.ey + (t?.translateY ?? 0) - by });
+  }
+  g.visible = true;
+  g.position.set(bx, by);
+  g.alpha = bodyTransform?.alpha ?? 1;
+  drawModuleContacts(g, mounts, drawnR);
+}
+
 export function drawModuleContacts(g: Graphics, mounts: ReadonlyArray<{ x: number; y: number }>, drawnR: number): void {
   g.clear();
   const r = drawnR * SHADE_FIT;

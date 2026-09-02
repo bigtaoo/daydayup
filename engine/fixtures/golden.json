@@ -1,11 +1,11 @@
 {
-  "engineVersion": 51,
+  "engineVersion": 52,
   "scenarios": [
     {
       "name": "arena-waves",
       "pins": "the flat wave path: fire cadence, crit/drop rolls, actor pairs, win condition",
       "ticks": 500,
-      "hash": 3983069152,
+      "hash": 3936886957,
       "witness": {
         "tick": 185,
         "phase": "gameover",
@@ -22,6 +22,7 @@
           "clash": 1,
           "hit": 10,
           "death": 3,
+          "melee_swing": 7,
           "wave_clear": 2,
           "win": 1
         }
@@ -31,7 +32,7 @@
       "name": "walls-and-pillars",
       "pins": "MovementSystem's rect/circle push-out and its tie-breaks — the geometry half of design/18",
       "ticks": 600,
-      "hash": 2340158192,
+      "hash": 1965531621,
       "witness": {
         "tick": 600,
         "phase": "playing",
@@ -46,7 +47,8 @@
         "events": {
           "bullet_fired": 51,
           "hit": 5,
-          "death": 1
+          "death": 1,
+          "melee_swing": 27
         }
       }
     },
@@ -54,7 +56,7 @@
       "name": "ember-dungeon-floor1",
       "pins": "authored floor-1 roomgen + room entry + door lock/unlock + freeStanding north brim + pickup clamping",
       "ticks": 1500,
-      "hash": 1052049563,
+      "hash": 2605551066,
       "witness": {
         "tick": 1500,
         "phase": "playing",
@@ -72,6 +74,7 @@
           "door_locked": 2,
           "hit": 62,
           "clash": 6,
+          "melee_swing": 67,
           "death": 15,
           "deflect": 5,
           "shield_break": 2,
@@ -85,7 +88,7 @@
       "name": "brim-grinder",
       "pins": "WALL_NORTH_BRIM itself: a free-standing block's brimmed north face vs its three bare ones",
       "ticks": 800,
-      "hash": 3100664569,
+      "hash": 4126542368,
       "witness": {
         "tick": 800,
         "phase": "playing",
@@ -103,6 +106,7 @@
           "door_locked": 1,
           "hit": 6,
           "death": 2,
+          "melee_swing": 36,
           "door_unlocked": 1
         }
       }
@@ -111,7 +115,7 @@
       "name": "launch-arena-pvp",
       "pins": "arena geometry + zone shrink + two hostile seats + per-skin arena stat scaling",
       "ticks": 900,
-      "hash": 2939295296,
+      "hash": 3023953293,
       "witness": {
         "tick": 900,
         "phase": "playing",
@@ -128,6 +132,7 @@
           "clash": 2,
           "hit": 51,
           "shield_break": 3,
+          "melee_swing": 44,
           "downed": 1,
           "deflect": 1,
           "death": 4,

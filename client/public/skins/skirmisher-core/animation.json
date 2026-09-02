@@ -235,8 +235,18 @@
           "time": 0,
           "bones": {
             "socket_r": {
-              "translateX": 0,
-              "scaleX": 1
+              "scaleX": 1,
+              "scaleY": 1
+            },
+            "shell": {
+              "translateY": 0
+            },
+            "belly": {
+              "translateY": 0
+            },
+            "eye": {
+              "translateY": 0,
+              "scaleY": 1
             }
           }
         },
@@ -244,8 +254,18 @@
           "time": 0.08,
           "bones": {
             "socket_r": {
-              "translateX": -10,
-              "scaleX": 0.85
+              "scaleX": 0.85,
+              "scaleY": 1.1
+            },
+            "shell": {
+              "translateY": 2
+            },
+            "belly": {
+              "translateY": 2
+            },
+            "eye": {
+              "translateY": 2,
+              "scaleY": 0.82
             }
           }
         },
@@ -253,8 +273,18 @@
           "time": 0.2,
           "bones": {
             "socket_r": {
-              "translateX": 4,
-              "scaleX": 1.05
+              "scaleX": 1.05,
+              "scaleY": 0.97
+            },
+            "shell": {
+              "translateY": -1
+            },
+            "belly": {
+              "translateY": -1
+            },
+            "eye": {
+              "translateY": -1,
+              "scaleY": 1.05
             }
           }
         },
@@ -262,8 +292,18 @@
           "time": 0.35,
           "bones": {
             "socket_r": {
-              "translateX": 0,
-              "scaleX": 1
+              "scaleX": 1,
+              "scaleY": 1
+            },
+            "shell": {
+              "translateY": 0
+            },
+            "belly": {
+              "translateY": 0
+            },
+            "eye": {
+              "translateY": 0,
+              "scaleY": 1
             }
           }
         }

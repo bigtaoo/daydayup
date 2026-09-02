@@ -14,7 +14,7 @@ import { ORB_CORE_RIG } from './orbCoreRig';
 import { CRITTER_CORE_RIG } from './critterCoreRig';
 import { BOSS_CORE_RIG } from './bossCoreRig';
 import { RigSkin, barrelReach } from './RigSkin';
-import { RECOIL_BODY_PX, RECOIL_MODULE_PX, RECOIL_MS } from './rigRecoil';
+import { RECOIL_BODY_PX, RECOIL_MODULE_PX, RECOIL_MS, SWING_ARC_DEG, SWING_MS } from './rigAttackMotion';
 import type { RigSkinBundle } from './taoBundle';
 import type { AnimationClip, SpriteBinding } from './types';
 
@@ -1013,7 +1013,7 @@ describe('the front-only bone set — design/12\'s last facing-model gap', () =>
 
 /**
  * The fire recoil landing on a real rig (2026-08-30, user report *"角色射击时，没有射击动画"*).
- * `rigRecoil.test.ts` covers the envelope and `rigWeaponMount.test.ts` the mount arithmetic;
+ * `rigAttackMotion.test.ts` covers the envelope and `rigWeaponMount.test.ts` the mount arithmetic;
  * what is only visible HERE is that one `kick()` moves all four things that have to move
  * together — the module sprite, the socket ring it is mounted on, the body, and the muzzle
  * point the bullet and the fx are anchored to — and that all four come back.
@@ -1033,8 +1033,8 @@ describe('RigSkin — the fire recoil', () => {
 
   /** Lay the rig out at the peak of the envelope (RECOIL_MS * RECOIL_ATTACK). */
   function atPeak(skin: RigSkin): void {
-    skin.kick();
-    skin.advanceRecoil(RECOIL_MS * 0.22);
+    skin.attack('ranged');
+    skin.advanceAttack(RECOIL_MS * 0.22);
     skin.update();
   }
 
@@ -1092,7 +1092,7 @@ describe('RigSkin — the fire recoil', () => {
     const restSocketX = spritesOf(skin).get('socket_r')!.x;
     const restMuzzle = skin.muzzleLocal()!;
     atPeak(skin);
-    skin.advanceRecoil(1000);
+    skin.advanceAttack(1000);
     skin.update();
     expect(modulesOf(skin).weaponSprite!.x).toBeCloseTo(restX, 10);
     expect(modulesOf(skin).weaponSprite!.y).toBeCloseTo(restY, 10);
@@ -1102,10 +1102,10 @@ describe('RigSkin — the fire recoil', () => {
     expect(skin.muzzleLocal()!.x).toBeCloseTo(restMuzzle.x, 10);
   });
 
-  // A rig with no `attack` clip must still visibly fire — that is the whole reason the recoil
-  // is an envelope over the current clip rather than a clip swap (see rigRecoil.ts). Every
-  // enemy bundle is in this case.
-  it('kicks a held-mount rig (an enemy) too, which ships no attack clip at all', () => {
+  // A rig with no `attack` clip must still visibly fire — the aim-relative envelope covers the
+  // whole roster on its own, and the clip layer is additive on top of it (rigAttackMotion.ts,
+  // rigClipLayer.ts). `makeSkin`'s bundle carries no clips at all, so this IS that case.
+  it('kicks a held-mount rig (an enemy) too, with no attack clip in its bundle', () => {
     const skin = makeSkin(CRITTER_CORE_RIG);
     skin.setWeaponKind('ranged', 'enemygun');
     skin.setBodyFacing(0);
@@ -1119,9 +1119,212 @@ describe('RigSkin — the fire recoil', () => {
   it('is inert until something actually fires', () => {
     const skin = armed();
     const restX = modulesOf(skin).weaponSprite!.x;
-    skin.advanceRecoil(16);
+    skin.advanceAttack(16);
     skin.update();
     expect(modulesOf(skin).weaponSprite!.x).toBe(restX);
     expect(skin.view.x).toBeCloseTo(0, 10);
+  });
+});
+
+/**
+ * The MELEE swing landing on a real rig (2026-09-02), and the reason it cannot be an authored
+ * clip: `update()` OVERWRITES every aim-tracking bone's rotation with the aim angle, and hands
+ * the same angle to the module mount. A swing authored into `attack` would be discarded without
+ * a word — `rigClipLayer.test.ts` proves the layer applies the clip, and it still would not turn
+ * a blade. What is only visible HERE is that the swing reaches the socket and the mounted
+ * sprite, that it leaves the parts it must not touch alone, and that it comes back to the aim.
+ */
+describe('RigSkin — the melee swing', () => {
+  const modulesOf = (skin: RigSkin) =>
+    skin as unknown as { weaponSprite: { x: number; y: number; rotation: number } | null };
+
+  /** Pixi's x/y/rotation are prototype ACCESSORS, so `{ ...sprite }` silently copies none of
+   *  them and every later comparison reads `undefined` — copy the three by hand. */
+  const snap = (s: { x: number; y: number; rotation: number }) => ({ x: s.x, y: s.y, rotation: s.rotation });
+
+  function bladed(aim = 0): RigSkin {
+    const skin = makeSkin();
+    skin.setWeaponKind('melee', 'saber');
+    skin.setBodyFacing(aim);
+    skin.setAim(aim);
+    skin.update();
+    return skin;
+  }
+
+  /** Lay the rig out at the far end of the strike (SWING_MS * 0.55). */
+  function atStrike(skin: RigSkin): void {
+    skin.attack('melee');
+    skin.advanceAttack(SWING_MS * 0.55);
+    skin.update();
+  }
+
+  it('sweeps the socket ahead of the aim, by the arc the envelope reports', () => {
+    const skin = bladed();
+    const rest = spritesOf(skin).get('socket_r')!.rotation;
+    atStrike(skin);
+    const swung = spritesOf(skin).get('socket_r')!.rotation;
+    expect(swung - rest).toBeCloseTo((SWING_ARC_DEG * Math.PI) / 180, 6);
+  });
+
+  it('carries the mounted blade around with the socket, not just the ring', () => {
+    // Two separate code paths read the angle (the bone sprite loop and `activeModuleMount`), so
+    // a swing wired into only one of them turns an empty housing while the sword stays put.
+    const skin = bladed();
+    const rest = snap(modulesOf(skin).weaponSprite!);
+    const restTip = skin.muzzleLocal()!;
+    atStrike(skin);
+    const swung = modulesOf(skin).weaponSprite!;
+    expect(swung.rotation - rest.rotation).toBeCloseTo((SWING_ARC_DEG * Math.PI) / 180, 6);
+    // A socket mount PIVOTS rather than orbits: `activeModuleMount`'s socket path parks the
+    // module on the bone's FK tip and takes only the ANGLE from the aim, so the blade turns
+    // about its own hand. What travels is the far end of it, which is what a swing looks like
+    // and what `muzzleLocal()` reports — the sprite's own origin is expected to stay put.
+    expect(Math.hypot(swung.x - rest.x, swung.y - rest.y)).toBeCloseTo(0, 10);
+    const tip = skin.muzzleLocal()!;
+    expect(Math.hypot(tip.x - restTip.x, tip.y - restTip.y)).toBeGreaterThan(1);
+  });
+
+  it('lunges the body INTO the aim, where a shot shoves it away', () => {
+    const swinging = bladed();
+    atStrike(swinging);
+    const shooting = bladed();
+    shooting.attack('ranged');
+    shooting.advanceAttack(RECOIL_MS * 0.22);
+    shooting.update();
+    // Aim is +x, so a lunge is +x on screen and a recoil is -x. Opposite signs, one formula.
+    expect(swinging.view.x).toBeGreaterThan(0);
+    expect(shooting.view.x).toBeLessThan(0);
+  });
+
+  it('never slides the module back along its barrel — that is the gun motion', () => {
+    const skin = bladed();
+    const rest = spritesOf(skin).get('socket_r')!;
+    const restPos = { x: rest.x, y: rest.y };
+    skin.attack('melee');
+    skin.advanceAttack(SWING_MS * 0.22);
+    skin.update();
+    // The socket BONE only moves for a recoil kick; the swing is expressed as rotation, so the
+    // ring's own position is untouched (the module on its tip is what travels).
+    expect(spritesOf(skin).get('socket_r')!.x).toBeCloseTo(restPos.x, 10);
+    expect(spritesOf(skin).get('socket_r')!.y).toBeCloseTo(restPos.y, 10);
+  });
+
+  it('leaves the EYE looking at the target through the whole swing', () => {
+    // The eye tracks the aim, not the blade — `canonicalSocketAngleRad` vs
+    // `canonicalWeaponAngleRad`. Wiring the swing into the shared angle would make the character
+    // stare off into the arc every time it attacked.
+    const skin = bladed();
+    const rest = snap(spritesOf(skin).get('eye')!);
+    atStrike(skin);
+    const during = spritesOf(skin).get('eye')!;
+    // Only the body's own lunge (`view.x/y`) may have moved it, and that is on the container.
+    expect(during.x).toBeCloseTo(rest.x, 10);
+    expect(during.y).toBeCloseTo(rest.y, 10);
+  });
+
+  it('returns the blade to exactly the aim line once the swing is spent', () => {
+    const skin = bladed();
+    const rest = spritesOf(skin).get('socket_r')!.rotation;
+    const restModule = snap(modulesOf(skin).weaponSprite!);
+    skin.attack('melee');
+    skin.advanceAttack(SWING_MS);
+    skin.update();
+    expect(spritesOf(skin).get('socket_r')!.rotation).toBeCloseTo(rest, 10);
+    expect(modulesOf(skin).weaponSprite!.rotation).toBeCloseTo(restModule.rotation, 10);
+    expect(modulesOf(skin).weaponSprite!.x).toBeCloseTo(restModule.x, 10);
+    expect(skin.view.x).toBeCloseTo(0, 10);
+  });
+
+  it('mirrors with the body — a left-facing swing sweeps the same way it does facing right', () => {
+    // Canonical space (`facing.canonicalAimRad`). Without it a left-facing character's blade
+    // sweeps backwards through the arc, which reads as the animation playing in reverse.
+    const screenSweep = (aim: number): number => {
+      const skin = bladed(aim);
+      const rest = spritesOf(skin).get('socket_r')!.rotation * skin.view.scale.x;
+      atStrike(skin);
+      return spritesOf(skin).get('socket_r')!.rotation * skin.view.scale.x - rest;
+    };
+    const right = screenSweep(0);
+    const left = screenSweep(Math.PI);
+    expect(Math.sign(left)).toBe(-Math.sign(right)); // mirrored, as the whole rig is
+    expect(Math.abs(left)).toBeCloseTo(Math.abs(right), 6);
+  });
+});
+
+/**
+ * The authored `attack` clip reaching the sprites THROUGH `RigSkin` (2026-09-02). `rigClipLayer
+ * .test.ts` proves the blend; this proves `update()` actually samples it, and — the regression
+ * that blocked playing these clips for a month — that a bone the attack clip does not name keeps
+ * the base clip's motion instead of snapping to rest for the clip's whole duration.
+ */
+describe('RigSkin — the attack clip layers over the base clip', () => {
+  const kf = (time: number, bones: Record<string, Record<string, number>>) =>
+    ({ time, bones: new Map(Object.entries(bones)) });
+  const CLIPS = new Map<string, AnimationClip>([
+    // `belly` bobs on idle and is absent from attack — it is the bone the old whole-clip swap
+    // dropped to rest. `shell` is in both, so it must end up with the SUM.
+    ['idle', { duration: 2, loop: true, keyframes: [
+      kf(0, { belly: { translateY: -20 }, shell: { translateY: -20 } }),
+      kf(2, { belly: { translateY: -20 }, shell: { translateY: -20 } }),
+    ] }],
+    ['attack', { duration: 0.4, loop: false, keyframes: [
+      kf(0, { shell: { translateY: 0 } }),
+      kf(0.2, { shell: { translateY: 7 } }),
+      kf(0.4, { shell: { translateY: 0 } }),
+    ] }],
+  ]);
+
+  function posed(): RigSkin {
+    const skin = makeSkin(ORB_CORE_RIG, CLIPS);
+    skin.setBodyFacing(0);
+    skin.setAim(0);
+    skin.playClip('idle', 0);
+    skin.update();
+    return skin;
+  }
+
+  it('adds the attack clip on top of the base clip for a bone in both', () => {
+    const skin = posed();
+    const rest = spritesOf(skin).get('shell')!.y;
+    skin.attack('melee'); // melee: no recoil translate, so the clip is the only thing moving it
+    skin.advanceAttack(200);
+    skin.playClip('idle', 0);
+    skin.update();
+    expect(spritesOf(skin).get('shell')!.y - rest).toBeCloseTo(7, 6);
+  });
+
+  it('leaves a bone the attack clip never names on its base pose — the bug this replaced', () => {
+    const skin = posed();
+    const rest = spritesOf(skin).get('belly')!.y;
+    skin.attack('melee');
+    skin.advanceAttack(200);
+    skin.playClip('idle', 0);
+    skin.update();
+    // A whole-clip swap put this back at the bone's rest tip, ~20px away, for 400 ms.
+    expect(spritesOf(skin).get('belly')!.y).toBeCloseTo(rest, 10);
+  });
+
+  it('comes back to exactly the base pose once the clip is spent', () => {
+    const skin = posed();
+    const rest = spritesOf(skin).get('shell')!.y;
+    skin.attack('melee');
+    skin.advanceAttack(400);
+    skin.playClip('idle', 0);
+    skin.update();
+    expect(spritesOf(skin).get('shell')!.y).toBeCloseTo(rest, 10);
+  });
+
+  it('a shot and a swing both play it — one clip, one rule, either kind', () => {
+    const displacement = (kind: 'ranged' | 'melee'): number => {
+      const skin = posed();
+      const rest = spritesOf(skin).get('shell')!.y;
+      skin.attack(kind);
+      skin.advanceAttack(200);
+      skin.playClip('idle', 0);
+      skin.update();
+      return spritesOf(skin).get('shell')!.y - rest;
+    };
+    expect(displacement('ranged')).toBeCloseTo(7, 6);
+    expect(displacement('melee')).toBeCloseTo(7, 6);
   });
 });

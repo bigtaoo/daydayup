@@ -444,11 +444,11 @@ export class Actor extends Entity {
     return { x: this.x + local.x, y: this.y + this.skin.view.y + local.y };
   }
 
-  /** This actor just fired (`EventReactor`, off `bullet_fired`'s `ownerId` — design/08's one
-   *  engine→render channel): the module kicks back along its barrel and the body leans with it,
-   *  so a shot reads as something the CHARACTER did. It also moves the drawn barrel tip that
-   *  `muzzlePos()` reports, so the muzzle fx recoil with the gun. See `render/rigRecoil.ts`. */
-  onFired(): void { this.skin.fire(); }
+  /** This actor just attacked (`EventReactor`, off `bullet_fired`/`melee_swing`'s `ownerId` —
+   *  design/08's one engine→render channel). One call for both kinds: each plays the rig's own
+   *  `attack` clip over idle/move plus an aim-relative envelope — a shot kicks the module back
+   *  (taking `muzzlePos()` with it), a swing sweeps forward. See `render/rigAttackMotion.ts`. */
+  onAttack(kind: WeaponKind): void { this.skin.attack(kind); }
 
   /** Keeps `healthBar` tracking this actor's own screen position at its fixed offset — it is
    *  deliberately not a child (see the constructor's doc comment), so nothing else moves it.

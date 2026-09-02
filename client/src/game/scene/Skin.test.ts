@@ -16,7 +16,7 @@ import { RigSkin } from '../../render/RigSkin';
 import { ORB_CORE_RIG, ORB_CORE_REFERENCE_RADIUS } from '../../render/orbCoreRig';
 import { CRITTER_CORE_RIG, CRITTER_CORE_REFERENCE_RADIUS } from '../../render/critterCoreRig';
 import { BOSS_CORE_RIG, BOSS_CORE_REFERENCE_RADIUS } from '../../render/bossCoreRig';
-import { RECOIL_MODULE_PX, RECOIL_MS } from '../../render/rigRecoil';
+import { RECOIL_MODULE_PX, RECOIL_MS } from '../../render/rigAttackMotion';
 import type { RigSkinBundle } from '../../render/taoBundle';
 import type { SpriteBinding } from '../../render/types';
 import type { LoadedRigSkin } from '../../render/skinRegistry';
@@ -269,46 +269,46 @@ describe('Skin.weaponMount — who is responsible for drawing the weapon', () =>
 });
 
 /**
- * `Skin.fire()` — the one call `Actor.onFired` makes. The recoil itself is covered in
- * `render/rigRecoil.test.ts` (the envelope) and `render/RigSkin.test.ts` (what it moves);
+ * `Skin.attack()` — the one call `Actor.onAttack` makes. The recoil itself is covered in
+ * `render/rigAttackMotion.test.ts` (the envelope) and `render/RigSkin.test.ts` (what it moves);
  * what belongs here is the WIRING, and specifically that the placeholder branch survives it:
  * a skin with no rig has no module to recoil, and firing must be a silent no-op rather than
  * the crash a `this.rig!` would give (the placeholder is what every actor renders as until
  * its bundle finishes preloading, so this path runs on the first frames of every run).
  */
-describe('Skin.fire — the recoil trigger', () => {
+describe('Skin.attack — the attack trigger', () => {
   it('kicks the rig when there is one', () => {
     mocks.loaded = loadedRig();
     const s = new Skin(0x123456, 0xabcdef, 20, 'char_vanguard');
-    const kick = vi.spyOn(internals(s).rig!, 'kick');
-    s.fire();
+    const kick = vi.spyOn(internals(s).rig!, 'attack');
+    s.attack('ranged');
     expect(kick).toHaveBeenCalledTimes(1);
   });
 
   it('is a silent no-op on the placeholder — nothing mounted, nothing to recoil', () => {
     mocks.loaded = undefined;
     const s = new Skin(0x123456, 0xabcdef, 20);
-    expect(() => s.fire()).not.toThrow();
+    expect(() => s.attack('ranged')).not.toThrow();
     expect(() => s.setFacing(0, 0, 16, 'idle')).not.toThrow();
   });
 
   it('advances the recoil off the render frame clock, so it settles on its own', () => {
     mocks.loaded = loadedRig();
     const s = new Skin(0x123456, 0xabcdef, 20, 'char_vanguard');
-    const advance = vi.spyOn(internals(s).rig!, 'advanceRecoil');
+    const advance = vi.spyOn(internals(s).rig!, 'advanceAttack');
     s.setFacing(0, 0, 16, 'idle');
     expect(advance).toHaveBeenCalledWith(16);
   });
 });
 
 /**
- * The recoil's UNITS crossing `Skin`'s wrapper (2026-08-30). `rigRecoil` states the kick in rig
+ * The recoil's UNITS crossing `Skin`'s wrapper (2026-08-30). `rigAttackMotion` states the kick in rig
  * authoring px and `RigSkin` applies it there, but what the fx and the bullet spawn actually
  * consume is `muzzleAnchor()` — authoring px multiplied by `radius / referenceRadius`. Nothing
  * else pins that composition for a MOVING point: the existing `muzzleAnchor` tests stub
  * `muzzleLocal` to a constant, so they cannot see a recoil that is scaled twice, or not at all.
  */
-describe('Skin.fire — the recoil crosses the wrapper scale intact', () => {
+describe('Skin.attack — the recoil crosses the wrapper scale intact', () => {
   it('moves the world-space muzzle by the authoring kick times radius / referenceRadius', () => {
     mocks.loaded = loadedRig();
     const s = new Skin(0x123456, 0xabcdef, 20, 'char_vanguard'); // 20 / 40 = 0.5x
@@ -316,10 +316,10 @@ describe('Skin.fire — the recoil crosses the wrapper scale intact', () => {
     let local = { x: 60, y: -46 };
     // Stand in for the rig's own geometry, but make it MOVE with the recoil the way the real
     // one does — the point of this test is the scale composition, not the rig arithmetic.
-    rig.muzzleLocal = () => ({ x: local.x - (rig as unknown as { recoil: { modulePx: number } }).recoil.modulePx, y: local.y });
+    rig.muzzleLocal = () => ({ x: local.x - (rig as unknown as { motion: { modulePx: number } }).motion.modulePx, y: local.y });
     s.setFacing(0, 0, 0, 'idle');
     const rest = s.muzzleAnchor()!;
-    s.fire();
+    s.attack('ranged');
     s.setFacing(0, 0, RECOIL_MS * 0.22, 'idle'); // advance to the peak through the real path
     const kicked = s.muzzleAnchor()!;
     expect(rest.x - kicked.x).toBeCloseTo(RECOIL_MODULE_PX * 0.5, 6);
@@ -331,10 +331,10 @@ describe('Skin.fire — the recoil crosses the wrapper scale intact', () => {
     const kickOf = (radius: number): number => {
       const s = new Skin(0, 0, radius, 'char_vanguard');
       const rig = internals(s).rig!;
-      rig.muzzleLocal = () => ({ x: 60 - (rig as unknown as { recoil: { modulePx: number } }).recoil.modulePx, y: 0 });
+      rig.muzzleLocal = () => ({ x: 60 - (rig as unknown as { motion: { modulePx: number } }).motion.modulePx, y: 0 });
       s.setFacing(0, 0, 0, 'idle');
       const rest = s.muzzleAnchor()!.x;
-      s.fire();
+      s.attack('ranged');
       s.setFacing(0, 0, RECOIL_MS * 0.22, 'idle');
       return rest - s.muzzleAnchor()!.x;
     };

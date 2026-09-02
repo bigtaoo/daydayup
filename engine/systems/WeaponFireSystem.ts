@@ -70,6 +70,12 @@ export class WeaponFireSystem {
       w.cooldownTicks = buffedCooldown(w.spec.fireRateTicks, buffs);
     } else {
       w.justSwung = true;
+      // The melee half of design/08's one engine->render channel, and the exact counterpart of
+      // `spawnBullet`'s `bullet_fired` push: the swing is otherwise invisible to the render
+      // layer, since `justSwung` is a one-tick latch the online loop can drain straight past
+      // (see the event's own doc comment in state/events.ts). Emitted for the SWING, not for
+      // its hits -- a swing that connects with nothing still has to animate.
+      state.events.push({ type: 'melee_swing', ownerId: a.id, faction: a.faction, gx: a.gx, gy: a.gy, facing: a.facing });
       w.cooldownTicks = buffedCooldown(w.spec.swingCooldownTicks, buffs);
     }
   }
