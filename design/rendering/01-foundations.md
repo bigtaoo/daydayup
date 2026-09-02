@@ -89,14 +89,20 @@ straight up the screen, the round left the barrel **43° off-aim** and slid **20
 (~79 screen px at the room camera's ~3.8x zoom) over ~150 ms before flying straight. Two
 sources, both removed where they arose rather than eased away here:
 
-- **Sideways** — the module was pinned to its socket bone's TIP, a fixed body-local point
-  that only *spun* to the aim, so firing up or down drew the gun a socket-length off the
-  line its own bullets flew along. Both mount paths now carry the module out along the aim
-  ray **in the ground plane** (`rigWeaponMount`'s GROUND-PLANE ORBIT note) — which is what
-  design/13's "two weapon modules that orbit it" describes in the first place, and is forced
-  by the render transform above: `screen.y = gy - z` maps the ground plane 1:1, so anything
-  else puts the drawn gun off the bullet's own line. The enemy 'held' mount lost its 0.45
-  vertical squash for the same reason.
+- **Sideways** — the socket bone sat at its rest angle and only the *module* spun to the aim,
+  so the tip it hangs off was a fixed body-local point and firing up or down drew the gun a
+  socket-length off the line its own bullets flew along. The **bone** is now turned to the aim
+  before FK runs (`rigWeaponMount.orbitActiveSocketToAim`) — i.e. it actually orbits, which is
+  what design/13's "two weapon modules that orbit it" describes in the first place — and the
+  enemy 'held' mount lost its 0.45 vertical squash for the same reason. Unsquashed and in the
+  ground plane is not a taste call: `screen.y = gy - z` maps the ground 1:1, so anything else
+  puts the drawn gun off its own bullets' line.
+
+  *Orbiting the module alone was tried first and is wrong*: the socket **ring**, the tether
+  drawn out to it and its contact shade on the core all hang off the bone, so the gun ended up
+  ~70 px from the ring that holds it with the tether still reaching for where the ring was. It
+  took one live frame to see and no test caught it — nothing asserts that a module sits on its
+  own mount. Turning the bone instead puts every one of those on the aim for free.
 - **Height** — `bulletZ` is a gameplay band (0.5 grid, "chest height, clears ground-hug
   hazards, blocked by tall cover", `07`) while the drawn gun is wherever the art hangs it:
   26.4 vs 16 world px for the hero. That gap is straight up the screen, i.e. perpendicular

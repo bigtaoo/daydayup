@@ -22,7 +22,7 @@ import { BOSS_CORE_RIG } from './bossCoreRig';
 import {
   ACTIVE_WEAPON_SOCKET, AIM_TRACKING_BONES, HELD_MOUNT_R, IDLE_WEAPON_SOCKET,
   MODULE_Z_BEHIND, activeModuleMount, barrelReach, idleModuleMount, moduleMuzzleLocal,
-  resolveWeaponMount,
+  orbitActiveSocketToAim, resolveWeaponMount,
 } from './rigWeaponMount';
 import type { ResolvedBoneTransform, WorldPose, WorldPositions } from './types';
 
@@ -88,48 +88,33 @@ describe('resolveWeaponMount — every shipped rig declares its own mount path',
 
 describe('activeModuleMount — the socket path', () => {
   // orb-core's real geometry: `socket_r` is `len 52, rwa 0` hanging off the shell's tip at
-  // (0, -46), so its PIVOT is the core's centre and its TIP is 52 px due east of it. The
-  // pivot is what the module orbits around, so giving it a value distinct from the tip is
-  // what makes the test able to fail (see the held path's own note on this fixture trap).
+  // (0, -46), so its PIVOT is the core's centre and its TIP is 52 px out. The pivot is given a
+  // value distinct from the tip on purpose — see the held path's own note on that fixture trap.
   const wp = poses({
     socket_r: { sx: 0, sy: -46, ex: 52, ey: -46, wa: 0 },
     socket_l: { sx: 0, sy: -46, ex: -52, ey: -46, wa: 180 },
   });
 
-  // The 2026-09-02 change, and the one property the arc fix rests on: the module rides
-  // AROUND the core to wherever the hero is aiming, in the ground plane, instead of being
-  // pinned to its bone's tip and merely spun. See rigWeaponMount's GROUND-PLANE ORBIT note.
-  it('orbits the core toward the aim at the socket bone reach it declares', () => {
-    const east = activeModuleMount('socket', wp, noTransforms, 0, null)!;
-    expect(east.x).toBeCloseTo(52, 10);
-    expect(east.y).toBeCloseTo(-46, 10);
-
-    const north = activeModuleMount('socket', wp, noTransforms, -Math.PI / 2, null)!;
-    expect(north.x).toBeCloseTo(0, 10); // swung off the right-hand side entirely...
-    expect(north.y).toBeCloseTo(-46 - 52, 10); // ...and 52 px up-screen of the core
-
-    const south = activeModuleMount('socket', wp, noTransforms, Math.PI / 2, null)!;
-    expect(south.x).toBeCloseTo(0, 10);
-    expect(south.y).toBeCloseTo(-46 + 52, 10);
-  });
-
-  // UNSQUASHED is the whole point (the held path used to squash its own vertical offset by
-  // 0.45): the sim spawns a round `muzzleOffset` along the aim ray on the GROUND plane and
-  // the renderer maps ground y to screen y 1:1, so anything less than 1:1 here puts the drawn
-  // gun off the line its own bullets fly along — which is what drew the arc.
-  it('moves the module as far up-screen as across — the ground plane is not foreshortened', () => {
-    const across = activeModuleMount('socket', wp, noTransforms, 0, null)!;
-    const up = activeModuleMount('socket', wp, noTransforms, -Math.PI / 2, null)!;
-    expect(Math.abs(across.x - 0)).toBeCloseTo(Math.abs(up.y - -46), 10);
-  });
-
-  it('takes the canonical aim angle as its rotation, and reports the plane it orbits in', () => {
+  it('sits on the ACTIVE socket bone tip and takes the canonical aim angle', () => {
     const m = activeModuleMount('socket', wp, noTransforms, 0.7, null)!;
+    expect(m.x).toBeCloseTo(52, 10);
+    expect(m.y).toBeCloseTo(-46, 10);
     expect(m.angle).toBe(0.7);
+  });
+
+  // Where the ORBIT lives, and why it is not here (2026-09-02): the bone is turned to the aim
+  // before FK runs (`orbitActiveSocketToAim`), so this reads a tip that has already travelled.
+  // Orbiting the module here instead left the gun ~70 px from its own socket ring, with the
+  // tether still drawn out to where the ring was — visible on the first live frame, invisible
+  // to every test, because nothing asserts that a module sits on its own mount.
+  it('reports the plane the module hangs in, which the orbit does not change', () => {
+    const m = activeModuleMount('socket', wp, noTransforms, 0.7, null)!;
     // `pivotY` is the height half of the mount (negated): the core's own centre, NOT the
-    // module's current y — which mixes in how far north the orbit has carried it.
+    // module's y — which mixes in how far north the orbit has carried it.
     expect(m.pivotY).toBeCloseTo(-46, 10);
-    expect(m.y).not.toBeCloseTo(-46, 3); // aim 0.7 rad has swung it south of that plane
+    const orbited = poses({ socket_r: { sx: 0, sy: -46, ex: 0, ey: -46 + 52 } }); // aimed south
+    expect(activeModuleMount('socket', orbited, noTransforms, Math.PI / 2, null)!.pivotY)
+      .toBeCloseTo(-46, 10);
   });
 
   it('is null when that bone is not posed this frame', () => {
@@ -141,6 +126,59 @@ describe('activeModuleMount — the socket path', () => {
   it('ignores the held-path body argument entirely', () => {
     const withBody = activeModuleMount('socket', wp, noTransforms, 0.7, { boneId: 'shell', drawnR: 999 });
     expect(withBody).toEqual(activeModuleMount('socket', wp, noTransforms, 0.7, null));
+  });
+});
+
+describe('orbitActiveSocketToAim — the module travels around the core, it does not just spin', () => {
+  const orbCore = new Rig(ORB_CORE_RIG);
+  const tipAt = (canonical: number, extra?: [string, Partial<ResolvedBoneTransform>][]) => {
+    const t = new Map<string, ResolvedBoneTransform>();
+    for (const [id, v] of extra ?? []) t.set(id, { rotation: 0, scaleX: 1, scaleY: 1, translateX: 0, translateY: 0, alpha: 1, ...v });
+    orbitActiveSocketToAim(orbCore, t, canonical);
+    return { pose: orbCore.computeFK(0, 0, t).get(ACTIVE_WEAPON_SOCKET)!, transforms: t };
+  };
+
+  it('puts the socket bone tip exactly on the aim ray, at the bone’s own length', () => {
+    // The core's centre: the shell's tip, 46 px up from the actor's ground point.
+    for (const [deg, x, y] of [[0, 52, -46], [90, 0, 6], [180, -52, -46], [-90, 0, -98]] as const) {
+      const { pose } = tipAt((deg * Math.PI) / 180);
+      expect(pose.ex, `aim ${deg}°`).toBeCloseTo(x, 6);
+      expect(pose.ey, `aim ${deg}°`).toBeCloseTo(y, 6);
+      expect(pose.sx, `aim ${deg}° pivot`).toBeCloseTo(0, 6);
+      expect(pose.sy, `aim ${deg}° pivot`).toBeCloseTo(-46, 6);
+    }
+  });
+
+  // UNSQUASHED (the vertical reach equals the horizontal one) is not a style choice: the sim
+  // spawns a round along the aim ray on the GROUND plane and `Entity.applyTransform` draws the
+  // ground 1:1 (`screen.y = groundY - z`), so anything less puts the drawn gun off the line its
+  // own bullets fly along. `muzzleParity.test.ts` is what bounds that.
+  it('reaches as far up-screen as across', () => {
+    const across = tipAt(0).pose;
+    const up = tipAt(-Math.PI / 2).pose;
+    expect(Math.abs(across.ex - across.sx)).toBeCloseTo(Math.abs(up.ey - up.sy), 10);
+  });
+
+  // The `move` clip leans the shell 10°. That lean must not swing the gun off the aim ray —
+  // the delta is stated relative to the chain the bone actually hangs on, not to its rest pose.
+  it('holds the aim through an ancestor’s own clip rotation (the run lean)', () => {
+    const leaned = tipAt(0, [['shell', { rotation: 10 }]]).pose;
+    expect(leaned.wa).toBeCloseTo(0, 6); // still due east, lean or no lean
+    expect(leaned.ey).toBeCloseTo(leaned.sy, 6);
+  });
+
+  it('keeps the clip’s own translation on that bone — the gun rides the hover bob', () => {
+    const { transforms } = tipAt(Math.PI / 2, [[ACTIVE_WEAPON_SOCKET, { translateY: -6, alpha: 0.5 }]]);
+    const t = transforms.get(ACTIVE_WEAPON_SOCKET)!;
+    expect(t.translateY).toBe(-6);
+    expect(t.alpha).toBe(0.5);
+    expect(t.rotation).toBeCloseTo(90, 6); // ...while the rotation is the aim's to own
+  });
+
+  it('no-ops for a rig with no such bone, rather than inventing one', () => {
+    const t = new Map<string, ResolvedBoneTransform>();
+    orbitActiveSocketToAim(new Rig(CRITTER_CORE_RIG), t, 1.2);
+    expect(t.size).toBe(0);
   });
 });
 
@@ -313,9 +351,8 @@ describe('barrelReach — how far a weapon texture extends from its anchor', () 
  * back down the BARREL, on both mount paths, and that it is the identity at rest.
  */
 describe('activeModuleMount — the fire recoil', () => {
-  // orb-core's real socket: pivot at the core's centre, tip 52 px east of it. The PIVOT is
-  // what the module orbits around and the pivot-to-tip distance is how far out it rides, so
-  // a fixture that left `sx/sy` at the origin would silently give it a 69.6 px reach.
+  // orb-core's real socket, posed at its rest angle: pivot at the core's centre, tip 52 px
+  // east of it. (`sx/sy` differ from `ex/ey` on purpose — see the held path's fixture note.)
   const socketPose = poses({ socket_r: { sx: 0, sy: -46, ex: 52, ey: -46, wa: 0 } });
   const bodyPose = poses({ body: { sx: 7, sy: 11, ex: 0, ey: -40, wa: -90 } });
   const heldBody = { boneId: 'body', drawnR: 35 };
@@ -335,10 +372,11 @@ describe('activeModuleMount — the fire recoil', () => {
   });
 
   it('follows the aim around the circle rather than kicking in a fixed direction', () => {
+    // The pose is held at rest here (the orbit is FK's job, tested above) so this isolates the
+    // KICK: aiming down-screen, it slides the mount straight back UP the screen.
     const down = activeModuleMount('socket', socketPose, noTransforms, Math.PI / 2, null, 10)!;
-    expect(down.x).toBeCloseTo(0, 10); // the orbit has carried it off the right-hand side
-    // 52 px down-screen of the core (the orbit), then 10 straight back UP it (the kick).
-    expect(down.y).toBeCloseTo(-46 + 52 - 10, 10);
+    expect(down.x).toBeCloseTo(52, 10);
+    expect(down.y).toBeCloseTo(-46 - 10, 10);
   });
 
   // Held path, straight back up the screen from a down-aim — the same full-distance kick the

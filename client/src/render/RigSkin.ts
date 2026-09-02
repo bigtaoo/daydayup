@@ -7,10 +7,11 @@ import { facingFromAngle } from './facing';
 import { getWeaponAnchor, getWeaponRotationOffset, getWeaponScale, getWeaponTexture, type WeaponVisualKind } from './weaponSkins';
 import { MODULE_BEHIND_SCALE, MODULE_BEHIND_SHADE, SHADE_MIN_BODY_R, drawModuleContacts, drawSphereShading, shadeHex } from './rigShading';
 import { drawTethers, hasTetheredBone } from './rigTethers';
-import { EYE_BONE_ID, trackEye } from './rigEyeTrack';
+import { EYE_BONE_ID, FRONT_ONLY_BONES, trackEye } from './rigFacingArt';
 import {
   AIM_TRACKING_BONES, ACTIVE_WEAPON_SOCKET, IDLE_WEAPON_SOCKET, MODULE_Z_BEHIND,
-  activeModuleMount, barrelReach, idleModuleMount, moduleMuzzleLocal, resolveWeaponMount,
+  activeModuleMount, barrelReach, idleModuleMount, moduleMuzzleLocal, orbitActiveSocketToAim,
+  resolveWeaponMount,
   type ModuleMount, type WeaponMountMode,
 } from './rigWeaponMount';
 import { Recoil } from './rigRecoil';
@@ -20,19 +21,6 @@ import { Recoil } from './rigRecoil';
 // "keep that path alive as a thin re-export shell").
 export { barrelReach };
 
-/**
- * Bones whose art depicts a FRONT surface and has no meaning seen from behind. Only the
- * belly qualifies today: it is the transparent chamber set into the front of the shell, so
- * from the back there is simply no chamber to see — the shell's own surface is the correct
- * picture. Every other bone either has real back art (`eye__back` ships for all three
- * characters) or reads the same from either side, which is a property of the design rather
- * than an accident: design/13 chose "one bold radially-ish-symmetric shape" partly because
- * "front/back sets nearly collapse".
- *
- * NOT a list of bones missing back art — `shell` is missing it too, and hiding the shell
- * would delete the character. This is a statement about what the art depicts.
- */
-const FRONT_ONLY_BONES: ReadonlySet<string> = new Set(['belly']);
 // The game-side .tao runtime renderer (design/12): bone FK + sprite binding +
 // animation playback, ported from tools/animator/src/rendering/Renderer.ts's
 // `updateSprites` (rewritten for Pixi v8's API — the editor is still on v7).
@@ -250,6 +238,10 @@ export class RigSkin {
     const transforms: Map<string, ResolvedBoneTransform> = this.clip
       ? sampleClip(this.clip, this.clipT)
       : new Map();
+    // The active socket ORBITS the core to the aim, applied to the BONE before FK so the ring,
+    // its tether, its contact shade and the weapon module all travel as one assembly.
+    if (this.weaponMount === 'socket')
+      orbitActiveSocketToAim(this.rig, transforms, this.canonicalSocketAngleRad());
     const worldPose = this.rig.computeFK(0, 0, transforms);
     const canonicalSocketDeg = (this.canonicalSocketAngleRad() * 180) / Math.PI;
 
@@ -402,12 +394,11 @@ export class RigSkin {
     }
 
     const rotationOffset = getWeaponRotationOffset(this.weaponName, this.weaponKind!);
-    // The ACTIVE module orbits to the aim now, so its own hemisphere — not the BODY's — is
-    // what decides whether it is on the far side of the core (design/01 "per-weapon local
-    // z-order"). The two agree once the body has finished turning; during the rate-limited
-    // turn (`facing.BODY_TURN_PER_TICK`) the gun is already there and the body is not, and
-    // `showBack` would draw a gun that has swung behind the core across its face. The idle
-    // module does not orbit, so it stays on the body's own answer.
+    // The ACTIVE module orbits to the aim, so its OWN hemisphere decides whether it is on the
+    // far side of the core (design/01 "per-weapon local z-order"). Keyed off `showBack` it
+    // would be drawn across the core's face for the length of the rate-limited body turn,
+    // during which the gun has swung behind it and the body has not. The idle one does not
+    // orbit, so it stays on the body's answer.
     this.weaponSprite = this.mountModule(
       this.weaponSprite, ACTIVE_WEAPON_SOCKET, activeMount, texture, rotationOffset,
       Math.sin(canonical) < 0,
@@ -472,14 +463,12 @@ export class RigSkin {
    * stated in the rig's PARENT space.
    *
    * `heightPx` is the HEIGHT half of this point, which `y` alone cannot express: that is two
-   * world quantities added together — how high off the floor the barrel tip is, and how far
-   * north of its carrier it stands — and past this method nothing can tell them apart. They
-   * are separable here only because both mount paths carry the module along the aim ray in the
-   * GROUND plane at a fixed height (`rigWeaponMount`'s GROUND-PLANE ORBIT note). `Scene` draws
-   * the round at this height instead of at the sim's `bulletZ`, since the leftover gap between
-   * the two is straight up the screen — PERPENDICULAR to a horizontal shot, i.e. an arc. It
-   * excludes `view.x/y` (added to the point above): that is the recoil's whole-body shove,
-   * which runs back along the aim ON THE GROUND, so it belongs to the ground position.
+   * world quantities added — how high off the floor the tip is, and how far north of its
+   * carrier it stands — separable only because both mount paths carry the module along the aim
+   * ray in the GROUND plane at a fixed height (see GROUND-PLANE ORBIT). `Scene` draws the round
+   * at this height rather than at `bulletZ`, since the gap between those is straight up the
+   * screen, i.e. PERPENDICULAR to a horizontal shot: an arc. Excludes `view.x/y` (added to the
+   * point above) — the recoil's body shove runs along the aim ON THE GROUND, so it is position.
    */
   muzzleLocal(): { x: number; y: number; heightPx: number } | null {
     const sprite = this.weaponSprite;

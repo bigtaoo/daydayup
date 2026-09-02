@@ -1,10 +1,11 @@
 import type { Sprite } from 'pixi.js';
 
 // Split out of RigSkin.ts (2026-09-02, 500-line convention, form ① independent functions):
-// eye tracking is one self-contained cue over one bone, computed from the aim alone, with no
-// Pixi state of its own beyond the sprite handed to it. Same category and same folder as
-// `rigShading.ts` / `rigTethers.ts` / `rigWeaponMount.ts`, and moved for the same reason —
-// RigSkin was sitting exactly on the 500-line limit.
+// the cues a 2D bone rig uses to fake a 3D facing with the art it already ships — the eye
+// slide below, and which bones simply have no picture from behind. Both are per-bone decisions
+// taken from the aim alone, with no Pixi state beyond the sprite handed in. Same category and
+// same folder as `rigShading.ts` / `rigTethers.ts` / `rigWeaponMount.ts`, and moved for the
+// same reason: RigSkin was sitting exactly on the 500-line limit.
 //
 // Eye tracking (2026-08-18). A 2D rig can't turn a head, and the two-hemisphere billboard
 // (`facingFromAngle`) only has four states — L/R flip × front/back — so a 360° aim used to
@@ -47,3 +48,17 @@ export function trackEye(sprite: Sprite, canonicalAngle: number, aimRad: number)
   sprite.y += Math.sin(canonicalAngle) * EYE_TRACK_R * EYE_TRACK_SQUASH;
   return 1 - EYE_AWAY_SHRINK * Math.max(0, -Math.sin(aimRad));
 }
+
+/**
+ * Bones whose art depicts a FRONT surface and has no meaning seen from behind. Only the
+ * belly qualifies today: it is the transparent chamber set into the front of the shell, so
+ * from the back there is simply no chamber to see — the shell's own surface is the correct
+ * picture. Every other bone either has real back art (`eye__back` ships for all three
+ * characters) or reads the same from either side, which is a property of the design rather
+ * than an accident: design/13 chose "one bold radially-ish-symmetric shape" partly because
+ * "front/back sets nearly collapse".
+ *
+ * NOT a list of bones missing back art — `shell` is missing it too, and hiding the shell
+ * would delete the character. This is a statement about what the art depicts.
+ */
+export const FRONT_ONLY_BONES: ReadonlySet<string> = new Set(['belly']);

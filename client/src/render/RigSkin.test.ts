@@ -977,20 +977,23 @@ describe('RigSkin — contact shades seat an orbiting module against the core', 
     expect(centres()).not.toEqual(rest);
   });
 
+  // Driven by the AIM rather than by a clip rotation of `socket_r` (2026-09-02): the active
+  // socket's angle is the aim's to own now — `orbitActiveSocketToAim` overrides it before FK,
+  // which is what makes the ring, the tether and the module travel as one assembly — so a clip
+  // keyframe on that bone's rotation no longer moves anything. The invariant under test is
+  // unchanged: the mounts are re-derived every frame, never cached at creation.
   it('re-derives the mounts every frame, so a module that orbits drags its contact along', () => {
-    const clips = new Map<string, AnimationClip>([
-      ['swing', { duration: 1, loop: false, keyframes: [{ time: 0, bones: new Map([['socket_r', { rotation: 90 }]]) }] }],
-    ]);
-    const skin = makeSkin(ORB_CORE_RIG, clips);
+    const skin = makeSkin(ORB_CORE_RIG);
     // Snapshot the NUMBERS, not the Bounds object — Pixi mutates one instance in place, so
     // holding the reference across a redraw would compare it against itself and pass on nothing.
     const snap = (): number[] => {
       const b = aoOf(skin)!.bounds;
       return [b.minX, b.minY, b.maxX, b.maxY];
     };
+    skin.setAim(0);
     skin.update();
     const before = snap();
-    skin.playClip('swing', 0);
+    skin.setAim(Math.PI / 2); // the module orbits a quarter turn around the core
     skin.update();
     expect(snap()).not.toEqual(before);
   });

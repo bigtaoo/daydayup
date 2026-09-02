@@ -141,11 +141,13 @@ vi.mock('pixi.js', async (importOriginal) => {
 import { Bullet } from '../game/scene/Bullet';
 import { fpToPx } from '../game/coords';
 import { facingFromAngle } from './facing';
+import type { ResolvedBoneTransform } from './types';
 import { BODY_FILL, BODY_FILL_DEFAULT, RIG_DEFS } from './skinRegistry';
 import {
   activeModuleMount,
   barrelReach,
   moduleMuzzleLocal,
+  orbitActiveSocketToAim,
   resolveWeaponMount,
   type WeaponMountMode,
 } from './rigWeaponMount';
@@ -604,11 +606,16 @@ function drawnMuzzleAt(
   const mode: WeaponMountMode = resolveWeaponMount(entry.rig);
   const { flipX } = facingFromAngle(aimRad); // the body turns to the aim (Scene/facing.ts)
   const canonical = flipX === 1 ? aimRad : Math.PI - aimRad;
-  const worldPose = entry.rig.computeFK(0, 0, new Map());
+  // Posed the way `RigSkin.update` poses it: the active socket is turned to the aim BEFORE FK,
+  // so its tip — where the module hangs — orbits the core. Skipping this would measure a rig
+  // the game never draws (and would report the arc this file exists to bound).
+  const transforms = new Map<string, ResolvedBoneTransform>();
+  if (mode === 'socket') orbitActiveSocketToAim(entry.rig, transforms, canonical);
+  const worldPose = entry.rig.computeFK(0, 0, transforms);
   const body = bodyBone(entry.rig);
   const fill = BODY_FILL[carrier.rigName] ?? BODY_FILL_DEFAULT;
   const mount = activeModuleMount(
-    mode, worldPose, new Map(), canonical, { boneId: body.boneId, drawnR: body.bodyR * fill }, 0,
+    mode, worldPose, transforms, canonical, { boneId: body.boneId, drawnR: body.bodyR * fill }, 0,
   )!;
   const local = moduleMuzzleLocal(
     mount, canonical, flipX, getWeaponTexture(weaponId, 'ranged')!,
@@ -694,9 +701,10 @@ describe('the drawn muzzle sits ON the shot’s own line, at every aim angle', (
     const wrapper = carrier.radiusPx / entry.referenceRadius;
     const sim = toSimSpec(WEAPON_SPECS['blaster']!) as RangedSimSpec;
     const m = fpToPx(sim.muzzleOffset);
-    const pose = entry.rig.computeFK(0, 0, new Map()).get('socket_r')!;
     const aim = -Math.PI / 2; // straight up the screen — the reported shot
-    // The OLD mount: the socket bone's tip, a fixed point that merely spun to the aim.
+    // The OLD geometry: FK with the socket bone left at its REST angle, so its tip is a fixed
+    // body-local point and only the module spun to the aim.
+    const pose = entry.rig.computeFK(0, 0, new Map()).get('socket_r')!;
     const pinned = moduleMuzzleLocal(
       { x: pose.ex, y: pose.ey }, Math.PI - aim, -1, getWeaponTexture('blaster', 'ranged')!,
       getWeaponAnchor('blaster', 'ranged'), getWeaponRotationOffset('blaster', 'ranged'),

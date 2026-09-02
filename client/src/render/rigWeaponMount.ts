@@ -47,8 +47,8 @@ export type WeaponMountMode = 'socket' | 'held' | 'none';
 // 1:1, unsquashed. So the ONLY way a drawn barrel tip can sit on the line the round actually
 // flies along is to be displaced by the same unsquashed ground-plane rule.
 //
-// Before this, neither path did. The socket path pinned the module to its bone's TIP, a fixed
-// body-local point that merely SPUN to the aim — so firing straight up drew the gun 20.8 world
+// Before this, neither path did. The socket path left its bone at a fixed rest angle and only
+// SPUN the module in place, so the tip it hangs off was a fixed body-local point — so firing straight up drew the gun 20.8 world
 // px to the SIDE of the round's own line, and `Bullet.setMuzzleOrigin` then had to eat that
 // sideways gap during flight, which is a curve by construction (user report 2026-09-02: *"子弹
 // 从枪口出去后进行了弧形的漂移，然后才直线运动"* — measured off the recorded run at 43° off-aim at the
@@ -112,6 +112,44 @@ export function resolveWeaponMount(rig: Rig): WeaponMountMode {
   return rig.weaponMount ?? (rig.boneMap.has(ACTIVE_WEAPON_SOCKET) ? 'socket' : 'none');
 }
 
+/**
+ * Turn the ACTIVE weapon socket bone to the aim, as a clip-style rotation on the transform map
+ * FK is about to be computed from — i.e. make the bone ORBIT the core (see GROUND-PLANE ORBIT
+ * above). Mutates `transforms`, which is `sampleClip`'s own fresh map, and no-ops for a rig
+ * with no such bone.
+ *
+ * Stated as a DELTA because that is what `Rig.computeFK` consumes (`wa = parent.wa + rla +
+ * delta`), so the target angle has to have the chain's own rotation taken back out of it: the
+ * bone's rest world angle, plus whatever an ancestor's clip rotation has already turned it by
+ * (the `move` clip leans the shell 10°). Without that subtraction the hero's lean would swing
+ * the gun off the aim ray while running, which is precisely the class of error this whole pass
+ * is about — the drawn gun has to sit on the line its own bullets fly along, in every pose.
+ *
+ * A clip's own entry for the bone is preserved apart from its rotation: `idle`/`move` bob it
+ * with `translateY` and that bob is how the gun rides with the body.
+ */
+export function orbitActiveSocketToAim(
+  rig: Rig,
+  transforms: Map<string, ResolvedBoneTransform>,
+  canonicalAngle: number,
+): void {
+  const bone = rig.boneMap.get(ACTIVE_WEAPON_SOCKET);
+  if (!bone) return;
+  let inherited = 0;
+  for (let p = bone.parent; p && p !== 'root'; p = rig.boneMap.get(p)?.parent ?? null) {
+    inherited += transforms.get(p)?.rotation ?? 0;
+  }
+  const prev = transforms.get(ACTIVE_WEAPON_SOCKET);
+  transforms.set(ACTIVE_WEAPON_SOCKET, {
+    rotation: (canonicalAngle * 180) / Math.PI - bone.rwa - inherited,
+    scaleX: prev?.scaleX ?? 1,
+    scaleY: prev?.scaleY ?? 1,
+    translateX: prev?.translateX ?? 0,
+    translateY: prev?.translateY ?? 0,
+    alpha: prev?.alpha ?? 1,
+  });
+}
+
 /** Where a module sits and how it is rotated, in the rig's own authoring-px space. */
 export interface ModuleMount {
   x: number;
@@ -157,19 +195,17 @@ export function activeModuleMount(
   if (mode === 'socket') {
     const pose = worldPose.get(ACTIVE_WEAPON_SOCKET);
     if (!pose) return null;
-    // The module ORBITS the core to the aim (see the GROUND-PLANE ORBIT note above): the
-    // socket bone supplies the two numbers — where the orbit is centred (its own pivot, i.e.
-    // the core's tip) and how far out the module rides (its own posed length) — and the aim
-    // supplies the direction. At the socket's rest angle this lands exactly on `pose.ex/ey`,
-    // the bone tip it used to be pinned to, which is why every calibration measured in that
-    // pose (`muzzleParity`'s whole table) still reads the same.
-    const reach = Math.hypot(pose.ex - pose.sx, pose.ey - pose.sy);
-    return recoiled({
-      x: pose.sx + Math.cos(canonicalAngle) * reach,
-      y: pose.sy + Math.sin(canonicalAngle) * reach,
-      angle: canonicalAngle,
-      pivotY: pose.sy,
-    }, recoilPx);
+    // Still the socket bone's TIP — but that tip now ORBITS to the aim, because the bone
+    // itself is turned there before FK runs (`orbitActiveSocketToAim` below). Doing it in the
+    // skeleton rather than here is what keeps the module, its socket ring, the tether drawn
+    // out to it and its contact shade on the core all in one place: an orbit applied to the
+    // module alone left the gun floating 70+ px from the ring that is supposed to hold it,
+    // with the tether still reaching for where the ring was. Measured on a live frame — no
+    // test saw it, because nothing asserts that a module sits on its own mount.
+    return recoiled(
+      { x: pose.ex, y: pose.ey, angle: canonicalAngle, pivotY: pose.sy },
+      recoilPx,
+    );
   }
   if (mode !== 'held' || !body) return null;
   const pose = worldPose.get(body.boneId);
