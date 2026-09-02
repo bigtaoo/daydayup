@@ -5,7 +5,7 @@ import type { Brad } from '@dd/engine/math/trig';
 import { createGameState } from '@dd/engine/state/GameState';
 import type { GameState } from '@dd/engine/state/GameState';
 import { ENEMY_TEAM_ID, type EnemyActor, type Faction, type Projectile } from '@dd/engine/state/entities';
-import { makeWeapon, SABER_SIM } from '@dd/engine/content/weapons';
+import { makeWeapon, openSwing, SABER_SIM } from '@dd/engine/content/weapons';
 import { freshStatus } from '@dd/engine/content/damage';
 import { PLAYER_BASE } from '@dd/engine/content/players';
 import { resolveSkin } from '@dd/engine/content/skins';
@@ -245,7 +245,7 @@ describe('DeflectSystem (step 6) — parry is the melee swing arc', () => {
     const s = state();
     const p = s.players[0]!;
     p.weapon = makeWeapon(SABER_SIM);
-    p.weapon.justSwung = true; // swung THIS tick — the swing IS the parry (no block key)
+    openSwing(p.weapon); // swung THIS tick — the swing IS the parry (no block key)
     p.facing = 0 as Brad; // facing +x
     addEnemy(s, 900, 600); // redirect target to the +x side
     const b = addBullet(s, 830, 600, toFp(-11), 'enemy'); // 30px in front, incoming, in-arc
@@ -258,8 +258,7 @@ describe('DeflectSystem (step 6) — parry is the melee swing arc', () => {
   it('does not deflect while not swinging (no passive block)', () => {
     const s = state();
     const p = s.players[0]!;
-    p.weapon = makeWeapon(SABER_SIM);
-    p.weapon.justSwung = false; // holding still — no swing, no parry
+    p.weapon = makeWeapon(SABER_SIM); // holding still — no swing, no parry (window never opened)
     p.facing = 0 as Brad;
     const b = addBullet(s, 830, 600, toFp(-11), 'enemy'); // in-arc but the saber isn't swinging
     new DeflectSystem().tick(s);
@@ -270,7 +269,7 @@ describe('DeflectSystem (step 6) — parry is the melee swing arc', () => {
     const s = state();
     const p = s.players[0]!;
     p.weapon = makeWeapon(SABER_SIM);
-    p.weapon.justSwung = true;
+    openSwing(p.weapon);
     p.facing = 0 as Brad; // facing +x
     const b = addBullet(s, 800, 700, toFp(0), 'enemy'); // 100px below → out of range + arc
     new DeflectSystem().tick(s);
@@ -344,7 +343,7 @@ describe('HitResolveSystem (step 7)', () => {
     const s = state();
     const p = s.players[0]!;
     p.weapon = makeWeapon(SABER_SIM);
-    p.weapon.justSwung = true;
+    openSwing(p.weapon);
     p.facing = 0 as Brad;
     const inArc = addEnemy(s, 830, 600); // 30px ahead, in the arc
     const behind = addEnemy(s, 770, 600); // behind → outside the forward arc

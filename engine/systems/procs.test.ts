@@ -18,7 +18,7 @@ import { ENEMY_TEAM_ID, type EnemyActor, type RangedSimSpec } from '@dd/engine/s
 import { pxToFp } from '@dd/engine/content/convert';
 import { freshStatus } from '@dd/engine/content/damage';
 import { BASIC_ENEMY } from '@dd/engine/content/enemies';
-import { makeWeapon, CAROM_SIM, LEECH_SIM } from '@dd/engine/content/weapons';
+import { makeWeapon, openSwing, CAROM_SIM, LEECH_SIM } from '@dd/engine/content/weapons';
 import { HitResolveSystem, WeaponFireSystem } from '@dd/engine/systems';
 
 const CFG = { seed: 17, worldW: 1600, worldH: 1200, playerStart: [400, 400] as const, waves: [] as const };
@@ -69,7 +69,7 @@ describe('k_lifesteal (design/03/09)', () => {
     const p = s.players[0]!;
     p.hp = 1;
     p.weapon = makeWeapon(LEECH_SIM);
-    p.weapon.justSwung = true;
+    openSwing(p.weapon); // latches justSwung AND opens the active window (design/07 step 7)
     p.facing = 0 as Brad;
     const e1 = addEnemy(s, 430, 400); // in arc
     const e2 = addEnemy(s, 440, 400); // also in arc

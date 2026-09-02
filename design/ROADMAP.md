@@ -705,6 +705,7 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 - **09-02** [The four clips finally get a sound](roadmap/14-2026-09-02-muzzle.md#the-four-clips-finally-get-a-sound-2026-09-02-client--assets--tooling-no-engine-bump) — `swing`/`hurt`/`death.player`/`spawn`, the audio half of the six authored clips; `death` splits in two, the fixed CC0 packs run out for the first time, and a phone-band measurement reverses a pick the centroid had hidden. `audio` `assets` `tools` `test` `docs`
 - **09-02** [The victory sting stops playing over defeat screens](roadmap/14-2026-09-02-muzzle.md#the-victory-sting-stops-playing-over-defeat-screens-2026-09-02-client-only-no-engine-bump) — `case 'win'` played the jingle for any `win` event, so a player who had just bled out heard the victory sting; the cue now asks whose win it was, through the same function the result screen decides on. `audio` `test` `docs`
 - **09-02** [Standing next to loot stops disarming the player](roadmap/14-2026-09-02-muzzle.md#standing-next-to-loot-stops-disarming-the-player-2026-09-02-client-only-no-engine-bump) — The weapon-pickup panel opens mid-fight and gated the whole fire button, so a player standing in their own loot could not shoot; it swallows the presses that land on it instead. `ui` `test` `docs`
+- **09-02** [The swing that was one frame long, because the field that said otherwise was never read](roadmap/14-2026-09-02-muzzle.md#the-swing-that-was-one-frame-long-because-the-field-that-said-otherwise-was-never-read-2026-09-02-engine--client-engine_version-5253) — `MeleeSpec.swingSec` was authored on all seven blades, documented as design/07's active hit window, and read by nothing; the window is now real, the parry shares it, and `prngCursors` proves the crit still rolls once. `engine` `render` `test` `docs`
 
 ## The work log — by theme
 
@@ -759,6 +760,7 @@ The same 86 entries, grouped. An entry with more than one tag appears more than 
 - 09-02 [The gun steps onto the line its own bullets fly along](roadmap/14-2026-09-02-muzzle.md#the-gun-steps-onto-the-line-its-own-bullets-fly-along-2026-09-02-client-only)
 - 09-02 [The character gets an attack, and the sim finally says when](roadmap/14-2026-09-02-muzzle.md#the-character-gets-an-attack-and-the-sim-finally-says-when-2026-09-02-engine--client--art-engine_version-5152)
 - 09-02 [The other three clips finally get a signal](roadmap/14-2026-09-02-muzzle.md#the-other-three-clips-finally-get-a-signal-2026-09-02-client-only)
+- 09-02 [The swing that was one frame long, because the field that said otherwise was never read](roadmap/14-2026-09-02-muzzle.md#the-swing-that-was-one-frame-long-because-the-field-that-said-otherwise-was-never-read-2026-09-02-engine--client-engine_version-5253)
 
 **`art`** — authored assets and the art pipeline *(15)*
 

@@ -136,7 +136,16 @@ export function serializeState(s: GameState): unknown {
       // the numbers (not just name) to catch a loadout divergence.
       p.weapons.map((w) => [
         w.spec.name, w.cooldownTicks, w.justSwung, w.spec.damage,
-        w.spec.kind === 'ranged' ? [w.spec.fireRateTicks, w.spec.bulletSpeed] : [w.spec.range],
+        // Melee active hit window (design/07 step 7, ENGINE_VERSION 53): a swing now spans
+        // several ticks, and all three of these move WITHOUT necessarily moving anything
+        // else the same tick — `swingTicksLeft` counts down on a tick where the arc connects
+        // with nothing, `swingHitIds` grows when a body is caught, and `swingDamage` is the
+        // frozen crit roll that decides how hard the REST of the window lands. Hashing them
+        // is what lets a divergence in the window itself surface directly instead of only
+        // showing up later as a hit that should have happened but didn't. Stable
+        // 0/''/0 for every ranged weapon and for a blade at rest.
+        w.swingTicksLeft, w.swingHitIds.join(','), w.swingDamage,
+        w.spec.kind === 'ranged' ? [w.spec.fireRateTicks, w.spec.bulletSpeed] : [w.spec.range, w.spec.swingTicks],
       ]),
     ]),
     enemies: s.enemies.map((e) => [

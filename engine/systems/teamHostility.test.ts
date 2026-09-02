@@ -14,7 +14,7 @@ import { pxToFp } from '@dd/engine/content/convert';
 import { createGameState } from '@dd/engine/state/GameState';
 import type { GameState } from '@dd/engine/state/GameState';
 import { ENEMY_TEAM_ID, isHostile, type Projectile } from '@dd/engine/state/entities';
-import { makeWeapon, SABER_SIM } from '@dd/engine/content/weapons';
+import { makeWeapon, openSwing, SABER_SIM } from '@dd/engine/content/weapons';
 import {
   DeflectSystem,
   HitResolveSystem,
@@ -93,7 +93,7 @@ describe('PvP: seats on different teamIds can damage each other', () => {
     const swinger = s.players[0]!;
     swinger.weapon = makeWeapon(SABER_SIM);
     swinger.weapons = [swinger.weapon];
-    swinger.weapon.justSwung = true;
+    openSwing(swinger.weapon);
     swinger.facing = 0 as Brad; // facing +x, toward the rival
     const rival = s.players[1]!;
     const ally = s.players[2]!;
@@ -115,7 +115,7 @@ describe('PvP: seats on different teamIds can damage each other', () => {
     const swinger = s.players[0]!;
     swinger.weapon = makeWeapon(SABER_SIM); // deflect: true (design/03)
     swinger.weapons = [swinger.weapon];
-    swinger.weapon.justSwung = true;
+    openSwing(swinger.weapon);
     swinger.facing = 0 as Brad;
 
     const rivalBullet = bulletOn(s, { gx: swinger.gx, gy: swinger.gy }, 1);

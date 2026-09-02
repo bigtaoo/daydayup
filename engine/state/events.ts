@@ -31,7 +31,16 @@ export type GameEvent =
   // would be invisible under any latency that made the client drain two frames in a render
   // frame. Events survive that by construction — `session.drive()` returns the whole drained
   // batch — which is design/08's reason for the channel existing in the first place.
-  | { type: 'melee_swing'; ownerId: number; faction: Faction; gx: Fp; gy: Fp; facing: Brad }
+  //
+  // `swingTicks` is the spec's ACTIVE hit window (design/07 step 7, ENGINE_VERSION 53) — the
+  // number of ticks HitResolve will keep re-testing this swing's arc. It rides on the event
+  // because the render layer has no other honest source for it: `rigAttackMotion`'s swing
+  // envelope used to be a hardcoded 260 ms chosen as a fraction of the STARTER SABER's
+  // recovery, which drifts from the truth for every other blade in the roster (the hammer's
+  // window is 6 ticks, the spear's 3). Additive and inert for the sim — events are never read
+  // back by a later system and never enter `serializeState`/`hashState` — so this field alone
+  // needed no bump; the window it reports did.
+  | { type: 'melee_swing'; ownerId: number; faction: Faction; gx: Fp; gy: Fp; facing: Brad; swingTicks: number }
   // `faction` is a DamageSrc, not just Faction — zone/hazard-tile damage (design/15,
   // ROADMAP 4.2d) reports 'environment' here, since there is no attacker on the other side.
   | { type: 'hit'; target: number; faction: DamageSrc; gx: Fp; gy: Fp; damage: number; damageType: DamageType; shieldRemaining?: number }

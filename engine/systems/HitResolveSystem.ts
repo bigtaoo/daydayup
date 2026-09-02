@@ -3,9 +3,10 @@
  * (mutual destruction, resolved first so a cancelled bullet can't also hit an actor
  * this tick). Then bullet–actor overlap deals damage to any actor hostile to the
  * bullet (design/15 team model — no longer "the other array": a player's bullet
- * can hit a rival player, not just enemies) and consumes the bullet; a melee swing
- * that started this tick (justSwung) deals arc damage to every hostile actor in
- * its sector, once. Damage only lowers hp here — death is decided in step 9,
+ * can hit a rival player, not just enemies) and consumes the bullet; a melee swing whose
+ * ACTIVE window is open this tick (`swingTicksLeft > 0`, design/07 step 7) re-tests its arc
+ * against every hostile actor in the sector, hitting each at most once for the whole swing.
+ * Damage only lowers hp here — death is decided in step 9,
  * matching design/08's separation. The projectiles array is compacted in place at
  * the end, after clash/step/block/hit have all resolved.
  *
@@ -19,14 +20,16 @@
  * Ports the hit branches of Game.ts updateBullets()/resolveMeleeHit(); radians →
  * brad, float px → fp, squared-distance overlap tests. Knockback / armor / i-frames
  * are design/07 and land later. (The demo's per-frame multi-hit melee is corrected
- * to once-per-swing, per design/07.)
+ * to once-per-swing, per design/07 — which is a different claim from once-per-TICK, and the
+ * distinction is the whole point of `swingHitIds`: the swing spans several ticks now, and
+ * the cap is per swing.)
  */
 import { addFp, isqrt, mulFp, type Fp } from '../math/fixed';
 import { atan2Brad, bradDiff, cosFp, sinFp, type Brad } from '../math/trig';
 import { inBeamLine } from '../content/ballistics';
 import { RICOCHET_RANGE_FP } from '../config';
 import type { GameState } from '../state/GameState';
-import type { Actor, Faction, MeleeSimSpec, Projectile } from '../state/entities';
+import type { Actor, Faction, MeleeSimSpec, Projectile, WeaponState } from '../state/entities';
 import { isHostile } from '../state/entities';
 import { hostileTargets } from './targeting';
 import { nearestByPosition } from './nearest';
@@ -98,10 +101,13 @@ export class HitResolveSystem {
       }
     }
 
+    // Melee: every player whose swing window is OPEN this tick, not just the tick it started
+    // (design/07 step 7, ENGINE_VERSION 53). The alive/downed gate is re-checked per tick on
+    // purpose — a player killed or downed part-way through their own swing stops swinging.
     for (const p of state.players) {
       const w = p.weapon;
-      if (!p.alive || p.downed || !w || w.spec.kind !== 'melee' || !w.justSwung) continue;
-      this.meleeArc(state, p, w.spec);
+      if (!p.alive || p.downed || !w || w.spec.kind !== 'melee' || w.swingTicksLeft <= 0) continue;
+      this.meleeArc(state, p, w);
     }
 
     retainAlive(state.projectiles);
@@ -291,23 +297,44 @@ export class HitResolveSystem {
     }
   }
 
-  private meleeArc(state: GameState, p: GameState['players'][number], spec: MeleeSimSpec): void {
-    // Player run buffs scale outgoing arc damage (design/14). Reaches any hostile
-    // actor (design/15) — a rival player included, not just state.enemies.
-    const buffs = sumBuffs(p.buffs);
-    // Crit (design/07 "one frozen payload"): rolled ONCE per swing, at swing time —
-    // not re-rolled per target — so every enemy caught in one arc either all crit or
-    // none do, matching "one swing, one attack" rather than a lottery per body hit.
-    const isCrit = rollCrit(buffs, state.combatPrng);
-    const damage = critDamage(buffedDamage(spec.damage, buffs), isCrit);
+  /**
+   * One ACTIVE tick of a melee swing (design/07 step 7). Called on every tick of the
+   * weapon's `swingTicks` window, not once per swing, which is what makes the arc a window
+   * rather than a snapshot: the test re-runs against the LIVE facing and the LIVE positions,
+   * so a target that walks into the sector, or one the player turns onto mid-swing, is caught
+   * — the sweep. What does NOT re-run is the payload: damage and the crit roll are frozen on
+   * the start tick (`justSwung`) into `w.swingDamage`, and `w.swingHitIds` keeps each body to
+   * one hit for the whole swing. Both are design/07's "one frozen payload, one swing" —
+   * without them a 6-tick hammer would deal its damage six times over and draw `combatPrng`
+   * six times for one attack.
+   */
+  private meleeArc(state: GameState, p: GameState['players'][number], w: WeaponState): void {
+    const spec = w.spec as MeleeSimSpec;
+    if (w.justSwung) {
+      // Player run buffs scale outgoing arc damage (design/14). Reaches any hostile
+      // actor (design/15) — a rival player included, not just state.enemies.
+      const buffs = sumBuffs(p.buffs);
+      // Crit (design/07 "one frozen payload"): rolled ONCE per swing, at swing time —
+      // not re-rolled per target OR per active tick — so every enemy caught in one arc
+      // either all crit or none do, matching "one swing, one attack" rather than a
+      // lottery per body hit. This is still the same single draw per swing it was before
+      // the window existed, on the same tick, so the `combatPrng` cursor is untouched.
+      const isCrit = rollCrit(buffs, state.combatPrng);
+      w.swingDamage = critDamage(buffedDamage(spec.damage, buffs), isCrit);
+    }
+    const damage = w.swingDamage;
     const targets = hostileTargets(state, p);
     for (const t of targets) {
+      // Once per swing per body, across the WHOLE window (design/07). Checked before the
+      // geometry so a target that stays parked inside the arc costs one test, not a hit.
+      if (w.swingHitIds.includes(t.id)) continue;
       const dx = t.gx - p.gx;
       const dy = t.gy - p.gy;
       const reach = spec.range + t.radius;
       if (dx * dx + dy * dy > reach * reach) continue;
       const ang = atan2Brad(dy, dx);
       if (Math.abs(bradDiff(ang, p.facing)) > spec.arcHalf) continue;
+      w.swingHitIds.push(t.id);
       this.applyHit(state, t, damage, spec.damageType, 'player', targets, p.id, spec.lifestealPermille);
       // Melee knockback (design/07 v25): shove the target outward along the same
       // attacker→target direction already computed for the arc test, into its

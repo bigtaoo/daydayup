@@ -27,6 +27,7 @@ import type { GameState } from '../state/GameState';
 import { Button, type PlayerCommand } from '../state/commands';
 import type { PlayerActor } from '../state/entities';
 import { PLAYER_BASE } from '../content/players';
+import { closeSwing } from '../content/weapons';
 import { nearestHostile } from './targeting';
 
 export class ApplyInputSystem {
@@ -105,6 +106,14 @@ export class ApplyInputSystem {
   // weapons[activeSlot] for the systems that read the active pointer.
   private swap(p: PlayerActor): void {
     if (p.weapons.length < 2) return;
+    // A swing you put away is over (ENGINE_VERSION 53): close the outgoing weapon's active
+    // hit window before the pointer moves. Only the ACTIVE weapon is ticked (WeaponFireSystem
+    // reads `a.weapon`), so an open window on a holstered blade would otherwise freeze
+    // mid-swing and re-open — still armed, still frozen damage — the moment the player
+    // swapped back, however many seconds later. Cooldown deliberately keeps its old
+    // freeze-in-place semantics per the comment above; that one is a *penalty* a player
+    // shouldn't be able to shed by swapping, where this is a live attack.
+    if (p.weapon) closeSwing(p.weapon);
     p.activeSlot = (p.activeSlot + 1) % p.weapons.length;
     p.weapon = p.weapons[p.activeSlot] ?? null;
   }

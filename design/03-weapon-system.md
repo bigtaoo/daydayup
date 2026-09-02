@@ -68,6 +68,8 @@ Showcase weapons per new frame (`content/weapons.ts`): `scattergun` (spread emis
 
 Melee has no ballistic; its frame is the **swing shape** (`arcDeg` × `rangeGrid` × `swingSec`). That shape doubles as a **parry-frequency axis** — a fast narrow frame parries often (many swings), a wide slow one bats a big sector at once. Every melee frame keeps `deflect: true`, so the ranged-vs-melee trade-off (below) is untouched.
 
+All three of those are now real numbers the sim reads. `swingSec` was the exception until `ENGINE_VERSION` 53 — authored on every melee weapon, converted by nothing, read by nowhere, so the third axis of the "swing shape" did not exist and every blade's hit window was one tick. It is now `MeleeSimSpec.swingTicks`, the active hit window of `07` step 7, and it also **paces the render** (`melee_swing` carries it; `client/src/render/rigAttackMotion.ts`), so the hammer's long sweep and the spear's quick poke finally *look* as different as they are authored to be.
+
 | melee frame | feel | parry character |
 |-------------|------|-----------------|
 | `dagger` | short arc/range, low cd, low dmg | dense small windows |

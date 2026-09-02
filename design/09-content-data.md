@@ -91,7 +91,7 @@ MeleeSpec = {
   arcDeg, rangeGrid  // swing sector (→ brad half-angle + fp range)
   damage, knockback
   damageType?        // 'physical'|'fire'|'ice'|'lightning'|'poison' (07); omitted = physical
-  swingSec           // → swingTicks (active-hit window, 07)
+  swingSec           // → swingTicks (active-hit window, 07) — clamped into [1, cooldownTicks]
   deflect: bool      // does the swing deflect bullets in its arc (03) — ranged-vs-melee trade-off gate
   deflectSpeed       // grid/s of a redirected bullet (07). The swing's arcDeg/rangeGrid
                      //   IS the deflect sector — there is no separate blockArc.

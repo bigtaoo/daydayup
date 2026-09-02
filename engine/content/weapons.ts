@@ -82,12 +82,20 @@ export function toSimSpec(spec: WeaponSpec): WeaponSimSpec {
     };
     return sim;
   }
+  const swingCooldownTicks = toTicks(spec.cooldownSec);
   const sim: MeleeSimSpec = {
     kind: 'melee',
     name: spec.id,
     nameKey: spec.nameKey,
     rarity: spec.rarity,
-    swingCooldownTicks: toTicks(spec.cooldownSec),
+    swingCooldownTicks,
+    // Active hit window (design/07 step 7, ENGINE_VERSION 53 — authored since Stage C, but
+    // `toSimSpec` dropped it on the floor until now, so the window was one tick for every
+    // weapon regardless of what its `swingSec` said). Clamped into [1, cooldown] rather than
+    // trusted raw: a `swingSec` small enough to round to 0 ticks would silently disarm the
+    // weapon entirely, and design/07 authors the window as a SUBSET of the recovery, so a
+    // window longer than the cooldown is a content error, not a mechanic.
+    swingTicks: Math.min(swingCooldownTicks, Math.max(1, toTicks(spec.swingSec))),
     damage: applyQuality(spec.damage, spec.rarity),
     arcHalf: degToBrad(spec.arcDeg / 2),
     range: toFpGrid(spec.rangeGrid),
@@ -132,7 +140,39 @@ export const GYRE_SIM = WEAPON_SIM_BY_ID.gyre as RangedSimSpec;
 export const CAROM_SIM = WEAPON_SIM_BY_ID.carom as RangedSimSpec;
 export const LEECH_SIM = WEAPON_SIM_BY_ID.leech as MeleeSimSpec;
 
-/** Fresh weapon runtime for a spec (design/08: cooldown in whole ticks). */
+/** Fresh weapon runtime for a spec (design/08: cooldown in whole ticks). The melee
+ *  swing-window fields start at rest — a weapon is never handed out mid-swing, including
+ *  the one a mid-run weapon drop swaps in. */
 export function makeWeapon(spec: WeaponSimSpec): WeaponState {
-  return { spec, cooldownTicks: 0, justSwung: false };
+  return { spec, cooldownTicks: 0, justSwung: false, swingTicksLeft: 0, swingHitIds: [], swingDamage: 0 };
+}
+
+/**
+ * Start a melee swing: latch the one-tick `justSwung` START flag AND open the spec's ACTIVE
+ * hit window (design/07 step 7, ENGINE_VERSION 53). These two have to move together — the
+ * latch is what freezes the swing's damage payload in HitResolve and what emits `melee_swing`,
+ * the window is what steps 6 (deflect) and 7 (arc damage) actually gate on — and a caller that
+ * set only one would produce a swing that either does no damage or re-rolls its crit every
+ * tick. So there is exactly ONE definition of "a swing starts", here, called by
+ * `WeaponFireSystem` and by every test that stages a swing without running step 3. A swing
+ * that starts while a previous one is still active restarts both, hit list included: it is a
+ * new attack.
+ *
+ * No-op for a ranged weapon, so a caller never has to narrow the spec first.
+ */
+export function openSwing(w: WeaponState): void {
+  if (w.spec.kind !== 'melee') return;
+  w.justSwung = true;
+  w.swingTicksLeft = w.spec.swingTicks;
+  w.swingHitIds.length = 0;
+}
+
+/** Close a melee swing early and drop its bookkeeping — the counterpart of `openSwing`, for
+ *  the two places a window ends other than by running out: it reached 0 in `WeaponFireSystem`,
+ *  or the blade was holstered mid-swing (`ApplyInputSystem.swap`). Leaves `justSwung` alone;
+ *  that latch is cleared at the top of every turn regardless. */
+export function closeSwing(w: WeaponState): void {
+  w.swingTicksLeft = 0;
+  w.swingHitIds.length = 0;
+  w.swingDamage = 0;
 }

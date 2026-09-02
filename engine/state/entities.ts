@@ -116,7 +116,11 @@ export interface MeleeSimSpec {
   nameKey: string; // i18n KEY for the player-facing name (design/09); client resolves via tName()
   rarity: RarityTier; // intrinsic tier (design/14); render reads it for the compare-card colour, the sim never does
   swingCooldownTicks: number; // recovery between swings
-  damage: number; // integer, per enemy in arc, once per swing
+  // ACTIVE hit window, whole ticks ⊂ swingCooldownTicks (design/07 step 7). Converted from the
+  // authored `swingSec` and clamped into [1, cooldown] by `toSimSpec`. Authored since Stage C,
+  // wired in ENGINE_VERSION 53 — before that the arc resolved instantly on the swing tick.
+  swingTicks: number;
+  damage: number; // integer, per enemy in arc, once per swing (across the WHOLE window)
   arcHalf: number; // swing sector half-angle, brad — used for BOTH damage and deflect
   range: Fp; // swing sector radius (reach from actor centre)
   deflect: boolean; // does the swing deflect bullets caught in its arc (design/03/05 parry)
@@ -145,7 +149,14 @@ export type ShieldBreakSim =
 export interface WeaponState {
   spec: WeaponSimSpec; // the sim spec systems read
   cooldownTicks: number; // counts down each tick, 0 = ready
-  justSwung: boolean; // melee: swing started THIS tick → HitResolve applies arc damage + DeflectSystem parries bullets in the arc, once
+  justSwung: boolean; // melee: swing STARTED this tick — the one-tick latch that opens the window below
+  // ── Melee swing runtime: the ACTIVE hit window (design/07 step 7, ENGINE_VERSION 53) ──
+  // A swing spans several ticks now. `openSwing`/`closeSwing` (content/weapons.ts) are the only
+  // legal transitions and carry the full rationale; `WeaponFireSystem` counts the window down.
+  // All three are 0/empty on every ranged weapon and on a melee weapon at rest.
+  swingTicksLeft: number; // > 0 = ACTIVE; the gate BOTH DeflectSystem (6) and HitResolve (7) read
+  swingHitIds: number[]; // bodies already hit — design/07's "at most once per swing", not per tick
+  swingDamage: number; // buffs + crit frozen on the START tick, reused all window (07 "one frozen payload")
 }
 
 // ── Actors ────────────────────────────────────────────────────────────────────

@@ -1,10 +1,11 @@
 /**
  * Step 3 — Weapon fire. For every actor whose fire flag is set and whose weapon
- * cooldown is ready: ranged spawns Projectile(s) at the muzzle; melee starts a
- * swing (justSwung → HitResolve applies arc damage once at step 7, and DeflectSystem
- * parries bullets in the same arc at step 6). Cooldowns count down here in whole
- * ticks. Runs BEFORE movement (design/08) so a bullet spawns at this tick's muzzle,
- * then everything moves.
+ * cooldown is ready: ranged spawns Projectile(s) at the muzzle; melee OPENS a swing —
+ * `justSwung` latches the start tick and `swingTicksLeft` holds the spec's active hit
+ * window open for `swingTicks` ticks (design/07 step 7, ENGINE_VERSION 53), which is what
+ * HitResolve (step 7) re-tests its arc against and DeflectSystem (step 6) parries inside.
+ * Both clocks — cooldown and window — count down here, in whole ticks. Runs BEFORE movement
+ * (design/08) so a bullet spawns at this tick's muzzle, then everything moves.
  *
  * Ports RangedWeapon.use() / MeleeWeapon.use() and the enemy-fire block of
  * Game.ts updateEnemies(): float cos/sin → fp-trig, px → grid-fp.
@@ -29,6 +30,7 @@ import {
   NO_BUFFS,
   type BuffSums,
 } from '../balance/runbuffs';
+import { closeSwing, openSwing } from '../content/weapons';
 import type { GameState } from '../state/GameState';
 import type { Actor, EnemyActor, RangedSimSpec } from '../state/entities';
 
@@ -62,6 +64,18 @@ export class WeaponFireSystem {
     const w = a.weapon;
     if (!w) return;
     w.justSwung = false;
+    // Age the melee active hit window (design/07 step 7, ENGINE_VERSION 53) alongside the
+    // cooldown, and for the same reason it sits above the early return: both are clocks that
+    // have to advance on a tick where the actor never gets to act. Decrementing HERE, at step
+    // 3, before the swing below can reload it, is what makes the window exactly `swingTicks`
+    // ticks long — the swing tick sees the full value, and each of the following `swingTicks-1`
+    // turns knocks one off before steps 6/7 read it.
+    if (w.swingTicksLeft > 0) {
+      w.swingTicksLeft--;
+      // The window just closed — drop the swing's bookkeeping so a weapon at rest holds no
+      // stale hit list (and so `swingHitIds` can't grow across swings).
+      if (w.swingTicksLeft === 0) closeSwing(w);
+    }
     if (w.cooldownTicks > 0) w.cooldownTicks--;
     if (!a.alive || !a.firing || w.cooldownTicks > 0) return;
 
@@ -69,13 +83,26 @@ export class WeaponFireSystem {
       this.fireRanged(state, a, w.spec, buffs);
       w.cooldownTicks = buffedCooldown(w.spec.fireRateTicks, buffs);
     } else {
-      w.justSwung = true;
+      // Latch the START flag and open the ACTIVE hit window together (design/07 step 7) —
+      // one call, because setting only one of them makes a broken swing. See `openSwing`.
+      openSwing(w);
       // The melee half of design/08's one engine->render channel, and the exact counterpart of
       // `spawnBullet`'s `bullet_fired` push: the swing is otherwise invisible to the render
       // layer, since `justSwung` is a one-tick latch the online loop can drain straight past
       // (see the event's own doc comment in state/events.ts). Emitted for the SWING, not for
       // its hits -- a swing that connects with nothing still has to animate.
-      state.events.push({ type: 'melee_swing', ownerId: a.id, faction: a.faction, gx: a.gx, gy: a.gy, facing: a.facing });
+      // `swingTicks` rides along so the render layer can pace the swing off the REAL active
+      // window instead of guessing a fraction of the recovery -- see the event's own doc
+      // comment and `client/src/render/rigAttackMotion.ts`.
+      state.events.push({
+        type: 'melee_swing',
+        ownerId: a.id,
+        faction: a.faction,
+        gx: a.gx,
+        gy: a.gy,
+        facing: a.facing,
+        swingTicks: w.spec.swingTicks,
+      });
       w.cooldownTicks = buffedCooldown(w.spec.swingCooldownTicks, buffs);
     }
   }

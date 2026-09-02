@@ -1259,3 +1259,74 @@ than discovering it as a desync.
 Those counts are also the first evidence the melee path is exercised by the golden set at all:
 before this, nothing in the fixture distinguished a run that swung 67 times from one whose melee
 weapon was never off cooldown.
+
+## v53: melee swings get their authored ACTIVE HIT WINDOW (design/07 step 7)
+
+`MeleeSpec.swingSec` had been authored on all seven melee weapons since Stage C — 0.1 s on the
+spear, 0.2 s on the hammer — carrying the doc comment *"ACTIVE hit-window (subset of
+cooldownSec), 07 step 7"* and an entry in design/09's conversion table (`swingSec → swingTicks
+(active-hit window, 07)`). `toSimSpec` never converted it, `MeleeSimSpec` had no field to convert
+it into, and **nothing in the repo read it**. `HitResolveSystem.meleeArc` resolved the entire arc
+on the single tick `justSwung` latched, so every blade had an effective one-tick window and the
+hammer and the spear were identically timed. design/07 step 7 has said otherwise the whole time
+(*"a swing is active for a few ticks (`swingTicks`); during active frames, test the weapon's arc
+… each target is hit at most once per swing (track hit ids on the swing)"*), so this is the spec
+landing, not a new mechanic.
+
+**What moved.** `MeleeSimSpec.swingTicks` (converted, clamped into `[1, swingCooldownTicks]`) and
+three `WeaponState` fields: `swingTicksLeft` (the live window, counted down at step 3 alongside
+the cooldown), `swingHitIds` (once-per-target-per-swing across the whole window), `swingDamage`
+(the payload frozen on the start tick). `HitResolveSystem` and `DeflectSystem` both gate on
+`swingTicksLeft > 0` instead of `justSwung`; `justSwung` survives as the one-tick START latch that
+freezes the payload and emits `melee_swing`. `openSwing`/`closeSwing` (`content/weapons.ts`) are
+the single definition of the transition, so a caller cannot set half of it.
+
+**Deflect widened too, on purpose.** design/07's locked decision is *"the SAME arc both damages
+enemies and deflects bullets — there is no separate `blockArc`"*, and an arc that damages for four
+ticks but parries for one is a separate blockArc in all but name. So the parry window is the same
+field, which is a real balance move on the pivot mechanic (one tick → 3-6 by weapon), not a free
+refactor. design/05's *"deflect is already a commitment"* still holds: the commitment is spending
+the swing, and frame-perfect parry timing was not readable at 30 Hz anyway. Watch it in playtest.
+
+**Why the bump.** Outcomes move. Measured against the v52 fixture BEFORE bumping (the only point
+at which the measurement means anything — `version` is serialized into the hashed state, so the
+bump alone moves all five hashes):
+
+```
+                       deflect        hit        melee_swing   prngCursors
+ember-dungeon-floor1     5 → 7      62 → 61          67 → 67      unchanged
+launch-arena-pvp         1 → 3      51 → 53          44 → 44      unchanged
+arena-waves / walls-and-pillars / brim-grinder: hash moved, witness unchanged
+```
+
+Read that table as three separate claims, because each is a thing that could have gone wrong:
+
+  - **`deflect` up** — the wider parry catches bullets the one-tick window missed. The feature
+    working, in shipped content, not in a fixture.
+  - **`melee_swing` unchanged** — the swing COUNT did not move, so the window did not accidentally
+    become a second trigger. The cooldown still gates how often a blade swings.
+  - **`prngCursors` unchanged** — the single most load-bearing number here. The crit is still
+    exactly ONE `combatPrng` draw per swing (design/07: *"a melee swing rolls ONCE for the whole
+    arc"*), not one per active tick. Had `meleeArc` re-rolled per tick, a 6-tick hammer would have
+    drawn six times and this column would have moved in every scenario. `swingDamage` is what
+    holds it still.
+
+`hit` moves in both directions and that is expected: a bullet parried by the wider window no
+longer lands on its target (dungeon, 62 → 61) while a body that walks into a still-open arc now
+does get caught (PvP, 51 → 53).
+
+**Coverage.** `systems/meleeWindow.test.ts` (33 tests, plus 10 across the render chain) is new and exists because the pre-existing
+melee tests could not have caught this: every one of them staged a swing by hand-latching
+`justSwung` and asserted the hits on that same tick, which is exactly what a one-tick window
+produces. Each test there either counts the active ticks it observed or proves the target was
+unreachable on the swing tick before asserting it was reached later — a test that would pass
+against `swingTicks: 1` is not testing this. A 31-mutant battery (21 engine, 10 render) measured
+the result rather than assuming it: 31/31 killed, tables in the two test files' headers. Notably
+all four "drop a swing field from `serializeState`" mutants survived the entire repo until the
+hash block in that file existed — a golden-replay comparison of two identical runs cannot see a
+missing field, as `replay.ts`'s own comment says.
+
+**Render.** `melee_swing` gained a `swingTicks` field (additive; events never enter the hash) and
+`rigAttackMotion`'s swing envelope now paces off it (`swingMsForWindow`) instead of a hardcoded
+260 ms picked as a fraction of the STARTER SABER's recovery. The hammer, the saber and the spear
+now animate on three different clocks, matching their three different windows.

@@ -422,7 +422,18 @@ describe('melee_swing announces the swing itself (design/08 fx channel, ENGINE_V
     new WeaponFireSystem().tick(s);
 
     expect(swings(s)).toEqual([
-      { type: 'melee_swing', ownerId: p.id, faction: p.faction, gx: p.gx, gy: p.gy, facing: p.facing },
+      // `swingTicks` (ENGINE_VERSION 53) is the spec's ACTIVE hit window, carried so the render
+      // layer can pace the swing off the real window — asserted against the spec, not a
+      // literal 4, so a saber retune moves both together instead of failing here.
+      {
+        type: 'melee_swing',
+        ownerId: p.id,
+        faction: p.faction,
+        gx: p.gx,
+        gy: p.gy,
+        facing: p.facing,
+        swingTicks: SABER_SIM.swingTicks,
+      },
     ]);
   });
 
