@@ -287,6 +287,22 @@ describe('Skin.attack — the attack trigger', () => {
     expect(kick).toHaveBeenCalledTimes(1);
   });
 
+  it('passes the swinging WEAPON through to the rig, not just the kind', () => {
+    // The middle hop of a three-link chain (`Actor.onAttack` -> here -> `RigSkin.attack` ->
+    // `AttackMotion.kick`), and the one with no observable effect of its own: drop the argument
+    // here and every weapon in the game silently swings the starter saber's 162° sector, which
+    // is exactly the bug the 2026-09-02 pass fixed. Both ends of the chain are asserted in
+    // `Actor.test.ts` and `render/RigSkin.test.ts`; this is the link between them.
+    mocks.loaded = loadedRig();
+    const s = new Skin(0x123456, 0xabcdef, 20, 'char_vanguard');
+    const kick = vi.spyOn(internals(s).rig!, 'attack');
+    const shape = { arcDeg: 220, recoveryMs: 667 };
+    s.attack('melee', shape);
+    expect(kick).toHaveBeenCalledWith('melee', shape);
+    s.attack('ranged');
+    expect(kick).toHaveBeenLastCalledWith('ranged', undefined); // a gun has no sector
+  });
+
   it('is a silent no-op on the placeholder — nothing mounted, nothing to recoil', () => {
     mocks.loaded = undefined;
     const s = new Skin(0x123456, 0xabcdef, 20);

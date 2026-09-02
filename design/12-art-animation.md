@@ -153,7 +153,7 @@ layers**, whether it is a shot or a swing, on every one of the seven shipped rig
 | layer | file | what it owns | why it cannot be the other layer |
 |---|---|---|---|
 | authored `attack` clip, layered **additively** over `idle`/`move` | `render/rigClipLayer.ts` | squash/stretch, the body's jolt, a boss's shard rings flaring — everything statable in the rig's own bone space, per body plan | it is per-character art; there is nothing to compute |
-| aim-relative envelope | `render/rigAttackMotion.ts` | a gun's kick back along the BARREL + body lean; a blade's 68° sweep + forward lunge | it is a function of the live aim angle — see below |
+| aim-relative envelope | `render/rigAttackMotion.ts` | a gun's kick back along the BARREL + body lean; a blade's sweep + forward lunge, **sized and paced by the weapon** since 2026-09-02 (26°-104° of travel over 130-400 ms, derived — see below) | it is a function of the live aim angle AND of the weapon — neither is authorable |
 
 Both are started by one call, `Actor.onAttack(kind)`, from one place: `EventReactor`, off
 `bullet_fired` or `melee_swing`. Only the envelope's SHAPE differs by kind.
@@ -166,6 +166,47 @@ Both are started by one call, `Actor.onAttack(kind)`, from one place: `EventReac
 2. the weapon sockets are **aim-tracking bones** — `RigSkin` overwrites their rotation with the
    aim angle every frame — so an authored swing arc is discarded in silence. A blade can only be
    swung procedurally.
+
+### The swing is the weapon's, and so is the sector on the ground (2026-09-02b)
+
+The envelope above shipped with ONE hardcoded sweep — 22° behind the aim to 46° past it, 260 ms —
+for every melee weapon in the game, because the trigger carried only `kind`. The authored sectors
+run from the spear's 60° to the hammer's 220° (`engine/content/weaponSpecs/*.ts`), so the spear's
+animation was wider than the sector it can hit in and the hammer drew 31% of its own. `DeflectSystem`
+parries bullets in that same `arcHalf`, which is what made it worth fixing rather than a flourish:
+the animation was misinforming the player about their own parry.
+
+`swingSchedule(shape)` now derives both numbers from the weapon — travel `= arcDeg × (68/162)`
+clamped to [26°, 104°], envelope `= recovery × (260/366.7)` clamped to [130, 400] ms. **Both factors
+are defined as the ratio between the starter saber's shape and the constants hand-tuned against
+it**, so the starter weapon's look is unchanged by construction rather than by luck, and a caller
+with no weapon (the `Graphics` placeholder, any enemy — none carry melee) gets that same default.
+The clamps are about the BODY: the blade hangs off an aim-tracking socket, so past ~100° it sweeps
+through the character rather than around it.
+
+**The sector itself is now drawn** (`client/src/game/fx/slashArc.ts`), at the weapon's true
+`arcHalf` and `range` — unclamped, because that fx exists to state the reach, where the envelope's
+clamps exist to keep a body legible. It is this renderer's only `Mesh`: the look needs alpha varying
+radially AND along the sweep at once, and a `Graphics` can carry only a one-dimensional ramp
+(`render/shadeRamp.rampFill` maps a gradient through a texture matrix, and a matrix cannot express a
+polar mapping).
+
+**Its brush is the second confirmed case of this doc's generate-it-don't-prompt-it rule** (the first
+was the shield's scale tile). The asset is a radial profile times a tail profile — a parametric
+alpha field you converge on by editing a number, with a hard requirement (additive-clean at any arc
+width) that an image model is bad at and no material for it to be good at. So it is baked at boot
+through `shadeRamp.bakedField`: 256×64, POT + mipmapped, premultiplied white, tinted per element,
+**zero bytes** against `04`'s package budget. One bake covers 60° through 220° because the angular
+span lives in the geometry while the brush is parametrised on FRACTIONS — sweep fraction along `u`,
+radius fraction along `v` — so nothing stretches at any width. Reach for the image model here only
+if the swing wants a MATERIAL (ink grain, a hammered edge); that would multiply into the same baked
+field and change no geometry.
+
+Both halves are cross-checked against the sim rather than against restated numbers:
+`client/src/game/fx/meleeArcParity.test.ts` drives the real `HitResolveSystem` and pins the drawn
+edge to `arcHalf` exactly, the drawn reach to `range` with the hit boundary exactly one target
+radius further out (bodies, not points — so the lit edge always connects), and that the arc sweeps
+the same way the blade does in both facings. See roadmap volume `15`.
 
 **The additive contract** the clip layer runs on: `rotation`/`translate` ADD, `scale`/`alpha`
 MULTIPLY, and a bone the attack clip does not name is left on its base clip untouched. That is

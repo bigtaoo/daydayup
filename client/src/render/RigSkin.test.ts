@@ -14,7 +14,7 @@ import { ORB_CORE_RIG } from './orbCoreRig';
 import { CRITTER_CORE_RIG } from './critterCoreRig';
 import { BOSS_CORE_RIG } from './bossCoreRig';
 import { RigSkin, barrelReach } from './RigSkin';
-import { RECOIL_BODY_PX, RECOIL_MODULE_PX, RECOIL_MS, SWING_ARC_DEG, SWING_MS } from './rigAttackMotion';
+import { RECOIL_BODY_PX, RECOIL_MODULE_PX, RECOIL_MS, SWING_ARC_DEG, SWING_MS, swingSchedule } from './rigAttackMotion';
 import type { RigSkinBundle } from './taoBundle';
 import type { AnimationClip, SpriteBinding } from './types';
 
@@ -1229,6 +1229,27 @@ describe('RigSkin — the melee swing', () => {
     atStrike(skin);
     const swung = spritesOf(skin).get('socket_r')!.rotation;
     expect(swung - rest).toBeCloseTo((SWING_ARC_DEG * Math.PI) / 180, 6);
+  });
+
+  it('sweeps a WIDE weapon further than a narrow one, from the same trigger', () => {
+    // The last hop of the weapon->motion chain, measured where it is finally visible: on the
+    // socket the blade is mounted to. `rigAttackMotion.test.ts` pins the envelope's own numbers;
+    // what this adds is that `attack`'s second argument reaches it at all — without it both of
+    // these sweep the identical 46°, and every other melee assertion in this file still passes.
+    const sweep = (shape?: { arcDeg: number; recoveryMs: number }): number => {
+      const skin = bladed();
+      const rest = spritesOf(skin).get('socket_r')!.rotation;
+      skin.attack('melee', shape);
+      skin.advanceClips((shape ? swingSchedule(shape).totalMs : SWING_MS) * 0.55);
+      skin.update();
+      return spritesOf(skin).get('socket_r')!.rotation - rest;
+    };
+    const recoveryMs = (11 * 1000) / 30;
+    const poke = sweep({ arcDeg: 60, recoveryMs });
+    const heave = sweep({ arcDeg: 220, recoveryMs });
+    expect(heave).toBeGreaterThan(poke * 2);
+    // ...and no shape at all still lands on the tuned constant, i.e. the fallback is intact.
+    expect(sweep()).toBeCloseTo((SWING_ARC_DEG * Math.PI) / 180, 6);
   });
 
   it('carries the mounted blade around with the socket, not just the ring', () => {

@@ -6,6 +6,7 @@ import { makeLightBuffer } from './lighting';
 import { resetActiveQuality, setActiveQuality } from '../../render/quality';
 import { Container, type Sprite } from 'pixi.js';
 import { tagGroundPiece } from '../scene/groundCulling';
+import { resetSlashArcPool, slashArcPoolSize, type SlashArcPose } from './slashArc';
 
 // FxController's filters (fx/filters.ts) build a real WebGL GlProgram at construction
 // time — unavailable under plain vitest (no `document`/canvas), and irrelevant to the
@@ -625,5 +626,97 @@ describe('FxController.muzzleFlare', () => {
     expect(flares(fx)[0]!.scale.x).toBeGreaterThan(1); // grows, the opposite of the flare
     fx.updateFx(80, 0, undefined);
     expect(flares(fx)).toHaveLength(0);
+  });
+});
+
+/**
+ * The melee sector arc's LIFECYCLE (2026-09-02). The arc's own geometry is pinned in
+ * `slashArc.test.ts`; what this block owns is the part that lives on `FxController` — an fx that
+ * deliberately opts out of the `_life` machinery every other fx here rides on, and therefore has
+ * to be stepped, removed and pooled by hand.
+ */
+describe('FxController.slashArc', () => {
+  const POSE: SlashArcPose = {
+    x: 40, y: 60, facingRad: 0, arcHalfRad: 1, innerPx: 16, outerPx: 46,
+    color: 0x90cdf4, flipX: 1, delayMs: 78, sweepMs: 65, fadeMs: 130,
+  };
+
+  it('mounts the arc on the additive fx layer and lights the room for its whole length', () => {
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.slashArc(POSE);
+    expect(layers.fx.children).toHaveLength(1);
+    const lit = activeLights(fx);
+    expect(lit).toHaveLength(1);
+    expect([lit[0]!.x, lit[0]!.y]).toEqual([POSE.x, POSE.y]);
+    expect(lit[0]!.color).toBe(POSE.color);
+  });
+
+  it('steps the sweep from updateFx, then removes the arc once it has faded', () => {
+    // The failure this catches is a leak, and a silent one: an arc that is never stepped stays
+    // parented forever at full alpha — a permanent glowing wedge stuck to the floor.
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.slashArc(POSE);
+    const arc = layers.fx.children[0]!;
+    fx.updateFx(POSE.delayMs + POSE.sweepMs, 0, undefined);
+    expect(arc.parent).toBe(layers.fx);
+    expect(arc.visible).toBe(true);
+    fx.updateFx(POSE.fadeMs, 0, undefined);
+    expect(layers.fx.children).toHaveLength(0);
+  });
+
+  it('does not touch the arc alpha or scale the way the `_life` loop would', () => {
+    // `_life`-tagged children get `alpha = life/max` and `scale = 1 + (1-alpha) * _grow` each
+    // frame. Applied to a sector that would GROW the arc past the reach it exists to state, so
+    // the arc must not be tagged — asserted through the visible consequence rather than by
+    // reaching for the private tag.
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.slashArc(POSE);
+    const arc = layers.fx.children[0]!;
+    fx.updateFx(POSE.delayMs + POSE.sweepMs * 0.5, 0, undefined);
+    expect(arc.scale.x).toBe(1);
+    expect(arc.alpha).toBe(1);
+  });
+
+  it('recycles a finished arc rather than allocating a fresh set of buffers per swing', () => {
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    resetSlashArcPool();
+    fx.slashArc(POSE);
+    fx.updateFx(POSE.delayMs + POSE.sweepMs + POSE.fadeMs, 0, undefined);
+    expect(slashArcPoolSize()).toBe(1);
+    fx.slashArc(POSE);
+    expect(slashArcPoolSize()).toBe(0);
+    expect(layers.fx.children).toHaveLength(1);
+  });
+
+  it('drops an in-flight arc on a run boundary', () => {
+    // A `_life` glow is small and gone in 170 ms so those are left to expire; an arc is the size
+    // of a weapon's whole reach, and one hanging over the first frames of the next run reads as
+    // that run's own swing.
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.slashArc(POSE);
+    fx.updateFx(POSE.delayMs + 10, 0, undefined);
+    fx.resetForNewRun();
+    expect(layers.fx.children).toHaveLength(0);
+    // ...and the next run's own arcs still work, i.e. the list was cleared, not corrupted.
+    fx.slashArc(POSE);
+    fx.updateFx(POSE.delayMs + POSE.sweepMs, 0, undefined);
+    expect(layers.fx.children).toHaveLength(1);
+  });
+
+  it('steps several concurrent arcs independently — two players can swing on one tick', () => {
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.slashArc(POSE);
+    fx.slashArc({ ...POSE, delayMs: POSE.delayMs * 3 }); // a slower weapon, still winding up
+    fx.updateFx(POSE.delayMs + POSE.sweepMs + POSE.fadeMs, 0, undefined);
+    // The first is spent and gone; the second is only now mid-sweep. Reaping backwards is what
+    // makes this work — a forward splice would skip the element after each removal.
+    expect(layers.fx.children).toHaveLength(1);
+    expect(layers.fx.children[0]!.visible).toBe(true);
   });
 });
