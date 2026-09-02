@@ -7,6 +7,8 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { pxToFp, type GameEvent, type GameState } from '@dd/engine';
+import { createGameState } from '@dd/engine/state/GameState';
+import type { ArenaMap } from '@dd/engine/content/arenas';
 import { EventReactor, type EventReactorHost } from './EventReactor';
 import type { FxController } from '../fx/FxController';
 import { HudView } from '../ui/HudView';
@@ -66,6 +68,19 @@ function newReactor() {
 }
 
 const PICKUP_BASE = { type: 'pickup' as const, gx: 0, gy: 0 };
+
+/** The smallest map that makes `createGameState` build an ARENA state (`zoneEnabled`, seats
+ *  with `teamId`s) — the `win` cue's whole question is which win model applies, and only a
+ *  real state answers that. Same one-room fixture `RunOutcome.test.ts` uses for the screen
+ *  side of the same decision. */
+const MINI_ARENA: ArenaMap = {
+  id: 'mini',
+  sizeGrid: { w: 10, h: 10 },
+  rooms: [{ id: 'A', rectGrid: { x: 0, y: 0, w: 10, h: 10 }, solids: [] }],
+  doors: [],
+  spawns: [{ x: 5, y: 5 }],
+  eyeCandidates: [{ roomId: 'A' }],
+};
 
 afterEach(() => resetLocaleForTests());
 
@@ -447,6 +462,125 @@ describe('EventReactor — the cues that are about YOU (design/11)', () => {
     expect(audio.play).not.toHaveBeenCalled();
     expect(fx.addShake).toHaveBeenCalled();
     expect(fx.addHitStop).toHaveBeenCalled();
+  });
+
+  // ---- `win` is about whose run ended well (2026-09-02) ------------------------------
+  //
+  // The bug these pin was live and reproduced, not theoretical: `case 'win'` played the
+  // jingle for ANY `win` event, and the event fires when anyone wins. With `?arenaDemo=1`,
+  // downing the local seat and letting it bleed out produced `death.player:1` then `win:1`
+  // in one frame with `phase === 'defeat'` — the victory sting over a defeat screen.
+  //
+  // Fixtures use the engine's REAL `createGameState` rather than the cast object literal the
+  // cases above share, because the whole question turns on two fields those literals do not
+  // have: `zoneEnabled` (which win model applies) and per-seat `teamId` (which squad won).
+  // A cast fixture would pass while spelling either of them wrong.
+
+  /** A finished arena match. `teams[i]` is seat i's squad; the local seat is seat 0
+   *  (`fakeHost().localOwner`), and seat i's entity id is i + 1 (`GameState.nextId`). */
+  function arenaReactor(teams: readonly number[]) {
+    const hud = new HudView();
+    hud.build(new Layers(), { w: 1280, h: 720 });
+    const audio = fakeAudio();
+    const host = fakeHost();
+    const s = createGameState({
+      seed: 1, worldW: 0, worldH: 0, waves: [], arena: MINI_ARENA,
+      players: teams.map((teamId) => ({ teamId })),
+    });
+    host.activeState = () => s;
+    return { reactor: new EventReactor(fakeFx(), hud, audio, host), audio, state: s };
+  }
+
+  const winBy = (winner: number | 'enemies' | null) => ({ type: 'win', winner }) as GameEvent;
+
+  it('plays the jingle when the local seat itself is the named winner', () => {
+    const { reactor, audio } = arenaReactor([0, 1]);
+    reactor.consume([winBy(0)]);
+    expect(cuesOf(audio)).toEqual(['win']);
+  });
+
+  it('a RIVAL winning plays the run-ending fall, never the jingle', () => {
+    // The reported bug, at its smallest: someone won, and it was not us.
+    const { reactor, audio } = arenaReactor([0, 1]);
+    reactor.consume([winBy(1)]);
+    expect(cuesOf(audio)).toEqual(['death.player']);
+  });
+
+  it("a squad-mate named as winner is still YOUR win — team membership, not seat identity", () => {
+    // `WinConditionSystem.tickPlacement` names the winning squad's LOWEST seat, so a seat-
+    // equality check hands most of a winning squad the defeat sound. That exact mistake was a
+    // real bug on the screen side (fixed 2026-08-04); sharing `localSeatWon` is what stops the
+    // audio side from having to make it again independently.
+    const { reactor, audio } = arenaReactor([0, 1, 1, 0]);
+    reactor.consume([winBy(3)]); // seat 3 shares the local seat's squad (team 0)
+    expect(cuesOf(audio)).toEqual(['win']);
+  });
+
+  it('a rival SQUAD winning plays the fall even though a seat of ours outlived a seat of theirs', () => {
+    const { reactor, audio } = arenaReactor([0, 1, 1, 0]);
+    reactor.consume([winBy(1)]);
+    expect(cuesOf(audio)).toEqual(['death.player']);
+  });
+
+  it('the local seat dying and the match ending in the same frame is ONE louder fall, not two sounds', () => {
+    // The literal reproduced frame: `death.player` from the bleedout plus a rival's `win`.
+    // Coalescing is what makes that one voice at higher gain — the same call design/11 makes
+    // for `downed` plus the `hit` that caused it. Two separate cues here would be the bug's
+    // twin: a second sound narrating the moment the first one already announced.
+    const { reactor, audio, state } = arenaReactor([0, 1]);
+    reactor.consume([
+      { type: 'death', id: state.players[0]!.id, faction: 'player', gx: 0, gy: 0 } as GameEvent,
+      winBy(1),
+    ]);
+    expect(audio.play).toHaveBeenCalledTimes(1);
+    expect(audio.play).toHaveBeenCalledWith('death.player', 2);
+  });
+
+  it('a PvE run ends well for the whole party, not just for the seat the sim names', () => {
+    // `WinConditionSystem`/`ExtractionSystem` both hardcode `winner: 0` (*"single-player:
+    // player id 0"*), so in co-op the arena rule — is that seat mine? — would silence the
+    // jingle for every seat but the first. PvE has no per-seat answer at all.
+    const { reactor, audio } = reactorFor(LOCAL); // no `zoneEnabled` → the PvE model
+    reactor.consume([winBy(0)]);
+    expect(cuesOf(audio)).toEqual(['win']);
+  });
+
+  it("a PvE wipe ('enemies' won) plays the fall", () => {
+    // The single-player defeat, and the one case where this cue says something no other cue
+    // in the frame does: the seat is `downed`, not dead, so `hurt` is all that fired and
+    // nothing yet said the fall was final.
+    const { reactor, audio } = reactorFor(LOCAL);
+    reactor.consume([
+      { type: 'downed', id: LOCAL, gx: 0, gy: 0 } as GameEvent,
+      winBy('enemies'),
+    ]);
+    expect(cuesOf(audio).sort()).toEqual(['death.player', 'hurt']);
+  });
+
+  it('reads the winner the EVENT announced, not the one the state happens to hold', () => {
+    // The state is only consulted for the seats' teams; WHO won comes off the event. The two
+    // agree in the real game (every producer sets `state.winner` and pushes the event in one
+    // tick), which is exactly why the difference is invisible unless a test forces it apart —
+    // so here the state carries the OPPOSITE winner from the event, and the event has to win.
+    // Reading `s.winner` instead compiles, and with the two never disagreeing anywhere else in
+    // this file it would stay green.
+    const a = arenaReactor([0, 1]);
+    a.state.winner = 1;            // the state says a rival took it
+    a.reactor.consume([winBy(0)]);  // the event says we did
+    expect(cuesOf(a.audio)).toEqual(['win']);
+
+    const b = arenaReactor([0, 1]);
+    b.state.winner = 0;            // ...and the mirror image
+    b.reactor.consume([winBy(1)]);
+    expect(cuesOf(b.audio)).toEqual(['death.player']);
+  });
+
+  it('plays NEITHER cue when there is no state to ask', () => {
+    // A menu frame draining a stale queue. Guessing either way is worse than silence: the
+    // jingle would be the original bug, and the fall would invent a defeat.
+    const { reactor, audio } = reactorFor(null);
+    reactor.consume([winBy(0), winBy('enemies')]);
+    expect(audio.play).not.toHaveBeenCalled();
   });
 });
 

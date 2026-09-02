@@ -2,6 +2,7 @@ import { TICK_RATE, type GameState } from '@dd/engine';
 import { SCORE } from '../score';
 import { t } from '../../i18n';
 import { totalFloorCount } from '../match/floorCount';
+import { localSeatWon } from './localOutcome';
 
 /** The bits of Game a run-outcome reaction needs — score/meta/phase/screen are all
  *  Game-owned state, so this stays a callback interface (same EventReactor-style
@@ -48,23 +49,18 @@ export class RunOutcome {
   constructor(private readonly host: RunOutcomeHost) {}
 
   handle(s: GameState): void {
+    // WHETHER the local seat won and WHICH screen says so are two separate questions: the
+    // first is `localSeatWon` (split out of this file 2026-09-02, once the `win` audio cue
+    // needed the same answer and had been guessing), the second is the arena/PvE split
+    // below, which only picks the copy — placement text or floor/materials text.
+    const won = localSeatWon(s, this.host.localOwner, s.winner);
     if (s.zoneEnabled) {
-      if (this.wonArena(s)) this.winArena(s);
+      if (won) this.winArena(s);
       else this.loseArena(s);
     } else {
-      if (s.winner === 'enemies') this.lose(s);
-      else this.win(s);
+      if (won) this.win(s);
+      else this.lose(s);
     }
-  }
-
-  /** `s.winner` names one representative seat of the winning SQUAD (design/15's
-   *  squad follow-up — see WinConditionSystem.tickPlacement), not necessarily the
-   *  local seat itself, so this must compare team membership, not seat equality. */
-  private wonArena(s: GameState): boolean {
-    if (typeof s.winner !== 'number') return false;
-    const localTeam = s.players[this.host.localOwner]?.teamId;
-    const winnerTeam = s.players[s.winner]?.teamId;
-    return localTeam !== undefined && localTeam === winnerTeam;
   }
 
   private win(s: GameState): void {

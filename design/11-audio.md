@@ -4,7 +4,7 @@ How the game sounds, and — more importantly for a deterministic-lockstep title
 
 > **Status (current): every shipped sound in the game plays, on BOTH web and WeChat — cues, UI cues and music.** The dated `Update:` paragraphs below carry the history in order; this headline is the summary and is kept rewritten rather than appended to, because a stale first sentence under a stack of accurate updates is this repo's own named docs-drift failure mode.
 >
-> **Update (2026-09-02): the four cues a CHARACTER makes about itself now exist — and one of them is the first cue no Kenney pack could serve.** `swing`, `hurt`, `death.player` and `spawn` are the audio half of the rig's six authored clips (design/12): `attack` is `swing`, `idle`/`move` are the two that never should make a sound, and the other three are named after their clips. All six had animated a body since earlier the same day and none of these four made any noise. `death` was renamed **`death.enemy`** in the same pass, because it was only ever played inside `if (faction === 'enemy')` — so a player bleeding out, the moment a run ends, was the one lifecycle event in the game with no sound at all. That pair is this doc's own written vocabulary (`death.<enemy/player>`, in the event→sound map below) finally built. **11 new files, 20.9 kB; the set is 61 files / 122.7 kB** against a 160 KiB budget that was NOT raised to fit them. See "The character-reaction cues" below.
+> **Update (2026-09-02): the four cues a CHARACTER makes about itself now exist — and one of them is the first cue no Kenney pack could serve.** `swing`, `hurt`, `death.player` and `spawn` are the audio half of the rig's six authored clips (design/12): `attack` is `swing`, `idle`/`move` are the two that never should make a sound, and the other three are named after their clips. All six had animated a body since earlier the same day and none of these four made any noise. `death` was renamed **`death.enemy`** in the same pass, because it was only ever played inside `if (faction === 'enemy')` — so a player bleeding out, the moment a run ends, was the one lifecycle event in the game with no sound at all. That pair is this doc's own written vocabulary (`death.<enemy/player>`, in the event→sound map below) finally built. **11 new files, 20.9 kB; the set is 61 files / 122.7 kB** against a 160 KiB budget that was NOT raised to fit them. See "The character-reaction cues" below. **A second pass the same day** spent no new bytes at all and fixed what the first one surfaced: `win` played its jingle for any `win` event, so a player who had just bled out heard the victory sting — it now asks whose win it was, through the same function the result screen decides on, and a defeat plays `death.player`. See "`win` is about whose run ended".
 >
 > **Status (2026-08-28): the shipped SFX set is what plays, on BOTH web and WeChat.** The seam is unchanged — engine `events` → `controllers/EventReactor.ts` → the `AudioBus` platform seam (`platform/types.ts`) — and the procedural voice table (`platform/audioSynth.ts`) still ships. What changed is that a cue now resolves to a **shipped sample first**, and to its synth voice only as a fallback.
 >
@@ -45,6 +45,7 @@ Audio subscribes to the per-frame `events` union (`08`) and maps each to a cue. 
 | `knockback` | (usually silent / folded into `impact`) | avoid clutter |
 | `death` | `death.enemy` / `death.player` | **Built 2026-09-02.** `death.player` fires for the LOCAL seat only; in an 8-player match the other seven eliminations are not this player's run. A boss-specific stinger is still unbuilt |
 | `downed` / `revive_progress` / `revived` | `hurt` / — / `pickup.heal` | `downed` played the enemy-death crunch until 2026-09-02 and now plays `hurt`, local seat only: going down IS damage, and it coalesces with the hit that caused it into one louder voice. Deliberately not `death.player` — a downed player can be revived in co-op, so the run-ending fall would be a lie. `revive-loop` remains unbuilt |
+| `win` | `win` / `death.player` | **Gated 2026-09-02.** The event carries the winner of the whole MATCH, so the jingle is played only for a win the LOCAL seat's side took — `controllers/localOutcome.ts`'s `localSeatWon`, the same function the result screen decides on, so sound and screen cannot disagree. A defeat plays `death.player`, which was authored as this cue's counterpart; where the seat's own `death` lands in the same frame the two coalesce into one louder voice |
 | *(no event — a `GameState` diff)* | `spawn` | The only cue with no engine event behind it. An id appearing is a diff, and `Scene` is the only thing that computes diffs, so it reports a per-frame COUNT of the actor views it built and `GameLoop` hands that to `EventReactor` beside the events. A wave materialising nine actors is one voice at higher gain |
 | `pickup_spawned` / `pickup_taken` | `pickup.<weapon/heal/material/buff>` | material bank vs weapon swap read differently (`05`) |
 | `hp_changed` / `shield_changed` | (UI feedback only, `10`) | low-frequency; often no dedicated SFX |
@@ -174,10 +175,10 @@ the local seat three times read `impact:3, hurt:2`); `hurt` again the tick that 
 `swing:1` off a real `melee_swing`; and `death.player:1` on its real bleedout, with an ally's own
 `death` event producing nothing.
 
-**One pre-existing defect surfaced there and is deliberately not fixed in that pass:** the frame
-that played `death.player` also played `win`, because `case 'win'` plays the jingle for any `win`
-event regardless of who won. A player who just died hears the victory sting. It needs the local
-seat's outcome (which `RunOutcome` already computes) and its own tests.
+**One pre-existing defect surfaced there, was deliberately left, and was fixed later the same
+day:** the frame that played `death.player` also played `win`, because `case 'win'` played the
+jingle for any `win` event regardless of who won — a player who had just died heard the victory
+sting. See "`win` is about whose run ended" below.
 
 ### What guards them
 
@@ -201,6 +202,87 @@ seat's outcome (which `RunOutcome` already computes) and its own tests.
   `tools/audio-pipeline/audit.py` gained the gate class of each new cue (`swing`/`hurt` combat,
   `spawn` feedback; `death-enemy`/`death-player` inherit `death`'s by prefix).
 
+## `win` is about whose run ended (fixed 2026-09-02, same day)
+
+The defect the section above surfaced and left, closed on its own. No new file, no catalogue
+change: the whole fix is that `case 'win'` now asks **whose** win it was.
+
+- **The event answers "somebody won", not "we won".** `{ type: 'win'; winner: Winner }` names the
+  winner of the whole match — a seat, `'enemies'`, or null — and it fires once for that outcome,
+  not once per seat. Playing the jingle on any `win` was therefore correct only in single-player
+  PvE, and wrong in every PvP match: with `?arenaDemo=1`, downing the local seat and letting it
+  bleed out produced `death.player:1` **followed by `win:1` in the same frame**, with the phase
+  already `defeat` and ELIMINATED on screen.
+- **The answer is the one the RESULT SCREEN uses**, not a second derivation of it.
+  `RunOutcome.handle`'s two branches were already exactly this question, so the branch condition
+  moved into `game/controllers/localOutcome.ts` as `localSeatWon(state, localOwner, winner)` and
+  both callers read it. That matters beyond tidiness: in PvP the winner is one **representative
+  seat of the winning SQUAD** (`WinConditionSystem.tickPlacement` names its lowest seat), so the
+  test is team MEMBERSHIP — comparing seat identity was a real bug on the screen side (fixed
+  2026-08-04, where most of a winning squad saw DEFEAT), and a cue that re-derived the rule would
+  have been free to make it again. In PvE the answer is deliberately **not** per-seat: anything but
+  `'enemies'` is the whole party's extraction, and the `winner: 0` those producers hardcode is
+  *"single-player: player id 0"*, not an owner to match against.
+- **A defeat plays `death.player`, and it does not need a cue of its own.** That file was authored
+  as this cue's counterpart in the first place — same instrument, a descending scale against the
+  jingle's figure, ranked at 118 directly under `win`'s 120. It also covers the case nothing else
+  did: a single-player wipe ends the run with the seat merely `downed`, whose only cue is `hurt`,
+  so until this event arrives nothing has said the fall was final — which is precisely why
+  `downed` itself must not play it (a co-op revive is still possible up to that point).
+- **The seat's own death and the match ending are ONE voice**, not two. Where both land in the same
+  frame the existing coalescing makes it `death.player:2` — one voice at +15% gain, the same call
+  `downed` already makes with the `hit` that caused it. Two sounds narrating one moment is the
+  bug's twin, not its fix.
+- **No state, no guess.** With `activeState()` null — a menu frame draining a stale queue —
+  *neither* cue plays. The jingle would be the original defect and the fall would invent a defeat;
+  this is the same silence the `hurt` gate takes when there is no local seat.
+
+### What guards it
+
+**Three layers, 17 new cases** (4388 → 4405), because the fix has three distinct failure modes:
+the cue picks the wrong branch, the shared rule itself is wrong, and one of the two callers
+quietly stops using it.
+
+- **`EventReactor.test.ts`'s "the cues that are about YOU" block, +10.** Both directions of the
+  arena gate, the squad-mate case both ways, the PvE shared outcome, the PvE wipe, the same-frame
+  coalescing at `death.player:2`, the null state playing nothing, and — deliberately forced apart
+  — that the winner is read off the EVENT and not off `state.winner`. Those two agree in the real
+  game, so a state carrying the opposite winner is the only way the difference is visible.
+- **`localOutcome.test.ts`, new, 14 cases.** The function's own edges, which neither caller
+  reaches: `null` in arena mode (nobody won) against `null` in PvE (not a loss), a `teamId` of 0
+  as a real team rather than an absent one, and two MISSING seats — where a bare
+  `localTeam === winnerTeam` is `undefined === undefined`, i.e. every seat in an empty state is
+  told it won. Plus a table that drives the same `(state, winner)` through BOTH real callers and
+  asserts the screen's `won` flag equals `cue === 'win'`: the invariant the split exists for, and
+  one no per-object test owns.
+- **`audioPipeline.test.ts`, +2.** `win` is now the only cue whose choice depends on state as well
+  as on its event, so the all-cues frame cannot cover it in both directions. A defeat has to reach
+  a real decoded `/audio/death-player_NN.mp3` with zero oscillators, not fall through to a synth
+  voice.
+
+Fixtures come from the engine's REAL `createGameState`, not the cast literals the rest of the
+reactor block shares: the question turns entirely on `zoneEnabled` and per-seat `teamId`, and a
+cast fixture would pass while spelling either of them wrong.
+
+**A 19-row mutation battery, 16 of 17 real mutants killed, both controls survived** (a consistent
+parameter rename and a reordering of the two team lookups — a battery with no survivors would not
+be trustworthy). Seven of the kills belong to tests added in this pass and to nothing else,
+including the two that reach the shared rule's real edges and the two that catch a caller silently
+re-deriving the rule instead of calling it.
+
+**The one survivor is not a coverage gap.** Deleting the `typeof winner !== 'number'` guard is
+behaviourally equivalent: `players['enemies']` and `players[null]` both yield undefined, which the
+`!== undefined` test already turns into `false`. No test can distinguish it — **`tsc` is what
+fails it** (TS2538, *"Type null cannot be used as an index type"*), because that guard is also
+what narrows the index. Measured by applying the mutant and running the type checker, and written
+into the guard's own comment so nobody simplifies it away.
+
+**Browser-measured on the real `?arenaDemo=1` harness, both directions.** A rigged loss ended at
+tick 1814 with `winner: 1`, phase `defeat`, ELIMINATED on screen and the frame's cues reading
+`impact:2, hurt:1, death.player:2` — the reproduced frame, with the victory sting gone and the two
+death signals merged. An unrigged run ended at tick 969 with `winner: 0`, phase `victory`, and
+`impact:2, hurt:1, win:1`: the jingle still plays for a win that is actually ours.
+
 ## The UI cues (built 2026-08-30)
 
 The other half of the vocabulary: what a **screen** sounds like. Same catalogue, same mixer, same files-on-disk discipline — a different origin, and that difference is the whole design.
@@ -216,25 +298,6 @@ The other half of the vocabulary: what a **screen** sounds like. Same catalogue,
 - **One variant each**, against this doc's own "a cue that fires often needs several". That rule is about repetition fatigue across a *set*; a UI cue is the opposite case — a direct answer to the player's finger that has to read as the same affordance every press. Two buttons that sound different are a bug, not variety. The ±3% pitch jitter is all the variation they get.
 - **Level is set once, in the voice table.** All four sit at catalogue gain 1.0, and the shipped files were peak-matched to their synth voice's amplitude (0.08-0.10, about -21 dBFS), below every combat voice. One knob, not two.
 - **Sourcing reversed direction.** For the combat set the synth voice existed first and the sample was chosen to match it; there was no UI voice before this pass, so the **sample was picked first** (on `audit.py`'s `ui` gate plus the pack's own family names: `select`, `back`, `toggle`, `error`) and the synth voice was then written to imitate its measured duration and centroid. `tools/audio-pipeline/process_ui.py` is a separate driver for exactly one reason: a UI voice is a single `tone()`, so its peak IS its `gain` argument and needs no re-render to measure, where `process_all.py` reads a `synth.json` audit of re-rendered voices.
-
-### Browser-measured, not assumed
-
-All **61 variants decoded** in a real browser (`loadedCues: 23`, `loadedVariants: 61`). Peak PCM
-on the SFX bus, each with **zero oscillators** — the shipped file is what plays: `swing` 0.0555
-(against `muzzle` 0.0586), `hurt` 0.0786 (against `impact` 0.0913), `spawn` 0.0589,
-`death.player` 0.1007 (against `deflect` 0.1087 and `death.enemy` 0.0622). The mix ladder this
-doc asks for is the ladder the bus delivers.
-
-On a hand-stepped real run: `spawn:2` on the first frame; `impact:2, hurt:1` while the zone burned
-BOTH seats (the local-seat gate, on live data, with the two counts independent — a frame hitting
-the local seat three times read `impact:3, hurt:2`); `hurt` again the tick that seat went down;
-`swing:1` off a real `melee_swing`; and `death.player:1` on its real bleedout, with an ally's own
-`death` event producing nothing.
-
-**One pre-existing defect surfaced there and is deliberately not fixed in that pass:** the frame
-that played `death.player` also played `win`, because `case 'win'` plays the jingle for any `win`
-event regardless of who won. A player who just died hears the victory sting. It needs the local
-seat's outcome (which `RunOutcome` already computes) and its own tests.
 
 ### What guards them
 

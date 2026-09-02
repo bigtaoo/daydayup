@@ -184,7 +184,10 @@ const EVENTS: Record<string, GameEvent> = {
   'pickup.material': { type: 'pickup', kind: 'material', materialId: 'mat_fire', qty: 1, gx: 0, gy: 0 } as GameEvent,
   'pickup.buff': { type: 'pickup', kind: 'buff', buffId: 'dmg_up', gx: 0, gy: 0 } as GameEvent,
   'wave-clear': { type: 'wave_clear' } as GameEvent,
-  win: { type: 'win' } as GameEvent,
+  // `winner` is not decoration: `EventReactor` plays the jingle only for a win the LOCAL
+  // seat's side took, and the run-ending fall otherwise (2026-09-02). This host's state has
+  // no `zoneEnabled`, so it is a PvE run, where anything but `'enemies'` is the party's win.
+  win: { type: 'win', winner: 0 } as GameEvent,
 };
 
 /** The cues an ENGINE event can produce: exactly the keys of `EVENTS` above.
@@ -250,6 +253,32 @@ describe('the audio pipeline — a real frame of events reaches the SHIPPED samp
     // Nine coalesced into one is a gain decision, and this is the only place it is visible for
     // this cue: catalogue gain 1.0 x the log-shaped boost, capped.
     expect(ctx.gains.at(-1)!.value).toBeCloseTo(coalesceBoost(9));
+  });
+
+  it('a DEFEAT reaches the shipped death-player file, not a synth voice', async () => {
+    // `win` is the only event whose cue depends on the STATE as well as on the event
+    // (design/11, `localSeatWon`), so it is the only one the all-cues frame above cannot cover
+    // in both directions — that frame's fixture is a win. `fakeHost` seats us at owner 0 in a
+    // state with no `zoneEnabled`, i.e. a PvE run, where `'enemies'` is the party's loss.
+    //
+    // What this adds over the unit gate: the losing branch resolves to a real decoded
+    // `/audio/death-player_NN.mp3` through the catalogue, bank and mixer instead of quietly
+    // falling through to a synth voice. `death.player` and `win` are peers at the top of the
+    // ladder (118 and 120), so a defeat is no more stealable than a victory, and neither of
+    // them should ever be the cue that gets synthesised.
+    const { reactor } = await bootedShell();
+    reactor.consume([{ type: 'win', winner: 'enemies' } as GameEvent]);
+    expect(voices()).toEqual(['death.player']);
+    expect(ctx.oscillators).toHaveLength(0);
+  });
+
+  it('...and a win the local side took still reaches the jingle', async () => {
+    // The other half, on the same path: the pair is the assertion, since a branch stuck on
+    // either answer would pass one of these two cases on its own.
+    const { reactor } = await bootedShell();
+    reactor.consume([{ type: 'win', winner: 0 } as GameEvent]);
+    expect(voices()).toEqual(['win']);
+    expect(ctx.oscillators).toHaveLength(0);
   });
 
   it('a firing burst plays samples only — no cue silently falls back', async () => {

@@ -6,6 +6,7 @@ import type { FxController } from '../fx/FxController';
 import type { HudView } from '../ui/HudView';
 import type { AudioBus, AudioCue } from '../../platform/types';
 import { t, tName } from '../../i18n';
+import { localSeatWon } from './localOutcome';
 
 /** The bits of Game an EventReactor reaction needs to reach back into — score/meta/
  *  room-rebuild are Game-owned state, so this stays a callback interface rather than
@@ -347,9 +348,38 @@ export class EventReactor {
           this.fx.flash(fpToPx(e.gx), fpToPx(e.gy), THEME.colors.extractGlow, 28);
           cue('pickup.heal');
           break;
-        case 'win':
-          cue('win');
+        case 'win': {
+          // "Somebody won" is not "we won". The event announces the winner of the whole
+          // match (`Winner` = a seat, `'enemies'`, or null), and in PvP / `?arenaDemo=1` that
+          // is usually not this seat — so playing the jingle on any `win` meant a player who
+          // had just bled out heard the victory sting over their own defeat screen. Observed
+          // live 2026-09-02: `death.player:1` then `win:1` in ONE frame, `g.phase` already
+          // `'defeat'`.
+          //
+          // The answer comes from `localSeatWon`, split out of `RunOutcome` (which computes
+          // the same thing for the result screen) rather than re-derived here, so the sound
+          // and the screen cannot disagree — including on the squad case, where comparing
+          // seat identity instead of team membership once made most of a winning squad see
+          // DEFEAT (fixed 2026-08-04).
+          //
+          // A defeat plays `death.player` rather than a cue of its own, because design/11
+          // authored that file AS the counterpart of `win`: same instrument, a descending
+          // scale against the jingle's own figure, ranked directly under it and stealable by
+          // nothing else. Where the local seat's own `death` event lands in this same frame
+          // the two coalesce into ONE voice at higher gain — the same call `downed` already
+          // makes with the `hit` that caused it: your death and your defeat are one moment,
+          // not two sounds. And where the run ends with the seat merely `downed` (a
+          // single-player wipe, whose only cue is `hurt`), this is the first thing that says
+          // the fall was final — which is exactly why `downed` itself must not play it: until
+          // this event arrives, a co-op revive is still possible.
+          //
+          // With no active state — a menu frame draining a stale queue — NEITHER plays: the
+          // same "no local seat, no answer" silence the `hurt` gate above takes, rather than
+          // guessing a run we cannot see the outcome of.
+          const s = this.host.activeState();
+          if (s) cue(localSeatWon(s, this.host.localOwner, e.winner) ? 'win' : 'death.player');
           break;
+        }
         // 'win' score bonus is handled by the outcome check (win()).
       }
     }
