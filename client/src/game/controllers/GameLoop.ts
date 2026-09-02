@@ -480,9 +480,13 @@ export class GameLoop {
     const nearPortal =
       !!p && !!portalPx && Math.hypot(fpToPx(p.gx) - portalPx.x, fpToPx(p.gy) - portalPx.y) <= PORTAL_PROMPT_RADIUS_PX;
     this.deps.portalPrompt.update(s, checkpointEligible && nearPortal, isLastFloor);
-    // Fire is suppressed while EITHER popup is open — a row click on the weapon-pickup
-    // panel must not also register as a shot (same WebInput raw-mousedown reasoning as
-    // the portal popup's own suppression above).
-    this.deps.builder.suppressFire(this.deps.portalPrompt.isOpen || this.deps.hud.weaponPickupPrompt.isOpen);
+    // Fire is suppressed while the PORTAL popup is open — its buttons are a run-level
+    // choice made in a cleared room, so gating the whole button on it costs nothing.
+    // The weapon-pickup panel used to be OR'd in here and no longer is (2026-09-02 live
+    // report, *"附近有可以拾取的武器时，不要阻断了玩家攻击"*): it opens mid-fight, from
+    // `SIM.lootRevealRadius` away, every time anything drops a weapon, so gating fire on
+    // it disarmed the player next to loot. It swallows its own presses instead —
+    // WeaponPickupPrompt.onPressStart → CommandBuilder.suppressFireUntilRelease().
+    this.deps.builder.suppressFire(this.deps.portalPrompt.isOpen);
   }
 }

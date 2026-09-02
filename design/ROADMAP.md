@@ -704,10 +704,11 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 - **09-02** [The other three clips finally get a signal](roadmap/14-2026-09-02-muzzle.md#the-other-three-clips-finally-get-a-signal-2026-09-02-client-only) — `hurt`/`death`/`spawn` had a clip in every bundle and no signal; the base layer becomes spawn -> idle/move -> death, and the identity check finds a real death-clip pop. `render` `art` `test` `docs`
 - **09-02** [The four clips finally get a sound](roadmap/14-2026-09-02-muzzle.md#the-four-clips-finally-get-a-sound-2026-09-02-client--assets--tooling-no-engine-bump) — `swing`/`hurt`/`death.player`/`spawn`, the audio half of the six authored clips; `death` splits in two, the fixed CC0 packs run out for the first time, and a phone-band measurement reverses a pick the centroid had hidden. `audio` `assets` `tools` `test` `docs`
 - **09-02** [The victory sting stops playing over defeat screens](roadmap/14-2026-09-02-muzzle.md#the-victory-sting-stops-playing-over-defeat-screens-2026-09-02-client-only-no-engine-bump) — `case 'win'` played the jingle for any `win` event, so a player who had just bled out heard the victory sting; the cue now asks whose win it was, through the same function the result screen decides on. `audio` `test` `docs`
+- **09-02** [Standing next to loot stops disarming the player](roadmap/14-2026-09-02-muzzle.md#standing-next-to-loot-stops-disarming-the-player-2026-09-02-client-only-no-engine-bump) — The weapon-pickup panel opens mid-fight and gated the whole fire button, so a player standing in their own loot could not shoot; it swallows the presses that land on it instead. `ui` `test` `docs`
 
 ## The work log — by theme
 
-The same 85 entries, grouped. An entry with more than one tag appears more than once.
+The same 86 entries, grouped. An entry with more than one tag appears more than once.
 
 **`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(45)*
 
@@ -830,7 +831,7 @@ The same 85 entries, grouped. An entry with more than one tag appears more than 
 - 08-25 [The Seven Districts: the launch arena gets authored](roadmap/06-2026-08-25.md#the-seven-districts-the-launch-arena-gets-authored-2026-08-25-content)
 - 08-25 [The three parked rules that had only shipped half](roadmap/06-2026-08-25.md#the-three-parked-rules-that-had-only-shipped-half-2026-08-25-client--one-render-only-engine-field)
 
-**`test`** — coverage sweeps, gates, mutation batteries *(22)*
+**`test`** — coverage sweeps, gates, mutation batteries *(23)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 08-05 [Platform-layer test coverage pass](roadmap/01-2026-07-24--08-05.md#platform-layer-test-coverage-pass--2026-08-05-全部加测试)
@@ -855,6 +856,7 @@ The same 85 entries, grouped. An entry with more than one tag appears more than 
 - 09-02 [The other three clips finally get a signal](roadmap/14-2026-09-02-muzzle.md#the-other-three-clips-finally-get-a-signal-2026-09-02-client-only)
 - 09-02 [The four clips finally get a sound](roadmap/14-2026-09-02-muzzle.md#the-four-clips-finally-get-a-sound-2026-09-02-client--assets--tooling-no-engine-bump)
 - 09-02 [The victory sting stops playing over defeat screens](roadmap/14-2026-09-02-muzzle.md#the-victory-sting-stops-playing-over-defeat-screens-2026-09-02-client-only-no-engine-bump)
+- 09-02 [Standing next to loot stops disarming the player](roadmap/14-2026-09-02-muzzle.md#standing-next-to-loot-stops-disarming-the-player-2026-09-02-client-only-no-engine-bump)
 
 **`audio`** — cues, music, the engine to sound channel *(5)*
 
@@ -875,7 +877,7 @@ The same 85 entries, grouped. An entry with more than one tag appears more than 
 - 09-01 [The first download becomes code only](roadmap/13-2026-09-01-asset-phases.md#the-first-download-becomes-code-only-2026-09-01-client--build--docs)
 - 09-01 [Two days of features, audited for what the tests did not say](roadmap/13-2026-09-01-asset-phases.md#two-days-of-features-audited-for-what-the-tests-did-not-say-2026-09-01-engine--client--build-engine_version-5051)
 
-**`ui`** — HUD, screens, widgets *(9)*
+**`ui`** — HUD, screens, widgets *(10)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 08-12 [Live-play bug-fix pass](roadmap/02-2026-08-12--08-15.md#live-play-bug-fix-pass--2026-08-12-user-report-from-a-dungeon-mode-screenshot)
@@ -886,6 +888,7 @@ The same 85 entries, grouped. An entry with more than one tag appears more than 
 - 08-15 [Russian settings labels render outside their buttons — Pixi's measure canvas ≠ its paint canvas](roadmap/02-2026-08-12--08-15.md#russian-settings-labels-render-outside-their-buttons--pixis-measure-canvas--its-paint-canvas-2026-08-15)
 - 08-26 [A character carries a gun AND a blade — in both modes](roadmap/09-2026-08-26.md#a-character-carries-a-gun-and-a-blade--in-both-modes-2026-08-26-engine_version-45)
 - 08-31 [The save verb gets a button, and the tests that were still missing](roadmap/11-2026-08-28--08-31.md#the-save-verb-gets-a-button-and-the-tests-that-were-still-missing-2026-08-31-client)
+- 09-02 [Standing next to loot stops disarming the player](roadmap/14-2026-09-02-muzzle.md#standing-next-to-loot-stops-disarming-the-player-2026-09-02-client-only-no-engine-bump)
 
 **`tools`** — sims, profilers, editors, build scripts *(11)*
 
@@ -901,7 +904,7 @@ The same 85 entries, grouped. An entry with more than one tag appears more than 
 - 09-01 [Two days of features, audited for what the tests did not say](roadmap/13-2026-09-01-asset-phases.md#two-days-of-features-audited-for-what-the-tests-did-not-say-2026-09-01-engine--client--build-engine_version-5051)
 - 09-02 [The four clips finally get a sound](roadmap/14-2026-09-02-muzzle.md#the-four-clips-finally-get-a-sound-2026-09-02-client--assets--tooling-no-engine-bump)
 
-**`docs`** — design docs and this log itself *(18)*
+**`docs`** — design docs and this log itself *(19)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-02 [Documentation pass](roadmap/01-2026-07-24--08-05.md#documentation-pass--2026-08-02)
@@ -921,6 +924,7 @@ The same 85 entries, grouped. An entry with more than one tag appears more than 
 - 09-02 [The other three clips finally get a signal](roadmap/14-2026-09-02-muzzle.md#the-other-three-clips-finally-get-a-signal-2026-09-02-client-only)
 - 09-02 [The four clips finally get a sound](roadmap/14-2026-09-02-muzzle.md#the-four-clips-finally-get-a-sound-2026-09-02-client--assets--tooling-no-engine-bump)
 - 09-02 [The victory sting stops playing over defeat screens](roadmap/14-2026-09-02-muzzle.md#the-victory-sting-stops-playing-over-defeat-screens-2026-09-02-client-only-no-engine-bump)
+- 09-02 [Standing next to loot stops disarming the player](roadmap/14-2026-09-02-muzzle.md#standing-next-to-loot-stops-disarming-the-player-2026-09-02-client-only-no-engine-bump)
 
 **`net`** — matchmaking, sockets, reconnect *(1)*
 

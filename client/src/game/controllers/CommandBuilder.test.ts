@@ -119,4 +119,54 @@ describe('CommandBuilder — move/buttons', () => {
     const restored = builder.build(2, 0);
     expect(restored.buttons & Button.FIRE).toBeTruthy();
   });
+
+  // The weapon-pickup panel's own suppression (2026-09-02, *"附近有可以拾取的武器时，不要
+  // 阻断了玩家攻击"*). Unlike suppressFire(true) above, nobody ever turns this one OFF —
+  // releasing the button is what clears it, which is the property these three cases pin.
+  it('suppressFireUntilRelease() swallows the press it lands in, all the way to release', () => {
+    const input = fakeInput({ ...IDLE_STATE, firing: true });
+    const builder = new CommandBuilder(input);
+    builder.suppressFireUntilRelease(); // pointerdown on the panel, before the button is even read
+    expect(builder.build(1, 0).buttons & Button.FIRE).toBeFalsy();
+    // Still held (a slow click, or several sim ticks inside one press) — still swallowed.
+    expect(builder.build(2, 0).buttons & Button.FIRE).toBeFalsy();
+  });
+
+  it('the NEXT press after that one fires normally — nothing has to turn it back off', () => {
+    const input = fakeInput({ ...IDLE_STATE, firing: true });
+    const builder = new CommandBuilder(input);
+    builder.suppressFireUntilRelease();
+    builder.build(1, 0);
+    input.state = { ...input.state, firing: false }; // release
+    builder.build(2, 0);
+    input.state = { ...input.state, firing: true }; // a fresh press, in open ground
+    expect(builder.build(3, 0).buttons & Button.FIRE).toBeTruthy();
+  });
+
+  it('swallows FIRE only — INTERACT and the one-shot latches ride the same press through', () => {
+    // The latch is set from a pointerdown on a panel that is deliberately NOT modal, so
+    // it must not become a general input block: a revive channel held through the click
+    // keeps channelling, and the click's own pickup still reaches the sim on that tick.
+    const input = fakeInput({ ...IDLE_STATE, firing: true, interacting: true });
+    const builder = new CommandBuilder(input);
+    builder.suppressFireUntilRelease();
+    builder.requestPickup(42);
+    builder.requestSwap();
+
+    const cmd = builder.build(1, 0);
+
+    expect(cmd.buttons & Button.FIRE).toBeFalsy();
+    expect(cmd.buttons & Button.INTERACT).toBeTruthy();
+    expect(cmd.buttons & Button.SWAP_WEAPON).toBeTruthy();
+    expect(cmd.pickupTargetId).toBe(42);
+  });
+
+  it('a press that never touched the panel still fires while the panel is on screen', () => {
+    // The regression itself: the panel being open is not, on its own, a reason to drop
+    // FIRE — only a press that landed ON it is (GameLoop no longer OR's isOpen into
+    // suppressFire, and this builder has no idea the panel exists).
+    const input = fakeInput({ ...IDLE_STATE, firing: true });
+    const builder = new CommandBuilder(input);
+    expect(builder.build(1, 0).buttons & Button.FIRE).toBeTruthy();
+  });
 });

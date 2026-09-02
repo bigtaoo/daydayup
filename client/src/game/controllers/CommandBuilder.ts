@@ -23,6 +23,9 @@ export class CommandBuilder {
   // `canvas.addEventListener('mousedown', ...)`, independent of Pixi's own event
   // system, so it fires regardless of what a Pixi button's hit-test consumes.
   private fireSuppressed = false;
+  // The same problem for a panel that is NOT modal — one press, not one panel, is what
+  // gets swallowed. See suppressFireUntilRelease().
+  private pressHoldsFire = false;
 
   constructor(private readonly input: InputSource) {}
 
@@ -53,6 +56,25 @@ export class CommandBuilder {
   }
 
   /**
+   * Swallow the press that is landing RIGHT NOW, and only that press — called from a
+   * panel's own capture-phase pointerdown (WeaponPickupPrompt.onPressStart) before
+   * WebInput's raw `mousedown` listener has even set `firing`, so the click that picks a
+   * weapon up never also fires a shot.
+   *
+   * The difference from `suppressFire(true)` is the whole point of it (live report,
+   * *"附近有可以拾取的武器时，不要阻断了玩家攻击"*): the weapon-pickup panel pops open
+   * from `SIM.lootRevealRadius` away and stays open for as long as any floor weapon is in
+   * range — which, since every kill drops one, is most of a fight. Gating fire on that
+   * panel's `isOpen` disarmed the player next to loot. Gating it on the press means the
+   * panel costs exactly the clicks that hit it and nothing else. It clears itself the
+   * first tick the input reports not-firing (i.e. on release), so there is no matching
+   * "off" call to forget and no pointerup listener to keep in sync.
+   */
+  suppressFireUntilRelease(): void {
+    this.pressHoldsFire = true;
+  }
+
+  /**
    * Build this tick's command. There is no manual aim input at all (design/10 v33): the
    * engine auto-faces the nearest hostile, else the movement direction, else holds last
    * facing (ApplyInputSystem) — exactly like an enemy's own facing is computed for it
@@ -65,8 +87,12 @@ export class CommandBuilder {
     // Move: raw vector → direction brad + 0..255 magnitude (engine input edge).
     const { moveBrad, moveMag } = quantizeMove(inp.moveX, inp.moveY);
 
+    // A press that started on a UI panel stays swallowed until it is released; releasing
+    // is the only thing that clears the latch (suppressFireUntilRelease).
+    if (!inp.firing) this.pressHoldsFire = false;
+
     let buttons = 0;
-    if (inp.firing && !this.fireSuppressed) buttons |= Button.FIRE;
+    if (inp.firing && !this.fireSuppressed && !this.pressHoldsFire) buttons |= Button.FIRE;
     if (inp.interacting) buttons |= Button.INTERACT; // revive channel / weapon-swap-on-pickup
     if (this.swapLatch) {
       buttons |= Button.SWAP_WEAPON;

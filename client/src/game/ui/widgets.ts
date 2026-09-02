@@ -229,6 +229,11 @@ export class Button {
     // documented mitigation ("occasionally some fonts are cropped").
     this.label = new Text({ text, style: { fill: textColor, fontSize, fontFamily: 'monospace', fontWeight: 'bold', padding: 14 } });
     this.label.anchor.set(0.5);
+    // The label is decoration: the box (`bg`) is what the press lands on. Marking it
+    // 'none' takes the whole Text out of hit-testing, which is both Pixi's own advice for
+    // non-interactive children and the reason a headless test can hit-test a button at
+    // all — `Text.containsPoint` measures the glyphs, and measuring needs a real canvas.
+    this.label.eventMode = 'none';
     this.view.addChild(this.bg, this.label);
     this.redraw();
     this.view.eventMode = 'static';

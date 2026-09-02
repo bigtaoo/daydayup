@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { Container, Graphics, Text, Texture } from 'pixi.js';
+import { Container, EventBoundary, FederatedContainer, Graphics, Text, Texture, extensions } from 'pixi.js';
 import { Panel, Button, Slider } from './widgets';
 import { setUiAudio } from '../../audio/uiSound';
 import type { AudioBus } from '../../platform/types';
@@ -148,6 +148,31 @@ describe('Button', () => {
     const b = new Button('X', { w: 100, h: 40 });
     expect(() => b.setIcon(Texture.WHITE, 0x6b46c1)).not.toThrow();
     expect(b.view.children.length).toBe(4);
+  });
+
+  // Which CHILD takes the press (2026-09-02). The box does; the label is `eventMode:
+  // 'none'` and is not a hit target at all. Two things ride on that, and neither is
+  // visible from the emit-based cases above, which bypass hit-testing entirely:
+  //   - a press must still land on the button when the pointer is over its LABEL — i.e.
+  //     marking the text 'none' must not have punched a hole in the middle of the box;
+  //   - `Text.containsPoint` measures its glyphs, and measuring needs a real canvas, so
+  //     an interactive label makes any hit test over this button THROW in a headless
+  //     suite (and costs a text measurement per press in the app).
+  // Hit-testing needs the events mixin a browser `Application.init()` would have
+  // installed, and works only in untransformed space (nothing headless updates a world
+  // transform) — so the button stays at the origin here.
+  it('takes a press on its box, never on its label', () => {
+    extensions.mixin(Container, FederatedContainer);
+    const b = new Button('HELLO', { w: 100, h: 40 });
+    const root = new Container();
+    root.addChild(b.view);
+    const boundary = new EventBoundary(root);
+
+    const label = b.view.children[1] as Text;
+    expect(label.eventMode).toBe('none');
+    // Dead centre — over the label's own glyphs, which is where a real player clicks.
+    expect(boundary.hitTest(50, 20)).toBe(b.view);
+    expect(boundary.hitTest(300, 300)).not.toBe(b.view); // and nowhere near it
   });
 });
 

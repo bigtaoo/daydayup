@@ -23,9 +23,13 @@ const CLOSE_SIZE = 20;
  * actual, server-authoritative proximity check). Closing the panel just leaves every
  * listed weapon on the floor.
  *
- * Non-blocking, same as `PortalPrompt`: the run keeps simulating while this is open
- * (Game.ts suppresses fire while `isOpen`, so a click on a row doesn't also fire a shot
- * — WebInput's raw mousedown sets `firing` independent of what a Pixi button consumed).
+ * Non-blocking, and non-blocking about the ATTACK button too (live report, *"附近有可以
+ * 拾取的武器时，不要阻断了玩家攻击"*): a press that lands on this panel is swallowed
+ * (`onPressStart` → `CommandBuilder.suppressFireUntilRelease`, needed because WebInput's
+ * raw mousedown sets `firing` independent of what a Pixi button consumed), and every
+ * other click still shoots. Until 2026-09-02 the whole fire button was gated on `isOpen`
+ * instead, which disarmed the player for as long as any floor weapon sat within
+ * `SIM.lootRevealRadius` — i.e. for most of a fight, since every kill drops one.
  */
 export class WeaponPickupPrompt {
   readonly view = new Container();
@@ -42,6 +46,12 @@ export class WeaponPickupPrompt {
   private closedForKey: string | null = null;
 
   onPick: ((itemId: number) => void) | null = null;
+  /** Fired the instant a press LANDS anywhere on this panel — its rows, its close button
+   *  or the chrome between them. Capture phase, so `Button`'s own pointerdown
+   *  `stopPropagation()` (widgets.ts) can't hide a row press from it, and BEFORE the
+   *  browser's `mousedown` reaches WebInput, so the latch is already set by the time the
+   *  next command is built. Game.ts routes it to CommandBuilder.suppressFireUntilRelease(). */
+  onPressStart: (() => void) | null = null;
 
   get isOpen(): boolean {
     return this.view.visible;
@@ -53,6 +63,7 @@ export class WeaponPickupPrompt {
       style: { fill: 0x90cdf4, fontSize: 13, fontFamily: 'monospace', fontWeight: 'bold', padding: 6 },
     });
     this.titleText.position.set(PAD, 8);
+    this.titleText.eventMode = 'none'; // decoration — the press belongs to the panel (see below)
 
     this.closeBtn = new Button('×', { w: CLOSE_SIZE, h: CLOSE_SIZE, fontSize: 14, color: 0x2a3140, sound: 'ui.back' });
     this.closeBtn.onTap = () => {
@@ -62,6 +73,18 @@ export class WeaponPickupPrompt {
 
     this.view.addChild(this.panel.view, this.titleText, this.closeBtn.view);
     this.view.visible = false;
+    // `static` makes the panel itself a real event target, not just a bag of buttons: a
+    // press on the chrome between two rows lands on `Panel`'s own background and must be
+    // swallowed on exactly the same terms as a press on a row. (Pixi only notifies a
+    // listener on a container that `isInteractive()`, so without this the capture handler
+    // below would never run for either kind of press.)
+    this.view.eventMode = 'static';
+    // `on('pointerdowncapture')` rather than `addEventListener(..., { capture: true })`,
+    // which is the same registration (FederatedEventTarget maps one to the other): the
+    // DOM-shaped method arrives with the events MIXIN, installed only once a browser
+    // `Application` has initialised, so a panel constructed in a headless test would throw
+    // on it. `on` is the underlying EventEmitter and is always there.
+    this.view.on('pointerdowncapture', () => this.onPressStart?.());
   }
 
   update(nearby: readonly PickupItem[]): void {

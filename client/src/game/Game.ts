@@ -391,6 +391,9 @@ export class Game {
     // Ground-weapon click-to-collect (design/03, ENGINE_VERSION 32) — same shape as
     // the portal popup above: a row click latches the target id onto the builder.
     this.hud.weaponPickupPrompt.onPick = (id) => this.builder.requestPickup(id);
+    // ...and the press CARRYING that click is swallowed, instead of fire being gated on the
+    // panel being open at all (see CommandBuilder.suppressFireUntilRelease).
+    this.hud.weaponPickupPrompt.onPressStart = () => this.builder.suppressFireUntilRelease();
     // In-run pause button (a real gap this pass closed — see HudView.pauseBtn's own
     // doc comment): the same pause() the Escape/P keyboard handler below already calls,
     // guarded by the same `!this.online` check (pause() freezes the local sim loop

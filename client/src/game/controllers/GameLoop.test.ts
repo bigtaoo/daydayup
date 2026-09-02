@@ -732,6 +732,37 @@ describe('GameLoop — portal/checkpoint eligibility (dungeon mode, 2026-08-12 s
 
     expect(deps.portalPrompt.update).toHaveBeenCalledWith(s, expect.any(Boolean), true);
   });
+
+  // 2026-09-02 live report — *"附近有可以拾取的武器时，不要阻断了玩家攻击"*. The weapon-pickup
+  // panel used to be OR'd into this same call, which meant the player was disarmed for as
+  // long as ANY floor weapon sat within SIM.lootRevealRadius — i.e. for most of a fight,
+  // since every kill drops one. It swallows its own presses now (WeaponPickupPrompt.
+  // onPressStart → CommandBuilder.suppressFireUntilRelease), and the loop leaves fire alone.
+  it('does not gate fire on the weapon-pickup panel: the panel is open and FIRE stays live', () => {
+    const { deps, hud, builder } = buildDeps();
+    const suppress = vi.spyOn(builder, 'suppressFire');
+    hud.weaponPickupPrompt.isOpen = true; // standing in loot, mid-fight
+    const s = dungeonStateWithRooms(2);
+    const host = buildHost({ getPhase: () => 'playing', activeState: () => s });
+    const loop = new GameLoop(deps, host);
+
+    loop.update(16);
+
+    expect(suppress).toHaveBeenLastCalledWith(false);
+  });
+
+  it('still gates fire on the PORTAL popup, whose buttons sit in a cleared room', () => {
+    const { deps, portalPrompt, builder } = buildDeps();
+    const suppress = vi.spyOn(builder, 'suppressFire');
+    portalPrompt.isOpen = true;
+    const s = dungeonStateWithRooms(2);
+    const host = buildHost({ getPhase: () => 'playing', activeState: () => s });
+    const loop = new GameLoop(deps, host);
+
+    loop.update(16);
+
+    expect(suppress).toHaveBeenLastCalledWith(true);
+  });
 });
 
 // `cameraFrame` (2026-08-17) — which rect `FxController.updateCamera` is told to FILL.
