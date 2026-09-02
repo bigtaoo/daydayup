@@ -65,7 +65,10 @@ export const SWING_MS = 260;
 /** Fraction of `SWING_MS` spent winding UP (rotating back past the aim), and the fraction by
  *  which the strike itself has landed. The rest is the recovery back to the aim line. */
 const SWING_WINDUP = 0.3;
-const SWING_STRIKE = 0.55;
+/** Exported because it is the ANCHOR between the render envelope and the sim: the strike ends at
+ *  this fraction, and `swingSchedule` sizes the envelope so that moment coincides with the close
+ *  of the weapon's active hit window (design/07 step 7). */
+export const SWING_STRIKE = 0.55;
 /** How far back past the aim line the module cocks before the strike, degrees. Negative =
  *  behind. Applied in the socket's CANONICAL (pre-mirror) space like every other socket
  *  offset, so the arc mirrors with the body instead of sweeping backwards when facing left. */
@@ -100,21 +103,33 @@ const SWING_WINDUP_LUNGE = 0.35;
 export interface SwingShape {
   /** The weapon's FULL hit sector, degrees — `MeleeSimSpec.arcHalf` × 2. */
   arcDeg: number;
-  /** The weapon's recovery between swings, ms — `swingCooldownTicks` at the sim's tick rate. */
-  recoveryMs: number;
+  /**
+   * The weapon's ACTIVE HIT WINDOW, ms — `MeleeSimSpec.swingTicks` at the sim's tick rate
+   * (design/07 step 7). The ticks during which `HitResolveSystem` is really re-testing this
+   * swing's arc, so it is the honest length for the visible stroke to cover.
+   *
+   * This replaced `recoveryMs` as the timing source in `ENGINE_VERSION` 53. It is not a
+   * refinement of the old number, it is a different quantity: the recovery is how long until
+   * you may swing AGAIN (11 ticks on the saber), the window is how long this swing can hit
+   * (4). Timing off the recovery was the only option when this file was written, because
+   * `swingSec` was authored-but-unconverted and the sim had no window at all — the arc
+   * resolved instantly on the swing tick. The two are not even proportional across the
+   * roster: the spear's window is 33% of its recovery and the hammer's 30%, but the
+   * frostbrand's is 36%, so no constant could have stood in for it.
+   */
+  windowMs: number;
 }
 
-/** The starter saber (`weaponSpecs/starter.ts`: 162°, 11 ticks @ 30 Hz). Both scale factors below
- *  are defined AS the ratio between this shape and the tuned constants above, so
+/** The starter saber (`weaponSpecs/starter.ts`: 162°, a 4-tick window @ 30 Hz). The sweep scale
+ *  below is defined AS the ratio between this shape and the tuned constants above, so
  *  `swingSchedule(DEFAULT_SWING)` — and therefore every caller with no spec to hand, i.e. the
  *  Graphics placeholder and any enemy, none of which carry a melee weapon — reproduces the
- *  pre-2026-09-02 envelope exactly rather than approximately. */
-export const DEFAULT_SWING: SwingShape = { arcDeg: 162, recoveryMs: (11 * 1000) / 30 };
+ *  saber's own sweep exactly rather than approximately. */
+export const DEFAULT_SWING: SwingShape = { arcDeg: 162, windowMs: (4 * 1000) / 30 };
 
 const SWEEP_DEG = SWING_ARC_DEG - SWING_WINDUP_DEG; // 68° — the saber's full travel
 const SWEEP_PER_ARC_DEG = SWEEP_DEG / DEFAULT_SWING.arcDeg;
 const WINDUP_SHARE = -SWING_WINDUP_DEG / SWEEP_DEG;
-const MS_PER_RECOVERY_MS = SWING_MS / DEFAULT_SWING.recoveryMs;
 /** Bounds on the DERIVED travel, degrees. The blade is drawn from an aim-tracking socket, so a
  *  sweep much past ~100° swings it through the body rather than around it; and a sector narrow
  *  enough to derive under ~26° stops reading as a swing at the ~13-20 px an actor occupies. The
@@ -122,8 +137,10 @@ const MS_PER_RECOVERY_MS = SWING_MS / DEFAULT_SWING.recoveryMs;
  *  are about the body's motion staying legible, not about hiding the sector's real size. */
 const SWEEP_MIN_DEG = 26;
 const SWEEP_MAX_DEG = 104;
-/** Bounds on the derived envelope length, ms. The upper one binds on the hammer (667 ms recovery
- *  would derive 473 ms), where a longer arc than this reads as slow motion rather than as weight. */
+/** Bounds on the derived envelope length, ms. Kept from the `recoveryMs` era and still doing the
+ *  same job, but nothing in the shipped roster binds on either now: the windows run 3-6 ticks, so
+ *  the derived envelopes span 182-364 ms and sit comfortably inside. They are the guard for a
+ *  future weapon authored at an extreme `swingSec`, not tuning applied to a current one. */
 const SWING_MIN_MS = 130;
 const SWING_MAX_MS = 400;
 
@@ -143,11 +160,24 @@ export interface SwingSchedule {
   strikeEndMs: number;
 }
 
-/** Derive one swing's schedule. Pure, and cheap enough to call per swing (two clamps and four
- *  multiplies) — nothing caches it, so a weapon retune needs no invalidation anywhere. */
+/**
+ * Derive one swing's schedule. Pure, and cheap enough to call per swing (two clamps and four
+ * multiplies) — nothing caches it, so a weapon retune needs no invalidation anywhere.
+ *
+ * The envelope is anchored so that **`strikeEndMs` lands on the close of the sim's hit window**:
+ * the sim opens the window on the tick the swing starts, so the visible stroke then covers
+ * exactly the ticks that can damage something, and the recovery tail plays out over what is
+ * genuinely recovery in the sim too. The wind-up necessarily plays INSIDE the live window — the
+ * render layer learns about a swing on the tick it starts and cannot anticipate it — which is the
+ * one part of the shape that cannot be honest, and is unchanged from before.
+ *
+ * Worked: the saber's 4-tick window is ~133 ms, so the envelope is 133/0.55 ≈ 242 ms; the
+ * hammer's 6 ticks give ~364 ms and the spear's 3 give ~182 ms. Three weapons, three swings —
+ * and the sector fx inherits all of it, since it schedules off `strikeStartMs`/`strikeEndMs`.
+ */
 export function swingSchedule(shape: SwingShape = DEFAULT_SWING): SwingSchedule {
   const sweep = clamp(shape.arcDeg * SWEEP_PER_ARC_DEG, SWEEP_MIN_DEG, SWEEP_MAX_DEG);
-  const totalMs = clamp(shape.recoveryMs * MS_PER_RECOVERY_MS, SWING_MIN_MS, SWING_MAX_MS);
+  const totalMs = clamp(windowToTotalMs(shape.windowMs), SWING_MIN_MS, SWING_MAX_MS);
   return {
     totalMs,
     windupDeg: -sweep * WINDUP_SHARE,
@@ -163,6 +193,14 @@ function lerp(a: number, b: number, t: number): number {
 
 function clamp(v: number, lo: number, hi: number): number {
   return v < lo ? lo : v > hi ? hi : v;
+}
+
+/** Envelope length whose strike ENDS as the sim's `windowMs`-long hit window closes. A
+ *  non-positive or NaN window (a caller with no spec, a malformed one) falls back to the saber's
+ *  own rather than dividing — an `Infinity` here would freeze the blade mid-air forever. */
+function windowToTotalMs(windowMs: number): number {
+  if (!(windowMs > 0)) return SWING_MS;
+  return windowMs / SWING_STRIKE;
 }
 
 /**

@@ -296,7 +296,7 @@ describe('Skin.attack — the attack trigger', () => {
     mocks.loaded = loadedRig();
     const s = new Skin(0x123456, 0xabcdef, 20, 'char_vanguard');
     const kick = vi.spyOn(internals(s).rig!, 'attack');
-    const shape = { arcDeg: 220, recoveryMs: 667 };
+    const shape = { arcDeg: 220, windowMs: 200 };
     s.attack('melee', shape);
     expect(kick).toHaveBeenCalledWith('melee', shape);
     s.attack('ranged');

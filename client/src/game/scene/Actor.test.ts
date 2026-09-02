@@ -1718,7 +1718,7 @@ describe('Actor.onAttack — the firing recoil reaches the skin', () => {
     const attack = vi.spyOn((a as unknown as { skin: { attack: () => void } }).skin, 'attack');
     a.onAttack('melee');
     expect(attack).toHaveBeenCalledWith('melee', undefined);
-    const shape = { arcDeg: 220, recoveryMs: 667 };
+    const shape = { arcDeg: 220, windowMs: 200 };
     a.onAttack('melee', shape);
     expect(attack).toHaveBeenLastCalledWith('melee', shape);
   });

@@ -13,9 +13,19 @@ import { describe, it, expect } from 'vitest';
 import { WEAPON_SIM_BY_ID, TICK_RATE, type MeleeSimSpec } from '@dd/engine';
 import {
   AttackMotion, RECOIL_MS, RECOIL_MODULE_PX, RECOIL_BODY_PX,
-  SWING_MS, SWING_ARC_DEG, SWING_WINDUP_DEG, SWING_LUNGE_PX,
+  SWING_MS, SWING_STRIKE, SWING_ARC_DEG, SWING_WINDUP_DEG, SWING_LUNGE_PX,
   DEFAULT_SWING, swingSchedule, type SwingShape,
 } from './rigAttackMotion';
+
+/**
+ * The DEFAULT melee envelope's real length, ms. Not `SWING_MS`: since ENGINE_VERSION 53 the
+ * envelope is derived from the swinging weapon's ACTIVE HIT WINDOW, and a caller with no weapon
+ * to hand gets `DEFAULT_SWING` — the saber's 162° and its 4-tick window — which lands at
+ * ~242 ms, not the 260 ms constant that used to be the answer. Every test below that samples
+ * the envelope at a FRACTION of its length has to use this; `SWING_MS` is now only correct for
+ * the fallback-value cases and for over-advancing past the end.
+ */
+const DEFAULT_TOTAL_MS = swingSchedule(DEFAULT_SWING).totalMs;
 
 describe('AttackMotion, ranged — the envelope at rest', () => {
   it('is exactly zero before anything fires', () => {
@@ -138,7 +148,7 @@ describe('AttackMotion, melee — the swing arc', () => {
   const at = (u: number): AttackMotion => {
     const m = new AttackMotion();
     m.kick('melee');
-    m.advance(SWING_MS * u);
+    m.advance(DEFAULT_TOTAL_MS * u);
     return m;
   };
 
@@ -147,7 +157,7 @@ describe('AttackMotion, melee — the swing arc', () => {
     const spent = at(1);
     expect(spent.swingDeg).toBe(0);
     expect(spent.bodyPx).toBe(0);
-    spent.advance(SWING_MS); // and stays there however long it is advanced afterwards
+    spent.advance(DEFAULT_TOTAL_MS); // and stays there however long it is advanced afterwards
     expect(spent.swingDeg).toBe(0);
   });
 
@@ -204,14 +214,14 @@ describe('AttackMotion, melee — the swing arc', () => {
     m.kick('melee');
     expect(m.modulePx).toBe(0); // the gun kick is gone the same frame
     expect(m.swingDeg).toBe(0); // and the swing starts from its own t=0
-    m.advance(SWING_MS * 0.55);
+    m.advance(DEFAULT_TOTAL_MS * 0.55);
     expect(m.swingDeg).toBeCloseTo(SWING_ARC_DEG, 6);
   });
 
   it('a swing restarts cleanly when the next one lands mid-recovery', () => {
     const m = new AttackMotion();
     m.kick('melee');
-    m.advance(SWING_MS * 0.9);
+    m.advance(DEFAULT_TOTAL_MS * 0.9);
     expect(m.swingDeg).toBeGreaterThan(0); // still recovering
     m.kick('melee');
     expect(m.swingDeg).toBe(0);
@@ -232,7 +242,7 @@ describe('AttackMotion, melee — the swing arc', () => {
     // SABER_SIM.swingCooldownTicks is 11 ticks at 30 Hz = ~367 ms (engine/content/weaponSpecs
     // /starter.ts, pinned in WeaponFireSystem.test.ts). A swing longer than that would still be
     // mid-arc when the next one restarted it, and the blade would never return to the aim line.
-    expect(SWING_MS).toBeLessThan((11 * 1000) / 30);
+    expect(DEFAULT_TOTAL_MS).toBeLessThan((11 * 1000) / 30);
   });
 
   it('never moves anything before the first attack', () => {
@@ -276,7 +286,7 @@ describe('AttackMotion, melee — the swing arc', () => {
     // guard carries.
     const m = new AttackMotion();
     m.kick('melee');
-    m.advance(SWING_MS * 10);
+    m.advance(DEFAULT_TOTAL_MS * 10);
     expect(m.swingDeg).toBe(0);
     expect(m.bodyPx).toBe(0);
     const r = new AttackMotion();
@@ -301,22 +311,37 @@ describe('swingSchedule — the weapon sizes and paces the swing', () => {
   /** The same brad→deg / ticks→ms conversion `EventReactor.swingShapeOf` does at the read site. */
   const shapeOf = (spec: MeleeSimSpec): SwingShape => ({
     arcDeg: (spec.arcHalf * 720) / 65536,
-    recoveryMs: (spec.swingCooldownTicks * 1000) / TICK_RATE,
+    windowMs: (spec.swingTicks * 1000) / TICK_RATE,
   });
   const travelOf = (shape: SwingShape): number => {
     const s = swingSchedule(shape);
     return s.strikeDeg - s.windupDeg;
   };
 
-  it('reproduces the hand-tuned constants EXACTLY for the shape they were tuned against', () => {
-    // The saber IS `DEFAULT_SWING`, and both scale factors are defined as the ratio between it
+  it('reproduces the hand-tuned SWEEP exactly for the shape it was tuned against', () => {
+    // The saber IS `DEFAULT_SWING` and `SWEEP_PER_ARC_DEG` is defined as the ratio between it
     // and these constants — so this is not a coincidence to be re-derived, it is the property
-    // that makes the change a no-op for the starter weapon. A drifted factor shows up here
-    // before it shows up on screen.
+    // that makes the derivation a no-op for the starter weapon's TRAVEL. A drifted factor shows
+    // up here before it shows up on screen.
     const s = swingSchedule(DEFAULT_SWING);
-    expect(s.totalMs).toBeCloseTo(SWING_MS, 6);
     expect(s.windupDeg).toBeCloseTo(SWING_WINDUP_DEG, 6);
     expect(s.strikeDeg).toBeCloseTo(SWING_ARC_DEG, 6);
+  });
+
+  it('times the saber off its real 4-tick hit window, which is NOT the 260 ms constant', () => {
+    // The one deliberate behaviour change of ENGINE_VERSION 53's render half, stated as its own
+    // test so it cannot be mistaken for drift. This file's timing used to derive from
+    // `recoveryMs` — the 11-tick gap until you may swing AGAIN — because that was the only
+    // number available: `swingSec` was authored but unconverted and the sim had no window at
+    // all. It has one now (4 ticks, ~133 ms), and the envelope is anchored so the STRIKE ENDS
+    // as the window closes: 133 / 0.55 ≈ 242 ms. `SWING_MS` survives only as the fallback.
+    const s = swingSchedule(DEFAULT_SWING);
+    expect(s.totalMs).toBeCloseTo(DEFAULT_SWING.windowMs / SWING_STRIKE, 6);
+    expect(s.totalMs).toBeCloseTo(242.42, 1);
+    expect(s.totalMs).toBeLessThan(SWING_MS); // shorter than the recovery-derived number it replaced
+    // …and the anchor itself: at `strikeEndMs` exactly one window has elapsed, so the visible
+    // stroke covers precisely the ticks `HitResolveSystem` can connect on.
+    expect(s.strikeEndMs).toBeCloseTo(DEFAULT_SWING.windowMs, 6);
   });
 
   it('is the saber that DEFAULT_SWING describes, not a hand-typed pair of numbers', () => {
@@ -324,7 +349,8 @@ describe('swingSchedule — the weapon sizes and paces the swing', () => {
     // the starter weapon" claim above would quietly stop being true.
     const saber = WEAPON_SIM_BY_ID.saber as MeleeSimSpec;
     expect(shapeOf(saber).arcDeg).toBeCloseTo(DEFAULT_SWING.arcDeg, 1);
-    expect(shapeOf(saber).recoveryMs).toBeCloseTo(DEFAULT_SWING.recoveryMs, 6);
+    expect(shapeOf(saber).windowMs).toBeCloseTo(DEFAULT_SWING.windowMs, 6);
+    expect(saber.swingTicks).toBe(4); // the window the constant above encodes
   });
 
   it('defaults to that shape when the caller has no weapon to hand', () => {
@@ -336,15 +362,34 @@ describe('swingSchedule — the weapon sizes and paces the swing', () => {
   it('gives a wide weapon a wider sweep than a narrow one, in the same order as the specs', () => {
     // The spear (60°) and the hammer (220°) are the roster's extremes and used to draw the
     // IDENTICAL 68° sweep. Ordering, not exact values: the two clamps below are what bound this.
-    const sweep = (arcDeg: number): number => travelOf({ arcDeg, recoveryMs: DEFAULT_SWING.recoveryMs });
+    const sweep = (arcDeg: number): number => travelOf({ arcDeg, windowMs: DEFAULT_SWING.windowMs });
     expect(sweep(60)).toBeLessThan(sweep(140));
     expect(sweep(140)).toBeLessThan(sweep(220));
     expect(sweep(220) / sweep(60)).toBeGreaterThan(2);
   });
 
-  it('gives a slow weapon a longer envelope than a fast one', () => {
-    expect(swingSchedule({ arcDeg: 162, recoveryMs: 300 }).totalMs)
-      .toBeLessThan(swingSchedule({ arcDeg: 162, recoveryMs: 600 }).totalMs);
+  it('gives a longer-windowed weapon a longer envelope than a shorter-windowed one', () => {
+    // Was phrased as slow-vs-fast when the input was the recovery. The input is now the ACTIVE
+    // WINDOW, and the two are not proportional across the roster (the spear spends 33% of its
+    // recovery active, the frostbrand 36%), so this is a different claim about a different axis.
+    expect(swingSchedule({ arcDeg: 162, windowMs: 100 }).totalMs)
+      .toBeLessThan(swingSchedule({ arcDeg: 162, windowMs: 200 }).totalMs);
+  });
+
+  it('walks the roster in window order, not in recovery order — they disagree', () => {
+    // The regression that would hide a silent revert to `recoveryMs`: the hammer has both the
+    // longest window AND the longest recovery, so ordering alone cannot tell the two inputs
+    // apart. The frostbrand vs the stormglaive can — 5 ticks of window on a 14-tick recovery
+    // against 4 on 12 — so their envelope order flips depending on which number is read.
+    const frost = WEAPON_SIM_BY_ID.frostbrand as MeleeSimSpec;
+    const storm = WEAPON_SIM_BY_ID.stormglaive as MeleeSimSpec;
+    expect([frost.swingTicks, storm.swingTicks]).toEqual([5, 4]);
+    expect(frost.swingCooldownTicks).toBeGreaterThan(storm.swingCooldownTicks); // 14 > 12
+    // Window order (5 > 4) and recovery order (14 > 12) agree in SIGN here, so pin the RATIO:
+    // by window it is 5/4 = 1.25x, by recovery it would be 14/12 ≈ 1.167x.
+    const ratio = swingSchedule(shapeOf(frost)).totalMs / swingSchedule(shapeOf(storm)).totalMs;
+    expect(ratio).toBeCloseTo(5 / 4, 6);
+    expect(ratio).not.toBeCloseTo(14 / 12, 2);
   });
 
   it('keeps the wind-up behind the aim and the strike ahead of it, at every arc in the roster', () => {
@@ -367,6 +412,11 @@ describe('swingSchedule — the weapon sizes and paces the swing', () => {
       const recoveryMs = (spec.swingCooldownTicks * 1000) / TICK_RATE;
       expect(swingSchedule(shapeOf(spec)).totalMs, id).toBeLessThanOrEqual(recoveryMs);
     }
+    // Still owed, and now owed for a structural reason rather than a tuned one: design/07 clamps
+    // every `swingTicks` into [1, swingCooldownTicks], and the envelope is the window over
+    // SWING_STRIKE (0.55) — so it can only exceed the recovery for a window past 55% of it,
+    // which `toSimSpec` cannot produce. The old `recoveryMs` derivation needed SWING_MAX_MS to
+    // hold this line for the hammer; nothing in the roster binds on it any more.
     expect(melee.length).toBeGreaterThanOrEqual(7); // and the sweep above ran over a real roster
   });
 
@@ -375,16 +425,21 @@ describe('swingSchedule — the weapon sizes and paces the swing', () => {
     // through the body, and under ~26° it is a twitch at the ~13-20 px an actor occupies. The
     // SECTOR fx is unclamped (`game/fx/slashArc.ts`) — this bound is about how the body moves,
     // not about how far the weapon reaches.
-    expect(travelOf({ arcDeg: 20, recoveryMs: DEFAULT_SWING.recoveryMs })).toBeCloseTo(26, 6);
-    expect(travelOf({ arcDeg: 360, recoveryMs: DEFAULT_SWING.recoveryMs })).toBeCloseTo(104, 6);
-    expect(swingSchedule({ arcDeg: 162, recoveryMs: 20 }).totalMs).toBeCloseTo(130, 6);
-    expect(swingSchedule({ arcDeg: 162, recoveryMs: 5000 }).totalMs).toBeCloseTo(400, 6);
+    expect(travelOf({ arcDeg: 20, windowMs: DEFAULT_SWING.windowMs })).toBeCloseTo(26, 6);
+    expect(travelOf({ arcDeg: 360, windowMs: DEFAULT_SWING.windowMs })).toBeCloseTo(104, 6);
+    expect(swingSchedule({ arcDeg: 162, windowMs: 20 }).totalMs).toBeCloseTo(130, 6);
+    expect(swingSchedule({ arcDeg: 162, windowMs: 5000 }).totalMs).toBeCloseTo(400, 6);
+    // A non-positive or malformed window falls back to the saber's own length rather than
+    // dividing — an Infinity here would leave the blade frozen mid-air forever.
+    expect(swingSchedule({ arcDeg: 162, windowMs: 0 }).totalMs).toBeCloseTo(SWING_MS, 6);
+    expect(swingSchedule({ arcDeg: 162, windowMs: -5 }).totalMs).toBeCloseTo(SWING_MS, 6);
+    expect(swingSchedule({ arcDeg: 162, windowMs: Number.NaN }).totalMs).toBeCloseTo(SWING_MS, 6);
   });
 
   it('schedules the strike window inside the envelope, in order', () => {
     // The sector fx schedules itself off these two (`EventReactor.slashSector`), so an inverted
     // or out-of-range pair would put the arc on screen before the wind-up or after the recovery.
-    for (const shape of [DEFAULT_SWING, { arcDeg: 60, recoveryMs: 300 }, { arcDeg: 220, recoveryMs: 667 }]) {
+    for (const shape of [DEFAULT_SWING, { arcDeg: 60, windowMs: 100 }, { arcDeg: 220, windowMs: 200 }]) {
       const s = swingSchedule(shape);
       expect(s.strikeStartMs).toBeGreaterThan(0);
       expect(s.strikeEndMs).toBeGreaterThan(s.strikeStartMs);
@@ -395,7 +450,7 @@ describe('swingSchedule — the weapon sizes and paces the swing', () => {
 
 describe('AttackMotion, melee — driven by the weapon that swung', () => {
   const sweepOf = (shape?: SwingShape): { windup: number; strike: number } => {
-    const total = shape ? swingSchedule(shape).totalMs : SWING_MS;
+    const total = swingSchedule(shape).totalMs; // `shape` undefined -> DEFAULT_SWING
     const cock = new AttackMotion();
     cock.kick('melee', shape);
     cock.advance(total * 0.3);
@@ -406,15 +461,19 @@ describe('AttackMotion, melee — driven by the weapon that swung', () => {
   };
 
   it('sweeps a 220° weapon visibly further than a 60° one — one trigger, a different blade', () => {
-    const poke = sweepOf({ arcDeg: 60, recoveryMs: DEFAULT_SWING.recoveryMs });
-    const heave = sweepOf({ arcDeg: 220, recoveryMs: DEFAULT_SWING.recoveryMs });
+    const poke = sweepOf({ arcDeg: 60, windowMs: DEFAULT_SWING.windowMs });
+    const heave = sweepOf({ arcDeg: 220, windowMs: DEFAULT_SWING.windowMs });
     expect(heave.strike).toBeGreaterThan(poke.strike);
     expect(heave.windup).toBeLessThan(poke.windup); // and cocks further back too
   });
 
-  it('an omitted shape moves exactly as the pre-2026-09-02 envelope did', () => {
+  it('an omitted shape sweeps exactly as the pre-2026-09-02 envelope did', () => {
     // Which is what keeps every ranged/placeholder/enemy path in this file honest: those callers
-    // pass no shape at all, and their look must not have changed.
+    // pass no shape at all, and their look must not have changed. Still exact after
+    // ENGINE_VERSION 53 moved the TIMING onto the hit window, because `sweepOf` samples at
+    // fractions of whichever total the schedule chose — the degrees are a function of the arc,
+    // and the fallback arc is still the saber's. The fallback's LENGTH did move (260 -> ~242 ms),
+    // which is pinned next door in `times the saber off its real 4-tick hit window`.
     const bare = sweepOf();
     expect(bare.windup).toBeCloseTo(SWING_WINDUP_DEG, 6);
     expect(bare.strike).toBeCloseTo(SWING_ARC_DEG, 6);
@@ -424,16 +483,16 @@ describe('AttackMotion, melee — driven by the weapon that swung', () => {
     // A slow weapon reaching its strike at the same MILLISECOND as a fast one would read as
     // every weapon having the same speed with different art.
     const slow = new AttackMotion();
-    slow.kick('melee', { arcDeg: 162, recoveryMs: 560 });
-    slow.advance(SWING_MS); // past a whole saber swing...
+    slow.kick('melee', { arcDeg: 162, windowMs: 200 });
+    slow.advance(DEFAULT_TOTAL_MS); // past a whole saber swing...
     expect(slow.swingDeg).not.toBe(0); // ...and this one is still mid-arc
   });
 
   it('a weapon swap between swings re-derives the shape rather than keeping the last one', () => {
     // `kick` is the only place the shape enters, and a held trigger through a swap is exactly how
     // a stale schedule would survive — the blade would keep sweeping the old weapon's size.
-    const wideShape = { arcDeg: 220, recoveryMs: DEFAULT_SWING.recoveryMs };
-    const narrowShape = { arcDeg: 60, recoveryMs: DEFAULT_SWING.recoveryMs };
+    const wideShape = { arcDeg: 220, windowMs: DEFAULT_SWING.windowMs };
+    const narrowShape = { arcDeg: 60, windowMs: DEFAULT_SWING.windowMs };
     const m = new AttackMotion();
     m.kick('melee', wideShape);
     m.advance(swingSchedule(wideShape).totalMs * 0.55);
@@ -447,7 +506,7 @@ describe('AttackMotion, melee — driven by the weapon that swung', () => {
     // The invariant the original melee block opens with, re-checked across the whole derived
     // range: a swing that settled anywhere but 0 leaves that weapon permanently off its aim.
     for (const arcDeg of [20, 60, 162, 220, 360]) {
-      const shape = { arcDeg, recoveryMs: DEFAULT_SWING.recoveryMs };
+      const shape = { arcDeg, windowMs: DEFAULT_SWING.windowMs };
       const m = new AttackMotion();
       m.kick('melee', shape);
       expect(m.swingDeg).toBe(0);

@@ -451,10 +451,12 @@ export class EventReactor {
 }
 
 /** The two `MeleeSimSpec` fields the swing envelope is derived from, in render units:
- *  `arcHalf` is brad (half-sector), `swingCooldownTicks` is sim ticks. */
+ *  `arcHalf` is brad (half-sector), `swingTicks` is the sim's ACTIVE HIT WINDOW in ticks
+ *  (design/07 step 7 — it was `swingCooldownTicks`, the recovery, until `ENGINE_VERSION` 53
+ *  gave the window a real number to read; see `SwingShape.windowMs` for why they differ). */
 function swingShapeOf(spec: MeleeSimSpec): SwingShape {
   return {
     arcDeg: (bradToRad(spec.arcHalf) * 360) / Math.PI,
-    recoveryMs: (spec.swingCooldownTicks * 1000) / TICK_RATE,
+    windowMs: (spec.swingTicks * 1000) / TICK_RATE,
   };
 }

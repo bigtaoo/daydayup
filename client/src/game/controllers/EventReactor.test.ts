@@ -929,7 +929,8 @@ describe('EventReactor — the melee swing carries the weapon that swung', () =>
 
   it('schedules the arc inside the strike window of that weapon own envelope', () => {
     const { pose } = swingWith(SABER);
-    const schedule = swingSchedule({ arcDeg: 162, recoveryMs: (11 * 1000) / 30 });
+    // The saber's ACTIVE hit window (4 ticks), not its 11-tick recovery — ENGINE_VERSION 53.
+    const schedule = swingSchedule({ arcDeg: 162, windowMs: (4 * 1000) / 30 });
     expect(pose!.delayMs).toBeCloseTo(schedule.strikeStartMs, 6);
     expect(pose!.sweepMs).toBeCloseTo(schedule.strikeEndMs - schedule.strikeStartMs, 6);
     // The whole fx has to be gone before the next swing of a held trigger starts one.
@@ -943,7 +944,9 @@ describe('EventReactor — the melee swing carries the weapon that swung', () =>
     const shape = (actor.onAttack as unknown as { mock: { calls: [string, SwingShape][] } })
       .mock.calls[0]![1]!;
     expect(shape.arcDeg).toBeCloseTo(220, 0);
-    expect(shape.recoveryMs).toBeCloseTo((20 * 1000) / 30, 0);
+    // The hammer's 6-tick window, not its 20-tick recovery (ENGINE_VERSION 53). Both consumers
+    // read the same field off the same spec, so this is what keeps them in step.
+    expect(shape.windowMs).toBeCloseTo((6 * 1000) / 30, 0);
   });
 
   it('animates but draws no sector for a swinger whose weapon cannot be resolved', () => {

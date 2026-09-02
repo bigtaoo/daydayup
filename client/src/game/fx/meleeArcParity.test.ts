@@ -34,7 +34,7 @@ import { toFp } from '@dd/engine/math/fixed';
 import type { Brad } from '@dd/engine/math/trig';
 import { createGameState, type GameState } from '@dd/engine/state/GameState';
 import { ENEMY_TEAM_ID, type EnemyActor, type MeleeSimSpec } from '@dd/engine/state/entities';
-import { makeWeapon, WEAPON_SIM_BY_ID } from '@dd/engine/content/weapons';
+import { makeWeapon, openSwing, WEAPON_SIM_BY_ID } from '@dd/engine/content/weapons';
 import { HitResolveSystem } from '@dd/engine';
 import { pxToFp } from '@dd/engine/content/convert';
 import { freshStatus } from '@dd/engine/content/damage';
@@ -83,7 +83,11 @@ function connects(spec: MeleeSimSpec, rPx: number, angleRad: number): boolean {
   const s = createGameState(CFG);
   const p = s.players[0]!;
   p.weapon = makeWeapon(spec);
-  p.weapon.justSwung = true;
+  // `openSwing`, not a bare `justSwung = true`: since ENGINE_VERSION 53 a swing is a WINDOW
+  // (`swingTicksLeft`, design/07 step 7) and the latch alone opens nothing, so a hand-staged
+  // swing that sets only the latch silently connects with nobody — which is what this probe
+  // read as "the sector does not hit" for all seven weapons.
+  openSwing(p.weapon);
   p.facing = 0 as Brad; // due east, so a probe's angle IS its offset from the facing
   const target = addEnemy(
     s,
@@ -98,7 +102,7 @@ function connects(spec: MeleeSimSpec, rPx: number, angleRad: number): boolean {
 function poseOf(spec: MeleeSimSpec, facingRad: number): SlashArcPose {
   const schedule = swingSchedule({
     arcDeg: (bradToRad(spec.arcHalf) * 360) / Math.PI,
-    recoveryMs: (spec.swingCooldownTicks * 1000) / 30,
+    windowMs: (spec.swingTicks * 1000) / 30, // the ACTIVE hit window (design/07 step 7)
   });
   return {
     x: 0, y: 0,
@@ -237,11 +241,11 @@ describe('the drawn sector sweeps the same way the blade does', () => {
     skin.setAim(facingRad);
     skin.attack('melee', {
       arcDeg: (bradToRad(spec.arcHalf) * 360) / Math.PI,
-      recoveryMs: (spec.swingCooldownTicks * 1000) / 30,
+      windowMs: (spec.swingTicks * 1000) / 30,
     });
     const schedule = swingSchedule({
       arcDeg: (bradToRad(spec.arcHalf) * 360) / Math.PI,
-      recoveryMs: (spec.swingCooldownTicks * 1000) / 30,
+      windowMs: (spec.swingTicks * 1000) / 30,
     });
     skin.advanceClips(schedule.strikeStartMs);
     const from = bladeWorldAngle(skin);

@@ -91,18 +91,10 @@ export class WeaponFireSystem {
       // layer, since `justSwung` is a one-tick latch the online loop can drain straight past
       // (see the event's own doc comment in state/events.ts). Emitted for the SWING, not for
       // its hits -- a swing that connects with nothing still has to animate.
-      // `swingTicks` rides along so the render layer can pace the swing off the REAL active
-      // window instead of guessing a fraction of the recovery -- see the event's own doc
-      // comment and `client/src/render/rigAttackMotion.ts`.
-      state.events.push({
-        type: 'melee_swing',
-        ownerId: a.id,
-        faction: a.faction,
-        gx: a.gx,
-        gy: a.gy,
-        facing: a.facing,
-        swingTicks: w.spec.swingTicks,
-      });
+      // The event carries no weapon data (see its own doc comment): the render layer resolves
+      // the spec -- and with it the active hit window it paces the swing off -- from the
+      // GameState every client already holds.
+      state.events.push({ type: 'melee_swing', ownerId: a.id, faction: a.faction, gx: a.gx, gy: a.gy, facing: a.facing });
       w.cooldownTicks = buffedCooldown(w.spec.swingCooldownTicks, buffs);
     }
   }

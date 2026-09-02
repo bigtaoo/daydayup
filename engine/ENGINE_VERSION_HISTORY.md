@@ -1326,7 +1326,19 @@ all four "drop a swing field from `serializeState`" mutants survived the entire 
 hash block in that file existed — a golden-replay comparison of two identical runs cannot see a
 missing field, as `replay.ts`'s own comment says.
 
-**Render.** `melee_swing` gained a `swingTicks` field (additive; events never enter the hash) and
-`rigAttackMotion`'s swing envelope now paces off it (`swingMsForWindow`) instead of a hardcoded
-260 ms picked as a fraction of the STARTER SABER's recovery. The hammer, the saber and the spear
-now animate on three different clocks, matching their three different windows.
+**Render.** The window is what the swing envelope and the sector fx are now paced from.
+`rigAttackMotion.swingSchedule` (landed hours earlier by the melee-sector pass, `c25edea`) already
+derived per-weapon timing — but from `swingCooldownTicks`, the RECOVERY, because that was the only
+number available while `swingSec` was unconverted. `SwingShape.recoveryMs` becomes
+`SwingShape.windowMs`, sourced from `swingTicks`, and the envelope is anchored so `strikeEndMs`
+lands on the window's close: the visible stroke covers exactly the ticks that can connect. The
+saber moves 260 ms → ~242 ms, the hammer to ~364, the spear to ~182, and `slashArc` inherits all
+of it since it schedules off `strikeStartMs`/`strikeEndMs`. The two are not proportional across
+the roster (the spear spends 33% of its recovery active, the frostbrand 36%), so no constant could
+have stood in.
+
+`melee_swing` deliberately carries NO weapon data. An earlier draft of this bump added
+`swingTicks` to the event; it was removed the same day, because `EventReactor.meleeSwinger`
+already resolves the spec out of the `GameState` every client holds, so the field had no reader —
+a second source of truth for a number the only consumer already has, which is the very shape
+`swingSec` spent two months in.

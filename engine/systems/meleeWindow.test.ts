@@ -732,18 +732,24 @@ describe('what the window does NOT extend to', () => {
   });
 });
 
-describe('melee_swing reports the swinging weapon\'s own window, not a constant', () => {
-  it('a hammer announces 6 and a spear announces 3', () => {
-    // The event feeds the render envelope. If it carried a constant, every blade would animate
-    // identically again — the exact bug on the client side that this field exists to fix.
-    const seen = (spec: MeleeSimSpec): number[] => {
+describe('the window the render layer can see', () => {
+  it("is on the ACTIVE weapon's spec, which is what a swinging player's state exposes", () => {
+    // `melee_swing` carries no weapon data by design, so the client reads the window off
+    // `state.players[i].weapon.spec` (`EventReactor.meleeSwinger` ->
+    // `swingShapeOf`). This is the engine-side half of that contract: the spec reachable
+    // through the swinging player really is the one that swung, and it really does carry a
+    // per-weapon window. Without it, a client pacing the swing off a constant again would be
+    // an entirely client-side test's problem to notice.
+    for (const [id, ticks] of [['hammer', 6], ['spear', 3], ['saber', 4]] as const) {
       const s = state();
-      swinger(s, spec);
+      const p = swinger(s, toSimSpec(WEAPON_SPECS[id] as MeleeSpec) as MeleeSimSpec);
       new WeaponFireSystem().tick(s);
-      return s.events.flatMap((e) => (e.type === 'melee_swing' ? [e.swingTicks] : []));
-    };
-    expect(seen(toSimSpec(WEAPON_SPECS.hammer as MeleeSpec) as MeleeSimSpec)).toEqual([6]);
-    expect(seen(toSimSpec(WEAPON_SPECS.spear as MeleeSpec) as MeleeSimSpec)).toEqual([3]);
-    expect(seen(SABER_SIM)).toEqual([4]);
+      expect(s.events.filter((e) => e.type === 'melee_swing'), id).toHaveLength(1);
+      const spec = p.weapon!.spec;
+      expect(spec.kind, id).toBe('melee');
+      expect((spec as MeleeSimSpec).swingTicks, id).toBe(ticks);
+      // …and it is the window the swing actually opened with, not merely a field on a spec.
+      expect(p.weapon!.swingTicksLeft, id).toBe(ticks);
+    }
   });
 });

@@ -14,7 +14,7 @@ import { ORB_CORE_RIG } from './orbCoreRig';
 import { CRITTER_CORE_RIG } from './critterCoreRig';
 import { BOSS_CORE_RIG } from './bossCoreRig';
 import { RigSkin, barrelReach } from './RigSkin';
-import { RECOIL_BODY_PX, RECOIL_MODULE_PX, RECOIL_MS, SWING_ARC_DEG, SWING_MS, swingSchedule } from './rigAttackMotion';
+import { RECOIL_BODY_PX, RECOIL_MODULE_PX, RECOIL_MS, SWING_ARC_DEG, swingSchedule } from './rigAttackMotion';
 import type { RigSkinBundle } from './taoBundle';
 import type { AnimationClip, SpriteBinding } from './types';
 
@@ -1216,10 +1216,14 @@ describe('RigSkin — the melee swing', () => {
     return skin;
   }
 
-  /** Lay the rig out at the far end of the strike (SWING_MS * 0.55). */
+  /** The default envelope's real length — the saber's 4-tick hit window over SWING_STRIKE
+   *  (ENGINE_VERSION 53), NOT the `SWING_MS` constant, which is only the no-window fallback. */
+  const DEFAULT_TOTAL_MS = swingSchedule().totalMs;
+
+  /** Lay the rig out at the far end of the strike (SWING_STRIKE through the envelope). */
   function atStrike(skin: RigSkin): void {
     skin.attack('melee');
-    skin.advanceClips(SWING_MS * 0.55);
+    skin.advanceClips(DEFAULT_TOTAL_MS * 0.55);
     skin.update();
   }
 
@@ -1236,17 +1240,17 @@ describe('RigSkin — the melee swing', () => {
     // socket the blade is mounted to. `rigAttackMotion.test.ts` pins the envelope's own numbers;
     // what this adds is that `attack`'s second argument reaches it at all — without it both of
     // these sweep the identical 46°, and every other melee assertion in this file still passes.
-    const sweep = (shape?: { arcDeg: number; recoveryMs: number }): number => {
+    const sweep = (shape?: { arcDeg: number; windowMs: number }): number => {
       const skin = bladed();
       const rest = spritesOf(skin).get('socket_r')!.rotation;
       skin.attack('melee', shape);
-      skin.advanceClips((shape ? swingSchedule(shape).totalMs : SWING_MS) * 0.55);
+      skin.advanceClips(swingSchedule(shape).totalMs * 0.55); // undefined -> DEFAULT_SWING
       skin.update();
       return spritesOf(skin).get('socket_r')!.rotation - rest;
     };
-    const recoveryMs = (11 * 1000) / 30;
-    const poke = sweep({ arcDeg: 60, recoveryMs });
-    const heave = sweep({ arcDeg: 220, recoveryMs });
+    const windowMs = (4 * 1000) / 30; // the saber ACTIVE hit window (v53), not its recovery
+    const poke = sweep({ arcDeg: 60, windowMs });
+    const heave = sweep({ arcDeg: 220, windowMs });
     expect(heave).toBeGreaterThan(poke * 2);
     // ...and no shape at all still lands on the tuned constant, i.e. the fallback is intact.
     expect(sweep()).toBeCloseTo((SWING_ARC_DEG * Math.PI) / 180, 6);
@@ -1296,7 +1300,7 @@ describe('RigSkin — the melee swing', () => {
     const swinging = bladed();
     const restRadius = radius(swinging);
     swinging.attack('melee');
-    swinging.advanceClips(SWING_MS * 0.5);
+    swinging.advanceClips(DEFAULT_TOTAL_MS * 0.5);
     swinging.update();
     expect(radius(swinging)).toBeCloseTo(restRadius, 6);
 
@@ -1325,7 +1329,7 @@ describe('RigSkin — the melee swing', () => {
     const rest = spritesOf(skin).get('socket_r')!.rotation;
     const restModule = snap(modulesOf(skin).weaponSprite!);
     skin.attack('melee');
-    skin.advanceClips(SWING_MS);
+    skin.advanceClips(DEFAULT_TOTAL_MS);
     skin.update();
     expect(spritesOf(skin).get('socket_r')!.rotation).toBeCloseTo(rest, 10);
     expect(modulesOf(skin).weaponSprite!.rotation).toBeCloseTo(restModule.rotation, 10);
