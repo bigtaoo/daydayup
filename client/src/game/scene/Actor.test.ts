@@ -1036,9 +1036,9 @@ describe('Actor.muzzlePos — the drawn barrel tip, in Entity coordinates', () =
     skinRegistryMocks.loaded = undefined;
   });
 
-  const stubMuzzle = (a: Actor, local: { x: number; y: number } | null) => {
-    (a as unknown as { skin: { muzzleAnchor: () => { x: number; y: number } | null } }).skin.muzzleAnchor =
-      () => local;
+  type Anchor = { x: number; y: number; heightPx: number };
+  const stubMuzzle = (a: Actor, local: Anchor | null) => {
+    (a as unknown as { skin: { muzzleAnchor: () => Anchor | null } }).skin.muzzleAnchor = () => local;
   };
 
   it('is null when the skin reports no mounted module — a placeholder skin, or a preload gap', () => {
@@ -1050,21 +1050,30 @@ describe('Actor.muzzlePos — the drawn barrel tip, in Entity coordinates', () =
     skinRegistryMocks.loaded = loadedOrbCoreRig();
     const a = new Actor('player', 20, undefined, false, 'char_vanguard');
     a.place(500, 300, 0);
-    stubMuzzle(a, { x: 30, y: -18 });
+    // A rig-local point with no ground-NORTH component (`heightPx === -y`), i.e. the module
+    // is out along a due-east aim: everything the rig draws above the origin is height.
+    stubMuzzle(a, { x: 30, y: -18, heightPx: 18 });
     // Stated against the DRAWN baseline (`a.y`) rather than the ground y, because a hovering
     // archetype's `visualZ` is folded into the transform (2026-08-18) — which is exactly the
     // contract this pins down: muzzlePos is wherever the barrel is actually drawn.
-    expect(a.muzzlePos()).toEqual({ x: 530, y: a.y - 18 });
+    expect(a.muzzlePos()!.x).toBe(530);
+    expect(a.muzzlePos()!.y).toBe(a.y - 18);
+    // ...and for that pose the reported HEIGHT is exactly how far the barrel tip is drawn
+    // above the actor's own GROUND point — hover included, since the gun rides with the body.
+    // (2026-09-02: this is what `Scene` lifts a fresh round to, so the round and the gun it
+    // came out of are at the same height and nothing is left to bend the shot.)
+    expect(300 - a.muzzlePos()!.y).toBeCloseTo(a.muzzlePos()!.heightPx, 10);
+    expect(a.muzzlePos()!.heightPx).toBeGreaterThan(18); // 18 + this archetype's hover
   });
 
   it('tracks the DRAWN position, so a lifted (z > 0) actor\'s muzzle rises with its sprite', () => {
     skinRegistryMocks.loaded = loadedOrbCoreRig();
     const a = new Actor('player', 20, undefined, false, 'char_vanguard');
     a.place(500, 300, 40); // Entity.applyTransform puts the container at y = gy - z
-    stubMuzzle(a, { x: 30, y: -18 });
+    stubMuzzle(a, { x: 30, y: -18, heightPx: 18 });
     const hover = 300 - a.y - 40; // the hover baseline this archetype rests at
     expect(hover).toBeGreaterThan(0);
-    expect(a.muzzlePos()).toEqual({ x: 530, y: 300 - 40 - hover - 18 });
+    expect(a.muzzlePos()).toEqual({ x: 530, y: 300 - 40 - hover - 18, heightPx: 40 + hover + 18 });
   });
 
   it('includes the placeholder body lift, so it stays right if a placeholder ever mounts one', () => {
@@ -1072,9 +1081,11 @@ describe('Actor.muzzlePos — the drawn barrel tip, in Entity coordinates', () =
     // reads it rather than assuming 0, which is what this pins down.
     const a = new Actor('player', 20); // placeholder: lift = -14
     a.place(0, 0, 0);
-    stubMuzzle(a, { x: 10, y: -5 });
+    stubMuzzle(a, { x: 10, y: -5, heightPx: 5 });
     // -14 placeholder body lift, -5 local point, and the hover baseline in `a.y`.
-    expect(a.muzzlePos()).toEqual({ x: 10, y: a.y - 14 - 5 });
+    // The body lift SUBTRACTS from the height for the same reason it lowers the point: it
+    // drops the drawn body, taking the muzzle down with it.
+    expect(a.muzzlePos()).toEqual({ x: 10, y: a.y - 14 - 5, heightPx: a.drawnLift + 5 + 14 });
   });
 });
 

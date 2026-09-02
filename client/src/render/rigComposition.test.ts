@@ -25,7 +25,7 @@
  * painted eye socket, does the art LOOK right). That still needs a live render — see
  * design/12. These are the strongest checks that survive in a canvas-free vitest run.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { Texture } from 'pixi.js';
 import { BASIC_ENEMY, BLASTER_SIM, PLAYER_BASE } from '@dd/engine';
@@ -36,11 +36,30 @@ import { RigSkin } from './RigSkin';
 import { deserializeClip, type AnimationJson } from './taoBundle';
 import { sampleClip } from './interpolate';
 import { KIND_DEFAULTS, WEAPON_DEFS, MODULE_SCALE, type WeaponVisualDef } from './weaponSkins';
-import { HELD_MOUNT_R, barrelReach, resolveWeaponMount } from './rigWeaponMount';
+import { ACTIVE_WEAPON_SOCKET, HELD_MOUNT_R, barrelReach, resolveWeaponMount } from './rigWeaponMount';
+import { preloadWeaponSkins } from './weaponSkins';
 import { RECOIL_BODY_PX, RECOIL_MODULE_PX } from './rigAttackMotion';
 import type { Rig } from './Rig';
 import type { RigSkinBundle } from './taoBundle';
 import type { AnimationClip, BoneDef, ResolvedBoneTransform, SpriteBinding, WorldPose } from './types';
+
+// `Assets.load` would hit the network. Stubbed the way `muzzleParity.test.ts` stubs it —
+// spread over the real module so every other pixi export (this file builds real `Texture`s and
+// real `RigSkin`s) stays real. Needed at all because `getWeaponTexture` returns undefined
+// until a weapon is in the preload cache, and an unmounted module cannot be checked for being
+// attached to anything; caching it is also what makes `weaponSkins.resolve()` hand back the
+// weapon's OWN calibration instead of falling back to the kind default.
+//
+// `Texture.WHITE` rather than the PNG's real size, unlike muzzleParity's stub: a module's
+// POSITION — the only thing the assembly sweep below asserts — is its mount's, and the texture
+// only sets what is drawn AT that point (anchor, scale, and the barrel reach measured from it).
+// Anything texture-derived is muzzleParity's subject, and it must be a real `Texture` here
+// because this one is assigned to a live `Sprite`, which a size-only stand-in cannot be.
+const mocks = vi.hoisted(() => ({ assetsLoad: vi.fn() }));
+vi.mock('pixi.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('pixi.js')>();
+  return { ...actual, Assets: { ...actual.Assets, load: mocks.assetsLoad } };
+});
 
 const PUBLIC = new URL('../../public/', import.meta.url);
 const read = (path: string): Buffer => readFileSync(new URL(path, PUBLIC));
@@ -99,7 +118,12 @@ function load(name: string, dir: string): Assembly {
   }
   const bundle: RigSkinBundle = { bindings, clips, textures };
 
-  const skin = new RigSkin(rig, bundle);
+  // `bodyFill` is passed exactly as the game passes it (`Skin.ts`: `new RigSkin(loaded.rig,
+  // loaded.bundle, loaded.bodyFill)`). Omitting it defaulted to 1, i.e. "the art fills its
+  // whole declared bodyR" — which is true for four of the seven bundles and silently wrong for
+  // critter-core (0.70), whose held gun then mounts 15 authoring px further out here than in
+  // the game. It only reaches `drawnBodyR`, so nothing above depended on it.
+  const skin = new RigSkin(rig, bundle, BODY_FILL[name] ?? BODY_FILL_DEFAULT);
   skin.setBodyFacing(0);
   skin.setAim(0);
   skin.update();
@@ -436,6 +460,161 @@ describe('rig composition — the held weapon mount works for the art that actua
     expect(byMode.get('socket')!.length + byMode.get('held')!.length + byMode.get('none')!.length)
       .toBe(BUNDLES.length);
   });
+});
+
+/**
+ * ASSEMBLY INTEGRITY of the mounted weapon (2026-09-02) — the invariant this whole file is
+ * about, applied to the one part of the rig that MOVES independently of its bone.
+ *
+ * Written because the bullet-arc fix shipped a regression past 4134 green tests, a 24-angle
+ * geometry sweep and a 4-mutation battery, and one live frame caught it: the first version
+ * orbited the weapon MODULE to the aim and left everything hanging off the same bone behind —
+ * the socket ring, the energy tether drawn out to it, the contact shade on the core. Aiming
+ * south drew the gun at (0, 6) with its ring still at (52, -49.7), 71 px away, tether reaching
+ * for where the ring used to be.
+ *
+ * Nothing in the suite could see it, and the reason generalises: every test asserted where the
+ * module IS — its mount coordinates, its muzzle point, its cross-track geometry, its depth
+ * flip. None asserted that it is still ATTACHED to the thing that holds it, because a rig's
+ * parts have that relationship by construction... right up until someone moves one of them out
+ * of the FK chain, which is the moment the construction stops being the guarantee.
+ *
+ * So these assert RELATIONSHIPS between things the renderer positions INDEPENDENTLY, over the
+ * real shipped bundles, swept across the aim and across every clip. Same family as "no two
+ * parts occupy the same point" above, and the same reason for existing.
+ */
+describe('rig composition — the mounted weapon stays attached to its own mount', () => {
+  /** Every preloaded bundle that mounts a weapon at all, with the weapon its carrier fires. */
+  const ARMED = BUNDLES
+    .filter(({ name }) => resolveWeaponMount(RIG_DEFS[name]!.rig) !== 'none')
+    .map(b => ({
+      ...b,
+      mode: resolveWeaponMount(RIG_DEFS[b.name]!.rig),
+      // The hero roster carries the catalog; every enemy body fires ENEMY_GUN_SIM
+      // (`content/enemies.ts`), whose render id is `enemygun`.
+      weapon: resolveWeaponMount(RIG_DEFS[b.name]!.rig) === 'socket' ? 'blaster' : 'enemygun',
+    }));
+
+  /** 16 directions, not the four axes: a mount that is wrong at 90° can be right at 0°, which
+   *  is exactly how the arc survived (`muzzleParity.test.ts` carries that lesson in full). */
+  const AIMS = Array.from({ length: 16 }, (_, i) => (i * Math.PI * 2) / 16);
+
+  beforeAll(async () => {
+    mocks.assetsLoad.mockImplementation(async (arg: string | { src: string }) => {
+      void (typeof arg === 'string' ? arg : arg.src);
+      return Texture.WHITE;
+    });
+    await preloadWeaponSkins();
+  });
+
+  /** A freshly loaded rig with its weapon mounted. */
+  function armed(name: string, dir: string, weapon: string): Assembly {
+    const a = load(name, dir);
+    a.skin.setWeaponKind('ranged', weapon);
+    return a;
+  }
+  const posed = (a: Assembly, aim: number): void => {
+    a.skin.setBodyFacing(aim);
+    a.skin.setAim(aim);
+    a.skin.update();
+  };
+  const moduleAt = (a: Assembly): { x: number; y: number } => {
+    const sprite = (a.skin as unknown as { weaponSprite: { x: number; y: number; visible: boolean } | null }).weaponSprite;
+    expect(sprite, 'no weapon module was mounted at all').not.toBeNull();
+    expect(sprite!.visible, 'the mounted module is hidden').toBe(true);
+    return { x: sprite!.x, y: sprite!.y };
+  };
+
+  it('found the armed bundles — every preloaded body except the boss', () => {
+    expect(ARMED.map(b => b.name).sort())
+      .toEqual(['brute-core', 'char_juggernaut', 'char_skirmisher', 'char_vanguard', 'critter-core', 'floater-core']);
+    expect(ARMED.filter(b => b.mode === 'socket')).not.toHaveLength(0);
+    expect(ARMED.filter(b => b.mode === 'held')).not.toHaveLength(0);
+  });
+
+  // The anti-vacuity control for everything below: a module that never moved would satisfy
+  // every "stays attached" check for free. It has to actually travel with the aim.
+  it.each(ARMED)('$name: the module travels with the aim rather than merely spinning', ({ name, dir, weapon }) => {
+    const a = armed(name, dir, weapon);
+    posed(a, 0);
+    const east = moduleAt(a);
+    posed(a, Math.PI / 2);
+    const south = moduleAt(a);
+    // A quarter-turn apart, so they must be at least the mount's own reach apart.
+    expect(dist(east, south)).toBeGreaterThan(a.bodyR * 0.5);
+  });
+
+  it.each(ARMED.filter(b => b.mode === 'socket'))(
+    '$name: the module sits exactly on its own socket ring, at every aim',
+    ({ name, dir, weapon }) => {
+      const a = armed(name, dir, weapon);
+      for (const aim of AIMS) {
+        posed(a, aim);
+        // The ring is the socket bone's OWN art, placed by the sprite loop; the module is
+        // placed by `activeModuleMount`. Two independent paths, one point — 71 px apart in the
+        // regression this test exists for.
+        expect(dist(moduleAt(a), a.centre(ACTIVE_WEAPON_SOCKET)), 'aim ' + Math.round((aim * 180) / Math.PI))
+          .toBeLessThan(0.01);
+      }
+    },
+  );
+
+  it.each(ARMED.filter(b => b.mode === 'socket'))(
+    '$name: and through every shipped clip, so the gun rides the hover bob with its ring',
+    ({ name, dir, weapon }) => {
+      const a = armed(name, dir, weapon);
+      const SAMPLES = 8;
+      for (const [clipName, clip] of a.clips) {
+        for (let i = 0; i <= SAMPLES; i++) {
+          a.skin.setAim(1.1); // an off-axis aim, so this is not the rest pose either
+          a.skin.playClip(clipName, (clip.duration * 1000 * i) / SAMPLES);
+          a.skin.update();
+          expect(dist(moduleAt(a), a.centre(ACTIVE_WEAPON_SOCKET)), clipName + ' @' + i + '/' + SAMPLES)
+            .toBeLessThan(0.01);
+        }
+      }
+    },
+  );
+
+  it.each(ARMED.filter(b => b.mode === 'socket'))(
+    '$name: the drawn tether reaches the module, not the point it used to hang at',
+    ({ name, dir, weapon }) => {
+      const a = armed(name, dir, weapon);
+      for (const aim of AIMS) {
+        posed(a, aim);
+        // `tetherGeometry` is the signature `drawTethers` builds from the endpoints it actually
+        // strokes — `sx,sy,ex,ey,alpha;` per tethered bone — so this reads the drawn curve's
+        // own far end rather than recomputing where it ought to be.
+        const geom = (a.skin as unknown as { tetherGeometry: string }).tetherGeometry;
+        const ends = geom.split(';').filter(Boolean).map((row) => {
+          const parts = row.split(',').map(Number);
+          return { x: parts[2]!, y: parts[3]! };
+        });
+        expect(ends.length, 'no tether was drawn at all').toBeGreaterThan(0);
+        const mod = moduleAt(a);
+        const nearest = Math.min(...ends.map((e) => dist(e, mod)));
+        // 0.1 rather than 0.01: the signature rounds its endpoints to one decimal place.
+        expect(nearest, 'aim ' + Math.round((aim * 180) / Math.PI)).toBeLessThan(0.1);
+      }
+    },
+  );
+
+  it.each(ARMED.filter(b => b.mode === 'held'))(
+    '$name: the held gun stays on the body edge at the SAME distance in every direction',
+    ({ name, dir, weapon }) => {
+      const a = armed(name, dir, weapon);
+      const fill = BODY_FILL[name] ?? BODY_FILL_DEFAULT;
+      const want = a.bodyR * fill * HELD_MOUNT_R;
+      for (const aim of AIMS) {
+        posed(a, aim);
+        // Constant in every direction is the whole point: the vertical half of this offset was
+        // squashed 0.45 until 2026-09-02, which made a mob's gun sit closer to its body when
+        // aiming up or down — i.e. off the line its own bullets fly along (`muzzleParity`).
+        expect(dist(moduleAt(a), a.centre(a.bodyBone.id)), 'aim ' + Math.round((aim * 180) / Math.PI))
+          .toBeCloseTo(want, 6);
+      }
+    },
+  );
 });
 
 describe('BODY_FILL — the recorded body art fill matches the shipped pixels', () => {

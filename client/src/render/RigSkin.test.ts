@@ -265,15 +265,47 @@ describe('RigSkin — two orbiting weapon modules, one active, one idle', () => 
   // anchor.x 0.2, scale 0.25 and rotationOffset 0 — so the reach past the socket tip is
   // (1 - 0.2) * 1 * 0.25 = 0.2 authoring-px. Small, but it is the same arithmetic the
   // real 320px textures go through, and `barrelReach` is covered on its own below.
-  it('the muzzle sits past the ACTIVE socket tip, along the aim direction', () => {
+  it('the muzzle sits past the ORBITED module, along the aim direction', () => {
     const skin = armed();
     skin.setAim(0);
     skin.update();
-    expect(skin.muzzleLocal()).toEqual({ x: expect.closeTo(52.2, 6), y: expect.closeTo(-46, 6) });
+    // Aim east is the socket's own rest angle, so this is also where the module sat when it
+    // was pinned to the bone tip (`rigWeaponMount`'s GROUND-PLANE ORBIT note) — which is why
+    // every calibration taken in this pose survived the change.
+    expect(skin.muzzleLocal()).toEqual({
+      x: expect.closeTo(52.2, 6), y: expect.closeTo(-46, 6), heightPx: expect.closeTo(46, 6),
+    });
 
-    skin.setAim(Math.PI / 2); // straight down-screen: the reach goes into +y, not +x
+    // Straight down-screen. The module ORBITS there (2026-09-02): the whole 52 px of socket
+    // reach goes into +y and the barrel's own 0.2 follows it, instead of the module staying
+    // out at x=52 and merely spinning — which is what put the drawn gun off the line its own
+    // bullets fly along, and drew the arc out of the barrel.
+    skin.setAim(Math.PI / 2);
     skin.update();
-    expect(skin.muzzleLocal()).toEqual({ x: expect.closeTo(52, 6), y: expect.closeTo(-45.8, 6) });
+    expect(skin.muzzleLocal()).toEqual({
+      // The HEIGHT is unchanged: the module orbited across the ground, it did not climb.
+      x: expect.closeTo(0, 6), y: expect.closeTo(-46 + 52.2, 6), heightPx: expect.closeTo(46, 6),
+    });
+  });
+
+  // The height half of that same point, which `Scene` needs separately (see the method's doc):
+  // the module orbits IN a plane, and how high that plane is does not change with the aim.
+  it('reports the muzzle HEIGHT as the plane the module orbits in, at any aim', () => {
+    const skin = armed();
+    for (const aim of [0, Math.PI / 2, Math.PI, -Math.PI / 2, 0.7]) {
+      skin.setAim(aim);
+      skin.update();
+      expect(skin.muzzleLocal()!.heightPx, `aim ${aim}`).toBeCloseTo(46, 6); // orb-core's shell len
+    }
+  });
+
+  // The height rides ALONG with the point rather than being its own call, so "is there a
+  // muzzle at all" can only ever have one answer — the two were always asked together.
+  it('reports no muzzle at all when nothing is mounted, height included', () => {
+    const skin = armed();
+    skin.setWeaponKind(null);
+    skin.update();
+    expect(skin.muzzleLocal()).toBeNull();
   });
 
   it('mirrors with the rig — a left-facing body puts the muzzle on the left, still ahead of the socket', () => {
@@ -517,27 +549,46 @@ describe('RigSkin — the eye slides inside the shell along the aim', () => {
 
 // design/01's "Per-weapon local z-order" — documented since the rendering doc was written,
 // but the mounted module was pinned in front until 2026-08-18.
-describe('RigSkin — the mounted module draws behind the body when facing away', () => {
+// The module's depth follows the MODULE, not the body (2026-09-02): it orbits to the aim now,
+// so where it actually is decides whether it is on the far side of the core (design/01's
+// "per-weapon local z-order"). These drive `setAim` for that reason — they used to drive
+// `setBodyFacing` alone, from when the gun was pinned beside the body and the only thing that
+// could put it behind was the body turning around.
+describe('RigSkin — the mounted module draws behind the body when it swings to the far side', () => {
   function moduleZ(skin: RigSkin): number {
     skin.update();
     return (skin as unknown as { weaponSprite: { zIndex: number } }).weaponSprite.zIndex;
   }
 
-  it('is in front while facing the camera and behind while facing away', () => {
+  it('is in front while aiming toward the camera and behind while aiming away', () => {
     const skin = makeSkin();
     skin.setWeaponKind('ranged', 'blaster');
-    skin.setBodyFacing(Math.PI / 2); // toward the camera
+    skin.setBodyFacing(Math.PI / 2);
+    skin.setAim(Math.PI / 2); // toward the camera — the module orbits south of the core
     expect(moduleZ(skin)).toBeGreaterThan(0);
-    skin.setBodyFacing(-Math.PI / 2); // away from the camera
+    skin.setBodyFacing(-Math.PI / 2);
+    skin.setAim(-Math.PI / 2); // away — it orbits north, i.e. behind the core
+    expect(moduleZ(skin)).toBeLessThan(0);
+  });
+
+  // The case the two rules disagree on, and the reason this one is keyed off the aim: the body
+  // turn is rate-limited (`facing.BODY_TURN_PER_TICK`, ~0.4 s for an about-face) while the gun
+  // is already pointing at the new target. Keyed off `showBack` the gun would be drawn ACROSS
+  // the core's face for those frames, having visibly swung behind it.
+  it('follows the gun, not the body, while the body is still turning', () => {
+    const skin = makeSkin();
+    skin.setWeaponKind('ranged', 'blaster');
+    skin.setBodyFacing(Math.PI / 2); // body still facing the camera...
+    skin.setAim(-Math.PI / 2); // ...aim already snapped away from it
     expect(moduleZ(skin)).toBeLessThan(0);
   });
 
   it('re-evaluates every frame, so turning around mid-play actually restacks it', () => {
     const skin = makeSkin();
     skin.setWeaponKind('ranged', 'blaster');
-    skin.setBodyFacing(-Math.PI / 2);
-    const behind = moduleZ(skin); // sprite is CREATED while facing away
-    skin.setBodyFacing(Math.PI / 2);
+    skin.setAim(-Math.PI / 2);
+    const behind = moduleZ(skin); // sprite is CREATED while aiming away
+    skin.setAim(Math.PI / 2);
     expect(moduleZ(skin)).toBeGreaterThan(behind); // and moves back in front on the next update
   });
 
@@ -546,6 +597,7 @@ describe('RigSkin — the mounted module draws behind the body when facing away'
     skin.setWeaponKind('ranged', 'blaster');
     skin.setBodyFacing(-Math.PI / 2);
     const tethers = (skin as unknown as { tethers: Container | null }).tethers;
+    skin.setAim(-Math.PI / 2);
     expect(tethers).not.toBeNull();
     expect(moduleZ(skin)).toBeLessThan(tethers!.zIndex);
   });
@@ -659,10 +711,12 @@ describe('RigSkin — a far-side module is drawn smaller and darker, not just be
     const front = { scale: activeModule(skin).scale.x, tint: activeModule(skin).tint };
 
     skin.setBodyFacing(-Math.PI / 2); // away
+    skin.setAim(-Math.PI / 2); // ...and the gun with it, which is what the depth cue tracks
     expect(activeModule(skin).scale.x).toBeLessThan(front.scale);
     expect(activeModule(skin).tint).toBeLessThan(front.tint);
 
     skin.setBodyFacing(Math.PI / 2);
+    skin.setAim(Math.PI / 2);
     expect(activeModule(skin).scale.x).toBeCloseTo(front.scale, 6);
     expect(activeModule(skin).tint).toBe(front.tint);
   });
@@ -923,20 +977,23 @@ describe('RigSkin — contact shades seat an orbiting module against the core', 
     expect(centres()).not.toEqual(rest);
   });
 
+  // Driven by the AIM rather than by a clip rotation of `socket_r` (2026-09-02): the active
+  // socket's angle is the aim's to own now — `orbitActiveSocketToAim` overrides it before FK,
+  // which is what makes the ring, the tether and the module travel as one assembly — so a clip
+  // keyframe on that bone's rotation no longer moves anything. The invariant under test is
+  // unchanged: the mounts are re-derived every frame, never cached at creation.
   it('re-derives the mounts every frame, so a module that orbits drags its contact along', () => {
-    const clips = new Map<string, AnimationClip>([
-      ['swing', { duration: 1, loop: false, keyframes: [{ time: 0, bones: new Map([['socket_r', { rotation: 90 }]]) }] }],
-    ]);
-    const skin = makeSkin(ORB_CORE_RIG, clips);
+    const skin = makeSkin(ORB_CORE_RIG);
     // Snapshot the NUMBERS, not the Bounds object — Pixi mutates one instance in place, so
     // holding the reference across a redraw would compare it against itself and pass on nothing.
     const snap = (): number[] => {
       const b = aoOf(skin)!.bounds;
       return [b.minX, b.minY, b.maxX, b.maxY];
     };
+    skin.setAim(0);
     skin.update();
     const before = snap();
-    skin.playClip('swing', 0);
+    skin.setAim(Math.PI / 2); // the module orbits a quarter turn around the core
     skin.update();
     expect(snap()).not.toEqual(before);
   });
@@ -1175,11 +1232,10 @@ describe('RigSkin — the melee swing', () => {
     atStrike(skin);
     const swung = modulesOf(skin).weaponSprite!;
     expect(swung.rotation - rest.rotation).toBeCloseTo((SWING_ARC_DEG * Math.PI) / 180, 6);
-    // A socket mount PIVOTS rather than orbits: `activeModuleMount`'s socket path parks the
-    // module on the bone's FK tip and takes only the ANGLE from the aim, so the blade turns
-    // about its own hand. What travels is the far end of it, which is what a swing looks like
-    // and what `muzzleLocal()` reports — the sprite's own origin is expected to stay put.
-    expect(Math.hypot(swung.x - rest.x, swung.y - rest.y)).toBeCloseTo(0, 10);
+    // The whole assembly ORBITS: `orbitActiveSocketToAim` rotates the socket BONE before FK, and
+    // it is handed the WEAPON angle, so the arc carries the ring, its tether, its contact shade
+    // and the module together. The module's own origin travels, and so does its far end.
+    expect(Math.hypot(swung.x - rest.x, swung.y - rest.y)).toBeGreaterThan(1);
     const tip = skin.muzzleLocal()!;
     expect(Math.hypot(tip.x - restTip.x, tip.y - restTip.y)).toBeGreaterThan(1);
   });
@@ -1196,17 +1252,30 @@ describe('RigSkin — the melee swing', () => {
     expect(shooting.view.x).toBeLessThan(0);
   });
 
-  it('never slides the module back along its barrel — that is the gun motion', () => {
-    const skin = bladed();
-    const rest = spritesOf(skin).get('socket_r')!;
-    const restPos = { x: rest.x, y: rest.y };
-    skin.attack('melee');
-    skin.advanceAttack(SWING_MS * 0.22);
-    skin.update();
-    // The socket BONE only moves for a recoil kick; the swing is expressed as rotation, so the
-    // ring's own position is untouched (the module on its tip is what travels).
-    expect(spritesOf(skin).get('socket_r')!.x).toBeCloseTo(restPos.x, 10);
-    expect(spritesOf(skin).get('socket_r')!.y).toBeCloseTo(restPos.y, 10);
+  it('travels ALONG the arc, never back down the barrel — that is the gun motion', () => {
+    // Both attacks move the socket, so "it moved" proves nothing; what tells them apart is the
+    // RADIUS. An orbit preserves the module's distance from the body while sweeping it around,
+    // and a recoil shortens that distance while holding the angle. This is the assertion that
+    // catches a swing wired into `modulePx` — which would drag the blade into the character.
+    // Measured from the BODY, not from the rig origin: the socket hangs off the shell's tip, so
+    // a radius taken from (0,0) is not the one the orbit preserves (it read 69.4 -> 47.5 and the
+    // first version of this test failed on that, which is the useful kind of failure).
+    const radius = (skin: RigSkin): number => {
+      const s = spritesOf(skin).get('socket_r')!, body = spritesOf(skin).get('shell')!;
+      return Math.hypot(s.x - body.x, s.y - body.y);
+    };
+    const swinging = bladed();
+    const restRadius = radius(swinging);
+    swinging.attack('melee');
+    swinging.advanceAttack(SWING_MS * 0.5);
+    swinging.update();
+    expect(radius(swinging)).toBeCloseTo(restRadius, 6);
+
+    const shooting = bladed();
+    shooting.attack('ranged');
+    shooting.advanceAttack(RECOIL_MS * 0.22);
+    shooting.update();
+    expect(radius(shooting)).toBeLessThan(restRadius - RECOIL_MODULE_PX * 0.9);
   });
 
   it('leaves the EYE looking at the target through the whole swing', () => {

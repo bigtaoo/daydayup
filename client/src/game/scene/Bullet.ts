@@ -129,26 +129,61 @@ export class Bullet extends Entity {
    * applied on top of the interpolated sim position — nothing here is ever read back
    * into the sim.
    *
-   * A decaying offset rather than just a different starting point, because the two
-   * lines are PARALLEL, not merely offset at their origins: the sim places its muzzle
-   * `muzzleOffset` along the aim ray on the GROUND plane and then lifts it by `bulletZ`,
-   * while the rig rotates the gun in screen space at the socket bone's own height. Aim
-   * downward and the sim's spawn slides "south" across the floor while the drawn barrel
-   * swings down the screen — so a bullet that merely STARTED at the muzzle would still
-   * fly along a visibly separate line below it (~16 world px, and this camera zooms 4x).
-   * Easing the offset out instead lets the shot leave the barrel and rejoin its true
-   * path within the first `MUZZLE_EASE_DISTANCE_PX` of flight, by which point the gap
-   * is invisible.
+   * A decaying offset rather than just a different starting point, because the two lines are
+   * PARALLEL, not merely offset at their origins: the sim places its muzzle `muzzleOffset`
+   * along the aim ray, and the rig's own reach out to the barrel tip is a different distance
+   * (`muzzleParity`'s table: +9.5 px for the blaster, up to +19.5 across the roster). A round
+   * that merely STARTED at the barrel tip would run permanently ahead of its true position by
+   * that much. Easing it out instead lets the shot leave the barrel and rejoin its own
+   * position within the first `MUZZLE_EASE_DISTANCE_PX` of flight.
+   *
+   * That gap is a distance along the SHOT, so spending it only ever changes how fast the round
+   * appears to travel — it can never bend the path. Both other axes on which the drawn gun and
+   * the sim's spawn point used to disagree are now removed at the source rather than eased
+   * away here, because easing them was the arc: the SIDEWAYS one by making the module orbit to
+   * the aim (`rigWeaponMount`'s GROUND-PLANE ORBIT), the HEIGHT one by `setDrawnHeight` below.
+   * The projection in this method is the backstop that keeps it that way.
    *
    * The shadow is deliberately left on the un-offset ground point: it marks where the
    * bullet actually is in the world, which is the sim position, not the drawn one.
    */
-  setMuzzleOrigin(dx: number, dy: number): void {
-    this.originDx = dx;
-    this.originDy = dy;
+  setMuzzleOrigin(dx: number, dy: number, ux: number, uy: number): void {
+    // Only the component ALONG the shot survives (`ux, uy` is the round's own unit velocity).
+    // A correction perpendicular to the flight direction cannot be spent without moving the
+    // drawn round sideways while it flies forward, which IS an arc — it was 20.8 world px and
+    // 43° off-aim at the muzzle when the drawn gun sat off the shot's line (user report
+    // 2026-09-02, measured off the recorded run; `rigWeaponMount`'s GROUND-PLANE ORBIT note
+    // is the fix for the geometry that produced it). Dropping it here makes "a bullet is
+    // never bent" a property of this class rather than an outcome of how well the art and the
+    // sim happen to agree: whatever is left over, the drawn path is a straight line along the
+    // shot. What that costs is that a round starts a hair off the barrel tip when the two
+    // disagree sideways — `muzzleParity.test.ts` bounds that gap at every aim angle, which is
+    // the honest place to catch it, since it is an art/sim disagreement and not a render bug.
+    const along = dx * ux + dy * uy;
+    this.originDx = ux * along;
+    this.originDy = uy * along;
     this.originRemainingPx = MUZZLE_EASE_DISTANCE_PX;
     this.lastBaseX = this.curX;
     this.lastBaseY = this.curY;
+  }
+
+  /**
+   * Draw this round at the height the gun that fired it is drawn at (`Actor.muzzleHeightPx`),
+   * instead of at the sim's own `bulletZ`. Render-only — `visualZ` never reaches the sim, and
+   * `z` itself (which the sim's cover gating reads, design/07) is untouched.
+   *
+   * The two disagree because they answer different questions: `bulletZ` is a gameplay BAND
+   * (0.5 grid = "chest height, clears ground-hug hazards, blocked by tall cover") while the
+   * drawn muzzle is wherever the rig hangs the gun — 26.4 vs 16 world px for the hero, i.e. a
+   * 10.4 px gap that is straight up the screen, therefore PERPENDICULAR to any horizontal
+   * shot, therefore an arc. Correcting it as a height rather than as part of the muzzle offset
+   * is what leaves that offset purely along-track (see `setMuzzleOrigin`).
+   *
+   * Constant for the round's life, so a ballistic that moves its own `z` (a lob's cosmetic
+   * arc) still reads as an arc — this shifts the whole curve up, it does not flatten it.
+   */
+  setDrawnHeight(px: number): void {
+    this.visualZ = px - this.curZ;
   }
 
   override interpolate(alpha: number, frameDt: number): void {

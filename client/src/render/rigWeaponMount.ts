@@ -10,9 +10,11 @@ import type { ResolvedBoneTransform, WorldPose, WorldPositions } from './types';
 // Two mount paths exist because the roster has two body plans (design/13):
 //
 //   - 'socket' — the hero's orb-core, whose weapon modules ORBIT the core on their own bones
-//     ("two weapon modules that orbit it on glowing energy tethers"). The module sits on a
-//     socket bone's TIP, which FK moves every frame, and a tether is drawn from the core out
-//     to it. This is the path that has always existed.
+//     ("two weapon modules that orbit it on glowing energy tethers"). The ACTIVE module rides
+//     the socket bone's own reach around the core, in the direction the hero is aiming (see
+//     GROUND-PLANE ORBIT below — until 2026-09-02 it was pinned to the bone's TIP and merely
+//     spun in place, which is what put the gun off the shot's own line); a tether is drawn
+//     from the core out to it. This is the path that has always existed.
 //
 //   - 'held' — the enemy body forms, which have no socket bone and never will: critter-core
 //     is deliberately the smallest useful rig (one bone, no arms), and brute-core/floater-core
@@ -34,6 +36,31 @@ import type { ResolvedBoneTransform, WorldPose, WorldPositions } from './types';
 //     armament, so a mob's rifle would be wrong on it. It still fires in the sim; what it must
 //     not do is draw one.
 export type WeaponMountMode = 'socket' | 'held' | 'none';
+
+// ## GROUND-PLANE ORBIT (2026-09-02) — why both mount paths place the module the same way
+//
+// Both paths carry the module OUT ALONG THE AIM RAY, in the ground plane, at a fixed height:
+// `x += cos(aim) * reach`, `y += sin(aim) * reach`, and the height it hangs at (`pivotY`) is
+// left alone. That is not a stylistic choice, it is forced by how a bullet is drawn. The sim
+// spawns a round `muzzleOffset` along the aim ray ON THE GROUND, lifted by `bulletZ`, and
+// `Entity.applyTransform` draws it at `screen.y = groundY - z` — the ground plane is mapped
+// 1:1, unsquashed. So the ONLY way a drawn barrel tip can sit on the line the round actually
+// flies along is to be displaced by the same unsquashed ground-plane rule.
+//
+// Before this, neither path did. The socket path left its bone at a fixed rest angle and only
+// SPUN the module in place, so the tip it hangs off was a fixed body-local point — so firing straight up drew the gun 20.8 world
+// px to the SIDE of the round's own line, and `Bullet.setMuzzleOrigin` then had to eat that
+// sideways gap during flight, which is a curve by construction (user report 2026-09-02: *"子弹
+// 从枪口出去后进行了弧形的漂移，然后才直线运动"* — measured off the recorded run at 43° off-aim at the
+// muzzle, converging over ~150 ms). The held path squashed its vertical offset by 0.45 for a
+// "the gun walks across the body's SURFACE" reason, which is the same mistake in miniature: a
+// mob's gun is held out at arm's length in the direction it is aiming, which is a ground-plane
+// displacement, not a walk across a sphere.
+//
+// The residual disagreement with the sim is now a pure distance ALONG the shot (the drawn reach
+// vs `muzzleOffset` — `muzzleParity`'s table), which `Bullet` eases out without bending
+// anything. `muzzleParity.test.ts` bounds the perpendicular component at every aim angle, since
+// that — not the along-track gap — is the component that draws an arc.
 
 // The socket that visibly carries the mounted weapon sprite (design/03 "swapping the
 // active slot swaps which socket fires" — the demo's `attack` clip already privileges
@@ -70,10 +97,6 @@ export const MODULE_Z_BEHIND = -2;
  * holds its gun.
  */
 export const HELD_MOUNT_R = 1.0;
-/** The vertical half of the held mount's offset is squashed: this is a tilted view
- *  (design/01), so a body's surface covers less screen distance vertically than
- *  horizontally. Same constant and same reason as `RigSkin`'s own `EYE_TRACK_SQUASH`. */
-export const HELD_MOUNT_SQUASH = 0.45;
 
 /**
  * Which mount path this rig uses. Declared on the `RigDef` itself, because it is a statement
@@ -89,12 +112,64 @@ export function resolveWeaponMount(rig: Rig): WeaponMountMode {
   return rig.weaponMount ?? (rig.boneMap.has(ACTIVE_WEAPON_SOCKET) ? 'socket' : 'none');
 }
 
+/**
+ * Turn the ACTIVE weapon socket bone to the aim, as a clip-style rotation on the transform map
+ * FK is about to be computed from — i.e. make the bone ORBIT the core (see GROUND-PLANE ORBIT
+ * above). Mutates `transforms`, which is `sampleClip`'s own fresh map, and no-ops for a rig
+ * with no such bone.
+ *
+ * Stated as a DELTA because that is what `Rig.computeFK` consumes (`wa = parent.wa + rla +
+ * delta`), so the target angle has to have the chain's own rotation taken back out of it: the
+ * bone's rest world angle, plus whatever an ancestor's clip rotation has already turned it by
+ * (the `move` clip leans the shell 10°). Without that subtraction the hero's lean would swing
+ * the gun off the aim ray while running, which is precisely the class of error this whole pass
+ * is about — the drawn gun has to sit on the line its own bullets fly along, in every pose.
+ *
+ * A clip's own entry for the bone is preserved apart from its rotation: `idle`/`move` bob it
+ * with `translateY` and that bob is how the gun rides with the body.
+ */
+export function orbitActiveSocketToAim(
+  rig: Rig,
+  transforms: Map<string, ResolvedBoneTransform>,
+  canonicalAngle: number,
+): void {
+  const bone = rig.boneMap.get(ACTIVE_WEAPON_SOCKET);
+  if (!bone) return;
+  let inherited = 0;
+  for (let p = bone.parent; p && p !== 'root'; p = rig.boneMap.get(p)?.parent ?? null) {
+    inherited += transforms.get(p)?.rotation ?? 0;
+  }
+  const prev = transforms.get(ACTIVE_WEAPON_SOCKET);
+  transforms.set(ACTIVE_WEAPON_SOCKET, {
+    rotation: (canonicalAngle * 180) / Math.PI - bone.rwa - inherited,
+    scaleX: prev?.scaleX ?? 1,
+    scaleY: prev?.scaleY ?? 1,
+    translateX: prev?.translateX ?? 0,
+    translateY: prev?.translateY ?? 0,
+    alpha: prev?.alpha ?? 1,
+  });
+}
+
 /** Where a module sits and how it is rotated, in the rig's own authoring-px space. */
 export interface ModuleMount {
   x: number;
   y: number;
   /** Local rotation in radians, BEFORE the texture's own `rotationOffsetRad` is added. */
   angle: number;
+  /**
+   * The rig-local `y` of the plane this module orbits in — i.e. MINUS its height above the
+   * actor's ground point (rig-local y grows downward, and the rig's origin is the actor's
+   * own ground point, so a module hanging at chest height reports a negative number).
+   *
+   * Exists because a rig is drawn in SCREEN space, where a module's `y` is two different
+   * world quantities added together — how high off the floor it is, and how far north of its
+   * carrier it stands — and the bullet chain has to tell them apart (`RigSkin.muzzleHeight`
+   * → `Scene`: the round is drawn at the height it was fired from, so the only remaining
+   * disagreement with the sim's spawn point is a distance ALONG the shot). Splitting them
+   * here rather than at the far end is what makes that possible at all: past this function
+   * the two are one number and nothing downstream can recover them.
+   */
+  pivotY: number;
 }
 
 /**
@@ -119,7 +194,31 @@ export function activeModuleMount(
 ): ModuleMount | null {
   if (mode === 'socket') {
     const pose = worldPose.get(ACTIVE_WEAPON_SOCKET);
-    return pose ? recoiled({ x: pose.ex, y: pose.ey, angle: canonicalAngle }, recoilPx) : null;
+    if (!pose) return null;
+    // Still the socket bone's TIP — but that tip now ORBITS to the aim, because the bone
+    // itself is turned there before FK runs (`orbitActiveSocketToAim` below). Doing it in the
+    // skeleton rather than here is what keeps the module, its socket ring, the tether drawn
+    // out to it and its contact shade on the core all in one place: an orbit applied to the
+    // module alone left the gun floating 70+ px from the ring that is supposed to hold it,
+    // with the tether still reaching for where the ring was. Measured on a live frame — no
+    // test saw it, because nothing asserts that a module sits on its own mount.
+    // `+ translate` for the same reason the held path below does it: `computeFK` folds a
+    // clip's ROTATION into a bone's tip but not its TRANSLATION, and the sprite loop adds that
+    // translation to the socket's own ring art — so without it the ring rides the idle bob and
+    // the module hanging on it does not. Small (6 authoring px at the bob's extreme, 0.9 px on
+    // the frame it was first noticed) and it was there before the 2026-09-02 orbit pass, but it
+    // is the same defect in miniature, and fixing it is what lets `rigComposition` assert the
+    // two coincide EXACTLY through every shipped clip rather than merely overlapping.
+    const t = transforms.get(ACTIVE_WEAPON_SOCKET);
+    return recoiled(
+      {
+        x: pose.ex + (t?.translateX ?? 0),
+        y: pose.ey + (t?.translateY ?? 0),
+        angle: canonicalAngle,
+        pivotY: pose.sy + (t?.translateY ?? 0),
+      },
+      recoilPx,
+    );
   }
   if (mode !== 'held' || !body) return null;
   const pose = worldPose.get(body.boneId);
@@ -130,8 +229,9 @@ export function activeModuleMount(
   const reach = body.drawnR * HELD_MOUNT_R;
   return recoiled({
     x: cx + Math.cos(canonicalAngle) * reach,
-    y: cy + Math.sin(canonicalAngle) * reach * HELD_MOUNT_SQUASH,
+    y: cy + Math.sin(canonicalAngle) * reach,
     angle: canonicalAngle,
+    pivotY: cy,
   }, recoilPx);
 }
 
@@ -152,9 +252,9 @@ export function activeModuleMount(
 function recoiled(mount: ModuleMount, px: number): ModuleMount {
   if (px === 0) return mount;
   return {
+    ...mount,
     x: mount.x - Math.cos(mount.angle) * px,
     y: mount.y - Math.sin(mount.angle) * px,
-    angle: mount.angle,
   };
 }
 
@@ -170,7 +270,9 @@ function recoiled(mount: ModuleMount, px: number): ModuleMount {
 export function idleModuleMount(mode: WeaponMountMode, worldPose: WorldPositions): ModuleMount | null {
   if (mode !== 'socket') return null;
   const pose: WorldPose | undefined = worldPose.get(IDLE_WEAPON_SOCKET);
-  return pose ? { x: pose.ex, y: pose.ey, angle: (pose.wa * Math.PI) / 180 } : null;
+  // Not an orbit: this one is decorative and stays on its own bone (see this function's doc),
+  // so its tip IS its position and the plane it hangs in is that bone's own pivot.
+  return pose ? { x: pose.ex, y: pose.ey, angle: (pose.wa * Math.PI) / 180, pivotY: pose.sy } : null;
 }
 
 /**

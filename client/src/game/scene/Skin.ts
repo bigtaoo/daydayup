@@ -127,13 +127,14 @@ export class Skin {
    *  ends at `radiusPx * 1.3`, which is within a pixel of the enemy gun's sim muzzle
    *  offset, so those bullets never needed correcting. Only valid after `setFacing` has
    *  laid the rig out for this frame. */
-  muzzleAnchor(): { x: number; y: number } | null {
+  muzzleAnchor(): { x: number; y: number; heightPx: number } | null {
     const local = this.rig?.muzzleLocal();
     if (!local) return null;
     // `wrapper` (the constructor's authoring-px -> gameplay-radius normalization) sits
-    // between the rig and `view`, so its uniform scale still has to be applied.
+    // between the rig and `view`, so its uniform scale still has to be applied — to the
+    // height as much as to the point, since both are in the rig's authoring px.
     const s = this.rigScale;
-    return { x: local.x * s, y: local.y * s };
+    return { x: local.x * s, y: local.y * s, heightPx: local.heightPx * s };
   }
 
   /** Whether a real `.tao` rig is active (vs. the Graphics placeholder). */

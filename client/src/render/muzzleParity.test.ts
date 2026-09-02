@@ -110,6 +110,7 @@ import type { Texture } from 'pixi.js';
 import {
   ENEMY_BLUEPRINTS,
   PLAYER_BASE,
+  TICK_RATE,
   WEAPON_SPECS,
   toSimSpec,
   type RangedSimSpec,
@@ -139,11 +140,14 @@ vi.mock('pixi.js', async (importOriginal) => {
 
 import { Bullet } from '../game/scene/Bullet';
 import { fpToPx } from '../game/coords';
+import { facingFromAngle } from './facing';
+import type { ResolvedBoneTransform } from './types';
 import { BODY_FILL, BODY_FILL_DEFAULT, RIG_DEFS } from './skinRegistry';
 import {
   activeModuleMount,
   barrelReach,
   moduleMuzzleLocal,
+  orbitActiveSocketToAim,
   resolveWeaponMount,
   type WeaponMountMode,
 } from './rigWeaponMount';
@@ -291,7 +295,7 @@ function parityRows(): ParityRow[] {
 function derivedEaseDistancePx(offsetPx: number): number {
   const b = new Bullet(4);
   b.place(0, 0, 0);
-  b.setMuzzleOrigin(offsetPx, 0);
+  b.setMuzzleOrigin(offsetPx, 0, 1, 0);
   b.interpolate(1, 0);
   for (let i = 1; i <= 4000; i++) {
     const d = i * 0.25;
@@ -442,7 +446,7 @@ describe('sim ↔ render muzzle parity — the gap the ease has to absorb', () =
     const drawnStep = (gap: number): number => {
       const b = new Bullet(4);
       b.place(0, 0, 0);
-      b.setMuzzleOrigin(gap, 0);
+      b.setMuzzleOrigin(gap, 0, 1, 0);
       b.interpolate(1, 0);
       const before = b.x;
       b.pushState(0.5, 0, 0, 0);
@@ -497,9 +501,10 @@ describe('Bullet.setMuzzleOrigin — spent by the budget distance, driven by rea
   const SIM_X = 500;
   const SIM_GROUND_Y = 300;
 
-  /** `Scene`: `setMuzzleOrigin(muzzle.x - bx, muzzle.y - (by - bz))` — the drawn barrel tip
-   *  minus the engine's spawn point, the latter already lifted onto the screen by `bulletZ`. */
-  function realOffsetFor(id: string): { dx: number; dy: number; zPx: number } {
+  /** `Scene`: `setMuzzleOrigin(muzzle.x - bx, muzzle.y - (by - muzzleH), ux, uy)` — the drawn
+   *  barrel tip minus the engine's spawn point, the latter lifted onto the screen by the round's
+   *  own DRAWN height (`Actor.muzzleHeightPx`, the gun's) rather than by the sim's `bulletZ`. */
+  function realOffsetFor(id: string): { dx: number; dy: number; zPx: number; heightPx: number } {
     const sim = toSimSpec(WEAPON_SPECS[id]!) as RangedSimSpec;
     const entry = RIG_DEFS[HERO.rigName]!;
     const wrapper = HERO.radiusPx / entry.referenceRadius;
@@ -511,38 +516,47 @@ describe('Bullet.setMuzzleOrigin — spent by the budget distance, driven by rea
       getWeaponAnchor(id, 'ranged'), getWeaponRotationOffset(id, 'ranged'), getWeaponScale(id, 'ranged'),
     );
     const zPx = fpToPx(sim.bulletZ);
+    // What `Scene` draws the round at: the gun's own height (`RigSkin.muzzleHeight` is
+    // `-pivotY`, `Skin` scales it, and `Actor` adds the actor's lift — 0 for this hover-less
+    // harness). Since 2026-09-02 that is the height the offset is measured against.
+    const heightPx = -mount.pivotY * wrapper;
     return {
       dx: local.x * wrapper - fpToPx(sim.muzzleOffset),
-      // The bullet's SCREEN y is its ground y minus the z lift, and the shooter's own ground
-      // y is the bullet's (aim is due east, so the sim muzzle slides purely horizontally) —
-      // so the vertical half of the correction is the drawn barrel's height plus that lift.
-      dy: local.y * wrapper + zPx,
+      // The round's SCREEN y is its ground y minus its drawn height, and the shooter's own
+      // ground y is the round's (aim is due east, so the sim muzzle slides purely
+      // horizontally) — so the vertical half of the correction is what is left of the drawn
+      // barrel's own y once the round has been lifted to the same height.
+      dy: local.y * wrapper + heightPx,
       zPx,
+      heightPx,
     };
   }
 
   it('spends a real blaster shot’s whole correction within the ease budget', () => {
-    const { dx, dy, zPx } = realOffsetFor('blaster');
-    // Non-vacuous: this weapon's two tables really do disagree, in BOTH axes — a zero offset
-    // would make the "fully spent" assertion below true for free.
-    expect(Math.hypot(dx, dy)).toBeGreaterThan(5);
-    expect(dx).not.toBe(0);
-    expect(dy).not.toBe(0);
+    const { dx, dy, zPx, heightPx } = realOffsetFor('blaster');
+    // Non-vacuous along the shot: this weapon's two tables really do disagree about how far
+    // out the muzzle is (+9.5 px, the table above), so "fully spent" is not true for free.
+    expect(dx).toBeGreaterThan(5);
+    // ...and vacuous ACROSS it, deliberately, which is the 2026-09-02 fix: aiming due east
+    // the only cross-track term was the height mismatch, and the round is now drawn at the
+    // gun's height, so there is nothing left to bend it. This asserted `dy !== 0` before.
+    expect(dy).toBeCloseTo(0, 9);
 
     const b = new Bullet(4);
     b.place(SIM_X, SIM_GROUND_Y, zPx);
-    b.setMuzzleOrigin(dx, dy);
+    b.setDrawnHeight(heightPx);
+    b.setMuzzleOrigin(dx, dy, 1, 0);
     b.interpolate(1, 0);
-    // Frame one: drawn at the gun, i.e. the full correction over the lifted sim position.
+    // Frame one: drawn at the gun — at its height, and its whole reach out along the shot.
     expect(b.x).toBeCloseTo(SIM_X + dx, 6);
-    expect(b.y).toBeCloseTo(SIM_GROUND_Y - zPx + dy, 6);
+    expect(b.y).toBeCloseTo(SIM_GROUND_Y - heightPx, 6);
 
     // ...and after the budget distance of travel, exactly on the sim line. Exact equality, not
     // toBeCloseTo: the correction is switched off, not merely small.
     b.pushState(SIM_X + EASE_PX, SIM_GROUND_Y, zPx, 0);
     b.interpolate(1, 1000 / 30);
     expect(b.x).toBe(SIM_X + EASE_PX);
-    expect(b.y).toBe(SIM_GROUND_Y - zPx);
+    expect(b.y).toBe(SIM_GROUND_Y - heightPx);
   });
 
   it('still has correction left one px short of the budget, for every ranged weapon', () => {
@@ -553,16 +567,247 @@ describe('Bullet.setMuzzleOrigin — spent by the budget distance, driven by rea
     expect(ids.length).toBeGreaterThanOrEqual(15);
     for (const id of ids) {
       if (id === 'enemygun') continue; // mounted on a mob body, measured in the sweep above
-      const { dx, dy, zPx } = realOffsetFor(id);
+      const { dx, dy, zPx, heightPx } = realOffsetFor(id);
       const b = new Bullet(4);
       b.place(SIM_X, SIM_GROUND_Y, zPx);
-      b.setMuzzleOrigin(dx, dy);
+      b.setDrawnHeight(heightPx);
+      b.setMuzzleOrigin(dx, dy, 1, 0);
       b.interpolate(1, 0);
       b.pushState(SIM_X + EASE_PX - 1, SIM_GROUND_Y, zPx, 0);
       b.interpolate(1, 1000 / 30);
-      const residual = Math.hypot(b.x - (SIM_X + EASE_PX - 1), b.y - (SIM_GROUND_Y - zPx));
+      const residual = Math.hypot(b.x - (SIM_X + EASE_PX - 1), b.y - (SIM_GROUND_Y - heightPx));
       expect(residual, `${id} correction at 1px short of the budget`).toBeGreaterThan(0);
     }
+  });
+});
+
+// ── 3b. The component that draws an ARC ─────────────────────────────────────────────────
+
+/**
+ * The drawn barrel tip at an ARBITRARY aim, split into the two world quantities its single
+ * screen-space `y` is made of — where it is on the ground, and how high off the floor.
+ *
+ * Everything above this point is evaluated at `AIM_EAST`, the pose where the whole chain is
+ * one scalar reach along the aim ray. That is what let the arc through: at aim 0 the gap is
+ * almost entirely ALONG the shot, which only makes a round look fast or slow, while the
+ * component ACROSS it — the one that has to be spent by moving the round sideways while it
+ * flies forward, i.e. the one that draws a curve — is invisible in that single pose. Sweeping
+ * the aim is the only way to see it at all.
+ *
+ * Runs the shipped chain (`facingFromAngle` → the canonical socket angle → `activeModuleMount`
+ * → `moduleMuzzleLocal`), including the whole-rig mirror, exactly as `RigSkin` composes it.
+ */
+function drawnMuzzleAt(
+  weaponId: string,
+  carrier: Carrier,
+  aimRad: number,
+): { x: number; y: number; heightPx: number } {
+  const entry = RIG_DEFS[carrier.rigName]!;
+  const mode: WeaponMountMode = resolveWeaponMount(entry.rig);
+  const { flipX } = facingFromAngle(aimRad); // the body turns to the aim (Scene/facing.ts)
+  const canonical = flipX === 1 ? aimRad : Math.PI - aimRad;
+  // Posed the way `RigSkin.update` poses it: the active socket is turned to the aim BEFORE FK,
+  // so its tip — where the module hangs — orbits the core. Skipping this would measure a rig
+  // the game never draws (and would report the arc this file exists to bound).
+  const transforms = new Map<string, ResolvedBoneTransform>();
+  if (mode === 'socket') orbitActiveSocketToAim(entry.rig, transforms, canonical);
+  const worldPose = entry.rig.computeFK(0, 0, transforms);
+  const body = bodyBone(entry.rig);
+  const fill = BODY_FILL[carrier.rigName] ?? BODY_FILL_DEFAULT;
+  const mount = activeModuleMount(
+    mode, worldPose, transforms, canonical, { boneId: body.boneId, drawnR: body.bodyR * fill }, 0,
+  )!;
+  const local = moduleMuzzleLocal(
+    mount, canonical, flipX, getWeaponTexture(weaponId, 'ranged')!,
+    getWeaponAnchor(weaponId, 'ranged'), getWeaponRotationOffset(weaponId, 'ranged'),
+    getWeaponScale(weaponId, 'ranged'),
+  );
+  const wrapper = carrier.radiusPx / entry.referenceRadius;
+  return { x: local.x * wrapper, y: local.y * wrapper, heightPx: -mount.pivotY * wrapper };
+}
+
+/** Aims swept below. 24 directions rather than the four axes: the failure this bounds is
+ *  worst at the vertical ones but a squash or a fixed body-local mount is wrong at every
+ *  angle, and an off-axis aim is the case a mirrored rig gets wrong on its own. */
+const NEWLINE = String.fromCharCode(10);
+
+const SWEPT_AIMS = Array.from({ length: 24 }, (_, i) => (i * Math.PI * 2) / 24);
+
+/**
+ * How far off the shot's own line the drawn barrel tip is allowed to sit, world px.
+ *
+ * This is a HARD zero in the geometry — both mount paths carry the module along the aim ray
+ * in the ground plane and the round is drawn at the gun's height, so the two lines coincide
+ * by construction and only floating-point dust separates them. The bound is a tenth of a
+ * world px because that is already invisible (the room camera zooms ~3.4-4.5x, so this is
+ * under half a screen pixel) while being tight enough that no re-introduction of a real
+ * offset can hide under it: the smallest one this class of bug has actually produced was
+ * 10.4 px, and the reported one was 20.8 px.
+ */
+const CROSS_TRACK_BOUND_PX = 0.1;
+
+describe('the drawn muzzle sits ON the shot’s own line, at every aim angle', () => {
+  /**
+   * The measurement the 2026-09-02 arc fix rests on, and the one this whole file was missing.
+   *
+   * For each weapon on each carrier, at 24 aim angles: put the drawn barrel tip and the sim's
+   * spawn point in the same frame (both drawn at the gun's height, which is what `Scene` does
+   * now), and take the component of the difference PERPENDICULAR to the shot. That component
+   * is what `Bullet` would have to spend sideways during flight — an arc out of the barrel.
+   *
+   * Before the fix this reported 20.8 px firing straight up on the hero (the round left the
+   * barrel 43° off-aim and slid sideways for ~150 ms, which is the user's report) and 10.4 px
+   * firing east. Both are gone, not merely reduced: `Bullet.setMuzzleOrigin` also projects
+   * the offset onto the shot now, so what this bounds is the art/sim disagreement itself
+   * rather than how visible the renderer lets it become.
+   */
+  it('leaves no component across the shot for any weapon, on any body, at any angle', () => {
+    const offenders: string[] = [];
+    let checked = 0;
+    for (const [id, spec] of Object.entries(WEAPON_SPECS)) {
+      if (spec.kind !== 'ranged') continue;
+      const sim = toSimSpec(spec) as RangedSimSpec;
+      const m = fpToPx(sim.muzzleOffset);
+      for (const carrier of id === 'enemygun' ? enemyCarriers() : [HERO]) {
+        for (const aim of SWEPT_AIMS) {
+          const ux = Math.cos(aim);
+          const uy = Math.sin(aim);
+          const drawn = drawnMuzzleAt(id, carrier, aim);
+          // The sim's spawn point in the same frame: `muzzleOffset` along the aim ray on the
+          // ground, drawn at the height `Scene` now lifts the round to (the gun's own).
+          const dx = drawn.x - m * ux;
+          const dy = drawn.y - (m * uy - drawn.heightPx);
+          const cross = -dx * uy + dy * ux;
+          checked++;
+          if (Math.abs(cross) > CROSS_TRACK_BOUND_PX) {
+            offenders.push(
+              `${id} on ${carrier.label} at ${((aim * 180) / Math.PI).toFixed(0)}°: ${cross.toFixed(2)}px across`,
+            );
+          }
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(400); // the sweep really ran
+      const detail = offenders.join(NEWLINE + '  ');
+      expect(offenders, `drawn muzzle off the shot line:${NEWLINE}  ${detail}`).toEqual([]);
+  });
+
+  // The control. A sweep that reports zero proves nothing unless the same measurement fires on
+  // geometry that IS off the line — and this is the exact shape of the shipped bug: a module
+  // pinned to a fixed body-local point instead of orbiting to the aim.
+  it('the same measurement DOES fire on a module that does not orbit to the aim', () => {
+    const carrier = HERO;
+    const entry = RIG_DEFS[carrier.rigName]!;
+    const wrapper = carrier.radiusPx / entry.referenceRadius;
+    const sim = toSimSpec(WEAPON_SPECS['blaster']!) as RangedSimSpec;
+    const m = fpToPx(sim.muzzleOffset);
+    const aim = -Math.PI / 2; // straight up the screen — the reported shot
+    // The OLD geometry: FK with the socket bone left at its REST angle, so its tip is a fixed
+    // body-local point and only the module spun to the aim.
+    const pose = entry.rig.computeFK(0, 0, new Map()).get('socket_r')!;
+    const pinned = moduleMuzzleLocal(
+      { x: pose.ex, y: pose.ey }, Math.PI - aim, -1, getWeaponTexture('blaster', 'ranged')!,
+      getWeaponAnchor('blaster', 'ranged'), getWeaponRotationOffset('blaster', 'ranged'),
+      getWeaponScale('blaster', 'ranged'),
+    );
+    const dx = pinned.x * wrapper - m * Math.cos(aim);
+    const dy = pinned.y * wrapper - (m * Math.sin(aim) - -pose.sy * wrapper);
+    const cross = -dx * Math.sin(aim) + dy * Math.cos(aim);
+    expect(Math.abs(cross)).toBeGreaterThan(20); // the 20.8 px measured off the recorded run
+  });
+});
+
+/**
+ * THE REPORTED SHOT, end to end (2026-09-02).
+ *
+ * The 24-angle sweep above bounds the GEOMETRY; this drives the whole chain the way `Scene`
+ * does — real catalog numbers, the real rig, a real `Bullet` flown at the weapon's own speed
+ * over real 60 fps frames — and asks the only question the user actually asked: does the round
+ * leave the barrel in a straight line?
+ *
+ * The pose is the one their recorded run ended on (`ddreplay-dungeon-1788278288285`, ticks
+ * 1927 and 2357, the tick they marked): a `blaster` fired straight up the screen with no
+ * enemies alive. Measured on that file BEFORE the fix, off the shipped classes:
+ *
+ *   D = (-20.8, +0.9) world px, i.e. 20.8 px PERPENDICULAR to the shot
+ *   the drawn round left the barrel 43° off-aim and swept back 43 -> 39 -> 34 -> 29 -> 23
+ *   -> 16 -> 8 -> 1 -> 0 over 9 render frames (~150 ms, ~43 px of travel), sliding 20.8 px
+ *   sideways — ~79 screen px at the room camera's ~3.8x zoom — before flying straight.
+ *
+ * Straight up is the worst case for the old geometry and the best test of the new: it is the
+ * aim where the socket bone's fixed body-local offset was entirely across the shot, and where
+ * the sim's own muzzle offset is entirely along it.
+ */
+describe('the shot from the report flies straight out of the barrel', () => {
+  it('leaves the blaster dead along the aim, firing straight up the screen', () => {
+    const sim = toSimSpec(WEAPON_SPECS['blaster']!) as RangedSimSpec;
+    const aim = -Math.PI / 2; // straight up the screen — 270°, the reported shot
+    const ux = Math.cos(aim);
+    const uy = Math.sin(aim);
+    const m = fpToPx(sim.muzzleOffset);
+    const bz = fpToPx(sim.bulletZ);
+    const speedPxPerTick = fpToPx(sim.bulletSpeed);
+    expect(speedPxPerTick).toBeGreaterThan(0); // a stationary round cannot show an arc
+
+    // `Scene`, verbatim: the drawn barrel tip minus the engine's spawn point, the round lifted
+    // to the gun's own height. Stated in the shooter's own frame — the actor's ground point at
+    // the origin — which the hover drops out of exactly: it lowers `muzzle.y` and raises
+    // `heightPx` by the same amount, so `dy` below cannot depend on where in its bob the body
+    // happened to be. (`Actor.test.ts` pins that composition; this is the geometry.)
+    const drawn = drawnMuzzleAt('blaster', HERO, aim);
+    const bx = m * ux;
+    const by = m * uy;
+    const dx = drawn.x - bx;
+    const dy = drawn.y - (by - drawn.heightPx);
+    // Non-vacuous: the two tables still disagree, by the blaster's +9.5 px of extra reach...
+    expect(dx * ux + dy * uy).toBeGreaterThan(5);
+    // ...and that disagreement is now entirely ALONG the shot. This is the number that was
+    // -20.8 px, and it is the whole difference between a straight line and an arc.
+    expect(-dx * uy + dy * ux).toBeCloseTo(0, 6);
+
+    const b = new Bullet(4);
+    b.place(bx, by, bz);
+    b.setDrawnHeight(drawn.heightPx);
+    b.setMuzzleOrigin(dx, dy, ux, uy);
+
+    // 30 render frames at 60 fps over a 30 Hz sim — well past the ease budget, so this covers
+    // the correction being spent AND the flight after it.
+    const frameMs = 1000 / 60;
+    const framesPerTick = (1000 / TICK_RATE) / frameMs;
+    let acc = 0;
+    let simTick = 0;
+    let prev: { x: number; y: number } | null = null;
+    let maxOffAimDeg = 0;
+    let maxSidewaysPx = 0;
+    let travelled = 0;
+    for (let f = 0; f < 30; f++) {
+      acc += 1;
+      if (acc >= framesPerTick) {
+        acc -= framesPerTick;
+        simTick++;
+        b.pushState(bx + ux * speedPxPerTick * simTick, by + uy * speedPxPerTick * simTick, bz, 0);
+      }
+      b.interpolate(Math.min(1, acc / framesPerTick), frameMs);
+      // Sideways distance from the line the barrel points along — the arc, if there is one.
+      const sideways = -(b.x - drawn.x) * uy + (b.y - drawn.y) * ux;
+      if (Math.abs(sideways) > Math.abs(maxSidewaysPx)) maxSidewaysPx = sideways;
+      if (prev) {
+        const vx = b.x - prev.x;
+        const vy = b.y - prev.y;
+        const step = Math.hypot(vx, vy);
+        if (step > 1e-9) {
+          travelled += step;
+          const off = Math.abs((Math.atan2(-vx * uy + vy * ux, vx * ux + vy * uy) * 180) / Math.PI);
+          if (off > maxOffAimDeg) maxOffAimDeg = off;
+        }
+      }
+      prev = { x: b.x, y: b.y };
+    }
+    // It really flew (a round that never moved would pass every assertion below for free).
+    expect(travelled).toBeGreaterThan(EASE_PX);
+    // Was 43°, and 20.8 px. Both are now floating-point dust.
+    expect(maxOffAimDeg).toBeCloseTo(0, 6);
+    expect(Math.abs(maxSidewaysPx)).toBeLessThan(CROSS_TRACK_BOUND_PX);
   });
 });
 
