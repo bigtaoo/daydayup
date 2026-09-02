@@ -697,11 +697,15 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 - **09-01** [The curtain re-encode, settled by looking at it](roadmap/13-2026-09-01-asset-phases.md#the-curtain-re-encode-settled-by-looking-at-it-2026-09-01-docs-only) — 606 kB for one fixture, put to the owner as a render comparison instead of argued from bytes; it stays. `art` `docs`
 - **09-01** [Two days of features, audited for what the tests did not say](roadmap/13-2026-09-01-asset-phases.md#two-days-of-features-audited-for-what-the-tests-did-not-say-2026-09-01-engine--client--build-engine_version-5051) — Two bugs the green suite could not see: a locking door sealed the loot it closed over (v51), and a stray file crashed the WeChat build. Then ~30 test gaps, each verified by mutation. `engine` `test` `tools` `platform` `docs`
 
+**[2026-09-02 — the muzzle](roadmap/14-2026-09-02-muzzle.md)**
+
+- **09-02** [The gun steps onto the line its own bullets fly along](roadmap/14-2026-09-02-muzzle.md#the-gun-steps-onto-the-line-its-own-bullets-fly-along-2026-09-02-client-only) — A bullet cannot be un-bent in flight, so the gun moved onto the shot's line: the socket bone orbits to the aim, the round is drawn at the gun's height, and the correction is projected onto the shot. `render` `art` `test` `docs`
+
 ## The work log — by theme
 
-The same 82 entries, grouped. An entry with more than one tag appears more than once.
+The same 83 entries, grouped. An entry with more than one tag appears more than once.
 
-**`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(43)*
+**`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(44)*
 
 - 08-12 [Live-play bug-fix pass](roadmap/02-2026-08-12--08-15.md#live-play-bug-fix-pass--2026-08-12-user-report-from-a-dungeon-mode-screenshot)
 - 08-12 [Viewport-fill bug-fix pass](roadmap/02-2026-08-12--08-15.md#viewport-fill-bug-fix-pass--2026-08-12)
@@ -747,8 +751,9 @@ The same 82 entries, grouped. An entry with more than one tag appears more than 
 - 08-30 [The gun never moved, and the flash was aimed at the floor](roadmap/11-2026-08-28--08-31.md#the-gun-never-moved-and-the-flash-was-aimed-at-the-floor-2026-08-30-client--engine)
 - 08-30 [A slow bullet's curve, budgeted by distance instead of a clock](roadmap/11-2026-08-28--08-31.md#a-slow-bullets-curve-budgeted-by-distance-instead-of-a-clock-2026-08-30-client)
 - 08-31 [A render-side instrument for the still-open report](roadmap/11-2026-08-28--08-31.md#a-render-side-instrument-for-the-still-open-report-2026-08-31-client-only-no-engine-bump)
+- 09-02 [The gun steps onto the line its own bullets fly along](roadmap/14-2026-09-02-muzzle.md#the-gun-steps-onto-the-line-its-own-bullets-fly-along-2026-09-02-client-only)
 
-**`art`** — authored assets and the art pipeline *(13)*
+**`art`** — authored assets and the art pipeline *(14)*
 
 - 08-12 [Shield-centering follow-up + rig-art aliasing fix](roadmap/02-2026-08-12--08-15.md#shield-centering-follow-up--rig-art-aliasing-fix--2026-08-12)
 - 08-17 [The rigged characters were assembled wrong on screen](roadmap/03-2026-08-17--08-19.md#the-rigged-characters-were-assembled-wrong-on-screen-2026-08-17-user-report)
@@ -763,6 +768,7 @@ The same 82 entries, grouped. An entry with more than one tag appears more than 
 - 08-27 [The void gets a face](roadmap/10-2026-08-27.md#the-void-gets-a-face-2026-08-27-client-only)
 - 09-01 [The first download becomes code only](roadmap/13-2026-09-01-asset-phases.md#the-first-download-becomes-code-only-2026-09-01-client--build--docs)
 - 09-01 [The curtain re-encode, settled by looking at it](roadmap/13-2026-09-01-asset-phases.md#the-curtain-re-encode-settled-by-looking-at-it-2026-09-01-docs-only)
+- 09-02 [The gun steps onto the line its own bullets fly along](roadmap/14-2026-09-02-muzzle.md#the-gun-steps-onto-the-line-its-own-bullets-fly-along-2026-09-02-client-only)
 
 **`perf`** — frame time, draw calls, geometry budgets *(12)*
 
@@ -815,7 +821,7 @@ The same 82 entries, grouped. An entry with more than one tag appears more than 
 - 08-25 [The Seven Districts: the launch arena gets authored](roadmap/06-2026-08-25.md#the-seven-districts-the-launch-arena-gets-authored-2026-08-25-content)
 - 08-25 [The three parked rules that had only shipped half](roadmap/06-2026-08-25.md#the-three-parked-rules-that-had-only-shipped-half-2026-08-25-client--one-render-only-engine-field)
 
-**`test`** — coverage sweeps, gates, mutation batteries *(18)*
+**`test`** — coverage sweeps, gates, mutation batteries *(19)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 08-05 [Platform-layer test coverage pass](roadmap/01-2026-07-24--08-05.md#platform-layer-test-coverage-pass--2026-08-05-全部加测试)
@@ -835,6 +841,7 @@ The same 82 entries, grouped. An entry with more than one tag appears more than 
 - 09-01 [The parser every audio gate trusted had no test, and its own header was wrong](roadmap/12-2026-08-31-audio.md#the-parser-every-audio-gate-trusted-had-no-test-and-its-own-header-was-wrong-2026-09-01-tests)
 - 09-01 [The first download becomes code only](roadmap/13-2026-09-01-asset-phases.md#the-first-download-becomes-code-only-2026-09-01-client--build--docs)
 - 09-01 [Two days of features, audited for what the tests did not say](roadmap/13-2026-09-01-asset-phases.md#two-days-of-features-audited-for-what-the-tests-did-not-say-2026-09-01-engine--client--build-engine_version-5051)
+- 09-02 [The gun steps onto the line its own bullets fly along](roadmap/14-2026-09-02-muzzle.md#the-gun-steps-onto-the-line-its-own-bullets-fly-along-2026-09-02-client-only)
 
 **`audio`** — cues, music, the engine to sound channel *(3)*
 
@@ -878,7 +885,7 @@ The same 82 entries, grouped. An entry with more than one tag appears more than 
 - 08-31 [A seed was never a repro, and nothing had ever recorded a run](roadmap/11-2026-08-28--08-31.md#a-seed-was-never-a-repro-and-nothing-had-ever-recorded-a-run-2026-08-31-engine--client)
 - 09-01 [Two days of features, audited for what the tests did not say](roadmap/13-2026-09-01-asset-phases.md#two-days-of-features-audited-for-what-the-tests-did-not-say-2026-09-01-engine--client--build-engine_version-5051)
 
-**`docs`** — design docs and this log itself *(14)*
+**`docs`** — design docs and this log itself *(15)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-02 [Documentation pass](roadmap/01-2026-07-24--08-05.md#documentation-pass--2026-08-02)
@@ -894,6 +901,7 @@ The same 82 entries, grouped. An entry with more than one tag appears more than 
 - 09-01 [The first download becomes code only](roadmap/13-2026-09-01-asset-phases.md#the-first-download-becomes-code-only-2026-09-01-client--build--docs)
 - 09-01 [The curtain re-encode, settled by looking at it](roadmap/13-2026-09-01-asset-phases.md#the-curtain-re-encode-settled-by-looking-at-it-2026-09-01-docs-only)
 - 09-01 [Two days of features, audited for what the tests did not say](roadmap/13-2026-09-01-asset-phases.md#two-days-of-features-audited-for-what-the-tests-did-not-say-2026-09-01-engine--client--build-engine_version-5051)
+- 09-02 [The gun steps onto the line its own bullets fly along](roadmap/14-2026-09-02-muzzle.md#the-gun-steps-onto-the-line-its-own-bullets-fly-along-2026-09-02-client-only)
 
 **`net`** — matchmaking, sockets, reconnect *(1)*
 

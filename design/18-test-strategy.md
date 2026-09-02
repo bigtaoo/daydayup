@@ -344,6 +344,20 @@ the room for zone damage and touching the wall for collision.
   perpendicular component at 0.1 px, carries a control that fires the same measurement on
   the old geometry, and flies a real `Bullet` through the reported shot end to end.
 
+  **And a second gap, one layer up, which the FIX walked straight into.** The first version of
+  it moved the weapon module to the aim and left everything else hanging off the same bone
+  behind — the socket ring, the tether drawn out to it, the contact shade on the core — so the
+  gun floated 71 px from its own mount. That passed the whole suite, the new 24-angle sweep and
+  a four-mutation battery; one live frame caught it. Every check in the suite asserted where
+  the module **is**, and none that it is still **attached** to the thing that holds it, because
+  a rig's parts have that relationship by construction — right up until one is moved out of the
+  FK chain, which is the moment the construction stops being the guarantee. `rigComposition
+  .test.ts` now carries the attachment invariants (module == its own ring, through every clip;
+  the drawn tether's own endpoint reaches the module; a held gun the same distance from its
+  body in every direction; plus a control that the module actually travels). Re-applying the
+  regression kills 9 of them. **Generalised: when a change moves one part of an assembled
+  thing, the test belongs on the RELATIONSHIP, not on the moved part's coordinates.**
+
 Two related facts about bullet birth, both currently unasserted:
 
 - `WeaponFireSystem.spawnBullet` does **no wall test at all**. A shooter flush against a
