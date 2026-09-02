@@ -202,8 +202,21 @@ export function activeModuleMount(
     // module alone left the gun floating 70+ px from the ring that is supposed to hold it,
     // with the tether still reaching for where the ring was. Measured on a live frame — no
     // test saw it, because nothing asserts that a module sits on its own mount.
+    // `+ translate` for the same reason the held path below does it: `computeFK` folds a
+    // clip's ROTATION into a bone's tip but not its TRANSLATION, and the sprite loop adds that
+    // translation to the socket's own ring art — so without it the ring rides the idle bob and
+    // the module hanging on it does not. Small (6 authoring px at the bob's extreme, 0.9 px on
+    // the frame it was first noticed) and it was there before the 2026-09-02 orbit pass, but it
+    // is the same defect in miniature, and fixing it is what lets `rigComposition` assert the
+    // two coincide EXACTLY through every shipped clip rather than merely overlapping.
+    const t = transforms.get(ACTIVE_WEAPON_SOCKET);
     return recoiled(
-      { x: pose.ex, y: pose.ey, angle: canonicalAngle, pivotY: pose.sy },
+      {
+        x: pose.ex + (t?.translateX ?? 0),
+        y: pose.ey + (t?.translateY ?? 0),
+        angle: canonicalAngle,
+        pivotY: pose.sy + (t?.translateY ?? 0),
+      },
       recoilPx,
     );
   }

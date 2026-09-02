@@ -260,6 +260,46 @@ describe('Bullet.setMuzzleOrigin — easing from the barrel tip onto the sim lin
     }
   });
 
+  // setDrawnHeight (2026-09-02): the round is drawn at the height the GUN is drawn at rather
+  // than at the sim's own `bulletZ`, which is what leaves the muzzle correction purely
+  // along-track. It is a constant lift for the round's life — `Scene` sets it once at spawn —
+  // and these pin the two halves of that: it really moves the drawn round, and it does NOT
+  // flatten a ballistic that animates its own `z`.
+  it('draws the round at the gun’s height instead of at the sim’s own bulletZ', () => {
+    const b = parked(100, 200, 16); // bulletZ 0.5 grid = 16 px, the ranged catalog's value
+    b.interpolate(1, 0);
+    expect(b.y).toBeCloseTo(200 - 16, 6); // un-lifted: drawn at the sim's z
+
+    b.setDrawnHeight(26.4); // the hero's drawn barrel tip: hover 8 + the socket's own 18.4
+    b.interpolate(1, 0);
+    expect(b.y).toBeCloseTo(200 - 26.4, 6);
+  });
+
+  it('shifts a lob’s arc without flattening it — the round still climbs and falls', () => {
+    // `mortar` is the one shipped weapon whose `z` moves in flight (`bulletZ: 1.2`, "cosmetic
+    // arc peak", frameLibrary.ts). A lift applied per-frame against the CURRENT z — rather than
+    // frozen at spawn — would cancel that motion and draw a mortar shell travelling flat.
+    const b = parked(100, 200, 8);
+    b.setDrawnHeight(26.4);
+    b.interpolate(1, 0);
+    const launch = b.y;
+
+    const heights: number[] = [];
+    for (const [i, z] of [20, 38, 20, 4].entries()) {
+      b.pushState(100 + 10 * (i + 1), 200, z, 0);
+      b.interpolate(1, 16);
+      heights.push(b.y);
+    }
+    // Up, over, and down: the shape of the arc is intact...
+    expect(heights[0]!).toBeLessThan(launch);
+    expect(heights[1]!).toBeLessThan(heights[0]!);
+    expect(heights[2]!).toBeGreaterThan(heights[1]!);
+    expect(heights[3]!).toBeGreaterThan(heights[2]!);
+    // ...and the whole of it is lifted by the same constant, the gap between the gun's height
+    // and the z the round spawned at (26.4 - 8), not re-derived against each frame's z.
+    expect(200 - heights[1]! - 38).toBeCloseTo(26.4 - 8, 6);
+  });
+
   // Ties the distance-based budget to a REAL shipped weapon (design/07 elemental frame),
   // rather than only to synthetic numbers — so a future change to either the correction's
   // 40px budget or this weapon's own pace shows up here as a concrete before/after, not just
