@@ -24,11 +24,11 @@ import { bradToRad } from '../coords';
 import { BODY_TURN_PER_TICK } from '../../render/facing';
 import { resetActiveQuality, setActiveQuality } from '../../render/quality';
 import { SHATTER_MS } from './actorFilters';
-import type { Actor } from './Actor';
+import { Actor } from './Actor';
 import type { Entity } from './Entity';
 
-// EnergyShieldFilter/OutlineFilter/DissolveFilter (Actor's setShield/hitFlash/
-// startDissolve) all build a real WebGL GlProgram at construction time — unavailable
+// EnergyShieldFilter/OutlineFilter/DissolveFilter (Actor's setShield/onHurt/
+// onDeath) all build a real WebGL GlProgram at construction time — unavailable
 // under plain vitest, same reason Actor.test.ts/FxController.test.ts stub fx/filters.ts.
 // Spread over `vi.importActual` (the convention RoomBuilder.test.ts/wechatRoomBuild.test.ts
 // already use here): only the filter CLASSES touch GL, while the module also exports plain
@@ -903,5 +903,149 @@ describe('Scene.refreshQuality', () => {
     expect((dying[0]! as unknown as { skin: { view: { alpha: number } } }).skin.view.alpha).toBe(1);
     dying[0]!.interpolate(1, 350);
     expect((dying[0]! as unknown as { skin: { view: { alpha: number } } }).skin.view.alpha).toBeCloseTo(0.5, 1);
+  });
+});
+
+/**
+ * The two LIFECYCLE edges `Scene` owns (2026-09-02) — the halves of the animation vocabulary
+ * that have no engine event to hang off. `hurt` and `attack` arrive as events and are
+ * `EventReactor`'s business; spawning and dying are diffs of `GameState`'s own entity arrays,
+ * which is a thing only this file computes. Both are one line, and both are the only thing
+ * standing between the engine and a clip that has never played.
+ *
+ * Driven through the real `Scene.reconcile` rather than by calling `Actor` directly, because the
+ * claim is about WHERE in the diff each edge is, not about what the actor then does.
+ */
+describe('Scene.reconcile — the spawn/death edges reach the actor view', () => {
+  /** Spy on every `Actor` the scene builds, without importing Actor into the assertion: the two
+   *  methods are recorded on the instance the moment it appears in `views`. */
+  const calls = (scene: Scene, id: number): string[] => {
+    const v = (scene as unknown as { views: Map<number, unknown> }).views.get(id) as
+      { __log?: string[] } | undefined;
+    return v?.__log ?? [];
+  };
+  const instrument = (scene: Scene, id: number): void => {
+    const v = (scene as unknown as { views: Map<number, Record<string, unknown>> }).views.get(id)!;
+    const log: string[] = [];
+    v.__log = log;
+    for (const m of ['onSpawn', 'onDeath']) {
+      const real = v[m] as () => void;
+      v[m] = (): void => { log.push(m); real.call(v); };
+    }
+  };
+
+  it('a brand-new id gets onSpawn, exactly once, on the tick it first appears', () => {
+    // Spied on the PROTOTYPE rather than on an instance, because the view does not exist to
+    // instrument until the reconcile that creates it — which is the whole point of this edge.
+    // `Enemy extends Actor` and does not override it, so one spy covers both factions.
+    const spy = vi.spyOn(Actor.prototype, 'onSpawn');
+    try {
+      const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+      addEnemy(s, 300, 300, 0 as Brad);
+      const scene = new Scene(new Layers());
+      scene.reconcile(s);
+      expect(spy).toHaveBeenCalledTimes(2); // the player seat and the enemy
+      // ...and NOT again on every later tick, which would restart the materialise every frame.
+      scene.reconcile(s);
+      scene.reconcile(s);
+      expect(spy).toHaveBeenCalledTimes(2);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('an id that drops out of the alive list gets onDeath, not a bare destroy', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const enemy = addEnemy(s, 300, 300, 0 as Brad);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+    instrument(scene, enemy.id);
+    const log = calls(scene, enemy.id);
+    enemy.alive = false;
+    scene.reconcile(s);
+    expect(log).toEqual(['onDeath']);
+  });
+
+  it('the player seat gets both edges too, not just enemies', () => {
+    // Every clip in the vocabulary is authored for all seven bundles including the three
+    // characters, and a player death is the one every run ends on.
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+    const id = s.players[0]!.id;
+    instrument(scene, id);
+    const log = calls(scene, id);
+    s.players[0]!.alive = false;
+    scene.reconcile(s);
+    expect(log).toEqual(['onDeath']);
+  });
+
+  it('a bullet or a pickup appearing gets neither — they have no clips at all', () => {
+    // `Scene.spawn` is shared by every view type, so the Actor guard on that line is load-
+    // bearing: a `Bullet` has no `onSpawn` and calling one would throw on the first shot fired.
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    addBullet(s, 200, 200);
+    addPickup(s, 250, 250);
+    const scene = new Scene(new Layers());
+    expect(() => scene.reconcile(s)).not.toThrow();
+    expect((scene as unknown as { views: Map<number, unknown> }).views.size).toBe(3);
+  });
+});
+
+/**
+ * The two facts about a DYING view that the death clip made load-bearing (2026-09-02). Both are
+ * about the second, separate list `Scene` keeps: a view whose id has gone is out of `views` but
+ * still being interpolated, and the two halves of that have opposite requirements — it must keep
+ * receiving frames (so its collapse plays) and must NOT be findable by an event reaction (so a
+ * corpse is never flinched).
+ */
+describe('Scene — a dying view keeps its frames but leaves the lookup', () => {
+  const killOne = (): { scene: Scene; id: number } => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const enemy = addEnemy(s, 300, 300, 0 as Brad);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s);
+    enemy.alive = false;
+    scene.reconcile(s);
+    return { scene, id: enemy.id };
+  };
+
+  it('keeps handing a dying view its frame dt, so the collapse clip plays out', () => {
+    // The dying list is a SECOND interpolation loop, and the `death` clip's clock is driven by the
+    // frame dt `Actor.interpolate` forwards to its skin (`Skin.setFacing`'s third argument ->
+    // `RigSkin.advanceClips`). A dying view that stopped receiving one would freeze mid-collapse
+    // and then vanish anyway when the DISSOLVE clock — a different clock, ticked by
+    // `ActorFilters` — ran out: a corpse that stops falling but still disappears on cue.
+    const { scene } = killOne();
+    const dying = (scene as unknown as { dying: Actor[] }).dying;
+    expect(dying).toHaveLength(1);
+    const skin = (dying[0] as unknown as { skin: { setFacing: (...a: unknown[]) => void } }).skin;
+    const spy = vi.spyOn(skin, 'setFacing');
+
+    scene.interpolate(1, 16);
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0]![2], 'the frame dt, not 0 — a 0 would freeze every clip clock').toBe(16);
+  });
+
+  it('drops it out of actorAt the same tick, so no event reaction can reach a corpse', () => {
+    // `GameLoop` reconciles before it consumes the tick's events (asserted in its own suite), so
+    // this is what a KILLING blow's `hit` finds when it reaches `EventReactor`: nothing. That is
+    // the mechanism, and it is why `rigClipLayer`'s "a corpse does not flinch" rule is defence at
+    // the layer that owns it rather than a guard on a live case. If `actorAt` is ever widened to
+    // search the dying list, that guard becomes the only thing holding the line.
+    const { scene, id } = killOne();
+    expect(scene.actorAt(id), 'a dying view must not be reachable by id').toBeUndefined();
+    // ...while still very much alive as a VIEW, which is the whole point of the two lists.
+    expect((scene as unknown as { dying: Actor[] }).dying).toHaveLength(1);
+    expect((scene as unknown as { views: Map<number, unknown> }).views.has(id)).toBe(false);
+  });
+
+  it('a dying enemy also leaves the x-ray focus list, and for the same reason', () => {
+    // `enemies` is `instanceof Enemy` over `views` — same mechanism, and worth stating beside the
+    // one above because both are "the dying list is not the live list" and a future refactor that
+    // merged them would break the corpse rule silently while looking like a simplification.
+    const { scene } = killOne();
+    expect(scene.enemies).toHaveLength(0);
   });
 });

@@ -83,7 +83,7 @@ vi.mock('../fx/filters', async () => ({
     membrane = 1;
     /** The shell's exit, 0..1 — driven by `ActorFilters` over SHATTER_MS. */
     shatter = 0;
-    /** Last impact handed to it, so a test can assert `hitFlash` forwards the direction. */
+    /** Last impact handed to it, so a test can assert `onHurt` forwards the direction. */
     lastHit: [number, number] | null = null;
     constructor(public color?: number) {}
     hit(dx: number, dy: number) { this.lastHit = [dx, dy]; }
@@ -455,7 +455,7 @@ describe('Actor.setShield — energy-shield shader (design/01 fidelity roadmap m
   it('HOLDS the filter past ratio 0 so the shell can play its exit, then detaches', () => {
     // Until 2026-08-26 this detached on the frame the pool emptied and the shell vanished
     // between two frames. The exit is the reason the filter has to outlive the state change —
-    // the same shape `startDissolve` and `Scene`'s dying-view list already use.
+    // the same shape `onDeath` and `Scene`'s dying-view list already use.
     const a = new Actor('player', 12);
     a.setShield(4, 8);
     a.setShield(0, 8);
@@ -598,7 +598,7 @@ describe('Actor.setShield — the shell exit (2026-08-26)', () => {
     expect(shieldFilterOf(a)).not.toBeNull(); // ...but the filter instance is still around
     a.setShield(0, 8); // "broken", with nothing on screen to break
     a.interpolate(1, SHATTER_MS / 2);
-    a.hitFlash(); // ANY recompose — a hit, a burn toggle, a quality flip
+    a.onHurt(); // ANY recompose — a hit, a burn toggle, a quality flip
     expect(skinFiltersOf(a) as unknown[]).toHaveLength(1); // the outline alone, no shell
   });
 
@@ -631,18 +631,18 @@ function outlineFilterOf(a: Actor): { alpha: number } | null {
   return fxOf(a).outlineFilter as { alpha: number } | null;
 }
 
-describe('Actor.hitFlash — outline shader (design/01 fidelity roadmap milestone 5)', () => {
+describe('Actor.onHurt — outline shader (design/01 fidelity roadmap milestone 5)', () => {
   it('attaches the outline filter at full alpha on the first hit', () => {
     const a = new Actor('enemy', 12);
     expect(skinFiltersOf(a) as unknown[] ?? []).toEqual([]); // no filter, pre-hit
-    a.hitFlash();
+    a.onHurt();
     expect(skinFiltersOf(a) as unknown[]).toHaveLength(1); // the outline alone
     expect(outlineFilterOf(a)!.alpha).toBe(1);
   });
 
   it('decays to 0 over HIT_FLASH_MS and then detaches', () => {
     const a = new Actor('player', 12);
-    a.hitFlash();
+    a.onHurt();
     a.interpolate(1, HIT_FLASH_MS / 2);
     expect(outlineFilterOf(a)!.alpha).toBeCloseTo(0.5, 1);
     expect(skinFiltersOf(a)).toBeTruthy();
@@ -653,10 +653,10 @@ describe('Actor.hitFlash — outline shader (design/01 fidelity roadmap mileston
 
   it('reuses the same filter instance across repeated hits', () => {
     const a = new Actor('player', 12);
-    a.hitFlash();
+    a.onHurt();
     const first = outlineFilterOf(a);
     a.interpolate(1, HIT_FLASH_MS); // fully decays
-    a.hitFlash();
+    a.onHurt();
     expect(outlineFilterOf(a)).toBe(first);
     expect(outlineFilterOf(a)!.alpha).toBe(1);
   });
@@ -664,12 +664,12 @@ describe('Actor.hitFlash — outline shader (design/01 fidelity roadmap mileston
   it('coexists with an active shield glow — both filters attach at once', () => {
     const a = new Actor('player', 12);
     a.setShield(4, 8);
-    a.hitFlash();
+    a.onHurt();
     expect(skinFiltersOf(a) as unknown[]).toHaveLength(2); // shield + outline (no lit filter since 2026-08-24)
   });
 
   // 2026-08-26: a hit now also dents the shell (`EnergyShieldFilter.hit`). Everything above
-  // calls `hitFlash()` with no arguments, so none of it exercises the direction at all.
+  // calls `onHurt()` with no arguments, so none of it exercises the direction at all.
   describe('forwards the impact direction to the shell', () => {
     const lastHitOf = (a: Actor): [number, number] | null =>
       (shieldFilterOf(a) as unknown as { lastHit: [number, number] | null } | null)?.lastHit ?? null;
@@ -677,7 +677,7 @@ describe('Actor.hitFlash — outline shader (design/01 fidelity roadmap mileston
     it('hands the shell the delta it was given, unchanged', () => {
       const a = new Actor('player', 12);
       a.setShield(4, 8);
-      a.hitFlash(5, -2);
+      a.onHurt(5, -2);
       expect(lastHitOf(a)).toEqual([5, -2]);
     });
 
@@ -687,7 +687,7 @@ describe('Actor.hitFlash — outline shader (design/01 fidelity roadmap mileston
       // a render-target pass per hit for every enemy in the room, which is the exact per-actor
       // cost the 2026-08-24 lighting pass existed to remove.
       const a = new Actor('enemy', 12);
-      a.hitFlash(5, -2);
+      a.onHurt(5, -2);
       expect(shieldFilterOf(a)).toBeNull();
       expect(skinFiltersOf(a) as unknown[]).toHaveLength(1); // the outline alone
     });
@@ -695,9 +695,9 @@ describe('Actor.hitFlash — outline shader (design/01 fidelity roadmap mileston
     it('does not dent a shell that has already broken', () => {
       const a = new Actor('player', 12);
       a.setShield(4, 8);
-      a.hitFlash(1, 0);
+      a.onHurt(1, 0);
       a.setShield(0, 8); // broken — the shell is now playing its exit, not sitting there
-      a.hitFlash(-1, 0);
+      a.onHurt(-1, 0);
       expect(lastHitOf(a)).toEqual([1, 0]); // the second hit did not reach it
       // The shell is STILL ATTACHED here (it is mid-exit, 2026-08-26), so the elastic dent has
       // to be excluded by name rather than by the filter's absence: a shield coming apart that
@@ -713,14 +713,14 @@ describe('Actor.hitFlash — outline shader (design/01 fidelity roadmap mileston
       a.setShield(0, 8);
       a.interpolate(1, SHATTER_MS);
       a.setShield(4, 8);
-      a.hitFlash(-1, 0);
+      a.onHurt(-1, 0);
       expect(lastHitOf(a)).toEqual([-1, 0]);
     });
 
     it('defaults to a directionless hit rather than passing undefined through', () => {
       const a = new Actor('player', 12);
       a.setShield(4, 8);
-      a.hitFlash();
+      a.onHurt();
       expect(lastHitOf(a)).toEqual([0, 0]); // `hit()` reads (0,0) as "keep the previous axis"
     });
   });
@@ -730,12 +730,12 @@ function dissolveFilterOf(a: Actor): { progress: number } | null {
   return fxOf(a).dissolveFilter as { progress: number } | null;
 }
 
-describe('Actor.startDissolve — death-dissolve shader (design/01 fidelity roadmap milestone 5)', () => {
+describe('Actor.onDeath — death-dissolve shader (design/01 fidelity roadmap milestone 5)', () => {
   it('attaches the dissolve filter and hides the weapon/aura/hp-bar/local-ring', () => {
     const a = new Actor('player', 12);
     a.setLocal(true);
     a.setHealth(50, 100);
-    a.startDissolve();
+    a.onDeath();
     expect(skinFiltersOf(a)).toBeTruthy();
     expect(dissolveFilterOf(a)!.progress).toBe(0);
     expect(a.isDissolved).toBe(false);
@@ -747,7 +747,7 @@ describe('Actor.startDissolve — death-dissolve shader (design/01 fidelity road
 
   it('progresses over DISSOLVE_MS and reports isDissolved once fully played out', () => {
     const a = new Actor('enemy', 12);
-    a.startDissolve();
+    a.onDeath();
     a.interpolate(1, 350); // half of the 700ms dissolve
     expect(dissolveFilterOf(a)!.progress).toBeCloseTo(0.5, 1);
     expect(a.isDissolved).toBe(false);
@@ -758,10 +758,10 @@ describe('Actor.startDissolve — death-dissolve shader (design/01 fidelity road
 
   it('is idempotent — a second call does not rebuild the filter or reset progress', () => {
     const a = new Actor('enemy', 12);
-    a.startDissolve();
+    a.onDeath();
     a.interpolate(1, 350);
     const first = dissolveFilterOf(a);
-    a.startDissolve();
+    a.onDeath();
     expect(dissolveFilterOf(a)).toBe(first);
     expect(dissolveFilterOf(a)!.progress).toBeCloseTo(0.5, 1);
   });
@@ -835,7 +835,7 @@ describe('Actor filters — nothing is attached unconditionally any more', () =>
     const a = new Actor('player', 12);
     a.setStatus({ ...freshStatus(), burnTicks: 10 });
     a.setShield(4, 8);
-    a.hitFlash();
+    a.onHurt();
     expect(skinFiltersOf(a) as unknown[]).toHaveLength(3);
     a.setStatus(freshStatus());
     a.setShield(0, 8);
@@ -849,8 +849,8 @@ describe('Actor — all four fidelity-roadmap shaders composed at once (design/0
     const a = new Actor('player', 12);
     a.setStatus({ ...freshStatus(), burnTicks: 10 });
     a.setShield(4, 8);
-    a.hitFlash();
-    a.startDissolve();
+    a.onHurt();
+    a.onDeath();
 
     const list = skinFiltersOf(a) as unknown[];
     expect(list).toHaveLength(4); // was 5 — the always-on lit filter is gone
@@ -1632,7 +1632,7 @@ describe('Actor filters — quality tier gate', () => {
   it('drops the hit outline and the burn haze on the low tier', () => {
     setActiveQuality('low');
     const a = new Actor('enemy', 12);
-    a.hitFlash();
+    a.onHurt();
     a.setStatus({ ...freshStatus(), burning: 1 } as ReturnType<typeof freshStatus>);
     expect(skinFiltersOf(a)).toBeNull();
   });
@@ -1654,7 +1654,7 @@ describe('Actor filters — quality tier gate', () => {
   it('fades a dying actor out on the low tier instead of leaving it standing', () => {
     setActiveQuality('low');
     const a = new Actor('enemy', 12);
-    a.startDissolve();
+    a.onDeath();
     expect(skinFiltersOf(a)).toBeNull(); // no dissolve shader here
     const alphaOf = () => (a as unknown as { skin: { view: { alpha: number } } }).skin.view.alpha;
     expect(alphaOf()).toBe(1);
@@ -1669,7 +1669,7 @@ describe('Actor filters — quality tier gate', () => {
   it('leaves the body fully opaque on the high tier, where the shader owns the fade', () => {
     setActiveQuality('high');
     const a = new Actor('enemy', 12);
-    a.startDissolve();
+    a.onDeath();
     a.interpolate(1, 350);
     // The alpha ramp must NOT stack with the dissolve shader — that would dim the body twice.
     expect((a as unknown as { skin: { view: { alpha: number } } }).skin.view.alpha).toBe(1);
@@ -1679,7 +1679,7 @@ describe('Actor filters — quality tier gate', () => {
   it('restores opacity when a mid-dissolve tier flip hands the fade back to the shader', () => {
     setActiveQuality('low');
     const a = new Actor('enemy', 12);
-    a.startDissolve();
+    a.onDeath();
     a.interpolate(1, 350);
     setActiveQuality('high');
     a.refreshQuality();
@@ -1732,8 +1732,173 @@ describe('Actor.onAttack — the firing recoil reaches the skin', () => {
     // 200ms of frames — past RECOIL_MS (150), so the envelope must be fully spent purely
     // because `interpolate` kept handing the skin its frame dt.
     for (let i = 0; i < 12; i++) a.interpolate(1, 17);
-    const rig = (a as unknown as { skin: { rig?: { advanceAttack(ms: number): void } } }).skin.rig!;
+    const rig = (a as unknown as { skin: { rig?: { advanceClips(ms: number): void } } }).skin.rig!;
     expect(rig).toBeDefined();
     expect((rig as unknown as { motion: { amount: number } }).motion.amount).toBe(0);
+  });
+});
+
+/**
+ * `Actor.onSpawn` / `onHurt` / `onDeath` — the remaining three engine signals reaching the view
+ * (2026-09-02), completing the set `onAttack` opened. Thin wiring again, and again it is the only
+ * thing standing between the engine and any feedback at all, so each line is pinned.
+ *
+ * The interesting content here is not "does it forward" but the two ORDERING facts, both of which
+ * are silent when wrong:
+ *
+ *   - the constructor must finish measuring before a spawn can start (the spawn pose is 20% scale
+ *     and alpha 0, and `filterArea`/`bodySilhouette` are measured once, at construction);
+ *   - `onDeath` must reach BOTH the clip and the dissolve, because the dissolve owns the clock
+ *     that destroys the view and the clip owns what the body does on the way out.
+ */
+describe('Actor.onSpawn / onHurt / onDeath — the lifecycle signals reach the skin', () => {
+  afterEach(() => {
+    skinRegistryMocks.loaded = undefined;
+  });
+
+  const rigged = (): Actor => {
+    skinRegistryMocks.loaded = loadedOrbCoreRig();
+    return new Actor('player', 20, undefined, false, 'char_vanguard');
+  };
+  const skinOf = (a: Actor): { hurt(): void; spawn(): void; die(): void } =>
+    (a as unknown as { skin: { hurt(): void; spawn(): void; die(): void } }).skin;
+
+  it('forwards a spawn to the skin', () => {
+    const a = rigged();
+    const spy = vi.spyOn(skinOf(a), 'spawn');
+    a.onSpawn();
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT spawn itself at construction — the rest pose has to be measurable first', () => {
+    // The filter area is measured ONCE, in the constructor, off a rest-posed rig: its centre is
+    // the assembled silhouette's own centre (`getLocalBounds`), because a rig's decorative bones
+    // hang off the body bone's TIP and the whole thing is top-heavy relative to (0,0). Starting
+    // the spawn clip before that measurement would centre the shield shell, the hit outline, the
+    // dissolve and the health bar on a body at 20% scale — for the whole run, not just for the
+    // 350 ms of the clip. `Scene.spawn` is the caller precisely so construction stays a
+    // measurement.
+    //
+    // The bundle needs a REAL spawn clip, and the number read has to be one the clip can move.
+    // A first version compared `bodySilhouette` on `loadedOrbCoreRig`, whose fake bundle has no
+    // clips at all — so it was vacuous twice over, and a battery mutant that moved
+    // `this.skin.spawn()` above the measurement survived it.
+    const withSpawn = (): Actor => {
+      const loaded = loadedOrbCoreRig();
+      loaded.bundle.clips.set('spawn', {
+        duration: 0.35,
+        loop: false,
+        keyframes: [
+          { time: 0, bones: new Map([['shell', { scaleX: 0.2, scaleY: 0.2 }]]) },
+          { time: 0.35, bones: new Map([['shell', { scaleX: 1, scaleY: 1 }]]) },
+        ],
+      });
+      skinRegistryMocks.loaded = loaded;
+      return new Actor('player', 20, undefined, false, 'char_vanguard');
+    };
+    const areaOf = (a: Actor): { y: number; height: number } => {
+      const r = (a as unknown as { skin: { view: { filterArea: { y: number; height: number } } } })
+        .skin.view.filterArea;
+      return { y: r.y, height: r.height };
+    };
+    const a = withSpawn();
+    const b = withSpawn();
+    b.onSpawn();
+    b.interpolate(1, 16);
+    expect(areaOf(a).height).toBeGreaterThan(0);
+    expect(areaOf(b)).toEqual(areaOf(a));
+    // ...and the clip really does move what the constructor measured, so the equality above is
+    // evidence: mid-spawn the drawn silhouette is a fraction of its rest height.
+    const midSpawn = (b as unknown as { skin: { view: { getLocalBounds(): { height: number } } } })
+      .skin.view.getLocalBounds().height;
+    const atRest = (a as unknown as { skin: { view: { getLocalBounds(): { height: number } } } })
+      .skin.view.getLocalBounds().height;
+    expect(midSpawn).toBeLessThan(atRest);
+  });
+
+  it('a hit drives BOTH halves of one reaction — the shader flash and the rig flinch', () => {
+    // Two independent mechanisms behind one signal, which is why `EventReactor` calls one method:
+    // splitting them into two host calls would let a future reaction reach only half the target.
+    const a = rigged();
+    const flinch = vi.spyOn(skinOf(a), 'hurt');
+    a.onHurt(3, -4);
+    expect(flinch).toHaveBeenCalledTimes(1);
+    expect(outlineFilterOf(a)!.alpha).toBe(1); // the shader half, same as the block above
+  });
+
+  it('death drives BOTH the collapse clip and the dissolve that ends the view', () => {
+    const a = rigged();
+    const collapse = vi.spyOn(skinOf(a), 'die');
+    a.onDeath();
+    expect(collapse).toHaveBeenCalledTimes(1);
+    expect(dissolveFilterOf(a)!.progress).toBe(0);
+    // ...and the dissolve, not the clip, is still what decides when the view is gone.
+    expect(a.isDissolved).toBe(false);
+    for (let i = 0; i < 50; i++) a.interpolate(1, 17); // 850 ms — past DISSOLVE_MS (700)
+    expect(a.isDissolved).toBe(true);
+  });
+
+  it('all three are safe on a placeholder skin, which every actor starts as', () => {
+    const a = new Actor('enemy', 12);
+    expect(() => { a.onSpawn(); a.onHurt(1, 2); a.onDeath(); }).not.toThrow();
+    expect(() => a.interpolate(1, 16)).not.toThrow();
+  });
+
+  it('the collapse still plays on the LOW quality tier, where there is no dissolve shader', () => {
+    // The tier gate is where a wired feature goes quietly untested (it has happened here before).
+    // `activeQuality().actorShaders` is false on low, so `ActorFilters` builds no `DissolveFilter`
+    // and fades the body with a plain alpha ramp instead — but the `death` CLIP is not a shader,
+    // and a cheap tier is supposed to lose the erosion and keep the animation. Nothing else in
+    // this file crosses the two, and the failure would be invisible: on low the body would still
+    // fade out on schedule, just without ever collapsing.
+    setActiveQuality('low');
+    const loaded = loadedOrbCoreRig();
+    loaded.bundle.clips.set('death', {
+      duration: 0.9,
+      loop: false,
+      keyframes: [
+        { time: 0, bones: new Map([['shell', { translateY: 0, alpha: 1 }]]) },
+        { time: 0.9, bones: new Map([['shell', { translateY: 30, alpha: 0 }]]) },
+      ],
+    });
+    skinRegistryMocks.loaded = loaded;
+    const a = new Actor('enemy', 20, undefined, false, 'char_vanguard');
+    a.place(0, 0, 0);
+    a.interpolate(1, 16);
+    const shellY = (): number =>
+      (a as unknown as { skin: { rig: { sprites: Map<string, { y: number }> } } }).skin.rig.sprites.get('shell')!.y;
+    const rest = shellY();
+
+    a.onDeath();
+    for (let i = 0; i < 12; i++) a.interpolate(1, 17); // ~200 ms into the collapse
+
+    expect(skinFiltersOf(a), 'the low tier draws no per-actor shader at all').toBeNull();
+    expect(shellY(), 'the body sank, i.e. the clip ran without the shader').toBeGreaterThan(rest);
+    // ...and the low tier's own stand-in for the shader is still doing its half.
+    expect((a as unknown as { skin: { view: { alpha: number } } }).skin.view.alpha).toBeLessThan(1);
+  });
+
+  it('the clips advance off the render clock alone, with no second call from the caller', () => {
+    // Same property `onAttack` has: `interpolate` hands the skin its frame dt, so a spawn plays
+    // out and releases with nothing else driving it. Needs a bundle that actually SHIPS a spawn
+    // clip — `loadedOrbCoreRig`'s fake one carries none, which is itself the "silent no-op"
+    // case the test above covers.
+    const loaded = loadedOrbCoreRig();
+    loaded.bundle.clips.set('spawn', {
+      duration: 0.35,
+      loop: false,
+      keyframes: [
+        { time: 0, bones: new Map([['shell', { alpha: 0 }]]) },
+        { time: 0.35, bones: new Map([['shell', { alpha: 1 }]]) },
+      ],
+    });
+    skinRegistryMocks.loaded = loaded;
+    const a = new Actor('player', 20, undefined, false, 'char_vanguard');
+    a.place(0, 0, 0);
+    a.onSpawn();
+    const layers = (a as unknown as { skin: { rig: { layers: { spawning: boolean } } } }).skin.rig.layers;
+    expect(layers.spawning).toBe(true);
+    for (let i = 0; i < 25; i++) a.interpolate(1, 17); // 425 ms, past the 350 ms clip
+    expect(layers.spawning).toBe(false);
   });
 });

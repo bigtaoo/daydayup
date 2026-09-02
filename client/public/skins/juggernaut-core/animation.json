@@ -369,6 +369,15 @@
             },
             "eye": {
               "alpha": 1
+            },
+            "belly": {
+              "alpha": 1
+            },
+            "socket_l": {
+              "alpha": 1
+            },
+            "socket_r": {
+              "alpha": 1
             }
           }
         },
@@ -382,6 +391,15 @@
             },
             "eye": {
               "alpha": 0.5
+            },
+            "belly": {
+              "alpha": 0.5
+            },
+            "socket_l": {
+              "alpha": 0.5
+            },
+            "socket_r": {
+              "alpha": 0.5
             }
           }
         },
@@ -394,6 +412,15 @@
               "translateY": 14
             },
             "eye": {
+              "alpha": 0.15
+            },
+            "belly": {
+              "alpha": 0.15
+            },
+            "socket_l": {
+              "alpha": 0.15
+            },
+            "socket_r": {
               "alpha": 0.15
             }
           }

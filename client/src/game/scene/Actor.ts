@@ -329,22 +329,44 @@ export class Actor extends Entity {
     this.fx.refreshQuality();
   }
 
-  /** Brief "you were just hit" silhouette flash — see `ActorFilters.hitFlash`. Fired from
-   *  EventReactor's 'hit' case for whichever actor the event names as `target`. */
-  hitFlash(dx = 0, dy = 0): void {
+  /**
+   * This actor just took a hit (`EventReactor`'s 'hit' case, for whichever actor the event names
+   * as `target`). One signal, so one call: the silhouette flash + shield dent (`ActorFilters.
+   * hitFlash`) and the rig's own `hurt` flinch are the shader and clip halves of one reaction,
+   * the same shape `onAttack` established. `dx`/`dy` are the impact point as a delta from this
+   * actor's centre, and only the shader half reads them — the flinch is authored per body plan,
+   * in the rig's own bone space, so there is no direction for it to take.
+   */
+  onHurt(dx = 0, dy = 0): void {
     this.fx.hitFlash(dx, dy);
+    this.skin.hurt();
+  }
+
+  /** This actor's view was just created for a new engine id (`Scene.spawn`) — the id appearing
+   *  IS the signal, so there is no event to listen for. Called after the constructor has measured
+   *  the rest pose (filter area, silhouette): the spawn clip opens at 20% scale and alpha 0, so
+   *  measuring through it would size every one of those against a body that has not arrived. */
+  onSpawn(): void {
+    this.skin.spawn();
   }
 
   /**
-   * Kick off the death-dissolve — called once by `Scene` when this actor's id drops out of the
-   * engine's alive list, instead of destroying the view that same tick.
+   * This actor died — called once by `Scene` when its id drops out of the engine's alive list,
+   * instead of destroying the view that same tick. Three things, and the split is deliberate:
    *
-   * The shader belongs to `ActorFilters`; hiding this actor's OTHER furniture belongs here,
-   * because those are its own children: weapon, status aura and health bar are all meaningless
-   * on a dead actor and would otherwise float over a half-dissolved silhouette.
+   *   - the rig's `death` clip owns the BODY's own collapse (squash, sink, fade — per body plan);
+   *   - `ActorFilters` owns the dissolve shader AND the clock that decides when the view is gone
+   *     (`isDissolved`), so art never gets a vote on view lifetime. The clip is simply cut off
+   *     mid-collapse when the dissolve finishes, which is what the shipped numbers do (a 900 ms
+   *     death clip against `DISSOLVE_MS` = 700), so the two read as one continuous motion;
+   *   - hiding this actor's OTHER furniture belongs here, because those are its own children:
+   *     weapon, status aura and health bar are all meaningless on a dead actor and would
+   *     otherwise float over a half-dissolved silhouette. (The rig-MOUNTED weapon module is not
+   *     one of them — it fades with the socket bone it hangs on, see `ModuleMount.alpha`.)
    */
-  startDissolve(): void {
+  onDeath(): void {
     this.fx.startDissolve();
+    this.skin.die();
     this.weaponGfx.visible = false;
     this.statusAura.visible = false;
     if (this.healthBar) this.healthBar.visible = false;
@@ -429,11 +451,12 @@ export class Actor extends Entity {
       this.visualZ = this.hover.base + this.hover.amp * Math.sin((this.hoverT / this.hover.periodMs) * Math.PI * 2);
     }
     super.interpolate(alpha, frameDt);
-    // Cheap idle/move clip pick straight from Entity's own interpolation buffers — firing
-    // rides on top (`onFired`); hurt/death need signals Actor doesn't receive yet. A caller
-    // that collapses prev onto cur mid-motion (`Scene.positionLocal`'s predicted-pose
-    // snap) sets `movingOverride` explicitly since the buffer delta alone would always
-    // read as stationary in that case.
+    // Cheap idle/move GROUND clip pick straight from Entity's own interpolation buffers. The
+    // other four clips ride on top of or outrank it and are driven by their own signals
+    // (`onAttack`/`onHurt`/`onSpawn`/`onDeath`), so this stays a two-way choice however many
+    // clips are in flight. A caller that collapses prev onto cur mid-motion
+    // (`Scene.positionLocal`'s predicted-pose snap) sets `movingOverride` explicitly since the
+    // buffer delta alone would always read as stationary in that case.
     const moving = this.movingOverride ?? Math.hypot(this.curX - this.prevX, this.curY - this.prevY) > 0.01;
     // Upper/lower body split: the body (legs/torso) faces movement (`bodyFacingRad`,
     // == facingRad for anything that doesn't move independently of its aim, like an

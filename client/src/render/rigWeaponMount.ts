@@ -170,6 +170,15 @@ export interface ModuleMount {
    * the two are one number and nothing downstream can recover them.
    */
   pivotY: number;
+  /**
+   * The mount BONE's own clip alpha this frame. A module is not a bone, so nothing else would
+   * ever fade it, and `spawn`/`death` are the two clips that make that visible: `spawn` opens
+   * every socket at alpha 0 and `death` fades them to 0, so a module left at 1 would materialise
+   * a fully-opaque gun beside a body that has not appeared yet, and leave it hanging crisp over a
+   * corpse. The tether out to it (`rigTethers.drawTethers`) and its contact shade on the core
+   * (`paintModuleContacts`) already read the same bone's alpha; this is the third of the three.
+   */
+  alpha: number;
 }
 
 /**
@@ -216,6 +225,7 @@ export function activeModuleMount(
         y: pose.ey + (t?.translateY ?? 0),
         angle: canonicalAngle,
         pivotY: pose.sy + (t?.translateY ?? 0),
+        alpha: t?.alpha ?? 1,
       },
       recoilPx,
     );
@@ -232,6 +242,7 @@ export function activeModuleMount(
     y: cy + Math.sin(canonicalAngle) * reach,
     angle: canonicalAngle,
     pivotY: cy,
+    alpha: t?.alpha ?? 1,
   }, recoilPx);
 }
 
@@ -267,12 +278,18 @@ function recoiled(mount: ModuleMount, px: number): ModuleMount {
  * computed pre-mirror like every other local angle here, so the whole-rig flip keeps it
  * pointing outward on whichever side it ends up.
  */
-export function idleModuleMount(mode: WeaponMountMode, worldPose: WorldPositions): ModuleMount | null {
+export function idleModuleMount(
+  mode: WeaponMountMode,
+  worldPose: WorldPositions,
+  transforms: ReadonlyMap<string, ResolvedBoneTransform>,
+): ModuleMount | null {
   if (mode !== 'socket') return null;
   const pose: WorldPose | undefined = worldPose.get(IDLE_WEAPON_SOCKET);
   // Not an orbit: this one is decorative and stays on its own bone (see this function's doc),
   // so its tip IS its position and the plane it hangs in is that bone's own pivot.
-  return pose ? { x: pose.ex, y: pose.ey, angle: (pose.wa * Math.PI) / 180, pivotY: pose.sy } : null;
+  if (!pose) return null;
+  const t = transforms.get(IDLE_WEAPON_SOCKET);
+  return { x: pose.ex, y: pose.ey, angle: (pose.wa * Math.PI) / 180, pivotY: pose.sy, alpha: t?.alpha ?? 1 };
 }
 
 /**

@@ -162,13 +162,13 @@ describe('EventReactor — hit-flash outline (design/01 fidelity roadmap milesto
   it('flashes the specific actor named by a hit event\'s `target` id', () => {
     const hud = new HudView();
     hud.build(new Layers(), { w: 1280, h: 720 });
-    const hitFlash = vi.fn();
+    const onHurt = vi.fn();
     const host = fakeHost();
-    (host.actorAt as ReturnType<typeof vi.fn>).mockReturnValue({ hitFlash });
+    (host.actorAt as ReturnType<typeof vi.fn>).mockReturnValue({ onHurt });
     const reactor = new EventReactor(fakeFx(), hud, fakeAudio(), host);
     reactor.consume([{ type: 'hit', target: 7, faction: 'player', gx: 0, gy: 0, damage: 1, damageType: 'physical' } as GameEvent]);
     expect(host.actorAt).toHaveBeenCalledWith(7);
-    expect(hitFlash).toHaveBeenCalled();
+    expect(onHurt).toHaveBeenCalled();
   });
 
   // 2026-08-26. `shield_break` grew a second fx call: the shell's own fragments
@@ -222,7 +222,7 @@ describe('EventReactor — hit-flash outline (design/01 fidelity roadmap milesto
   // still reads as correct on screen. Nothing else in the suite covers this — the mutation
   // battery for the rewrite only mutates the shader and the tile, never this file.
   describe('hands the shell the direction the hit came from', () => {
-    const fire = (target: { hitFlash: ReturnType<typeof vi.fn>; x: number; y: number }, gx: number, gy: number) => {
+    const fire = (target: { onHurt: ReturnType<typeof vi.fn>; x: number; y: number }, gx: number, gy: number) => {
       const hud = new HudView();
       hud.build(new Layers(), { w: 1280, h: 720 });
       const host = fakeHost();
@@ -230,7 +230,7 @@ describe('EventReactor — hit-flash outline (design/01 fidelity roadmap milesto
       new EventReactor(fakeFx(), hud, fakeAudio(), host).consume([
         { type: 'hit', target: 7, faction: 'player', gx, gy, damage: 1, damageType: 'physical' } as GameEvent,
       ]);
-      return target.hitFlash.mock.calls[0] as [number, number];
+      return target.onHurt.mock.calls[0] as [number, number];
     };
     // The actor is deliberately NOT at the origin: with it at (0,0) an implementation that
     // forwarded the impact's absolute position instead of the delta would produce the same
@@ -238,7 +238,7 @@ describe('EventReactor — hit-flash outline (design/01 fidelity roadmap milesto
     const AT = { x: 300, y: 200 };
 
     it('points from the actor toward the impact, not the other way', () => {
-      const t = { hitFlash: vi.fn(), ...AT };
+      const t = { onHurt: vi.fn(), ...AT };
       // Impact one grid to the RIGHT of the actor: 300px is 9.375 grid, +1 grid = 332px.
       const [dx, dy] = fire(t, pxToFp(332), pxToFp(200));
       expect(dx).toBeGreaterThan(0);
@@ -246,22 +246,22 @@ describe('EventReactor — hit-flash outline (design/01 fidelity roadmap milesto
     });
 
     it('flips with the impact side', () => {
-      const right = fire({ hitFlash: vi.fn(), ...AT }, pxToFp(332), pxToFp(200));
-      const left = fire({ hitFlash: vi.fn(), ...AT }, pxToFp(268), pxToFp(200));
+      const right = fire({ onHurt: vi.fn(), ...AT }, pxToFp(332), pxToFp(200));
+      const left = fire({ onHurt: vi.fn(), ...AT }, pxToFp(268), pxToFp(200));
       expect(Math.sign(right[0])).toBe(1);
       expect(Math.sign(left[0])).toBe(-1);
       expect(right[0]).toBeCloseTo(-left[0], 6); // symmetric about the actor
     });
 
     it('is a DELTA from the actor, not the impact position', () => {
-      const t = { hitFlash: vi.fn(), ...AT };
+      const t = { onHurt: vi.fn(), ...AT };
       const [dx, dy] = fire(t, pxToFp(332), pxToFp(232));
       expect(dx).toBeCloseTo(32, 6);
       expect(dy).toBeCloseTo(32, 6);
     });
 
     it('uses screen-down y, so a hit from below dents the bottom of the shell', () => {
-      const t = { hitFlash: vi.fn(), ...AT };
+      const t = { onHurt: vi.fn(), ...AT };
       const [, dy] = fire(t, pxToFp(300), pxToFp(264));
       expect(dy).toBeGreaterThan(0); // +y is DOWN on screen; the shader's dent axis assumes it
     });
@@ -407,7 +407,7 @@ describe('EventReactor — a shot leaves the shooter, not the event position', (
 
   function shooter(muzzle: { x: number; y: number } | null) {
     return {
-      hitFlash: vi.fn(), onAttack: vi.fn(), muzzlePos: vi.fn(() => muzzle), x: 100, y: 200,
+      onHurt: vi.fn(), onAttack: vi.fn(), muzzlePos: vi.fn(() => muzzle), x: 100, y: 200,
     };
   }
 
@@ -534,7 +534,7 @@ describe('EventReactor — a shot leaves the shooter, not the event position', (
  */
 describe('EventReactor — a multi-pellet volley in one frame', () => {
   it('recoils and flares per pellet, but plays exactly one muzzle cue carrying the count', () => {
-    const actor = { hitFlash: vi.fn(), onAttack: vi.fn(), muzzlePos: vi.fn(() => ({ x: 12, y: 34 })), x: 0, y: 0 };
+    const actor = { onHurt: vi.fn(), onAttack: vi.fn(), muzzlePos: vi.fn(() => ({ x: 12, y: 34 })), x: 0, y: 0 };
     const fx = fakeFx();
     const audio = fakeAudio();
     const hud = new HudView();

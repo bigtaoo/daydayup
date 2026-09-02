@@ -44,7 +44,7 @@ void main(void)
  * boss's larger silhouette. `padding` is set so the edge at the very boundary of the
  * sprite's own tight bounds has real transparent neighbour texels to sample against
  * (without it, Pixi clamps to the edge texel and the outermost ring never detects an
- * edge at all). Used as a brief "you were just hit" flash (`Actor.hitFlash`) — `alpha`
+ * edge at all). Used as a brief "you were just hit" flash (`Actor.onHurt`) — `alpha`
  * is set to 1 on hit and decays to 0 over a couple hundred ms (`Actor.interpolate`),
  * the same transient-not-permanent convention as `ChromaticAberrationFilter.amount`. */
 export class OutlineFilter extends Filter {
@@ -98,7 +98,7 @@ void main(void)
  * (a GLSL hash of the UV, no noise texture — same "no textures" discipline as
  * `Particles.ts`) burns away in patches as `progress` goes
  * 0→1, with a bright ember-coloured edge trailing the dissolving boundary. Driven by
- * `Actor.startDissolve`/`Scene`'s dying-view list, which keeps a dead actor's view
+ * `Actor.onDeath`/`Scene`'s dying-view list, which keeps a dead actor's view
  * alive (instead of destroying it the instant its id drops out of the engine state) for
  * exactly as long as this animation needs. */
 export class DissolveFilter extends Filter {

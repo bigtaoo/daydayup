@@ -31,6 +31,7 @@ import {
   drawModuleContacts,
   drawSphereShading,
   paintModuleContacts,
+  placeSphereShade,
   shadeHex,
   sphereFormShadowAlpha,
   sphereShadeAt,
@@ -623,6 +624,97 @@ describe('paintModuleContacts — gathering this frame\'s mounts from a posed ri
       [[BODY, { ...rest, alpha: 0.25 }]],
     );
     expect(g.alpha).toBe(0.25);
+  });
+});
+
+describe('placeSphereShade — seating the quad on the body bone it shades', () => {
+  // Split out of `RigSkin.update` with the `death` clip (2026-09-02) and tested directly here for
+  // the same reason `paintModuleContacts` is: the sphere overlay is a mark the rig DRAWS over its
+  // authored art, and everything about placing it is pure geometry over ONE bone's pose. Through
+  // `RigSkin` these four properties can only be read together on a real rig; here each is one
+  // argument, so a test can move one channel at a time — including the two that have no shipped
+  // clip moving them alone.
+  const rest: ResolvedBoneTransform = { rotation: 0, scaleX: 1, scaleY: 1, translateX: 0, translateY: 0, alpha: 1 };
+  const at = (ex: number, ey: number) => ({ sx: 0, sy: 0, ex, ey, wa: -90 });
+  const quad = (): Graphics => drawSphereShading(40);
+
+  it('parks the quad on the bone TIP, which is where that bone\'s art is drawn', () => {
+    const g = quad();
+    placeSphereShade(g, at(3, -40), undefined, 1);
+    expect(g.visible).toBe(true);
+    expect({ x: g.x, y: g.y }).toEqual({ x: 3, y: -40 });
+  });
+
+  it('adds the clip translation, because computeFK does not fold it into a tip', () => {
+    // Same rule the sprite loop and the contact shades follow. Without it the shading rides
+    // still while the body it sits on bobs — measurable as the full amplitude of the idle hover.
+    const g = quad();
+    placeSphereShade(g, at(0, -40), { ...rest, translateX: 2, translateY: -6 }, 1);
+    expect({ x: g.x, y: g.y }).toEqual({ x: 2, y: -46 });
+  });
+
+  it('takes the bone\'s alpha, so it fades out with the art it sits on', () => {
+    const g = quad();
+    placeSphereShade(g, at(0, -40), { ...rest, alpha: 0.25 }, 1);
+    expect(g.alpha).toBe(0.25);
+  });
+
+  it('takes the bone\'s SQUASH, which is what the death collapse needs', () => {
+    // The channel this function was extracted to add. `death` collapses the body to 0.4x0.3 and
+    // the corpse HOLDS there for the whole dissolve, so a fixed-size quad reads as a dark plate
+    // lying beside a shrinking body — 700 ms of it, not a 60 ms accent nobody resolves.
+    const g = quad();
+    placeSphereShade(g, at(0, -40), { ...rest, scaleX: 0.4, scaleY: 0.3 }, 1);
+    expect(g.scale.x).toBeCloseTo(0.4, 10);
+    expect(g.scale.y).toBeCloseTo(0.3, 10);
+  });
+
+  it('counter-flips on X and NEVER on Y — the key light is fixed in screen space', () => {
+    // The one property that deliberately does not come from the bone. `flipX` cancels
+    // `RigSkin.view.scale.x` exactly, so the highlight stays upper-left whichever way the
+    // character faces; mirroring with the body would read as the light source teleporting.
+    // Composed WITH the squash, which is the combination `RigSkin` could not express while the
+    // flip was written in `setBodyFacing` and the squash would have been written in `update`.
+    const left = quad();
+    placeSphereShade(left, at(0, -40), { ...rest, scaleX: 0.5, scaleY: 0.3 }, -1);
+    expect(left.scale.x).toBeCloseTo(-0.5, 10);
+    expect(left.scale.y).toBeCloseTo(0.3, 10); // the sign never reaches Y
+    const right = quad();
+    placeSphereShade(right, at(0, -40), { ...rest, scaleX: 0.5, scaleY: 0.3 }, 1);
+    expect(right.scale.x).toBeCloseTo(0.5, 10);
+    // Same magnitude both ways: the flip is a mirror, not a resize.
+    expect(Math.abs(left.scale.x)).toBeCloseTo(Math.abs(right.scale.x), 10);
+  });
+
+  it('treats a missing transform as identity rather than blanking the quad', () => {
+    // The common case: no clip names the body bone this frame (a bundle with no `move`, or a
+    // rig posed at rest for a measurement). It must draw normally, not vanish or collapse to 0.
+    const g = quad();
+    placeSphereShade(g, at(0, -40), undefined, 1);
+    expect(g.visible).toBe(true);
+    expect(g.alpha).toBe(1);
+    expect({ x: g.scale.x, y: g.scale.y }).toEqual({ x: 1, y: 1 });
+  });
+
+  it('hides the quad for an unposed bone instead of leaving it at last frame\'s place', () => {
+    // Reachable through `RigSkin.update` whenever FK returns no pose for the shade bone. Left
+    // visible, the overlay would sit as a dark blob wherever the body last was — the same class
+    // of stale-position bug `paintModuleContacts` hides for.
+    const g = quad();
+    placeSphereShade(g, at(0, -40), undefined, 1);
+    placeSphereShade(g, undefined, undefined, 1);
+    expect(g.visible).toBe(false);
+  });
+
+  it('brings a hidden quad back the frame its bone is posed again', () => {
+    // `visible` is set on BOTH paths on purpose. A one-way hide would make a single unposed frame
+    // permanent, which is worse than the stale position it was avoiding.
+    const g = quad();
+    placeSphereShade(g, undefined, undefined, 1);
+    expect(g.visible).toBe(false);
+    placeSphereShade(g, at(1, -30), { ...rest, alpha: 0.5 }, 1);
+    expect(g.visible).toBe(true);
+    expect({ x: g.x, y: g.y, a: g.alpha }).toEqual({ x: 1, y: -30, a: 0.5 });
   });
 });
 

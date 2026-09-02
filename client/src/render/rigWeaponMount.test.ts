@@ -270,7 +270,7 @@ describe('idleModuleMount — the decorative second module is the hero silhouett
   const wp = poses({ socket_l: { ex: -52, ey: -46, wa: 180 }, body: { ex: 0, ey: -40 } });
 
   it('sits on the idle socket and turns with its OWN bone, not the reticle', () => {
-    const m = idleModuleMount('socket', wp)!;
+    const m = idleModuleMount('socket', wp, noTransforms)!;
     expect(m.x).toBe(-52);
     expect(m.y).toBe(-46);
     expect(m.angle).toBeCloseTo(Math.PI, 10); // socket_l's rest angle, i.e. away from the core
@@ -279,15 +279,24 @@ describe('idleModuleMount — the decorative second module is the hero silhouett
   // design/13's "two weapon modules that orbit it" describes the hero. A mob carries one gun,
   // so the held path must not mirror a decorative second copy onto the other side.
   it('is null on the held path — a mob carries one gun', () => {
-    expect(idleModuleMount('held', wp)).toBeNull();
+    expect(idleModuleMount('held', wp, noTransforms)).toBeNull();
   });
 
   it("is null for 'none'", () => {
-    expect(idleModuleMount('none', wp)).toBeNull();
+    expect(idleModuleMount('none', wp, noTransforms)).toBeNull();
+  });
+
+  it("takes its own socket's clip alpha, so it fades with the arm it hangs on", () => {
+    // The decorative module is not a bone either. `spawn` opens `socket_l` at alpha 0 and
+    // `death` fades it to 0, and it is the LEFT socket here — a bug that only reads on the arm
+    // the aim never touches, i.e. the one nobody is looking at while they play.
+    const t = new Map([['socket_l', { rotation: 0, scaleX: 1, scaleY: 1, translateX: 0, translateY: 0, alpha: 0.25 }]]);
+    expect(idleModuleMount('socket', wp, t)!.alpha).toBe(0.25);
+    expect(idleModuleMount('socket', wp, noTransforms)!.alpha).toBe(1);
   });
 
   it('is null when the idle socket is unposed', () => {
-    expect(idleModuleMount('socket', poses({ socket_r: {} }))).toBeNull();
+    expect(idleModuleMount('socket', poses({ socket_r: {} }), noTransforms)).toBeNull();
   });
 });
 

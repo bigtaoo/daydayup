@@ -574,6 +574,52 @@ describe('GameLoop — online path (advanceOnline)', () => {
   });
 });
 
+/**
+ * The order of the two things a tick does to the render layer, which nothing asserted and which
+ * decides what a DEATH looks like (2026-09-02).
+ *
+ * `reconcile` diffs `GameState` and `consumeEvents` hands the tick's events to `EventReactor`.
+ * Because reconcile runs FIRST, on the tick an actor dies its view has already left `Scene.views`
+ * (moved to the dissolving list, its `death` clip started) by the time the `hit` that killed it
+ * reaches the reactor — and `Scene.actorAt` only searches `views`. So a killing blow's hit-flash
+ * and `hurt` flinch never land, and `render/rigClipLayer.ts`'s own "a corpse does not flinch" rule
+ * is defence at the layer that owns the rule rather than a guard on a live case.
+ *
+ * Reverse this order and that guard becomes the only thing holding the line, which is exactly why
+ * the order is worth a test rather than a comment.
+ */
+describe('GameLoop — the scene is reconciled BEFORE the tick\'s events are consumed', () => {
+  const orderOf = (fn: unknown): number =>
+    (fn as { mock: { invocationCallOrder: number[] } }).mock.invocationCallOrder[0]!;
+
+  it('offline (stepSim)', () => {
+    const { deps, scene, events } = buildDeps();
+    const engine = createGameEngine(CFG);
+    const loop = new GameLoop(deps, buildHost({ getEngine: () => engine }));
+
+    loop.update(SIM_DT_MS_FOR_TESTS);
+
+    expect(scene.reconcile).toHaveBeenCalledTimes(1);
+    expect(events.consume).toHaveBeenCalledTimes(1);
+    expect(orderOf(scene.reconcile)).toBeLessThan(orderOf(events.consume));
+  });
+
+  it('online (advanceOnline) — the same order, which is not automatic: it is a second call site', () => {
+    const { deps, scene, events } = buildDeps();
+    const session = {
+      started: true, frame: 5, state: createGameEngine(CFG).state,
+      submit: vi.fn(), drive: vi.fn().mockReturnValue([{ type: 'hit' }]), reportResult: vi.fn(),
+    } as unknown as CoopSession;
+    const loop = new GameLoop(deps, buildHost({ isOnline: () => true, getSession: () => session }));
+
+    loop.update(16);
+
+    expect(scene.reconcile).toHaveBeenCalledTimes(1);
+    expect(events.consume).toHaveBeenCalledTimes(1);
+    expect(orderOf(scene.reconcile)).toBeLessThan(orderOf(events.consume));
+  });
+});
+
 describe('GameLoop — reset hooks (run-lifecycle callbacks)', () => {
   it('resetForNewRun zeroes the accumulator, so the very next frame needs a full tick before stepping', () => {
     const { deps } = buildDeps();

@@ -659,10 +659,17 @@ describe('RigSkin — sphere shading over the body bone', () => {
     // The single thing this could get wrong: the light is fixed in SCREEN space. If the
     // shading mirrored with the rig, the highlight would jump sides every time the player
     // turned around — which reads as the light source teleporting, not as a body turning.
+    //
+    // Read after `update()` because that is where the counter-flip is written since 2026-09-02:
+    // the quad's scale now carries the body bone's clip squash as well (`placeSphereShade`), and
+    // one property is written in one place. So this asserts the net transform on a RENDERED
+    // frame rather than mid-way through the facing setters, which is the stronger claim anyway.
     const skin = makeSkin(ORB_CORE_RIG);
     skin.setBodyFacing(0); // facing right, no flip
+    skin.update();
     expect(skin.view.scale.x * shadeOf(skin)!.scale.x).toBe(1);
     skin.setBodyFacing(Math.PI); // facing left, whole rig flips
+    skin.update();
     expect(skin.view.scale.x).toBe(-1);
     expect(skin.view.scale.x * shadeOf(skin)!.scale.x).toBe(1); // net transform unchanged
   });
@@ -767,7 +774,8 @@ describe('RigSkin — rigs that get no sphere shading, and rigs whose body moves
     const skin = makeSkin(tinyRig);
     expect(shadeOf(skin)).toBeNull();
     expect(() => skin.update()).not.toThrow();
-    expect(() => skin.setBodyFacing(Math.PI)).not.toThrow(); // the counter-flip path too
+    skin.setBodyFacing(Math.PI);
+    expect(() => skin.update()).not.toThrow(); // ...including the counter-flip/squash path
   });
 
   it('skips a body bone with no bound art, since there is nothing to shade', () => {
@@ -1091,7 +1099,7 @@ describe('RigSkin — the fire recoil', () => {
   /** Lay the rig out at the peak of the envelope (RECOIL_MS * RECOIL_ATTACK). */
   function atPeak(skin: RigSkin): void {
     skin.attack('ranged');
-    skin.advanceAttack(RECOIL_MS * 0.22);
+    skin.advanceClips(RECOIL_MS * 0.22);
     skin.update();
   }
 
@@ -1149,7 +1157,7 @@ describe('RigSkin — the fire recoil', () => {
     const restSocketX = spritesOf(skin).get('socket_r')!.x;
     const restMuzzle = skin.muzzleLocal()!;
     atPeak(skin);
-    skin.advanceAttack(1000);
+    skin.advanceClips(1000);
     skin.update();
     expect(modulesOf(skin).weaponSprite!.x).toBeCloseTo(restX, 10);
     expect(modulesOf(skin).weaponSprite!.y).toBeCloseTo(restY, 10);
@@ -1176,7 +1184,7 @@ describe('RigSkin — the fire recoil', () => {
   it('is inert until something actually fires', () => {
     const skin = armed();
     const restX = modulesOf(skin).weaponSprite!.x;
-    skin.advanceAttack(16);
+    skin.advanceClips(16);
     skin.update();
     expect(modulesOf(skin).weaponSprite!.x).toBe(restX);
     expect(skin.view.x).toBeCloseTo(0, 10);
@@ -1211,7 +1219,7 @@ describe('RigSkin — the melee swing', () => {
   /** Lay the rig out at the far end of the strike (SWING_MS * 0.55). */
   function atStrike(skin: RigSkin): void {
     skin.attack('melee');
-    skin.advanceAttack(SWING_MS * 0.55);
+    skin.advanceClips(SWING_MS * 0.55);
     skin.update();
   }
 
@@ -1245,7 +1253,7 @@ describe('RigSkin — the melee swing', () => {
     atStrike(swinging);
     const shooting = bladed();
     shooting.attack('ranged');
-    shooting.advanceAttack(RECOIL_MS * 0.22);
+    shooting.advanceClips(RECOIL_MS * 0.22);
     shooting.update();
     // Aim is +x, so a lunge is +x on screen and a recoil is -x. Opposite signs, one formula.
     expect(swinging.view.x).toBeGreaterThan(0);
@@ -1267,13 +1275,13 @@ describe('RigSkin — the melee swing', () => {
     const swinging = bladed();
     const restRadius = radius(swinging);
     swinging.attack('melee');
-    swinging.advanceAttack(SWING_MS * 0.5);
+    swinging.advanceClips(SWING_MS * 0.5);
     swinging.update();
     expect(radius(swinging)).toBeCloseTo(restRadius, 6);
 
     const shooting = bladed();
     shooting.attack('ranged');
-    shooting.advanceAttack(RECOIL_MS * 0.22);
+    shooting.advanceClips(RECOIL_MS * 0.22);
     shooting.update();
     expect(radius(shooting)).toBeLessThan(restRadius - RECOIL_MODULE_PX * 0.9);
   });
@@ -1296,7 +1304,7 @@ describe('RigSkin — the melee swing', () => {
     const rest = spritesOf(skin).get('socket_r')!.rotation;
     const restModule = snap(modulesOf(skin).weaponSprite!);
     skin.attack('melee');
-    skin.advanceAttack(SWING_MS);
+    skin.advanceClips(SWING_MS);
     skin.update();
     expect(spritesOf(skin).get('socket_r')!.rotation).toBeCloseTo(rest, 10);
     expect(modulesOf(skin).weaponSprite!.rotation).toBeCloseTo(restModule.rotation, 10);
@@ -1356,7 +1364,7 @@ describe('RigSkin — the attack clip layers over the base clip', () => {
     const skin = posed();
     const rest = spritesOf(skin).get('shell')!.y;
     skin.attack('melee'); // melee: no recoil translate, so the clip is the only thing moving it
-    skin.advanceAttack(200);
+    skin.advanceClips(200);
     skin.playClip('idle', 0);
     skin.update();
     expect(spritesOf(skin).get('shell')!.y - rest).toBeCloseTo(7, 6);
@@ -1366,7 +1374,7 @@ describe('RigSkin — the attack clip layers over the base clip', () => {
     const skin = posed();
     const rest = spritesOf(skin).get('belly')!.y;
     skin.attack('melee');
-    skin.advanceAttack(200);
+    skin.advanceClips(200);
     skin.playClip('idle', 0);
     skin.update();
     // A whole-clip swap put this back at the bone's rest tip, ~20px away, for 400 ms.
@@ -1377,7 +1385,7 @@ describe('RigSkin — the attack clip layers over the base clip', () => {
     const skin = posed();
     const rest = spritesOf(skin).get('shell')!.y;
     skin.attack('melee');
-    skin.advanceAttack(400);
+    skin.advanceClips(400);
     skin.playClip('idle', 0);
     skin.update();
     expect(spritesOf(skin).get('shell')!.y).toBeCloseTo(rest, 10);
@@ -1388,12 +1396,198 @@ describe('RigSkin — the attack clip layers over the base clip', () => {
       const skin = posed();
       const rest = spritesOf(skin).get('shell')!.y;
       skin.attack(kind);
-      skin.advanceAttack(200);
+      skin.advanceClips(200);
       skin.playClip('idle', 0);
       skin.update();
       return spritesOf(skin).get('shell')!.y - rest;
     };
     expect(displacement('ranged')).toBeCloseTo(7, 6);
     expect(displacement('melee')).toBeCloseTo(7, 6);
+  });
+});
+
+/**
+ * The other three clips reaching the real sprites (2026-09-02) — `hurt`, `death`, `spawn`.
+ *
+ * `rigClipLayer.test.ts` proves the layer picks the right clip and holds/releases the base layer
+ * correctly; `rigComposition.test.ts` proves the SHIPPED clips permit that layering. Neither can
+ * see this half: a clip channel only exists on screen if `RigSkin.update` writes it onto a
+ * sprite, and the four channels these three clips use land on four separate lines of that method
+ * (`sprite.scale`, `sprite.y`, `sprite.alpha`, and the module mount's own alpha). The bundle here
+ * carries hand-built clips rather than the shipped ones, so each case can isolate ONE channel —
+ * which the shipped data, moving all of them at once, cannot.
+ */
+describe('RigSkin — hurt / death / spawn reach the sprites', () => {
+  const spriteFieldsOf = (skin: RigSkin): Map<string, { alpha: number; y: number; scale: { x: number; y: number } }> =>
+    (skin as unknown as { sprites: Map<string, { alpha: number; y: number; scale: { x: number; y: number } }> }).sprites;
+
+  /** A bundle whose three lifecycle clips each move exactly ONE channel of `shell`, so a test
+   *  that reads one property cannot be passing on another clip's account. */
+  const lifecycleClips = (): Map<string, AnimationClip> => new Map<string, AnimationClip>([
+    ['idle', { duration: 2, loop: true, keyframes: [
+      { time: 0, bones: new Map([['shell', { translateY: 0 }]]) },
+      { time: 1, bones: new Map([['shell', { translateY: -6 }]]) },
+      { time: 2, bones: new Map([['shell', { translateY: 0 }]]) },
+    ] }],
+    // scale only, identity at both ends — the shipped `hurt`'s shape.
+    ['hurt', { duration: 0.3, loop: false, keyframes: [
+      { time: 0, bones: new Map([['shell', { scaleX: 1, scaleY: 1 }]]) },
+      { time: 0.06, bones: new Map([['shell', { scaleX: 1.5, scaleY: 0.5 }]]) },
+      { time: 0.3, bones: new Map([['shell', { scaleX: 1, scaleY: 1 }]]) },
+    ] }],
+    // translate + alpha only, ending far from identity — the shipped `death`'s shape.
+    ['death', { duration: 0.9, loop: false, keyframes: [
+      { time: 0, bones: new Map([['shell', { translateY: 0, alpha: 1 }], ['socket_r', { alpha: 1 }]]) },
+      { time: 0.9, bones: new Map([['shell', { translateY: 30, alpha: 0 }], ['socket_r', { alpha: 0 }]]) },
+    ] }],
+    // alpha only, OPENING far from identity — the shipped `spawn`'s shape.
+    ['spawn', { duration: 0.35, loop: false, keyframes: [
+      { time: 0, bones: new Map([['shell', { alpha: 0 }], ['socket_r', { alpha: 0 }]]) },
+      { time: 0.35, bones: new Map([['shell', { alpha: 1 }], ['socket_r', { alpha: 1 }]]) },
+    ] }],
+  ]);
+
+  function posed(): RigSkin {
+    const skin = makeSkin(ORB_CORE_RIG, lifecycleClips());
+    skin.setBodyFacing(0);
+    skin.setAim(0);
+    skin.playClip('idle', 1000); // parked at the idle trough, so the base layer is not neutral
+    skin.update();
+    return skin;
+  }
+
+  it('the hurt flinch squashes the body while the idle bob keeps running underneath', () => {
+    // The whole reason it is an overlay: an actor hit mid-walk must not stop walking. Read on the
+    // sprite, so it also covers `update()` composing the clip scale with the BINDING scale.
+    const skin = posed();
+    const restY = spriteFieldsOf(skin).get('shell')!.y;
+    const restScaleY = spriteFieldsOf(skin).get('shell')!.scale.y;
+    skin.hurt();
+    skin.advanceClips(60); // the flinch's peak
+    skin.update();
+    expect(spriteFieldsOf(skin).get('shell')!.scale.y).toBeLessThan(restScaleY);
+    expect(spriteFieldsOf(skin).get('shell')!.y).toBe(restY); // the bob is untouched by it
+  });
+
+  it('...and hands the body back exactly as it found it', () => {
+    const skin = posed();
+    // Read the fields out rather than spreading — `x`/`y` are prototype accessors on a Pixi
+    // ObservablePoint, so a spread copy is `{}` and every assertion below it reads `undefined`
+    // (which `toBeCloseTo` then fails on with a NaN difference; it did, first run).
+    const restX = spriteFieldsOf(skin).get('shell')!.scale.x;
+    const restY = spriteFieldsOf(skin).get('shell')!.scale.y;
+    skin.hurt();
+    skin.advanceClips(60);
+    skin.update();
+    skin.advanceClips(300);
+    skin.update();
+    expect(spriteFieldsOf(skin).get('shell')!.scale.x).toBeCloseTo(restX, 10);
+    expect(spriteFieldsOf(skin).get('shell')!.scale.y).toBeCloseTo(restY, 10);
+  });
+
+  it('the death collapse sinks and fades the body, and drops the idle bob it replaces', () => {
+    const skin = posed();
+    const restY = spriteFieldsOf(skin).get('shell')!.y;
+    skin.die();
+    skin.update();
+    // Frame ONE of the collapse: the clip is at its own identity, so the sprite has to be at the
+    // clip's translateY 0 — NOT at idle's -6. That single number is the difference between the
+    // lifecycle clip owning the base layer and merely being added to it.
+    expect(spriteFieldsOf(skin).get('shell')!.y).toBeGreaterThan(restY);
+    skin.advanceClips(900);
+    skin.update();
+    expect(spriteFieldsOf(skin).get('shell')!.y).toBeCloseTo(restY + 6 + 30, 6);
+    expect(spriteFieldsOf(skin).get('shell')!.alpha).toBe(0);
+  });
+
+  it('the collapse holds its last frame for as long as the view outlives the clip', () => {
+    // `Actor.onDeath` gives the dissolve shader the say on when the view dies, so this clip can
+    // and does run out first on a slow frame or a retuned `DISSOLVE_MS`. Releasing back to idle
+    // there would stand the corpse back up at full size, mid-dissolve.
+    const skin = posed();
+    skin.die();
+    skin.advanceClips(900);
+    skin.update();
+    const held = spriteFieldsOf(skin).get('shell')!.y;
+    skin.advanceClips(5000);
+    skin.update();
+    expect(spriteFieldsOf(skin).get('shell')!.y).toBe(held);
+    expect(spriteFieldsOf(skin).get('shell')!.alpha).toBe(0);
+  });
+
+  it('the spawn clip materialises the body and then releases it back to idle', () => {
+    const skin = posed();
+    skin.spawn();
+    skin.update();
+    expect(spriteFieldsOf(skin).get('shell')!.alpha).toBe(0);
+    skin.advanceClips(350);
+    skin.update();
+    expect(spriteFieldsOf(skin).get('shell')!.alpha).toBe(1);
+    // ...and the base layer is idle again, i.e. the bob is running: two frames apart at a phase
+    // where the bob is actually moving must give two different y values.
+    skin.playClip('idle', 500);
+    skin.update();
+    const a = spriteFieldsOf(skin).get('shell')!.y;
+    skin.playClip('idle', 700);
+    skin.update();
+    expect(spriteFieldsOf(skin).get('shell')!.y).not.toBe(a);
+  });
+
+  it('the mounted module fades with the socket bone it hangs on', () => {
+    // A module is a sprite parented to the rig, not a bone, so `sprite.alpha = mount.alpha` in
+    // `mountModule` is the ONLY thing that fades it. Without it a spawning character mounts a
+    // fully-opaque gun on an invisible arm, and a corpse leaves one hanging over the dissolve.
+    const skin = posed();
+    skin.setWeaponKind('ranged', 'blaster');
+    skin.update();
+    const active = (): { alpha: number } =>
+      (skin as unknown as { weaponSprite: { alpha: number } }).weaponSprite;
+    expect(active().alpha).toBe(1);
+    skin.spawn();
+    skin.update();
+    expect(active().alpha).toBe(0);
+    skin.advanceClips(350);
+    skin.update();
+    expect(active().alpha).toBe(1);
+    skin.die();
+    skin.advanceClips(900);
+    skin.update();
+    expect(active().alpha).toBe(0);
+  });
+
+  it('the sphere shading collapses with the body rather than staying full size over it', () => {
+    // `placeSphereShade` takes the body bone's own scale. The `death` clip is what forced it:
+    // it squashes the body to a third and the corpse HOLDS there for the whole dissolve, so a
+    // fixed-size shade reads as a dark plate lying beside a shrinking body. Note the flip is
+    // still cancelled at the same time — asserted as the absolute value here, since the sign
+    // belongs to the counter-flip test above.
+    const squash = new Map<string, AnimationClip>([['death', { duration: 1, loop: false, keyframes: [
+      { time: 0, bones: new Map([['shell', { scaleX: 1, scaleY: 1 }]]) },
+      { time: 1, bones: new Map([['shell', { scaleX: 0.4, scaleY: 0.3 }]]) },
+    ] }]]);
+    const skin = makeSkin(ORB_CORE_RIG, squash);
+    skin.setBodyFacing(0);
+    skin.update();
+    const shade = (skin as unknown as { sphereShade: Graphics }).sphereShade;
+    expect(Math.abs(shade.scale.x)).toBeCloseTo(1, 10);
+    skin.die();
+    skin.advanceClips(1000);
+    skin.update();
+    expect(Math.abs(shade.scale.x)).toBeCloseTo(0.4, 6);
+    expect(shade.scale.y).toBeCloseTo(0.3, 6);
+  });
+
+  it('all three are silent no-ops on a bundle that ships none of them', () => {
+    // `makeSkin`'s default bundle has no clips at all, which is also the real state of every
+    // actor for the frames before its bundle finishes preloading.
+    const skin = makeSkin();
+    skin.setBodyFacing(0);
+    skin.update();
+    const restY = spriteFieldsOf(skin).get('shell')!.y;
+    expect(() => { skin.hurt(); skin.spawn(); skin.die(); }).not.toThrow();
+    skin.advanceClips(16);
+    skin.update();
+    expect(spriteFieldsOf(skin).get('shell')!.y).toBe(restY);
+    expect(spriteFieldsOf(skin).get('shell')!.alpha).toBe(1);
   });
 });

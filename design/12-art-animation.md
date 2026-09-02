@@ -204,6 +204,106 @@ simply not be in the state the render layer sees. See `ENGINE_VERSION_HISTORY.md
 > pose, once every rig has one and there is a blend to play it through" — 2026-09-02 supplied
 > both. The envelope did not go away; it became the aim-relative layer of the table above.
 
+> **`hurt`/`death`/`spawn` were listed as still-unplayed when this section was written.**
+> They landed the same day; see the section directly below, which is also where the reason the
+> additive contract could not carry two of the three is written down.
+
+### The rest of the vocabulary: hurt / death / spawn (2026-09-02)
+
+The other half of the same pass, and the entry that closes the "still open, deliberately" note the
+attack section left behind. All six clips have shipped in all seven bundles since 2026-09-02; three
+of them had been played by the end of it. `hurt`, `death` and `spawn` had not, and the reason was never the art
+— it was that `Actor` received no signal for any of them. All three signals already existed:
+
+| clip | signal | who owns it |
+|---|---|---|
+| `hurt` | the `hit` event's `target` (`08`) | `EventReactor` → `Actor.onHurt` |
+| `death` | the actor's id dropping out of the engine's alive list | `Scene.reconcile` → `Actor.onDeath` |
+| `spawn` | a new id appearing, i.e. the view being created | `Scene.spawn` → `Actor.onSpawn` |
+
+Note the split: **two of the three are diffs of `GameState`, not events.** `Scene` is the only
+thing that computes those diffs, so it drives them, and `EventReactor`'s host interface deliberately
+does not carry them. Nothing new reaches the client for any of the three, and no engine change was
+needed — this is a pure client pass, `ENGINE_VERSION` untouched.
+
+**Which LAYER each clip lands on is decided by the DATA, not by taste**, and this is the part worth
+remembering. The attack section's additive contract says an overlay contributes its own first pose
+on the frame it triggers and its own last pose on the frame it expires. Read that in the negative
+and it becomes a test the shipped keyframes either pass or fail:
+
+- **`hurt` starts and ends at identity** on all seven bundles → it can be an additive overlay, on
+  exactly the same path as `attack`. It also *should* be one: being hit must not interrupt walking
+  or firing, and a flinch belongs on top of whatever the body was doing.
+- **`spawn` opens at scale 0.2 / alpha 0**, and **`death` ends at scale 0.4×0.3, translateY 18,
+  alpha 0** → neither can be an overlay. Layer them and a spawning body pops to 20% on the trigger
+  frame, and a corpse pops back to full size the instant its collapse finishes.
+
+So the base layer stopped being an idle/move pick and became a small state machine —
+**spawn → idle/move → death** — inside `render/rigClipLayer.ts`. A lifecycle clip *outranks* the
+caller's ground clip for its duration; `spawn` then releases it back, and `death` **holds its last
+frame**, because there is nothing for a corpse to return to. `Actor` still asks for `'idle'`/`'move'`
+every frame and never has to know which of the four one-shots is in flight. The one-shot overlay slot
+became a SET rather than a second named field, which is free: both channel operations (add, multiply)
+are commutative, so two live overlays compose to the same pose in either order and no priority rule
+is needed.
+
+**Death is absorbing** — it refuses every later trigger and clears whatever overlays were live: a
+corpse does not flinch. The rule is stated at the layer that owns it, and it is **currently
+unreachable from the one live caller**, which the gap audit that followed this pass established
+rather than assumed. `GameLoop` reconciles the scene BEFORE it consumes the tick's events (both
+loop paths), so on the tick an actor dies its view has already left `Scene.views`, and `actorAt` —
+the only way an event reaction finds an actor — searches nothing else. A killing blow's `hit`
+therefore reaches no view at all, and neither does a splash hit on an actor already mid-dissolve.
+That is a reason to stop calling the guard load-bearing, not a reason to delete it: it is tested as
+a property of `ClipLayers`, and each of the three facts that make it moot is asserted in its own
+suite (the order, `actorAt` refusing a dying view, and the dying list still receiving its frame dt
+so the collapse plays). Widen `actorAt` or reorder the tick and it becomes the live guard.
+
+**Who owns what, on death.** Two mechanisms run at once and the boundary is load-bearing:
+
+- the authored `death` clip owns **the body's own collapse** — squash, sink, fade, per body plan;
+- `ActorFilters` owns **the dissolve shader and the clock that ends the view** (`isDissolved`, which
+  `Scene` destroys on). Art gets no vote on view lifetime.
+
+Because the clip (900 ms) is deliberately longer than `DISSOLVE_MS` (700), the corpse is always
+destroyed while still visibly collapsing, so the two read as one continuous motion instead of a
+collapse followed by a static body being eroded. Both numbers are asserted as a relationship rather
+than restated. `Actor.onDeath` keeps hiding the weapon/aura/health bar, because those are its own
+children; the rig-**mounted** weapon module is not one of them and fades on its own (below).
+
+**The drawn marks had to learn to follow the body**, and which ones already did was only settled
+by asking what `spawn`'s alpha and `death`'s scale actually reach. The tether and the module
+contact shade already read their bone's clip alpha; two did not:
+
+- the **mounted weapon module** is a sprite parented to the rig, not a bone, so nothing faded it.
+  `ModuleMount` now carries its mount bone's own clip alpha. Without it a spawning character mounts
+  a fully-opaque gun on an arm that has not arrived, and a corpse leaves one hanging crisp over the
+  dissolve. The tether out to the module and its contact shade on the core already read that same
+  bone's alpha, so the module was the only one of the three still unwired.
+- the **sphere shading** took only the body bone's position and alpha, never its scale — fine for a
+  60 ms squash accent, not fine for a body collapsed to a third and *held* there for the whole
+  dissolve, which read as a dark plate lying beside a shrinking corpse. `rigShading.placeSphereShade`
+  now takes position, alpha and scale off that one bone, times the screen-space counter-flip (the
+  key light must not mirror with the body — that is the one property that deliberately does *not*
+  come from the bone).
+
+**One real authoring bug fell out of the layer decision**, and it is the kind this pipeline should
+expect. The three `char_*` bundles' `death` clip named `belly`/`socket_l`/`socket_r` **only in its
+final keyframe**, at alpha 0. `sampleClip` resolves a bone with no keyframe at-or-before `t`
+straight to its earliest FUTURE keyframe with no interpolation — so on frame ONE of the collapse a
+hero's belly and both weapon modules vanished outright, while the shell collapsed over the next
+900 ms. Invisible in any still, invisible to source-level tests, and the clip's own last keyframe
+looked entirely correct. Fixed by giving those bones the eye's own alpha ramp. The general rule is
+now asserted for every clip in every bundle: **every bone a clip animates must have a keyframe at
+`t = 0`**, or it cuts instead of ramping.
+
+**Two seams the shipped data still has, both accepted.** The frame `death` takes over, the ground
+clip's pose is dropped, so a body caught at the top of its idle bob steps up to 6 authoring px
+(~2 world px); same for the frame `spawn` releases. That is the same order as the step every
+existing idle↔move swap already takes (one monotonic clock, two different clips), so it is not new
+and not worth a cross-fade — and the death case is covered by a shake, a debris burst and a
+dissolve all starting on the same frame.
+
 ## Atlas / spritesheet format
 
 - **Packed texture atlases** (Pixi spritesheet JSON + a single page image per skin, multi-page if it overflows max texture size). One atlas per skin keeps swaps to a single texture bind.

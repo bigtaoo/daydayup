@@ -193,7 +193,7 @@ export class ActorFilters {
 
   /**
    * Kick off the death-dissolve shader (design/01 milestone 5, `DissolveFilter`) — called once by
-   * `Actor.startDissolve` when this actor's id drops out of the engine's alive list, instead of
+   * `Actor.onDeath` when this actor's id drops out of the engine's alive list, instead of
    * destroying the view that same tick. Hiding the actor's other furniture (weapon, aura, health
    * bar) stays with `Actor`: those are its children, not this object's business.
    */

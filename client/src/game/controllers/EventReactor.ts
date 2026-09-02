@@ -35,9 +35,13 @@ export interface EventReactorHost {
    *  The narrow view this reactor needs: where the actor is on screen (world px, so an event's
    *  own position can be turned into a delta from its centre), the hit reaction, the attack
    *  reaction, and where its DRAWN barrel tip is — the muzzle fx has to be anchored there, and
-   *  `muzzlePos()` is null for a skin that mounts no weapon module (`Skin.muzzleAnchor`). */
+   *  `muzzlePos()` is null for a skin that mounts no weapon module (`Skin.muzzleAnchor`).
+   *
+   *  The two lifecycle reactions (`onSpawn`/`onDeath`) are deliberately NOT here: an id
+   *  appearing in or vanishing from `GameState` is the signal for those, so `Scene` drives them
+   *  off its own diff. This reactor only carries what an EVENT announces. */
   actorAt(id: number): {
-    hitFlash(dx?: number, dy?: number): void;
+    onHurt(dx?: number, dy?: number): void;
     onAttack(kind: 'ranged' | 'melee'): void;
     muzzlePos(): { x: number; y: number } | null;
     x: number;
@@ -107,16 +111,19 @@ export class EventReactor {
         case 'hit':
           this.fx.flash(fpToPx(e.gx), fpToPx(e.gy),
             e.faction === 'enemy' ? THEME.colors.enemy : THEME.colors.swordGlow, 16);
-          // A silhouette flash on the SPECIFIC actor hit (design/01 milestone 5,
-          // `OutlineFilter`) — independent of the position-anchored burst above, which
-          // reads as "impact happened here" rather than "this one took it".
-          // Handed the impact point as a delta from the target's own centre, so the shield
-          // shell dents where the hit landed rather than in a fixed direction
-          // (`EnergyShieldFilter.hit`, 2026-08-26). The event already carries the position the
-          // burst above is anchored to; nothing new had to reach the client for this.
+          // The reaction on the SPECIFIC actor hit — a silhouette flash + shield dent
+          // (design/01 milestone 5, `OutlineFilter`/`EnergyShieldFilter.hit`) and, since
+          // 2026-09-02, the rig's own authored `hurt` flinch. All one call, the same way
+          // `bullet_fired` above makes one `onAttack` call: it is one signal, and splitting it
+          // into two host methods would let a future reaction reach only half the target.
+          // Independent of the position-anchored burst above, which reads as "impact happened
+          // here" rather than "this one took it". Handed the impact point as a delta from the
+          // target's own centre, so the shell dents where the hit landed rather than in a fixed
+          // direction; the event already carries that position, so nothing new had to reach the
+          // client for either half.
           {
             const target = this.host.actorAt(e.target);
-            target?.hitFlash(fpToPx(e.gx) - target.x, fpToPx(e.gy) - target.y);
+            target?.onHurt(fpToPx(e.gx) - target.x, fpToPx(e.gy) - target.y);
           }
           if (e.faction === 'enemy') {
             // The (any) player took the hit — a small punch of feedback.

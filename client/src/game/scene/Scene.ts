@@ -235,11 +235,12 @@ export class Scene {
       if (seen.has(id)) continue;
       this.views.delete(id);
       if (v === this.playerView) this.playerView = null;
-      // A dead player/enemy plays its death-dissolve instead of vanishing outright
-      // (design/01 milestone 5) — bullets/pickups have no dissolve and destroy same as
-      // ever. `interpolate()` below keeps stepping the dissolve until it finishes.
+      // A dead player/enemy plays its death animation instead of vanishing outright — the rig's
+      // authored `death` clip plus the dissolve shader (design/01 milestone 5; `Actor.onDeath`
+      // for which owns what). Bullets/pickups have neither and destroy same as ever.
+      // `interpolate()` below keeps stepping the dissolve until it finishes.
       if (v instanceof Actor) {
-        v.startDissolve();
+        v.onDeath();
         this.dying.push(v);
       } else {
         v.destroy();
@@ -295,5 +296,15 @@ export class Scene {
     if (v instanceof Actor && v.healthBar) this.layers.hud.addChild(v.healthBar);
     v.pushState(x, y, z, facingRad, bodyFacingRad);
     v.snap(); // appear at spawn, don't lerp in from (0,0)
+    // A new engine id IS the spawn signal — there is no `spawn` event, and there does not need to
+    // be one: this method runs exactly once per id, on the tick the entity first appears in
+    // `GameState`. What DOES matter about the timing is that it is after CONSTRUCTION: `Actor`
+    // measures its filter area and its drawn silhouette once, off a rest-posed rig, and the spawn
+    // clip opens the body at 20% scale — so starting it any earlier would size the shield shell,
+    // the hit outline and the occlusion x-ray's denominator against a body that has not arrived,
+    // for the whole run rather than for the clip's 350 ms. Its position within this method is not
+    // load-bearing (a clip trigger reads no coordinates); the call being here rather than in the
+    // constructor is.
+    if (v instanceof Actor) v.onSpawn();
   }
 }

@@ -1,6 +1,6 @@
 import { Graphics, type Texture } from 'pixi.js';
 import { CLEAR, bakedField, over, premul, writeTexel, type Premul } from './shadeRamp';
-import type { BoneDef, ResolvedBoneTransform, WorldPositions } from './types';
+import type { BoneDef, ResolvedBoneTransform, WorldPose, WorldPositions } from './types';
 
 // Split out of RigSkin.ts (2026-08-18, 500-line convention): the DEPTH-CUE marks a rig
 // draws on top of its own flat-cel art — the sphere shading over its body bone, and the
@@ -348,6 +348,43 @@ export function drawSphereShading(drawnR: number): Graphics {
  * `rigTethers.drawTethers` and as the painter it delegates to, and it never needed anything
  * from `RigSkin` beyond the six values it is now handed.
  */
+/**
+ * Seat the sphere-shading quad on the body bone it shades, for this frame (`RigSkin.update`).
+ * Split out here beside `paintModuleContacts` for the same reason that one is here: it is a mark
+ * the rig DRAWS over its authored art, and placing it is pure geometry over one bone's pose.
+ *
+ * All four properties come off that ONE bone, which is the point — the quad is a mark on the
+ * body, so anything the body's clip does to itself it has to do too:
+ *
+ *   - position: the bone's TIP plus the clip's translate (`computeFK` folds a clip's rotation
+ *     into a tip but not its translation, so the idle hover bob has to be re-added here);
+ *   - alpha: the bone's own, so the shade fades out with the art it sits on;
+ *   - scale: the bone's own squash, times `flipX`. The flip is the ONE thing that must NOT come
+ *     from the body: the key light is fixed in SCREEN space, so counter-flipping cancels
+ *     `RigSkin.view.scale.x` exactly and leaves the highlight upper-left whichever way the
+ *     character faces. The squash half of it landed with the `death` clip (2026-09-02), which
+ *     collapses the body to 0.4x0.3 and holds it there for the whole dissolve — a fixed-size
+ *     shade over that read as a dark plate beside a shrinking corpse.
+ *
+ * An unposed bone hides the quad rather than leaving it at last frame's place.
+ */
+export function placeSphereShade(
+  g: Graphics,
+  pose: WorldPose | undefined,
+  transform: ResolvedBoneTransform | undefined,
+  flipX: 1 | -1,
+): void {
+  if (!pose) {
+    g.visible = false;
+    return;
+  }
+  g.visible = true;
+  g.x = pose.ex + (transform?.translateX ?? 0);
+  g.y = pose.ey + (transform?.translateY ?? 0);
+  g.alpha = transform?.alpha ?? 1;
+  g.scale.set(flipX * (transform?.scaleX ?? 1), transform?.scaleY ?? 1);
+}
+
 export function paintModuleContacts(
   g: Graphics,
   shadeBoneId: string,

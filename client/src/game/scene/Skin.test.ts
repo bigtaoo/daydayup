@@ -297,9 +297,74 @@ describe('Skin.attack — the attack trigger', () => {
   it('advances the recoil off the render frame clock, so it settles on its own', () => {
     mocks.loaded = loadedRig();
     const s = new Skin(0x123456, 0xabcdef, 20, 'char_vanguard');
-    const advance = vi.spyOn(internals(s).rig!, 'advanceAttack');
+    const advance = vi.spyOn(internals(s).rig!, 'advanceClips');
     s.setFacing(0, 0, 16, 'idle');
     expect(advance).toHaveBeenCalledWith(16);
+  });
+});
+
+/**
+ * `Skin.hurt()` / `Skin.spawn()` / `Skin.die()` — the other three signals (2026-09-02), and the
+ * same wiring-plus-placeholder pair `Skin.attack` above is checked for. What each clip then DOES
+ * is `render/RigSkin.test.ts` and `render/rigClipLayer.test.ts`; the placeholder half matters
+ * because it is what every actor renders as for the first frames of a run, which is exactly when
+ * a spawn fires.
+ */
+describe('Skin — the three lifecycle/reaction clips', () => {
+  it('forwards each one to the rig', () => {
+    mocks.loaded = loadedRig();
+    const s = new Skin(0x123456, 0xabcdef, 20, 'char_vanguard');
+    const rig = internals(s).rig!;
+    const spies = {
+      hurt: vi.spyOn(rig, 'hurt'), spawn: vi.spyOn(rig, 'spawn'), die: vi.spyOn(rig, 'die'),
+    };
+    s.hurt();
+    s.spawn();
+    s.die();
+    expect(spies.hurt).toHaveBeenCalledTimes(1);
+    expect(spies.spawn).toHaveBeenCalledTimes(1);
+    expect(spies.die).toHaveBeenCalledTimes(1);
+  });
+
+  it('is a silent no-op on the placeholder — the first frames of every run render as one', () => {
+    mocks.loaded = undefined;
+    const s = new Skin(0x123456, 0xabcdef, 20);
+    expect(() => { s.spawn(); s.hurt(); s.die(); }).not.toThrow();
+    expect(() => s.setFacing(0, 0, 16, 'idle')).not.toThrow();
+  });
+
+  it('does not measure its own silhouette through a spawn — the body is at 20% there', () => {
+    // `bodyDrawnH` is measured in the constructor and read by the occlusion x-ray as the
+    // denominator for "how much of this character is a wall covering". The spawn clip opens at
+    // scale 0.2, so a skin that started its own spawn before measuring would report a body a
+    // fifth of its real height for the rest of the run. `Actor.onSpawn` is deliberately called
+    // by `Scene` AFTER construction; this pins that the constructor never does it itself.
+    //
+    // The bundle needs a REAL spawn clip for that to mean anything. The first version of this
+    // test used `loadedRig()`, whose fake bundle carries no clips at all — so `spawn()` was a
+    // no-op, the two heights matched trivially, and a mutation battery walked a
+    // spawn-before-measure straight past it. The `shrinks` assertion below is what makes the
+    // equality above evidence rather than a coincidence.
+    mocks.loaded = loadedRig();
+    mocks.loaded.bundle.clips.set('spawn', {
+      duration: 0.35,
+      loop: false,
+      keyframes: [
+        { time: 0, bones: new Map([['shell', { scaleX: 0.2, scaleY: 0.2 }]]) },
+        { time: 0.35, bones: new Map([['shell', { scaleX: 1, scaleY: 1 }]]) },
+      ],
+    });
+    const a = new Skin(0, 0, 20, 'char_vanguard');
+    const b = new Skin(0, 0, 20, 'char_vanguard');
+    b.spawn();
+    b.setFacing(0, 0, 0, 'idle');
+    expect(a.bodyDrawnH).toBeGreaterThan(0);
+    expect(b.bodyDrawnH).toBe(a.bodyDrawnH);
+    // ...and the clip really does shrink the LIVE body, i.e. measuring through it would have
+    // produced a different number.
+    const shrunk = b.view.getLocalBounds().height;
+    b.setFacing(0, 0, 350, 'idle'); // play the spawn out
+    expect(b.view.getLocalBounds().height).toBeGreaterThan(shrunk);
   });
 });
 

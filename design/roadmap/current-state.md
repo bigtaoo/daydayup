@@ -140,13 +140,17 @@ reachable from any unit test — a full `createGameEngine` end-to-end regression
 `dungeonrun.test.ts` reproducing the reported bug shape directly: one room, two
 real spawned enemies (one beside the player, one clear across the room), driven
 through the real tick order, confirming the near one engages immediately while the
-far one fires zero bullets until it closes the distance. **6421 tests green across all 8
-workspace packages** (engine 1104 / client 4257 / server 189 / animator 444 / map-editor 282 /
+far one fires zero bullets until it closes the distance. **6514 tests green across all 8
+workspace packages** (engine 1104 / client 4350 / server 189 / animator 444 / map-editor 282 /
 png-pipeline 42 / desktop-shell 81 / root build-script 22, `npm run check`, re-measured
-2026-09-02 from `main` with no worktree checked out, after the attack-animation pass (client
-+86 cases over the additive clip layer, the melee swing envelope, `paintModuleContacts` and the
-shipped bundles' own clip data; engine +8 over `melee_swing`) and the muzzle pass before it the
-same day. The root leg reads 22 rather than the 13 recorded below because it now runs TWO files
+2026-09-02 from `main` with no worktree checked out, after the hurt/death/spawn pass (client
++67 cases over the base-layer lifecycle state machine, the second overlay, the two drawn marks
+that now follow the body's clip, and the shipped bundles' own hurt/death/spawn data, plus +26
+from the gap audit that followed it — `placeSphereShade`'s first direct tests, the overlay-over-
+lifecycle branch, the low quality tier's own collapse, and the reconcile-before-events order on
+both loop paths) and, before it the same day, the attack-animation pass (client +86 over the additive clip layer, the melee
+swing envelope, `paintModuleContacts` and the shipped bundles' clip data; engine +8 over
+`melee_swing`) and the muzzle pass before that. The root leg reads 22 rather than the 13 recorded below because it now runs TWO files
 (`versionManifestPlugin` + `wechatAssetSync`), not because a worktree inflated it — the caveat
 that follows is still exactly right and is why this number was taken with none present.
 Previously 5320, re-measured 2026-08-27 after the void return (+48 client: the two new scene modules, `powerRamp`, the call-site

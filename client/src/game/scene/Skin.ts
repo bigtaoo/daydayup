@@ -88,15 +88,16 @@ export class Skin {
   // for a player — see Actor's upper/lower body split); `aimRad` is the weapon's own
   // aim/shot direction, tracked independently of the body. `frameDt`/`clipName` drive
   // a real rig's animation clock + which clip plays (design/12's "render clock").
-  // `clipName` is the BASE layer only — idle/move; an attack rides on top of it as its own
-  // layer (`attack()`), and hurt/death need GameState signals Actor doesn't carry yet,
-  // deliberately left for later. The Graphics placeholder only has a body
-  // front-indicator (its cosmetic weapon Graphics is rotated separately by Actor), so
-  // it ignores `aimRad`/`frameDt`/`clipName`.
+  // `clipName` is the GROUND clip only — idle/move, i.e. "what is this body doing on the
+  // floor". The other four clips of the vocabulary are driven by their own signals and
+  // outrank or overlay it inside `render/rigClipLayer.ts`: `attack`/`hurt` fold on top, and
+  // `spawn`/`death` take over the base layer, so this caller never has to know which of them
+  // is in flight. The Graphics placeholder only has a body front-indicator (its cosmetic
+  // weapon Graphics is rotated separately by Actor), so it ignores `aimRad`/`frameDt`/`clipName`.
   setFacing(bodyRad: number, aimRad: number, frameDt = 0, clipName = 'idle') {
     if (this.rig) {
       this.clock += frameDt;
-      this.rig.advanceAttack(frameDt);
+      this.rig.advanceClips(frameDt);
       this.rig.playClip(clipName, this.clock);
       this.rig.setBodyFacing(bodyRad);
       this.rig.setAim(aimRad);
@@ -115,6 +116,16 @@ export class Skin {
   attack(kind: AttackKind): void {
     this.rig?.attack(kind);
   }
+
+  /** The other three engine signals a rig animates (`Actor.onHurt`/`onSpawn`/`onDeath`), each
+   *  one authored clip and no procedural half — none of them points along the aim ray, which is
+   *  the whole reason `attack` needs one. `hurt` overlays whatever the body is doing; `spawn` and
+   *  `death` take over the base layer, because their own first/last poses are far from identity
+   *  and an additive layer would step the character twice (`render/rigClipLayer.ts`'s header).
+   *  All three are no-ops on the Graphics placeholder, which has no clips at all. */
+  hurt(): void { this.rig?.hurt(); }
+  spawn(): void { this.rig?.spawn(); }
+  die(): void { this.rig?.die(); }
 
   // Hand anchor (in actor-local coords). Fixed in the demo; later driven by animation frames.
   handAnchor(): { x: number; y: number } {

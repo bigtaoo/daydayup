@@ -39,6 +39,8 @@ import { KIND_DEFAULTS, WEAPON_DEFS, MODULE_SCALE, type WeaponVisualDef } from '
 import { ACTIVE_WEAPON_SOCKET, HELD_MOUNT_R, barrelReach, resolveWeaponMount } from './rigWeaponMount';
 import { preloadWeaponSkins } from './weaponSkins';
 import { RECOIL_BODY_PX, RECOIL_MODULE_PX } from './rigAttackMotion';
+import { ATTACK_CLIP, DEATH_CLIP, HURT_CLIP, SPAWN_CLIP } from './rigClipLayer';
+import { DISSOLVE_MS } from '../game/scene/actorFilters';
 import type { Rig } from './Rig';
 import type { RigSkinBundle } from './taoBundle';
 import type { AnimationClip, BoneDef, ResolvedBoneTransform, SpriteBinding, WorldPose } from './types';
@@ -158,6 +160,13 @@ function load(name: string, dir: string): Assembly {
 
 const dist = (a: { x: number; y: number }, b: { x: number; y: number }): number => Math.hypot(a.x - b.x, a.y - b.y);
 const isOrbiting = (bone: BoneDef): boolean => bone.outerW !== undefined && bone.innerW !== undefined;
+
+/** One authoring px of this rig, in world px on THIS bundle's actor — `Skin`'s own
+ *  normalization (`radius / referenceRadius`), before the room camera's further ~4x. The three
+ *  reference radii in play are 40 / 50 / 70 against actors of 15-16 world px, so the same
+ *  authored delta arrives on screen at 0.214x on the boss and 0.400x on a hero. */
+const toWorld = (name: string): number =>
+  fpToPx(name.startsWith('char_') ? PLAYER_BASE.radius : BASIC_ENEMY.radius) / RIG_DEFS[name]!.referenceRadius;
 
 const BUNDLES = preloadedBundles();
 
@@ -811,9 +820,6 @@ describe('rig composition — the move/attack clips against every shipped body',
     }
     return { scale, rotationDeg };
   };
-  const toWorld = (name: string): number =>
-    fpToPx(name.startsWith('char_') ? PLAYER_BASE.radius : BASIC_ENEMY.radius) / RIG_DEFS[name]!.referenceRadius;
-
   it.each(BUNDLES)('$name: the attack clip is visible at world scale, on some channel', ({ name, dir }) => {
     const clip = load(name, dir).clips.get('attack')!;
     const wp = peakTranslate(clip) * toWorld(name);
@@ -853,12 +859,12 @@ describe('rig composition — the move/attack clips against every shipped body',
     }
   });
 
-  it.each(BUNDLES)('$name: the real attack over the real idle blanks nothing idle animates', ({ name, dir }) => {
+  it.each(BUNDLES)('$name: the real overlays over the real idle blank nothing idle animates', ({ name, dir }) => {
     // The end-to-end version of the bug the additive layer exists for, on SHIPPED data and
     // through a real `RigSkin` rather than a hand-built clip pair. Before the layer, playing
     // `attack` dropped every bone it does not name back to rest for the clip's whole duration.
     const a = load(name, dir);
-    const rig = a.skin as unknown as { layers: { playBase(n: string, t: number): void; attack(): void; advance(ms: number): void; sample(): Map<string, ResolvedBoneTransform> } };
+    const rig = a.skin as unknown as { layers: { playBase(n: string, t: number): void; attack(): void; hurt(): void; advance(ms: number): void; sample(): Map<string, ResolvedBoneTransform> } };
     const idleBones = new Set<string>();
     for (let i = 0; i <= 20; i++) {
       for (const [bone, tr] of sampleClip(a.clips.get('idle')!, (a.clips.get('idle')!.duration * i) / 20)) {
@@ -870,19 +876,27 @@ describe('rig composition — the move/attack clips against every shipped body',
     // Park idle at its own extreme (t = half the loop, where every shipped idle is at its peak),
     // then run the attack over it and check each of those bones still carries idle's pose.
     const half = a.clips.get('idle')!.duration / 2;
-    rig.layers.playBase('idle', half * 1000);
-    const alone = rig.layers.sample();
-    rig.layers.attack();
-    rig.layers.advance(a.clips.get('attack')!.duration * 1000 * 0.5); // mid-clip, the worst case
-    const layered = rig.layers.sample();
-    for (const bone of idleBones) {
-      const before = alone.get(bone)!, after = layered.get(bone)!;
-      expect(after, `${name}: ${bone} vanished from the pose under the attack layer`).toBeDefined();
-      // The attack may ADD to it; what it must never do is put the bone back at rest.
-      const idleOffset = Math.hypot(before.translateX, before.translateY) + Math.abs(before.rotation);
-      const stillCarried = Math.hypot(after.translateX, after.translateY) + Math.abs(after.rotation);
-      expect(stillCarried, `${name}: ${bone} was blanked (idle ${idleOffset.toFixed(2)} -> ${stillCarried.toFixed(2)})`)
-        .toBeGreaterThan(idleOffset * 0.4);
+    // Both overlays, and both at once — the frame a player is shot at while firing, which is the
+    // only case where the layer holds two clips and the one no single-overlay test can reach.
+    for (const live of [[ATTACK_CLIP], [HURT_CLIP], [ATTACK_CLIP, HURT_CLIP]]) {
+      rig.layers.playBase('idle', half * 1000);
+      const alone = rig.layers.sample();
+      for (const clipName of live) rig.layers[clipName === ATTACK_CLIP ? 'attack' : 'hurt']();
+      // Mid-clip on the SHORTER of the live clips, so every one of them is still contributing.
+      const shortest = Math.min(...live.map(c => a.clips.get(c)!.duration));
+      rig.layers.advance(shortest * 1000 * 0.5);
+      const layered = rig.layers.sample();
+      for (const bone of idleBones) {
+        const before = alone.get(bone)!, after = layered.get(bone)!;
+        expect(after, `${name}: ${bone} vanished under ${live.join('+')}`).toBeDefined();
+        // The overlay may ADD to it; what it must never do is put the bone back at rest.
+        const idleOffset = Math.hypot(before.translateX, before.translateY) + Math.abs(before.rotation);
+        const stillCarried = Math.hypot(after.translateX, after.translateY) + Math.abs(after.rotation);
+        expect(stillCarried, `${name}: ${bone} was blanked under ${live.join('+')} (idle ${idleOffset.toFixed(2)} -> ${stillCarried.toFixed(2)})`)
+          .toBeGreaterThan(idleOffset * 0.4);
+      }
+      // ...and the next iteration must start from a clean layer, or two rounds pile up.
+      rig.layers.advance(10_000);
     }
   });
 
@@ -960,36 +974,70 @@ describe('rig composition — the shared clip vocabulary and the additive-overla
     }
   });
 
-  it("every bundle's attack clip starts AND ends at identity — the additive layer pops otherwise", () => {
+  it('every bundle\'s OVERLAY clips start AND end at identity — the additive layer pops otherwise', () => {
     // The authoring contract `rigClipLayer.layerAdditive` cannot enforce from code: it ADDS
     // translate/rotation and MULTIPLIES scale/alpha onto the base pose, so a first or last
     // keyframe away from identity is a step change on the frame the overlay starts and on the
     // frame it expires. Asserted on the raw keyframes rather than through a sampler, because
     // this is a claim about what the artist committed.
+    //
+    // BOTH overlay clips since 2026-09-02. `hurt` was checked against this before it was wired,
+    // and it is the reason it could go on the same layer as `attack` rather than needing a
+    // mechanism of its own — see the sibling test below for the two clips that failed the check.
     const IDENTITY: Record<string, number> = {
       rotation: 0, translateX: 0, translateY: 0, scaleX: 1, scaleY: 1, alpha: 1,
     };
     for (const { name, dir } of BUNDLES) {
-      const attack = clipsOf(dir).attack!;
-      const frames = [...attack.keyframes].sort((a, b) => a.time - b.time);
-      for (const edge of [frames[0]!, frames[frames.length - 1]!]) {
-        for (const [boneId, channels] of Object.entries(edge.bones)) {
-          for (const [channel, value] of Object.entries(channels)) {
-            expect(value, `${name} attack t=${edge.time} ${boneId}.${channel}`).toBe(IDENTITY[channel]);
+      for (const clipName of [ATTACK_CLIP, HURT_CLIP]) {
+        const frames = [...clipsOf(dir)[clipName]!.keyframes].sort((a, b) => a.time - b.time);
+        for (const edge of [frames[0]!, frames[frames.length - 1]!]) {
+          for (const [boneId, channels] of Object.entries(edge.bones)) {
+            for (const [channel, value] of Object.entries(channels)) {
+              expect(value, `${name} ${clipName} t=${edge.time} ${boneId}.${channel}`)
+                .toBe(IDENTITY[channel]);
+            }
           }
         }
       }
     }
   });
 
-  it('an attack clip only ever touches bones its own rig actually has', () => {
-    // The layer writes whatever the overlay names, so a stale bone id would silently create a
+  it('every bone a clip animates has a keyframe at t=0 — otherwise it CUTS instead of ramping', () => {
+    // Found by the sibling block's identity check on 2026-09-02, in the three char_* bundles'
+    // `death`: `belly`/`socket_l`/`socket_r` appeared ONLY in the final keyframe, at alpha 0.
+    // `sampleClip` resolves a bone with no keyframe at-or-before `t` straight to its earliest
+    // FUTURE keyframe (`resolveOne`, no interpolation), so those three bones went to alpha 0 on
+    // frame ONE and stayed there — a hero's belly and both weapon modules popped out of existence
+    // the instant it died, while the shell collapsed over the following 900 ms. It is invisible
+    // in every still, invisible to a source-level test, and the clip's own last keyframe looked
+    // completely correct. Fixed by giving those bones the eye's own alpha ramp; asserted here as
+    // the general rule, because the same shape is one forgotten keyframe away in any clip.
+    for (const { name, dir } of BUNDLES) {
+      for (const [clipName, clip] of Object.entries(clipsOf(dir))) {
+        const frames = [...clip.keyframes].sort((a, b) => a.time - b.time);
+        expect(frames[0]!.time, `${name} ${clipName} does not open at t=0`).toBe(0);
+        const opening = new Set(Object.keys(frames[0]!.bones));
+        for (const boneId of new Set(frames.flatMap(k => Object.keys(k.bones)))) {
+          expect(opening.has(boneId), `${name} ${clipName}: '${boneId}' has no t=0 keyframe`).toBe(true);
+        }
+      }
+    }
+  });
+
+  it('no clip ever touches a bone its own rig does not have', () => {
+    // The layer writes whatever a clip names, so a stale bone id would silently create a
     // transform for a bone no sprite reads — invisible on screen and invisible to a sampler test.
+    // All six clips, not just `attack`: `hurt`/`death`/`spawn` were authored for seven bundles
+    // across three rig families, which is exactly the situation a copy-paste bone id survives.
     for (const { name, dir } of BUNDLES) {
       const known = new Set(RIG_DEFS[name]!.rig.boneDefs.map(b => b.id));
-      const bones = new Set(clipsOf(dir).attack!.keyframes.flatMap(k => Object.keys(k.bones)));
-      for (const boneId of bones) expect(known.has(boneId), `${name} attack bone '${boneId}'`).toBe(true);
-      expect(bones.size, `${name} attack animates nothing`).toBeGreaterThan(0);
+      for (const [clipName, clip] of Object.entries(clipsOf(dir))) {
+        const bones = new Set(clip.keyframes.flatMap(k => Object.keys(k.bones)));
+        for (const boneId of bones) {
+          expect(known.has(boneId), `${name} ${clipName} bone '${boneId}'`).toBe(true);
+        }
+        expect(bones.size, `${name} ${clipName} animates nothing`).toBeGreaterThan(0);
+      }
     }
   });
 
@@ -1019,5 +1067,207 @@ describe('rig composition — the shared clip vocabulary and the additive-overla
           .toBe(JSON.stringify(frames[frames.length - 1]!.bones));
       }
     }
+  });
+});
+
+/**
+ * The three clips wired on 2026-09-02, against the art that actually SHIPS — `hurt`, `death`,
+ * `spawn`. Sibling of the two blocks above and it exists for the same reason: `rigClipLayer.
+ * test.ts` proves the state machine is right on hand-built clips, and can prove nothing about
+ * whether the authored NUMBERS read on a real body or whether they even permit the layering the
+ * render side chose for them.
+ *
+ * The FIRST test here is the load-bearing one. It is the measurement the whole design rests on:
+ * `hurt` is identity-anchored at both ends and can therefore be an additive overlay; `spawn` and
+ * `death` are not, and therefore cannot. If an artist ever re-authors `death` to end at identity,
+ * that test fails and the base-layer state machine deserves re-reading rather than standing on a
+ * premise that no longer holds — the same tripwire shape the attack block's own header describes,
+ * and which did its job once already.
+ *
+ * ## What is NOT asserted here, deliberately
+ *
+ * Two seams the shipped data has and nothing can cheaply remove:
+ *
+ *   - the frame `death` takes over the base layer, the ground clip's own pose is dropped, so a
+ *     body caught at the top of its idle bob steps up to 6 authoring px (~2 world px). Same for
+ *     the frame `spawn` releases back to idle. That is the same order as the step every existing
+ *     idle<->move swap already takes (one monotonic clock, two different clips), so it is not new
+ *     and not worth a cross-fade; the death case is additionally covered by a shake, a debris
+ *     burst and a dissolve starting on the same frame.
+ *   - `death` (900 ms) outlives the dissolve that destroys the view (`DISSOLVE_MS` = 700), so its
+ *     last 200 ms are never seen. That is asserted as an intended RELATIONSHIP below rather than
+ *     fixed: the clip being cut off mid-collapse is what makes the two read as one motion.
+ */
+describe('rig composition — the lifecycle clips against every shipped body', () => {
+  /** How far the whole pose sits from identity at time `t`: the largest single-channel departure
+   *  across every bone, with scale/alpha measured against 1 and the rest against 0. One number,
+   *  because the question these tests ask is only "is this pose identity or not". */
+  const departure = (clip: AnimationClip, t: number): number => {
+    let peak = 0;
+    for (const [, tr] of sampleClip(clip, t)) {
+      peak = Math.max(
+        peak,
+        Math.abs(tr.rotation), Math.abs(tr.translateX), Math.abs(tr.translateY),
+        Math.abs(tr.scaleX - 1), Math.abs(tr.scaleY - 1), Math.abs(tr.alpha - 1),
+      );
+    }
+    return peak;
+  };
+
+  it.each(BUNDLES)('$name: hurt can be an overlay and spawn/death provably cannot', ({ name, dir }) => {
+    // The measurement that chose the layers. An additive overlay contributes its own FIRST pose
+    // on the frame it is triggered and its own LAST pose on the frame it expires, so a clip whose
+    // ends are away from identity steps the character twice.
+    const a = load(name, dir);
+    const hurt = a.clips.get(HURT_CLIP)!, spawn = a.clips.get(SPAWN_CLIP)!, death = a.clips.get(DEATH_CLIP)!;
+
+    // hurt: both ends AT identity -> layerable. (The raw-keyframe form of this is in the
+    // vocabulary block; here it is read through the sampler, which also covers a bone whose last
+    // keyframe is earlier than the clip's end and is therefore held rather than returned.)
+    expect(departure(hurt, 0), `${name}: hurt does not start at identity`).toBeCloseTo(0, 10);
+    expect(departure(hurt, hurt.duration), `${name}: hurt does not end at identity`).toBeCloseTo(0, 10);
+
+    // spawn: opens FAR from identity -> must own the base layer. Ends at identity, which is the
+    // separate property that makes releasing back to idle/move safe.
+    expect(departure(spawn, 0), `${name}: spawn could have been an overlay`).toBeGreaterThan(0.5);
+    expect(departure(spawn, spawn.duration), `${name}: spawn does not settle at identity`).toBeCloseTo(0, 10);
+
+    // death: the mirror image. Starts at identity (so the collapse begins from rest rather than
+    // snapping) and ENDS far away -> must own the base layer, and must hold rather than release.
+    expect(departure(death, 0), `${name}: death does not start at identity`).toBeCloseTo(0, 10);
+    expect(departure(death, death.duration), `${name}: death could have been an overlay`).toBeGreaterThan(0.5);
+  });
+
+  it('the three lifecycle clips have one cadence across every bundle', () => {
+    // Same claim the move/attack block makes for its two: one render-side rule driving seven rigs
+    // means nothing if a `death` is twice as long on one body plan. None of them loops — a
+    // looping death would restart its own collapse forever.
+    for (const { name, dir } of BUNDLES) {
+      const a = load(name, dir);
+      expect([a.clips.get(HURT_CLIP)!.duration, a.clips.get(HURT_CLIP)!.loop], `${name} hurt`).toEqual([0.3, false]);
+      expect([a.clips.get(DEATH_CLIP)!.duration, a.clips.get(DEATH_CLIP)!.loop], `${name} death`).toEqual([0.9, false]);
+      expect([a.clips.get(SPAWN_CLIP)!.duration, a.clips.get(SPAWN_CLIP)!.loop], `${name} spawn`).toEqual([0.35, false]);
+    }
+  });
+
+  it('the death clip outlives the dissolve that destroys the view', () => {
+    // The two clocks that have to agree, and they are owned by different files on purpose:
+    // this layer owns the body's collapse, `ActorFilters` owns the dissolve AND the moment the
+    // view is gone (`Actor.onDeath`). Because the clip is the LONGER of the two, the corpse is
+    // always destroyed while still visibly collapsing, so the two read as one continuous motion.
+    // Were it shorter, the body would finish falling and then sit there, held, while the shader
+    // kept eroding a static pose.
+    const deathMs = load(BUNDLES[0]!.name, BUNDLES[0]!.dir).clips.get(DEATH_CLIP)!.duration * 1000;
+    expect(deathMs).toBeGreaterThan(DISSOLVE_MS);
+  });
+
+  it.each(BUNDLES)('$name: spawn opens small and death collapses, both readably', ({ name, dir }) => {
+    // The readability band, and unlike the move/attack block this one needs no world-px
+    // conversion: scale and alpha are dimensionless, so an authored 0.2 reads as 20% of the body
+    // on a 40-radius hero and on a 70-radius boss alike. That is also why these two clips could
+    // be authored once for three rig families where `move`'s translations could not.
+    const a = load(name, dir);
+    const minScale = (clip: AnimationClip): number => {
+      let min = 1;
+      for (let i = 0; i <= 60; i++) {
+        for (const [, tr] of sampleClip(clip, (clip.duration * i) / 60)) min = Math.min(min, tr.scaleX, tr.scaleY);
+      }
+      return min;
+    };
+    const spawn = a.clips.get(SPAWN_CLIP)!, death = a.clips.get(DEATH_CLIP)!;
+    // Materialising: starts invisible and no more than half size, or it reads as a pop-in.
+    expect(sampleClip(spawn, 0).get(a.bodyBone.id)!.alpha, `${name} spawn opening alpha`).toBe(0);
+    expect(minScale(spawn), `${name} spawn min scale`).toBeLessThanOrEqual(0.5);
+    // Collapsing: ends invisible and no more than half size, plus a sink the eye can follow.
+    expect(sampleClip(death, death.duration).get(a.bodyBone.id)!.alpha, `${name} death final alpha`).toBe(0);
+    expect(minScale(death), `${name} death min scale`).toBeLessThanOrEqual(0.5);
+    const sinkWp = sampleClip(death, death.duration).get(a.bodyBone.id)!.translateY * toWorld(name);
+    expect(sinkWp, `${name} death sinks ${sinkWp.toFixed(2)} world px`).toBeGreaterThan(0.3);
+  });
+
+  it.each(BUNDLES)('$name: the hurt flinch is visible at world scale', ({ name, dir }) => {
+    // The sibling of the move/attack readability check, and like the spawn/death one it needs no
+    // world-px conversion: `hurt` expresses itself entirely as squash, and scale is dimensionless,
+    // so an authored 1.15/0.8 reads as the same 15-20% on a 40-radius hero and a 70-radius boss.
+    // The bar is the attack block's own scale bar, because this is the same kind of read.
+    const clip = load(name, dir).clips.get(HURT_CLIP)!;
+    let peak = 0;
+    for (let i = 0; i <= 60; i++) {
+      for (const [, tr] of sampleClip(clip, (clip.duration * i) / 60)) {
+        peak = Math.max(peak, Math.abs(tr.scaleX - 1), Math.abs(tr.scaleY - 1));
+      }
+    }
+    expect(peak, `${name}: hurt peaks at only ${(peak * 100).toFixed(0)}% of squash`)
+      .toBeGreaterThanOrEqual(0.1);
+  });
+
+  it('the three character bundles ship byte-identical animations', () => {
+    // The hero sibling of the critter/brute/floater check above, and it holds for the same
+    // reason: all three `char_*` bundles are the SAME `orb-core` rig with different art, and the
+    // clips are authored once. Nothing enforced it, so a retune applied to one character would
+    // silently give three characters on one skeleton three different gaits and three different
+    // deaths — and `build-character-projects.mjs` writes all three from one source, which is
+    // exactly the script that has drifted from its own output before (2026-09-02, earlier).
+    const clipsJson = (dir: string): string =>
+      JSON.stringify(readJson<AnimationJson>(`skins/${dir}/animation.json`).animations);
+    const heroes = BUNDLES.filter(b => b.name.startsWith('char_'));
+    expect(heroes.length, 'expected the three-character roster').toBe(3);
+    const first = clipsJson(heroes[0]!.dir);
+    for (const { name, dir } of heroes.slice(1)) {
+      expect(clipsJson(dir), `${name} has drifted from ${heroes[0]!.name}`).toBe(first);
+    }
+  });
+
+  it.each(BUNDLES)('$name: the real clips reach the real sprites, through a real RigSkin', ({ name, dir }) => {
+    // End-to-end, on shipped data and through the public API the game calls — the half no
+    // sampler test covers, because a clip channel only matters if `RigSkin.update` puts it on a
+    // sprite. Every one of the three moves a DIFFERENT channel onto a different property, and
+    // each of those is a separate line in that method.
+    const a = load(name, dir);
+    const spriteOf = (boneId: string): { alpha: number; y: number } =>
+      (a.skin as unknown as { sprites: Map<string, { alpha: number; y: number }> }).sprites.get(boneId)!;
+    const body = a.bodyBone.id;
+    const restFootprint = a.footprint(body);
+    const restY = spriteOf(body).y;
+    expect(spriteOf(body).alpha, `${name}: not opaque at rest`).toBe(1);
+
+    // spawn, frame 0: the body is barely there — scale AND alpha, both off the same clip.
+    a.skin.spawn();
+    a.skin.update();
+    expect(a.footprint(body) / restFootprint, `${name} spawn footprint`).toBeLessThan(0.5);
+    expect(spriteOf(body).alpha, `${name} spawn alpha`).toBe(0);
+
+    // ...and it hands the body back at full size once it has played out.
+    a.skin.advanceClips(a.clips.get(SPAWN_CLIP)!.duration * 1000);
+    a.skin.update();
+    expect(a.footprint(body)).toBeCloseTo(restFootprint, 6);
+    expect(spriteOf(body).alpha).toBe(1);
+
+    // death, at the point the dissolve destroys the view: collapsed, sunk and nearly gone. Read
+    // at DISSOLVE_MS rather than at the clip's end because that is the last frame anyone sees.
+    a.skin.die();
+    a.skin.advanceClips(DISSOLVE_MS);
+    a.skin.update();
+    expect(a.footprint(body) / restFootprint, `${name} death footprint`).toBeLessThan(0.8);
+    expect(spriteOf(body).y, `${name} death sink`).toBeGreaterThan(restY);
+    expect(spriteOf(body).alpha, `${name} death alpha`).toBeLessThan(1);
+  });
+
+  it.each(BUNDLES)('$name: a mounted module fades with the socket it hangs on', ({ name, dir }) => {
+    // A module is not a bone, so nothing else would ever fade it (`ModuleMount.alpha`). Both
+    // lifecycle clips make that visible: `spawn` opens every socket at alpha 0, so a module left
+    // at 1 materialises a fully-opaque gun beside a body that has not arrived. Skipped for the
+    // one rig that deliberately mounts nothing (boss-core, design/13's shard rings).
+    const a = load(name, dir);
+    if (resolveWeaponMount(RIG_DEFS[name]!.rig) === 'none') return;
+    a.skin.setWeaponKind('ranged', 'blaster');
+    a.skin.update();
+    const active = (): { alpha: number; visible: boolean } =>
+      (a.skin as unknown as { weaponSprite: { alpha: number; visible: boolean } | null }).weaponSprite!;
+    expect(active(), `${name}: no module mounted, so this proves nothing`).not.toBeNull();
+    expect(active().alpha).toBe(1);
+    a.skin.spawn();
+    a.skin.update();
+    expect(active().alpha, `${name}: module did not fade with its mount`).toBe(0);
   });
 });

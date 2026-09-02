@@ -4,7 +4,7 @@ import type { RigSkinBundle } from './taoBundle';
 import type { ResolvedBoneTransform, WorldPositions } from './types';
 import { canonicalAimRad, facingFromAngle } from './facing';
 import { getWeaponAnchor, getWeaponRotationOffset, getWeaponScale, getWeaponTexture, type WeaponVisualKind } from './weaponSkins';
-import { MODULE_BEHIND_SCALE, MODULE_BEHIND_SHADE, SHADE_MIN_BODY_R, drawSphereShading, paintModuleContacts, shadeHex } from './rigShading';
+import { MODULE_BEHIND_SCALE, MODULE_BEHIND_SHADE, SHADE_MIN_BODY_R, drawSphereShading, paintModuleContacts, placeSphereShade, shadeHex } from './rigShading';
 import { drawTethers, hasTetheredBone } from './rigTethers';
 import { EYE_BONE_ID, FRONT_ONLY_BONES, trackEye } from './rigFacingArt';
 import {
@@ -156,9 +156,11 @@ export class RigSkin {
     this.view.sortableChildren = true;
   }
 
-  /** Select which BASE clip plays (idle/move) and at what local time (ms — converted to the
+  /** Select which GROUND clip plays (idle/move) and at what local time (ms — converted to the
    *  seconds clip.duration/keyframe.time are authored in, tools/animator's AnimationController).
-   *  The attack overlay is independent of this and rides on top; see `attack()`. */
+   *  The one-shot overlays ride on top of it (`attack`/`hurt`) and the lifecycle clips outrank it
+   *  (`spawn`/`die`), so this stays the caller's plain "what is the body doing on the ground"
+   *  question — `Actor` asks for idle/move whether or not the actor is spawning or dying. */
   playClip(name: string, tMs: number): void {
     this.layers.playBase(name, tMs);
   }
@@ -171,8 +173,17 @@ export class RigSkin {
     this.layers.attack();
   }
 
-  /** Advance the attack clip overlay + envelope by one render frame. Call before `update()`. */
-  advanceAttack(dtMs: number): void {
+  /** The other three signals the engine's event/entity stream carries, each one clip and nothing
+   *  else — no procedural half, unlike `attack`, because none of them points along the aim ray.
+   *  Which LAYER each lands on is `rigClipLayer`'s call and is forced by the shipped keyframes;
+   *  see its header table. `hurt` rides over whatever the body is doing (a flinch must not stop
+   *  a walk), `spawn`/`die` take over the base layer for their duration. */
+  hurt(): void { this.layers.hurt(); }
+  spawn(): void { this.layers.spawn(); }
+  die(): void { this.layers.die(); }
+
+  /** Advance every clip clock + the attack envelope by one render frame. Call before `update()`. */
+  advanceClips(dtMs: number): void {
     this.motion.advance(dtMs);
     this.layers.advance(dtMs);
   }
@@ -188,8 +199,9 @@ export class RigSkin {
     // The key light is fixed in SCREEN space, so the shading must not mirror with the body:
     // counter-flipping cancels `view.scale.x` exactly, leaving the highlight on the
     // upper-left and the terminator on the lower-right whichever way the character faces.
-    // (Every other child here is body-space art and SHOULD mirror.)
-    if (this.sphereShade) this.sphereShade.scale.x = flipX;
+    // (Every other child here is body-space art and SHOULD mirror.) The counter-flip itself is
+    // WRITTEN in `update()`, together with the body's own clip squash it now has to share that
+    // scale with — one line owning one property, rather than two that overwrite each other.
   }
 
   /** Aim/shot direction (radians) — drives ONLY the weapon-socket aim-tracking
@@ -306,20 +318,13 @@ export class RigSkin {
       sprite.alpha = transform?.alpha ?? 1;
     });
 
-    // Sphere shading rides the body bone's drawn position — same tip-not-pivot convention
-    // as the art itself, and re-read every frame because the idle clip translates that bone
-    // (the hover bob). Geometry is static in body space, so only x/y move here.
+    // Sphere shading rides the body bone it shades — its drawn position, its clip alpha and its
+    // clip squash, all off that one bone. See `rigShading.placeSphereShade` for each and for the
+    // one property that deliberately does NOT come from the body (the screen-space flip).
     if (this.sphereShade && this.shadeBoneId) {
-      const bodyPose = worldPose.get(this.shadeBoneId);
-      const bodyTransform = transforms.get(this.shadeBoneId);
-      if (bodyPose) {
-        this.sphereShade.visible = true;
-        this.sphereShade.x = bodyPose.ex + (bodyTransform?.translateX ?? 0);
-        this.sphereShade.y = bodyPose.ey + (bodyTransform?.translateY ?? 0);
-        this.sphereShade.alpha = bodyTransform?.alpha ?? 1;
-      } else {
-        this.sphereShade.visible = false;
-      }
+      placeSphereShade(
+        this.sphereShade, worldPose.get(this.shadeBoneId), transforms.get(this.shadeBoneId), this.flipX,
+      );
     }
 
     if (this.tethers) {
@@ -368,7 +373,7 @@ export class RigSkin {
           this.weaponMount, worldPose, transforms, canonical, this.heldMountBody(), this.motion.modulePx,
         )
       : null;
-    const idleMount = texture ? idleModuleMount(this.weaponMount, worldPose) : null;
+    const idleMount = texture ? idleModuleMount(this.weaponMount, worldPose, transforms) : null;
     // The height half of the active mount (see `muzzleLocal`'s `heightPx`) — the last point
     // where the rig can still tell "how high off the floor" from "how far north".
     this.activePivotY = activeMount?.pivotY ?? 0;
@@ -433,6 +438,9 @@ export class RigSkin {
     sprite.visible = true;
     sprite.x = mount.x;
     sprite.y = mount.y;
+    // A module is not a bone, so its mount carries its mount BONE's clip alpha — see
+    // `ModuleMount.alpha` for the two clips that make the difference visible.
+    sprite.alpha = mount.alpha;
     sprite.rotation = mount.angle + rotationOffset;
     return sprite;
   }
