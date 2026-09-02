@@ -239,11 +239,11 @@ change: the whole fix is that `case 'win'` now asks **whose** win it was.
 
 ### What guards it
 
-**Three layers, 17 new cases** (4388 → 4405), because the fix has three distinct failure modes:
+**Three layers, 25 new cases** (4380 → 4405), because the fix has three distinct failure modes:
 the cue picks the wrong branch, the shared rule itself is wrong, and one of the two callers
 quietly stops using it.
 
-- **`EventReactor.test.ts`'s "the cues that are about YOU" block, +10.** Both directions of the
+- **`EventReactor.test.ts`'s "the cues that are about YOU" block, +9.** Both directions of the
   arena gate, the squad-mate case both ways, the PvE shared outcome, the PvE wipe, the same-frame
   coalescing at `death.player:2`, the null state playing nothing, and — deliberately forced apart
   — that the winner is read off the EVENT and not off `state.winner`. Those two agree in the real
