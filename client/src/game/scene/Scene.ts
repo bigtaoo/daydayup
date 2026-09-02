@@ -33,6 +33,20 @@ export class Scene {
   // Same pattern again, for `pickups` below.
   private readonly pickupsScratch: Pickup[] = [];
 
+  /**
+   * How many Actor views the last `reconcile()` built — the `spawn` cue's whole trigger
+   * (design/11, 2026-09-02). It is reported as a NUMBER rather than played here for two
+   * reasons: this file holds no audio dependency and should not start (it draws what the
+   * engine computed, design/08), and the count is what the mixer needs anyway — a room's
+   * wave materialising nine actors on one frame has to coalesce into one voice at higher
+   * gain, not nine voices. `GameLoop` hands it to `EventReactor.consume` beside that frame's
+   * events, which is where every other cue is already coalesced.
+   *
+   * Reset at the top of each `reconcile()`, so it describes that call and never accumulates.
+   * Bullets and pickups are excluded because only an `Actor` has a `spawn` clip to match.
+   */
+  spawnedActors = 0;
+
   constructor(private readonly layers: Layers) {}
 
   /** The LOCAL player's view, for the camera to follow (null before spawn / after death). */
@@ -105,6 +119,7 @@ export class Scene {
   reconcile(state: GameState, localPlayerId = -1): void {
     const seen = this.seenScratch;
     seen.clear();
+    this.spawnedActors = 0;
 
     for (const p of state.players) {
       if (!p.alive) continue;
@@ -305,6 +320,9 @@ export class Scene {
     // for the whole run rather than for the clip's 350 ms. Its position within this method is not
     // load-bearing (a clip trigger reads no coordinates); the call being here rather than in the
     // constructor is.
-    if (v instanceof Actor) v.onSpawn();
+    if (v instanceof Actor) {
+      v.onSpawn();
+      this.spawnedActors++;
+    }
   }
 }

@@ -17,6 +17,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { ALL_CUES } from '../audio/cueCatalogue';
 // The frame walker moved to `audio/mp3Frames.ts` when the music gate needed the same parser
@@ -30,7 +31,10 @@ const ART_AUDIO = new URL('../../../art/audio/', import.meta.url);
 // Total budget for the SFX set. It sits inside the WeChat main package (design/04's 4 MB),
 // which `build/checkWeChatPackage.mjs` gates as a whole; this is the finer drift check, so
 // audio creeping upward shows up here as itself rather than as an anonymous package overrun.
-// The set is 101.9 kB at the time of writing (46 engine cues + 4 UI, 2026-08-30).
+// The set is 122.7 kB at the time of writing (46 engine + 4 UI + the 11 character-reaction
+// files of 2026-09-02). The budget has NOT moved with it: it was set at 160 KiB against a
+// 101.9 kB set and there is still room, which is the point — a budget that is raised to fit
+// whatever just landed is not a budget.
 const AUDIO_BUDGET_BYTES = 160 * 1024;
 
 // Every cue the game can fire, from `audio/cueCatalogue.ts` — which the compiler holds
@@ -46,6 +50,12 @@ const AUDIO_BUDGET_BYTES = 160 * 1024;
 const COMBAT_CUES = new Set<string>([
   'muzzle', 'impact', 'deflect', 'clash', 'shield.break',
   'status.burn', 'status.chill', 'status.shock', 'status.poison',
+  // The character-reaction cues (2026-09-02) split across the two classes rather than
+  // arriving as a block, and which side each falls on is the decision worth pinning:
+  // `swing` and `hurt` are combat CONTACTS, so a tail that outlives the moment piles up the
+  // same way a long `muzzle` would, while `spawn` and `death.player` announce a lifecycle
+  // step and belong with `death.enemy`/`pickup.*` on the looser gate.
+  'swing', 'hurt',
 ]);
 
 // The third class, added with the UI cues (2026-08-30). It is the tightest of the three on
@@ -61,6 +71,8 @@ interface CreditsFile {
   file: string;
   source: string;
   source_pack: string;
+  /** Only for a `per_sound` pack — see `Packs` below. */
+  source_sha256?: string;
   sample_rate: number;
   duration_ms: number;
   bytes: number;
@@ -77,7 +89,14 @@ interface Credits {
   kept_on_synth: Record<string, string>;
 }
 interface Packs {
-  packs: { id: string; license: string; license_text: string; sha256: string; download: string }[];
+  // `sha256` is the upstream ZIP's, and it is absent exactly when `per_sound` is set: a
+  // source that serves one sound at a time has no archive to hash, so its integrity record
+  // moves to `credits.json`, where each file from it carries its own `source_sha256`. The
+  // test below holds both shapes to the same standard rather than exempting either.
+  packs: {
+    id: string; license: string; license_text: string; download: string;
+    sha256?: string; per_sound?: boolean;
+  }[];
 }
 
 const json = <T>(base: URL, name: string): T =>
@@ -213,9 +232,27 @@ describe('licence provenance', () => {
       const path = new URL(`../../../${p.license_text}`, import.meta.url);
       expect(existsSync(fileURLToPath(path)), `${p.id} licence text missing`).toBe(true);
       expect(readFileSync(path, 'utf8')).toMatch(/CC0/);
-      // sha256 of the upstream zip, so the full pack stays re-fetchable and verifiable.
-      expect(p.sha256).toMatch(/^[0-9a-f]{64}$/);
       expect(p.download).toMatch(/^https:\/\//);
+      if (p.per_sound) {
+        // No archive exists to hash, so the guarantee is per FILE and has to actually be
+        // there for every one of them — a `per_sound` flag with no hashes behind it would be
+        // an exemption rather than a different way of keeping the same promise.
+        expect(p.sha256).toBeUndefined();
+        const fromPack = creditFiles.filter((f) => f.source_pack === p.id);
+        expect(fromPack.length, `${p.id} declared but unused`).toBeGreaterThan(0);
+        for (const f of fromPack) {
+          expect(f.source_sha256, `${f.file} source hash`).toMatch(/^[0-9a-f]{64}$/);
+          // ...and it has to be the hash OF the archived bytes. A well-formed hash that
+          // describes nothing is the failure mode a shape check cannot see, and it is the
+          // whole reason this pack is allowed to ship without a zip hash.
+          const src = readFileSync(new URL(`sources/${f.source}`, ART_AUDIO));
+          expect(createHash('sha256').update(src).digest('hex'), `${f.source} bytes`)
+            .toBe(f.source_sha256);
+        }
+      } else {
+        // sha256 of the upstream zip, so the full pack stays re-fetchable and verifiable.
+        expect(p.sha256).toMatch(/^[0-9a-f]{64}$/);
+      }
     }
   });
 

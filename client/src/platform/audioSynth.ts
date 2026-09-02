@@ -71,6 +71,26 @@ function chordNote(ctx: AudioContext, bus: GainNode, freq: number, dur: number, 
 const VOICES: Record<AudioCue, (ctx: AudioContext, bus: GainNode) => void> = {
   muzzle: (c, b) => tone(c, b, 220, 'square', 0.06, 0.12, 120),
   impact: (c, b) => { noise(c, b, 0.07, 0.18, 2600); tone(c, b, 160, 'triangle', 0.06, 0.1, 90); },
+
+  // The four voices added with the character-reaction cues (2026-09-02). Every one of them is
+  // a SINGLE `tone()`, and that is a decision rather than a coincidence: a single tone's gain
+  // envelope ramps 0 -> `gain` -> 0 over a unit-amplitude oscillator, so its peak IS its gain
+  // argument, exactly — which is what lets `tools/audio-pipeline/process_reaction.py` derive
+  // its peak-match reference from this table instead of from a re-rendered `synth.json` that
+  // no longer exists in the repo. The four `ui.*` voices below rely on the same property.
+  //
+  // Direction of imitation is the UI table's, not the combat table's: the SAMPLE was picked
+  // first and each voice was written to imitate its measured duration and centroid (swing
+  // 126-155 ms / 1208-1572 Hz, hurt 107-118 ms / 1465-1818 Hz, death.player 780 ms / 1161 Hz,
+  // spawn 400 ms / 467-631 Hz). "Closest match to the incumbent" is not why these files
+  // sound the way they do — there was no incumbent.
+  //
+  // A downward sweep, under `muzzle`'s 0.12: a stroke through air, and the quieter half of
+  // the two attack announcements.
+  swing: (c, b) => tone(c, b, 1500, 'triangle', 0.14, 0.11, 620),
+  // The local seat taking damage. Above the status stings and just under `impact`'s noise
+  // burst (0.18) — it layers under that transient every time it plays, never over it.
+  hurt: (c, b) => tone(c, b, 1400, 'triangle', 0.11, 0.16, 900),
   deflect: (c, b) => tone(c, b, 700, 'triangle', 0.14, 0.2, 1400), // signature parry ping (design/03/05)
   clash: (c, b) => { tone(c, b, 520, 'square', 0.05, 0.1); tone(c, b, 780, 'square', 0.05, 0.08); },
   'shield.break': (c, b) => { tone(c, b, 420, 'sawtooth', 0.16, 0.16, 180); chordNote(c, b, 620, 0.1, 0.1); },
@@ -78,7 +98,12 @@ const VOICES: Record<AudioCue, (ctx: AudioContext, bus: GainNode) => void> = {
   'status.chill': (c, b) => tone(c, b, 1200, 'sine', 0.12, 0.09, 900),
   'status.shock': (c, b) => tone(c, b, 300, 'sawtooth', 0.08, 0.1, 600),
   'status.poison': (c, b) => tone(c, b, 180, 'sine', 0.16, 0.09, 140),
-  death: (c, b) => tone(c, b, 300, 'sawtooth', 0.22, 0.14, 70),
+  'death.enemy': (c, b) => tone(c, b, 300, 'sawtooth', 0.22, 0.14, 70),
+  // A long fall, and the loudest single voice in the table. It is the counterpart of `win`,
+  // so it is allowed the room `win` gets — still under `win` itself, which stacks three tones.
+  'death.player': (c, b) => tone(c, b, 520, 'triangle', 0.7, 0.2, 200),
+  // A rise, level with `muzzle`: nine of these can arrive on one frame.
+  spawn: (c, b) => tone(c, b, 300, 'sine', 0.38, 0.12, 900),
   'pickup.heal': (c, b) => tone(c, b, 660, 'sine', 0.12, 0.13, 990),
   'pickup.weapon': (c, b) => tone(c, b, 520, 'triangle', 0.14, 0.13, 780),
   'pickup.material': (c, b) => tone(c, b, 880, 'square', 0.08, 0.1, 1320),

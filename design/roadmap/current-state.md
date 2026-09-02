@@ -140,10 +140,14 @@ reachable from any unit test — a full `createGameEngine` end-to-end regression
 `dungeonrun.test.ts` reproducing the reported bug shape directly: one room, two
 real spawned enemies (one beside the player, one clear across the room), driven
 through the real tick order, confirming the near one engages immediately while the
-far one fires zero bullets until it closes the distance. **6514 tests green across all 8
-workspace packages** (engine 1104 / client 4350 / server 189 / animator 444 / map-editor 282 /
+far one fires zero bullets until it closes the distance. **6544 tests green across all 8
+workspace packages** (engine 1104 / client 4380 / server 189 / animator 444 / map-editor 282 /
 png-pipeline 42 / desktop-shell 81 / root build-script 22, `npm run check`, re-measured
-2026-09-02 from `main` with no worktree checked out, after the hurt/death/spawn pass (client
+2026-09-02 from `main` with no worktree checked out, after the character-reaction CUE pass
+(client +30: the local-seat gate on `hurt`/`death.player` in both directions, the spawn count's
+arithmetic and its one piece of wiring, `Scene.spawnedActors` describing one reconcile rather
+than accumulating, and the closed-form invariant `tools/audio-pipeline/` reads out of the synth
+voice table) and, before it the same day, the hurt/death/spawn CLIP pass (client
 +67 cases over the base-layer lifecycle state machine, the second overlay, the two drawn marks
 that now follow the body's clip, and the shipped bundles' own hurt/death/spawn data, plus +26
 from the gap audit that followed it — `placeSphereShade`'s first direct tests, the overlay-over-
@@ -195,8 +199,14 @@ see that entry under [Phase 5](../ROADMAP.md#phase-5--presentation--platform)), 
 post-processing, particles, all four fidelity-roadmap custom shaders (5.4), and (2026-08-03,
 see that entry under [Phase 5](../ROADMAP.md#phase-5--presentation--platform)) 5.4's dynamic-lighting milestone all ship; the project's art direction is
 now GPT-Image-2-generated art treated as final production art (an explicit scope decision, not a
-tooling change — see the 5.3 update under [Phase 5](../ROADMAP.md#phase-5--presentation--platform)), so what remains in Phase 5 is real authored
-music, and 5.5 WeChat device verification (blocked on hardware). A repo structure pass (bottom
+tooling change — see the 5.3 update under [Phase 5](../ROADMAP.md#phase-5--presentation--platform)). **Audio (5.1) has since closed too**: the SFX
+set, the four `ui.*` screen cues, two music loops with a real two-deck runtime (2026-08-31) and,
+2026-09-02, the four cues a character makes about itself (`swing`/`hurt`/`spawn`/`death.player`,
+which also split the old `death` cue into `death.enemy`/`death.player`) — **61 shipped cue files
+and 2 loops, all of which play on both targets**. So what remains in Phase 5 is a master for the
+third music track (`dungeon.ember` borrows `menu`'s as a declared placeholder), 5.5 WeChat device
+verification (blocked on hardware), and the one thing no measurement can close: **nobody has
+listened to any of it.** A repo structure pass (bottom
 of this doc) made the engine its own DOM-free package and the repo an npm workspace. Per-item
 detail, including what each phase deliberately did *not* build, is in the volumes under [design/roadmap/](.); the
 [Dependency summary](../ROADMAP.md#dependency-summary) in the index is the one-screen version.

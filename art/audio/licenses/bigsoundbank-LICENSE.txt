@@ -1,0 +1,17 @@
+BigSoundBank (La Sonotheque) -- licence statement, captured verbatim
+Author: Joseph SARDIN
+Source page: https://bigsoundbank.com/whoosh-1-s0572.html
+
+License   CC0 (public domain): Free and royalty-free
+
+The same page answers its own FAQ:
+  "Is this sound free?"  -> "Yes, because I intentionally release it under the CC0
+     license (public-domain equivalent). You can download and use it without paying,
+     without creating an account, and without asking for permission."
+  "Is this sound free for commercial use?" -> "Yes. You can use this sound in any
+     project, including commercial ones, anywhere in the world, without paying a
+     license fee."
+
+Captured by tools/audio-pipeline/fetch_bigsoundbank.py --license. Unlike the Kenney
+packs there is no bundled LICENSE.txt to archive, so this file IS the record; re-run
+the command above to re-capture it from the live page.

@@ -75,6 +75,10 @@ export interface InputSource {
 // it reads events and plays, and NEVER feeds the sim (design/06/11).
 export type AudioCue =
   | 'muzzle'
+  // The melee counterpart of `muzzle`, off the `melee_swing` event (ENGINE_VERSION 52) —
+  // announced whether or not the swing connects, so a stroke through empty air is audible.
+  // A connection is `impact`'s job and a parry is `deflect`'s; this is the stroke itself.
+  | 'swing'
   | 'impact'
   | 'deflect'
   | 'clash'
@@ -83,7 +87,29 @@ export type AudioCue =
   | 'status.chill'
   | 'status.shock'
   | 'status.poison'
-  | 'death'
+  // The four cues a CHARACTER makes about itself, and the audio half of the rig's own
+  // authored clips (design/12): `attack` is `swing` above, and these three are `hurt`,
+  // `death` and `spawn`. All four clips have animated a body since 2026-09-02 and none of
+  // them made a sound; `idle`/`move` are the two that never should.
+  //
+  // `hurt` fires ONLY for the local seat, unlike `impact`, which fires for every hit anywhere.
+  // That is the whole point of it: `impact` says a hit landed, `hurt` says it landed on YOU —
+  // the "player damage" at the top of design/11's priority ladder. Firing it for every actor
+  // would just double `impact` on every frame of a fight.
+  | 'hurt'
+  // `death` split in two (2026-09-02). The bare `death` cue only ever fired for an enemy —
+  // `EventReactor` tested `faction === 'enemy'` before playing it — so a player death, the
+  // moment a run ends, was the one lifecycle event in the game with no sound at all. Two
+  // named cues instead of one silent branch, which is also design/11's own written
+  // vocabulary (`death.<enemy/player>`).
+  | 'death.enemy'
+  | 'death.player'
+  // An actor VIEW being built. Alone among the engine-driven cues this one has no engine
+  // event behind it: an id appearing in `GameState` is a diff `Scene` computes, not something
+  // the sim announces (same reason `Actor.onSpawn` is driven from there rather than from
+  // `EventReactor`). It arrives as a per-frame COUNT instead — a room's wave can materialise
+  // nine actors on one frame, which the mixer coalesces into one voice at higher gain.
+  | 'spawn'
   | 'pickup.heal'
   | 'pickup.weapon'
   | 'pickup.material'

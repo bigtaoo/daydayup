@@ -1,5 +1,5 @@
 // The cue catalogue (design/11 "Cue catalogue") — the data half of "what does a cue sound
-// like", and the file design/11 named as the one thing blocking the 46 shipped mp3s from
+// like", and the file design/11 named as the one thing blocking the then-46 shipped mp3s from
 // ever being audible.
 //
 // WHY IT LIVES HERE, not in the design/12 asset manifest. `render/assetPacks.json` answers
@@ -60,7 +60,19 @@ export interface CueDef {
 export const CUE_CATALOGUE: Record<AudioCue, CueDef> = {
   // --- combat: fires constantly, must stay under the mix rather than fill it ---
   muzzle: { variants: 5, gain: 0.8, priority: 20 },
+  // The melee `muzzle`, and it inherits `muzzle`'s treatment for the same reason: it fires on
+  // every stroke. Four variants rather than five only because that is how many clean swings
+  // the source take yields (see `process_reaction.py`); gain stays 1.0 because the level
+  // decision is already made in the voice table, which put `swing` under `muzzle` — the shot
+  // is the louder of the two announcements.
+  swing: { variants: 4, gain: 1.0, priority: 22 },
   impact: { variants: 5, gain: 1.0, priority: 60 },
+  // Fires for the LOCAL seat only, on top of the `impact` that fires for the same hit. Its
+  // priority is above every combat cue and below the UI: a voice cap that dropped "you are
+  // being damaged" would be dropping the one cue that reports the state ending the run,
+  // whereas a dropped `muzzle` reads as nothing at all. design/11's ladder puts player damage
+  // at the top and this is what that means once the cue exists.
+  hurt: { variants: 3, gain: 1.0, priority: 105 },
   // The parry is the pivot mechanic (design/03/05) and design/11 asks for it to "read
   // clearly over the mix" — the only cue deliberately louder than its placeholder.
   deflect: { variants: 5, gain: 1.15, priority: 95 },
@@ -74,7 +86,15 @@ export const CUE_CATALOGUE: Record<AudioCue, CueDef> = {
   'status.poison': { variants: 2, gain: 0.75, priority: 40 },
 
   // --- feedback: rarer, longer, and the player is meant to notice every one ---
-  death: { variants: 3, gain: 0.9, priority: 70 },
+  'death.enemy': { variants: 3, gain: 0.9, priority: 70 },
+  // The counterpart of `win`, and ranked directly under it: your own death is the second
+  // thing in the game that ends a run, and nothing but the win jingle may steal it. One
+  // variant for the same reason `win` has one — it happens once.
+  'death.player': { variants: 1, gain: 1.0, priority: 118 },
+  // Below `impact` on purpose. A wave materialising is context, not a demand on the player's
+  // attention, and it can arrive nine at a time — it must never be what pushes a hit or a
+  // parry out of the voice budget.
+  spawn: { variants: 3, gain: 1.0, priority: 50 },
   'pickup.heal': { variants: 2, gain: 1.0, priority: 80 },
   'pickup.weapon': { variants: 2, gain: 1.0, priority: 80 },
   'pickup.material': { variants: 2, gain: 0.9, priority: 75 },

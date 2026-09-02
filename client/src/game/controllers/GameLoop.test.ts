@@ -53,6 +53,9 @@ function fakeScene() {
     interpolate: vi.fn(),
     reconcile: vi.fn(),
     positionLocal: vi.fn(),
+    // The spawn count  forwards to the reactor (design/11). Mutable on the fake so
+    // a case can say what the reconcile reported.
+    spawnedActors: 0,
   };
 }
 
@@ -1129,5 +1132,53 @@ describe('GameLoop — the local player glow (design/01 milestone 2)', () => {
     expect(light.radius).toBeGreaterThan(0);
     expect(light.intensity).toBeGreaterThan(0);
     expect(light.color).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * The spawn count's one piece of wiring (design/11, 2026-09-02).
+ *
+ * `Scene` counts the actor views it built and `EventReactor` turns a count into a cue; both
+ * are tested where they live. What only exists here is the ARGUMENT between them, and dropping
+ * it is the quietest possible regression: `consume(events)` still compiles, every other test
+ * in every file stays green, and the game simply never plays a spawn cue again. So this is
+ * about one parameter.
+ */
+describe('GameLoop — hands the reconcile\'s spawn count to the reactor', () => {
+  /** One real sim tick down the offline path — the same shape the stepping cases above use. */
+  function stepOnce(deps: GameLoopDeps) {
+    const engine = createGameEngine(CFG);
+    new GameLoop(deps, buildHost({ getEngine: () => engine })).update(SIM_DT_MS_FOR_TESTS);
+  }
+
+  it('passes what THIS frame\'s reconcile reported, not a constant', () => {
+    const { deps, scene, events } = buildDeps();
+    scene.spawnedActors = 4;
+    stepOnce(deps);
+    expect(events.consume).toHaveBeenCalledTimes(1);
+    expect(events.consume.mock.calls[0]![1]).toBe(4);
+  });
+
+  it('passes zero on a frame where nothing materialised', () => {
+    // The overwhelmingly common case: a hard-coded 1, or a truthy default, would fire a spawn
+    // voice on every frame of the run.
+    const { deps, scene, events } = buildDeps();
+    scene.spawnedActors = 0;
+    stepOnce(deps);
+    expect(events.consume.mock.calls[0]![1]).toBe(0);
+  });
+
+  it('reads the count AFTER the reconcile that produces it', () => {
+    // Order is the whole correctness here, and it is invisible in the source: reading
+    // `spawnedActors` before `reconcile()` would report the PREVIOUS frame's spawns forever —
+    // one frame late, and permanently wrong on the frame that matters most (a run's first).
+    // The fake reconcile sets the count, so a read taken too early sees the initial 0.
+    const { deps, scene, events } = buildDeps();
+    scene.spawnedActors = 0;
+    scene.reconcile.mockImplementation(() => {
+      scene.spawnedActors = 7;
+    });
+    stepOnce(deps);
+    expect(events.consume.mock.calls[0]![1]).toBe(7);
   });
 });

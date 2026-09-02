@@ -1049,3 +1049,67 @@ describe('Scene — a dying view keeps its frames but leaves the lookup', () => 
     expect(scene.enemies).toHaveLength(0);
   });
 });
+
+/**
+ * `spawnedActors` — the `spawn` cue's entire trigger (design/11, 2026-09-02). There is no
+ * `spawn` event: an id appearing in `GameState` is a diff, and this class is the only thing
+ * that computes diffs. So the count it reports is the whole signal, and every case below is
+ * a way that count can lie without anything else looking wrong.
+ */
+describe('Scene.spawnedActors — the spawn cue has no event behind it', () => {
+  it('counts the actor views built by this reconcile', () => {
+    const s = createGameState(CFG);
+    addEnemy(s, 100, 100, 0 as Brad);
+    addEnemy(s, 140, 100, 0 as Brad);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s, s.players[0]!.id);
+    expect(scene.spawnedActors).toBe(3); // the seat + two mobs
+  });
+
+  it('reports ZERO on the next reconcile, when nothing new appeared', () => {
+    // The failure this pins is an accumulator instead of a per-call count: it would play a
+    // spawn cue on every frame of the run, growing louder, and only the ear would notice.
+    const s = createGameState(CFG);
+    addEnemy(s, 100, 100, 0 as Brad);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s, s.players[0]!.id);
+    scene.reconcile(s, s.players[0]!.id);
+    expect(scene.spawnedActors).toBe(0);
+  });
+
+  it('counts a wave that arrives mid-run, and only the new members of it', () => {
+    const s = createGameState(CFG);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s, s.players[0]!.id); // the seat
+    addEnemy(s, 100, 100, 0 as Brad);
+    addEnemy(s, 140, 100, 0 as Brad);
+    addEnemy(s, 180, 100, 0 as Brad);
+    scene.reconcile(s, s.players[0]!.id);
+    expect(scene.spawnedActors).toBe(3);
+  });
+
+  it('ignores bullets and pickups — only a body has a spawn clip to match', () => {
+    // Bullets are the highest-volume view in the game. Counting them would turn `spawn` into
+    // a second, louder `muzzle` that fires on the wrong frame.
+    const s = createGameState(CFG);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s, s.players[0]!.id);
+    addBullet(s, 50, 50);
+    addBullet(s, 60, 50);
+    addPickup(s, 70, 50);
+    scene.reconcile(s, s.players[0]!.id);
+    expect(scene.spawnedActors).toBe(0);
+  });
+
+  it('counts again after clear(), because every view really is rebuilt', () => {
+    // `clear()` drops every view before a new run's engine is created, so the next reconcile
+    // legitimately materialises the whole cast — and it should sound like it.
+    const s = createGameState(CFG);
+    addEnemy(s, 100, 100, 0 as Brad);
+    const scene = new Scene(new Layers());
+    scene.reconcile(s, s.players[0]!.id);
+    scene.clear();
+    scene.reconcile(s, s.players[0]!.id);
+    expect(scene.spawnedActors).toBe(2);
+  });
+});

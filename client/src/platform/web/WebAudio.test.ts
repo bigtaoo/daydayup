@@ -13,7 +13,7 @@ vi.mock('../audioSynth', () => ({ playCue: vi.fn() }));
 import { playCue } from '../audioSynth';
 
 // The sample loader reads through the art asset host (render/assetHost.ts) — faked here so
-// these tests stay offline, and so the 50 real paths are not fetched 50 times per case.
+// these tests stay offline, and so the whole shipped set is not fetched once per case.
 vi.mock('../../render/assetHost', () => ({ readBinaryAsset: vi.fn(async () => new ArrayBuffer(8)) }));
 import { readBinaryAsset } from '../../render/assetHost';
 import { allSfxPaths } from '../../audio/cueCatalogue';
@@ -207,7 +207,9 @@ describe('WebAudio — preload() (design/11 boot preload)', () => {
     expect(instances[0]!.state).toBe('suspended');
     expect((readBinaryAsset as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]).sort())
       .toEqual(allSfxPaths().slice().sort());
-    expect(instances[0]!.decodeAudioData).toHaveBeenCalledTimes(50);
+    // Derived: the assertion above already pins WHICH files, so a literal here would only
+    // be a number to update whenever the set grows (46 -> 50 -> 61 so far).
+    expect(instances[0]!.decodeAudioData).toHaveBeenCalledTimes(allSfxPaths().length);
   });
 
   it('plays a decoded sample once resumed, instead of the synth voice', async () => {

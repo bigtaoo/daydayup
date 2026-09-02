@@ -13,6 +13,8 @@ Mirrors the `art/` convention: this directory holds the **source** audio and its
 paperwork. Nothing here is loaded at runtime — what the game ships is the processed copy
 under `client/public/audio/`.
 
+> **Status (2026-09-02): the four cues a CHARACTER makes about itself now exist.** `swing`, `hurt`, `death.player` and `spawn` — the audio half of the rig's own authored clips, which had animated a body since earlier the same day and made no sound. **11 more files, 20.9 kB; the set is 61 files, 122.7 kB** and still inside its 160 KiB budget, which was not raised. `death` was renamed `death.enemy` at the same time (it only ever fired for an enemy, so a player death had no sound at all). One new SOURCE came with them, the first that is not a Kenney zip: **BigSoundBank**, because none of the six packs' 323 files is a whoosh — see "Provenance" below for what changes when a source is per-sound instead of a pack. Still nobody has listened to any of it.
+>
 > **Status (2026-08-31): the SFX set is complete and playing, and so is MUSIC.** Two loops ship under `client/public/audio/music/` (`menu.mp3` 69.0 s / 511.8 kB, `boss.mp3` 64.5 s / 603.4 kB), cut from AI-generated masters in `sources/suno/` — see "Music" below. They are **not** CC0 library material like everything else here, so their provenance is a separate `music`/`music_terms` block in `credits.json` rather than an entry in `packs.json`. Two passes the same day: the first cut and gated the files, the second built the runtime that plays them (`client/src/audio/musicCatalogue.ts` + `MusicPlayer.ts`, a deck per platform, and `client/src/game/musicDirector.ts`). **Nobody has listened to them, or to the 50 cues.** That is the one open item on this set a measurement cannot close.
 >
 > **Status (2026-08-30): 19 of 20 cues have assets, and all of them play.** The set is
@@ -37,22 +39,43 @@ under `client/public/audio/`.
 
 ## Provenance
 
-Six CC0 packs from Kenney. **Only the 50 files actually used are archived here**, under
-`sources/<pack>/` — the full zips come to 10.7 MB against 447 kB of used source, so
-`packs.json` records each pack's download URL and **sha256** instead, making the whole pack
-re-fetchable and verifiable. Every `licenses/<pack>-LICENSE.txt` was read out of the pack
-itself and checked to contain CC0.
+Six CC0 packs from Kenney, plus one per-sound CC0 library. **Only the files actually used are
+archived here**, under `sources/<pack>/` — the full zips come to 10.7 MB against under 500 kB of
+used source, so `packs.json` records each pack's download URL and **sha256** instead, making the
+whole pack re-fetchable and verifiable. Every `licenses/<pack>-LICENSE.txt` was read out of the
+pack itself and checked to contain CC0.
+
+**BigSoundBank is the exception, and the exception is the interesting part (2026-09-02).** The
+six Kenney packs are a fixed inventory, and it ran out: there is no whoosh, swoosh or
+air-movement family anywhere in their 323 files, so the `swing` cue — which fires on every melee
+stroke in the game — had no material at all. BigSoundBank is a real-world foley library that can
+be **queried**, which is the only kind of source that can answer "does this sound exist"; the
+sibling project `funny` reached the same conclusion from the other end and added freesound.org
+there for the same reason. Three things differ, and all three are recorded rather than waved
+through:
+
+| | a Kenney pack | BigSoundBank |
+|---|---|---|
+| integrity | one `sha256` over the zip, in `packs.json` | one `source_sha256` per file, in `credits.json` — narrower and stronger: it covers the exact bytes that were processed |
+| licence | `LICENSE.txt` read out of the zip | stated on each sound's page; `fetch_bigsoundbank.py --license` captures that statement **verbatim** into `licenses/bigsoundbank-LICENSE.txt` with its source URL |
+| what is archived | the used files | the used file only — `sources/bigsoundbank/fetched.json` keeps the whole surveyed pool (20 candidates: id, title, page, sha256) so a rejected one is re-fetchable without keeping its bytes |
+
+`platform/audioAssets.test.ts` holds both shapes to the same standard: a pack marked
+`per_sound` must have no zip hash AND every credited file from it must carry a
+`source_sha256` that **matches the archived bytes**. A flag with no hashes behind it would be
+an exemption; this is the same promise kept a different way.
 
 | Pack | Files | Used for |
 |---|---|---|
-| Impact Sounds | 130 | `impact`, `deflect`, `shield.break` |
+| Impact Sounds | 130 | `impact`, `deflect`, `shield.break`, `hurt` |
 | Interface Sounds | 100 | `clash`, `status.shock`, `status.chill`, `pickup.material`, `wave-clear`, and all four `ui.*` |
-| Sci-Fi Sounds | 73 | `muzzle`, `death` |
+| Sci-Fi Sounds | 73 | `muzzle`, `death.enemy`, `spawn` |
 | Digital Audio | 63 | `status.poison`, `pickup.heal`, `pickup.buff` |
 | RPG Audio | 52 | `pickup.weapon`, `pickup.material` |
-| Music Jingles | 86 | `win` |
+| Music Jingles | 86 | `win`, `death.player` |
+| BigSoundBank (per sound) | 20 surveyed | `swing` |
 
-**Licence: CC0 1.0** for all six — commercial use allowed, attribution not required.
+**Licence: CC0 1.0** for all seven — commercial use allowed, attribution not required.
 Per-file provenance (source file, sample rate, gain applied, bytes) is in `credits.json`.
 
 ## What was measured
@@ -90,7 +113,7 @@ chiptune is a style judgement made from spectra alone.
 | `status.shock` | `glitch` | 4 | 10–30 ms electric ticks. The semantically obvious `zap` runs 1019–1228 ms and clips — far too long for a status tick that repeats. |
 | `status.chill` | `glass` | 4 | 111–125 ms against a 120 ms target. Glass is both the right timbre for ice and the world's own material. |
 | `clash` | `tick` | 3 | 23–55 ms against a 50 ms target, centroid 3786–7920 vs 4894 — the tightest match found for any cue. |
-| `death` | `explosionCrunch` | 3 | Centroid 2223–3386 vs 3556. **Capped at 600 ms**: an unbounded 2 s tail times many simultaneous deaths is mud. Still the most expensive cue at 19.5 kB. |
+| `death.enemy` | `explosionCrunch` | 3 | Centroid 2223–3386 vs 3556. **Capped at 600 ms**: an unbounded 2 s tail times many simultaneous deaths is mud. Still the most expensive cue at 19.5 kB. Named `death` until 2026-09-02 — see below. |
 | `status.poison` | `lowRandom`, `lowDown` | 2 | Centroid 249 and 178 Hz against a 236 Hz target — the closest spectral match in the corpus. Only two files exist at this pitch. |
 | `pickup.heal` | `pepSound` | 2 | Centroid 643 and 808 Hz bracket the 823 Hz target. |
 | `pickup.weapon` | `drawKnife` | 2 | Chosen on semantics — it *is* a weapon pickup. Brighter than the chime it replaces. |
@@ -98,6 +121,60 @@ chiptune is a style judgement made from spectra alone.
 | `pickup.buff` | `phaserUp` | 2 | Centroid 1316 and 1230 Hz against a 1427 Hz target. |
 | `wave-clear` | `confirmation` | 1 | Centroid 1536 vs 1278 Hz. Fires once per wave. |
 | `win` | `jingles_PIZZI` | 1 | Centroid 1356 Hz against 1318 Hz — near exact. Pizzicato over the chiptune and sax alternatives, which fight the flat-cel world. |
+
+### The character-reaction cues (2026-09-02)
+
+The four sounds a *body* makes about itself, and the audio half of the rig's six authored clips:
+`attack` is `swing`, and the other three are `hurt`, `death` and `spawn`. (`idle` and `move` are
+the two that never should make one.) All four had animated a character since earlier the same day
+with no sound attached.
+
+Picked the UI pass's way round — **sample first, voice written afterwards to imitate it** — for
+the same reason: none of these cues had a synth voice to match. That also settles where the
+peak-match reference comes from. Each new voice in `platform/audioSynth.ts` is a **single**
+`tone()`, whose envelope ramps 0 → `gain` → 0 over a unit-amplitude oscillator, so its delivered
+peak *is* its `gain` argument, exactly; `process_reaction.py` reads those four numbers instead of
+the re-rendered `synth.json` that `process_all.py` needs and that no longer exists in the repo.
+`audioSynth.test.ts` asserts the property both drivers depend on: one oscillator, no noise burst,
+first envelope ramp exactly the documented gain.
+
+**`death` became `death.enemy`, and `death.player` is new.** The old cue was only ever played
+inside `if (faction === 'enemy')`, so the moment a run ends — the local player bleeding out — was
+the one lifecycle event in the game with no sound at all. Two named cues make that a decision
+instead of a branch nobody reads, and it is design/11's own written vocabulary
+(`death.<enemy/player>`).
+
+| Cue | Source | Variants | Why |
+|---|---|---|---|
+| `swing` | `bigsoundbank/whoosh_s0572.ogg`, four regions | 4 | The one cue with no material in any Kenney pack. The useful takes turned out not to be the 1-second files at all: this is an **11 s mono take holding eleven discrete sword whooshes**, and across all eleven they are far more homogeneous (centroid 1433–1806 Hz, −40 dB extent 124–153 ms) than four separate files could be — which is what a variant set wants, four takes of one action. Ships at 126–155 ms, next to `muzzle`'s 140. |
+| `hurt` | `impactGlass_light` | 3 | **The pick that took three tries, and the metric that decided it is in the table below.** Light glass to `shield.break`'s heavy glass: one material, two severities, so the shell has a vocabulary. Centroid 1465–1818 Hz sits an octave above `impact` (793–927) and an octave below `deflect` (2465–3082). |
+| `spawn` | `forceField` | 3 | An energy field powering up, for a body that materialises inside an energy shell the sim already runs (design/07 two-pool). Mono in the pack, so no mixdown. Its 130–139 ms attack makes it a swell rather than a pop, which is what matches the spawn clip — it opens at 20 % scale and releases 350 ms later. **Capped at 400 ms.** |
+| `death.player` | `jingles_PIZZI14.ogg` | 1 | The counterpart of `win`, so it comes from `win`'s own instrument. Measuring the fundamental of all 17 pizzicato jingles in 120 ms frames gives eight that fall and nine that rise; this is the clearest fall — a six-note descending scale, 417 → 371 → 331 → 294 → 263 → 262 Hz. It cannot be confused with `win` (494 ms, two notes) or with `death.enemy` (an explosion crunch). **Capped at 780 ms**, inside the feedback gate's 800. |
+
+#### What `hurt` cost, and the measurement that was worth more than the centroid
+
+The first two candidate sets were body impacts — `impactPunch_heavy`, on the reasoning that a
+punch is what "you took it" sounds like — and they were picked among by **spectral centroid**,
+which is the number every other row in this document is chosen on. Both were wrong, and one
+measurement showed it: band-limit each candidate to **500–4000 Hz**, the range a phone speaker can
+actually reproduce, and take its RMS.
+
+| | 500–4000 Hz RMS |
+|---|---|
+| shipped `impact` set (the reference) | −38.7 … −39.7 dBFS |
+| `impactPunch_heavy` (rejected) | **−48 … −57 dBFS** |
+| `impactGlass_light` (shipped as `hurt`) | −32.5 … −33.1 dBFS |
+
+96–98 % of the punches' energy sits below 300 Hz. On the WeChat target the game's most important
+feedback cue would have been inaudible while the cue it layers under was not — and the centroid
+had hidden exactly that, because a sparse high tail pulls it up to 594–873 Hz over a spectrum that
+is essentially all sub-bass. **Centroid describes where a spectrum is centred; it says nothing
+about whether the listener's speaker reaches it.** For any cue that has to be heard on a phone,
+measure the band, not the centre.
+
+The trade taken with the shipped set: `hurt` fires at the same instant as `impact`, and they are
+separated by material and register rather than by envelope. Whether the two read as one event or
+as two is a **listening** question, which is this document's standing open item.
 
 ### The UI cues (2026-08-30)
 
@@ -139,13 +216,18 @@ Run via `tools/audio-pipeline/process_all.py`. Every step fixes a measured defec
 2. **Trim** — drop head/tail below −40 dBFS with 4 ms/8 ms fades so the new edges cannot
    click. Removed up to 224 ms of inaudible material from individual files.
 3. **Cap** — per-cue duration ceiling matched to how often the cue fires, applied as a 20 ms
-   fade-out rather than a cut. Only `muzzle`, `status.poison`, `death`, `pickup.*` and
-   `wave-clear` needed one.
+   fade-out rather than a cut. Only `muzzle`, `status.poison`, `death.enemy`, `pickup.*`,
+   `wave-clear` and (2026-09-02) `hurt`, `spawn`, `death.player` needed one.
 4. **Encode** — MP3 at the **smallest** output among all sample rates that still clear
    2.2 × the file's own measured 95 % rolloff. Bytes are *not* monotonic in sample rate
    (libsndfile picks its own VBR quality per rate — one file is smallest at 16 kHz, another
    at 24 kHz), so this is a measured search, not a heuristic. It found 95.0 kB where a
    plausible per-family guess gave 99.1 kB.
+4b. **Extract a region**, for `swing` only (2026-09-02) — the four whooshes are windows into
+   one 11 s take, taken generously at both ends so that step 2 above decides the real edges.
+   The times are written down as measured rather than found by an onset detector: a detector in
+   a shipping driver is a second thing that can drift, and the source file's `source_sha256` in
+   `credits.json` is what keeps the numbers meaningful.
 5. **Peak-normalise** to the peak of the synth cue being replaced, so swapping an asset in
    does not change perceived loudness and the `AudioBus` calibration still holds. Gains
    range from −20.2 dB to +6.5 dB; the one positive gain (`drawKnife2`, a quiet −22.95 dBFS

@@ -611,7 +611,7 @@ with identical probe builds before the table above was believed.
    - whether `wx.createWebAudioContext()` exists at all (the sampled cues degrade to the synth
      voice table if not, `design/11`; **music is deliberately independent of it**, so a base
      library without it keeps the bed and loses the samples);
-   - whether the 50 shipped **MP3** cue assets decode there. MP3 was chosen partly because
+   - whether the 61 shipped **MP3** cue assets decode there. MP3 was chosen partly because
      `design/11` calls it universally decoded on WeChat, but every measurement behind that choice
      was taken in a desktop browser;
    - which shape that context's `decodeAudioData` takes — `audio/decodeAudio.ts` accepts both the

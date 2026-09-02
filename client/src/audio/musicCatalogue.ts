@@ -8,7 +8,7 @@
 //  - **A track is STREAMED, never decoded into a `SampleBank`.** A 69 s stereo loop decodes
 //    to ~26 MB of `AudioBuffer` at 48 kHz. That single figure is why music runs on two
 //    long-lived decks (an `Audio` element on web, an `InnerAudioContext` on WeChat) instead of
-//    going through the path all 50 cues share.
+//    going through the path every cue shares.
 //  - **Length is part of the decision, not a curiosity.** The loop is closed by the PLAYER,
 //    not by the file: `el.loop = true` is unusable because MP3 frame padding denies
 //    sample-exact wrapping, so `MusicPlayer` starts a second deck at `length - XFADE_S` and

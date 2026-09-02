@@ -266,6 +266,12 @@ GATES = {
 CUE_CLASS = {
     "muzzle": "sfx", "impact": "sfx", "deflect": "sfx", "clash": "sfx",
     "shield-break": "sfx", "status": "sfx",
+    # The character's own reaction cues (2026-09-02, process_reaction.py). `swing` and `hurt`
+    # are combat contacts and must feel instant, so they take the tight gate; `spawn` announces
+    # a lifecycle moment the way `death`/`pickup` do and takes the same one they do. `death`
+    # already covers BOTH `death-enemy_NN` and `death-player_NN` -- the prefix rule below
+    # matches on a trailing "-" as well as a ".".
+    "swing": "sfx", "hurt": "sfx", "spawn": "feedback",
     "pickup": "feedback", "death": "feedback", "wave-clear": "feedback", "win": "feedback",
     # The screen-layer cues (design/11 UI cues, 2026-08-30). One prefix covers all of them,
     # the same way "status"/"pickup" do, so a fifth `ui.*` cue inherits the gate.

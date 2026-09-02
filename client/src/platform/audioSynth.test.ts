@@ -202,3 +202,46 @@ describe('playCue()', () => {
     expect(ctx.oscillators).toHaveLength(3);
   });
 });
+
+/**
+ * The property `tools/audio-pipeline/` DERIVES A NUMBER FROM, which is why it is asserted
+ * here rather than left as a comment in two files that cannot see each other.
+ *
+ * `process_ui.py` and `process_reaction.py` peak-match their shipped mp3s to `20*log10(g)`,
+ * where `g` is the `gain` argument of that cue's voice below. That equation is only true
+ * because each of those voices is a SINGLE `tone()`: its envelope ramps 0 -> g -> 0 over a
+ * unit-amplitude oscillator, so the delivered peak is exactly g. Add a second primitive to
+ * one of these voices and the two can sum above g; the shipped file for that cue is then
+ * peak-matched to a level its own voice no longer produces, and every symptom of it is a
+ * quiet mix nobody can point at.
+ *
+ * `process_all.py`'s eight combat cues are deliberately NOT in this table — they stack
+ * primitives on purpose, which is exactly why that driver needs a re-rendered `synth.json`
+ * (a scratch file that no longer exists, and the reason no later pass has used it).
+ */
+describe('the voices whose peak IS their gain (the audio pipeline reads these numbers)', () => {
+  const CLOSED_FORM: Record<string, number> = {
+    // From process_reaction.py's VOICE_GAIN (2026-09-02).
+    swing: 0.11, hurt: 0.16, 'death.player': 0.2, spawn: 0.12,
+    // From process_ui.py's VOICE_GAIN (2026-08-30).
+    'ui.tap': 0.09, 'ui.back': 0.09, 'ui.toggle': 0.08, 'ui.denied': 0.1,
+  };
+
+  it.each(Object.entries(CLOSED_FORM))('%s is one tone peaking at exactly %f', (cue, gain) => {
+    const ctx = fakeCtx();
+    playCue(cue as AudioCue, ctx as unknown as AudioContext, fakeGainNode() as unknown as GainNode);
+    expect(ctx.oscillators, `${cue} is no longer a single tone`).toHaveLength(1);
+    expect(ctx.sources, `${cue} gained a noise burst`).toHaveLength(0);
+    // The envelope's first ramp target is the peak, exactly.
+    expect(ctx.gains[0]!.gain.linearRampToValueAtTime)
+      .toHaveBeenNthCalledWith(1, gain, 0.005);
+  });
+
+  it('covers every cue the two closed-form drivers ship a file for', () => {
+    // A cue added to `process_reaction.py`/`process_ui.py` without an entry above would be
+    // peak-matched against an unasserted number — the table has to be complete, not a sample.
+    const stems = Object.keys(CLOSED_FORM);
+    expect(stems).toHaveLength(8);
+    for (const cue of stems) expect(ALL_CUES as readonly string[]).toContain(cue);
+  });
+});

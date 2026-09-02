@@ -64,7 +64,16 @@ export class EventReactor {
     private readonly host: EventReactorHost,
   ) {}
 
-  consume(events: readonly GameEvent[]): void {
+  /**
+   * @param spawnedActors how many actor VIEWS `Scene.reconcile` built this frame — the one
+   * cue in the game with no engine event behind it (`spawn`). An id appearing in `GameState`
+   * is a diff only `Scene` computes, which is why `Actor.onSpawn` is driven from there and
+   * why `EventReactorHost` deliberately carries no lifecycle reaction. It arrives here as a
+   * plain count rather than through the host for exactly that reason: nothing is being read
+   * back out of a view, and the coalescing below is the whole job — a wave materialising nine
+   * actors on one frame has to become one voice at higher gain, the same as nine `impact`s.
+   */
+  consume(events: readonly GameEvent[], spawnedActors = 0): void {
     // Coalesce audio cues within the frame: a bullet-hell frame can emit dozens of
     // identical events, so we collect the distinct cues here and play each ONCE after
     // the loop (design/11 "coalesce identical cues in the same frame"). fx/score still
@@ -75,6 +84,29 @@ export class EventReactor {
     const cues = new Map<AudioCue, number>();
     const cue = (id: AudioCue): void => {
       cues.set(id, (cues.get(id) ?? 0) + 1);
+    };
+    if (spawnedActors > 0) cues.set('spawn', spawnedActors);
+    // "Is this entity the seat I am playing?" — the gate on `hurt` and `death.player`, the
+    // only two cues that fire for ONE actor rather than for a world position. Both are
+    // meaningless without it: `impact` already says a hit landed somewhere, so a `hurt` that
+    // fired for every target would only double it, and in an 8-player PvP match a
+    // `death.player` per elimination would announce seven runs that are not this one.
+    //
+    // Resolved at most ONCE per frame, and only if an event actually asks. Eager resolution
+    // was the first cut and it was wrong twice over: it walks the state on every frame of a
+    // menu whose queue holds nothing that needs it, and it makes this reactor — a consumer
+    // that never used to touch `players` unless an event named one — able to throw on a
+    // state it previously tolerated. A render-layer consumer failing where it used to draw
+    // is the wrong trade for saving one property read.
+    let localId: number | undefined;
+    let localIdResolved = false;
+    const isLocalSeat = (id: number): boolean => {
+      if (!localIdResolved) {
+        localId = this.host.activeState()?.players[this.host.localOwner]?.id;
+        localIdResolved = true;
+      }
+      // Undefined before the first seat exists — "no local actor", never "actor 0".
+      return localId !== undefined && id === localId;
     };
     for (const e of events) {
       switch (e.type) {
@@ -103,10 +135,13 @@ export class EventReactor {
         case 'melee_swing':
           // The melee half of the SAME reaction the ranged branch above opens with, and the
           // reason `melee_swing` exists at all (ENGINE_VERSION 52): a swing is announced whether
-          // or not it connects, so the blade animates over empty air too. No fx of its own —
-          // `deflect` already flashes a parry and `hit` a connection, and a swing that reads
-          // only as a flash of light is the thing this replaces.
+          // or not it connects, so the blade animates over empty air too. No VISUAL fx of its
+          // own — `deflect` already flashes a parry and `hit` a connection, and a swing that
+          // reads only as a flash of light is the thing this replaces. It does get a cue, for
+          // the same reason it gets a clip: a stroke through empty air is a real action the
+          // player took, and until 2026-09-02 it was the only one they could not hear.
           this.host.actorAt(e.ownerId)?.onAttack('melee');
+          cue('swing');
           break;
         case 'hit':
           this.fx.flash(fpToPx(e.gx), fpToPx(e.gy),
@@ -131,6 +166,18 @@ export class EventReactor {
             this.fx.pulseChromatic(0.006);
           }
           cue('impact');
+          // ...and, since 2026-09-02, the audio half of the shake above. Gated on the LOCAL
+          // seat rather than on `faction === 'enemy'` like the shake is, because the two
+          // answer different questions: the shake fires when a player took it (a PvP rival's
+          // hit is `faction: 'player'` and shakes nobody's screen today), while this one has
+          // to fire whenever THIS player took it, from any source that reaches this event —
+          // an enemy, a PvP rival, or a hazard tile (`faction: 'environment'`). The shrinking
+          // zone's own ticks are NOT one of them: those arrive as `zone_damage`, which this
+          // reactor has never handled, and wiring that up is its own decision, not a
+          // side-effect of this one. `hurt`'s file is light glass to `shield.break`'s heavy
+          // glass, an octave above `impact`'s thud, so the pair layers into "a hit landed,
+          // and it was on you".
+          if (isLocalSeat(e.target)) cue('hurt');
           break;
         case 'shield_break':
           // A shattered shield — a bright cyan burst (design/07 two-pool break).
@@ -180,7 +227,15 @@ export class EventReactor {
             this.host.addScore(SCORE.kill);
             this.fx.particles.explosionDebris(fpToPx(e.gx), fpToPx(e.gy) - 12, THEME.colors.enemy);
             this.fx.addShake(0.15);
-            cue('death');
+            cue('death.enemy');
+          } else if (isLocalSeat(e.id)) {
+            // The local seat bled out (ReviveSystem) — the run is over, and until 2026-09-02
+            // this branch did not exist at all: the cue was named `death` but only ever played
+            // for `faction === 'enemy'`, so the one moment that ends a run was the only
+            // lifecycle event in the game with no sound. It is deliberately NOT the same cue
+            // the `downed` case below plays: going down is recoverable in co-op and this is
+            // not, so hearing the run-ending fall on a revive would be a lie.
+            cue('death.player');
           }
           break;
         case 'pickup':
@@ -278,7 +333,14 @@ export class EventReactor {
           this.fx.addShake(0.55);
           this.fx.addHitStop(80);
           this.fx.pulseChromatic(0.02);
-          cue('death');
+          // Used to play the bare `death` cue — an enemy explosion crunch, for the local
+          // player collapsing, which the 2026-09-02 split made impossible to keep writing
+          // down. `hurt` instead: going down IS damage, it is already the highest-priority
+          // combat cue, and it coalesces with the `hit` that caused it in this same frame
+          // into ONE voice at higher gain, which is exactly what the moment should sound
+          // like. Gated on the local seat for the same reason `hurt` itself is — the fx
+          // above stays ungated, because a teammate going down is worth SEEING.
+          if (isLocalSeat(e.id)) cue('hurt');
           break;
         case 'revived':
           // A teammate channelled the player back up — a green pulse (co-op only).

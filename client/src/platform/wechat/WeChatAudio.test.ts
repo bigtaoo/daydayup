@@ -163,7 +163,9 @@ describe('WeChatAudio — preload() (design/11 boot preload)', () => {
     await audio.preload();
     expect((readBinaryAsset as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0]).sort())
       .toEqual(allSfxPaths().slice().sort());
-    expect(instances[0]!.decodeAudioData).toHaveBeenCalledTimes(50);
+    // Derived: the assertion above already pins WHICH files, so a literal here would only
+    // be a number to update whenever the set grows (46 -> 50 -> 61 so far).
+    expect(instances[0]!.decodeAudioData).toHaveBeenCalledTimes(allSfxPaths().length);
   });
 
   it('plays a decoded sample once resumed, instead of the synth voice', async () => {

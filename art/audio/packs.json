@@ -1,5 +1,5 @@
 {
- "note": "Upstream CC0 packs. Only the files actually used are archived under art/audio/sources/; the sha256 lets the full pack be re-fetched and verified. Every license_text was read out of the pack itself and contains CC0.",
+ "note": "Upstream CC0 sources. Only the files actually used are archived under art/audio/sources/. A pack with a `sha256` is a downloadable ZIP and that hash lets the whole pack be re-fetched and verified; a pack marked `per_sound` has no archive to hash, so the integrity record moves to credits.json, where every file from it carries its own `source_sha256`. Every license_text was read from the source itself -- out of the pack for a zip, off the sound's own page for a per-sound source -- and contains CC0.",
  "packs": [
   {
    "id": "impact-sounds",
@@ -22,6 +22,9 @@
     "impactGlass_heavy_002.ogg",
     "impactGlass_heavy_003.ogg",
     "impactGlass_heavy_004.ogg",
+    "impactGlass_light_000.ogg",
+    "impactGlass_light_002.ogg",
+    "impactGlass_light_004.ogg",
     "impactMetal_light_000.ogg",
     "impactMetal_light_001.ogg",
     "impactMetal_light_002.ogg",
@@ -73,6 +76,9 @@
     "explosionCrunch_000.ogg",
     "explosionCrunch_001.ogg",
     "explosionCrunch_002.ogg",
+    "forceField_000.ogg",
+    "forceField_002.ogg",
+    "forceField_004.ogg",
     "laserRetro_000.ogg",
     "laserRetro_001.ogg",
     "laserRetro_002.ogg",
@@ -126,7 +132,22 @@
    "license": "CC0-1.0",
    "license_text": "art/audio/licenses/music-jingles-LICENSE.txt",
    "files_used": [
-    "jingles_PIZZI00.ogg"
+    "jingles_PIZZI00.ogg",
+    "jingles_PIZZI14.ogg"
+   ]
+  },
+  {
+   "id": "bigsoundbank",
+   "title": "BigSoundBank (La Sonotheque)",
+   "author": "Joseph SARDIN",
+   "page": "https://bigsoundbank.com/",
+   "download": "https://bigsoundbank.com/UPLOAD/ogg/<id>.ogg  (id = the -sNNNN suffix in each archived filename)",
+   "per_sound": true,
+   "license": "CC0-1.0",
+   "license_text": "art/audio/licenses/bigsoundbank-LICENSE.txt",
+   "note": "Added 2026-09-02 for the `swing` cue, the first one no Kenney pack could serve: none of their 323 files is a whoosh. Fetched by tools/audio-pipeline/fetch_bigsoundbank.py, which also captured the licence text above verbatim from a sound page -- this source states its terms on the page rather than shipping a LICENSE.txt, so that capture IS the record. No account is needed and OGG is served anonymously (WAV/FLAC are behind a login). fetched.json beside the archived file records the whole surveyed pool (20 candidates) with each sound's id, page and sha256, so a rejected candidate stays re-fetchable without keeping its bytes in the repo.",
+   "files_used": [
+    "whoosh_s0572.ogg"
    ]
   }
  ]

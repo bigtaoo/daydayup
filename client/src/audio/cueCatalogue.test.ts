@@ -33,8 +33,10 @@ describe('cue catalogue', () => {
     // Cheap, but it is the guarantee the whole module rests on: `CUE_CATALOGUE` is a
     // `Record<AudioCue, ...>`, so this passing means no cue can reach the mixer without a
     // decision. (`ALL_CUES` is derived from it, so the real assertion is the count.)
-    // 16 engine cues + the 4 `ui.*` screen cues added 2026-08-30.
-    expect(ALL_CUES).toHaveLength(20);
+    // 20 engine cues + the 4 `ui.*` screen cues added 2026-08-30. The engine count went
+    // 16 -> 20 on 2026-09-02: `swing`, `hurt` and `spawn` are new, and `death` became the
+    // pair `death.enemy`/`death.player`.
+    expect(ALL_CUES).toHaveLength(24);
     expect(new Set(ALL_CUES).size).toBe(ALL_CUES.length);
     for (const cue of ALL_CUES) expect(CUE_CATALOGUE[cue]).toBeDefined();
   });
@@ -100,8 +102,22 @@ describe('cue catalogue', () => {
     // "player damage > enemy death > distant bullet" — and the cue that fires on every shot
     // is the most expendable thing in the mix.
     expect(p('muzzle')).toBeLessThan(p('impact'));
-    expect(p('impact')).toBeLessThan(p('death'));
-    expect(p('death')).toBeLessThan(p('deflect')); // the signature parry outranks a kill
+    expect(p('impact')).toBeLessThan(p('death.enemy'));
+    expect(p('death.enemy')).toBeLessThan(p('deflect')); // the signature parry outranks a kill
+    // ...and, once `hurt` exists, that ladder is only half of design/11's sentence. "Player
+    // damage" is the TOP of it: taking a hit has to outrank every cue that describes what is
+    // happening to someone else, including the parry, or the cap can drop the one signal that
+    // reports the state ending the run.
+    expect(p('deflect')).toBeLessThan(p('hurt'));
+    expect(p('death.enemy')).toBeLessThan(p('hurt'));
+    // Your own death outranks even that, and is second only to the win jingle.
+    expect(p('hurt')).toBeLessThan(p('death.player'));
+    expect(p('death.player')).toBeLessThan(p('win'));
+    // `swing` is the melee `muzzle` and sits with it at the expendable end: a stroke that is
+    // dropped under load costs the player nothing they cannot see.
+    expect(p('swing')).toBeLessThan(p('impact'));
+    // `spawn` can arrive nine at a time and must never push a hit out of the budget.
+    expect(p('spawn')).toBeLessThan(p('impact'));
     // A once-per-run stinger must never be stolen by anything.
     expect(p('win')).toBe(Math.max(...ALL_CUES.map((c) => CUE_CATALOGUE[c].priority)));
     for (const cue of ALL_CUES) expect(p(cue), `${cue} priority`).toBeGreaterThan(0);

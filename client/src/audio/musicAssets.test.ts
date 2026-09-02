@@ -53,7 +53,8 @@ const ART_AUDIO = new URL('../../../art/audio/', import.meta.url);
  * check between "a third loop lands" and "a package overrun with no name on it".
  *
  * Deliberately NOT generous. Music is by far the heaviest asset class in the game — the two
- * loops together outweigh all 50 cues by 11x — so the one thing this number has to do is make a
+ * loops together outweigh the whole cue set by ~9x (1.09 MB against 122.7 kB) — so the one
+ * thing this number has to do is make a
  * re-encode at a higher bitrate an explicit decision rather than a silent 40% increase.
  */
 const MUSIC_BUDGET_BYTES = 1_800_000;

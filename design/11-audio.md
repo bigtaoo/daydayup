@@ -4,6 +4,8 @@ How the game sounds, and — more importantly for a deterministic-lockstep title
 
 > **Status (current): every shipped sound in the game plays, on BOTH web and WeChat — cues, UI cues and music.** The dated `Update:` paragraphs below carry the history in order; this headline is the summary and is kept rewritten rather than appended to, because a stale first sentence under a stack of accurate updates is this repo's own named docs-drift failure mode.
 >
+> **Update (2026-09-02): the four cues a CHARACTER makes about itself now exist — and one of them is the first cue no Kenney pack could serve.** `swing`, `hurt`, `death.player` and `spawn` are the audio half of the rig's six authored clips (design/12): `attack` is `swing`, `idle`/`move` are the two that never should make a sound, and the other three are named after their clips. All six had animated a body since earlier the same day and none of these four made any noise. `death` was renamed **`death.enemy`** in the same pass, because it was only ever played inside `if (faction === 'enemy')` — so a player bleeding out, the moment a run ends, was the one lifecycle event in the game with no sound at all. That pair is this doc's own written vocabulary (`death.<enemy/player>`, in the event→sound map below) finally built. **11 new files, 20.9 kB; the set is 61 files / 122.7 kB** against a 160 KiB budget that was NOT raised to fit them. See "The character-reaction cues" below.
+>
 > **Status (2026-08-28): the shipped SFX set is what plays, on BOTH web and WeChat.** The seam is unchanged — engine `events` → `controllers/EventReactor.ts` → the `AudioBus` platform seam (`platform/types.ts`) — and the procedural voice table (`platform/audioSynth.ts`) still ships. What changed is that a cue now resolves to a **shipped sample first**, and to its synth voice only as a fallback.
 >
 > The new module is `client/src/audio/`: **`cueCatalogue.ts`** (the catalogue — per-cue variant count, gain and priority, and the id→path rule), **`SampleBank.ts`** (fetch + decode, best-effort per file, through `render/assetHost.ts`'s new `readBinary` — the same platform seam the art loaders use, so audio inherits the design/12 bundle rules), **`decodeAudio.ts`** (one promise over two runtimes' `decodeAudioData` shapes), **`VoiceBudget.ts`** (the concurrency cap, priority-ranked) and **`CueMixer.ts`** (sample-or-synth, catalogue gain, coalesce gain, variant choice, pitch jitter). Both entries call `audio.preload()` at boot, fire-and-forget: 95 kB decodes long before the first shot, and until it lands the synth voices carry the mix. WeChat runs the identical module, reading bytes with `FileSystemManager.readFileSync` instead of `fetch`.
@@ -16,7 +18,7 @@ How the game sounds, and — more importantly for a deterministic-lockstep title
 >
 > **Update (2026-09-01): a test pass over the music work found a real bug in the thing all three asset gates trust.** Nothing about what plays changed; what changed is that the shipped-file parser is now itself under test. `audio/mp3Frames.ts` — the MPEG frame walker that tells `platform/audioAssets.test.ts`, `audio/musicAssets.test.ts` and one `musicPipeline` case what a shipped file *is* — had **no test of its own**, because every caller feeds it the 52 files that are already correct, leaving every rejection branch and the LAME delay/padding arithmetic unexercised. It turned out its header's claim that a truncated file "fails as itself" was **false**: constant-bitrate frames are fixed length, so a cut always leaves an intact header at the last boundary and the walk stepped past the end of the buffer counting the stub as a whole frame. Now caught, by a frame declaring more bytes than remain plus a trailing stub too short to be a header — after measuring that all 52 shipped files and both masters end on an exact frame boundary, so the strict rule rejects nothing real. A second fix in the same file: the frame-length guard is now `!(len > 4)` rather than `len <= 4`, because both reserved header indices together make the length `NaN` and `NaN <= 4` is false — the old form let NaN through to `i += NaN`, which ends the walk quietly and reports a duration divided by a zero sample rate. Two new suites came with it (`audio/mp3Frames.test.ts`, `platform/wechat/weChatMusicDeck.test.ts`) and two stale cases were replaced; see "What guards it" below.
 >
-> **Still open — and none of it is a wiring problem any more:** `dungeon.ember` has no master, so it plays `menu.mp3` as a declared placeholder (`TrackDef.borrowedFrom`); the WeChat path remains unverified on a real device, now including whether `InnerAudioContext` takes a subpackage path and which shape that runtime's `decodeAudioData` has; the voice cap (12) is a first pass rather than a measurement; **nobody has listened to the 50 cues or the 2 loops**; and the AI masters still have no archived licence text and no captured prompt (recorded as declared gaps in `credits.json`, gated as such). The cues were selected by measurement — fit against the synth voice each replaces — plus the material the world already specifies (`13`: crystal-mirror enemies, so glass). That rules out defects and matches loudness; it cannot say a sound is *right*, and the weakest pick on that basis is `win`. Now that everything actually plays, listening is the open item that a person, not a test, has to close. The game stays fully playable silent, so none of it blocks anything.
+> **Still open — and none of it is a wiring problem any more:** `dungeon.ember` has no master, so it plays `menu.mp3` as a declared placeholder (`TrackDef.borrowedFrom`); the WeChat path remains unverified on a real device, now including whether `InnerAudioContext` takes a subpackage path and which shape that runtime's `decodeAudioData` has; the voice cap (12) is a first pass rather than a measurement, and it did NOT move when the set grew to 24 cues on 2026-09-02; **nobody has listened to the 61 cues or the 2 loops**; and the AI masters still have no archived licence text and no captured prompt (recorded as declared gaps in `credits.json`, gated as such). The cues were selected by measurement — fit against the synth voice each replaces — plus the material the world already specifies (`13`: crystal-mirror enemies, so glass). That rules out defects and matches loudness; it cannot say a sound is *right*, and the weakest pick on that basis is `win` — joined 2026-09-02 by the `hurt`/`impact` pair, which fire at the same instant and are separated by material and register rather than by envelope. Now that everything actually plays, listening is the open item that a person, not a test, has to close. The game stays fully playable silent, so none of it blocks anything.
 
 ## The decisions (locked)
 
@@ -34,15 +36,16 @@ Audio subscribes to the per-frame `events` union (`08`) and maps each to a cue. 
 
 | Engine event (`07`/`08`) | Cue | Notes |
 |---|---|---|
-| `bullet_fired` / `melee_swing` | `muzzle.<weaponFrame>` / `swing.<meleeFrame>` | per-frame variant (`03`); pitch-jitter by `combatPrng`? **No — render-side RNG only** (must not touch sim) |
-| `hit` | `impact.<damageType>` | element-tinted layer (`03`/`13` colour law's audio cousin); coalesce per frame |
+| `bullet_fired` / `melee_swing` | `muzzle` / `swing` | **Both built.** One cue each, not the per-frame variants sketched here — the same simplification `muzzle` already shipped with. Pitch-jitter by `combatPrng`? **No — render-side RNG only** (must not touch sim) |
+| `hit` | `impact` **+ `hurt`** | `impact` for every hit anywhere; `hurt` only when the target is the LOCAL seat — the two layer into "a hit landed, and it was on you". The element-tinted variant (`03`/`13` colour law's audio cousin) is still unbuilt. Coalesce per frame |
 | `clash` | `clash` | two bullets annihilate |
 | `deflect` | `deflect` | the parry — a signature, satisfying cue (pivot mechanic, `03`/`05`); should read clearly over the mix |
 | `shield_break` | `shield-break` | shield→0; pairs with the character break-passive fx (`02`/`07`) |
 | `status` | `status.<burn/chill/chain/poison>` | on-apply sting; the *lingering* aura loop is optional ambience, low gain |
 | `knockback` | (usually silent / folded into `impact`) | avoid clutter |
-| `death` | `death.<enemy/player>` | boss death = a distinct stinger |
-| `downed` / `revive_progress` / `revived` | `downed` / `revive-loop` / `revived` | co-op feedback (`05`/`07`); revive-loop is a sustained cue while channelling |
+| `death` | `death.enemy` / `death.player` | **Built 2026-09-02.** `death.player` fires for the LOCAL seat only; in an 8-player match the other seven eliminations are not this player's run. A boss-specific stinger is still unbuilt |
+| `downed` / `revive_progress` / `revived` | `hurt` / — / `pickup.heal` | `downed` played the enemy-death crunch until 2026-09-02 and now plays `hurt`, local seat only: going down IS damage, and it coalesces with the hit that caused it into one louder voice. Deliberately not `death.player` — a downed player can be revived in co-op, so the run-ending fall would be a lie. `revive-loop` remains unbuilt |
+| *(no event — a `GameState` diff)* | `spawn` | The only cue with no engine event behind it. An id appearing is a diff, and `Scene` is the only thing that computes diffs, so it reports a per-frame COUNT of the actor views it built and `GameLoop` hands that to `EventReactor` beside the events. A wave materialising nine actors is one voice at higher gain |
 | `pickup_spawned` / `pickup_taken` | `pickup.<weapon/heal/material/buff>` | material bank vs weapon swap read differently (`05`) |
 | `hp_changed` / `shield_changed` | (UI feedback only, `10`) | low-frequency; often no dedicated SFX |
 
@@ -72,6 +75,132 @@ Every link above has unit tests, and that is exactly why two **integration** tes
 - **A source-level guard on the two entry points** rides along in the pipeline test: that each calls `audio.preload()`, that neither AWAITS it, and that the WeChat one does it after the host swap. Crude on purpose — both entries are top-level `boot()` scripts with no seam, and every other test builds the backend itself, so deleting that one line would leave the whole suite green and the shipped set silently unloaded.
 - **35 injected mutations, all caught** (20 across the module and its units, 11 across the two integration tests, 4 against the entry wiring). Two survivors on the first run were both worth the trip: one exposed a **fake-fidelity bug** — the `wx` fake ignored `readFileSync`'s encoding argument, so "read the mp3s as utf8", which on a device hands a string to the decoder and loses every sample, passed the suite — and one showed the string-return guard was only observable through its message, which is now asserted.
 
+## The character-reaction cues (built 2026-09-02)
+
+The third origin, after "an engine event at a world position" and "a screen answering a finger":
+**a body making a sound about itself.** These four are the audio half of design/12's six
+authored clips — `attack` is `swing`, `hurt`/`death`/`spawn` keep their clip's name, and
+`idle`/`move` are the two that never should make a sound. Every one of those clips had animated
+a character since earlier the same day; none of them was audible.
+
+- **`swing` is the melee `muzzle`**, off `melee_swing` (ENGINE_VERSION 52). It fires whether or
+  not the stroke connects, which is why the event exists at all: a connection is `impact`'s job
+  and a parry is `deflect`'s, and a swing through empty air was a real action the player took
+  that produced neither. It inherits `muzzle`'s treatment — most variants in the set, shortest
+  cue, bottom of the priority ladder.
+- **`hurt` answers "was that me".** `impact` already fires for every hit anywhere, so a second
+  cue on the same event is only worth its bytes if it says something the first cannot: it is
+  gated on the LOCAL seat. That is also this doc's own "player damage > enemy death > distant
+  bullet" made real — until now the priority ladder had no cue at the top of it, because the
+  player's own damage was indistinguishable from anyone else's. It sits at 105, above the
+  signature parry and below the UI cues.
+- **`death` split into `death.enemy` and `death.player`.** The bare cue was only ever played
+  inside `if (faction === 'enemy')`, so the moment a run ends had no sound. `death.player` is
+  the counterpart of `win` — same instrument (pizzicato), a descending scale against `win`'s own
+  figure — and ranks directly under it at 118: nothing but the win jingle may steal it.
+  It fires for the local seat only; seven other eliminations in a PvP match are not this run.
+- **`spawn` is the one cue with no engine event behind it.** An id appearing in `GameState` is a
+  DIFF, and `Scene` is the only thing that computes diffs — which is already why `Actor.onSpawn`
+  is driven from there rather than from `EventReactor`. So `Scene.reconcile` reports how many
+  actor views it built and `GameLoop` hands that count to `EventReactor.consume` beside the
+  frame's events. It lands in the same coalescing map everything else does, which is the whole
+  reason it is a count rather than N calls: a room's wave materialising nine actors has to be
+  one voice at higher gain, exactly as ten hits in a frame are.
+
+### `downed` stopped playing an explosion
+
+It played the bare `death` cue — an enemy explosion crunch, for the local player collapsing —
+and the rename made that impossible to keep writing down. It plays `hurt` now, gated on the
+local seat: going down IS damage, `hurt` already outranks every other combat cue, and in the
+frame where both land it coalesces with the `hit` that caused it into ONE louder voice, which is
+what the moment should sound like. Deliberately **not** `death.player`: a downed player can be
+revived in co-op, and the run-ending fall would be a lie. The fx stays ungated — a teammate
+collapsing is worth seeing.
+
+### Sourcing: the first cue the fixed packs could not serve
+
+Six Kenney packs are a fixed inventory, and `swing` is where it ran out — there is no whoosh,
+swoosh or air family in any of their 323 files. `art/audio/` gained a second kind of source for
+it: **BigSoundBank**, a real-world foley library that can be *queried*, fetched by the new
+`tools/audio-pipeline/fetch_bigsoundbank.py`. The sibling project `funny` reached the same
+conclusion from the other end and added freesound.org there for the same reason, and its lesson
+transferred verbatim in a different form: **that search takes one noun** — `"sword whoosh"`
+returns nothing while `"whoosh"` returns twelve — and it fails silently, reading exactly like
+"this sound does not exist".
+
+What changes when a source is per-sound rather than a pack is recorded in `art/audio/README.md`
+and enforced by `platform/audioAssets.test.ts`: no zip means no pack-level `sha256`, so every
+file from it carries a `source_sha256` that the test checks **against the archived bytes**, and
+the licence — stated on the page rather than shipped in the bundle — is captured verbatim by
+`fetch_bigsoundbank.py --license`.
+
+### The measurement that changed a pick, and generalises
+
+`hurt` took three candidate sets. The first two were body impacts chosen by **spectral
+centroid**, the number every other cue in this set was picked on. One measurement rejected both:
+band-limit a candidate to **500–4000 Hz** — what a phone speaker actually reproduces — and take
+its RMS. The shipped `impact` set delivers −38.7 … −39.7 dBFS there; those punches delivered
+**−48 … −57**, with 96–98 % of their energy below 300 Hz. On the WeChat target the game's most
+important feedback cue would have been inaudible while the cue it layers under was not, and the
+centroid had hidden it (a sparse high tail pulls it to 594–873 Hz over a spectrum that is
+essentially all sub-bass).
+
+**Centroid says where a spectrum is centred; it says nothing about whether the listener's
+speaker reaches it.** For any cue that has to be heard on a phone, measure the band. The shipped
+`impactGlass_light` set delivers −32.5 … −33.1 dBFS, and closes a vocabulary while it is there:
+`shield.break` is already heavy glass, so the shell now has a light tick when it is hit and a
+heavy shatter when it fails.
+
+### Why the voice cap did NOT move
+
+The cue count went 20 → 24 and `CueMixer`'s `DEFAULT_CAP` stayed at 12. It is a *device* budget,
+not headroom over the cue list, and what the extra cues actually cost is measured rather than
+assumed: a frame containing every engine cue overflows the cap by exactly the number of sample
+voices over it, and every sacrificed voice ranks below every surviving one. That is what the
+priority ladder is for, and `audioPipeline.test.ts` derives both numbers rather than writing
+them down — it had written them down, and they went stale.
+
+### Browser-measured, not assumed
+
+All **61 variants decoded** in a real browser (`loadedCues: 23`, `loadedVariants: 61`). Peak PCM
+on the SFX bus, each with **zero oscillators** — the shipped file is what plays: `swing` 0.0555
+(against `muzzle` 0.0586), `hurt` 0.0786 (against `impact` 0.0913), `spawn` 0.0589,
+`death.player` 0.1007 (against `deflect` 0.1087 and `death.enemy` 0.0622). The mix ladder this
+doc asks for is the ladder the bus delivers.
+
+On a hand-stepped real run: `spawn:2` on the first frame; `impact:2, hurt:1` while the zone burned
+BOTH seats (the local-seat gate, on live data, with the two counts independent — a frame hitting
+the local seat three times read `impact:3, hurt:2`); `hurt` again the tick that seat went down;
+`swing:1` off a real `melee_swing`; and `death.player:1` on its real bleedout, with an ally's own
+`death` event producing nothing.
+
+**One pre-existing defect surfaced there and is deliberately not fixed in that pass:** the frame
+that played `death.player` also played `win`, because `case 'win'` plays the jingle for any `win`
+event regardless of who won. A player who just died hears the victory sting. It needs the local
+seat's outcome (which `RunOutcome` already computes) and its own tests.
+
+### What guards them
+
+- **Unit**: the local-seat gate in both directions (a hit on you plays `hurt` + `impact`, a hit
+  on anyone else plays `impact` alone, and with no seat yet neither fires — "no local actor" must
+  never resolve to actor 0); the spawn count's arithmetic, including that a count of 0 plays
+  nothing; `Scene.spawnedActors` describing one reconcile rather than accumulating, and ignoring
+  bullets and pickups.
+- **Wiring**: `GameLoop.test.ts` asserts the count argument itself, and that it is read AFTER
+  the reconcile that produces it. Dropping that one parameter compiles, leaves every other test
+  in the repo green, and silently ends the spawn cue forever.
+- **The closed form the pipeline reads**: `audioSynth.test.ts` pins that all eight
+  sample-first voices (these four plus the four `ui.*`) are a single `tone()` whose first
+  envelope ramp is exactly the gain `process_reaction.py` / `process_ui.py` peak-matched their
+  files against. Adding a second primitive to one of those voices silently invalidates a shipped
+  file's level, and nothing else in the repo can see it.
+- **End to end**: `audioPipeline.test.ts` drives real `GameEvent`s through the real reactor,
+  backend, bank and mixer to the SHIPPED mp3s, including the one cue with no event — nine
+  spawns arriving as a count and leaving as one decoded voice at the coalesced gain.
+- **Assets**: `platform/audioAssets.test.ts` gained the per-sound integrity rule above, and
+  `tools/audio-pipeline/audit.py` gained the gate class of each new cue (`swing`/`hurt` combat,
+  `spawn` feedback; `death-enemy`/`death-player` inherit `death`'s by prefix).
+
 ## The UI cues (built 2026-08-30)
 
 The other half of the vocabulary: what a **screen** sounds like. Same catalogue, same mixer, same files-on-disk discipline — a different origin, and that difference is the whole design.
@@ -87,6 +216,25 @@ The other half of the vocabulary: what a **screen** sounds like. Same catalogue,
 - **One variant each**, against this doc's own "a cue that fires often needs several". That rule is about repetition fatigue across a *set*; a UI cue is the opposite case — a direct answer to the player's finger that has to read as the same affordance every press. Two buttons that sound different are a bug, not variety. The ±3% pitch jitter is all the variation they get.
 - **Level is set once, in the voice table.** All four sit at catalogue gain 1.0, and the shipped files were peak-matched to their synth voice's amplitude (0.08-0.10, about -21 dBFS), below every combat voice. One knob, not two.
 - **Sourcing reversed direction.** For the combat set the synth voice existed first and the sample was chosen to match it; there was no UI voice before this pass, so the **sample was picked first** (on `audit.py`'s `ui` gate plus the pack's own family names: `select`, `back`, `toggle`, `error`) and the synth voice was then written to imitate its measured duration and centroid. `tools/audio-pipeline/process_ui.py` is a separate driver for exactly one reason: a UI voice is a single `tone()`, so its peak IS its `gain` argument and needs no re-render to measure, where `process_all.py` reads a `synth.json` audit of re-rendered voices.
+
+### Browser-measured, not assumed
+
+All **61 variants decoded** in a real browser (`loadedCues: 23`, `loadedVariants: 61`). Peak PCM
+on the SFX bus, each with **zero oscillators** — the shipped file is what plays: `swing` 0.0555
+(against `muzzle` 0.0586), `hurt` 0.0786 (against `impact` 0.0913), `spawn` 0.0589,
+`death.player` 0.1007 (against `deflect` 0.1087 and `death.enemy` 0.0622). The mix ladder this
+doc asks for is the ladder the bus delivers.
+
+On a hand-stepped real run: `spawn:2` on the first frame; `impact:2, hurt:1` while the zone burned
+BOTH seats (the local-seat gate, on live data, with the two counts independent — a frame hitting
+the local seat three times read `impact:3, hurt:2`); `hurt` again the tick that seat went down;
+`swing:1` off a real `melee_swing`; and `death.player:1` on its real bleedout, with an ally's own
+`death` event producing nothing.
+
+**One pre-existing defect surfaced there and is deliberately not fixed in that pass:** the frame
+that played `death.player` also played `win`, because `case 'win'` plays the jingle for any `win`
+event regardless of who won. A player who just died hears the victory sting. It needs the local
+seat's outcome (which `RunOutcome` already computes) and its own tests.
 
 ### What guards them
 
@@ -361,7 +509,7 @@ link is silence — and silence is what a month of green tests looked like.
 
 - ~~**Cue catalogue** — the cue-id list + per-cue gain/priority/variation-count, authored as data.~~ **Built (2026-08-27):** `client/src/audio/cueCatalogue.ts` plus the loading path — see the section above. It landed as its own module rather than in `content/` or the `12` manifest, for the reason recorded there.
 - **Music track list & transitions** — **partly answered 2026-08-31**: three launch tracks rather than eight, and the cross-fade rule is settled by the double-deck loop mechanism above (2 s equal-power, serving both the loop and track-to-track). What the RUNTIME still owes: `MusicPlayer` plus one streaming deck implementation per platform (web `Audio` + `MediaElementAudioSourceNode` into a music gain node; WeChat two long-lived `InnerAudioContext`s whose `.volume` carries bus × fade, since they cannot be routed through a gain node), a `musicDirector` deriving the wanted track from screen/biome/boss-room state **each frame** rather than from events (idempotent, so it needs no dedupe and clears the autoplay gate by itself), a real `setMusicVolume` in both backends, focus/blur pause (`visibilitychange` / `wx.onAudioInterruptionBegin` — the audio side has neither today), and a TS-side byte budget and provenance record for the music files. The `assetPacks.json` prefix rule making `audio/music/` a subpackage **is done** (2026-08-31) — the WeChat byte gate forced it the moment the files existed, since without a rule they fall to `main` and took it from 4.00 to 5.09 MB against a hard 4.00 MB limit. One caution for whoever writes the runtime: with music moved out, **main sat at 4,191,575 / 4,194,304 bytes — 2,729 spare**, so the runtime's own code did not fit until something left main. (**Settled 2026-09-01**, `12` "the first download is code only": the main package is now `js/game.js` alone at ~0.95 MB, every asset lives in a subpackage, and `music` is the one pack nothing ever awaits — its completion calls `MusicPlayer.invalidate()`, because a deck handed a path inside an unfetched pack plays nothing and the per-frame director cannot notice.) That last one is a real hole: `platform/audioAssets.test.ts` reads `public/audio/` **non-recursively** and filters `.mp3`, so the two loops sit outside every gate it holds, including the 160 KiB budget.
-- **Voice-count budget** on WeChat low-end (`04`) — the priority table and the coalescing curve now exist and are enforced (above), but the cap itself (12) was reasoned from what a frame can ask for, **not measured on a device**. That measurement is what is left.
+- **Voice-count budget** on WeChat low-end (`04`) — the priority table and the coalescing curve now exist and are enforced (above), but the cap itself (12) was reasoned from what a frame can ask for, **not measured on a device**. That measurement is what is left. It did not move when the cue set grew to 24 on 2026-09-02, deliberately — see "Why the voice cap did NOT move".
 - ~~**Sourcing** — AI-generated vs. licensed library vs. commissioned, and the commercial-use licence check for a monetised title (`14`).~~ **Resolved for SFX (2026-08-27):** CC0-only, from free libraries, no AI generation and no commission. Six Kenney CC0 packs, licence texts archived under `art/audio/licenses/` and asserted by test. Still open **for music** — see the sourcing note below, where CC0 music turned out to be almost entirely chiptune, a style mismatch for `13`'s flat-cel direction.
 - ~~**Placeholder audio** — a tiny free/procedural SFX set to wire the event→sound path early.~~ **Resolved (2026-07-26):** `platform/audioSynth.ts` is that set, and it is still what plays. The 2026-08-27 asset pass did not replace it; it produced the files that will, once the catalogue above exists.
 
@@ -372,7 +520,7 @@ link is silence — and silence is what a month of green tests looked like.
 - **Adaptive/interactive music** (intensity layers, stingers) vs. flat loops — worth the mixing complexity on WeChat, or ship flat loops first?
 - **Does `menu`'s missing high register matter?** Both AI masters were prompted for crystalline bell/glass timbres and both placed their energy about two octaves below what was asked: the first put 90% of it under 109 Hz (which is why it became `boss` instead), and the second, after `sub-bass`/`drone` went into the exclude list, reached 160 Hz-1.2 kHz but still produced nothing above 4 kHz (-70 dBFS and below). Neither file is *defective*; the question is whether a bed with no sparkle reads as the cold crystal hub `13` describes. Only listening answers it, and as of this pass nobody has listened to the music either.
 - ~~**Total audio budget** against WeChat package limits (`04`) — how much goes in the boot core vs. lazy sub-packages, and what compression bitrate holds up.~~ **Answered for SFX (2026-08-27, re-measured 2026-08-30):** the whole 50-file set is **101.9 kB** and sits in the boot core, with the main package at **3.42 MB / 4.00 MB** (the four UI cues added 6.9 kB). Bitrate is not a fixed setting — each file is encoded at whichever sample rate on a 16–48 kHz ladder yields the **smallest** MP3 while still clearing 2.2× its own measured 95% rolloff, because MP3 bytes are not monotonic in sample rate. A `client/src/platform/audioAssets.test.ts` budget of 160 KiB now gates drift. **Answered for music too (2026-09-01, `12`)**: the 1.09 MB of loops sit in a `music` subpackage that is fetched in the background from the lobby and awaited by nothing, and the SFX set moved out of the boot core with everything else — the main package is code only now, so "the boot core" holds no audio at all.
-- **Who signs off on how it sounds.** The 50 shipped files were chosen from spectra, not by ear (status block). Measurement cannot close this; a person has to listen — and as of 2026-08-27 these files are what actually plays, so "the synth voices are what plays anyway" is no longer the reason it can wait. It is still not *blocking* (the game is playable silent), but it is now the top open item on this doc.
+- **Who signs off on how it sounds.** The 61 shipped files were chosen from spectra, not by ear (status block). The 2026-09-02 pass added one specific pair to listen for: `hurt` fires at the same instant as `impact` and is separated from it by material and register rather than by envelope, so whether they read as one event or as two clutter is exactly the kind of question only a listener can answer. Measurement cannot close this; a person has to listen — and as of 2026-08-27 these files are what actually plays, so "the synth voices are what plays anyway" is no longer the reason it can wait. It is still not *blocking* (the game is playable silent), but it is now the top open item on this doc.
 - **Does WeChat's `decodeAudioData` take the promise or the callback form** on the lowest target base library? `audio/decodeAudio.ts` accepts either, so the answer only decides which branch is dead code — but a decode that fails silently costs every sample on that platform, and the fallback (synth voices) is quiet about it.
 
 ## Sourcing audio (tools & libraries)

@@ -10,7 +10,15 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { SampleBank } from './SampleBank';
-import { allSfxPaths, variantPaths } from './cueCatalogue';
+import { ALL_CUES, CUE_CATALOGUE, allSfxPaths, variantPaths } from './cueCatalogue';
+
+// Derived, not written down. These counts have drifted twice already (46 -> 50 with the UI
+// cues, 50 -> 61 with the character reactions), and every time they did, the literal was the
+// only thing that broke — the behaviour under test never changed. What these cases are about
+// is "the whole catalogued set" and "one warning per failed file", so that is what they say.
+// The exact-set assertion below is what actually pins WHICH files, so nothing is lost.
+const ALL_VARIANTS = allSfxPaths().length;
+const CUES_WITH_SAMPLES = ALL_CUES.filter((c) => CUE_CATALOGUE[c].variants > 0).length;
 
 /** A decoded buffer that remembers which path produced it, so variant ORDER is assertable. */
 type Tagged = AudioBuffer & { path: string };
@@ -54,10 +62,10 @@ describe('SampleBank — a clean load', () => {
     const { bank, reads } = harness();
     return bank.load().then(() => {
       expect(reads.slice().sort()).toEqual(allSfxPaths().slice().sort());
-      expect(reads).toHaveLength(50);
+      expect(reads).toHaveLength(ALL_VARIANTS);
       expect(bank.variantsOf('status.burn')).toBeUndefined();
-      expect(bank.loadedCues).toBe(19);
-      expect(bank.loadedVariants).toBe(50);
+      expect(bank.loadedCues).toBe(CUES_WITH_SAMPLES);
+      expect(bank.loadedVariants).toBe(ALL_VARIANTS);
     });
   });
 
@@ -96,14 +104,14 @@ describe('SampleBank — per-file failure', () => {
     const { bank } = harness(variantPaths('clash') as string[]);
     await bank.load();
     expect(bank.variantsOf('clash')).toBeUndefined();
-    expect(bank.loadedCues).toBe(18);
+    expect(bank.loadedCues).toBe(CUES_WITH_SAMPLES - 1);
   });
 
   it('never rejects, even when the whole set fails', async () => {
     const { bank, warn } = harness(allSfxPaths() as string[]);
     await expect(bank.load()).resolves.toBeUndefined();
     expect(bank.loadedCues).toBe(0);
-    expect(warn).toHaveBeenCalledTimes(50);
+    expect(warn).toHaveBeenCalledTimes(ALL_VARIANTS);
   });
 });
 
@@ -114,7 +122,7 @@ describe('SampleBank — repeat calls', () => {
     const b = bank.load();
     expect(a).toBe(b);
     await Promise.all([a, b]);
-    expect(reads).toHaveLength(50);
+    expect(reads).toHaveLength(ALL_VARIANTS);
   });
 
   it('retries only what has nothing loaded', async () => {

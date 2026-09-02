@@ -471,14 +471,14 @@
    ]
   },
   {
-   "cue": "death",
+   "cue": "death.enemy",
    "variants": 3,
    "total_bytes": 19989,
    "gate_class": "feedback",
-   "rationale": "Centroid 2223-3386 vs 3556. Capped: an unbounded 2 s tail times many simultaneous deaths is mud.",
+   "rationale": "Centroid 2223-3386 vs 3556. Capped: an unbounded 2 s tail times many simultaneous deaths is mud. Renamed from the bare `death` cue 2026-09-02, when `death.player` joined it: \"death\" meaning only an enemy death was a trap the union could not show.",
    "files": [
     {
-     "file": "audio/death_00.mp3",
+     "file": "audio/death-enemy_00.mp3",
      "source": "sci-fi-sounds/explosionCrunch_000.ogg",
      "source_pack": "sci-fi-sounds",
      "source_channels": 1,
@@ -490,7 +490,7 @@
      "bytes": 6699
     },
     {
-     "file": "audio/death_01.mp3",
+     "file": "audio/death-enemy_01.mp3",
      "source": "sci-fi-sounds/explosionCrunch_001.ogg",
      "source_pack": "sci-fi-sounds",
      "source_channels": 1,
@@ -502,7 +502,7 @@
      "bytes": 7194
     },
     {
-     "file": "audio/death_02.mp3",
+     "file": "audio/death-enemy_02.mp3",
      "source": "sci-fi-sounds/explosionCrunch_002.ogg",
      "source_pack": "sci-fi-sounds",
      "source_channels": 1,
@@ -772,6 +772,194 @@
      "bytes": 3120
     }
    ]
+  },
+  {
+   "cue": "swing",
+   "variants": 4,
+   "total_bytes": 6075,
+   "gate_class": "sfx",
+   "rationale": "Four of the eleven sword-through-air swings inside one 11 s mono take -- the only whoosh material reachable at all, since the six Kenney packs contain no air family. Chosen across the take rather than consecutively: centroid 1455/1656/1697/1806 Hz spans the set's own 1433-1806 range, so the four read as one action performed four times.",
+   "files": [
+    {
+     "file": "audio/swing_00.mp3",
+     "source": "bigsoundbank/whoosh_s0572.ogg",
+     "source_pack": "bigsoundbank",
+     "source_channels": 1,
+     "sample_rate": 16000,
+     "duration_ms": 142.2,
+     "trimmed_ms": 197.8,
+     "capped_ms": 0.0,
+     "gain_applied_db": -16.39,
+     "bytes": 1440,
+     "source_region_s": [
+      1.08,
+      1.42
+     ],
+     "source_sha256": "5226d901186e3847980d0bac583b5db249fdf84370fd0daa17122de989d6ef98"
+    },
+    {
+     "file": "audio/swing_01.mp3",
+     "source": "bigsoundbank/whoosh_s0572.ogg",
+     "source_pack": "bigsoundbank",
+     "source_channels": 1,
+     "sample_rate": 22050,
+     "duration_ms": 154.8,
+     "trimmed_ms": 205.2,
+     "capped_ms": 0.0,
+     "gain_applied_db": -15.24,
+     "bytes": 1719,
+     "source_region_s": [
+      3.42,
+      3.78
+     ],
+     "source_sha256": "5226d901186e3847980d0bac583b5db249fdf84370fd0daa17122de989d6ef98"
+    },
+    {
+     "file": "audio/swing_02.mp3",
+     "source": "bigsoundbank/whoosh_s0572.ogg",
+     "source_pack": "bigsoundbank",
+     "source_channels": 1,
+     "sample_rate": 16000,
+     "duration_ms": 126.2,
+     "trimmed_ms": 213.8,
+     "capped_ms": 0.0,
+     "gain_applied_db": -18.63,
+     "bytes": 1440,
+     "source_region_s": [
+      6.46,
+      6.8
+     ],
+     "source_sha256": "5226d901186e3847980d0bac583b5db249fdf84370fd0daa17122de989d6ef98"
+    },
+    {
+     "file": "audio/swing_03.mp3",
+     "source": "bigsoundbank/whoosh_s0572.ogg",
+     "source_pack": "bigsoundbank",
+     "source_channels": 1,
+     "sample_rate": 16000,
+     "duration_ms": 136.6,
+     "trimmed_ms": 203.4,
+     "capped_ms": 0.0,
+     "gain_applied_db": -17.89,
+     "bytes": 1476,
+     "source_region_s": [
+      8.48,
+      8.82
+     ],
+     "source_sha256": "5226d901186e3847980d0bac583b5db249fdf84370fd0daa17122de989d6ef98"
+    }
+   ]
+  },
+  {
+   "cue": "hurt",
+   "variants": 3,
+   "total_bytes": 3114,
+   "gate_class": "sfx",
+   "rationale": "500-4000 Hz RMS of -32.5/-32.9/-33.1 dBFS against the shipped `impact` set's -38.7..-39.7 -- audible over it on a phone, which is the property the first two candidate families failed. Centroid 1466-1835 Hz sits an octave above `impact` (793-927) and an octave below `deflect` (2465-3082). Light glass to `shield.break`'s heavy glass: one material, two severities.",
+   "files": [
+    {
+     "file": "audio/hurt_00.mp3",
+     "source": "impact-sounds/impactGlass_light_002.ogg",
+     "source_pack": "impact-sounds",
+     "source_channels": 2,
+     "sample_rate": 22050,
+     "duration_ms": 118.5,
+     "trimmed_ms": 91.1,
+     "capped_ms": 0.0,
+     "gain_applied_db": -14.73,
+     "bytes": 1042
+    },
+    {
+     "file": "audio/hurt_01.mp3",
+     "source": "impact-sounds/impactGlass_light_000.ogg",
+     "source_pack": "impact-sounds",
+     "source_channels": 2,
+     "sample_rate": 22050,
+     "duration_ms": 107.3,
+     "trimmed_ms": 102.2,
+     "capped_ms": 0.0,
+     "gain_applied_db": -14.35,
+     "bytes": 1016
+    },
+    {
+     "file": "audio/hurt_02.mp3",
+     "source": "impact-sounds/impactGlass_light_004.ogg",
+     "source_pack": "impact-sounds",
+     "source_channels": 2,
+     "sample_rate": 24000,
+     "duration_ms": 113.0,
+     "trimmed_ms": 96.6,
+     "capped_ms": 0.0,
+     "gain_applied_db": -15.1,
+     "bytes": 1056
+    }
+   ]
+  },
+  {
+   "cue": "death.player",
+   "variants": 1,
+   "total_bytes": 5328,
+   "gate_class": "feedback",
+   "rationale": "The descending pizzicato scale, against `win`'s rising-then-held figure in the same instrument. Capped at 780 ms to sit inside the feedback gate proper (800 ms); the peak lands 360 ms in, well before the cap.",
+   "files": [
+    {
+     "file": "audio/death-player_00.mp3",
+     "source": "music-jingles/jingles_PIZZI14.ogg",
+     "source_pack": "music-jingles",
+     "source_channels": 2,
+     "sample_rate": 16000,
+     "duration_ms": 780.0,
+     "trimmed_ms": 25.1,
+     "capped_ms": 118.0,
+     "gain_applied_db": -9.03,
+     "bytes": 5328
+    }
+   ]
+  },
+  {
+   "cue": "spawn",
+   "variants": 3,
+   "total_bytes": 6841,
+   "gate_class": "feedback",
+   "rationale": "An energy field powering up, for a body that materialises inside an energy shell the game already simulates (design/07 two-pool). Mono in the pack, so no channel mixdown; a 137 ms attack makes it a swell rather than a pop, matching the spawn clip, which opens at 20% scale and releases 350 ms later. Capped at 400 ms.",
+   "files": [
+    {
+     "file": "audio/spawn_00.mp3",
+     "source": "sci-fi-sounds/forceField_000.ogg",
+     "source_pack": "sci-fi-sounds",
+     "source_channels": 1,
+     "sample_rate": 16000,
+     "duration_ms": 400.0,
+     "trimmed_ms": 264.9,
+     "capped_ms": 289.1,
+     "gain_applied_db": -17.53,
+     "bytes": 2160
+    },
+    {
+     "file": "audio/spawn_01.mp3",
+     "source": "sci-fi-sounds/forceField_002.ogg",
+     "source_pack": "sci-fi-sounds",
+     "source_channels": 1,
+     "sample_rate": 16000,
+     "duration_ms": 400.0,
+     "trimmed_ms": 265.2,
+     "capped_ms": 289.9,
+     "gain_applied_db": -17.48,
+     "bytes": 2340
+    },
+    {
+     "file": "audio/spawn_02.mp3",
+     "source": "sci-fi-sounds/forceField_004.ogg",
+     "source_pack": "sci-fi-sounds",
+     "source_channels": 1,
+     "sample_rate": 22050,
+     "duration_ms": 400.0,
+     "trimmed_ms": 267.2,
+     "capped_ms": 287.3,
+     "gain_applied_db": -17.51,
+     "bytes": 2341
+    }
+   ]
   }
  ],
  "kept_on_synth": {
@@ -834,6 +1022,6 @@
   "license_text_archived": false,
   "accepted_by": "project owner",
   "accepted_on": "2026-08-31",
-  "note": "NOT CC0, unlike every SFX source in `packs.json`. The service grants commercial use of generated output under its own terms; the project owner judged the infringement risk on purely instrumental output acceptable and asked not to dwell on it. Two gaps are recorded rather than argued: no licence text is archived under licenses/ (the CC0 texts there do not cover these), and the terms as accepted are a URL rather than a snapshot, so what was agreed to is whatever that page said on accepted_on. Both are the owner’s call to close; `musicAssets.test.ts` only asserts that the record exists and stays honest about what it does not have."
+  "note": "NOT CC0, unlike every SFX source in `packs.json`. The service grants commercial use of generated output under its own terms; the project owner judged the infringement risk on purely instrumental output acceptable and asked not to dwell on it. Two gaps are recorded rather than argued: no licence text is archived under licenses/ (the CC0 texts there do not cover these), and the terms as accepted are a URL rather than a snapshot, so what was agreed to is whatever that page said on accepted_on. Both are the ownerâ€™s call to close; `musicAssets.test.ts` only asserts that the record exists and stays honest about what it does not have."
  }
 }

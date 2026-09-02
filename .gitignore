@@ -36,3 +36,13 @@ Thumbs.db
 __pycache__/
 *.py[cod]
 venv/
+
+# The audio drivers' scratch working directories. Each one reads a tree of upstream pack
+# files (`src/`, `all/`) and writes a batch of candidate mp3s (`out*/`) plus its own report,
+# none of which is source: the pack zips are re-fetchable by the sha256 in art/audio/packs.json,
+# and only the files that actually ship are archived under art/audio/sources/.
+tools/audio-pipeline/src/
+tools/audio-pipeline/all/
+tools/audio-pipeline/out*/
+tools/audio-pipeline/synth.json
+tools/audio-pipeline/process*.json

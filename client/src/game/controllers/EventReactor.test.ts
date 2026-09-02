@@ -282,7 +282,9 @@ describe('EventReactor — door lock/unlock (design/05 "Room & door model" DoorS
     const hud = new HudView();
     hud.build(new Layers(), { w: 1280, h: 720 });
     const host = fakeHost();
-    const state = {} as GameState;
+    // `players: []` rather than `{}`: `activeState()` is typed `GameState | null`, so a state
+    // with no seat array is a shape the game never produces and the cast was hiding that.
+    const state = { players: [] } as unknown as GameState;
     host.activeState = () => state;
     const reactor = new EventReactor(fakeFx(), hud, fakeAudio(), host);
     reactor.consume([{ type: 'door_locked', roomId: 'r1' } as GameEvent]);
@@ -293,7 +295,7 @@ describe('EventReactor — door lock/unlock (design/05 "Room & door model" DoorS
     const hud = new HudView();
     hud.build(new Layers(), { w: 1280, h: 720 });
     const host = fakeHost();
-    const state = {} as GameState;
+    const state = { players: [] } as unknown as GameState;
     host.activeState = () => state;
     const reactor = new EventReactor(fakeFx(), hud, fakeAudio(), host);
     reactor.consume([{ type: 'door_unlocked', roomId: 'r1' } as GameEvent]);
@@ -346,6 +348,158 @@ describe('EventReactor — force_regroup (design/05 DoorSystem)', () => {
     expect(host.onForceRegroup).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * The character-reaction cues (design/11, 2026-09-02). Three of the four are gated on the
+ * LOCAL seat, and that gate is the whole design: `impact` already reports that a hit landed
+ * somewhere, `death.enemy` that something died. What had no sound at all was the answer to
+ * "was that me" — so a `hurt` or a `death.player` that fired for every actor would not be a
+ * louder version of this feature, it would be the absence of it.
+ */
+describe('EventReactor — the cues that are about YOU (design/11)', () => {
+  const LOCAL = 11;
+  const OTHER = 12;
+
+  function reactorFor(seatId: number | null) {
+    const hud = new HudView();
+    hud.build(new Layers(), { w: 1280, h: 720 });
+    const audio = fakeAudio();
+    const fx = fakeFx();
+    const host = fakeHost();
+    if (seatId !== null) {
+      host.activeState = () =>
+        ({ players: [{ id: seatId, gx: 0, gy: 0 }] }) as unknown as GameState;
+    }
+    return { reactor: new EventReactor(fx, hud, audio, host), audio, fx, host };
+  }
+
+  const hitOn = (target: number) => ({
+    type: 'hit', target, faction: 'enemy', gx: 0, gy: 0, damage: 1, damageType: 'physical',
+  }) as GameEvent;
+
+  it('a hit on the local seat plays hurt AND impact — the pair IS the signal', () => {
+    // Not either/or: `impact` places the hit in the world and `hurt` says whose body it was.
+    // A version that replaced one with the other would lose half of what the frame knows.
+    const { reactor, audio } = reactorFor(LOCAL);
+    reactor.consume([hitOn(LOCAL)]);
+    expect(cuesOf(audio).sort()).toEqual(['hurt', 'impact']);
+  });
+
+  it('a hit on anybody else plays impact alone', () => {
+    const { reactor, audio } = reactorFor(LOCAL);
+    reactor.consume([hitOn(OTHER)]);
+    expect(cuesOf(audio)).toEqual(['impact']);
+  });
+
+  it('coalesces a burst of hits on the local seat into one hurt carrying the count', () => {
+    const { reactor, audio } = reactorFor(LOCAL);
+    reactor.consume([hitOn(LOCAL), hitOn(LOCAL), hitOn(OTHER)]);
+    expect(audio.play).toHaveBeenCalledWith('hurt', 2);
+    expect(audio.play).toHaveBeenCalledWith('impact', 3);
+  });
+
+  it('plays nothing seat-specific when there is no seat yet', () => {
+    // A menu frame draining a stale queue: `activeState()` is null, so there is no local id.
+    // The failure this pins is treating "no local actor" as actor 0, which would hand the
+    // hurt cue to whichever entity happened to be first.
+    const { reactor, audio } = reactorFor(null);
+    reactor.consume([
+      hitOn(0),
+      { type: 'death', id: 0, faction: 'player', gx: 0, gy: 0 } as GameEvent,
+    ]);
+    expect(cuesOf(audio)).toEqual(['impact']);
+  });
+
+  it("the local seat's death plays death.player; another player's plays nothing", () => {
+    const a = reactorFor(LOCAL);
+    a.reactor.consume([{ type: 'death', id: LOCAL, faction: 'player', gx: 0, gy: 0 } as GameEvent]);
+    expect(cuesOf(a.audio)).toEqual(['death.player']);
+
+    const b = reactorFor(LOCAL);
+    b.reactor.consume([{ type: 'death', id: OTHER, faction: 'player', gx: 0, gy: 0 } as GameEvent]);
+    expect(b.audio.play).not.toHaveBeenCalled();
+  });
+
+  it('an enemy death still plays death.enemy, and never the run-ending fall', () => {
+    const { reactor, audio, host } = reactorFor(LOCAL);
+    reactor.consume([{ type: 'death', id: 99, faction: 'enemy', gx: 0, gy: 0 } as GameEvent]);
+    expect(cuesOf(audio)).toEqual(['death.enemy']);
+    expect(host.addScore).toHaveBeenCalled(); // the kill-score branch is untouched
+  });
+
+  it('being downed plays hurt, and coalesces with the hit that caused it', () => {
+    // Going down is damage, so it takes the damage cue rather than a lifecycle one — a downed
+    // player in co-op can be revived, and the run-ending fall would be a lie. In the frame
+    // where both land, that is ONE louder hurt, which is what the moment should be.
+    const { reactor, audio } = reactorFor(LOCAL);
+    reactor.consume([
+      hitOn(LOCAL),
+      { type: 'downed', id: LOCAL, gx: 0, gy: 0 } as GameEvent,
+    ]);
+    expect(audio.play).toHaveBeenCalledWith('hurt', 2);
+  });
+
+  it('a teammate going down is SEEN but not heard', () => {
+    // The split is deliberate: the fx stays ungated because a teammate collapsing is worth
+    // looking at, while the cue is the local seat's own damage channel.
+    const { reactor, audio, fx } = reactorFor(LOCAL);
+    reactor.consume([{ type: 'downed', id: OTHER, gx: 0, gy: 0 } as GameEvent]);
+    expect(audio.play).not.toHaveBeenCalled();
+    expect(fx.addShake).toHaveBeenCalled();
+    expect(fx.addHitStop).toHaveBeenCalled();
+  });
+});
+
+/**
+ * `spawn` — the one cue with no engine event behind it. `Scene` counts the actor views it
+ * built this frame and `GameLoop` hands that count here, so these cases are about the
+ * arithmetic at this end; `Scene.test.ts` owns whether the count itself is right.
+ */
+describe('EventReactor — the spawn count (design/11)', () => {
+  function reactorWithAudio() {
+    const hud = new HudView();
+    hud.build(new Layers(), { w: 1280, h: 720 });
+    const audio = fakeAudio();
+    return { reactor: new EventReactor(fakeFx(), hud, audio, fakeHost()), audio };
+  }
+
+  it('plays one spawn cue carrying how many actors materialised', () => {
+    // A room's wave arrives all at once: nine bodies must be one voice at higher gain, the
+    // same rule design/11 states for ten hits in a frame.
+    const { reactor, audio } = reactorWithAudio();
+    reactor.consume([], 9);
+    expect(audio.play).toHaveBeenCalledTimes(1);
+    expect(audio.play).toHaveBeenCalledWith('spawn', 9);
+  });
+
+  it('plays nothing on a frame that built no views', () => {
+    // The common case by far — every frame between waves. A cue at count 0 would be a voice
+    // per frame, which is the mistake a truthy check would not catch.
+    const { reactor, audio } = reactorWithAudio();
+    reactor.consume([{ type: 'clash', gx: 0, gy: 0 } as GameEvent], 0);
+    expect(cuesOf(audio)).toEqual(['clash']);
+  });
+
+  it('defaults to no spawns when the caller passes nothing', () => {
+    // Every other case in this file calls `consume(events)` with one argument; the default is
+    // what keeps that honest rather than silently meaning "one spawn".
+    const { reactor, audio } = reactorWithAudio();
+    reactor.consume([{ type: 'clash', gx: 0, gy: 0 } as GameEvent]);
+    expect(cuesOf(audio)).toEqual(['clash']);
+  });
+
+  it('rides in the same coalescing map as the events, not around it', () => {
+    const { reactor, audio } = reactorWithAudio();
+    reactor.consume([{ type: 'bullet_fired', gx: 0, gy: 0, facing: 0 } as GameEvent], 2);
+    expect(audio.play).toHaveBeenCalledTimes(2);
+    expect(audio.play).toHaveBeenCalledWith('spawn', 2);
+    expect(audio.play).toHaveBeenCalledWith('muzzle', 1);
+  });
+});
+
+/** Which cues a fake bus was asked for, in call order. */
+const cuesOf = (audio: ReturnType<typeof fakeAudio>): string[] =>
+  (audio.play as ReturnType<typeof vi.fn>).mock.calls.map((c) => c[0] as string);
 
 describe('EventReactor — audio cue coalescing (design/11)', () => {
   function reactorWithAudio() {
@@ -460,18 +614,20 @@ describe('EventReactor — a shot leaves the shooter, not the event position', (
     expect(() => reactor.consume([SWING])).not.toThrow();
   });
 
-  it('a swing plays no cue — there is no whoosh in the catalogue, and a gunshot would be wrong', () => {
-    // Deliberate, and worth pinning rather than leaving as an absence: the two events carry the
-    // same fields, so routing a swing through the ranged branch would give a sword the `muzzle`
-    // cue. If a swing cue is ever authored (design/11), this test is the one that has to change,
-    // which is the point — it makes the silence a decision instead of an oversight.
+  it('a swing plays its OWN cue, never the gunshot', () => {
+    // This case used to assert the opposite — that a swing made no sound at all — and said in
+    // its own comment that authoring a swing cue is what would change it. That happened
+    // 2026-09-02. What it is pinning is unchanged and is the part that matters: `melee_swing`
+    // and `bullet_fired` carry identical fields, so routing a swing through the ranged branch
+    // would hand a sword the `muzzle` cue and nothing would look wrong.
     const SWING = { type: 'melee_swing', ownerId: 7, gx: pxToFp(0), gy: pxToFp(0), facing: 0 } as GameEvent;
     const audio = fakeAudio();
     const hud = new HudView();
     hud.build(new Layers(), { w: 1280, h: 720 });
     const host = { ...fakeHost(), actorAt: vi.fn(() => shooter({ x: 1, y: 2 })) };
     new EventReactor(fakeFx(), hud, audio, host).consume([SWING]);
-    expect(audio.play).not.toHaveBeenCalled();
+    expect(audio.play).toHaveBeenCalledWith('swing', 1);
+    expect(audio.play).toHaveBeenCalledTimes(1);
   });
 
   it('lands on the swinger the event names, not on whoever swung last', () => {

@@ -3,7 +3,7 @@
 //
 // The chain is `Audio` element -> `createMediaElementSource` -> this deck's own `GainNode` ->
 // `WebAudio`'s music bus gain -> destination. Two reasons it is a media element rather than a
-// `SampleBank` entry like all 50 cues:
+// `SampleBank` entry like every cue:
 //
 //  1. **RAM.** A 69 s stereo loop decodes to ~26 MB of `AudioBuffer` at 48 kHz. Three tracks
 //     resident would cost more than every texture in the game.

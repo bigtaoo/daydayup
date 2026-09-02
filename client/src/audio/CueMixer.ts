@@ -24,9 +24,17 @@ import type { SampleBank } from './SampleBank';
 
 /** Simultaneous sample voices. A first pass, not a measurement — design/11 still lists the
  *  on-device voice budget as open. Sized against what a frame can actually ask for: the
- *  caller coalesces duplicates, so at most 16 distinct cues arrive per frame, and the long
- *  tails (`death`, 600 ms) are the only ones that overlap for any length of time. */
-const DEFAULT_CAP = 12;
+ *  caller coalesces duplicates, so a bounded number of distinct cues arrive per frame, and the
+ *  long tails (`death.player`, 780 ms; `death.enemy`, 600 ms) are the only ones that overlap
+ *  for any length of time. That bound was 16 when this number was chosen and is 20 since the
+ *  character-reaction cues landed (2026-09-02) — the cap was deliberately NOT raised with it,
+ *  because it is a device budget, not a headroom-over-the-cue-count budget, and what the extra
+ *  cues cost is measured in `audioPipeline.test.ts`: the overflow is cut from the bottom of the
+ *  priority ladder, which is exactly what the ladder is for.
+ *
+ *  Exported for that test, which derives how many voices a saturated frame must sacrifice
+ *  rather than writing the number down — it had been written down, and it went stale. */
+export const DEFAULT_CAP = 12;
 
 /** Pitch spread per voice, plus and minus. Small enough to read as the same sound, large
  *  enough to blunt the repetition a 2-variant cue would otherwise have. */

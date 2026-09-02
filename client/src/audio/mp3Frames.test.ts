@@ -3,7 +3,7 @@
  * construction.
  *
  * Written because the frame walker had no test of its own (2026-09-01). It is the independent
- * second opinion behind three gates — `platform/audioAssets.test.ts` (50 cues),
+ * second opinion behind three gates — `platform/audioAssets.test.ts` (the shipped cue set),
  * `audio/musicAssets.test.ts` (the loops) and one case in `audio/musicPipeline.test.ts` — and
  * every one of them feeds it the 52 files that are already CORRECT. That leaves two whole
  * halves of the parser unexercised:

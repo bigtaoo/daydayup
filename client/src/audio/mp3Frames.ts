@@ -2,7 +2,7 @@
 // the bitstream, with no decoder involved.
 //
 // TEST SUPPORT, not runtime code. It exists because the two asset gates that need it —
-// `platform/audioAssets.test.ts` (the 50 shipped cues) and `audio/musicAssets.test.ts` (the
+// `platform/audioAssets.test.ts` (the shipped cue set) and `audio/musicAssets.test.ts` (the
 // music loops) — must not each own a copy: the parser's whole job is to be the independent
 // second opinion on what a shipped file IS, and two copies of an independent opinion is one
 // copy of it. It lives under src/ rather than beside a test for the same reason

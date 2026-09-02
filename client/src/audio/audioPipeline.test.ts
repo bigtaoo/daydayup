@@ -7,7 +7,7 @@
  * Why this file exists on top of the per-unit tests. Every link here is already covered
  * individually, and that is exactly the problem: the failure this pass was built to end is
  * *silent*. Delete the preload call, drift a catalogue path, break the sample branch, and the
- * game keeps making noise — the synth voices carry it — while the 46 shipped files quietly
+ * game keeps making noise — the synth voices carry it — while the shipped files quietly
  * stop being used. No unit test fails, and nobody hears the difference without knowing what
  * to listen for. This file asserts the property no unit owns: **that a real frame of engine
  * events reaches the SHIPPED samples and not the fallback.** It is the automated form of the
@@ -23,6 +23,7 @@ import { Layers } from '../game/scene/layers';
 import { WebAudio } from '../platform/web/WebAudio';
 import { Button } from '../game/ui/widgets';
 import { setUiAudio, playUiCue, type UiCue } from './uiSound';
+import { DEFAULT_CAP, coalesceBoost } from './CueMixer';
 import { ALL_CUES, CUE_CATALOGUE, variantPaths } from './cueCatalogue';
 import type { AudioCue } from '../platform/types';
 
@@ -170,7 +171,14 @@ const EVENTS: Record<string, GameEvent> = {
   'status.chill': { type: 'status', effect: 'chill', gx: 0, gy: 0 } as GameEvent,
   'status.shock': { type: 'status', effect: 'shock', gx: 0, gy: 0 } as GameEvent,
   'status.poison': { type: 'status', effect: 'poison', gx: 0, gy: 0 } as GameEvent,
-  death: { type: 'death', faction: 'enemy', gx: 0, gy: 0 } as GameEvent,
+  swing: { type: 'melee_swing', ownerId: 3, gx: 0, gy: 0, facing: 0 } as GameEvent,
+  // A SECOND `hit`, aimed at the local seat (`fakeHost` seats it as id 1) where the `impact`
+  // fixture above is aimed at somebody else. Both produce `impact`; only this one also
+  // produces `hurt`, which is the whole gate on that cue and the reason the two fixtures
+  // cannot be one.
+  hurt: { type: 'hit', target: 1, faction: 'enemy', gx: 0, gy: 0, damage: 1, damageType: 'physical' } as GameEvent,
+  'death.enemy': { type: 'death', id: 9, faction: 'enemy', gx: 0, gy: 0 } as GameEvent,
+  'death.player': { type: 'death', id: 1, faction: 'player', gx: 0, gy: 0 } as GameEvent,
   'pickup.heal': { type: 'pickup', kind: 'heal', gx: 0, gy: 0 } as GameEvent,
   'pickup.weapon': { type: 'pickup', kind: 'weapon', weaponId: 'repeater', gx: 0, gy: 0 } as GameEvent,
   'pickup.material': { type: 'pickup', kind: 'material', materialId: 'mat_fire', qty: 1, gx: 0, gy: 0 } as GameEvent,
@@ -189,6 +197,11 @@ const EVENTS: Record<string, GameEvent> = {
  *  with no fixture event here would otherwise just quietly not be exercised. */
 const ENGINE_CUES = Object.keys(EVENTS) as AudioCue[];
 const UI_CUES = ALL_CUES.filter((c) => c.startsWith('ui.'));
+/** The third origin, and the only member of it: `spawn` is driven by a `GameState` DIFF that
+ *  `Scene` computes, not by any event, so it reaches the reactor as a count argument and can
+ *  never appear in `EVENTS`. It is listed rather than inferred so the exhaustiveness case
+ *  below still fails on a new cue that belongs to no origin at all. */
+const DIFF_CUES: AudioCue[] = ['spawn'];
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -203,14 +216,18 @@ describe('the audio pipeline — a real frame of events reaches the SHIPPED samp
     // Guards the fixture, not the code. Every cue is either engine-driven (and needs an
     // event here, or the coverage below shrinks without failing) or a UI cue (and cannot
     // have one). Nothing may be in neither set.
-    expect([...ENGINE_CUES, ...UI_CUES].sort()).toEqual([...ALL_CUES].sort());
+    expect([...ENGINE_CUES, ...UI_CUES, ...DIFF_CUES].sort()).toEqual([...ALL_CUES].sort());
     expect(ENGINE_CUES.some((c) => c.startsWith('ui.'))).toBe(false);
+    // A diff-driven cue must not also have a fixture event, or the origin split is a fiction.
+    expect(DIFF_CUES.some((c) => ENGINE_CUES.includes(c))).toBe(false);
   });
 
   it('plays a decoded file for every cue that has one, and the synth voice only for the one that does not', async () => {
     // The whole point of the pass, as one assertion. `status.burn` is the single deliberate
     // synth keep (no fire crackle exists in any of the six CC0 packs, `credits.json`), so a
-    // frame containing every cue must produce 15 sampled voices and exactly one synthesised.
+    // frame containing every engine cue must produce a sampled voice for each and exactly one
+    // synthesised. (`spawn` is absent here by construction — it has no event; the case below
+    // is its counterpart.)
     const { reactor } = await bootedShell();
     reactor.consume(Object.values(EVENTS));
     const sampled = voices().filter((c): c is AudioCue => c !== null);
@@ -219,6 +236,20 @@ describe('the audio pipeline — a real frame of events reaches the SHIPPED samp
     // ...and the one synth voice that DID play is `status.burn`'s noise burst: a buffer this
     // context built itself rather than one the decoder returned.
     expect(ctx.createBuffer).toHaveBeenCalledTimes(1);
+  });
+
+  it('a spawn count reaches the SHIPPED spawn samples, with no event to carry it', async () => {
+    // The one cue whose whole path is a number rather than an event, end to end: a count from
+    // `Scene` through the reactor's coalescing map, the catalogue, the bank and the mixer, out
+    // as a decoded `/audio/spawn_NN.mp3`. Nothing about it can be exercised by the all-cues
+    // frame above, because there is no `GameEvent` to put in that frame.
+    const { reactor } = await bootedShell();
+    reactor.consume([], 9);
+    expect(voices()).toEqual(['spawn']);       // one voice, not nine
+    expect(ctx.oscillators).toHaveLength(0);   // and it is the sample, not the synth voice
+    // Nine coalesced into one is a gain decision, and this is the only place it is visible for
+    // this cue: catalogue gain 1.0 x the log-shaped boost, capped.
+    expect(ctx.gains.at(-1)!.value).toBeCloseTo(coalesceBoost(9));
   });
 
   it('a firing burst plays samples only — no cue silently falls back', async () => {
@@ -270,7 +301,7 @@ describe('the audio pipeline — a frame that asks for more than the voice cap',
   }
 
   it('sacrifices only expendable voices when a frame saturates the cap', async () => {
-    // 16 distinct cues in one frame exceeds the 12-voice cap, so something must give — and
+    // Every engine cue in one frame exceeds the 12-voice cap, so something must give — and
     // what gives is worth pinning, because the mechanism is not the obvious one. Over the cap
     // a higher-priority cue does NOT get refused: it STEALS the weakest slot, so every cue
     // still starts, and the loser is faded out 12 ms in. So the assertion is about which
@@ -280,14 +311,19 @@ describe('the audio pipeline — a frame that asks for more than the voice cap',
     reactor.consume(Object.values(EVENTS));
     const { stolen, kept } = stolenAndKept();
 
-    // Three sample voices over the cap → three cut short, and every one of them from the
-    // bottom of the ladder. Nothing the player needs to hear is sacrificed for a gunshot.
-    expect(stolen.size).toBe(3);
+    // Exactly the overflow is cut short, and the cut is a clean slice down the ladder:
+    // every sacrificed cue ranks BELOW every surviving one. Both numbers are derived, because
+    // the literal 3 this case used to carry stopped being true the moment the cue set grew,
+    // while neither thing it was actually testing changed.
+    const sampledCues = ENGINE_CUES.filter((c) => CUE_CATALOGUE[c].variants > 0);
+    expect(stolen.size).toBe(sampledCues.length - DEFAULT_CAP);
+    const worstKept = Math.min(...[...kept].map((c) => CUE_CATALOGUE[c].priority));
     for (const cue of stolen) {
-      expect(CUE_CATALOGUE[cue].priority, `${cue} was cut short`).toBeLessThanOrEqual(40);
+      expect(CUE_CATALOGUE[cue].priority, `${cue} was cut short`).toBeLessThan(worstKept);
     }
     expect(stolen.has('muzzle')).toBe(true); // fires on every shot — the first to go
     expect(stolen.has('clash')).toBe(true);
+    expect(stolen.has('swing')).toBe(true);  // the melee `muzzle`, and just as expendable
     for (const cue of ENGINE_CUES) {
       if (CUE_CATALOGUE[cue].priority > 50 && CUE_CATALOGUE[cue].variants > 0) {
         expect(kept.has(cue), `${cue} (priority ${CUE_CATALOGUE[cue].priority}) lost its slot`).toBe(true);

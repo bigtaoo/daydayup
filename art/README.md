@@ -2,8 +2,11 @@
 
 > **Audio lives alongside this, under [`art/audio/`](audio/README.md)** — same convention (source
 > and licence paperwork here, the processed copy under `client/public/`), different medium. As of
-> 2026-08-30 it holds the CC0 source behind 50 shipped SFX/UI assets plus `credits.json` /
-> `packs.json`; nothing loads them yet (`design/11`).
+> 2026-09-02 it holds the source behind **61 shipped SFX/UI assets and 2 music loops**, plus
+> `credits.json` / `packs.json`. All of it **plays** — the "nothing loads them yet" this box used
+> to say stopped being true on 2026-08-28 (`design/11`). Two of its conventions differ from art's:
+> one source (BigSoundBank) is licensed and hashed per SOUND rather than per pack, and the music
+> masters are AI-generated rather than CC0 library material.
 
 > **Direction locked (2026-07-23):** flat-cel orb-core hero + universal-mount weapons +
 > crystal-mirror enemies. See `design/13-worldview-art-direction.md` for the direction and

@@ -327,8 +327,15 @@ export class GameLoop {
 
   // Events are the only engine→render channel (design/08): fx feedback + score + audio.
   // The actual per-event-type reactions live in EventReactor.
+  //
+  // The one thing that reaches the reactor without being an event is `scene.spawnedActors`,
+  // the count of actor views the reconcile immediately above just built. There is no `spawn`
+  // event to carry it — an id appearing in `GameState` is a diff, and `Scene` is the only
+  // thing that computes diffs (the same reason `Actor.onSpawn` is driven from there). Read
+  // here rather than inside the reactor so the ordering stays visible: it describes the
+  // reconcile that ran this frame, and every call site below reconciles first.
   private consumeEvents(events: readonly GameEvent[]): void {
-    this.deps.events.consume(events);
+    this.deps.events.consume(events, this.deps.scene.spawnedActors);
   }
 
   // ---- fx / camera / hud (FxController/HudView do the actual work — see those files) ----
