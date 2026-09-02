@@ -97,6 +97,18 @@ export class Entity extends Container {
   shadow: Graphics | null = null;
 
   /**
+   * The height (world px) this entity was last DRAWN at — `z + visualZ`, the exact lift
+   * `applyTransform` folded into `this.y` on the most recent frame.
+   *
+   * Kept because screen `y` alone cannot be un-mixed: it is `groundY - lift`, and a caller
+   * that needs one of those two back (`Actor.muzzleHeightPx`, so a bullet can be drawn at the
+   * height the gun that fired it is drawn at) would otherwise have to re-derive the lift from
+   * state that has already moved on. Written on every path that draws, so it is always this
+   * frame's answer rather than a stale one.
+   */
+  drawnLift = 0;
+
+  /**
    * Extra render-only height, added on top of the sim's `z` for BOTH the screen transform
    * and the shadow (2026-08-18 depth pass). This is where a hovering body's idle rise
    * lives: `z` itself comes from the engine and is 0 for every actor (design/01 "Actors
@@ -204,6 +216,7 @@ export class Entity extends Container {
   // `place()` and `interpolate()` and any future caller all get it.
   protected applyTransform(x: number, y: number, z: number): void {
     const lift = z + this.visualZ;
+    this.drawnLift = lift;
     this.x = x;
     this.y = y - lift;
     this.zIndex = y; // Y-sort — the GROUND coordinate, never the lifted one

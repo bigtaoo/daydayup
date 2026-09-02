@@ -64,14 +64,11 @@ Every entity has two Y values:
 Render transform: `screen.x = gx`, `screen.y = gy - z`. A large part of the 3D feel comes from objects being able to leave the ground.
 
 **Bullets are drawn leaving the barrel tip, not the sim's muzzle point** (2026-08-17, live
-report: *"子弹要从枪口打出"*). The two are not the same place, and can't be: the engine puts
-a bullet `muzzleOffset` along the aim ray **on the ground plane** and then lifts it by
-`bulletZ`, while the rig rotates the gun **in screen space** at its socket bone's own
-height — so aiming downward slides the sim's spawn point south across the floor while the
-drawn barrel swings down the screen, leaving the two on visibly *parallel* lines (~16 world
-px apart, and this camera zooms 4x). `RigSkin.muzzleLocal` reports the mounted module's
-business end (socket-bone tip + a ray/rect measure of how far the texture reaches from its
-anchor in its own baked direction), `Actor.muzzlePos` lifts that into world space, and
+report: *"子弹要从枪口打出"*). The engine puts a bullet `muzzleOffset` along the aim ray **on
+the ground plane** and lifts it by `bulletZ`; the rig draws the gun wherever its own art
+hangs it. `RigSkin.muzzleLocal` reports the mounted module's business end (its mounted
+position + a ray/rect measure of how far the texture reaches from its anchor in its own
+baked direction), `Actor.muzzlePos` lifts that into world space, and
 `Bullet.setMuzzleOrigin` eases the difference out over the first 40 world px of *travel*
 (2026-08-30 retune, live report *"子弹的弹道，现在会从枪口曲线跑到角色身前再继续飞向目标"*: a fixed
 120ms budget spent itself fine for a normal-paced weapon (~38px covered) but a slow one
@@ -80,9 +77,38 @@ over half its early flight instead of a third, and read as the shot curving in f
 shooter before straightening out — budgeting by distance instead keeps that fraction the
 same for every `bulletSpeed`). Fixed on the VIEW, not by moving the sim's own muzzle: the
 sim position stays authoritative for hit detection, and a longer sim muzzle would let a
-player standing flush against a wall spawn shots on its far side. Null for anything with no
-rig-mounted module — every enemy, whose placeholder barrel already ends within a pixel of
-its own sim muzzle.
+player standing flush against a wall spawn shots on its far side. Null only for a rig that
+mounts nothing at all (`weaponMount: 'none'` — the boss) or before its weapon texture has
+preloaded; every enemy has mounted a real module since 2026-08-21.
+
+**That difference is a distance ALONG the shot, and nothing else** (2026-09-02, live report
+*"子弹从枪口出去后进行了弧形的漂移，然后才直线运动"*). It has to be, because a correction that is
+*across* the shot cannot be spent without walking the drawn round sideways while it flies
+forward — which is an arc, however it is eased. Measured off the reported run: firing
+straight up the screen, the round left the barrel **43° off-aim** and slid **20.8 world px**
+(~79 screen px at the room camera's ~3.8x zoom) over ~150 ms before flying straight. Two
+sources, both removed where they arose rather than eased away here:
+
+- **Sideways** — the module was pinned to its socket bone's TIP, a fixed body-local point
+  that only *spun* to the aim, so firing up or down drew the gun a socket-length off the
+  line its own bullets flew along. Both mount paths now carry the module out along the aim
+  ray **in the ground plane** (`rigWeaponMount`'s GROUND-PLANE ORBIT note) — which is what
+  design/13's "two weapon modules that orbit it" describes in the first place, and is forced
+  by the render transform above: `screen.y = gy - z` maps the ground plane 1:1, so anything
+  else puts the drawn gun off the bullet's own line. The enemy 'held' mount lost its 0.45
+  vertical squash for the same reason.
+- **Height** — `bulletZ` is a gameplay band (0.5 grid, "chest height, clears ground-hug
+  hazards, blocked by tall cover", `07`) while the drawn gun is wherever the art hangs it:
+  26.4 vs 16 world px for the hero. That gap is straight up the screen, i.e. perpendicular
+  to any horizontal shot. `Bullet.setDrawnHeight` draws the round at the gun's own height
+  (`muzzlePos().heightPx`, render-only — `z` itself is untouched and the sim never sees it).
+
+`setMuzzleOrigin` then *projects* what is left onto the shot direction and eases only that,
+so "a bullet is never bent" is a property of the renderer rather than an outcome of how well
+two tables happen to agree. `muzzleParity.test.ts` bounds the perpendicular disagreement
+itself, at 24 aim angles × every weapon × every body — the pose sweep is the point: every
+measurement in that file used to be taken at aim 0, the one pose where the gap is almost
+entirely along the shot and the component that draws an arc is invisible.
 
 ---
 
@@ -370,9 +396,15 @@ its own sim muzzle.
 
 A weapon is attached to one of the character's orbiting weapon sockets (`02`/`13`) and rendered separately, and must switch front/back by facing:
 
-- Facing up (dy < 0): weapon renders **behind** the body.
-- Facing down / sideways: weapon renders **in front**.
+- Aiming up (dy < 0): weapon renders **behind** the body.
+- Aiming down / sideways: weapon renders **in front**.
 - The actor container itself has `sortableChildren = true`, with body.zIndex = 0.
+
+Keyed off the AIM since 2026-09-02, not the body's own facing: the module orbits to the aim
+now (see the bullet section above), so where it actually *is* decides which side of the core
+it is on. The two agree once the body has finished turning — the turn is rate-limited
+(`facing.BODY_TURN_PER_TICK`, ~0.4 s for an about-face) and during it the gun has already
+swung behind the core while the body has not, which the old rule drew across its face.
 
 Otherwise you get the "gun floating on the chest while facing away" artifact.
 

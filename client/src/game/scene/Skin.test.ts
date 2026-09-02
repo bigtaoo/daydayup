@@ -173,8 +173,10 @@ describe('Skin.muzzleAnchor — rig authoring-px scaled to the actor', () => {
     const rig = internals(s).rig!;
     // Stub the rig's own answer so this test covers ONLY the scale composition, not the
     // socket/texture geometry RigSkin.test.ts already pins down.
-    rig.muzzleLocal = () => ({ x: 60, y: -46 });
-    expect(s.muzzleAnchor()).toEqual({ x: 30, y: -23 });
+    rig.muzzleLocal = () => ({ x: 60, y: -46, heightPx: 46 });
+    // The HEIGHT is scaled by the same wrapper as the point (2026-09-02) — it is stated in
+    // the rig's authoring px too, so a half-size actor's gun hangs half as high.
+    expect(s.muzzleAnchor()).toEqual({ x: 30, y: -23, heightPx: 23 });
   });
 
   it('a bigger actor scales the SAME rig-local point further out — the gun grows with the body', () => {
@@ -182,10 +184,10 @@ describe('Skin.muzzleAnchor — rig authoring-px scaled to the actor', () => {
     const small = new Skin(0, 0, 20, 'char_vanguard');
     const big = new Skin(0, 0, 40, 'char_vanguard'); // 40 / 40 = 1x
     for (const s of [small, big]) s.setFacing(0, 0, 0, 'idle');
-    internals(small).rig!.muzzleLocal = () => ({ x: 60, y: -46 });
-    internals(big).rig!.muzzleLocal = () => ({ x: 60, y: -46 });
-    expect(small.muzzleAnchor()).toEqual({ x: 30, y: -23 });
-    expect(big.muzzleAnchor()).toEqual({ x: 60, y: -46 });
+    internals(small).rig!.muzzleLocal = () => ({ x: 60, y: -46, heightPx: 46 });
+    internals(big).rig!.muzzleLocal = () => ({ x: 60, y: -46, heightPx: 46 });
+    expect(small.muzzleAnchor()).toEqual({ x: 30, y: -23, heightPx: 23 });
+    expect(big.muzzleAnchor()).toEqual({ x: 60, y: -46, heightPx: 46 });
   });
 });
 
@@ -316,7 +318,7 @@ describe('Skin.fire — the recoil crosses the wrapper scale intact', () => {
     let local = { x: 60, y: -46 };
     // Stand in for the rig's own geometry, but make it MOVE with the recoil the way the real
     // one does — the point of this test is the scale composition, not the rig arithmetic.
-    rig.muzzleLocal = () => ({ x: local.x - (rig as unknown as { recoil: { modulePx: number } }).recoil.modulePx, y: local.y });
+    rig.muzzleLocal = () => ({ x: local.x - (rig as unknown as { recoil: { modulePx: number } }).recoil.modulePx, y: local.y, heightPx: 46 });
     s.setFacing(0, 0, 0, 'idle');
     const rest = s.muzzleAnchor()!;
     s.fire();
@@ -331,7 +333,7 @@ describe('Skin.fire — the recoil crosses the wrapper scale intact', () => {
     const kickOf = (radius: number): number => {
       const s = new Skin(0, 0, radius, 'char_vanguard');
       const rig = internals(s).rig!;
-      rig.muzzleLocal = () => ({ x: 60 - (rig as unknown as { recoil: { modulePx: number } }).recoil.modulePx, y: 0 });
+      rig.muzzleLocal = () => ({ x: 60 - (rig as unknown as { recoil: { modulePx: number } }).recoil.modulePx, y: 0, heightPx: 46 });
       s.setFacing(0, 0, 0, 'idle');
       const rest = s.muzzleAnchor()!.x;
       s.fire();

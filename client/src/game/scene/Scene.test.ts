@@ -419,12 +419,14 @@ describe('Scene.reconcile — death-dissolve lingering view (design/01 fidelity 
     const p = s.players[0]!;
     const scene = new Scene(new Layers());
     scene.reconcile(s, p.id); // the shooter's view has to exist before its bullet does
-    // The placeholder skin these tests build has no rig-mounted module, so stub the
-    // muzzle the way a preloaded weapon texture would report it: 30px right of and 8px
-    // above where the engine spawns the round.
-    scene.actorAt(p.id)!.muzzlePos = () => ({ x: 330, y: 292 });
+    // The placeholder skin these tests build has no rig-mounted module, so stub the muzzle the
+    // way a preloaded weapon texture would report it: a barrel tip 30px further along the shot
+    // than where the engine spawns the round, drawn at a gun height of 8px. The height half
+    // matters since 2026-09-02 — `Scene` measures the offset against the round's own DRAWN
+    // height (`muzzlePos().heightPx`), not against the sim's `bulletZ`.
+    scene.actorAt(p.id)!.muzzlePos = () => ({ x: 330, y: 292, heightPx: 8 });
 
-    const bullet = addBullet(s, 300, 300); // z 0, so the drawn sim position is (300, 300)
+    const bullet = addBullet(s, 300, 300); // z 0, vx +x — so the shot runs due east
     bullet.ownerId = p.id;
     scene.reconcile(s, p.id);
     const view = (scene as unknown as { views: Map<number, Entity> }).views.get(bullet.id)!;
@@ -444,13 +446,44 @@ describe('Scene.reconcile — death-dissolve lingering view (design/01 fidelity 
     scene.reconcile(s, p.id);
     scene.interpolate(1, 16); // halfway through the 40px ease: 0.5^2 of the offset left
     expect(view.x).toBeCloseTo(320 + 30 * 0.25, 5);
-    expect(view.y).toBeCloseTo(300 - 8 * 0.25, 5);
+    // The HEIGHT does not ease — the round is drawn at the gun's height for its whole life
+    // (2026-09-02). It used to ease from 292 back down to the sim's own 300, and since that is
+    // straight up the screen it was PERPENDICULAR to this due-east shot, i.e. the arc.
+    expect(view.y).toBeCloseTo(292, 5);
 
     bullet.gx = pxToFp(340); // the other 20px — the whole 40px budget now spent
     scene.reconcile(s, p.id);
-    scene.interpolate(1, 16); // past it: exactly the engine position from here on
+    scene.interpolate(1, 16); // past it: exactly the engine position, at the gun's height
     expect(view.x).toBeCloseTo(340, 5);
-    expect(view.y).toBeCloseTo(300, 5);
+    expect(view.y).toBeCloseTo(292, 5);
+  });
+
+  // The wiring half of `Bullet.setMuzzleOrigin`'s projection: `Scene` hands it the shot
+  // direction off the round's own velocity, so a drawn muzzle sitting off the shot's line
+  // cannot bend the round. Here the stub is 12px off it — a disagreement that big is what
+  // `muzzleParity.test.ts` actually bounds; this pins that the renderer draws no curve out of
+  // one in the meantime.
+  it('never bends a bullet, even when the reported muzzle is off the shot line', () => {
+    const s = createGameState({ ...CFG, players: [{ start: [100, 100] }] });
+    const p = s.players[0]!;
+    const scene = new Scene(new Layers());
+    scene.reconcile(s, p.id);
+    // 12px above the shot's line, at a gun height of 8px.
+    scene.actorAt(p.id)!.muzzlePos = () => ({ x: 330, y: 280, heightPx: 8 });
+
+    const bullet = addBullet(s, 300, 300); // due east again
+    bullet.ownerId = p.id;
+    scene.reconcile(s, p.id);
+    const view = (scene as unknown as { views: Map<number, Entity> }).views.get(bullet.id)!;
+
+    for (const [travelled, gx] of [[0, 300], [10, 310], [20, 320], [40, 340]] as const) {
+      bullet.gx = pxToFp(gx);
+      scene.reconcile(s, p.id);
+      scene.interpolate(1, 16);
+      // Dead flat at the gun's height on every frame of the ease — the 12px across the shot is
+      // dropped, not spent, so there is no sideways motion to see.
+      expect(view.y, `after ${travelled}px`).toBeCloseTo(292, 5);
+    }
   });
 
   it('a bullet whose shooter reports no muzzle is drawn at the engine position from frame one (every enemy)', () => {

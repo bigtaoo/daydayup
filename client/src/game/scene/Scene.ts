@@ -181,8 +181,28 @@ export class Scene {
         // for the wrong reason (they never mounted a module at all, see `Skin.weaponMount`);
         // since 2026-08-21 they mount one, so a mob's shots get the same barrel-tip spawn
         // correction the hero's have had since 2026-08-17.
+        //
+        // The offset is measured against the round's OWN drawn height, not against `bulletZ`
+        // (2026-09-02): the gun is drawn where the rig hangs it and the sim's `z` is a
+        // gameplay band, so pinning the round to `bulletZ` left a gap straight up the screen —
+        // perpendicular to a horizontal shot, i.e. an arc out of the barrel. `setDrawnHeight`
+        // puts the round at the gun's height instead, which leaves `setMuzzleOrigin` a pure
+        // along-the-shot distance. Order matters: the height has to be set before the offset
+        // is measured against it.
         const muzzle = b.ownerId === undefined ? null : this.actorAt(b.ownerId)?.muzzlePos();
-        if (muzzle) v.setMuzzleOrigin(muzzle.x - bx, muzzle.y - (by - bz));
+        if (muzzle) {
+          v.setDrawnHeight(muzzle.heightPx);
+          // The shot direction, straight off the round's own velocity — the sim's aim ray by
+          // construction (`WeaponFireSystem.spawnBullet` sets both from the same `dir`), and
+          // available here where the firing angle is not. A projectile with no velocity at all
+          // has no direction to project onto, so it keeps the whole offset.
+          const vx = fpToPx(b.vx);
+          const vy = fpToPx(b.vy);
+          const speed = Math.hypot(vx, vy);
+          const ux = speed > 0 ? vx / speed : 1;
+          const uy = speed > 0 ? vy / speed : 0;
+          v.setMuzzleOrigin(muzzle.x - bx, muzzle.y - (by - muzzle.heightPx), ux, uy);
+        }
       } else {
         v.pushState(fpToPx(b.gx), fpToPx(b.gy), fpToPx(b.z), 0);
       }

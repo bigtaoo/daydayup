@@ -329,7 +329,20 @@ the room for zone damage and touching the wall for collision.
   `client/src/render/weaponSkins.ts`. `Bullet.setMuzzleOrigin` eases the difference away
   over the first 40 px of flight, so a large mismatch does not error — it just renders a
   bigger correction. `Bullet.test.ts` exercises the ease with a hardcoded `(30, -18)`,
-  never with a real weapon's numbers.
+  never with a real weapon's numbers. **Closed by `muzzleParity.test.ts` (2026-08-30).**
+
+  **A second edition of the same gap, found 2026-09-02 (live report: bullets drift in an
+  arc out of the muzzle before flying straight).** The parity table closed the two tables'
+  disagreement as a SCALAR — measured at aim 0, the one pose where the whole chain is a
+  single reach along the aim ray. That pose is exactly where the gap is almost entirely
+  ALONG the shot, which only makes a round look fast or slow. The component ACROSS it — the
+  one that has to be spent by moving the drawn round sideways while it flies forward, i.e.
+  the one that draws a curve — was invisible to every measurement in the file, and was
+  20.8 world px on the reported shot. **The lesson is the pose, not the axis:** a harness
+  that evaluates a rotationally-dependent chain at one angle has measured one angle. The
+  file now sweeps 24 aim angles × every weapon × every carrying body, bounds the
+  perpendicular component at 0.1 px, carries a control that fires the same measurement on
+  the old geometry, and flies a real `Bullet` through the reported shot end to end.
 
 Two related facts about bullet birth, both currently unasserted:
 

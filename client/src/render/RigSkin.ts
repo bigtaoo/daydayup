@@ -7,6 +7,7 @@ import { facingFromAngle } from './facing';
 import { getWeaponAnchor, getWeaponRotationOffset, getWeaponScale, getWeaponTexture, type WeaponVisualKind } from './weaponSkins';
 import { MODULE_BEHIND_SCALE, MODULE_BEHIND_SHADE, SHADE_MIN_BODY_R, drawModuleContacts, drawSphereShading, shadeHex } from './rigShading';
 import { drawTethers, hasTetheredBone } from './rigTethers';
+import { EYE_BONE_ID, trackEye } from './rigEyeTrack';
 import {
   AIM_TRACKING_BONES, ACTIVE_WEAPON_SOCKET, IDLE_WEAPON_SOCKET, MODULE_Z_BEHIND,
   activeModuleMount, barrelReach, idleModuleMount, moduleMuzzleLocal, resolveWeaponMount,
@@ -19,23 +20,6 @@ import { Recoil } from './rigRecoil';
 // "keep that path alive as a thin re-export shell").
 export { barrelReach };
 
-// Eye tracking (2026-08-18). A 2D rig can't turn a head, and the two-hemisphere billboard
-// (`facingFromAngle`) only has four states — L/R flip × front/back — so a 360° aim used to
-// read as four discrete poses. For a body plan that is mostly one big eye (design/13),
-// the direction cue nobody has to be taught is where the eye is LOOKING: the eye slot
-// slides inside the shell along the aim direction, which turns those four states into a
-// continuous read using the art that already ships. Free of new assets by construction.
-const EYE_BONE_ID = 'eye';
-/** How far the eye slides from its authored rest position, in rig authoring px. The shell's
- *  own `bodyR` is 40 and the eye's is 16 (`orbCoreRig`), so 14 keeps it inside the shell
- *  with a margin rather than riding the rim. */
-const EYE_TRACK_R = 14;
-/** The vertical half of that slide is squashed: this is a tilted view (design/01), so a
- *  sphere's surface covers less screen distance vertically than horizontally. */
-const EYE_TRACK_SQUASH = 0.45;
-/** How much the eye shrinks as the aim turns away from the camera — a little perspective
- *  on top of the front/back texture swap, so crossing the hemisphere isn't a hard cut. */
-const EYE_AWAY_SHRINK = 0.15;
 /**
  * Bones whose art depicts a FRONT surface and has no meaning seen from behind. Only the
  * belly qualifies today: it is the transparent chamber set into the front of the shell, so
@@ -118,6 +102,8 @@ export class RigSkin {
    *  interrupts the idle hover bob. See that file for why it is not a clip. */
   private readonly recoil = new Recoil();
   private weaponSprite: Sprite | null = null; // the ACTIVE socket's module (aim-tracking)
+  /** Last frame's active `ModuleMount.pivotY` — see `muzzleLocal`'s `heightPx`. */
+  private activePivotY = 0;
   private idleModuleSprite: Sprite | null = null; // the other arm's decorative module
   private weaponTint = 0xffffff;
 
@@ -306,17 +292,9 @@ export class RigSkin {
       }
       const angleDeg = aimTracking ? canonicalSocketDeg : pose.wa - restAngleDeg;
       sprite.rotation = ((angleDeg + binding.rotation) * Math.PI) / 180;
-      let scaleMul = 1;
-      if (boneId === EYE_BONE_ID) {
-        // Canonical (pre-mirror) angle, like the sockets: `view.scale.x` mirrors the whole
-        // rig, so an offset computed here in canonical space lands on the correct side of
-        // the shell after the flip. cos(π−a) = −cos(a) unflips to +cos(a); sin is unchanged,
-        // which is exactly right — the vertical component must not mirror.
-        const a = this.canonicalSocketAngleRad();
-        sprite.x += Math.cos(a) * EYE_TRACK_R;
-        sprite.y += Math.sin(a) * EYE_TRACK_R * EYE_TRACK_SQUASH;
-        scaleMul = 1 - EYE_AWAY_SHRINK * Math.max(0, -Math.sin(this.aimRad));
-      }
+      const scaleMul = boneId === EYE_BONE_ID
+        ? trackEye(sprite, this.canonicalSocketAngleRad(), this.aimRad)
+        : 1;
       sprite.scale.set(
         (binding.flipX ? -1 : 1) * (transform?.scaleX ?? 1) * binding.scaleX * scaleMul,
         (transform?.scaleY ?? 1) * binding.scaleY * scaleMul,
@@ -402,9 +380,9 @@ export class RigSkin {
 
   /** Mount/move/hide this rig's weapon modules (design/03 universal mount — render-only,
    *  never touches the sim). Which modules exist, and where they sit, is `rigWeaponMount`'s
-   *  call: the hero's orb-core gets an aim-tracking ACTIVE module on its socket bone's TIP
-   *  plus a decorative IDLE one on the other arm; an enemy body gets a single module held at
-   *  its own drawn edge; the boss gets none. */
+   *  call: the hero's orb-core gets an ACTIVE module orbiting the core toward the aim plus a
+   *  decorative IDLE one on the other arm; an enemy body gets a single module held out along
+   *  the aim at its own drawn edge; the boss gets none. */
   private updateWeaponSprites(worldPose: WorldPositions, transforms: Map<string, ResolvedBoneTransform>): void {
     const texture = this.weaponKind ? getWeaponTexture(this.weaponName, this.weaponKind) : undefined;
     const canonical = this.canonicalSocketAngleRad();
@@ -414,6 +392,9 @@ export class RigSkin {
         )
       : null;
     const idleMount = texture ? idleModuleMount(this.weaponMount, worldPose) : null;
+    // The height half of the active mount (see `muzzleLocal`'s `heightPx`) — the last point
+    // where the rig can still tell "how high off the floor" from "how far north".
+    this.activePivotY = activeMount?.pivotY ?? 0;
     if (!texture) {
       if (this.weaponSprite) this.weaponSprite.visible = false;
       if (this.idleModuleSprite) this.idleModuleSprite.visible = false;
@@ -421,11 +402,18 @@ export class RigSkin {
     }
 
     const rotationOffset = getWeaponRotationOffset(this.weaponName, this.weaponKind!);
+    // The ACTIVE module orbits to the aim now, so its own hemisphere — not the BODY's — is
+    // what decides whether it is on the far side of the core (design/01 "per-weapon local
+    // z-order"). The two agree once the body has finished turning; during the rate-limited
+    // turn (`facing.BODY_TURN_PER_TICK`) the gun is already there and the body is not, and
+    // `showBack` would draw a gun that has swung behind the core across its face. The idle
+    // module does not orbit, so it stays on the body's own answer.
     this.weaponSprite = this.mountModule(
       this.weaponSprite, ACTIVE_WEAPON_SOCKET, activeMount, texture, rotationOffset,
+      Math.sin(canonical) < 0,
     );
     this.idleModuleSprite = this.mountModule(
-      this.idleModuleSprite, IDLE_WEAPON_SOCKET, idleMount, texture, rotationOffset,
+      this.idleModuleSprite, IDLE_WEAPON_SOCKET, idleMount, texture, rotationOffset, this.showBack,
     );
   }
 
@@ -438,6 +426,7 @@ export class RigSkin {
     mount: ModuleMount | null,
     texture: Texture,
     rotationOffset: number,
+    behind: boolean,
   ): Sprite | null {
     if (!mount) {
       if (sprite) sprite.visible = false;
@@ -459,7 +448,6 @@ export class RigSkin {
     // orbit around a sphere rather than a layer swap. Applied here, not in `setWeaponTint`,
     // because it has to be recomputed against the CURRENT `showBack` every frame — the tint
     // setter only knows the element colour.
-    const behind = this.showBack;
     sprite.zIndex = behind ? MODULE_Z_BEHIND : (this.bundle.bindings.get(socketId)?.zOrder ?? 0) + 1;
     sprite.tint = behind ? shadeHex(this.weaponTint, MODULE_BEHIND_SHADE) : this.weaponTint;
     const anchor = getWeaponAnchor(this.weaponName, this.weaponKind!);
@@ -482,8 +470,18 @@ export class RigSkin {
    * moves the MOUNT, this point recoils with the gun; `+ view.position` adds the recoil's
    * whole-body shove, which lives on the container rather than on any bone, since the result is
    * stated in the rig's PARENT space.
+   *
+   * `heightPx` is the HEIGHT half of this point, which `y` alone cannot express: that is two
+   * world quantities added together — how high off the floor the barrel tip is, and how far
+   * north of its carrier it stands — and past this method nothing can tell them apart. They
+   * are separable here only because both mount paths carry the module along the aim ray in the
+   * GROUND plane at a fixed height (`rigWeaponMount`'s GROUND-PLANE ORBIT note). `Scene` draws
+   * the round at this height instead of at the sim's `bulletZ`, since the leftover gap between
+   * the two is straight up the screen — PERPENDICULAR to a horizontal shot, i.e. an arc. It
+   * excludes `view.x/y` (added to the point above): that is the recoil's whole-body shove,
+   * which runs back along the aim ON THE GROUND, so it belongs to the ground position.
    */
-  muzzleLocal(): { x: number; y: number } | null {
+  muzzleLocal(): { x: number; y: number; heightPx: number } | null {
     const sprite = this.weaponSprite;
     if (!sprite || !sprite.visible || !this.weaponKind) return null;
     const local = moduleMuzzleLocal(
@@ -495,6 +493,7 @@ export class RigSkin {
       getWeaponRotationOffset(this.weaponName, this.weaponKind),
       getWeaponScale(this.weaponName, this.weaponKind),
     );
-    return { x: local.x + this.view.x, y: local.y + this.view.y };
+    return { x: local.x + this.view.x, y: local.y + this.view.y, heightPx: -this.activePivotY };
   }
+
 }
