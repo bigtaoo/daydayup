@@ -14,6 +14,7 @@ import { describe, it, expect } from 'vitest';
 import {
   blockCapTop,
   bordersDoorNorth,
+  doorFlankHeight,
   effectiveWallHeight,
   joinRects,
   mergeWallRuns,
@@ -25,7 +26,7 @@ import {
 } from './wallRuns';
 import type { RectPx } from './wallGeometry';
 import { FACE_CROWN_FRACTION_MIN, faceCrownFraction } from './wallTone';
-import { WALL_H_INTERIOR, WALL_H_PERIMETER } from './wallGeometry';
+import { WALL_H_INTERIOR, WALL_H_KERB, WALL_H_PERIMETER } from './wallGeometry';
 
 const r = (x: number, y: number, w: number, h: number): RectPx => ({ x, y, w, h });
 const run = (rect: RectPx, tier: WallRun['tier'] = 'perimeter'): WallRun => ({ rect, tier });
@@ -338,3 +339,47 @@ describe('effectiveWallHeight — the FACE half of the doorClip fix (doorSpillCo
   });
 });
 
+describe('blockCapTop — capless (a door that out-tops the wall it is cut into)', () => {
+  const CAPLESS: WallJoins = { ...NO_JOINS, capless: true };
+
+  it('collapses the cap onto the fold, so every cue derived from its depth sizes to zero', () => {
+    const rect = r(0, 0, 128, 64);
+    expect(blockCapTop(rect, WALL_H_PERIMETER, CAPLESS)).toBe(-WALL_H_PERIMETER);
+    // Not the same thing as having a cap of some small depth: the unclipped answer for this
+    // footprint is a full 64 px of stone above the fold, which is the slab that was reported.
+    expect(blockCapTop(rect, WALL_H_PERIMETER, NO_JOINS)).toBe(-WALL_H_PERIMETER - 64);
+  });
+
+  it('wins over both other clips — there is no cap for them to have an opinion about', () => {
+    const rect = r(0, 0, 32, 200); // deep enough that doorClip and the tuck both bite
+    const both: WallJoins = { ...CAPLESS, tuckNorth: true, tuckLiftPx: 10, doorClip: true };
+    expect(blockCapTop(rect, WALL_H_PERIMETER, both)).toBe(-WALL_H_PERIMETER);
+  });
+});
+
+describe('doorFlankHeight — the stone a doorway is cut into', () => {
+  const perimeter = (rect: RectPx): WallRun => ({ rect, tier: 'perimeter' });
+  const kerb = (rect: RectPx): WallRun => ({ rect, tier: 'kerb' });
+
+  it('is the SHORTEST flank, not the tallest: a cap resting on one crown still floats over the other', () => {
+    const door = r(96, 224, 64, 32);
+    expect(doorFlankHeight(door, [perimeter(r(0, 224, 96, 32)), kerb(r(160, 224, 96, 32))])).toBe(WALL_H_KERB);
+  });
+
+  it('reads both jamb axes — a gap in a north-south wall is flanked above and below', () => {
+    const door = r(0, 64, 32, 64);
+    expect(doorFlankHeight(door, [perimeter(r(0, 0, 32, 64)), perimeter(r(0, 128, 32, 64))]))
+      .toBe(WALL_H_PERIMETER);
+  });
+
+  it('ignores a wall that only kisses the doorway at a corner', () => {
+    const door = r(96, 224, 64, 32);
+    // Touching along x at the door's west end, but its y range ends exactly where the door's
+    // begins: no jamb, no vote. Without the overlap test this would answer 22 and uncap the door.
+    expect(doorFlankHeight(door, [kerb(r(32, 192, 64, 32))])).toBeNull();
+  });
+
+  it('is null when nothing abuts the passage at all, so the caller decides rather than geometry', () => {
+    expect(doorFlankHeight(r(96, 224, 64, 32), [])).toBeNull();
+  });
+});

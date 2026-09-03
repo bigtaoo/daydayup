@@ -735,6 +735,10 @@ describe('RoomBuilder — doors (design/05 "Room & door model", 2026-08-04; stan
     const rb = makeRoomBuilder();
     rb.build(s);
     expect(doorHeightOf(rb, 0)).toBeCloseTo(DOOR_H);
+    // ...and it KEEPS its cap here, because the runs either side of it stand at that same height:
+    // the stone over this lintel really is the continuation of their crown. The kerb case below
+    // is where that stops being true — see `wallRuns.doorFlankHeight`.
+    expect(doorFixtures(rb)[0]!.capLayers.length).toBeGreaterThan(0);
   });
 
   it('...and at exactly the same DOOR_H in a 22 px kerb, where it used to be kerb-high', () => {
@@ -757,6 +761,18 @@ describe('RoomBuilder — doors (design/05 "Room & door model", 2026-08-04; stan
     // reads it. Without this the pair above is satisfied just as well by deleting the kerb tier.
     const kerbs = wallHeights(rb).filter((h) => Math.abs(h - WALL_H_KERB) < 0.01);
     expect(kerbs.length).toBeGreaterThan(0);
+
+    // ...and standing that much taller than its own flanks is exactly why it must draw NO cap
+    // (2026-09-03, the report after `DOOR_H` shipped: *"我希望门的位置只有门，不要在入口的两端有
+    // 墙"*). A cap is the wall over the lintel and only reads as stone by continuing the flanking
+    // runs' crown; 82 px above a 22 px kerb there is no crown to continue, so the tiled swatch
+    // hung over the opening as a slab of wall with nothing under it. `capLayers` is precisely the
+    // group `addCapLayers` fills, so an empty one is the absence of that slab, not a proxy for it.
+    expect(doorFixtures(rb)[0]!.capLayers).toHaveLength(0);
+    // The occluder agrees, which is what stops the x-ray reserving a band of floor for stone that
+    // is no longer drawn: the fixture's topmost row is the top of its own arch.
+    const box = occluders(rb).find((o) => o.box.left === 96 && o.box.sortY === 256)!.box;
+    expect(box.top).toBeCloseTo(box.sortY - DOOR_H);
   });
 
   // A door gets its OWN `wallJoins` entry, and the only place that is observable from outside

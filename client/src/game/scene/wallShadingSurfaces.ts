@@ -65,6 +65,10 @@ import {
 export function drawCapDepthGradient(g: Graphics, r: RectPx, height: number, joins: WallJoins): void {
   const capTop = blockCapTop(r, height, joins);
   const capDepth = -height - capTop;
+  // A capless block (`WallJoins.capless` — a door standing taller than the wall it is cut into)
+  // has no top surface for a depth gradient to fall across. Returning early rather than filling
+  // zero-height rects keeps the degenerate case out of the geometry buffer entirely.
+  if (capDepth <= 0) return;
   const openSouth = unjoinedSpans(r.w, joins.south);
   const capReach = Math.min(capDepth, CAP_GRADIENT_REACH_PX);
   const far = -height - capReach;
@@ -131,6 +135,7 @@ export function drawSideBands(g: Graphics, r: RectPx, height: number, joins: Wal
 export function drawCapEdgeBevel(g: Graphics, r: RectPx, height: number, joins: WallJoins): void {
   const capTop = blockCapTop(r, height, joins);
   const capDepth = -height - capTop;
+  if (capDepth <= 0) return; // No cap, no cap edges — see `drawCapDepthGradient`.
   const capEdge = Math.min(CAP_EDGE_PX, r.w * CAP_EDGE_MAX_FRACTION);
   // East edge: darkest at the block's own east side, which is the one turned away from the key
   // light — hence full `CAP_EDGE_ALPHA` here and `CAP_EDGE_WEST_SCALE` of it on the west.

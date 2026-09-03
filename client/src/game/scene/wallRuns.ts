@@ -172,12 +172,21 @@ export interface WallJoins {
    *  caller that knows about `s.dungeonDoors` (`RoomBuilder`) sets it after the fact. Read only
    *  by `blockCapTop`, and only on a run deep enough to have a cap left once clipped — see there. */
   doorClip: boolean;
+  /** True when this block has NO cap at all: its art stops at the top of its own face, with no
+   *  stone lying over it. Like `doorClip` it is never computed by `wallJoins` (which only knows
+   *  about walls); the caller sets it, and the only one that does today is
+   *  `RoomBuilder.buildDoors`, for a door standing taller than the wall it is cut into — see
+   *  `doorFlankHeight`. Read by `blockCapTop`, which is the single place every cap-shaped cue
+   *  (`wallRender.addCapLayers`, the cap depth gradient, the cap edge bevel, the coping in
+   *  `addBlockEdge`) derives its extent from — so one flag drops the whole cap coherently rather
+   *  than five call sites agreeing by hand. */
+  capless: boolean;
 }
 
 /** No joins at all — the default for callers that have no neighbour set (tests, flat modes). */
 export const NO_JOINS: WallJoins = {
   north: [], south: [], tuckNorth: false, tuckLiftPx: 0, tuckedSouth: [],
-  crownFraction: FACE_CROWN_FRACTION_MIN, doorClip: false,
+  crownFraction: FACE_CROWN_FRACTION_MIN, doorClip: false, capless: false,
 };
 
 /** Merge touching/overlapping intervals so a masked stroke never restarts mid-join. */
@@ -267,6 +276,7 @@ export function wallJoins(
       tuckedSouth: coalesce(tuckedSouth),
       crownFraction,
       doorClip: false,
+      capless: false,
     };
   });
 }
@@ -325,8 +335,15 @@ export function unjoinedSpans(
  * a `doorClip`ped run's CAP alone is not always the whole spill, and `Math.min(-height, ...)`
  * below only ever protects this function's own output from crossing its own fold — it has no way
  * to know whether `height` itself is already too tall for `r.h` to justify.
+ *
+ * `capless` short-circuits both of those: the block has no top surface to place at all, so its cap
+ * collapses onto its own fold and every cue derived from `-height - capTop` sizes itself to zero.
+ * Only doors set it — see `WallJoins.capless` and `doorFlankHeight`.
  */
 export function blockCapTop(r: RectPx, height: number, joins: WallJoins = NO_JOINS): number {
+  // `capless` first and unconditionally: the block has no top surface at all, so its cap starts
+  // and ends on its own fold. Every cap cue sizes itself off `-height - capTop`, which is then 0.
+  if (joins.capless) return -height;
   const base = joins.tuckNorth ? Math.min(-height, -r.h - joins.tuckLiftPx) : -height - r.h;
   return joins.doorClip ? Math.min(-height, Math.max(base, -r.h)) : base;
 }
@@ -359,4 +376,51 @@ export function blockCapTop(r: RectPx, height: number, joins: WallJoins = NO_JOI
 export function effectiveWallHeight(r: RectPx, height: number, joins: WallJoins = NO_JOINS): number {
   return joins.doorClip ? Math.min(height, r.h) : height;
 }
+/**
+ * How tall the wall a door is CUT INTO stands, in world px — the SHORTEST of the runs abutting the
+ * passage along the gap — or `null` when nothing abuts it at all (a mode with no wall model, or a
+ * hand-built fixture in a test).
+ *
+ * This is the descendant of the deleted `doorFlankTier`, and it is deliberately NOT a height for
+ * the door: `wallGeometry.DOOR_H` is, one number for every door in the game, and that stays. What
+ * the flank still decides is whether the door has a CAP — whether there is any stone lying over
+ * its lintel — because a cap only means anything as the continuation of the neighbouring wall's
+ * own crown (`wallRender.addCapLayers`: "its stone above the lintel has to be the same continuous
+ * quarry as the runs either side of it"). Where the door out-tops those runs there is no such
+ * quarry to continue, and drawing one anyway hangs a slab of wall in mid-air above the doorway —
+ * which is exactly what shipping `DOOR_H` did to the 11 kerb doorways (2026-09-03, live report
+ * with a screenshot circling the slab: *"我希望门的位置只有门"*).
+ *
+ * SHORTEST rather than tallest for the same reason the old tier rule took the shortest: a passage
+ * between two rooms is flanked by several runs, and a cap that lands on one flank's crown while
+ * floating over the other is still a floating slab. Both sides have to reach it.
+ */
+export function doorFlankHeight(door: RectPx, runs: readonly WallRun[]): number | null {
+  let best: number | null = null;
+  for (const run of runs) {
+    if (!abutsAlongGap(door, run.rect)) continue;
+    const h = wallHeight(run.tier);
+    if (best === null || h < best) best = h;
+  }
+  return best;
+}
 
+/**
+ * Does this doorway draw NO cap — i.e. does it stand taller than the stone it is cut into?
+ * `WallJoins.capless`' production rule, here rather than in `RoomBuilder` so the sweep over the
+ * shipped floors (`doorStandCoverage.test.ts`) asks the same question the renderer asks.
+ */
+export function doorCapless(door: RectPx, runs: readonly WallRun[], height: number): boolean {
+  const flank = doorFlankHeight(door, runs);
+  return flank !== null && flank < height;
+}
+
+/** Does `r` sit against `door` along the gap — touching on one axis, genuinely overlapping on the
+ *  other? A shared corner is not a flank (the overlap test is `> JOIN_TOLERANCE`, not `>= 0`), so
+ *  a wall that merely clips the doorway's corner diagonally never gets a vote on its height. */
+function abutsAlongGap(door: RectPx, r: RectPx): boolean {
+  const overlapX = Math.min(door.x + door.w, r.x + r.w) - Math.max(door.x, r.x);
+  const overlapY = Math.min(door.y + door.h, r.y + r.h) - Math.max(door.y, r.y);
+  if (overlapY > JOIN_TOLERANCE && (near(r.x + r.w, door.x) || near(r.x, door.x + door.w))) return true;
+  return overlapX > JOIN_TOLERANCE && (near(r.y + r.h, door.y) || near(r.y, door.y + door.h));
+}

@@ -788,20 +788,21 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 **[2026-09-03 — coverage becomes a gate](roadmap/19-2026-09-03-coverage-gate.md)**
 
 - **09-03** [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump) — funny's coverage shape, ported and gated at 90% lines **and** 90% branches over all three packages' whole source trees. The client was already at 96.52% and nothing measured it; branches sat 0.03pp over the bar. Adds a rule funny has no equivalent of (a narrowed `coverage.include` fails outright — the mutant reports 97.68%/92.13% while measuring 130 of 224 files), retires Game.ts's 1135-line baseline entry by splitting it six ways, and makes the logic-consistency gates a named CI job whose manifest fails closed. Two production bugs, both found by the first test that touched the code. `test` `tools` `net` `docs`
-
-**[2026-09-03 — mobs take up standing room](roadmap/20-2026-09-03-mob-spacing.md)**
-
-- **09-03** [A mob has one size while walking and a bigger one while standing](roadmap/20-2026-09-03-mob-spacing.md#a-mob-has-one-size-while-walking-and-a-bigger-one-while-standing-2026-09-03-engine-engine_version-55) — *"怪物寻路时要加一个停留体积…这里是两个概念"* — a mob carried one size and was asked two questions with opposite answers: walking it must fit a 1.5-body slit, standing it should claim two body radii. Arrival became state (`EnemyActor.holding`) and the second radius hangs off it, so a garrison spreads where it stops without any gap in the level narrowing. Measured cost, not assumed: the careful bot's avg floor 2.5 → 1.5, and the obvious mitigation measured backwards. 15 mutants with the golden gate deliberately excluded (it would have faked ALL-KILLED); 3 survivors, one of which was dead code. `engine` `test` `docs`
+- **09-03** [A mob has one size while walking and a bigger one while standing](roadmap/20-2026-09-03-mob-spacing.md#a-mob-has-one-size-while-walking-and-a-bigger-one-while-standing-2026-09-03-engine-engine_version-55) — *"怪物寻路时要加一个停留体积…这里是两个概念"* — a mob carried one size and was asked two questions with opposite answers: walking it must fit a 1.5-body slit, standing it should claim two body radii. Arrival became state (`EnemyActor.holding`) and the second radius hangs off it, so a garrison spreads where it stops without any gap in the level narrowing. Measured cost, not assumed: the careful bot's avg floor 2.5 → 1.5, and the obvious mitigation measured backwards. `engine` `test` `docs`
 
 **[2026-09-03 — a death burst is the size of what died](roadmap/21-2026-09-03-death-burst.md)**
 
 - **09-03** [A death burst is the size of what died](roadmap/21-2026-09-03-death-burst.md#a-death-burst-is-the-size-of-what-died-2026-09-03-client--engine-event-field-no-engine_version-bump) — *the effect reads well, it is just far too big — make it a circle sized off the monster's body.* The burst had been one authored spray since 2026-07-26: per-piece speed and lifetime under gravity, so its reach was 18-80 px on every corpse alike (5 body radii on a mob, 2.7 on a boss) and its shape a plume rather than a ring. Now solved from the body — equal distance per piece, jitter only where it cannot change the size, no gravity. Nine mutants, nine killed; no frame sampled, and the doc says so. `render` `test` `docs`
 
+**[2026-09-03 — only the door at the door](roadmap/22-2026-09-03-door-cap.md)**
+
+- **09-03** [Only the door at the door, and no wall hanging over it](roadmap/22-2026-09-03-door-cap.md#only-the-door-at-the-door-and-no-wall-hanging-over-it-2026-09-03-client-only-no-engine-bump) — one height for every door left the 11 kerb doorways with a slab of their own cap stone hanging 82 px above the crown line, because a cap only reads as stone by continuing the flanking runs' crown and a 22 px kerb has none to continue. A door now draws a cap only where its flank reaches it; the height and all 13 perimeter doorways are untouched. `render` `test` `docs`
+
 ## The work log — by theme
 
-The same 102 entries, grouped. An entry with more than one tag appears more than once.
+The same 103 entries, grouped. An entry with more than one tag appears more than once.
 
-**`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(53)*
+**`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(54)*
 
 - 08-12 [Live-play bug-fix pass](roadmap/02-2026-08-12--08-15.md#live-play-bug-fix-pass--2026-08-12-user-report-from-a-dungeon-mode-screenshot)
 - 08-12 [Viewport-fill bug-fix pass](roadmap/02-2026-08-12--08-15.md#viewport-fill-bug-fix-pass--2026-08-12)
@@ -856,6 +857,7 @@ The same 102 entries, grouped. An entry with more than one tag appears more than
 - 09-03 [Every door is the same door, whatever wall it is cut into](roadmap/16-2026-09-03-doc-audit.md#every-door-is-the-same-door-whatever-wall-it-is-cut-into-2026-09-03-client-only-no-engine-bump)
 - 09-03 [A door has a clock, and direction is what says "you can walk through this"](roadmap/18-2026-09-03-door-fx.md#a-door-has-a-clock-and-direction-is-what-says-you-can-walk-through-this-2026-09-03-client-only-no-engine-bump)
 - 09-03 [A death burst is the size of what died](roadmap/21-2026-09-03-death-burst.md#a-death-burst-is-the-size-of-what-died-2026-09-03-client--engine-event-field-no-engine_version-bump)
+- 09-03 [Only the door at the door, and no wall hanging over it](roadmap/22-2026-09-03-door-cap.md#only-the-door-at-the-door-and-no-wall-hanging-over-it-2026-09-03-client-only-no-engine-bump)
 
 **`art`** — authored assets and the art pipeline *(16)*
 
@@ -931,7 +933,7 @@ The same 102 entries, grouped. An entry with more than one tag appears more than
 - 08-25 [The Seven Districts: the launch arena gets authored](roadmap/06-2026-08-25.md#the-seven-districts-the-launch-arena-gets-authored-2026-08-25-content)
 - 08-25 [The three parked rules that had only shipped half](roadmap/06-2026-08-25.md#the-three-parked-rules-that-had-only-shipped-half-2026-08-25-client--one-render-only-engine-field)
 
-**`test`** — coverage sweeps, gates, mutation batteries *(33)*
+**`test`** — coverage sweeps, gates, mutation batteries *(34)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 08-05 [Platform-layer test coverage pass](roadmap/01-2026-07-24--08-05.md#platform-layer-test-coverage-pass--2026-08-05-全部加测试)
@@ -966,6 +968,7 @@ The same 102 entries, grouped. An entry with more than one tag appears more than
 - 09-03 [A door has a clock, and direction is what says "you can walk through this"](roadmap/18-2026-09-03-door-fx.md#a-door-has-a-clock-and-direction-is-what-says-you-can-walk-through-this-2026-09-03-client-only-no-engine-bump)
 - 09-03 [A mob has one size while walking and a bigger one while standing](roadmap/20-2026-09-03-mob-spacing.md#a-mob-has-one-size-while-walking-and-a-bigger-one-while-standing-2026-09-03-engine-engine_version-55)
 - 09-03 [A death burst is the size of what died](roadmap/21-2026-09-03-death-burst.md#a-death-burst-is-the-size-of-what-died-2026-09-03-client--engine-event-field-no-engine_version-bump)
+- 09-03 [Only the door at the door, and no wall hanging over it](roadmap/22-2026-09-03-door-cap.md#only-the-door-at-the-door-and-no-wall-hanging-over-it-2026-09-03-client-only-no-engine-bump)
 
 **`audio`** — cues, music, the engine to sound channel *(5)*
 
@@ -1015,7 +1018,7 @@ The same 102 entries, grouped. An entry with more than one tag appears more than
 - 09-03 [The path references get a gate, by giving up on two thirds of them](roadmap/16-2026-09-03-doc-audit.md#the-path-references-get-a-gate-by-giving-up-on-two-thirds-of-them-2026-09-03-tooling--docs-no-engine-bump)
 - 09-03 [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump)
 
-**`docs`** — design docs and this log itself *(30)*
+**`docs`** — design docs and this log itself *(31)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-02 [Documentation pass](roadmap/01-2026-07-24--08-05.md#documentation-pass--2026-08-02)
@@ -1047,6 +1050,7 @@ The same 102 entries, grouped. An entry with more than one tag appears more than
 - 09-03 [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump)
 - 09-03 [A mob has one size while walking and a bigger one while standing](roadmap/20-2026-09-03-mob-spacing.md#a-mob-has-one-size-while-walking-and-a-bigger-one-while-standing-2026-09-03-engine-engine_version-55)
 - 09-03 [A death burst is the size of what died](roadmap/21-2026-09-03-death-burst.md#a-death-burst-is-the-size-of-what-died-2026-09-03-client--engine-event-field-no-engine_version-bump)
+- 09-03 [Only the door at the door, and no wall hanging over it](roadmap/22-2026-09-03-door-cap.md#only-the-door-at-the-door-and-no-wall-hanging-over-it-2026-09-03-client-only-no-engine-bump)
 
 **`net`** — matchmaking, sockets, reconnect *(2)*
 

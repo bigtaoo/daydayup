@@ -36,7 +36,7 @@ import {
 } from '@dd/engine';
 import { fpToPx } from '../coords';
 import { wallHeight, wallTier, DOOR_H, DOOR_TIER, WALL_H_PERIMETER, type RectPx } from './wallGeometry';
-import { blockCapTop, mergeWallRuns, wallJoins, type WallRun } from './wallRuns';
+import { blockCapTop, doorCapless, doorFlankHeight, mergeWallRuns, wallJoins, type WallRun } from './wallRuns';
 import { faceCrownFraction } from './wallTone';
 import { doorLeafFrame } from './doorRender';
 import { readFileSync } from 'node:fs';
@@ -201,30 +201,56 @@ describe('every door presents the same — on the real shipped floors', () => {
     expect(tucked).toBeGreaterThan(0);
   });
 
-  it('does not tuck in a kerb, so its cap is not clipped off the 11 doorways that changed', () => {
-    // The 11 doorways this pass changed, pinned at the geometry the renderer draws: their cap is
-    // the full footprint depth above a full-height opening, unclipped. `wallJoins` would clip it
-    // by tucking them under the mass to their north — and the reason it does not is that there IS
-    // no mass there: a doorway in the low boundary between two stacked rooms has open floor north
-    // of it, which is exactly why it can stand full height now. So this is a claim about the
-    // shipped content, not a restatement of the tuck rule.
+  it('drops its cap where it out-tops the wall it is cut into — the 11 kerb doorways', () => {
+    // The pass after `DOOR_H` (2026-09-03, live report with a screenshot circling the result:
+    // *"我希望门的位置只有门，不要在入口的两端有墙"*). Standing all 24 doors at one height fixed the
+    // letterbox openings and left a second artifact behind on exactly the 11 it fixed: a door's
+    // CAP is the wall over its lintel, and it only reads as stone because it continues the crown
+    // of the runs either side of it (`wallRender.addCapLayers`). A doorway through a 22 px kerb
+    // out-tops those runs by 82 px, so its cap — a full footprint depth of tiled wall swatch —
+    // hung in mid-air above the opening with nothing under it on either side.
     //
-    // (Measured, so the comment above does not overclaim: mutating `DOOR_TIER` to `'kerb'` does
-    // NOT fail this test — the north edge is open either way. What catches that is the
-    // `wallHeight(DOOR_TIER) === DOOR_H` assertion in `wallGeometry.test.ts`.)
-    let kerbShaped = 0;
+    // So a door draws a cap only where its flank reaches it (`wallRuns.doorFlankHeight`), and this
+    // sweep is the claim that the split lands on the real content the way it is meant to: all 11
+    // kerb doorways capless, all 13 perimeter ones keeping the full cap they always had. Built
+    // through `RoomBuilder.buildDoors`' own sequence — the doors' second `wallJoins` pass, then
+    // the flank measurement folded into it — so a regression in either half shows up here.
+    let capless = 0;
+    let capped = 0;
     for (const index of FLOOR_INDICES) {
       const { runs, doorRects } = floorGeo(index);
       const doorRuns: WallRun[] = doorRects.map((rect) => ({ rect, tier: DOOR_TIER }));
       const joins = wallJoins([...runs, ...doorRuns], faceCrownFraction('fire')).slice(runs.length);
       for (const [i, run] of doorRuns.entries()) {
-        if (run.rect.w <= run.rect.h) continue; // the 64x128 ones legitimately tuck — see above
-        kerbShaped++;
-        expect(joins[i]!.tuckNorth, `${run.rect.w}x${run.rect.h} tucked`).toBe(false);
-        // ...and the cap really is the full footprint depth above the opening, unclipped.
-        expect(blockCapTop(run.rect, DOOR_H, joins[i]!)).toBeCloseTo(-DOOR_H - run.rect.h);
+        const flank = doorFlankHeight(run.rect, runs);
+        expect(flank, `${run.rect.w}x${run.rect.h} doorway has no flank stone`).not.toBeNull();
+        // Through `doorCapless` — the production predicate `RoomBuilder.buildDoors` calls, not a
+        // second copy of the rule that could agree with the doc and disagree with the renderer.
+        const j = doorCapless(run.rect, runs, DOOR_H) ? { ...joins[i]!, capless: true } : joins[i]!;
+        if (j.capless) {
+          capless++;
+          expect(flank).toBe(wallHeight('kerb'));
+          // Capless means exactly this in the geometry every cap cue reads: the cap starts and
+          // ends on the fold, so `addCapLayers`, the depth gradient and the edge bevel all size
+          // to zero and the fixture's topmost row is the top of its own arch.
+          expect(blockCapTop(run.rect, DOOR_H, j)).toBe(-DOOR_H);
+        } else {
+          capped++;
+          expect(flank).toBe(WALL_H_PERIMETER);
+          // Unchanged from before the pass: real stone over the lintel, landing on the same rows
+          // as the flanking runs' own caps. Its DEPTH is the footprint's, less whatever the tuck
+          // clips off (all 13 of these are 64x128 passages, deeper than they stand tall, so all
+          // 13 tuck — the `toBeLessThan` below is what keeps that from going unnoticed).
+          const capDepth = -DOOR_H - blockCapTop(run.rect, DOOR_H, j);
+          expect(capDepth).toBeGreaterThan(0);
+          expect(capDepth).toBeLessThanOrEqual(run.rect.h);
+          if (joins[i]!.tuckNorth) expect(capDepth).toBeLessThan(run.rect.h);
+        }
+        // The tuck is not what is doing this: a kerb doorway has open floor north of it and never
+        // tucked, which is exactly why its cap was free to hang there in the first place.
+        if (run.rect.w > run.rect.h) expect(joins[i]!.tuckNorth).toBe(false);
       }
     }
-    expect(kerbShaped).toBe(11);
+    expect([capless, capped]).toEqual([11, 13]);
   });
 });

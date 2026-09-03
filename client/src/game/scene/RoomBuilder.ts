@@ -1,4 +1,4 @@
-import { Graphics, Texture } from 'pixi.js';
+import { Graphics } from 'pixi.js';
 import type { GameState } from '@dd/engine';
 import type { Layers } from './layers';
 import { Entity } from './Entity';
@@ -21,12 +21,13 @@ import {
 import {
   blockCapTop,
   bordersDoorNorth,
+  doorCapless,
   effectiveWallHeight,
   mergeWallRuns,
   wallJoins,
   type WallRun,
 } from './wallRuns';
-import { buildDoorBlock, type DoorFixture } from './doorRender';
+import { buildDoorBlock, type DoorFixture, type DoorSkin } from './doorRender';
 import { tickDoors, type CameraRect } from './doorTick';
 import { buildGroundLayer, floorRegionsPx, roomRectsPx } from './groundLayer';
 import { voidEdges } from './wallVoidEdge';
@@ -319,22 +320,17 @@ export class RoomBuilder {
     s: GameState,
     runs: readonly WallRun[],
     doorRects: readonly RectPx[],
-    skin: {
-      palette: BiomePalette;
-      cap: Texture | undefined;
-      face: Texture | undefined;
-      floor: Texture | undefined;
-      curtain: Texture | undefined;
-    },
+    // Everything a door is drawn from except the leaf, which is per-door (`getDoorTexture`) and
+    // is added at the `buildDoorBlock` call below.
+    skin: Omit<DoorSkin, 'leaf'>,
     shadows: Graphics,
     element: string,
   ): void {
     this.clearDoors();
-    // A door stands at `DOOR_H` — ONE height for every door in the game, whatever wall it is cut
-    // into and however thick that wall is (see `wallGeometry.DOOR_H` for the live report this
-    // replaced `doorFlankTier`'s shortest-flank rule over, and for what the change spends). The
-    // `DOOR_TIER` is only for `wallJoins` below, which reasons in tiers — see its own doc for why
-    // handing it a stale one would silently clip the cap off every kerb doorway.
+    // A door stands at `DOOR_H` — ONE height for every door, whatever wall it is cut into and
+    // however thick (see `wallGeometry.DOOR_H` for the report that replaced `doorFlankTier`'s
+    // shortest-flank rule, and what it spends). `DOOR_TIER` is only for `wallJoins` below, which
+    // reasons in tiers — a stale one there silently clips the cap off every kerb doorway.
     const doorRuns: WallRun[] = doorRects.map((rect) => ({ rect, tier: DOOR_TIER }));
     // The doors' own joins, computed against the walls AND each other. Deliberately a SECOND
     // `wallJoins` pass rather than one combined list: a door has to know that its cap runs into
@@ -348,7 +344,10 @@ export class RoomBuilder {
     for (const [i, dr] of s.dungeonDoors.entries()) {
       const rect = doorRects[i]!;
       const height = DOOR_H;
-      const joins = doorJoins[i]!;
+      // `capless` is folded in by hand for the same reason `doorClip` is on the walls' joins:
+      // `wallJoins` cannot compute it. Why a door that out-tops its flanks draws no cap at all
+      // is `wallRuns.doorCapless`.
+      const joins = doorCapless(rect, runs, height) ? { ...doorJoins[i]!, capless: true } : doorJoins[i]!;
       // `i` is the door's phase offset (`doorFx.ts`: two doors in one room must not breathe in
       // unison), so it has to be the index within the FLOOR's door list — stable across rebuilds
       // and identical on every client — not a per-room counter.

@@ -784,6 +784,7 @@ describe('shipped level-1 walls — the shading still batches', () => {
       tuckedSouth: [[300, 360]] as Array<[number, number]>,
       crownFraction: FACE_CROWN_FRACTION_MIN,
       doorClip: false,
+      capless: false,
     };
     const g = drawBlockShading(rect, height, all);
     const tones = (

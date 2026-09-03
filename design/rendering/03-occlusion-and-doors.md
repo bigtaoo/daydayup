@@ -553,7 +553,8 @@ no door in it that a player would read as a door — a dark red hairline along a
 `wallGeometry.DOOR_H`, one height for every door in the game. It is `WALL_H_PERIMETER` rather than
 a fourth independent number, which also keeps `MAX_WALL_HEIGHT` — what `GameLoop.cameraFrame` pads
 the framed room rect by — correct by construction. `doorFlankTier` and its `abutsAlongGap` helper
-are deleted rather than left unused; `RoomBuilder` hands a door to the joins pass as `'perimeter'`
+were deleted with the rule (the flank measurement came back one section later, as
+`doorFlankHeight` — it decides whether a door has a CAP, never how tall it stands); `RoomBuilder` hands a door to the joins pass as `'perimeter'`
 purely because that pass reasons in tiers, and `doorStandCoverage.test.ts` pins
 `wallHeight(DOOR_TIER) === DOOR_H` so the two cannot drift.
 
@@ -817,3 +818,40 @@ two bakes), `scene/doorTick.ts` (the cull, the proximity ramp, the refusal), `sc
 `GameLoop`'s one call, `CommandBuilder.lastMove` and `FxController.worldView`. Five new test files
 and additions to five existing ones — 103 new tests; **4,659 client tests green** as of
 2026-09-03.
+## ...and then only the door, with no wall hanging over it (2026-09-03c)
+
+The report immediately after the section above shipped, with a screenshot of a `128x64` kerb
+doorway circled: *"我希望门的位置只有门，不要在入口的两端有墙"* — at the door's position I want only
+the door, no wall at the entrance.
+
+Standing all 24 doors at `DOOR_H` fixed the letterbox opening and left a second artifact on
+exactly the 11 it fixed. A door's **cap** is the wall over its lintel, and the whole reason it
+reads as stone is stated in this document's own list above: *"tiled from the same world-aligned
+swatch as the runs either side, so a room's crown line runs unbroken THROUGH the doorway."* That
+sentence quietly assumes the runs either side reach the cap. Through a 22 px kerb they do not — the
+doorway now out-tops them by 82 px — so the cap came out as a full footprint depth of tiled wall
+swatch (64 px on those passages) sitting 82 px above the crown line on both sides, with nothing
+under it: a slab of wall hanging in mid-air over the opening. Measured on the shipped floors,
+every one of the 11 had one; the 13 perimeter doorways never did, because their flanks really are
+`WALL_H_PERIMETER` and their cap really is the continuation it claims to be.
+
+**So the cap became conditional on the thing it was always claiming**: `wallRuns.doorFlankHeight`
+measures the SHORTEST run abutting the passage (the old `doorFlankTier`'s predicate, restored for
+a different question — a cap resting on one flank's crown while floating over the other is still a
+floating slab), and `RoomBuilder.buildDoors` folds `capless` into the door's own joins wherever
+that flank falls short of `DOOR_H`. `WallJoins.capless` is a caller-set flag exactly like
+`doorClip`, and it is read in exactly one place — `blockCapTop`, which is where every cap-shaped
+cue already derives its extent from. One flag therefore drops `addCapLayers`, the cap depth
+gradient, the cap edge bevel and the coping together, instead of four call sites agreeing by hand;
+the fixture's topmost row becomes the top of its own arch, which is what an archway standing in a
+low wall looks like. The x-ray occluder follows for free (its `top` is that same `blockCapTop`), so
+it stops reserving a band of floor for stone that is no longer drawn.
+
+**The height is untouched, and so is every perimeter doorway.** This is not a partial revert of
+`DOOR_H` — all 24 doors still stand at one height, and the 13 through a room boundary draw the same
+cap they always have. What varies is whether there is stone above the lintel at all, which is a
+property of the WALL, not of the door. `doorStandCoverage.test.ts` sweeps the shipped content for
+the 11/13 split through `RoomBuilder.buildDoors`' own sequence; `RoomBuilder.test.ts` asserts it on
+a really-built fixture at both flank heights (empty `capLayers` in a kerb, non-empty beside a
+perimeter run) because `capLayers` is precisely the group `addCapLayers` fills, so an empty one is
+the absence of the slab rather than a proxy for it.

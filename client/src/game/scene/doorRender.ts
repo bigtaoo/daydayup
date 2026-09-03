@@ -252,7 +252,12 @@ export function buildDoorBlock(
   // in it by `fx.xrayLayer` instead — see that field for why two writers on one `alpha` silently
   // disables the fade on exactly the layers a character in a doorway most needs faded.
   const capFrom = seg.children.length;
-  addCapLayers(seg, r, capTop, capH, skin);
+  // `capH` is 0 exactly when `joins.capless` is set — the door stands taller than the wall it is
+  // cut into, so there is no neighbouring crown for stone over the lintel to continue and drawing
+  // it anyway hangs a slab of wall in mid-air over the doorway (2026-09-03 live report; see
+  // `wallRuns.doorFlankHeight`). The fixture then ends at the top of its own arch, which is what
+  // an archway standing in a low wall looks like.
+  if (capH > 0) addCapLayers(seg, r, capTop, capH, skin);
   const fxOwned = new Set<unknown>([recessLocked, openFloor, openShade, through, curtain, glow, spill, leafGhost, fx.behind, fx.over]);
   for (let i = 0; i < capFrom; i++) {
     const c = seg.children[i]!;

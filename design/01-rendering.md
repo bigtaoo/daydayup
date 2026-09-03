@@ -53,6 +53,7 @@ Keeping the character visible through stone, and the one fixture a player has to
   - [The recess itself is still shared stone, and then it is a whole illustrated curtain (2026-08-30b)](rendering/03-occlusion-and-doors.md#the-recess-itself-is-still-shared-stone-and-then-it-is-a-whole-illustrated-curtain-2026-08-30b)
 - **[Every door is the same door, whatever wall it is cut into (2026-09-03)](rendering/03-occlusion-and-doors.md#every-door-is-the-same-door-whatever-wall-it-is-cut-into-2026-09-03)** — 11 of the 24 shipped doors were a 22 px letterbox under 64 px of their own lintel; a door now has one height, not the wall's.
 - **[A door has a clock (2026-09-03b)](rendering/03-occlusion-and-doors.md#a-door-has-a-clock-2026-09-03b)** — "太死板": a door measured 0.01 luma of motion because nothing in this project could animate a scene fixture at all. Direction is what now says passable.
+- **[...and then only the door, with no wall hanging over it (2026-09-03c)](rendering/03-occlusion-and-doors.md#and-then-only-the-door-with-no-wall-hanging-over-it-2026-09-03c)** — one height for every door left the 11 kerb doorways with a slab of their own cap stone hanging 82 px above the crown line; a door draws a cap only where its flank reaches it.
 
 ### [The floor, the arena, the void](rendering/04-floor-arena-void.md)
 
