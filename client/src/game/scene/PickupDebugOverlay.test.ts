@@ -20,6 +20,12 @@ function stateWithPickupAt(kind: PickupItem['kind'], dx: number, dy = 0): { s: R
   const p = s.players[0]!;
   p.gx = 20000 as Fp;
   p.gy = 20000 as Fp;
+  // Damaged on purpose: since ENGINE_VERSION 54 a heal is not collectible AT ALL while the
+  // player is at full HP (design/05 "only when useful"), so a full-HP fixture would make
+  // every `heal` distance sweep below vacuously "never collectible" — which is what the
+  // sweep's own anti-vacuity guard caught. The DISTANCE gate is what these tests measure;
+  // the usefulness gate gets its own test at the end of this block.
+  p.hp = 1;
   const item: PickupItem = {
     id: s.nextId(),
     kind,
@@ -90,6 +96,30 @@ describe('pickupDebugGate — auto-collect kinds (heal/material/buff/bandage)', 
     const { nearestPx, collectible } = pickupDebugGate(s, item);
     expect(collectible).toBe(false);
     expect(nearestPx).toBe(Infinity);
+  });
+
+  // design/05's "only when useful" rule (ENGINE_VERSION 54) makes distance NOT the only
+  // gate, so the overlay had to learn it too — otherwise a heal under a full-HP player
+  // draws green while the sim walks straight past it, and the tool built to tell "looks
+  // reachable" from "the sim agrees" lies about exactly that. Asserted against the real
+  // system, like every other case here, not against a restated rule.
+  it('a heal under a FULL-HP player is not collectible, and the sim agrees', () => {
+    const { s, item } = stateWithPickupAt('heal', 0); // standing exactly on it
+    const p = s.players[0]!;
+    p.hp = p.maxHp;
+
+    expect(pickupDebugGate(s, item).collectible).toBe(false);
+    expect(pickupDebugGate(s, item).nearestPx).toBe(0); // still reported as right here
+    s.tick = 1;
+    new PickupSystem().tick(s);
+    expect(s.pickups.some((q) => q.id === item.id && q.alive)).toBe(true); // sim left it too
+  });
+
+  it('the same heal, one point of damage later, is collectible again', () => {
+    const { s, item } = stateWithPickupAt('heal', 0);
+    const p = s.players[0]!;
+    p.hp = p.maxHp - 1;
+    expect(pickupDebugGate(s, item).collectible).toBe(true);
   });
 });
 

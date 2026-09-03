@@ -16,6 +16,13 @@
  * agrees with itself and with nothing else. That function is already pinned against the
  * real `PickupSystem.tick` and the real weapon panel in `PickupDebugOverlay.test.ts`.
  *
+ * **One legitimate "never collectible" verdict to read carefully, since ENGINE_VERSION 54:**
+ * a `heal` is refused at any distance while that player is at FULL HP (design/05's "only
+ * when useful" rule — with no item bag, collecting it at full effect would destroy it). So a
+ * heal reported as never-collectible is not automatically a defect: cross-check the player's
+ * hp over the same ticks before reading it as one. Every other kind's verdict is still
+ * distance alone.
+ *
  * Pure — no fs, no env, no printing. `replayInspect.sim.ts` is the shell that reads a
  * file and formats this; `inspect.test.ts` drives it on synthetic runs.
  */

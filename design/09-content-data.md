@@ -159,8 +159,10 @@ SkinDef = {
   atlasKey                // texture atlas to swap (02)
   animRef: AnimId         // shared animation-data reference (frame timing, events)
   maxHp                   // integer hard-floor HP (05); recovered only by heal items
-  maxShield               // integer soft buffer, absorbed before HP; auto-regens (05/07)
-                          //   NOT balanced to equal EHP: 8/0 starter vs 3/10 skirmisher (05)
+  maxShield               // soft buffer, absorbed before HP; auto-regens (05/07). NOT required
+                          //   to be an integer — the shipped vanguard is 3.2 on purpose (07's
+                          //   two-pool decision explains why that is safe and what it costs)
+                          //   NOT balanced to equal EHP: 11/0 juggernaut vs 3/6 skirmisher (05)
   shieldBreak?: ShieldBreakPassive  // fires the instant shield hits 0 (07); the concrete
                           //   form of 02's "minor passive". Omitted for 0-shield characters.
 }
@@ -178,7 +180,7 @@ AnimData = {
 
 ## Rarity & run buffs (`03`/`14`)
 
-The in-run power axis (`05`) is **finding a better weapon + run buffs** — *not* weapon affixes. The **affix system is cut** (`14`, Soul-Knight route): no `Affix`/`AffixId`, no `AFFIX_FIELD_MAP`/`EFFECT_CAPS`/`applyAffixes`, no `AFFIX_DROP_POOL`, no `k_*` procs, and no `elem_*` set-element affix. A weapon is fully defined by **frame + baked-in element + a fixed stat row + intrinsic rarity**. Removing the shipped affix code (incl. the `elem_*` affix from `ENGINE_VERSION 9`) is a code change + `ENGINE_VERSION` bump, tracked as a separate task.
+The in-run power axis (`05`) is **finding a better weapon + run buffs** — *not* weapon affixes. The **affix system is cut** (`14`, Soul-Knight route): no `Affix`/`AffixId`, no `AFFIX_FIELD_MAP`/`EFFECT_CAPS`/`applyAffixes`, no `AFFIX_DROP_POOL`, and no `elem_*` set-element affix. A weapon is fully defined by **frame + baked-in element + a fixed stat row + intrinsic rarity**. ✅ **Done** — the removal was `ENGINE_VERSION` 9→10 (ROADMAP 0.1); this paragraph called it "tracked as a separate task" until 2026-09-03, and the same sentence also listed "no `k_*` procs" among the things cut. **That last item is wrong**: `k_*` on-hit procs are a shipped, first-class part of a `WeaponSpec` (`ENGINE_VERSION` 28 — `k_lifesteal`/`k_ricochet`, carried by `leech`/`carom`, see `03` and the Frame-content item under "To design"). What the affix cut removed was the *rolled per-instance* proc; a proc baked into one weapon was never an affix.
 
 **Rarity — intrinsic, fixed per weapon (`14`):**
 
@@ -200,7 +202,7 @@ RUN_BUFFS: Record<RunBuffId, { kind: 'mult_damage'|'mult_firerate'|'flat_hp'|'cr
 BUFF_CAPS: Record<kind, cap>                    // Σ-then-clamp, deterministic apply order
 ```
 
-- Buffs are **found in-run** (chests / rooms / shop — `05`/`14` to-design) and apply to the player / all held weapons, summed-then-clamped in a fixed order so it stays deterministic (`06`). They are **not** attached to a weapon and never carry out.
+- Buffs are **found in-run** (chests / rooms / shop is the design; the shipped reality is a 6/84 weight on the flat kill `DROP_TABLE` and nothing else — `ROADMAP` B1/B2) and apply to the player / all held weapons, summed-then-clamped in a fixed order so it stays deterministic (`06`). They are **not** attached to a weapon and never carry out.
 - **Unknown weapon / skin / buff id → ignored** (forward-compat).
 
 ## The build layer — the fairness wall
@@ -221,7 +223,7 @@ buildArenaSpecs(presetId: ArenaPresetId, skinId: SkinId): ResolvedSpecs
 
 ### Collision geometry — `RoomState` (deferred from `07`) ✅ schema shipped 2026-07-24 (ROADMAP 1.2)
 
-A room's static solids and markers, all on the `gx/gy` grid (`01`). `content/rooms.ts` implements this shape (`RoomPiece`/`Point`/`SpawnPoint`/`AabbGrid`/`PillarGrid`/`ExitDef`/`PropPlacement`/`WaveScript`/`WaveEntry`/`RoomRole`) plus the pure `roomGeometry(piece, offsetXGrid?, offsetYGrid?)` converter to sim `{ walls: AABB[]; obstacles: Obstacle[] }`. `GameState` gained a `walls: AABB[]` array (sourced from `EngineConfig.walls`, parallel to the existing `obstacles`) and `MovementSystem`/`ProjectileStepSystem` resolve against it (`07`) — additive, no `ENGINE_VERSION` bump (every existing config omits `walls`, so it stays empty). **Remaining:** no `RoomPiece` content is authored yet, and nothing places a piece into a live `GameState` — that's 1.3 (hand-authored library + seeded layout), which will call `roomGeometry` when stitching a floor together.
+A room's static solids and markers, all on the `gx/gy` grid (`01`). `content/rooms.ts` implements this shape (`RoomPiece`/`Point`/`SpawnPoint`/`AabbGrid`/`PillarGrid`/`ExitDef`/`PropPlacement`/`WaveScript`/`WaveEntry`/`RoomRole`) plus the pure `roomGeometry(piece, offsetXGrid?, offsetYGrid?)` converter to sim `{ walls: AABB[]; obstacles: Obstacle[] }`. `GameState` gained a `walls: AABB[]` array (sourced from `EngineConfig.walls`, parallel to the existing `obstacles`) and `MovementSystem`/`ProjectileStepSystem` resolve against it (`07`) — additive, no `ENGINE_VERSION` bump (every existing config omits `walls`, so it stays empty). ~~**Remaining:** no `RoomPiece` content is authored yet, and nothing places a piece into a live `GameState`.~~ **Both closed long since** (1.3, then the hand-authored level of 2026-08-15): 14 `RoomPiece` files under `world/dungeons/ember/pieces/` plus the seven original `EMBER_ROOMS` fixtures, and `placeAuthoredFloor`/`placeFloor`/`placeFloorGraph2d` all stitch them into a live floor through `buildFloorGeometry`. Struck 2026-09-03 — see the superseded note below, which this line sat two paragraphs above.
 
 ```
 RoomPiece = {
@@ -289,13 +291,22 @@ DungeonConfig = {
   floorCount                  // ~5 tentative (05 to-tune)
   roomsPerFloor: { min, max } // 5–10 (05 to-tune)
   pieceTags: RoomTag[]        // which RoomPiece pools this biome draws from
-  layout: 'linear'|'branching'   // 05 reward-choice structure
-  extractionPiece: RoomPieceId   // the per-floor extraction room (descend vs leave, 05)
-  bossPiece: RoomPieceId         // the deepest floor's room; its portal opens post-kill and
+  layout: 'linear'|'branching'|'graph2d'  // 05 reward-choice structure. 'graph2d' (2026-08-05)
+                                 //   places a generated floor in real 2D instead of a west→east
+                                 //   spine, and is what the shipped EMBER_DUNGEON uses.
+  extractionPieceId: RoomPieceId // the per-floor extraction room (descend vs leave, 05)
+  bossPieceId: RoomPieceId       // the deepest floor's room; its portal opens post-kill and
                                  //   doubles as that floor's extraction (05)
+  branchFactor?: number          // 'branching' only: sibling rooms per fork stage (default 2)
+  floorMaps?: Partial<Record<number, DungeonFloorMap>>   // per-floor hand-authored override
+                                 //   (05 "Hand-authored PvE floors"); level 1 sets all five
   difficultyCurve: CurveSpec  // scales enemy count/tier by floor depth (05 to-tune)
-  dropTableByDepth: DropTableId[]      // better pools deeper
-  materialTierByDepth: number[]        // material quality shift per floor (05)
+  // ── NOT ON THE REAL INTERFACE (ROADMAP B4). Both were sketched here and never added
+  //    to world/dungeon/types.ts — "unwired schema field" (as this doc and ROADMAP 1.5
+  //    both said for a year) overstated it; there is no field. Depth→material quality is
+  //    a `tier = floorIndex` identity inside rollDrop instead.
+  dropTableByDepth?: DropTableId[]     // better pools deeper — DESIGN ONLY
+  materialTierByDepth?: number[]       // material quality shift per floor (05) — DESIGN ONLY
 }
 
 RoomPiece.role?: 'normal' | 'extraction' | 'boss'   // extends the RoomPiece schema above;
@@ -319,7 +330,7 @@ The `WaveDirector` (funny, ported) pre-expands `count`/`spacing` into a tick-sor
 
 ### Arenas & presets (`15` PvP) ✅ shipped — see `15` for the full schema
 
-**Superseded the original symmetric-team-arena sketch below** once `15` locked PvP as an **8-player solo battle royale**: `ArenaMap` is *not* RoomPiece-like/symmetric — it is a **~60-room, simultaneously co-resident map** (unlike a PvE floor's rooms, which are real but visited *sequentially*, one live at a time). `content/arenas.ts` implements the real shape:
+**Superseded the original symmetric-team-arena sketch below** once `15` locked PvP as an **8-player solo battle royale**: `ArenaMap` is *not* RoomPiece-like/symmetric — it is a **~60-room, simultaneously co-resident map**. *(This used to add "unlike a PvE floor's rooms, which are real but visited sequentially, one live at a time" — false since `ENGINE_VERSION` 34, 2026-08-04: a PvE floor is co-resident too, which is the whole reason its `Door` type is this file's `Door` verbatim and its rooms feed PvP's own `Minimap`. Corrected 2026-09-03; `15` carried the identical stale contrast in its own `ArenaMap` comment.)* `content/arenas.ts` implements the real shape:
 
 ```
 ArenaMap = { id, sizeGrid, rooms: ArenaRoom[], doors: Door[], spawns: Point[], eyeCandidates: EyeCandidate[] }
@@ -333,14 +344,24 @@ There is no separate `PICKUP_TABLE` — loot is per-room `LootMarker`s resolved 
 
 ### Drops, pickups & materials (`05`)
 
-A `Pickup` on the ground is one of three kinds; `DropTable` rolls which drops from a chest or a slain enemy:
+A `Pickup` on the ground is one of these kinds; `DropTable` rolls which drops from a slain enemy (or, in the arena, a loot marker — chests are `ROADMAP` B1, not built):
 
 ```
 Pickup =
   | { kind: 'weapon';   spec: WeaponId }                     // in-run, ephemeral; rarity is on the WeaponSpec (05/14)
   | { kind: 'buff';     buffId: RunBuffId }                  // run-scoped in-run buff (14)
-  | { kind: 'heal' }                                          // flat +1 HP (05/07)
-  | { kind: 'material'; matId: MaterialId; qty }             // the ONLY carry-out (05)
+  | { kind: 'heal' }                                          // flat +1 HP (05/07). NOT collected
+                                                              //   at full HP — the item stays on the
+                                                              //   floor (05 "only when useful", v54)
+  | { kind: 'material'; matId: MaterialId; qty; tier }       // the ONLY carry-out (05); `tier` is the
+                                                              //   ROLLED depth quality, keyed via bankKey
+  // Added after this block was first written (both listed here since 2026-09-03):
+  | { kind: 'bandage' }                                       // PvP-only squad-revive currency (05/15)
+  | { kind: 'crate' }                                         // PvP-only UNRESOLVED loot marker: rolls
+                                                              //   into a real kind the first tick a
+                                                              //   player is within lootRevealRadius, so
+                                                              //   its value never sits in shared state
+                                                              //   for a camera cheat to read (15)
 
 DropTable = { entries: { itemPool; weight }[] }   // itemPool spans all kinds; weapon rarity is intrinsic to the WeaponId
 
@@ -348,8 +369,8 @@ MaterialDef = { id: MaterialId; nameKey; element: DamageType; tier }
               // 5 elemental kinds (03/14) × tier by depth; feeds forge recipes (14)
 ```
 
-- **Materials are the run's only carry-out** and the meta-forge input. They are **banked at extraction rooms** (reaching one = a checkpoint, `05`); a death forfeits only the *current floor's* un-banked materials. ✅ **Shipped 2026-07-24 (ROADMAP 1.4/1.5, `ENGINE_VERSION` 15, additive):** `state.floorMaterials` (buffer) → `state.bankedMaterials` (carry-out), merged by the new `ExtractionSystem` on EXTRACT/DESCEND; forfeit-on-death is free (never merged). Gated entirely behind `EngineConfig.floors?` — every config that omits it is untouched.
-- **Deeper floors roll better materials** — `dropTableByDepth` / `materialTierByDepth` (below) shift the pools by floor; weapon *finds* stay random at every depth (`05`). ✅ First-pass shipped: `rollDrop(prng, tier)` tags a material drop with a depth signal (`DeathDropsSystem` passes `state.floorIndex` — a straight identity curve, not yet the configurable `materialTierByDepth` array below, which stays an unwired `DungeonConfig` schema field until 1.2/1.3's `RoomPiece` system is live).
+- **Materials are the run's only carry-out** and the meta-forge input. They are **banked at extraction rooms** (reaching one = a checkpoint, `05`); a run-ending death forfeits the **entire un-extracted carry-out** — this floor's buffer *and* everything banked-but-not-extracted earlier in the run (`05`'s locked wipe rule; this line claimed "only the current floor's" until 2026-09-03). ✅ **Shipped 2026-07-24 (ROADMAP 1.4/1.5, `ENGINE_VERSION` 15, additive):** `state.floorMaterials` (buffer) → `state.bankedMaterials` (carry-out), merged by the new `ExtractionSystem` on EXTRACT/DESCEND; forfeit-on-death is free at both tiers (the buffer is never merged, and the merged bag is never handed to the meta layer — `RunOutcome.lose()` skips `bankRunMaterials`). Gated entirely behind `EngineConfig.floors?` — every config that omits it is untouched.
+- **Deeper floors roll better materials** — `dropTableByDepth` / `materialTierByDepth` (below) shift the pools by floor; weapon *finds* stay random at every depth (`05`). ✅ First-pass shipped: `rollDrop(prng, tier)` tags a material drop with a depth signal (`DeathDropsSystem` passes `state.floorIndex` — a straight identity curve). The configurable `materialTierByDepth` array, and `dropTableByDepth` entirely, are **`ROADMAP` B4**: neither is an unwired field, neither was ever added to the real `DungeonConfig`. So depth buys material TIER today and nothing else — a deeper floor rolls from the same drop pool as floor 1.
 - Rolled from `dropPrng`; rewards are recomputed/validated server-side, never trusted from the client (funny ADR-006, `06`).
 
 ## Loading, validation, versioning
@@ -364,7 +385,7 @@ MaterialDef = { id: MaterialId; nameKey; element: DamageType; tier }
 - **`03`:** `WEAPON_SPECS`/rarity/ballistics are the concrete form of its `RangedSpec`/`MeleeSpec` "to design" list and its Frame × Element composition (affixes cut, `14`).
 - **`02`:** `SkinDef` + `AnimData.socketAnchors` realize "animation separate from texture" and "the weapon socket follows the frame."
 - **`05`:** dungeon assembly, drop tables, arena presets, difficulty curve — the data behind its core loop, economy, and PvP; its open design questions (room count, reward structure, preset set) fill these schemas.
-- **`07`:** `RoomPiece.solids`/`pillars` are the collision geometry (round pillars implemented, AABB tiles deferred); `WeaponSpec`/`EnemyBlueprint` feed its damage/ballistic bodies.
+- **`07`:** `RoomPiece.solids`/`pillars` are the collision geometry (both implemented — round-pillar push-out and AABB rect push, the latter since ROADMAP 1.2; this line said "AABB tiles deferred" until 2026-09-03); `WeaponSpec`/`EnemyBlueprint` feed its damage/ballistic bodies.
 - **`08`:** the build layer resolves specs into `GameState` at match start; `WaveScript`/`WaveDirector` is step 10; all PRNG-seeded content obeys its determinism contract.
 - **`06`:** single-source config, human→fp/brad conversion, injected PRNG, and the fairness wall all originate there.
 
@@ -373,7 +394,7 @@ MaterialDef = { id: MaterialId; nameKey; element: DamageType; tier }
 *Phase-0 sync (ROADMAP 0.1–0.6) shipped first-pass versions of several items below; each is annotated with what remains.*
 
 - ✅ **Concrete first-pass numbers** for the demo weapons + a starter/elemental enemy set — shipped in `content/*.ts`.
-- **Character roster** (`02`/`05`): ✅ done (ROADMAP 2.3). `PLAYER_BASE` + two side-grade `SkinDef`s (vanguard, skirmisher) with `(maxHp, maxShield)` + `shieldBreak` shipped first (ROADMAP 0.5); the full 3-character launch roster — vanguard/skirmisher/**juggernaut** (9HP/0shield, the flat-HP tank) — shipped in Phase 2.3. *Remaining:* free-vs-paid split, revive timings. (Regen timings currently live in `config.ts` `SHIELD_REGEN_*`, not `PLAYER_BASE` — a shielded-actor constant shared beyond the player.)
+- **Character roster** (`02`/`05`): ✅ done (ROADMAP 2.3). `PLAYER_BASE` + two side-grade `SkinDef`s (vanguard, skirmisher) with `(maxHp, maxShield)` + `shieldBreak` shipped first (ROADMAP 0.5); the full 3-character launch roster — vanguard (6/3.2) / skirmisher (3/6) / **juggernaut** (11HP/0shield, the flat-HP tank) — shipped in Phase 2.3. *(Those are the shipped numbers as retuned 2026-07-28 against `pvpBalanceSim`; this line said "9HP/0shield" until 2026-09-03, and `14`/`05`/`ROADMAP` 2.3 each carried a different stale triple.)* *Remaining:* free-vs-paid split, revive timings. (Regen timings currently live in `config.ts` `SHIELD_REGEN_*`, not `PLAYER_BASE` — a shielded-actor constant shared beyond the player.)
 - **Material catalog & forge recipes** — ✅ done (ROADMAP 2.1). The `MaterialDef` shape + a base tier-0 catalog (5 elemental kinds, `content/materials.ts`) shipped (ROADMAP 0.6); first-pass tier-by-depth rolling + the floor-buffer/carry-out bank shipped (ROADMAP 1.4/1.5); the forge outpost, per-weapon `element × qty × min-tier` recipes, and `minTier` enforcement all shipped in Phase 2 — the material bank keys by `(element, rolled tier)` via `content/materials.ts`'s `bankKey`/`parseBankKey` (additive, tier 0 keeps the flat legacy key), so a recipe genuinely demands materials from deep-enough floors; spending is lowest-qualifying-tier-first (`meta/forge.ts`).
 - **Rarity tiers & run-buff catalogue** (`14`): first-pass `RARITY_TIERS` (0.2) and `RUN_BUFFS` families/caps (0.3) shipped — all four families now real, including `crit_chance` (`ENGINE_VERSION` 26, `07`'s crit sketch). *Remaining:* the final base-quality numbers and an actual chest/room/shop offering flow (buffs still only drop off the flat `DROP_TABLE`).
 - ~~**`RoomPiece` authoring pipeline**: hand-edit JSON, or a small editor?~~ **(decided, 2026-07-25):** a dedicated map editor, not hand-edited JSON. The same editor also authors PvP's `ArenaMap`/`ArenaRoom`/`CellTrait` (`15`) — one tool, two output schemas (`RoomPiece` for PvE floors, `ArenaMap` for the PvP arena). Format/round-trip tooling details remain open.

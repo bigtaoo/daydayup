@@ -1,11 +1,11 @@
 {
-  "engineVersion": 53,
+  "engineVersion": 54,
   "scenarios": [
     {
       "name": "arena-waves",
       "pins": "the flat wave path: fire cadence, crit/drop rolls, actor pairs, win condition",
       "ticks": 500,
-      "hash": 2640344510,
+      "hash": 1650267439,
       "witness": {
         "tick": 185,
         "phase": "gameover",
@@ -32,7 +32,7 @@
       "name": "walls-and-pillars",
       "pins": "MovementSystem's rect/circle push-out and its tie-breaks — the geometry half of design/18",
       "ticks": 600,
-      "hash": 2844423768,
+      "hash": 1986169461,
       "witness": {
         "tick": 600,
         "phase": "playing",
@@ -56,7 +56,7 @@
       "name": "ember-dungeon-floor1",
       "pins": "authored floor-1 roomgen + room entry + door lock/unlock + freeStanding north brim + pickup clamping",
       "ticks": 1500,
-      "hash": 1853881631,
+      "hash": 1230281610,
       "witness": {
         "tick": 1500,
         "phase": "playing",
@@ -88,7 +88,7 @@
       "name": "brim-grinder",
       "pins": "WALL_NORTH_BRIM itself: a free-standing block's brimmed north face vs its three bare ones",
       "ticks": 800,
-      "hash": 2117829639,
+      "hash": 598306750,
       "witness": {
         "tick": 800,
         "phase": "playing",
@@ -115,7 +115,7 @@
       "name": "launch-arena-pvp",
       "pins": "arena geometry + zone shrink + two hostile seats + per-skin arena stat scaling",
       "ticks": 900,
-      "hash": 2531138778,
+      "hash": 3387435011,
       "witness": {
         "tick": 900,
         "phase": "playing",

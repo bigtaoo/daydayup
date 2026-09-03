@@ -2,7 +2,9 @@
  * Drop tables (design/05/09) — what a dead enemy leaves behind, rolled from the
  * injected dropPrng so every client / headless re-judge produces the same drops
  * from seed + input stream (design/06). This is the content that turns kills into
- * the roguelite power ramp: coins (score), health, and weapons (design/05).
+ * the roguelite power ramp: materials, health, weapons and run buffs (design/05). (This line
+ * said "coins (score)" until 2026-09-03 — the coin kind was replaced by `material` at ROADMAP
+ * 0.6's pickup-vocabulary sync, and score comes off kills, not off a drop.)
  *
  * Plain data + one roll function; no Pixi, no closures (design/09 "content is plain
  * data"). All weights are integers → weightedIndex is a single deterministic draw.

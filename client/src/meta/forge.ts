@@ -12,7 +12,7 @@
  * from the LOWEST qualifying tier first (deterministic), so a player's scarce high-tier
  * materials are preserved for the recipes that actually require them.
  */
-import { BLUEPRINT_CATALOG, PLAYER_BASE, parseBankKey, type MaterialCost, type WeaponBlueprint } from '@dd/engine';
+import { BLUEPRINT_CATALOG, PLAYER_BASE, WEAPON_SPECS, parseBankKey, type MaterialCost, type WeaponBlueprint } from '@dd/engine';
 import type { MetaState } from './MetaState';
 
 /** Fold a finished run's carry-out bag (GameState.bankedMaterials) into the account bank.
@@ -62,16 +62,45 @@ export function bankTotal(m: MetaState, element: string, minTier = 0): number {
   return availableFor(m, { element: element as MaterialCost['element'], qty: 0, minTier });
 }
 
-export type CraftFailure = 'unknown' | 'locked' | 'loadout-full' | 'unaffordable';
+export type CraftFailure = 'unknown' | 'locked' | 'loadout-full' | 'kind-taken' | 'unaffordable';
 export type CraftResult = { ok: true; meta: MetaState } | { ok: false; reason: CraftFailure };
 
+/** The `'ranged' | 'melee'` kind a staged weaponId will occupy, or undefined for an id
+ * the weapon catalog doesn't know (dropped by `resolveLoadout` anyway, design/09
+ * forward-compat). */
+function kindOf(weaponId: string): string | undefined {
+  return WEAPON_SPECS[weaponId]?.kind;
+}
+
+/** Is a weapon of this kind already staged? The guard behind the one-gun-and-one-melee
+ * invariant (see `craft`). */
+export function kindAlreadyStaged(m: MetaState, weaponId: string): boolean {
+  const kind = kindOf(weaponId);
+  return kind !== undefined && m.loadout.some((id) => kindOf(id) === kind);
+}
+
 /** Craft one instance of `weaponId` into the staged loadout: requires the blueprint to
- * exist, be unlocked, a free loadout slot, and enough materials — spends them on success. */
+ * exist, be unlocked, a free loadout slot **of a kind not already staged**, and enough
+ * materials — spends them on success.
+ *
+ * **The kind check is what makes design/03/05's central claim true** — *"every loadout
+ * carries one gun and one melee weapon, so parry is always OWNED"* (`ENGINE_VERSION` 45).
+ * That was never enforced anywhere: `resolveLoadout` only fills FREE slots by kind and
+ * honours a staged same-kind pair verbatim (deliberately — an explicit choice is never
+ * discarded), and this function used to check only the slot COUNT. So two of the five
+ * blueprints a fresh account starts unlocked (`repeater` + `scattergun`, both guns) could
+ * be staged together into a run with no melee weapon at all: no parry, and a swap button
+ * toggling between two of the same thing — the exact state `ENGINE_VERSION` 46's
+ * same-kind pickup rule was written to prevent a floor weapon from producing. The forge is
+ * the only place a same-kind pair can enter a normal run, so it is the right place for the
+ * gate; `resolveLoadout` stays unchanged, so a hand-built `EngineConfig` (tests, the sim
+ * harnesses, `?dev` fixtures) can still ask for two of a kind on purpose. */
 export function craft(m: MetaState, weaponId: string): CraftResult {
   const bp = BLUEPRINT_CATALOG[weaponId];
   if (!bp) return { ok: false, reason: 'unknown' };
   if (!isUnlocked(m, weaponId)) return { ok: false, reason: 'locked' };
   if (m.loadout.length >= PLAYER_BASE.weaponSlots) return { ok: false, reason: 'loadout-full' };
+  if (kindAlreadyStaged(m, weaponId)) return { ok: false, reason: 'kind-taken' };
   if (!canAfford(m, bp)) return { ok: false, reason: 'unaffordable' };
 
   // Spend each cost from its qualifying tiers, lowest first (deterministic); an emptied

@@ -26,7 +26,9 @@ export type BlueprintSource = 'drop' | 'purchase' | 'event';
 export interface MaterialCost {
   element: DamageType;
   qty: number;
-  minTier?: number; // design/14 (authored; not yet enforced — see module doc)
+  minTier?: number; // design/14. ENFORCED — the module doc above has the mechanism (the bank
+  // keys by (element, rolled tier), so only deep-enough materials count). This said "not yet
+  // enforced" until 2026-09-03, contradicting that doc eleven lines up.
 }
 
 export interface WeaponBlueprint {

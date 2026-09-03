@@ -40,10 +40,17 @@ import {
 // Just enough state for `pickupDebugGate` + `observePickups`: the player's ground point
 // and radius, and the drops. `radius` 16 px is PLAYER_BASE's own solidRadius, so the
 // auto-collect gate here is the real ~31 px.
+//
+// `hp`/`maxHp` are here because distance stopped being the only gate at ENGINE_VERSION 54:
+// a heal is not collectible at ANY distance while the player is at full HP (design/05
+// "only when useful"), and `pickupDebugGate` asks the engine's own predicate. Omitting them
+// left both `undefined`, so `hp < maxHp` was false and every heal below read as
+// never-collectible — which is what these two tests caught. Damaged on purpose, since what
+// this file measures is the DISTANCE rule.
 function stateAt(playerPx: [number, number], pickups: Partial<PickupItem>[], tick = 1): GameState {
   return {
     tick,
-    players: [{ id: 1, alive: true, gx: pxToFp(playerPx[0]), gy: pxToFp(playerPx[1]), radius: pxToFp(16) }],
+    players: [{ id: 1, alive: true, hp: 1, maxHp: 6, gx: pxToFp(playerPx[0]), gy: pxToFp(playerPx[1]), radius: pxToFp(16) }],
     pickups: pickups.map((p, i) => ({ id: i + 1, alive: true, kind: 'heal', gx: 0 as Fp, gy: 0 as Fp, ...p })),
   } as unknown as GameState;
 }

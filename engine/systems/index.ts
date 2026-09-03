@@ -8,7 +8,7 @@ export { DeflectSystem } from './DeflectSystem';
 export { HitResolveSystem } from './HitResolveSystem';
 export { StatusEffectSystem } from './StatusEffectSystem';
 export { DeathDropsSystem } from './DeathDropsSystem';
-export { PickupSystem } from './PickupSystem';
+export { PickupSystem, pickupWouldApply } from './PickupSystem';
 export { SpawnSystem } from './SpawnSystem';
 export { DoorSystem } from './DoorSystem';
 export { ExtractionSystem } from './ExtractionSystem';
