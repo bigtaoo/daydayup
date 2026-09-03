@@ -24,7 +24,7 @@ export class DeathDropsSystem {
     for (const e of state.enemies) {
       if (!e.alive || e.hp > 0) continue;
       e.alive = false;
-      state.events.push({ type: 'death', id: e.id, faction: 'enemy', gx: e.gx, gy: e.gy });
+      state.events.push({ type: 'death', id: e.id, faction: 'enemy', gx: e.gx, gy: e.gy, r: e.radius });
       // Boss adds (design/09 aspirational `onDeathSpawn`, ENGINE_VERSION 27, funny's
       // own onDeathSpawn design/07 already named as the intended home for this).
       // Ringed evenly around the dying boss's own body radius — PRNG-free, same even-

@@ -177,6 +177,28 @@ describe('ReviveSystem — the revive channel', () => {
     expect(a.alive).toBe(false); // dead for good
     expect(s.events.some((e) => e.type === 'death' && e.id === a.id)).toBe(true);
   });
+
+  it('the permanent-death event carries the DRAWN body radius, like the enemy one', () => {
+    // `DeathDropsSystem` is not the only producer of a `death` event — this is the other one,
+    // and both feed the same `EventReactor` case. It matters that they agree on which of the
+    // four radii (`state/actorRadius.ts`) `death.r` means: a player's `footprintRadius` is
+    // deliberately smaller than the silhouette, so the wrong field here would size a burst
+    // smaller than the body it came out of, and the render layer has no way to tell.
+    //
+    // It is asserted on the player `createGameState` actually builds, not on this file's
+    // hand-made `addPlayer` fixture, so a `PLAYER_BASE` change moves the expectation with it.
+    const s = state();
+    const a = s.players[0]!;
+    a.downed = true;
+    a.bleedoutTicks = 1;
+    new ReviveSystem().tick(s);
+    const death = s.events.find((e) => e.type === 'death' && e.id === a.id);
+    expect(death).toBeDefined();
+    expect(death!.type === 'death' && death!.r).toBe(a.radius);
+    // ...and `radius` is a distinct number from the feet circle, so the line above is a real
+    // claim about WHICH radius rather than an accident of the two being equal today.
+    expect(a.radius).not.toBe(a.footprintRadius);
+  });
 });
 
 describe('ReviveSystem — PvP squad + bandage gating (design/05/15)', () => {

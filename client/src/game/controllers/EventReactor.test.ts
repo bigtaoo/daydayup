@@ -11,11 +11,14 @@ import {
   type GameEvent, type GameState, type MeleeSimSpec, type RangedSimSpec,
 } from '@dd/engine';
 import { createGameState } from '@dd/engine/state/GameState';
+import { buildEnemyActor } from '@dd/engine/content/enemies';
+import { DeathDropsSystem } from '@dd/engine/systems';
 // Every enemy in the game fires this one, and `weapons.ts` keeps it out of
 // `WEAPON_SIM_BY_ID` (not player-facing) — so the enemy-shooter case imports it directly.
 import { ENEMY_GUN_SIM } from '@dd/engine/content/weapons';
 import type { ArenaMap } from '@dd/engine/content/arenas';
 import { EventReactor, type EventReactorHost } from './EventReactor';
+import { fpToPx } from '../coords';
 import { swingShapeOf } from './attackShapes';
 import type { FxController } from '../fx/FxController';
 import { HudView } from '../ui/HudView';
@@ -181,8 +184,100 @@ describe('EventReactor — score reactions unaffected by the toast migration', (
     hud.build(new Layers(), { w: 1280, h: 720 });
     const host = fakeHost();
     const reactor = new EventReactor(fakeFx(), hud, fakeAudio(), host);
-    reactor.consume([{ type: 'death', faction: 'enemy', gx: 0, gy: 0 } as GameEvent]);
+    reactor.consume([{ type: 'death', faction: 'enemy', gx: 0, gy: 0, r: pxToFp(15) } as GameEvent]);
     expect(host.addScore).toHaveBeenCalled();
+  });
+});
+
+// 2026-09-03. The death burst is sized off the corpse (`GameEvent`'s `death.r`, the dying
+// actor's drawn body radius) instead of off one authored constant, and centred on that body
+// rather than on its ground anchor. Both are invisible in a screenshot of one mob dying —
+// which is how the old flat spray survived: it was eyeballed on a 15 px body and stayed the
+// same size on a 30 px boss — so they are measured here against TWO body sizes.
+describe('EventReactor — the death burst is sized and centred off the dying body', () => {
+  const dieAt = (gx: number, gy: number, bodyPx: number) => {
+    const hud = new HudView();
+    hud.build(new Layers(), { w: 1280, h: 720 });
+    const fx = fakeFx();
+    new EventReactor(fx, hud, fakeAudio(), fakeHost()).consume([
+      { type: 'death', id: 3, faction: 'enemy', gx, gy, r: pxToFp(bodyPx) } as GameEvent,
+    ]);
+    const debris = fx.particles.explosionDebris as unknown as ReturnType<typeof vi.fn>;
+    expect(debris).toHaveBeenCalledTimes(1);
+    return debris.mock.calls[0] as [number, number, number, number];
+  };
+
+  it('hands the particle system the body radius in screen px', () => {
+    // Through the fp round trip, which is lossy (`pxToFp(15)` comes back as 14.992), so every
+    // expectation below is stated as the round-tripped value rather than as the authored px.
+    expect(dieAt(0, 0, 15)[3]).toBeCloseTo(fpToPx(pxToFp(15)), 6);
+    expect(dieAt(0, 0, 30)[3]).toBeCloseTo(fpToPx(pxToFp(30)), 6);
+  });
+
+  it('lifts the centre by a fraction of that body, not by a flat 12 px', () => {
+    // The bug the fraction replaced: a lift that is 0.8 body radii on the mob it was chosen
+    // against and 0.4 on a boss, i.e. a boss ring hanging around its feet.
+    const [x, mobY] = dieAt(pxToFp(300), pxToFp(200), 15);
+    expect(x).toBeCloseTo(300, 6);
+    expect(mobY).toBeCloseTo(200 - fpToPx(pxToFp(15)) * 0.8, 6);
+    const [, bossY] = dieAt(pxToFp(300), pxToFp(200), 30);
+    expect(bossY).toBeCloseTo(200 - fpToPx(pxToFp(30)) * 0.8, 6);
+    // ...and the lift is a real fraction of the body, not two constants that happen to differ.
+    expect(200 - bossY).toBeCloseTo((200 - mobY) * 2, 3);
+  });
+
+  it('follows the corpse rather than sitting at the origin', () => {
+    const [x, y] = dieAt(pxToFp(-140), pxToFp(96), 15);
+    expect(x).toBeCloseTo(-140, 6);
+    expect(y).toBeCloseTo(96 - fpToPx(pxToFp(15)) * 0.8, 6);
+  });
+
+  it('is sized off the same radius the BODY is drawn at, through the real engine', () => {
+    // The end-to-end version of the two cases above, and the one that can catch what they
+    // cannot: they hand this reactor an event built by hand, so they pin the reactor's own
+    // arithmetic while taking the event's contents on trust. Here the event comes out of the
+    // real `DeathDropsSystem`, off a real `buildEnemyActor`, so the whole chain is measured —
+    // which radius the engine puts on the wire, which field the reactor reads, and the fp→px
+    // conversion between them (handing `e.r` straight through would be a burst ~32x too big,
+    // and it is the single easiest mistake to make in this file: `gx`/`gy` right beside it
+    // need the same call).
+    //
+    // The expectation is `fpToPx(e.radius)` because that is LITERALLY what the body is drawn
+    // at — `Scene.reconcile` builds the view as `new Enemy(fpToPx(e.radius), ...)`. So a ring
+    // of 1.6 is 1.6 of the silhouette on screen, which is the whole claim of the rewrite.
+    const s = createGameState({ seed: 3, worldW: 1600, worldH: 1200, waves: [] });
+    const boss = buildEnemyActor(s, pxToFp(400), pxToFp(300), 'boss');
+    s.enemies.push(boss);
+    const drawnR = fpToPx(boss.radius);
+    const feetR = fpToPx(boss.footprintRadius);
+    boss.hp = 0;
+    new DeathDropsSystem().tick(s);
+    expect(s.enemies).toHaveLength(0); // ...and the corpse is gone, which is why `r` is carried
+
+    const hud = new HudView();
+    hud.build(new Layers(), { w: 1280, h: 720 });
+    const fx = fakeFx();
+    new EventReactor(fx, hud, fakeAudio(), fakeHost()).consume(s.events);
+    const debris = fx.particles.explosionDebris as unknown as ReturnType<typeof vi.fn>;
+    expect(debris).toHaveBeenCalledTimes(1);
+    const [, , , bodyPx] = debris.mock.calls[0] as [number, number, number, number];
+    expect(bodyPx).toBeCloseTo(drawnR, 6);
+    // Not the feet circle — the substitution that has already gone wrong twice on the engine
+    // side of this same value (`DoorSystem`, the minion clamp; both fixed in v49).
+    expect(bodyPx).not.toBeCloseTo(feetR, 1);
+    // ...and in px, not fp. Stated as a bound rather than as "=== drawnR" a second time, so
+    // this line fails for the one reason it is here for.
+    expect(bodyPx).toBeLessThan(boss.radius as unknown as number);
+  });
+
+  it('does not burst for a player death — that branch is cue-only', () => {
+    const hud = new HudView();
+    hud.build(new Layers(), { w: 1280, h: 720 });
+    const fx = fakeFx();
+    new EventReactor(fx, hud, fakeAudio(), fakeHost()).consume([
+      { type: 'death', id: 1, faction: 'player', gx: 0, gy: 0, r: pxToFp(15) } as GameEvent,
+    ]);
+    expect(fx.particles.explosionDebris).not.toHaveBeenCalled();
   });
 });
 
@@ -433,24 +528,24 @@ describe('EventReactor — the cues that are about YOU (design/11)', () => {
     const { reactor, audio } = reactorFor(null);
     reactor.consume([
       hitOn(0),
-      { type: 'death', id: 0, faction: 'player', gx: 0, gy: 0 } as GameEvent,
+      { type: 'death', id: 0, faction: 'player', gx: 0, gy: 0, r: pxToFp(15) } as GameEvent,
     ]);
     expect(cuesOf(audio)).toEqual(['impact']);
   });
 
   it("the local seat's death plays death.player; another player's plays nothing", () => {
     const a = reactorFor(LOCAL);
-    a.reactor.consume([{ type: 'death', id: LOCAL, faction: 'player', gx: 0, gy: 0 } as GameEvent]);
+    a.reactor.consume([{ type: 'death', id: LOCAL, faction: 'player', gx: 0, gy: 0, r: pxToFp(15) } as GameEvent]);
     expect(cuesOf(a.audio)).toEqual(['death.player']);
 
     const b = reactorFor(LOCAL);
-    b.reactor.consume([{ type: 'death', id: OTHER, faction: 'player', gx: 0, gy: 0 } as GameEvent]);
+    b.reactor.consume([{ type: 'death', id: OTHER, faction: 'player', gx: 0, gy: 0, r: pxToFp(15) } as GameEvent]);
     expect(b.audio.play).not.toHaveBeenCalled();
   });
 
   it('an enemy death still plays death.enemy, and never the run-ending fall', () => {
     const { reactor, audio, host } = reactorFor(LOCAL);
-    reactor.consume([{ type: 'death', id: 99, faction: 'enemy', gx: 0, gy: 0 } as GameEvent]);
+    reactor.consume([{ type: 'death', id: 99, faction: 'enemy', gx: 0, gy: 0, r: pxToFp(15) } as GameEvent]);
     expect(cuesOf(audio)).toEqual(['death.enemy']);
     expect(host.addScore).toHaveBeenCalled(); // the kill-score branch is untouched
   });
@@ -542,7 +637,7 @@ describe('EventReactor — the cues that are about YOU (design/11)', () => {
     // twin: a second sound narrating the moment the first one already announced.
     const { reactor, audio, state } = arenaReactor([0, 1]);
     reactor.consume([
-      { type: 'death', id: state.players[0]!.id, faction: 'player', gx: 0, gy: 0 } as GameEvent,
+      { type: 'death', id: state.players[0]!.id, faction: 'player', gx: 0, gy: 0, r: pxToFp(15) } as GameEvent,
       winBy(1),
     ]);
     expect(audio.play).toHaveBeenCalledTimes(1);

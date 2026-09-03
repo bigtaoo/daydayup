@@ -9,7 +9,7 @@ import { makeWeapon, openSwing, SABER_SIM } from '@dd/engine/content/weapons';
 import { freshStatus } from '@dd/engine/content/damage';
 import { PLAYER_BASE } from '@dd/engine/content/players';
 import { resolveSkin } from '@dd/engine/content/skins';
-import { BASIC_ENEMY } from '@dd/engine/content/enemies';
+import { BASIC_ENEMY, buildEnemyActor } from '@dd/engine/content/enemies';
 import { WALL_NORTH_BRIM } from '@dd/engine/config';
 import { SIM } from '@dd/engine/sim.config';
 
@@ -370,6 +370,29 @@ describe('DeathDropsSystem (step 8)', () => {
     expect(s.events.some((ev) => ev.type === 'death' && ev.id === e.id)).toBe(true);
     expect(s.pickups).toHaveLength(1);
     expect(s.pickups[0]!.spawnTick).toBe(5); // tagged this tick → not collectable yet
+  });
+
+  it('the death event carries the DRAWN body radius, not a collision radius', () => {
+    // The render layer sizes the death burst off this (design/08: events are the only
+    // engine→render channel, and there is nothing left to read it off — the enemy is compacted
+    // out of `state.enemies` on this same tick, asserted above). Which of the four radii
+    // (`state/actorRadius.ts`) it is matters: `footprintRadius` is deliberately SMALLER than
+    // the silhouette so a crowd reads as a crowd, so a burst sized off it would be smaller
+    // than the corpse it came out of — and it is the exact substitution that has already gone
+    // wrong twice in this file's neighbours (`DoorSystem`, `DeathDropsSystem`'s own minion
+    // clamp, both fixed in v49). It cannot be read off a hand-built fixture either: this
+    // asserts against `buildEnemyActor`'s own body, via a boss, so a roster change that moves
+    // the radius moves the expectation with it.
+    const s = state();
+    const boss = buildEnemyActor(s, pxToFp(830), pxToFp(600), 'boss');
+    boss.hp = 0;
+    s.enemies.push(boss);
+    new DeathDropsSystem().tick(s);
+    const death = s.events.find((ev) => ev.type === 'death' && ev.id === boss.id);
+    expect(death).toBeDefined();
+    expect(death!.type === 'death' && death!.r).toBe(boss.radius);
+    // ...and a boss's silhouette is the one place the three radii visibly disagree.
+    expect(boss.radius).not.toBe(boss.footprintRadius);
   });
 
   it('drop kind is deterministic for a given seed', () => {

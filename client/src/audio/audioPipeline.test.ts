@@ -177,8 +177,8 @@ const EVENTS: Record<string, GameEvent> = {
   // produces `hurt`, which is the whole gate on that cue and the reason the two fixtures
   // cannot be one.
   hurt: { type: 'hit', target: 1, faction: 'enemy', gx: 0, gy: 0, damage: 1, damageType: 'physical' } as GameEvent,
-  'death.enemy': { type: 'death', id: 9, faction: 'enemy', gx: 0, gy: 0 } as GameEvent,
-  'death.player': { type: 'death', id: 1, faction: 'player', gx: 0, gy: 0 } as GameEvent,
+  'death.enemy': { type: 'death', id: 9, faction: 'enemy', gx: 0, gy: 0, r: 480 } as GameEvent,
+  'death.player': { type: 'death', id: 1, faction: 'player', gx: 0, gy: 0, r: 480 } as GameEvent,
   'pickup.heal': { type: 'pickup', kind: 'heal', gx: 0, gy: 0 } as GameEvent,
   'pickup.weapon': { type: 'pickup', kind: 'weapon', weaponId: 'repeater', gx: 0, gy: 0 } as GameEvent,
   'pickup.material': { type: 'pickup', kind: 'material', materialId: 'mat_fire', qty: 1, gx: 0, gy: 0 } as GameEvent,

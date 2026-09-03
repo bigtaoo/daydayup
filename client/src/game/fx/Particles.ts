@@ -18,6 +18,27 @@ interface Particle {
   maxLife: number;
 }
 
+// ---- death burst (`explosionDebris`) ----
+
+/** The ring's final radius, in multiples of the dying body's own drawn radius. Just outside
+ *  the silhouette: the debris has to clear the corpse (a ring drawn inside it is hidden by it,
+ *  and the dissolve shader is already playing there) without leaving the space the body
+ *  occupied, which is the whole point of sizing it off the body at all. */
+const DEBRIS_REACH_R = 1.6;
+
+/** The basic mob's drawn radius (`engine/content/enemies.ts`, `pxToFp(15)`) — the body the
+ *  authored 6-8 piece count was chosen against, and therefore the reference the count is held
+ *  proportional to. Not a gameplay number: it only says "this many pieces per this much
+ *  circumference", so a roster change moves the density, never the ring. */
+const DEBRIS_REF_BODY_PX = 15;
+
+/** How long the ring takes to reach `DEBRIS_REACH_R` and fade out. Shared by every piece
+ *  BY DESIGN — it is half of what makes the burst land as a circle (see `explosionDebris`),
+ *  so a per-piece roll here is not a missing flourish, it is the bug this replaced. Alpha
+ *  already decays across the life, so the ring is nearly gone before it stops expanding and
+ *  nothing reads as a synchronised pop. */
+const DEBRIS_LIFE_MS = 300;
+
 export class ParticleSystem {
   readonly view = new Container();
   private particles: Particle[] = [];
@@ -146,16 +167,50 @@ export class ParticleSystem {
     });
   }
 
-  /** A radial burst of debris on death — gravity-affected, faction/element-tinted. */
-  explosionDebris(x: number, y: number, color: number) {
-    const count = this.scaled(6 + Math.floor(Math.random() * 3));
+  /**
+   * A radial burst of debris on death — a RING sized off the body that just died, faction/
+   * element-tinted (2026-09-03; live report: the burst read far too big for the corpse).
+   *
+   * What this was until now: one authored spray for every death — speed 70-160 px/s over a
+   * 260-500 ms life under gravity 200, i.e. a reach of anywhere from 18 to 80 px, drifting
+   * down as it went. Two things fell out of that and both are what the report is about.
+   * Its SIZE was unrelated to the thing dying (5 body radii on a 15 px mob, 2.7 on a 30 px
+   * boss, so the mob's death was the bigger event of the two), and its SHAPE was a plume,
+   * not a burst: with each piece rolling its own speed and its own lifetime, where any one
+   * of them ended up was independent of every other, and gravity pulled the whole thing
+   * off-centre on the way. It read as an explosion the corpse was standing in.
+   *
+   * So the burst is now solved from `bodyRadiusPx` instead of authored:
+   *
+   *   - every piece travels the SAME distance, `DEBRIS_REACH_R` body radii, over the same
+   *     lifetime — speed is `distance / life`, never rolled — so what the eye follows is one
+   *     expanding circle whose final radius is a property of the body, not of the dice;
+   *   - the jitter that keeps it from reading mechanical is on the ANGLE and on ±12% of the
+   *     radius, neither of which can change how big the burst is;
+   *   - no gravity. It is the only term here that is not radial, and at a mob-sized reach of
+   *     24 px its old 200 px/s² was worth ~9 px of sag by the end — better than a third of
+   *     the ring's own radius, i.e. exactly the difference between a circle and a teardrop.
+   *     (`shieldShards`, which is a ring too, keeps a token 70 for the same reason it always
+   *     did: it is thrown at 130-220 px/s, so the same sag is a fraction of that reach.)
+   *
+   * `bodyRadiusPx` is the DRAWN body radius, straight off the death event (`GameEvent`'s
+   * `death.r` documents why the engine has to carry it) — not one of the collision radii.
+   */
+  explosionDebris(x: number, y: number, color: number, bodyRadiusPx: number) {
+    // Angular density is held constant instead of the count: a boss ring is 2x the
+    // circumference of a mob's, and the authored 6-8 spread over it would read as a handful
+    // of stray dots rather than as a body coming apart. Fractional counts are fine —
+    // `scaled` does the one rounding, budget included.
+    const count = this.scaled(((6 + Math.floor(Math.random() * 3)) * bodyRadiusPx) / DEBRIS_REF_BODY_PX);
+    const reach = bodyRadiusPx * DEBRIS_REACH_R;
     for (let i = 0; i < count; i++) {
       const a = (i / count) * Math.PI * 2 + Math.random() * 0.4;
-      const speed = 70 + Math.random() * 90;
+      const dist = reach * (0.88 + Math.random() * 0.24);
+      const speed = dist / (DEBRIS_LIFE_MS / 1000);
       this.spawn({
         x, y, vx: Math.cos(a) * speed, vy: Math.sin(a) * speed,
-        gravity: 200, spin: (Math.random() - 0.5) * 8,
-        color, size: 2.5 + Math.random() * 2.5, lifeMs: 260 + Math.random() * 240,
+        spin: (Math.random() - 0.5) * 8,
+        color, size: 2.5 + Math.random() * 2.5, lifeMs: DEBRIS_LIFE_MS,
       });
     }
   }

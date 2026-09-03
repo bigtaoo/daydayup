@@ -52,7 +52,19 @@ export type GameEvent =
   // An elemental status was applied or ticked on a target (render plays the fx —
   // burn flames, chill frost, shock arc, poison bubbles). Transient, fx-only (08).
   | { type: 'status'; effect: 'burn' | 'chill' | 'shock' | 'poison'; target: number; gx: Fp; gy: Fp }
-  | { type: 'death'; id: number; faction: Faction; gx: Fp; gy: Fp }
+  // `r` is the dying actor's DRAWN body radius (`Actor.radius`, not any of the three
+  // collision radii — see `state/actorRadius.ts`), carried so the render layer can size the
+  // death burst off the corpse instead of off one authored number that fitted a 15 px mob and
+  // nothing else (2026-09-03, live report: the burst reads far too big for the body).
+  //
+  // This is the one lifecycle event that genuinely cannot be answered from state the way
+  // `bullet_fired`'s deliberately-omitted fields are: `DeathDropsSystem` compacts the dead
+  // enemy out of `state.enemies` in the SAME tick it pushes this, so by the time a frame's
+  // events are consumed there is no entity left to read a radius off — and `Scene.actorAt`
+  // cannot stand in for it either, because the view has already moved to the dying list by
+  // then (`render/rigClipLayer.ts` documents that same ordering). Additive and inert for the
+  // sim, so no ENGINE_VERSION bump: see the header above.
+  | { type: 'death'; id: number; faction: Faction; gx: Fp; gy: Fp; r: Fp }
   // A boss-tier enemy dropped below its enrage HP threshold (design/09 aspirational
   // `traits`, now real). Fires ONCE, the tick it first triggers — fx/audio only,
   // never read back into sim decisions (the enraged bonus itself lives on the actor).

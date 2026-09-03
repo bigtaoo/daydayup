@@ -94,19 +94,127 @@ describe('ParticleSystem.shellCasing', () => {
   });
 });
 
+/** The basic mob / boss drawn radii (`engine/content/enemies.ts`) — the two ends of the
+ *  roster the death ring is sized against, so every assertion below is made at BOTH. A ring
+ *  measured at one body size cannot tell "sized off the body" from "an authored constant that
+ *  happens to fit this body", which is the exact bug this replaced. */
+const MOB_BODY_PX = 15;
+const BOSS_BODY_PX = 30;
+/** `DEBRIS_REACH_R` and the ±12% radius jitter, restated (both are module-private). */
+const REACH_R = 1.6;
+const JITTER = 0.12;
+
+/**
+ * Where each piece of a burst ended up, relative to where the burst was spawned, at the end
+ * of its life. Measured by stepping the system rather than by reading velocities, which are
+ * private — and 299 of the 300 ms life rather than all of it, since `update` destroys a
+ * particle the frame its life runs out (the same reason `shieldShards`' own outward-direction
+ * test steps one frame instead of inspecting the spawn).
+ */
+function debrisAtEndOfLife(ps: ParticleSystem): { a: number; r: number; x: number; y: number }[] {
+  ps.update(299);
+  return ps.view.children.map((c) => ({
+    a: Math.atan2(c.y, c.x), r: Math.hypot(c.x, c.y), x: c.x, y: c.y,
+  }));
+}
+
 describe('ParticleSystem.explosionDebris', () => {
-  it('spawns the minimum debris count at the low end of the random range', () => {
-    const ps = new ParticleSystem();
-    // count = 6 + floor(0*3) = 6
-    withRandom(0, () => ps.explosionDebris(0, 0, 0xff0000));
-    expect(ps.view.children.length).toBe(6);
+  it('sizes the ring off the dying body — a boss burst is twice a mob burst', () => {
+    // The report this method was rewritten for: the burst was one authored size for every
+    // corpse. Two runs with the SAME dice, so the only thing that differs is the body.
+    const mob = new ParticleSystem();
+    withRandom(0.5, () => mob.explosionDebris(0, 0, 0xff0000, MOB_BODY_PX));
+    const boss = new ParticleSystem();
+    withRandom(0.5, () => boss.explosionDebris(0, 0, 0xff0000, BOSS_BODY_PX));
+
+    const mobR = debrisAtEndOfLife(mob).map((d) => d.r);
+    const bossR = debrisAtEndOfLife(boss).map((d) => d.r);
+    expect(mobR.length).toBeGreaterThan(0);
+    expect(bossR.length).toBeGreaterThan(0);
+    const mean = (xs: number[]): number => xs.reduce((t, v) => t + v, 0) / xs.length;
+    // Sized off the body, and to the authored multiple of it — not merely "bigger for a
+    // bigger body", which a `bodyRadiusPx * 0.2 + 40` would also satisfy.
+    expect(mean(mobR)).toBeCloseTo(MOB_BODY_PX * REACH_R, 0);
+    expect(mean(bossR)).toBeCloseTo(BOSS_BODY_PX * REACH_R, 0);
+    expect(mean(bossR) / mean(mobR)).toBeCloseTo(2, 1);
+    // ...and the mob's ring is well inside what the old flat spray reached (18-80 px), which
+    // is what "too big" meant: at 15 px of body it was up to 5 body radii of debris.
+    expect(mean(mobR)).toBeLessThan(30);
   });
 
-  it('spawns the maximum debris count at the high end of the random range', () => {
+  for (const bodyPx of [MOB_BODY_PX, BOSS_BODY_PX]) {
+    it(`lands as a circle at ${bodyPx} px of body, whatever the dice say`, () => {
+      // The other half of the report. THREE properties in one measurement, because they are
+      // one property of the burst: every piece the same distance out (speed solved from the
+      // reach, never rolled), no downward drift (no gravity term), and the whole circle
+      // covered (evenly walked angles). A jittered PRNG, not a pinned one — a constant
+      // `Math.random` would make "every piece the same distance" true by construction even
+      // if the speed were rolled, which is the shape of a test that pins nothing.
+      const rolls = [0.02, 0.31, 0.5, 0.77, 0.94, 0.63, 0.18, 0.86, 0.41, 0.99];
+      let i = 0;
+      const spy = vi.spyOn(Math, 'random').mockImplementation(() => rolls[i++ % rolls.length]!);
+      const ps = new ParticleSystem();
+      try {
+        ps.explosionDebris(0, 0, 0xff0000, bodyPx);
+      } finally {
+        spy.mockRestore();
+      }
+
+      const reach = bodyPx * REACH_R;
+      const debris = debrisAtEndOfLife(ps);
+      expect(debris.length).toBeGreaterThan(4);
+      for (const d of debris) {
+        // Inside the authored jitter band and nowhere else. This single bound is what kills
+        // gravity as well as a rolled speed: 200 px/s^2 over the 300 ms life is ~9 px of sag,
+        // which at a mob's 24 px reach would throw the down-going pieces to 1.4x and the
+        // up-going ones to 0.6x — both far outside 1 ± 0.12.
+        expect(d.r).toBeGreaterThan(reach * (1 - JITTER - 0.01));
+        expect(d.r).toBeLessThan(reach * (1 + JITTER + 0.01));
+      }
+      // No net drift in any direction: a ring, not a plume leaning somewhere.
+      const cx = debris.reduce((t, d) => t + d.x, 0) / debris.length;
+      const cy = debris.reduce((t, d) => t + d.y, 0) / debris.length;
+      expect(Math.hypot(cx, cy)).toBeLessThan(reach * 0.35);
+      // ...and the pieces cover the circle rather than clustering on one arc.
+      const sorted = debris.map((d) => d.a).sort((x, y) => x - y);
+      const gaps = sorted.map((a, k) => (k === 0 ? a + Math.PI * 2 - sorted[sorted.length - 1]! : a - sorted[k - 1]!));
+      expect(Math.max(...gaps)).toBeLessThan(Math.PI);
+    });
+  }
+
+  it('stays physical debris rather than glow', () => {
+    // The one visual property of the burst that is NOT geometry, and the neighbouring
+    // spawners in this file split on it: `muzzleFlame` and `shieldShards` are additive
+    // (light), casings and this are not (matter). Debris flipped to additive would read as a
+    // ring of sparks — plausible on its own, wrong for a body coming apart, and invisible to
+    // every other assertion here since blend mode moves nothing.
     const ps = new ParticleSystem();
-    // count = 6 + floor(0.999*3) = 8
-    withRandom(0.999, () => ps.explosionDebris(0, 0, 0xff0000));
-    expect(ps.view.children.length).toBe(8);
+    withRandom(0.5, () => ps.explosionDebris(0, 0, 0xff0000, MOB_BODY_PX));
+    expect(ps.view.children.length).toBeGreaterThan(0);
+    for (const child of ps.view.children) expect(child.blendMode).not.toBe('add');
+  });
+
+  it('holds the piece count proportional to the body, so density survives the size', () => {
+    // A boss ring is twice the circumference; the authored 6-8 spread over it would read as a
+    // handful of stray dots. Same dice again, so the count is the body's doing.
+    const mob = new ParticleSystem();
+    withRandom(0.5, () => mob.explosionDebris(0, 0, 0xff0000, MOB_BODY_PX));
+    const boss = new ParticleSystem();
+    withRandom(0.5, () => boss.explosionDebris(0, 0, 0xff0000, BOSS_BODY_PX));
+    // count = round((6 + floor(0.5*3)) * bodyPx / 15) = 7 and 14.
+    expect(mob.view.children.length).toBe(7);
+    expect(boss.view.children.length).toBe(14);
+  });
+
+  it('spawns the authored count band at the reference body size', () => {
+    // The 6-8 roll itself, unchanged by the rewrite — at `DEBRIS_REF_BODY_PX` the
+    // proportional scaling above is exactly 1x.
+    const low = new ParticleSystem();
+    withRandom(0, () => low.explosionDebris(0, 0, 0xff0000, MOB_BODY_PX));
+    expect(low.view.children.length).toBe(6); // 6 + floor(0*3)
+    const high = new ParticleSystem();
+    withRandom(0.999, () => high.explosionDebris(0, 0, 0xff0000, MOB_BODY_PX));
+    expect(high.view.children.length).toBe(8); // 6 + floor(0.999*3)
   });
 });
 
@@ -273,12 +381,32 @@ describe('ParticleSystem.clear', () => {
 describe('ParticleSystem.setBudget', () => {
   it('thins a burst in proportion to the budget', () => {
     const full = new ParticleSystem();
-    withRandom(0.5, () => full.explosionDebris(0, 0, 0xffffff));
+    withRandom(0.5, () => full.explosionDebris(0, 0, 0xffffff, 15));
     const thin = new ParticleSystem();
     thin.setBudget(0.35);
-    withRandom(0.5, () => thin.explosionDebris(0, 0, 0xffffff));
+    withRandom(0.5, () => thin.explosionDebris(0, 0, 0xffffff, 15));
     expect(thin.view.children.length).toBeLessThan(full.view.children.length);
     expect(thin.view.children.length).toBeGreaterThan(0);
+  });
+
+  it('thins the death ring without resizing it — the budget owns the count, not the reach', () => {
+    // The quality tier is allowed to make a burst sparser; it is not allowed to make a mob's
+    // death a different SIZE than it is on another machine, which is what would happen if the
+    // budget ever reached the reach (a `scaled(reach)` looks just as reasonable as
+    // `scaled(count)` in a diff, and `setBudget`'s own doc calls itself a multiplier on
+    // "every burst count"). Same dice both sides, so the only variable is the budget.
+    const full = new ParticleSystem();
+    withRandom(0.5, () => full.explosionDebris(0, 0, 0xff0000, MOB_BODY_PX));
+    const thin = new ParticleSystem();
+    thin.setBudget(0.35);
+    withRandom(0.5, () => thin.explosionDebris(0, 0, 0xff0000, MOB_BODY_PX));
+
+    const fullR = debrisAtEndOfLife(full).map((d) => d.r);
+    const thinR = debrisAtEndOfLife(thin).map((d) => d.r);
+    expect(thinR.length).toBeLessThan(fullR.length); // sparser...
+    expect(thinR.length).toBeGreaterThan(0);
+    const mean = (xs: number[]): number => xs.reduce((t, v) => t + v, 0) / xs.length;
+    expect(mean(thinR)).toBeCloseTo(mean(fullR), 6); // ...and exactly as big
   });
 
   it('never silences a burst entirely, however small the budget', () => {
@@ -296,7 +424,7 @@ describe('ParticleSystem.setBudget', () => {
     p.setBudget(0);
     withRandom(0.5, () => {
       p.muzzleFlame(0, 0, 0, 0xffffff);
-      p.explosionDebris(0, 0, 0xffffff);
+      p.explosionDebris(0, 0, 0xffffff, 15);
       p.shellCasing(0, 0, 0);
     });
     expect(p.view.children.length).toBe(0);

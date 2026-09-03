@@ -790,11 +790,15 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 - **09-03** [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump) — funny's coverage shape, ported and gated at 90% lines **and** 90% branches over all three packages' whole source trees. The client was already at 96.52% and nothing measured it; branches sat 0.03pp over the bar. Adds a rule funny has no equivalent of (a narrowed `coverage.include` fails outright — the mutant reports 97.68%/92.13% while measuring 130 of 224 files), retires Game.ts's 1135-line baseline entry by splitting it six ways, and makes the logic-consistency gates a named CI job whose manifest fails closed. Two production bugs, both found by the first test that touched the code. `test` `tools` `net` `docs`
 - **09-03** [A mob has one size while walking and a bigger one while standing](roadmap/20-2026-09-03-mob-spacing.md#a-mob-has-one-size-while-walking-and-a-bigger-one-while-standing-2026-09-03-engine-engine_version-55) — *"怪物寻路时要加一个停留体积…这里是两个概念"* — a mob carried one size and was asked two questions with opposite answers: walking it must fit a 1.5-body slit, standing it should claim two body radii. Arrival became state (`EnemyActor.holding`) and the second radius hangs off it, so a garrison spreads where it stops without any gap in the level narrowing. Measured cost, not assumed: the careful bot's avg floor 2.5 → 1.5, and the obvious mitigation measured backwards. `engine` `test` `docs`
 
+**[2026-09-03 — a death burst is the size of what died](roadmap/21-2026-09-03-death-burst.md)**
+
+- **09-03** [A death burst is the size of what died](roadmap/21-2026-09-03-death-burst.md#a-death-burst-is-the-size-of-what-died-2026-09-03-client--engine-event-field-no-engine_version-bump) — *the effect reads well, it is just far too big — make it a circle sized off the monster's body.* The burst had been one authored spray since 2026-07-26: per-piece speed and lifetime under gravity, so its reach was 18-80 px on every corpse alike (5 body radii on a mob, 2.7 on a boss) and its shape a plume rather than a ring. Now solved from the body — equal distance per piece, jitter only where it cannot change the size, no gravity. Nine mutants, nine killed; no frame sampled, and the doc says so. `render` `test` `docs`
+
 ## The work log — by theme
 
-The same 100 entries, grouped. An entry with more than one tag appears more than once.
+The same 102 entries, grouped. An entry with more than one tag appears more than once.
 
-**`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(52)*
+**`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(53)*
 
 - 08-12 [Live-play bug-fix pass](roadmap/02-2026-08-12--08-15.md#live-play-bug-fix-pass--2026-08-12-user-report-from-a-dungeon-mode-screenshot)
 - 08-12 [Viewport-fill bug-fix pass](roadmap/02-2026-08-12--08-15.md#viewport-fill-bug-fix-pass--2026-08-12)
@@ -848,6 +852,7 @@ The same 100 entries, grouped. An entry with more than one tag appears more than
 - 09-02 [The weapon decides how heavy it swings, and how hard it kicks](roadmap/15-2026-09-02-melee-sector.md#the-weapon-decides-how-heavy-it-swings-and-how-hard-it-kicks-2026-09-02-client-only-no-engine-bump)
 - 09-03 [Every door is the same door, whatever wall it is cut into](roadmap/16-2026-09-03-doc-audit.md#every-door-is-the-same-door-whatever-wall-it-is-cut-into-2026-09-03-client-only-no-engine-bump)
 - 09-03 [A door has a clock, and direction is what says "you can walk through this"](roadmap/18-2026-09-03-door-fx.md#a-door-has-a-clock-and-direction-is-what-says-you-can-walk-through-this-2026-09-03-client-only-no-engine-bump)
+- 09-03 [A death burst is the size of what died](roadmap/21-2026-09-03-death-burst.md#a-death-burst-is-the-size-of-what-died-2026-09-03-client--engine-event-field-no-engine_version-bump)
 
 **`art`** — authored assets and the art pipeline *(16)*
 
@@ -883,7 +888,7 @@ The same 100 entries, grouped. An entry with more than one tag appears more than
 - 08-27 [The floor stops at its own walls](roadmap/10-2026-08-27.md#the-floor-stops-at-its-own-walls-2026-08-27-client-only)
 - 08-31 [The re-measurement that its own control threw away](roadmap/11-2026-08-28--08-31.md#the-re-measurement-that-its-own-control-threw-away-2026-08-31-docs--measurement-only)
 
-**`engine`** — the deterministic sim — anything that can bump `ENGINE_VERSION` *(19)*
+**`engine`** — the deterministic sim — anything that can bump `ENGINE_VERSION` *(20)*
 
 - 08-04 [Room & door model — co-resident PvE floors](roadmap/01-2026-07-24--08-05.md#room--door-model--co-resident-pve-floors--2026-08-04-engine_version-3334)
 - 08-12 [Boss-room instant-extract bug fix](roadmap/02-2026-08-12--08-15.md#boss-room-instant-extract-bug-fix--2026-08-12)
@@ -923,7 +928,7 @@ The same 100 entries, grouped. An entry with more than one tag appears more than
 - 08-25 [The Seven Districts: the launch arena gets authored](roadmap/06-2026-08-25.md#the-seven-districts-the-launch-arena-gets-authored-2026-08-25-content)
 - 08-25 [The three parked rules that had only shipped half](roadmap/06-2026-08-25.md#the-three-parked-rules-that-had-only-shipped-half-2026-08-25-client--one-render-only-engine-field)
 
-**`test`** — coverage sweeps, gates, mutation batteries *(32)*
+**`test`** — coverage sweeps, gates, mutation batteries *(33)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 08-05 [Platform-layer test coverage pass](roadmap/01-2026-07-24--08-05.md#platform-layer-test-coverage-pass--2026-08-05-全部加测试)
@@ -957,6 +962,7 @@ The same 100 entries, grouped. An entry with more than one tag appears more than
 - 09-03 [The path references get a gate, by giving up on two thirds of them](roadmap/16-2026-09-03-doc-audit.md#the-path-references-get-a-gate-by-giving-up-on-two-thirds-of-them-2026-09-03-tooling--docs-no-engine-bump)
 - 09-03 [A door has a clock, and direction is what says "you can walk through this"](roadmap/18-2026-09-03-door-fx.md#a-door-has-a-clock-and-direction-is-what-says-you-can-walk-through-this-2026-09-03-client-only-no-engine-bump)
 - 09-03 [A mob has one size while walking and a bigger one while standing](roadmap/20-2026-09-03-mob-spacing.md#a-mob-has-one-size-while-walking-and-a-bigger-one-while-standing-2026-09-03-engine-engine_version-55)
+- 09-03 [A death burst is the size of what died](roadmap/21-2026-09-03-death-burst.md#a-death-burst-is-the-size-of-what-died-2026-09-03-client--engine-event-field-no-engine_version-bump)
 
 **`audio`** — cues, music, the engine to sound channel *(5)*
 
@@ -1006,7 +1012,7 @@ The same 100 entries, grouped. An entry with more than one tag appears more than
 - 09-03 [The path references get a gate, by giving up on two thirds of them](roadmap/16-2026-09-03-doc-audit.md#the-path-references-get-a-gate-by-giving-up-on-two-thirds-of-them-2026-09-03-tooling--docs-no-engine-bump)
 - 09-03 [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump)
 
-**`docs`** — design docs and this log itself *(28)*
+**`docs`** — design docs and this log itself *(30)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-02 [Documentation pass](roadmap/01-2026-07-24--08-05.md#documentation-pass--2026-08-02)
@@ -1037,6 +1043,7 @@ The same 100 entries, grouped. An entry with more than one tag appears more than
 - 09-03 [A door has a clock, and direction is what says "you can walk through this"](roadmap/18-2026-09-03-door-fx.md#a-door-has-a-clock-and-direction-is-what-says-you-can-walk-through-this-2026-09-03-client-only-no-engine-bump)
 - 09-03 [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump)
 - 09-03 [A mob has one size while walking and a bigger one while standing](roadmap/20-2026-09-03-mob-spacing.md#a-mob-has-one-size-while-walking-and-a-bigger-one-while-standing-2026-09-03-engine-engine_version-55)
+- 09-03 [A death burst is the size of what died](roadmap/21-2026-09-03-death-burst.md#a-death-burst-is-the-size-of-what-died-2026-09-03-client--engine-event-field-no-engine_version-bump)
 
 **`net`** — matchmaking, sockets, reconnect *(2)*
 

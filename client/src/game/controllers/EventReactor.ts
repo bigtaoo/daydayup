@@ -14,6 +14,12 @@ import type { AudioBus, AudioCue } from '../../platform/types';
 import { t, tName } from '../../i18n';
 import { localSeatWon } from './localOutcome';
 
+/** How far above a dying actor's ground anchor its death burst is centred, in multiples of
+ *  that actor's own drawn body radius — see the `death` case for why this reactor eyeballs
+ *  the body centre rather than reading the view's real one. 0.8 is what the flat 12 px this
+ *  replaced worked out to on the 15 px mob it was chosen against. */
+const DEATH_BURST_LIFT_R = 0.8;
+
 /** The bits of Game an EventReactor reaction needs to reach back into — score/meta/
  *  room-rebuild are Game-owned state, so this stays a callback interface rather than
  *  EventReactor importing MetaState/Screens/etc. directly (same decoupling FxController
@@ -245,7 +251,20 @@ export class EventReactor {
         case 'death':
           if (e.faction === 'enemy') {
             this.host.addScore(SCORE.kill);
-            this.fx.particles.explosionDebris(fpToPx(e.gx), fpToPx(e.gy) - 12, THEME.colors.enemy);
+            // Centred on the corpse's BODY, not on its ground anchor: `e.gx/gy` is where the
+            // shadow and the collision footprint sit (`Actor`'s container origin), and a ring
+            // sized off the body but centred at the feet hangs below it. The lift was a flat
+            // 12 px until 2026-09-03 — 0.8 body radii for the 15 px mob it was eyeballed on,
+            // and the same 12 px on a 30 px boss, where it is 0.4 — so it is now that same
+            // fraction of whatever died. Deliberately an approximation and not `Actor`'s own
+            // `bodyCenterY`: that one is per-SKIN (a rig stands its art off the ground point
+            // in its body bone, a placeholder gets `BODY_LIFT_R`), and reading it would mean
+            // resolving a view this reactor cannot see anyway — the dying actor has already
+            // left `Scene.views` by the time this event is consumed.
+            const bodyR = fpToPx(e.r);
+            this.fx.particles.explosionDebris(
+              fpToPx(e.gx), fpToPx(e.gy) - bodyR * DEATH_BURST_LIFT_R, THEME.colors.enemy, bodyR,
+            );
             this.fx.addShake(0.15);
             cue('death.enemy');
           } else if (isLocalSeat(e.id)) {

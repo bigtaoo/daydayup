@@ -59,7 +59,7 @@ export class ReviveSystem {
           d.downed = false;
           d.alive = false;
           d.bleedoutTicks = 0;
-          state.events.push({ type: 'death', id: d.id, faction: 'player', gx: d.gx, gy: d.gy });
+          state.events.push({ type: 'death', id: d.id, faction: 'player', gx: d.gx, gy: d.gy, r: d.radius });
         }
       }
     }

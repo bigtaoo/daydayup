@@ -107,6 +107,27 @@ The things standing on the ground rather than the ground itself.
    0, which is what gives the leading edge a hard boundary. Verified by an A/B `extract` diff on a
    frozen live frame, not by looking — the arc sweeps around a character already wearing a cyan
    shield shell, and no screenshot separates the two. See `design/12` and roadmap volume `15`.
+   **The death burst re-sized 2026-09-03** (live report: the effect itself reads well, but it is
+   far too big — make it a circle whose radius comes from the monster's own body): the burst was
+   one authored spray for every corpse — each piece rolling its own speed (70-160 px/s) and its
+   own lifetime (260-500 ms) under gravity, i.e. a reach of anywhere from 18 to 80 world px,
+   drifting downward as it went. Two consequences, and both are the report. Its SIZE had nothing
+   to do with the thing dying — up to 5 body radii on a 15 px mob and 2.7 on a 30 px boss, so a
+   mob's death was the bigger event of the two — and its SHAPE was a plume rather than a burst,
+   because where any one piece ended up was independent of every other and gravity pulled the
+   whole thing off-centre. It is now solved from the body instead: every piece travels the same
+   `DEBRIS_REACH_R` = 1.6 body radii over one shared lifetime (speed = distance / life, never
+   rolled), the jitter is on the angle and on ±12% of the radius so it cannot change how big the
+   burst is, the piece count is held proportional to the body so a boss's larger circumference
+   keeps the same angular density, and the gravity term is gone — at a mob's 24 px reach its old
+   200 px/s² was ~9 px of sag, better than a third of the ring's own radius, which is exactly the
+   difference between a circle and a teardrop. The engine carries the radius on the event
+   (`GameEvent`'s `death.r`, additive/inert, **no `ENGINE_VERSION` bump**) because this is the one
+   lifecycle event that cannot be answered from state: `DeathDropsSystem` compacts the dead enemy
+   out on the same tick, and the view has already left `Scene.views` by the time the frame's
+   events are consumed. The centre moved with it, from a flat 12 px lift to 0.8 body radii — the
+   same 12 px, on the mob it was originally eyeballed on.
+
 
 5. **[shipped 2026-08-03] Custom shaders — all four items done:** dissolve on death,
    outline, energy shield, heat-haze distortion. All four are hand-written-GLSL custom
