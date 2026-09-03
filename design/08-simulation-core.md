@@ -83,7 +83,9 @@ step(tick, commands):
 
   1. Apply input      — for each PlayerActor, fold its confirmed command into intent
                         (move vector, aim brad, firing flag, edge-detected swap)
-  2. AI decide        — enemies/boss set their own intent from state + aiPrng   [PvE only]
+  2. AI decide        — enemies/boss set their own intent from state + aiPrng
+                        [both modes — arena rooms carry enemies too; only the
+                        dungeon room-activation gate is PvE-specific]
   3. Weapon fire      — for actors whose fire flag is set & cooldown ready:
                         ranged → spawn Projectile(s) (spread from combatPrng);
                         melee  → start swing (justSwung); the swing IS the parry (03)
@@ -100,8 +102,18 @@ step(tick, commands):
  8b. Environment      — CellTrait hazard damage (always-on or phased) (15)   [PvP, arena-mode only]
   9. Death & drops    — hp<=0 → enemy death + roll dropPrng → Pickup (weapon/heal/material);
                         player → downed (revive via INTERACT channel), not removed (05, 07)
- 10. Pickup           — player–pickup overlap → apply (weapon→active slot / heal / floor-buffer material) (05)
- 11. Spawns           — WaveDirector.tick(tick) spawns scripted waves/boss (05)   [PvE only]
+ 10. Pickup           — player–pickup overlap → apply (weapon→active slot / heal / floor-buffer
+                        material) (05); in arena mode also resolves an unrolled 'crate' via
+                        rollArenaDrop and scales a picked-up weapon by PVP_SCALE_FACTOR (15)
+ 11. Spawns           — expand a room's WaveScript into a timed schedule and dispatch it (05)
+                        [both modes — one shared WaveScript vocabulary, two spawn-point
+                        sources: dungeon rooms, and arena rooms on lazy activation (15),
+                        which also drop each room's lootMarker crates]
+11.5 Doors           — recompute every room's hasLiveEnemy; on a room's rising edge
+                        force-regroup the other players onto its entrance; relock doors
+                        (locked = either side in combat) and, only on an actual lock
+                        change, rebuild state.walls + the spatial index (05 "Room &
+                        door model")   [PvE dungeon only]
  12. Extraction       — per-floor checkpoint → EXTRACT/DESCEND, banks the floor's
                         materials (05, ROADMAP 1.4/1.5)   [PvE, floors-mode only]
  13. Revive           — bleedout timer + sustained-INTERACT revive channel for downed
@@ -118,8 +130,9 @@ Notes on the order:
 - **Status effects (8) after hit (7), before death (9)**: HitResolve only *starts* an elemental status; the DoT that can KILL is applied in step 8, so a burn/poison kill is swept and rolls a drop the same tick as a direct-hit kill (`07`). Added 2026-07-10 (`ENGINE_VERSION` 8). **Shield regen** rides at the end of the same step: because step 7 and the step-8 DoT sub-pass both zero `ticksSinceHit` on damage, advancing the timer + regen *after* them means any actor hit this tick (direct or DoT) cannot regen this tick — the "clear your status to recover shield" rule (`05`/`07`) needs no extra bookkeeping. ✅ Shipped (ROADMAP 0.4): the two-pool shield + regen bumped `ENGINE_VERSION` 11→12 (it changed hit outcomes; no new PRNG draw). The step-9 drop kinds and step-10 apply now speak the design/09 vocabulary (`heal`/`material`/`weapon`/`buff`, ROADMAP 0.6, `ENGINE_VERSION` 14).
 - **Zone/Environment (8a/8b) after status (8), before death (9)**: ✅ Shipped (ROADMAP 4.2d). Both are PvP arena-mode-only hazard passes (room-graph shrink damage, then `CellTrait` tile damage) that reuse `takeDamage`'s existing shield-first path, so a zone/trap kill rolls a drop through the same step-9 pass as any other kill. **Exception to "a new step bumps the version":** both are hard no-ops unless `state.zoneEnabled`/`config.arena` was provided, so insertion changed nothing for any pre-existing config.
 - **Death/drops (9) before pickup (10)**: a kill this tick can drop a pickup, but it is not collectable until the *next* tick's pickup pass — avoids "kill and auto-vacuum in the same frame" order sensitivity.
+- **Doors (11.5) after spawns (11), before extraction (12)**: ✅ Shipped (2026-08-04, `ENGINE_VERSION` 34→35 — `05` "Room & door model"). Both halves are a real ordering requirement, not a convenience. A room's enemies for THIS tick — including anything `SpawnSystem` just dispatched, which sets `roomId` directly rather than leaving it to next tick's inference — must be counted before this system decides which doors lock; and `ExtractionSystem`'s capstone check must see this tick's fresh `hasLiveEnemy`, not the previous tick's. A room is "in combat" purely because it holds a live enemy — never an authored flag, and never re-locked once cleared, since nothing respawns into a cleared room. The wall rebuild is the one thing in the engine that moves a wall mid-run (`state.walls` from `dungeonBaseWalls` + every locked door's passage rect, then `rebuildSpatialIndex()`), which is why `ENGINE_VERSION` 51 had to re-clamp resting pickups after it. **Exception to "a new step bumps the version"** does *not* apply here: unlike 8a/8b and 12, this one shipped with a bump, because it replaced the old one-room swap outright.
 - **Extraction (12) before revive (13) before win condition (14)**: ✅ Shipped (ROADMAP 1.4/1.5, then 3.2). Reaching a floor's checkpoint used to be win condition's job (waves exhausted + no enemies → immediate win); that transition now belongs to `ExtractionSystem`, which must run first so win condition sees `state.winner` already set on an EXTRACT resolution and no-ops instead of double-deciding. `ReviveSystem` (13) runs the bleedout timer + revive channel before win condition checks whether every player is down (a team wipe). **The exception to "a new step bumps the version":** step 12 is a hard no-op unless `EngineConfig.floors` was provided (`state.floorsEnabled`), so its insertion changed nothing for any config that predates the feature — verified by keeping every pre-1.4 replay test green without a bump.
-- **PvP** skips steps 2, 10, 11, and 12 (no AI-directed wave spawning or PvE floors — arena encounters are editor-authored per room via the shared `WaveScript` path, `15`) — the confirmed command stream is the only input, exactly what keeps two clients byte-identical (funny's `netplay` branch).
+- **What each mode actually skips.** PvP skips only **11.5** (`state.dungeonEnabled`) and **12** (`state.floorsEnabled`); PvE skips **8a/8b** (`state.zoneEnabled`/`config.arena`). Everything else runs in both. This line used to read "PvP skips steps 2, 10, 11, and 12", which was wrong on three of the four (corrected 2026-09-03): an arena room carries enemies, so **2** drives them (only the dungeon room-activation gate inside it is PvE-specific); **11** is the shared `WaveScript` path for *both* dungeon and arena rooms, and is what drops an arena room's `lootMarker` crates on activation; and **10** is the most arena-aware system of the three — it rolls an unresolved crate through `rollArenaDrop`, scales a picked-up weapon by `PVP_SCALE_FACTOR`, and owns the PvP-only `bandage`. In every mode the confirmed command stream is the only input, which is what keeps two clients byte-identical (funny's `netplay` branch).
 
 Whatever the final order, it is frozen; changing it bumps `ENGINE_VERSION` — except steps 8a/8b and 12, which ship as standing no-ops for any config that doesn't opt in (above).
 

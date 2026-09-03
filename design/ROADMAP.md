@@ -711,9 +711,13 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 
 - **09-02** [The swing shows the sector it actually hits](roadmap/15-2026-09-02-melee-sector.md#the-swing-shows-the-sector-it-actually-hits-2026-09-02-client-only-no-engine-bump) — The animation's amplitude was one hardcoded 68° sweep against authored sectors from 60° to 220°, and the parry reads that same arc; the weapon now sizes and paces the swing, and a baked-brush Mesh draws the sector it really hits. `render` `test` `docs`
 
+**[2026-09-03 — the doc audit](roadmap/16-2026-09-03-doc-audit.md)**
+
+- **09-03** [The docs were right about behaviour and wrong about every pointer](roadmap/16-2026-09-03-doc-audit.md#the-docs-were-right-about-behaviour-and-wrong-about-every-pointer-2026-09-03-docs-only-no-engine-bump) — Three mechanical sweeps came back clean on links and constants; what was stale was every kind of *pointer*. design/08's "determinism contract" was missing `DoorSystem` entirely and wrong on three of its four mode tags, three system headers had been off by one since v8, and design/10 still promised a compile-time gate deleted in August. `docs`
+
 ## The work log — by theme
 
-The same 92 entries, grouped. An entry with more than one tag appears more than once.
+The same 93 entries, grouped. An entry with more than one tag appears more than once.
 
 **`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(47)*
 
@@ -914,7 +918,7 @@ The same 92 entries, grouped. An entry with more than one tag appears more than 
 - 09-01 [Two days of features, audited for what the tests did not say](roadmap/13-2026-09-01-asset-phases.md#two-days-of-features-audited-for-what-the-tests-did-not-say-2026-09-01-engine--client--build-engine_version-5051)
 - 09-02 [The four clips finally get a sound](roadmap/14-2026-09-02-muzzle.md#the-four-clips-finally-get-a-sound-2026-09-02-client--assets--tooling-no-engine-bump)
 
-**`docs`** — design docs and this log itself *(21)*
+**`docs`** — design docs and this log itself *(22)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-02 [Documentation pass](roadmap/01-2026-07-24--08-05.md#documentation-pass--2026-08-02)
@@ -937,6 +941,7 @@ The same 92 entries, grouped. An entry with more than one tag appears more than 
 - 09-02 [The victory sting stops playing over defeat screens](roadmap/14-2026-09-02-muzzle.md#the-victory-sting-stops-playing-over-defeat-screens-2026-09-02-client-only-no-engine-bump)
 - 09-02 [Standing next to loot stops disarming the player](roadmap/14-2026-09-02-muzzle.md#standing-next-to-loot-stops-disarming-the-player-2026-09-02-client-only-no-engine-bump)
 - 09-02 [The swing that was one frame long, because the field that said otherwise was never read](roadmap/14-2026-09-02-muzzle.md#the-swing-that-was-one-frame-long-because-the-field-that-said-otherwise-was-never-read-2026-09-02-engine--client-engine_version-5253)
+- 09-03 [The docs were right about behaviour and wrong about every pointer](roadmap/16-2026-09-03-doc-audit.md#the-docs-were-right-about-behaviour-and-wrong-about-every-pointer-2026-09-03-docs-only-no-engine-bump)
 
 **`net`** — matchmaking, sockets, reconnect *(1)*
 

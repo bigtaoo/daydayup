@@ -1,5 +1,5 @@
 /**
- * Step 8 — Death & drops. Any actor at hp<=0 dies (death event); a dead enemy
+ * Step 9 — Death & drops. Any actor at hp<=0 dies (death event); a dead enemy
  * rolls the dropPrng against the DROP_TABLE (design/05/09) for a coin / health /
  * weapon pickup, tagged with this tick so the next step's Pickup pass can't
  * auto-vacuum it the same frame (design/08 note on ordering). Players don't drop.

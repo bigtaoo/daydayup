@@ -1,5 +1,5 @@
 /**
- * Step 2 — AI decide (PvE only). Each enemy sets its own intent from state +
+ * Step 2 — AI decide (both modes). Each enemy sets its own intent from state +
  * aiPrng: face the (first alive) player, close the distance toward it until
  * within gun range, then fire once actually in range; the weapon cooldown gates
  * the actual shot in WeaponFire. Enemies used to be fully stationary in the

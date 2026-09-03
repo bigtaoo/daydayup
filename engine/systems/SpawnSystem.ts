@@ -1,5 +1,5 @@
 /**
- * Step 10 — Spawns (PvE only). A scripted wave director: spawn the first wave
+ * Step 11 — Spawns (both modes; see the arena branch below). A scripted wave director: spawn the first wave
  * immediately, then, once a wave is fully cleared, run a short break before the
  * next; when the last wave is dispatched, flag wavesExhausted for WinCondition.
  * Enemies spawn with an aiPrng-seeded initial cooldown so their fire phases don't

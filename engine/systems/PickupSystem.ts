@@ -1,7 +1,7 @@
 /**
- * Step 9 — Pickup. A player overlapping a collectable pickup applies it and the
+ * Step 10 — Pickup. A player overlapping a collectable pickup applies it and the
  * pickup is consumed. Pickups dropped THIS tick are skipped (spawnTick guard) so a
- * kill in step 8 isn't vacuumed the same frame (design/08 ordering note). Collected
+ * kill in step 9 isn't vacuumed the same frame (design/08 ordering note). Collected
  * pickups are compacted out in place.
  *
  * Effects (design/05 the in-run power ramp):
