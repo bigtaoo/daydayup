@@ -4,6 +4,7 @@
  * expiry, malformed) is the security boundary and gets pinned here.
  */
 import { describe, it, expect } from 'vitest';
+import { createHmac } from 'node:crypto';
 import { signTicket, verifyTicket, type TicketPayload } from '../src/ticket';
 
 const SECRET = 'test-secret';
@@ -86,5 +87,47 @@ describe('ticket — rejection surface', () => {
 
     const forgedFloat = Buffer.from(JSON.stringify({ ...payload, teamId: 1.5 }), 'utf8').toString('base64url');
     expect(verifyTicket(`${forgedFloat}.${sig}`, SECRET, 0)).toBeNull();
+  });
+});
+
+describe('verifyTicket — a correctly signed body that is not a ticket', () => {
+  it('rejects a validly-signed token whose body is not JSON', () => {
+    // The `JSON.parse` catch, and the only arm of this file that a forged token cannot reach:
+    // it needs the RIGHT secret and a wrong body, i.e. an issuer bug (a payload built from a
+    // string, a truncated write) rather than an attacker. Without the catch, one malformed
+    // ticket is an uncaught throw inside the gameserver's connection handler.
+    const body = Buffer.from('not json at all', 'utf8').toString('base64url');
+    const sig = createHmac('sha256', SECRET).update(body).digest('base64url');
+    expect(verifyTicket(`${body}.${sig}`, SECRET, 0)).toBeNull();
+  });
+
+  it('rejects a validly-signed body that is JSON but the wrong SHAPE', () => {
+    // Each field check is a separate arm; what matters is that a well-formed envelope
+    // carrying a nonsense payload never becomes a seat grant.
+    const cases: unknown[] = [
+      { ...payload, roomId: 7 },
+      { ...payload, owner: 1.5 },
+      { ...payload, seed: 'x' },
+      { ...payload, playerCount: null },
+      { ...payload, teamId: undefined },
+      { ...payload, exp: 'soon' },
+      { ...payload, mode: 'solo' },
+      { ...payload, accountId: 42 },
+      null,
+      [],
+    ];
+    for (const shape of cases) {
+      const body = Buffer.from(JSON.stringify(shape), 'utf8').toString('base64url');
+      const sig = createHmac('sha256', SECRET).update(body).digest('base64url');
+      expect(verifyTicket(`${body}.${sig}`, SECRET, 0), JSON.stringify(shape)).toBeNull();
+    }
+  });
+
+  it('accepts the same envelope when the shape IS valid — the control', () => {
+    // Without this, every assertion above would pass just as happily if `verifyTicket`
+    // rejected everything signed this way.
+    const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+    const sig = createHmac('sha256', SECRET).update(body).digest('base64url');
+    expect(verifyTicket(`${body}.${sig}`, SECRET, 0)).toMatchObject({ roomId: 'r1' });
   });
 });

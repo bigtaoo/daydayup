@@ -9,4 +9,15 @@ import { serverAlias } from '../build/ddAlias.mjs';
 // package. tsconfig.base.json's `paths` is the type-side mirror of this same map.
 export default defineConfig({
   resolve: { alias: serverAlias },
+  test: {
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json-summary', 'html', 'lcov'],
+      reportsDirectory: './coverage',
+      // Whole-tree, same reasoning as the other two packages. Note the tests live in
+      // `test/`, not beside the sources, so `src/**` is already exactly the shipped code.
+      include: ['src/**/*.ts'],
+      exclude: ['src/**/*.d.ts'],
+    },
+  },
 });

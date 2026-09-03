@@ -784,9 +784,13 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 
 - **09-03** [A door has a clock, and direction is what says "you can walk through this"](roadmap/18-2026-09-03-door-fx.md#a-door-has-a-clock-and-direction-is-what-says-you-can-walk-through-this-2026-09-03-client-only-no-engine-bump) — *"目前的形式太死板了"* — a door measured 0.01 luma of motion because nothing in this project could animate a scene fixture at all (which had also frozen `Portal` for three weeks). Motion is generated rather than prompted: no new art, zero bytes. 70/70 mutants killed, and all four first-round survivors were sentences the log made that nothing asserted. `render` `test` `docs`
 
+**[2026-09-03 — coverage becomes a gate](roadmap/19-2026-09-03-coverage-gate.md)**
+
+- **09-03** [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump) — funny's coverage shape, ported and gated at 90% lines **and** 90% branches over all three packages' whole source trees. The client was already at 96.52% and nothing measured it; branches sat 0.03pp over the bar. Adds a rule funny has no equivalent of (a narrowed `coverage.include` fails outright — the mutant reports 97.68%/92.13% while measuring 130 of 224 files), retires Game.ts's 1135-line baseline entry by splitting it six ways, and makes the logic-consistency gates a named CI job whose manifest fails closed. Two production bugs, both found by the first test that touched the code. `test` `tools` `net` `docs`
+
 ## The work log — by theme
 
-The same 99 entries, grouped. An entry with more than one tag appears more than once.
+The same 100 entries, grouped. An entry with more than one tag appears more than once.
 
 **`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(52)*
 
@@ -916,7 +920,7 @@ The same 99 entries, grouped. An entry with more than one tag appears more than 
 - 08-25 [The Seven Districts: the launch arena gets authored](roadmap/06-2026-08-25.md#the-seven-districts-the-launch-arena-gets-authored-2026-08-25-content)
 - 08-25 [The three parked rules that had only shipped half](roadmap/06-2026-08-25.md#the-three-parked-rules-that-had-only-shipped-half-2026-08-25-client--one-render-only-engine-field)
 
-**`test`** — coverage sweeps, gates, mutation batteries *(31)*
+**`test`** — coverage sweeps, gates, mutation batteries *(32)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 08-05 [Platform-layer test coverage pass](roadmap/01-2026-07-24--08-05.md#platform-layer-test-coverage-pass--2026-08-05-全部加测试)
@@ -949,6 +953,7 @@ The same 99 entries, grouped. An entry with more than one tag appears more than 
 - 09-03 [The step numbers get a gate, and it fails on its own first run](roadmap/16-2026-09-03-doc-audit.md#the-step-numbers-get-a-gate-and-it-fails-on-its-own-first-run-2026-09-03-engine-tests--docs-no-engine-bump)
 - 09-03 [The path references get a gate, by giving up on two thirds of them](roadmap/16-2026-09-03-doc-audit.md#the-path-references-get-a-gate-by-giving-up-on-two-thirds-of-them-2026-09-03-tooling--docs-no-engine-bump)
 - 09-03 [A door has a clock, and direction is what says "you can walk through this"](roadmap/18-2026-09-03-door-fx.md#a-door-has-a-clock-and-direction-is-what-says-you-can-walk-through-this-2026-09-03-client-only-no-engine-bump)
+- 09-03 [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump)
 
 **`audio`** — cues, music, the engine to sound channel *(5)*
 
@@ -982,7 +987,7 @@ The same 99 entries, grouped. An entry with more than one tag appears more than 
 - 08-31 [The save verb gets a button, and the tests that were still missing](roadmap/11-2026-08-28--08-31.md#the-save-verb-gets-a-button-and-the-tests-that-were-still-missing-2026-08-31-client)
 - 09-02 [Standing next to loot stops disarming the player](roadmap/14-2026-09-02-muzzle.md#standing-next-to-loot-stops-disarming-the-player-2026-09-02-client-only-no-engine-bump)
 
-**`tools`** — sims, profilers, editors, build scripts *(12)*
+**`tools`** — sims, profilers, editors, build scripts *(13)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-12 [File-length convention pass](roadmap/02-2026-08-12--08-15.md#file-length-convention-pass--2026-08-12)
@@ -996,8 +1001,9 @@ The same 99 entries, grouped. An entry with more than one tag appears more than 
 - 09-01 [Two days of features, audited for what the tests did not say](roadmap/13-2026-09-01-asset-phases.md#two-days-of-features-audited-for-what-the-tests-did-not-say-2026-09-01-engine--client--build-engine_version-5051)
 - 09-02 [The four clips finally get a sound](roadmap/14-2026-09-02-muzzle.md#the-four-clips-finally-get-a-sound-2026-09-02-client--assets--tooling-no-engine-bump)
 - 09-03 [The path references get a gate, by giving up on two thirds of them](roadmap/16-2026-09-03-doc-audit.md#the-path-references-get-a-gate-by-giving-up-on-two-thirds-of-them-2026-09-03-tooling--docs-no-engine-bump)
+- 09-03 [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump)
 
-**`docs`** — design docs and this log itself *(27)*
+**`docs`** — design docs and this log itself *(28)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-02 [Documentation pass](roadmap/01-2026-07-24--08-05.md#documentation-pass--2026-08-02)
@@ -1026,10 +1032,12 @@ The same 99 entries, grouped. An entry with more than one tag appears more than 
 - 09-03 [The docs' locked decisions had been superseded by their own later sections](roadmap/17-2026-09-03-doc-coherence.md#the-docs-locked-decisions-had-been-superseded-by-their-own-later-sections-2026-09-03-docs--engine--client-engine_version-54)
 - 09-03 [The path references get a gate, by giving up on two thirds of them](roadmap/16-2026-09-03-doc-audit.md#the-path-references-get-a-gate-by-giving-up-on-two-thirds-of-them-2026-09-03-tooling--docs-no-engine-bump)
 - 09-03 [A door has a clock, and direction is what says "you can walk through this"](roadmap/18-2026-09-03-door-fx.md#a-door-has-a-clock-and-direction-is-what-says-you-can-walk-through-this-2026-09-03-client-only-no-engine-bump)
+- 09-03 [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump)
 
-**`net`** — matchmaking, sockets, reconnect *(1)*
+**`net`** — matchmaking, sockets, reconnect *(2)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
+- 09-03 [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump)
 
 **`i18n`** — locales and text layout *(2)*
 

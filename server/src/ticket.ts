@@ -88,6 +88,14 @@ export function verifyTicket(
   } catch {
     return null;
   }
+  // `JSON.parse('null')` succeeds and yields `null`, which the try above cannot catch — so
+  // without this line the very next property read THROWS, out of a function whose documented
+  // contract (see this doc comment's "all reject and close") is that every malformed token
+  // returns null. Both call sites are request handlers: the gameserver's `connection`
+  // listener and matchsvc's `/resume`. Found 2026-09-03 by the shape sweep in
+  // `ticket.test.ts`; a signed `null` body needs the real secret, so this is an issuer bug
+  // rather than a forgery, but the crash would be the whole process either way.
+  if (payload === null || typeof payload !== 'object') return null;
   if (
     typeof payload.roomId !== 'string' ||
     !Number.isInteger(payload.owner) ||

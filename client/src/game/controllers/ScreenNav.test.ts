@@ -1,0 +1,310 @@
+/**
+ * `ScreenNav` — the phase writes and the art gate around them, over fake collaborators.
+ *
+ * Every screen object here is a recorder, not a Pixi container: what this file asserts is
+ * WHICH transition ran and what `phase` became, never what got drawn. `ScreenFlow` already
+ * has its own suite for the widget half, and the drawing is `test/render`'s problem.
+ *
+ * The two rules worth the file:
+ *
+ *  - the ART GATE wraps four transitions and not the other four. A screen that draws rig or
+ *    weapon art and skips the gate shows placeholder squares on a cold cache — for one
+ *    player in a hundred, on their first visit, which is the least likely bug to be reported.
+ *  - `settingsReturnPhase` is a one-field memory of who opened the settings screen. Getting
+ *    it wrong drops a paused player back to the main menu mid-run, abandoning the match.
+ */
+import { describe, expect, it, vi } from 'vitest';
+import { defaultMetaState, type MetaStore } from '../../meta';
+import { RunState } from '../runState';
+import { ScreenNav, type ScreenNavDeps } from './ScreenNav';
+
+const store: MetaStore = { load: () => defaultMetaState(), save: () => {} };
+
+/** Records every ScreenFlow call as `name(args…)`. */
+function recorder() {
+  const calls: string[] = [];
+  const proxy = new Proxy(
+    {},
+    {
+      get: (_t, name: string) => (...args: unknown[]) => {
+        calls.push(`${name}(${args.filter((a) => typeof a !== 'function').join(',')})`);
+      },
+    },
+  );
+  return { calls, proxy: proxy as never };
+}
+
+function make(over: Partial<ScreenNavDeps> = {}) {
+  const run = new RunState(store);
+  const flow = recorder();
+  // The art gate: `defer` returning true means "not yet, I'll call you back".
+  let gateOpen = true;
+  const deferred: Array<() => void> = [];
+  const artGate = {
+    defer: (retry: () => void) => {
+      if (gateOpen) return false;
+      deferred.push(retry);
+      return true;
+    },
+  };
+  const screen = () => ({ show: vi.fn(), resize: vi.fn(), render: vi.fn(), hide: vi.fn() });
+  const deps: ScreenNavDeps = {
+    run,
+    layers: { menu: { fit: () => ({ w: 800, h: 600 }) } } as never,
+    screenFlow: flow.proxy,
+    artGate: artGate as never,
+    backdrop: { resize: vi.fn() } as never,
+    hud: { reposition: vi.fn() } as never,
+    portalPrompt: { reposition: vi.fn() } as never,
+    mainMenu: screen() as never,
+    modeSelect: screen() as never,
+    pvpPreview: screen() as never,
+    matchmaking: screen() as never,
+    partyScreen: screen() as never,
+    loginScreen: screen() as never,
+    forge: screen() as never,
+    screens: screen() as never,
+    settingsScreen: screen() as never,
+    pauseMenu: screen() as never,
+    screenSize: () => ({ w: 1600, h: 1200 }),
+    settings: () => ({ quality: 'high' }) as never,
+    connect: vi.fn(),
+    ...over,
+  };
+  const nav = new ScreenNav(deps);
+  return {
+    nav,
+    run,
+    deps,
+    calls: flow.calls,
+    closeGate: () => {
+      gateOpen = false;
+    },
+    releaseGate: () => {
+      gateOpen = true;
+      for (const fn of deferred.splice(0)) fn();
+    },
+  };
+}
+
+describe('the plain transitions', () => {
+  it.each([
+    ['showMenu', 'menu', 'showMenu'],
+    ['showModeSelect', 'modeSelect', 'showModeSelect'],
+    ['showSquad', 'squad', 'showSquad'],
+    ['showAccount', 'account', 'showAccount'],
+    ['showForge', 'forge', 'showForge'],
+    ['showPvpPreview', 'pvpPreview', 'showPvpPreview'],
+    ['showMatchmaking', 'matchmaking', 'showMatchmaking'],
+  ])('%s sets phase %s and drives ScreenFlow.%s', (method, phase, flowCall) => {
+    const t = make();
+    (t.nav as unknown as Record<string, () => void>)[method]!();
+    expect(t.run.phase).toBe(phase);
+    expect(t.calls.some((c) => c.startsWith(`${flowCall}(`))).toBe(true);
+  });
+
+  it('tells ModeSelect whether the tutorial is still unseen', () => {
+    // The prompt on the TUTORIAL button. Inverted, it nags a player who already played it.
+    const t = make();
+    t.nav.showModeSelect();
+    expect(t.calls).toContain('showModeSelect(800,600,true)');
+
+    t.run.meta = { ...t.run.meta, hasSeenTutorial: true };
+    t.calls.length = 0;
+    t.nav.showModeSelect();
+    expect(t.calls).toContain('showModeSelect(800,600,false)');
+  });
+});
+
+describe('the art gate', () => {
+  const GATED = ['showForge', 'showPvpPreview', 'showMatchmaking'] as const;
+  const UNGATED = ['showMenu', 'showModeSelect', 'showSquad', 'showAccount'] as const;
+
+  it.each(GATED)('%s WAITS for run art, then completes when it arrives', (method) => {
+    const t = make();
+    t.closeGate();
+    t.nav[method]();
+    // Deferred: neither the phase nor the screen has moved yet. A transition that ran anyway
+    // would draw the screen with placeholder art and never redraw it.
+    expect(t.run.phase).toBe('menu');
+    expect(t.calls).toEqual([]);
+
+    t.releaseGate();
+    expect(t.run.phase).not.toBe('menu');
+    expect(t.calls.length).toBeGreaterThan(0);
+  });
+
+  it.each(UNGATED)('%s does NOT wait — it draws no run art', (method) => {
+    const t = make();
+    t.closeGate();
+    t.nav[method]();
+    expect(t.calls.length).toBeGreaterThan(0);
+  });
+});
+
+describe('settings and pause', () => {
+  it('remembers the forge as the return phase, and goes back there', () => {
+    const t = make();
+    t.run.phase = 'forge';
+    t.nav.openSettings();
+    expect(t.run.phase).toBe('settings');
+    expect(t.run.settingsReturnPhase).toBe('forge');
+
+    t.nav.closeSettings();
+    expect(t.run.phase).toBe('forge');
+  });
+
+  it('remembers the menu the same way', () => {
+    const t = make();
+    t.run.phase = 'menu';
+    t.nav.openSettings();
+    expect(t.run.settingsReturnPhase).toBe('menu');
+    t.nav.closeSettings();
+    expect(t.run.phase).toBe('menu');
+  });
+
+  it('REFUSES to open from anywhere else — a mid-run open would strand the player', () => {
+    // `closeSettings` only knows two destinations, so opening from a third phase would
+    // return somewhere the player never was. The guard is what keeps that unreachable.
+    for (const phase of ['playing', 'paused', 'victory', 'matchmaking', 'squad'] as const) {
+      const t = make();
+      t.run.phase = phase;
+      t.nav.openSettings();
+      expect(t.run.phase, phase).toBe(phase);
+      expect(t.calls).toEqual([]);
+    }
+  });
+
+  it('pauses and resumes around the playing phase', () => {
+    const t = make();
+    t.run.phase = 'playing';
+    t.nav.pause();
+    expect(t.run.phase).toBe('paused');
+    t.nav.resume();
+    expect(t.run.phase).toBe('playing');
+  });
+
+  it('returns to the PAUSE menu, not the forge, when settings was opened from a pause', () => {
+    // The one that matters: `closeSettings` would send a paused player to the main menu and
+    // abandon the run. The pause path uses its own return instead.
+    const t = make();
+    t.run.phase = 'paused';
+    t.nav.openSettingsFromPause();
+    expect(t.run.phase).toBe('settings');
+    expect(t.run.settingsReturnPhase).toBe('paused');
+
+    t.nav.openPauseFromSettings();
+    expect(t.run.phase).toBe('paused');
+  });
+
+  it('labels the pause menu SKIP during a tutorial and QUIT otherwise', () => {
+    // A tutorial is always skippable (design/10) and skipping counts as completing it. The
+    // label is the only place a player learns that, so the two cases must differ.
+    const t = make();
+    t.nav.pause();
+    const normal = t.calls.at(-1)!;
+    expect(normal).toBe('pause(800,600,)'); // no third argument — the default QUIT label
+
+    t.calls.length = 0;
+    t.run.tutorialActive = true;
+    t.nav.pause();
+    const tutorial = t.calls.at(-1)!;
+    expect(tutorial).not.toBe(normal);
+    expect(tutorial.startsWith('pause(800,600,')).toBe(true);
+
+    // ...and the same label reaches the pause menu when it is reopened from settings, which
+    // is a second call site that could easily have been left passing `undefined`.
+    t.calls.length = 0;
+    t.nav.openPauseFromSettings();
+    expect(t.calls.at(-1)).toBe(tutorial.replace('pause(', 'openPauseFromSettings('));
+  });
+});
+
+describe('relayout', () => {
+  it('repositions the viewport-space widgets whatever the phase', () => {
+    // The backdrop and the in-run HUD are NOT in menu design space, so they get the raw
+    // renderer size, not the fitted one. Passing the wrong pair leaves the HUD in a corner.
+    const t = make();
+    t.nav.relayout();
+    expect(t.deps.backdrop.resize).toHaveBeenCalledWith(1600, 1200);
+    expect(t.deps.hud.reposition).toHaveBeenCalledWith({ w: 1600, h: 1200 });
+    expect(t.deps.portalPrompt.reposition).toHaveBeenCalledWith({ w: 1600, h: 1200 });
+  });
+
+  it.each([
+    ['menu', 'mainMenu'],
+    ['modeSelect', 'modeSelect'],
+    ['pvpPreview', 'pvpPreview'],
+    ['squad', 'partyScreen'],
+    ['account', 'loginScreen'],
+    ['paused', 'pauseMenu'],
+    ['settings', 'settingsScreen'],
+  ] as const)('re-shows the %s screen', (phase, dep) => {
+    const t = make();
+    t.run.phase = phase;
+    t.nav.relayout();
+    expect((t.deps as unknown as Record<string, { show: ReturnType<typeof vi.fn> }>)[dep]!.show)
+      .toHaveBeenCalled();
+  });
+
+  it('RESIZES the matchmaking screen rather than showing it', () => {
+    // `show()` restarts connect(). A resize during matchmaking would drop the queue entry
+    // and start a second one — and the player would just see it take longer.
+    const t = make();
+    t.run.phase = 'matchmaking';
+    t.nav.relayout();
+    expect(t.deps.matchmaking.resize).toHaveBeenCalled();
+    expect(t.deps.matchmaking.show).not.toHaveBeenCalled();
+  });
+
+  it('re-renders the forge with the CURRENT meta', () => {
+    const t = make();
+    t.run.phase = 'forge';
+    t.nav.relayout();
+    expect(t.deps.forge.render).toHaveBeenCalledWith(t.run.meta, 800, 600);
+  });
+
+  it('resizes the result screen for both outcomes', () => {
+    for (const phase of ['victory', 'defeat'] as const) {
+      const t = make();
+      t.run.phase = phase;
+      t.nav.relayout();
+      expect(t.deps.screens.resize, phase).toHaveBeenCalled();
+    }
+  });
+
+  it('lays out NO panel while playing — the HUD reposition above is the whole job', () => {
+    const t = make();
+    t.run.phase = 'playing';
+    t.nav.relayout();
+    for (const dep of ['mainMenu', 'modeSelect', 'forge', 'screens', 'pauseMenu'] as const) {
+      const s = (t.deps as unknown as Record<string, { show: ReturnType<typeof vi.fn>; render: ReturnType<typeof vi.fn>; resize: ReturnType<typeof vi.fn> }>)[dep]!;
+      expect(s.show, dep).not.toHaveBeenCalled();
+      expect(s.render, dep).not.toHaveBeenCalled();
+      expect(s.resize, dep).not.toHaveBeenCalled();
+    }
+  });
+});
+
+describe('refreshForgeIfOpen', () => {
+  it('re-renders only while the forge is the live screen', () => {
+    // Called after an account sync changes the meta. Rendering the forge from another phase
+    // would draw it over whatever is actually on screen.
+    const t = make();
+    t.run.phase = 'menu';
+    t.nav.refreshForgeIfOpen();
+    expect(t.deps.forge.render).not.toHaveBeenCalled();
+
+    t.run.phase = 'forge';
+    t.nav.refreshForgeIfOpen();
+    expect(t.deps.forge.render).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('showOutcome', () => {
+  it('shows the result screen in menu design space', () => {
+    const t = make();
+    t.nav.showOutcome(true, 'Extracted', ['a', 'b']);
+    expect(t.deps.screens.show).toHaveBeenCalledWith(800, 600, true, 'Extracted', ['a', 'b']);
+  });
+});

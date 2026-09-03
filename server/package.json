@@ -9,6 +9,7 @@
     "start": "node --import tsx/esm src/index.ts",
     "matchsvc": "node --import tsx/esm src/matchsvc.ts",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "check:filelength": "node ../build/checkFileLength.mjs"

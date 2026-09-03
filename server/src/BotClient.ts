@@ -40,8 +40,17 @@ export interface BotClientOptions {
 
 const DEFAULT_TICK_MS = 1000 / 30;
 
-/** Node `ws`-backed Transport — the only place this module touches a real socket. */
-class WsTransport implements Transport {
+/** Node `ws`-backed Transport — the only place this module touches a real socket.
+ *
+ * Exported for the same reason `runBotClient` is: it is the half of this file a fake
+ * Transport can never exercise, and it was at 0% until 2026-09-03 while the suite around it
+ * looked thorough. Three of its behaviours fail SILENTLY on a live socket — a message sent
+ * before `open` (every `join`, since `CoopSession` sends one the moment it is constructed and
+ * the socket is still CONNECTING), a malformed inbound frame, and a frame arriving before
+ * `onMessage` is wired — so none of them would surface as an error anywhere; the bot would
+ * just never appear in the match. `BotClient.wsTransport.test.ts` drives it over a real
+ * `ws` server. */
+export class WsTransport implements Transport {
   private handler: ((msg: ServerMsg) => void) | null = null;
   private readonly ws: WebSocket;
   private readonly outbox: string[] = [];
@@ -61,6 +70,22 @@ class WsTransport implements Transport {
       } catch {
         /* ignore malformed frames */
       }
+    });
+    // MANDATORY, not defensive. `ws` reports socket failures as an 'error' EVENT, and an
+    // 'error' event with no listener is an uncaught exception in Node — so without this line
+    // a single bot seat failing to connect kills the whole matchsvc process, taking down
+    // matchmaking, parties, accounts and the ladder with it. Two ordinary situations reach
+    // it: the gameserver being unreachable (`ECONNREFUSED`, i.e. matchsvc outliving a
+    // gameserver restart, which is the normal deploy order) and `close()` landing while the
+    // socket is still CONNECTING. Verified 2026-09-03 by pointing a bare `ws` client at a
+    // dead port — the process died on `connect ECONNREFUSED`.
+    //
+    // Swallowing is the right response and not a shrug: there is nothing to retry here. The
+    // bot is fire-and-forget by design (`spawnBotClient` keeps no handle), and a seat that
+    // fails to fill is already the accepted outcome — the room simply runs with one fewer
+    // bot, which is what would have happened had the queue not bot-filled at all.
+    this.ws.on('error', () => {
+      /* see above — the listener's existence is the fix; there is no recovery to attempt */
     });
   }
 

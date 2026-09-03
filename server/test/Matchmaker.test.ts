@@ -339,3 +339,56 @@ describe('Matchmaker — squads (design/05/15 PvP squad follow-up)', () => {
     expect(tb.teamId).toBe(1); // playerCount=2 doesn't divide by SQUAD_SIZE=4 → 1-seat squads
   });
 });
+
+describe('Matchmaker — the arms a well-formed queue never reaches', () => {
+  it('works with NO signer injected, handing back empty tokens', () => {
+    // `deps.sign ?? (() => '')`. The documented shape for a test that only asserts grouping —
+    // and if the fallback were dropped, every such caller would throw on `this.sign(grant)`
+    // instead of getting a ticket with an empty token.
+    const { mm } = make({ sign: undefined });
+    const a = mm.enqueue(1);
+    expect(a.ticket).toBeTruthy();
+    expect(a.ticket!.token).toBe('');
+    expect(a.ticket!.roomId).toBe('room-1');
+  });
+
+  it('skips an already-matched waiter when scanning the queue', () => {
+    // The `!w || w.ticket` continue. A matched waiter stays in the queue array until it is
+    // polled, so the live-queue scan has to step over it — otherwise a seat that already has
+    // a ticket would be counted again and could be granted a SECOND room.
+    const { mm } = make();
+    const a = mm.enqueue(2);
+    const b = mm.enqueue(2);
+    expect(b.ticket).toBeTruthy(); // the room formed; neither has been polled yet
+    expect(mm.waiting(2)).toBe(0); // both are matched, so nobody is still waiting
+    // A third arrival must start a fresh queue rather than joining the settled pair.
+    const c = mm.enqueue(2);
+    expect(c.ticket).toBeUndefined();
+    expect(mm.poll(a.queueId).status).toBe('matched');
+  });
+
+  it('does not fire onBotFill when the group filled itself with real players', () => {
+    // `botOwners.length > 0`. A queue that reached full size at the exact moment the bot-fill
+    // deadline passed must form as an all-human room — spawning bots for zero empty seats
+    // would put phantom sockets on a full match.
+    const fills: unknown[] = [];
+    const { mm } = make({ pvpBotFillMs: 10, onBotFill: (i) => void fills.push(i) });
+    const a = mm.enqueue(2, 'pvp');
+    const b = mm.enqueue(2, 'pvp');
+    expect(b.ticket).toBeTruthy();
+    expect(fills).toEqual([]);
+    expect(mm.poll(a.queueId).status).toBe('matched');
+  });
+
+  it('bot-fills the empty seats when one player waits out the deadline — the control', () => {
+    // Without this the three cases above would pass just as happily if onBotFill were never
+    // called at all.
+    const fills: Array<{ botOwners: readonly number[] }> = [];
+    const { mm, advance } = make({ pvpBotFillMs: 10, onBotFill: (i) => fills.push(i) });
+    const a = mm.enqueue(4, 'pvp');
+    advance(50);
+    expect(mm.poll(a.queueId).status).toBe('matched');
+    expect(fills).toHaveLength(1);
+    expect([...fills[0]!.botOwners]).toEqual([1, 2, 3]);
+  });
+});

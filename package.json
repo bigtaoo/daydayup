@@ -14,11 +14,16 @@
     "tools/desktop-shell"
   ],
   "scripts": {
-    "test": "npm run test --workspaces --if-present && npx vitest run build/versionManifestPlugin.test.mjs build/wechatAssetSync.test.mjs build/checkDocPaths.test.mjs",
+    "test": "npm run test --workspaces --if-present && npx vitest run build/versionManifestPlugin.test.mjs build/wechatAssetSync.test.mjs build/checkDocPaths.test.mjs build/checkCoverageThreshold.test.mjs build/coverageScope.test.mjs build/logicConsistency.test.mjs",
+    "test:coverage": "npm run test:coverage --workspaces --if-present",
+    "coverage:report": "node build/coverageReport.mjs",
+    "check:coverage": "node build/checkCoverageThreshold.mjs",
+    "coverage": "npm run test:coverage && npm run coverage:report && npm run check:coverage",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "check:filelength": "npm run check:filelength --workspaces --if-present",
     "check:wechatpackage": "node build/checkWeChatPackage.mjs",
     "check:docpaths": "node build/checkDocPaths.mjs",
+    "check:logic": "node build/logicConsistency.mjs --run",
     "check": "npm run typecheck && npm run check:filelength && npm run check:wechatpackage && npm run check:docpaths && npm run test",
     "test:pvp-sim": "npm run test:pvp-sim -w client",
     "test:pve-sim": "npm run test:pve-sim -w client",
@@ -37,6 +42,7 @@
     "check:full": "npm run check && npm run test:sims"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "^4.1.10",
     "typescript": "^5.7.2",
     "vite": "^6.0.7",
     "vitest": "^4.1.10"

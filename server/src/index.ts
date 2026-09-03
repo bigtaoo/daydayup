@@ -42,7 +42,7 @@ const MATCHSVC_URL = process.env.DDU_MATCHSVC_URL;
  * just the fetch call, best-effort — a dropped report never blocks or retries
  * settlement.
  */
-function reportSettledMatch(match: SettledMatch): void {
+export function reportSettledMatch(match: SettledMatch): void {
   if (!MATCHSVC_URL || !match.hashOk || !match.placements || typeof match.winner !== 'number') return;
   const body = buildRatingReportBody(match.roomId, match.winner, match.placements, match.playerCount, match.seatAccounts);
   fetch(`${MATCHSVC_URL}/rating/report`, {
@@ -201,21 +201,49 @@ export function createGameserver(opts: GameserverOptions = {}): { server: Server
   return { server: http, wss, manager };
 }
 
-function main(): void {
-  const { server, wss, manager } = createGameserver();
+export interface MainOptions extends GameserverOptions {
+  /** Listen port/host overrides — a test binds port 0 rather than fighting for 8787. */
+  port?: number;
+  host?: string;
+  /** How the shutdown handler ends the process. Injected ONLY so a test can observe the
+   * shutdown sequence without killing its own runner; production passes nothing and gets
+   * `process.exit`. */
+  exit?: (code: number) => void;
+}
+
+/**
+ * The real CLI entrypoint. Exported (2026-09-03) rather than private, because the shutdown
+ * path is the one piece of this file with no other way in and a real consequence: `SIGTERM`
+ * during a deploy must destroy every live room before the socket closes, or each room's
+ * metronome interval outlives it and the process refuses to exit. That whole sequence was
+ * uncovered, and a reordering of it fails in a way nothing else here would notice.
+ */
+export function main(opts: MainOptions = {}): {
+  server: Server;
+  wss: WebSocketServer;
+  manager: RoomManager;
+  shutdown: () => void;
+} {
+  const { server, wss, manager } = createGameserver(opts);
+  const exit = opts.exit ?? ((code: number) => process.exit(code));
 
   const shutdown = (): void => {
+    // Order matters: rooms first (their metronome intervals are what keep the event loop
+    // alive), then the socket layer, then the HTTP server underneath it.
     manager.destroyAll();
     wss.close();
     server.close();
-    process.exit(0);
+    exit(0);
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 
-  server.listen(PORT, HOST, () => {
-    console.log(`daydayup gameserver (co-op frame relay) on ws://${HOST}:${PORT}/ws`);
+  const port = opts.port ?? PORT;
+  const host = opts.host ?? HOST;
+  server.listen(port, host, () => {
+    console.log(`daydayup gameserver (co-op frame relay) on ws://${host}:${port}/ws`);
   });
+  return { server, wss, manager, shutdown };
 }
 
 // Only auto-start when run directly (`node --import tsx/esm src/index.ts`), not when

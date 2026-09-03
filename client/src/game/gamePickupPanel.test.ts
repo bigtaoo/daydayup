@@ -65,10 +65,10 @@ function newGame() {
   game.start();
 
   const inner = game as unknown as {
-    engine: { state: GameState } | null;
+    run: { engine: { state: GameState } | null };
     hud: { weaponPickupPrompt: Prompt };
-    showForge(): void;
-    beginRun(): void;
+    nav: { showForge(): void };
+    runs: { beginRun(): void };
   };
   let ms = 0;
   const frames = (n: number) => {
@@ -80,11 +80,11 @@ function newGame() {
 /** A run, standing on a floor weapon, with the panel up. */
 function runWithLootUnderfoot() {
   const h = newGame();
-  h.inner.showForge();
-  h.inner.beginRun();
+  h.inner.nav.showForge();
+  h.inner.runs.beginRun();
   h.frames(4); // the spawn position is only real once tick 1's SpawnSystem has run
 
-  const s = h.inner.engine!.state;
+  const s = h.inner.run.engine!.state;
   const p = s.players[0]!;
   const item: PickupItem = {
     id: s.nextId(), kind: 'weapon', gx: p.gx, gy: p.gy,

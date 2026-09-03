@@ -130,3 +130,28 @@ describe('RatingStore — SQLite-backed', () => {
     expect(store.get('seat:room1:0')).toBeGreaterThan(DEFAULT_RATING);
   });
 });
+
+describe('computeRatingDeltas — the squad-aware arms nothing else reaches', () => {
+  it('gives everyone zero when the whole field is ONE team', () => {
+    // `numTeams <= 1 ? 0.5 : ...`. A four-seat room where every seat shares a squad has no
+    // ranking to express, so the actual score is a draw against itself — and the delta must
+    // be 0 rather than the K-factor swing an `(numTeams - rank) / (numTeams - 1)` with
+    // numTeams === 1 would produce (a division by zero, i.e. NaN ratings written to the DB).
+    const deltas = computeRatingDeltas([1200, 1200, 1000, 1400], [1, 1, 1, 1], [7, 7, 7, 7]);
+    expect(deltas).toEqual([0, 0, 0, 0]);
+    for (const d of deltas) expect(Number.isFinite(d)).toBe(true);
+  });
+
+  it('breaks a tie between two teams that share a best place by teamId, deterministically', () => {
+    // The `|| a.teamId - b.teamId` arm. Two teams whose best member placed the same is
+    // structurally impossible from a real match, but the sort has to be TOTAL anyway:
+    // without the tiebreak the order depends on the engine's sort stability, and the same
+    // settled match could rate differently on two runs.
+    const run = (): number[] => computeRatingDeltas([1200, 1200], [1, 1], [5, 2]);
+    const first = run();
+    for (let i = 0; i < 5; i++) expect(run()).toEqual(first);
+    // Team 2 sorts ahead of team 5, so seat 1 (team 2) is ranked first and gains.
+    expect(first[1]!).toBeGreaterThan(0);
+    expect(first[0]!).toBeLessThan(0);
+  });
+});

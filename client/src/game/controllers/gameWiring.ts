@@ -1,0 +1,194 @@
+// Split out of Game.ts's start(), 2026-09-03 — the callback wiring: which screen's button,
+// which HUD control and which key runs which verb.
+//
+// ## Why this one is free functions rather than a class
+//
+// CLAUDE.md's split order puts independent function modules first, and this is the shape that
+// earns it: there is no state here at all. Every line is one assignment from a widget's
+// callback slot to a verb on one of the four controllers, so the whole file is a table — no
+// fields, no lifecycle, nothing to construct.
+//
+// ## What changed about the old argument for keeping it in the shell
+//
+// Game.ts's file-length note defended this block twice, on the grounds that "fragmenting it
+// further would hide the full picture of what connects to what". That was right while the
+// verbs it wires were also in the shell — the picture WAS the file. It stopped being true
+// once the verbs moved: the block became ninety lines of `this.a.b = () => this.c.d()` in a
+// class that no longer owns either side. Moving the table to its own file puts the whole
+// picture in one screenful instead of buried in the middle of a 600-line constructor path,
+// which is the same thing that argument was protecting.
+//
+// `keydownAction` is the piece with real behaviour, and it is a PURE function on purpose:
+// the key table used to be an `if` chain inside a DOM listener, so the rule that F9 and pause
+// are offline-only could not be asserted without a `window`.
+import type { InputSource } from '../../platform/types';
+import type { CommandBuilder } from './CommandBuilder';
+import type { ForgeInput } from './ForgeInput';
+import type { OnlineMatch } from './OnlineMatch';
+import type { RunLifecycle } from './RunLifecycle';
+import type { ScreenNav } from './ScreenNav';
+import type { HudView } from '../ui/HudView';
+import type { PortalPrompt } from '../ui/PortalPrompt';
+import type { MainMenu } from '../screens/MainMenu';
+import type { ModeSelect } from '../screens/ModeSelect';
+import type { PvpPreview } from '../screens/PvpPreview';
+import type { Matchmaking } from '../screens/Matchmaking';
+import type { PartyScreen } from '../screens/PartyScreen';
+import type { LoginScreen } from '../screens/LoginScreen';
+import type { Forge } from '../screens/Forge';
+import type { Screens } from '../screens/Screens';
+import type { PauseMenu } from '../screens/PauseMenu';
+import { shouldSwapToSlot } from './weaponSlotSelect';
+import type { RunState } from '../runState';
+
+export interface WiringDeps {
+  run: RunState;
+  nav: ScreenNav;
+  runs: RunLifecycle;
+  net: OnlineMatch;
+  forgeInput: ForgeInput;
+  builder: CommandBuilder;
+  input: InputSource;
+  hud: HudView;
+  portalPrompt: PortalPrompt;
+  mainMenu: MainMenu;
+  modeSelect: ModeSelect;
+  pvpPreview: PvpPreview;
+  matchmaking: Matchmaking;
+  partyScreen: PartyScreen;
+  loginScreen: LoginScreen;
+  forge: Forge;
+  screens: Screens;
+  pauseMenu: PauseMenu;
+  /** Confirm — the verb Fire, Enter and the START RUN / result-screen buttons share. */
+  confirm: () => void;
+  /** The active slot of the local player, or undefined outside a run. */
+  activeSlot: () => number | undefined;
+}
+
+/** Every screen's own buttons. */
+export function wireScreens(d: WiringDeps): void {
+  d.mainMenu.onPlay = () => d.nav.showModeSelect();
+  d.mainMenu.onSquad = () => d.nav.showSquad();
+  d.mainMenu.onAccount = () => d.nav.showAccount();
+  d.mainMenu.onSettings = () => d.nav.openSettings();
+  d.modeSelect.onSolo = () => d.nav.showForge();
+  d.modeSelect.onCoop = () => d.net.beginSoloQueue(false);
+  d.modeSelect.onPvpSolo = () => d.net.beginSoloQueue(true);
+  d.modeSelect.onTutorial = () => d.runs.beginTutorialRun();
+  d.modeSelect.onBack = () => d.nav.showMenu();
+  d.pvpPreview.onQueue = () => d.nav.showMatchmaking();
+  d.pvpPreview.onBack = () => d.nav.showModeSelect();
+  d.matchmaking.onConnected = (session) => d.runs.finalizeOnlineRun(session);
+  d.matchmaking.onCancelled = () => d.net.onCancelled();
+  d.partyScreen.onBack = () => d.nav.showMenu();
+  d.partyScreen.onStartMatch = (partyId) => d.net.beginSquadMatch(partyId);
+  d.loginScreen.onBack = () => d.nav.showMenu();
+  // A login/register/logout can change which MetaStore backs the forge (design/16
+  // -accounts.md's account-bound blueprints) and the main menu's own "Hi, X" label.
+  d.loginScreen.onSessionChange = () => {
+    d.mainMenu.refreshAccountLabel();
+    void d.net.syncMetaWithSession();
+  };
+  d.forge.onBack = () => d.nav.showMenu();
+  d.forge.onCycleCharacter = () => d.forgeInput.cycleCharacter();
+  d.forge.onClear = () => d.forgeInput.clear();
+  d.forge.onCraftAt = (i) => d.forgeInput.craftAt(i);
+  d.forge.onStart = () => d.confirm();
+  d.forge.onAcquire = () => d.forgeInput.acquireBlueprint();
+  d.screens.onConfirm = () => d.confirm();
+  d.screens.onMenu = () => d.nav.showMenu();
+  d.pauseMenu.onResume = () => d.nav.resume();
+  d.pauseMenu.onSettings = () => d.nav.openSettingsFromPause();
+  d.pauseMenu.onQuit = () => d.runs.quitRun();
+}
+
+/** The in-run HUD's own controls and the portal popup. */
+export function wireHud(d: WiringDeps): void {
+  // Portal popup (design/10 legibility fix, 2026-08-02): a button click is the player's
+  // explicit checkpoint choice — routes to CommandBuilder's one-shot latches, same shape as
+  // onSwitchWeapon → builder.requestSwap() below.
+  d.portalPrompt.onExtract = () => d.builder.requestConfirmExtract();
+  d.portalPrompt.onDescend = () => d.builder.requestConfirmDescend();
+  // Ground-weapon click-to-collect (design/03, ENGINE_VERSION 32) — same shape as the portal
+  // popup above: a row click latches the target id onto the builder.
+  d.hud.weaponPickupPrompt.onPick = (id) => d.builder.requestPickup(id);
+  // ...and the press CARRYING that click is swallowed, instead of fire being gated on the
+  // panel being open at all (see CommandBuilder.suppressFireUntilRelease).
+  d.hud.weaponPickupPrompt.onPressStart = () => d.builder.suppressFireUntilRelease();
+  // In-run pause button (see HudView.pauseBtn's own doc comment): the same pause() the
+  // Escape/P key already calls, guarded by the same `!online` check (pause freezes the local
+  // sim loop unconditionally — see ScreenNav's own note on why that is unsafe for a shared
+  // match).
+  d.hud.onPause = () => {
+    if (!d.run.online && d.run.phase === 'playing') d.nav.pause();
+  };
+  // Tapping the idle-slot chip (HudView, design/10 HUD follow-up) swaps the active weapon —
+  // same latch as the keyboard/touch swap controls.
+  d.hud.onSwapWeapon = () => {
+    if (d.run.phase === 'playing') d.builder.requestSwap();
+  };
+  // The HUD's record button — the same verb as the F9 hotkey, so a touch/WeChat player (no
+  // keyboard at all) can hand over a repro too. Not phase-guarded: an offline run stays
+  // packable after it ends, and the button is only mounted while the HUD is up anyway.
+  d.hud.onSaveReplay = () => d.runs.saveReplay();
+  // Discrete actions route through the shell: during a run they latch a one-tick button pulse
+  // on the command builder. A weapon button NAMES a slot; the engine offers only a toggle,
+  // and `shouldSwapToSlot` is that bridge (see its own doc).
+  d.input.onSwitchWeapon = (slot) => {
+    if (d.run.phase === 'playing' && shouldSwapToSlot(d.activeSlot(), slot)) d.builder.requestSwap();
+  };
+}
+
+/** What a key press means, given the phase and whether the run is a shared online match. */
+export type KeyAction = 'forge' | 'closeSettings' | 'pause' | 'resume' | 'saveReplay' | 'none';
+
+/**
+ * The key table, as a pure function — the reason this is not just an `if` chain inside the
+ * DOM listener below. Two of its rules are invisible from outside and would fail silently:
+ *
+ *  - pause/resume and F9 are OFFLINE ONLY. A shared online match cannot be frozen from one
+ *    client without server reconciliation, so the hotkey is a deliberate no-op there — and a
+ *    regression would look like "Escape sometimes doesn't work", not like a bug.
+ *  - Escape and O BOTH close the settings screen, but only from the settings phase; O in the
+ *    forge phase OPENS it, which is the `forge` action (ForgeInput owns that table).
+ *
+ * Every code that is not a shell hotkey returns `forge`, because ForgeInput's own handler is
+ * phase-guarded and ignores anything it does not recognise.
+ */
+export function keydownAction(code: string, phase: string, online: boolean): KeyAction {
+  if (phase === 'settings' && (code === 'Escape' || code === 'KeyO')) return 'closeSettings';
+  if (online) return 'forge';
+  if (phase === 'playing' && (code === 'Escape' || code === 'KeyP')) return 'pause';
+  if (phase === 'paused' && (code === 'Escape' || code === 'KeyP')) return 'resume';
+  // Deliberately always available rather than behind a `?replay=1` flag: the moment worth
+  // recording is one nobody planned for, so opting in beforehand is exactly what fails.
+  if (code === 'F9') return 'saveReplay';
+  return 'forge';
+}
+
+/**
+ * The two `window` listeners. Guarded to the DOM: WeChat has no `window`, and its settings
+ * entry is the SETTINGS button instead.
+ *
+ * The resize listener registers AFTER WebPlatform's own `resizeTo: window` (added during
+ * `app.init()`, well before this runs), so the browser's guaranteed same-event listener
+ * ordering means Pixi's renderer.resize() has already happened by the time ours fires —
+ * `relayout` reads the already-updated renderer dimensions, not last frame's.
+ */
+export function wireWindow(d: WiringDeps): void {
+  if (typeof window === 'undefined') return;
+  window.addEventListener('keydown', (e) => {
+    // ForgeInput runs first and is phase-guarded, so a shell hotkey and a forge key can
+    // share a code without either shadowing the other.
+    d.forgeInput.onKey(e.code);
+    switch (keydownAction(e.code, d.run.phase, d.run.online)) {
+      case 'closeSettings': d.nav.closeSettings(); break;
+      case 'pause': d.nav.pause(); break;
+      case 'resume': d.nav.resume(); break;
+      case 'saveReplay': d.runs.saveReplay(); break;
+      default: break; // 'forge' — already handled above
+    }
+  });
+  window.addEventListener('resize', () => requestAnimationFrame(() => d.nav.relayout()));
+}

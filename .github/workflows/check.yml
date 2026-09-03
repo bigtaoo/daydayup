@@ -2,15 +2,25 @@
 # workflows — nothing ran the tests on a push, so every gate in the repo was a gate only
 # for whoever remembered to run it locally.
 #
-# Two jobs, split by cost rather than by kind:
+# Four jobs, split by cost and by what a failure MEANS rather than by kind:
 #
-#   check  — typecheck, the 500-line drift gate, the WeChat package-size gate, and the full
-#            unit suite across every workspace. Seconds, so it runs on everything.
-#   sims   — the three `.sim.ts` suites (`test:pvp-sim`, `test:pve-sim`). They play real
-#            bot-driven matches and carry the level's survivability gates (design/05 "Room
-#            encounter budget"), which is exactly what a geometry or enemy change can break
-#            without failing a single unit test. Minutes, so it runs on pushes to main and
-#            on pull requests, and can be triggered by hand.
+#   logic    — the logic-consistency gates, by name (build/logicConsistency.mjs). Seconds,
+#              and first, because it is the fastest way to learn that a change altered sim
+#              behaviour: a red `logic` with a green `check` says the code is fine and the
+#              BEHAVIOUR moved, which is a different conversation from a broken build.
+#   check    — typecheck, the 500-line drift gate, the WeChat package-size gate, the doc-path
+#              gate, and the full unit suite across every workspace. Seconds, so it runs on
+#              everything.
+#   coverage — the same suites again under v8 instrumentation, then the 90% line / 90% branch
+#              gate over client, engine and server (build/checkCoverageThreshold.mjs).
+#              Minutes; see that job's own comment for why it runs on every event anyway.
+#   sims     — the three `.sim.ts` suites (`test:pvp-sim`, `test:pve-sim`, `test:drop-sim`).
+#              They play real bot-driven matches and carry the level's survivability gates
+#              (design/05 "Room encounter budget"), which is exactly what a geometry or enemy
+#              change can break without failing a single unit test. Minutes.
+#
+# Every job is independent on purpose: when a geometry change breaks a balance gate we want
+# to see ALL the results, not have the slow ones skipped because the fast one went red.
 #
 # See design/18-test-strategy.md for what each layer of the suite is for.
 name: check
@@ -28,6 +38,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # The named consistency step. `npm run check` below already runs every one of these tests,
+  # which is precisely why this job exists separately: inside a 6,000-test summary, a gate
+  # that stops running looks like nothing at all. Here the step's own name is the claim, and
+  # the manifest fails closed if any gate it names has been renamed or deleted.
+  logic:
+    name: logic consistency
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run check:logic
+
   check:
     runs-on: ubuntu-latest
     steps:
@@ -42,10 +68,54 @@ jobs:
       - run: npm ci
       - run: npm run check
 
+  # Coverage on EVERY event, including pull requests — deliberately, and it is the expensive
+  # choice. The sibling project `funny` ran coverage only on the pre-deploy push for exactly
+  # the cost reason, and recorded what that bought: a coverage regression could only be caught
+  # by the merge that shipped it, never by the PR that caused it. Since the bars are 90/90 and
+  # the client sits ~2 points over on branches, one unexercised `if` is all it takes — so the
+  # PR that adds it is the only useful place to say so.
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: run every suite under v8 instrumentation
+        id: measure
+        run: npm run test:coverage
+      # Both of the steps below run even when the one above failed, and they read the same
+      # `evaluate` call so they cannot disagree. TESTS_OK is how the gate is told that a
+      # missing coverage/ directory here is a CONSEQUENCE of a failed test run rather than a
+      # broken coverage step — it fails closed otherwise, on purpose.
+      - name: coverage report
+        if: always()
+        env:
+          TESTS_OK: ${{ steps.measure.outcome == 'success' }}
+        run: node build/coverageReport.mjs
+      - name: 90% line / 90% branch gate
+        if: always()
+        env:
+          TESTS_OK: ${{ steps.measure.outcome == 'success' }}
+        run: node build/checkCoverageThreshold.mjs
+      # Kept even on failure: the HTML report is how you find WHICH lines, and a failed gate
+      # is exactly when someone wants it.
+      - name: upload coverage html
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: |
+            client/coverage
+            engine/coverage
+            server/coverage
+          retention-days: 7
+          if-no-files-found: warn
+
   sims:
     runs-on: ubuntu-latest
-    # Independent of `check` on purpose: when a geometry change breaks a balance gate we want
-    # to see BOTH results, not have the slow one skipped because the fast one went red.
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

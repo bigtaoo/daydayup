@@ -183,16 +183,14 @@ function newGame(opts: { search?: string; body?: string | null } = {}) {
   game.start();
 
   const inner = game as unknown as {
-    phase: string;
-    engine: { state: GameState } | null;
+    run: { phase: string; engine: { state: GameState } | null; replayStop: number | null };
     hud: {
       replayBtn: { view: { visible: boolean } };
       update(...args: unknown[]): void;
       toast(text: string, color?: number): void;
     };
-    showForge(): void;
-    beginRun(): void;
-    beginReplayRun(url: string): Promise<void>;
+    nav: { showForge(): void };
+    runs: { beginRun(): void; beginReplayRun(url: string): Promise<void> };
   };
 
   let ms = 0;
@@ -223,23 +221,23 @@ describe('Game — booting into a recording with ?replay=', () => {
     await flush();
 
     expect(h.host.fetched).toEqual(['/r.json']);
-    expect(h.inner.phase).toBe('playing');
-    expect(h.inner.engine).not.toBeNull();
-    expect(h.inner.engine!.state.tick).toBe(0); // built, not yet stepped
+    expect(h.inner.run.phase).toBe('playing');
+    expect(h.inner.run.engine).not.toBeNull();
+    expect(h.inner.run.engine!.state.tick).toBe(0); // built, not yet stepped
 
     h.frames(30);
-    const first = h.inner.engine!.state.tick;
+    const first = h.inner.run.engine!.state.tick;
     expect(first).toBeGreaterThan(0);
     h.frames(30);
-    expect(h.inner.engine!.state.tick).toBeGreaterThan(first);
+    expect(h.inner.run.engine!.state.tick).toBeGreaterThan(first);
 
     // And it is the RECORDED input driving it, not a live one: the state matches a
     // headless replay of the same file to the same tick, bit for bit. A live command
     // submitted over the top would diverge here (and `ReplayInputSource` is read-only, so
     // it would throw) — this is the assertion that says playback is playback.
     const file = parseReplayFileText(text);
-    const at = h.inner.engine!.state.tick;
-    expect(hashState(runReplay(file.replay, at).state)).toBe(hashState(h.inner.engine!.state));
+    const at = h.inner.run.engine!.state.tick;
+    expect(hashState(runReplay(file.replay, at).state)).toBe(hashState(h.inner.run.engine!.state));
   });
 
   it('holds at the LAST marked tick while the frame loop keeps running', async () => {
@@ -251,11 +249,11 @@ describe('Game — booting into a recording with ?replay=', () => {
     expect(h.game.replayStopTick()).toBe(LAST_MARK);
 
     h.frames(600); // far past both the mark and the end of the 300-tick stream
-    expect(h.inner.engine!.state.tick).toBe(LAST_MARK);
+    expect(h.inner.run.engine!.state.tick).toBe(LAST_MARK);
 
     const before = h.counted.hudUpdates;
     h.frames(60);
-    expect(h.inner.engine!.state.tick).toBe(LAST_MARK); // still held
+    expect(h.inner.run.engine!.state.tick).toBe(LAST_MARK); // still held
     expect(h.counted.hudUpdates).toBeGreaterThan(before); // and the client is not frozen
   });
 
@@ -273,13 +271,13 @@ describe('Game — booting into a recording with ?replay=', () => {
     // labelled with the old run while the player is looking at a different one entirely —
     // the worst possible bug in a feature whose only job is answering "which run was this".
     const h = newGame({ search: '' }); // no ?replay= — a normal offline boot first
-    h.inner.showForge();
-    h.inner.beginRun();
+    h.inner.nav.showForge();
+    h.inner.runs.beginRun();
     h.frames(60);
     h.pressF9();
     expect(h.saved).toHaveLength(1); // the offline run really was exportable
 
-    await h.inner.beginReplayRun('/r.json');
+    await h.inner.runs.beginReplayRun('/r.json');
     h.frames(30);
     h.pressF9();
 
@@ -297,8 +295,8 @@ describe('Game — booting into a recording with ?replay=', () => {
     expect(h.game.replayStopTick()).toBeNull();
     expect(h.toasts).toHaveLength(1);
     expect(h.toasts[0]).toContain('Not a DayDayUp replay');
-    expect(h.inner.phase).not.toBe('playing'); // and it did not half-enter a run
-    expect(h.inner.engine).toBeNull();
+    expect(h.inner.run.phase).not.toBe('playing'); // and it did not half-enter a run
+    expect(h.inner.run.engine).toBeNull();
   });
 
   it('a failed load RELEASES the held tick, so the next run is not frozen at it', async () => {
@@ -311,16 +309,16 @@ describe('Game — booting into a recording with ?replay=', () => {
     expect(h.game.replayStopTick()).toBe(LAST_MARK);
 
     h.host.serve(null); // the next fetch 404s
-    await h.inner.beginReplayRun('/missing.json');
+    await h.inner.runs.beginReplayRun('/missing.json');
 
     expect(h.game.replayStopTick()).toBeNull();
     expect(h.toasts[h.toasts.length - 1]).toContain('Could not load replay /missing.json');
 
     // The consequence, asserted rather than assumed: a fresh offline run advances past the
     // tick the abandoned file wanted to hold.
-    h.inner.showForge();
-    h.inner.beginRun();
+    h.inner.nav.showForge();
+    h.inner.runs.beginRun();
     h.frames(300);
-    expect(h.inner.engine!.state.tick).toBeGreaterThan(LAST_MARK);
+    expect(h.inner.run.engine!.state.tick).toBeGreaterThan(LAST_MARK);
   });
 });

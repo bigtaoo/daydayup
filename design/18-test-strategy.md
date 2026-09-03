@@ -1,11 +1,15 @@
 # Test strategy: keeping the logic in sync with itself
 
-> Status: **all four layers shipped**, 2026-08-30, at `ENGINE_VERSION` **49**. Repo-wide
+> Status: **all four layers shipped**, 2026-08-30, at `ENGINE_VERSION` **49**, and since
+> 2026-09-03 **measured and gated** — see "Layer 4: coverage as a gate" below. Repo-wide
 > `npm run check` was green at 5,885 tests when they landed (engine 885 → 1064), and at
-> **6,902** (engine **1164**) when last measured, 2026-09-03 (the day's last pass was the door-fx
-> clock, +103 client tests) — both figures dated on purpose,
-> because an undated count in a status block is this doc set's most reliable way of going stale
-> (see the design-docs conventions memory). Two more Layer 0 gates landed that day:
+> **7,190** (engine **1164**, client **4,810**, server **285**) when last measured, 2026-09-03
+> (the day's last pass was the coverage gate + the Game.ts split, +151 client and +96 server
+> tests) — both figures dated on purpose, because an undated count in a status block is this
+> doc set's most reliable way of going stale (see the design-docs conventions memory).
+> Coverage at that same measurement: **client 97.70% lines / 92.12% branches, engine 97.67% /
+> 92.86%, server 99.32% / 95.44%**, each over its whole source tree, each gated at 90/90.
+> Two more Layer 0 gates landed the same day:
 > `engine/stepOrder.test.ts` and `build/checkDocPaths.mjs`. Both `.sim.ts` balance suites pass,
 > including the level-1 no-stall gate that a geometry change is most likely to break.
 >
@@ -26,10 +30,74 @@
 | **1** unit tests | `solidBounds.test.ts`, `MovementSystem.test.ts`, `WeaponFireSystem.test.ts`, `ProjectileStepSystem.test.ts` | ✅ the last three had **no test file at all** before this |
 | **2** parity sweeps | `boundaryParity.test.ts`, `clearanceParity.test.ts`, `client/.../simRenderParity.test.ts`, `client/src/render/muzzleParity.test.ts`, `client/.../pickupProximity.test.ts` (v50) | ✅ G4, G5, G6 closed; v50 adds the panel-offers-vs-sim-accepts pair, the one gap that straddles the sim boundary |
 | **3** smoke + CI | `engine/smoke.test.ts`, root `npm run check:full`, `.github/workflows/check.yml` | ✅ 5 real runs, 7 invariants, every tick (v50 added the two loot/monster placement rules) |
+| **4** coverage as a gate | `build/coverageLib.mjs` + `checkCoverageThreshold.mjs` + `coverageReport.mjs`, `build/coverageScope.test.mjs`, `client/src/game/pureLayerBoundary.test.ts` | ✅ 2026-09-03 — 90% lines **and** 90% branches over each package's whole tree, plus the two guards that keep the scope honest |
+| **4** the gates, by name | `build/logicConsistency.mjs` + its manifest test | ✅ 2026-09-03 — the 12 gates above as a named CI job, failing closed when one is renamed away |
 
 `check:full` = `check` + the `.sim.ts` suites. `.github/workflows/check.yml` runs both in CI —
 until it existed, `.github/workflows/` held only deploy workflows, so nothing ran the tests on
 a push and every gate in the repo was a gate only for whoever remembered to run it locally.
+Since 2026-09-03 it is four independent jobs — `logic`, `check`, `coverage`, `sims` — all on
+every push and pull request.
+
+## Layer 4: coverage as a gate, and the two things a percentage cannot say (2026-09-03)
+
+The layers above answer "does the logic agree with itself". This one answers a different
+question — "is there any of it nothing runs" — and it was added because the answer had never
+been measured. There was no coverage provider installed, no script, and no CI step.
+
+The measurement, taken before anything was built, is the reason the pass turned out the way it
+did:
+
+| Package | Lines | Branches | Functions |
+| --- | --- | --- | --- |
+| client | 96.52% | **90.03%** | 92.06% |
+| engine | 97.70% | 92.95% | 98.75% |
+| server | 85.23% | **78.27%** | 79.74% |
+
+Two things follow from those numbers, and neither is "write more tests".
+
+**The branch column is the one worth gating.** The client's line coverage was comfortable and
+its branch coverage was three hundredths of a point over 90 — one unexercised `if` from
+failing. Uncovered branches concentrate in the absent-field fallbacks, the refusal paths and
+the lost-race arms: the code that only runs when something has already gone wrong, which is
+the code a test is most worth having. `server/src/MatchRoom.ts` was the clearest case in the
+repo: **99.08% lines, 83.14% branches**, because every guard's line executes — only the taken
+side runs — while every "wrong caller, wrong phase, wrong seat" arm in it was unexercised.
+Those guards are trust boundaries fed straight off the wire. Functions is measured and
+reported but deliberately **not** gated: it is the metric most easily satisfied by calling a
+function once and asserting nothing.
+
+**Scope is the knob that raises every number without a test.** The gate therefore carries a
+`scopeShrunk` rule: it fails when the coverage report holds fewer files than the package's
+source tree, using the answer vitest's own matcher just produced rather than re-deriving the
+globs. It is what lets all three packages keep a whole-tree `coverage.include` instead of the
+hand-maintained allow-list the sibling project `funny` needs (its render layer sits at 0–15%
+and would drown the number). Verified by mutation, and the mutant is the argument: narrowing
+the client's include to `src/game/**` reports **97.68% lines / 92.13% branches — both green**
+while measuring 130 of 224 files. Nothing else in the setup would have said a word.
+
+### What the percentage still cannot do
+
+`client/src/game/pureLayerBoundary.test.ts` exists because a gate's headroom is
+`covered / 0.9 - total` — at 96% that is hundreds of lines, and it GROWS as the tests improve.
+So a module that imports PIXI can be dropped into the pure layer, add untested lines, and
+leave the gate comfortably green. What that costs is not coverage; it is the ability to test
+the logic at all, which is the entire reason `src/game/runState.ts` was split out of `Game.ts`
+in the first place. The guard has two halves — no runtime import may reach a browser-dependent
+module, and the file may not touch a browser global itself — because the first alone is a hole
+you can drive through: a module needs no imports at all to call `document.createElement`.
+
+### The gates, by name
+
+Every Layer 0 and Layer 2 gate above already ran inside `npm run check`, and that is precisely
+the problem `build/logicConsistency.mjs` solves. Rename one, move it out of an `include` glob,
+or let its `describe` go empty, and the suite reports one fewer test — nothing anywhere says
+which tests were *supposed* to run. The manifest lists all twelve with the reason each
+qualifies (it pins an agreement between two separately-maintained things that can drift apart
+in silence — not merely an important test), `--run` executes exactly those as a named CI job,
+and a named entry that no longer resolves fails closed. Its own test guards the other
+direction: it discovers gates from the tree by this document's naming conventions and fails if
+one is not on the list, so a new `*Parity.test.ts` cannot quietly skip the step.
 
 ## What v49 fixed
 

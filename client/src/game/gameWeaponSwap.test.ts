@@ -58,11 +58,10 @@ function newGame() {
   game.start();
 
   const inner = game as unknown as {
-    phase: string;
-    engine: { state: GameState } | null;
+    run: { phase: string; engine: { state: GameState } | null; replayStop: number | null };
     hud: { weaponSlotChip: { onTap: (() => void) | null; view: { visible: boolean } } };
-    showForge(): void;
-    beginRun(): void;
+    nav: { showForge(): void };
+    runs: { beginRun(): void };
   };
   let ms = 0;
   const frames = (n: number) => {
@@ -72,16 +71,16 @@ function newGame() {
 }
 
 /** The active weapon as the SIM sees it — `weapons[activeSlot]`, not a HUD label. */
-function active(inner: { engine: { state: GameState } | null }) {
-  const p = inner.engine!.state.players[0]!;
+function active(inner: { run: { engine: { state: GameState } | null } }) {
+  const p = inner.run.engine!.state.players[0]!;
   return { slot: p.activeSlot, name: p.weapon!.spec.name, kind: p.weapon!.spec.kind };
 }
 
 function startedRun() {
   const h = newGame();
   expect(h.frameCount()).toBeGreaterThan(0); // the loop really is captured
-  h.inner.showForge();
-  h.inner.beginRun();
+  h.inner.nav.showForge();
+  h.inner.runs.beginRun();
   h.frames(4);
   return h;
 }
@@ -89,7 +88,7 @@ function startedRun() {
 describe('Game — the weapon swap verb, HUD tap to sim', () => {
   it('an ordinary run spawns holding a gun with a melee weapon in the idle slot', () => {
     const { inner } = startedRun();
-    const p = inner.engine!.state.players[0]!;
+    const p = inner.run.engine!.state.players[0]!;
     expect(p.weapons).toHaveLength(PLAYER_BASE.weaponSlots);
     expect(active(inner).kind).toBe('ranged');
     expect(p.weapons.map((w) => w.spec.kind)).toContain('melee');
@@ -135,7 +134,7 @@ describe('Game — the weapon swap verb, HUD tap to sim', () => {
     inner.hud.weaponSlotChip.onTap!();
     frames(4);
     expect(inner.hud.weaponSlotChip.view.visible).toBe(true);
-    const p = inner.engine!.state.players[0]!;
+    const p = inner.run.engine!.state.players[0]!;
     expect(p.weapons[(p.activeSlot + 1) % p.weapons.length]!.spec.name).toBe(before.name);
   });
 });

@@ -94,6 +94,21 @@ export interface MatchsvcServerOptions {
   dbPath?: string;
   /** Ticket-signing secret override — tests can pin a fixed value; defaults to `ticketSecret()`. */
   secret?: string;
+  /**
+   * Matchmaker timing overrides. The only reason this exists is `pvpBotFillMs`: PvP bot
+   * backfill is a 30-SECOND wait by default, so `onBotFill` below — the block that mints a
+   * ticket per empty seat and is the entire PvP-with-bots path players actually hit — could
+   * not be reached by any test at a sane runtime, and was at 0% until 2026-09-03.
+   */
+  matchmaker?: { pvpBotFillMs?: number; queueTtlMs?: number; ticketTtlMs?: number };
+  /**
+   * Bot spawner seam, defaulting to the real `spawnBotClient` (which opens a socket to
+   * GAMESERVER_URL). Injected so a test can assert WHAT was minted for each empty seat —
+   * the seat's owner index, its team, the signature — without standing up a gameserver.
+   * The interesting logic here is `teamIdForOwner`, which decides whether a bot tops up a
+   * real party's understaffed squad or starts a new one, and it is invisible from outside.
+   */
+  spawnBot?: typeof spawnBotClient;
 }
 
 /**
@@ -109,7 +124,9 @@ export function createMatchsvcServer(opts: MatchsvcServerOptions = {}): Server {
   // Seeds only need to differ per room (the engine derives all determinism from seed +
   // inputs); a counter off the start time avoids Math.random and cross-restart collision.
   let seedCounter = Date.now() & 0x7fffffff;
+  const spawnBot = opts.spawnBot ?? spawnBotClient;
   const matchmaker = new Matchmaker({
+    ...opts.matchmaker,
     nowMs: () => Date.now(),
     nextSeed: () => (seedCounter = (seedCounter + 1) & 0x7fffffff),
     newRoomId: () => randomUUID(),
@@ -127,7 +144,7 @@ export function createMatchsvcServer(opts: MatchsvcServerOptions = {}): Server {
         // falls into, topping up a real party's understaffed squad first.
         const teamId = teamIdForOwner(owner, playerCount);
         const grant: TicketPayload = { roomId, owner, seed, playerCount, teamId, exp, mode };
-        spawnBotClient({
+        spawnBot({
           wsUrl: GAMESERVER_URL,
           token: signTicket(grant, secret),
           roomId,

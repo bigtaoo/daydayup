@@ -10,10 +10,12 @@
  * bot's `setInterval` tick cadence so the test stays synchronous and deterministic.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import type { AddressInfo } from 'node:net';
+import { WebSocketServer } from 'ws';
 import { makeCommand, type Brad, type ClientMsg, type PlayerCommand, type ServerMsg } from '@dd/engine';
 import type { Transport } from '@dd/net/transport';
 import { MatchRoom, type RoomConnection, type Scheduler, type IntervalHandle } from '../src/MatchRoom';
-import { runBotClient } from '../src/BotClient';
+import { runBotClient, spawnBotClient } from '../src/BotClient';
 
 class FakeScheduler implements Scheduler {
   private fns: Array<() => void> = [];
@@ -101,4 +103,115 @@ describe('BotClient — drives a real seat through a real MatchRoom', () => {
     scheduler.pulse();
     expect(bridge.sent.length).toBe(sentCountAtStop); // no further ticks after stop()
   });
+});
+
+describe('BotClient — stop() is idempotent and final', () => {
+  // The `done` flag's two arms. `stop()` is reachable twice in production — from `tick`'s
+  // gameover branch and from whatever tears the bot down — and a second `clearInterval` on a
+  // stale handle is harmless, but a second `session.close()` is not: it closes a socket a
+  // NEW bot may already have been handed for the same seat.
+  it('ignores a second stop, and ticks nothing after the first', () => {
+    vi.useFakeTimers();
+    const scheduler = new FakeScheduler();
+    const room = new MatchRoom('r2', 5, 2, { scheduler, onDestroy: () => {}, mode: 'pvp', framesPerBatch: 1 });
+    const human: RoomConnection = { owner: 0, send: () => {} };
+    room.join(human);
+
+    const bridge = new BridgeTransport(1);
+    const bot = runBotClient({
+      transport: bridge,
+      wsUrl: 'unused',
+      token: 'unused',
+      roomId: 'r2',
+      owner: 1,
+      seed: 5,
+      playerCount: 2,
+      // no tickMs — exercises the DEFAULT_TICK_MS fallback, i.e. the cadence every real
+      // bot actually runs at (matchsvc never passes one).
+    });
+    room.join(bridge.conn);
+
+    bot.stop();
+    expect(bridge.closed).toBe(true);
+    const sentAtStop = bridge.sent.length;
+
+    bot.stop(); // second call: must be a no-op, not a second close
+    vi.advanceTimersByTime(500);
+    scheduler.pulse();
+    expect(bridge.sent.length).toBe(sentAtStop);
+  });
+});
+
+describe('BotClient — the match ending', () => {
+  it('reports its result and closes itself once the sim reaches gameover', () => {
+    // The gameover arm of `tick`, and the reason a bot is fire-and-forget: nothing tracks the
+    // handle, so if this branch never fired every bot-filled match would leak a live socket
+    // and a 30 Hz interval for the lifetime of the process.
+    vi.useFakeTimers();
+    const scheduler = new FakeScheduler();
+    const room = new MatchRoom('r3', 11, 2, { scheduler, onDestroy: () => {}, mode: 'pvp', framesPerBatch: 1 });
+
+    // Seat 0 is a human who never acts, so the bot wins on its own — the match really does
+    // reach gameover rather than being told it has.
+    const human: RoomConnection = { owner: 0, send: () => {} };
+    room.join(human);
+    const bridge = new BridgeTransport(1);
+    runBotClient({
+      transport: bridge,
+      wsUrl: 'unused',
+      token: 'unused',
+      roomId: 'r3',
+      owner: 1,
+      seed: 11,
+      playerCount: 2,
+      tickMs: 10,
+    });
+    room.join(bridge.conn);
+
+    for (let i = 0; i < 20_000 && !bridge.closed; i++) {
+      room.submitCmd(0, humanCmd(i + 1));
+      vi.advanceTimersByTime(10);
+      scheduler.pulse();
+    }
+
+    expect(bridge.closed).toBe(true); // stop() ran, which only the gameover arm does here
+    const results = bridge.sent.filter((m) => m.type === 'result');
+    expect(results).toHaveLength(1); // exactly one, from the tick that saw gameover
+  }, 60_000);
+});
+
+describe('spawnBotClient — the production entry point', () => {
+  it('opens a ticket-authenticated socket at the given gameserver URL', async () => {
+    // `spawnBotClient` is the only line matchsvc actually calls, and it was uncovered: the
+    // suite above drives `runBotClient` with an injected transport, which skips both the URL
+    // assembly and the ticket encoding. A token that is not URL-encoded arrives truncated at
+    // the first `+` or `=` and the gameserver refuses the handshake — silently, from the
+    // bot's side.
+    vi.useRealTimers();
+    const wss = new WebSocketServer({ port: 0 });
+    await new Promise<void>((r) => wss.once('listening', () => r()));
+    const { port } = wss.address() as AddressInfo;
+    const seen: string[] = [];
+    wss.on('connection', (_ws, req) => seen.push(req.url ?? ''));
+    try {
+      const token = 'a+b/c=d'; // the characters base64url signing produces that URLs mangle
+      spawnBotClient({
+        wsUrl: `ws://127.0.0.1:${port}/ws`,
+        token,
+        roomId: 'r4',
+        owner: 1,
+        seed: 3,
+        playerCount: 2,
+      });
+      const deadline = Date.now() + 3000;
+      while (seen.length === 0 && Date.now() < deadline) await new Promise((r) => setTimeout(r, 10));
+
+      expect(seen).toHaveLength(1);
+      const query = new URL(seen[0]!, 'ws://x').searchParams;
+      expect(query.get('ticket')).toBe(token);
+    } finally {
+      for (const c of wss.clients) c.terminate();
+      await new Promise<void>((r) => wss.close(() => r()));
+    }
+  }, 20_000);
 });

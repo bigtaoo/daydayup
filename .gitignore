@@ -46,3 +46,8 @@ tools/audio-pipeline/all/
 tools/audio-pipeline/out*/
 tools/audio-pipeline/synth.json
 tools/audio-pipeline/process*.json
+
+# Coverage output (build/coverageLib.mjs's `<pkg>/coverage/`). Written by every
+# `npm run test:coverage`; the gate reads coverage-summary.json out of it and CI uploads the
+# html half as an artifact. Never source.
+coverage/

@@ -192,26 +192,37 @@ describe('a genuine wait', () => {
 
 describe('the transitions that are gated', () => {
   it('gates every screen that draws run art, and no screen that does not', () => {
-    // A source assertion, because `Game` cannot be constructed without a real WebGL renderer.
-    // What it protects is the list itself: adding a screen that draws rig or weapon art and
-    // forgetting the gate is invisible until someone plays on a cold cache.
-    const src = readFileSync(new URL('../Game.ts', import.meta.url), 'utf8');
+    // A source assertion, because these transitions cannot be driven without a real WebGL
+    // renderer behind them. What it protects is the list itself: adding a screen that draws
+    // rig or weapon art and forgetting the gate is invisible until someone plays on a cold
+    // cache.
+    //
+    // Two files since the 2026-09-03 Game.ts split — the screen transitions moved to
+    // `ScreenNav`, the run entry points to `RunLifecycle`. Both are searched, and a name
+    // found in NEITHER fails, so a method that moves again does not silently stop being
+    // checked (the failure mode this sweep is most exposed to: `indexOf` returning -1 and
+    // `slice(-1)` yielding a one-character body that contains nothing).
+    const sources = ['./ScreenNav.ts', './RunLifecycle.ts'].map((rel) =>
+      readFileSync(new URL(rel, import.meta.url), 'utf8'),
+    );
     const bodyAfter = (name: string): string => {
+      const hits = sources.filter((src) => src.includes(name));
+      expect(hits.length, `${name} is in ${hits.length} of the controller files, want exactly 1`).toBe(1);
+      const src = hits[0]!;
       const at = src.indexOf(name);
-      expect(at, `${name} is gone from Game.ts`).toBeGreaterThan(-1);
       return src.slice(at, src.indexOf('\n  }', at));
     };
     for (const gated of [
-      'private showForge()',
-      'private showPvpPreview()',
-      'private showMatchmaking()',
-      'private beginTutorialRun()',
-      'private beginArenaDemoRun()',
-      'private async beginReplayRun(',
+      'showForge(): void {',
+      'showPvpPreview(): void {',
+      'showMatchmaking(): void {',
+      'beginTutorialRun(): void {',
+      'beginArenaDemoRun(): void {',
+      'async beginReplayRun(',
     ]) {
-      expect(bodyAfter(gated), gated).toContain('this.artGate.defer(');
+      expect(bodyAfter(gated), gated).toContain('artGate.defer(');
     }
-    for (const ungated of ['private showMenu()', 'private showModeSelect()', 'private showAccount()', 'private showSquad()']) {
+    for (const ungated of ['showMenu(): void {', 'showModeSelect(): void {', 'showAccount(): void {', 'showSquad(): void {']) {
       expect(bodyAfter(ungated), ungated).not.toContain('artGate');
     }
   });

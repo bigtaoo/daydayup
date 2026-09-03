@@ -975,7 +975,15 @@ describe('arena occlusion coverage — the launch map, swept', () => {
     // single deep-pass case on one of those would have survived into `withBrim`.
     const tiers = new Set(control.flatMap((h) => h.blocks.map((b) => b.tier)));
     expect([...tiers]).toEqual(['interior']);
-  });
+    // 30s, and ONLY on this case. It is the one test in the client that sweeps the whole launch
+    // map TWICE (once with the brim, once without, for the control above), and v8 coverage
+    // instrumentation costs it 13x: 623 ms bare, 8.4 s under `--coverage`, i.e. it passes the
+    // normal run and times out at vitest's 5 s default the moment coverage is on. Raising the
+    // GLOBAL timeout instead would have been the cheaper edit and the wrong one — it would give
+    // every one of the other 4,658 cases two minutes to hang before saying so, and a hang that
+    // eventually reports is exactly the failure this repo's mutation work keeps mistaking for a
+    // kill. So the exemption stays where the cost is.
+  }, 30_000);
 
   // The three tests that used to live here — that the deep pass never fires below the band
   // `deepFadeReach` keeps opaque, that it leaves ZERO rows of the body buried, and how much of the

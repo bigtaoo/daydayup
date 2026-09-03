@@ -117,22 +117,18 @@ function newGame(opts: { canDownload?: boolean } = {}) {
   game.start();
 
   const inner = game as unknown as {
-    phase: string;
-    engine: { state: GameState } | null;
+    run: { phase: string; engine: { state: GameState } | null; replayStop: number | null };
     hud: {
       replayBtn: { onTap: (() => void) | null };
       onSaveReplay: (() => void) | null;
       toast(text: string, color?: number): void;
     };
-    showForge(): void;
-    beginRun(): void;
+    nav: { showForge(): void };
+    runs: { beginRun(): void; beginTutorialRun(): void; beginArenaDemoRun(): void; finalizeOnlineRun(session: unknown): void };
     // The other two offline entry points, and the online transition — all private, all
     // reached here exactly the way a player reaches them (a ModeSelect button / a match
     // starting), because the thing under test is whether each one leaves an exportable
     // stream behind.
-    beginTutorialRun(): void;
-    beginArenaDemoRun(): void;
-    finalizeOnlineRun(session: unknown): void;
   };
   let ms = 0;
   const frames = (n: number) => {
@@ -149,8 +145,8 @@ function newGame(opts: { canDownload?: boolean } = {}) {
 
 function startedRun(opts: { canDownload?: boolean } = {}) {
   const h = newGame(opts);
-  h.inner.showForge();
-  h.inner.beginRun();
+  h.inner.nav.showForge();
+  h.inner.runs.beginRun();
   h.frames(120); // a real run, long enough that the recorded stream is not trivially short
   return h;
 }
@@ -158,7 +154,7 @@ function startedRun(opts: { canDownload?: boolean } = {}) {
 describe('Game — saving a replay, from a real run to real bytes', () => {
   it('the HUD record button writes a file that reconstructs the run being played', () => {
     const { inner, saved } = startedRun();
-    const live = inner.engine!.state;
+    const live = inner.run.engine!.state;
     expect(live.tick).toBeGreaterThan(50); // the run really advanced
 
     inner.hud.replayBtn.onTap!();
@@ -175,7 +171,7 @@ describe('Game — saving a replay, from a real run to real bytes', () => {
 
   it('marks the tick the control was pressed on — the reason a report is answerable', () => {
     const { inner, saved } = startedRun();
-    const at = inner.engine!.state.tick;
+    const at = inner.run.engine!.state.tick;
     inner.hud.replayBtn.onTap!();
     expect(parseReplayFileText(saved[0]!.text).marks).toEqual([
       { tick: at, note: `hotkey at tick ${at}` },
@@ -184,7 +180,7 @@ describe('Game — saving a replay, from a real run to real bytes', () => {
 
   it('the F9 key reaches the same verb — one save, two entry points', () => {
     const { inner, pressF9, saved } = startedRun();
-    const at = inner.engine!.state.tick;
+    const at = inner.run.engine!.state.tick;
     pressF9();
     expect(saved).toHaveLength(1);
     const file = parseReplayFileText(saved[0]!.text);
@@ -242,7 +238,7 @@ describe('Game — saving a replay, from a real run to real bytes', () => {
 
   it('a run that has not started yet saves nothing, and does not throw', () => {
     const { inner, pressF9, saved } = newGame();
-    expect(inner.engine).toBeNull();
+    expect(inner.run.engine).toBeNull();
     expect(() => pressF9()).not.toThrow();
     expect(saved).toHaveLength(0);
   });
@@ -252,8 +248,8 @@ describe('Game — saving a replay, from a real run to real bytes', () => {
     h.inner.hud.replayBtn.onTap!();
     const first = parseReplayFileText(h.saved[0]!.text);
 
-    h.inner.showForge();
-    h.inner.beginRun();
+    h.inner.nav.showForge();
+    h.inner.runs.beginRun();
     h.frames(30);
     h.inner.hud.replayBtn.onTap!();
     const second = parseReplayFileText(h.saved[1]!.text);
@@ -261,7 +257,7 @@ describe('Game — saving a replay, from a real run to real bytes', () => {
     expect(second.replay.commands.length).toBeLessThan(first.replay.commands.length);
     expect(second.marks).toHaveLength(1); // the first run's mark did not survive
     // And the second file still reconstructs the second run.
-    expect(hashState(runReplay(second.replay, second.ticks).state)).toBe(hashState(h.inner.engine!.state));
+    expect(hashState(runReplay(second.replay, second.ticks).state)).toBe(hashState(h.inner.run.engine!.state));
   });
 });
 
@@ -275,17 +271,17 @@ describe('every offline entry point leaves an exportable run behind', () => {
     {
       name: 'dungeon (Enter from the forge)',
       label: 'dungeon',
-      start: (i: ReturnType<typeof newGame>['inner']) => { i.showForge(); i.beginRun(); },
+      start: (i: ReturnType<typeof newGame>['inner']) => { i.nav.showForge(); i.runs.beginRun(); },
     },
     {
       name: 'tutorial (ModeSelect’s TUTORIAL button)',
       label: 'tutorial',
-      start: (i: ReturnType<typeof newGame>['inner']) => i.beginTutorialRun(),
+      start: (i: ReturnType<typeof newGame>['inner']) => i.runs.beginTutorialRun(),
     },
     {
       name: 'arena demo (?arena=, the dev harness)',
       label: 'arena',
-      start: (i: ReturnType<typeof newGame>['inner']) => i.beginArenaDemoRun(),
+      start: (i: ReturnType<typeof newGame>['inner']) => i.runs.beginArenaDemoRun(),
     },
   ];
 
@@ -305,7 +301,7 @@ describe('every offline entry point leaves an exportable run behind', () => {
       expect(file.label).toBe(entry.label);
       // And the same claim the dungeon case makes: these bytes ARE the run.
       expect(file.replay.commands.length).toBeGreaterThan(0);
-      expect(hashState(runReplay(file.replay, file.ticks).state)).toBe(hashState(h.inner.engine!.state));
+      expect(hashState(runReplay(file.replay, file.ticks).state)).toBe(hashState(h.inner.run.engine!.state));
     });
   }
 });
@@ -322,7 +318,7 @@ describe('an online match is not exportable — and neither is the run before it
     h.inner.hud.replayBtn.onTap!();
     expect(h.saved).toHaveLength(1); // exportable right up to the transition
 
-    h.inner.finalizeOnlineRun({ close: () => {} });
+    h.inner.runs.finalizeOnlineRun({ close: () => {} });
 
     h.pressF9();
     expect(h.saved).toHaveLength(1); // nothing new reached the disk

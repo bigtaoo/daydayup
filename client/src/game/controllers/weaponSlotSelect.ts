@@ -46,9 +46,15 @@ export function swapNeededForSlot(
 
 /**
  * The shipped call site's form: same rule, against this game's own slot count. Split from the
- * fully-parameterized core above so Game.ts needs one import and one line for the whole
- * bridge — Game.ts is baselined debt under CLAUDE.md's 500-line convention, so a control-flow
- * detail that can live in its own module has to.
+ * fully-parameterized core above so the caller needs one import and one line for the whole
+ * bridge.
+ *
+ * That caller was `Game.ts`, and the original reason given here was its 500-line baseline
+ * debt. Both facts changed on 2026-09-03: the baseline entry is retired (Game.ts is 497
+ * lines) and the call site moved to `controllers/gameWiring.ts`. The split still earns its
+ * keep, on the reason the header gives rather than the file-length one — input policy is the
+ * part worth testing, and neither the shell nor the wiring table can be constructed without a
+ * Pixi application behind it.
  */
 export function shouldSwapToSlot(activeSlot: number | undefined, requestedSlot: number): boolean {
   return swapNeededForSlot(activeSlot, requestedSlot, PLAYER_BASE.weaponSlots);

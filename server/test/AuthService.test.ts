@@ -270,3 +270,56 @@ describe('AuthService — edge cases', () => {
     expect(failures).toHaveLength(1);
   });
 });
+
+describe('AuthService — the non-string arms of every public entry point', () => {
+  // Each of these reads straight off a JSON request body, so `unknown` is not defensive
+  // typing — a client can send a number, an object or nothing at all for any of them. The
+  // arms below were the file's only uncovered branches (93.65%) while its LINE coverage
+  // read 100%, which is the shape the branch bar exists to catch.
+  it('login refuses a non-string username or password without touching the DB', () => {
+    const { auth } = make();
+    auth.register('alice', 'hunter22');
+    for (const [u, p] of [
+      [42, 'hunter22'],
+      ['alice', { toString: () => 'hunter22' }],
+      [undefined, undefined],
+      [null, 'hunter22'],
+    ] as Array<[unknown, unknown]>) {
+      expect(auth.login(u, p)).toEqual({ error: 'invalid username or password' });
+    }
+    // The control: the same account still logs in, so the guard rejects the shape and not
+    // every call.
+    expect('token' in auth.login('alice', 'hunter22')).toBe(true);
+  });
+
+  it('verifySession refuses a non-string or empty token', () => {
+    const { auth } = make();
+    for (const token of [undefined, null, 0, '', 7, {}] as unknown[]) {
+      expect(auth.verifySession(token)).toBeNull();
+    }
+  });
+
+  it('changePassword rejects an invalid NEW password after the old one verified', () => {
+    // The ordering is the point: the old password is checked first, so reaching the
+    // new-password validation at all requires a legitimate caller. A missing arm here means
+    // a logged-in user can set an unusable password and lock themselves out.
+    const { auth } = make();
+    const reg = auth.register('bob', 'hunter22');
+    const accountId = (reg as { accountId: string }).accountId;
+    expect(auth.changePassword(accountId, 'hunter22', 'x')).toMatchObject({
+      error: expect.any(String),
+    });
+    // ...and the old password is still the live one.
+    expect('token' in auth.login('bob', 'hunter22')).toBe(true);
+  });
+
+  it('treats a corrupted stored password hash as a failed login, not a crash', () => {
+    // `verifyPassword`'s `!saltHex || !hashHex` arm. Only a damaged row reaches it (a
+    // truncated write, a bad migration), and the alternative to returning false is
+    // `Buffer.from(undefined, 'hex')` throwing inside the login handler.
+    const { auth, db } = make();
+    auth.register('carol', 'hunter22');
+    db.prepare('UPDATE accounts SET password_hash = ? WHERE username = ?').run('garbage', 'carol');
+    expect(auth.login('carol', 'hunter22')).toEqual({ error: 'invalid username or password' });
+  });
+});

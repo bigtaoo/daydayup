@@ -72,11 +72,13 @@ interface GameInternals {
     rowCards: Array<{ view: Container }>;
   };
   settingsBtn: { view: Container };
-  showForge: () => void;
-  showMenu: () => void;
-  pause: () => void;
-  openSettings: () => void;
-  relayoutViewport: () => void;
+  nav: {
+    showForge: () => void;
+    showMenu: () => void;
+    pause: () => void;
+    openSettings: () => void;
+    relayout: () => void;
+  };
 }
 
 function newGame(w: number, h: number) {
@@ -143,10 +145,10 @@ describe('Game — menu screens are laid out in design space and land inside the
   });
 
   const PHASES: Array<[string, (i: GameInternals) => void]> = [
-    ['menu', (i) => i.showMenu()],
-    ['forge', (i) => i.showForge()],
-    ['settings', (i) => { i.showForge(); i.openSettings(); }],
-    ['paused', (i) => i.pause()],
+    ['menu', (i) => i.nav.showMenu()],
+    ['forge', (i) => i.nav.showForge()],
+    ['settings', (i) => { i.nav.showForge(); i.nav.openSettings(); }],
+    ['paused', (i) => i.nav.pause()],
   ];
 
   it.each(PHASES)('%s — nothing spills out of the real viewport', (_name, drive) => {
@@ -164,7 +166,7 @@ describe('Game — menu screens are laid out in design space and land inside the
   // occupies the top-left ~61% and leaves the rest of the viewport empty.
   it('forge — fills the viewport rather than being squeezed into a corner', () => {
     const { inner } = newGame(WECHAT.w, WECHAT.h);
-    inner.showForge();
+    inner.nav.showForge();
     const b = visibleScreenBounds(inner.layers.menu);
     expect(b.maxY).toBeGreaterThan(WECHAT.h * 0.8);
     expect(b.maxX).toBeGreaterThan(WECHAT.w * 0.7);
@@ -172,7 +174,7 @@ describe('Game — menu screens are laid out in design space and land inside the
 
   it('forge — START RUN is on screen and no weapon card is drawn over it', () => {
     const { inner } = newGame(WECHAT.w, WECHAT.h);
-    inner.showForge();
+    inner.nav.showForge();
     const btn = inner.forge.startBtn.view.getBounds();
     expect(btn.minY).toBeGreaterThanOrEqual(-SLACK);
     expect(btn.maxY).toBeLessThanOrEqual(WECHAT.h + SLACK);
@@ -186,7 +188,7 @@ describe('Game — menu screens are laid out in design space and land inside the
 
   it('the forge SETTINGS button paints above every screen, not under one', () => {
     const { inner } = newGame(WECHAT.w, WECHAT.h);
-    inner.showForge();
+    inner.nav.showForge();
     // Above EVERY screen, not just the forge — it is the only floating widget in the layer
     // today, so "last child" is the invariant. A second float should extend this list, not
     // relax it to "above the one screen we happened to check" (the mutant that hid here:
@@ -205,10 +207,10 @@ describe('Game — menu screens are laid out in design space and land inside the
   // first show, and has its own two-coordinate-space split to get wrong.
   it('a resize up re-fits: a desktop-sized window drops the scale back to 1', () => {
     const { inner, screen } = newGame(WECHAT.w, WECHAT.h);
-    inner.showForge();
+    inner.nav.showForge();
     expect(inner.layers.menu.scale.x).toBeLessThan(1);
     screen.width = 1280; screen.height = 720;
-    inner.relayoutViewport();
+    inner.nav.relayout();
     expect(inner.layers.menu.scale.x).toBe(1);
     const b = visibleScreenBounds(inner.layers.menu);
     expect(b.maxX).toBeLessThanOrEqual(1280 + SLACK);
@@ -217,10 +219,10 @@ describe('Game — menu screens are laid out in design space and land inside the
 
   it('a resize down re-fits the other way, and the forge still fits afterwards', () => {
     const { inner, screen } = newGame(1280, 720);
-    inner.showForge();
+    inner.nav.showForge();
     expect(inner.layers.menu.scale.x).toBe(1);
     screen.width = WECHAT.w; screen.height = WECHAT.h;
-    inner.relayoutViewport();
+    inner.nav.relayout();
     expect(inner.layers.menu.scale.x).toBeCloseTo(menuFitScale(WECHAT.w, WECHAT.h), 6);
     const b = visibleScreenBounds(inner.layers.menu);
     expect(b.maxY).toBeLessThanOrEqual(WECHAT.h + SLACK);
@@ -231,7 +233,7 @@ describe('Game — menu screens are laid out in design space and land inside the
 describe('Game — the in-run HUD stays in REAL screen space, not design space', () => {
   it('the HUD layer is never scaled with the menus', () => {
     const { inner } = newGame(WECHAT.w, WECHAT.h);
-    inner.showForge();
+    inner.nav.showForge();
     expect(inner.layers.menu.scale.x).toBeLessThan(1);
     expect(inner.layers.hudOverlay.scale.x).toBe(1);
   });
@@ -244,7 +246,7 @@ describe('Game — the in-run HUD stays in REAL screen space, not design space',
     const sizes: Array<[number, number]> = [];
     const real = inner.backdrop.resize.bind(inner.backdrop);
     inner.backdrop.resize = (w: number, h: number) => { sizes.push([w, h]); real(w, h); };
-    inner.relayoutViewport();
+    inner.nav.relayout();
     expect(sizes).toContainEqual([WECHAT.w, WECHAT.h]);
     for (const [w, h] of sizes) {
       expect(w).toBeLessThanOrEqual(WECHAT.w);
