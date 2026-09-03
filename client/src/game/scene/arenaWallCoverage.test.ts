@@ -92,7 +92,6 @@ import {
   NO_JOINS,
   blockCapTop,
   bordersDoorNorth,
-  doorFlankTier,
   effectiveWallHeight,
   mergeWallRuns,
   wallJoins,
@@ -1044,8 +1043,14 @@ describe('arena passages — the clip rule that used to be dead code here', () =
   // clips the runs above a passage and paints `drawDoorWear`'s worn floor patch across it. Door
   // FIXTURES are deliberately NOT part of that — an arena `Door` is an adjacency record with no
   // lock and no leaf (design/15), fixtures are built from `DoorRuntime`s that `DoorSystem` locks
-  // and `replay` serializes, and an arena passage is meant to stay open. So `doorFlankTier` is
-  // still unexercised here, and the last test in this block is what keeps that honest.
+  // and `replay` serializes, and an arena passage is meant to stay open.
+  //
+  // This block used to end with a test that `doorFlankTier` — the rule that gave a door fixture
+  // the height of the shortest wall it was cut into — would answer for all 74 passages at all
+  // three tiers, kept as a standing measurement in case fixtures were ever wanted here. That rule
+  // is gone (2026-09-03, `wallGeometry.DOOR_H`: every door stands at one height, whatever wall it
+  // is cut into), and with it the question it was answering, so the test went with it rather than
+  // being retargeted at a constant.
 
   it('the map authors 74 passages, and still builds no door FIXTURE for any of them', () => {
     const s = createGameState({ seed: 1, worldW: 1, worldH: 1, waves: [], arena: ARENA_CATALOG.arena_launch });
@@ -1227,35 +1232,6 @@ describe('arena passages — the clip rule that used to be dead code here', () =
     expect(spilling.length).toBeGreaterThan(100);
   });
 
-  it('and `doorFlankTier` WOULD answer for every one of them, at all three tiers', () => {
-    // `doorStandCoverage.test.ts`'s subject: the height a door fixture stands at is the SHORTEST
-    // wall it is cut into. Still not exercised in an arena — the 2026-08-26 fix wired the passage
-    // CLIP, not fixtures, and this function only has a caller where a fixture is built. Kept as a
-    // conditional measurement, because the arena is where its two branches are most unbalanced —
-    // 36 of the 74 passages are flanked by kerbs (a horizontal boundary between two vertically
-    // stacked rooms), which is the case with the clearance consequence — so if fixtures are ever
-    // wanted here, this says up front that the tier choice already has an answer for all 74.
-    const tiers = LAUNCH.passages.map((p) => doorFlankTier({ x: p.x, y: p.y, w: p.w, h: p.h }, LAUNCH.runs));
-    expect(tiers.filter((t) => t === null)).toEqual([]); // nothing falls back
-    for (const tier of ['perimeter', 'interior', 'kerb'] as const) {
-      expect(tiers.filter((t) => t === tier).length, `${tier} flanks`).toBeGreaterThan(5);
-    }
-    // The clearance guarantee the choice exists for: a doorway may never stand taller than the
-    // wall it interrupts, whichever side is shorter.
-    for (const [i, p] of LAUNCH.passages.entries()) {
-      const tier = tiers[i]!;
-      for (const run of LAUNCH.runs) {
-        const r = run.rect;
-        const ox = Math.min(p.x + p.w, r.x + r.w) - Math.max(p.x, r.x);
-        const oy = Math.min(p.y + p.h, r.y + r.h) - Math.max(p.y, r.y);
-        const touchesX = Math.abs(r.x + r.w - p.x) <= 1 || Math.abs(r.x - (p.x + p.w)) <= 1;
-        const touchesY = Math.abs(r.y + r.h - p.y) <= 1 || Math.abs(r.y - (p.y + p.h)) <= 1;
-        if ((oy > 1 && touchesX) || (ox > 1 && touchesY)) {
-          expect(wallHeight(tier), `passage ${p.i} over a shorter flank`).toBeLessThanOrEqual(wallHeight(run.tier));
-        }
-      }
-    }
-  });
 });
 
 describe('arena walls — the sides that end at nothing', () => {

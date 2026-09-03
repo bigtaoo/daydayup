@@ -14,7 +14,6 @@ import { describe, it, expect } from 'vitest';
 import {
   blockCapTop,
   bordersDoorNorth,
-  doorFlankTier,
   effectiveWallHeight,
   joinRects,
   mergeWallRuns,
@@ -339,43 +338,3 @@ describe('effectiveWallHeight — the FACE half of the doorClip fix (doorSpillCo
   });
 });
 
-describe('doorFlankTier — a door stands at the height of the wall it is cut into', () => {
-  const run = (tier: 'perimeter' | 'interior' | 'kerb', rect: RectPx): WallRun => ({ rect, tier });
-  // A 64x128 passage through a north-south wall: the flanking runs abut it in Y (north and south
-  // of the gap) and share its X span. The kerb/perimeter mix below is the case with a real
-  // consequence — see `WALL_H_KERB`.
-  const door = r(100, 100, 64, 128);
-
-  it('takes the SHORTEST flank, not the tallest — a doorway may not stand where a kerb may not', () => {
-    const runs = [
-      run('perimeter', r(100, 0, 64, 100)), // north of the gap
-      run('kerb', r(100, 228, 64, 32)), // south of it, a low boundary lip
-    ];
-    expect(doorFlankTier(door, runs)).toBe('kerb');
-    // ...and the answer must not depend on the order they arrive in.
-    expect(doorFlankTier(door, [...runs].reverse())).toBe('kerb');
-  });
-
-  it('takes the tier itself when every flank agrees', () => {
-    const runs = [run('perimeter', r(100, 0, 64, 100)), run('perimeter', r(100, 228, 64, 32))];
-    expect(doorFlankTier(door, runs)).toBe('perimeter');
-  });
-
-  it('finds flanks on the OTHER axis too — a passage through an east-west wall', () => {
-    const wide = r(100, 100, 128, 64); // travel north-south: the flanks abut in X
-    const runs = [run('kerb', r(0, 100, 100, 32)), run('kerb', r(228, 100, 100, 32))];
-    expect(doorFlankTier(wide, runs)).toBe('kerb');
-  });
-
-  it('ignores a run that only meets the passage at a corner', () => {
-    // Touching in X at the door's west edge, but its Y span ends exactly where the door's begins:
-    // a diagonal corner kiss, not a jamb, and it must not get a vote on the door's height.
-    const runs = [run('kerb', r(36, 36, 64, 64))];
-    expect(doorFlankTier(door, runs)).toBeNull();
-  });
-
-  it('returns null when nothing abuts the passage at all', () => {
-    expect(doorFlankTier(door, [])).toBeNull();
-    expect(doorFlankTier(door, [run('perimeter', r(400, 400, 64, 64))])).toBeNull();
-  });
-});

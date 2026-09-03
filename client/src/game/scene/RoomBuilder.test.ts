@@ -17,7 +17,7 @@ import { PLAYER_BASE } from '@dd/engine';
 import type { PlacedRoom, PropPlacement, RoomPiece } from '@dd/engine';
 import { Layers } from './layers';
 import { RoomBuilder } from './RoomBuilder';
-import { WALL_H_PERIMETER, WALL_H_INTERIOR, WALL_H_KERB } from './wallGeometry';
+import { DOOR_H, WALL_H_PERIMETER, WALL_H_INTERIOR, WALL_H_KERB } from './wallGeometry';
 import { groundPieceBounds } from './groundCulling';
 import { deepFadeReach, XRAY_DEEP_LABEL, XRAY_LABEL } from './occlusion';
 import { fpToPx, PX_PER_GRID } from '../coords';
@@ -78,8 +78,24 @@ function stateLightsOf(rb: RoomBuilder, i: number): boolean[] {
  *  private field, so the assertion is on geometry that actually reached the screen. */
 function doorHeightOf(rb: RoomBuilder, i: number): number {
   const view = doorFixtures(rb)[i]!.view;
-  const box = occluders(rb).find((o) => o.box.sortY === view.y)!.box;
+  // Matched on `left` as well as `sortY`: a door is cut INTO a wall, so the runs flanking it
+  // share its ground line by construction, and `sortY` alone picks whichever occluder was pushed
+  // first — the wall. That went unnoticed while a door stood at its flank's own height (the two
+  // answers were equal); it reads the wall's 22 px the moment they differ.
+  const box = occluders(rb).find((o) => o.box.sortY === view.y && o.box.left === view.x)!.box;
   return box.sortY - box.foldY;
+}
+
+/** How tall every NON-door standing block was built, same cap/face fold read as `doorHeightOf`.
+ *  The control for a door-height assertion: `DOOR_H` must move the door and nothing else. */
+function wallHeights(rb: RoomBuilder): number[] {
+  // Keyed on the same `(sortY, left)` pair `doorHeightOf` matches on, for the same reason: a
+  // door's flanking runs share its ground line, so dropping every occluder on that line would
+  // drop the walls this is trying to look at.
+  const doorKeys = new Set(doorFixtures(rb).map((d) => `${d.view.y},${d.view.x}`));
+  return occluders(rb)
+    .filter((o) => !doorKeys.has(`${o.box.sortY},${o.box.left}`))
+    .map((o) => o.box.sortY - o.box.foldY);
 }
 
 const mocks = vi.hoisted(() => ({
@@ -701,12 +717,13 @@ describe('RoomBuilder — doors (design/05 "Room & door model", 2026-08-04; stan
     expect(view.zIndex).toBeCloseTo(164);
   });
 
-  // `doorFlankTier`: a door stands as tall as the wall it interrupts, and the KERB case is the
-  // one that matters — a door in a boundary between two vertically stacked rooms must not
-  // inherit a perimeter height, or the fixture stands in exactly the band `WALL_H_KERB` exists
-  // to keep clear of the camera. Both directions asserted, because a rule that only ever
-  // returns one of its two answers is indistinguishable from a constant.
-  it('stands at the height of the wall it is cut into — perimeter beside a perimeter run', () => {
+  // `wallGeometry.DOOR_H`: ONE height for every door, whatever wall it is cut into (2026-09-03).
+  // Both flank cases are asserted through a really-built fixture, because this pair is the only
+  // place the production decision is observable — `doorStandCoverage.test.ts` sweeps the shipped
+  // content for the shapes, but it cannot re-derive the height without restating the constant.
+  // The KERB case is the one that changed: it used to come out at `WALL_H_KERB` (22 px), a
+  // letterbox under its own lintel, which is the fixture the live report was circling.
+  it('stands at DOOR_H beside a perimeter run', () => {
     const s = createGameState({
       seed: 1, worldW: 800, worldH: 600, waves: [],
       // Two stubs of a north-south perimeter run (they touch the world's west edge) with a
@@ -717,10 +734,10 @@ describe('RoomBuilder — doors (design/05 "Room & door model", 2026-08-04; stan
     pushDoor(s, false, [0, 64, 32, 64]);
     const rb = makeRoomBuilder();
     rb.build(s);
-    expect(doorHeightOf(rb, 0)).toBeCloseTo(WALL_H_PERIMETER);
+    expect(doorHeightOf(rb, 0)).toBeCloseTo(DOOR_H);
   });
 
-  it('...and only kerb-high where a kerb flanks it, so a doorway never stands in front of the player', () => {
+  it('...and at exactly the same DOOR_H in a 22 px kerb, where it used to be kerb-high', () => {
     const s = createGameState({
       seed: 1, worldW: 800, worldH: 600, waves: [],
       // An east-west wall on a room's own south boundary is a kerb (`framesFloorFromSouth`),
@@ -735,7 +752,42 @@ describe('RoomBuilder — doors (design/05 "Room & door model", 2026-08-04; stan
     pushDoor(s, false, [96, 224, 64, 32]);
     const rb = makeRoomBuilder();
     rb.build(s);
-    expect(doorHeightOf(rb, 0)).toBeCloseTo(WALL_H_KERB);
+    expect(doorHeightOf(rb, 0)).toBeCloseTo(DOOR_H);
+    // The wall it is cut into is untouched by that — `DOOR_H` is a door constant, and no wall run
+    // reads it. Without this the pair above is satisfied just as well by deleting the kerb tier.
+    const kerbs = wallHeights(rb).filter((h) => Math.abs(h - WALL_H_KERB) < 0.01);
+    expect(kerbs.length).toBeGreaterThan(0);
+  });
+
+  // A door gets its OWN `wallJoins` entry, and the only place that is observable from outside
+  // `buildDoors` is a doorway whose cap the joins actually CLIP. Without a fixture that tucks,
+  // every door's cap sits at the unclipped `-height - depth` whatever joins it was handed — which
+  // is why the 2026-09-03 battery could hand the doors the WALLS' joins (`.slice(0, n)` instead of
+  // `.slice(runs.length)`) and survive the whole scene suite. This is that fixture.
+  it('a doorway whose north edge is buried tucks under that wall instead of climbing its crown', () => {
+    const s = createGameState({
+      seed: 1, worldW: 800, worldH: 600, waves: [],
+      // A north-south boundary run in two pieces with a 128 px-deep gap between them. The gap is
+      // DEEPER than a door stands tall, and the piece north of it spans the gap's full width at
+      // perimeter height — `wallRuns.tucks`' two conditions, which is what a real 64x128 passage
+      // through a room boundary looks like (13 of the 24 shipped doors).
+      walls: [[100, 0, 64, 100], [100, 228, 64, 100]],
+      obstacles: [],
+    });
+    s.dungeonRoomRects.push({
+      id: 'r',
+      rect: { x: pxToFp(0), y: pxToFp(0), w: pxToFp(800), h: pxToFp(600) },
+    });
+    pushDoor(s, false, [100, 100, 64, 128]);
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    const box = occluders(rb).find((o) => o.box.left === 100 && o.box.sortY === 228)!.box;
+    expect(doorHeightOf(rb, 0)).toBeCloseTo(DOOR_H); // still DOOR_H tall — the tuck clips the CAP
+    // Unclipped, this door's art would reach `DOOR_H + 128` north of its own ground line. The
+    // tuck stops it short, leaving the wall above holding its own crown course.
+    const unclipped = box.sortY - DOOR_H - 128;
+    expect(box.top).toBeGreaterThan(unclipped);
+    expect(box.top).toBeLessThanOrEqual(box.sortY - DOOR_H); // ...but there is still a cap
   });
 
   it('a locked door uses the locked leaf texture when loaded, untinted', () => {
@@ -901,9 +953,9 @@ describe('RoomBuilder — doors (design/05 "Room & door model", 2026-08-04; stan
     const box = occluders(rb).find((o) => o.box.left === 300)!.box;
     expect(box.sortY).toBeCloseTo(164);
     expect(box.right).toBeCloseTo(320);
-    // This fixture's passage abuts no wall at all, so the height is the `wallTier` fallback —
-    // interior, since the passage sits in the middle of the (single, world-sized) room.
-    expect(box.foldY).toBeCloseTo(164 - WALL_H_INTERIOR);
+    // Every door stands at `DOOR_H` (2026-09-03), including this one, whose passage abuts no wall
+    // at all — the case that used to fall back to `wallTier` and come out interior-high.
+    expect(box.foldY).toBeCloseTo(164 - DOOR_H);
     expect(box.top).toBeLessThan(box.foldY); // its cap reaches north of the fold, like a wall's
   });
 

@@ -716,6 +716,107 @@ describe('what the layers come out as together', () => {
     expect(ratio).toBeGreaterThan(0.6);
   });
 
+  /**
+   * The four VALUE survivors of the 2026-09-03 mutation battery, closed together.
+   *
+   * All four are the same shape, and it is the shape `drawDoorWear`'s `WEAR_ALPHA` already taught
+   * this repo once (2026-08-26): the layer's GEOMETRY was covered — is it there, does it ramp the
+   * right way, is it visible in the right state — and its VALUE by nothing at all, so setting the
+   * constant to 0 (or to the other state's) left the whole suite green. `OPEN_RECESS_ALPHA_TOP`,
+   * `SILL_ALPHA`, `GLOW_WASH_ALPHA` and `RIM_ALPHA` were each mutated and each survived. They are
+   * asserted here as the luma they actually contribute, on the same compositor the three tests
+   * above use, because "alpha > 0" is not the question the player asks.
+   *
+   * They matter more after the uniform-door-height pass than before it: a 104 px opening shows
+   * roughly five times as much recess, wash and rim as the 22 px letterbox 11 of the 24 shipped
+   * doors used to be, so a value that was nearly invisible either way is now a value that carries.
+   */
+  const rectsOf = (draw: (g: Graphics, w: number, h: number) => void, w = 64, h = H) => {
+    const g = new Graphics();
+    draw(g, w, h);
+    return { g, fills: rectFills(g) };
+  };
+
+  it('an OPEN tunnel reads lighter than a locked one at every depth, not just differently', () => {
+    // The open recess exists because a passable door whose tunnel is as dark as a locked one
+    // differs from it only in the light added on top ("可以通过时的门... 离我想要的效果还差很远").
+    // Mutating `OPEN_RECESS_ALPHA_TOP` to the locked 0.72 collapses exactly that distinction and
+    // survived the battery: `drawOpenRecessShade` still ramped, still had the right band count,
+    // still only appeared in the open state.
+    const locked = rectsOf(drawRecess).g;
+    const open = rectsOf(drawOpenRecessShade).g;
+    const at = (g: Graphics, y: number): number => lumaAtRow([{ g, mode: 'normal' }], y);
+    for (const y of [-1, -H / 2, -H + 1]) {
+      expect(at(open, y), `open recess at y=${y}`).toBeGreaterThan(at(locked, y));
+    }
+    // ...and by a real margin at the deep end, which is where the two ramps are furthest apart and
+    // where a tunnel either reads as floor continuing or as a hole. Measured on the shipped pair:
+    // 34.5 open against 20.0 locked, a factor of 1.7.
+    expect(at(open, -H + 1)).toBeGreaterThan(at(locked, -H + 1) * 1.4);
+    // Both still DARKER than the stone, or the open door stops being a recess at all — the guard
+    // that stops this test being satisfied by simply deleting the open ramp.
+    expect(at(open, -H + 1)).toBeLessThan(STONE);
+  });
+
+  it('the sill is a visible hairline on the threshold, not a stroke at alpha zero', () => {
+    const g = new Graphics();
+    drawSill(g, 64);
+    const strokes = g.context.instructions.map((ins) => (ins.data as {
+      style?: { color?: number; alpha?: number; width?: number };
+    }).style ?? {});
+    expect(strokes).toHaveLength(1);
+    const { color = 0, alpha = 0, width = 0 } = strokes[0]!;
+    expect(color).toBe(0xffffff);
+    expect(width).toBe(1);
+    // What it is worth on screen: a white line at `alpha` over the recess-darkened threshold.
+    // The floor of the visibility band is the same 3/255 the door-wear patch was held to; the
+    // ceiling is what keeps it a coping hairline rather than a lit bar across the doorway.
+    const base = lumaAtRow([{ g: rectsOf(drawRecess).g, mode: 'normal' }], -1);
+    const lift = (255 - base) * alpha;
+    expect(lift).toBeGreaterThan(3);
+    expect(lift).toBeLessThan(80);
+  });
+
+  it('a locked leaf is actually washed, not just ringed on the floor', () => {
+    // `drawGlow` is a floor pool (nine ellipses) plus ONE rect over the leaf. The pool has been
+    // measured since the day it shipped; the wash had no assertion at all, so `GLOW_WASH_ALPHA`
+    // could go to 0 and every "the hazard bloom is present and visible" test stayed green while
+    // the leaf itself stopped being touched.
+    const { fills } = rectsOf(drawGlow);
+    expect(fills).toHaveLength(1); // the wash; the rings are ellipses and `rectFills` skips them
+    const wash = fills[0]!;
+    expect(wash.color).toBe(0xff3a1e);
+    // Additive, so what it contributes is colour x alpha, not alpha. 98 x 0.1 ~ 9.8: comfortably
+    // over the 3/255 floor, and well under the point where the leaf goes flat red.
+    const contribution = relLuma(wash.color) * wash.alpha;
+    expect(contribution).toBeGreaterThan(3);
+    expect(contribution).toBeLessThan(30);
+  });
+
+  it('the rim lights both jambs and dies out FAST — t*t, which a linear ramp would fail', () => {
+    // `RIM_ALPHA -> 0` survived the battery: the rim's band count, geometry and placement were all
+    // covered, its strength by nothing. Both halves of its own stated rule are asserted here,
+    // because the value and the falloff are what separate "the arch catches the light" from
+    // "the doorway is outlined like a wireframe" — the mistake the 2026-08-18 wall pass made.
+    const { fills } = rectsOf(drawSpill);
+    expect(fills.length).toBeGreaterThan(4); // the rim bands; the pool is ellipses
+    const byDepth = [...fills].sort((a, b) => b.y - a.y); // threshold first (y closest to 0)
+    const contribution = (f: { color: number; alpha: number }): number => relLuma(f.color) * f.alpha;
+    // Brightest at the threshold, and visible there.
+    expect(contribution(byDepth[0]!)).toBeGreaterThan(5);
+    // Monotone up the jamb — a rim that brightened with height is a lit lintel, which the recess
+    // exists to keep dark.
+    for (let i = 1; i < byDepth.length; i++) {
+      expect(contribution(byDepth[i]!)).toBeLessThanOrEqual(contribution(byDepth[i - 1]!));
+    }
+    // ...and the falloff is quadratic, not linear. With six bands, `t` would leave the topmost at
+    // ~9% of the brightest and `t * t` leaves it at ~0.8%; the bound sits between the two, so this
+    // fails if the square is ever dropped as well as if the alpha is.
+    const faintest = contribution(byDepth[byDepth.length - 1]!);
+    expect(faintest / contribution(byDepth[0]!)).toBeLessThan(0.03);
+    expect(faintest).toBeGreaterThan(0); // ...but the band is drawn, not skipped
+  });
+
   it('still tells the two states apart with NO leaf art loaded, where the arch cannot mask', () => {
     // The fallback path (`applyLeaf` with no swatch) draws an OPAQUE tinted rect over the whole
     // opening, so the through-light — which lives behind the leaf on purpose — contributes nothing

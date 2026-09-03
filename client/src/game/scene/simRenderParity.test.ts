@@ -98,6 +98,7 @@ import {
   WALL_NORTH_BRIM,
   buildFloorGeometry,
   placeAuthoredFloor,
+  toFpAabbGrid,
   toFpGrid,
   type RoomPiece,
 } from '@dd/engine';
@@ -105,6 +106,7 @@ import { fpToPx } from '../coords';
 import {
   wallHeight,
   wallTier,
+  DOOR_H,
   WALL_H_INTERIOR,
   WALL_H_KERB,
   type RectPx,
@@ -147,6 +149,10 @@ interface Floor {
   index: number;
   walls: SimWall[];
   rooms: RectPx[];
+  /** The floor's door passages, converted the same way `RoomBuilder` converts them. Doors are not
+   *  walls — they carry no tier since 2026-09-03 — but they stand in the same band the kerb claim
+   *  below is about, which is what makes them this file's business. */
+  doors: RectPx[];
 }
 
 /**
@@ -171,12 +177,20 @@ function buildFloor(index: number): Floor {
     const rect: RectPx = { x: fpToPx(w.x), y: fpToPx(w.y), w: fpToPx(w.w), h: fpToPx(w.h) };
     return { ...rect, freeStanding: w.freeStanding === true, tier: wallTier(rect, rooms) };
   });
-  return { index, walls, rooms };
+  const doorRects: RectPx[] = doors.map((d) => {
+    const a = toFpAabbGrid(d.passageGrid);
+    return { x: fpToPx(a.x), y: fpToPx(a.y), w: fpToPx(a.w), h: fpToPx(a.h) };
+  });
+  return { index, walls, rooms, doors: doorRects };
 }
 
 const FLOORS: Floor[] = Object.keys(EMBER_L1_FLOORS).map(Number).map(buildFloor);
 const ALL: Array<SimWall & { floor: number }> = FLOORS.flatMap((f) =>
   f.walls.map((w) => ({ ...w, floor: f.index })),
+);
+
+const ALL_DOORS: Array<RectPx & { floor: number }> = FLOORS.flatMap((f) =>
+  f.doors.map((d) => ({ ...d, floor: f.index })),
 );
 
 const where = (w: SimWall & { floor: number }): string =>
@@ -397,6 +411,77 @@ describe('sim/render parity — the kerb 6 px claim, computed instead of restate
     // the brim's own comment says it must not re-open. Negative rather than merely smaller is
     // what makes this a categorical statement instead of a tuning preference.
     expect(WALL_H_KERB - (CLEARANCE + BRIM)).toBeLessThan(0);
+  });
+});
+
+describe('sim/render parity — a DOORWAY in the kerb band, which is what the uniform height spends', () => {
+  /**
+   * The claim `wallGeometry.DOOR_H` is written on, stated as arithmetic instead of as prose.
+   *
+   * The suite above proves a KERB never x-rays itself: 22 px of lip reaches 6 px above the feet at
+   * the closest legal approach, which is under `MIN_COVER_FRACTION` for every body height the rig
+   * is drawn at, so the southern lip of a room does not dissolve as the player walks along it.
+   * Since 2026-09-03 a DOOR cut into that same boundary no longer inherits those 22 px — it stands
+   * at `DOOR_H`, five times taller, deliberately, so that a doorway reads as a doorway.
+   *
+   * That trade is only affordable if the x-ray does fire there. If it did not, the change would be
+   * a straight regression: a player walking south into a doorway would be covered by 104 px of
+   * fixture with nothing fading it — the exact *"角色跑到墙下面去了"* report the x-ray exists for,
+   * reintroduced at the one fixture the player is guaranteed to walk into on every floor. Nothing
+   * asserted it, so this is the pass's load-bearing claim and it lives here rather than beside the
+   * door tests, because it is a statement about the SIM's clearance and the RENDERER's height
+   * together — neither file can see it alone.
+   */
+  const KERB_SHAPED = ALL_DOORS.filter((d) => d.w > d.h); // a gap in an east-west wall: travel N-S
+
+  it('is a real population — 11 of the 24 shipped doors, the ones that changed', () => {
+    expect(KERB_SHAPED).toHaveLength(11);
+    expect(ALL_DOORS).toHaveLength(24);
+  });
+
+  it('DOES cover the player at the closest legal approach, at every body height', () => {
+    // Same focus construction as the kerb sweep above — ground point `CLEARANCE` north of the
+    // fixture's own north edge, swept over the whole drawn-body band — and the OPPOSITE verdict,
+    // which is the point: same geometry, same rule, different height, and the rule notices.
+    const missed: string[] = [];
+    let pairs = 0;
+    for (const d of KERB_SHAPED) {
+      const box = boxFor(d, DOOR_H);
+      for (let bodyH = BODY_H_MIN; bodyH <= BODY_H_MAX; bodyH++) {
+        pairs++;
+        const focus = { x: d.x + d.w / 2, y: d.y - CLEARANCE, halfW: BODY_HALF_W, bodyH };
+        if (!occludes(box, focus)) missed.push(`floor ${d.floor} [${d.x},${d.y}] bodyH ${bodyH}`);
+      }
+    }
+    expect(missed.slice(0, 8)).toEqual([]);
+    expect(pairs).toBeGreaterThan(300);
+  });
+
+  it('...and the DEEP pass reaches, because the passage floor is inside the fixture', () => {
+    // A cap-only fade cannot save a character standing IN the doorway: the leaf, the recess and
+    // both states' lights all sit below the cap/face fold. `buildDoorBlock` puts them in the deep
+    // group for exactly this reason, and `needsDeepFade` is what turns that group on.
+    for (const d of KERB_SHAPED) {
+      const box = boxFor(d, DOOR_H);
+      const inDoorway = { x: d.x + d.w / 2, y: d.y + d.h / 2, halfW: BODY_HALF_W, bodyH: BODY_H_MIN };
+      expect(needsDeepFade(box, inDoorway), `floor ${d.floor} [${d.x},${d.y}]`).toBe(true);
+    }
+  });
+
+  it('and the kerb it is cut INTO still does not fire — the two verdicts coexist', () => {
+    // The control that stops the test above from being satisfied by loosening the x-ray for
+    // everything. `DOOR_H` is a door constant; the walls flanking these very passages keep their
+    // 22 px and keep their exemption, on the same floors, in the same band.
+    const kerbsBesideDoors = ALL.filter(
+      (w) => w.tier === 'kerb' && ALL_DOORS.some((d) => d.floor === w.floor && Math.abs(d.y - w.y) < 64),
+    );
+    expect(kerbsBesideDoors.length).toBeGreaterThan(10);
+    const fired = kerbsBesideDoors.filter((w) =>
+      occludes(boxFor(w, WALL_H_KERB), {
+        x: w.x + w.w / 2, y: w.y - CLEARANCE, halfW: BODY_HALF_W, bodyH: BODY_H_MIN,
+      }),
+    );
+    expect(fired.map(where).slice(0, 8)).toEqual([]);
   });
 });
 

@@ -30,15 +30,16 @@
 //            open one's light from beyond (`THROUGH_*`/`SPILL_*` — see their block below for why
 //            an open door needed one at all).
 //
-// **THE LEAF IS FIT BY WIDTH AND CROPPED, NEVER SQUASHED.** Both swatches are 221x320-ish
-// portrait; an opening is 64 wide x 104 tall on a perimeter wall and 128 x 22 on a kerb (the
-// boundary between two vertically stacked rooms, which cannot stand tall without hiding the
-// player — `wallGeometry.WALL_H_KERB`). Scaling to fit both axes would squash the kerb case 8:1.
-// Instead the art is scaled by WIDTH, bottom-anchored, and any overflow is cropped off the TOP
-// via a source frame: a tall door shows the whole leaf under a band of lintel stone, a kerb door
-// shows the leaf's own base — its frame feet and the bottom hazard stripe — at the same stone
-// scale as everything else in the room. `doorLeafFrame` is the pure half of that rule, tested
-// without a canvas.
+// **THE LEAF IS FIT BY WIDTH AND CROPPED, NEVER SQUASHED.** Both swatches are portrait 147x217 and
+// 156x224 — their sizes AFTER this pass re-trimmed their margins, not the 221x320 above, which
+// this line went on claiming long enough to make the crop look twice as generous as it was
+// (`doorStandCoverage.test.ts` reads the shipped IHDR now). An opening is 64 x 104 through a room
+// boundary and 128 x 104 through a kerb: ONE height for every door since 2026-09-03
+// (`wallGeometry.DOOR_H`), where the kerb case was 128 x 22 and fitting both axes would have
+// squashed the art 8:1. Instead it is scaled by WIDTH, bottom-anchored, and any overflow is
+// cropped off the TOP via a source frame: a 64-wide opening shows the whole leaf under a band of
+// lintel stone, a 128-wide one its bottom 55% — the frame feet and the hazard stripes — at the
+// room's own stone scale. `doorLeafFrame` is the pure half of that rule, tested without a canvas.
 import { Graphics, Sprite, Texture, TilingSprite } from 'pixi.js';
 import { Entity } from './Entity';
 import type { RectPx } from './wallGeometry';

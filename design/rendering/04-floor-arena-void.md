@@ -91,7 +91,8 @@ ROADMAP because they are statements about the RULES, not about that map:
   44 runs, 21 of them the shallow case, with no spill in either direction — and the residual is 10
   partly-covered passages, worst 40 px of a 96 px gap, none buried. Door FIXTURES stay dungeon-only:
   a fixture is built per `DoorRuntime`, an arena `Door` is an adjacency record with no lock and no
-  leaf, and an arena passage is meant to stay open. So `doorFlankTier` is still unexercised there.
+  leaf, and an arena passage is meant to stay open. So the door-height rule never ran there — and as
+  of 2026-09-03 there is no such rule to run: every door stands at `wallGeometry.DOOR_H`.
   The passage list feeds `groundLayer`'s worn-floor patch too, which is the cue that a hole in the
   stone is a threshold — without it the courses ran on unbroken and a buried passage read as a wall
   somebody meant to build. That patch is additive, so its visibility is `luma(WEAR_COLOR) * WEAR_ALPHA`

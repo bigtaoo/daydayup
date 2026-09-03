@@ -43,6 +43,61 @@ export const WALL_H_KERB = 22;
  *  by so a north wall's face isn't cut off the top of the viewport. */
 export const MAX_WALL_HEIGHT = WALL_H_PERIMETER;
 
+/**
+ * How tall a DOOR fixture stands — one number for every door in the game, whatever wall it is
+ * cut into (`doorRender.ts`, `RoomBuilder.buildDoors`).
+ *
+ * **Deliberately not a wall tier** (2026-09-03, live report with a screenshot of the shipped
+ * `forge → extraction` doorway: *"有些门会被墙盖住... 我希望门的表现是单独的，统一的，不管墙有多
+ * 厚"* — some doors are covered by the wall; a door's presentation should be its own and uniform
+ * no matter how thick the wall is). Until this pass a door inherited the SHORTEST wall abutting
+ * its passage (`doorFlankTier`), which split the 24 shipped doors into two presentations that
+ * have almost nothing to do with each other:
+ *
+ *   - 13 east-west doors through a room boundary: a 64 x 104 portrait opening. Reads as a door.
+ *   - 11 north-south doors through the low boundary between two stacked rooms: a 128 x **22**
+ *     letterbox with 64 px of its own cap stone on top of it — three times the opening's own
+ *     height. The leaf art, fit by width, cropped to its bottom 12% (25 of `door_locked_raw.png`'s
+ *     217 rows — measured off the shipped IHDR in `doorStandCoverage.test.ts`, which now also
+ *     holds every door to showing over half of it). That is the fixture
+ *     the report was circling: not a door swallowed by a NEIGHBOURING wall, but a door whose own
+ *     inherited height left nothing to see under its own lintel.
+ *
+ * A door is a fixture, not a course of wall, so it gets a fixture's constant. `WALL_H_PERIMETER`
+ * rather than a fourth independent number: a doorway should read as tall as the tallest thing a
+ * room boundary can be, and pinning it to that constant also keeps `MAX_WALL_HEIGHT` (what
+ * `GameLoop.cameraFrame` pads the framed rect by) correct by construction — a door can never
+ * out-top the padding the camera already allows for.
+ *
+ * **What this deliberately spends.** `WALL_H_KERB` is 22 because a room's floor lies immediately
+ * north of that boundary and anything tall there stands between the camera and the player. A door
+ * standing 104 there covers ~82 px more of that floor than it used to, and a player walking south
+ * INTO the doorway is behind it. That is paid for by the door's own occlusion x-ray, which it has
+ * had since it started standing at all (`RoomBuilder.buildDoors` registers every fixture as a
+ * `fadeableBlock`, cap layers and deep layers both, precisely because "the passage floor is
+ * entirely inside the fixture's own art") — and it is the same deal the other 13 doors have
+ * always run at, on the wall the player most often walks through. The KERB ITSELF is unchanged:
+ * this is a door constant, and no wall run reads it.
+ */
+export const DOOR_H = WALL_H_PERIMETER;
+
+/**
+ * The tier a door is handed to `wallRuns.wallJoins` as. A door does not HAVE a tier any more —
+ * `DOOR_H` is its height — but that pass reasons about neighbours in tiers, so a door has to
+ * arrive as the one whose `wallHeight` is exactly the height it will be drawn at.
+ *
+ * It is not cosmetic, but its surface is narrow, and the narrowness is why it needs an explicit
+ * assertion rather than a reader's confidence: `wallJoins` compares each NEIGHBOUR's height
+ * against this tier's to decide which of a doorway's own edges are buried (no coping, no
+ * silhouette there) and whether it tucks. A stale tier changes which neighbours clear that bar.
+ * Nothing downstream re-derives the height from it — `RoomBuilder` passes `DOOR_H` to
+ * `buildDoorBlock`/`blockCapTop`/`drawWallShadow` directly — so a mismatch would be a quiet edge-
+ * cue defect, not a visibly wrong-sized door. Declared beside `DOOR_H` so there is one definition
+ * to keep in step; `wallGeometry.test.ts` asserts the two agree, and that assertion is the whole
+ * of what catches a drift (a mutation run with this set to `'kerb'` fails exactly one test).
+ */
+export const DOOR_TIER: WallTier = 'perimeter';
+
 /** Kept for the pillars, which share the interior wall height by design (see above). */
 export const WALL_HEIGHT = WALL_H_INTERIOR;
 

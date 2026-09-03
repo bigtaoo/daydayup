@@ -714,12 +714,13 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 **[2026-09-03 — the doc audit](roadmap/16-2026-09-03-doc-audit.md)**
 
 - **09-03** [The docs were right about behaviour and wrong about every pointer](roadmap/16-2026-09-03-doc-audit.md#the-docs-were-right-about-behaviour-and-wrong-about-every-pointer-2026-09-03-docs-only-no-engine-bump) — Three mechanical sweeps came back clean on links and constants; what was stale was every kind of *pointer*. design/08's "determinism contract" was missing `DoorSystem` entirely and wrong on three of its four mode tags, three system headers had been off by one since v8, and design/10 still promised a compile-time gate deleted in August. `docs`
+- **09-03** [Every door is the same door, whatever wall it is cut into](roadmap/16-2026-09-03-doc-audit.md#every-door-is-the-same-door-whatever-wall-it-is-cut-into-2026-09-03-client-only-no-engine-bump) — 11 of the 24 shipped doors were a 128x22 letterbox under 64 px of their own lintel, because a door inherited the shortest wall it was cut into; a door now has one height of its own, and the leaf test that proves it reads the shipped PNG. `render` `test` `docs`
 
 ## The work log — by theme
 
-The same 93 entries, grouped. An entry with more than one tag appears more than once.
+The same 94 entries, grouped. An entry with more than one tag appears more than once.
 
-**`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(47)*
+**`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(48)*
 
 - 08-12 [Live-play bug-fix pass](roadmap/02-2026-08-12--08-15.md#live-play-bug-fix-pass--2026-08-12-user-report-from-a-dungeon-mode-screenshot)
 - 08-12 [Viewport-fill bug-fix pass](roadmap/02-2026-08-12--08-15.md#viewport-fill-bug-fix-pass--2026-08-12)
@@ -770,6 +771,7 @@ The same 93 entries, grouped. An entry with more than one tag appears more than 
 - 09-02 [The other three clips finally get a signal](roadmap/14-2026-09-02-muzzle.md#the-other-three-clips-finally-get-a-signal-2026-09-02-client-only)
 - 09-02 [The swing shows the sector it actually hits](roadmap/15-2026-09-02-melee-sector.md#the-swing-shows-the-sector-it-actually-hits-2026-09-02-client-only-no-engine-bump)
 - 09-02 [The swing that was one frame long, because the field that said otherwise was never read](roadmap/14-2026-09-02-muzzle.md#the-swing-that-was-one-frame-long-because-the-field-that-said-otherwise-was-never-read-2026-09-02-engine--client-engine_version-5253)
+- 09-03 [Every door is the same door, whatever wall it is cut into](roadmap/16-2026-09-03-doc-audit.md#every-door-is-the-same-door-whatever-wall-it-is-cut-into-2026-09-03-client-only-no-engine-bump)
 
 **`art`** — authored assets and the art pipeline *(15)*
 
@@ -843,7 +845,7 @@ The same 93 entries, grouped. An entry with more than one tag appears more than 
 - 08-25 [The Seven Districts: the launch arena gets authored](roadmap/06-2026-08-25.md#the-seven-districts-the-launch-arena-gets-authored-2026-08-25-content)
 - 08-25 [The three parked rules that had only shipped half](roadmap/06-2026-08-25.md#the-three-parked-rules-that-had-only-shipped-half-2026-08-25-client--one-render-only-engine-field)
 
-**`test`** — coverage sweeps, gates, mutation batteries *(25)*
+**`test`** — coverage sweeps, gates, mutation batteries *(26)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 08-05 [Platform-layer test coverage pass](roadmap/01-2026-07-24--08-05.md#platform-layer-test-coverage-pass--2026-08-05-全部加测试)
@@ -871,6 +873,7 @@ The same 93 entries, grouped. An entry with more than one tag appears more than 
 - 09-02 [The victory sting stops playing over defeat screens](roadmap/14-2026-09-02-muzzle.md#the-victory-sting-stops-playing-over-defeat-screens-2026-09-02-client-only-no-engine-bump)
 - 09-02 [Standing next to loot stops disarming the player](roadmap/14-2026-09-02-muzzle.md#standing-next-to-loot-stops-disarming-the-player-2026-09-02-client-only-no-engine-bump)
 - 09-02 [The swing that was one frame long, because the field that said otherwise was never read](roadmap/14-2026-09-02-muzzle.md#the-swing-that-was-one-frame-long-because-the-field-that-said-otherwise-was-never-read-2026-09-02-engine--client-engine_version-5253)
+- 09-03 [Every door is the same door, whatever wall it is cut into](roadmap/16-2026-09-03-doc-audit.md#every-door-is-the-same-door-whatever-wall-it-is-cut-into-2026-09-03-client-only-no-engine-bump)
 
 **`audio`** — cues, music, the engine to sound channel *(5)*
 

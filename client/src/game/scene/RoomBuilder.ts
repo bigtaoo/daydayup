@@ -6,7 +6,7 @@ import { biomePalette, biomeElementOf, type BiomeElement, type BiomePalette } fr
 import { fpToPx, PX_PER_GRID } from '../coords';
 import { getFloorTexture, getWallTexture, getWallFaceTexture } from '../../render/biomeTiles';
 import { getDoorCurtainTexture, getDoorTexture } from '../../render/environmentSprites';
-import { wallTier, wallHeight, type RectPx } from './wallGeometry';
+import { wallTier, wallHeight, DOOR_H, DOOR_TIER, type RectPx } from './wallGeometry';
 import { buildWallBlock, drawWallShadow } from './wallRender';
 import { staticGraphics } from '../../render/staticGraphics';
 import { buildPillarEntities, buildPropEntities, destroyDressing } from './roomDressing';
@@ -21,7 +21,6 @@ import {
 import {
   blockCapTop,
   bordersDoorNorth,
-  doorFlankTier,
   effectiveWallHeight,
   mergeWallRuns,
   wallJoins,
@@ -257,7 +256,6 @@ export class RoomBuilder {
       s,
       merged,
       doorRectsPx,
-      roomsPx,
       { palette, cap: wallTex, face: faceTex, floor: floorTex, curtain: getDoorCurtainTexture() },
       shadows,
       element,
@@ -299,11 +297,13 @@ export class RoomBuilder {
    * Standing since 2026-08-20 (`doorRender.ts`): the two door swatches are front ELEVATIONS and
    * were being stretched flat over the passage rect on `layers.ground`, so the one fixture the
    * player has to read at a glance was the only thing in the room still painted on the floor.
-   * A door now builds as a wall block whose face is an opening, at the tier of the wall it is
-   * cut into (`doorFlankTier` over the MERGED runs — merged, so a boundary authored as two
-   * parallel rects votes once per side rather than twice), and registers with the occlusion
-   * x-ray like any other standing block: the passage floor is entirely inside the fixture's own
-   * art, so a character walking through a doorway is behind it by construction.
+   * A door builds as a wall block whose face is an opening, at `wallGeometry.DOOR_H` — the SAME
+   * height for every door in the game since 2026-09-03, where it used to inherit the shortest
+   * wall abutting its passage — and registers with the occlusion x-ray like any other standing
+   * block: the passage floor is entirely inside the fixture's own art, so a character walking
+   * through a doorway is behind it by construction. `runs` is still the MERGED wall list (a
+   * boundary authored as two parallel rects is one mass), because the doors' own `wallJoins` pass
+   * below has to see the stone each doorway is cut into, even though its HEIGHT no longer does.
    *
    * Rebuilt fresh each `build()`; `updateDoors()` is the cheap in-place path for a lock-state
    * flip alone. `doorRects` is index-aligned with `s.dungeonDoors` (built by the caller for
@@ -313,7 +313,6 @@ export class RoomBuilder {
     s: GameState,
     runs: readonly WallRun[],
     doorRects: readonly RectPx[],
-    roomsPx: readonly RectPx[],
     skin: {
       palette: BiomePalette;
       cap: Texture | undefined;
@@ -325,14 +324,12 @@ export class RoomBuilder {
     element: string,
   ): void {
     this.clearDoors();
-    // A door stands at the tier of the wall it interrupts (`doorFlankTier`), or — with nothing
-    // abutting the passage at all (a mode with no wall model, a passage authored clear of its own
-    // wall) — at whatever tier the passage rect itself would stand at, the same question asked of
-    // the same room rects.
-    const doorRuns: WallRun[] = doorRects.map((rect) => ({
-      rect,
-      tier: doorFlankTier(rect, runs) ?? wallTier(rect, roomsPx),
-    }));
+    // A door stands at `DOOR_H` — ONE height for every door in the game, whatever wall it is cut
+    // into and however thick that wall is (see `wallGeometry.DOOR_H` for the live report this
+    // replaced `doorFlankTier`'s shortest-flank rule over, and for what the change spends). The
+    // `DOOR_TIER` is only for `wallJoins` below, which reasons in tiers — see its own doc for why
+    // handing it a stale one would silently clip the cap off every kerb doorway.
+    const doorRuns: WallRun[] = doorRects.map((rect) => ({ rect, tier: DOOR_TIER }));
     // The doors' own joins, computed against the walls AND each other. Deliberately a SECOND
     // `wallJoins` pass rather than one combined list: a door has to know that its cap runs into
     // the flanking runs' caps (else it draws a lit coping and a dark silhouette straight across
@@ -344,7 +341,7 @@ export class RoomBuilder {
 
     for (const [i, dr] of s.dungeonDoors.entries()) {
       const rect = doorRects[i]!;
-      const height = wallHeight(doorRuns[i]!.tier);
+      const height = DOOR_H;
       const joins = doorJoins[i]!;
       const fixture = buildDoorBlock(rect, height, { ...skin, leaf: getDoorTexture(dr.locked) }, dr.locked, joins);
       drawWallShadow(shadows, rect, height);

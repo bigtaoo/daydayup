@@ -380,16 +380,13 @@ construction covers both orientations:
   a mean of **+4.0** luma (max +27, 41% of pixels past 3/255) — unlike `LIT_WALLS`, which was
   measured at 0.06% and deleted.
 
-**A door stands exactly as tall as the wall it interrupts** (`wallRuns.doorFlankTier` — the
-SHORTEST run abutting the passage along the gap, then `wallHeight`). This is the rule that keeps
-the fix from re-opening a bug the wall passes already closed twice: nearly half the doors in the
-shipped game (11 of 24, swept in `doorStandCoverage.test.ts`) are cut into a KERB, the low
-boundary between two vertically stacked rooms, which is low precisely because a room's floor lies
-immediately north of it and anything tall there stands between the camera and the player. A
-doorway is no more entitled to that space than the wall is, so it inherits the shorter flank and
-gets its legibility from the hazard bloom instead of from height. The other 13 stand at
-`WALL_H_PERIMETER`. Taking the shortest also means a door can never out-top the mass it is set
-into. Doors additionally get their own `wallJoins` pass (against the walls, not folded into the
+**A door stood exactly as tall as the wall it interrupts** (`wallRuns.doorFlankTier` — the
+SHORTEST run abutting the passage along the gap, then `wallHeight`) — the rule that was meant to
+keep this fix from re-opening a bug the wall passes had already closed twice, and the rule the
+2026-09-03 pass below removed. Its measurement stands and is what condemned it: nearly half the
+doors in the shipped game (11 of 24, swept in `doorStandCoverage.test.ts`) are cut into a KERB,
+the low boundary between two vertically stacked rooms, and inherited its 22 px. Doors get their
+own `wallJoins` pass (against the walls, not folded into the
 walls' own pass — every wall tone was measured with doors absent from that list), so a doorway's
 cap runs into the flanking caps without either side drawing an "I end here" coping across one
 continuous stone top.
@@ -521,3 +518,111 @@ repo has shipped a shape-dependent variant of that exact class of bug before. A 
 gap closed the same pass: nothing proved `RoomBuilder` actually wires `getFloorTexture()`/
 `getDoorCurtainTexture()` into the door skin at all — confirmed real by deleting both from the call
 site first (the full suite stayed green), then closed in `RoomBuilder.test.ts`.
+
+## Every door is the same door, whatever wall it is cut into (2026-09-03)
+
+Live report, with a screenshot of the shipped `ember_l1_forge → ember_l1_extraction` doorway on
+floor 1: *"有些门会被墙盖住，我看看，我希望门的表现是单独的，统一的，不管墙有多厚"* — some doors get
+covered by the wall; a door's presentation should be its own and uniform no matter how thick the
+wall is.
+
+**The measurement first, because the report and the cause are not the same thing.** "Covered by
+the wall" reads as an occluder bug, and the two clips that exist for exactly that
+(`bordersDoorNorth` / `effectiveWallHeight`, above) were both working. Sweeping the 24 shipped
+doors through the real pipeline instead gave two presentations with almost nothing in common:
+
+| passage | count | drawn opening | its OWN cap stone above it |
+|---|---|---|---|
+| `64x128` — through a room boundary, travel east-west | 13 | 64 x **104** | 128 px |
+| `128x64` — through the low boundary between two stacked rooms, travel north-south | 11 | 128 x **22** | 64 px |
+
+The wall covering the second row's doors was *their own lintel*. `doorFlankTier` handed a door the
+shortest run abutting its passage, that boundary is a KERB on both sides, and 22 px of opening
+under 64 px of cap is a fixture that is three-quarters stone. The leaf elevation, fit by width and
+cropped from the top, was showing its bottom **12%** — 25 of `door_locked_raw.png`'s 217 rows at
+the scale a 128 px opening puts it at, and 27 of `door_open_raw.png`'s 224. (Both numbers are
+measured off the SHIPPED PNGs' real IHDR, 147x217 and 156x224. `doorRender.ts`'s header still said
+"221x320-ish", which is what the art measured before the same 2026-08-20 pass re-trimmed its
+transparent margins — a stale number that made this crop look twice as generous as it was, now
+corrected there too and pinned in `doorStandCoverage.test.ts` against the real files.) The same
+fit at `DOOR_H` shows **55%**. Rendered A/B at identical framing
+(`renderer.extract` on the live floor, player parked north of that doorway) the before frame has
+no door in it that a player would read as a door — a dark red hairline along a stone lip.
+
+**So a door stops being a course of wall and becomes a fixture with a fixture's constant**:
+`wallGeometry.DOOR_H`, one height for every door in the game. It is `WALL_H_PERIMETER` rather than
+a fourth independent number, which also keeps `MAX_WALL_HEIGHT` — what `GameLoop.cameraFrame` pads
+the framed room rect by — correct by construction. `doorFlankTier` and its `abutsAlongGap` helper
+are deleted rather than left unused; `RoomBuilder` hands a door to the joins pass as `'perimeter'`
+purely because that pass reasons in tiers, and `doorStandCoverage.test.ts` pins
+`wallHeight(DOOR_TIER) === DOOR_H` so the two cannot drift.
+
+**What this deliberately spends, and why it is affordable.** `WALL_H_KERB` is 22 because a room's
+floor lies immediately north of that boundary and anything tall there stands between the camera
+and the player. A door standing 104 there covers ~82 px more of that floor, and a player walking
+south into the doorway is behind it. Three things pay for it: a door has been a `fadeableBlock`
+x-ray occluder, cap layers and deep layers both, since the day it started standing (see the
+section above — "the passage floor is entirely inside the fixture's own art" was already the
+reason); it is a 128 px-wide fixture the player is deliberately walking INTO, not a run they walk
+along; and it is the same deal the other 13 doors have always run at. Checked on the live frame at
+the closest legal approach (the player's ground point stays `PLAYER_BASE.solidRadius` north of the
+kerb): the cap fades and the body reads through it. **The kerb itself is untouched** — `DOOR_H` is
+a door constant and no wall run reads it, which `RoomBuilder.test.ts` asserts as the control
+beside the height itself (without it, "every door stands at `DOOR_H`" is equally satisfied by
+deleting the kerb tier).
+
+**What did NOT change, deliberately: the drawn WIDTH.** A door's opening still takes the passage's
+own screen footprint — 64 px for an east-west door (the wall's thickness), 128 for a north-south
+one (the gap). A single fixed aperture would look more uniform still, but on a 128-wide gap it
+would paint stone over floor the player can walk on, which is the same class of defect as a
+passage buried under wall art. Uniform height and uniform treatment; honest width.
+
+The sweeps that keyed off the tier now key off the passage SHAPE, which is what still varies and
+is what every fit-by-width layer here actually cares about (`doorStandCoverage`,
+`doorLightCoverage`, `doorCurtainCoverage`). One of them turned into a direct measurement of what
+the change bought: the smallest through-light band on any shipped opening is now taller than a
+kerb door's entire fixture used to be. The arena block's standing "`doorFlankTier` would answer
+for all 74 passages at all three tiers" test went with the rule it was measuring.
+
+### What the mutation battery said, and the five value survivors it found (2026-09-03)
+
+Asked for directly (*"有测试可以加吗"*), and the battery is the answer rather than a guess at what
+to add. **34 mutants** over the whole door path — `DOOR_H`/`DOOR_TIER`, every line of
+`RoomBuilder.buildDoors`, `doorRender`'s layer constants, `doorLeaf`'s fit rule, and the
+door-adjacent wall clips — with the scene suite as oracle, baseline green, revert in `finally`.
+**26 killed, 5 survived, 3 skipped** on anchors that matched twice.
+
+Every survivor was real, and four of them were the same shape — the one `drawDoorWear`'s
+`WEAR_ALPHA` taught this repo in 2026-08-26, where a layer's GEOMETRY is covered and its VALUE by
+nothing at all:
+
+- `OPEN_RECESS_ALPHA_TOP` set to the LOCKED 0.72 — the open tunnel stops reading as floor and the
+  two states differ only in the light added on top, which is the defect the 2026-08-30 pass was
+  called in to fix. Every "the open recess is present, ramps, and only shows when open" assertion
+  stayed green.
+- `SILL_ALPHA`, `GLOW_WASH_ALPHA`, `RIM_ALPHA` each to **0** — the layer is still built, still
+  visible, still in the right state, and contributes nothing.
+- The fifth: `RoomBuilder` handing the doors the WALLS' joins (`.slice(0, n)`). Invisible because
+  no test fixture had a door whose joins actually CLIP its cap — every door's cap sat at the
+  unclipped `-height - depth` whatever it was handed.
+
+All five are closed, and each new assertion was itself mutated to prove it has teeth (a linear rim
+falloff, a doubled sill, a crop that rounds up to the whole art, and `MIN_COVER_FRACTION` raised
+until a doorway stops firing — all killed). The three skipped anchors were re-run uniquely: two
+killed, and the third "survived" only because `push(...).valueOf()` still pushes — a harness bug,
+killed by 4 tests once the mutant was a real no-op. **38 distinct mutants, 38 killed.**
+
+Two of the new tests are worth naming, because they are assertion CLASSES this suite did not have:
+
+- **How much of the leaf survives the crop**, swept over all 24 shipped doors against the real
+  IHDR of `door_locked_raw.png`/`door_open_raw.png`. Every door must show over half its own art.
+  At the old height it reports 12% and fails — which makes it the first test in the door suite
+  that would have caught the reported bug, rather than one that describes it afterwards. It also
+  found the stale "221x320-ish" in `doorRender.ts`'s own header (the art has been 147x217 since
+  the margins were trimmed) and this document's first draft of the section above, which had
+  repeated it.
+- **The x-ray actually fires at a kerb doorway** (`simRenderParity.test.ts`, beside the kerb's own
+  exemption): same focus construction, same rule, opposite verdict, over all 11 of them at every
+  body height the rig is drawn at — plus the deep pass for a character standing IN the passage,
+  and the flanking kerbs still NOT firing as the control. That is the claim `DOOR_H` is written
+  on, and until now it was prose.

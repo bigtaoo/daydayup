@@ -19,6 +19,8 @@ import {
   WALL_H_PERIMETER,
   WALL_H_INTERIOR,
   WALL_H_KERB,
+  DOOR_H,
+  DOOR_TIER,
   MAX_WALL_HEIGHT,
   type RectPx,
 } from './wallGeometry';
@@ -143,5 +145,11 @@ describe('wallHeight', () => {
 
   it('exports the maximum the camera frame has to grow by', () => {
     expect(MAX_WALL_HEIGHT).toBe(Math.max(WALL_H_PERIMETER, WALL_H_INTERIOR, WALL_H_KERB));
+    // A door is not a wall tier, but `RoomBuilder` hands it to the joins pass as one, so the pair
+    // has to agree — `wallJoins` decides a door's tuck (and therefore whether its cap survives)
+    // from the tier's height, not from `DOOR_H`. Nothing else compares them.
+    expect(wallHeight(DOOR_TIER)).toBe(DOOR_H);
+    // And a door may never out-top the padding `GameLoop.cameraFrame` grows the framed room by.
+    expect(DOOR_H).toBeLessThanOrEqual(MAX_WALL_HEIGHT);
   });
 });

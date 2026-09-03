@@ -35,8 +35,8 @@ import {
 import { fpToPx } from '../coords';
 import { biomePalette } from '../theme';
 import { buildDoorBlock, doorLeafFrame, drawSpill, drawThroughLight, type DoorSkin } from './doorRender';
-import { wallHeight, wallTier, WALL_H_KERB, type RectPx, type WallTier } from './wallGeometry';
-import { doorFlankTier, mergeWallRuns, type WallRun } from './wallRuns';
+import { DOOR_H, wallTier, WALL_H_KERB, type RectPx } from './wallGeometry';
+import { mergeWallRuns, type WallRun } from './wallRuns';
 
 const FLOOR_INDICES = Object.keys(EMBER_L1_FLOORS).map(Number);
 
@@ -92,15 +92,15 @@ function floorGeo(index: number): FloorGeo {
   return { runs, doorRects };
 }
 
-/** Every shipped door as `(rect, height)` — the two arguments `buildDoorBlock` is called with. */
-function shippedDoors(): { rect: RectPx; height: number; tier: WallTier }[] {
-  const out: { rect: RectPx; height: number; tier: WallTier }[] = [];
+/** Every shipped door as `(rect, height)` — the two arguments `buildDoorBlock` is called with —
+ *  plus the passage SHAPE, which is what still varies now that the height does not (2026-09-03,
+ *  `wallGeometry.DOOR_H`). The shape is the axis these sweeps care about anyway: it sets the
+ *  opening's WIDTH, and every leaf/curtain/light layer here is fit by width. */
+function shippedDoors(): { rect: RectPx; height: number; shape: string }[] {
+  const out: { rect: RectPx; height: number; shape: string }[] = [];
   for (const index of FLOOR_INDICES) {
-    const { runs, doorRects } = floorGeo(index);
-    for (const rect of doorRects) {
-      const tier = doorFlankTier(rect, runs) ?? wallTier(rect, []);
-      out.push({ rect, height: wallHeight(tier), tier });
-    }
+    const { doorRects } = floorGeo(index);
+    for (const rect of doorRects) out.push({ rect, height: DOOR_H, shape: `${rect.w}x${rect.h}` });
   }
   return out;
 }
@@ -148,9 +148,9 @@ describe('the open-door lights on the real shipped floors', () => {
     // The sweep means nothing if the pipeline handed back nothing to sweep.
     expect(doors.length).toBeGreaterThan(0);
 
-    const tiers = new Map<WallTier, number>();
-    for (const { rect, height, tier } of doors) {
-      tiers.set(tier, (tiers.get(tier) ?? 0) + 1);
+    const shapes = new Map<string, number>();
+    for (const { rect, height, shape } of doors) {
+      shapes.set(shape, (shapes.get(shape) ?? 0) + 1);
       const fixture = buildDoorBlock(rect, height, skin(), false);
       const through = layerOf(fixture, drawThroughLight, rect, height);
       const spill = layerOf(fixture, drawSpill, rect, height);
@@ -163,12 +163,13 @@ describe('the open-door lights on the real shipped floors', () => {
       expect(shapeCount(through!)).toBeGreaterThan(4);
       expect(shapeCount(spill!)).toBeGreaterThan(4);
     }
-    // Both branches occur, so neither is asserted vacuously. A kerb door is the case where the
-    // through-light has almost no height to work with and the pool carries the whole cue; if the
-    // shipped content had only perimeter doors, every kerb claim in this pass would be untested
-    // here however many doors the loop walked.
-    expect(tiers.get('perimeter') ?? 0).toBeGreaterThan(0);
-    expect(tiers.get('kerb') ?? 0).toBeGreaterThan(0);
+    // Both passage shapes occur, so neither is asserted vacuously. Until 2026-09-03 the axis that
+    // mattered here was the door's HEIGHT — a 22 px kerb door had almost nothing for the
+    // through-light to climb and the floor pool carried the whole cue. Every door stands at
+    // `DOOR_H` now, so what still varies is the opening's WIDTH, which is what the leaf and the
+    // curtain are fit by and therefore what sets `drawH` for these ramps.
+    expect(shapes.get('64x128') ?? 0).toBeGreaterThan(0);
+    expect(shapes.get('128x64') ?? 0).toBeGreaterThan(0);
   });
 
   it('gives every shipped door a lit band tall enough to see, kerb doors included', () => {
@@ -192,8 +193,12 @@ describe('the open-door lights on the real shipped floors', () => {
       expect(reach).toBeLessThan(drawH); // ...and never a wash over the whole thing
       seen.push(reach);
     }
-    // A kerb opening really is the small end of that range, i.e. the bound above is not slack.
-    expect(Math.min(...seen)).toBeLessThan(WALL_H_KERB);
+    // The bound above (>= 10 px) used to be nearly tight: a 22 px kerb door's lit band was the
+    // small end of this range. Since 2026-09-03 every door stands at `DOOR_H`, and the smallest
+    // lit band on any shipped opening is now taller than that whole fixture used to be — the
+    // direct measurement of what the uniform height bought, and the reason the old
+    // `< WALL_H_KERB` assertion here had to be replaced rather than deleted.
+    expect(Math.min(...seen)).toBeGreaterThan(WALL_H_KERB);
   });
 
   it('keeps exactly one state lit on every shipped door, in both states', () => {

@@ -1,23 +1,28 @@
 /// <reference types="node" />
 /**
  * Does the STANDING door fixture (2026-08-20, `doorRender.ts`) actually work on the shipped
- * content — and does the rule that decides its height ever fire at all?
+ * content — and does every door really present the SAME way?
  *
- * The risk this file exists for is the one `wallComposition.test.ts`'s header names and this repo
- * has already shipped once: a geometric predicate that reads correctly, passes its unit tests on
- * hand-built fixtures, and silently matches NOTHING in the real level (`wallGeometry`'s old
- * `w > h` guard left 1 wall standing where 32 should). `doorFlankTier` is exactly that shape — it
- * asks whether a run abuts the passage along the gap, and if the answer were always "no" every
- * door would quietly fall back to `wallTier` and the kerb-clearance guarantee below would be
- * vacuous. So this sweeps the REAL five shipped floors through the REAL pipeline
- * (`placeAuthoredFloor` → `buildFloorGeometry` → `wallTier` → `mergeWallRuns` → `doorFlankTier`,
- * RoomBuilder's own sequence) and asserts both the invariant AND that both of its branches occur.
+ * **What this file used to hold, and why it changed (2026-09-03).** Until this pass a door
+ * inherited the height of the shortest wall abutting its passage (`doorFlankTier`), and this
+ * sweep's job was to prove that rule fired on real content. It did, and the measurement it
+ * printed is what condemned the rule: 24 doors across the five shipped floors, 13 standing at
+ * `WALL_H_PERIMETER` (a 64x128 passage through a room boundary, travel east-west) and 11 at
+ * `WALL_H_KERB` — a 128x64 passage through the low boundary between two vertically stacked
+ * rooms, drawn as a 128 x **22** letterbox under 64 px of its own cap stone, showing 12% of its
+ * own leaf art. Nearly half the doors in the game were a fixture whose own lintel was three times
+ * its opening. Live report
+ * with a screenshot of one: *"有些门会被墙盖住... 我希望门的表现是单独的，统一的，不管墙有多厚"*.
+ * So the height is now one constant, `wallGeometry.DOOR_H`, for every door — see there for what
+ * that spends against the clearance rule `WALL_H_KERB` exists for.
  *
- * Measured when written: 24 doors across the five shipped floors, every one of them flanked (zero
- * fallbacks) — 13 standing at `WALL_H_PERIMETER` (a 64x128 passage through a room boundary, travel
- * east-west) and 11 at `WALL_H_KERB` (a 128x64 passage through the low boundary between two
- * vertically stacked rooms, travel north-south). The kerb case is not an edge case: it is nearly
- * half the doors in the game.
+ * The sweep itself stays, because the risk it was written against is unchanged and this repo has
+ * shipped it once already (`wallGeometry`'s old `w > h` guard left 1 wall standing where 32
+ * should): a geometric claim that reads correctly, passes on hand-built fixtures, and matches
+ * nothing in the real level. So this runs the REAL five shipped floors through the REAL pipeline
+ * (`placeAuthoredFloor` → `buildFloorGeometry` → `wallTier` → `mergeWallRuns` → the doors' own
+ * `wallJoins` pass, RoomBuilder's own sequence) and asserts that BOTH passage shapes still occur
+ * — the uniformity claim is empty if the content only ever produces one of them.
  */
 import { describe, it, expect } from 'vitest';
 import {
@@ -30,11 +35,21 @@ import {
   type RoomPiece,
 } from '@dd/engine';
 import { fpToPx } from '../coords';
-import { wallHeight, wallTier, WALL_H_KERB, WALL_H_PERIMETER, type RectPx, type WallTier } from './wallGeometry';
-import { blockCapTop, doorFlankTier, mergeWallRuns, wallJoins, type WallRun } from './wallRuns';
+import { wallHeight, wallTier, DOOR_H, DOOR_TIER, WALL_H_PERIMETER, type RectPx } from './wallGeometry';
+import { blockCapTop, mergeWallRuns, wallJoins, type WallRun } from './wallRuns';
 import { faceCrownFraction } from './wallTone';
+import { doorLeafFrame } from './doorRender';
+import { readFileSync } from 'node:fs';
+
+/** A shipped PNG's real pixel size, straight out of its IHDR — the same "measure the shipped
+ *  bytes, not a fixture" route `rigComposition.test.ts` uses for the rig bundles. */
+function pngSize(file: string): { w: number; h: number } {
+  const buf = readFileSync(new URL(`../../../public/environment/${file}`, import.meta.url));
+  return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
+}
 
 const FLOOR_INDICES = Object.keys(EMBER_L1_FLOORS).map(Number);
+
 
 interface FloorGeo {
   runs: WallRun[];
@@ -68,8 +83,9 @@ function floorGeo(index: number): FloorGeo {
   return { runs, doorRects };
 }
 
-/** Every run that touches `door` along the gap — the same adjacency `doorFlankTier` uses,
- *  restated here independently so the assertion is not just the implementation echoed back. */
+/** Every run that touches `door` along the gap — a jamb, not a corner kiss. The stone each
+ *  doorway is actually cut into, which is what the height USED to be derived from and is now
+ *  only what it is measured AGAINST. */
 function flanking(door: RectPx, runs: readonly WallRun[]): WallRun[] {
   const overlap = (a0: number, a1: number, b0: number, b1: number): number =>
     Math.min(a1, b1) - Math.max(a0, b0);
@@ -83,79 +99,132 @@ function flanking(door: RectPx, runs: readonly WallRun[]): WallRun[] {
   });
 }
 
-describe('a door stands at the height of the wall it is cut into — on the real shipped floors', () => {
-  it('every door is flanked, never taller than its shortest flank, and both tiers occur', () => {
+describe('every door presents the same — on the real shipped floors', () => {
+  it('stands at DOOR_H whatever wall it is cut into, and both passage shapes still occur', () => {
     let doors = 0;
-    let fellBack = 0;
-    const tiers = new Map<WallTier, number>();
+    let unflanked = 0;
+    // The two shapes a shipped passage comes in, counted by the flank stone rather than by the
+    // door: a rect wider than it is deep is a gap in an east-west wall (travel north-south), and
+    // the low boundary between two stacked rooms is exactly where the OLD rule collapsed the
+    // fixture to 22 px. Keyed on the SHORTEST flank so the count is directly comparable with the
+    // 13/11 split this sweep printed before the change.
+    const shapes = new Map<string, number>();
     for (const index of FLOOR_INDICES) {
       const { runs, doorRects } = floorGeo(index);
       for (const door of doorRects) {
         doors++;
-        const tier = doorFlankTier(door, runs);
-        if (tier === null) {
-          fellBack++;
-          continue;
-        }
-        tiers.set(tier, (tiers.get(tier) ?? 0) + 1);
-        // The clearance guarantee: a doorway may never stand taller than the wall it interrupts,
-        // whichever side is shorter. A kerb is low because a room's floor lies immediately north
-        // of it (`wallGeometry.framesFloorFromSouth`) and anything tall there stands between the
-        // camera and the player — a door is no more entitled to that space than the wall is.
         const flanks = flanking(door, runs);
-        expect(flanks.length).toBeGreaterThan(0);
-        for (const f of flanks) {
-          expect(wallHeight(tier)).toBeLessThanOrEqual(wallHeight(f.tier));
+        if (flanks.length === 0) unflanked++;
+        const shortest = Math.min(...flanks.map((f) => wallHeight(f.tier)));
+        const key = `${door.w}x${door.h} in ${shortest}px stone`;
+        shapes.set(key, (shapes.get(key) ?? 0) + 1);
+        // What this file can honestly assert about the height is the CONTENT side of it: the
+        // stone a door is cut into really does vary (22 px on 11 of them, 104 on the other 13),
+        // so "every door stands at one height" is a claim with something to be wrong about. That
+        // the fixture actually gets that height is pinned where the production code decides it —
+        // `RoomBuilder.test.ts`, over a built fixture, at BOTH flank heights — not restated here,
+        // where re-deriving `DOOR_H` from `DOOR_H` would prove nothing.
+        expect(shortest).toBeLessThanOrEqual(DOOR_H);
+      }
+    }
+    expect(doors).toBe(24);
+    // Every passage is a hole in stone — a door hanging in nothing would make the comparison
+    // above vacuous rather than false.
+    expect(unflanked).toBe(0);
+    // ...and the content really does still produce both shapes, including the one the old rule
+    // shrank: 11 doors in a 22 px kerb, which now stand at DOOR_H like the other 13.
+    expect(shapes.get(`128x64 in ${wallHeight('kerb')}px stone`)).toBe(11);
+    expect(shapes.get(`64x128 in ${WALL_H_PERIMETER}px stone`)).toBe(13);
+  });
+
+  it('shows over half of the real leaf art on every shipped door — the reported defect itself', () => {
+    // THE assertion this whole pass is about, and the one class of claim the door suite did not
+    // have: not "is the leaf there" or "is it positioned right" (both already swept) but HOW MUCH
+    // OF IT SURVIVES THE CROP. `doorLeafFrame` fits by width and crops off the top, so the opening
+    // height decides what the player actually sees of the door.
+    //
+    // Measured against the SHIPPED PNGs' own IHDR rather than a fixture, because the numbers only
+    // mean anything at the art's real proportions — and because `doorRender.ts`'s header carried
+    // "221x320-ish" for two weeks after the same 2026-08-20 pass re-trimmed the margins off, which
+    // is exactly the kind of stale constant a fixture would have preserved. At `WALL_H_KERB` the
+    // 11 kerb doors showed 25 of `door_locked_raw.png`'s 217 rows: 12%. At `DOOR_H` they show 55%,
+    // and the 13 narrow ones show the whole leaf under a band of lintel.
+    const art = {
+      locked: pngSize('door_locked_raw.png'),
+      open: pngSize('door_open_raw.png'),
+    };
+    expect(art.locked).toEqual({ w: 147, h: 217 }); // the trim this file's numbers are computed at
+    expect(art.open).toEqual({ w: 156, h: 224 });
+
+    const shown: number[] = [];
+    for (const index of FLOOR_INDICES) {
+      for (const rect of floorGeo(index).doorRects) {
+        for (const [state, { w, h }] of Object.entries(art)) {
+          const { srcH } = doorLeafFrame(rect.w, DOOR_H, w, h);
+          const fraction = srcH / h;
+          expect(fraction, `${state} leaf on a ${rect.w}x${rect.h} passage`).toBeGreaterThan(0.5);
+          expect(fraction).toBeLessThanOrEqual(1);
+          shown.push(fraction);
         }
       }
     }
-    // The sweep only means anything if the predicate matches real geometry at all...
-    expect(doors).toBeGreaterThan(0);
-    expect(fellBack).toBe(0);
-    // ...and if both answers actually occur in the shipped content. A rule that only ever returns
-    // `perimeter` here would leave the kerb case — the one with a real clearance consequence —
-    // untested by this sweep no matter how many doors it walked.
-    expect(tiers.get('perimeter') ?? 0).toBeGreaterThan(0);
-    expect(tiers.get('kerb') ?? 0).toBeGreaterThan(0);
+    expect(shown).toHaveLength(48); // 24 doors x 2 states, or the sweep skipped something
+    // The bound is not slack in one direction and vacuous in the other: the WIDE passages really
+    // are the ones near it (0.55), and the narrow ones really do show the whole leaf.
+    expect(Math.min(...shown)).toBeLessThan(0.6);
+    expect(Math.max(...shown)).toBe(1);
   });
 
-  it('a door never climbs over the crown of the wall it is set into', () => {
-    // A block's cap reaches one height + its own depth north of its footprint, which for a door
-    // set in a DEEP wall (a passage through a room boundary is 64+ px deep) would put its stone
-    // over the crown course of the run north of it — the artifact `wallJoins`' tuck exists for.
-    // Doors get their own joins pass in `RoomBuilder.buildDoors`, so this checks the result the
-    // renderer actually uses, not the unclipped geometry.
+  it('reaches exactly one height north of its own footprint, and never inverts its cap', () => {
+    // A block's cap reaches one height + its own depth north of its footprint. Doors get their
+    // own joins pass in `RoomBuilder.buildDoors`, so this checks the result the renderer actually
+    // uses, at the height it actually uses (`DOOR_H`, not a tier lookup).
     let tucked = 0;
     for (const index of FLOOR_INDICES) {
       const { runs, doorRects } = floorGeo(index);
-      const doorRuns: WallRun[] = doorRects.map((rect) => ({
-        rect,
-        tier: doorFlankTier(rect, runs) ?? 'interior',
-      }));
+      const doorRuns: WallRun[] = doorRects.map((rect) => ({ rect, tier: DOOR_TIER }));
       const joins = wallJoins([...runs, ...doorRuns], faceCrownFraction('fire')).slice(runs.length);
       for (const [i, run] of doorRuns.entries()) {
-        const height = wallHeight(run.tier);
-        const capTop = blockCapTop(run.rect, height, joins[i]!);
+        const capTop = blockCapTop(run.rect, DOOR_H, joins[i]!);
         const reachNorth = -capTop - run.rect.h; // px of art north of the footprint's own north edge
-        if (reachNorth < height) tucked++;
+        if (reachNorth < DOOR_H) tucked++;
         // Never more than one height north of its own footprint — the same bound a wall block
         // has, and the reason a doorway cannot bury the room's back wall.
-        expect(reachNorth).toBeLessThanOrEqual(height + 0.01);
-        expect(capTop).toBeLessThanOrEqual(-height); // never an inverted cap
+        expect(reachNorth).toBeLessThanOrEqual(DOOR_H + 0.01);
+        expect(capTop).toBeLessThanOrEqual(-DOOR_H); // never an inverted cap
       }
     }
-    // The clip has to actually fire somewhere in the shipped content, or this test is only
-    // re-proving the unclipped bound. It fires on a passage through a room BOUNDARY (deeper than
-    // the wall stands tall, whole north edge buried in the run beside it); a door in a stacked-room
-    // kerb has open floor north of it and correctly does not tuck, which is why this is a count
-    // over all five floors rather than a per-door assertion.
+    // The tuck has to fire somewhere or this is only re-proving the unclipped bound. It fires on
+    // a passage DEEPER than the door stands tall (`64x128` through a room boundary, whole north
+    // edge buried in the perimeter run beside it); a 128x64 kerb passage has open floor north of
+    // it and correctly does not tuck — which is precisely why it now stands full height there.
     expect(tucked).toBeGreaterThan(0);
   });
 
-  it('the two tier heights are the ones a wall uses, not a door-only constant', () => {
-    // Cheap but load-bearing: the fixture's height comes from `wallHeight`, so a future change to
-    // the wall tiers moves the doors with them by construction.
-    expect(wallHeight('perimeter')).toBe(WALL_H_PERIMETER);
-    expect(wallHeight('kerb')).toBe(WALL_H_KERB);
+  it('does not tuck in a kerb, so its cap is not clipped off the 11 doorways that changed', () => {
+    // The 11 doorways this pass changed, pinned at the geometry the renderer draws: their cap is
+    // the full footprint depth above a full-height opening, unclipped. `wallJoins` would clip it
+    // by tucking them under the mass to their north — and the reason it does not is that there IS
+    // no mass there: a doorway in the low boundary between two stacked rooms has open floor north
+    // of it, which is exactly why it can stand full height now. So this is a claim about the
+    // shipped content, not a restatement of the tuck rule.
+    //
+    // (Measured, so the comment above does not overclaim: mutating `DOOR_TIER` to `'kerb'` does
+    // NOT fail this test — the north edge is open either way. What catches that is the
+    // `wallHeight(DOOR_TIER) === DOOR_H` assertion in `wallGeometry.test.ts`.)
+    let kerbShaped = 0;
+    for (const index of FLOOR_INDICES) {
+      const { runs, doorRects } = floorGeo(index);
+      const doorRuns: WallRun[] = doorRects.map((rect) => ({ rect, tier: DOOR_TIER }));
+      const joins = wallJoins([...runs, ...doorRuns], faceCrownFraction('fire')).slice(runs.length);
+      for (const [i, run] of doorRuns.entries()) {
+        if (run.rect.w <= run.rect.h) continue; // the 64x128 ones legitimately tuck — see above
+        kerbShaped++;
+        expect(joins[i]!.tuckNorth, `${run.rect.w}x${run.rect.h} tucked`).toBe(false);
+        // ...and the cap really is the full footprint depth above the opening, unclipped.
+        expect(blockCapTop(run.rect, DOOR_H, joins[i]!)).toBeCloseTo(-DOOR_H - run.rect.h);
+      }
+    }
+    expect(kerbShaped).toBe(11);
   });
 });

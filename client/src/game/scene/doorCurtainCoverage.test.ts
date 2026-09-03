@@ -28,8 +28,8 @@ import {
 import { fpToPx } from '../coords';
 import { biomePalette } from '../theme';
 import { buildDoorBlock, doorLeafFrame, type DoorSkin } from './doorRender';
-import { wallHeight, wallTier, type RectPx, type WallTier } from './wallGeometry';
-import { doorFlankTier, mergeWallRuns, type WallRun } from './wallRuns';
+import { DOOR_H, wallTier, type RectPx } from './wallGeometry';
+import { mergeWallRuns, type WallRun } from './wallRuns';
 
 const FLOOR_INDICES = Object.keys(EMBER_L1_FLOORS).map(Number);
 
@@ -85,15 +85,15 @@ function floorGeo(index: number): FloorGeo {
   return { runs, doorRects };
 }
 
-/** Every shipped door as `(rect, height)` — the two arguments `buildDoorBlock` is called with. */
-function shippedDoors(): { rect: RectPx; height: number; tier: WallTier }[] {
-  const out: { rect: RectPx; height: number; tier: WallTier }[] = [];
+/** Every shipped door as `(rect, height)` — the two arguments `buildDoorBlock` is called with —
+ *  plus the passage SHAPE, which is what still varies now that the height does not (2026-09-03,
+ *  `wallGeometry.DOOR_H`). The shape is the axis these sweeps care about anyway: it sets the
+ *  opening's WIDTH, and every leaf/curtain/light layer here is fit by width. */
+function shippedDoors(): { rect: RectPx; height: number; shape: string }[] {
+  const out: { rect: RectPx; height: number; shape: string }[] = [];
   for (const index of FLOOR_INDICES) {
-    const { runs, doorRects } = floorGeo(index);
-    for (const rect of doorRects) {
-      const tier = doorFlankTier(rect, runs) ?? wallTier(rect, []);
-      out.push({ rect, height: wallHeight(tier), tier });
-    }
+    const { doorRects } = floorGeo(index);
+    for (const rect of doorRects) out.push({ rect, height: DOOR_H, shape: `${rect.w}x${rect.h}` });
   }
   return out;
 }
@@ -113,9 +113,9 @@ describe('the open-door curtain-of-light on the real shipped floors', () => {
     expect(doors.length).toBeGreaterThan(0); // the sweep means nothing over an empty list
 
     const curtainArt = tex(CURTAIN_ART_W, CURTAIN_ART_H);
-    const tiers = new Map<WallTier, number>();
-    for (const { rect, height, tier } of doors) {
-      tiers.set(tier, (tiers.get(tier) ?? 0) + 1);
+    const shapes = new Map<string, number>();
+    for (const { rect, height, shape } of doors) {
+      shapes.set(shape, (shapes.get(shape) ?? 0) + 1);
       const fixture = buildDoorBlock(rect, height, { ...skin(), curtain: curtainArt }, false);
       const curtain = curtainOf(fixture, curtainArt);
       expect(curtain, `curtain on ${rect.w}x${rect.h} @${height}`).toBeDefined();
@@ -132,10 +132,11 @@ describe('the open-door curtain-of-light on the real shipped floors', () => {
       expect(curtain!.y).toBeCloseTo(-drawH);
       expect(curtain!.y).toBeLessThan(0); // the direct regression check: never (0, 0)
     }
-    // Both tiers occur, so the position rule is checked on the short kerb crop AND the tall
-    // perimeter case, not just on whichever shape happened to come first.
-    expect(tiers.get('perimeter') ?? 0).toBeGreaterThan(0);
-    expect(tiers.get('kerb') ?? 0).toBeGreaterThan(0);
+    // Both passage shapes occur, so the position rule is checked on the WIDE crop (a 128 px
+    // opening, where the curtain art overflows and is cropped to its bottom) AND the narrow one
+    // (64 px, where it fits under a band of lintel) — not just whichever came first.
+    expect(shapes.get('64x128') ?? 0).toBeGreaterThan(0);
+    expect(shapes.get('128x64') ?? 0).toBeGreaterThan(0);
   });
 
   it('hides the curtain and shows nothing in its place while locked, on every shipped door', () => {
