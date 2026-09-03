@@ -67,3 +67,45 @@ export const NOTICE_SPREAD_TICKS = 30; // + up to 1.0s more, per enemy
 export function noticeDelayTicks(id: number): number {
   return NOTICE_DELAY_TICKS + (id % NOTICE_SPREAD_TICKS);
 }
+
+// ── Standing spacing (ENGINE_VERSION 55) ────────────────────────────────────────
+/**
+ * How far a mob that has ARRIVED spreads from its neighbours, as a multiple of its own
+ * body `radius` (live play report 2026-09-03: *"怪物寻路时要加一个停留体积，最好是两倍于
+ * 怪物的体型，这样怪物才会分散"* — a screenshot of three mobs stacked into one silhouette,
+ * two health bars overlapping a third body).
+ *
+ * The report names the thing that was missing precisely: a mob has ONE size today and it
+ * answers two different questions. Travelling, its size should be its body, or it cannot
+ * fit through a gap the level authored for it. Standing, its size should be its personal
+ * space, which is a much bigger circle — otherwise every mob in a room converges on the
+ * same engage-range ring around the player and parks there, feet-circle to feet-circle
+ * (`footprintRadius`, 7 px against a 15 px body), i.e. as a blob.
+ *
+ * So this multiple applies ONLY between two mobs that are both holding position
+ * (`EnemyActor.holding`), and only to each other — never to a mob that is still moving,
+ * never to a player, and never to a wall. That restriction is the whole design: a 1.5-body
+ * gap stays passable at full speed because the travelling mob is judged at its body, while
+ * two mobs that stop next to each other end up 2+2 = 4 body radii apart. Both halves of the
+ * report, from one flag.
+ *
+ * 2 is the reported number and it is also about right against the numbers already here: at
+ * a basic mob's 15 px radius it puts standing mobs 60 px apart, so roughly 18 fit around the
+ * 180 px `DEFAULT_ENEMY_ENGAGE_RANGE_FP` ring before the crowd has to fall back to a second
+ * one — a level-1 room's 15-30 garrison spreads into a loose arc rather than a column.
+ */
+export const STANDOFF_BODY_MULTIPLE = 2;
+
+/**
+ * How far past its engage range a mob may be pushed by the spacing above before it counts
+ * as no longer holding and starts closing again (per-mille of `engageRangeFp`).
+ *
+ * Hysteresis, for the same reason `aggroed` is a latch: spacing moves a standing mob
+ * OUTWARD, so a mob that stopped exactly on the engage ring is pushed just outside it by
+ * its neighbour, and with a bare `dist <= range` test it would immediately re-chase, close
+ * the gap, be pushed out again — a permanent shuffle at the ring, and (since fire slots go
+ * to mobs in range) a gun that stutters on and off with it. Holding is therefore sticky:
+ * entered at `engageRangeFp`, left only past this wider radius. A mob spread out to the
+ * 1.5× band still shoots — `ENEMY_GUN_SIM`'s bullets travel ~30 grid, five times that far.
+ */
+export const HOLD_RELEASE_PERMILLE = 1500;

@@ -2,7 +2,9 @@
  * Step 4 — Movement. Integrate vx/vy (fp displacement already baked per tick) on
  * the 2D ground plane; push actors out of static round solids (pillars) AND static
  * rectangular solids (AABB tile/wall geometry, design/07/09 ROADMAP 1.2); push
- * overlapping actors apart from EACH OTHER (design/07's actor–actor half); clamp
+ * overlapping actors apart from EACH OTHER (design/07's actor–actor half); spread
+ * mobs that have STOPPED away from each other so a garrison doesn't stack into one
+ * silhouette (`resolveStandingSpacing`, ENGINE_VERSION 55); clamp
  * players inside the world bounds. Movement is strictly 2D — there is no z axis /
  * gravity (jump was removed; a future dodge is a planar blink, not a hop). Enemies
  * are integrated + resolved through the exact same path as players — AIDecideSystem
@@ -16,10 +18,11 @@
 import { addFp, isqrt } from '../math/fixed';
 import type { Fp } from '../math/fixed';
 import { PLAYER_BASE } from '../content/players';
+import { DEFAULT_ENEMY_MOVE_SPEED_PER_TICK } from '../content/enemies';
 import { KNOCKBACK_FRICTION_PERMILLE, KNOCKBACK_SNAP_FP } from '../config';
 import type { GameState } from '../state/GameState';
-import type { Actor } from '../state/entities';
-import { blockingRadius } from '../state/actorRadius';
+import type { Actor, EnemyActor } from '../state/entities';
+import { blockingRadius, standoffRadius } from '../state/actorRadius';
 import { pushOutOfObstacle, pushOutOfWall, queryRadiusFor, type Point } from './solidBounds';
 
 export class MovementSystem {
@@ -27,6 +30,11 @@ export class MovementSystem {
   // cleared and refilled each call, never read across ticks, so this is a pure
   // perf win with no effect on the fixed ascending-id sort order it holds.
   private readonly actorPairScratch: Actor[] = [];
+  // Same deal for the standing-spacing pass: the holders and their accumulated
+  // push, refilled every tick and never read across ticks.
+  private readonly holderScratch: EnemyActor[] = [];
+  private readonly holderPushX: number[] = [];
+  private readonly holderPushY: number[] = [];
 
   tick(state: GameState): void {
     for (const p of state.players) {
@@ -43,6 +51,7 @@ export class MovementSystem {
       this.resolveWalls(state, e);
     }
     this.resolveActorPairs(state);
+    this.resolveStandingSpacing(state);
     this.reseparateFromSolids(state);
   }
 
@@ -236,6 +245,118 @@ export class MovementSystem {
         b.gy = (b.gy - (ny - nyHalf)) as Fp;
       }
     }
+  }
+
+  /**
+   * Spread mobs that have ARRIVED away from each other (ENGINE_VERSION 55, live play report
+   * 2026-09-03: *"怪物寻路时要加一个停留体积，最好是两倍于怪物的体型，这样怪物才会分散"*, with
+   * a screenshot of three mobs fused into one silhouette and two health bars drawn over a
+   * third body).
+   *
+   * The pair push above is a COLLISION rule — it fires only once two bodies already overlap,
+   * and at `footprintRadius` (7 px against a 15 px body) that is barely before their sprites
+   * are on top of each other. Nothing in the sim ever expressed the other half: how far apart
+   * two mobs that have stopped moving would LIKE to stand. Without it every mob in a room
+   * solves the same problem — walk at the player, stop at `engageRangeFp` — and arrives at the
+   * same ring, so a garrison reads as one blob with several health bars.
+   *
+   * The reason this is a separate pass and not just a bigger radius in `resolveActorPairs` is
+   * the report's other half, and it is the whole point of the design: a mob has one size while
+   * TRAVELLING (its body — it has to fit through whatever gap the level authored) and a much
+   * larger one while STANDING. So this pass is gated on `holding`, on BOTH sides:
+   *
+   *   - two mobs that have both stopped drift apart to `standoffRadius` each (2 body radii,
+   *     so 4 between their centres) and end up as separate, countable, individually
+   *     shootable threats;
+   *   - a mob that is still moving neither pushes nor is pushed here, so a corridor only
+   *     1.5 bodies wide stays passable at full speed even with a mob standing in it. A
+   *     travelling mob is judged exactly as it was before this version.
+   *
+   * Three properties make it a shuffle rather than a shove:
+   *
+   *   - it is a PREFERENCE, applied on top of (never instead of) the collision push above,
+   *     so it can be overruled: the solid re-separation right after this has the last word,
+   *     and a mob backed into a corner simply stops spreading;
+   *   - each mob's total displacement is capped at its own walking speed per tick, so a
+   *     crowd unpacks over about half a second instead of exploding apart on one tick. The
+   *     cap is per ACTOR, not per pair, which is also what keeps a mob at the centre of a
+   *     press from being launched by the sum of six neighbours;
+   *   - the pushes are ACCUMULATED first and applied after, so the result does not depend on
+   *     the order pairs are visited (design/06 wants determinism, and this gets it by
+   *     construction rather than by fixing an iteration order).
+   *
+   * `state.enemies` order is spawn order = ascending id, so the accumulation is deterministic
+   * without the explicit sort `resolveActorPairs` needs (that one merges two arrays).
+   */
+  private resolveStandingSpacing(state: GameState): void {
+    const holders = this.holderScratch;
+    const pushX = this.holderPushX;
+    const pushY = this.holderPushY;
+    holders.length = 0;
+    for (const e of state.enemies) if (e.alive && e.holding) holders.push(e);
+    if (holders.length < 2) return;
+    pushX.length = holders.length;
+    pushY.length = holders.length;
+    pushX.fill(0);
+    pushY.fill(0);
+
+    for (let i = 0; i < holders.length; i++) {
+      const a = holders[i]!;
+      for (let j = i + 1; j < holders.length; j++) {
+        const b = holders[j]!;
+        const dx = a.gx - b.gx;
+        const dy = a.gy - b.gy;
+        const want = standoffRadius(a) + standoffRadius(b);
+        const distSq = dx * dx + dy * dy;
+        if (distSq >= want * want) continue; // already standing far enough apart
+
+        const dist = isqrt(distSq);
+        if (dist === 0) {
+          // Exactly concentric — no defined direction, so split along +x in the same
+          // fixed, every-client-agrees way the two collision resolvers do.
+          const half = Math.trunc((want as number) / 2);
+          pushX[i] = pushX[i]! + half;
+          pushX[j] = pushX[j]! - ((want as number) - half);
+          continue;
+        }
+        const pen = want - dist;
+        const nx = Math.trunc((dx * pen) / dist);
+        const ny = Math.trunc((dy * pen) / dist);
+        const nxHalf = Math.trunc(nx / 2);
+        const nyHalf = Math.trunc(ny / 2);
+        pushX[i] = pushX[i]! + nxHalf;
+        pushY[i] = pushY[i]! + nyHalf;
+        pushX[j] = pushX[j]! - (nx - nxHalf);
+        pushY[j] = pushY[j]! - (ny - nyHalf);
+      }
+    }
+
+    for (let i = 0; i < holders.length; i++) {
+      const e = holders[i]!;
+      const [dx, dy] = this.cappedShuffle(pushX[i]!, pushY[i]!, e);
+      e.gx = (e.gx + dx) as Fp;
+      e.gy = (e.gy + dy) as Fp;
+    }
+  }
+
+  /**
+   * Clamp one tick of accumulated standing-spacing push to the mob's own walking speed
+   * (`moveSpeedPerTick`, the same number `AIDecideSystem` closes distance with), keeping the
+   * direction. A standing mob that is being crowded should look like it is stepping aside,
+   * and a mob cannot step aside faster than it can walk — which also means a hand-built
+   * test actor with no `moveSpeedPerTick` behaves like a shipped mob rather than teleporting.
+   *
+   * Integer scale-down by `cap/len`, truncated toward zero, so the capped vector is never
+   * longer than the cap and a sub-pixel push still resolves to 0 rather than to a rounding
+   * artifact that jitters forever.
+   */
+  private cappedShuffle(dx: number, dy: number, e: EnemyActor): [Fp, Fp] {
+    const cap = e.moveSpeedPerTick ?? DEFAULT_ENEMY_MOVE_SPEED_PER_TICK;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq <= cap * cap) return [dx as Fp, dy as Fp];
+    const len = isqrt(lenSq);
+    if (len === 0) return [0 as Fp, 0 as Fp];
+    return [Math.trunc((dx * cap) / len) as Fp, Math.trunc((dy * cap) / len) as Fp];
   }
 
   private clampToWorld(state: GameState, a: Actor): void {

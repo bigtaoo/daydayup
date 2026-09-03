@@ -518,6 +518,37 @@ enemy, so a mob or a heal outside the room is unreachable, and with mobs no long
 over on their own the bot found no target, fell through to `travel`, and bounced off the
 locked door until the run timed out. That is the sim's no-stall gate doing its job.
 
+### Standing room ✅ (2026-09-03, `ENGINE_VERSION` 55)
+
+The same reading problem as the pass above, reported again with a screenshot — three mobs
+fused into one silhouette, two health bars drawn across a third body — and this time with
+the missing distinction named: *"怪物寻路时要加一个停留体积，最好是两倍于怪物的体型，这样
+怪物才会分散。这里是两个概念，一个是寻路体积，一个是终点停留时的体积。"*
+
+Re-enabling the push-out in v42 made mobs stop interpenetrating, and that is all it could
+do: it is a COLLISION rule keyed on `footprintRadius` (7 px against a 15 px body), so
+"resolved" still means two sprites almost exactly on top of each other. What was missing is
+that a mob has two sizes — its body while travelling (it has to fit through the gaps the
+level authored) and its personal space while standing.
+
+- **`EnemyActor.holding`** — arrival is now state, written by `AIDecideSystem` the tick a
+  mob reaches its engage range and stops.
+- **`standoffRadius` = 2 × body `radius`**, spread by `MovementSystem.resolveStandingSpacing`
+  (`07` step 4.4), so two arrived mobs settle four body radii apart. **Only between two
+  mobs that are both holding** — a travelling mob is judged exactly as it was before, so a
+  1.5-body-wide slit stays passable at full speed with a mob standing at its mouth.
+- **`HOLD_RELEASE_PERMILLE` = 1500** — "in engage range" became hysteretic, because the
+  spread pushes a standing mob outward and a bare threshold would have it re-chase, be
+  pushed out again, and shuffle at the ring forever with its gun stuttering behind it.
+
+**This took back most of what the pass above gave away, and the sim says so:** the careful
+bot's average deepest floor went 2.5 → 1.5 across a widened 24-seed `test:pve-sim` A/B
+(extraction 13% → 4%). Damage taken per second barely moved — a spread arc is a crossfire,
+and `ROOM_FIRE_BUDGET`'s two slots rotate among more mobs as the player moves, so the
+player kills slower rather than being hit harder. Deliberately not compensated for here:
+the garrison re-tightening dial named above is still the right place for that, and it is a
+difficulty decision rather than part of a legibility fix.
+
 **Difficulty target, chosen 2026-08-17: hard overall.** Floor 1 passable by careful play,
 a full 5-floor extraction uncommon. After the changes the sim's careful bot clears the
 entrance room in 100% of runs, descends off floor 0 in ~37%, and dies spread across

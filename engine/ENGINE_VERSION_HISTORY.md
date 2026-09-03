@@ -1389,3 +1389,126 @@ the rule stays heal-specific. The pre-existing "heal restores up to maxHp, never
 gained a `pickups.length` assertion at each step — it asserted only `hp`, and "hp unchanged at
 full HP" was already true of the bug, which is why it never caught it. Its boundary case
 (`maxHp - 1` still collects) is the other side of the gate.
+
+## v55: a mob that has ARRIVED claims standing room (design/07 actor–actor, ENGINE_VERSION 55)
+
+Live play report, 2026-09-03, with a screenshot of three mobs fused into one silhouette and two
+health bars drawn across a third body: *"怪物寻路时要加一个停留体积，最好是两倍于怪物的体型，这样
+怪物才会分散。这里是两个概念，一个是寻路体积，一个是终点停留时的体积。比如一个窄缝，只有1.5个怪
+物体积大，怪物寻路时，1倍的寻路体积，正常通过。然后停留时，2倍的停留体积，其他的怪就离他很远了，
+两个怪加起来就是4个怪物体积了。"*
+
+The report names something the sim genuinely did not have a word for. A mob carried one size, and
+that size answered two questions that want opposite answers. Travelling, its size must be its
+body, or it cannot fit through a gap the level authored for it. Standing, its size should be its
+personal space, which is much bigger. With only the first, every mob in a room solves the same
+problem — walk at the player, stop at `engageRangeFp` — arrives at the same ring, and parks there
+feet-circle to feet-circle: `footprintRadius` is 7 px against a 15 px body, so "not overlapping"
+by the sim's rule still means two sprites drawn almost exactly on top of each other. v42's
+perception radius made them arrive in waves rather than as one column, which helped the approach
+and did nothing about the destination.
+
+So arrival becomes a state (`EnemyActor.holding`, written by `AIDecideSystem` every tick) and the
+fourth radius is derived from it:
+
+- `state/actorRadius.ts` gains `standoffRadius(a)` = `STANDOFF_BODY_MULTIPLE` (2) × the body
+  `radius`. It is the first radius in that file that is not a collision rule — the other three
+  answer "may these two shapes overlap", this one answers "how far apart would two stopped mobs
+  LIKE to stand", which is a preference, not a constraint.
+- `MovementSystem.resolveStandingSpacing` (a new pass, after the collision pair push and before
+  the solid re-separation) drifts two mobs apart to that distance — 2 + 2 = 4 body radii between
+  centres, exactly the report's arithmetic — but only when BOTH are `holding`. That gate is the
+  whole design rather than a detail: a travelling mob neither exerts nor receives the push, so a
+  1.5-body gap stays passable at full speed with a mob standing at its mouth, and nothing about
+  routing, clearance or `solidRadius` moved at all. A bigger number in `resolveActorPairs` would
+  have produced the first half of the report and broken the second.
+
+Three properties keep it a shuffle rather than a shove. It is applied on top of the collision
+push, never instead of it, and the solid re-separation still runs afterwards, so stone always
+wins and a mob backed into a corner simply stops spreading. Each mob's displacement is capped per
+tick at its own `moveSpeedPerTick`, so a crowd unpacks over about half a second instead of
+exploding apart on one frame — and the cap is per ACTOR, not per pair, which is what stops the
+mob in the middle of a press from being launched by the sum of six neighbours. And the pushes are
+accumulated first, applied after, so the result does not depend on the order pairs are visited:
+determinism by construction rather than by pinning an iteration order.
+
+`holding` also made "in engage range" hysteretic (`HOLD_RELEASE_PERMILLE`, 1.5×), because the
+spacing push moves a standing mob outward: a mob that stopped exactly on the ring is nudged just
+past it by its neighbour, and with a bare threshold it would re-chase, be pushed out, re-chase —
+a permanent shuffle at the ring, with its gun stuttering on and off as fire slots follow the
+range test. Entered at `engageRangeFp`, left only past the wider radius. A mob spread out to that
+band still shoots; `ENEMY_GUN_SIM` bullets travel ~30 grid, five times as far.
+
+**What diverges.** Three of the five golden scenarios, and they say what you would expect: mobs
+that stand further apart present a wider arc, block each other's shots less often, and are killed
+one at a time instead of as a stack.
+
+```
+                       hash (v54 → v55)           witness
+arena-waves            1650267439 → 3619040192   hit 10 → 9
+walls-and-pillars      1986169461 → 2681387654   unchanged (no mob ever reaches engage range)
+ember-dungeon-floor1   1230281610 → 4176489738   bullet_fired 173 → 186, clash 6 → 11,
+                                                 hit 61 → 57, hpTotal 3.4 → 4.2, pickup 8 → 5
+brim-grinder            598306750 → 4277594053   unchanged (same reason as walls-and-pillars)
+launch-arena-pvp       2531138778 → 4197231998   enemiesAlive 2 → 3, death 4 → 3, hit 53 → 51
+```
+
+**Balance: this made the game harder, and the number is worth having.** `test:pve-sim` A/B, the
+spacing pass disabled vs enabled, widened from the shipped 8 seeds to 24 for the measurement (the
+8-seed gates all still pass on the shipped set):
+
+```
+careful bot      extracted 13% → 4%   ·  avg floor 2.5 → 1.5  ·  avg kills 155 → 104
+aggressive bot   extracted  0% → 0%   ·  avg floor 0.1 → 0.1  ·  avg kills  26 → 17
+```
+
+Damage TAKEN per second barely moved (worst 1 s window 6 both ways, average 4.2 → 4.4), so this
+is not a volley getting heavier — the player kills slower and therefore bleeds for longer. Two
+compounding reasons, both consequences of the dispersal rather than defects in it: a spread arc
+is a crossfire, where a blob is one bearing that can be dodged as a unit; and `ROOM_FIRE_BUDGET`
+awards its two slots to the NEAREST contenders, so a spread garrison rotates those slots as the
+player moves and a freshly-slotted mob may arrive with a spent cooldown, which is visible above
+as ember's `bullet_fired` 173 → 186 over the same 1500 ticks.
+
+Tightening the hysteresis was tried as a mitigation on the theory that mobs settling further out
+were the cause, and it measured the opposite (`HOLD_RELEASE_PERMILLE` 1500 → 1100: careful bot to
+0% extraction, avg floor 1.2) — mobs that hold their spacing closer to the player are harder to
+survive, not easier. So the difficulty is coming from the dispersal itself, which is the feature.
+Left as measured rather than compensated for here: the dial for it is `ROOM_FIRE_BUDGET`, an
+encounter-level number with its own tuning history, and moving it is a difficulty decision rather
+than part of this change.
+
+**Coverage** is `systems/enemySpacing.test.ts` (10 new), driven through the real AIDecide +
+Movement pair because every interesting failure is in the seam between them: the pair that
+settles at four body radii and stays there, the five-deep press where no mob is displaced faster
+than it can walk (started outside each other's feet circles, so the uncapped collision push
+cannot be what is measured), the traveller whose route past a stander is identical tick-for-tick
+to the same route through an empty room, the 45 px gap walked through with a mob standing at its
+mouth, the player who is never pushed, the mob nudged outside the ring that keeps holding AND
+keeps firing, the wall that overrules the spread, the un-noticed garrison that keeps the spots
+the level authored for it, the standoff stated as a NUMBER (2 × the body, and a brute's own
+20 px body rather than one shared constant), and the pair that stops reserving space when the
+player dies under them.
+
+**The last three of those came from a mutation battery, and the battery is why they exist.** 15
+mutants over `resolveStandingSpacing`, `cappedShuffle`, the `holding` writes and the two balance
+constants, run with **`goldenHash` excluded on purpose** — every mutant moves a recorded hash, so
+leaving it in reports ALL-KILLED while saying nothing about whether the behavioural tests
+discriminate. First run: 12 killed, 3 survivors, and each survivor was a different kind of gap.
+
+- `pen = want` instead of `want - dist` (push the whole separation every tick rather than the
+  remaining penetration) survived because the settle assertion had px-scale slack — and the true
+  equilibrium is EXACT (`dist === want`, over by 0 fp), while the mutant lands ~1.8 px past it,
+  just inside the 2 px tolerance. The assertion is now the equality, which is also the honest
+  statement of what the pass does.
+- Not clearing `holding` when the target is gone survived because nothing ever killed the player
+  out from under a holding pair. Now something does.
+- Not clearing `holding` for an un-noticed mob survived because **the line is dead**: `aggroed` is
+  a one-way latch with a single writer, and `holding` can only be set after that latch is on, so
+  the branch can never see a holding mob. Deleted rather than tested (v46's precedent), and the
+  golden gate staying green across the deletion is what says it was really inert.
+
+A 16th mutant — one mob absorbing the whole push instead of half each — was killed only
+incidentally by a distant hysteresis assertion, so the settle test now also pins the pair's
+MIDPOINT (it may move by the 1 fp floor/remainder tie-break and no more). After the three fixes:
+15/15 killed.

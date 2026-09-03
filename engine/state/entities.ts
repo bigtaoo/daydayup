@@ -337,6 +337,16 @@ export interface EnemyActor extends Actor {
   // and idling every tick as its own movement carried it back and forth across it.
   // Required (not optional) so the field always has a stable false default.
   aggroed: boolean;
+  // Has this mob ARRIVED — reached engage range and stopped to shoot (ENGINE_VERSION 55)?
+  // Written by AIDecideSystem, read by MovementSystem, and the single switch behind the
+  // standing-spacing rule: a holding mob claims `standoffRadius` of personal space against
+  // OTHER holding mobs (state/actorRadius.ts), a travelling one claims nothing beyond its
+  // body, so mobs disperse where they stop without any gap in the level becoming narrower
+  // than the mob walking through it. NOT a latch, unlike `aggroed` — a mob that loses its
+  // target is moving again and must stop reserving space — but sticky in one direction
+  // (`HOLD_RELEASE_PERMILLE`), since the spacing push moves a holding mob outward and a
+  // bare threshold would have it re-chase the instant a neighbour nudged it.
+  holding: boolean;
 }
 
 /** A boss's enrage trait (design/09 `traits`, ENGINE_VERSION 27): below `hpThresholdPermille`

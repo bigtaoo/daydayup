@@ -73,7 +73,7 @@ import {
   DEFAULT_ENEMY_ENGAGE_RANGE_FP,
   DEFAULT_ENEMY_AGGRO_RANGE_FP,
 } from '../content/enemies';
-import { ROOM_FIRE_BUDGET, noticeDelayTicks } from '../balance/encounter';
+import { ROOM_FIRE_BUDGET, HOLD_RELEASE_PERMILLE, noticeDelayTicks } from '../balance/encounter';
 import type { GameState } from '../state/GameState';
 import type { EnemyActor } from '../state/entities';
 
@@ -101,6 +101,7 @@ export class AIDecideSystem {
       if (state.dungeonEnabled && !this.isActivated(state, e.roomId)) continue;
       if (!target) {
         e.firing = false;
+        e.holding = false; // nothing to stand off from — stop reserving space (v55)
         e.vx = 0 as Fp;
         e.vy = 0 as Fp;
         continue;
@@ -112,6 +113,10 @@ export class AIDecideSystem {
         // face them either — a mob that tracks you with its gun barrel from across the
         // room while standing still reads as "aware but passive", which is the opposite
         // of what the perception radius is for.
+        // No `holding = false` here, deliberately: `aggroed` is a one-way latch with a single
+        // writer, and `holding` can only ever be set AFTER that latch is on, so a mob reaching
+        // this branch has never held. A mutation battery (v55) found the reset dead — it was
+        // the only mutant of the three survivors that wanted deleting rather than testing.
         e.firing = false;
         e.vx = 0 as Fp;
         e.vy = 0 as Fp;
@@ -163,16 +168,27 @@ export class AIDecideSystem {
    * Returns the squared distance to the target when the mob is in range and holding
    * still (i.e. eligible to fire, if it gets a slot), else null. `firing` is left
    * false here in every case; only `grantFireSlots` ever sets it true.
+   *
+   * `e.holding` is that same in-range/stopped answer, published as state so
+   * `MovementSystem.resolveStandingSpacing` can space arrived mobs out (ENGINE_VERSION
+   * 55) — and the reason "in range" is now HYSTERETIC rather than a bare threshold:
+   * that spacing pushes a standing mob outward, so the mob that stopped exactly on the
+   * ring is nudged just past it, and a bare test would send it straight back into a
+   * chase-push-chase shuffle with its gun stuttering on and off. Entered at
+   * `engageRangeFp`, left only past `HOLD_RELEASE_PERMILLE` of it.
    */
   private chaseAndEngage(e: EnemyActor, dx: number, dy: number): number | null {
     const range = e.engageRangeFp ?? DEFAULT_ENEMY_ENGAGE_RANGE_FP;
     const distSq = dx * dx + dy * dy;
     e.firing = false;
-    if (distSq <= range * range) {
+    const stopAt = e.holding ? this.holdReleaseRange(range) : range;
+    if (distSq <= stopAt * stopAt) {
+      e.holding = true;
       e.vx = 0 as Fp;
       e.vy = 0 as Fp;
       return distSq;
     }
+    e.holding = false;
     const dist = isqrt(distSq); // still out of engage range — close the distance
     if (dist === 0) {
       e.vx = 0 as Fp;
@@ -183,6 +199,16 @@ export class AIDecideSystem {
     e.vx = Math.trunc((dx * speed) / dist) as Fp;
     e.vy = Math.trunc((dy * speed) / dist) as Fp;
     return null;
+  }
+
+  /**
+   * The wider radius a mob already holding position is allowed to be pushed out to
+   * before it counts as out of range again (`HOLD_RELEASE_PERMILLE`). Integer per-mille
+   * scale, truncated — the same shape as every other per-mille dial in the sim
+   * (design/06: no floats reach state).
+   */
+  private holdReleaseRange(range: number): number {
+    return Math.trunc((range * HOLD_RELEASE_PERMILLE) / 1000);
   }
 
   /**

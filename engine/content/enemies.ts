@@ -320,6 +320,7 @@ export function buildEnemyActor(state: GameState, gx: Fp, gy: Fp, type?: string)
     enrage: bp.enrage,
     enraged: false,
     aggroed: false,
+    holding: false,
     onDeathSpawn: bp.onDeathSpawn,
     moveSpeedPerTick: bp.moveSpeedPerTick ?? DEFAULT_ENEMY_MOVE_SPEED_PER_TICK,
     engageRangeFp: bp.engageRangeFp ?? DEFAULT_ENEMY_ENGAGE_RANGE_FP,

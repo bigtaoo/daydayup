@@ -2,18 +2,20 @@
  * Which radius answers "is this blocked by a static solid" — one answer, one place
  * (design/18-test-strategy.md, G4).
  *
- * An actor carries THREE radii and they are not interchangeable:
+ * An actor carries FOUR radii and they are not interchangeable:
  *
  *   - `radius` — the drawn body. What the silhouette occupies.
  *   - `footprintRadius` — the feet circle. What actor-vs-actor crowding uses
  *     (`MovementSystem.resolveActorPairs`), deliberately smaller so a crowd reads as a crowd
  *     rather than a force field.
+ *   - `standoffRadius(a)` — personal space while standing still (v55). Not a collision radius
+ *     at all: two STOPPED mobs drift apart to it, and nothing else ever consults it.
  *   - `solidRadius` — the clearance against a STATIC solid. `radius` for both players (v43) and
  *     enemies (v48), floored at the player's own clearance for enemies (v50): an actor should
  *     stop at the silhouette it draws, so it reads as standing against a wall rather than sunk
  *     into one, and no actor may stand somewhere the player's body could not follow.
  *
- * Every "am I blocked by a wall/pillar" question must use the third one, and the reason this is
+ * Every "am I blocked by a wall/pillar" question must use `blockingRadius`, and the reason it is
  * a named function rather than a convention is that the convention was already broken twice by
  * code that meant to follow it:
  *
@@ -30,7 +32,24 @@
  */
 import type { Fp } from '../math/fixed';
 import { PLAYER_BASE } from '../content/players';
+import { STANDOFF_BODY_MULTIPLE } from '../balance/encounter';
 import type { Actor } from './entities';
+
+/**
+ * The FOURTH radius (ENGINE_VERSION 55) — personal space while STANDING STILL, and the one
+ * radius above that is not about collision at all.
+ *
+ * The three above all answer "may these two shapes overlap"; this one answers "how far apart
+ * do two mobs that have stopped want to stand", which is a preference, not a constraint. It is
+ * consulted only by `MovementSystem.resolveStandingSpacing`, only between two enemies that are
+ * both `holding`, and it never blocks anything: a mob still on the move is judged at its
+ * `solidRadius` exactly as before, so a gap wide enough for one body stays wide enough for one
+ * body no matter who is standing near it. See `STANDOFF_BODY_MULTIPLE` for the report and the
+ * reasoning behind the multiple.
+ */
+export function standoffRadius(a: Pick<Actor, 'radius'>): Fp {
+  return ((a.radius as number) * STANDOFF_BODY_MULTIPLE) as Fp;
+}
 
 /** The radius any static-solid question about `a` must use. */
 export function blockingRadius(a: Pick<Actor, 'solidRadius'>): Fp {
