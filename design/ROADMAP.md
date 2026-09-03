@@ -798,11 +798,15 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 
 - **09-03** [Only the door at the door, and no wall hanging over it](roadmap/22-2026-09-03-door-cap.md#only-the-door-at-the-door-and-no-wall-hanging-over-it-2026-09-03-client-only-no-engine-bump) — one height for every door left the 11 kerb doorways with a slab of their own cap stone hanging 82 px above the crown line, because a cap only reads as stone by continuing the flanking runs' crown and a 22 px kerb has none to continue. A door now draws a cap only where its flank reaches it; the height and all 13 perimeter doorways are untouched. `render` `test` `docs`
 
+**[2026-09-03 — the floor a door lights](roadmap/23-2026-09-03-door-floor-plane.md)**
+
+- **09-03** [The floor a door lights is not always south of it](roadmap/23-2026-09-03-door-floor-plane.md#the-floor-a-door-lights-is-not-always-south-of-it-2026-09-03d-client-only-no-engine-bump) — every floor-level layer a door draws — both pools, the travelling pulse, the lock-change burst — was drawn from the threshold southward, on the assumption that the ground in front of a doorway is room floor. It is, for 11 of the 24 shipped doors; for the other 13 that ground is the same wall continuing, whose block Y-sorts in front of the door and painted over 29-90% of every ring. One `DoorFloorPlane` now puts a decal on the floor the fixture's own stone is not standing on. `render` `test` `docs`
+
 ## The work log — by theme
 
-The same 103 entries, grouped. An entry with more than one tag appears more than once.
+The same 104 entries, grouped. An entry with more than one tag appears more than once.
 
-**`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(54)*
+**`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(55)*
 
 - 08-12 [Live-play bug-fix pass](roadmap/02-2026-08-12--08-15.md#live-play-bug-fix-pass--2026-08-12-user-report-from-a-dungeon-mode-screenshot)
 - 08-12 [Viewport-fill bug-fix pass](roadmap/02-2026-08-12--08-15.md#viewport-fill-bug-fix-pass--2026-08-12)
@@ -858,6 +862,7 @@ The same 103 entries, grouped. An entry with more than one tag appears more than
 - 09-03 [A door has a clock, and direction is what says "you can walk through this"](roadmap/18-2026-09-03-door-fx.md#a-door-has-a-clock-and-direction-is-what-says-you-can-walk-through-this-2026-09-03-client-only-no-engine-bump)
 - 09-03 [A death burst is the size of what died](roadmap/21-2026-09-03-death-burst.md#a-death-burst-is-the-size-of-what-died-2026-09-03-client--engine-event-field-no-engine_version-bump)
 - 09-03 [Only the door at the door, and no wall hanging over it](roadmap/22-2026-09-03-door-cap.md#only-the-door-at-the-door-and-no-wall-hanging-over-it-2026-09-03-client-only-no-engine-bump)
+- 09-03 [The floor a door lights is not always south of it](roadmap/23-2026-09-03-door-floor-plane.md#the-floor-a-door-lights-is-not-always-south-of-it-2026-09-03d-client-only-no-engine-bump)
 
 **`art`** — authored assets and the art pipeline *(16)*
 
@@ -933,7 +938,7 @@ The same 103 entries, grouped. An entry with more than one tag appears more than
 - 08-25 [The Seven Districts: the launch arena gets authored](roadmap/06-2026-08-25.md#the-seven-districts-the-launch-arena-gets-authored-2026-08-25-content)
 - 08-25 [The three parked rules that had only shipped half](roadmap/06-2026-08-25.md#the-three-parked-rules-that-had-only-shipped-half-2026-08-25-client--one-render-only-engine-field)
 
-**`test`** — coverage sweeps, gates, mutation batteries *(34)*
+**`test`** — coverage sweeps, gates, mutation batteries *(35)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 08-05 [Platform-layer test coverage pass](roadmap/01-2026-07-24--08-05.md#platform-layer-test-coverage-pass--2026-08-05-全部加测试)
@@ -969,6 +974,7 @@ The same 103 entries, grouped. An entry with more than one tag appears more than
 - 09-03 [A mob has one size while walking and a bigger one while standing](roadmap/20-2026-09-03-mob-spacing.md#a-mob-has-one-size-while-walking-and-a-bigger-one-while-standing-2026-09-03-engine-engine_version-55)
 - 09-03 [A death burst is the size of what died](roadmap/21-2026-09-03-death-burst.md#a-death-burst-is-the-size-of-what-died-2026-09-03-client--engine-event-field-no-engine_version-bump)
 - 09-03 [Only the door at the door, and no wall hanging over it](roadmap/22-2026-09-03-door-cap.md#only-the-door-at-the-door-and-no-wall-hanging-over-it-2026-09-03-client-only-no-engine-bump)
+- 09-03 [The floor a door lights is not always south of it](roadmap/23-2026-09-03-door-floor-plane.md#the-floor-a-door-lights-is-not-always-south-of-it-2026-09-03d-client-only-no-engine-bump)
 
 **`audio`** — cues, music, the engine to sound channel *(5)*
 
@@ -1018,7 +1024,7 @@ The same 103 entries, grouped. An entry with more than one tag appears more than
 - 09-03 [The path references get a gate, by giving up on two thirds of them](roadmap/16-2026-09-03-doc-audit.md#the-path-references-get-a-gate-by-giving-up-on-two-thirds-of-them-2026-09-03-tooling--docs-no-engine-bump)
 - 09-03 [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump)
 
-**`docs`** — design docs and this log itself *(31)*
+**`docs`** — design docs and this log itself *(32)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-02 [Documentation pass](roadmap/01-2026-07-24--08-05.md#documentation-pass--2026-08-02)
@@ -1051,6 +1057,7 @@ The same 103 entries, grouped. An entry with more than one tag appears more than
 - 09-03 [A mob has one size while walking and a bigger one while standing](roadmap/20-2026-09-03-mob-spacing.md#a-mob-has-one-size-while-walking-and-a-bigger-one-while-standing-2026-09-03-engine-engine_version-55)
 - 09-03 [A death burst is the size of what died](roadmap/21-2026-09-03-death-burst.md#a-death-burst-is-the-size-of-what-died-2026-09-03-client--engine-event-field-no-engine_version-bump)
 - 09-03 [Only the door at the door, and no wall hanging over it](roadmap/22-2026-09-03-door-cap.md#only-the-door-at-the-door-and-no-wall-hanging-over-it-2026-09-03-client-only-no-engine-bump)
+- 09-03 [The floor a door lights is not always south of it](roadmap/23-2026-09-03-door-floor-plane.md#the-floor-a-door-lights-is-not-always-south-of-it-2026-09-03d-client-only-no-engine-bump)
 
 **`net`** — matchmaking, sockets, reconnect *(2)*
 

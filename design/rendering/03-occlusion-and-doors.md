@@ -425,7 +425,10 @@ not. A passage leads to a lit room, so light comes OUT of it — one physical cl
   the light to the opening exactly, with no inset constant keyed to where a particular PNG's jambs
   sit. It is the inverse of `drawRecess`'s ramp and drawn over it — the recess makes the opening a
   hole, this puts a lit floor at the bottom of it.
-- **spill** — a pool on the room floor south of the threshold: `GLOW_POOL`'s nine graduated rings
+- **spill** — a pool on the room floor in front of the doorway (south of the threshold for a
+  door in an east-west wall; beside the passage for one in a north-south wall — see
+  [The floor a door lights is not always south of it (2026-09-03d)](#the-floor-a-door-lights-is-not-always-south-of-it-2026-09-03d-client-only-no-engine-bump)): `GLOW_POOL`'s nine
+  graduated rings
   verbatim, in warm white. Deliberately the same SHAPE as the hazard pool, so "a pool at the door"
   is one symbol the player learns once and colour says which state. It is also what carries a KERB
   door, where a 22 px opening leaves no room for the ramp — 11 of the 24 shipped doors.
@@ -855,3 +858,67 @@ the 11/13 split through `RoomBuilder.buildDoors`' own sequence; `RoomBuilder.tes
 a really-built fixture at both flank heights (empty `capLayers` in a kerb, non-empty beside a
 perimeter run) because `capLayers` is precisely the group `addCapLayers` fills, so an empty one is
 the absence of the slab rather than a proxy for it.
+
+## The floor a door lights is not always south of it (2026-09-03d)
+
+Live report, with a locked doorway's floor circled: *"门的这个特效下面的光圈被挡住了，是故意的，还是
+层级算错了？"* — the light ring under the door's effect is covered up; deliberate, or is the layering
+wrong? **Neither.** The fixture's paint order was right and the stone in front of the ring was
+sorting correctly; what was wrong was a piece of geometry this document states as fact in the
+[open-door lighting](#an-open-door-is-lit-from-beyond-2026-08-30) list above — *"a pool on the room
+floor south of the threshold"* — which is true for 11 of the 24 shipped doors.
+
+Every floor-level layer a door draws is built from that assumption: both states' `GLOW_POOL` fills,
+`doorFx.drawPulse`'s travelling ring, `drawBurst`'s one-shot. `strokeFloorArc` even argues for
+drawing the southern half only, because a full ellipse *"put their northern halves straight up the
+door's own stone."* Correct, and exactly half the picture — the other half is which side of the
+fixture the floor is on.
+
+A passage AABB's short axis is the wall's thickness, so the shipped content is two shapes:
+
+- **`128x64`, 11 doors** — a hole in an east-west wall, crossed north-south. South of the threshold
+  is room floor, the pool belongs there, and every swept constant in `doorLights.ts` was measured
+  on one of these.
+- **`64x128`, 13 doors** — a hole in a north-south wall, crossed east-west. South of the fixture's
+  base line is **the same wall continuing**: `bordersDoorNorth`'s own relationship, runs 32-320 px
+  deep covering all 64 px of the fixture's width, and `blockCapTop`'s `doorClip` (above) puts that
+  run's cap top *exactly* on the door's threshold. The run Y-sorts after the door — `Entity.zIndex`
+  is the ground y, the run's is its own south edge — so it painted straight over the decal.
+
+Measured on the five shipped floors, per sampled ring point: **29-33% of a ring inside a wall run at
+`rx = w`, 86-90% at `rx = w/2`**. The visible remainder was the outer lobes poking past the 64 px
+wall, which is the pair of arcs the screenshot circled. Note how close this sat to work already
+done: [the door-clip sweep](#a-door-is-a-wall-block-whose-face-is-an-opening-2026-08-20) pins that
+such a run never spills onto the door's ART — 12 real cases — and nobody asked the mirror question
+about the door's own decals reaching 40 px past its footprint into that block's sort band.
+
+**`doorLights.DoorFloorPlane`** answers it with one rule rather than a branch per layer: *a floor
+decal lies on the floor the fixture's own stone is not standing on.* `south` (`w > h`) is the
+shipped geometry byte for byte. `sides` (`w <= h`) centres on the passage's own mid-depth and draws
+the ring as two side lobes with the wall's thickness skipped — an interrupted ring, which is what a
+ring around a doorway in a wall you see the sides of looks like. The discriminator is the one
+`floorRender.drawDoorWear` already uses for the worn patch (travel is along the short axis), so the
+two floor-level door decals agree about a door's facing instead of disagreeing silently. A `sides`
+ring narrower than the wall's half-thickness draws nothing, so a locked door's inward pulse now
+shrinks into the doorway and dies there — `doorFx`'s "locked motion is CONTAINED" reads literally.
+
+A live frame of the reported door (floor 0, `64x128` at `(1504, 288)`), `renderer.extract` A/B'd
+against the same frame with the fixture's floor layers hidden, mean luma over 8-10k px:
+
+| region | floor alone | old | fixed |
+| --- | --- | --- | --- |
+| floor west of the wall, mid-passage | 57.96 | 0.00 | **+10.96** |
+| floor east of the wall, mid-passage | 49.25 | 0.00 | **+9.44** |
+| the band south of the threshold (that run's cap) | 38.98 | 0.00 | 0.00 |
+| floor just south-west of the threshold | 39.92 | +4.85 | 0.00 |
+
+The old pool's entire visible output was that 4.85-luma sliver. `doorFloorPlaneCoverage.test.ts`
+sweeps all 24 doors through `RoomBuilder`'s pipeline: no `sides` ring point in stone or over void at
+any radius up to `drawBurst`'s widest, the `south` doors' geometry unchanged point for point, and an
+inverse run asserting the old plane's 29-90% shares **as failures** so the sweep cannot pass against
+the code that shipped the bug. The `south` residual is bounded rather than fixed: a southern
+half-ellipse terminates on the wall line it is cut into, so <=19% of a ring sits in the flanking
+runs' footprints and <=29% reaches past the room's floor edge at the burst's widest — clipping a
+decal that legitimately spans two rooms needs the room rects threaded into the fixture, and the
+bound exists so the residual cannot grow unnoticed. Full account:
+[`../roadmap/23-2026-09-03-door-floor-plane.md`](../roadmap/23-2026-09-03-door-floor-plane.md).

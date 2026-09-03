@@ -39,7 +39,7 @@
 // MATERIAL, which is what an image model is actually good at.
 import { Container, Graphics, Sprite, TilingSprite } from 'pixi.js';
 import { activeQuality } from '../../render/quality';
-import { GLOW_COLOR, GLOW_POOL_SQUASH, THROUGH_COLOR } from './doorLights';
+import { GLOW_COLOR, strokeFloorArc, THROUGH_COLOR, thresholdPlane, type DoorFloorPlane } from './doorLights';
 import {
   bakeField,
   bakeScanBar,
@@ -195,6 +195,10 @@ export class DoorFx {
     parts: DoorFxParts,
     index: number,
     locked: boolean,
+    /** Where this door's two floor rings lie — see `doorLights.DoorFloorPlane`. Defaults to the
+     *  threshold, i.e. a door in an east-west wall, which is what a fixture built with no passage
+     *  rect to hand (the unit tests) means. */
+    private readonly plane: DoorFloorPlane = thresholdPlane(openingW),
   ) {
     this.locked = locked;
     this.leafGhost = parts.leafGhost;
@@ -403,9 +407,10 @@ export class DoorFx {
     }
   }
 
-  /** The floor pulse: one ring per `PULSE_PERIOD_MS`, travelling OUTWARD from the threshold when
-   *  the door is open and INWARD toward it when locked. Same ellipse squash as `GLOW_POOL`, so it
-   *  lies on the floor with everything else in this view. */
+  /** The floor pulse: one ring per `PULSE_PERIOD_MS`, travelling OUTWARD from the doorway when the
+   *  door is open and INWARD toward it when locked. Same ellipse squash as `GLOW_POOL`, so it lies
+   *  on the floor with everything else in this view, and cut back to the floor the fixture is not
+   *  standing on (`doorLights.strokeFloorArc` over this door's own `plane`). */
   private drawPulse(lockedW: number, openW: number, nearMul: number): void {
     const g = this.pulse;
     g.clear();
@@ -415,7 +420,7 @@ export class DoorFx {
       const a = weight * nearMul * PULSE_ALPHA * fade;
       if (a <= 0.002) return;
       const rx = this.openingW * (0.35 + 0.95 * grow);
-      strokeFloorArc(g, this.openingW / 2, rx, color, 2, Math.min(1, a));
+      strokeFloorArc(g, this.plane, rx, color, 2, Math.min(1, a));
     };
     ring(openW, THROUGH_COLOR, s);
     ring(lockedW, GLOW_COLOR, 1 - s);
@@ -430,34 +435,8 @@ export class DoorFx {
     const k = 1 - this.burstMs / TRANSITION_MS;
     const grow = this.locked ? 1 - k : k;
     const rx = this.openingW * (0.3 + 1.35 * grow);
-    strokeFloorArc(g, this.openingW / 2, rx, this.locked ? GLOW_COLOR : 0xffffff, 3, (1 - k) * 0.75 * fade);
+    strokeFloorArc(g, this.plane, rx, this.locked ? GLOW_COLOR : 0xffffff, 3, (1 - k) * 0.75 * fade);
   }
-}
-
-/**
- * Half an ellipse, stroked, centred on the threshold and opening SOUTHWARD onto the floor.
- *
- * A full `g.ellipse(cx, 0, ...)` is what the pulse and the burst were first drawn as, and it put
- * their northern halves straight up the door's own stone — a 2 px stroke at 0.3 alpha crossing the
- * hazard leaf and the flanking wall, which on a live frame read as a stray red line through the
- * masonry rather than as a ring on the floor. `GLOW_POOL` gets away with a full ellipse because it
- * is nine FILLS at 0.035; a stroke has nowhere to hide.
- *
- * Segments rather than an arc call: Pixi's `arc` is circular, and the foreshortening
- * (`GLOW_POOL_SQUASH`, the same every round thing in this view shares) is what makes a ring lie on
- * the ground instead of standing up in the air.
- */
-function strokeFloorArc(g: Graphics, cx: number, rx: number, color: number, width: number, alpha: number): void {
-  const ry = rx * GLOW_POOL_SQUASH;
-  const segs = 20;
-  for (let i = 0; i <= segs; i++) {
-    const th = (i / segs) * Math.PI; // 0 -> pi: the southern half, since screen y grows downward
-    const x = cx + Math.cos(th) * rx;
-    const y = Math.sin(th) * ry;
-    if (i === 0) g.moveTo(x, y);
-    else g.lineTo(x, y);
-  }
-  g.stroke({ color, width, alpha });
 }
 
 /** Write one state group's alphas: `weight` is its crossfade share times its breath, `nearMul` the

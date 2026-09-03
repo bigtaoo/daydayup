@@ -8,6 +8,7 @@
 // visible. What MOVES lives in doorFx.ts, which reads four of the colours/shapes below so the
 // animated layers and the static ones stay one palette.
 import { Graphics, Texture, TilingSprite } from 'pixi.js';
+import type { RectPx } from './wallGeometry';
 /**
  * The recess behind the leaf — what makes a doorway a hole rather than a panel.
  *
@@ -66,6 +67,10 @@ const SILL_ALPHA = 0.22;
  * the whole read. Additive rather than a tint for the reason `wallTone.CAP_BOOST_ALPHA` documents:
  * a wash toward red would flatten the leaf's own contrast, an additive term lifts it and leaves
  * the stone frame's amplitude intact.
+ *
+ * Since 2026-09-03d "immediately south of the threshold" is only where a door in an EAST-WEST wall
+ * puts its pool — `DoorFloorPlane` below decides, because for the other 13 shipped doors the ground
+ * south of the threshold is more wall.
  */
 export const GLOW_COLOR = 0xff3a1e;
 /** Pool rings, widest first: `rx` as a multiple of the opening's width, all at `GLOW_RING_ALPHA`.
@@ -104,7 +109,8 @@ const GLOW_WASH_ALPHA = 0.1;
  *             particular PNG's jambs happen to sit. It is the exact inverse of `drawRecess`'s
  *             ramp, which stays — the recess is what makes the opening a hole, this is what puts
  *             a lit floor at the bottom of it.
- *   spill   — a pool on the room floor south of the threshold: the same nine graduated rings as
+ *   spill   — a pool on the room floor in front of the doorway (`DoorFloorPlane` says which side
+ *             that is): the same nine graduated rings as
  *             `GLOW_POOL`, warm white, at two thirds the alpha. Deliberately the same SHAPE as the
  *             hazard pool so "a pool at the door" is ONE symbol the player learns once, with
  *             colour saying which state. This is also the piece that carries a KERB door, where a
@@ -161,7 +167,7 @@ const SPILL_RING_ALPHA = 0.018;
 const RIM_BANDS = 6;
 const RIM_REACH = 0.6;
 const RIM_WIDTH = 3;
-const RIM_ALPHA = 0.34;
+const RIM_ALPHA = 0.34;
 /** The sill: one lit hairline along the opening's own floor line. Its own function so the assembly
  *  test can look for exactly this geometry among the fixture's children — the silhouette
  *  (`addBlockEdge`) also strokes along y = 0, so "is there a line at the threshold" cannot tell the
@@ -225,13 +231,146 @@ export function buildOpenFloorTile(
   return g;
 }
 
-/** A locked door's bloom: a graduated pool on the floor around the threshold plus a wash over the
- *  leaf. Exported for tests. */
-export function drawGlow(g: Graphics, openingW: number, openingH: number): void {
-  for (const rx of GLOW_POOL) {
-    g.ellipse(openingW / 2, 0, openingW * rx, openingW * rx * GLOW_POOL_SQUASH)
-      .fill({ color: GLOW_COLOR, alpha: GLOW_RING_ALPHA });
+/**
+ * Where a door's floor-level decals lie, and which part of them is on real floor.
+ *
+ * **WHY THIS EXISTS (2026-09-03d).** Every floor-level layer this file and `doorFx.ts` draw — both
+ * states' pools, the travelling pulse ring, the lock-change burst — was drawn from the threshold
+ * SOUTHWARD, on the assumption that what lies in front of a doorway is room floor. True for a door
+ * in an east-west wall; false for one in a north-south wall, where the ground south of the
+ * fixture's own base line is **the same wall continuing** — `wallRuns.bordersDoorNorth`'s case,
+ * which `doorSpillCoverage.test.ts` already measured 12 times across the five shipped floors for a
+ * different symptom of it (that run's cap swallowing the door's ART).
+ *
+ * Measured over all 24 shipped doors (`doorFloorPlaneCoverage.test.ts` re-measures it, and is the
+ * test that would have caught this): the 13 whose passage is 64x128 each have runs standing on
+ * their south edge, 32-320 px deep, covering all 64 px of the fixture's width — and `blockCapTop`'s
+ * `doorClip` puts that run's cap top EXACTLY on the door's threshold. The pool reaches 39.7 px
+ * south (`GLOW_POOL[0] * GLOW_POOL_SQUASH * 64`) and the pulse 38.3 px, so **100% of both landed
+ * inside that cap**, which Y-sorts after the door (`Entity.zIndex` is the ground y, and the run's
+ * is its own south edge) and painted over them. On a live frame that read as a ring with its middle
+ * bitten out, which is how it was reported — two arcs flanking the doorway and nothing between.
+ *
+ * The unifying rule, and why this is one plane rather than an orientation branch per layer: **a
+ * floor decal lies on the floor the fixture's own stone is not standing on.** For an east-west wall
+ * that is the strip south of the threshold — today's shape, unchanged, and what every swept number
+ * in this file was measured on. For a north-south wall it is the floor EAST and WEST of the wall at
+ * the passage's own mid-depth, which is also where the player walks through. Travel is along the
+ * passage's SHORT axis (it is a hole in a wall), the same discriminator
+ * `floorRender.drawDoorWear` uses for the worn patch across a doorway, so the two floor-level door
+ * decals now agree about which way a door faces.
+ */
+export interface DoorFloorPlane {
+  /** Local x of the decals' centre — the middle of the drawn opening either way. */
+  readonly cx: number;
+  /** Local y of that centre: 0 (the threshold) for `south`, half the passage's depth up-screen
+   *  (i.e. the middle of the passage) for `sides`. */
+  readonly cy: number;
+  /** Which part of a ring centred there is on floor. `south` — the fixture's stone stands north of
+   *  the centre, so the southern half is drawn. `sides` — the wall runs north-south THROUGH the
+   *  centre, so the two side lobes are drawn and `cx` doubles as the half-thickness they clear. */
+  readonly floor: 'south' | 'sides';
+}
+
+/** The plane for one passage AABB. `w <= h` is `floorRender.drawDoorWear`'s own test for a passage
+ *  crossed along x (a hole in a north-south wall); the shipped rects are 64x128 or 128x64 and never
+ *  square, so the tie-break only decides a shape no shipped floor has. */
+export function doorFloorPlane(r: RectPx): DoorFloorPlane {
+  return r.w <= r.h
+    ? { cx: r.w / 2, cy: -r.h / 2, floor: 'sides' }
+    : { cx: r.w / 2, cy: 0, floor: 'south' };
+}
+
+/** The threshold plane for a bare opening width: what every call site with no passage rect to hand
+ *  (the unit tests, a `DoorFx` built without one) drew before the plane existed. */
+export function thresholdPlane(openingW: number): DoorFloorPlane {
+  return { cx: openingW / 2, cy: 0, floor: 'south' };
+}
+
+/** How many segments one arc span is drawn from — 20 for the `south` span, so that plane samples
+ *  the exact 21 points the pre-plane ellipse did. */
+const ARC_SEGS = 20;
+
+/**
+ * A floor ring, stroked, centred on `plane` and drawn only where the fixture's own stone is not
+ * standing on it.
+ *
+ * A full `g.ellipse(cx, 0, ...)` is what the pulse and the burst were first drawn as, and it put
+ * their northern halves straight up the door's own stone — a 2 px stroke at 0.3 alpha crossing the
+ * hazard leaf and the flanking wall, which on a live frame read as a stray red line through the
+ * masonry rather than as a ring on the floor. `GLOW_POOL` gets away with a full ellipse because it
+ * is nine FILLS at 0.035; a stroke has nowhere to hide.
+ *
+ * Segments rather than an arc call: Pixi's `arc` is circular, and the foreshortening
+ * (`GLOW_POOL_SQUASH`, the same every round thing in this view shares) is what makes a ring lie on
+ * the ground instead of standing up in the air. One `stroke()` over however many subpaths the plane
+ * leaves — two for `sides`, and NONE while a `sides` ring is still narrower than the wall's own
+ * thickness, which is what makes that pulse emerge from the doorway instead of over it.
+ *
+ * Lives here rather than in `doorFx.ts` (where the pulse and the burst are) because the plane is
+ * this file's and the pool fills below share it.
+ */
+export function strokeFloorArc(
+  g: Graphics,
+  plane: DoorFloorPlane,
+  rx: number,
+  color: number,
+  width: number,
+  alpha: number,
+): void {
+  const spans = floorArcSpans(plane, rx);
+  if (spans.length === 0) return;
+  const ry = rx * GLOW_POOL_SQUASH;
+  for (const [from, to] of spans) {
+    for (let i = 0; i <= ARC_SEGS; i++) {
+      const th = from + ((to - from) * i) / ARC_SEGS;
+      const x = plane.cx + Math.cos(th) * rx;
+      const y = plane.cy + Math.sin(th) * ry;
+      if (i === 0) g.moveTo(x, y);
+      else g.lineTo(x, y);
+    }
   }
+  g.stroke({ color, width, alpha });
+}
+
+/**
+ * The angular spans of that ring which lie on floor.
+ *
+ * `south` is the half from 0 to pi — screen y grows downward, so that is the southern one, and it
+ * is the pre-plane behaviour unchanged. `sides` is the two spans clear of the wall's own thickness:
+ * `|cos th| * rx >= cx`, i.e. within `acos(cx / rx)` of 0 (east) and of pi (west), and nothing at
+ * all while `rx <= cx`. Exported for tests, which is cheaper than reading spans back out of a
+ * Graphics's path to ask "did this ring know where the floor was".
+ */
+export function floorArcSpans(plane: DoorFloorPlane, rx: number): readonly (readonly [number, number])[] {
+  if (plane.floor === 'south') return [[0, Math.PI]];
+  if (rx <= plane.cx) return [];
+  const a = Math.acos(plane.cx / rx);
+  return [
+    [-a, a],
+    [Math.PI - a, Math.PI + a],
+  ];
+}
+
+/** The graduated pool both states share: `GLOW_POOL`'s rings, centred on the plane. Unlike the
+ *  stroked ring above these are NOT cut back to the floor — nine fills at 0.035 spreading over the
+ *  fixture's own stone read as bloom coming off the doorway, the same latitude the pre-plane
+ *  version already took over the leaf (and `drawGlow` adds an explicit wash there anyway). */
+function fillFloorPool(g: Graphics, openingW: number, plane: DoorFloorPlane, color: number, alpha: number): void {
+  for (const rx of GLOW_POOL) {
+    g.ellipse(plane.cx, plane.cy, openingW * rx, openingW * rx * GLOW_POOL_SQUASH).fill({ color, alpha });
+  }
+}
+
+/** A locked door's bloom: a graduated pool on the floor around the doorway plus a wash over the
+ *  leaf. Exported for tests. */
+export function drawGlow(
+  g: Graphics,
+  openingW: number,
+  openingH: number,
+  plane: DoorFloorPlane = thresholdPlane(openingW),
+): void {
+  fillFloorPool(g, openingW, plane, GLOW_COLOR, GLOW_RING_ALPHA);
   g.rect(0, -openingH, openingW, openingH).fill({ color: GLOW_COLOR, alpha: GLOW_WASH_ALPHA });
 }
 
@@ -260,11 +399,13 @@ export function drawThroughLight(g: Graphics, openingW: number, openingH: number
  * carrying which — and it is what a kerb door's 22 px opening has instead of the ramp above.
  * The rim is what separates the arch from the flat wall next to it. Exported for tests.
  */
-export function drawSpill(g: Graphics, openingW: number, openingH: number): void {
-  for (const rx of GLOW_POOL) {
-    g.ellipse(openingW / 2, 0, openingW * rx, openingW * rx * GLOW_POOL_SQUASH)
-      .fill({ color: THROUGH_COLOR, alpha: SPILL_RING_ALPHA });
-  }
+export function drawSpill(
+  g: Graphics,
+  openingW: number,
+  openingH: number,
+  plane: DoorFloorPlane = thresholdPlane(openingW),
+): void {
+  fillFloorPool(g, openingW, plane, THROUGH_COLOR, SPILL_RING_ALPHA);
   if (openingH <= 0) return;
   const bandH = (openingH * RIM_REACH) / RIM_BANDS;
   const w = Math.min(RIM_WIDTH, openingW / 2);
@@ -275,4 +416,4 @@ export function drawSpill(g: Graphics, openingW: number, openingH: number): void
     g.rect(0, y, w, bandH).fill({ color: THROUGH_COLOR, alpha });
     g.rect(openingW - w, y, w, bandH).fill({ color: THROUGH_COLOR, alpha });
   }
-}
+}

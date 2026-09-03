@@ -52,6 +52,7 @@ import { applyLeaf, doorLeafFrame, fitArtToOpening, leafHeight } from './doorLea
 // are re-exported below so every pre-split import path stays valid.
 import {
   buildOpenFloorTile,
+  doorFloorPlane,
   drawGlow,
   drawOpenRecessShade,
   drawRecess,
@@ -125,6 +126,10 @@ export function buildDoorBlock(
   const capH = -height - capTop;
 
   const leafDrawH = leafHeight(r.w, height, skin.leaf);
+  // Which floor this door's floor-level layers may lie on. NOT always "south of the threshold":
+  // for the 13 shipped doors cut through a north-south wall that ground is the same wall
+  // continuing, and its own block Y-sorts in front of this fixture — see `DoorFloorPlane`.
+  const plane = doorFloorPlane(r);
   // The art the leaf is CURRENTLY showing — `setLocked` needs the OUTGOING texture to hand to the
   // crossfade ghost, and the caller only ever passes it the incoming one.
   let currentLeaf = skin.leaf;
@@ -208,12 +213,12 @@ export function buildDoorBlock(
   // 5. The two states' floor-level signals, both additive so they lift what is under them rather
   //    than washing it out, both over the leaf, exactly one of them visible.
   const glow = new Graphics();
-  drawGlow(glow, r.w, leafDrawH);
+  drawGlow(glow, r.w, leafDrawH, plane);
   glow.blendMode = 'add';
   seg.addChild(glow);
 
   const spill = new Graphics();
-  drawSpill(spill, r.w, leafDrawH);
+  drawSpill(spill, r.w, leafDrawH, plane);
   spill.blendMode = 'add';
   seg.addChild(spill);
 
@@ -237,6 +242,7 @@ export function buildDoorBlock(
     },
     index,
     locked,
+    plane,
   );
   // `behind` belongs in the same slot as `through`/`curtain` and for the same reason — under the
   // leaf, so the arch art's own stone masks it — but it can only be built once the fixture's own

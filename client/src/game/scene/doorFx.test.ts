@@ -16,6 +16,7 @@
 import { describe, it, expect } from 'vitest';
 import { Container, Graphics, Sprite, TilingSprite } from 'pixi.js';
 import { DoorFx, type DoorFxParts } from './doorFx';
+import { doorFloorPlane, type DoorFloorPlane } from './doorLights';
 import { MOTE_COUNT, PERIODS_MS } from './doorMotion';
 import { resetActiveQuality, setActiveQuality } from '../../render/quality';
 
@@ -26,7 +27,7 @@ const TRANSITION_MS = 350; // `doorFx.TRANSITION_MS`, restated so a wrong value 
 
 /** A door's fx with plain Containers standing in for the still layers `buildDoorBlock` hands over.
  *  `base`/`lit` are read off each node's alpha at construction, so these are set beforehand. */
-function build(locked: boolean, index = 0): { fx: DoorFx; parts: Required<DoorFxParts> } {
+function build(locked: boolean, index = 0, plane?: DoorFloorPlane): { fx: DoorFx; parts: Required<DoorFxParts> } {
   const layer = (alpha: number): Container => {
     const c = new Container();
     c.alpha = alpha;
@@ -39,23 +40,30 @@ function build(locked: boolean, index = 0): { fx: DoorFx; parts: Required<DoorFx
     openBase: [layer(1), layer(0.9)],
     openLit: [layer(0.7), layer(0.6)],
   };
-  return { fx: new DoorFx(OPENING_W, OPENING_H, BAND, parts, index, locked), parts };
+  return { fx: new DoorFx(OPENING_W, OPENING_H, BAND, parts, index, locked, plane), parts };
 }
 
 const tilesOf = (c: Container): TilingSprite[] => c.children.filter((k): k is TilingSprite => k instanceof TilingSprite);
 const graphicsOf = (c: Container): Graphics[] => c.children.filter((k): k is Graphics => k instanceof Graphics);
 
-/** Every point of every stroked path in `g`, as `[x, y]`. The floor rings are stroked half
- *  ellipses built from segments (`doorFx.strokeFloorArc`), not `ellipse` calls, so their radius
- *  has to be read back off the geometry — which is the better measurement anyway: it is the span
- *  actually drawn, not the argument that was passed. */
+/** Every point of every STROKED path in `g`, as `[x, y]`. The floor rings are stroked ellipse
+ *  segments (`doorLights.strokeFloorArc`), not `ellipse` calls, so their radius has to be read back
+ *  off the geometry — which is the better measurement anyway: it is the span actually drawn, not the
+ *  argument that was passed.
+ *
+ *  Stroked ONLY, and that filter is load-bearing: Pixi emits a `moveTo(0, 0)` of its own ahead of
+ *  every `circle` after the first, so an unfiltered read picks up one phantom point at the origin
+ *  per mote. Those are what let the southern-half assertion below pass on a plane whose ring is
+ *  nowhere near y = 0 — a test passing on points no ring drew. */
 function pathPoints(g: Graphics): number[][] {
-  type Ins = { data: { path?: { instructions: { action: string; data: number[] }[] } } };
-  return (g.context.instructions as unknown as Ins[]).flatMap((ins) =>
-    (ins.data.path?.instructions ?? [])
-      .filter((i) => i.action === 'moveTo' || i.action === 'lineTo')
-      .map((i) => i.data),
-  );
+  type Ins = { action: string; data: { path?: { instructions: { action: string; data: number[] }[] } } };
+  return (g.context.instructions as unknown as Ins[])
+    .filter((ins) => ins.action === 'stroke')
+    .flatMap((ins) =>
+      (ins.data.path?.instructions ?? [])
+        .filter((i) => i.action === 'moveTo' || i.action === 'lineTo')
+        .map((i) => i.data),
+    );
 }
 
 /** Half the horizontal span of `g`'s stroked path — the floor ring's own `rx`. NaN when nothing
@@ -168,6 +176,28 @@ describe('direction — the channel the whole cue rests on', () => {
     const pts = graphicsOf(fx.over).flatMap(pathPoints);
     expect(pts.length).toBeGreaterThan(20);
     for (const [, y] of pts) expect(y!).toBeGreaterThanOrEqual(0);
+  });
+
+  it('puts both floor rings BESIDE the doorway for a door cut through a north-south wall', () => {
+    // The other half of the same claim, and the bug that made the plane exist: south of THAT door's
+    // threshold is the same wall continuing, so a southern half-ellipse is drawn onto stone that
+    // Y-sorts in front of it — on a live frame, a ring with its middle bitten out. The plane moves
+    // both rings onto the floor either side of the passage, where the player actually walks.
+    // `doorFloorPlaneCoverage.test.ts` measures the shipped floors; this pins that the fixture's
+    // own rings read the plane at all, which no assertion on `strokeFloorArc` can show.
+    const plane = doorFloorPlane({ x: 0, y: 0, w: OPENING_W, h: 128 });
+    const { fx } = build(true, 0, plane);
+    fx.setLocked(false, true); // both rings live at once, mid-transition
+    fx.tick(80, 1);
+    const pts = graphicsOf(fx.over).flatMap(pathPoints);
+    expect(pts.length).toBeGreaterThan(20);
+    // Every point clear of the wall's own column — that column is the stone standing in front.
+    for (const [x] of pts) expect(Math.abs(x! - plane.cx)).toBeGreaterThanOrEqual(plane.cx - 1e-9);
+    // Both lobes present (a ring on ONE side would read as a door facing the wrong way), and all of
+    // it around the passage's mid-depth rather than hanging off the threshold.
+    expect(pts.some(([x]) => x! > plane.cx)).toBe(true);
+    expect(pts.some(([x]) => x! < plane.cx)).toBe(true);
+    for (const [, y] of pts) expect(y!).toBeLessThan(0);
   });
 
   it('carries motes out of the doorway toward the player, growing as they come', () => {

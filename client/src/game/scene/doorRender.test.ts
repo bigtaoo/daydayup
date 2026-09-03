@@ -27,6 +27,7 @@ import {
   drawThroughLight,
   type DoorSkin,
 } from './doorRender';
+import { doorFloorPlane, type DoorFloorPlane } from './doorLights';
 import { WALL_H_KERB, WALL_H_PERIMETER, type RectPx } from './wallGeometry';
 
 function tex(w: number, h: number): Texture {
@@ -100,16 +101,22 @@ const settle = (fixture: ReturnType<typeof buildDoorBlock>): void => fixture.tic
  * whichever happens to be first in the child list — which is how these assertions would go on
  * passing while testing the wrong layer. Asserting the layer is present at all is half the point:
  * a `draw*` that no-ops matches an empty child, so the expectation is checked non-empty too.
+ *
+ * The floor-level layers (`drawGlow`/`drawSpill`) also take the fixture's own `DoorFloorPlane`
+ * since 2026-09-03d — a door in a north-south wall puts its pool on the floor beside the passage
+ * rather than south of the threshold, so an expectation drawn on the default plane matches nothing.
+ * Derived from `passage` here for the same reason the fixture derives it from `r`: the helper has
+ * to build what the fixture built, not what the pre-plane version would have.
  */
 function lightOf(
   fixture: ReturnType<typeof buildDoorBlock>,
-  draw: (g: Graphics, w: number, h: number) => void,
+  draw: (g: Graphics, w: number, h: number, plane?: DoorFloorPlane) => void,
   passage: RectPx = PASSAGE,
   height = WALL_H_PERIMETER,
   art: [number, number] = [ART_W, ART_H],
 ): Graphics {
   const expected = new Graphics();
-  draw(expected, passage.w, doorLeafFrame(passage.w, height, art[0], art[1]).drawH);
+  draw(expected, passage.w, doorLeafFrame(passage.w, height, art[0], art[1]).drawH, doorFloorPlane(passage));
   const want = digest(expected);
   expect(want).not.toBe('');
   const found = graphicsOf(fixture).filter((g) => digest(g) === want);
@@ -888,7 +895,7 @@ describe('what the layers come out as together', () => {
     // `leafHeight` falls back to the full fixture height. `lightOf` cannot express that case,
     // which is why the expectation is built by hand here.
     const expected = new Graphics();
-    drawSpill(expected, PASSAGE.w, WALL_H_PERIMETER);
+    drawSpill(expected, PASSAGE.w, WALL_H_PERIMETER, doorFloorPlane(PASSAGE));
     expect(inFront.map(digest)).toContain(digest(expected));
   });
 });
