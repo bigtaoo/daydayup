@@ -46,6 +46,7 @@ import { Rig } from '../../render/Rig';
 import { ORB_CORE_RIG } from '../../render/orbCoreRig';
 import { facingFromAngle } from '../../render/facing';
 import { swingSchedule } from '../../render/rigAttackMotion';
+import { swingShapeOf } from '../controllers/attackShapes';
 import { Texture } from 'pixi.js';
 import type { RigSkinBundle } from '../../render/taoBundle';
 import type { SpriteBinding } from '../../render/types';
@@ -100,10 +101,9 @@ function connects(spec: MeleeSimSpec, rPx: number, angleRad: number): boolean {
 
 /** The pose `EventReactor.slashSector` builds, for a weapon and an aim. */
 function poseOf(spec: MeleeSimSpec, facingRad: number): SlashArcPose {
-  const schedule = swingSchedule({
-    arcDeg: (bradToRad(spec.arcHalf) * 360) / Math.PI,
-    windowMs: (spec.swingTicks * 1000) / 30, // the ACTIVE hit window (design/07 step 7)
-  });
+  // The shipped conversion (`EventReactor.swingShapeOf`), not a restatement of it — this file
+  // exists to catch two tables drifting apart, so it must not carry a third copy of one.
+  const schedule = swingSchedule(swingShapeOf(spec));
   return {
     x: 0, y: 0,
     facingRad,
@@ -239,14 +239,8 @@ describe('the drawn sector sweeps the same way the blade does', () => {
     const skin = makeRigSkin();
     skin.setBodyFacing(facingRad);
     skin.setAim(facingRad);
-    skin.attack('melee', {
-      arcDeg: (bradToRad(spec.arcHalf) * 360) / Math.PI,
-      windowMs: (spec.swingTicks * 1000) / 30,
-    });
-    const schedule = swingSchedule({
-      arcDeg: (bradToRad(spec.arcHalf) * 360) / Math.PI,
-      windowMs: (spec.swingTicks * 1000) / 30,
-    });
+    skin.attack('melee', swingShapeOf(spec));
+    const schedule = swingSchedule(swingShapeOf(spec));
     skin.advanceClips(schedule.strikeStartMs);
     const from = bladeWorldAngle(skin);
     skin.advanceClips((schedule.strikeEndMs - schedule.strikeStartMs) * 0.75);

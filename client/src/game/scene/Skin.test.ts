@@ -296,11 +296,23 @@ describe('Skin.attack — the attack trigger', () => {
     mocks.loaded = loadedRig();
     const s = new Skin(0x123456, 0xabcdef, 20, 'char_vanguard');
     const kick = vi.spyOn(internals(s).rig!, 'attack');
-    const shape = { arcDeg: 220, windowMs: 200 };
+    const shape = { arcDeg: 220, windowMs: 200, recoveryMs: 667, knockback: 12 }; // the hammer, the roster's heaviest
     s.attack('melee', shape);
     expect(kick).toHaveBeenCalledWith('melee', shape);
     s.attack('ranged');
     expect(kick).toHaveBeenLastCalledWith('ranged', undefined); // a gun has no sector
+  });
+
+  it('passes the firing GUN through as well — the same hop, the other kind', () => {
+    // `attack` is overloaded per kind, so the two shapes are genuinely different types travelling
+    // one parameter; a body that forwarded only the melee branch would typecheck and would hand
+    // every gun the fallback blaster envelope.
+    mocks.loaded = loadedRig();
+    const s = new Skin(0x123456, 0xabcdef, 20, 'char_vanguard');
+    const kick = vi.spyOn(internals(s).rig!, 'attack');
+    const shot = { intervalMs: 100, punch: 1 }; // the repeater: the roster's fastest cadence
+    s.attack('ranged', shot);
+    expect(kick).toHaveBeenCalledWith('ranged', shot);
   });
 
   it('is a silent no-op on the placeholder — nothing mounted, nothing to recoil', () => {

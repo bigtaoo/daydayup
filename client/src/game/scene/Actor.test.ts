@@ -1718,9 +1718,25 @@ describe('Actor.onAttack — the firing recoil reaches the skin', () => {
     const attack = vi.spyOn((a as unknown as { skin: { attack: () => void } }).skin, 'attack');
     a.onAttack('melee');
     expect(attack).toHaveBeenCalledWith('melee', undefined);
-    const shape = { arcDeg: 220, windowMs: 200 };
+    const shape = { arcDeg: 220, windowMs: 200, recoveryMs: 667, knockback: 12 }; // the hammer, the roster's heaviest
     a.onAttack('melee', shape);
     expect(attack).toHaveBeenLastCalledWith('melee', shape);
+  });
+
+  it('forwards the GUN through as well, not just the blade', () => {
+    // The ranged half of the case above, and it needs saying separately because the two travel
+    // through the SAME parameter and only one of them was covered: since 2026-09-02 a shot's
+    // envelope is sized by the firing weapon too, so a dropped argument here silently gives every
+    // gun in the game the starter blaster's kick — which is exactly the state that pass removed,
+    // and which looks entirely fine on screen.
+    skinRegistryMocks.loaded = loadedOrbCoreRig();
+    const a = new Actor('player', 20, undefined, false, 'char_vanguard');
+    const attack = vi.spyOn((a as unknown as { skin: { attack: () => void } }).skin, 'attack');
+    a.onAttack('ranged');
+    expect(attack).toHaveBeenCalledWith('ranged', undefined);
+    const shot = { intervalMs: 600, punch: 3 }; // the cannon: slow and hard-hitting
+    a.onAttack('ranged', shot);
+    expect(attack).toHaveBeenLastCalledWith('ranged', shot);
   });
 
   it('is safe on a placeholder skin — the first frames of every run render as one', () => {

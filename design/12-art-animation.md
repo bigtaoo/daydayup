@@ -153,10 +153,12 @@ layers**, whether it is a shot or a swing, on every one of the seven shipped rig
 | layer | file | what it owns | why it cannot be the other layer |
 |---|---|---|---|
 | authored `attack` clip, layered **additively** over `idle`/`move` | `render/rigClipLayer.ts` | squash/stretch, the body's jolt, a boss's shard rings flaring — everything statable in the rig's own bone space, per body plan | it is per-character art; there is nothing to compute |
-| aim-relative envelope | `render/rigAttackMotion.ts` | a gun's kick back along the BARREL + body lean; a blade's sweep + forward lunge, **sized and paced by the weapon** since 2026-09-02 (26°-104° of travel over 130-400 ms, derived — see below) | it is a function of the live aim angle AND of the weapon — neither is authorable |
+| aim-relative envelope | `render/rigAttackMotion.ts` + `render/attack/{swingShape,shotShape}.ts` | a gun's kick back along the BARREL + body lean + **muzzle climb**; a blade's sweep or **thrust**, plus a forward lunge — every magnitude and every duration **derived from the weapon that attacked** (2026-09-02, both kinds — see below) | it is a function of the live aim angle AND of the weapon — neither is authorable |
 
-Both are started by one call, `Actor.onAttack(kind)`, from one place: `EventReactor`, off
-`bullet_fired` or `melee_swing`. Only the envelope's SHAPE differs by kind.
+Both are started by one call, `Actor.onAttack(kind, shape)`, from one place: `EventReactor`, off
+`bullet_fired` or `melee_swing`. Only the envelope's SHAPE differs by kind. The `shape` is the
+attacking weapon's own numbers, converted out of the sim spec at that one read site
+(`controllers/attackShapes.ts`) — the render layer holds no engine units.
 
 **Why the aim-relative half cannot be authored data**, which is the part worth remembering:
 
@@ -184,6 +186,11 @@ with no weapon (the `Graphics` placeholder, any enemy — none carry melee) gets
 The clamps are about the BODY: the blade hangs off an aim-tracking socket, so past ~100° it sweeps
 through the character rather than around it.
 
+*(The envelope half of that paragraph was superseded twice the same day: first by `ENGINE_VERSION`
+53, which moved the STRIKE onto the weapon's real hit window, and then by "the weapon decides how
+heavy it is" below, which put the FOLLOW-THROUGH on the recovery. The travel half stands as
+written, with a thrust term added. See both sections.)*
+
 **The sector itself is now drawn** (`client/src/game/fx/slashArc.ts`), at the weapon's true
 `arcHalf` and `range` — unclamped, because that fx exists to state the reach, where the envelope's
 clamps exist to keep a body legible. It is this renderer's only `Mesh`: the look needs alpha varying
@@ -201,6 +208,69 @@ span lives in the geometry while the brush is parametrised on FRACTIONS — swee
 radius fraction along `v` — so nothing stretches at any width. Reach for the image model here only
 if the swing wants a MATERIAL (ink grain, a hammered edge); that would multiply into the same baked
 field and change no geometry.
+
+### The weapon decides how heavy it is — both kinds (2026-09-02d)
+
+From a live report on the pass above: the sector fx reads well, but the MOTION did not match it —
+*"能将动作幅度也匹配上吗？而且武器的攻击间隔也不同，最好也能对应调整一下动作的播放时间，这样
+对于重型武器和轻型武器的感觉就能区分开了。然后再看看开枪的动作也做些优化。"* Three asks:
+amplitude, pacing, and the gun. Four channels were still constants shared by the whole roster.
+
+**Melee — the follow-through is the recovery, not the window.** v53 anchored `strikeEndMs` on the
+active hit window, correctly, and that half is untouched. But it then sized the WHOLE envelope as
+`windowMs / 0.55`, so the tail was a fixed 82% of the window for every weapon: the hammer snapped
+back to guard in 164 ms and then stood still for the remaining ~300 ms of its own recovery. The two
+segments now come from the two quantities that describe them —
+
+| segment | input | why only that field can say it |
+|---|---|---|
+| wind-up + strike | `swingTicks` (the hit window) | the ticks `HitResolveSystem` can connect on |
+| follow-through | `swingCooldownTicks` (the recovery) | how long until you may swing again |
+
+— and `FOLLOW_SHARE` is **defined as the value that reproduces the pre-existing saber tail exactly**,
+so this is the roster spreading out around the reference rather than a retune of it. Envelopes go
+from 182-364 ms (a 2.0× spread, tracking only the window) to 194-418 ms (2.16×, against the
+recovery's own 2.22×). "The stroke fits inside its own recovery" also stops being a tuned clamp and
+becomes **structural**: `window + (recovery − window)·s ≤ recovery` for any `s ≤ 1`, and `toSimSpec`
+guarantees `window ≤ recovery`.
+
+**Melee — a narrow sector is a THRUST, not a small sweep.** The 26° floor above is where a
+rotation-only motion stops being honest: the spear's 60° sector derives 25°, gets clamped up, and
+draws a miniature swing of a sector that is not an arc — while its 2.1-grid reach, the longest in
+the roster, goes unstated. Under 145° the motion trades rotation for a slide down its own barrel,
+linearly to a pure thrust at 60°. The channel already existed and is the gun's recoil with the sign
+reversed (`AttackMotion.modulePx` is now signed for both kinds), so this cost no new plumbing. The
+knee is deliberately 145 and not 150 — 150 is the stormglaive's authored sector, and a knee sitting
+on a shipped weapon is decided by brad quantization (75° round-trips to 74.998°).
+
+**Melee — the body commits as hard as the swing shoves.** `knockback` is the only field in the sim
+that states how hard a swing hits (hammer 12 grid/s, saber 6, leech 3), so the lunge scales with it,
+`√(k/6)` clamped to [0.6, 1.8]. Sub-linear because `knockback` spans 4× and this is a body offset in
+authoring px. Its fp round trip is **lossy by ~1%** — `toFpPerTick` truncates, so 6 grid/s reads back
+as 5.94 — which is the one input on which the reference does not reproduce to the bit; recorded
+rather than papered over.
+
+**Ranged — the kick fits the cadence, and it was a real defect that it did not.** Every gun kicked
+for 150 ms, tuned against the blaster's 200 ms cadence and applied to all eighteen. The repeater and
+the flamer fire every 100 ms, so the next shot restarted the envelope halfway out and **the gun
+never came back** — permanently displaced for the whole of a held trigger, snapping home on release.
+The envelope is now `interval × 0.75` (again, the ratio that reproduces the blaster exactly) clamped
+to [70, 380] ms. The ceiling was chosen by measuring how much of the roster it swallows: at 260 ms
+thirteen of eighteen guns pinned to one value, which is the same "every gun feels the same" defect
+moved rather than removed.
+
+**Ranged — magnitude off the shot, and a third channel that is actually visible.** `punch` is damage
+per TRIGGER PULL (`damage × bullets`), so the scattergun's five pellets kick like a slug rather than
+like five blasters; `√punch` clamped to [0.7, 2.2], the upper bound catching the novaburst's
+ten-bullet ring, which is radial and has no direction to be shoved away from anyway. And the recoil
+now **rotates the muzzle up** as well as sliding it back. That matters more than it sounds: the
+slide is foreshortened to nothing when firing toward or away from the camera — half of all aim
+angles — while the rotation reads at every one of them. It goes through the socket-angle channel the
+melee sweep already used, which is why `AttackMotion.swingDeg` is now `weaponDeg`.
+
+`rigAttackMotion.ts` became a three-file module under the 500-line convention: the two pure
+derivations are siblings (`attack/swingShape.ts`, `attack/shotShape.ts`) and the shell keeps the
+clock and re-exports them, so no import path moved.
 
 Both halves are cross-checked against the sim rather than against restated numbers:
 `client/src/game/fx/meleeArcParity.test.ts` drives the real `HitResolveSystem` and pins the drawn

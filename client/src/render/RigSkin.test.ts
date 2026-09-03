@@ -14,7 +14,11 @@ import { ORB_CORE_RIG } from './orbCoreRig';
 import { CRITTER_CORE_RIG } from './critterCoreRig';
 import { BOSS_CORE_RIG } from './bossCoreRig';
 import { RigSkin, barrelReach } from './RigSkin';
-import { RECOIL_BODY_PX, RECOIL_MODULE_PX, RECOIL_MS, SWING_ARC_DEG, swingSchedule } from './rigAttackMotion';
+import {
+  DEFAULT_SWING, RECOIL_BODY_PX, RECOIL_CLIMB_DEG, RECOIL_MODULE_PX, RECOIL_MS,
+  SWING_ARC_DEG, swingSchedule,
+  type SwingShape,
+} from './rigAttackMotion';
 import type { RigSkinBundle } from './taoBundle';
 import type { AnimationClip, SpriteBinding } from './types';
 
@@ -1128,26 +1132,56 @@ describe('RigSkin — the fire recoil', () => {
   // module kick swamps the 3 px body shove and the muzzle still moved backwards. The fx and the
   // next shot's spawn correction both read this point, so the ~1 world px it loses is a real
   // (small) mis-anchor, and only the arithmetic can see it.
-  it('moves the muzzle by the module kick AND the body lean, not just the kick', () => {
+  it('moves the muzzle by the module kick, the body lean AND the muzzle climb', () => {
+    // The third term arrived 2026-09-02 and it is the one a player can always see: the slide is
+    // foreshortened to nothing when firing toward or away from the camera, the rotation is not.
+    // It shows up here as a barrel tip that RISES and, because a rotated barrel reaches less far
+    // along the aim, an along-aim displacement slightly greater than kick + lean.
     const skin = armed();
     const rest = skin.muzzleLocal()!;
     atPeak(skin);
     const kicked = skin.muzzleLocal()!;
-    expect(rest.x - kicked.x).toBeCloseTo(RECOIL_MODULE_PX + RECOIL_BODY_PX, 6);
-    expect(kicked.y).toBeCloseTo(rest.y, 6); // aiming +x, so the whole displacement is -x
+    const along = rest.x - kicked.x;
+    const rise = rest.y - kicked.y;
+    expect(along).toBeGreaterThan(RECOIL_MODULE_PX + RECOIL_BODY_PX);
+    expect(rise).toBeGreaterThan(0);
+    // Pinned exactly, and independently of the rig's own barrel reach: rotating a barrel of any
+    // length R by the climb angle lifts the tip by `R*sin(climb)` and shortens its reach by
+    // `R*(1 - cos(climb))`, and the ratio of those two is `tan(climb/2)` with R cancelled out.
+    const climbRad = (RECOIL_CLIMB_DEG * Math.PI) / 180;
+    const extra = along - (RECOIL_MODULE_PX + RECOIL_BODY_PX);
+    expect(extra / rise).toBeCloseTo(Math.tan(climbRad / 2), 6);
   });
 
   it('follows the aim rather than kicking in a fixed screen direction', () => {
-    const skin = armed();
-    skin.setAim(Math.PI / 2); // straight down-screen
-    skin.update();
-    // Read the fields out rather than spreading: `x`/`y` are prototype accessors on a Pixi
-    // Sprite, so a spread copy silently loses them (and every assertion below with it).
-    const restX = modulesOf(skin).weaponSprite!.x;
-    const restY = modulesOf(skin).weaponSprite!.y;
-    atPeak(skin);
-    expect(modulesOf(skin).weaponSprite!.y).toBeLessThan(restY); // back UP the screen
-    expect(modulesOf(skin).weaponSprite!.x).toBeCloseTo(restX, 6);
+    // Measured in AIM-RELATIVE components, which is what the claim is actually about. It used to
+    // be enough to check the whole displacement was along the aim, because the whole recoil was;
+    // since the muzzle climb arrived (2026-09-02) the kick has a second, ACROSS-aim term as
+    // well — the assembly rotates about the core — and both terms have to turn with the aim
+    // rather than pointing at a fixed corner of the screen.
+    const relative = (aim: number): { along: number; across: number } => {
+      const skin = armed();
+      skin.setAim(aim);
+      skin.update();
+      // Read the fields out rather than spreading: `x`/`y` are prototype accessors on a Pixi
+      // Sprite, so a spread copy silently loses them (and every assertion below with it).
+      const restX = modulesOf(skin).weaponSprite!.x;
+      const restY = modulesOf(skin).weaponSprite!.y;
+      atPeak(skin);
+      const dx = modulesOf(skin).weaponSprite!.x - restX;
+      const dy = modulesOf(skin).weaponSprite!.y - restY;
+      return {
+        along: dx * Math.cos(aim) + dy * Math.sin(aim),
+        across: -dx * Math.sin(aim) + dy * Math.cos(aim),
+      };
+    };
+    const east = relative(0);
+    const down = relative(Math.PI / 2); // straight down-screen
+    expect(east.along).toBeLessThan(0); // back down its own barrel, not down the screen
+    expect(down.along).toBeCloseTo(east.along, 6);
+    expect(down.across).toBeCloseTo(east.across, 6);
+    // ...and the slide is still the dominant term, so a shot does not read as a swipe.
+    expect(Math.abs(east.across)).toBeLessThan(Math.abs(east.along));
   });
 
   it('returns everything to exactly its rest pose once the envelope is spent', () => {
@@ -1240,7 +1274,7 @@ describe('RigSkin — the melee swing', () => {
     // socket the blade is mounted to. `rigAttackMotion.test.ts` pins the envelope's own numbers;
     // what this adds is that `attack`'s second argument reaches it at all — without it both of
     // these sweep the identical 46°, and every other melee assertion in this file still passes.
-    const sweep = (shape?: { arcDeg: number; windowMs: number }): number => {
+    const sweep = (shape?: SwingShape): number => {
       const skin = bladed();
       const rest = spritesOf(skin).get('socket_r')!.rotation;
       skin.attack('melee', shape);
@@ -1248,12 +1282,68 @@ describe('RigSkin — the melee swing', () => {
       skin.update();
       return spritesOf(skin).get('socket_r')!.rotation - rest;
     };
-    const windowMs = (4 * 1000) / 30; // the saber ACTIVE hit window (v53), not its recovery
-    const poke = sweep({ arcDeg: 60, windowMs });
-    const heave = sweep({ arcDeg: 220, windowMs });
+    // The saber's own timing and heft on both, so the ARC is the only thing that differs.
+    const rest = { ...DEFAULT_SWING };
+    const poke = sweep({ ...rest, arcDeg: 60 });
+    const heave = sweep({ ...rest, arcDeg: 220 });
     expect(heave).toBeGreaterThan(poke * 2);
     // ...and no shape at all still lands on the tuned constant, i.e. the fallback is intact.
     expect(sweep()).toBeCloseTo((SWING_ARC_DEG * Math.PI) / 180, 6);
+  });
+
+
+  it('drives a NARROW weapon module out along its barrel — both the ring and the blade', () => {
+    // The last hop of the thrust chain, and the bug class this file has already caught once (see
+    // `carries the mounted blade around with the socket, not just the ring` below): `modulePx` is
+    // read in TWO places — the aim-tracking bone loop and `rigWeaponMount.activeModuleMount` — so
+    // a thrust wired into one of them slides an empty housing while the sword stays put, or the
+    // reverse. Both are asserted, and neither could be by reading `AttackMotion` alone.
+    //
+    // Isolating the thrust from the SWEEP is the whole difficulty: a swing rotates the assembly
+    // as well as driving it, and the socket orbits about its own JOINT rather than about the rig
+    // origin, so no radius or single axis separates the two. The control that does: a rig posed
+    // STATICALLY at the angle the swing has reached. Both rigs then have the identical weapon
+    // angle and therefore the identical FK pose, and everything left between them is the recoil
+    // channel — zero for a weapon that only sweeps, a forward slide for one that thrusts.
+    const sample = (skin: RigSkin) => {
+      const r = spritesOf(skin).get('socket_r')!;
+      const b = modulesOf(skin).weaponSprite!;
+      return { ringX: r.x, ringY: r.y, bladeX: b.x, bladeY: b.y };
+    };
+    /** Mid-swing at `t`, against a rig held still at the angle that swing has reached. */
+    const thrustAt = (shape: SwingShape, t: number) => {
+      const swung = bladed();
+      swung.setWeaponKind('melee', 'spear');
+      swung.attack('melee', shape);
+      swung.advanceClips(t);
+      swung.update();
+      const motion = (swung as unknown as { motion: { weaponDeg: number } }).motion;
+
+      const posed = bladed();
+      posed.setWeaponKind('melee', 'spear');
+      posed.setAim((motion.weaponDeg * Math.PI) / 180); // same weapon angle, no attack in flight
+      posed.update();
+
+      const a = sample(swung);
+      const b = sample(posed);
+      return { ring: a.ringX - b.ringX, blade: Math.hypot(a.bladeX - b.bladeX, a.bladeY - b.bladeY) };
+    };
+
+    const spear = { ...DEFAULT_SWING, arcDeg: 60 };
+    const strike = thrustAt(spear, swingSchedule(spear).strikeEndMs);
+    expect(strike.blade).toBeGreaterThan(0); // the blade is driven OUT, not merely turned
+    expect(strike.ring).toBeGreaterThan(0); // ...and its housing goes with it, along the aim
+
+    // A wide weapon at the same point in its own swing ONLY turns: the saber derives no thrust,
+    // so mid-swing and posed-at-that-angle are the same rig to the last float.
+    const saber = thrustAt(DEFAULT_SWING, swingSchedule(DEFAULT_SWING).strikeEndMs);
+    expect(saber.blade).toBeCloseTo(0, 6);
+    expect(saber.ring).toBeCloseTo(0, 6);
+
+    // And it comes home: a thrust that settled anywhere but 0 leaves the weapon off its mount.
+    const spent = thrustAt(spear, swingSchedule(spear).totalMs);
+    expect(spent.blade).toBeCloseTo(0, 6);
+    expect(spent.ring).toBeCloseTo(0, 6);
   });
 
   it('carries the mounted blade around with the socket, not just the ring', () => {
@@ -1416,11 +1506,51 @@ describe('RigSkin — the attack clip layers over the base clip', () => {
     expect(spritesOf(skin).get('shell')!.y).toBeCloseTo(rest, 10);
   });
 
+
+  it('survives being re-triggered faster than its own duration, and still comes home', () => {
+    // NOT hypothetical, and worth stating precisely because it is the one part of the attack a
+    // weapon does NOT pace. Every shipped bundle authors `attack` at **350 ms** (asserted next
+    // door in `rigComposition.test.ts`), while the repeater and the flamer fire every 100 ms and
+    // the spear recovers in 300 — so for the fast end of the roster the clip is re-triggered
+    // before it can finish, for the whole of a held trigger.
+    //
+    // That is tolerable only because of a property the ART has to hold: the clip starts AND ends
+    // at identity, so a restart re-seeds the same additive contribution rather than stacking onto
+    // the last one. This pins the consequence of that property on the drawn sprite — twenty
+    // restarts at a cadence well inside the clip's length must not accumulate, and release must
+    // return the body to EXACTLY its base pose rather than to a drifted one.
+    //
+    // The per-weapon fix for the underlying mismatch (a playback rate, or authored clips) is
+    // deliberately not taken; this is the guard that makes leaving it safe.
+    const skin = posed();
+    const rest = spritesOf(skin).get('shell')!.y;
+    const CADENCE_MS = 100; // the repeater's, against a 400 ms clip in this fixture
+    const seen: number[] = [];
+    for (let i = 0; i < 20; i++) {
+      skin.attack('melee'); // melee: no recoil translate, so the clip is the only thing moving it
+      for (let f = 0; f < 6; f++) skin.advanceClips(CADENCE_MS / 6);
+      skin.playClip('idle', 0);
+      skin.update();
+      seen.push(spritesOf(skin).get('shell')!.y - rest);
+    }
+    // Every restart lands on the SAME pose — the tenth is not ten times the first.
+    expect(seen[19]).toBeCloseTo(seen[1]!, 10);
+    expect(Math.abs(seen[19]!)).toBeGreaterThan(0.5); // ...and it was actually displaced
+    // Release: once no further trigger arrives the clip runs out and the body returns exactly.
+    skin.advanceClips(1000);
+    skin.playClip('idle', 0);
+    skin.update();
+    expect(spritesOf(skin).get('shell')!.y).toBeCloseTo(rest, 10);
+  });
+
   it('a shot and a swing both play it — one clip, one rule, either kind', () => {
     const displacement = (kind: 'ranged' | 'melee'): number => {
       const skin = posed();
       const rest = spritesOf(skin).get('shell')!.y;
-      skin.attack(kind);
+      // Split rather than passed through: `attack` is overloaded per kind since the ranged half
+      // gained its own shape, so a union `kind` no longer selects one signature.
+      if (kind === 'melee') skin.attack('melee');
+      else skin.attack('ranged');
       skin.advanceClips(200);
       skin.playClip('idle', 0);
       skin.update();

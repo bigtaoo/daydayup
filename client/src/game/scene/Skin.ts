@@ -3,7 +3,7 @@ import { RigSkin } from '../../render/RigSkin';
 import { getRigSkin } from '../../render/skinRegistry';
 import type { WeaponVisualKind } from '../../render/weaponSkins';
 import { resolveWeaponMount } from '../../render/rigWeaponMount';
-import type { AttackKind, SwingShape } from '../../render/rigAttackMotion';
+import type { AttackKind, ShotShape, SwingShape } from '../../render/rigAttackMotion';
 
 // Appearance layer (see design/02-entity-model.md).
 // A skin is either the Graphics placeholder (default — no real art preloaded
@@ -111,10 +111,14 @@ export class Skin {
    *  or `melee_swing` event — design/08's one render channel). ONE entry point for both, by
    *  design: either kind starts the same authored `attack` clip layered over idle/move
    *  (`render/rigClipLayer.ts`) and the same aim-relative envelope, which only differs by kind
-   *  (`render/rigAttackMotion.ts` — a gun kicks back, a blade sweeps forward). No-op on the
-   *  Graphics placeholder, which has neither a clip nor a mounted module to move. */
-  attack(kind: AttackKind, swing?: SwingShape): void {
-    this.rig?.attack(kind, swing);
+   *  (`render/rigAttackMotion.ts` — a gun kicks back, a blade sweeps forward), and which the
+   *  attacking WEAPON sizes and paces through the shape passed with it. No-op on the Graphics
+   *  placeholder, which has neither a clip nor a mounted module to move. */
+  attack(kind: 'ranged', shot?: ShotShape): void;
+  attack(kind: 'melee', swing?: SwingShape): void;
+  attack(kind: AttackKind, shape?: ShotShape | SwingShape): void {
+    if (kind === 'melee') this.rig?.attack(kind, shape as SwingShape | undefined);
+    else this.rig?.attack(kind, shape as ShotShape | undefined);
   }
 
   /** The other three engine signals a rig animates (`Actor.onHurt`/`onSpawn`/`onDeath`), each

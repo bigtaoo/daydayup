@@ -6,10 +6,17 @@
  * HudView.test.ts.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { pxToFp, WEAPON_SIM_BY_ID, type GameEvent, type GameState, type MeleeSimSpec } from '@dd/engine';
+import {
+  pxToFp, WEAPON_SIM_BY_ID,
+  type GameEvent, type GameState, type MeleeSimSpec, type RangedSimSpec,
+} from '@dd/engine';
 import { createGameState } from '@dd/engine/state/GameState';
+// Every enemy in the game fires this one, and `weapons.ts` keeps it out of
+// `WEAPON_SIM_BY_ID` (not player-facing) — so the enemy-shooter case imports it directly.
+import { ENEMY_GUN_SIM } from '@dd/engine/content/weapons';
 import type { ArenaMap } from '@dd/engine/content/arenas';
 import { EventReactor, type EventReactorHost } from './EventReactor';
+import { swingShapeOf } from './attackShapes';
 import type { FxController } from '../fx/FxController';
 import { HudView } from '../ui/HudView';
 import { Layers } from '../scene/layers';
@@ -17,7 +24,9 @@ import type { AudioBus } from '../../platform/types';
 import { setLocale, resetLocaleForTests } from '../../i18n';
 import { THEME } from '../theme';
 import type { SlashArcPose } from '../fx/slashArc';
-import { swingSchedule, type SwingShape } from '../../render/rigAttackMotion';
+import {
+  swingSchedule, recoilSchedule, RECOIL_MS, type ShotShape, type SwingShape,
+} from '../../render/rigAttackMotion';
 
 // `FxController`'s real constructor builds WebGL filters (VignetteFilter/
 // ChromaticAberrationFilter), which need an actual `document`/GL context this repo's
@@ -716,7 +725,10 @@ describe('EventReactor — a shot leaves the shooter, not the event position', (
     const { reactor, host } = reactorWith(actor);
     reactor.consume([SHOT]);
     expect(host.actorAt).toHaveBeenCalledWith(7);
-    expect(actor.onAttack).toHaveBeenCalledWith('ranged');
+    // Two arguments now: the shooter's own gun sizes and paces the kick. `undefined` here is
+    // the honest answer for this fixture — `fakeHost().activeState()` is null (a menu frame
+    // draining a stale queue), and the rig falls back to the starter blaster.
+    expect(actor.onAttack).toHaveBeenCalledWith('ranged', undefined);
     expect(actor.onAttack).toHaveBeenCalledTimes(1);
   });
 
@@ -857,17 +869,125 @@ describe('EventReactor — a multi-pellet volley in one frame', () => {
  * brad→rad, fp→px and ticks→ms on the way to the fx. Every one of those conversions is a place a
  * plausible-looking arc can end up at the wrong size.
  */
+/**
+ * The RANGED half of "the weapon that attacked drives the motion" (2026-09-02, asked directly
+ * alongside the melee pass: *"the firing motion could use some optimisation too"*). Same shape as
+ * the melee describe below and the same failure mode: the event carries no weapon, so this
+ * reactor resolves the shooter's spec out of `GameState`, and a conversion that silently
+ * returned nothing would leave every gun in the game kicking like the starter blaster — which is
+ * exactly the state this replaced, and which looks perfectly fine on screen.
+ */
+describe('EventReactor — a shot carries the gun that fired it', () => {
+  const BLASTER = WEAPON_SIM_BY_ID.blaster as RangedSimSpec;
+  const SCATTERGUN = WEAPON_SIM_BY_ID.scattergun as RangedSimSpec;
+
+  /** A state with one player and one enemy, either of which may hold `spec`. Both lists are
+   *  present because `attacker` walks both — which is the point of the enemy case below. */
+  function stateWith(
+    who: 'player' | 'enemy' | 'none',
+    spec: RangedSimSpec,
+  ): GameState {
+    const armed = { id: 7, radius: pxToFp(16), weapon: { spec } };
+    const bare = { id: 7, radius: pxToFp(16), weapon: null };
+    return {
+      players: who === 'player' ? [armed] : [],
+      enemies: who === 'enemy' ? [armed] : who === 'none' ? [bare] : [],
+    } as unknown as GameState;
+  }
+
+  function fireWith(who: 'player' | 'enemy' | 'none', spec: RangedSimSpec) {
+    const actor = {
+      onHurt: vi.fn(), onAttack: vi.fn(), muzzlePos: vi.fn(() => null), x: 0, y: 0,
+    };
+    const host = {
+      ...fakeHost(),
+      activeState: () => stateWith(who, spec),
+      actorAt: vi.fn(() => actor),
+    };
+    const hud = new HudView();
+    hud.build(new Layers(), { w: 1280, h: 720 });
+    new EventReactor(fakeFx(), hud, fakeAudio(), host).consume([
+      { type: 'bullet_fired', ownerId: 7, gx: pxToFp(80), gy: pxToFp(120), facing: 0 } as GameEvent,
+    ]);
+    const calls = (actor.onAttack as unknown as { mock: { calls: [string, ShotShape?][] } })
+      .mock.calls;
+    return calls[0]?.[1];
+  }
+
+  it('hands the rig the shooter own cadence and per-pull damage', () => {
+    const shape = fireWith('player', BLASTER)!;
+    expect(shape.intervalMs).toBeCloseTo((6 * 1000) / 30, 6); // 6 ticks, the starter blaster
+    expect(shape.punch).toBe(1); // 1 damage x 1 bullet
+  });
+
+  it('counts a pellet spread as ONE trigger pull, not five shots', () => {
+    // The scattergun emits five `bullet_fired` events in one frame (see the volley describe
+    // above), so the easy mistake is a per-BULLET punch — which would give each of the five
+    // pellets the blaster's kick and make a shotgun the softest weapon in the game.
+    const shape = fireWith('player', SCATTERGUN)!;
+    expect(shape.punch).toBe(5); // 1 damage x 5 pellets
+    expect(recoilSchedule(shape).modulePx).toBeGreaterThan(recoilSchedule(fireWith('player', BLASTER)!).modulePx);
+  });
+
+  it('resolves an ENEMY shooter, which is most of what fires in a run', () => {
+    // The lookup this replaced only walked `state.players`, because it was written for the melee
+    // branch where that is sufficient (no enemy in the roster carries a blade). Every mob in the
+    // game shoots, so a players-only lookup would have handed the entire enemy roster the
+    // fallback blaster kick and nothing would have looked broken.
+    const shape = fireWith('enemy', ENEMY_GUN_SIM)!;
+    expect(shape.intervalMs).toBeCloseTo((45 * 1000) / 30, 6); // 1.5 s — the roster's slowest
+  });
+
+  it('degrades rather than throwing on a state that carries only one of the two lists', () => {
+    // Not hypothetical: the reactor is handed partial states by menu frames, stale queues and
+    // most of the faked hosts in this repo's suites (`audio/audioPipeline.test.ts`'s is exactly
+    // `{ players: [...] }`). Widening the lookup to a SECOND list is what made this reachable —
+    // the previous players-only version could not touch a field that was not there — so it is
+    // pinned here rather than left to whichever unrelated suite happens to notice.
+    const bare = (state: unknown) => {
+      const actor = {
+        onHurt: vi.fn(), onAttack: vi.fn(), muzzlePos: vi.fn(() => null), x: 0, y: 0,
+      };
+      const host = {
+        ...fakeHost(),
+        activeState: () => state as GameState,
+        actorAt: vi.fn(() => actor),
+      };
+      const hud = new HudView();
+      hud.build(new Layers(), { w: 1280, h: 720 });
+      const reactor = new EventReactor(fakeFx(), hud, fakeAudio(), host);
+      return () => reactor.consume([
+        { type: 'bullet_fired', ownerId: 9, gx: 0, gy: 0, facing: 0 } as GameEvent,
+        { type: 'melee_swing', ownerId: 9, gx: 0, gy: 0, facing: 0 } as GameEvent,
+      ]);
+    };
+    expect(bare({ players: [{ id: 1, radius: pxToFp(16), weapon: null }] })).not.toThrow();
+    expect(bare({ enemies: [{ id: 1, radius: pxToFp(16), weapon: null }] })).not.toThrow();
+    expect(bare({})).not.toThrow();
+  });
+
+  it('falls back to the starter blaster for a shooter with no weapon on the state', () => {
+    // An actor already gone, or a frame where the shot outlives its owner. `undefined` reaches
+    // `AttackMotion.kick`, which derives `DEFAULT_SHOT` — the blaster's own tuned envelope.
+    expect(fireWith('none', BLASTER)).toBeUndefined();
+    expect(recoilSchedule(undefined).totalMs).toBeCloseTo(RECOIL_MS, 6);
+  });
+});
+
 describe('EventReactor — the melee swing carries the weapon that swung', () => {
   const SABER = WEAPON_SIM_BY_ID.saber as MeleeSimSpec;
   const HAMMER = WEAPON_SIM_BY_ID.hammer as MeleeSimSpec;
   const SPEAR = WEAPON_SIM_BY_ID.spear as MeleeSimSpec;
 
-  /** A state holding one player at `id` with `spec` equipped — the narrow slice `meleeSwinger`
-   *  reads (`players[].id/radius/weapon.spec`), faked rather than driven through a real engine
-   *  because what is under test is the translation, not the sim. */
+  /** A state holding one player at `id` with `spec` equipped — the narrow slice `attacker`
+   *  reads (`players[]`/`enemies[]`, each entry's `id`/`radius`/`weapon.spec`), faked rather
+   *  than driven through a real engine because what is under test is the translation, not the
+   *  sim. `enemies` is present and empty rather than absent: the lookup walks BOTH lists since
+   *  the ranged branch started using it, and a fake that omits one would throw on a miss. */
   function stateWith(id: number, spec: MeleeSimSpec | undefined): GameState {
     return {
       players: [{ id, radius: pxToFp(16), weapon: spec ? { spec } : null }],
+      enemies: [],
     } as unknown as GameState;
   }
 
@@ -930,7 +1050,7 @@ describe('EventReactor — the melee swing carries the weapon that swung', () =>
   it('schedules the arc inside the strike window of that weapon own envelope', () => {
     const { pose } = swingWith(SABER);
     // The saber's ACTIVE hit window (4 ticks), not its 11-tick recovery — ENGINE_VERSION 53.
-    const schedule = swingSchedule({ arcDeg: 162, windowMs: (4 * 1000) / 30 });
+    const schedule = swingSchedule(swingShapeOf(SABER));
     expect(pose!.delayMs).toBeCloseTo(schedule.strikeStartMs, 6);
     expect(pose!.sweepMs).toBeCloseTo(schedule.strikeEndMs - schedule.strikeStartMs, 6);
     // The whole fx has to be gone before the next swing of a held trigger starts one.
@@ -944,9 +1064,38 @@ describe('EventReactor — the melee swing carries the weapon that swung', () =>
     const shape = (actor.onAttack as unknown as { mock: { calls: [string, SwingShape][] } })
       .mock.calls[0]![1]!;
     expect(shape.arcDeg).toBeCloseTo(220, 0);
-    // The hammer's 6-tick window, not its 20-tick recovery (ENGINE_VERSION 53). Both consumers
-    // read the same field off the same spec, so this is what keeps them in step.
+    // The hammer's 6-tick window (ENGINE_VERSION 53's anchor for the STRIKE) AND its 20-tick
+    // recovery (which sizes the follow-through, 2026-09-02) — both are read, and they are not
+    // interchangeable. Both consumers read them off the same spec, which keeps them in step.
     expect(shape.windowMs).toBeCloseTo((6 * 1000) / 30, 0);
+    expect(shape.recoveryMs).toBeCloseTo((20 * 1000) / 30, 0);
+    // And the heft the body commits with: 12 grid/s as authored, converted out of the fp/tick
+    // the sim holds it in — to within the sim's own truncation, which loses ~1% on the way in
+    // (`toFpPerTick(12)` is 396, which reads back as 11.88; see `SwingShape.knockback`). The
+    // roster's hardest shove, twice the saber's, which is the part the lunge reads.
+    expect(shape.knockback).toBeCloseTo(12, 0.5);
+    expect(shape.knockback / swingShapeOf(SABER).knockback).toBeCloseTo(2, 6);
+  });
+
+  it('finishes the whole sector fx inside every weapon own recovery, not just the saber', () => {
+    // The arc outlives its own sweep by design (`delayMs + sweepMs + fadeMs`), so "it is gone
+    // before the next swing" is a claim about a SUM, and it was pinned for the starter saber
+    // only. The follow-through now derives from the recovery (2026-09-02), which moves the
+    // envelope this fx schedules against for every weapon EXCEPT the saber — so the one weapon
+    // that was covered is precisely the one that could not have caught a regression.
+    //
+    // A held trigger that restarts the arc while the last one is still fading stacks two sectors
+    // at different angles, which reads as the blade hitting in a direction it is not pointing.
+    for (const [id, spec] of Object.entries(WEAPON_SIM_BY_ID)) {
+      if (spec.kind !== 'melee') continue;
+      const { pose } = swingWith(spec);
+      const recoveryMs = (spec.swingCooldownTicks * 1000) / 30;
+      expect(pose!.delayMs + pose!.sweepMs + pose!.fadeMs, id).toBeLessThan(recoveryMs);
+      // ...and the sweep is the strike itself, so the light is on the ground while the blade is.
+      const schedule = swingSchedule(swingShapeOf(spec));
+      expect(pose!.delayMs, id).toBeCloseTo(schedule.strikeStartMs, 6);
+      expect(pose!.sweepMs, id).toBeCloseTo(schedule.strikeEndMs - schedule.strikeStartMs, 6);
+    }
   });
 
   it('animates but draws no sector for a swinger whose weapon cannot be resolved', () => {
@@ -956,6 +1105,33 @@ describe('EventReactor — the melee swing carries the weapon that swung', () =>
     const { fx, actor } = swingWith(undefined);
     expect(actor.onAttack).toHaveBeenCalledWith('melee', undefined);
     expect(fx.slashArc).not.toHaveBeenCalled();
+  });
+
+  it('falls back rather than mis-deriving when the event and the held weapon disagree', () => {
+    // SWAP is one input away and the queue is drained a frame after the tick that filled it, so a
+    // player can be holding the other kind by the time their own `melee_swing` is read. Deriving
+    // a swing from a GUN's numbers is worse than falling back — `arcHalf`/`swingTicks` simply do
+    // not exist on a `RangedSimSpec`, so every field would come out `NaN` and the blade would
+    // freeze mid-air. `specOf` narrows on `kind` for exactly this, and nothing else covered it.
+    const actor = { onHurt: vi.fn(), onAttack: vi.fn(), muzzlePos: vi.fn(() => null), x: 0, y: 0 };
+    const host = {
+      ...fakeHost(),
+      activeState: () => ({
+        players: [{ id: 7, radius: pxToFp(16), weapon: { spec: WEAPON_SIM_BY_ID.blaster } }],
+        enemies: [],
+      } as unknown as GameState),
+      actorAt: vi.fn(() => actor),
+    };
+    const fx = fakeFx();
+    const hud = new HudView();
+    hud.build(new Layers(), { w: 1280, h: 720 });
+    new EventReactor(fx, hud, fakeAudio(), host).consume([
+      { type: 'melee_swing', ownerId: 7, gx: 0, gy: 0, facing: 0 } as GameEvent,
+    ]);
+    // The swing still animates — a stroke through empty air is a real action the player took —
+    // but on the starter saber's shape rather than on a gun reinterpreted as a blade.
+    expect(actor.onAttack).toHaveBeenCalledWith('melee', undefined);
+    expect(fx.slashArc).not.toHaveBeenCalled(); // and no sector is drawn at a made-up size
   });
 
   it('draws no sector on a menu frame draining a stale swing', () => {

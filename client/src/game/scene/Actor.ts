@@ -8,7 +8,7 @@ import { Skin } from './Skin';
 import { drawHealthBar } from './healthBar';
 import { auraMaskOf, drawStatusAura, AURA_BIT_BURN } from './statusAura';
 import { BODY_LIFT_R, HOVER } from './actorLift';
-import type { SwingShape } from '../../render/rigAttackMotion';
+import type { ShotShape, SwingShape } from '../../render/rigAttackMotion';
 
 export type Faction = 'player' | 'enemy';
 export type WeaponKind = 'ranged' | 'melee';
@@ -422,9 +422,16 @@ export class Actor extends Entity {
    *  `attack` clip over idle/move plus an aim-relative envelope — a shot kicks the module back
    *  (taking `muzzlePos()` with it), a swing sweeps forward. See `render/rigAttackMotion.ts`.
    *
-   *  `swing` is the melee weapon's own sector and recovery, which is what SIZES and PACES the
-   *  sweep; omitted for a shot, and for a swinging actor whose weapon could not be resolved. */
-  onAttack(kind: WeaponKind, swing?: SwingShape): void { this.skin.attack(kind, swing); }
+   *  The shape is the WEAPON that attacked, and it is what SIZES and PACES the motion: for a
+   *  swing its sector, hit window, recovery and knockback; for a shot its fire interval and the
+   *  damage one trigger pull puts out. Omitted for an attacker whose weapon could not be
+   *  resolved, which falls back to that kind's starter weapon. */
+  onAttack(kind: 'ranged', shot?: ShotShape): void;
+  onAttack(kind: 'melee', swing?: SwingShape): void;
+  onAttack(kind: WeaponKind, shape?: ShotShape | SwingShape): void {
+    if (kind === 'melee') this.skin.attack(kind, shape as SwingShape | undefined);
+    else this.skin.attack(kind, shape as ShotShape | undefined);
+  }
 
   /** Keeps `healthBar` tracking this actor's own screen position at its fixed offset — it is
    *  deliberately not a child (see the constructor's doc comment), so nothing else moves it.

@@ -13,7 +13,9 @@ import {
   resolveWeaponMount,
   type ModuleMount, type WeaponMountMode,
 } from './rigWeaponMount';
-import { AttackMotion, type AttackKind, type SwingShape } from './rigAttackMotion';
+import {
+  AttackMotion, type AttackKind, type ShotShape, type SwingShape,
+} from './rigAttackMotion';
 import { ClipLayers } from './rigClipLayer';
 
 // `barrelReach` moved to ./rigWeaponMount with the rest of the mount geometry; re-exported
@@ -167,9 +169,16 @@ export class RigSkin {
 
   /** An attack just left this rig — one entry point for both kinds, which is the whole point:
    *  a shot and a swing start the same authored `attack` clip and the same envelope, and only
-   *  the envelope's SHAPE differs by kind. */
-  attack(kind: AttackKind, swing?: SwingShape): void {
-    this.motion.kick(kind, swing);
+   *  the envelope's SHAPE differs by kind. The shape is the WEAPON that attacked (its sector,
+   *  hit window, recovery and knockback for a swing; its cadence and per-pull damage for a
+   *  shot); omitted, the envelope falls back to that kind's starter weapon. */
+  attack(kind: 'ranged', shot?: ShotShape): void;
+  attack(kind: 'melee', swing?: SwingShape): void;
+  attack(kind: AttackKind, shape?: ShotShape | SwingShape): void {
+    // The overloads above are the pairing check; this body has already lost it, so the two
+    // `kick` overloads are re-selected by the same discriminant rather than by a cast.
+    if (kind === 'melee') this.motion.kick(kind, shape as SwingShape | undefined);
+    else this.motion.kick(kind, shape as ShotShape | undefined);
     this.layers.attack();
   }
 
@@ -248,10 +257,11 @@ export class RigSkin {
     return canonicalAimRad(this.aimRad, this.flipX);
   }
 
-  /** Where the WEAPON points: the aim plus the melee swing's arc. Separate from the aim above
-   *  on purpose — the eye follows the target, not the blade. Equal to it for a gun. */
+  /** Where the WEAPON points: the aim plus whatever the attack envelope adds to it — a melee
+   *  swing's arc, or a shot's muzzle climb. Separate from the aim above on purpose: the eye
+   *  follows the target, not the blade, and it does not ride the recoil either. */
   private canonicalWeaponAngleRad(): number {
-    return this.canonicalSocketAngleRad() + (this.motion.swingDeg * Math.PI) / 180;
+    return this.canonicalSocketAngleRad() + (this.motion.weaponDeg * Math.PI) / 180;
   }
 
   /** Recompute FK from the current clip sample and push it onto the sprites. Call once per render frame. */

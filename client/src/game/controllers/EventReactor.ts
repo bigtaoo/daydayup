@@ -1,12 +1,13 @@
 import {
-  WEAPON_SIM_BY_ID, BLUEPRINT_CATALOG, MATERIAL_DEFS, RUN_BUFFS, TICK_RATE,
-  type GameEvent, type GameState, type MeleeSimSpec,
+  WEAPON_SIM_BY_ID, BLUEPRINT_CATALOG, MATERIAL_DEFS, RUN_BUFFS,
+  type GameEvent, type GameState, type MeleeSimSpec, type WeaponSimSpec,
 } from '@dd/engine';
 import { THEME, rarityColor, ELEMENT_COLORS } from '../theme';
 import { SCORE } from '../score';
 import { fpToPx, bradToRad } from '../coords';
 import { facingFromAngle } from '../../render/facing';
-import { swingSchedule, type SwingShape } from '../../render/rigAttackMotion';
+import { swingSchedule, type AttackTrigger } from '../../render/rigAttackMotion';
+import { byId, specOf, shotShapeOf, swingShapeOf } from './attackShapes';
 import type { FxController } from '../fx/FxController';
 import type { HudView } from '../ui/HudView';
 import type { AudioBus, AudioCue } from '../../platform/types';
@@ -48,7 +49,7 @@ export interface EventReactorHost {
    *  off its own diff. This reactor only carries what an EVENT announces. */
   actorAt(id: number): {
     onHurt(dx?: number, dy?: number): void;
-    onAttack(kind: 'ranged' | 'melee', swing?: SwingShape): void;
+    onAttack: AttackTrigger;
     muzzlePos(): { x: number; y: number } | null;
     x: number;
     y: number;
@@ -127,7 +128,12 @@ export class EventReactor {
           // boss, the Graphics placeholder, the frames before the weapon texture preloads) —
           // those keep the old sim position plus the same 12 px lift `flash()`/`trailDot()` use.
           const shooter = this.host.actorAt(e.ownerId);
-          shooter?.onAttack('ranged'); // clip + recoil — render-only, see Actor.onAttack
+          // clip + recoil — render-only, see Actor.onAttack. The SHOOTER's own weapon sizes and
+          // paces the kick (`render/attack/shotShape.ts`); resolved from the state for the same
+          // reason the swing below is, and over players AND enemies, since every enemy in the
+          // roster shoots. A shooter that cannot be resolved falls back to the starter blaster.
+          const gun = specOf(this.attacker(e.ownerId), 'ranged');
+          shooter?.onAttack('ranged', gun && shotShapeOf(gun));
           const drawn = shooter?.muzzlePos() ?? null;
           const fx = drawn ? drawn.x : fpToPx(e.gx);
           const fy = drawn ? drawn.y : fpToPx(e.gy) - 12;
@@ -149,9 +155,11 @@ export class EventReactor {
           // (design/08 keeps events to what the sim announces, and every client already holds
           // the whole `GameState` — the netcode broadcasts inputs, not entities). Resolved from
           // there rather than added to the event, so no engine/protocol shape changes.
-          const swinger = this.meleeSwinger(e.ownerId);
-          this.host.actorAt(e.ownerId)?.onAttack('melee', swinger && swingShapeOf(swinger.spec));
-          if (swinger) this.slashSector(swinger, bradToRad(e.facing), fpToPx(e.gx), fpToPx(e.gy));
+          const swinger = this.attacker(e.ownerId);
+          const blade = specOf(swinger, 'melee');
+          this.host.actorAt(e.ownerId)?.onAttack('melee', blade && swingShapeOf(blade));
+          if (swinger && blade)
+            this.slashSector(blade, swinger.radiusPx, bradToRad(e.facing), fpToPx(e.gx), fpToPx(e.gy));
           cue('swing');
           break;
         }
@@ -398,18 +406,27 @@ export class EventReactor {
   }
 
   /**
-   * The melee weapon an actor swung, plus its own body radius — the arc's inner edge.
+   * The weapon an actor just attacked with, plus its own body radius — the melee arc's inner
+   * edge. Both attack branches above go through this: the shape they hand the rig is what sizes
+   * and paces the motion, and neither event carries it (design/08 keeps events to what the sim
+   * announces, and every client already holds the whole `GameState` — the netcode broadcasts
+   * inputs, not entities). Resolved from there rather than added to the event, so no
+   * engine/protocol shape change was needed for either kind.
    *
-   * Only PLAYERS can carry one: `HitResolveSystem.meleeArc` is called over `state.players`, and
-   * every enemy in the roster is built on the generic ranged AI (`content/enemies.ts`: "no
-   * ranged/melee AI split exists yet"). So a lookup that misses is the normal case for an
-   * enemy's `melee_swing`, not an error — both callers treat it as "no spec, keep the default".
+   * PLAYERS AND ENEMIES, unlike the players-only lookup this replaced. That one was written for
+   * the melee branch, where it was sufficient — `HitResolveSystem.meleeArc` is called over
+   * `state.players` and every enemy in the roster is built on the generic ranged AI
+   * (`content/enemies.ts`: "no ranged/melee AI split exists yet"), so no enemy can swing. The
+   * RANGED branch is the other way round: enemies are most of what fires, and a players-only
+   * lookup would have given every mob in the game the fallback blaster kick. A miss is still not
+   * an error — an actor already gone from the state on the frame its own event is drained — and
+   * every caller treats it as "no spec, keep that kind's starter weapon".
    */
-  private meleeSwinger(ownerId: number): { spec: MeleeSimSpec; radiusPx: number } | undefined {
-    const p = this.host.activeState()?.players.find(q => q.id === ownerId);
-    const spec = p?.weapon?.spec;
-    if (!p || spec?.kind !== 'melee') return undefined;
-    return { spec, radiusPx: fpToPx(p.radius) };
+  private attacker(ownerId: number): { spec: WeaponSimSpec; radiusPx: number } | undefined {
+    const s = this.host.activeState();
+    const a = byId(s?.players, ownerId) ?? byId(s?.enemies, ownerId);
+    const spec = a?.weapon?.spec;
+    return a && spec ? { spec, radiusPx: fpToPx(a.radius) } : undefined;
   }
 
   /**
@@ -419,12 +436,12 @@ export class EventReactor {
    * so it has to agree with the hit test, and the body is mid-lunge for the whole of the sweep.
    */
   private slashSector(
-    swinger: { spec: MeleeSimSpec; radiusPx: number },
+    spec: MeleeSimSpec,
+    radiusPx: number,
     facingRad: number,
     x: number,
     y: number,
   ): void {
-    const { spec, radiusPx } = swinger;
     const schedule = swingSchedule(swingShapeOf(spec));
     this.fx.slashArc({
       x,
@@ -448,15 +465,4 @@ export class EventReactor {
       fadeMs: (schedule.strikeEndMs - schedule.strikeStartMs) * 2,
     });
   }
-}
-
-/** The two `MeleeSimSpec` fields the swing envelope is derived from, in render units:
- *  `arcHalf` is brad (half-sector), `swingTicks` is the sim's ACTIVE HIT WINDOW in ticks
- *  (design/07 step 7 — it was `swingCooldownTicks`, the recovery, until `ENGINE_VERSION` 53
- *  gave the window a real number to read; see `SwingShape.windowMs` for why they differ). */
-function swingShapeOf(spec: MeleeSimSpec): SwingShape {
-  return {
-    arcDeg: (bradToRad(spec.arcHalf) * 360) / Math.PI,
-    windowMs: (spec.swingTicks * 1000) / TICK_RATE,
-  };
 }
