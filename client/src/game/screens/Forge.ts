@@ -4,7 +4,7 @@ import {
   type WeaponBlueprint,
 } from '@dd/engine';
 import type { MetaState } from '../../meta';
-import { bankTotal, canAfford, isUnlocked, purchasableBlueprints } from '../../meta';
+import { bankTotal, canAfford, isUnlocked, kindAlreadyStaged, purchasableBlueprints } from '../../meta';
 import { Panel, Button } from '../ui/widgets';
 import { BlueprintCard } from '../ui/BlueprintCard';
 import { CompareCard, buildCompareRows, equippedSpecOfKind } from '../ui/compareCard';
@@ -252,10 +252,17 @@ export class Forge {
       const unlocked = isUnlocked(m, id);
       const staged = m.loadout.filter((x) => x === id).length;
       const affordable = canAfford(m, bp);
+      // A blueprint whose weapon KIND is already staged cannot be crafted however much
+      // material the bank holds (design/03/05's one-gun-and-one-melee invariant, gated in
+      // `meta/forge.ts craft`). Say so on the card: without this the press just plays
+      // `ui.denied` on an unlocked, affordable weapon, which reads as a lost input rather
+      // than as a rule.
+      const kindTaken = unlocked && kindAlreadyStaged(m, id);
       const status = !unlocked
         ? (bp.source === 'drop' ? t('forge.lockedFind') : t('forge.lockedSource', { source: t(SOURCE_KEY[bp.source]) }))
+        : kindTaken ? t('forge.kindTaken')
         : affordable ? t('forge.craftable') : t('forge.needMaterials');
-      const statusColor = !unlocked ? 0x718096 : affordable ? 0x68d391 : 0xf6ad55;
+      const statusColor = !unlocked || kindTaken ? 0x718096 : affordable ? 0x68d391 : 0xf6ad55;
       const key = i < 9 ? `${i + 1}` : '·'; // only the first 9 have a digit-key shortcut
       const spec = WEAPON_SPECS[bp.weaponId];
       const borderColor = spec ? RARITY_COLORS[RARITY_TIERS[spec.rarity].colorKey] : 0x4c566a;

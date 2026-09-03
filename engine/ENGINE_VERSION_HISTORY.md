@@ -1342,3 +1342,50 @@ have stood in.
 already resolves the spec out of the `GameState` every client holds, so the field had no reader —
 a second source of truth for a number the only consumer already has, which is the very shape
 `swingSec` spent two months in.
+
+## v54: a heal pickup at full HP stays on the floor (design/05 "only when useful")
+
+design/05's Pickup rules have carried a locked clause since the mode was written: *"Consumables
+— auto-apply, but only when useful. To avoid overheal waste with **no item bag**, the pickup
+radius only triggers **when the effect would actually do something** — at full HP the health
+pickup is left on the floor for you to grab later."*
+
+`PickupSystem.apply` implemented the first half and not the second: `p.hp = Math.min(p.maxHp,
+p.hp + HEAL_PICKUP_AMOUNT)`, reached from an unconditional overlap test. A full-HP player
+walking over a heal consumed it, clamped it away, and emitted the `pickup` event (so the HUD
+even toasted `+1 HP`). That is the one item in the game that restores the one pool nothing else
+restores — HP never regenerates (design/07: *"HP is the hard floor… recovered only by items"*)
+— being deleted for zero effect, in a mode whose difficulty target is *"hard overall"*.
+
+Fixed by a `wouldApply(p, item)` gate in the player loop, ahead of the overlap test. It is a
+`continue`, not a `break`, so a full-HP teammate standing on a drop cannot deny it to a hurt
+one on the same tick. Only `heal` has a clause: `material`/`bandage` accumulate uncapped, and a
+`buff` is a stack entry Σ-clamped at USE time rather than an instant item, so "is this one
+already wasted" is not a question the pickup site can answer — see the function's own comment.
+
+**Why the bump, when the golden gate did not move.** Measured before bumping, per this file's
+own rule — and all five scenarios' hashes and witnesses were byte-identical. That is a real
+statement about the gate's coverage, not a licence to skip the bump: no scenario in the set ever
+has a full-HP player overlap a heal (the two that collect any drop are damaged by then), so the
+fixture is blind to this change by construction. The change genuinely can diverge an old stream
+— an uncollected pickup stays in `state.pickups`, which is hashed and which a later tick can
+still collect — so an old recording replayed on v54 would fork the first time a healthy player
+crossed a heal. `ENGINE_VERSION` is the guard for exactly that, and the five hashes below moved
+only because `version` is itself serialized:
+
+```
+                       hash (v53 → v54)           witness
+arena-waves            2640344510 → 1650267439   unchanged
+walls-and-pillars      2844423768 → 1986169461   unchanged
+ember-dungeon-floor1   1853881631 → 1230281610   unchanged (pickup 8, still)
+brim-grinder           2117829639 →  598306750   unchanged
+launch-arena-pvp       2531138778 → 3387435011   unchanged (pickup 1, still)
+```
+
+**Coverage** is therefore unit-level, in `systems/pickups.test.ts` (4 new): the full-HP player
+leaves it and gets no `pickup` event, the same item is collected on a later tick once damaged,
+the hurt teammate takes it past a full one, and a `material` is still collected at full HP so
+the rule stays heal-specific. The pre-existing "heal restores up to maxHp, never over" test also
+gained a `pickups.length` assertion at each step — it asserted only `hp`, and "hp unchanged at
+full HP" was already true of the bug, which is why it never caught it. Its boundary case
+(`maxHp - 1` still collects) is the other side of the gate.

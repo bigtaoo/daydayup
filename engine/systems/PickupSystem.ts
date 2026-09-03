@@ -5,7 +5,13 @@
  * pickups are compacted out in place.
  *
  * Effects (design/05 the in-run power ramp):
- *   heal     — restore up to maxHp. Auto, on overlap.
+ *   heal     — restore up to maxHp. Auto, on overlap — but ONLY while it would
+ *              actually heal (`wouldApply`): a full-HP player walks over it and
+ *              leaves it lying there to grab later. That is design/05's locked
+ *              "consumables auto-apply, but only when useful" rule, which exists
+ *              because there is no item bag to hold one in; it went unimplemented
+ *              until `ENGINE_VERSION` 54, so the ONE item that restores the one
+ *              pool nothing else restores was silently binned at full HP.
  *   material — added to this floor's un-banked buffer (state.floorMaterials,
  *              design/05, ROADMAP 1.4/1.5); banked at an extraction checkpoint
  *              (ExtractionSystem), forfeited on a run-ending death. Auto, on overlap.
@@ -40,6 +46,33 @@ import type { PickupItem, PlayerActor, WeaponSimSpec } from '../state/entities';
 import { dropClearance } from '../state/actorRadius';
 import { circlesOverlap, clampToWalkable, retainAlive } from './geom';
 
+/**
+ * Would collecting `item` change `p`'s state at all? design/05's *"consumables —
+ * auto-apply, but only when useful"*: with no item bag, an instant item collected at
+ * full effect is destroyed for nothing, so the pickup radius must not trigger for it.
+ *
+ * **Only `heal` has a condition, deliberately.** `material`/`bandage` accumulate with no
+ * cap, so they always do something. `buff` looks like a candidate and is not one: the
+ * `mult_*` families are Σ-then-clamped at USE time (`sumBuffs`, read by WeaponFire /
+ * HitResolve), so "is this buff already at its cap" is not a question this call site can
+ * answer without duplicating that arithmetic — and a run buff is a permanent stack entry,
+ * not the "instant item" design/05's rule is about. `weapon` is click-driven and never
+ * auto-collected in the first place. If a shield/temp-buff instant item is ever added,
+ * this is the one place it needs a clause.
+ *
+ * Per-PLAYER, not per-item: it is called inside the player loop, so a full-HP teammate
+ * standing on a heal does not block a hurt one from taking it on the same tick.
+ *
+ * **Exported because the `?pickupDebug=1` overlay has to agree with it.** That tool's whole
+ * contract is "a green dot means the sim would collect this" (`PickupDebugOverlay.ts`), and
+ * its own parity test runs the real `PickupSystem` beside the readout — so a second copy of
+ * this predicate would be exactly the drift design/18's G6 is about. It called this out by
+ * failing the moment the gate landed.
+ */
+export function pickupWouldApply(p: PlayerActor, item: PickupItem): boolean {
+  return item.kind === 'heal' ? p.hp < p.maxHp : true;
+}
+
 export class PickupSystem {
   tick(state: GameState): void {
     // Reveal pass FIRST, same tick, so a crate a player is already standing inside
@@ -63,6 +96,7 @@ export class PickupSystem {
         const p = state.players[i]!;
         if (!p.alive) continue;
         if (isWeapon && p.pickupTargetId !== item.id) continue; // must have clicked THIS item this tick
+        if (!pickupWouldApply(p, item)) continue; // design/05: no-op consumables stay on the floor
         if (!circlesOverlap(item.gx, item.gy, radius, p.gx, p.gy, p.radius)) continue;
         this.apply(state, p, item);
         item.alive = false;

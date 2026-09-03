@@ -5,11 +5,12 @@
  * beyond that one config field, so these can drive the real createGameEngine.
  */
 import { describe, it, expect } from 'vitest';
-import { createGameEngine, WEAPON_SIM_BY_ID, PLAYER_BASE, bankKey, parseBankKey } from '@dd/engine';
+import { createGameEngine, WEAPON_SIM_BY_ID, PLAYER_BASE, bankKey, parseBankKey, resolveLoadout } from '@dd/engine';
+import type { MetaState } from './index';
 import {
   defaultMetaState, bankMaterials, unlockBlueprint, isUnlocked, canAfford, craft,
   clearLoadout, selectCharacter, grantCharacter, acquireBlueprint, purchasableBlueprints,
-  bankTotal, MemoryMetaStore, createWebMetaStore, migrate,
+  bankTotal, kindAlreadyStaged, MemoryMetaStore, createWebMetaStore, migrate,
 } from './index';
 import { BLUEPRINT_CATALOG } from '@dd/engine';
 
@@ -70,11 +71,14 @@ describe('craft', () => {
 
   it('rejects once the loadout is full (WEAPON_SLOTS)', () => {
     let m = defaultMetaState();
-    m = bankMaterials(m, { mat_physical: 3, mat_fire: 3 });
-    m = unlockBlueprint(m, 'flamer'); // already a starter, but explicit
-    const a = craft(m, 'repeater');
+    // One of each KIND — a same-kind pair is rejected before it can ever fill the
+    // second slot now (see the one-gun-and-one-melee block below), so a full loadout
+    // can only be reached with a gun and a blade.
+    m = bankMaterials(m, { mat_physical: 6 });
+    m = unlockBlueprint(m, 'hammer'); // already a starter, but explicit
+    const a = craft(m, 'repeater'); // ranged
     expect(a.ok).toBe(true);
-    const b = a.ok ? craft(a.meta, 'flamer') : a;
+    const b = a.ok ? craft(a.meta, 'hammer') : a; // melee
     expect(b.ok).toBe(true);
     if (b.ok) {
       expect(b.meta.loadout).toHaveLength(PLAYER_BASE.weaponSlots);
@@ -82,6 +86,76 @@ describe('craft', () => {
       const withMore = bankMaterials(b.meta, { mat_physical: 5 });
       expect(craft(withMore, 'repeater')).toEqual({ ok: false, reason: 'loadout-full' });
     }
+  });
+});
+
+/**
+ * design/03/05's *"every loadout carries one gun and one melee weapon, so parry is always
+ * OWNED"* (`ENGINE_VERSION` 45). Before this gate the claim was false in ordinary play:
+ * `resolveLoadout` only fills FREE slots by kind and honours a staged same-kind pair
+ * verbatim, and `craft` checked only the slot COUNT — so `repeater` + `scattergun`, two of
+ * the five blueprints a fresh account starts with, both guns, staged into a melee-less run.
+ *
+ * Each test below states which half of the invariant it holds, because "craft returned
+ * `ok: false`" alone would also pass against a bank that simply ran out of materials.
+ */
+describe('craft — one gun and one melee weapon (design/03/05 invariant)', () => {
+  function stagedWith(id: string): MetaState {
+    let m = defaultMetaState();
+    m = bankMaterials(m, { mat_physical: 20, mat_fire: 20 });
+    const r = craft(m, id);
+    expect(r.ok).toBe(true); // the premise, not the assertion
+    return r.ok ? r.meta : m;
+  }
+
+  it('rejects a second RANGED blueprint with a gun already staged — and it is affordable', () => {
+    const m = stagedWith('repeater');
+    expect(canAfford(m, BLUEPRINT_CATALOG.scattergun!)).toBe(true); // so 'unaffordable' is ruled out
+    expect(m.loadout).toEqual(['repeater']); // and 'loadout-full' is ruled out
+    expect(craft(m, 'scattergun')).toEqual({ ok: false, reason: 'kind-taken' });
+  });
+
+  it('rejects a second MELEE blueprint with a blade already staged', () => {
+    const m = stagedWith('hammer');
+    expect(canAfford(m, BLUEPRINT_CATALOG.spear!)).toBe(true);
+    expect(craft(m, 'spear')).toEqual({ ok: false, reason: 'kind-taken' });
+  });
+
+  it('rejects re-crafting the SAME blueprint twice (the narrowest same-kind case)', () => {
+    const m = stagedWith('repeater');
+    expect(craft(m, 'repeater')).toEqual({ ok: false, reason: 'kind-taken' });
+  });
+
+  it('still allows the other kind, and the pair resolves to one gun + one blade in the run', () => {
+    const m = stagedWith('repeater');
+    const withBlade = craft(m, 'hammer');
+    expect(withBlade.ok).toBe(true);
+    if (!withBlade.ok) return;
+    expect(withBlade.meta.loadout).toEqual(['repeater', 'hammer']);
+    // The point of the gate: what the RUN spawns holding, not just what the bank allows.
+    const kinds = resolveLoadout(withBlade.meta.loadout).map((w) => w.kind);
+    expect([...kinds].sort()).toEqual(['melee', 'ranged']);
+  });
+
+  it('an empty loadout accepts either kind first', () => {
+    let m = defaultMetaState();
+    m = bankMaterials(m, { mat_physical: 20 });
+    expect(craft(m, 'repeater').ok).toBe(true);
+    expect(craft(m, 'hammer').ok).toBe(true);
+  });
+
+  it('kindAlreadyStaged ignores an id the weapon catalog does not know (forward-compat)', () => {
+    // design/09: an unknown id is dropped by resolveLoadout, so it occupies no kind and
+    // must not block a real weapon. A `loadout` can hold one after a content downgrade.
+    const m = { ...defaultMetaState(), loadout: ['ghost_weapon'] };
+    expect(kindAlreadyStaged(m, 'repeater')).toBe(false);
+    expect(kindAlreadyStaged(m, 'ghost_weapon')).toBe(false);
+  });
+
+  it('clearLoadout frees the kind again', () => {
+    const m = stagedWith('repeater');
+    expect(kindAlreadyStaged(m, 'scattergun')).toBe(true);
+    expect(kindAlreadyStaged(clearLoadout(m), 'scattergun')).toBe(false);
   });
 });
 
@@ -253,12 +327,15 @@ describe('meta loadout reaches the run via EngineConfig.loadout', () => {
   };
 
   it('a crafted loadout becomes the player’s carried weapons', () => {
-    const start = bankMaterials(defaultMetaState(), { mat_physical: 3, mat_fire: 3 });
+    // One gun + one blade: the only shape a full crafted loadout can take now (the
+    // same-kind gate above). This used to craft `repeater` + `flamer`, two guns —
+    // which is exactly the melee-less run design/03/05 claimed was impossible.
+    const start = bankMaterials(defaultMetaState(), { mat_physical: 6 });
     const r1 = craft(start, 'repeater');
-    const r2 = r1.ok ? craft(r1.meta, 'flamer') : r1;
+    const r2 = r1.ok ? craft(r1.meta, 'hammer') : r1;
     const loadout = r2.ok ? r2.meta.loadout : [];
-    expect(loadout).toEqual(['repeater', 'flamer']);
-    expect(names(loadout)).toEqual([WEAPON_SIM_BY_ID.repeater!.name, WEAPON_SIM_BY_ID.flamer!.name]);
+    expect(loadout).toEqual(['repeater', 'hammer']);
+    expect(names(loadout)).toEqual([WEAPON_SIM_BY_ID.repeater!.name, WEAPON_SIM_BY_ID.hammer!.name]);
   });
 
   it('an absent loadout keeps the default starter loadout (byte-compatible with old configs)', () => {

@@ -30,8 +30,16 @@
  *
  * Both resolutions bank state.floorMaterials into state.bankedMaterials (design/05
  * "materials so far are locked in" on descend; "keep materials" on extract) — a
- * run-ending DEATH never reaches here, so the floor buffer is simply never merged,
- * which IS the "forfeit only this floor's un-banked buffer" rule, for free.
+ * run-ending DEATH never reaches here, so the floor buffer is simply never merged.
+ *
+ * That is only HALF the forfeit rule, and this comment used to name the wrong half
+ * ("forfeit only this floor's un-banked buffer" — design/05's own locked wipe rule
+ * is stricter, and had been since ROADMAP 3.2). `bankedMaterials` is not safe either:
+ * it leaves the sim only when the CLIENT hands it to the meta layer, and
+ * `RunOutcome.lose()` deliberately never does. So the shipped rule is **a death
+ * forfeits the entire un-extracted carry-out**, both tiers, and the two-tier split
+ * here is per-floor bookkeeping for the HUD — not a risk boundary. Nothing in this
+ * file needs to change for that; the merge simply is not where the guarantee lives.
  */
 import type { GameState } from '../state/GameState';
 

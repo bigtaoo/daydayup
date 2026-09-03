@@ -31,7 +31,7 @@ The concrete answer to this doc's opening goal ("a very large variety of weapons
 
 | Axis | Decides | Status |
 |------|---------|--------|
-| **Frame** | *behavior* — how shots leave the muzzle and how they fly (or, for melee, the swing's shape) | only `straight` shipped — **the main gap** |
+| **Frame** | *behavior* — how shots leave the muzzle and how they fly (or, for melee, the swing's shape) | **shipped, whole axis** — see the landing order below (`ENGINE_VERSION` 15/16). This cell read "only `straight` shipped — the main gap" until 2026-09-03, twenty lines above the table that closed it. |
 | **Element** | *status layer* — burn / chill / chain / poison-stack + resist/weakness (above) | shipped (`ENGINE_VERSION` 8) |
 
 **The bet: variety is combinatorial, not authored per weapon.** `N` ranged frames × 5 elements yields `N×5` distinct-feeling guns from `N+5` pieces. One weapon = one frame id + one **baked-in** element tag + a fixed stat row — nothing hard-coded per weapon. Element is a fixed property of the weapon (a "fire rifle" and an "ice rifle" are different weapons), not swapped by a drop.
@@ -110,7 +110,7 @@ Deflect is **part of the melee attack — not a separate state or button.** Pres
 
 So there is no `isBlocking`, no block key, no separate `blockArc` — the arc that hits enemies is the arc that bats bullets back. A per-weapon `deflect: bool` gates whether a given melee weapon can parry at all.
 
-**Where the ranged-vs-melee trade-off actually lives (`ENGINE_VERSION` 45).** It used to read "ranged loadouts get no parry" — a BUILD-level choice. That is no longer true, and deliberately so: every loadout now carries one gun and one melee weapon (`resolveLoadout`, `09`; PvP's landing kit is the same pair, `15`), because a one-weapon loadout silently removed the swap verb from the game. The trade-off is now MOMENT-level: the swap is instant and free, but only the active weapon's arc exists, so you cannot hold the gun's uptime and the saber's parry sector in the same instant — you choose, mid-fight, which one is in your hands when the bullet arrives. Both halves are always OWNED; neither is ever both-at-once.
+**Where the ranged-vs-melee trade-off actually lives (`ENGINE_VERSION` 45).** It used to read "ranged loadouts get no parry" — a BUILD-level choice. That is no longer true, and deliberately so: every loadout now carries one gun and one melee weapon (`resolveLoadout`, `09`; PvP's landing kit is the same pair, `15`), because a one-weapon loadout silently removed the swap verb from the game. **The PvE half of that only became enforceable on 2026-09-03**: `resolveLoadout` fills FREE slots by kind but honours an explicitly-staged same-kind pair verbatim, and the forge checked only the slot count — so `repeater` + `scattergun` (two of the five blueprints a fresh account starts unlocked, both guns) produced exactly the melee-less run this paragraph says cannot happen. `meta/forge.ts craft` now refuses a kind already staged; `resolveLoadout` is unchanged, so a hand-built `EngineConfig` can still ask for two of a kind on purpose. The trade-off is now MOMENT-level: the swap is instant and free, but only the active weapon's arc exists, so you cannot hold the gun's uptime and the saber's parry sector in the same instant — you choose, mid-fight, which one is in your hands when the bullet arrives. Both halves are always OWNED; neither is ever both-at-once.
 
 - Extensible: perfect-swing timing window for a damage bonus, etc.
 

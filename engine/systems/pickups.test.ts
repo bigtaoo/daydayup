@@ -27,11 +27,84 @@ describe('PickupSystem — the in-run power ramp (design/05)', () => {
     dropOnPlayer(s, { kind: 'heal' });
     sys.tick(s);
     expect(p.hp).toBe(3);
+    expect(s.pickups).toHaveLength(0); // consumed
 
-    p.hp = p.maxHp;
+    // One point short of full still collects — the boundary on the useful side.
+    p.hp = p.maxHp - 1;
     dropOnPlayer(s, { kind: 'heal' });
     sys.tick(s);
-    expect(p.hp).toBe(p.maxHp); // capped
+    expect(p.hp).toBe(p.maxHp);
+    expect(s.pickups).toHaveLength(0);
+  });
+
+  // design/05's locked "consumables auto-apply, but only when useful" rule. There is no
+  // item bag, so a heal collected at full HP is destroyed for nothing — and HP is the one
+  // pool nothing else in the game restores. Shipped ENGINE_VERSION 54; before it,
+  // `apply` clamped with Math.min and the item was consumed regardless, which LOOKED
+  // correct from the hp assertion alone (that is why the test above grew a pickups-length
+  // assertion too: "hp unchanged" was already true of the bug).
+  it('a full-HP player leaves a heal on the floor instead of binning it', () => {
+    const s = createGameState(CFG);
+    const p = s.players[0]!;
+    p.hp = p.maxHp;
+    dropOnPlayer(s, { kind: 'heal' });
+
+    sys.tick(s);
+
+    expect(p.hp).toBe(p.maxHp);
+    expect(s.pickups).toHaveLength(1);
+    expect(s.pickups[0]!.alive).toBe(true);
+    expect(s.events.filter((e) => e.type === 'pickup')).toHaveLength(0); // no toast either
+  });
+
+  it('the same heal is collected on a later tick, once the player has taken damage', () => {
+    const s = createGameState(CFG);
+    const p = s.players[0]!;
+    p.hp = p.maxHp;
+    dropOnPlayer(s, { kind: 'heal' });
+    const id = s.pickups[0]!.id;
+
+    sys.tick(s);
+    expect(s.pickups[0]!.id).toBe(id); // same item, still there
+
+    p.hp -= 1;
+    sys.tick(s);
+
+    expect(p.hp).toBe(p.maxHp);
+    expect(s.pickups).toHaveLength(0);
+  });
+
+  // The gate is per-PLAYER, inside the player loop — a `continue`, not a `break`. Were it
+  // per-item, the full teammate standing on it would deny it to the hurt one.
+  it('a full-HP player standing on a heal does not block a hurt co-op teammate from taking it', () => {
+    const s = createGameState({ ...CFG, players: [{ teamId: 0 }, { teamId: 0 }] });
+    const full = s.players[0]!;
+    const hurt = s.players[1]!;
+    full.hp = full.maxHp;
+    hurt.hp = 1;
+    hurt.gx = full.gx;
+    hurt.gy = full.gy; // both overlapping the same drop
+    dropOnPlayer(s, { kind: 'heal' });
+
+    sys.tick(s);
+
+    expect(full.hp).toBe(full.maxHp);
+    expect(hurt.hp).toBe(2);
+    expect(s.pickups).toHaveLength(0);
+  });
+
+  // Only `heal` is gated (see `wouldApply`'s own doc): the other auto kinds accumulate
+  // with no local cap, so "would it do something" is always yes for them.
+  it('a material is still collected at any state — the rule is heal-specific', () => {
+    const s = createGameState(CFG);
+    const p = s.players[0]!;
+    p.hp = p.maxHp;
+    dropOnPlayer(s, { kind: 'material', materialId: 'mat_fire', qty: 1, tier: 0 });
+
+    sys.tick(s);
+
+    expect(s.pickups).toHaveLength(0);
+    expect(s.floorMaterials.mat_fire).toBe(1);
   });
 
   it('a weapon drop is NOT collected on overlap alone (design/03: click-driven, not auto)', () => {

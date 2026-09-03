@@ -15,7 +15,7 @@
 // behind the query flag — never in a normal session.
 
 import { Container, Graphics, Text } from 'pixi.js';
-import { SIM, type Fp, type GameState, type PickupItem } from '@dd/engine';
+import { SIM, pickupWouldApply, type Fp, type GameState, type PickupItem } from '@dd/engine';
 import { fpToPx } from '../coords';
 
 // SIM.pickupRadius + a player's own solidRadius — the exact threshold PickupSystem's
@@ -47,7 +47,13 @@ export function pickupDebugGate(state: GameState, item: PickupItem): { nearestPx
     if (!p.alive) continue;
     const d = Math.hypot(fpToPx((item.gx - p.gx) as Fp), fpToPx((item.gy - p.gy) as Fp));
     if (d < nearestPx) nearestPx = d;
-    if (d <= pickupGatePx(item, p)) collectible = true;
+    // Distance is not the only gate: design/05's "only when useful" rule leaves a no-op
+    // consumable on the floor even at zero distance (`ENGINE_VERSION` 54), so a heal
+    // standing under a full-HP player is genuinely NOT collectible and must not draw green.
+    // Asking the engine's own predicate rather than restating it is the point — this file's
+    // parity test runs the real PickupSystem beside this readout, and caught the gap the
+    // day the rule landed.
+    if (d <= pickupGatePx(item, p) && pickupWouldApply(p, item)) collectible = true;
   }
   return { nearestPx, collectible };
 }

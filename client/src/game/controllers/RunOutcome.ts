@@ -28,6 +28,22 @@ function totalBanked(s: GameState): number {
   return n;
 }
 
+/**
+ * Everything a run-ending death costs (design/05's locked wipe rule): BOTH tiers — this
+ * floor's un-banked buffer AND the carry-out bag descending folded it into. The bag is not
+ * the safe half: it only ever leaves the sim when `bankRunMaterials` hands it to the meta
+ * layer, and `lose()` below deliberately never calls that.
+ *
+ * Worth a named function rather than reusing `totalBanked`: the defeat line used to read
+ * "The floor's materials were lost", which named the smaller of the two pools and matched a
+ * claim design/05 had already superseded (corrected 2026-09-03, together with the docs).
+ */
+function totalForfeited(s: GameState): number {
+  let n = totalBanked(s);
+  for (const v of Object.values(s.floorMaterials)) n += v ?? 0;
+  return n;
+}
+
 /** `Time M:SS`, from the sim's own tick counter (GameEngine.ts increments `s.tick`
  *  every step) — free: no new state, already part of the hashed/serialized state, so
  *  this is a zero-risk render-only addition (design/06 determinism untouched). */
@@ -86,7 +102,7 @@ export class RunOutcome {
     this.host.hideHud();
     this.host.showOutcomeScreen(false, t('results.defeatTitle'), [
       t('results.fellOnFloor', { floor, floorCount: totalFloorCount(s) }),
-      t('results.materialsLost'),
+      t('results.materialsLost', { count: totalForfeited(s) }),
       timeText(s),
       t('results.scoreLine', { score: this.host.currentScore() }),
     ]);

@@ -33,5 +33,6 @@
 | WeChat mini-game | Pixi v8 + own `DOMAdapter` (no weapp-adapter) + unsafe-eval, WebGL | **boot + render verified in DevTools** (see 04) |
 
 Input is unified across platforms: keyboard/mouse on desktop, a shared virtual
-twin-stick (`client/src/platform/TouchControls.ts`) on all touch targets (mobile web,
-Capacitor, WeChat).
+move stick + fire zone + corner buttons (`client/src/platform/TouchControls.ts`) on all
+touch targets (mobile web, Capacitor, WeChat). *(Said "twin-stick" until 2026-09-03; `10`
+v33 removed aim input, so there is one stick — see `10`'s controls section.)*

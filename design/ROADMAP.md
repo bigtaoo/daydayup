@@ -103,8 +103,8 @@ The core PvE loop (floors → extraction → bank) is fully designed (05/09) and
 - **1.3 ✅ Seeded dungeon assembly** (05/09) — DONE, additive (no `ENGINE_VERSION` bump). `world/dungeon.ts DungeonConfig` + pure `generateFloor()` (floors × rooms via `roomgenPrng`, `layout:'linear'`|`'branching'`) + a first hand-authored `RoomPiece` library (`world/rooms/ember.ts`, 5 normal + 1 extraction + 1 boss
 — the 5th normal piece, `ember_atrium`, and the extraction/boss pieces' full 4-exit symmetry were
 added 2026-08-05's "graph2d content" pass, Room & door model section below). **Wired into a live, traversable run** (2026-07-24, same day, commits `4d05555`/`aac5829`/`7a611e4`): `EngineConfig.dungeon = {config, library}` opts a run in; `SpawnSystem.tickDungeon` calls `generateFloor` per floor and `loadRoom` per room (swaps `state.walls`/`state.obstacles` via `roomGeometry()`, rebuilds the spatial index, repositions players, loads the room's `WaveScript`), `ExtractionSystem.resolveDescend` resets the room cursor so the next floor regenerates lazily, and `expandEncounter`/`dispatchDueSpawns` interpret `WaveScript`'s `atTick`/`spacingTicks` timing (shared with the PvP arena spawn path). Branching layout picks the next room by aim direction. Covered end-to-end by `dungeonrun.test.ts` (room load/advance/descend/branching/determinism/a full Ember-biome run) driven through `createGameEngine`, not just `dungeon.test.ts`'s pure-function unit tests. The real client (`Game.ts`) already builds every single-player/co-op/online run with `EngineConfig.dungeon: {config: EMBER_DUNGEON, library: ...}` — this is the live path, not a demo fallback. **Superseded as the live level 2026-08-15** ("Level 1 is now fully hand-authored", Room & door model section below): `EMBER_DUNGEON` is now 5 hand-authored floors paired with `EMBER_L1_ROOMS`, so a real run takes `placeAuthoredFloor` and never reaches `generateFloor` at all. Everything above still describes the machinery accurately — it is just the fallback path now, driven by the `EMBER_PROCEDURAL_DUNGEON` + `EMBER_ROOMS` pair the tests keep pointed at it.
-- **1.4 ✅ Extraction rooms** (05) — DONE. `EngineConfig.floors?` (the flat, non-dungeon mode — same single arena reused every floor, still supported for configs that opt into it) OR `EngineConfig.dungeon` (the room-generated mode, see 1.3) opts a run into the checkpoint loop; `ExtractionSystem` (step 12) resolves the per-floor checkpoint (`wavesExhausted && enemies.length===0`) into `EXTRACT` or `DESCEND` (in dungeon mode, regenerates the next floor's rooms; in flat mode, reloads the next floor's flat wave list). Death forfeits the floor buffer for free (a run-ending death simply never reaches the bank step). The last floor has no `DESCEND` option, but otherwise resolves the same explicit-gesture way as any other floor (design/05 "the boss room IS its extraction room" — see the [Live-play bug-fix pass](roadmap/02-2026-08-12--08-15.md#live-play-bug-fix-pass--2026-08-12-user-report-from-a-dungeon-mode-screenshot) entries for why the original no-gesture auto-resolve was dropped 2026-08-12). **The gesture itself was rewritten 2026-08-02** (see that entry below): originally a sustained-INTERACT hold=EXTRACT/tap=DESCEND (mirroring the revive channel), now two explicit one-shot `Button.CONFIRM_EXTRACT`/`CONFIRM_DESCEND` presses driven by a world-space portal + popup, `ENGINE_VERSION` 31.
-- **1.5 ✅ Materials carry-out** (05/09) — DONE, additive. `state.floorMaterials` (this floor's un-banked buffer, filled by `PickupSystem`) merges into `state.bankedMaterials` (the run's only carry-out) on every `EXTRACT`/`DESCEND`. `rollDrop` gained an optional depth `tier` param (`DeathDropsSystem` passes `state.floorIndex`) so a material pickup/event carries a rolled instance tier — first-pass "material quality shift per floor" (a straight `tier = floorIndex` identity curve; `DungeonConfig.materialTierByDepth` remains an unused schema field for a future non-identity curve).
+- **1.4 ✅ Extraction rooms** (05) — DONE. `EngineConfig.floors?` (the flat, non-dungeon mode — same single arena reused every floor, still supported for configs that opt into it) OR `EngineConfig.dungeon` (the room-generated mode, see 1.3) opts a run into the checkpoint loop; `ExtractionSystem` (step 12) resolves the per-floor checkpoint (`wavesExhausted && enemies.length===0`) into `EXTRACT` or `DESCEND` (in dungeon mode, regenerates the next floor's rooms; in flat mode, reloads the next floor's flat wave list). Death forfeits the **whole un-extracted carry-out** for free — not just the floor buffer (this entry said "the floor buffer" until 2026-09-03, matching a stale claim in design/05 that 3.2's own wipe decision had already superseded): a run-ending death never reaches `ExtractionSystem`'s merge, AND `RunOutcome.lose()` never hands `state.bankedMaterials` to the meta layer, so both tiers die with the run. The last floor has no `DESCEND` option, but otherwise resolves the same explicit-gesture way as any other floor (design/05 "the boss room IS its extraction room" — see the [Live-play bug-fix pass](roadmap/02-2026-08-12--08-15.md#live-play-bug-fix-pass--2026-08-12-user-report-from-a-dungeon-mode-screenshot) entries for why the original no-gesture auto-resolve was dropped 2026-08-12). **The gesture itself was rewritten 2026-08-02** (see that entry below): originally a sustained-INTERACT hold=EXTRACT/tap=DESCEND (mirroring the revive channel), now two explicit one-shot `Button.CONFIRM_EXTRACT`/`CONFIRM_DESCEND` presses driven by a world-space portal + popup, `ENGINE_VERSION` 31.
+- **1.5 ✅ Materials carry-out** (05/09) — DONE, additive. `state.floorMaterials` (this floor's un-banked buffer, filled by `PickupSystem`) merges into `state.bankedMaterials` (the run's only carry-out) on every `EXTRACT`/`DESCEND`. `rollDrop` gained an optional depth `tier` param (`DeathDropsSystem` passes `state.floorIndex`) so a material pickup/event carries a rolled instance tier — first-pass "material quality shift per floor" (a straight `tier = floorIndex` identity curve). This entry said `DungeonConfig.materialTierByDepth` "remains an unused schema field"; **corrected 2026-09-03 — it is not a field.** It and `dropTableByDepth` were sketched in design/09 and never added to `world/dungeon/types.ts`, so a configurable curve and a per-depth drop POOL are both unbuilt: see Backlog B4.
 
 **Phase 1 status: fully closed, including live multi-room floors.** A run goes floors → checkpoint → EXTRACT-or-DESCEND → bank, with materials as the only carry-out. Both modes are real and tested: `EngineConfig.floors` (flat, single-arena-reused-per-floor, still available for configs that want it) and `EngineConfig.dungeon` (generated multi-room floors via `generateFloor`/`RoomPiece`/`placeFloor`, `'branching'` layout, `WaveScript` timing) — the latter is what the real client actually uses for every live run. Nothing from 1.2/1.3 is unwired or demo-only. **2026-08-04 update:** "room-to-room traversal" here no longer means the original sequential swap-on-clear — see [Room & door model](roadmap/01-2026-07-24--08-05.md#room--door-model--co-resident-pve-floors--2026-08-04-engine_version-3334) (design/05, `ENGINE_VERSION` 34): a floor's rooms are now co-resident and door-connected, freely walkable/backtrackable, with combat-derived door locking and force-regroup. **2026-08-05 update:** `'branching'` layout now places a real fork-and-reconverge diamond of sibling rooms instead of resolving at generation time (`ENGINE_VERSION` 35, same section). **2026-08-05 update (same day): the west→east-spine scope cut is closed too** — a new `layout: 'graph2d'` (`world/dungeon.ts placeFloorGraph2d`, additive, no `ENGINE_VERSION` bump) places a *generated* floor in real 2D instead of forcing it onto a single axis; see design/05's "Room & door model" section for the full account. **2026-08-05 update (same day, "graph2d content" pass): `EMBER_DUNGEON` now uses `'graph2d'`** (was `'linear'`) — a new `ember_atrium` piece and wider exit authoring on `ember_pillars`/`ember_extraction`/`ember_boss` make the shipped biome actually bend, and a new `placeFloorGraph2d` direction-retry (found necessary by testing, not inspection — full account in `world/rooms/ember.ts`'s module doc) makes that safe against fold-back overlaps. `'branching'` still stays unused by any shipped config.
 
@@ -112,7 +112,7 @@ added 2026-08-05's "graph2d content" pass, Room & door model section below). **W
 
 - **2.1 ✅ Forge outpost** (14/09): blueprint unlock (permanent) + per-run craft from materials. Recipes are `element × qty × min-tier` — and **`minTier` is now enforced**: the material bank keys by (element, rolled tier) via `bankKey` (additive, no bump — tier 0 keeps the flat key), so a premium recipe (e.g. emberblade: fire×2 minTier 1) genuinely demands materials from deeper floors; spending is lowest-qualifying-tier-first.
 - **2.2 ✅ Loadout screen** (10): up to 2 crafted weapons carried into a run via `EngineConfig.loadout`; a free slot keeps its starter default, by kind, so every run carries a gun + a melee weapon (ENGINE_VERSION 45). Lives in the demo forge outpost (`game/Forge.ts`).
-- **2.3 ✅ Character roster + select** (14/09/13): the **3 launch characters** ship — vanguard (6/4), skirmisher (3/8), juggernaut (9/0, the flat-HP tank). Full side-grade balance suite (`skins.test.ts`): Pareto-non-domination, per-axis spread, equal-worth budget band, no inert passive on a zero-shield body. All free for now (paid split is the store's job).
+- **2.3 ✅ Character roster + select** (14/09/13): the **3 launch characters** ship — vanguard (6/3.2), skirmisher (3/6), juggernaut (11/0, the flat-HP tank). *(Shipped numbers as retuned against `pvpBalanceSim` 2026-07-28; this line said 6/4, 3/8, 9/0 — the pre-retune values — until 2026-09-03, as did design/09 and design/14 with two other variants. `content/skins.ts` is the source of truth.)* Full side-grade balance suite (`skins.test.ts`): Pareto-non-domination, per-axis spread, equal-worth budget band, no inert passive on a zero-shield body. All free for now (paid split is the store's job).
 - **2.4 ✅ Monetization scaffolding** (14): direct-purchase blueprint/character grant APIs (`acquireBlueprint`/`grantCharacter`/`purchasableBlueprints`), no gacha. Real billing is deliberately out of scope (a platform adapter would call these after its own payment flow).
 
 **Deferred out of Phase 2 (not blocking the loop):** ~~touch/WeChat forge input (web-keyboard only today)~~ — **stale, corrected 2026-08-31**: every Forge control is a tappable `ui/widgets` `Button` with an `onTap` (back, character cycle, blueprint cards, clear, acquire, page, START RUN), and design/04's verification checklist items 12 and 13 are the WeChat-simulator proof — item 12 fixed the day every Button on that platform was silently unclickable, item 13 fixed the landscape layout that hid START RUN, both on a real device runtime with no keyboard at all. The keyboard digits in `onForgeKey` are a desktop shortcut on top, not the only path; the outpost's real art (design/13 → Phase 5 art pipeline) — **shipped 2026-08-01, NPC included as of 2026-08-02, see 5.3's update below**; a real billing adapter.
@@ -549,9 +549,66 @@ via its own `forge.lockedFind` string), all 8 locales gained `hud.source.purchas
 
 ---
 
+## Backlog — designed in prose, never built (filed 2026-09-03)
+
+Five mechanics the design docs describe in the present tense, as if they were part of the
+shipped loop, and which have **no implementation at all**. They are filed here rather than
+left in the docs' running text because the docs' own rule is that status lives in exactly one
+place — and a mechanic described in a "core loop" diagram reads as built, which is how all
+four survived this long. Each doc sentence was corrected in the same pass to point here.
+
+None is a bug: nothing regressed, and the loop is playable without them. They are the gap
+between the loop as designed and the loop as shipped.
+
+- **B1 🔴 Chests.** design/05's core-loop diagram says *"clear (some of) its rooms: fight,
+  **open chests**, pick up weapons & materials"*, its controls section says *"an `INTERACT`
+  button opens chests"*, and design/07 step 9 says a chest rolls the drop table. There is no
+  chest entity anywhere in the repo — `INTERACT` drives the revive channel and nothing else,
+  and every drop in the game comes from an enemy death (`DeathDropsSystem`) or an arena loot
+  marker. A room therefore has nothing in it to *find*, only things to kill. This is the
+  largest single hole in the PvE loop as written, and it is the natural home for B2.
+- **B2 🔴 A real run-buff offering flow.** design/05 and design/14 both describe run buffs as
+  found in *"chests / rooms / shop"*; `balance/runbuffs.ts`'s own module doc concedes the
+  shipped reality (*"the demo drops them off the DROP_TABLE"*). So the in-run power layer that
+  replaced the affix system is delivered entirely by a 6/84 weight on the kill table — never
+  chosen, never offered, never a decision. Blocked behind B1 for the chest route; a
+  room-clear-reward or a shop room are the alternatives design/05 names.
+- **B3 🟡 An extraction room that is not always last.** design/05: *"You need not clear a
+  floor. How many rooms you can skip depends on where that floor's extraction room sits — an
+  extraction room mid-floor lets you leave one or two rooms unfought, a natural 'greed for the
+  last chest vs. leave safe' micro-decision."* Zero rooms are skippable today, for two
+  independent reasons: `generateFloor` always **appends** the capstone (and `placeAuthoredFloor`
+  requires it at `rooms[last]`, enforced by the editor's save gate), and a room's doors lock as
+  a unit while it holds a live enemy — so on a chain floor every room between spawn and capstone
+  must be cleared to pass through it. Level 1's five floors are chains with no alternate route
+  (design/05 records that under "Open, deliberately left for editor tuning"). Needs BOTH a
+  capstone that can sit at an interior index AND a floor with a bypass route; either alone
+  changes nothing.
+- **B4 🟢 `dropTableByDepth` / `materialTierByDepth`.** design/09's `DungeonConfig` schema lists
+  both. Neither field exists on the real interface (`world/dungeon/types.ts`) — they were never
+  added, not added-and-unwired, which is what design/09 and 1.5 above both said for a year.
+  Depth→material quality currently works via a straight `tier = floorIndex` identity in
+  `rollDrop`, which is enough to make `minTier` recipes demand deeper floors; the missing half is
+  a configurable curve and a per-depth drop POOL (better weapons/buffs deeper, not just better
+  materials).
+- **B5 🟡 Blueprints that drop from runs.** design/14: *"**2–3 common blueprints drop from
+  runs** (permanent the moment you obtain them)"*. `Pickup` has no blueprint kind and no drop
+  table can roll one — nothing in a run grants a blueprint. `STARTER_BLUEPRINTS` hands over
+  every `source: 'drop'` entry (**5** of them) at account creation instead, which
+  `content/blueprints.ts` describes as a demo stand-in for exactly this. So the only ways to
+  get a blueprint are "free at signup" and "buy it": the earn-by-playing path the monetization
+  model leans on (*"sell breadth, not power"* only reads as fair if breadth is also earnable)
+  does not exist. Needs a `{kind:'blueprint'}` pickup that survives a run — note it must
+  bypass the "weapons are ephemeral" rule, since a blueprint is account-level, so it also
+  needs a route out of the sim that materials' `bankedMaterials` path does not cover.
+
 ## Dependency summary
 
 ```
+Backlog (B1-B5)  designed in prose, never built — chests, the run-buff offering flow, a
+                 mid-floor extraction room (nothing is skippable today), the two depth-curve
+                 DungeonConfig fields that were never actually added, and blueprints dropping
+                 from runs. See the Backlog section above; each is filed, none is a regression.
 Phase 0 (sync)  ─┬─ 0.1 affix removal ──┬─ 0.2 rarity
                  │                       └─ 0.3 run-buffs ── 0.6 pickup names
                  └─ 0.4 shield ── 0.5 characters
@@ -718,9 +775,13 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 - **09-03** [Every door is the same door, whatever wall it is cut into](roadmap/16-2026-09-03-doc-audit.md#every-door-is-the-same-door-whatever-wall-it-is-cut-into-2026-09-03-client-only-no-engine-bump) — 11 of the 24 shipped doors were a 128x22 letterbox under 64 px of their own lintel, because a door inherited the shortest wall it was cut into; a door now has one height of its own, and the leaf test that proves it reads the shipped PNG. `render` `test` `docs`
 - **09-03** [The step numbers get a gate, and it fails on its own first run](roadmap/16-2026-09-03-doc-audit.md#the-step-numbers-get-a-gate-and-it-fails-on-its-own-first-run-2026-09-03-engine-tests--docs-no-engine-bump) — The doc audit named one finding worth a real gate and did not write it; this is it — four rules over every system header, every `step()` label and design/08's own skeleton, 8 of 8 reverted fixes killed. It failed on its first run by matching `step(commands)` in a doc comment, and turned up two more defects on the way, one of them in the audit's own correction. `test` `docs`
 
+**[2026-09-03 — design-doc coherence](roadmap/17-2026-09-03-doc-coherence.md)**
+
+- **09-03** [The docs' locked decisions had been superseded by their own later sections](roadmap/17-2026-09-03-doc-coherence.md#the-docs-locked-decisions-had-been-superseded-by-their-own-later-sections-2026-09-03-docs--engine--client-engine_version-54) — A doc audit: every gameplay doc's `locked` list is the part nobody edits, and four bullets in design/05 alone had been revised by a later section of the same file. Three behaviour bugs came out of taking those sentences literally (a run could carry two guns and no parry; a full-HP heal was binned; both weapon buttons were one control), plus five mechanics the docs describe as live and nothing implements, filed as Backlog B1-B5. `docs` `engine`
+
 ## The work log — by theme
 
-The same 96 entries, grouped. An entry with more than one tag appears more than once.
+The same 97 entries, grouped. An entry with more than one tag appears more than once.
 
 **`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(51)*
 
@@ -810,7 +871,7 @@ The same 96 entries, grouped. An entry with more than one tag appears more than 
 - 08-27 [The floor stops at its own walls](roadmap/10-2026-08-27.md#the-floor-stops-at-its-own-walls-2026-08-27-client-only)
 - 08-31 [The re-measurement that its own control threw away](roadmap/11-2026-08-28--08-31.md#the-re-measurement-that-its-own-control-threw-away-2026-08-31-docs--measurement-only)
 
-**`engine`** — the deterministic sim — anything that can bump `ENGINE_VERSION` *(18)*
+**`engine`** — the deterministic sim — anything that can bump `ENGINE_VERSION` *(19)*
 
 - 08-04 [Room & door model — co-resident PvE floors](roadmap/01-2026-07-24--08-05.md#room--door-model--co-resident-pve-floors--2026-08-04-engine_version-3334)
 - 08-12 [Boss-room instant-extract bug fix](roadmap/02-2026-08-12--08-15.md#boss-room-instant-extract-bug-fix--2026-08-12)
@@ -830,6 +891,7 @@ The same 96 entries, grouped. An entry with more than one tag appears more than 
 - 09-01 [Two days of features, audited for what the tests did not say](roadmap/13-2026-09-01-asset-phases.md#two-days-of-features-audited-for-what-the-tests-did-not-say-2026-09-01-engine--client--build-engine_version-5051)
 - 09-02 [The swing that was one frame long, because the field that said otherwise was never read](roadmap/14-2026-09-02-muzzle.md#the-swing-that-was-one-frame-long-because-the-field-that-said-otherwise-was-never-read-2026-09-02-engine--client-engine_version-5253)
 - 09-02 [The character gets an attack, and the sim finally says when](roadmap/14-2026-09-02-muzzle.md#the-character-gets-an-attack-and-the-sim-finally-says-when-2026-09-02-engine--client--art-engine_version-5152)
+- 09-03 [The docs' locked decisions had been superseded by their own later sections](roadmap/17-2026-09-03-doc-coherence.md#the-docs-locked-decisions-had-been-superseded-by-their-own-later-sections-2026-09-03-docs--engine--client-engine_version-54)
 
 **`arena`** — the PvP launch map and its audit *(7)*
 
@@ -926,7 +988,7 @@ The same 96 entries, grouped. An entry with more than one tag appears more than 
 - 09-01 [Two days of features, audited for what the tests did not say](roadmap/13-2026-09-01-asset-phases.md#two-days-of-features-audited-for-what-the-tests-did-not-say-2026-09-01-engine--client--build-engine_version-5051)
 - 09-02 [The four clips finally get a sound](roadmap/14-2026-09-02-muzzle.md#the-four-clips-finally-get-a-sound-2026-09-02-client--assets--tooling-no-engine-bump)
 
-**`docs`** — design docs and this log itself *(24)*
+**`docs`** — design docs and this log itself *(25)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-02 [Documentation pass](roadmap/01-2026-07-24--08-05.md#documentation-pass--2026-08-02)
@@ -952,6 +1014,7 @@ The same 96 entries, grouped. An entry with more than one tag appears more than 
 - 09-02 [The weapon decides how heavy it swings, and how hard it kicks](roadmap/15-2026-09-02-melee-sector.md#the-weapon-decides-how-heavy-it-swings-and-how-hard-it-kicks-2026-09-02-client-only-no-engine-bump)
 - 09-03 [The docs were right about behaviour and wrong about every pointer](roadmap/16-2026-09-03-doc-audit.md#the-docs-were-right-about-behaviour-and-wrong-about-every-pointer-2026-09-03-docs-only-no-engine-bump)
 - 09-03 [The step numbers get a gate, and it fails on its own first run](roadmap/16-2026-09-03-doc-audit.md#the-step-numbers-get-a-gate-and-it-fails-on-its-own-first-run-2026-09-03-engine-tests--docs-no-engine-bump)
+- 09-03 [The docs' locked decisions had been superseded by their own later sections](roadmap/17-2026-09-03-doc-coherence.md#the-docs-locked-decisions-had-been-superseded-by-their-own-later-sections-2026-09-03-docs--engine--client-engine_version-54)
 
 **`net`** — matchmaking, sockets, reconnect *(1)*
 

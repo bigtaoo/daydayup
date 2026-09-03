@@ -107,11 +107,40 @@ describe('RunOutcome — PvE extraction/death', () => {
       title: 'DEFEAT',
       lines: [
         `Fell on floor 1/${EMBER_DUNGEON.floorCount}`,
-        "The floor's materials were lost",
+        'All 9 carried materials were lost',
         'Time 0:00',
         'Score 0',
       ],
     });
+  });
+
+  // design/05's locked wipe rule: a death forfeits the ENTIRE un-extracted carry-out —
+  // this floor's buffer AND everything descending already folded into the bag. The defeat
+  // line used to say "The floor's materials were lost", which named only the smaller pool
+  // and matched a claim design/05/09/ROADMAP had all been carrying past its own
+  // supersession; this asserts the counted total spans both tiers, so the copy can never
+  // drift back to naming one of them.
+  it('lose (death): the reported loss counts BOTH the floor buffer and the banked bag', () => {
+    const s = pveState();
+    s.bankedMaterials = { fire: 4, ice: 2 }; // descended past two floors with these
+    s.floorMaterials = { poison: 3 }; // picked up on the floor they died on
+    s.winner = 'enemies';
+
+    const host = mockHost();
+    new RunOutcome(host).handle(s);
+
+    expect(host.banked).toEqual([]); // neither tier reaches the account
+    expect(host.shown?.lines).toContain('All 9 carried materials were lost');
+  });
+
+  it('lose (death) with an empty run still reports 0, not a blank or NaN', () => {
+    const s = pveState();
+    s.winner = 'enemies';
+
+    const host = mockHost();
+    new RunOutcome(host).handle(s);
+
+    expect(host.shown?.lines).toContain('All 0 carried materials were lost');
   });
 
   it('a zero-material extraction still shows "Materials banked: 0", not blank', () => {
@@ -211,7 +240,7 @@ describe('RunOutcome — i18n (design/17-i18n.md)', () => {
 
     expect(host.shown?.won).toBe(false);
     expect(host.shown?.title).toBe('战败');
-    expect(host.shown?.lines).toContain('本层材料已全部丢失');
+    expect(host.shown?.lines).toContain('携带的 0 个材料已全部丢失');
   });
 
   it('switching back to English produces the original English copy again', () => {

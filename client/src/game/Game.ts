@@ -55,6 +55,7 @@ import { RunOutcome } from './controllers/RunOutcome';
 import { ForgeActions } from './controllers/ForgeActions';
 import { ScreenFlow } from './controllers/ScreenFlow';
 import { GameLoop } from './controllers/GameLoop';
+import { shouldSwapToSlot } from './controllers/weaponSlotSelect';
 import { readGameQueryParams } from './match/gameQueryParams';
 import { computeScreenSize } from './viewport';
 import type { Phase } from './phase';
@@ -415,9 +416,8 @@ export class Game {
     this.input.attach(this.app.canvas as unknown as InputCanvas);
     // Discrete actions route through the shell: during a run they latch a one-tick
     // button pulse on the command builder; on menus/results a press confirms.
-    this.input.onSwitchWeapon = () => {
-      if (this.phase === 'playing') this.builder.requestSwap();
-    };
+    // A weapon button NAMES a slot; the engine offers only a toggle. `shouldSwapToSlot` is that bridge (see its own doc).
+    this.input.onSwitchWeapon = (slot) => { if (this.phase === 'playing' && shouldSwapToSlot(this.activeState()?.players[this.localOwner]?.activeSlot, slot)) this.builder.requestSwap(); };
     // Forge outpost controls (web keyboard, design/14). A touch forge is a follow-up —
     // like the touch INTERACT control — so this is guarded to the DOM and only acts in
     // the forge phase. Digits craft, C cycles character, X clears, B acquires, Enter descends,
