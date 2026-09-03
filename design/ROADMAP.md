@@ -115,7 +115,7 @@ added 2026-08-05's "graph2d content" pass, Room & door model section below). **W
 - **2.3 ✅ Character roster + select** (14/09/13): the **3 launch characters** ship — vanguard (6/3.2), skirmisher (3/6), juggernaut (11/0, the flat-HP tank). *(Shipped numbers as retuned against `pvpBalanceSim` 2026-07-28; this line said 6/4, 3/8, 9/0 — the pre-retune values — until 2026-09-03, as did design/09 and design/14 with two other variants. `content/skins.ts` is the source of truth.)* Full side-grade balance suite (`skins.test.ts`): Pareto-non-domination, per-axis spread, equal-worth budget band, no inert passive on a zero-shield body. All free for now (paid split is the store's job).
 - **2.4 ✅ Monetization scaffolding** (14): direct-purchase blueprint/character grant APIs (`acquireBlueprint`/`grantCharacter`/`purchasableBlueprints`), no gacha. Real billing is deliberately out of scope (a platform adapter would call these after its own payment flow).
 
-**Deferred out of Phase 2 (not blocking the loop):** ~~touch/WeChat forge input (web-keyboard only today)~~ — **stale, corrected 2026-08-31**: every Forge control is a tappable `ui/widgets` `Button` with an `onTap` (back, character cycle, blueprint cards, clear, acquire, page, START RUN), and design/04's verification checklist items 12 and 13 are the WeChat-simulator proof — item 12 fixed the day every Button on that platform was silently unclickable, item 13 fixed the landscape layout that hid START RUN, both on a real device runtime with no keyboard at all. The keyboard digits in `onForgeKey` are a desktop shortcut on top, not the only path; the outpost's real art (design/13 → Phase 5 art pipeline) — **shipped 2026-08-01, NPC included as of 2026-08-02, see 5.3's update below**; a real billing adapter.
+**Deferred out of Phase 2 (not blocking the loop):** ~~touch/WeChat forge input (web-keyboard only today)~~ — **stale, corrected 2026-08-31**: every Forge control is a tappable `ui/widgets` `Button` with an `onTap` (back, character cycle, blueprint cards, clear, acquire, page, START RUN), and design/04's verification checklist items 12 and 13 are the WeChat-simulator proof — item 12 fixed the day every Button on that platform was silently unclickable, item 13 fixed the landscape layout that hid START RUN, both on a real device runtime with no keyboard at all. The keyboard digits in the forge key handler (`controllers/ForgeInput.onKey`, split out of `Game.onForgeKey` on 2026-09-03) are a desktop shortcut on top, not the only path; the outpost's real art (design/13 → Phase 5 art pipeline) — **shipped 2026-08-01, NPC included as of 2026-08-02, see 5.3's update below**; a real billing adapter.
 
 ## Phase 3 — Co-op & netcode
 
@@ -625,6 +625,7 @@ Phase 7 (i18n)          DONE (✅) — client/src/i18n/: en.ts canonical + zh.ts
 Documentation           DONE (✅ 2026-08-02) — all 19 design docs + every README audited against the code; stale top-of-file Status blocks rewritten (12/10/client/art READMEs and this file's own header), design/README index completed, engine/README written, art/ UUID filenames + duplicate files cleaned up. Docs-only, no code change.
 Repo structure          DONE (✅ 2026-08-02) — engine/ hoisted to its own top-level package (DOM-free, self-only paths: the determinism rule is now compile-enforced); client/src/game/ split into screens|scene|controllers|match; root npm workspace with a single `npm run check` across all 5 packages; game/config.ts deleted (dead pre-engine duplicates) and split into theme.ts + score.ts. 931 tests before and after, zero behaviour change.
 Test coverage audit     DONE (✅ 2026-08-05) — full test-coverage sweep across all 7 workspaces; zero dead/obsolete tests found (nothing to delete); ~50 previously-untested files closed, 1736 → 2627 tests. See the Test coverage audit pass section above.
+Coverage gate           DONE (✅ 2026-09-03) — coverage is now MEASURED and GATED, which it never was before: no provider was installed, no script, no CI step. 90% lines AND 90% branches over each of client/engine/server's WHOLE source tree (`npm run coverage`; build/checkCoverageThreshold.mjs), functions reported but not gated, plus a `scopeShrunk` rule that fails a narrowed `coverage.include` outright — the one edit that raises every number without a test. Client 97.70%/92.12%, engine 97.67%/92.86%, server 99.32%/95.44% (85.23%/78.27% before this pass). Two production bugs fell out of writing the server cases. The 12 logic-consistency gates also became a NAMED CI job with a fail-closed manifest (`npm run check:logic`), and CI went from two jobs to four, all on every push and PR. See volume 19 and design/18 "Layer 4".
 ```
 
 ## The work log — by date
@@ -787,6 +788,7 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 **[2026-09-03 — coverage becomes a gate](roadmap/19-2026-09-03-coverage-gate.md)**
 
 - **09-03** [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump) — funny's coverage shape, ported and gated at 90% lines **and** 90% branches over all three packages' whole source trees. The client was already at 96.52% and nothing measured it; branches sat 0.03pp over the bar. Adds a rule funny has no equivalent of (a narrowed `coverage.include` fails outright — the mutant reports 97.68%/92.13% while measuring 130 of 224 files), retires Game.ts's 1135-line baseline entry by splitting it six ways, and makes the logic-consistency gates a named CI job whose manifest fails closed. Two production bugs, both found by the first test that touched the code. `test` `tools` `net` `docs`
+- **09-03** [A mob has one size while walking and a bigger one while standing](roadmap/20-2026-09-03-mob-spacing.md#a-mob-has-one-size-while-walking-and-a-bigger-one-while-standing-2026-09-03-engine-engine_version-55) — *"怪物寻路时要加一个停留体积…这里是两个概念"* — a mob carried one size and was asked two questions with opposite answers: walking it must fit a 1.5-body slit, standing it should claim two body radii. Arrival became state (`EnemyActor.holding`) and the second radius hangs off it, so a garrison spreads where it stops without any gap in the level narrowing. Measured cost, not assumed: the careful bot's avg floor 2.5 → 1.5, and the obvious mitigation measured backwards. `engine` `test` `docs`
 
 ## The work log — by theme
 
@@ -902,6 +904,7 @@ The same 100 entries, grouped. An entry with more than one tag appears more than
 - 09-02 [The swing that was one frame long, because the field that said otherwise was never read](roadmap/14-2026-09-02-muzzle.md#the-swing-that-was-one-frame-long-because-the-field-that-said-otherwise-was-never-read-2026-09-02-engine--client-engine_version-5253)
 - 09-02 [The character gets an attack, and the sim finally says when](roadmap/14-2026-09-02-muzzle.md#the-character-gets-an-attack-and-the-sim-finally-says-when-2026-09-02-engine--client--art-engine_version-5152)
 - 09-03 [The docs' locked decisions had been superseded by their own later sections](roadmap/17-2026-09-03-doc-coherence.md#the-docs-locked-decisions-had-been-superseded-by-their-own-later-sections-2026-09-03-docs--engine--client-engine_version-54)
+- 09-03 [A mob has one size while walking and a bigger one while standing](roadmap/20-2026-09-03-mob-spacing.md#a-mob-has-one-size-while-walking-and-a-bigger-one-while-standing-2026-09-03-engine-engine_version-55)
 
 **`arena`** — the PvP launch map and its audit *(7)*
 
@@ -953,7 +956,7 @@ The same 100 entries, grouped. An entry with more than one tag appears more than
 - 09-03 [The step numbers get a gate, and it fails on its own first run](roadmap/16-2026-09-03-doc-audit.md#the-step-numbers-get-a-gate-and-it-fails-on-its-own-first-run-2026-09-03-engine-tests--docs-no-engine-bump)
 - 09-03 [The path references get a gate, by giving up on two thirds of them](roadmap/16-2026-09-03-doc-audit.md#the-path-references-get-a-gate-by-giving-up-on-two-thirds-of-them-2026-09-03-tooling--docs-no-engine-bump)
 - 09-03 [A door has a clock, and direction is what says "you can walk through this"](roadmap/18-2026-09-03-door-fx.md#a-door-has-a-clock-and-direction-is-what-says-you-can-walk-through-this-2026-09-03-client-only-no-engine-bump)
-- 09-03 [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump)
+- 09-03 [A mob has one size while walking and a bigger one while standing](roadmap/20-2026-09-03-mob-spacing.md#a-mob-has-one-size-while-walking-and-a-bigger-one-while-standing-2026-09-03-engine-engine_version-55)
 
 **`audio`** — cues, music, the engine to sound channel *(5)*
 
@@ -1033,6 +1036,7 @@ The same 100 entries, grouped. An entry with more than one tag appears more than
 - 09-03 [The path references get a gate, by giving up on two thirds of them](roadmap/16-2026-09-03-doc-audit.md#the-path-references-get-a-gate-by-giving-up-on-two-thirds-of-them-2026-09-03-tooling--docs-no-engine-bump)
 - 09-03 [A door has a clock, and direction is what says "you can walk through this"](roadmap/18-2026-09-03-door-fx.md#a-door-has-a-clock-and-direction-is-what-says-you-can-walk-through-this-2026-09-03-client-only-no-engine-bump)
 - 09-03 [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump)
+- 09-03 [A mob has one size while walking and a bigger one while standing](roadmap/20-2026-09-03-mob-spacing.md#a-mob-has-one-size-while-walking-and-a-bigger-one-while-standing-2026-09-03-engine-engine_version-55)
 
 **`net`** — matchmaking, sockets, reconnect *(2)*
 

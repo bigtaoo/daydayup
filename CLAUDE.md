@@ -80,6 +80,40 @@ This mirrors the convention adopted in the sibling project `funny`
 (`claudedocs/server.md` / `claudedocs/client-modules.md`, "单文件 500 行收敛"), scaled
 down for this repo's smaller codebase.
 
+## Test coverage: 90/90, over the whole tree
+
+Coverage is measured and gated (2026-09-03). **90% lines AND 90% branches** for `client`,
+`engine` and `server`, each over its **whole** source tree — there is no exemption list and no
+per-package override, on purpose: a working way to be exempt is an invitation to use it.
+
+```bash
+npm run coverage      # measure all three, print the report, run the gate
+npm run check:logic   # the 12 named logic-consistency gates, verified then run
+```
+
+`npm run coverage` is **not** part of `npm run check` — it is minutes, not seconds. CI runs it
+as its own job on every push and pull request, alongside `logic`, `check` and `sims`.
+
+Three things to know before touching any of it:
+
+- **Branches are gated too, and that is the column that bites.** Uncovered branches are the
+  absent-field fallbacks, the refusal paths and the lost-race arms — code whose *line* runs on
+  every call while only the taken side is ever exercised. `server/src/MatchRoom.ts` read
+  99.08% lines / 83.14% branches with every trust boundary in it untested.
+- **Never narrow `coverage.include`.** The gate's `scopeShrunk` rule fails a scope smaller than
+  the source tree, and `build/coverageScope.test.mjs` fails an include entry that names an
+  individual file. Both exist because narrowing raises every number without adding a test:
+  scoping the client to `src/game/**` reports 97.68%/92.13% — both green — over 130 of 224
+  files.
+- **A percentage cannot keep the pure layer pure.** `client/src/game/pureLayerBoundary.test.ts`
+  does that: the modules it lists may not reach a browser-dependent module or touch a browser
+  global. At ~96% the gate has hundreds of lines of headroom, so a file importing PIXI can land
+  in the pure layer with nothing turning red — and what that costs is the ability to test the
+  logic at all.
+
+`design/18-test-strategy.md` "Layer 4" has the full account, including why functions is
+reported but deliberately not gated.
+
 ## Language policy
 
 - All code, code comments, and documentation in this repository must be written

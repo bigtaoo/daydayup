@@ -90,7 +90,12 @@ src/
 ├─ main.ts            Web entry (WebPlatform → Game)
 ├─ main.wechat.ts     WeChat entry (WeChatPlatform → Game); loaded by ../wechat/game.js
 ├─ game/
-│  ├─ Game.ts         assembly, main loop, phase orchestration
+│  ├─ Game.ts         the assembly shell: Pixi objects, the constructor, buildHud, and
+│  │                  the host interfaces. 497 lines since the 2026-09-03 split — the
+│  │                  behaviour moved to runState + controllers/ below
+│  ├─ runState.ts     every mutable RUN field (phase, meta, mode flags, engine, session,
+│  │                  score). PIXI-free by construction, which is what makes the rules
+│  │                  above testable — see pureLayerBoundary.test.ts
 │  ├─ phase.ts        the Phase union — shared vocabulary of Game and the screens
 │  ├─ theme.ts        render palette (NOT gameplay tuning — that's the engine)
 │  ├─ score.ts        the run's score table (host-side, never simulated)
@@ -99,9 +104,13 @@ src/
 │  │                  Bullet, Pickup, Portal, Backdrop, Skin, RoomBuilder, layers)
 │  ├─ screens/        full-screen flow (MainMenu, ModeSelect, PvpPreview, Matchmaking,
 │  │                  Forge, Login, Party, Pause, Settings, Screens, confirmEdge)
-│  ├─ controllers/    input → PlayerCommand and engine events → host callbacks
-│  │                  (CommandBuilder, Ally/PvpBot controllers, LocalPredictor,
-│  │                  EventReactor, RunOutcome)
+│  ├─ controllers/    input → PlayerCommand, engine events → host callbacks, and the
+│  │                  shell's own behaviour (CommandBuilder, Ally/PvpBot controllers,
+│  │                  LocalPredictor, EventReactor, RunOutcome, GameLoop, ScreenFlow,
+│  │                  ArtGate, ForgeActions; plus the 2026-09-03 split — ScreenNav
+│  │                  (phase→screen), RunLifecycle (start/end a run), OnlineMatch
+│  │                  (queue + connect), ForgeInput (the forge key table), and the two
+│  │                  free-function tables gameWiring + gameAssembly)
 │  ├─ match/          how a run is configured and connected (arenaCatalog, matchConfig,
 │  │                  offlineConfig, pvpConfig, onlineConnect, gameQueryParams),
 │  │                  plus recording one (MatchRecorder/replayDownload/replayPlayback

@@ -442,8 +442,12 @@ assets, the gate, the subpackage rule and the documentation all existed and noth
 - **`Game.ts` was not touched.** The per-frame call sits in `GameLoop.update`, ahead of the
   playing/paused/idle branch so the menu bed is driven at all, and reaches the device through a
   module sink (`setMusicAudio`, attached at boot in both entries) rather than a constructor dep —
-  the same shape and the same reason as `audio/uiSound.ts`, plus one hard constraint: `Game.ts` is
-  this repo's one tracked 500-line offender and the drift gate pins its length.
+  the same shape and the same reason as `audio/uiSound.ts`, plus one hard constraint at the time:
+  `Game.ts` was then this repo's one tracked 500-line offender and the drift gate pinned its
+  length. *(That constraint is gone as of 2026-09-03 — `Game.ts` is 497 lines and the client's
+  file-length baseline is empty; see `roadmap/19-2026-09-03-coverage-gate.md`. The decision
+  stands on its first reason, which was never about file length: a module sink is the right
+  shape for something attached at boot in both entries.)*
 
 #### What guards it
 
