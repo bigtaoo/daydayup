@@ -15,6 +15,7 @@ import type { TutorialHintController } from './TutorialHintController';
 import type { Scene } from '../scene/Scene';
 import type { RoomBuilder } from '../scene/RoomBuilder';
 import { MAX_WALL_HEIGHT } from '../scene/wallGeometry';
+import { DoorFxDriver } from '../scene/doorTick';
 import type { OcclusionFocus } from '../scene/occlusion';
 import type { FxController } from '../fx/FxController';
 import type { HudView } from '../ui/HudView';
@@ -121,6 +122,7 @@ export class GameLoop {
     ...DEFAULT_PREDICTOR,
   });
   private predLastTick = -1;
+  private readonly doorFx = new DoorFxDriver(); // per-frame fixture motion (`scene/doorTick.ts`)
 
   // Reused every `updateFx` call instead of a fresh array of fresh objects per render frame
   // (`Scene.enemiesScratch` is the same idea one layer down) — occlusion runs at render rate
@@ -406,6 +408,11 @@ export class GameLoop {
     for (const p of this.deps.scene.pickups) putFocus(p.curX, p.curY, p.bodySilhouette);
     foci.length = n; // drop any stale slots left over from a frame with more foci than this one
     this.deps.roomBuilder.updateOcclusion(foci, dt);
+
+    // Animated fixtures (`scene/doorFx.ts`, `Portal`) + the client-derived refusal flash, on this
+    // wrapper for the same reason as the two passes above. See `doorTick.ts` for the whole rule.
+    const d = this.deps;
+    this.doorFx.frame(dt, s?.dungeonDoors ?? [], d.roomBuilder, d.fx, player, d.builder.lastMove);
   }
 
   private updateCamera(alpha: number): void {

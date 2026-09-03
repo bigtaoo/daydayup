@@ -27,6 +27,7 @@ import {
   type WallRun,
 } from './wallRuns';
 import { buildDoorBlock, type DoorFixture } from './doorRender';
+import { tickDoors, type CameraRect } from './doorTick';
 import { buildGroundLayer, floorRegionsPx, roomRectsPx } from './groundLayer';
 import { voidEdges } from './wallVoidEdge';
 import { faceCrownFraction } from './wallTone';
@@ -78,6 +79,11 @@ export class RoomBuilder {
   // means they must be destroyed explicitly like `wallEntities` — `build()`'s wholesale sweep
   // of `layers.ground` no longer covers them.
   private readonly doorFixtures: DoorFixture[] = [];
+  // The same doors' world-px footprints, index-aligned with `doorFixtures`. Kept because
+  // `tickFixtures` has to answer two questions per frame that a fixture cannot answer about
+  // itself: is this door on screen at all, and how close is the player to it. Rebuilt with the
+  // room by `buildDoors`, cleared by `clearDoors`.
+  private readonly doorFootprints: RectPx[] = [];
   // Decorative room dressing (`RoomPiece.props`, design/09 "decorative + Y-sortable"),
   // read straight off `s.dungeonRooms` — the same `PlacedRoom[]` SpawnSystem already
   // populates for walls/obstacles, so no new engine-side plumbing is needed to reach a
@@ -343,10 +349,14 @@ export class RoomBuilder {
       const rect = doorRects[i]!;
       const height = DOOR_H;
       const joins = doorJoins[i]!;
-      const fixture = buildDoorBlock(rect, height, { ...skin, leaf: getDoorTexture(dr.locked) }, dr.locked, joins);
+      // `i` is the door's phase offset (`doorFx.ts`: two doors in one room must not breathe in
+      // unison), so it has to be the index within the FLOOR's door list — stable across rebuilds
+      // and identical on every client — not a per-room counter.
+      const fixture = buildDoorBlock(rect, height, { ...skin, leaf: getDoorTexture(dr.locked) }, dr.locked, joins, i);
       drawWallShadow(shadows, rect, height);
       this.layers.entities.addChild(fixture.view);
       this.doorFixtures.push(fixture);
+      this.doorFootprints.push(rect);
       const sortY = rect.y + rect.h;
       this.occluders.push(
         fadeableBlock(
@@ -362,6 +372,37 @@ export class RoomBuilder {
         ),
       );
     }
+  }
+
+  /**
+   * One render frame of every animated fixture in the current room.
+   *
+   * **Why this exists at all.** Nothing in this project could animate a scene FIXTURE before
+   * 2026-09-03: `Scene.interpolate` walks `Scene.views` (actors/bullets/pickups), and a door or a
+   * portal is added straight to `layers.entities` by this class and is in no such list. So every
+   * door was a still image (live report: *"目前的形式太死板了"*) — and `Portal.interpolate`, four
+   * animated layers written 2026-08-12, had no caller at all and had been drawing a frozen vortex
+   * ever since. Both are driven from here; the doors' own cull-and-proximity rule is
+   * `doorTick.tickDoors`.
+   */
+  tickFixtures(dt: number, view: CameraRect | null, playerPx: { x: number; y: number } | null): void {
+    tickDoors(dt, this.doorFixtures, this.doorFootprints, view, playerPx);
+    // The portal animates only while it is open — it is `visible = false` otherwise, and a hidden
+    // vortex advancing its own clock is pure cost. `alpha` is 1 because a portal never
+    // interpolates a POSITION: it is placed once per room, and only its own layers move.
+    if (this.portal?.visible) this.portal.interpolate(1, dt);
+  }
+
+  /** Flash the door at `index` as having refused the player (`DoorFixture.reject`) — `GameLoop`
+   *  derives that on the client. No-op for an index with no fixture: an arena has doors in its map
+   *  and builds none. `doorFootprint` is the same index's drawn rect, which that derivation needs
+   *  because `state.dungeonDoors[index]` carries only the sim's Fp passage AABB. */
+  rejectDoor(index: number): void {
+    this.doorFixtures[index]?.reject();
+  }
+
+  doorFootprint(index: number): RectPx | null {
+    return this.doorFootprints[index] ?? null;
   }
 
   /** Cheap reaction to `door_locked`/`door_unlocked` (DoorSystem) — swap each door's leaf
@@ -380,6 +421,7 @@ export class RoomBuilder {
   private clearDoors(): void {
     for (const d of this.doorFixtures) d.view.destroy();
     this.doorFixtures.length = 0;
+    this.doorFootprints.length = 0;
   }
 
   /** Hidden until `setPortalOpen(true)` (Game, gated on the same checkpoint condition

@@ -626,3 +626,194 @@ Two of the new tests are worth naming, because they are assertion CLASSES this s
   body height the rig is drawn at — plus the deep pass for a character standing IN the passage,
   and the flanking kerbs still NOT firing as the control. That is the claim `DOOR_H` is written
   on, and until now it was prose.
+
+---
+
+## A door has a clock (2026-09-03b)
+
+Live report, with a screenshot of a doorway: *"我想在门上加点特效，分别表示可以通过和不能通过。目前的形式太死板了"*
+— add fx to the doors that say passable / not passable, the current form is too rigid.
+
+**The diagnosis is not that the cue was weak.** Three passes had already added layers to this
+fixture: the 2026-08-30 through/spill/rim lighting, the 2026-08-30b floor tile and illustrated
+curtain, the 2026-09-03 single door height. Every one of them added a STILL layer — drawn once in
+`buildDoorBlock` and thereafter only toggled by `.visible`. **Nothing in this project could animate
+a scene fixture at all.** `Scene.interpolate` walks `Scene.views`, which holds actors, bullets and
+pickups; a door is added straight to `layers.entities` by `RoomBuilder` and is in no such list.
+Measured on a live frame of level 1's locked perimeter door, two extracts 480 ms apart over the
+leaf's own bounds: **mean 0.01 luma, 0.2% of pixels moving more than 3/255.** A still image.
+
+The same gap had quietly frozen the **portal**. `Portal.interpolate` — the alpha pulse, two
+counter-rotating rings and ten infalling motes, written 2026-08-12 — **had no caller anywhere in
+the repo** and had been drawing one static frame ever since. `RoomBuilder.tickFixtures` now drives
+both, off the `dt` `GameLoop.updateFx` already has.
+
+### What the clock is spent on: direction, rhythm, reaction
+
+A still image can only speak with COLOUR and SHAPE, and both were already committed — the two
+states deliberately share one floor-pool shape and differ by hue. Motion adds three channels, and
+`doorFx.ts` assigns them rather than making everything wobble:
+
+- **Direction — the whole read.** A LOCKED door's motion is CONTAINED: flame scrolls upward inside
+  the leaf, a scan bar ping-pongs between the jambs, its floor ring travels INWARD. Nothing crosses
+  the threshold. An OPEN door's motion CROSSES it: light streams down and out of the passage, motes
+  drift onto the floor toward the player, its floor ring travels OUTWARD. "Can I walk through this"
+  is answered by which way things move, before colour is read. This matters more than it sounds:
+  the shipped locked leaf is a red hazard panel and the shipped open curtain is a gold streaming
+  one, and at a glance in a lava biome those are two warm rectangles.
+- **Rhythm.** Locked is fast and restless — 1.7 s and 2.75 s beating against each other at a ratio
+  that lands on no simple fraction, so the pair has no visible loop. Open is one slow 2.4 s breath
+  that the curtain, the spill pool and the ramp all share, so they read as one lit passage rather
+  than three stacked decals.
+- **Reaction**, which a still door could not have at all: `near` brightens a door as the player
+  approaches, and a locked door FLASHES when they walk into it.
+
+### No new art, and why that was the cheaper answer
+
+The obvious way to animate fire is a frame sequence; the obvious way to get one is to ask an image
+model for N frames, and this project has already found that does not work (`12`: GPT Image 2 emits
+one flattened raster — the reason the portal is *"a split, not a sprite… the file is the half of
+the object that never moves"*). So the motion is **generated, not prompted**: two seamless fields
+baked by `shadeRamp.bakedField` (zero bytes against `04`'s package budget, POT, mipmappable,
+readable back by a test) scrolled under the shipped stills, which keep supplying the material.
+
+Two properties of those bakes are load-bearing and invisible when wrong, so both are asserted:
+
+- **Seamless in y.** Every vertical term is a sine of an INTEGER number of cycles over the tile, so
+  the last row meets the first. The first version was not: it carried a `0.35 + 0.65 * (1 - y/h)`
+  "fire is densest low" bias, which is not periodic, and scrolled a hard seam up the fire once per
+  1.7 s. `doorMotion.test.ts` caught it. The bias is a SCREEN-space property anyway — baked in, it
+  would travel with the scroll — so it moved to stacking the second flame layer over the band's
+  lower 62%, which pins it at the base of the doorway.
+- **Faded at both x edges**, so the band's own sides are not two hard vertical lines. Over `w - 1`,
+  not `w`: with `x / w` the last column lands at `sin(0.984π) = 0.05`, a 12/255 hairline down the
+  right side and nothing down the left.
+
+The one animated layer that cannot let the art mask it is the flame overlay — the hazard leaf is
+opaque, so an overlay behind it would be invisible. It is therefore confined to a **measured** band
+(`FLAME_BAND`, x 0.197–0.803, y 0.184–0.816 of `door_locked_raw.png`), re-derived from the shipped
+PNG's own pixels by `doorArtBands.test.ts` every run — saturation × value, the fire against a
+desaturated stone frame, a plateau stable to ±0.01 across thresholds 0.3–0.4. Same contract
+`environmentArt.test.ts` puts on the portal arch. The open state's streams need no such number: they sit
+BEHIND the leaf and get the arch's stone as a mask for free, exactly as `drawThroughLight` does.
+
+### The unlock is an event now
+
+A lock flip used to set six layers' `.visible` in one frame — at the single most meaningful moment
+in a room, which is the worst possible place for a cut. It now crossfades over 350 ms (the outgoing
+side squared so it clears early and the eye lands on the arriving state), with a second leaf sprite
+holding the outgoing elevation, and throws off one ring: outward and warm on unlock, inward and red
+when a fight seals a room.
+
+### The refusal is client-derived, and never reaches the sim
+
+Walking into a locked door flashes it and adds 0.05 of camera trauma. A `door_blocked` event would
+be the cleaner signal and costs an `ENGINE_VERSION` bump plus a golden-hash re-run for something
+that changes no simulation state, so `doorTick.isRefused` reads what the client already has. Three
+conditions, each independently necessary: the door is locked; the player is within 20 px of the
+passage AND their input points into it; and they are **not actually moving**. That third one is
+what tells "walked into it and stopped" from "walking past it" — the sim has already resolved the
+collision, so a blocked player's `cur` simply stops leaving `prev`. Debounced at 450 ms, so holding
+a direction reads as shoving rather than as a strobe. Deliberately NOT paired with `addHitStop`:
+freezing the sim over a navigation mistake punishes one.
+
+### What it cost, and what it bought
+
+`RoomBuilder.tickFixtures` steps only the doors whose footprint meets the visible world rect, grown
+by 96 px for the one-frame-stale camera (the fx pass runs before `updateCamera`, which needs this
+frame's interpolation alpha). Verified live on level 1: with one door on screen and four built,
+**60 ticks in 60 frames for the visible one and 0 for the other three**. The whole pass measures
+**below the noise floor** of a 120-frame timing on this machine (0.111 ms/frame with it on against
+0.144 with it suppressed — i.e. not distinguishable from run-to-run variance).
+
+A/B on a live frame, two extracts 480 ms apart over the leaf's own bounds, the pass suppressed and
+then restored:
+
+| | mean luma delta | pixels moving > 3/255 |
+|---|---|---|
+| locked, before | 0.01 | 0.2% |
+| locked, after | 4.11 | 30.3% |
+| open, before | 0.56 (the player's own rig crossing the doorway) | 1.2% |
+| open, after | 5.30 | 45.0% |
+
+Confinement, measured the same way: inside the fire band the locked door moves by a mean of 7.30
+with a max of 64/255; on the stone jamb 6 px to its left, a max of **4/255** — that is the glow's
+own ambient breath over the whole leaf, not the overlay leaking. Brightness is essentially
+unchanged in both states (open 104.6 → 101.8, locked 71.7 → 73.8), which is the intent: the
+2026-08-30 sweep above had already settled what value a doorway is allowed to sit at, and this pass
+adds motion, not light.
+
+One defect the frame caught that no test would have: both floor rings were full ellipses centred on
+the threshold, so their northern halves drew straight up the door's own stone — a 2 px stroke at
+0.3 alpha crossing the hazard leaf and the flanking wall, which read as a stray red line through
+the masonry. They are half ellipses now, opening south onto the floor only. `GLOW_POOL` gets away
+with a full ellipse because it is nine fills at 0.035; a stroke has nowhere to hide.
+
+### The Nyquist gate `01` asked for, five weeks late
+
+`01`'s "Ambient animation rates" has tabulated every idle loop's rate since `Pickup`'s hover shipped
+at 19 Hz and reached a player as *"地上的东西闪得太快了"* — and nothing enforced the band. Every period
+in `doorFx`/`doorMotion` now lives in one exported `PERIODS_MS` table that the code itself aliases,
+and `doorMotion.test.ts` walks it: each loop must advance by well under the Nyquist limit in one
+60 fps frame, and must sit inside the 0.2–1.3 Hz band the scene's existing loops occupy. A new loop
+with a hand-rolled period is not in the table and does not get past review; a period the test checks
+cannot be a second, unused copy of the one the code uses.
+
+### Two things that had to be settled to make this safe
+
+- **One writer per `alpha`.** `occlusion.fadeGroup` captures each layer's alpha ONCE and thereafter
+  writes `base * fade`; `DoorFx` rewrites those same alphas every frame, and the fx pass runs after
+  the x-ray — so `DoorFx` would have won, silently disabling the x-ray on a door's own layers, one
+  of which (`buildOpenFloorTile`'s tile) is fully opaque and would then hide the character standing
+  in the doorway. That is the exact defect the x-ray exists to prevent. Those layers are therefore
+  out of the fade group, represented in it by a single `DoorFx.xrayLayer` proxy whose value the
+  controller folds into everything it writes. `doorRender.test.ts` asserts the EFFECT (fade the
+  group, tick, the layer dims) rather than membership, since membership would now pass on a proxy
+  nobody read.
+- **`pingPong` never worked.** `((t % p) + p) / p` only rescues a negative clock; it does not wrap a
+  positive one, so it returned 1.5 at half a period and swept the scan bar off to `2 - 3 = -1`.
+  Caught by the first run of `doorMotion.test.ts`, before a frame was ever looked at.
+
+### What the tier lever is, and what it deliberately is not
+
+Only ONE thing in this pass costs anything per frame: the motes, which are a `Graphics` rebuilt
+every frame. Everything else is transform animation — two floats per scrolling layer — and gating
+it would buy nothing measurable. So the lever is the mote COUNT, and it rides the `particleBudget`
+the quality profile already carries rather than a new tier field, because that is literally what
+that field means and a mote is a particle: the low tier's 0.35 thins five to two. It never reaches
+zero. A tier that turned the motes off entirely would take the open state's "things come OUT of
+here" away from the device tier alone, and that is a legibility cue rather than decoration.
+
+### What the mutation battery said
+
+**70 mutants over the five files this pass touched, 70 killed** — but not on the first run. 55 rows
+over `doorFx`/`doorMotion`/`doorTick`/`doorRender` scored 51, and every one of the four survivors
+was a claim this document makes that nothing asserted:
+
+- **the motes ACCELERATE out of the passage** (`eased = v * v * (3 - 2 * v)` → `v`). Monotone,
+  spanning 0..1 and spread — every existing assertion held for a linear fall.
+- **the crossfade clears the OUTGOING state early** (`(1 - p)²` → `1 - p`). The ghost still faded,
+  both groups were still mounted, it still settled: the suite could see that the crossfade ran and
+  nothing about its shape.
+- **the ghost carries the art we left** (deleting the `applyLeaf` onto it). Alpha and visibility
+  were asserted, the TEXTURE was not — so the transition would have crossfaded out an empty sprite,
+  i.e. put back the instant cut it exists to remove.
+- **the degenerate-opening guard** was the fourth, and it is the different verdict: it is
+  runtime-EQUIVALENT for height (the clamps already collapse `h` to 0 for every degenerate input,
+  divide-by-zero included). What it actually buys is a FINITE `y`; without it the top clamp
+  resolves to Infinity. Pinning the finiteness is what makes the line load-bearing rather than
+  decorative — the same "judge the survivor, don't just add a test" call the 2026-09-02 battery
+  documented.
+
+A second battery over `doorLights.ts` — the file that only MOVED in this pass, and whose only
+evidence was "the old assertions still pass" — scored 12/13. The survivor is worth naming because
+it predates this pass: **deleting the EAST jamb's rim band** left every spill assertion green,
+because they counted bands rather than sides. A doorway lit down one side only is not subtle in the
+room; it was simply invisible to the suite. Both sides are now asserted band-for-band.
+
+**Files:** `scene/doorFx.ts` (the per-door controller), `scene/doorMotion.ts` (the pure math and the
+two bakes), `scene/doorTick.ts` (the cull, the proximity ramp, the refusal), `scene/doorLights.ts`
+(the still layers, split out of `doorRender.ts` to make room), plus `RoomBuilder.tickFixtures`,
+`GameLoop`'s one call, `CommandBuilder.lastMove` and `FxController.worldView`. Five new test files
+and additions to five existing ones — 103 new tests; **4,659 client tests green** as of
+2026-09-03.

@@ -9,6 +9,7 @@
 // commands through the exact same grid this producer uses.
 import { Button, makeCommand, quantizeMove, type PlayerCommand } from '@dd/engine';
 import type { InputSource } from '../../platform/types';
+import { bradToRad } from '../coords';
 
 export class CommandBuilder {
   private swapLatch = false;
@@ -26,6 +27,16 @@ export class CommandBuilder {
   // The same problem for a panel that is NOT modal — one press, not one panel, is what
   // gets swallowed. See suppressFireUntilRelease().
   private pressHoldsFire = false;
+
+  /**
+   * The movement half of the command this builder last produced, in radians + the engine's own
+   * 0..255 deflection. Kept because a render-only reader needs the input the SIM was given for the
+   * tick being drawn, not a fresh `input.read()` — `scene/doorTick.isRefused` asks "is the player
+   * pushing into this locked door", and re-reading the device would answer for a different instant
+   * and would also poll a gamepad twice a frame. Written on every `build()`, so it is exactly as
+   * old as the newest submitted command; `{0, 0}` before the first one.
+   */
+  readonly lastMove = { rad: 0, mag: 0 };
 
   constructor(private readonly input: InputSource) {}
 
@@ -109,6 +120,8 @@ export class CommandBuilder {
     const pickupTargetId = this.pickupLatchId;
     this.pickupLatchId = 0;
 
+    this.lastMove.rad = bradToRad(moveBrad);
+    this.lastMove.mag = moveMag;
     return makeCommand({ owner, tick, moveBrad, moveMag, buttons, pickupTargetId });
   }
 }

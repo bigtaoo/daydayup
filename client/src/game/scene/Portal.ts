@@ -8,7 +8,7 @@ const PARTICLE_COUNT = 10;
 const GOLDEN_ANGLE = 2.399963; // radians — spreads N particles so no two ever fall in sync
 
 /** Where the vortex sits inside the arch, and how big it can be there. Both are measured
- *  off the shipped sprite rather than chosen — `portalArt.test.ts` re-derives them from the
+ *  off the shipped sprite rather than chosen — `environmentArt.test.ts` re-derives them from the
  *  file's own alpha channel every run and fails if they drift.
  *
  *  Neither number existed before 2026-08-20, because both were free: the "arch" was a
@@ -86,7 +86,7 @@ export class Portal extends Entity {
     // 2. The standing arch. Real masonry art since 2026-08-20 — bottom-anchored on the
     // ground point and scaled by WIDTH, so the file's aspect decides how tall the gate
     // stands (the same rule the pillar sprite follows; the shipped file's 576x539 lands
-    // within a pixel of `archH`, which `portalArt.test.ts` pins). Falls back to the two
+    // within a pixel of `archH`, which `environmentArt.test.ts` pins). Falls back to the two
     // stroked ellipses it drew before the art existed — a dark rim plus a bright inner
     // edge, which gave the gate a boundary distinct from the ambient glow around it.
     const archTex = getPortalArchTexture();

@@ -10,7 +10,7 @@
  * by design, never imports.
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { createGameEngine, createGameState, buildEnemyActor, makeCommand, quantizeMove, ReplayInputSource, toFp, toReplay, EMBER_DUNGEON, EMBER_ROOMS, type DungeonConfig } from '@dd/engine';
+import { createGameEngine, createGameState, buildEnemyActor, makeCommand, quantizeMove, ReplayInputSource, toFp, toReplay, EMBER_DUNGEON, EMBER_ROOMS, type DungeonConfig, type GameState } from '@dd/engine';
 import type { CoopSession } from '../../net/CoopSession';
 import type { InputSource, InputState, TouchVisual } from '../../platform/types';
 import { CommandBuilder } from './CommandBuilder';
@@ -45,8 +45,11 @@ function fakeInput(initial: Partial<InputState> = {}): InputSource & { state: In
 
 function fakeScene() {
   return {
+    // `prevX`/`prevY` are the interpolation buffers every real `Entity` carries; `doorTick`'s
+    // refusal derivation reads them (a blocked player's `cur` stops leaving `prev`), so a fake
+    // without them would make that whole path unreachable from here.
     player: undefined as
-      | { curX: number; curY: number; bodySilhouette: { halfW: number; bodyH: number } }
+      | { curX: number; curY: number; prevX: number; prevY: number; bodySilhouette: { halfW: number; bodyH: number } }
       | undefined,
     enemies: [] as ReadonlyArray<{ curX: number; curY: number; bodySilhouette: { halfW: number; bodyH: number } }>,
     pickups: [] as ReadonlyArray<{ curX: number; curY: number; bodySilhouette: { halfW: number; bodyH: number } }>,
@@ -65,6 +68,12 @@ function fakeFx() {
     updateFx: vi.fn(),
     updateCamera: vi.fn(),
     trailDot: vi.fn(),
+    addShake: vi.fn(),
+    // This frame's visible world rect, which `DoorFxDriver` culls the animated fixtures against
+    // (`scene/doorTick.ts`). Generous enough to contain any test floor, so the cull is never what
+    // makes an assertion here pass or fail — this file is about GameLoop's wiring, and
+    // `doorTick.test.ts` owns the cull rule itself.
+    worldView: { x: -1e4, y: -1e4, width: 2e4, height: 2e4 },
     lights: { addPersistent: vi.fn(), removePersistent: vi.fn() },
   };
 }
@@ -77,6 +86,9 @@ function fakeRoomBuilder() {
   return {
     setPortalOpen: vi.fn(),
     updateOcclusion: vi.fn(),
+    tickFixtures: vi.fn(),
+    doorFootprint: vi.fn().mockReturnValue(null),
+    rejectDoor: vi.fn(),
     portalPx: null as { x: number; y: number } | null,
   };
 }
@@ -916,6 +928,128 @@ describe('GameLoop.updateCamera — the frame rect handed to FxController', () =
   });
 });
 
+describe('GameLoop — the animated fixtures are driven every render frame (2026-09-03b)', () => {
+  // Exactly the wiring problem the x-ray block below documents, one pass later: `doorFx`,
+  // `doorTick` and `RoomBuilder` are each covered by their own tests and every one of them stays
+  // green if this call is deleted. Deleting it puts every door back to the still image the live
+  // report called 太死板 — and re-freezes `Portal`, which spent three weeks that way because
+  // `Portal.interpolate` had no caller at all.
+  const SIL = { halfW: 12.96, bodyH: 32 };
+  const at = (x: number, y: number, moved = 0) =>
+    ({ curX: x, curY: y, prevX: x - moved, prevY: y, bodySilhouette: SIL });
+  /** A real `GameState` carrying one locked door — `doorTick` reads only `.locked`, but the state
+   *  has to be the real shape because that is what `GameLoop` is typed against. */
+  const stateWithLockedDoor = () => {
+    const st = createGameState(CFG);
+    st.dungeonDoors.push({ locked: true } as unknown as GameState['dungeonDoors'][number]);
+    return st;
+  };
+  /** Prime `CommandBuilder.lastMove` the way a sim step would, without needing an engine: it is
+   *  written by `build()`, which is the only thing `doorTick` reads the push out of. */
+  const pushInto = (builder: CommandBuilder): void => {
+    builder.build(1, 0);
+  };
+
+  it("steps the fixtures with this frame's dt and the camera's own world rect", () => {
+    const { deps, scene, roomBuilder } = buildDeps();
+    scene.player = at(1200, 140.8);
+    const loop = new GameLoop(deps, buildHost({ getPhase: () => 'playing' }));
+
+    loop.update(16);
+
+    // The rect is `FxController.worldView` (a Pixi `Rectangle`, width/height) restated in the
+    // scene layer's own w/h shape — a conversion that silently culls everything if it is wrong.
+    expect(roomBuilder.tickFixtures).toHaveBeenCalledWith(
+      16,
+      { x: -1e4, y: -1e4, w: 2e4, h: 2e4 },
+      { x: 1200, y: 140.8 },
+    );
+  });
+
+  it('still steps them with no local player, so a door on screen keeps breathing on a menu', () => {
+    const { deps, scene, roomBuilder } = buildDeps();
+    scene.player = undefined;
+    const loop = new GameLoop(deps, buildHost({ getPhase: () => 'victory' }));
+
+    loop.update(16);
+
+    expect(roomBuilder.tickFixtures).toHaveBeenCalledWith(16, expect.anything(), null);
+  });
+
+  it('flashes a locked door the player walked into, and shakes the camera once', () => {
+    const { deps, scene, roomBuilder, fx, input, builder } = buildDeps();
+    // Pressed against the door's south face, pushing north into it, and NOT moving.
+    roomBuilder.doorFootprint.mockReturnValue({ x: 100, y: 100, w: 64, h: 20 });
+    scene.player = at(132, 128, 0);
+    input.state.moveY = -1; // north, into the passage
+    pushInto(builder);
+    const st = stateWithLockedDoor();
+    const loop = new GameLoop(deps, buildHost({ getPhase: () => 'paused', activeState: () => st }));
+
+    loop.update(16);
+
+    expect(roomBuilder.rejectDoor).toHaveBeenCalledWith(0);
+    expect(fx.addShake).toHaveBeenCalledTimes(1);
+  });
+
+  it('reads the input the SIM was given, not a fresh device poll', () => {
+    // `CommandBuilder.lastMove` is written by `build()`, i.e. by a submitted command. A frame that
+    // never built one must not resurrect a push into a door however the stick is being held —
+    // otherwise a paused game with a finger on the stick flashes every door the player stands at.
+    const { deps, scene, roomBuilder, input } = buildDeps();
+    roomBuilder.doorFootprint.mockReturnValue({ x: 100, y: 100, w: 64, h: 20 });
+    scene.player = at(132, 128, 0);
+    input.state.moveY = -1; // held, but never submitted
+    const st = stateWithLockedDoor();
+    const loop = new GameLoop(deps, buildHost({ getPhase: () => 'paused', activeState: () => st }));
+
+    loop.update(16);
+
+    expect(roomBuilder.tickFixtures).toHaveBeenCalled(); // the fixtures still animate...
+    expect(roomBuilder.rejectDoor).not.toHaveBeenCalled(); // ...and nothing was refused
+  });
+
+  it('refuses nothing while the player is still moving', () => {
+    const { deps, scene, roomBuilder, fx, input } = buildDeps();
+    roomBuilder.doorFootprint.mockReturnValue({ x: 100, y: 100, w: 64, h: 20 });
+    scene.player = at(132, 128, 3); // the sim moved them 3 px on the tick being drawn
+    input.state.moveY = -1;
+    pushInto(deps.builder as CommandBuilder);
+    const st = stateWithLockedDoor();
+    const loop = new GameLoop(deps, buildHost({ getPhase: () => 'paused', activeState: () => st }));
+
+    loop.update(16);
+
+    expect(roomBuilder.rejectDoor).not.toHaveBeenCalled();
+    expect(fx.addShake).not.toHaveBeenCalled();
+  });
+
+  it('debounces, so holding a direction into a door shoves rather than strobes', () => {
+    const { deps, scene, roomBuilder, input } = buildDeps();
+    roomBuilder.doorFootprint.mockReturnValue({ x: 100, y: 100, w: 64, h: 20 });
+    scene.player = at(132, 128, 0);
+    input.state.moveY = -1;
+    pushInto(deps.builder as CommandBuilder);
+    const st = stateWithLockedDoor();
+    const loop = new GameLoop(deps, buildHost({ getPhase: () => 'paused', activeState: () => st }));
+
+    for (let i = 0; i < 12; i++) loop.update(16); // 192 ms, inside the 450 ms cooldown
+
+    expect(roomBuilder.rejectDoor).toHaveBeenCalledTimes(1);
+  });
+
+  it('passes an empty door list on a mode with no dungeon doors, rather than throwing', () => {
+    // An arena's doors live in `arenaMap` and never in `dungeonDoors`; a menu has no state at all.
+    const { deps, scene, roomBuilder } = buildDeps();
+    scene.player = at(10, 10);
+    const loop = new GameLoop(deps, buildHost({ getPhase: () => 'menu', activeState: () => null }));
+
+    expect(() => loop.update(16)).not.toThrow();
+    expect(roomBuilder.tickFixtures).toHaveBeenCalled();
+    expect(roomBuilder.rejectDoor).not.toHaveBeenCalled();
+  });
+});
+
 describe('GameLoop — the occlusion x-ray is driven every render frame', () => {
   // The wiring nothing else can see: `scene/occlusion.ts` and `RoomBuilder` are both covered by
   // their own tests, and both stay green if this call is deleted — only a live look would notice.
@@ -925,7 +1059,7 @@ describe('GameLoop — the occlusion x-ray is driven every render frame', () => 
 
   it('passes the local player\'s ground point and DRAWN silhouette, with this frame\'s dt', () => {
     const { deps, scene, roomBuilder } = buildDeps();
-    scene.player = { curX: 1200, curY: 140.8, bodySilhouette: silhouette };
+    scene.player = { curX: 1200, curY: 140.8, prevX: 1200, prevY: 140.8, bodySilhouette: silhouette };
     const loop = new GameLoop(deps, buildHost({ getPhase: () => 'playing' }));
 
     loop.update(16);
@@ -962,7 +1096,7 @@ describe('GameLoop — the occlusion x-ray is driven every render frame', () => 
 
   it('passes both the player and every enemy together', () => {
     const { deps, scene, roomBuilder } = buildDeps();
-    scene.player = { curX: 1200, curY: 140.8, bodySilhouette: silhouette };
+    scene.player = { curX: 1200, curY: 140.8, prevX: 1200, prevY: 140.8, bodySilhouette: silhouette };
     scene.enemies = [{ curX: 40, curY: 60, bodySilhouette: silhouette }];
     const loop = new GameLoop(deps, buildHost({ getPhase: () => 'playing' }));
 
@@ -993,7 +1127,7 @@ describe('GameLoop — the occlusion x-ray is driven every render frame', () => 
 
   it('passes the player, every enemy and every pickup together, pickups last', () => {
     const { deps, scene, roomBuilder } = buildDeps();
-    scene.player = { curX: 1200, curY: 140.8, bodySilhouette: silhouette };
+    scene.player = { curX: 1200, curY: 140.8, prevX: 1200, prevY: 140.8, bodySilhouette: silhouette };
     scene.enemies = [{ curX: 40, curY: 60, bodySilhouette: silhouette }];
     scene.pickups = [{ curX: 25, curY: 50, bodySilhouette: silhouette }];
     const loop = new GameLoop(deps, buildHost({ getPhase: () => 'playing' }));
@@ -1012,7 +1146,7 @@ describe('GameLoop — the occlusion x-ray is driven every render frame', () => 
 
   it('keeps running while PAUSED — a frozen frame still has to show the character', () => {
     const { deps, scene, roomBuilder } = buildDeps();
-    scene.player = { curX: 10, curY: 20, bodySilhouette: silhouette };
+    scene.player = { curX: 10, curY: 20, prevX: 10, prevY: 20, bodySilhouette: silhouette };
     const loop = new GameLoop(deps, buildHost({ getPhase: () => 'paused' }));
 
     loop.update(16);
@@ -1025,7 +1159,7 @@ describe('GameLoop — the occlusion x-ray is driven every render frame', () => 
     // steps in 33 ms jumps at 60 fps and reads as a stutter rather than a fade.
     const { deps, scene, roomBuilder } = buildDeps();
     const engine = createGameEngine(CFG);
-    scene.player = { curX: 0, curY: 0, bodySilhouette: silhouette };
+    scene.player = { curX: 0, curY: 0, prevX: 0, prevY: 0, bodySilhouette: silhouette };
     const loop = new GameLoop(deps, buildHost({ getEngine: () => engine }));
 
     loop.update(8); // well under one sim tick
@@ -1041,7 +1175,7 @@ describe('GameLoop — the occlusion x-ray is driven every render frame', () => 
     // later frame that grows again get FRESH values rather than whatever a dropped slot's
     // reused object last held?
     const { deps, scene, roomBuilder } = buildDeps();
-    scene.player = { curX: 1200, curY: 140.8, bodySilhouette: silhouette };
+    scene.player = { curX: 1200, curY: 140.8, prevX: 1200, prevY: 140.8, bodySilhouette: silhouette };
     scene.enemies = [{ curX: 40, curY: 60, bodySilhouette: silhouette }];
     // Phase 'victory' (not 'playing'): three repeated calls just need updateFx wired every
     // frame, not a real sim to step — same reason the "empty list with no local player" test
@@ -1115,9 +1249,9 @@ describe('GameLoop — the local player glow (design/01 milestone 2)', () => {
     const { deps, scene, fx } = buildDeps();
     const loop = new GameLoop(deps, buildHost());
 
-    scene.player = { curX: 10, curY: 20, bodySilhouette: silhouette };
+    scene.player = { curX: 10, curY: 20, prevX: 10, prevY: 20, bodySilhouette: silhouette };
     loop.update(16);
-    scene.player = { curX: 90, curY: 40, bodySilhouette: silhouette };
+    scene.player = { curX: 90, curY: 40, prevX: 90, prevY: 40, bodySilhouette: silhouette };
     loop.update(16);
 
     const calls = fx.lights.addPersistent.mock.calls;
@@ -1131,7 +1265,7 @@ describe('GameLoop — the local player glow (design/01 milestone 2)', () => {
     const { deps, scene, fx } = buildDeps();
     const loop = new GameLoop(deps, buildHost());
 
-    scene.player = { curX: 10, curY: 20, bodySilhouette: silhouette };
+    scene.player = { curX: 10, curY: 20, prevX: 10, prevY: 20, bodySilhouette: silhouette };
     loop.update(16);
     scene.player = undefined;
     loop.update(16);
@@ -1145,7 +1279,7 @@ describe('GameLoop — the local player glow (design/01 milestone 2)', () => {
     for (const phase of ['playing', 'paused', 'victory'] as const) {
       const { deps, scene, fx } = buildDeps();
       const loop = new GameLoop(deps, buildHost({ getPhase: () => phase }));
-      scene.player = { curX: 1, curY: 2, bodySilhouette: silhouette };
+      scene.player = { curX: 1, curY: 2, prevX: 1, prevY: 2, bodySilhouette: silhouette };
       loop.update(16);
       expect(fx.lights.addPersistent).toHaveBeenCalledTimes(1);
     }
@@ -1156,7 +1290,7 @@ describe('GameLoop — the local player glow (design/01 milestone 2)', () => {
     // so these are not decoration: a regression to 0 here would silently unlight the player.
     const { deps, scene, fx } = buildDeps();
     const loop = new GameLoop(deps, buildHost());
-    scene.player = { curX: 0, curY: 0, bodySilhouette: silhouette };
+    scene.player = { curX: 0, curY: 0, prevX: 0, prevY: 0, bodySilhouette: silhouette };
     loop.update(16);
 
     const light = fx.lights.addPersistent.mock.calls[0]![1] as { radius: number; intensity: number; color: number };

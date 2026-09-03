@@ -409,6 +409,16 @@ export class FxController {
     this.sceneLight.setLights(this.lightBuffer, this.lights.snapshot(this.lightBuffer));
   }
 
+  /** This frame's visible world rect, in world px — the inverse of the camera transform applied
+   *  to the viewport, computed by `syncCamera`. Read by callers that have to cull against what is
+   *  on screen (`RoomBuilder.tickFixtures`, whose doors each cost a per-frame redraw). Live from
+   *  the first `updateCamera`; a 1x1 placeholder before it, which culls nothing in because
+   *  `doorTick` treats an unset view the same way it treats any other. Returned by reference and
+   *  mutated in place every frame, so never hold onto it across frames. */
+  get worldView(): Rectangle {
+    return this.litArea;
+  }
+
   /** Bump camera-shake trauma (clamped to 1) — call from consumeEvents on an impactful moment. */
   addShake(amount: number): void {
     this.shakeTrauma = Math.min(1, this.shakeTrauma + amount);

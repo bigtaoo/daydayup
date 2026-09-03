@@ -2,7 +2,8 @@
 
 > Status: **all four layers shipped**, 2026-08-30, at `ENGINE_VERSION` **49**. Repo-wide
 > `npm run check` was green at 5,885 tests when they landed (engine 885 → 1064), and at
-> **6,799** (engine **1164**) when last measured, 2026-09-03 — both figures dated on purpose,
+> **6,902** (engine **1164**) when last measured, 2026-09-03 (the day's last pass was the door-fx
+> clock, +103 client tests) — both figures dated on purpose,
 > because an undated count in a status block is this doc set's most reliable way of going stale
 > (see the design-docs conventions memory). Two more Layer 0 gates landed that day:
 > `engine/stepOrder.test.ts` and `build/checkDocPaths.mjs`. Both `.sim.ts` balance suites pass,

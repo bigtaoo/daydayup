@@ -459,7 +459,18 @@ Keep every ambient loop in the band the scene already uses. Current inhabitants:
 | `Portal` alpha pulse | 0.003 | 0.48 Hz | 0.05 rad |
 | `Pickup` hover + glow breathe | `2π/2000` | 0.50 Hz | 0.052 rad |
 | `Actor` status aura | 0.008 | 1.27 Hz | 0.13 rad |
+| `doorFx` locked flame pair | `2π/1700`, `2π/2750` | 0.59 / 0.36 Hz | 0.062 / 0.038 rad |
+| `doorFx` locked scan + breathe | `2π/1400`, `2π/1750` | 0.71 / 0.57 Hz | 0.075 / 0.060 rad |
+| `doorFx` open streams | `2π/2600`, `2π/4200` | 0.38 / 0.24 Hz | 0.040 / 0.025 rad |
+| `doorFx` open breathe, motes, floor pulse | `2π/2400`, `2π/2800`, `2π/2400` | 0.42 / 0.36 / 0.42 Hz | 0.044 / 0.037 / 0.044 rad |
 | *(Nyquist limit at 60fps)* | 0.188 | 30 Hz | π |
+
+**This table is a GATE since 2026-09-03b, not just a record — for the door rows.** Every period in
+`scene/doorFx.ts`/`scene/doorMotion.ts` lives in one exported `PERIODS_MS` object that the code
+itself aliases, and `doorMotion.test.ts` walks it: each entry must advance by well under the
+Nyquist limit in one 60 fps frame and sit inside the 0.2-1.3 Hz band the rows above occupy. The
+older three rows are still prose. A new loop that hand-rolls its own period is not in the table the
+test reads, which is the point of aliasing rather than duplicating the numbers.
 
 `Pickup`'s hover shipped at `0.12` (19.1 Hz, 2.0 rad/frame) and reached a player as "the
 items on the ground flicker far too fast" — it had never been a bob at all. Two rules came

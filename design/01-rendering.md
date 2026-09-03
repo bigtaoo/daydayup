@@ -52,6 +52,7 @@ Keeping the character visible through stone, and the one fixture a player has to
 - **[An open door is lit from beyond (2026-08-30)](rendering/03-occlusion-and-doors.md#an-open-door-is-lit-from-beyond-2026-08-30)** — "You can walk through here" was being rendered as the absence of a signal.
   - [The recess itself is still shared stone, and then it is a whole illustrated curtain (2026-08-30b)](rendering/03-occlusion-and-doors.md#the-recess-itself-is-still-shared-stone-and-then-it-is-a-whole-illustrated-curtain-2026-08-30b)
 - **[Every door is the same door, whatever wall it is cut into (2026-09-03)](rendering/03-occlusion-and-doors.md#every-door-is-the-same-door-whatever-wall-it-is-cut-into-2026-09-03)** — 11 of the 24 shipped doors were a 22 px letterbox under 64 px of their own lintel; a door now has one height, not the wall's.
+- **[A door has a clock (2026-09-03b)](rendering/03-occlusion-and-doors.md#a-door-has-a-clock-2026-09-03b)** — "太死板": a door measured 0.01 luma of motion because nothing in this project could animate a scene fixture at all. Direction is what now says passable.
 
 ### [The floor, the arena, the void](rendering/04-floor-arena-void.md)
 

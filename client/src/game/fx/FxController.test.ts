@@ -720,3 +720,52 @@ describe('FxController.slashArc', () => {
     expect(layers.fx.children[0]!.visible).toBe(true);
   });
 });
+
+/**
+ * `worldView` (2026-09-03b) — this frame's visible world rect, exposed so the scene layer can cull
+ * against what is actually on screen (`RoomBuilder.tickFixtures`, whose doors each cost a per-frame
+ * redraw). It is the same rect the lighting pass is handed, and it has to stay that way: they
+ * describe one thing, and a second derivation of it is a second thing to get wrong.
+ */
+describe('FxController.worldView', () => {
+  it('is the rect the camera is actually showing, and the SAME one the light pass is given', () => {
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.attach();
+    fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 1600, h: 1200 }, fakePlayer(800, 600));
+
+    const [x, y, w, h] = recorded(fx).region;
+    expect([fx.worldView.x, fx.worldView.y, fx.worldView.width, fx.worldView.height]).toEqual([x, y, w, h]);
+  });
+
+  it('tracks the camera rather than reporting one frame forever', () => {
+    // The failure this catches is total and silent: a `worldView` frozen at its placeholder culls
+    // every door in the level out of its own animation the moment the camera leaves the origin.
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    fx.attach();
+    fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 4000, h: 4000 }, fakePlayer(400, 400));
+    const first = { x: fx.worldView.x, y: fx.worldView.y };
+    fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 4000, h: 4000 }, fakePlayer(3000, 3000));
+
+    expect(fx.worldView.x).not.toBe(first.x);
+    expect(fx.worldView.y).not.toBe(first.y);
+  });
+
+  it('is live on the LOW tier too, where the light pass that also reads it is unmounted', () => {
+    // Same shape as the 2026-08-27 battery survivor this file already guards for the ground cull:
+    // the low tier is the DEVICE tier, so a `worldView` that only updated while the lighting pass
+    // was mounted would leave the cheapest machines animating every door in the floor.
+    const layers = new Layers();
+    const fx = new FxController(layers);
+    setActiveQuality('low');
+    try {
+      fx.attach();
+      fx.updateCamera(1, { vw: 800, vh: 600 }, { w: 4000, h: 4000 }, fakePlayer(3000, 3000));
+      expect(fx.worldView.width).toBe(800);
+      expect(fx.worldView.x).toBeGreaterThan(0);
+    } finally {
+      resetActiveQuality();
+    }
+  });
+});

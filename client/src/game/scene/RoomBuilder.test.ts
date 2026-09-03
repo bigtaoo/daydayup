@@ -882,6 +882,13 @@ describe('RoomBuilder — doors (design/05 "Room & door model", 2026-08-04; stan
     expect(doorFixtures(rb)[0]).toBe(fixture); // same fixture instance, not rebuilt
     expect(fixture.view.children.length).toBe(childCount);
     expect(leafOf(rb, 0).texture.source).toBe(mocks.doorOpenTex!.source);
+    // Mid-crossfade (2026-09-03): a flip mounts BOTH states and lets their alphas carry it, so the
+    // settled invariant below is only reachable after the transition has run. That the transition
+    // exists at all is asserted here rather than only in `doorFx.test.ts`, because this is the
+    // call path a real unlock arrives on and an `updateDoors` that cut instantly would look
+    // identical after the settle.
+    expect(stateLightsOf(rb, 0).every(Boolean)).toBe(true);
+    rb.tickFixtures(400, null, null);
     // Every state light flipped: the locked one off, the open ones on. Asserting only that the
     // bloom went dark would pass on a fixture whose open lights never came up — which is the
     // whole defect the 2026-08-30 pass fixed, arriving through this exact call path.
@@ -1032,6 +1039,138 @@ describe('RoomBuilder — doors (design/05 "Room & door model", 2026-08-04; stan
     const box = (rb as unknown as { occluders: { box: { top: number; sortY: number } }[] })
       .occluders.find((o) => o.box.sortY === 96)!.box;
     expect(box.top).toBeCloseTo(64 - WALL_H_PERIMETER, 1);
+  });
+});
+
+describe('RoomBuilder — tickFixtures drives the animated fixtures (2026-09-03b)', () => {
+  /** The two unlabelled containers `DoorFx` mounts into a fixture, and the scroll offsets inside
+   *  them — the layer property the whole cue rests on, read off the assembled fixture rather than
+   *  off the controller, so this asserts what actually reaches the screen. */
+  function scrollsOf(rb: RoomBuilder, i: number): number[] {
+    return doorFixtures(rb)[i]!
+      .view.children.filter((c) => c.label === null && c.children.length > 0)
+      .flatMap((c) => c.children)
+      .filter((c): c is TilingSprite => c instanceof TilingSprite)
+      .map((t) => t.tilePosition.y);
+  }
+
+  it('advances a door that is inside the view, and leaves one outside it untouched', () => {
+    // The cull, through the real builder rather than through `tickDoors`' own unit test: a floor is
+    // co-resident (all 24 of level 1's doors are built into one world) and each ticked door costs a
+    // per-frame `Graphics` rebuild. A cull that lets everything through looks identical in play.
+    const s = stateWithOneWall('ember');
+    pushDoor(s, true, [300, 100, 20, 64]);
+    pushDoor(s, true, [9000, 100, 20, 64]);
+    const rb = makeRoomBuilder();
+    rb.build(s);
+
+    const before = [scrollsOf(rb, 0), scrollsOf(rb, 1)];
+    rb.tickFixtures(200, { x: 0, y: 0, w: 800, h: 600 }, null);
+    const after = [scrollsOf(rb, 0), scrollsOf(rb, 1)];
+
+    expect(after[0]).not.toEqual(before[0]);
+    expect(after[1]).toEqual(before[1]);
+  });
+
+  it('ticks everything when it has no camera rect yet', () => {
+    const s = stateWithOneWall('ember');
+    pushDoor(s, true, [9000, 100, 20, 64]);
+    const rb = makeRoomBuilder();
+    rb.build(s);
+
+    const before = scrollsOf(rb, 0);
+    rb.tickFixtures(200, null, null);
+
+    expect(scrollsOf(rb, 0)).not.toEqual(before);
+  });
+
+  it('starts two doors of one room at different phases, so they do not breathe in unison', () => {
+    // design/01 "Give co-located instances different start phases" — the rule `Pickup` had to learn
+    // when a whole floor of loot rose and fell as one flash. `buildDoors` has to pass each door its
+    // INDEX for that, and passing a constant (or nothing) is invisible on any single door.
+    const s = stateWithOneWall('ember');
+    pushDoor(s, true, [300, 100, 20, 64]);
+    pushDoor(s, true, [400, 100, 20, 64]);
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    rb.tickFixtures(16, null, null);
+
+    // The LIVE additive layer of the state each door is in — index 0 of the additive children is
+    // `through`, which for a locked door is unmounted and still carrying its authored alpha.
+    const alpha = (i: number): number =>
+      doorFixtures(rb)[i]!.view.children.find((c) => c instanceof Graphics && c.blendMode === 'add' && c.visible)!.alpha;
+    expect(alpha(0)).not.toBeCloseTo(alpha(1), 4);
+  });
+
+  it('drives the portal only while it is open — the animation that had no caller at all', () => {
+    // `Portal.interpolate` (alpha pulse, two counter-rotating rings, ten infalling motes) was
+    // written 2026-08-12 and NOTHING in the repo called it: `Scene.interpolate` walks
+    // `Scene.views`, and a portal is added straight to `layers.entities` by this class. It drew one
+    // frozen frame for three weeks. Nothing but this assertion notices if that regresses.
+    const s = stateWithOneWall('ember');
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    const portal = (rb as unknown as { portal: { visible: boolean; rotation?: number; children: { rotation: number }[] } }).portal!;
+    const spin = (): number[] =>
+      (portal as unknown as { children: { children?: { rotation: number }[] }[] }).children
+        .flatMap((c) => c.children ?? [])
+        .map((c) => c.rotation);
+
+    rb.setPortalOpen(false);
+    const hidden = spin();
+    rb.tickFixtures(500, null, null);
+    expect(spin()).toEqual(hidden); // a hidden vortex advancing its own clock is pure cost
+
+    rb.setPortalOpen(true);
+    const shown = spin();
+    rb.tickFixtures(500, null, null);
+    expect(spin()).not.toEqual(shown);
+  });
+
+  it('reports each door’s drawn footprint and flashes the right one, index-aligned with dungeonDoors', () => {
+    // Real leaf art, so the fixtures actually build a fire band and therefore a refusal flash — a
+    // door with no art has no band, and this would then assert on whichever layer happened to be
+    // first (which is exactly the way `stateLightsOf` above once became the wrong layer).
+    mocks.doorLockedTex = fakeTexture(147, 217);
+    // `GameLoop`'s refusal derivation addresses doors by their `state.dungeonDoors` index and needs
+    // the DRAWN rect back (the sim carries only an Fp passage AABB). An off-by-one here flashes the
+    // wrong door, which no visual check would ever attribute to an index.
+    const s = stateWithOneWall('ember');
+    pushDoor(s, true, [300, 100, 20, 64]);
+    pushDoor(s, true, [500, 200, 20, 64]);
+    const rb = makeRoomBuilder();
+    rb.build(s);
+
+    expect(rb.doorFootprint(0)).toEqual({ x: 300, y: 100, w: 20, h: 64 });
+    expect(rb.doorFootprint(1)).toEqual({ x: 500, y: 200, w: 20, h: 64 });
+    expect(rb.doorFootprint(2)).toBeNull();
+
+    // The refusal flash is the one Graphics in `over` that sits inside the fire band: it is built
+    // only when there IS a band, and it is the layer `reject()` lights.
+    const flashOf = (i: number): number => {
+      const over = doorFixtures(rb)[i]!.view.children.filter((c) => c.label === null && c.children.length > 0)[1]!;
+      const gfx = over.children.filter((c): c is Graphics => c instanceof Graphics);
+      expect(gfx.length).toBeGreaterThan(3); // pulse + motes + burst + the flash the band adds
+      return gfx[0]!.alpha;
+    };
+    rb.tickFixtures(16, null, null);
+    expect(flashOf(0)).toBe(0);
+    rb.rejectDoor(1);
+    rb.tickFixtures(16, null, null);
+    expect(flashOf(0)).toBe(0); // ...and only that one
+    expect(flashOf(1)).toBeGreaterThan(0);
+  });
+
+  it('clears the footprints with the room, so a stale index cannot outlive its fixture', () => {
+    const s = stateWithOneWall('ember');
+    pushDoor(s, true, [300, 100, 20, 64]);
+    const rb = makeRoomBuilder();
+    rb.build(s);
+    expect(rb.doorFootprint(0)).not.toBeNull();
+
+    rb.build(stateWithOneWall('ember')); // a floor with no doors at all
+    expect(rb.doorFootprint(0)).toBeNull();
+    expect(() => rb.rejectDoor(0)).not.toThrow();
   });
 });
 

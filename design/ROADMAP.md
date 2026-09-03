@@ -780,11 +780,15 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 
 - **09-03** [The docs' locked decisions had been superseded by their own later sections](roadmap/17-2026-09-03-doc-coherence.md#the-docs-locked-decisions-had-been-superseded-by-their-own-later-sections-2026-09-03-docs--engine--client-engine_version-54) — A doc audit: every gameplay doc's `locked` list is the part nobody edits, and four bullets in design/05 alone had been revised by a later section of the same file. Three behaviour bugs came out of taking those sentences literally (a run could carry two guns and no parry; a full-HP heal was binned; both weapon buttons were one control), plus five mechanics the docs describe as live and nothing implements, filed as Backlog B1-B5. `docs` `engine`
 
+**[2026-09-03 — the doors get a clock](roadmap/18-2026-09-03-door-fx.md)**
+
+- **09-03** [A door has a clock, and direction is what says "you can walk through this"](roadmap/18-2026-09-03-door-fx.md#a-door-has-a-clock-and-direction-is-what-says-you-can-walk-through-this-2026-09-03-client-only-no-engine-bump) — *"目前的形式太死板了"* — a door measured 0.01 luma of motion because nothing in this project could animate a scene fixture at all (which had also frozen `Portal` for three weeks). Motion is generated rather than prompted: no new art, zero bytes. 70/70 mutants killed, and all four first-round survivors were sentences the log made that nothing asserted. `render` `test` `docs`
+
 ## The work log — by theme
 
-The same 98 entries, grouped. An entry with more than one tag appears more than once.
+The same 99 entries, grouped. An entry with more than one tag appears more than once.
 
-**`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(51)*
+**`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(52)*
 
 - 08-12 [Live-play bug-fix pass](roadmap/02-2026-08-12--08-15.md#live-play-bug-fix-pass--2026-08-12-user-report-from-a-dungeon-mode-screenshot)
 - 08-12 [Viewport-fill bug-fix pass](roadmap/02-2026-08-12--08-15.md#viewport-fill-bug-fix-pass--2026-08-12)
@@ -837,6 +841,7 @@ The same 98 entries, grouped. An entry with more than one tag appears more than 
 - 09-02 [The swing that was one frame long, because the field that said otherwise was never read](roadmap/14-2026-09-02-muzzle.md#the-swing-that-was-one-frame-long-because-the-field-that-said-otherwise-was-never-read-2026-09-02-engine--client-engine_version-5253)
 - 09-02 [The weapon decides how heavy it swings, and how hard it kicks](roadmap/15-2026-09-02-melee-sector.md#the-weapon-decides-how-heavy-it-swings-and-how-hard-it-kicks-2026-09-02-client-only-no-engine-bump)
 - 09-03 [Every door is the same door, whatever wall it is cut into](roadmap/16-2026-09-03-doc-audit.md#every-door-is-the-same-door-whatever-wall-it-is-cut-into-2026-09-03-client-only-no-engine-bump)
+- 09-03 [A door has a clock, and direction is what says "you can walk through this"](roadmap/18-2026-09-03-door-fx.md#a-door-has-a-clock-and-direction-is-what-says-you-can-walk-through-this-2026-09-03-client-only-no-engine-bump)
 
 **`art`** — authored assets and the art pipeline *(16)*
 
@@ -911,7 +916,7 @@ The same 98 entries, grouped. An entry with more than one tag appears more than 
 - 08-25 [The Seven Districts: the launch arena gets authored](roadmap/06-2026-08-25.md#the-seven-districts-the-launch-arena-gets-authored-2026-08-25-content)
 - 08-25 [The three parked rules that had only shipped half](roadmap/06-2026-08-25.md#the-three-parked-rules-that-had-only-shipped-half-2026-08-25-client--one-render-only-engine-field)
 
-**`test`** — coverage sweeps, gates, mutation batteries *(30)*
+**`test`** — coverage sweeps, gates, mutation batteries *(31)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 08-05 [Platform-layer test coverage pass](roadmap/01-2026-07-24--08-05.md#platform-layer-test-coverage-pass--2026-08-05-全部加测试)
@@ -943,6 +948,7 @@ The same 98 entries, grouped. An entry with more than one tag appears more than 
 - 09-03 [Every door is the same door, whatever wall it is cut into](roadmap/16-2026-09-03-doc-audit.md#every-door-is-the-same-door-whatever-wall-it-is-cut-into-2026-09-03-client-only-no-engine-bump)
 - 09-03 [The step numbers get a gate, and it fails on its own first run](roadmap/16-2026-09-03-doc-audit.md#the-step-numbers-get-a-gate-and-it-fails-on-its-own-first-run-2026-09-03-engine-tests--docs-no-engine-bump)
 - 09-03 [The path references get a gate, by giving up on two thirds of them](roadmap/16-2026-09-03-doc-audit.md#the-path-references-get-a-gate-by-giving-up-on-two-thirds-of-them-2026-09-03-tooling--docs-no-engine-bump)
+- 09-03 [A door has a clock, and direction is what says "you can walk through this"](roadmap/18-2026-09-03-door-fx.md#a-door-has-a-clock-and-direction-is-what-says-you-can-walk-through-this-2026-09-03-client-only-no-engine-bump)
 
 **`audio`** — cues, music, the engine to sound channel *(5)*
 
@@ -991,7 +997,7 @@ The same 98 entries, grouped. An entry with more than one tag appears more than 
 - 09-02 [The four clips finally get a sound](roadmap/14-2026-09-02-muzzle.md#the-four-clips-finally-get-a-sound-2026-09-02-client--assets--tooling-no-engine-bump)
 - 09-03 [The path references get a gate, by giving up on two thirds of them](roadmap/16-2026-09-03-doc-audit.md#the-path-references-get-a-gate-by-giving-up-on-two-thirds-of-them-2026-09-03-tooling--docs-no-engine-bump)
 
-**`docs`** — design docs and this log itself *(26)*
+**`docs`** — design docs and this log itself *(27)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-02 [Documentation pass](roadmap/01-2026-07-24--08-05.md#documentation-pass--2026-08-02)
@@ -1019,6 +1025,7 @@ The same 98 entries, grouped. An entry with more than one tag appears more than 
 - 09-03 [The step numbers get a gate, and it fails on its own first run](roadmap/16-2026-09-03-doc-audit.md#the-step-numbers-get-a-gate-and-it-fails-on-its-own-first-run-2026-09-03-engine-tests--docs-no-engine-bump)
 - 09-03 [The docs' locked decisions had been superseded by their own later sections](roadmap/17-2026-09-03-doc-coherence.md#the-docs-locked-decisions-had-been-superseded-by-their-own-later-sections-2026-09-03-docs--engine--client-engine_version-54)
 - 09-03 [The path references get a gate, by giving up on two thirds of them](roadmap/16-2026-09-03-doc-audit.md#the-path-references-get-a-gate-by-giving-up-on-two-thirds-of-them-2026-09-03-tooling--docs-no-engine-bump)
+- 09-03 [A door has a clock, and direction is what says "you can walk through this"](roadmap/18-2026-09-03-door-fx.md#a-door-has-a-clock-and-direction-is-what-says-you-can-walk-through-this-2026-09-03-client-only-no-engine-bump)
 
 **`net`** — matchmaking, sockets, reconnect *(1)*
 

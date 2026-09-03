@@ -170,3 +170,61 @@ describe('CommandBuilder — move/buttons', () => {
     expect(builder.build(1, 0).buttons & Button.FIRE).toBeTruthy();
   });
 });
+
+/**
+ * `lastMove` (2026-09-03b) — the movement half of the command this builder last PRODUCED.
+ *
+ * It exists because a render-only reader (`scene/doorTick.isRefused`, "is the player pushing into
+ * this locked door") needs the input the SIM was given for the tick being drawn. Re-reading the
+ * device would answer for a different instant and would poll a gamepad twice a frame.
+ */
+describe('CommandBuilder.lastMove', () => {
+  it('starts at rest, so nothing reads a push out of a builder that has never built', () => {
+    const b = new CommandBuilder(fakeInput({ ...IDLE_STATE }));
+    expect(b.lastMove).toEqual({ rad: 0, mag: 0 });
+  });
+
+  it('records the direction and deflection of the command it just returned', () => {
+    const input = fakeInput({ ...IDLE_STATE, moveX: 0, moveY: -1 });
+    const b = new CommandBuilder(input);
+    const cmd = b.build(1, 0);
+
+    expect(b.lastMove.mag).toBe(cmd.moveMag);
+    expect(b.lastMove.rad).toBeCloseTo(bradToRad(cmd.moveBrad), 6);
+    expect(b.lastMove.mag).toBeGreaterThan(0);
+  });
+
+  it('only moves when a command is BUILT, not when the device changes', () => {
+    // The property `doorTick` depends on: a paused frame submits no command, so a finger left on
+    // the stick must not keep refusing doors. Mutating the input alone must change nothing.
+    const input = fakeInput({ ...IDLE_STATE, moveX: 1, moveY: 0 });
+    const b = new CommandBuilder(input);
+    b.build(1, 0);
+    const after = { ...b.lastMove };
+
+    input.state.moveX = 0;
+    input.state.moveY = -1;
+    expect(b.lastMove).toEqual(after);
+
+    b.build(2, 0);
+    expect(b.lastMove).not.toEqual(after);
+  });
+
+  it('goes back to rest when the stick does', () => {
+    const input = fakeInput({ ...IDLE_STATE, moveX: 1, moveY: 0 });
+    const b = new CommandBuilder(input);
+    b.build(1, 0);
+    input.state.moveX = 0;
+    b.build(2, 0);
+    expect(b.lastMove.mag).toBe(0);
+  });
+
+  it('is one object, mutated in place — a caller may hold the reference across frames', () => {
+    const input = fakeInput({ ...IDLE_STATE, moveX: 1, moveY: 0 });
+    const b = new CommandBuilder(input);
+    const held = b.lastMove;
+    b.build(1, 0);
+    expect(b.lastMove).toBe(held);
+    expect(held.mag).toBeGreaterThan(0);
+  });
+});

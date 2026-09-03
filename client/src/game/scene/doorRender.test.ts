@@ -85,6 +85,14 @@ const graphicsOf = (fixture: ReturnType<typeof buildDoorBlock>): Graphics[] =>
 const leafOf = (fixture: ReturnType<typeof buildDoorBlock>): Sprite =>
   fixture.view.children.find((c) => c instanceof Sprite && !(c instanceof TilingSprite)) as Sprite;
 
+/** Run a lock-state change to completion (`doorFx.TRANSITION_MS` is 350 ms). Since 2026-09-03 a
+ *  flip CROSSFADES rather than cutting, so both states are mounted for the transition and the
+ *  "exactly one of them is live" invariant below is a statement about the SETTLED fixture. The
+ *  transition's own behaviour is pinned separately, in `doorFx.test.ts` and in the mid-flip
+ *  assertions here — settling without ever checking the middle would let a crossfade that jumps
+ *  straight to its end state pass every one of these. */
+const settle = (fixture: ReturnType<typeof buildDoorBlock>): void => fixture.tick(400, 0);
+
 /**
  * The fixture's own copy of one `draw*` layer, found by DIGEST rather than by picking the first
  * additive child. The fixture now carries three additive Graphics (the hazard bloom, and the open
@@ -222,8 +230,25 @@ describe('buildDoorBlock — a wall block whose face is an opening', () => {
     expect(leaf.texture.source).toBe(locked.source);
 
     fixture.setLocked(false, open);
-    expect(glow.visible).toBe(false);
+    // The ghost is carrying the art we LEFT. Without this the crossfade fades out an empty sprite,
+    // i.e. the outgoing elevation vanishes on the instant — exactly the cut the transition exists
+    // to remove, and invisible to every assertion about the ghost's alpha. (2026-09-03b battery.)
+    const ghost = fixture.view.children.filter(
+      (c): c is Sprite => c instanceof Sprite && !(c instanceof TilingSprite),
+    )[1]!;
+    expect(ghost.texture.source).toBe(locked.source);
+    expect(ghost.visible).toBe(true);
+    // Mid-flip: the outgoing bloom is still mounted and still carrying most of its own weight —
+    // the leaf, though, is swapped on the instant, and it is the ghost that holds the old art.
+    expect(glow.visible).toBe(true);
+    expect(glow.alpha).toBeGreaterThan(0);
     expect(leaf.texture.source).toBe(open.source);
+    fixture.tick(200, 0);
+    const mid = glow.alpha;
+    fixture.tick(100, 0);
+    expect(glow.alpha).toBeLessThan(mid); // it is actually fading, not holding then cutting
+    settle(fixture);
+    expect(glow.visible).toBe(false);
     expect(fixture.view.children.length).toBe(kids); // no rebuild, no leak
   });
 
@@ -298,6 +323,7 @@ describe('the pieces that make an opening read as a hole rather than a panel', (
     const bloom = lightOf(locked, drawGlow);
     expect(bloom.visible).toBe(true);
     locked.setLocked(false, undefined);
+    settle(locked);
     expect(bloom.visible).toBe(false);
   });
 });
@@ -369,6 +395,16 @@ describe('an open door is lit from beyond, rather than being a locked door minus
       expect(rw!).toBeLessThan(w / 2);
       expect(x === 0 || Math.abs(x! + rw! - w) < 1e-6).toBe(true);
     }
+    // BOTH jambs, band for band. A 2026-09-03b mutation battery deleted the east one and every
+    // assertion above stayed green — `allRects` counts bands, not sides, so a doorway lit down one
+    // side only was invisible to this suite. It would not be invisible in the room: the rim is
+    // exactly what separates the arch from the flat wall beside it.
+    const west = rects.filter(([x]) => x === 0);
+    const east = rects.filter(([x, , rw]) => Math.abs(x! + rw! - w) < 1e-6);
+    expect(west.length).toBe(east.length);
+    expect(west.length).toBeGreaterThan(0);
+    // Same band heights and same alphas down both sides, not merely the same count.
+    expect(west.map(([, y, , rh]) => [y, rh])).toEqual(east.map(([, y, , rh]) => [y, rh]));
   });
 
   it('drawSpill still lays its floor pool for a kerb opening with no height to ramp into', () => {
@@ -396,8 +432,11 @@ describe('an open door is lit from beyond, rather than being a locked door minus
     const live = (): string => [through, spill, glow].map((g) => (g.visible ? '1' : '0')).join('');
     expect(live()).toBe('001');
     fixture.setLocked(false, tex(156, 224));
+    expect(live()).toBe('111'); // mid-crossfade, every layer is mounted and the alphas carry it
+    settle(fixture);
     expect(live()).toBe('110');
     fixture.setLocked(true, tex(ART_W, ART_H));
+    settle(fixture);
     expect(live()).toBe('001'); // the flip back is a separate mutant from the flip out
     expect(fixture.view.children.length).toBe(kids);
   });
@@ -419,9 +458,17 @@ describe('an open door is lit from beyond, rather than being a locked door minus
     // one of these by construction — a light that stayed opaque through the fade would sit on top
     // of the player it is meant to invite through.
     const fixture = buildDoorBlock(PASSAGE, WALL_H_PERIMETER, skin(tex(ART_W, ART_H), tex(256, 128)), false);
-    for (const draw of [drawThroughLight, drawSpill]) {
-      expect(fixture.deepLayers).toContain(lightOf(fixture, draw));
-    }
+    fixture.tick(16, 0);
+    const before = [drawThroughLight, drawSpill].map((d) => lightOf(fixture, d).alpha);
+    expect(before.every((a) => a > 0)).toBe(true);
+    // Asserted through the EFFECT rather than through membership in `deepLayers`, because since
+    // 2026-09-03 these layers reach the fade indirectly: `doorFx` owns their alpha, so the group
+    // holds its `xrayLayer` proxy in their place and the fade arrives on the next tick. A
+    // membership assertion would now pass on a proxy that was never read.
+    for (const l of fixture.deepLayers) l.alpha *= 0.3; // exactly what `occlusion.fadeGroup` does
+    fixture.tick(16, 0);
+    const after = [drawThroughLight, drawSpill].map((d) => lightOf(fixture, d).alpha);
+    for (let i = 0; i < after.length; i++) expect(after[i]!).toBeLessThan(before[i]! * 0.5);
   });
 
   it('lights a KERB door too, where the opening is 22 px and the ramp has nowhere to go', () => {
@@ -488,6 +535,7 @@ describe("an open door's recess shows the room's own floor, not more wall stone"
     const shade = lightOf(fixture, drawOpenRecessShade);
     expect(shade.visible).toBe(true);
     fixture.setLocked(true, tex(ART_W, ART_H));
+    settle(fixture);
     expect(shade.visible).toBe(false);
   });
 });
@@ -512,7 +560,7 @@ describe("an open door's curtain-of-light replaces the procedural through-light 
   it('adds no curtain sprite at all when no curtain art is loaded — through carries the cue alone', () => {
     const fixture = buildDoorBlock(PASSAGE, WALL_H_PERIMETER, skin(tex(ART_W, ART_H)), false);
     const sprites = fixture.view.children.filter((c): c is Sprite => c instanceof Sprite && !(c instanceof TilingSprite));
-    expect(sprites).toHaveLength(1); // the leaf, and nothing else
+    expect(sprites).toHaveLength(2); // the leaf and the crossfade ghost (`doorFx`), and nothing else
     expect(lightOf(fixture, drawThroughLight).visible).toBe(true);
   });
 
@@ -522,8 +570,9 @@ describe("an open door's curtain-of-light replaces the procedural through-light 
     const curtain = curtainOf(fixture, curtainArt);
     expect(curtain).toBeDefined();
     expect(curtain!.blendMode).toBe('add');
-    expect(curtain!.visible).toBe(false); // locked
+    expect(curtain!.visible).toBe(false); // locked, and settled
     fixture.setLocked(false, tex(156, 224));
+    settle(fixture);
     expect(curtain!.visible).toBe(true);
   });
 
@@ -575,7 +624,13 @@ describe("an open door's curtain-of-light replaces the procedural through-light 
     )!;
     const at = (c: unknown): number => fixture.view.children.indexOf(c as never);
     expect(at(curtain)).toBeLessThan(at(leaf));
-    expect(fixture.deepLayers).toContain(curtain);
+    // Same indirection as the through/spill case above: the curtain's alpha is `doorFx`'s, so the
+    // x-ray reaches it through that controller's proxy and only on the following tick.
+    fixture.tick(16, 0);
+    const lit = curtain.alpha;
+    for (const l of fixture.deepLayers) l.alpha *= 0.3;
+    fixture.tick(16, 0);
+    expect(curtain.alpha).toBeLessThan(lit * 0.5);
   });
 });
 
