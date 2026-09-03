@@ -18,7 +18,7 @@
 | Layer | Files | State |
 |---|---|---|
 | **−1** one boundary, one function | `engine/systems/solidBounds.ts`, `engine/state/actorRadius.ts` | ✅ G3 closed; three copies of the brim rule became one |
-| **0** contract gates | `goldenHash.test.ts` + `fixtures/golden.json` + `scripts/recordGolden.mjs`, `versionContract.test.ts`, `determinismLint.test.ts` | ✅ G1, G2 closed |
+| **0** contract gates | `goldenHash.test.ts` + `fixtures/golden.json` + `scripts/recordGolden.mjs`, `versionContract.test.ts`, `determinismLint.test.ts`, `stepOrder.test.ts` (2026-09-03) | ✅ G1, G2 closed; `stepOrder` closes a seventh gap found later, by the `roadmap/16` doc audit |
 | **1** unit tests | `solidBounds.test.ts`, `MovementSystem.test.ts`, `WeaponFireSystem.test.ts`, `ProjectileStepSystem.test.ts` | ✅ the last three had **no test file at all** before this |
 | **2** parity sweeps | `boundaryParity.test.ts`, `clearanceParity.test.ts`, `client/.../simRenderParity.test.ts`, `client/src/render/muzzleParity.test.ts`, `client/.../pickupProximity.test.ts` (v50) | ✅ G4, G5, G6 closed; v50 adds the panel-offers-vs-sim-accepts pair, the one gap that straddles the sim boundary |
 | **3** smoke + CI | `engine/smoke.test.ts`, root `npm run check:full`, `.github/workflows/check.yml` | ✅ 5 real runs, 7 invariants, every tick (v50 added the two loot/monster placement rules) |
@@ -441,6 +441,25 @@ performance.now`, with an explicit allowlist array carrying a reason per entry. 
 says these are "(enforced)"; today nothing enforces them. Strip comments before scanning
 — a source-text contract test that matches a value quoted in a comment is a known trap in
 this repo.
+
+**`engine/stepOrder.test.ts`** (2026-09-03) — not one of the six gaps below; it closes a
+seventh, found by the doc audit in `roadmap/16` rather than by this doc's own survey. The step
+ORDER is already
+enforced by the golden hashes; this enforces that the three places which *describe* it still
+agree. Each system's header opens `Step N — …`, `GameEngine.step()` labels every call, and
+design/08 lists the whole order; nothing compared them, and they had disagreed for weeks (the
+`DeathDrops`/`Pickup`/`Spawn` off-by-one trio, stale since `ENGINE_VERSION` 8; `Zone`/
+`Environment` with the number dropped entirely; design/08 not mentioning `DoorSystem` at all).
+Four rules: every call carries a label and resolves to a declared field; labels strictly
+increase down the body (so a reorder without a renumber fails); each header matches its call
+position; and no `*System.ts` is missing from `step()` or called without a file. The label
+comparator understands `8a`/`8b`/`11.5` — both escape hatches are deliberate, so that inserting
+a pass did not churn every header below it. Parser lives in `fixtures/stepOrder.mjs` so each
+rule is also proven against a synthetic violation; the real-tree assertion alone would be
+indistinguishable from a test that checks nothing. **It found the comment trap above on its
+first run** — `GameEngine.ts`'s own header says "step(commands) is the direct entry
+(headless/tests)", and an `indexOf` matched that instead of the declaration, returning the field
+list as the step order.
 
 ### Layer 1 — unit tests of the logic itself
 

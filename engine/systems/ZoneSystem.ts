@@ -1,5 +1,5 @@
 /**
- * Step — PvP zone stage machine (design/15, ROADMAP 4.2d). A room-graph BFS shrink
+ * Step 8a — PvP zone stage machine (design/15, ROADMAP 4.2d). A room-graph BFS shrink
  * from a per-match-drawn eye, NOT a geometric circle — `dist <= R` is always a
  * connected region and strictly shrinks as `R` decreases, so it can never carve
  * through a wall a player physically cannot reach, nor trap a safe room behind

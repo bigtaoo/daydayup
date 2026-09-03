@@ -716,10 +716,11 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 
 - **09-03** [The docs were right about behaviour and wrong about every pointer](roadmap/16-2026-09-03-doc-audit.md#the-docs-were-right-about-behaviour-and-wrong-about-every-pointer-2026-09-03-docs-only-no-engine-bump) — Three mechanical sweeps came back clean on links and constants; what was stale was every kind of *pointer*. design/08's "determinism contract" was missing `DoorSystem` entirely and wrong on three of its four mode tags, three system headers had been off by one since v8, and design/10 still promised a compile-time gate deleted in August. `docs`
 - **09-03** [Every door is the same door, whatever wall it is cut into](roadmap/16-2026-09-03-doc-audit.md#every-door-is-the-same-door-whatever-wall-it-is-cut-into-2026-09-03-client-only-no-engine-bump) — 11 of the 24 shipped doors were a 128x22 letterbox under 64 px of their own lintel, because a door inherited the shortest wall it was cut into; a door now has one height of its own, and the leaf test that proves it reads the shipped PNG. `render` `test` `docs`
+- **09-03** [The step numbers get a gate, and it fails on its own first run](roadmap/16-2026-09-03-doc-audit.md#the-step-numbers-get-a-gate-and-it-fails-on-its-own-first-run-2026-09-03-engine-tests--docs-no-engine-bump) — The doc audit named one finding worth a real gate and did not write it; this is it — four rules over every system header, every `step()` label and design/08's own skeleton, 8 of 8 reverted fixes killed. It failed on its first run by matching `step(commands)` in a doc comment, and turned up two more defects on the way, one of them in the audit's own correction. `test` `docs`
 
 ## The work log — by theme
 
-The same 95 entries, grouped. An entry with more than one tag appears more than once.
+The same 96 entries, grouped. An entry with more than one tag appears more than once.
 
 **`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(51)*
 
@@ -847,7 +848,7 @@ The same 95 entries, grouped. An entry with more than one tag appears more than 
 - 08-25 [The Seven Districts: the launch arena gets authored](roadmap/06-2026-08-25.md#the-seven-districts-the-launch-arena-gets-authored-2026-08-25-content)
 - 08-25 [The three parked rules that had only shipped half](roadmap/06-2026-08-25.md#the-three-parked-rules-that-had-only-shipped-half-2026-08-25-client--one-render-only-engine-field)
 
-**`test`** — coverage sweeps, gates, mutation batteries *(28)*
+**`test`** — coverage sweeps, gates, mutation batteries *(29)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 08-05 [Platform-layer test coverage pass](roadmap/01-2026-07-24--08-05.md#platform-layer-test-coverage-pass--2026-08-05-全部加测试)
@@ -877,6 +878,7 @@ The same 95 entries, grouped. An entry with more than one tag appears more than 
 - 09-02 [The swing that was one frame long, because the field that said otherwise was never read](roadmap/14-2026-09-02-muzzle.md#the-swing-that-was-one-frame-long-because-the-field-that-said-otherwise-was-never-read-2026-09-02-engine--client-engine_version-5253)
 - 09-02 [The weapon decides how heavy it swings, and how hard it kicks](roadmap/15-2026-09-02-melee-sector.md#the-weapon-decides-how-heavy-it-swings-and-how-hard-it-kicks-2026-09-02-client-only-no-engine-bump)
 - 09-03 [Every door is the same door, whatever wall it is cut into](roadmap/16-2026-09-03-doc-audit.md#every-door-is-the-same-door-whatever-wall-it-is-cut-into-2026-09-03-client-only-no-engine-bump)
+- 09-03 [The step numbers get a gate, and it fails on its own first run](roadmap/16-2026-09-03-doc-audit.md#the-step-numbers-get-a-gate-and-it-fails-on-its-own-first-run-2026-09-03-engine-tests--docs-no-engine-bump)
 
 **`audio`** — cues, music, the engine to sound channel *(5)*
 
@@ -924,7 +926,7 @@ The same 95 entries, grouped. An entry with more than one tag appears more than 
 - 09-01 [Two days of features, audited for what the tests did not say](roadmap/13-2026-09-01-asset-phases.md#two-days-of-features-audited-for-what-the-tests-did-not-say-2026-09-01-engine--client--build-engine_version-5051)
 - 09-02 [The four clips finally get a sound](roadmap/14-2026-09-02-muzzle.md#the-four-clips-finally-get-a-sound-2026-09-02-client--assets--tooling-no-engine-bump)
 
-**`docs`** — design docs and this log itself *(23)*
+**`docs`** — design docs and this log itself *(24)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-02 [Documentation pass](roadmap/01-2026-07-24--08-05.md#documentation-pass--2026-08-02)
@@ -949,6 +951,7 @@ The same 95 entries, grouped. An entry with more than one tag appears more than 
 - 09-02 [The swing that was one frame long, because the field that said otherwise was never read](roadmap/14-2026-09-02-muzzle.md#the-swing-that-was-one-frame-long-because-the-field-that-said-otherwise-was-never-read-2026-09-02-engine--client-engine_version-5253)
 - 09-02 [The weapon decides how heavy it swings, and how hard it kicks](roadmap/15-2026-09-02-melee-sector.md#the-weapon-decides-how-heavy-it-swings-and-how-hard-it-kicks-2026-09-02-client-only-no-engine-bump)
 - 09-03 [The docs were right about behaviour and wrong about every pointer](roadmap/16-2026-09-03-doc-audit.md#the-docs-were-right-about-behaviour-and-wrong-about-every-pointer-2026-09-03-docs-only-no-engine-bump)
+- 09-03 [The step numbers get a gate, and it fails on its own first run](roadmap/16-2026-09-03-doc-audit.md#the-step-numbers-get-a-gate-and-it-fails-on-its-own-first-run-2026-09-03-engine-tests--docs-no-engine-bump)
 
 **`net`** — matchmaking, sockets, reconnect *(1)*
 

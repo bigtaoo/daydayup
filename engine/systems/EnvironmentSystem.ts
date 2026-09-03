@@ -1,5 +1,5 @@
 /**
- * Step — room-id tracking (PvE + PvP) + PvP zone/hazard-tile damage (design/15,
+ * Step 8b — room-id tracking (PvE + PvP) + PvP zone/hazard-tile damage (design/15,
  * ROADMAP 4.2d; generalized to dungeon mode design/05 "Room & door model",
  * 2026-08-04). AI enemies go through the identical check as players — no special-
  * casing needed for "does the zone kill monsters too," it just does.
