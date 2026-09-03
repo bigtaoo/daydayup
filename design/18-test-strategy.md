@@ -1,9 +1,12 @@
 # Test strategy: keeping the logic in sync with itself
 
 > Status: **all four layers shipped**, 2026-08-30, at `ENGINE_VERSION` **49**. Repo-wide
-> `npm run check` is green at 5,885 tests (engine 885 → 1064); both `.sim.ts` balance
-> suites pass, including the level-1 no-stall gate that a geometry change is most likely
-> to break.
+> `npm run check` was green at 5,885 tests when they landed (engine 885 → 1064), and at
+> **6,799** (engine **1164**) when last measured, 2026-09-03 — both figures dated on purpose,
+> because an undated count in a status block is this doc set's most reliable way of going stale
+> (see the design-docs conventions memory). Two more Layer 0 gates landed that day:
+> `engine/stepOrder.test.ts` and `build/checkDocPaths.mjs`. Both `.sim.ts` balance suites pass,
+> including the level-1 no-stall gate that a geometry change is most likely to break.
 >
 > The findings the new tests turned up were then **fixed**, which is what the v49 bump is
 > — see `ENGINE_VERSION_HISTORY.md`. The Layer −1 refactor was *not* part of that bump:
