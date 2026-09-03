@@ -18,7 +18,7 @@
 | Layer | Files | State |
 |---|---|---|
 | **−1** one boundary, one function | `engine/systems/solidBounds.ts`, `engine/state/actorRadius.ts` | ✅ G3 closed; three copies of the brim rule became one |
-| **0** contract gates | `goldenHash.test.ts` + `fixtures/golden.json` + `scripts/recordGolden.mjs`, `versionContract.test.ts`, `determinismLint.test.ts`, `stepOrder.test.ts` (2026-09-03) | ✅ G1, G2 closed; `stepOrder` closes a seventh gap found later, by the `roadmap/16` doc audit |
+| **0** contract gates | `goldenHash.test.ts` + `fixtures/golden.json` + `scripts/recordGolden.mjs`, `versionContract.test.ts`, `determinismLint.test.ts`, `stepOrder.test.ts` + `build/checkDocPaths.mjs` (both 2026-09-03) | ✅ G1, G2 closed; the last two close the two mechanically-checkable gaps the `roadmap/16` doc audit found, outside this doc's own six |
 | **1** unit tests | `solidBounds.test.ts`, `MovementSystem.test.ts`, `WeaponFireSystem.test.ts`, `ProjectileStepSystem.test.ts` | ✅ the last three had **no test file at all** before this |
 | **2** parity sweeps | `boundaryParity.test.ts`, `clearanceParity.test.ts`, `client/.../simRenderParity.test.ts`, `client/src/render/muzzleParity.test.ts`, `client/.../pickupProximity.test.ts` (v50) | ✅ G4, G5, G6 closed; v50 adds the panel-offers-vs-sim-accepts pair, the one gap that straddles the sim boundary |
 | **3** smoke + CI | `engine/smoke.test.ts`, root `npm run check:full`, `.github/workflows/check.yml` | ✅ 5 real runs, 7 invariants, every tick (v50 added the two loot/monster placement rules) |
@@ -460,6 +460,23 @@ indistinguishable from a test that checks nothing. **It found the comment trap a
 first run** — `GameEngine.ts`'s own header says "step(commands) is the direct entry
 (headless/tests)", and an `indexOf` matched that instead of the declaration, returning the field
 list as the step order.
+
+**`build/checkDocPaths.mjs`** + `build/checkDocPaths.test.mjs` (2026-09-03, `npm run
+check:docpaths`, folded into `npm run check`) — the other gap `roadmap/16` found: a **decision
+doc** may not cite a source file that does not exist. Its design is a scoping decision, not an
+algorithm. Run over the whole doc set the sweep produced 36 hits and **35 were correct**, because
+`ROADMAP.md`, `roadmap/*` and `README.md` are an append-only historical log where naming a
+since-deleted file is right, not stale — so gating them would mean editing the past or growing an
+allowlist forever. Scoped instead to `design/**/*.md` minus ROADMAP and the log, plus `CLAUDE.md`:
+26 docs and about a thousand references, with a 20-entry allowlist, and the one real defect (design/10 promising a
+`confirmEdge.test.ts` gate deleted a month earlier) sits inside that scope. Matching is by
+BASENAME — `game/Scene.ts` for `client/src/game/scene/Scene.ts` is house style, and full-path
+matching would flag ~200 correct references — against `git ls-files`, so CI and every machine
+agree (a filesystem walk would not: `client/dist/version.json` exists only after a build). Each
+exemption carries a reason and the list is asserted **minimal**: an entry that stops being cited,
+or starts resolving, fails. **What it cannot do:** the exemption is on a token, not a sentence, so
+rewording one of the five "cited as deleted" references back into a present-tense claim would pass
+— it catches a *new* dangling reference, which is the direction the drift travels.
 
 ### Layer 1 — unit tests of the logic itself
 

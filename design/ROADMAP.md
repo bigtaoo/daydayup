@@ -774,6 +774,7 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 - **09-03** [The docs were right about behaviour and wrong about every pointer](roadmap/16-2026-09-03-doc-audit.md#the-docs-were-right-about-behaviour-and-wrong-about-every-pointer-2026-09-03-docs-only-no-engine-bump) — Three mechanical sweeps came back clean on links and constants; what was stale was every kind of *pointer*. design/08's "determinism contract" was missing `DoorSystem` entirely and wrong on three of its four mode tags, three system headers had been off by one since v8, and design/10 still promised a compile-time gate deleted in August. `docs`
 - **09-03** [Every door is the same door, whatever wall it is cut into](roadmap/16-2026-09-03-doc-audit.md#every-door-is-the-same-door-whatever-wall-it-is-cut-into-2026-09-03-client-only-no-engine-bump) — 11 of the 24 shipped doors were a 128x22 letterbox under 64 px of their own lintel, because a door inherited the shortest wall it was cut into; a door now has one height of its own, and the leaf test that proves it reads the shipped PNG. `render` `test` `docs`
 - **09-03** [The step numbers get a gate, and it fails on its own first run](roadmap/16-2026-09-03-doc-audit.md#the-step-numbers-get-a-gate-and-it-fails-on-its-own-first-run-2026-09-03-engine-tests--docs-no-engine-bump) — The doc audit named one finding worth a real gate and did not write it; this is it — four rules over every system header, every `step()` label and design/08's own skeleton, 8 of 8 reverted fixes killed. It failed on its first run by matching `step(commands)` in a doc comment, and turned up two more defects on the way, one of them in the audit's own correction. `test` `docs`
+- **09-03** [The path references get a gate, by giving up on two thirds of them](roadmap/16-2026-09-03-doc-audit.md#the-path-references-get-a-gate-by-giving-up-on-two-thirds-of-them-2026-09-03-tooling--docs-no-engine-bump) — The other gate the audit named. The raw sweep was 35-of-36 false positives, and the fix was scoping rather than cleverness: the log is append-only history where naming a deleted file is right, so only the decision docs are gated. 20 reasoned exemptions, asserted minimal, and it caught its own author citing an untracked file mid-pass. `tools` `test` `docs`
 
 **[2026-09-03 — design-doc coherence](roadmap/17-2026-09-03-doc-coherence.md)**
 
@@ -781,7 +782,7 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 
 ## The work log — by theme
 
-The same 97 entries, grouped. An entry with more than one tag appears more than once.
+The same 98 entries, grouped. An entry with more than one tag appears more than once.
 
 **`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(51)*
 
@@ -910,7 +911,7 @@ The same 97 entries, grouped. An entry with more than one tag appears more than 
 - 08-25 [The Seven Districts: the launch arena gets authored](roadmap/06-2026-08-25.md#the-seven-districts-the-launch-arena-gets-authored-2026-08-25-content)
 - 08-25 [The three parked rules that had only shipped half](roadmap/06-2026-08-25.md#the-three-parked-rules-that-had-only-shipped-half-2026-08-25-client--one-render-only-engine-field)
 
-**`test`** — coverage sweeps, gates, mutation batteries *(29)*
+**`test`** — coverage sweeps, gates, mutation batteries *(30)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 08-05 [Platform-layer test coverage pass](roadmap/01-2026-07-24--08-05.md#platform-layer-test-coverage-pass--2026-08-05-全部加测试)
@@ -941,6 +942,7 @@ The same 97 entries, grouped. An entry with more than one tag appears more than 
 - 09-02 [The weapon decides how heavy it swings, and how hard it kicks](roadmap/15-2026-09-02-melee-sector.md#the-weapon-decides-how-heavy-it-swings-and-how-hard-it-kicks-2026-09-02-client-only-no-engine-bump)
 - 09-03 [Every door is the same door, whatever wall it is cut into](roadmap/16-2026-09-03-doc-audit.md#every-door-is-the-same-door-whatever-wall-it-is-cut-into-2026-09-03-client-only-no-engine-bump)
 - 09-03 [The step numbers get a gate, and it fails on its own first run](roadmap/16-2026-09-03-doc-audit.md#the-step-numbers-get-a-gate-and-it-fails-on-its-own-first-run-2026-09-03-engine-tests--docs-no-engine-bump)
+- 09-03 [The path references get a gate, by giving up on two thirds of them](roadmap/16-2026-09-03-doc-audit.md#the-path-references-get-a-gate-by-giving-up-on-two-thirds-of-them-2026-09-03-tooling--docs-no-engine-bump)
 
 **`audio`** — cues, music, the engine to sound channel *(5)*
 
@@ -974,7 +976,7 @@ The same 97 entries, grouped. An entry with more than one tag appears more than 
 - 08-31 [The save verb gets a button, and the tests that were still missing](roadmap/11-2026-08-28--08-31.md#the-save-verb-gets-a-button-and-the-tests-that-were-still-missing-2026-08-31-client)
 - 09-02 [Standing next to loot stops disarming the player](roadmap/14-2026-09-02-muzzle.md#standing-next-to-loot-stops-disarming-the-player-2026-09-02-client-only-no-engine-bump)
 
-**`tools`** — sims, profilers, editors, build scripts *(11)*
+**`tools`** — sims, profilers, editors, build scripts *(12)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-12 [File-length convention pass](roadmap/02-2026-08-12--08-15.md#file-length-convention-pass--2026-08-12)
@@ -987,8 +989,9 @@ The same 97 entries, grouped. An entry with more than one tag appears more than 
 - 08-31 [A seed was never a repro, and nothing had ever recorded a run](roadmap/11-2026-08-28--08-31.md#a-seed-was-never-a-repro-and-nothing-had-ever-recorded-a-run-2026-08-31-engine--client)
 - 09-01 [Two days of features, audited for what the tests did not say](roadmap/13-2026-09-01-asset-phases.md#two-days-of-features-audited-for-what-the-tests-did-not-say-2026-09-01-engine--client--build-engine_version-5051)
 - 09-02 [The four clips finally get a sound](roadmap/14-2026-09-02-muzzle.md#the-four-clips-finally-get-a-sound-2026-09-02-client--assets--tooling-no-engine-bump)
+- 09-03 [The path references get a gate, by giving up on two thirds of them](roadmap/16-2026-09-03-doc-audit.md#the-path-references-get-a-gate-by-giving-up-on-two-thirds-of-them-2026-09-03-tooling--docs-no-engine-bump)
 
-**`docs`** — design docs and this log itself *(25)*
+**`docs`** — design docs and this log itself *(26)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-02 [Documentation pass](roadmap/01-2026-07-24--08-05.md#documentation-pass--2026-08-02)
@@ -1015,6 +1018,7 @@ The same 97 entries, grouped. An entry with more than one tag appears more than 
 - 09-03 [The docs were right about behaviour and wrong about every pointer](roadmap/16-2026-09-03-doc-audit.md#the-docs-were-right-about-behaviour-and-wrong-about-every-pointer-2026-09-03-docs-only-no-engine-bump)
 - 09-03 [The step numbers get a gate, and it fails on its own first run](roadmap/16-2026-09-03-doc-audit.md#the-step-numbers-get-a-gate-and-it-fails-on-its-own-first-run-2026-09-03-engine-tests--docs-no-engine-bump)
 - 09-03 [The docs' locked decisions had been superseded by their own later sections](roadmap/17-2026-09-03-doc-coherence.md#the-docs-locked-decisions-had-been-superseded-by-their-own-later-sections-2026-09-03-docs--engine--client-engine_version-54)
+- 09-03 [The path references get a gate, by giving up on two thirds of them](roadmap/16-2026-09-03-doc-audit.md#the-path-references-get-a-gate-by-giving-up-on-two-thirds-of-them-2026-09-03-tooling--docs-no-engine-bump)
 
 **`net`** — matchmaking, sockets, reconnect *(1)*
 

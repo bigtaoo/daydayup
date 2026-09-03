@@ -14,11 +14,12 @@
     "tools/desktop-shell"
   ],
   "scripts": {
-    "test": "npm run test --workspaces --if-present && npx vitest run build/versionManifestPlugin.test.mjs build/wechatAssetSync.test.mjs",
+    "test": "npm run test --workspaces --if-present && npx vitest run build/versionManifestPlugin.test.mjs build/wechatAssetSync.test.mjs build/checkDocPaths.test.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "check:filelength": "npm run check:filelength --workspaces --if-present",
     "check:wechatpackage": "node build/checkWeChatPackage.mjs",
-    "check": "npm run typecheck && npm run check:filelength && npm run check:wechatpackage && npm run test",
+    "check:docpaths": "node build/checkDocPaths.mjs",
+    "check": "npm run typecheck && npm run check:filelength && npm run check:wechatpackage && npm run check:docpaths && npm run test",
     "test:pvp-sim": "npm run test:pvp-sim -w client",
     "test:pve-sim": "npm run test:pve-sim -w client",
     "test:drop-sim": "npm run test:drop-sim -w client",
