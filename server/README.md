@@ -33,7 +33,9 @@ pure core + the shared ticket module:
 | `src/routes/*.ts`    | One module per surface (`auth`, `account`, `match`, `party`, `rating`), each a set of free `(req, res, url, deps)` handlers, over a shared `routes/http.ts` (CORS, `send`, `readJson`). | no | ✅ `test/routes.test.ts` + the two `*.http.test.ts` |
 | `src/db.ts` / `src/AuthService.ts` | The SQLite (`node:sqlite`) account store: `accounts`/`sessions`/`ratings`/`meta_state`/`entitlements` (design/16-accounts.md). | file | ✅ `test/db.test.ts`, `test/AuthService.test.ts` |
 | `src/EntitlementService.ts` | Server-owned blueprint/character ownership (design/19 §2, ROADMAP 8.2) — the reason `/account/meta` is no longer a blind whole-blob upsert. Grant is `ON CONFLICT DO NOTHING` + `changes`, so an at-least-once delivery is idempotent. | no | ✅ `test/EntitlementService.test.ts` |
-| `src/config.ts`      | The one place that reads `DDU_TICKET_SECRET` (env), so both planes agree on the secret. | env | — |
+| `src/config.ts`      | The one place that reads `DDU_TICKET_SECRET` and `DDU_INTERNAL_KEY` (env), so both planes agree on each. | env | ✅ `test/config.test.ts` + `test/config.internalKeys.test.ts` |
+| `src/internalAuth.ts` | Inbound service-to-service auth (ROADMAP 8.1): `x-internal-key` against a per-caller registry, hashed before `timingSafeEqual`. A THIRD credential namespace — never a player token. | no | ✅ `test/internalAuth.test.ts`, `test/internalTrustSeam.test.ts` |
+| `src/internalFetch.ts` | Outbound service-to-service calls: always drains the response body, explicit per-attempt timeout, opt-in bounded retry. | no | ✅ `test/internalFetch.test.ts` |
 
 `MatchRoom`/`RoomManager` take an injected `Scheduler` (the metronome clock) and
 `RoomConnection`s (per-seat senders), so the whole lifecycle is unit-tested with a fake
@@ -89,6 +91,17 @@ accepts the legacy raw-param handshake (`/ws?roomId=..&owner=..&seed=..&count=..
 manual testing. Set `DDU_GAMESERVER_URL` on matchsvc so its issued tickets carry the right
 `wsUrl` (default `ws://localhost:8787/ws`). Where the two services physically deploy is an
 ops call; the architecture split (design/06) is settled.
+
+**Internal key (ROADMAP 8.1, design/19 §3):** set `DDU_INTERNAL_KEY` to the SAME value on
+both processes, the same way as the ticket secret and for the same reason — it is what the
+gameserver presents on `POST /rating/report`, which is an INTERNAL route and refuses anything
+else. It is a **third** credential namespace, distinct from player sessions (`Authorization:
+Bearer`) and from the ticket HMAC; an internal route never accepts a player token. Unset, it
+falls back to a published insecure DEV key with a warning so the local two-process setup
+works out of the box — **except under `NODE_ENV=production`, where an unset key means every
+internal call is refused** rather than falling back to a key printed in this repository.
+A refused settlement report is logged (room, attempt count, failure kind), so a missing key
+shows up in the gameserver log rather than as a ladder that quietly stops moving.
 
 **Reconnect (design/06, wired end-to-end 2026-08-04):** the join handshake above only
 ever succeeds while a room is still `WAITING` (filling seats) — a socket for a room

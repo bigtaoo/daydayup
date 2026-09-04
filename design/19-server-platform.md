@@ -14,9 +14,10 @@ hold here — the standing rule for porting from that project.
 ## Path convention in this doc
 
 A backticked path carries a file extension **only when the file exists in this repo today**.
-Planned modules (`server/src/internalAuth`) and sibling-project paths (funny's
+Planned modules (`server/src/billsvc/iap`) and sibling-project paths (funny's
 `shared/src/internalFetch`) are written **without** one, so `checkDocPaths.mjs` reads them as
-prose rather than as claims about this tree. Add the extension when the file lands.
+prose rather than as claims about this tree. Add the extension when the file lands — §3's two
+modules did, on 2026-09-04, and carry `.ts` below.
 
 ## The decisions (locked)
 
@@ -59,18 +60,21 @@ each seam below now names its own file, and the two passes cannot collide in one
 
 The only trust seam between them is the signed ticket (`ticket.ts`): matchsvc signs
 `{roomId, owner, seed, playerCount, mode, accountId}`, the gameserver trusts nothing else. That
-part is correct and is not changed here. Two things around it are not:
+part is correct and is not changed here. Two things around it were not — both **fixed
+2026-09-04** (ROADMAP 8.1, `design/roadmap/29-2026-09-04-internal-trust-seam.md`):
 
-- **D1 — `/rating/report` is unauthenticated.** It is called by the gameserver and by nothing
-  else, but it has no key, no origin check, and open CORS. Any client can POST arbitrary ladder
-  placements for any `accountId`. Fixed by §4.
+- **D1 — `/rating/report` was unauthenticated.** It is called by the gameserver and by nothing
+  else, but it had no key, no origin check, and open CORS. Any client could POST arbitrary ladder
+  placements for any `accountId`. Closed by §3's inbound half. (This bullet and the next read
+  "Fixed by §4" when the doc was written; §4 is billing, and the seam that fixes them is §3.)
 - **D2 — the outbound report never drains its response body.** `reportSettledMatch` in `index.ts`
   is `fetch(...).catch(() => {})`. funny shipped that exact shape and measured the consequence
   under a concurrent burst: unconsumed undici bodies keep their sockets checked out, the
   keep-alive pool jams, and every request fails with `fetch failed` ~30 s later — so *none* of
-  them arrived. Low PvP settlement volume is the only reason this has not bitten. Fixed by §4.
+  them arrived. Low PvP settlement volume is the only reason it never bit here. Closed by §3's
+  outbound half.
 
-Neither defect involves billing. Both should be fixed first.
+Neither defect involved billing, and both were fixed first, as planned.
 
 ## 2. Entitlements move server-side — SHIPPED 2026-09-04
 
@@ -141,11 +145,15 @@ from a paid one afterwards.
 delivery path is billsvc's (§4) through an internal-key-authed route (§3), and
 `EntitlementService.owns` exists and is tested but no PvP character gate consults it yet.
 
-## 3. The internal trust seam
+## 3. The internal trust seam — SHIPPED 2026-09-04
+
+**Status: SHIPPED 2026-09-04** (ROADMAP 8.1). Both modules exist; `POST /rating/report` is
+behind the key, and `reportSettledMatch` goes through the outbound helper. Three things the
+plan below did not anticipate are recorded at the end of this section.
 
 Borrowed from funny's `shared/src/internalAuth` and `shared/src/internalFetch`, cut down.
 
-**Inbound** (`server/src/internalAuth`): an `x-internal-key` header compared with
+**Inbound** (`server/src/internalAuth.ts`): an `x-internal-key` header compared with
 `timingSafeEqual`, plus an advisory `x-internal-caller` for logs. funny's per-caller key registry
 (one key per calling service, independently rotatable) is the right end state but is not worth it
 at three processes — keep the *shape* (a verifier object built from a registry that currently has
@@ -157,14 +165,41 @@ Applies to `/rating/report` (D1, `server/src/routes/rating.ts`) immediately, and
 `billsvc` route except the platform
 webhook, which is authenticated by the platform's own signature instead.
 
-**Outbound** (`server/src/internalFetch`): one helper that every cross-service call goes through,
+**Outbound** (`server/src/internalFetch.ts`): one helper that every cross-service call goes through,
 which cannot forget the three things a bare `fetch` forgets:
 
 1. **always drain or cancel the response body**, even when the real answer arrives elsewhere (D2);
 2. **an explicit per-attempt timeout** — undici's `fetch` has no default, so a stuck socket hangs
    for tens of seconds instead of failing fast;
 3. **bounded retry only for calls that are idempotent and not self-healing.** A settlement report
-   is worth retrying; a periodic heartbeat is not, because the next tick re-sends it.
+   is worth retrying; a periodic heartbeat is not, because the next tick re-sends it. Retry is
+   therefore **opt-in**: `retry` absent means exactly one attempt, so a caller who never thought
+   about it cannot accidentally get at-least-once delivery.
+
+### What building it changed (2026-09-04)
+
+- **The key comparison hashes both sides before `timingSafeEqual`.** The plan said
+  "compared with `timingSafeEqual`", which is what `ticket.ts` already does — behind an
+  `a.length !== b.length` guard, because that function *throws* on a length mismatch. That
+  guard is right for an HMAC, which is always the same length, and wrong for an
+  operator-chosen shared secret: it turns the real key's length into something an attacker can
+  measure. Hashing first makes every comparison 32 bytes against 32 bytes, so it neither
+  throws nor leaks the length. Without it a wrong-length key is a 500, not a refusal.
+- **An unset key in production yields an EMPTY registry, not the dev key.** `config.ts` gives
+  the internal key the same posture it already gives `DDU_TICKET_SECRET` (real env var →
+  production; unset → a published dev key plus one loud warning, so the two-process local
+  setup works out of the box) with exactly one difference: under `NODE_ENV=production` an
+  unset `DDU_INTERNAL_KEY` refuses *every* internal call rather than falling back. A key
+  printed in this repository is not a weaker credential than none — it is the same one — and
+  the fallback would look configured. This is §5's "fail closed in production" rule, which
+  that section states for the billing dev stub, reaching one section earlier than expected.
+- **`/rating/report` is at-least-once, and retrying it can double-apply a rating.**
+  `RatingStore.applyMatch` carries no dedupe key, so a report that was delivered but whose
+  response was lost is applied twice on retry. The settlement budget is a deliberate 3 for
+  that reason, and the trade is recorded at the call site. Making it exactly-once wants the
+  same shape §4 already specifies for billing delivery — a dedupe key (`roomId` is already
+  threaded through `ladderReport.ts`), a `UNIQUE` column in `db.ts`, and a `changes()` check
+  rather than SELECT-then-INSERT. **Open**, and the first thing to do to this seam next.
 
 ## 4. Billing: the data model
 
