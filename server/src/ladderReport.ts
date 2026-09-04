@@ -5,7 +5,12 @@
  * ONLY file that touches ws... hands everything to the pure RoomManager/MatchRoom
  * lifecycle, which the tests drive with fakes") — this module is that same principle
  * applied to the 4.6 wiring.
+ *
+ * Also owns the report's exactly-once dedupe key (`ratingReportKey`, design/19 §3), for the
+ * same reason: whether `roomId` is a sufficient key is an argument about match identity, and
+ * arguments belong where a test can reach them.
  */
+import { createHash } from 'node:crypto';
 import { teamIdForOwner } from './config';
 
 export interface RatingReportBody {
@@ -18,6 +23,64 @@ export interface RatingReportBody {
    * (`teamIdForOwner`), so a solo/FFA match (squad size 1) degenerates to one
    * singleton team per seat, byte-identical to the pre-squad behavior. */
   teamIds: number[];
+  /**
+   * The exactly-once dedupe key for this report (design/19 §3, closing ROADMAP 8.1's one
+   * open item) — see `ratingReportKey` below for what is in it and why. matchsvc claims
+   * this string in `rating_reports` inside the same transaction that moves the ratings, so
+   * a retried-but-already-delivered report adds nothing the second time.
+   *
+   * Carried in the BODY rather than derived by the receiver, because the sender is the only
+   * side that knows which match this is: the receiver sees a set of accounts and places,
+   * and two genuinely different matches can produce an identical one. The key is exactly as
+   * trusted as the placements it travels with, which is what design/19 §3's internal key
+   * already establishes.
+   */
+  reportKey: string;
+}
+
+/**
+ * The dedupe key for one settled match: `{roomId}:{16 hex of sha256 over the report}`.
+ *
+ * WHY roomId, and why it is not enough ON ITS OWN. A room settles at most once —
+ * `MatchRoom.reportResult` latches `this.settled` and destroys the room immediately after
+ * firing `onSettled` — and `matchsvc.ts` mints room ids with `randomUUID()`, so in
+ * production one roomId names exactly one settlement and `roomId` alone would be a correct
+ * key. The mode does not change that: a PvE/co-op settlement travels the SAME
+ * `onSettled` → `reportSettledMatch` path and is filtered only by that function's
+ * `hashOk`/`placements`/`winner` guard, but the filter is per-REPORT, so whatever gets
+ * through still gets through once per room.
+ *
+ * What breaks it is the room id not always being ours. `index.ts`'s legacy dev handshake
+ * (no `DDU_TICKET_SECRET` configured) takes `roomId` straight off the query string, and the
+ * room is destroyed when it settles — so a local `?roomId=dev` can host a second, genuinely
+ * different match, and a roomId-only key would silently swallow every settlement after the
+ * first. That failure is the one the tests below care about most: double-crediting a match
+ * is visible and reversible, while a match whose rating never lands is neither.
+ *
+ * The room id appears TWICE — as the prefix and inside the digest — and the second is
+ * redundant while the first is intact (a mutation battery on 2026-09-05 confirmed it:
+ * dropping `roomId` from the digest kills nothing, dropping the prefix kills four cases).
+ * It is kept as the cheaper half of the pair to lose: the prefix exists for humans reading
+ * SQL and could reasonably be shortened or normalised one day, and if it is, the digest is
+ * what keeps two rooms apart.
+ *
+ * So the content digest rides along. It costs nothing to compute, it is a pure function of
+ * the report (the SAME body a retry re-sends, so the key is stable across the retry ladder
+ * — which is the one property the whole mechanism rests on), and it separates two matches
+ * that share a room id unless their accounts, places AND teams are all identical, at which
+ * point the two reports are indistinguishable anyway.
+ */
+export function ratingReportKey(
+  roomId: string,
+  accountIds: readonly string[],
+  places: readonly number[],
+  teamIds: readonly number[],
+): string {
+  // JSON of a fixed-order tuple rather than a hand-rolled join: it cannot be made ambiguous
+  // by an id that happens to contain the separator, and `buildRatingReportBody` fills the
+  // three arrays in a deterministic seat order, so the same match always digests the same.
+  const digest = createHash('sha256').update(JSON.stringify([roomId, accountIds, places, teamIds])).digest('hex');
+  return `${roomId}:${digest.slice(0, 16)}`;
 }
 
 /**
@@ -70,5 +133,5 @@ export function buildRatingReportBody(
     places.push(place);
     teamIds.push(teamIdForOwner(seatIdx, n));
   }
-  return { accountIds, places, teamIds };
+  return { accountIds, places, teamIds, reportKey: ratingReportKey(roomId, accountIds, places, teamIds) };
 }

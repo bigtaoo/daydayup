@@ -120,8 +120,9 @@ export function createInternalVerifier(registry: readonly InternalCaller[]): Int
 /**
  * Sanitize an untrusted header value for a log line: control characters (a newline above
  * all) removed and the result truncated, so a rejected caller cannot inject a fake log
- * record into the audit trail it is about to appear in. Exported for its own test — this
- * is the one place a hostile string reaches a `console.warn`.
+ * record into the audit trail it is about to appear in. Exported for its own test, and since
+ * 2026-09-05 also for `routes/rating.ts`, whose settlement-failure line names the body's
+ * `reportKey` — every place an untrusted string reaches a console call goes through here.
  */
 export function sanitizeAuditValue(value: string, maxLength = 64): string {
   // Control characters, DEL included: a newline in this value is how a fake log line gets in.

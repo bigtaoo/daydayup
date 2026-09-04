@@ -74,6 +74,29 @@ CREATE TABLE IF NOT EXISTS entitlements (
   -- could never match it to anything on the platform side.
   CHECK (source <> 'purchase' OR order_id IS NOT NULL)
 );
+
+-- Exactly-once ladder settlement (design/19 §3, closing ROADMAP 8.1's one open item). \`POST /rating/report\` is an
+-- AT-LEAST-ONCE delivery: ROADMAP 8.1 gave \`reportSettledMatch\` a retry budget, so a report
+-- that was DELIVERED and lost only its response (a timeout, a 5xx written after the write)
+-- comes back. With nothing to lose a claim to, the retry adds the whole match's rating
+-- deltas a second time — 8.1's own note called that "the first thing to do to this seam
+-- next", and this table is it.
+--
+-- The PRIMARY KEY *is* the mechanism, not an index over one. Delivery claims a row with
+-- \`INSERT ... ON CONFLICT DO NOTHING\` and reads \`changes()\`, inside the SAME transaction
+-- that writes \`ratings\` (rating.ts's \`applyMatchOnce\`) — never SELECT-then-INSERT, which
+-- answers the question before holding the lock that would make the answer true. That is
+-- design/19 §4's first billing rule and its AMENDMENT 2, pointed at this seam.
+--
+-- No FK and no rating columns: the row is a CLAIM, not a record of what was applied. The
+-- deltas are already in \`ratings\`, the report keys are \`ladderReport.ts\`'s
+-- \`{roomId}:{digest}\` (see there for why a digest rides along), and \`applied_at\` plus
+-- \`WHERE report_key LIKE 'the-room-id:%'\` is what an operator needs to answer "did this
+-- room's settlement land?" with plain SQL (design/19 §7 rules out an admin service).
+CREATE TABLE IF NOT EXISTS rating_reports (
+  report_key TEXT PRIMARY KEY,
+  applied_at INTEGER NOT NULL
+);
 `;
 
 /** Opens (creating if needed) the account DB and ensures the schema exists. */

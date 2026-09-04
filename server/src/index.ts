@@ -41,18 +41,24 @@ const MATCHSVC_URL = process.env.DDU_MATCHSVC_URL;
  * the opposite of a periodic heartbeat, which passes no `retry` because the next tick is
  * already the retry.
  *
- * NOTE, and this is the reason the budget is 3 rather than 10: `/rating/report` is
- * at-least-once, not exactly-once. `RatingStore.applyMatch` carries no dedupe key, so a
- * report that was delivered but whose RESPONSE was lost (a timeout, a 5xx written after
- * the write) gets applied twice if it is retried. Making it truly idempotent means a
- * dedupe key on the report — `roomId` is already threaded into `buildRatingReportBody`
- * and would serve — plus a `UNIQUE` column in `db.ts`'s `ratings` schema and a
- * `changes()` check in `rating.ts`, exactly the shape design/19 §4 specifies for billing
- * delivery. That is a change to files this pass does not own; until it lands, a bounded
- * 3 is the honest trade: it recovers the common transient failure without turning a
- * flapping matchsvc into a rating multiplier.
+ * The budget used to be 3, and the note here used to explain that the ceiling was low
+ * because `/rating/report` was at-least-once against a receiver with no dedupe key, so a
+ * delivered-but-unacknowledged report double-applied on retry — 8.1's one open item.
+ * That is closed: the report now carries `ladderReport.ts`'s `reportKey`, and matchsvc
+ * claims it in `rating_reports` inside the same transaction that moves the ratings
+ * (`RatingStore.applyMatchOnce`). A redelivery loses the claim and comes back 200 with
+ * `duplicate: true`, which ends the ladder rather than being counted a failure.
+ *
+ * So the trade this constant expresses changed shape. Retrying can no longer multiply a
+ * rating; what it still costs is one in-flight request per attempt against a peer that may
+ * be struggling. 5 attempts at 250/500/1000/2000/2000 ms is ~3.75 s of backoff plus up to
+ * 5 x `DEFAULT_TIMEOUT_MS` — enough to ride out a matchsvc restart, still bounded, and
+ * still fire-and-forget so no match waits on it.
+ *
+ * Exported so `index.lifecycle.test.ts` can assert the give-up point against the real
+ * budget instead of a copy of the number, which is the part that must not drift.
  */
-const SETTLEMENT_RETRY = { attempts: 3, baseDelayMs: 250, maxDelayMs: 2_000 } as const;
+export const SETTLEMENT_RETRY = { attempts: 5, baseDelayMs: 250, maxDelayMs: 2_000 } as const;
 
 /**
  * Report a settled match's placements to matchsvc's ladder (design/15, ROADMAP 4.6) —
@@ -71,6 +77,12 @@ const SETTLEMENT_RETRY = { attempts: 3, baseDelayMs: 250, maxDelayMs: 2_000 } as
  * `SETTLEMENT_RETRY` for why bounded. It stays fire-and-forget: settlement never awaits
  * the ladder, and `internalFetch` never rejects, so there is no unhandled rejection to
  * take the gameserver down mid-match. What it no longer does is fail SILENTLY.
+ *
+ * The body carries `reportKey` (`ladderReport.ts`), which makes the retry above safe: a
+ * redelivered report loses matchsvc's dedupe claim and is answered 200, so the ladder stops
+ * on the first attempt that reaches an already-applied settlement instead of applying it
+ * again. Nothing here has to check for that — a 200 is a 200 — which is the point of
+ * putting the marker in the body and not in the status.
  *
  * `opts` is a test seam (the same role `GameserverOptions` plays for `createGameserver`) —
  * production passes nothing and gets the real `fetch`, the real timers and the real key.

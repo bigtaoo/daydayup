@@ -31,7 +31,8 @@ pure core + the shared ticket module:
 | `src/Matchmaker.ts`  | Pure queue: `enqueue`→group-when-full→signed tickets, `poll`. Injected clock/seed/roomId/signer. | no | ✅ `test/Matchmaker.test.ts` |
 | `src/matchsvc.ts`    | HTTP bootstrap and assembly shell — the ONLY control-plane file that imports `node:http`; wires the real clock/seed/signer around `Matchmaker`, then dispatches to `src/routes/`. | yes | ✅ `test/matchsvc.http.test.ts` |
 | `src/routes/*.ts`    | One module per surface (`auth`, `account`, `match`, `party`, `rating`), each a set of free `(req, res, url, deps)` handlers, over a shared `routes/http.ts` (CORS, `send`, `readJson`). | no | ✅ `test/routes.test.ts` + the two `*.http.test.ts` |
-| `src/db.ts` / `src/AuthService.ts` | The SQLite (`node:sqlite`) account store: `accounts`/`sessions`/`ratings`/`meta_state`/`entitlements` (design/16-accounts.md). | file | ✅ `test/db.test.ts`, `test/AuthService.test.ts` |
+| `src/db.ts` / `src/AuthService.ts` | The SQLite (`node:sqlite`) account store: `accounts`/`sessions`/`ratings`/`meta_state`/`entitlements`/`rating_reports` (design/16-accounts.md). | file | ✅ `test/db.test.ts`, `test/AuthService.test.ts` |
+| `src/rating.ts` / `src/ladderReport.ts` | The ladder: Elo-ish squad-aware deltas, the store, and the pure placement→rank conversion. `applyMatchOnce` claims `rating_reports.report_key` (`ON CONFLICT DO NOTHING` + `changes()`) inside the same `BEGIN IMMEDIATE` that writes `ratings`, which is what makes the at-least-once settlement report exactly-once (design/19 §3). | no | ✅ `test/rating.test.ts`, `test/ladderReport.test.ts`, `test/ratingReportOnce.test.ts` |
 | `src/EntitlementService.ts` | Server-owned blueprint/character ownership (design/19 §2, ROADMAP 8.2) — the reason `/account/meta` is no longer a blind whole-blob upsert. Grant is `ON CONFLICT DO NOTHING` + `changes`, so an at-least-once delivery is idempotent. | no | ✅ `test/EntitlementService.test.ts` |
 | `src/config.ts`      | The one place that reads `DDU_TICKET_SECRET` and `DDU_INTERNAL_KEY` (env), so both planes agree on each. | env | ✅ `test/config.test.ts` + `test/config.internalKeys.test.ts` |
 | `src/internalAuth.ts` | Inbound service-to-service auth (ROADMAP 8.1): `x-internal-key` against a per-caller registry, hashed before `timingSafeEqual`. A THIRD credential namespace — never a player token. | no | ✅ `test/internalAuth.test.ts`, `test/internalTrustSeam.test.ts` |
@@ -133,6 +134,17 @@ already `IN_MATCH` gets `4403` from that path. A dropped mid-match connection in
 calls `POST /resume {token}` with its *original* (by now likely expired) join ticket:
 matchsvc re-verifies its signature while ignoring `exp` (proof the caller once
 legitimately held that seat — a match runs far longer than a ticket's 30s TTL, so the
+**Exactly-once settlement (2026-09-05, design/19 §3):** the report carries a `reportKey`
+(`{roomId}:{digest}`, from `ladderReport.ts`), and matchsvc claims it in `rating_reports`
+inside the same transaction that moves the ratings — so the retry the paragraph above
+describes can no longer double-credit a match. A redelivery is answered **200 with
+`duplicate: true`** and not 409, because the sender counts every non-2xx a failure and would
+otherwise log a failure for a report that landed *and* keep retrying it; a report whose apply
+throws is answered 500, which is the one status that IS retried, and the claim has already
+rolled back. A report with no `reportKey` at all (an older gameserver mid-deploy) is applied
+the old, non-deduped way and logged — a 4xx is never retried, so refusing it would lose that
+match's rating for good.
+
 original can't just be redeemed again) and mints a fresh one for the same
 `{roomId,owner,seed,playerCount,teamId,mode}`. The client then reopens `/ws?ticket=` with
 that fresh ticket; the gameserver detects the room is already `IN_MATCH` (not `WAITING`)

@@ -86,6 +86,17 @@ export interface RatingChange {
 }
 
 /**
+ * The outcome of an exactly-once apply. A union rather than `{applied, changes}` with an
+ * empty array, so a caller cannot read the deltas without first asking whether they
+ * happened — the whole failure this shape exists to prevent is a duplicate report being
+ * reported back as a successful one.
+ */
+export type ApplyMatchOnceResult =
+  | { applied: true; changes: RatingChange[] }
+  /** The claim was LOST: this exact report has already moved these ratings. */
+  | { applied: false };
+
+/**
  * Ladder store, keyed by an opaque `accountId` string; this module doesn't define
  * what an account IS — a guest/bot's scaffold `seat:{roomId}:{seatIdx}` id (see
  * ladderReport.ts) works exactly like a real one, it just resets every restart.
@@ -96,11 +107,21 @@ export interface RatingChange {
  * their account/blueprints already do. Falls back to an in-memory `Map` when
  * constructed with no db (every existing test, plus any future caller that wants a
  * scratch store) — same value, same shape, just not durable.
+ *
+ * `applyMatchOnce` is the exactly-once entry point (design/19 §3, closing ROADMAP 8.1's one
+ * open item) and the one every real report goes through; `applyMatch` stays what design/15
+ * defined — an unconditional apply, with no opinion about whether it has run before.
  */
 export class RatingStore {
   private readonly cache = new Map<string, number>();
+  /** The no-db backend's `rating_reports` (see `applyMatchOnce`). */
+  private readonly claimed = new Set<string>();
 
-  constructor(private readonly db?: DatabaseSync) {}
+  constructor(
+    private readonly db?: DatabaseSync,
+    /** Injected only so a test can pin `rating_reports.applied_at`; production wants the clock. */
+    private readonly nowMs: () => number = () => Date.now(),
+  ) {}
 
   get(accountId: string): number {
     if (this.db) {
@@ -132,5 +153,100 @@ export class RatingStore {
       }
       return { accountId, before: b, after };
     });
+  }
+
+  /**
+   * Apply one verified match AT MOST ONCE, keyed by `reportKey` (`ladderReport.ts`'s
+   * `{roomId}:{digest}`) — design/19 §3, closing the one thing ROADMAP 8.1 left open.
+   *
+   * `POST /rating/report` is an at-least-once delivery: 8.1 gave `reportSettledMatch` a
+   * retry budget, so a report that was DELIVERED and lost only its response comes back, and
+   * before this method existed it was applied a second time. That is not a theoretical race
+   * — it is what a 5xx written after the write, or a timeout on a slow response, does.
+   *
+   * IDEMPOTENCY IS A CLAIM, NEVER A LOOK-BEFORE-WRITE, and the claim is in the SAME
+   * transaction as the ratings it guards. `INSERT ... ON CONFLICT DO NOTHING` then
+   * `changes()` — the shape design/19 §4 specifies for billing delivery — because
+   * SELECT-then-INSERT answers the question before holding the lock that would make the
+   * answer true. Two directions matter equally and are tested separately:
+   *
+   *  - LOSE the claim ⇒ apply nothing. Otherwise the retry double-credits.
+   *  - WIN the claim and then FAIL ⇒ the claim rolls back with the ratings. Otherwise the
+   *    key is burned for a match whose deltas were never written, and that match's rating
+   *    is gone permanently — strictly worse than double-crediting, which is at least
+   *    visible and reversible.
+   *
+   * Throws whatever the write threw, after rolling back. The caller (`routes/rating.ts`)
+   * turns that into a 5xx precisely so the retry ladder gets to try again.
+   *
+   * `BEGIN IMMEDIATE` is deliberately OUTSIDE the try: a second connection already holding
+   * the write lock makes it throw with no transaction open, and a `ROLLBACK` there would
+   * throw a second, less informative error over the first.
+   *
+   * TWO EQUIVALENT MUTANTS, recorded rather than papered over (mutation battery, 2026-09-05).
+   * Downgrading `BEGIN IMMEDIATE` to a plain deferred `BEGIN` changes nothing *today*, because
+   * the claim is the transaction's FIRST statement and it is a write — so the write lock is
+   * taken at the same instant either way. `IMMEDIATE` stays because it says what this
+   * transaction is for, and because the equivalence quietly ends the moment a read is added
+   * ahead of the claim, which is exactly the mistake design/19 §4's AMENDMENT 2 is about.
+   * And `ROLLBACK` vs `COMMIT` on the lost-claim branch is genuinely indistinguishable —
+   * nothing was written — so no test can tell them apart and none pretends to.
+   */
+  applyMatchOnce(
+    reportKey: string,
+    accountIds: readonly string[],
+    places: readonly number[],
+    teamIds?: readonly number[],
+  ): ApplyMatchOnceResult {
+    const db = this.db;
+    if (!db) return this.applyMatchOnceInMemory(reportKey, accountIds, places, teamIds);
+
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      const claim = db
+        .prepare('INSERT INTO rating_reports (report_key, applied_at) VALUES (?, ?) ON CONFLICT(report_key) DO NOTHING')
+        .run(reportKey, this.nowMs());
+      if (Number(claim.changes) !== 1) {
+        // Nothing was written, so there is nothing to commit — and unlike billsvc's
+        // `settle`, losing this claim raises no follow-up question (there is no second
+        // account whose report this could be), so the transaction just ends.
+        db.exec('ROLLBACK');
+        return { applied: false };
+      }
+      const changes = this.applyMatch(accountIds, places, teamIds);
+      db.exec('COMMIT');
+      return { applied: true, changes };
+    } catch (e) {
+      db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+
+  /**
+   * The no-db backend's `applyMatchOnce`. A `Set` is the claim table and a snapshot of the
+   * touched keys is the transaction — hand-rolled so the two backends answer identically,
+   * including the rollback. Worth the eight lines: every RatingStore test that does not
+   * specifically want SQLite runs on this path, so a memory store that "deduped" but left a
+   * half-applied match behind would make those tests agree with a store that cannot happen.
+   */
+  private applyMatchOnceInMemory(
+    reportKey: string,
+    accountIds: readonly string[],
+    places: readonly number[],
+    teamIds?: readonly number[],
+  ): ApplyMatchOnceResult {
+    if (this.claimed.has(reportKey)) return { applied: false };
+    this.claimed.add(reportKey);
+    const snapshot = accountIds.map((id) => [id, this.cache.get(id)] as const);
+    try {
+      return { applied: true, changes: this.applyMatch(accountIds, places, teamIds) };
+    } catch (e) {
+      this.claimed.delete(reportKey);
+      for (const [id, prior] of snapshot) {
+        if (prior === undefined) this.cache.delete(id);
+        else this.cache.set(id, prior);
+      }
+      throw e;
+    }
   }
 }

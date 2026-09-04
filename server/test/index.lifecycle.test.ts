@@ -30,7 +30,7 @@ import { describe, it, expect, vi, afterEach, type MockInstance } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { WebSocket, type WebSocketServer } from 'ws';
-import { createGameserver, main } from '../src/index';
+import { createGameserver, main, SETTLEMENT_RETRY } from '../src/index';
 import type { SettledMatch } from '../src/MatchRoom';
 import { signTicket, type TicketPayload } from '../src/ticket';
 import type { RoomManager } from '../src/RoomManager';
@@ -184,12 +184,38 @@ describe('reportSettledMatch — what ROADMAP 8.1 changed about the call itself'
     const { report, calls } = await withMatchsvc('http://matchsvc.test', [503, 200]);
     report(settled());
     await vi.waitFor(() => expect(calls).toHaveLength(2));
-    // ...and no third. A settlement that succeeded must not be re-applied:
-    // `RatingStore.applyMatch` has no dedupe key (see SETTLEMENT_RETRY's note in index.ts).
+    // ...and no third: a 2xx ends the ladder. It is now safe for a 2xx to be a REDELIVERY
+    // rather than a first landing (matchsvc answers a lost dedupe claim 200 with
+    // `duplicate: true`), which is exactly why this stop condition is the right one.
     await new Promise((r) => setTimeout(r, 5));
     expect(calls).toHaveLength(2);
     expect(calls[0]!.res.bodyUsed).toBe(true); // both attempts drained, not just the last
     expect(calls[1]!.res.bodyUsed).toBe(true);
+  });
+
+  it('sends the SAME reportKey on every attempt of one settlement', async () => {
+    // The property the whole exactly-once mechanism rests on, and the one that breaks
+    // silently: a key that changed between attempts would win a fresh claim each time, so
+    // the dedupe table would fill up and the ratings would double-apply anyway — with every
+    // test above still green, because each individual response is a 200.
+    const { report, calls } = await withMatchsvc('http://matchsvc.test', [503, 503, 200]);
+    report(settled());
+    await vi.waitFor(() => expect(calls).toHaveLength(3));
+    const keys = calls.map((c) => (c.body as { reportKey: string }).reportKey);
+    expect(new Set(keys).size).toBe(1);
+    expect(keys[0]!.startsWith('room-1:')).toBe(true); // and it names the room, for the audit
+  });
+
+  it('a duplicate answer (200) is not logged as a failure', async () => {
+    // matchsvc answers an already-applied report 200 with `duplicate: true` in the BODY,
+    // deliberately not 409: a non-2xx here would print "ladder report ... failed" for a
+    // match whose rating actually landed, which is worse than saying nothing.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { report, calls } = await withMatchsvc('http://matchsvc.test', [200]);
+    report(settled());
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 5));
+    expect(ladderWarnings(warn)).toHaveLength(0);
   });
 
   it('never retries a 401 — a refused key cannot be fixed by asking again', async () => {
@@ -207,8 +233,10 @@ describe('reportSettledMatch — what ROADMAP 8.1 changed about the call itself'
     const { report, calls } = await withMatchsvc('http://matchsvc.test', [500]);
     report(settled());
     await vi.waitFor(() => expect(ladderWarnings(warn)).toHaveLength(1));
-    expect(calls.length).toBeGreaterThan(1);
-    expect(calls.length).toBeLessThanOrEqual(5);
+    // Against the real budget rather than a copy of the number: what must not drift is that
+    // the ladder STOPS, not the particular ceiling (which this pass raised from 3 to 5 once
+    // a retry could no longer multiply a rating).
+    expect(calls).toHaveLength(SETTLEMENT_RETRY.attempts);
     expect(calls.every((c) => c.res.bodyUsed)).toBe(true);
   });
 

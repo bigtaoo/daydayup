@@ -147,9 +147,11 @@ delivery path is billsvc's (§4) through an internal-key-authed route (§3), and
 
 ## 3. The internal trust seam — SHIPPED 2026-09-04
 
-**Status: SHIPPED 2026-09-04** (ROADMAP 8.1). Both modules exist; `POST /rating/report` is
-behind the key, and `reportSettledMatch` goes through the outbound helper. Three things the
-plan below did not anticipate are recorded at the end of this section.
+**Status: SHIPPED 2026-09-04** (ROADMAP 8.1), and **exactly-once since 2026-09-05**. Both
+modules exist; `POST /rating/report` is behind the key, `reportSettledMatch` goes through the
+outbound helper, and the settlement report is now idempotent at the receiver. Three things
+the plan below did not anticipate are recorded at the end of this section — the third of them
+was left open on 2026-09-04 and is closed under "Exactly-once settlement" after it.
 
 Borrowed from funny's `shared/src/internalAuth` and `shared/src/internalFetch`, cut down.
 
@@ -193,13 +195,52 @@ which cannot forget the three things a bare `fetch` forgets:
   printed in this repository is not a weaker credential than none — it is the same one — and
   the fallback would look configured. This is §5's "fail closed in production" rule, which
   that section states for the billing dev stub, reaching one section earlier than expected.
-- **`/rating/report` is at-least-once, and retrying it can double-apply a rating.**
-  `RatingStore.applyMatch` carries no dedupe key, so a report that was delivered but whose
-  response was lost is applied twice on retry. The settlement budget is a deliberate 3 for
-  that reason, and the trade is recorded at the call site. Making it exactly-once wants the
-  same shape §4 already specifies for billing delivery — a dedupe key (`roomId` is already
-  threaded through `ladderReport.ts`), a `UNIQUE` column in `db.ts`, and a `changes()` check
-  rather than SELECT-then-INSERT. **Open**, and the first thing to do to this seam next.
+- **`/rating/report` was at-least-once, and retrying it double-applied a rating.**
+  `RatingStore.applyMatch` carried no dedupe key, so a report that was delivered but whose
+  response was lost was applied twice on retry — which is why the settlement budget shipped as
+  a deliberate 3. **CLOSED 2026-09-05**, with exactly the shape §4 specifies for billing
+  delivery: a dedupe key threaded through `ladderReport.ts`, a `UNIQUE` column in `db.ts`, and
+  a claim-then-`changes()` check rather than SELECT-then-INSERT. See "Exactly-once settlement"
+  below; the budget is now 5, because a retry can no longer multiply a rating.
+
+### Exactly-once settlement — SHIPPED 2026-09-05
+
+`ladderReport.ts` puts a `reportKey` in the report body, `db.ts` gains a `rating_reports`
+table whose `report_key` PRIMARY KEY *is* the mechanism, and `RatingStore.applyMatchOnce`
+claims that key with `INSERT ... ON CONFLICT DO NOTHING` + `changes()` **inside the same
+`BEGIN IMMEDIATE` that writes `ratings`**. Four things the build settled that the sentence
+above did not say.
+
+- **The claim and the ratings roll back together, and that direction matters more.** Losing
+  the claim and applying anyway is the original defect: a redelivery double-credits. Winning
+  the claim and then failing is worse — the key is burned for a match whose deltas were never
+  written, so that match's rating is gone permanently and every retry is answered "already
+  applied". A double-credit is at least visible in the ladder and reversible. Both directions
+  have their own tests, the failing-write one forced by a real SQLite trigger rather than a
+  mocked driver, because the point is that the *database* aborts the write the claim is tied to.
+- **A lost claim answers 200 with `duplicate: true`, deliberately not 409.** The sender is an
+  at-least-once retry ladder, and `internalFetch` counts every non-2xx a failure: a 409 would
+  log "ladder report failed" for a match whose rating actually landed, and keep asking. 200 is
+  what *ends* at-least-once delivery meeting an idempotent receiver, so the marker goes in the
+  body where an operator can still tell the two apart. A thrown apply is a 500 for the mirror
+  reason — 500 is the one status that IS retried, and the claim has already rolled back.
+- **`roomId` alone would have been a correct key, and is not the one that shipped.** A room
+  settles at most once (`MatchRoom.reportResult` latches and destroys) and `matchsvc.ts` mints
+  room ids with `randomUUID()`, and the mode does not change this: a PvE/co-op settlement takes
+  the same `onSettled` path and is filtered per-REPORT by `reportSettledMatch`'s
+  `hashOk`/`placements`/`winner` guard, so whatever gets through still gets through once per
+  room. What breaks it is that the room id is not always ours — `index.ts`'s legacy dev
+  handshake reads `roomId` off the query string, and the room is gone once it settles, so a
+  local `?roomId=dev` can host a second, genuinely different match. So the key is
+  `{roomId}:{16 hex of sha256 over the report}`: the prefix is what an operator greps, the
+  digest is what keeps two matches apart, and it is stable across the retry ladder because it
+  is a pure function of the body.
+- **A report with NO `reportKey` is applied the old, non-deduped way, and logged.** The route
+  has exactly one legitimate caller, so a keyless report means version skew during a rolling
+  deploy. The two options are asymmetric: accept it and risk the bounded double-apply that
+  stood until today, or 400 it and lose those matches' ratings for good, since a 4xx is never
+  retried. The recoverable failure wins. This is not a hole worth closing — the route is
+  key-gated, and anyone who can reach it can already post whatever placements they like.
 
 ## 4. Billing: the data model — SHIPPED 2026-09-04
 
