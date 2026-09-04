@@ -9,6 +9,8 @@
     "start": "node --import tsx/esm src/index.ts",
     "matchsvc": "node --import tsx/esm src/matchsvc.ts",
     "billsvc": "node --import tsx/esm src/billsvc/main.ts",
+    "reconcile": "node --import tsx/esm scripts/reconcile.ts",
+    "audit:grants": "node --import tsx/esm scripts/grantAudit.ts",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",

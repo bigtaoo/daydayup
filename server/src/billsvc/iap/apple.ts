@@ -14,7 +14,7 @@
  * `original_transaction_id` onto `platformTxnId`. The production-first-then-sandbox order
  * is not optional: doing it the other way round accepts sandbox receipts in production.
  */
-import { missingCredentials, type IapVerifyResult } from './types';
+import { listingUnavailable, missingCredentials, type IapVerifyResult, type PlatformOrderListing } from './types';
 
 export interface AppleCredentials {
   /** App Store Connect shared secret (`DDU_APPLE_SHARED_SECRET`). */
@@ -27,5 +27,35 @@ export async function verifyAppleReceipt(receipt: string, creds: AppleCredential
   return {
     ok: false,
     reason: 'apple: App Store verifyReceipt round trip not implemented — no credential exists to test it against',
+  };
+}
+
+/**
+ * The reconciliation half (design/19 §7, ROADMAP 8.5) — SHAPE ONLY, same two outcomes and
+ * the same fail-closed posture as `verifyAppleReceipt` above, and for the same reason: no
+ * App Store Connect credential exists in this project, so this adapter must not be able to
+ * report "nothing to reconcile" when what it means is "I could not ask".
+ *
+ * What the real implementation is: App Store Server API
+ * `GET /inApps/v1/transactions/{originalTransactionId}` is per-transaction and therefore the
+ * wrong call; the list call is `GET /inApps/v1/notifications/history` (POST, paged by
+ * `paginationToken`, bounded by `startDate`/`endDate` in ms) filtered to
+ * `notificationType: 'ONE_TIME_CHARGE'`, with each entry's signed payload decoded to recover
+ * `transactionId`, `productId` and `price`. It is signed with an ES256 JWT built from the
+ * issuer id, key id and .p8 private key — three credentials this project has none of. The
+ * guard below checks the shared secret instead, because it is the only Apple credential this
+ * project has an env var for at all; whoever implements this replaces the guard along with
+ * the call.
+ */
+export async function listAppleOrders(
+  _sinceMs: number,
+  _untilMs: number,
+  creds: AppleCredentials,
+): Promise<PlatformOrderListing> {
+  if (!creds.sharedSecret) return listingUnavailable('apple', 'App Store shared secret not configured');
+  return {
+    ok: false,
+    reason:
+      'apple: App Store Server API notification-history round trip not implemented — no credential exists to test it against',
   };
 }

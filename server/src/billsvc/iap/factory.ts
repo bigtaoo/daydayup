@@ -18,12 +18,18 @@
  * dev flag set in production. design/19: "One of those checks is the design; two is the
  * design surviving a deploy." The two deliberately share no code — see that file's note.
  */
-import { verifyAppleReceipt } from './apple';
-import { verifyGoogleReceipt } from './google';
-import { verifyWechatReceipt } from './wechat';
-import { verifyStripeReceipt } from './stripe';
-import { isDevStubReceipt, verifyDevStubReceipt } from './devStub';
-import type { IapPlatform, IapVerifyResult, ReceiptVerifier } from './types';
+import { listAppleOrders, verifyAppleReceipt } from './apple';
+import { listGoogleOrders, verifyGoogleReceipt } from './google';
+import { listWechatOrders, verifyWechatReceipt } from './wechat';
+import { listStripeOrders, verifyStripeReceipt } from './stripe';
+import { DevStubOrderBook, isDevStubReceipt, verifyDevStubReceipt } from './devStub';
+import type {
+  IapPlatform,
+  IapVerifyResult,
+  PlatformOrderLister,
+  PlatformOrderListing,
+  ReceiptVerifier,
+} from './types';
 
 /** Only the variables this layer reads — a plain record so tests need no `process.env`. */
 export type BillingEnv = Readonly<Record<string, string | undefined>>;
@@ -48,13 +54,7 @@ export function devStubEnabled(env: BillingEnv): boolean {
 
 export function createReceiptVerifier(env: BillingEnv = process.env): ReceiptVerifier {
   const stub = devStubEnabled(env);
-  const apple = { sharedSecret: env.DDU_APPLE_SHARED_SECRET };
-  const google = {
-    serviceAccountJson: env.DDU_GOOGLE_SERVICE_ACCOUNT_JSON,
-    packageName: env.DDU_GOOGLE_PACKAGE_NAME,
-  };
-  const wechat = { mchId: env.DDU_WECHAT_MCH_ID, apiV3Key: env.DDU_WECHAT_API_V3_KEY };
-  const stripe = { secretKey: env.DDU_STRIPE_SECRET_KEY, webhookSecret: env.DDU_STRIPE_WEBHOOK_SECRET };
+  const { apple, google, wechat, stripe } = readCredentials(env);
 
   return async (platform: IapPlatform, receipt: string): Promise<IapVerifyResult> => {
     // A `product:` receipt resolves locally on ANY platform while the stub is enabled —
@@ -78,5 +78,83 @@ export function createReceiptVerifier(env: BillingEnv = process.env): ReceiptVer
           ? verifyDevStubReceipt(receipt)
           : { ok: false, reason: 'dev: the dev stub is disabled in this environment' };
     }
+  };
+}
+
+/**
+ * Credentials, read once. Split out of `createReceiptVerifier` so the listing dispatch below
+ * reads the SAME variables from the SAME environment — two independently-written credential
+ * reads is how a platform ends up verifiable but not reconcilable, or the reverse.
+ */
+function readCredentials(env: BillingEnv) {
+  return {
+    apple: { sharedSecret: env.DDU_APPLE_SHARED_SECRET },
+    google: {
+      serviceAccountJson: env.DDU_GOOGLE_SERVICE_ACCOUNT_JSON,
+      packageName: env.DDU_GOOGLE_PACKAGE_NAME,
+    },
+    wechat: { mchId: env.DDU_WECHAT_MCH_ID, apiV3Key: env.DDU_WECHAT_API_V3_KEY },
+    stripe: { secretKey: env.DDU_STRIPE_SECRET_KEY, webhookSecret: env.DDU_STRIPE_WEBHOOK_SECRET },
+  };
+}
+
+/**
+ * The reconciliation port's dispatch (design/19 §7, ROADMAP 8.5) — the same shape as
+ * `createReceiptVerifier` and, deliberately, the same fail-closed rules:
+ *
+ *   1. Under `NODE_ENV=production` the dev platform is off, full stop, because
+ *      `devStubEnabled` says so before `DDU_BILLING_DEV_STUB` is read.
+ *   2. A platform with no credentials REFUSES rather than returning an empty list. That is
+ *      the rule with teeth here: an empty list is not a neutral answer to "what did you
+ *      charge" — it would make every local order look like one the platform never saw, or,
+ *      read the other way, print a clean reconciliation for a check that never ran.
+ *      `reconcile.ts` keeps those refusals as a first-class `unreconciled` field for exactly
+ *      that reason.
+ *
+ * `book` is the dev platform's own order list. Passing `undefined` is not the same as passing
+ * an empty book: no book means the dev platform REFUSES too, because "nobody configured a
+ * platform to compare against" and "the platform charged nothing" are different facts and
+ * only one of them is evidence.
+ */
+export function createPlatformOrderLister(env: BillingEnv = process.env, book?: DevStubOrderBook): PlatformOrderLister {
+  const stub = devStubEnabled(env);
+  const creds = readCredentials(env);
+
+  return async (platform: IapPlatform, sinceMs: number, untilMs: number): Promise<PlatformOrderListing> => {
+    switch (platform) {
+      case 'apple':
+        return listAppleOrders(sinceMs, untilMs, creds.apple);
+      case 'google':
+        return listGoogleOrders(sinceMs, untilMs, creds.google);
+      case 'wechat':
+        return listWechatOrders(sinceMs, untilMs, creds.wechat);
+      case 'stripe':
+        return listStripeOrders(sinceMs, untilMs, creds.stripe);
+      case 'dev':
+        if (!stub) return { ok: false, reason: 'dev: the dev stub is disabled in this environment' };
+        if (!book) return { ok: false, reason: 'dev: no order book configured — nothing to reconcile against' };
+        return book.list(sinceMs, untilMs);
+    }
+  };
+}
+
+/**
+ * Both adapters over one environment and one dev order book. The seam `server.ts` and the
+ * reconciliation script take, so a process cannot end up with a verifier that resolves dev
+ * receipts and a lister that refuses to list them.
+ */
+export interface BillingAdapters {
+  verify: ReceiptVerifier;
+  listOrders: PlatformOrderLister;
+  /** `undefined` whenever the dev stub is disabled — including in production, always. */
+  devOrderBook?: DevStubOrderBook;
+}
+
+export function createBillingAdapters(env: BillingEnv = process.env): BillingAdapters {
+  const book = devStubEnabled(env) ? new DevStubOrderBook() : undefined;
+  return {
+    verify: createReceiptVerifier(env),
+    listOrders: createPlatformOrderLister(env, book),
+    devOrderBook: book,
   };
 }

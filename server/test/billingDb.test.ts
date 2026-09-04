@@ -32,12 +32,21 @@ const tableNames = (db: ReturnType<typeof openBillingDb>): string[] =>
     .filter((n) => !n.startsWith('sqlite_'));
 
 describe('openBillingDb', () => {
-  it('creates exactly the four tables design/19 §4 specifies, and no more', () => {
+  it('creates exactly the six tables design/19 §4 and §7 specify, and no more', () => {
     // Three when this file shipped; `deliveries` is the fourth, added 2026-09-05 when the
     // entitlement loop closed — the outbox row a settlement writes inside its own
-    // transaction because `entitlements` lives in a different database FILE.
+    // transaction because `entitlements` lives in a different database FILE. `webhook_events`
+    // and `review_queue` are §7's operational pair (ROADMAP 8.5): every callback rather than
+    // only the ones that settled, and the one place a human is told to look.
     const db = openBillingDb(':memory:');
-    expect(tableNames(db)).toEqual(['deliveries', 'ledger', 'orders', 'receipts']);
+    expect(tableNames(db)).toEqual([
+      'deliveries',
+      'ledger',
+      'orders',
+      'receipts',
+      'review_queue',
+      'webhook_events',
+    ]);
     db.close();
   });
 

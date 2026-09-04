@@ -12,7 +12,7 @@
  * `design/19-server-platform.md` §9 records that which platform ships first is a product
  * decision; nothing in this file assumes it is this one.
  */
-import { missingCredentials, type IapVerifyResult } from './types';
+import { listingUnavailable, missingCredentials, type IapVerifyResult, type PlatformOrderListing } from './types';
 
 export interface WechatCredentials {
   /** Merchant id (`DDU_WECHAT_MCH_ID`). */
@@ -28,5 +28,30 @@ export async function verifyWechatReceipt(receipt: string, creds: WechatCredenti
   return {
     ok: false,
     reason: 'wechat: Pay v3 transaction query not implemented — no merchant account exists to test it against',
+  };
+}
+
+/**
+ * The reconciliation half (design/19 §7, ROADMAP 8.5) — SHAPE ONLY, same posture as
+ * `verifyWechatReceipt` above.
+ *
+ * What the real implementation is: WeChat Pay has no "list transactions" endpoint at all.
+ * The supported answer is the daily bill — `GET /v3/bill/tradebill?bill_date=YYYY-MM-DD&
+ * bill_type=SUCCESS`, which returns a signed download URL for a gzipped CSV that is then
+ * fetched and parsed. So the `[since, until)` window this signature takes has to be mapped
+ * onto whole Beijing-time bill days, and a window narrower than a day cannot be answered
+ * exactly. Recorded here because it is the constraint that will shape the daily job's
+ * schedule, not an implementation detail.
+ */
+export async function listWechatOrders(
+  _sinceMs: number,
+  _untilMs: number,
+  creds: WechatCredentials,
+): Promise<PlatformOrderListing> {
+  if (!creds.mchId) return listingUnavailable('wechat', 'merchant id not configured');
+  if (!creds.apiV3Key) return listingUnavailable('wechat', 'APIv3 key not configured');
+  return {
+    ok: false,
+    reason: 'wechat: Pay daily trade-bill download not implemented — no merchant account exists to test it against',
   };
 }

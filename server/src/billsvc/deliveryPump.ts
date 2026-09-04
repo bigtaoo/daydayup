@@ -47,11 +47,22 @@
  * `internalFetch`'s own bounded retry runs INSIDE one sweep (three attempts, backing off),
  * so a one-second blip never reaches the table at all; the sweep-level retry above is for
  * outages longer than that.
+ *
+ * WHERE A TERMINAL ROW GOES (design/19 §7, ROADMAP 8.5). Both terminal paths below — the 4xx
+ * and the unreadable `grants_json` — are the same fact: MONEY WAS TAKEN AND NOTHING WAS
+ * GRANTED. It is the only class in Phase 8 where that is true, and until 8.5 it existed
+ * ONLY as a `console.error`: no owner, no second reader, and gone on the next log rotation.
+ * `retire` now files it into `reviewQueue.ts` in the SAME transaction that makes the row
+ * terminal, so the two cannot come apart — a crash between them would otherwise leave a
+ * `failed` row nobody is ever told about, which is strictly the worst outcome available. The
+ * error line stays: a queue row is for the person who works the queue, a log line is for the
+ * person watching the deploy.
  */
 import type { DatabaseSync } from 'node:sqlite';
 import { internalFetch, type InternalFetchResult, type RetryPolicy } from '../internalFetch';
 import type { SkuGrant } from './skus';
 import { countAttempt, markDelivered, markFailed, pendingDeliveries, type DeliveryRecord } from './outbox';
+import { fileReview, moneyTakenId } from './reviewQueue';
 
 /** The control-plane route this pump POSTs to (`server/src/routes/internalEntitlements.ts`). */
 export const GRANT_PATH = '/internal/entitlements/grant';
@@ -169,11 +180,16 @@ export class DeliveryPump {
       result.attempted += 1;
       const grants = parseGrants(row.grantsJson);
       if (grants === null) {
-        markFailed(this.db, row.id);
+        this.retire(
+          row,
+          `delivery '${row.id}' has unreadable grants_json and can never be delivered`,
+          { cause: 'unreadable-grants', grantsJson: row.grantsJson, attempts: row.attempts },
+        );
         result.failed += 1;
         console.error(
           `[daydayup] billsvc: delivery '${row.id}' has unreadable grants_json and can never be delivered — ` +
-            `account '${row.accountId}' paid for '${row.sku}' (order '${row.orderId}') and has NOTHING. Needs a manual grant.`,
+            `account '${row.accountId}' paid for '${row.sku}' (order '${row.orderId}') and has NOTHING. ` +
+            'Needs a manual grant; filed for review.',
         );
         continue;
       }
@@ -189,11 +205,17 @@ export class DeliveryPump {
       // not retryable and stopped its own ladder; repeating it from here would only be
       // slower about reaching the same answer.
       if (outcome.failure === 'http' && outcome.status !== undefined && outcome.status < 500) {
-        markFailed(this.db, row.id);
+        this.retire(row, `the control plane REFUSED delivery '${row.id}' with ${outcome.status}`, {
+          cause: 'control-plane-refused',
+          status: outcome.status,
+          error: outcome.error ?? null,
+          attempts: row.attempts + 1,
+        });
         result.failed += 1;
         console.error(
           `[daydayup] billsvc: the control plane REFUSED delivery '${row.id}' with ${outcome.status} — ` +
-            `account '${row.accountId}' paid for '${row.sku}' (order '${row.orderId}') and has NOTHING. Needs a manual grant.`,
+            `account '${row.accountId}' paid for '${row.sku}' (order '${row.orderId}') and has NOTHING. ` +
+            'Needs a manual grant; filed for review.',
         );
         continue;
       }
@@ -205,6 +227,51 @@ export class DeliveryPump {
       );
     }
     return result;
+  }
+
+  /**
+   * Make one row terminal AND file it for review, atomically.
+   *
+   * One `BEGIN IMMEDIATE` around both, because the pair is the whole point: a `failed` row is
+   * money taken with nothing granted, and the only way out of it is a human. A crash between
+   * `markFailed` and `fileReview` would leave a terminal row that no sweep will ever look at
+   * again and that nobody was told about — the one outcome worse than either failure alone.
+   * They are two tables in the SAME file (`billingDb.ts`), so one transaction covers them,
+   * which is the same argument design/19 §4 makes for the settlement path.
+   *
+   * The review id is `money-taken-nothing-granted:<deliveryId>`, and the delivery id is
+   * already the ledger row's own claimed id — so re-filing is impossible without a second
+   * idempotency mechanism, exactly as the outbox row itself is. `fileReview`'s
+   * `ON CONFLICT DO NOTHING` then makes a re-run of an already-terminal row a no-op rather
+   * than a duplicate.
+   */
+  private retire(row: DeliveryRecord, summary: string, evidence: Record<string, unknown>): void {
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      markFailed(this.db, row.id);
+      fileReview(this.db, moneyTakenId(row.id), {
+        kind: 'money-taken-nothing-granted',
+        accountId: row.accountId,
+        // No day key: this is an event, not a day's worth of behaviour.
+        dayKey: null,
+        summary:
+          `${summary} — account '${row.accountId}' paid for '${row.sku}' (order '${row.orderId}') and has NOTHING`,
+        evidence: {
+          deliveryId: row.id,
+          accountId: row.accountId,
+          sku: row.sku,
+          orderId: row.orderId,
+          receiptId: row.receiptId,
+          createdAt: row.createdAt,
+          ...evidence,
+        },
+        ts: this.now(),
+      });
+      this.db.exec('COMMIT');
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
   }
 
   private post(row: DeliveryRecord, grants: SkuGrant[]): Promise<InternalFetchResult> {

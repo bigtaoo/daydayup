@@ -509,25 +509,101 @@ Also settled here rather than in `config.ts`: `DDU_GAMESERVER_URL`'s default liv
 `GameRegistry.staticGameserverUrl()`, read per call for the reason `ticketSecret` is. The registry
 owns the topology question, so `config.ts` has no reason to.
 
-## 7. Operations
+## 7. Operations — SHIPPED 2026-09-05
 
-None of this is optional once money moves; all of it is small if the schema anticipates it.
+**Status: SHIPPED 2026-09-05** (ROADMAP 8.5). None of this was optional once money moved, and all
+of it was small because the schema anticipated it — three new sibling modules under
+`server/src/billsvc/` plus one at `server/src/grantAudit.ts`, two new tables in billsvc's own
+file, and two CLI scripts under `server/scripts/`. `BillingService.ts` did not grow by a line:
+each of the three is an independent concern, so each is a sibling file (CLAUDE.md's first split
+form), not a method.
 
-- **Log every webhook event, not just the successful one.** Keyed `${txnId}:${eventType}` so
-  at-least-once redelivery upserts. funny's reason: failed and cancelled transactions are
-  otherwise dropped silently by the handler, and "why did my payment not go through" then has no
-  evidence behind it at all.
-- **Reconciliation, daily.** Pull the platform's recent order list, compare against local
-  `orders`. This is the check that covers the platform↔local tear §4 leaves open, and it is the
-  reason the ledger is append-only.
-- **A daily anomaly audit that files rather than acts.** Count non-`purchase` entitlement grants
-  per account per day; anything over a threshold goes to a review list. funny's two audits
-  (`coinAnomalyAudit`, `anticheatAudit`) share one principle worth stating here because it is the
-  same one `design/15-pvp-arena.md`'s checkpoint quorum already follows: **with no evidence, skip
-  — never convict.** No automatic revocation.
+- **Log every webhook event, not just the successful one — `server/src/billsvc/webhookLog.ts`.**
+  Keyed `${txnId}:${eventType}` so at-least-once redelivery upserts. funny's reason: failed and
+  cancelled transactions are otherwise dropped silently by the handler, and "why did my payment
+  not go through" then has no evidence behind it at all. Every branch of `POST /webhook/:platform`
+  now writes one `webhook_events` row before it answers — the settlement, the replay, the cancel,
+  the refusal, the unrecognised event type, and the body that was not even JSON.
+- **Reconciliation, daily — `server/src/billsvc/reconcile.ts`.** Pull the platform's recent order
+  list, compare against local `orders`. This is the check that covers the platform↔local tear §4
+  leaves open, and it is the reason the ledger is append-only. Joined on `platform_txn_id`; four
+  difference kinds (`local-not-on-platform`, `platform-not-local`, `amount-mismatch`,
+  `sku-mismatch`).
+- **A daily anomaly audit that files rather than acts — `server/src/grantAudit.ts`.** Count
+  non-`purchase` entitlement grants per account per day; anything over a threshold goes to a
+  review list. funny's two audits (`coinAnomalyAudit`, `anticheatAudit`) share one principle worth
+  stating here because it is the same one `design/15-pvp-arena.md`'s checkpoint quorum already
+  follows: **with no evidence, skip — never convict.** No automatic revocation.
 - **No admin service.** funny has a whole one. Here the requirement is weaker but real: the schema
   must be queryable and hand-correctable by a human with SQL, which is what `source` on an
-  entitlement and an append-only ledger buy. Revisit when the first refund arrives.
+  entitlement and an append-only ledger buy. Revisit when the first refund arrives. The review
+  list above is a TABLE for that reason, not a dashboard: `review_queue` in billsvc's own file,
+  worked at a `sqlite3` prompt.
+
+Five things the plan above did not say, each because it only appears once the code is real.
+
+**AMENDMENT 1: `${txnId}:${eventType}` needs two fallbacks, and they are not a detail.** A
+callback that carries no transaction id is not an edge case to shrug at — it is precisely the
+malformed or unparsable payload whose evidence is worth the most, and a naive key collapses every
+one of them into a single row that each new bad payload overwrites. `webhookEventKey` falls back
+to the merchant order id (`order:<id>:<event>`) and, failing that, to a truncated sha256 of the
+raw bytes (`raw:<hash>:<event>`). The hash is a legitimate key rather than a giving-up value,
+because a platform retry of an unparsable body repeats the same bytes — so the redelivery still
+lands on its own row, which is the whole property the key exists for.
+
+**AMENDMENT 2: an unknown event type must not settle.** Before this pass, `server.ts` special-cased
+`failed`/`cancelled` and sent *everything else* into `settle` — so a platform that started sending
+`refunded` or `chargeback` would have had it treated as a purchase callback. `webhookEventType`
+now narrows to a known set and anything else is recorded with outcome `ignored` and answered 200
+(200, not 4xx: a platform retrying an event this server has simply not implemented is noise, and
+the row is where anyone finds out it started arriving). This is the one behaviour change in §7 as
+opposed to an addition, and it is the reason "log every event" was worth doing as a pass rather
+than as a line.
+
+**AMENDMENT 3: reconciliation cannot be honest here without saying what it did NOT check.** §9
+records that no merchant account exists on any of the four real platforms, so there is no platform
+order list to pull. That is handled the way §5 handled the identical problem for verification:
+"list the platform's recent orders" is an injected PORT (`PlatformOrderLister`), the dev stub
+implements it against an **authored** order book (`DevStubOrderBook`, seeded from
+`DDU_BILLING_DEV_ORDERS`), and the four real adapters each carry the call they would make and
+return not-implemented. Two consequences are load-bearing:
+
+- A platform whose port refuses does **not** contribute zero differences — it lands in the
+  report's `unreconciled` list, and `complete` is false whenever that list is non-empty. There is
+  no code path that can report a clean reconciliation for a check that did not run, and the
+  formatted first line says COMPLETE or INCOMPLETE *before* it says how many differences.
+- The dev platform's book is authored and never derived from `orders`. A dev platform computed
+  from the local tables could only ever report zero differences — a reconciliation that passes by
+  construction, which is worse than none because it looks like evidence.
+
+**AMENDMENT 4: the threshold comparison is `>`, and the audit reads a database it cannot write.**
+Exactly at the threshold is not an anomaly: the threshold is the largest count anyone has said is
+fine, so a count equal to it is a case somebody already accepted. And the "never convict" half is
+enforced structurally rather than by comment — `server/scripts/grantAudit.ts` opens the account
+database **read-only** (`entitlements` is the table it is judging) and the billing database
+read-write for `review_queue` alone. A source that is not on the counted list is SKIPPED rather
+than counted, including one a later migration adds to `db.ts`'s CHECK: it arrives uncounted, and
+whoever adds it decides. `(accountId, dayKey)` in UTC is the idempotency key, so re-running the
+audit over a day already filed produces nothing — not a duplicate, not a reopened row, not a
+refreshed timestamp. An audit an operator is afraid to re-run is an audit that stops being run.
+
+**AMENDMENT 5: the review queue already had a producer waiting for it.** §4's outbox (2026-09-05)
+made a 4xx from the control plane terminal and logged it as an error naming the account — money
+taken, nothing granted, the only class in Phase 8 where that is true — and a `console.error` was
+its entire disposition: no owner, no second reader, gone on the next rotation. `deliveryPump.ts`
+now files that row into `review_queue` **in the same transaction** that makes the delivery
+terminal, because a crash between the two would leave a terminal row nobody is ever told about,
+which is worse than either failure alone. Both terminal paths file: the deliberate 4xx and the
+outbox row whose `grants_json` can never be read. A *retryable* failure files nothing, and that
+distinction has teeth — a 5xx row is still owed and a peer that comes back heals it, so filing it
+would tell a human to hand-grant a purchase the next sweep is about to deliver.
+
+**Where the two new tables live, and why one of them is in the "wrong" file.** `webhook_events`
+and `review_queue` are both in billsvc's own SQLite file (`billingDb.ts`), six tables now rather
+than four. `review_queue` holding findings about the CONTROL PLANE's `entitlements` table is
+deliberate: that file is the one an operator already opens when money is the question, the delivery
+pump has that connection and no other, and a second queue in the account database would mean a
+human has to know which of two places to look.
 
 ## 8. Deliberately not built (all of these exist in funny)
 
@@ -543,7 +619,12 @@ None of this is optional once money moves; all of it is small if the schema anti
 ## 9. Open questions
 
 - No WeChat or Apple merchant credentials exist anywhere in this project, so §5's real adapters
-  cannot be verified past the dev stub. Which platform is first is a product decision.
+  cannot be verified past the dev stub — and, since 2026-09-05, neither can §7's order listers,
+  which is why a reconciliation run reports INCOMPLETE for four of five platforms rather than
+  clean. Which platform is first is a product decision. Stripe is the cheapest one to prove the
+  reconciliation logic against for real: its list call is a single paged `GET
+  /v1/checkout/sessions`, where Apple's needs an ES256 JWT over three credentials, Google's needs
+  a Pub/Sub subscription, and WeChat's is a gzipped CSV behind a signed download URL.
 - Whether `entitlements` should also absorb the **materials** half of `MetaState` (it is farmable,
   not purchasable, so it is only worth it if duplication-by-blob-replay turns out to matter).
 - `ForgeActions.acquireBlueprint`'s `demo: free grant` scaffold (`design/14-meta-forging.md`,

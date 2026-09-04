@@ -38,6 +38,21 @@
  * settlement commits, WITHOUT awaiting it — the platform's callback must answer fast and
  * must not be coupled to a peer that may be down, and the settlement is already durable by
  * then. `main.ts` arms the startup sweep and the backstop interval.
+ *
+ * EVERY WEBHOOK EVENT IS LOGGED (design/19 §7, ROADMAP 8.5, `webhookLog.ts`). Every branch of
+ * the webhook route below writes one `webhook_events` row before it answers — the settlement,
+ * the replay, the cancel, the refusal, the unrecognised event type, and the body that was not
+ * even JSON. Before that, only a callback that settled left any trace at all, and "why did my
+ * payment not go through" had no evidence behind it. The recording is deliberately in the
+ * ROUTE rather than in `BillingService`: several of those branches never reach `settle`, and a
+ * log that covered only the ones that did would miss exactly the cases it exists for.
+ *
+ * AN UNKNOWN EVENT TYPE IS RECORDED AND NOT ACTED ON. It used to fall through into `settle`,
+ * which meant a platform sending `refunded` or `chargeback` would have had it treated as a
+ * purchase callback. Now `webhookEventType` narrows to a known set and anything else answers
+ * 200 with `ignored: true` — 200 rather than 4xx because a platform retrying an event this
+ * server has simply not implemented is noise, and the row is where anyone finds out it
+ * started arriving.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
@@ -45,11 +60,13 @@ import { openBillingDb } from '../billingDb';
 import { BillingService, type BillingServiceDeps } from './BillingService';
 import { controlPlaneUrl, INTERNAL_CALLER_BILLSVC, internalKeys, sharedInternalKey } from '../config';
 import { createInternalVerifier, describeInternalAuthFailure, type InternalVerifier } from '../internalAuth';
-import { createReceiptVerifier, devStubEnabled, type BillingEnv } from './iap/factory';
-import { asIapPlatform, type ReceiptVerifier } from './iap/types';
+import { createBillingAdapters, devStubEnabled, type BillingEnv } from './iap/factory';
+import { asIapPlatform, type PlatformOrderLister, type ReceiptVerifier } from './iap/types';
+import type { DevStubOrderBook } from './iap/devStub';
 import type { EntitlementDelivery } from './delivery';
 import { createOutboxDelivery } from './outbox';
 import { DeliveryPump, type DeliveryPumpDeps } from './deliveryPump';
+import { recordWebhookEvent, webhookEventType, type WebhookOutcome } from './webhookLog';
 
 const CORS = {
   'access-control-allow-origin': '*',
@@ -118,22 +135,43 @@ export interface BillsvcServer {
   db: DatabaseSync;
   /** The outbox drain (`deliveryPump.ts`). Built, not started — see `BillsvcServerOptions.pump`. */
   pump: DeliveryPump;
+  /**
+   * The reconciliation port (`reconcile.ts`, design/19 §7). Returned rather than mounted on a
+   * route: reconciliation is a daily job, not a request, and `server/scripts/reconcile.ts` is
+   * its entry point. Exposed here so a same-process caller reconciles through the SAME
+   * adapters — and therefore the same credential reads and the same dev order book — that the
+   * webhook verifies through.
+   */
+  listOrders: PlatformOrderLister;
+  /**
+   * The dev platform's authored order book, or `undefined` whenever the stub is off (always,
+   * in production). In-memory and per-process: a script in another process has its own, which
+   * is why `DevStubOrderBook.fromJson` exists.
+   */
+  devOrderBook?: DevStubOrderBook;
 }
 
 export function createBillsvcServer(opts: BillsvcServerOptions = {}): BillsvcServer {
   const env = opts.env ?? process.env;
   const db = opts.db ?? openBillingDb(opts.dbPath);
+  // Shared with `BillingService` below on purpose: a webhook event stamped from one clock and
+  // the order it settled stamped from another is the kind of thing that only shows up when
+  // somebody is reading the two tables side by side to answer a support question.
+  const now = opts.nowMs ?? (() => Date.now());
+  // ONE adapter set over one environment, so the verifier and the reconciliation lister cannot
+  // disagree about which platforms are configured or share a dev order book with nobody.
+  const adapters = createBillingAdapters(env);
   const billing =
     opts.billing ??
     new BillingService({
       db,
-      verify: opts.verify ?? createReceiptVerifier(env),
+      verify: opts.verify ?? adapters.verify,
       // The OUTBOX, not `BillingService`'s own `ledgerOnlyDelivery` default (design/19 §4's
       // closed loop). One synchronous insert into a fourth table in this same file, inside
       // the settlement transaction; `pump` below is what turns it into an `entitlements`
       // row in the control plane's file afterwards.
       deliver: opts.deliver ?? createOutboxDelivery(db),
-      nowMs: opts.nowMs,
+      nowMs: now,
       newOrderId: opts.newOrderId,
       devStubOn: devStubEnabled(env),
     });
@@ -202,19 +240,46 @@ export function createBillsvcServer(opts: BillsvcServerOptions = {}): BillsvcSer
     const webhook = url.pathname.match(/^\/webhook\/([^/]+)$/);
     if (req.method === 'POST' && webhook) {
       const platform = asIapPlatform(decodeURIComponent(webhook[1]!));
+      // Not logged: `webhook_events.platform` would have nothing real to hold, and an unknown
+      // path segment is a routing miss rather than a payment event. Recording it would also
+      // let anyone with the public webhook URL write rows into an evidence table.
       if (!platform) return send(res, 404, { error: 'unknown platform' });
-      return readJson(req, (body) => {
+      return readJson(req, (body, raw) => {
         const b = (body ?? {}) as { orderId?: unknown; receipt?: unknown; txnId?: unknown; event?: unknown };
         const orderId = typeof b.orderId === 'string' ? b.orderId : '';
+        const txnId = typeof b.txnId === 'string' ? b.txnId : '';
+        const eventType = webhookEventType(b.event);
+
+        /** Record what this callback said and what was decided about it. */
+        const logged = (outcome: WebhookOutcome, detail: string | null): void => {
+          recordWebhookEvent(db, { platform, orderId, txnId, eventType, outcome, detail, raw, ts: now() });
+        };
+
+        // An event type this plane does not implement. RECORDED AND NOT ACTED ON — see the
+        // file header. It used to fall through into `settle`, so a `refunded` callback would
+        // have been treated as a purchase.
+        if (eventType === 'unknown') {
+          logged('ignored', `unrecognised event type ${JSON.stringify(b.event)}`);
+          return send(res, 200, { ok: true, ignored: true, event: b.event });
+        }
 
         // A failure/cancel callback closes the order and grants nothing. Handled here
         // rather than inside `settle` because it has no receipt to verify — treating it as
         // a settlement with a missing receipt would report it as a verification failure,
         // which is a different (and alarming) thing from "the player cancelled".
-        if (b.event === 'failed' || b.event === 'cancelled') {
-          if (!orderId) return send(res, 400, { error: 'orderId required' });
+        if (eventType === 'failed' || eventType === 'cancelled') {
+          if (!orderId) {
+            logged('rejected', 'orderId required');
+            return send(res, 400, { error: 'orderId required' });
+          }
           const marked = billing.markFailed({ orderId });
-          if (!marked.ok) return send(res, 404, { error: 'not found' });
+          if (!marked.ok) {
+            logged('rejected', `no order '${orderId}'`);
+            return send(res, 404, { error: 'not found' });
+          }
+          // `changed: false` is a redelivery of a cancel this server already applied, which is
+          // a different fact from having just closed the order and is recorded as one.
+          logged(marked.changed ? 'marked-failed' : 'no-change', null);
           return send(res, 200, { ok: true, state: 'failed', changed: marked.changed });
         }
 
@@ -223,10 +288,11 @@ export function createBillsvcServer(opts: BillsvcServerOptions = {}): BillsvcSer
             platform,
             orderId,
             receipt: typeof b.receipt === 'string' ? b.receipt : '',
-            txnId: typeof b.txnId === 'string' ? b.txnId : '',
+            txnId,
           })
           .then((result) => {
             if (result.ok) {
+              logged(result.delivered ? 'settled' : 'already-delivered', result.note ?? null);
               // TRIGGER 1 (`deliveryPump.ts`): advance the outbox now rather than at the
               // next interval, so the entitlement lands while the player is still looking at
               // the payment sheet. Deliberately NOT awaited and deliberately not part of
@@ -244,24 +310,38 @@ export function createBillsvcServer(opts: BillsvcServerOptions = {}): BillsvcSer
                 note: result.note,
               });
             }
-            // A rejection is a 4xx so the platform's retry stops on a permanent refusal and
-            // an operator sees it. Which codes a specific platform wants folded into a 200
-            // to stop ITS retry loop is a per-platform question, and belongs with ROADMAP
-            // 8.5's webhook event log rather than being guessed at here.
+            // A rejection is a 4xx so the platform's retry stops on a permanent refusal and an
+            // operator sees it. Which codes a specific platform wants folded into a 200 to stop
+            // ITS retry loop is a per-platform question and is still not guessed at here — but
+            // the refusal is now EVIDENCE rather than a dropped branch, which is what ROADMAP
+            // 8.5's event log was wanted for: this row and its `detail` are the whole answer to
+            // "why did my payment not go through".
+            logged('rejected', `${result.code}: ${result.reason}`);
             send(res, result.code === 'unknown-order' ? 404 : 400, { error: result.reason, code: result.code });
           })
           // `settle` is written to be total — it catches a throwing verifier and a throwing
           // delivery — but this route is the one place where losing that promise means no
           // response is ever sent and the platform's request hangs until its own timeout.
           // A 500 tells it to retry; silence tells it nothing.
-          .catch((e: unknown) => send(res, 500, { error: (e as Error).message, code: 'internal' }));
+          .catch((e: unknown) => {
+            // Logged from inside the catch, and itself guarded: this handler runs when
+            // something already went wrong in a way `settle` was written to make impossible,
+            // and a throwing log here would be the one path that leaves the platform with no
+            // response at all — the exact failure this `.catch` exists to prevent.
+            try {
+              logged('rejected', `internal: ${(e as Error).message}`);
+            } catch {
+              /* the response matters more than the row */
+            }
+            send(res, 500, { error: (e as Error).message, code: 'internal' });
+          });
       });
     }
 
     send(res, 404, { error: 'not found' });
   });
 
-  return { server, billing, db, pump };
+  return { server, billing, db, pump, listOrders: adapters.listOrders, devOrderBook: adapters.devOrderBook };
 }
 
 function send(res: ServerResponse, status: number, body: unknown): void {
@@ -276,7 +356,7 @@ function send(res: ServerResponse, status: number, body: unknown): void {
  * several kilobytes, so matchsvc's 4 KB find-request ceiling would silently truncate a
  * real webhook body into a parse failure.
  */
-function readJson(req: IncomingMessage, done: (body: unknown) => void): void {
+function readJson(req: IncomingMessage, done: (body: unknown, raw: string) => void): void {
   const chunks: Buffer[] = [];
   let size = 0;
   let overflow = false;
@@ -289,11 +369,21 @@ function readJson(req: IncomingMessage, done: (body: unknown) => void): void {
     chunks.push(c);
   });
   req.on('end', () => {
-    if (overflow) return done({});
+    // `raw` is a SECOND argument rather than something the caller re-derives, and it is why
+    // this helper changed shape at all (ROADMAP 8.5): the webhook event log stores the bytes
+    // as they arrived, and a payload that did not parse is exactly the one whose bytes are
+    // worth the most. Re-serialising the parsed body would lose the unparsable case entirely
+    // and silently reorder every other one.
+    if (overflow) {
+      // The body is DISCARDED past the cap, so there is no verbatim payload to store. Say so,
+      // rather than storing a truncated prefix that would later read like the whole thing.
+      return done({}, `<oversized body discarded: >${size} bytes>`);
+    }
+    const raw = Buffer.concat(chunks).toString('utf8');
     try {
-      done(chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {});
+      done(chunks.length ? JSON.parse(raw) : {}, raw);
     } catch {
-      done({});
+      done({}, raw);
     }
   });
   // UNOBSERVABLE, AND KEPT ANYWAY — recorded here so the next reader does not have to
@@ -306,5 +396,5 @@ function readJson(req: IncomingMessage, done: (body: unknown) => void): void {
   // node's "unhandled 'error' throws" rule is a runtime detail this file should not depend
   // on. `billsvc.http.test.ts`'s mid-upload-disconnect case covers the OUTCOME that matters
   // either way (the process keeps serving and books nothing); it does not cover this line.
-  req.on('error', () => done({}));
+  req.on('error', () => done({}, ''));
 }

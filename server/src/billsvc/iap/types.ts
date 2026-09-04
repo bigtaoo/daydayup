@@ -62,3 +62,70 @@ export type ReceiptVerifier = (platform: IapPlatform, receipt: string) => Promis
 export function missingCredentials(platform: IapPlatform, what: string): IapVerifyFail {
   return { ok: false, reason: `${platform}: ${what} not configured — cannot verify, nothing granted` };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The reconciliation port (design/19 §7, ROADMAP 8.5)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * ONE ORDER AS THE PLATFORM SEES IT. The other side of design/19 §4's one remaining tear:
+ * `orders`/`receipts`/`ledger` are one SQLite file and cannot tear against each other, but
+ * they can and do tear against the PLATFORM, because a payment that succeeded on Apple's
+ * side and never produced a callback here leaves no local row at all. Reconciliation is the
+ * only thing that can see that, and this is the shape it needs to see it in.
+ *
+ * Deliberately NOT `IapVerifyOk`. A verification answers "is this receipt real and what is
+ * it for"; a listing answers "what did you charge, when". They overlap on `product` and
+ * `amountCents` and diverge on everything else, and folding them into one type would make
+ * every field on it optional.
+ */
+export interface PlatformOrder {
+  /** The platform's own transaction id. THE join key against `orders.platform_txn_id`. */
+  platformTxnId: string;
+  /**
+   * The merchant order id the platform echoes back (out_trade_no / applicationUsername),
+   * when it carries one. Advisory: reconciliation joins on `platformTxnId`, and uses this
+   * only to make a difference readable. Some platforms do not return it on a list call.
+   */
+  merchantOrderId?: string;
+  /** The SKU the platform believes was bought. Compared against the local order's. */
+  product: string;
+  /**
+   * Minor units, as the platform records them. OPTIONAL, and the option is load-bearing: a
+   * platform that does not report an amount on a list call must produce NO amount finding,
+   * rather than one comparing against a zero nobody sent.
+   */
+  amountCents?: number;
+  currency?: string;
+  /** ms epoch, as the platform records it. */
+  settledAt: number;
+}
+
+/**
+ * A listing, or an honest refusal. The `ok: false` arm is not decoration: no merchant
+ * account exists anywhere in this project (design/19 §9), so it is the arm four of the five
+ * adapters always take — and a reconciliation that treated "could not ask" as "nothing to
+ * report" would print a clean bill of health for a check that never ran.
+ */
+export type PlatformOrderListing =
+  | { ok: true; orders: readonly PlatformOrder[] }
+  | { ok: false; reason: string };
+
+/**
+ * "List this platform's orders settled in `[sinceMs, untilMs)`."
+ *
+ * Async and injected for the same reason `ReceiptVerifier` is: a real implementation is an
+ * HTTPS round trip, and the reconciliation logic that consumes it must be drivable with no
+ * network at all. Half-open interval on purpose — two consecutive daily windows must not
+ * both claim an order settled exactly on the boundary.
+ */
+export type PlatformOrderLister = (
+  platform: IapPlatform,
+  sinceMs: number,
+  untilMs: number,
+) => Promise<PlatformOrderListing>;
+
+/** The listing-side mirror of `missingCredentials`. Same fail-closed posture, same shape. */
+export function listingUnavailable(platform: IapPlatform, what: string): PlatformOrderListing {
+  return { ok: false, reason: `${platform}: ${what} — cannot list orders, NOT reconciled` };
+}

@@ -549,7 +549,7 @@ via its own `forge.lockedFind` string), all 8 locales gained `hud.source.purchas
 
 ---
 
-## Phase 8 — Server platform: trust seams, entitlements, billing 🟡 (planned 2026-09-04, building)
+## Phase 8 — Server platform: trust seams, entitlements, billing ✅ (planned 2026-09-04, complete 2026-09-05)
 
 The server side beyond the game (`design/19-server-platform.md`), planned after an audit of the
 sibling project `funny`'s 13-service backend. Four of its five concerns already ship (login and
@@ -623,13 +623,43 @@ records which of funny's assumptions does not hold here.
   project, so the four real adapters stop at unverified: two outcomes each, both failures, neither
   throwing, each carrying the real call it would make. Shipped 2026-09-04 —
   [volume 30](roadmap/30-2026-09-04-billsvc.md).
-- **8.5 🟡 Operations.** Log every webhook event and not just the successful one (keyed
-  `${txnId}:${eventType}`), because failed and cancelled transactions are otherwise dropped
-  silently and "why did my payment not go through" has no evidence behind it. Daily reconciliation
-  against the platform's order list. A daily anomaly audit over non-`purchase` grants that **files
-  rather than acts** — the same "with no evidence, skip; never convict" principle
-  `design/15-pvp-arena.md`'s checkpoint quorum already follows. No admin service; the requirement
-  is only that the schema be hand-correctable with SQL.
+- **8.5 🟢 Operations — the billing plane leaves evidence.** Three concerns sharing one posture:
+  record what happened, tell a human, never act. `BillingService.ts` did not grow by a line —
+  each is its own sibling module. Shipped 2026-09-05 —
+  [volume 35](roadmap/35-2026-09-05-billing-operations.md).
+  **Every webhook event, not just the successful one** (`billsvc/webhookLog.ts`): a failed,
+  cancelled, refused or unparsable callback used to leave nothing anywhere, and "why did my payment
+  not go through" had no evidence source at all. Keyed `${txnId}:${eventType}` and upserted,
+  because platform redelivery is at-least-once — with two fallbacks that turn out to matter more
+  than the named key, since a body carrying no txn id is exactly the malformed one whose bytes are
+  worth the most and the one a naive key collapses into a single row every later bad payload
+  overwrites. `raw` keeps the FIRST body, `outcome` the LATEST, and `divergences` counts
+  redeliveries whose body CHANGED — the forgery shape 8.3's amendment closes on the settlement
+  path, seen from the other side. One behaviour CHANGE rides along: an unrecognised `event` string
+  used to fall through into `settle`, so a `refunded` callback with a valid receipt would have
+  DELIVERED; it is now recorded and answered 200 with `ignored: true`.
+  **Daily reconciliation** (`billsvc/reconcile.ts`) covers the platform↔local tear 8.3 leaves open,
+  and the honest part is what it refuses to claim: no merchant account exists (design/19 §9), so
+  "list the platform's recent orders" is an injected PORT — the dev stub implements it against an
+  **authored** order book, the four real adapters each carry the call they would make and return
+  not-implemented, and a platform that could not be asked lands in `unreconciled` rather than
+  contributing zero differences. `complete` is false whenever that list is non-empty and the
+  formatted first line says COMPLETE/INCOMPLETE *before* the count, because a caller reading only
+  the count is the misreading. The dev book is never derived from local `orders`: a reconciliation
+  that passes by construction looks like evidence and is worse than none.
+  **A daily anomaly audit that files rather than acts** (`grantAudit.ts` + `scripts/grantAudit.ts`,
+  a standalone module and a script, not a matchsvc route — design/19 §7 rules out an admin
+  service). `design/15-pvp-arena.md`'s checkpoint-quorum principle, literally: exactly AT the
+  threshold is not an anomaly (`>`, never `>=`), a source the audit was not told to count is
+  SKIPPED rather than counted, `purchase` is skipped because the money is the evidence, and nothing
+  revokes. The script opens the account database **read-only** — the posture made structural rather
+  than commented. `(accountId, dayKey)` in UTC is the idempotency key, so a re-run files nothing.
+  **And 8.7's orphan record finally has somewhere to go**: a control-plane 4xx is money taken with
+  nothing granted, the only class in Phase 8 where that is true, and a `console.error` was its
+  entire disposition. It is now filed into `review_queue` in the SAME transaction that makes the
+  delivery terminal — a crash between the two would leave a terminal row nobody is told about — and
+  a *retryable* failure files nothing, because that row is still owed and a peer that comes back
+  heals it. 836 → 973 server tests across 38 → 44 files; 99.00% lines / 97.73% branches.
 - **8.6 🟢 `GameRegistry`, shaped now and deferred.** The gameserver's rooms are in-process `Map`s
   driven by in-process intervals (`RoomManager.ts`), so today there can be exactly one — fine, but
   currently an accident rather than a decision. funny's registry (register + heartbeat + pick
@@ -744,7 +774,7 @@ Client hardening pass   DONE (✅ 2026-08-04) — full client/src code review (1
 Room & door model       DONE (✅ 2026-08-04/05, ENGINE_VERSION 34→35) — PvE floors co-resident + door-connected (placeFloor/carveDoorGaps/buildFloorGeometry, new DoorSystem: activation/lock-unlock/force-regroup), replacing the old one-room swap. HudView.ts fixed to compile against the new schema. Client room rendering shipped same day: door_{locked,open}_raw.png loaded and wired onto RoomBuilder's per-door Sprite (reactive lock/unlock in place via updateDoors(), no full rebuild), EventReactor reacts to force_regroup with a local-player camera snap. Fully-realized branching shipped 2026-08-05 (ENGINE_VERSION 35) — a real fork-and-reconverge diamond of sibling rooms, needing zero client changes (DoorSystem/RoomBuilder/EventReactor already topology-agnostic). PvE minimap adapter shipped same day — FloorProgress deleted, PvE now shares PvP's own Minimap widget via dungeonToArenaMap/dungeonRoomStatus (minimapLayout.ts). Map-editor door placement shipped same day (no engine version bump) — DungeonFloorMap/placeAuthoredFloor/DungeonConfig.floorMaps + a third tools/map-editor mode ("PvE Dungeon Floor") + validateDungeonFloorMap, closing the last item of the original three-item follow-up list. "全部加测试" follow-up added DungeonFloorCanvas.test.ts (28 tests, previously zero coverage on the tool's most complex new file). Real 2D graph layout (`layout: 'graph2d'`, `placeFloorGraph2d`) shipped same day too — a generated floor can place in real 2D instead of a forced west→east spine. "graph2d content" pass shipped 2026-08-05 (same day): `EMBER_DUNGEON` switches to `'graph2d'` (a new `ember_atrium` piece + wider exit authoring on `ember_pillars`/`ember_extraction`/`ember_boss`), and `placeFloorGraph2d` gains a direction-retry fallback for fold-back overlaps — both found necessary by testing the real content, not by inspection. `'branching'` still stays unused by any shipped config. **Bug fix pass shipped 2026-08-12 (ENGINE_VERSION 35→36):** two real bugs found from a live player report (door unlocked but still physically impassable) — `DeathDropsSystem`'s `onDeathSpawn` boss-adds now inherit the dying boss's own `roomId` (was `undefined`, so `DoorSystem` briefly saw the room as cleared and force-regrouped the player back), and `placeFloorGraph2d` now shifts a floor's whole coordinate space so a north/west hop off the origin-pinned spawn room never leaves a room (and its door) at a negative, physically-unreachable offset. See the Room & door model section above. **Stranded-enemy fix shipped 2026-08-15 (ENGINE_VERSION 38→39):** the third consequence of this same model — the checkpoint only requires the *capstone* room to be cleared, so a DESCEND could carry every enemy still alive elsewhere on the floor (plus their in-flight bullets) into the next one, holding a dead `roomId` and a position in geometry that had just been torn down; `resolveDescend` now clears `state.enemies`/`state.projectiles` alongside the room arrays it already wiped. See the Stranded-enemy section above.
 Phase 6 (accounts)      DONE (✅) — real username/password login (SQLite via node:sqlite), never required to play. Bound to PvP ladder rating (accountId in the signed ticket -> MatchRoom.seatAccounts -> ladderReport, guest/bot fallback preserved) and Forge MetaState (best-effort /account/meta sync). Independent of Phases 1-5; third-party OAuth reserved, not built.
 Phase 7 (i18n)          DONE (✅) — client/src/i18n/: en.ts canonical + zh.ts translation, both compile-time key-checked (Translations<typeof en>, TranslationKey). Every screen migrated to t(); Settings gained a language toggle backed by SettingsState.locale. Independent of Phases 1-6; enum/data-driven values (damage type, weapon kind, rarity/ids) deliberately left untranslated.
-Phase 8 (server platform) IN PROGRESS (design/19-server-platform.md) — the three planes (control 8788 / data 8787 / new billsvc 8789).
+Phase 8 (server platform) DONE (✅ 2026-09-05, design/19-server-platform.md) — the three planes (control 8788 / data 8787 / new billsvc 8789).
                         8.1 ✅ and 8.2 ✅ both landed 2026-09-04, both independent of billing. 8.1 closed the two defects that stood that day:
                         /rating/report had no authentication at all, and reportSettledMatch never drained its response body (funny measured that
                         shape wedging undici’s keep-alive pool so that no request arrived); the one item it left open — that route being
@@ -753,7 +783,10 @@ Phase 8 (server platform) IN PROGRESS (design/19-server-platform.md) — the thr
                         /account/meta blob, which was a free-money hole the moment blueprints/characters are sold. 8.3-8.4 billsvc + IAP adapters + a fail-closed dev stub, on
                         its own SQLite file; 8.7 closed the loop between them on 2026-09-05 with a delivery OUTBOX, because the entitlements table is in
                         another database file and one transaction cannot span it — at-least-once delivery made safe by 8.2’s UNIQUE, which is why
-                        it is an outbox and not a two-phase commit. 8.5 webhook logging/reconciliation/anomaly audit. 8.6 shipped 2026-09-05 as GameRegistry's static
+                        it is an outbox and not a two-phase commit. 8.5 shipped 2026-09-05 as the operational half — every webhook event logged and not just the settling one
+                        (an unknown event type used to fall through into settle), daily reconciliation behind an injected platform-order PORT that reports INCOMPLETE
+                        rather than clean when a platform cannot be asked, and a non-purchase grant audit that FILES and never revokes — plus a review queue that
+                        finally gives 8.7's "money taken, nothing granted" record somewhere to go. 8.6 shipped 2026-09-05 as GameRegistry's static
                         single-instance branch only — /find's wsUrl is a lookup that travels in the response, never in the ticket. Depends on nothing in Phases 0-7; 8.2 depends on 8.1’s internal key, 8.3 on both, 8.7 on all three.
 Documentation           DONE (✅ 2026-08-02) — all 19 design docs + every README audited against the code; stale top-of-file Status blocks rewritten (12/10/client/art READMEs and this file's own header), design/README index completed, engine/README written, art/ UUID filenames + duplicate files cleaned up. Docs-only, no code change.
 Repo structure          DONE (✅ 2026-08-02) — engine/ hoisted to its own top-level package (DOM-free, self-only paths: the determinism rule is now compile-enforced); client/src/game/ split into screens|scene|controllers|match; root npm workspace with a single `npm run check` across all 5 packages; game/config.ts deleted (dead pre-engine duplicates) and split into theme.ts + score.ts. 931 tests before and after, zero behaviour change.
@@ -979,9 +1012,13 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 - **09-05** [The ladder gate stops asking the players](roadmap/33-2026-09-05-ladder-mode-gate.md#the-ladder-gate-stops-asking-the-players-2026-09-05-server-only-no-engine-bump) — 8.1's key settled *who* may write the ladder; this settles *which settlements get written*, which until now the clients decided. The guard was `!hashOk || !placements || typeof winner !== 'number'`, and only `hashOk` is trusted — the room computes it by comparing every seat's state hash. `placements` and `winner` are `reports[0]`'s values, relayed verbatim off the seats' own `result` messages, and `hashOk` says only that every seat sent the SAME hash, never that any of it describes a real match. So `placements`-is-present was doing double duty: a necessary precondition for `buildRatingReportBody`, and — per the comment above it — the test for "was this PvP", which is a question the seats were answering about themselves. A co-op/PvE squad that plays a room out, agrees on a hash (they already do; same deterministic sim) and all send a fabricated `placements` array plus a numeric `winner` therefore moved REAL accounts' ratings for a match nobody competed in — `seatAccounts` comes from the verified ticket, so they never had to lie about who they were, only about what they were playing. It also qualifies volume 31's "anyone who can reach the route can already post whatever placements they like": true of the route, and it understated the population, because the gameserver holding a real key was forwarding placements authored by clients holding none. The room already knew better — `MatchRoomDeps.mode` comes from the verified ticket, `RoomManager.join` rejects a joiner who disagrees, and `index.ts`'s reconnect arm was already cross-checking `modeValue`. It went unconsulted on purpose and the comment said so; that reasoning is right about `match_over`'s `reason` string, which is cosmetic, and the mistake was letting a rule about a display string govern a decision with ratings attached. `SettledMatch` gains a REQUIRED `mode` (optional fails closed only by luck, since `undefined !== 'pvp'`; required makes it a compile error, and it found the one construction site at once), `MatchRoom` still imports nothing from matchsvc, and `placements`/`winner` stay as a shape check rather than as evidence. Mutation-checked three ways — dropping the `mode` arm kills 2, hardcoding `'pvp'` kills 7, hardcoding `'coop'` kills exactly 1, the control written for it. `net` `test` `docs`
 - **09-05** [The gameserver's address becomes a lookup](roadmap/34-2026-09-05-game-registry.md#the-gameservers-address-becomes-a-lookup-2026-09-05-server-only-no-engine-bump) — ROADMAP 8.6, Phase 8's last item and its smallest: `matchsvc.ts` held `const GAMESERVER_URL` and stamped it onto every issued ticket, so the answer to "where is the data plane" could not vary. The client half was already right (`MatchInfo.wsUrl`, redeemed as `${wsUrl}?ticket=`), which is why this is one indirection — the value is entirely in which one. `GameRegistry` lands as design/19 §6 specifies: register + heartbeat + pick-least-loaded + 30 s staleness, with the register/heartbeat ROUTES unbuilt and a configured static address as the only reachable branch. Three decisions the build had to make. §6 says the static address "seeds one entry", and seeding it LITERALLY is wrong — nothing heartbeats a configured address and nothing reports its load, so as a map entry it sits at load 0, never goes stale, and wins every pick against real instances reporting real numbers; a fallback that outcompetes the thing it is a fallback for is not a fallback, so it lives in its own field. §6's retry rules (4xx terminal, capped backoff otherwise, a heartbeat that NEVER re-registers) are the shape of the class rather than a detail of a component that does not exist yet, so they are in its header and `heartbeat()` returns false for an unknown id and writes nothing. And `pick()` returning `null` is a real answer the old `withUrl: (t) => t & {wsUrl: string}` could not express — all three routes now answer 503, which is what lets `MatchInfo.wsUrl` stay non-optional instead of an `undefined` surfacing much later as a socket opened on `undefined?ticket=`. The one thing the plan did not settle is WHERE that check sits: decorating on the way out is a bug on the poll route, because `Matchmaker.poll` DELETES the waiter on its way to `matched`, so a 503 decided afterwards destroys the seat the player queued for. `ticket.ts` and `config.ts` untouched; no client change. 40 new cases in two files, `GameRegistry.ts` at 100% on all four columns, `matchsvc.ts` 92.5/94.94 → 93.75/96.96. A 26-mutant battery killed all 26 over three rounds, and two of those rounds changed the code rather than confirming it: two survivors were MY OWN tests being fake ("empty registry, assert no bots" holds whether or not the guard exists, because the poll is refused before `onBotFill` can run — a zero asserted with no evidence the case arose), and one was unreachable code reading like a live branch, now a TYPE instead of a runtime check. Coverage then found the same class of thing a third time from the other side. `net` `test` `docs`
 
+**[2026-09-05 — the billing plane learns to leave evidence](roadmap/35-2026-09-05-billing-operations.md)**
+
+- **09-05** [The billing plane learns to leave evidence](roadmap/35-2026-09-05-billing-operations.md#1-every-webhook-event-not-just-the-successful-one) — ROADMAP 8.5, the operational half of Phase 8 and the last item in it: three concerns sharing one posture — record what happened, tell a human, never act. Until this pass only a callback that SETTLED left a trace, so "why did my payment not go through" had no evidence source anywhere in the project; every branch of the webhook route now writes a `webhook_events` row keyed `${txnId}:${eventType}` and upserted, because platform redelivery is at-least-once. The named key needed two fallbacks that matter more than it does — a body carrying no txn id is exactly the malformed one whose bytes are worth the most, and a naive key collapses every one of them into a single row each later bad payload overwrites, so the merchant order id and then a sha256 of the raw bytes stand in (a hash is a real key here: a retry of an unparsable body repeats the same bytes). `raw` keeps the FIRST body and `outcome` the LATEST — different rules on purpose, since the body is evidence and the outcome is what the account state reflects — and `divergences` counts redeliveries whose body CHANGED, which is 8.3's forgery shape seen from the other side, done in the UPSERT as `divergences + (raw <> excluded.raw)` rather than as a look-before-write. One behaviour CHANGE rode along: an unrecognised `event` string used to fall through into `settle`, so a `refunded` callback with a valid receipt would have DELIVERED. Reconciliation is the honest half — no merchant account exists, so "list the platform's recent orders" is an injected PORT, the four real adapters carry the call they would make and return not-implemented, and writing them down was worth more than expected (three of the four are not a single fetch: an ES256 JWT over three credentials, a Pub/Sub subscription, a gzipped CSV behind a signed URL). A platform that could not be asked lands in `unreconciled` instead of contributing zero differences, `complete` is false whenever that list is non-empty, and the first formatted line says COMPLETE/INCOMPLETE *before* the count — a test asserts the trap directly: 0 differences AND not reconciled. The dev platform's book is authored and never derived from local `orders`, because a reconciliation that passes by construction looks like evidence. The grant audit is `design/15`'s checkpoint-quorum principle applied to money — exactly AT the threshold is not an anomaly (`>`, never `>=`), a source it was not told to count is SKIPPED so a later migration's new source arrives uncounted, and its script opens the account database READ-ONLY, which is "never convict" made structural rather than commented. And 8.7's orphan finally has somewhere to go: a control-plane 4xx is the only "money taken, nothing granted" class in Phase 8 and a `console.error` was its whole disposition — now filed into a review queue in the SAME transaction that makes the delivery terminal, while a *retryable* failure files nothing because that row is still owed. 836 → 973 server tests across 38 → 44 files, 99.00% lines / 97.73% branches, every new module 100/100. `net` `test` `docs`
+
 ## The work log — by theme
 
-The same 114 entries, grouped. An entry with more than one tag appears more than once.
+The same 116 entries, grouped. An entry with more than one tag appears more than once.
 
 **`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(56)*
 
@@ -1117,7 +1154,7 @@ The same 114 entries, grouped. An entry with more than one tag appears more than
 - 08-25 [The Seven Districts: the launch arena gets authored](roadmap/06-2026-08-25.md#the-seven-districts-the-launch-arena-gets-authored-2026-08-25-content)
 - 08-25 [The three parked rules that had only shipped half](roadmap/06-2026-08-25.md#the-three-parked-rules-that-had-only-shipped-half-2026-08-25-client--one-render-only-engine-field)
 
-**`test`** — coverage sweeps, gates, mutation batteries *(45)*
+**`test`** — coverage sweeps, gates, mutation batteries *(47)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 08-05 [Platform-layer test coverage pass](roadmap/01-2026-07-24--08-05.md#platform-layer-test-coverage-pass--2026-08-05-全部加测试)
@@ -1164,6 +1201,8 @@ The same 114 entries, grouped. An entry with more than one tag appears more than
 - 09-05 [The settlement report becomes exactly-once](roadmap/31-2026-09-05-exactly-once-settlement.md#the-settlement-report-becomes-exactly-once-2026-09-05-server-no-engine-bump)
 - 09-05 [The delivery loop closes, through an outbox](roadmap/32-2026-09-05-delivery-outbox.md#the-delivery-loop-closes-through-an-outbox-2026-09-05-server-only-no-engine-bump)
 - 09-05 [The ladder gate stops asking the players](roadmap/33-2026-09-05-ladder-mode-gate.md#the-ladder-gate-stops-asking-the-players-2026-09-05-server-only-no-engine-bump)
+- 09-05 [The gameserver's address becomes a lookup](roadmap/34-2026-09-05-game-registry.md#the-gameservers-address-becomes-a-lookup-2026-09-05-server-only-no-engine-bump)
+- 09-05 [The billing plane learns to leave evidence](roadmap/35-2026-09-05-billing-operations.md#1-every-webhook-event-not-just-the-successful-one)
 
 **`audio`** — cues, music, the engine to sound channel *(5)*
 
@@ -1215,7 +1254,7 @@ The same 114 entries, grouped. An entry with more than one tag appears more than
 - 09-04 [The dispatch chain gets five files](roadmap/25-2026-09-04-matchsvc-routes.md#the-dispatch-chain-gets-five-files-2026-09-04-server-only-no-engine-bump)
 - 09-04 [The weapon roster gets tested](roadmap/26-2026-09-04-weapon-tests.md#the-weapon-roster-gets-tested-2026-09-04-tests-and-one-pure-module-no-engine-bump)
 
-**`docs`** — design docs and this log itself *(42)*
+**`docs`** — design docs and this log itself *(44)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-02 [Documentation pass](roadmap/01-2026-07-24--08-05.md#documentation-pass--2026-08-02)
@@ -1259,8 +1298,10 @@ The same 114 entries, grouped. An entry with more than one tag appears more than
 - 09-05 [The settlement report becomes exactly-once](roadmap/31-2026-09-05-exactly-once-settlement.md#the-settlement-report-becomes-exactly-once-2026-09-05-server-no-engine-bump)
 - 09-05 [The delivery loop closes, through an outbox](roadmap/32-2026-09-05-delivery-outbox.md#the-delivery-loop-closes-through-an-outbox-2026-09-05-server-only-no-engine-bump)
 - 09-05 [The ladder gate stops asking the players](roadmap/33-2026-09-05-ladder-mode-gate.md#the-ladder-gate-stops-asking-the-players-2026-09-05-server-only-no-engine-bump)
+- 09-05 [The gameserver's address becomes a lookup](roadmap/34-2026-09-05-game-registry.md#the-gameservers-address-becomes-a-lookup-2026-09-05-server-only-no-engine-bump)
+- 09-05 [The billing plane learns to leave evidence](roadmap/35-2026-09-05-billing-operations.md#1-every-webhook-event-not-just-the-successful-one)
 
-**`net`** — matchmaking, sockets, reconnect *(9)*
+**`net`** — matchmaking, sockets, reconnect *(11)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 09-03 [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump)
@@ -1271,6 +1312,8 @@ The same 114 entries, grouped. An entry with more than one tag appears more than
 - 09-05 [The settlement report becomes exactly-once](roadmap/31-2026-09-05-exactly-once-settlement.md#the-settlement-report-becomes-exactly-once-2026-09-05-server-no-engine-bump)
 - 09-05 [The delivery loop closes, through an outbox](roadmap/32-2026-09-05-delivery-outbox.md#the-delivery-loop-closes-through-an-outbox-2026-09-05-server-only-no-engine-bump)
 - 09-05 [The ladder gate stops asking the players](roadmap/33-2026-09-05-ladder-mode-gate.md#the-ladder-gate-stops-asking-the-players-2026-09-05-server-only-no-engine-bump)
+- 09-05 [The gameserver's address becomes a lookup](roadmap/34-2026-09-05-game-registry.md#the-gameservers-address-becomes-a-lookup-2026-09-05-server-only-no-engine-bump)
+- 09-05 [The billing plane learns to leave evidence](roadmap/35-2026-09-05-billing-operations.md#1-every-webhook-event-not-just-the-successful-one)
 
 **`i18n`** — locales and text layout *(2)*
 

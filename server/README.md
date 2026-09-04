@@ -39,20 +39,24 @@ pure core + the shared ticket module:
 | `src/internalAuth.ts` | Inbound service-to-service auth (ROADMAP 8.1): `x-internal-key` against a per-caller registry, hashed before `timingSafeEqual`. A THIRD credential namespace — never a player token. | no | ✅ `test/internalAuth.test.ts`, `test/internalTrustSeam.test.ts` |
 | `src/internalFetch.ts` | Outbound service-to-service calls: always drains the response body, explicit per-attempt timeout, opt-in bounded retry. | no | ✅ `test/internalFetch.test.ts` |
 
-**Billing plane** — orders, receipts, IAP, entitlement delivery (ROADMAP 8.3/8.4/8.7, design/19 §4/§5):
+**Billing plane** — orders, receipts, IAP, entitlement delivery, operations (ROADMAP 8.3/8.4/8.5/8.7, design/19 §4/§5/§7):
 
 | File | Role | I/O? | Tested |
 |------|------|------|--------|
-| `src/billingDb.ts` | billsvc's OWN SQLite file (`DDU_BILLING_DB_PATH`): `orders`/`receipts`/append-only `ledger`/`deliveries`. Deliberately NOT `db.ts`'s `openDb` — money gets its own file, and a shared opener is how that gets undone. | file | ✅ `test/billingDb.test.ts` |
+| `src/billingDb.ts` | billsvc's OWN SQLite file (`DDU_BILLING_DB_PATH`): `orders`/`receipts`/append-only `ledger`/`deliveries`, plus 8.5's `webhook_events`/`review_queue`. Six tables, and a test asserts exactly those and no more. Deliberately NOT `db.ts`'s `openDb` — money gets its own file, and a shared opener is how that gets undone. | file | ✅ `test/billingDb.test.ts` |
 | `src/billsvc/BillingService.ts` | The five §4 rules. `settle` claims the receipt row AND the ledger row (`ON CONFLICT DO NOTHING` + `changes()`), then updates the order and grants — one `BEGIN IMMEDIATE`, so a refused grant rolls all of it back. | no | ✅ `test/billsvc.BillingService.test.ts` |
 | `src/billsvc/delivery.ts` | The entitlement seam, called from INSIDE that transaction — synchronous and `void`, so a throw rolls the settlement back. `ledgerOnlyDelivery` is the explicit opt-out, no longer the default. | no | ✅ (above) |
 | `src/billsvc/outbox.ts` | The DURABLE half of the closed loop (8.7): one synchronous INSERT into `deliveries`, in the settlement transaction, keyed on the LEDGER row's id. After the COMMIT the delivery is OWED on disk. | no | ✅ `test/billsvc.outbox.test.ts` |
-| `src/billsvc/deliveryPump.ts` | The ASYNC half: drains `deliveries` into matchsvc's `POST /internal/entitlements/grant` over `internalFetch`. Opportunistic after a settlement + a startup sweep + a bounded backstop. 4xx is terminal and loud; 5xx/network stays owed forever. | net | ✅ `test/billsvc.deliveryPump.test.ts`, `test/billsvc.deliveryLoop.test.ts` |
+| `src/billsvc/deliveryPump.ts` | The ASYNC half: drains `deliveries` into matchsvc's `POST /internal/entitlements/grant` over `internalFetch`. Opportunistic after a settlement + a startup sweep + a bounded backstop. 4xx is terminal and loud; 5xx/network stays owed forever. Since 8.5 a terminal row is also FILED into `review_queue`, in the same transaction that makes it terminal. | net | ✅ `test/billsvc.deliveryPump.test.ts`, `test/billsvc.deliveryLoop.test.ts`, `test/billsvc.moneyTaken.test.ts` |
 | `src/billsvc/skus.ts` | The server-side price table. `createOrder` has no `amount` parameter, so a body price cannot be plumbed in. | no | ✅ `test/billsvc.skus.test.ts` |
-| `src/billsvc/iap/*.ts` | One module per platform behind `createReceiptVerifier`, plus the `product:<sku>` dev stub. Missing credentials FAIL — never fall back to the stub. | net | ✅ `test/billsvc.iap.test.ts` |
+| `src/billsvc/iap/*.ts` | One module per platform behind `createReceiptVerifier` AND `createPlatformOrderLister` (8.5's reconciliation port), plus the `product:<sku>` dev stub and its authored `DevStubOrderBook`. Missing credentials FAIL on both — never fall back to the stub, and never answer an order listing with an empty list. | net | ✅ `test/billsvc.iap.test.ts`, `test/billsvc.reconcile.test.ts` |
 | `src/billsvc/startupGuard.ts` | Second fail-closed check: refuses to START with a dev flag under `NODE_ENV=production`. Shares no code with the first, on purpose. | no | ✅ `test/billsvc.startupGuard.test.ts` |
 | `src/billsvc/server.ts` | HTTP surface — the ONLY billing file that imports `node:http`. Every route behind `internalAuth` except `/health`, `/skus` and the platform webhook. | yes | ✅ `test/billsvc.http.test.ts` |
 | `src/billsvc/main.ts` | Process entry on `BILL_PORT` (8789). Asserts startup safety BEFORE binding a port or creating a file. | yes | ✅ `test/billsvc.main.test.ts` |
+| `src/billsvc/webhookLog.ts` | 8.5: EVERY platform callback, not just the one that settled — keyed `${txnId}:${eventType}` and upserted, with an order-id and then a raw-bytes-hash fallback so an unparsable payload still gets its own row. `raw` keeps the FIRST body; `divergences` counts redeliveries that changed it. | no | ✅ `test/billsvc.webhookLog.test.ts`, `test/billsvc.webhookEvents.http.test.ts` |
+| `src/billsvc/reconcile.ts` | 8.5: the local↔platform comparison design/19 §4 leaves open, over an injected `PlatformOrderLister`. A platform that could not be asked lands in `unreconciled` and `complete` goes false — there is no path that reports clean for a check that did not run. Driven by `scripts/reconcile.ts`. | no | ✅ `test/billsvc.reconcile.test.ts` |
+| `src/billsvc/reviewQueue.ts` | 8.5: the one place a human is told to look. Two producers (the grant audit, and the pump's money-taken-nothing-granted rows), `ON CONFLICT DO NOTHING` on a producer-minted key, and nothing in this server ever acts on an entry. | no | ✅ `test/billsvc.reviewQueue.test.ts` |
+| `src/grantAudit.ts` | 8.5: counts non-`purchase` `entitlements` grants per account per UTC day and FILES anything over the threshold. `design/15`'s checkpoint-quorum principle — exactly AT the threshold is not an anomaly, an uncounted source is skipped, nothing is ever revoked. Control-plane table, so it is a module + `scripts/grantAudit.ts`, not a matchsvc route. | no | ✅ `test/grantAudit.test.ts` |
 
 `MatchRoom`/`RoomManager` take an injected `Scheduler` (the metronome clock) and
 `RoomConnection`s (per-seat senders), so the whole lifecycle is unit-tested with a fake
@@ -93,6 +97,18 @@ npm run dev:matchsvc  # control plane: http://0.0.0.0:8788  (MATCH_PORT env over
 npm run billsvc -w server   # billing plane: http://0.0.0.0:8789  (BILL_PORT env override)
 ```
 
+Two operational jobs, both CLI-only and neither scheduled by anything yet (ROADMAP 8.5):
+
+```bash
+npm run reconcile -w server -- --days=1        # local orders vs the platform's list; --strict to exit 1
+npm run audit:grants -w server -- --dry-run    # non-purchase grants per account per UTC day
+```
+
+`reconcile` reports **INCOMPLETE** for the four real platforms, because none of them has a
+credential in this project — that is the honest answer, not a failure of the run. `audit:grants`
+opens the account database **read-only** and files into billsvc's `review_queue`; re-running it
+over a day it has already filed produces nothing.
+
 Or from inside `server/`: `npm test` (ticket / Matchmaker / MatchRoom / RoomManager),
 `npm run typecheck` (incl. all three entrypoints), `npm run dev`, `npm run matchsvc`, `npm run billsvc`.
 
@@ -119,7 +135,7 @@ does not register at all. With no configured address and nothing registered, `/f
 /find/:queueId` and `/resume` answer **503 `{"error":"no gameserver available"}`** rather than
 issuing a ticket with nowhere to redeem it.
 
-**Billing (ROADMAP 8.3/8.4, design/19 §4/§5):** `DDU_BILLING_DB_PATH` is billsvc's own SQLite
+**Billing (ROADMAP 8.3/8.4/8.5, design/19 §4/§5/§7):** `DDU_BILLING_DB_PATH` is billsvc's own SQLite
 file and is deliberately a DIFFERENT variable from `DDU_DB_PATH` — one operator setting one
 variable must not be able to point both planes at one file. `DDU_BILLING_DEV_STUB=1` enables the
 `product:<sku>` receipt stub, which is what makes the whole create → pay → callback → delivered
@@ -127,7 +143,13 @@ chain drivable with no merchant account; under `NODE_ENV=production` it is ignor
 refuses to start with it set. No Apple/Google/WeChat/Stripe credential exists in this project, so
 those adapters return failure rather than granting anything (`DDU_APPLE_SHARED_SECRET`,
 `DDU_GOOGLE_SERVICE_ACCOUNT_JSON` + `DDU_GOOGLE_PACKAGE_NAME`, `DDU_WECHAT_MCH_ID` +
-`DDU_WECHAT_API_V3_KEY`, `DDU_STRIPE_SECRET_KEY` are read but cannot be verified).
+`DDU_WECHAT_API_V3_KEY`, `DDU_STRIPE_SECRET_KEY` are read but cannot be verified) — and, since
+8.5, cannot be reconciled against either. `DDU_BILLING_DEV_ORDERS` points at a JSON array of
+platform orders that becomes the dev platform's own order book, which is what makes reconciliation
+drivable at all with no merchant account; it is deliberately AUTHORED rather than derived from
+`orders`, since a platform side computed from the local side could only ever report zero
+differences. `DDU_GRANT_AUDIT_THRESHOLD` overrides the grant audit's per-account-per-day ceiling
+(default 3; the comparison is `>`, so exactly at it is not an anomaly).
 
 **Internal key (ROADMAP 8.1, design/19 §3):** set `DDU_INTERNAL_KEY` to the SAME value on
 all three processes, the same way as the ticket secret and for the same reason — it is what the
