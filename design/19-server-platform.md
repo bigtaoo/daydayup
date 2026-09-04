@@ -201,9 +201,16 @@ which cannot forget the three things a bare `fetch` forgets:
   threaded through `ladderReport.ts`), a `UNIQUE` column in `db.ts`, and a `changes()` check
   rather than SELECT-then-INSERT. **Open**, and the first thing to do to this seam next.
 
-## 4. Billing: the data model
+## 4. Billing: the data model — SHIPPED 2026-09-04
 
-Three tables in `billsvc`'s **own** SQLite file (`DDU_BILLING_DB_PATH`), never the account DB:
+**Status: SHIPPED 2026-09-04** (ROADMAP 8.3). `server/src/billingDb.ts` owns the file and
+`server/src/billsvc/BillingService.ts` the five rules; the process is `server/src/billsvc/main.ts`
+on 8789 and its routes are `server/src/billsvc/server.ts`. Two amendments the plan below did not
+anticipate, and one thing left open, are recorded at the end of this section.
+
+Three tables in `billsvc`'s **own** SQLite file (`DDU_BILLING_DB_PATH`), never the account DB —
+and never `db.ts`'s `openDb` either, because a shared opener is how a later refactor quietly
+re-merges two files this decision separated on purpose:
 
 ```
 orders(id, account_id, sku, platform, amount_cents, currency,
@@ -237,7 +244,43 @@ file, so a single `BEGIN IMMEDIATE` makes the tear impossible and the CAS machin
 What survives the translation is the *reasoning*, pointed at the tear that does still exist —
 between the **platform** and the local transaction. That is what §7's reconciliation covers.
 
-## 5. IAP adapters and the dev stub
+**AMENDMENT 1 (2026-09-04): the named idempotency key is not sufficient on its own.**
+`platform_txn_id`'s UNIQUE constraint is the right key and the claim-then-`changes()` shape above
+is the right mechanism, but `txnId` arrives in the **callback body**, which nothing authenticates.
+One dev-stub receipt posted at three different orders with three invented transaction ids wins
+three claims and delivers three times. So `settle` claims **twice** inside the one transaction —
+the receipt row's primary key first, then the ledger row's `purchase:<platform>:<txn>` id — and
+prefers `verified.platformTxnId` over the body's whenever an adapter supplies one, because the
+receipt is verified and the body is not. Losing the first claim is an at-least-once redelivery;
+losing the second after winning the first means one platform transaction presented under two
+receipts, which is refused rather than resolved silently either way.
+
+**AMENDMENT 2 (2026-09-04): rule 4 belongs INSIDE the transaction.** It first shipped as a
+`SELECT account_id FROM receipts` before `BEGIN IMMEDIATE`, which is correct today — but only
+because there happens to be no `await` between that read and the claim. Written that way the
+guarantee is a property of the current code rather than of the lock, so the ownership question is
+now answered from the **lost claim**, under the write lock the transaction already holds.
+
+**What the single-transaction claim actually rests on, and how it is checked.** The grant is called
+from *inside* the transaction (`server/src/billsvc/delivery.ts`), and that is what makes the
+decision above testable rather than assertable: a throwing grant rolls the order row, the receipt
+row and the ledger row back together, the platform's next retry finds an open order, and the
+connection stays usable. If the order row survived a failed grant, funny's saga would be necessary
+here after all and this section would be wrong.
+
+**Left open: nothing writes §2's `entitlements` table yet.** `ledgerOnlyDelivery` is the default,
+under which the append-only ledger row *is* the delivery record — correct behaviour rather than a
+stub, and replayable into `entitlements` later precisely because the ledger is append-only. Note
+the tension this section glosses: §2 puts `entitlements` in the **control plane's** database file,
+so "three tables in one SQLite file" does not hold across it and one `BEGIN IMMEDIATE` cannot span
+it. Closing the loop is an internal call, and where it sits against that transaction boundary is an
+open design question — not an oversight, and not something the ledger-only default hides.
+
+## 5. IAP adapters and the dev stub — SHIPPED 2026-09-04
+
+**Status: SHIPPED 2026-09-04** (ROADMAP 8.4), under `server/src/billsvc/iap/` with the second
+fail-closed check in `server/src/billsvc/startupGuard.ts`. The four real adapters stop at
+unverified, exactly as §9 says they must.
 
 Shape borrowed from funny's `commercial/src/iap/`, which is a per-platform set of independent
 functions behind one factory — CLAUDE.md's preferred split form, and it survived four platforms:
@@ -266,6 +309,19 @@ Two properties are non-negotiable, both taken verbatim from funny:
 coins-first with a non-coin product as a secondary branch. Here there is no currency, so that
 secondary branch is the *only* branch and the coin fields do not exist. The port is a
 simplification, not a translation.
+
+**As shipped, three notes.** The two fail-closed checks deliberately **share no code**:
+`server/src/billsvc/iap/factory.ts` reads `NODE_ENV` before it reads `DDU_BILLING_DEV_STUB`, and
+`server/src/billsvc/startupGuard.ts` carries its own copy of that three-line predicate. Importing one into the other is the obvious
+tidy-up and it would make both defences one defence with two call sites, which is the failure
+"twice over" exists to survive — so each has a test asserting its own copy. The stub resolves a
+`product:` receipt on **any** platform while enabled, which is what makes `/webhook/apple` drivable
+end to end with no Apple account; when it is off the same receipt falls through to the real adapter
+and fails there, which is the correct answer and not a fallback in the other direction. And the
+four real adapters each have exactly two outcomes, both failures and neither throwing (a missing
+credential, and a round trip that is not implemented) — a platform that cannot be verified must not
+report `ok`, and one unconfigured platform must not be able to 500 the shared webhook route for the
+others.
 
 ## 6. Topology: `GameRegistry`, deferred but shaped now
 

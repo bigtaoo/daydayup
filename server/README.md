@@ -37,6 +37,19 @@ pure core + the shared ticket module:
 | `src/internalAuth.ts` | Inbound service-to-service auth (ROADMAP 8.1): `x-internal-key` against a per-caller registry, hashed before `timingSafeEqual`. A THIRD credential namespace — never a player token. | no | ✅ `test/internalAuth.test.ts`, `test/internalTrustSeam.test.ts` |
 | `src/internalFetch.ts` | Outbound service-to-service calls: always drains the response body, explicit per-attempt timeout, opt-in bounded retry. | no | ✅ `test/internalFetch.test.ts` |
 
+**Billing plane** — orders, receipts, IAP (ROADMAP 8.3/8.4, design/19 §4/§5):
+
+| File | Role | I/O? | Tested |
+|------|------|------|--------|
+| `src/billingDb.ts` | billsvc's OWN SQLite file (`DDU_BILLING_DB_PATH`): `orders`/`receipts`/append-only `ledger`. Deliberately NOT `db.ts`'s `openDb` — money gets its own file, and a shared opener is how that gets undone. | file | ✅ `test/billingDb.test.ts` |
+| `src/billsvc/BillingService.ts` | The five §4 rules. `settle` claims the receipt row AND the ledger row (`ON CONFLICT DO NOTHING` + `changes()`), then updates the order and grants — one `BEGIN IMMEDIATE`, so a refused grant rolls all of it back. | no | ✅ `test/billsvc.BillingService.test.ts` |
+| `src/billsvc/delivery.ts` | The entitlement seam, called from INSIDE that transaction. `ledgerOnlyDelivery` is the default until 8.2's table is wired — the ledger row is the delivery record. | no | ✅ (above) |
+| `src/billsvc/skus.ts` | The server-side price table. `createOrder` has no `amount` parameter, so a body price cannot be plumbed in. | no | ✅ `test/billsvc.skus.test.ts` |
+| `src/billsvc/iap/*.ts` | One module per platform behind `createReceiptVerifier`, plus the `product:<sku>` dev stub. Missing credentials FAIL — never fall back to the stub. | net | ✅ `test/billsvc.iap.test.ts` |
+| `src/billsvc/startupGuard.ts` | Second fail-closed check: refuses to START with a dev flag under `NODE_ENV=production`. Shares no code with the first, on purpose. | no | ✅ `test/billsvc.startupGuard.test.ts` |
+| `src/billsvc/server.ts` | HTTP surface — the ONLY billing file that imports `node:http`. Every route behind `internalAuth` except `/health`, `/skus` and the platform webhook. | yes | ✅ `test/billsvc.http.test.ts` |
+| `src/billsvc/main.ts` | Process entry on `BILL_PORT` (8789). Asserts startup safety BEFORE binding a port or creating a file. | yes | ✅ `test/billsvc.main.test.ts` |
+
 `MatchRoom`/`RoomManager` take an injected `Scheduler` (the metronome clock) and
 `RoomConnection`s (per-seat senders), so the whole lifecycle is unit-tested with a fake
 clock and fake sockets — no network, no timers. The relay *content* (command ordering,
@@ -73,10 +86,11 @@ One package of a root npm workspace — `npm install` once at the repo root cove
 ```bash
 npm run dev:server    # data plane: ws://0.0.0.0:8787/ws  (PORT/HOST env override)
 npm run dev:matchsvc  # control plane: http://0.0.0.0:8788  (MATCH_PORT env override)
+npm run billsvc -w server   # billing plane: http://0.0.0.0:8789  (BILL_PORT env override)
 ```
 
 Or from inside `server/`: `npm test` (ticket / Matchmaker / MatchRoom / RoomManager),
-`npm run typecheck` (incl. both entrypoints), `npm run dev`, `npm run matchsvc`.
+`npm run typecheck` (incl. all three entrypoints), `npm run dev`, `npm run matchsvc`, `npm run billsvc`.
 
 **Handshake (ROADMAP 3.3):** the client calls the control plane to matchmake —
 `POST /find {playerCount}` then poll `GET /find/:queueId` — and receives a **signed
@@ -91,6 +105,16 @@ accepts the legacy raw-param handshake (`/ws?roomId=..&owner=..&seed=..&count=..
 manual testing. Set `DDU_GAMESERVER_URL` on matchsvc so its issued tickets carry the right
 `wsUrl` (default `ws://localhost:8787/ws`). Where the two services physically deploy is an
 ops call; the architecture split (design/06) is settled.
+
+**Billing (ROADMAP 8.3/8.4, design/19 §4/§5):** `DDU_BILLING_DB_PATH` is billsvc's own SQLite
+file and is deliberately a DIFFERENT variable from `DDU_DB_PATH` — one operator setting one
+variable must not be able to point both planes at one file. `DDU_BILLING_DEV_STUB=1` enables the
+`product:<sku>` receipt stub, which is what makes the whole create → pay → callback → delivered
+chain drivable with no merchant account; under `NODE_ENV=production` it is ignored AND the process
+refuses to start with it set. No Apple/Google/WeChat/Stripe credential exists in this project, so
+those adapters return failure rather than granting anything (`DDU_APPLE_SHARED_SECRET`,
+`DDU_GOOGLE_SERVICE_ACCOUNT_JSON` + `DDU_GOOGLE_PACKAGE_NAME`, `DDU_WECHAT_MCH_ID` +
+`DDU_WECHAT_API_V3_KEY`, `DDU_STRIPE_SECRET_KEY` are read but cannot be verified).
 
 **Internal key (ROADMAP 8.1, design/19 §3):** set `DDU_INTERNAL_KEY` to the SAME value on
 both processes, the same way as the ticket secret and for the same reason — it is what the

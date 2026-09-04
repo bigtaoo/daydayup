@@ -580,21 +580,39 @@ records which of funny's assumptions does not hold here.
   (`purchase`/`grant`/`event`/`starter`/`drop`); `meta_state` keeps materials and loadout and stays
   a blob. `forge.ts`'s `acquireBlueprint`/`grantCharacter` are already the reserved grant seam —
   what changes is who may call them. A guest is byte-identical to today. Shipped 2026-09-04 — [volume 28](roadmap/28-2026-09-04-entitlements.md). Nothing *calls* `grant()` yet: delivery is 8.3's, through 8.1's key, and the PvP character gate that would consult `EntitlementService.owns` is still unbuilt.
-- **8.3 🔴 `billsvc` (port 8789) with its own database file.** Third process, deliberately not
+- **8.3 🟢 `billsvc` (port 8789) with its own database file.** Third process, deliberately not
   folded into the control plane: the control plane restarts on a matchmaking cadence, and platform
   callbacks need a stable entry point, pinned credentials and an audit boundary. `orders` /
-  `receipts` / append-only `ledger`; `platform_txn_id` UNIQUE as the idempotency key; delivery
-  triggered only by the platform callback; price from a server-side SKU table. funny's
+  `receipts` / append-only `ledger` in `server/src/billingDb.ts`, behind `DDU_BILLING_DB_PATH` and
+  its own opener — never `db.ts`'s, because a shared one is how a later refactor quietly re-merges
+  them. Delivery is triggered only by the platform callback; price comes from
+  `server/src/billsvc/skus.ts` and `createOrder` has no `amount` **parameter** at all. funny's
   verify-and-heal CAS saga is deliberately *not* copied — it exists because its receipt row and
   wallet increment are separate Mongo documents, where one SQLite `BEGIN IMMEDIATE` makes the tear
-  impossible. The tear that does remain is platform↔local, covered by 8.5's reconciliation.
-- **8.4 🔴 IAP adapters + the fail-closed dev stub.** One independent-function module per platform
-  behind one factory (funny's shape, which survived four platforms). The `product:<sku>` dev stub is
-  what makes the whole chain testable with no merchant account and is a long-lived asset, not
-  scaffolding; in production it is disabled twice over — neither switchable on by a mis-set env var
-  nor reachable by falling back from missing credentials, with the process refusing to start with
-  the dev flag set. No WeChat/Apple credentials exist anywhere in this project, so the real
-  adapters stop at unverified.
+  impossible; `delivery.ts`'s seam calls the grant from *inside* that transaction so the claim has
+  a test rather than a comment. Shipped 2026-09-04 — [volume 30](roadmap/30-2026-09-04-billsvc.md).
+  Two things the plan did not say. `platform_txn_id`'s UNIQUE is the named idempotency key and is
+  **not sufficient alone**: `txnId` arrives in an unauthenticated callback body, so `settle` claims
+  the receipt row's primary key as well and prefers the verifier's transaction id over the body's.
+  And rule 4 belongs *inside* the transaction — as a `SELECT` before `BEGIN IMMEDIATE` it holds
+  only because no `await` sits between the read and the claim. Still open: nothing writes 8.2's
+  `entitlements` table yet. `ledgerOnlyDelivery` is the default and the append-only ledger row *is*
+  the delivery record, which is correct rather than a stub — that table lives in the **control
+  plane's** database file, so one transaction cannot span it, and where the internal call sits
+  against that boundary is a real design question rather than an oversight.
+- **8.4 🟢 IAP adapters + the fail-closed dev stub.** One independent-function module per platform
+  behind one factory (funny's shape, which survived four platforms), under
+  `server/src/billsvc/iap/`. The `product:<sku>` dev stub is what makes the whole chain testable
+  with no merchant account and is a long-lived asset, not scaffolding — it resolves on *any*
+  platform while enabled, so `/webhook/apple` is drivable end to end. In production it is disabled
+  twice over and the two checks deliberately **share no code**: `iap/factory.ts` reads `NODE_ENV`
+  before it reads `DDU_BILLING_DEV_STUB` (so a mis-set flag is inert) and never falls back to the
+  stub for missing credentials, while `billsvc/startupGuard.ts` refuses to let the process start at
+  all, before a port is bound or a file is created. One shared predicate would make both defences
+  one defence with two call sites. No WeChat/Apple/Google/Stripe credential exists anywhere in this
+  project, so the four real adapters stop at unverified: two outcomes each, both failures, neither
+  throwing, each carrying the real call it would make. Shipped 2026-09-04 —
+  [volume 30](roadmap/30-2026-09-04-billsvc.md).
 - **8.5 🟡 Operations.** Log every webhook event and not just the successful one (keyed
   `${txnId}:${eventType}`), because failed and cancelled transactions are otherwise dropped
   silently and "why did my payment not go through" has no evidence behind it. Daily reconciliation
@@ -904,9 +922,13 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 
 - **09-04** [The internal trust seam](roadmap/29-2026-09-04-internal-trust-seam.md#the-internal-trust-seam-2026-09-04-server-no-engine-bump) — Phase 8's first code, and the half of it that has nothing to do with money: `POST /rating/report` had **no authentication of any kind** — no key, no origin check, open CORS — on the one route in the project that can move any account's ladder rating, so one `curl` could hand you first place and demote a real player permanently (`RatingStore` persists; nothing expires the damage). And `reportSettledMatch` was `fetch(...).catch(() => {})`, never consuming its response body — the shape funny measured wedging undici's keep-alive pool under a burst so that *no* report arrived for ~30 s at a time, silently, because the call was fire-and-forget to begin with. `internalAuth.ts` is a THIRD credential namespace and the distinction is structural, not a check: nothing in it reads `authorization`, so a real session token — one `/auth/me` accepts in the same test — is refused like noise. Three things the plan did not say. The comparison hashes both sides before `timingSafeEqual`, because `ticket.ts`'s `a.length !== b.length` guard is right for a fixed-length HMAC and wrong for an operator-chosen secret (it makes the key's length measurable, and without the hash a wrong-length key is a 500 rather than a refusal). `x-internal-caller` is advisory only and never selects which key to compare against — otherwise the attacker picks their own examiner — and is sanitized before it reaches the log line it appears in. And under `NODE_ENV=production` an unset `DDU_INTERNAL_KEY` yields an EMPTY registry that refuses everything, rather than the published dev key, which is not a weaker credential than none but the same one. `internalFetch.ts` drains the body before any status branch and on *every* attempt (draining after the loop looks correct and leaves attempts 1..n-1 checked out), times each attempt out explicitly, and makes retry opt-in so a caller who never thought about idempotency cannot get at-least-once by accident. Left open and written at the call site: `/rating/report` **is** at-least-once — `applyMatch` has no dedupe key — so the budget is a deliberate 3, and exactly-once wants the `UNIQUE` + `changes()` shape §4 already specifies for billing. 88 new cases, 311 → 399 server tests, coverage 99.32/95.44 → 99.44/96.26. Two test-craft finds: `vi.spyOn` on an already-spied method hands back the existing mock, so a whole file's "warns once" assertions were counting the file; and `Date.now()`'s ~15 ms Windows granularity makes any sub-20 ms elapsed assertion a coin flip. `net` `test` `docs`
 
+**[2026-09-04 — the billing plane](roadmap/30-2026-09-04-billsvc.md)**
+
+- **09-04** [The billing plane](roadmap/30-2026-09-04-billsvc.md#the-billing-plane-2026-09-04-server-only-no-engine-bump) — Phase 8's billing half: a third process on its own SQLite file, and the five rules that make taking money safe. `platform_txn_id`'s UNIQUE is the idempotency key design/19 names, and it is not sufficient on its own — `txnId` arrives in an unauthenticated callback body, so one dev-stub receipt posted at three orders with three invented ids wins three claims; `settle` therefore claims the receipt row's key **and** the ledger row's, and prefers the verifier's transaction id over the body's. Rule 4 (another account's receipt is refused, not replayed) moved INSIDE the transaction: as a `SELECT` before `BEGIN IMMEDIATE` it was correct only because no `await` sits between the read and the claim, which is a property of the code rather than of the lock. funny's verify-and-heal CAS saga stayed out and now has a test saying why — the grant runs inside the transaction, so a throwing delivery rolls order, receipt and ledger back together and the platform's retry finds an open order. Fail-closed twice over, and the two checks share no code on purpose. Four real adapters ship as shape only, because no merchant credential exists anywhere in this project; the `product:<sku>` dev stub is what let the whole chain be driven end to end, against the real process. A mutation battery found three gaps that 98.9% branch coverage could not: a claim made redundant by the check after it except for a hand-issued ledger row, schema constraints with no tests at all, and an oversized-body test that passed for the wrong reason (its truncated body did not parse, so the guard it 'tested' could be deleted) — `matchsvc.ts`'s own `readJson` has that shape with no guard and a 4 KB cap. 462 → 675 server tests. `net` `test` `docs`
+
 ## The work log — by theme
 
-The same 110 entries, grouped. An entry with more than one tag appears more than once.
+The same 111 entries, grouped. An entry with more than one tag appears more than once.
 
 **`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(56)*
 
@@ -1042,7 +1064,7 @@ The same 110 entries, grouped. An entry with more than one tag appears more than
 - 08-25 [The Seven Districts: the launch arena gets authored](roadmap/06-2026-08-25.md#the-seven-districts-the-launch-arena-gets-authored-2026-08-25-content)
 - 08-25 [The three parked rules that had only shipped half](roadmap/06-2026-08-25.md#the-three-parked-rules-that-had-only-shipped-half-2026-08-25-client--one-render-only-engine-field)
 
-**`test`** — coverage sweeps, gates, mutation batteries *(41)*
+**`test`** — coverage sweeps, gates, mutation batteries *(42)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 08-05 [Platform-layer test coverage pass](roadmap/01-2026-07-24--08-05.md#platform-layer-test-coverage-pass--2026-08-05-全部加测试)
@@ -1085,6 +1107,7 @@ The same 110 entries, grouped. An entry with more than one tag appears more than
 - 09-04 [The standing volume becomes the destination](roadmap/27-2026-09-04-approach-slots.md#the-standing-volume-becomes-the-destination-2026-09-04-engine-engine_version-56)
 - 09-04 [Entitlements own the purchasable half of MetaState](roadmap/28-2026-09-04-entitlements.md#entitlements-own-the-purchasable-half-of-metastate-2026-09-04-server--client-no-engine-bump)
 - 09-04 [The internal trust seam](roadmap/29-2026-09-04-internal-trust-seam.md#the-internal-trust-seam-2026-09-04-server-no-engine-bump)
+- 09-04 [The billing plane](roadmap/30-2026-09-04-billsvc.md#the-billing-plane-2026-09-04-server-only-no-engine-bump)
 
 **`audio`** — cues, music, the engine to sound channel *(5)*
 
@@ -1136,7 +1159,7 @@ The same 110 entries, grouped. An entry with more than one tag appears more than
 - 09-04 [The dispatch chain gets five files](roadmap/25-2026-09-04-matchsvc-routes.md#the-dispatch-chain-gets-five-files-2026-09-04-server-only-no-engine-bump)
 - 09-04 [The weapon roster gets tested](roadmap/26-2026-09-04-weapon-tests.md#the-weapon-roster-gets-tested-2026-09-04-tests-and-one-pure-module-no-engine-bump)
 
-**`docs`** — design docs and this log itself *(38)*
+**`docs`** — design docs and this log itself *(39)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-02 [Documentation pass](roadmap/01-2026-07-24--08-05.md#documentation-pass--2026-08-02)
@@ -1176,14 +1199,16 @@ The same 110 entries, grouped. An entry with more than one tag appears more than
 - 09-04 [The standing volume becomes the destination](roadmap/27-2026-09-04-approach-slots.md#the-standing-volume-becomes-the-destination-2026-09-04-engine-engine_version-56)
 - 09-04 [Entitlements own the purchasable half of MetaState](roadmap/28-2026-09-04-entitlements.md#entitlements-own-the-purchasable-half-of-metastate-2026-09-04-server--client-no-engine-bump)
 - 09-04 [The internal trust seam](roadmap/29-2026-09-04-internal-trust-seam.md#the-internal-trust-seam-2026-09-04-server-no-engine-bump)
+- 09-04 [The billing plane](roadmap/30-2026-09-04-billsvc.md#the-billing-plane-2026-09-04-server-only-no-engine-bump)
 
-**`net`** — matchmaking, sockets, reconnect *(5)*
+**`net`** — matchmaking, sockets, reconnect *(6)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 09-03 [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump)
 - 09-04 [The dispatch chain gets five files](roadmap/25-2026-09-04-matchsvc-routes.md#the-dispatch-chain-gets-five-files-2026-09-04-server-only-no-engine-bump)
 - 09-04 [Entitlements own the purchasable half of MetaState](roadmap/28-2026-09-04-entitlements.md#entitlements-own-the-purchasable-half-of-metastate-2026-09-04-server--client-no-engine-bump)
 - 09-04 [The internal trust seam](roadmap/29-2026-09-04-internal-trust-seam.md#the-internal-trust-seam-2026-09-04-server-no-engine-bump)
+- 09-04 [The billing plane](roadmap/30-2026-09-04-billsvc.md#the-billing-plane-2026-09-04-server-only-no-engine-bump)
 
 **`i18n`** — locales and text layout *(2)*
 
