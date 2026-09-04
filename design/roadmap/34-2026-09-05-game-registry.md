@@ -91,7 +91,9 @@ code behind the route's 503: the route picks, then `poll()` forms the room and c
 
 ### Tests
 
-40 new cases in two new files.
+40 new cases in two new files. Server suite **798 → 838** passing, measured in a worktree at this
+commit rather than on the shared tree — a co-resident session was landing ROADMAP 8.5 the same day,
+so the shared tree's counts and its red client typecheck belong to that work, not to this one.
 
 - `test/GameRegistry.test.ts` (24) — the class. Aimed at the decisions above rather than at lines:
   the fallback losing to a 90%-occupied registered instance, ratio-not-absolute ranking (a 4-seat
