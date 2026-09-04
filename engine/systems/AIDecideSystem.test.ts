@@ -20,6 +20,7 @@ import {
   DEFAULT_ENEMY_MOVE_SPEED_PER_TICK,
 } from '@dd/engine/content/enemies';
 import { AIDecideSystem } from '@dd/engine/systems/AIDecideSystem';
+import { MovementSystem } from '@dd/engine/systems/MovementSystem';
 import {
   NOTICE_DELAY_TICKS,
   NOTICE_SPREAD_TICKS,
@@ -207,15 +208,30 @@ describe('AIDecideSystem.tick — chase toward engage range (ENGINE_VERSION 37)'
     expect(e.firing).toBe(true);
   });
 
-  it('stops and fires exactly at the boundary (distance === engageRangeFp)', () => {
+  it('fires exactly at the boundary (distance === engageRangeFp), and settles just inside it', () => {
     const s = createGameState({ ...CFG, players: [{ start: [400, 400] }] });
     const e = addEnemy(s, 400, 400);
     // Place the enemy exactly engageRangeFp away along +x — the boundary is inclusive.
     e.gx = (s.players[0]!.gx - DEFAULT_ENEMY_ENGAGE_RANGE_FP) as Fp;
     new AIDecideSystem().tick(s);
+    expect(e.firing).toBe(true); // in range on the tick it reaches the boundary
+
+    // It does not stop ON the line, though (ENGINE_VERSION 56): its standing spot is a
+    // couple of walking steps inside its own range, so that settling within one step of
+    // the spot still leaves it in range rather than balanced on the edge of it. Two ticks
+    // of movement is all that costs, and it stops there rather than creeping inward.
+    const mv = new MovementSystem();
+    const ai = new AIDecideSystem();
+    for (let i = 0; i < 30; i++) {
+      ai.tick(s);
+      mv.tick(s);
+    }
     expect(e.vx).toBe(toFp(0));
     expect(e.vy).toBe(toFp(0));
     expect(e.firing).toBe(true);
+    const away = s.players[0]!.gx - e.gx;
+    expect(away).toBeLessThanOrEqual(DEFAULT_ENEMY_ENGAGE_RANGE_FP);
+    expect(away).toBeGreaterThan(DEFAULT_ENEMY_ENGAGE_RANGE_FP - 4 * DEFAULT_ENEMY_MOVE_SPEED_PER_TICK);
   });
 
   it('does NOT fire one fp past the boundary (distance === engageRangeFp + 1)', () => {
@@ -231,14 +247,18 @@ describe('AIDecideSystem.tick — chase toward engage range (ENGINE_VERSION 37)'
   it('a per-enemy moveSpeedPerTick/engageRangeFp override wins over the shared default', () => {
     const s = createGameState({ ...CFG, players: [{ start: [900, 700] }] });
     const e = addEnemy(s, 400, 400);
-    e.moveSpeedPerTick = toFp(50); // far above the default — should dominate
+    // 60x the default, and still well under the ~18000 fp it has left to walk: a step big
+    // enough to cover the whole remaining distance would be an ARRIVAL (v56 stops a mob at
+    // its destination rather than launching it past), which measures the stop rule instead
+    // of the speed override this is about.
+    e.moveSpeedPerTick = toFp(5);
     e.engageRangeFp = toFp(0); // never satisfied at this distance, so it should keep closing
     new AIDecideSystem().tick(s);
     const speed = isqrt(e.vx * e.vx + e.vy * e.vy);
     // Direction-normalize truncates twice at this magnitude — a loose relative
     // tolerance, not exact-arithmetic reimplementation.
-    expect(speed).toBeGreaterThan(toFp(50) * 0.95);
-    expect(speed).toBeLessThan(toFp(50) * 1.05);
+    expect(speed).toBeGreaterThan(toFp(5) * 0.95);
+    expect(speed).toBeLessThan(toFp(5) * 1.05);
     expect(e.firing).toBe(false); // 0fp range never satisfied at this distance
   });
 
@@ -388,11 +408,35 @@ describe('AIDecideSystem.tick — dungeon room-activation gate (design/05, 2026-
  * are per-ROOM, so they are tested against a room's worth of mobs rather than one.
  */
 describe('AIDecideSystem.tick — per-room fire budget + staggered notice (ENGINE_VERSION 41)', () => {
-  /** `n` mobs all inside engage range of the world-centre player, spread along a line
-   *  so their distances are strictly increasing — nearest first, by construction. */
+  /**
+   * `n` mobs all inside engage range of the world-centre player, at strictly increasing
+   * distances — nearest first, by construction — and 36 degrees apart around it.
+   *
+   * They used to be a straight line of mobs 10 px apart, which since ENGINE_VERSION 56 is a
+   * line of mobs standing in each other's spots: they would spend these tests walking round
+   * to their own, and a mob that is walking is not contending for a fire slot (v40's "stop
+   * and shoot"). The budget is what is under test here, not the spread, so the crowd is
+   * authored already spread — 36 degrees is comfortably past the ~33 degrees two mobs claim
+   * at this radius, so nobody moves and every mob is a contender from tick one.
+   */
+  const CROWD_OFFSETS_PX: readonly (readonly [number, number])[] = [
+    [100, 0],
+    [87, 63],
+    [35, 108],
+    [-37, 115],
+    [-104, 75],
+    [-135, 0],
+    [-115, -84],
+    [-46, -142],
+    [48, -148],
+    [132, -96],
+  ];
   function crowd(s: GameState, n: number, roomId = 'r0'): EnemyActor[] {
     const out: EnemyActor[] = [];
-    for (let i = 0; i < n; i++) out.push(addEnemy(s, 800 - 20 - i * 10, 600, roomId));
+    for (let i = 0; i < n; i++) {
+      const [dx, dy] = CROWD_OFFSETS_PX[i]!;
+      out.push(addEnemy(s, 800 + dx, 600 + dy, roomId));
+    }
     return out;
   }
 

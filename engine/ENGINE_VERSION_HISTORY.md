@@ -1512,3 +1512,138 @@ A 16th mutant — one mob absorbing the whole push instead of half each — was 
 incidentally by a distant hysteresis assertion, so the settle test now also pins the pair's
 MIDPOINT (it may move by the 1 fp floor/remainder tie-break and no more). After the three fixes:
 15/15 killed.
+
+## v56: the standing volume becomes the DESTINATION, not a correction applied after it (ENGINE_VERSION 56)
+
+Live play report the day after v55 shipped, 2026-09-04: *"昨天改的寻路中怪物的站立体积，整体效果不错。有个细节，我希望的是在设置寻路终点时就考虑到这个站立体积。现在的做法是怪先跑到一起，然后再分散开。我希望的是一步到位。"*
+
+v55 gave a mob a standing volume and a pass that drifts two arrived mobs apart. What it did not
+do is tell the mob where it was going: `chaseAndEngage` aimed every mob at the same point, the
+player, so a garrison still converged into one silhouette and `resolveStandingSpacing` unpacked
+it over the following half second. The standing volume was a correction applied to the
+destination and never an input to choosing it, which is the half second the report is about.
+
+`systems/approachSlots.ts` is that input. Every mob chasing the target is given its own point on
+a ring around it, far enough round the ring from every other mob's point that mobs arriving are
+already `standoffRadius`-apart the tick they get there. Four rules make it a spot rather than a
+slot number:
+
+- **A mob keeps the angle it already has unless someone else has claimed it.** No global slot
+  grid, deliberately: quantizing to one would make a LONE mob slide half a slot sideways on
+  arrival for no reason a player could see. One mob against one player walks in exactly the
+  straight line it walked in v37.
+- **Arrived mobs claim first** (`holding`, then array order = ascending id = spawn order), so a
+  mob standing somewhere keeps standing there and the newcomer routes around it.
+- **A spot is never further from the target than the mob already is.** The ring is a place to
+  stop closing, not a place to retreat to — otherwise a mob the player walks up to backs off to
+  its engage range, and this is not the pass that adds kiting.
+- **A mob never walks round the player, or into a wall, to find room.** The search is bounded to
+  a quarter circle either side of the mob's own bearing; past that it is placed one ring further
+  out, so a crowd forms an arc and then a second arc behind it rather than a conga line cutting
+  across the player. And `pathIsClear` rejects a spot the mob cannot walk to in a straight line,
+  falling back to the radial approach — which is what keeps v55's own example working, a mob
+  standing in the mouth of a 1.5-body slit not making the slit impassable to the mob behind it.
+
+Two supporting changes fall out of it, and both are the difference between a good measurement and
+a bad one:
+
+- **Arrival is hysteretic.** A spot is anchored to the target, so it moves when the player does,
+  and with a single one-step tolerance every arrived mob shadows the player step for step at its
+  engage range. That is a different game, and a measurably harder one (see below). A mob that is
+  already stopped and in range now only sets off again once its spot has moved a whole standing
+  volume away; a mob already walking carries on to within one step of it. Keyed off the mob's own
+  `vx`/`vy`, so no new state field and nothing new to serialize.
+- **"Stop and shoot" stays literal.** Being in range and being stopped are no longer the same
+  thing, since a mob can be inside its engage range and still sliding round to its spot. Only a
+  stopped mob contends for a fire slot, or a garrison would open fire while still arranging
+  itself — v40/v41's alpha strike in a new costume.
+
+`MovementSystem.resolveStandingSpacing` is unchanged except for its gate: it now runs over mobs
+that are holding AND stopped. A mob still walking to its spot is already resolving its own
+spacing, and pushing it as well would move it two walking speeds in one tick, breaking the
+per-actor cap that is the whole reason that pass is a shuffle rather than a shove. What is left
+for it is what a destination cannot predict: a player shouldering through a crowd, knockback, and
+mobs steered onto the same spot because geometry left no route to a spread one. That last case is
+not hypothetical — it is what the two mobs in `enemySpacing.test.ts`'s first case still need it
+for, arriving 10 fp short of the standoff and settling on it.
+
+**What diverges.** All five golden scenarios, including the two that v55 left untouched: a mob
+walking to a spot beside the player instead of at the player is a different path from the first
+tick, so anything with a mob and a target in it moves.
+
+```
+                       hash (v55 → v56)           witness
+arena-waves            3619040192 → 3584987628   hit 9 → 10
+walls-and-pillars      2681387654 → 1792336504   unchanged (no mob reaches engage range — but
+                                                 the destination differs from tick one anyway,
+                                                 which is why this one moved and did not in v55)
+ember-dungeon-floor1   4176489738 → 2759524990   enemiesAlive 2 → 1, death 15 → 16, pickups
+                                                 10 → 11, bullet_fired 186 → 167, clash 11 → 8,
+                                                 hpTotal 4.2 → 5.2
+brim-grinder           4277594053 → 4222537262   unchanged (same reason as walls-and-pillars)
+launch-arena-pvp       4197231998 → 1163589857   enemiesAlive 3 → 2, death 3 → 4, hit 51 → 54,
+                                                 deflect 1 → 2
+```
+
+Worth reading the ember line the right way round: with the same 1500 ticks the bot fires NINETEEN
+fewer bullets and kills one more mob, and finishes on more HP. Spread mobs are individually
+shootable — the melee arc and a straight shot both land on one body instead of being spent on a
+stack — which is the legibility half of the report showing up as a number.
+
+**Balance, measured rather than assumed.** `test:pve-sim` A/B on the pass itself, widened from
+the shipped 8 seeds to 24 for the measurement (the 8-seed gates all still pass on the shipped
+set):
+
+```
+careful bot      avg floor 1.3 -> 1.0  ·  avg kills 94.8 -> 68.4  ·  extracted 0% both
+aggressive bot   avg floor 0   -> 0    ·  avg kills 16.7 -> 15.8  ·  extracted 0% both
+```
+
+Same direction as v55 and the same reason: a spread arc is a crossfire where a blob is one
+bearing that can be dodged as a unit. Damage TAKEN per second did not move (worst 1 s window 6
+both ways, average 4.5 -> 4.2) — the player kills slower and bleeds for longer, which is v55's
+finding restated.
+
+**The arrival deadband is in this entry because it was found by that measurement, not by
+reading.** Without it the same A/B put the careful bot at **0.5**, less than half the baseline,
+and the cause was not the spread at all: mobs whose spot tracked the player continuously never
+stood still, so the player could not disengage from one. Tightening the fire rule alone made it
+worse (0.7 -> 0.5), which is the same shape of wrong answer v55 got from tightening the
+hysteresis. The deadband recovers 0.5 -> 1.0 and leaves 1.3 -> 1.0 as the honest cost of the
+feature. Left as measured rather than compensated for, for the same reason as v55: the dial is
+`ROOM_FIRE_BUDGET`, and moving it is a difficulty decision rather than part of a legibility fix.
+
+**Coverage** is `systems/approachSlots.test.ts` (12 new) for the cases composition cannot reach
+or reaches only by luck — the second ring, the quarter-circle deviation cap, the walled-off
+fallback, the pillar version of it, the per-room buckets, the last-resort spot, the mob standing
+exactly on the target — plus six restagings in `systems/enemySpacing.test.ts` where v55's
+assertions described behaviour this pass deliberately changed. The one worth naming is the
+traveller: it asserted that a chaser's route past a stander is BIT-IDENTICAL to the same route
+through an empty room, and that is now false by design, because the stander's standing volume is
+an input to where the chaser is walking. What it must still cost the chaser is nothing — not a
+pixel of speed, not a pixel of the stander's position — and that is what it measures now.
+
+**Battery: 17 mutants, `goldenHash` EXCLUDED on purpose** (every mutant here moves a recorded
+hash, so leaving it in reports ALL-KILLED while measuring nothing). 15 killed on the first run,
+and the two survivors wanted opposite things:
+
+- `radial = Math.min(base, away)` → `base` survived, and it was a real gap. The no-retreat rule
+  is enforced on every ring but the LAST-RESORT spot, and nothing reached that path, because
+  reaching it takes four mobs pressed against the player: each ring's claims are its own, so the
+  second mob takes the free bearing on ring 1 and the third on ring 2 before the fourth has
+  nowhere left to be put. The first attempt at the test used two mobs and the mutant survived it
+  too — they were taking rings 0 and 1, never the fallback. Now tested with four; the mutant dies.
+- The quarter-circle clamp in `halfWidthAt` survived because it is INERT: `nearestFreeAngle`
+  already refuses any candidate further than `MAX_SLOT_DEVIATION` from the mob's own bearing, and
+  every candidate a quarter-circle-wide claim generates is past that, so clamped and unclamped
+  reach the same fallback by the same route. Deleted rather than tested — a guard that reads as
+  load-bearing and is not invites the next reader to assume `half` is bounded when nothing
+  enforces it. (The zero guard beside it is real: `radius` is 0 for a mob standing on the target.)
+
+One fixture outside the engine moved with the sim, and it is the kind that is worth recording
+because the temptation is to delete it: `client/sim/replay/inspect.test.ts` pins a mark at a tick
+its recorded run has a live drop on, and mobs dying at different times moves that tick (70 /
+pickup #25 → 90 / pickup #31). The assertion that caught it is the anti-vacuity check — without
+it every claim about the mark readout is satisfied by an EMPTY pickup list — so the comment now
+says the tick is MEASURED and how to re-measure it.
+

@@ -75,7 +75,9 @@ import {
 } from '../content/enemies';
 import { ROOM_FIRE_BUDGET, HOLD_RELEASE_PERMILLE, noticeDelayTicks } from '../balance/encounter';
 import type { GameState } from '../state/GameState';
-import type { EnemyActor } from '../state/entities';
+import type { Actor, EnemyActor } from '../state/entities';
+import { standoffRadius } from '../state/actorRadius';
+import { assignApproachSlots, type ApproachSlot } from './approachSlots';
 
 /** A mob that is in range, has noticed the player, and is therefore competing for
  *  one of its room's fire slots. `distSq` is what the slots are awarded by. */
@@ -90,11 +92,17 @@ interface FireContender {
 const NO_ROOM = '#unroomed';
 
 export class AIDecideSystem {
+  // Refilled every tick, never read across ticks: the mobs actually chasing this tick, and the
+  // point each one is walking to. Scratch rather than fresh arrays because this runs at 30 Hz
+  // for every activated room (same reasoning as MovementSystem's own pair scratch).
+  private readonly chasers: EnemyActor[] = [];
+  private readonly slots: ApproachSlot[] = [];
+
   tick(state: GameState): void {
     // Enemies ignore downed players (design/07, 3.2) — no camping a body that can't fight back.
     const target = state.players.find((p) => p.alive && !p.downed) ?? null;
-    // Insertion-ordered (spawn order) — see grantFireSlots' determinism note.
-    const contenders = new Map<string, FireContender[]>();
+    const chasers = this.chasers;
+    chasers.length = 0;
 
     for (const e of state.enemies) {
       if (!e.alive) continue;
@@ -123,9 +131,34 @@ export class AIDecideSystem {
         continue;
       }
       e.facing = atan2Brad(dy, dx);
-      const distSq = this.chaseAndEngage(e, dx, dy);
-      // In range (chaseAndEngage stopped it and left `firing` false) and past its
-      // notice delay → it wants to shoot, pending a slot.
+      chasers.push(e);
+    }
+
+    if (target !== null) this.steerChasers(state, target);
+  }
+
+  /**
+   * Give every chasing mob its own standing spot around the target and walk it there
+   * (ENGINE_VERSION 56, `approachSlots.ts`), then hand out the room's fire slots.
+   *
+   * The two-pass shape is the whole change: v55 and earlier decided each mob's velocity in the
+   * same loop that looked at it, which meant the only destination a mob could be given was the
+   * one thing it knew about — the player — so a garrison converged on one point and was pulled
+   * apart afterwards by `MovementSystem.resolveStandingSpacing`. Choosing where each mob is
+   * GOING needs to see the other mobs, so the walk decision now happens after the whole
+   * garrison has been collected.
+   */
+  private steerChasers(state: GameState, target: Actor): void {
+    const chasers = this.chasers;
+    if (chasers.length === 0) return;
+    assignApproachSlots(state, chasers, target.gx, target.gy, this.slots);
+    // Insertion-ordered (spawn order) — see grantFireSlots' determinism note.
+    const contenders = new Map<string, FireContender[]>();
+    for (let i = 0; i < chasers.length; i++) {
+      const e = chasers[i]!;
+      const distSq = this.chaseAndEngage(e, target.gx - e.gx, target.gy - e.gy, this.slots[i]!);
+      // In range (chaseAndEngage left `firing` false) and past its notice delay → it wants to
+      // shoot, pending a slot.
       if (distSq !== null && this.hasNoticed(state, e)) {
         const key = e.roomId ?? NO_ROOM;
         const list = contenders.get(key);
@@ -133,7 +166,6 @@ export class AIDecideSystem {
         else contenders.set(key, [{ e, distSq }]);
       }
     }
-
     this.grantFireSlots(contenders);
   }
 
@@ -157,48 +189,95 @@ export class AIDecideSystem {
   }
 
   /**
-   * Close the distance to the target until within the mob's engage range, then stop
-   * (v37 first pass for the movement half — no hysteresis/kiting/steering yet, see
-   * the module's matching content/enemies.ts default constants for the tuning
-   * rationale; v40 added the firing gate, v41 the room budget — see the module doc
-   * comment). A straight-line pursuit, same as everything else here: MovementSystem's
-   * push-out keeps a chasing mob from clipping through a wall or another actor, it
-   * just doesn't route AROUND one — a mob can stall against a concave wall.
+   * Walk the mob to its own standing spot around the target, and report whether it is in
+   * range to shoot (v37 first pass for the movement half — no kiting yet, see the module's
+   * matching content/enemies.ts default constants for the tuning rationale; v40 added the
+   * firing gate, v41 the room budget — see the module doc comment). Still a straight-line
+   * pursuit, just at a point rather than at the player: MovementSystem's push-out keeps a
+   * chasing mob from clipping through a wall or another actor, it does not route AROUND one,
+   * so a mob can still stall against a concave wall.
    *
-   * Returns the squared distance to the target when the mob is in range and holding
-   * still (i.e. eligible to fire, if it gets a slot), else null. `firing` is left
-   * false here in every case; only `grantFireSlots` ever sets it true.
+   * The destination is what changed in ENGINE_VERSION 56 (`approachSlots.ts`). Through v55
+   * every mob aimed at the player itself and stopped on its engage ring wherever it happened
+   * to get there, so a garrison arrived as one silhouette and `resolveStandingSpacing` pulled
+   * it apart over the next half second (live report: *"现在的做法是怪先跑到一起，然后再分散开。
+   * 我希望的是一步到位"*). Now the spot each mob walks to already accounts for the standing
+   * volume of every other mob heading in, so the garrison arrives spread.
    *
-   * `e.holding` is that same in-range/stopped answer, published as state so
+   * Returns the squared distance to the TARGET when the mob is in range (i.e. eligible to
+   * fire, if it gets a slot), else null. Distance to the target, not to the spot: what a gun
+   * cares about is how far away the player is. `firing` is left false here in every case;
+   * only `grantFireSlots` ever sets it true.
+   *
+   * `e.holding` is that same in-range answer, published as state so
    * `MovementSystem.resolveStandingSpacing` can space arrived mobs out (ENGINE_VERSION
-   * 55) — and the reason "in range" is now HYSTERETIC rather than a bare threshold:
-   * that spacing pushes a standing mob outward, so the mob that stopped exactly on the
-   * ring is nudged just past it, and a bare test would send it straight back into a
-   * chase-push-chase shuffle with its gun stuttering on and off. Entered at
-   * `engageRangeFp`, left only past `HOLD_RELEASE_PERMILLE` of it.
+   * 55) — and the reason "in range" is HYSTERETIC rather than a bare threshold: that spacing
+   * pushes a standing mob outward, so a mob that stopped on the ring can be nudged just past
+   * it, and a bare test would send it straight back into a chase-push-chase shuffle with its
+   * gun stuttering on and off. Entered at `engageRangeFp`, left only past
+   * `HOLD_RELEASE_PERMILLE` of it.
    */
-  private chaseAndEngage(e: EnemyActor, dx: number, dy: number): number | null {
+  private chaseAndEngage(e: EnemyActor, dx: number, dy: number, slot: ApproachSlot): number | null {
     const range = e.engageRangeFp ?? DEFAULT_ENEMY_ENGAGE_RANGE_FP;
     const distSq = dx * dx + dy * dy;
     e.firing = false;
     const stopAt = e.holding ? this.holdReleaseRange(range) : range;
-    if (distSq <= stopAt * stopAt) {
-      e.holding = true;
-      e.vx = 0 as Fp;
-      e.vy = 0 as Fp;
-      return distSq;
-    }
-    e.holding = false;
-    const dist = isqrt(distSq); // still out of engage range — close the distance
-    if (dist === 0) {
-      e.vx = 0 as Fp;
-      e.vy = 0 as Fp;
-      return null;
-    }
+    const inRange = distSq <= stopAt * stopAt;
+    e.holding = inRange;
+    this.stepToward(e, slot);
+    // "Stop and shoot" stays literal (v40): a mob may only contend for a fire slot on a tick
+    // it is not walking. In range is no longer the same thing as stopped since v56 — a mob
+    // can be inside its engage range and still sliding round to the spot it was given — and
+    // if that counted as engaged, a garrison would open fire while it was still arranging
+    // itself, which is the alpha strike v40/v41 exist to prevent, in a new costume.
+    return inRange && e.vx === 0 && e.vy === 0 ? distSq : null;
+  }
+
+  /**
+   * One tick of walking toward `slot`, or a full stop once there.
+   *
+   * "There" is within one of the mob's own steps, because a step is the finest move it has:
+   * a tighter tolerance would only buy a permanent one-tick-out, one-tick-back jitter around
+   * the spot. The spot itself is placed `RING_MARGIN_STEPS` inside the engage range
+   * (`approachSlots.ts`) precisely so that stopping a step short of it still leaves the mob
+   * in range to shoot.
+   *
+   * The stop is NOT gated on being in range, unlike the one it replaces: a mob sent to an
+   * outer ring by a crowded inner one has to be able to park there too. And a mob that is in
+   * range but not yet at its spot keeps walking, sliding round the ring into place rather
+   * than stopping in someone else's spot and waiting to be shoved out of it.
+   *
+   * ## Why an arrived mob has a much wider deadband than a walking one
+   *
+   * A spot is anchored to the target, so it MOVES when the player does — and with a single
+   * one-step tolerance that turns every arrived mob into a mob that shadows the player step
+   * for step at its engage range, which is a different game (and measurably a harder one:
+   * `test:pve-sim` put the careful bot's average floor at 0.5 against 1.3 before this
+   * deadband went in). Standing still is the behaviour v37 shipped and nothing in this pass
+   * is meant to change it; what this pass changes is WHERE a mob stands, not whether it
+   * stays there.
+   *
+   * So arrival is hysteretic, keyed off the mob's own current velocity — no new state field:
+   * a mob that is already stopped and in range only sets off again once its spot has moved a
+   * whole standing volume away (`standoffRadius`, ~30 px), while a mob already walking
+   * carries on to within a step of it. A mob still out of range always closes, deadband or
+   * not — that is the chase, and it is what `engageRangeFp` already bounds.
+   */
+  private stepToward(e: EnemyActor, slot: ApproachSlot): void {
     const speed = e.moveSpeedPerTick ?? DEFAULT_ENEMY_MOVE_SPEED_PER_TICK;
+    const dx = (slot.x as number) - e.gx;
+    const dy = (slot.y as number) - e.gy;
+    const distSq = dx * dx + dy * dy;
+    const settled = e.holding && e.vx === 0 && e.vy === 0;
+    const deadband = settled ? Math.max(standoffRadius(e) as number, speed) : speed;
+    if (distSq <= deadband * deadband) {
+      e.vx = 0 as Fp;
+      e.vy = 0 as Fp;
+      return;
+    }
+    const dist = isqrt(distSq); // > deadband >= 0, so never a divide by zero
     e.vx = Math.trunc((dx * speed) / dist) as Fp;
     e.vy = Math.trunc((dy * speed) / dist) as Fp;
-    return null;
   }
 
   /**

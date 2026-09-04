@@ -541,6 +541,9 @@ level authored) and its personal space while standing.
   spread pushes a standing mob outward and a bare threshold would have it re-chase, be
   pushed out again, and shuffle at the ring forever with its gun stuttering behind it.
 
+**Superseded in part by the section below** (`ENGINE_VERSION` 56): the spread is chosen at the
+destination now, and `resolveStandingSpacing` is the correction rather than the mechanism.
+
 **This took back most of what the pass above gave away, and the sim says so:** the careful
 bot's average deepest floor went 2.5 → 1.5 across a widened 24-seed `test:pve-sim` A/B
 (extraction 13% → 4%). Damage taken per second barely moved — a spread arc is a crossfire,
@@ -548,6 +551,34 @@ and `ROOM_FIRE_BUDGET`'s two slots rotate among more mobs as the player moves, s
 player kills slower rather than being hit harder. Deliberately not compensated for here:
 the garrison re-tightening dial named above is still the right place for that, and it is a
 difficulty decision rather than part of a legibility fix.
+
+### Standing room is chosen, not corrected ✅ (2026-09-04, `ENGINE_VERSION` 56)
+
+The next day's report on the pass above: *"整体效果不错。有个细节，我希望的是在设置寻路终点时
+就考虑到这个站立体积。现在的做法是怪先跑到一起，然后再分散开。我希望的是一步到位。"* — v55 spread mobs
+once they had arrived; it never told them where to go, so a garrison still converged into one
+silhouette and unpacked over the following half second.
+
+- **`systems/approachSlots.ts`** — every chasing mob is given its own point on a ring around the
+  target, spaced by the same `standoffRadius`. Its own bearing if nothing has claimed it (so a
+  lone mob walks the straight line it always did), the nearest free angle otherwise, and a
+  second ring one standing diameter further out rather than a walk round the player. Arrived
+  mobs claim before travelling ones, and a spot is never further out than the mob already
+  stands — the ring stops a mob closing, it does not add kiting.
+- **A spot behind a wall is refused** and the mob falls back to the radial approach. That is what
+  keeps the 1.5-body slit above passable: a mob standing in its mouth claims the bearing straight
+  through it, and without the check the mob behind presses into stone forever.
+- **Arrival is hysteretic** — a spot moves with the player, so without a deadband every arrived
+  mob shadows the player step for step at its engage range. Found by measurement, not design: the
+  careful bot sat at avg floor **0.5** until the deadband went in.
+- **Only a stopped mob takes a fire slot.** In range and stopped stopped being the same thing, and
+  the alternative is a garrison firing while it is still arranging itself — v40/v41's alpha
+  strike again.
+
+Cost, 24 seeds: careful bot avg floor **1.3 → 1.0**, damage taken per second flat (worst 1 s
+window 6 both ways). Same crossfire effect as v55, same decision not to compensate for it here.
+`MovementSystem.resolveStandingSpacing` stays as the correction layer, now gated on holding AND
+stopped. See `roadmap/27-2026-09-04-approach-slots.md`.
 
 **Difficulty target, chosen 2026-08-17: hard overall.** Floor 1 passable by careful play,
 a full 5-floor extraction uncommon. After the changes the sim's careful bot clears the

@@ -64,24 +64,29 @@ describe('standing spacing — mobs that have ARRIVED spread out (ENGINE_VERSION
     // report screenshotted (15 px apart, half of one body's 30 px width).
     expect(dist(a, b)).toBeLessThan(pxToFp(20));
 
-    const midBefore = (a.gx + b.gx) / 2;
+    const aBefore = { gx: a.gx, gy: a.gy };
     run(s, 90);
 
     const want = standoffRadius(a) + standoffRadius(b); // 2·15px + 2·15px = 60px between centres
     expect(a.holding).toBe(true);
     expect(b.holding).toBe(true);
-    // EXACTLY the standoff, not "somewhere past it". The push is the remaining penetration
-    // (capped), so the last step is the small one that closes the gap — a mutant that pushes
-    // the full separation every tick instead settles ~2 px past this and is invisible to any
-    // assertion written with px-scale slack, which is how it survived the first battery.
-    expect(dist(a, b)).toBe(want);
-    // Half the push each, so the PAIR stays where it was and neither mob is the one that
-    // gets shoved: the midpoint moves only by the 1 fp floor/remainder tie-break.
-    expect(Math.abs((a.gx + b.gx) / 2 - midBefore)).toBeLessThanOrEqual(1);
+    // EXACTLY the standoff, not "somewhere past it" — to within 2 fp (0.06 px), which is the
+    // fp scale rather than px-scale slack. A mutant that pushes the full separation every
+    // tick instead of the remaining penetration settles ~2 PX past this and is invisible to
+    // any assertion written loosely, which is how it survived the first battery.
+    expect(Math.abs(dist(a, b) - want)).toBeLessThanOrEqual(2);
+    // And since ENGINE_VERSION 56 it is not a mutual shove that gets them there: `a` was
+    // already standing on a spot nobody had claimed, so it stays on it — it moves less than
+    // one step in ninety ticks, and only to let the spacing pass close the last few fp — and
+    // `b`, the one that turned up on top of it, is the one that walks somewhere else.
+    // Whoever holds a spot keeps it (`approachSlots.ts`, the priority rule).
+    expect(dist(a, aBefore)).toBeLessThan(a.moveSpeedPerTick!);
+    expect(dist(b, { gx: pxToFp(515), gy: pxToFp(300) })).toBeGreaterThan(pxToFp(30));
 
     // Stable: another 90 ticks neither drifts further nor oscillates back in.
+    const settled = dist(a, b);
     run(s, 90);
-    expect(dist(a, b)).toBe(want);
+    expect(dist(a, b)).toBe(settled);
   });
 
   it('the standoff is two body radii, so a bigger mob claims proportionally more room', () => {
@@ -127,38 +132,38 @@ describe('standing spacing — mobs that have ARRIVED spread out (ENGINE_VERSION
     expect([{ gx: a.gx, gy: a.gy }, { gx: b.gx, gy: b.gy }]).toEqual(rest);
   });
 
-  it('the spread is a shuffle, not a shove: no mob is displaced faster than it can walk', () => {
+  it('the spread is a shuffle, not a shove: a mob that is not walking is never displaced faster than it could walk', () => {
     const s = createGameState({ ...CFG, players: [{ start: [400, 300] }] });
     // Five mobs in a tight column, every one of them accumulating a push from four
     // neighbours at once — the worst case for the per-actor cap. They start 20 px apart:
-    // clear of the 14 px feet-circle collision (whose push is deliberately uncapped and
-    // would otherwise be what this measured) but deep inside each other's 60 px standoff,
-    // so every pixel of movement below belongs to the spacing pass. Spread along the
-    // column, i.e. across the line to the player, so nobody is pushed onto it.
+    // clear of the 14 px feet-circle collision but deep inside each other's 60 px standoff.
+    // Spread along the column, i.e. across the line to the player, so nobody is pushed onto
+    // it.
     const mobs = [-40, -20, 0, 20, 40].map((d) => spawnAware(s, 560, 300 + d));
     const ai = new AIDecideSystem();
     const mv = new MovementSystem();
     let worst = 0;
+    let measured = 0;
     for (let i = 0; i < 120; i++) {
       const before = mobs.map((m) => ({ gx: m.gx, gy: m.gy }));
       ai.tick(s);
+      // Only the mobs the AI did NOT set walking this tick: their whole displacement below
+      // is the spacing pass's, which is the thing with the cap on it. A mob walking to its
+      // v56 standing spot is already spacing itself and is exempt from the pass entirely
+      // (`MovementSystem.resolveStandingSpacing`), so folding it in here would measure the
+      // walk instead.
+      const still = mobs.map((m) => m.vx === 0 && m.vy === 0);
       mv.tick(s);
-      for (let k = 0; k < mobs.length; k++) worst = Math.max(worst, dist(mobs[k]!, before[k]!));
-    }
-    // Every mob is holding (vx/vy are 0) and none of them ever touched another's feet
-    // circle, so all of the movement measured above came from the spacing pass — and the
-    // per-actor cap is what keeps the mob in the middle of the press from being launched by
-    // the sum of its four neighbours.
-    for (let i = 0; i < mobs.length; i++) {
-      for (let j = i + 1; j < mobs.length; j++) {
-        expect(dist(mobs[i]!, mobs[j]!)).toBeGreaterThan(
-          mobs[i]!.footprintRadius + mobs[j]!.footprintRadius,
-        );
+      for (let k = 0; k < mobs.length; k++) {
+        if (!still[k]) continue;
+        measured++;
+        worst = Math.max(worst, dist(mobs[k]!, before[k]!));
       }
     }
-    for (const m of mobs) expect(m.holding).toBe(true);
+    expect(measured).toBeGreaterThan(100); // the cap above was actually exercised
     expect(worst).toBeLessThanOrEqual(mobs[0]!.moveSpeedPerTick!);
-    // …and it did the job anyway: the stack became five separate, countable bodies.
+    for (const m of mobs) expect(m.holding).toBe(true);
+    // …and the stack became five separate, countable bodies.
     for (let i = 0; i < mobs.length; i++) {
       for (let j = i + 1; j < mobs.length; j++) {
         expect(dist(mobs[i]!, mobs[j]!)).toBeGreaterThan(pxToFp(28)); // ≥ one body apart
@@ -166,29 +171,44 @@ describe('standing spacing — mobs that have ARRIVED spread out (ENGINE_VERSION
     }
   });
 
-  it('a mob that is still TRAVELLING is neither pushed by a standing mob nor pushes one', () => {
+  it('a mob that is still TRAVELLING is neither slowed by a standing mob nor pushes one', () => {
     // The half of the report a "just make the collision radius bigger" fix would break. The
     // chaser's route brushes past the stander at a distance the two rules disagree about —
-    // inside the 60 px standoff, outside the 14 px feet-circle collision — so the ONLY thing
-    // that could deflect it there is the new rule, and it must not. Measured below rather
-    // than asserted from the geometry, since a route that never actually came close would
-    // make the whole test vacuous.
+    // inside the 60 px standoff, outside the 14 px feet-circle collision — and there the
+    // standing volume must cost it nothing: not a pixel of speed, not a pixel of the
+    // stander's position. Measured below rather than asserted from the geometry, since a
+    // route that never actually came close would make the whole test vacuous.
+    //
+    // What it deliberately does NOT assert any more (ENGINE_VERSION 56) is that the route is
+    // bit-identical to the one taken through an empty room. It is not, and that is the point
+    // of v56: the stander's standing volume is now an input to WHERE the chaser is walking,
+    // so the chaser aims at a spot beside it rather than at the same one. The volume still
+    // exerts no force, which is the distinction this test exists to protect; it is just no
+    // longer invisible to the mob choosing a destination.
     const withStander = createGameState({ ...CFG, players: [{ start: [400, 300] }] });
     const stander = spawnAware(withStander, 400, 480); // 180 px south of the player: arrived
     const chaser = spawnAware(withStander, 520, 900); // far south, still closing, passing east of it
     const control = createGameState({ ...CFG, players: [{ start: [400, 300] }] });
     const soloChaser = spawnAware(control, 520, 900);
 
+    // Ten ticks for the stander to settle onto its own standing spot first — it is authored
+    // exactly ON the engage ring, and since v56 a mob stands a couple of steps inside that
+    // rather than balanced on it. Both worlds are stepped, so the two chasers stay in phase.
+    run(withStander, 10);
+    run(control, 10);
     const standerStart = { gx: stander.gx, gy: stander.gy };
     let travelled = 0;
     let closest = Number.POSITIVE_INFINITY;
     for (let i = 0; i < 300; i++) {
+      const before = { gx: chaser.gx, gy: chaser.gy };
+      const soloBefore = { gx: soloChaser.gx, gy: soloChaser.gy };
       run(withStander, 1);
       run(control, 1);
       if (!chaser.holding) {
-        // Tick for tick, the chaser's route is the one it would have taken through an empty
-        // room — the stander's personal space is not in its way.
-        expect([chaser.gx, chaser.gy]).toEqual([soloChaser.gx, soloChaser.gy]);
+        // Tick for tick it covers the ground it would have covered through an empty room —
+        // to within the 1 fp the direction normalize truncates differently on a different
+        // heading. The stander's personal space bends the route; it never brakes it.
+        expect(Math.abs(dist(chaser, before) - dist(soloChaser, soloBefore))).toBeLessThan(2);
         // The traffic does not shove the stander off its spot either: the rule is symmetric,
         // a travelling mob neither receives nor exerts a standing push.
         expect({ gx: stander.gx, gy: stander.gy }).toEqual(standerStart);
@@ -197,15 +217,23 @@ describe('standing spacing — mobs that have ARRIVED spread out (ENGINE_VERSION
       }
     }
     expect(travelled).toBeGreaterThan(100); // the comparison above ran over a real journey
-    // …and that journey really did cross the standoff circle without being nudged by it.
-    expect(closest).toBeLessThan(standoffRadius(chaser) + standoffRadius(stander));
+    // …and that journey really did come right up against the standoff boundary, four times
+    // closer than the feet circles the collision rule is keyed on, without being nudged. It
+    // no longer crosses that boundary, and could not: since v56 the destination it is
+    // walking to is itself a standoff away from the stander, so the closest it ever gets is
+    // the moment it arrives. Both bounds are still what makes the run non-vacuous — a route
+    // that stayed out at aggro range would prove nothing about a rule that acts at 60 px.
+    const standoff = standoffRadius(chaser) + standoffRadius(stander);
+    expect(closest).toBeLessThan(standoff + pxToFp(2));
     expect(closest).toBeGreaterThan(chaser.footprintRadius + stander.footprintRadius);
     expect(stander.holding).toBe(true);
     expect(chaser.holding).toBe(true); // it did arrive, so the run was not vacuous
-    // And the moment it did, the same two mobs that ignored each other all the way across
-    // the room started keeping their distance — the flag, not the geometry, is the switch.
-    expect({ gx: stander.gx, gy: stander.gy }).not.toEqual(standerStart);
+    // And having arrived it keeps its distance — four body radii, reached by walking to a
+    // spot beside the stander rather than by being shoved out of the stander's.
     expect(dist(chaser, stander)).toBeGreaterThan(closest);
+    expect(dist(chaser, stander)).toBeGreaterThanOrEqual(
+      standoffRadius(chaser) + standoffRadius(stander) - 2,
+    );
   });
 
   it('a gap only 1.5 bodies wide is still walked through with a mob standing at its mouth', () => {
@@ -237,50 +265,70 @@ describe('standing spacing — mobs that have ARRIVED spread out (ENGINE_VERSION
   it('the player is never pushed by a mob standing near it — the bubble is between mobs only', () => {
     const s = createGameState({ ...CFG, players: [{ start: [400, 300] }] });
     const p = s.players[0]!;
-    const a = spawnAware(s, 470, 300);
-    const b = spawnAware(s, 485, 300);
+    // Right up against the player — 50 px and 65 px away, both well inside the 60 px a mob
+    // keeps from another mob, and inside its own engage range so neither is walking anywhere
+    // except out of the other's way.
+    const a = spawnAware(s, 450, 300);
+    const b = spawnAware(s, 465, 300);
     const before = { gx: p.gx, gy: p.gy };
 
     run(s, 90);
 
-    // a is spread WEST, to well inside b's standoff distance of the player, and the player
-    // still has not budged: an enemy's personal space is not a force field against the one
-    // actor whose movement is supposed to be entirely the player's own.
-    expect(a.gx).toBeLessThan(pxToFp(470));
+    // The two mobs took their room from each other and neither took any from the player: `a`
+    // is still standing well inside a mob's standoff distance of it, and the player has not
+    // budged. An enemy's personal space is not a force field against the one actor whose
+    // movement is supposed to be entirely the player's own.
+    expect(dist(a, b)).toBeGreaterThanOrEqual(standoffRadius(a) + standoffRadius(b) - 2);
     expect(dist(a, p)).toBeLessThan(standoffRadius(a) + standoffRadius(b));
     expect({ gx: p.gx, gy: p.gy }).toEqual(before);
   });
 
-  it('a mob nudged just outside engage range keeps holding (and keeps shooting) instead of re-closing', () => {
-    // Hysteresis. Both mobs stop ON the engage ring, then space each other OUTWARD past it.
-    // With a bare threshold each would immediately re-chase, be pushed out again, and shuffle
-    // there forever with its gun stuttering on and off — so this measures the gun too.
+  it('a mob shoved just outside engage range keeps holding, and keeps shooting, on the way back in', () => {
+    // Hysteresis. A crowd can put a mob outside the ring it stopped on — the spacing pass
+    // pushes outward, the collision push and knockback push wherever they like — and with a
+    // bare `dist <= engageRangeFp` test its gun would cut out the instant that happened and
+    // come back on a few ticks later, stuttering all the way. Holding is therefore sticky:
+    // entered at the engage range, left only past HOLD_RELEASE_PERMILLE of it.
     const s = createGameState({ ...CFG, players: [{ start: [400, 300] }] });
     const range = DEFAULT_ENEMY_ENGAGE_RANGE_FP;
-    // Lined up ALONG the radius rather than across it, so the spacing they apply to each
-    // other is the one direction that actually crosses the engage ring: the outer mob is
-    // pushed further out, the inner one further in.
-    const inner = spawnAware(s, 400 + 150, 300);
-    const outer = spawnAware(s, 400 + 165, 300);
-
+    // Started outside its engage range so it walks IN to the spot it is given — a mob that
+    // starts inside keeps the distance it had (v56 never pulls a mob back out), and this
+    // test needs one standing on the ring itself.
+    const e = spawnAware(s, 400 + 250, 300);
     run(s, 90);
+    expect(e.holding).toBe(true); // arrived, standing on its spot
+    expect(e.vx).toBe(0);
 
-    expect(dist(inner, s.players[0]!)).toBeLessThan(range); // the pair straddles the ring
-    for (const e of [outer]) {
-      expect(dist(e, s.players[0]!)).toBeGreaterThan(range); // pushed outside the ring…
-      expect(e.holding).toBe(true); // …and staying put anyway
-      expect(e.vx).toBe(0);
-      expect(e.vy).toBe(0);
-      expect(e.firing).toBe(true); // still contending for a fire slot: no stutter
-    }
+    // Nudged 20 px further out — past the engage ring, but still inside both the release
+    // radius and the standing volume its spot sits at the middle of, which is the size of
+    // nudge the spacing pass and a passing body actually produce.
+    const spot = { gx: e.gx, gy: e.gy };
+    e.gx = (e.gx + pxToFp(20)) as Fp;
+    run(s, 1);
+    expect(dist(e, s.players[0]!)).toBeGreaterThan(range); // outside the ring by the bare test…
+    expect(e.holding).toBe(true); // …still holding, because holding is sticky
+    expect(e.vx).toBe(0); // …and still standing: it does not re-close over a nudge
+    expect(e.vy).toBe(0);
+    expect(e.firing).toBe(true); // still contending for a fire slot: no stutter
+    // A real shove is a different matter — a whole standing volume off its spot and it walks
+    // back, which is the v56 half of this: a mob returns to the spot it was given, and (v40)
+    // does not shoot while it is walking.
+    e.gx = (spot.gx + standoffRadius(e) + pxToFp(6)) as Fp;
+    run(s, 1);
+    expect(e.vx).not.toBe(0);
+    expect(e.firing).toBe(false);
+    run(s, 60);
+    expect(dist(e, s.players[0]!)).toBeLessThan(range);
+    expect(e.firing).toBe(true);
+
     // The stickiness is bounded, not a leash: a player who actually leaves puts the mob
-    // back on the move.
+    // back on the move as a chaser rather than a holder.
     s.players[0]!.gx = (s.players[0]!.gx - range * 2) as Fp;
     run(s, 1);
-    expect(outer.holding).toBe(false);
-    expect(outer.vx).not.toBe(0);
+    expect(e.holding).toBe(false);
+    expect(e.vx).not.toBe(0);
     // The release radius is the wider one, so a player who steps just past the ring does NOT
-    // restart the chase.
+    // flip the gun off.
     expect(Math.trunc((range * HOLD_RELEASE_PERMILLE) / 1000)).toBeGreaterThan(range);
   });
 

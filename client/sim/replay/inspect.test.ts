@@ -326,11 +326,16 @@ describe('inspectReplay end to end, on a real recorded dungeon run', () => {
   }
 
   it('a mark readout carries the real per-drop numbers, measured against the sim itself', () => {
-    // Tick 70 measured on this fixture: pickup #25 (a heal) is lying on the floor there.
-    // A mark at 600 (the fixture above) happens to land on a tick with no live drop, so
-    // every existing assertion about `marks` is satisfied by an EMPTY pickup list — which
-    // is how the readout's numbers came to be unpinned in the first place.
-    const MARK_TICK = 70;
+    // Tick 90 MEASURED on this fixture, not chosen: pickup #31 (a heal) is lying on the
+    // floor there. A mark at 600 (the fixture above) happens to land on a tick with no live
+    // drop, so every existing assertion about `marks` is satisfied by an EMPTY pickup list —
+    // which is how the readout's numbers came to be unpinned in the first place.
+    //
+    // It is measured, so it moves when the sim does: this was tick 70 / pickup #25 until
+    // ENGINE_VERSION 56 changed where mobs walk and therefore when each of them dies. If it
+    // ever fails on `pickups.length`, re-measure it — the anti-vacuity check above is doing
+    // its job, and silently deleting it would put the readout's numbers back to unpinned.
+    const MARK_TICK = 90;
     const file = markedAt(MARK_TICK);
     const report = inspectReplay(file);
     // Independent oracle: the same recording replayed to that tick by the engine's own

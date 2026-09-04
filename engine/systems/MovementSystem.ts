@@ -287,13 +287,22 @@ export class MovementSystem {
    *
    * `state.enemies` order is spawn order = ascending id, so the accumulation is deterministic
    * without the explicit sort `resolveActorPairs` needs (that one merges two arrays).
+   *
+   * STOPPED, not merely arrived (ENGINE_VERSION 56). Since v56 an arrived mob is walking to a
+   * spot that already accounts for every other mob's standing volume (`approachSlots.ts`), so
+   * this pass has one job left: correcting mobs that have come to rest too close together
+   * anyway — shoved by a player pushing through the crowd, by knockback, or steered onto the
+   * same spot because geometry left no route to a spread one. A mob still walking is already
+   * resolving its own spacing, and pushing it as well would move it two walking speeds in one
+   * tick, breaking the per-actor cap that is the whole reason this is a shuffle rather than a
+   * shove.
    */
   private resolveStandingSpacing(state: GameState): void {
     const holders = this.holderScratch;
     const pushX = this.holderPushX;
     const pushY = this.holderPushY;
     holders.length = 0;
-    for (const e of state.enemies) if (e.alive && e.holding) holders.push(e);
+    for (const e of state.enemies) if (e.alive && e.holding && e.vx === 0 && e.vy === 0) holders.push(e);
     if (holders.length < 2) return;
     pushX.length = holders.length;
     pushY.length = holders.length;
