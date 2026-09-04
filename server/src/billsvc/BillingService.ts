@@ -28,7 +28,10 @@
  *
  * And the sixth, from `delivery.ts`: the order update, the ledger row and the entitlement
  * grant are one `BEGIN IMMEDIATE`. funny's verify-and-heal CAS saga is deliberately not
- * copied — see that file.
+ * copied — see that file. This class knows nothing about how the grant is honoured: the
+ * shipped implementation (`outbox.ts`) writes a durable delivery obligation into a fourth
+ * table in this same file and a pump drains it afterwards, and swapping that for something
+ * else must not require reading a line of this file.
  *
  * Verification happens BEFORE the transaction opens. A real adapter is an HTTPS round
  * trip, and holding SQLite's write lock across one would serialise every settlement in
@@ -99,7 +102,12 @@ export interface SettleInput {
 export interface BillingServiceDeps {
   db: DatabaseSync;
   verify: ReceiptVerifier;
-  /** Defaults to `ledgerOnlyDelivery` — correct until ROADMAP 8.2's entitlements table. */
+  /**
+   * Defaults to `ledgerOnlyDelivery`, which writes nothing beyond the ledger row. The
+   * PROCESS does not take that default — `server.ts` injects `outbox.ts`'s delivery — but
+   * this class keeps it, because a `BillingService` constructed with no delivery at all in
+   * a test must write only to the tables it was handed.
+   */
   deliver?: EntitlementDelivery;
   nowMs?: () => number;
   newOrderId?: () => string;
@@ -340,6 +348,9 @@ export class BillingService {
       // Inside the transaction on purpose (delivery.ts): a throw here rolls the order row
       // and the ledger row back with it, so the platform's next retry finds an open order.
       this.deliver.grant({
+        // The key this transaction just WON, handed on so a persisting delivery keys itself
+        // on the same claim rather than minting a weaker one (`delivery.ts`).
+        ledgerId,
         accountId: order.accountId,
         sku: order.sku,
         grants: def?.grants ?? [],

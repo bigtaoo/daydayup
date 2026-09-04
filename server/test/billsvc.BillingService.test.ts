@@ -215,6 +215,11 @@ describe('settle — the delivering path', () => {
     ]);
     expect(granted).toHaveLength(1);
     expect(granted[0]).toMatchObject({ accountId: 'a1', sku: SKU, orderId: id, grants: [{ kind: 'blueprint', id: 'cannon' }] });
+    // The grant carries the key this transaction just WON, not one of its own. A persisting
+    // delivery (`outbox.ts`) keys itself on it, so a delivery row and the money that caused
+    // it share an id — and a delivery that minted its own would need a second, weaker
+    // idempotency mechanism to stay at one row per payment.
+    expect(granted[0]!.ledgerId).toBe(svc.ledgerFor('a1')[0]!.id);
   });
 
   it('RULE 5: the receipt row records the product it resolved to', async () => {

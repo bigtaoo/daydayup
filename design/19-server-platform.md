@@ -247,7 +247,8 @@ above did not say.
 **Status: SHIPPED 2026-09-04** (ROADMAP 8.3). `server/src/billingDb.ts` owns the file and
 `server/src/billsvc/BillingService.ts` the five rules; the process is `server/src/billsvc/main.ts`
 on 8789 and its routes are `server/src/billsvc/server.ts`. Two amendments the plan below did not
-anticipate, and one thing left open, are recorded at the end of this section.
+anticipate are recorded at the end of this section, along with the one thing it left open — which
+closed the next day (2026-09-05, ROADMAP 8.7) and now reads CLOSED rather than open.
 
 Three tables in `billsvc`'s **own** SQLite file (`DDU_BILLING_DB_PATH`), never the account DB —
 and never `db.ts`'s `openDb` either, because a shared opener is how a later refactor quietly
@@ -309,13 +310,55 @@ row and the ledger row back together, the platform's next retry finds an open or
 connection stays usable. If the order row survived a failed grant, funny's saga would be necessary
 here after all and this section would be wrong.
 
-**Left open: nothing writes §2's `entitlements` table yet.** `ledgerOnlyDelivery` is the default,
-under which the append-only ledger row *is* the delivery record — correct behaviour rather than a
-stub, and replayable into `entitlements` later precisely because the ledger is append-only. Note
-the tension this section glosses: §2 puts `entitlements` in the **control plane's** database file,
-so "three tables in one SQLite file" does not hold across it and one `BEGIN IMMEDIATE` cannot span
-it. Closing the loop is an internal call, and where it sits against that transaction boundary is an
-open design question — not an oversight, and not something the ledger-only default hides.
+**CLOSED 2026-09-05 (ROADMAP 8.7): the loop reaches `entitlements`, through an OUTBOX.** The open
+question this section left was not *whether* to close the loop but **where the internal call sits
+against the transaction boundary**, and the honest answer is that it cannot sit inside it. §2 puts
+`entitlements` in the **control plane's** database file, so "three tables in one SQLite file" does
+not hold across it and one `BEGIN IMMEDIATE` cannot span it; and an HTTP call made from inside that
+transaction would hold SQLite's write lock across a network round trip — serialising every
+settlement behind the slowest control-plane response — while *still* not being atomic with the
+remote write. It would buy the cost of the tear without removing it.
+
+So the call sits strictly **outside**, and what goes **inside** is a durable promise to make it:
+
+```
+deliveries(id, account_id, sku, grants_json, order_id, receipt_id,
+           state, attempts, created_at, delivered_at)   -- a FOURTH table in billsvc's own file
+  id = the LEDGER row's own `purchase:<platform>:<txn>`
+  state: 'pending' | 'delivered' | 'failed'
+```
+
+- `EntitlementDelivery.grant` (`server/src/billsvc/outbox.ts`) is one synchronous `INSERT` into
+  that table, in the settlement transaction, over the settlement's own connection. The
+  single-transaction claim above is therefore exactly as strong as it reads, and gains a fourth
+  member: after the COMMIT, the obligation is on disk. **`ledgerOnlyDelivery` is no longer the
+  default** — it stays as the explicit opt-out.
+- The row's id is the **ledger row's**, not a minted one. The ledger claim was already won two
+  statements earlier, so sharing the key makes a duplicate impossible without a second idempotency
+  mechanism, and makes `ledger LEFT JOIN deliveries USING (id)` the one query that answers "which
+  money moved without reaching an account" — the hand-auditability posture the other three tables
+  are shaped for.
+- `server/src/billsvc/deliveryPump.ts` drains it into `POST /internal/entitlements/grant`
+  (`server/src/routes/internalEntitlements.ts`) over §3's internal key. Three triggers, in the
+  order they matter: **opportunistically** right after a settlement commits (not awaited — the
+  platform's callback must not be coupled to a peer that may be down), **once at startup** (the
+  only thing that can resume a process that died between the COMMIT and the delivery, and the
+  entire reason the table exists), and a **bounded interval** as the backstop. An interval alone
+  would make every purchase wait a tick; a queue process is the infrastructure §8 declines to build.
+- Delivery is therefore **at-least-once**, and that is safe *only* because §2's
+  `UNIQUE(account_id, sku)` already makes the receiving grant idempotent — a redelivery grants
+  nothing twice and still answers 200, so the pump can retire its row. **That property is the whole
+  reason this is an outbox rather than a two-phase commit**; without it a coordinator would be
+  unavoidable.
+- The failure policy is the part with teeth, because the two directions fail differently. A **4xx**
+  is the control plane refusing on purpose (unknown account, malformed body, rejected key): the row
+  goes terminal and is logged as an error naming the account, because money moved and nothing was
+  granted and only a human can fix that. A **5xx, a timeout or a refused connection** leaves the row
+  `pending` **forever** — abandoning it loses a purchase, while a peer that comes back heals every
+  stuck row on the next sweep. `attempts` is an operator signal, deliberately not a budget.
+
+What is still not closed is the tear between the **platform** and the local transaction, which was
+never this section's to close — that is §7's reconciliation, and it is unchanged.
 
 ## 5. IAP adapters and the dev stub — SHIPPED 2026-09-04
 

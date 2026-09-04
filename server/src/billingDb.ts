@@ -15,6 +15,11 @@
  *   ledger    append-only. Never UPDATEd, never DELETEd. A reversal is a new row with
  *             `kind = 'reversal'`, which is what makes the file hand-auditable with SQL
  *             instead of needing the admin service design/19 §8 declines to build.
+ *   deliveries the OUTBOX (design/19 §4's closed loop). One row per settled purchase that
+ *             owes the control plane an `entitlements` write, inserted inside the same
+ *             `BEGIN IMMEDIATE` as its `orders`/`receipts`/`ledger` siblings and drained
+ *             afterwards over HTTP. Four tables, not three, and the fourth is the whole
+ *             reason the single-transaction claim survives a table in another file.
  *
  * No foreign keys point at `accounts(id)`, and none can: that table lives in a different
  * database FILE. The account-side integrity check is design/19 §2's `entitlements` table
@@ -63,6 +68,48 @@ CREATE TABLE IF NOT EXISTS ledger (
   ts INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ledger_account ON ledger(account_id);
+
+-- The delivery outbox (design/19 §4). 'entitlements' lives in the CONTROL PLANE's database
+-- file, so no 'BEGIN IMMEDIATE' can span it and an HTTP call from inside one would hold
+-- SQLite's write lock across a network round trip. This table is the resolution: the
+-- settlement transaction writes a durable PROMISE to deliver, and a pump keeps that promise
+-- afterwards. At-least-once, which is safe because the UNIQUE(account_id, sku) on
+-- entitlements makes the receiving grant idempotent -- the entire reason this is an
+-- outbox and not a
+-- two-phase commit.
+CREATE TABLE IF NOT EXISTS deliveries (
+  -- The LEDGER row's own id, 'purchase:<platform>:<txn>', shared rather than generated:
+  -- the ledger claim inside the settlement transaction has already been WON by the time
+  -- this row is written, so reusing that key makes a second row impossible without a
+  -- second idempotency mechanism -- and makes 'ledger LEFT JOIN deliveries USING (id)' the
+  -- one query that answers "which money moved without reaching an account", which is the
+  -- hand-auditability posture the other three tables are shaped for.
+  id TEXT PRIMARY KEY,
+  account_id TEXT NOT NULL,
+  -- The BILLSVC sku ('bp.cannon'), advisory: what the receiving side writes is derived from
+  -- 'grants_json' and namespaced by 'EntitlementService' ('blueprint:cannon'). Kept because
+  -- an operator reading this table wants the thing that was sold, not its projection.
+  sku TEXT NOT NULL,
+  -- The '(kind, id)' pairs from the SKU catalogue, frozen AT SETTLEMENT. Not re-read from
+  -- the catalogue at delivery time on purpose: a SKU edited between the payment and a
+  -- retried delivery must deliver what was paid for, not what the table says later.
+  grants_json TEXT NOT NULL,
+  -- NOT NULL, both of them: the CHECK on entitlements refuses a purchase-sourced row with
+  -- no order behind it, so a delivery that could not satisfy it must never be written here
+  -- in the first place.
+  order_id TEXT NOT NULL,
+  receipt_id TEXT NOT NULL,
+  -- 'failed' is TERMINAL and means the control plane refused on purpose (a 4xx). A
+  -- retryable failure -- 5xx, timeout, connection refused -- leaves the row 'pending' and
+  -- bumps 'attempts', forever: the money moved, so giving up loses a purchase, while a peer
+  -- that comes back heals on its own. 'attempts' is what an operator alerts on.
+  state TEXT NOT NULL CHECK (state IN ('pending', 'delivered', 'failed')),
+  attempts INTEGER NOT NULL DEFAULT 0,
+  created_at INTEGER NOT NULL,
+  delivered_at INTEGER
+);
+-- The pump's only query: oldest pending first.
+CREATE INDEX IF NOT EXISTS deliveries_pending ON deliveries(state, created_at);
 `;
 
 /** Opens (creating if needed) the BILLING database and ensures the schema exists. */
