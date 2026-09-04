@@ -48,6 +48,15 @@ prose rather than as claims about this tree. Add the extension when the file lan
 | Control plane | `matchsvc.ts` | 8788 | `/auth/*` (`AuthService.ts`), `/account/meta`, `/find` `/resume` (`Matchmaker.ts`), `/party/*` (`PartyService.ts`), `/rating/*` (`rating.ts`) |
 | Data plane | `index.ts` | 8787 | `/ws` frame broadcast (`RoomManager.ts` / `MatchRoom.ts`), checkpoint hash adjudication |
 
+Since 2026-09-04 `matchsvc.ts` is an **assembly shell only** — service construction, the
+bot-fill hook, `/health`, the dispatch chain, `main()` — and every surface in that first row is
+a group of free `(req, res, url, deps)` handlers under `server/src/routes/`:
+`server/src/routes/auth.ts`, `server/src/routes/account.ts`, `server/src/routes/match.ts`,
+`server/src/routes/party.ts`, `server/src/routes/rating.ts`, over a shared
+`server/src/routes/http.ts` (the CORS block, `send`, `readJson`). It was one 431-line if/else
+chain before, against an empty file-length baseline, and §2 and §3 both add routes to it — so
+each seam below now names its own file, and the two passes cannot collide in one file.
+
 The only trust seam between them is the signed ticket (`ticket.ts`): matchsvc signs
 `{roomId, owner, seed, playerCount, mode, accountId}`, the gameserver trusts nothing else. That
 part is correct and is not changed here. Two things around it are not:
@@ -65,7 +74,8 @@ Neither defect involves billing. Both should be fixed first.
 
 ## 2. Entitlements move server-side
 
-Today `/account/meta` is a blind whole-blob upsert: `INSERT ... ON CONFLICT DO UPDATE SET
+Today `/account/meta` (`server/src/routes/account.ts`) is a blind whole-blob upsert:
+`INSERT ... ON CONFLICT DO UPDATE SET
 data = excluded.data`, with the only validation being that a `data` key is present. That was the
 right call when `MetaState` was a localStorage mirror (`design/16-accounts.md` says so) and
 nothing in it was worth money.
@@ -106,7 +116,8 @@ one entry) so adding the registry later is not a rewrite. This is a third namesp
 distinct from player bearer sessions and from the `ticket.ts` HMAC: internal routes never accept a
 player token, and the mismatch is structural rather than a check.
 
-Applies to `/rating/report` (D1) immediately, and to every `billsvc` route except the platform
+Applies to `/rating/report` (D1, `server/src/routes/rating.ts`) immediately, and to every
+`billsvc` route except the platform
 webhook, which is authenticated by the platform's own signature instead.
 
 **Outbound** (`server/src/internalFetch`): one helper that every cross-service call goes through,

@@ -29,7 +29,8 @@ pure core + the shared ticket module:
 |------|------|------|--------|
 | `src/ticket.ts`      | Stateless HMAC-SHA256 sign/verify over `{roomId,owner,seed,playerCount,exp}`. Shared by both planes. | no | ✅ `test/ticket.test.ts` |
 | `src/Matchmaker.ts`  | Pure queue: `enqueue`→group-when-full→signed tickets, `poll`. Injected clock/seed/roomId/signer. | no | ✅ `test/Matchmaker.test.ts` |
-| `src/matchsvc.ts`    | HTTP bootstrap — the ONLY control-plane file that imports `node:http`; wires the real clock/seed/signer around `Matchmaker`. | yes | typecheck only |
+| `src/matchsvc.ts`    | HTTP bootstrap and assembly shell — the ONLY control-plane file that imports `node:http`; wires the real clock/seed/signer around `Matchmaker`, then dispatches to `src/routes/`. | yes | ✅ `test/matchsvc.http.test.ts` |
+| `src/routes/*.ts`    | One module per surface (`auth`, `account`, `match`, `party`, `rating`), each a set of free `(req, res, url, deps)` handlers, over a shared `routes/http.ts` (CORS, `send`, `readJson`). | no | ✅ `test/routes.test.ts` + the two `*.http.test.ts` |
 | `src/config.ts`      | The one place that reads `DDU_TICKET_SECRET` (env), so both planes agree on the secret. | env | — |
 
 `MatchRoom`/`RoomManager` take an injected `Scheduler` (the metronome clock) and
