@@ -23,6 +23,7 @@ This directory records **decisions** and **architecture**. It is the single sour
 | [16-accounts.md](16-accounts.md) | Accounts: username/password login (SQLite + scrypt + opaque bearer sessions), never required to play, and the two things bound to an account — PvP ladder rating and forge blueprints/materials/loadout |
 | [17-i18n.md](17-i18n.md) | Internationalization: English-canonical `t()` with compile-time key checking, the locale files, what is deliberately left untranslated, and the repo's English-only rule for code/comments/docs |
 | [18-test-strategy.md](18-test-strategy.md) | Test strategy: the two meanings of "out of sync" — replay divergence, and systems disagreeing inside one build — the six gaps that were measured, and the four layers that closed them (contract gates incl. the committed golden hash, unit tests, parity sweeps, invariant smoke runs) |
+| [19-server-platform.md](19-server-platform.md) | Server platform: the three planes (control / data / billing), the internal-key trust seam and the two defects it closes, entitlements moving server-side out of the client-authored meta blob, the billing order/receipt/ledger model and its idempotency rules, IAP adapters + the fail-closed dev stub, and the gameserver registry that keeps topology out of the ticket |
 
 ## Where the plan lives
 

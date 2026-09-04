@@ -12,7 +12,7 @@ no particular order — and now live in `design/roadmap/`, one volume per stretc
 
 | Part | Where | What it is |
 | --- | --- | --- |
-| Phase spine | **this file**, below | Phases 0–7 in dependency order, with per-item status. What code comments mean when they say `ROADMAP 3.1` or `ROADMAP 4.2c`. |
+| Phase spine | **this file**, below | Phases 0–8 in dependency order, with per-item status. What code comments mean when they say `ROADMAP 3.1` or `ROADMAP 4.2c`. |
 | Dependency summary | **this file**, below | The one-screen version of the spine. |
 | Work log | [`design/roadmap/NN-*.md`](roadmap/) | Every dated pass, verbatim. Indexed below [by date](#the-work-log--by-date) and [by theme](#the-work-log--by-theme). |
 | Current built state | [`design/roadmap/current-state.md`](roadmap/current-state.md) | The running "what is built right now" note. **Not** the authority on `ENGINE_VERSION` — `engine/versionHistory.ts` is. |
@@ -549,6 +549,68 @@ via its own `forge.lockedFind` string), all 8 locales gained `hud.source.purchas
 
 ---
 
+## Phase 8 — Server platform: trust seams, entitlements, billing 🔴 (planned 2026-09-04)
+
+The server side beyond the game (`design/19-server-platform.md`), planned after an audit of the
+sibling project `funny`'s 13-service backend. Four of its five concerns already ship (login and
+account storage in Phase 6, matchmaking in 3.3/4.x, the frame-relay gameserver in 3.1); the fifth,
+billing, does not exist — and adding it turns three tolerable things into wrong ones. The plan
+adopts a named set of funny's *mechanisms* and explicitly rejects its *topology*; every borrow
+records which of funny's assumptions does not hold here.
+
+- **8.1 🔴 The internal trust seam.** Two defects that stand today, independent of billing.
+  `/rating/report` on `matchsvc.ts` has no authentication at all — no key, no origin check, open
+  CORS — so any client can POST arbitrary ladder placements for any `accountId`, on a route only
+  the gameserver is meant to call. And `reportSettledMatch` in `index.ts` is a bare
+  `fetch(...).catch(() => {})` that never drains its response body: funny shipped that exact shape
+  and measured it wedging undici's keep-alive pool under a concurrent burst, so that *no* request
+  arrived. Closes both with `server/src/internalAuth` (timing-safe `x-internal-key`, a third
+  namespace distinct from player sessions and the `ticket.ts` HMAC) and `server/src/internalFetch`
+  (drained body, per-attempt timeout, retry only where idempotent-and-not-self-healing).
+- **8.2 🔴 Entitlements move server-side.** `/account/meta` is a blind whole-blob upsert — correct
+  while `MetaState` was a localStorage mirror, a free-money hole once blueprints and characters are
+  sold, and characters are the one meta axis that reaches PvP (`design/14-meta-forging.md`). A new
+  `entitlements` table owns blueprint/character ownership with a `source` column
+  (`purchase`/`grant`/`event`/`starter`/`drop`); `meta_state` keeps materials and loadout and stays
+  a blob. `forge.ts`'s `acquireBlueprint`/`grantCharacter` are already the reserved grant seam —
+  what changes is who may call them. A guest is byte-identical to today.
+- **8.3 🔴 `billsvc` (port 8789) with its own database file.** Third process, deliberately not
+  folded into the control plane: the control plane restarts on a matchmaking cadence, and platform
+  callbacks need a stable entry point, pinned credentials and an audit boundary. `orders` /
+  `receipts` / append-only `ledger`; `platform_txn_id` UNIQUE as the idempotency key; delivery
+  triggered only by the platform callback; price from a server-side SKU table. funny's
+  verify-and-heal CAS saga is deliberately *not* copied — it exists because its receipt row and
+  wallet increment are separate Mongo documents, where one SQLite `BEGIN IMMEDIATE` makes the tear
+  impossible. The tear that does remain is platform↔local, covered by 8.5's reconciliation.
+- **8.4 🔴 IAP adapters + the fail-closed dev stub.** One independent-function module per platform
+  behind one factory (funny's shape, which survived four platforms). The `product:<sku>` dev stub is
+  what makes the whole chain testable with no merchant account and is a long-lived asset, not
+  scaffolding; in production it is disabled twice over — neither switchable on by a mis-set env var
+  nor reachable by falling back from missing credentials, with the process refusing to start with
+  the dev flag set. No WeChat/Apple credentials exist anywhere in this project, so the real
+  adapters stop at unverified.
+- **8.5 🟡 Operations.** Log every webhook event and not just the successful one (keyed
+  `${txnId}:${eventType}`), because failed and cancelled transactions are otherwise dropped
+  silently and "why did my payment not go through" has no evidence behind it. Daily reconciliation
+  against the platform's order list. A daily anomaly audit over non-`purchase` grants that **files
+  rather than acts** — the same "with no evidence, skip; never convict" principle
+  `design/15-pvp-arena.md`'s checkpoint quorum already follows. No admin service; the requirement
+  is only that the schema be hand-correctable with SQL.
+- **8.6 🟢 `GameRegistry`, shaped now and deferred.** The gameserver's rooms are in-process `Map`s
+  driven by in-process intervals (`RoomManager.ts`), so today there can be exactly one — fine, but
+  currently an accident rather than a decision. funny's registry (register + heartbeat + pick
+  least-loaded + 30 s staleness) lands as its **static single-instance branch only**, with the
+  chosen WS URL returned in `/find`'s response rather than baked into the ticket, so `ticket.ts`
+  stays purely a seat authorization. Supersedes the "put a gameserver id inside the ticket" sketch.
+
+Deliberately not adopted from funny, with reasons, in `design/19-server-platform.md`'s own table:
+gateway/gameserver separation, Mongo + Redis + protobuf + generated OpenAPI routes, wallet/currency/
+gacha/pity/subscriptions, channel-tagged balances (an Apple anti-circumvention problem that selling
+SKUs rather than currency removes — and that returns the day a currency is introduced), the
+Loki/Alloy/Grafana stack, and the social/auction/world services.
+
+---
+
 ## Backlog — designed in prose, never built (filed 2026-09-03)
 
 Five mechanics the design docs describe in the present tense, as if they were part of the
@@ -622,6 +684,13 @@ Client hardening pass   DONE (✅ 2026-08-04) — full client/src code review (1
 Room & door model       DONE (✅ 2026-08-04/05, ENGINE_VERSION 34→35) — PvE floors co-resident + door-connected (placeFloor/carveDoorGaps/buildFloorGeometry, new DoorSystem: activation/lock-unlock/force-regroup), replacing the old one-room swap. HudView.ts fixed to compile against the new schema. Client room rendering shipped same day: door_{locked,open}_raw.png loaded and wired onto RoomBuilder's per-door Sprite (reactive lock/unlock in place via updateDoors(), no full rebuild), EventReactor reacts to force_regroup with a local-player camera snap. Fully-realized branching shipped 2026-08-05 (ENGINE_VERSION 35) — a real fork-and-reconverge diamond of sibling rooms, needing zero client changes (DoorSystem/RoomBuilder/EventReactor already topology-agnostic). PvE minimap adapter shipped same day — FloorProgress deleted, PvE now shares PvP's own Minimap widget via dungeonToArenaMap/dungeonRoomStatus (minimapLayout.ts). Map-editor door placement shipped same day (no engine version bump) — DungeonFloorMap/placeAuthoredFloor/DungeonConfig.floorMaps + a third tools/map-editor mode ("PvE Dungeon Floor") + validateDungeonFloorMap, closing the last item of the original three-item follow-up list. "全部加测试" follow-up added DungeonFloorCanvas.test.ts (28 tests, previously zero coverage on the tool's most complex new file). Real 2D graph layout (`layout: 'graph2d'`, `placeFloorGraph2d`) shipped same day too — a generated floor can place in real 2D instead of a forced west→east spine. "graph2d content" pass shipped 2026-08-05 (same day): `EMBER_DUNGEON` switches to `'graph2d'` (a new `ember_atrium` piece + wider exit authoring on `ember_pillars`/`ember_extraction`/`ember_boss`), and `placeFloorGraph2d` gains a direction-retry fallback for fold-back overlaps — both found necessary by testing the real content, not by inspection. `'branching'` still stays unused by any shipped config. **Bug fix pass shipped 2026-08-12 (ENGINE_VERSION 35→36):** two real bugs found from a live player report (door unlocked but still physically impassable) — `DeathDropsSystem`'s `onDeathSpawn` boss-adds now inherit the dying boss's own `roomId` (was `undefined`, so `DoorSystem` briefly saw the room as cleared and force-regrouped the player back), and `placeFloorGraph2d` now shifts a floor's whole coordinate space so a north/west hop off the origin-pinned spawn room never leaves a room (and its door) at a negative, physically-unreachable offset. See the Room & door model section above. **Stranded-enemy fix shipped 2026-08-15 (ENGINE_VERSION 38→39):** the third consequence of this same model — the checkpoint only requires the *capstone* room to be cleared, so a DESCEND could carry every enemy still alive elsewhere on the floor (plus their in-flight bullets) into the next one, holding a dead `roomId` and a position in geometry that had just been torn down; `resolveDescend` now clears `state.enemies`/`state.projectiles` alongside the room arrays it already wiped. See the Stranded-enemy section above.
 Phase 6 (accounts)      DONE (✅) — real username/password login (SQLite via node:sqlite), never required to play. Bound to PvP ladder rating (accountId in the signed ticket -> MatchRoom.seatAccounts -> ladderReport, guest/bot fallback preserved) and Forge MetaState (best-effort /account/meta sync). Independent of Phases 1-5; third-party OAuth reserved, not built.
 Phase 7 (i18n)          DONE (✅) — client/src/i18n/: en.ts canonical + zh.ts translation, both compile-time key-checked (Translations<typeof en>, TranslationKey). Every screen migrated to t(); Settings gained a language toggle backed by SettingsState.locale. Independent of Phases 1-6; enum/data-driven values (damage type, weapon kind, rarity/ids) deliberately left untranslated.
+Phase 8 (server platform) PLANNED (🔴, design/19-server-platform.md) — the three planes (control 8788 / data 8787 / new billsvc 8789).
+                        8.1 internal-key trust seam closes two defects that stand TODAY and are independent of billing: /rating/report has no
+                        authentication at all, and reportSettledMatch never drains its response body (funny measured that shape wedging undici’s
+                        keep-alive pool so that no request arrived). 8.2 entitlements move out of the client-authored /account/meta blob, which is
+                        a free-money hole the moment blueprints/characters are sold. 8.3-8.4 billsvc + IAP adapters + a fail-closed dev stub, on
+                        its own SQLite file. 8.5 webhook logging/reconciliation/anomaly audit. 8.6 GameRegistry as its static single-instance
+                        branch only. Depends on nothing in Phases 0-7; 8.2 depends on 8.1’s internal key, 8.3 on both.
 Documentation           DONE (✅ 2026-08-02) — all 19 design docs + every README audited against the code; stale top-of-file Status blocks rewritten (12/10/client/art READMEs and this file's own header), design/README index completed, engine/README written, art/ UUID filenames + duplicate files cleaned up. Docs-only, no code change.
 Repo structure          DONE (✅ 2026-08-02) — engine/ hoisted to its own top-level package (DOM-free, self-only paths: the determinism rule is now compile-enforced); client/src/game/ split into screens|scene|controllers|match; root npm workspace with a single `npm run check` across all 5 packages; game/config.ts deleted (dead pre-engine duplicates) and split into theme.ts + score.ts. 931 tests before and after, zero behaviour change.
 Test coverage audit     DONE (✅ 2026-08-05) — full test-coverage sweep across all 7 workspaces; zero dead/obsolete tests found (nothing to delete); ~50 previously-untested files closed, 1736 → 2627 tests. See the Test coverage audit pass section above.
