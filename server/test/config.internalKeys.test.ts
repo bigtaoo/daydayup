@@ -39,7 +39,10 @@ beforeAll(async () => {
 async function freshConfig(): Promise<{
   internalKeys: () => { registry: InternalCaller[]; isDev: boolean };
   internalKeyFor: (caller: string) => string | undefined;
+  sharedInternalKey: () => string | undefined;
+  controlPlaneUrl: () => string;
   gameserver: string;
+  billsvc: string;
   warn: MockInstance<typeof console.warn>;
 }> {
   vi.resetModules();
@@ -48,7 +51,10 @@ async function freshConfig(): Promise<{
   return {
     internalKeys: mod.internalKeys,
     internalKeyFor: mod.internalKeyFor,
+    sharedInternalKey: mod.sharedInternalKey,
+    controlPlaneUrl: mod.controlPlaneUrl,
     gameserver: mod.INTERNAL_CALLER_GAMESERVER,
+    billsvc: mod.INTERNAL_CALLER_BILLSVC,
     warn,
   };
 }
@@ -171,5 +177,76 @@ describe('internalKeyFor — the key this process presents outbound', () => {
     delete process.env.DDU_INTERNAL_KEY;
     const { internalKeyFor, gameserver } = await freshConfig();
     expect(internalKeyFor(gameserver)).toBeUndefined();
+  });
+});
+
+describe('sharedInternalKey — what billsvc presents outbound (design/19 §4)', () => {
+  it('is the one configured key, whatever caller the registry entry is labelled', async () => {
+    // The registry today holds ONE key that all three processes share, filed under the
+    // caller that needed it first. billsvc asking for it by that label would put a false
+    // name in the one place an audit line reads one, so it asks for the shared key instead —
+    // and `internalKeyFor('billsvc')` correctly still answers undefined (the case above),
+    // which is what makes this function necessary rather than redundant.
+    process.env.DDU_INTERNAL_KEY = 'a-real-internal-key';
+    const { sharedInternalKey, internalKeyFor, billsvc } = await freshConfig();
+    expect(sharedInternalKey()).toBe('a-real-internal-key');
+    expect(internalKeyFor(billsvc)).toBeUndefined();
+  });
+
+  it('is the published dev key outside production, so the local three-process setup works', async () => {
+    delete process.env.DDU_INTERNAL_KEY;
+    delete process.env.NODE_ENV;
+    const { sharedInternalKey } = await freshConfig();
+    expect(sharedInternalKey()).toBe(DEV_INTERNAL_KEY);
+  });
+
+  it('is undefined in the production fail-closed state', async () => {
+    // The billing plane then sends no `x-internal-key` at all and every delivery is rejected
+    // with a logged reason — visibly broken, rather than looking configured while presenting
+    // a secret that is published in `config.ts`.
+    process.env.NODE_ENV = 'production';
+    delete process.env.DDU_INTERNAL_KEY;
+    const { sharedInternalKey } = await freshConfig();
+    expect(sharedInternalKey()).toBeUndefined();
+  });
+
+  it('names billsvc distinctly from the gameserver', async () => {
+    const { billsvc, gameserver } = await freshConfig();
+    expect(billsvc).toBe('billsvc');
+    expect(billsvc).not.toBe(gameserver);
+  });
+});
+
+describe('controlPlaneUrl — where billsvc delivers to', () => {
+  const ORIGINAL_URL = process.env.DDU_MATCHSVC_URL;
+  afterEach(() => {
+    if (ORIGINAL_URL === undefined) delete process.env.DDU_MATCHSVC_URL;
+    else process.env.DDU_MATCHSVC_URL = ORIGINAL_URL;
+  });
+
+  it('reads DDU_MATCHSVC_URL when it is set', async () => {
+    process.env.DDU_MATCHSVC_URL = 'https://control.example';
+    const { controlPlaneUrl } = await freshConfig();
+    expect(controlPlaneUrl()).toBe('https://control.example');
+  });
+
+  it('defaults to localhost on the control plane own port, matching matchsvc posture', async () => {
+    delete process.env.DDU_MATCHSVC_URL;
+    const { controlPlaneUrl } = await freshConfig();
+    expect(controlPlaneUrl()).toBe('http://localhost:8788');
+  });
+
+  it('treats an empty-string env var as unset', async () => {
+    process.env.DDU_MATCHSVC_URL = '';
+    const { controlPlaneUrl } = await freshConfig();
+    expect(controlPlaneUrl()).toBe('http://localhost:8788');
+  });
+
+  it('reads the env per CALL, not at import', async () => {
+    delete process.env.DDU_MATCHSVC_URL;
+    const { controlPlaneUrl } = await freshConfig();
+    expect(controlPlaneUrl()).toBe('http://localhost:8788');
+    process.env.DDU_MATCHSVC_URL = 'https://later.example';
+    expect(controlPlaneUrl()).toBe('https://later.example');
   });
 });

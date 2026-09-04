@@ -22,6 +22,7 @@ import { openBillingDb } from '../src/billingDb';
 import { createBillsvcServer, type BillsvcServerOptions } from '../src/billsvc/server';
 import { createInternalVerifier } from '../src/internalAuth';
 import type { EntitlementGrantRequest } from '../src/billsvc/delivery';
+import { deliveryById, pendingDeliveries } from '../src/billsvc/outbox';
 
 const KEY = 'test-internal-key';
 /** Drives the receipt-stub policy only. The internal key is pinned as a registry below. */
@@ -650,8 +651,11 @@ describe('createBillsvcServer wiring', () => {
     expect((await call('POST', '/webhook/dev', { key: null, body: params })).body.delivered).toBe(true);
   });
 
-  it('falls back to the ledger-only delivery when none is injected', async () => {
-    const { server, db: own, billing } = createBillsvcServer({
+  it('falls back to the OUTBOX delivery when none is injected', async () => {
+    // The default this builder takes is not `BillingService`'s own `ledgerOnlyDelivery` —
+    // it is `outbox.ts`'s (design/19 §4's closed loop, 2026-09-05). A settlement therefore
+    // leaves a ledger row AND a durable delivery obligation, in one transaction.
+    const { server, db: own, billing, pump } = createBillsvcServer({
       dbPath: ':memory:',
       env: DEV_ENV,
       internalAuth: createInternalVerifier(REGISTRY),
@@ -667,8 +671,27 @@ describe('createBillsvcServer wiring', () => {
       });
       expect(r).toMatchObject({ ok: true, delivered: true });
       expect(billing.ledgerFor('a1')).toHaveLength(1);
+      // Keyed on the ledger row's own id, so the two are one fact in two tables.
+      expect(deliveryById(own, 'purchase:dev:T1')).toMatchObject({
+        accountId: 'a1',
+        sku: 'bp.cannon',
+        state: 'pending',
+      });
     }
+    await pump.stop();
     own.close();
     server.close();
+  });
+
+  it('leaves the outbox alone when a delivery IS injected, and every other case here does', async () => {
+    // Guards the convenience the rest of this file leans on: `start()` above passes a
+    // recording `deliver`, which disconnects the pump from anything to do. If that stopped
+    // being true, every case in this file would be quietly making a network call.
+    await start();
+    const created = await createOrder({ accountId: 'a1', sku: 'bp.cannon', platform: 'dev' });
+    const params = (created.body.payment as unknown as { params: Record<string, string> }).params;
+    await call('POST', '/webhook/dev', { key: null, body: params });
+    expect(granted).toHaveLength(1);
+    expect(pendingDeliveries(db, 10)).toHaveLength(0);
   });
 });

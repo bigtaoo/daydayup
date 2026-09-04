@@ -32,9 +32,12 @@ const tableNames = (db: ReturnType<typeof openBillingDb>): string[] =>
     .filter((n) => !n.startsWith('sqlite_'));
 
 describe('openBillingDb', () => {
-  it('creates exactly the three tables design/19 §4 specifies, and no more', () => {
+  it('creates exactly the four tables design/19 §4 specifies, and no more', () => {
+    // Three when this file shipped; `deliveries` is the fourth, added 2026-09-05 when the
+    // entitlement loop closed — the outbox row a settlement writes inside its own
+    // transaction because `entitlements` lives in a different database FILE.
     const db = openBillingDb(':memory:');
-    expect(tableNames(db)).toEqual(['ledger', 'orders', 'receipts']);
+    expect(tableNames(db)).toEqual(['deliveries', 'ledger', 'orders', 'receipts']);
     db.close();
   });
 
@@ -52,7 +55,7 @@ describe('openBillingDb', () => {
   it('and the account DB carries none of the billing tables', () => {
     const accounts = openDb(':memory:');
     const names = tableNames(accounts);
-    for (const billingTable of ['orders', 'receipts', 'ledger']) {
+    for (const billingTable of ['orders', 'receipts', 'ledger', 'deliveries']) {
       expect(names).not.toContain(billingTable);
     }
     accounts.close();

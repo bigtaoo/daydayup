@@ -106,3 +106,37 @@ export function internalKeys(): { registry: InternalCaller[]; isDev: boolean } {
 export function internalKeyFor(caller: string): string | undefined {
   return internalKeys().registry.find((entry) => entry.caller === caller)?.key;
 }
+
+/** billsvc, the second process to make an outbound internal call (the delivery pump). */
+export const INTERNAL_CALLER_BILLSVC = 'billsvc';
+
+/**
+ * The secret an outbound caller presents when it is NOT the entry the registry happens to
+ * be labelled after. Today that registry holds exactly one key and all three processes
+ * share it (§3), so "billsvc's key" and "the one key" are the same string — and this
+ * function names that fact rather than having billsvc ask for
+ * `internalKeyFor(INTERNAL_CALLER_GAMESERVER)`, which would put a false caller name in the
+ * one place an audit line reads it. When the registry grows a key per caller this becomes
+ * `internalKeyFor(INTERNAL_CALLER_BILLSVC)` and nothing else moves.
+ *
+ * `undefined` in the production fail-closed branch, exactly as `internalKeyFor` is.
+ */
+export function sharedInternalKey(): string | undefined {
+  return internalKeys().registry[0]?.key;
+}
+
+/**
+ * Where the CONTROL PLANE answers, for a process that needs to call it. Read per call for
+ * the reason `ticketSecret` is: a module-scope capture makes the answer depend on whether
+ * the environment was loaded before the first import.
+ *
+ * Defaults to localhost rather than to "disabled", matching `matchsvc.ts`'s own
+ * `DDU_GAMESERVER_URL` default — the local three-process setup then works with no
+ * configuration, and a real deployment that forgets the variable fails visibly (a refused
+ * connection, logged per attempt, with the owed deliveries still `pending`) rather than
+ * silently doing nothing.
+ */
+export function controlPlaneUrl(): string {
+  const env = process.env.DDU_MATCHSVC_URL;
+  return env && env.length > 0 ? env : 'http://localhost:8788';
+}

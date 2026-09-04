@@ -30,21 +30,23 @@ pure core + the shared ticket module:
 | `src/ticket.ts`      | Stateless HMAC-SHA256 sign/verify over `{roomId,owner,seed,playerCount,exp}`. Shared by both planes. | no | ✅ `test/ticket.test.ts` |
 | `src/Matchmaker.ts`  | Pure queue: `enqueue`→group-when-full→signed tickets, `poll`. Injected clock/seed/roomId/signer. | no | ✅ `test/Matchmaker.test.ts` |
 | `src/matchsvc.ts`    | HTTP bootstrap and assembly shell — the ONLY control-plane file that imports `node:http`; wires the real clock/seed/signer around `Matchmaker`, then dispatches to `src/routes/`. | yes | ✅ `test/matchsvc.http.test.ts` |
-| `src/routes/*.ts`    | One module per surface (`auth`, `account`, `match`, `party`, `rating`), each a set of free `(req, res, url, deps)` handlers, over a shared `routes/http.ts` (CORS, `send`, `readJson`). | no | ✅ `test/routes.test.ts` + the two `*.http.test.ts` |
-| `src/db.ts` / `src/AuthService.ts` | The SQLite (`node:sqlite`) account store: `accounts`/`sessions`/`ratings`/`meta_state`/`entitlements`/`rating_reports` (design/16-accounts.md). | file | ✅ `test/db.test.ts`, `test/AuthService.test.ts` |
-| `src/rating.ts` / `src/ladderReport.ts` | The ladder: Elo-ish squad-aware deltas, the store, and the pure placement→rank conversion. `applyMatchOnce` claims `rating_reports.report_key` (`ON CONFLICT DO NOTHING` + `changes()`) inside the same `BEGIN IMMEDIATE` that writes `ratings`, which is what makes the at-least-once settlement report exactly-once (design/19 §3). | no | ✅ `test/rating.test.ts`, `test/ladderReport.test.ts`, `test/ratingReportOnce.test.ts` |
+| `src/routes/*.ts`    | One module per surface (`auth`, `account`, `match`, `party`, `rating`, `internalEntitlements`), each a set of free `(req, res, url, deps)` handlers, over a shared `routes/http.ts` (CORS, `send`, `readJson`). | no | ✅ `test/routes.test.ts` + the two `*.http.test.ts` |
+| `src/db.ts` / `src/AuthService.ts` | The SQLite (`node:sqlite`) account store: `accounts`/`sessions`/`ratings`/`meta_state`/`entitlements` (design/16-accounts.md). | file | ✅ `test/db.test.ts`, `test/AuthService.test.ts` |
 | `src/EntitlementService.ts` | Server-owned blueprint/character ownership (design/19 §2, ROADMAP 8.2) — the reason `/account/meta` is no longer a blind whole-blob upsert. Grant is `ON CONFLICT DO NOTHING` + `changes`, so an at-least-once delivery is idempotent. | no | ✅ `test/EntitlementService.test.ts` |
-| `src/config.ts`      | The one place that reads `DDU_TICKET_SECRET` and `DDU_INTERNAL_KEY` (env), so both planes agree on each. | env | ✅ `test/config.test.ts` + `test/config.internalKeys.test.ts` |
+| `src/routes/internalEntitlements.ts` | `POST /internal/entitlements/grant` (8.7) — the ONLY caller of `EntitlementService.grant`, behind `internalAuth`. billsvc's delivery pump is what calls it. A 4xx here is read as terminal by that pump, so every refusal has to be one the same bytes would earn again. | no | ✅ `test/routes.internalEntitlements.test.ts` |
+| `src/config.ts`      | The one place that reads `DDU_TICKET_SECRET`, `DDU_INTERNAL_KEY` and `DDU_MATCHSVC_URL` (env), so all three planes agree on each. | env | ✅ `test/config.test.ts` + `test/config.internalKeys.test.ts` |
 | `src/internalAuth.ts` | Inbound service-to-service auth (ROADMAP 8.1): `x-internal-key` against a per-caller registry, hashed before `timingSafeEqual`. A THIRD credential namespace — never a player token. | no | ✅ `test/internalAuth.test.ts`, `test/internalTrustSeam.test.ts` |
 | `src/internalFetch.ts` | Outbound service-to-service calls: always drains the response body, explicit per-attempt timeout, opt-in bounded retry. | no | ✅ `test/internalFetch.test.ts` |
 
-**Billing plane** — orders, receipts, IAP (ROADMAP 8.3/8.4, design/19 §4/§5):
+**Billing plane** — orders, receipts, IAP, entitlement delivery (ROADMAP 8.3/8.4/8.7, design/19 §4/§5):
 
 | File | Role | I/O? | Tested |
 |------|------|------|--------|
-| `src/billingDb.ts` | billsvc's OWN SQLite file (`DDU_BILLING_DB_PATH`): `orders`/`receipts`/append-only `ledger`. Deliberately NOT `db.ts`'s `openDb` — money gets its own file, and a shared opener is how that gets undone. | file | ✅ `test/billingDb.test.ts` |
+| `src/billingDb.ts` | billsvc's OWN SQLite file (`DDU_BILLING_DB_PATH`): `orders`/`receipts`/append-only `ledger`/`deliveries`. Deliberately NOT `db.ts`'s `openDb` — money gets its own file, and a shared opener is how that gets undone. | file | ✅ `test/billingDb.test.ts` |
 | `src/billsvc/BillingService.ts` | The five §4 rules. `settle` claims the receipt row AND the ledger row (`ON CONFLICT DO NOTHING` + `changes()`), then updates the order and grants — one `BEGIN IMMEDIATE`, so a refused grant rolls all of it back. | no | ✅ `test/billsvc.BillingService.test.ts` |
-| `src/billsvc/delivery.ts` | The entitlement seam, called from INSIDE that transaction. `ledgerOnlyDelivery` is the default until 8.2's table is wired — the ledger row is the delivery record. | no | ✅ (above) |
+| `src/billsvc/delivery.ts` | The entitlement seam, called from INSIDE that transaction — synchronous and `void`, so a throw rolls the settlement back. `ledgerOnlyDelivery` is the explicit opt-out, no longer the default. | no | ✅ (above) |
+| `src/billsvc/outbox.ts` | The DURABLE half of the closed loop (8.7): one synchronous INSERT into `deliveries`, in the settlement transaction, keyed on the LEDGER row's id. After the COMMIT the delivery is OWED on disk. | no | ✅ `test/billsvc.outbox.test.ts` |
+| `src/billsvc/deliveryPump.ts` | The ASYNC half: drains `deliveries` into matchsvc's `POST /internal/entitlements/grant` over `internalFetch`. Opportunistic after a settlement + a startup sweep + a bounded backstop. 4xx is terminal and loud; 5xx/network stays owed forever. | net | ✅ `test/billsvc.deliveryPump.test.ts`, `test/billsvc.deliveryLoop.test.ts` |
 | `src/billsvc/skus.ts` | The server-side price table. `createOrder` has no `amount` parameter, so a body price cannot be plumbed in. | no | ✅ `test/billsvc.skus.test.ts` |
 | `src/billsvc/iap/*.ts` | One module per platform behind `createReceiptVerifier`, plus the `product:<sku>` dev stub. Missing credentials FAIL — never fall back to the stub. | net | ✅ `test/billsvc.iap.test.ts` |
 | `src/billsvc/startupGuard.ts` | Second fail-closed check: refuses to START with a dev flag under `NODE_ENV=production`. Shares no code with the first, on purpose. | no | ✅ `test/billsvc.startupGuard.test.ts` |
@@ -118,9 +120,12 @@ those adapters return failure rather than granting anything (`DDU_APPLE_SHARED_S
 `DDU_WECHAT_API_V3_KEY`, `DDU_STRIPE_SECRET_KEY` are read but cannot be verified).
 
 **Internal key (ROADMAP 8.1, design/19 §3):** set `DDU_INTERNAL_KEY` to the SAME value on
-both processes, the same way as the ticket secret and for the same reason — it is what the
-gameserver presents on `POST /rating/report`, which is an INTERNAL route and refuses anything
-else. It is a **third** credential namespace, distinct from player sessions (`Authorization:
+all three processes, the same way as the ticket secret and for the same reason — it is what the
+gameserver presents on `POST /rating/report` and what billsvc presents on
+`POST /internal/entitlements/grant`, both of which are INTERNAL routes and refuse anything
+else. billsvc also needs `DDU_MATCHSVC_URL` to know where to deliver (default
+`http://localhost:8788`); with it wrong or the control plane down, a settled purchase stays
+`pending` in `deliveries` and is retried rather than lost. It is a **third** credential namespace, distinct from player sessions (`Authorization:
 Bearer`) and from the ticket HMAC; an internal route never accepts a player token. Unset, it
 falls back to a published insecure DEV key with a warning so the local two-process setup
 works out of the box — **except under `NODE_ENV=production`, where an unset key means every
@@ -134,17 +139,6 @@ already `IN_MATCH` gets `4403` from that path. A dropped mid-match connection in
 calls `POST /resume {token}` with its *original* (by now likely expired) join ticket:
 matchsvc re-verifies its signature while ignoring `exp` (proof the caller once
 legitimately held that seat — a match runs far longer than a ticket's 30s TTL, so the
-**Exactly-once settlement (2026-09-05, design/19 §3):** the report carries a `reportKey`
-(`{roomId}:{digest}`, from `ladderReport.ts`), and matchsvc claims it in `rating_reports`
-inside the same transaction that moves the ratings — so the retry the paragraph above
-describes can no longer double-credit a match. A redelivery is answered **200 with
-`duplicate: true`** and not 409, because the sender counts every non-2xx a failure and would
-otherwise log a failure for a report that landed *and* keep retrying it; a report whose apply
-throws is answered 500, which is the one status that IS retried, and the claim has already
-rolled back. A report with no `reportKey` at all (an older gameserver mid-deploy) is applied
-the old, non-deduped way and logged — a 4xx is never retried, so refusing it would lose that
-match's rating for good.
-
 original can't just be redeemed again) and mints a fresh one for the same
 `{roomId,owner,seed,playerCount,teamId,mode}`. The client then reopens `/ws?ticket=` with
 that fresh ticket; the gameserver detects the room is already `IN_MATCH` (not `WAITING`)

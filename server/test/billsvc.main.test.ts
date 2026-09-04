@@ -13,6 +13,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { main, DEFAULT_BILL_PORT, OTHER_PLANE_PORTS } from '../src/billsvc/main';
+import { openBillingDb } from '../src/billingDb';
+import { deliveryById } from '../src/billsvc/outbox';
 import type { BillsvcServer } from '../src/billsvc/server';
 import { BillingStartupError } from '../src/billsvc/startupGuard';
 
@@ -37,7 +39,10 @@ afterEach(async () => {
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   while (handles.length) {
-    const { server, db } = handles.pop()!;
+    const { server, db, pump } = handles.pop()!;
+    // Before the connection closes: `main` arms the delivery pump, and a sweep still in
+    // flight would be writing into a database that is about to go away.
+    await pump.stop();
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     // Must close BEFORE the rmSync below: Windows keeps a lock on an open SQLite file and
@@ -45,6 +50,41 @@ afterEach(async () => {
     db.close();
   }
   while (dirs.length) rmSync(dirs.pop()!, { recursive: true, force: true });
+});
+
+describe('main — the delivery pump', () => {
+  it('sweeps the outbox at STARTUP, so a delivery a previous process left owed is resumed', async () => {
+    // The whole reason `deliveries` is a table rather than a variable (design/19 §4). No
+    // webhook is coming a second time for a purchase that already settled, so if `main` did
+    // not arm this sweep nothing ever would.
+    const dbPath = tmpDbPath();
+    vi.stubEnv('DDU_BILLING_DB_PATH', dbPath);
+    // Refused instantly, so the attempt is observable without waiting on a real timeout —
+    // and a REFUSED attempt is the strongest evidence available here: it proves the sweep
+    // ran and reached the network, which nothing but `start()` could have caused.
+    vi.stubEnv('DDU_MATCHSVC_URL', 'http://127.0.0.1:1');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    // Written by the "previous process", before this one exists.
+    const seeded = openBillingDb(dbPath);
+    seeded
+      .prepare(
+        `INSERT INTO deliveries (id, account_id, sku, grants_json, order_id, receipt_id, state, attempts, created_at, delivered_at)
+         VALUES ('purchase:dev:T1', 'a1', 'bp.cannon', '[]', 'o1', 'dev:r1', 'pending', 0, 1, NULL)`,
+      )
+      .run();
+    seeded.close();
+
+    const handle = await listen({ DDU_BILLING_DEV_STUB: '1' });
+    await handle.pump.stop(); // awaits the sweep `start()` already kicked off
+
+    const row = deliveryById(handle.db, 'purchase:dev:T1')!;
+    expect(row.attempts).toBeGreaterThanOrEqual(1);
+    // Still owed, because the control plane was unreachable — a retryable failure never
+    // writes a paid purchase off.
+    expect(row.state).toBe('pending');
+  });
 });
 
 describe('main — the startup refusal', () => {

@@ -30,16 +30,26 @@
  * `POST /order/create` DROPS `amount`. Reading the field and ignoring it would be the same
  * behaviour; not reading it is the version that survives someone adding a "pass-through"
  * later (design/19 §4: "An `amount` in the request body is discarded").
+ *
+ * DELIVERY (design/19 §4's closed loop, 2026-09-05). This is where the two halves are wired:
+ * `outbox.ts`'s delivery is what `BillingService` calls inside the settlement transaction,
+ * and `deliveryPump.ts` is what drains the row it wrote into the control plane's
+ * `entitlements` table afterwards. The webhook triggers a sweep opportunistically after a
+ * settlement commits, WITHOUT awaiting it — the platform's callback must answer fast and
+ * must not be coupled to a peer that may be down, and the settlement is already durable by
+ * then. `main.ts` arms the startup sweep and the backstop interval.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { DatabaseSync } from 'node:sqlite';
 import { openBillingDb } from '../billingDb';
 import { BillingService, type BillingServiceDeps } from './BillingService';
-import { internalKeys } from '../config';
+import { controlPlaneUrl, INTERNAL_CALLER_BILLSVC, internalKeys, sharedInternalKey } from '../config';
 import { createInternalVerifier, describeInternalAuthFailure, type InternalVerifier } from '../internalAuth';
 import { createReceiptVerifier, devStubEnabled, type BillingEnv } from './iap/factory';
 import { asIapPlatform, type ReceiptVerifier } from './iap/types';
 import type { EntitlementDelivery } from './delivery';
+import { createOutboxDelivery } from './outbox';
+import { DeliveryPump, type DeliveryPumpDeps } from './deliveryPump';
 
 const CORS = {
   'access-control-allow-origin': '*',
@@ -66,8 +76,23 @@ export interface BillsvcServerOptions {
   env?: BillingEnv;
   /** Receipt verifier override. Defaults to `createReceiptVerifier(env)`. */
   verify?: ReceiptVerifier;
-  /** Entitlement delivery, called inside the settlement transaction (`delivery.ts`). */
+  /**
+   * Entitlement delivery, called inside the settlement transaction (`delivery.ts`).
+   * Defaults to `outbox.ts`'s — the shipped one, which writes the `deliveries` row the pump
+   * below drains. Overriding it (with `ledgerOnlyDelivery`, or a spy) also disconnects the
+   * pump from anything to do, since nothing else writes that table.
+   */
   deliver?: EntitlementDelivery;
+  /**
+   * Delivery-pump overrides, merged over the `config.ts`-derived defaults. A test pins
+   * `fetchImpl`/`nowMs`/`sleep` here rather than stubbing globals; the URL and the internal
+   * key default to `controlPlaneUrl()` and `sharedInternalKey()`.
+   *
+   * The pump is BUILT here and never STARTED here: `createBillsvcServer` binds no port
+   * either, and a builder that armed a background interval could not be called by a test
+   * without leaving one running. `main.ts` starts it.
+   */
+  pump?: Partial<DeliveryPumpDeps>;
   /**
    * A pre-built `BillingService`, replacing everything above it. The routes are a thin
    * shell over this object, so this is the only seam from which a test can make a
@@ -91,6 +116,8 @@ export interface BillsvcServer {
   server: Server;
   billing: BillingService;
   db: DatabaseSync;
+  /** The outbox drain (`deliveryPump.ts`). Built, not started — see `BillsvcServerOptions.pump`. */
+  pump: DeliveryPump;
 }
 
 export function createBillsvcServer(opts: BillsvcServerOptions = {}): BillsvcServer {
@@ -101,11 +128,24 @@ export function createBillsvcServer(opts: BillsvcServerOptions = {}): BillsvcSer
     new BillingService({
       db,
       verify: opts.verify ?? createReceiptVerifier(env),
-      deliver: opts.deliver,
+      // The OUTBOX, not `BillingService`'s own `ledgerOnlyDelivery` default (design/19 §4's
+      // closed loop). One synchronous insert into a fourth table in this same file, inside
+      // the settlement transaction; `pump` below is what turns it into an `entitlements`
+      // row in the control plane's file afterwards.
+      deliver: opts.deliver ?? createOutboxDelivery(db),
       nowMs: opts.nowMs,
       newOrderId: opts.newOrderId,
       devStubOn: devStubEnabled(env),
     });
+  const pump = new DeliveryPump({
+    matchsvcUrl: controlPlaneUrl(),
+    internalKey: sharedInternalKey(),
+    caller: INTERNAL_CALLER_BILLSVC,
+    ...opts.pump,
+    // Last, and not overridable: the pump drains THIS process's outbox, and a test that
+    // pointed it at another connection would be exercising nothing that ships.
+    db,
+  });
   // ROADMAP 8.1's shared verifier (`server/src/internalAuth.ts`), not a billsvc-local check:
   // one namespace, one fail-closed posture, one place to add per-caller keys. `config.ts`'s
   // registry names its single entry `gameserver` because that was the first hop to need a
@@ -187,6 +227,15 @@ export function createBillsvcServer(opts: BillsvcServerOptions = {}): BillsvcSer
           })
           .then((result) => {
             if (result.ok) {
+              // TRIGGER 1 (`deliveryPump.ts`): advance the outbox now rather than at the
+              // next interval, so the entitlement lands while the player is still looking at
+              // the payment sheet. Deliberately NOT awaited and deliberately not part of
+              // this response — the settlement is already committed and durable, and making
+              // the platform's webhook wait on the control plane would couple a callback
+              // that must answer fast to a peer that may be down. `pumpOnce` never rejects
+              // (every failure is a table state plus a log), so `schedule()` cannot produce
+              // an unhandled rejection here.
+              if (result.delivered) pump.schedule();
               return send(res, 200, {
                 ok: true,
                 orderId: result.orderId,
@@ -212,7 +261,7 @@ export function createBillsvcServer(opts: BillsvcServerOptions = {}): BillsvcSer
     send(res, 404, { error: 'not found' });
   });
 
-  return { server, billing, db };
+  return { server, billing, db, pump };
 }
 
 function send(res: ServerResponse, status: number, body: unknown): void {

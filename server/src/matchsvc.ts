@@ -37,6 +37,8 @@
  *   POST /auth/change-password { token, oldPassword, newPassword } -> { ok: true } | 400/401
  *   GET  /account/meta      (Bearer token)  -> { data: MetaState | null, entitlements } | 401
  *   POST /account/meta      (Bearer token) { data }        -> { ok: true } | 400/401    routes/account
+ *   POST /internal/entitlements/grant  (x-internal-key)  -> { granted, alreadyOwned } | 401/400/404
+ *                                                                                     routes/internalEntitlements
  *   GET  /health                                                                       (here)
  *
  * `/auth/*` and `/account/*` (design/16-accounts.md) are this project's first real
@@ -64,6 +66,7 @@ import * as ratingRoutes from './routes/rating';
 import * as partyRoutes from './routes/party';
 import * as authRoutes from './routes/auth';
 import * as accountRoutes from './routes/account';
+import * as internalEntitlementRoutes from './routes/internalEntitlements';
 
 const PORT = Number(process.env.MATCH_PORT ?? 8788);
 const HOST = process.env.HOST ?? '0.0.0.0';
@@ -191,6 +194,12 @@ export function createMatchsvcServer(opts: MatchsvcServerOptions = {}): Server {
 
     if (req.method === 'GET' && path === '/account/meta') return accountRoutes.getMeta(req, res, url, deps);
     if (req.method === 'POST' && path === '/account/meta') return accountRoutes.postMeta(req, res, url, deps);
+
+    // The one route no player ever calls (design/19 §4's closed delivery loop): billsvc's
+    // outbox pump POSTs a settled purchase here over ROADMAP 8.1's internal key.
+    if (req.method === 'POST' && path === internalEntitlementRoutes.INTERNAL_GRANT_PATH) {
+      return internalEntitlementRoutes.postGrant(req, res, url, deps);
+    }
 
     send(res, 404, { error: 'not found' });
   });

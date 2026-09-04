@@ -8,6 +8,14 @@
  * warns (`startupGuard.ts`). That is deliberate and it is the second of design/19 §5's two
  * fail-closed defences: a billing process whose dev receipt stub is reachable in
  * production must not come up at all.
+ *
+ * The last thing it does is `pump.start()`, and that ordering is the whole reason the
+ * delivery outbox exists. A process that died between a settlement's COMMIT and its
+ * entitlement grant left `deliveries` rows behind that nothing will ever re-trigger — no
+ * webhook is coming a second time, and the platform considers the payment done. The startup
+ * sweep is what picks them up (`deliveryPump.ts`, trigger 2), and it runs here rather than
+ * in `createBillsvcServer` because a builder that arms a background interval cannot be
+ * called by a test without leaving one running.
  */
 import { fileURLToPath } from 'node:url';
 import { createBillsvcServer, type BillsvcServer } from './server';
@@ -48,6 +56,11 @@ export function main(env: StartupEnv = process.env, port = PORT, host = HOST): B
     const stub = devStubEnabled(env) ? '  [DEV RECEIPT STUB ENABLED]' : '';
     console.log(`daydayup billsvc (billing plane) on http://${host}:${port}  db=${defaultBillingDbPath()}${stub}`);
   });
+  // Sweeps whatever a previous process left owed, then arms the backstop interval. Started
+  // AFTER `listen` for no functional reason (nothing in the pump touches the socket) but for
+  // an operational one: the "on http://..." line is what an operator waits for, and a sweep
+  // that logs a refused control plane ahead of it reads like a failure to start.
+  handle.pump.start();
   return handle;
 }
 
