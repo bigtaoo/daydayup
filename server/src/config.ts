@@ -20,6 +20,8 @@ const DEV_SECRET = 'dev-insecure-secret-do-not-use-in-prod';
 // instead of two hand-mirrored copies that could drift (design/06's own stated lesson).
 export { SQUAD_SIZE, squadSizeForPlayerCount, teamIdForOwner } from '@dd/game/match/pvpConfig';
 
+import type { InternalCaller } from './internalAuth';
+
 let warned = false;
 
 export function ticketSecret(): { secret: string; isDev: boolean } {
@@ -33,4 +35,74 @@ export function ticketSecret(): { secret: string; isDev: boolean } {
     );
   }
   return { secret: DEV_SECRET, isDev: true };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Internal service-to-service key (design/19 §3, ROADMAP 8.1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The one caller in the registry today: the gameserver (`index.ts`), which POSTs a settled
+ * PvP match to matchsvc's `/rating/report`. Named rather than inlined because the registry
+ * is deliberately shaped to grow (design/19 §3) — `billsvc` is the next entry, and the day
+ * there are two, each gets its own key and this becomes a lookup rather than a rename.
+ */
+export const INTERNAL_CALLER_GAMESERVER = 'gameserver';
+
+const DEV_INTERNAL_KEY = 'dev-insecure-internal-key-do-not-use-in-prod';
+
+let internalWarned = false;
+
+/**
+ * Where the internal key comes from, with the same posture `ticketSecret()` above already
+ * establishes for the ticket secret — one mental model for both, because an operator
+ * configures them together and a second, different rule is a second thing to get wrong:
+ * a real `DDU_INTERNAL_KEY` is production, unset falls back to a shared well-known DEV key
+ * with a loud one-time warning so the local two-process setup works out of the box.
+ *
+ * With ONE difference, and it is the important one: under `NODE_ENV=production` an unset
+ * key does NOT fall back. It returns an EMPTY registry, and `createInternalVerifier`
+ * rejects every internal call — design/19 §5's "fail closed in production" principle, which
+ * that section states for the billing dev stub and which applies here for the same reason.
+ * The alternative is a deploy that misses one env var and silently ships a route whose key
+ * is published in this file, which is indistinguishable from having no key at all.
+ *
+ * Read per CALL, never captured at module scope, for the reason `config.test.ts` spells out
+ * for `ticketSecret`: a module-scope capture makes the answer depend on whether the
+ * environment was loaded before the first import.
+ */
+export function internalKeys(): { registry: InternalCaller[]; isDev: boolean } {
+  const env = process.env.DDU_INTERNAL_KEY;
+  if (env && env.length > 0) {
+    return { registry: [{ caller: INTERNAL_CALLER_GAMESERVER, key: env }], isDev: false };
+  }
+  if (process.env.NODE_ENV === 'production') {
+    if (!internalWarned) {
+      internalWarned = true;
+      console.warn(
+        '[daydayup] DDU_INTERNAL_KEY unset in production — every internal route now REJECTS ' +
+          'every call (fail closed). Set DDU_INTERNAL_KEY (same value on matchsvc + gameserver).',
+      );
+    }
+    return { registry: [], isDev: false };
+  }
+  if (!internalWarned) {
+    internalWarned = true;
+    console.warn(
+      '[daydayup] DDU_INTERNAL_KEY unset — using an insecure DEV internal key. ' +
+        'Set DDU_INTERNAL_KEY (same value on matchsvc + gameserver) for any real deployment.',
+    );
+  }
+  return { registry: [{ caller: INTERNAL_CALLER_GAMESERVER, key: DEV_INTERNAL_KEY }], isDev: true };
+}
+
+/**
+ * The key THIS process presents on an OUTBOUND internal call — the caller-side mirror of
+ * `internalKeys()`. `undefined` when nothing is configured (the production fail-closed
+ * branch above), which `internalFetch` turns into a request with no `x-internal-key` at
+ * all: rejected by the peer with a logged reason, rather than sent with a placeholder that
+ * would have to be recognised as one somewhere.
+ */
+export function internalKeyFor(caller: string): string | undefined {
+  return internalKeys().registry.find((entry) => entry.caller === caller)?.key;
 }

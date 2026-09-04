@@ -460,20 +460,24 @@ describe('a literal null JSON body', () => {
   // callback, which is an uncaught exception rather than a 400. These were the last
   // uncovered arms in this file. A client sends this by posting `null`, which is exactly
   // what a `JSON.stringify(undefined)`-shaped bug on the client produces.
+  // The third column is any credential the route needs before it will even look at the
+  // body. `/rating/report` became an internal route in ROADMAP 8.1, and without its key it
+  // would answer 401 without ever reaching the `?? {}` fallback this sweep is about — a
+  // green case that had stopped testing anything.
   it.each([
-    ['/party/join', 400],
-    ['/party/leave', 400],
-    ['/party/start', 400],
-    ['/rating/report', 400],
-    ['/auth/register', 400],
-    ['/auth/login', 401],
-    ['/auth/change-password', 401],
-  ])('%s answers %i instead of throwing', async (path, expected) => {
+    ['/party/join', 400, {}],
+    ['/party/leave', 400, {}],
+    ['/party/start', 400, {}],
+    ['/rating/report', 400, { 'x-internal-key': 'dev-insecure-internal-key-do-not-use-in-prod' }],
+    ['/auth/register', 400, {}],
+    ['/auth/login', 401, {}],
+    ['/auth/change-password', 401, {}],
+  ])('%s answers %i instead of throwing', async (path, expected, credential) => {
     const ctx = await start();
     try {
       const res = await fetch(`${ctx.url}${path}`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...(credential as Record<string, string>) },
         body: 'null',
       });
       expect(res.status).toBe(expected);

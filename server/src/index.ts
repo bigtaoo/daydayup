@@ -24,7 +24,8 @@ import { RoomManager } from './RoomManager';
 import { Phase, type RoomConnection, type SettledMatch } from './MatchRoom';
 import { buildRatingReportBody } from './ladderReport';
 import { verifyTicket, type MatchMode } from './ticket';
-import { ticketSecret } from './config';
+import { INTERNAL_CALLER_GAMESERVER, internalKeyFor, ticketSecret } from './config';
+import { internalFetch, type InternalFetchInit } from './internalFetch';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HOST = process.env.HOST ?? '0.0.0.0';
@@ -34,23 +35,65 @@ const HOST = process.env.HOST ?? '0.0.0.0';
 const MATCHSVC_URL = process.env.DDU_MATCHSVC_URL;
 
 /**
+ * How hard the gameserver tries to land a settlement report (design/19 §3, ROADMAP 8.1).
+ * A settlement is the retryable kind of call: it happens exactly once per match, nothing
+ * re-sends it, and a lost one silently costs real players the rating they just earned —
+ * the opposite of a periodic heartbeat, which passes no `retry` because the next tick is
+ * already the retry.
+ *
+ * NOTE, and this is the reason the budget is 3 rather than 10: `/rating/report` is
+ * at-least-once, not exactly-once. `RatingStore.applyMatch` carries no dedupe key, so a
+ * report that was delivered but whose RESPONSE was lost (a timeout, a 5xx written after
+ * the write) gets applied twice if it is retried. Making it truly idempotent means a
+ * dedupe key on the report — `roomId` is already threaded into `buildRatingReportBody`
+ * and would serve — plus a `UNIQUE` column in `db.ts`'s `ratings` schema and a
+ * `changes()` check in `rating.ts`, exactly the shape design/19 §4 specifies for billing
+ * delivery. That is a change to files this pass does not own; until it lands, a bounded
+ * 3 is the honest trade: it recovers the common transient failure without turning a
+ * flapping matchsvc into a rating multiplier.
+ */
+const SETTLEMENT_RETRY = { attempts: 3, baseDelayMs: 250, maxDelayMs: 2_000 } as const;
+
+/**
  * Report a settled match's placements to matchsvc's ladder (design/15, ROADMAP 4.6) —
  * ONLY when the result was checkpoint/hash-verified (`hashOk`) and it was actually a
  * PvP match (`placements` present, `winner` a real seat index); every PvE/co-op
  * settlement is silently skipped, same as it always was before 4.6 existed. The
- * placement→rank conversion lives in `ladderReport.ts` (pure, unit-tested); this is
- * just the fetch call, best-effort — a dropped report never blocks or retries
- * settlement.
+ * placement→rank conversion lives in `ladderReport.ts` (pure, unit-tested).
+ *
+ * Goes through `internalFetch` rather than a bare `fetch` — design/19's D2, and the one
+ * call in this process that had the defect. The old shape was
+ * `fetch(...).catch(() => {})`, which never consumed the response body: funny shipped
+ * that exact line and measured it wedging undici's keep-alive pool under a concurrent
+ * burst so that NO report arrived, for ~30 s at a time, with nothing logged either way.
+ * Three things change: the body is always drained, the attempt has an explicit timeout
+ * (undici's `fetch` has none), and a transient failure is retried — see
+ * `SETTLEMENT_RETRY` for why bounded. It stays fire-and-forget: settlement never awaits
+ * the ladder, and `internalFetch` never rejects, so there is no unhandled rejection to
+ * take the gameserver down mid-match. What it no longer does is fail SILENTLY.
+ *
+ * `opts` is a test seam (the same role `GameserverOptions` plays for `createGameserver`) —
+ * production passes nothing and gets the real `fetch`, the real timers and the real key.
  */
-export function reportSettledMatch(match: SettledMatch): void {
+export function reportSettledMatch(match: SettledMatch, opts: InternalFetchInit = {}): void {
   if (!MATCHSVC_URL || !match.hashOk || !match.placements || typeof match.winner !== 'number') return;
   const body = buildRatingReportBody(match.roomId, match.winner, match.placements, match.playerCount, match.seatAccounts);
-  fetch(`${MATCHSVC_URL}/rating/report`, {
+  void internalFetch(`${MATCHSVC_URL}/rating/report`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  }).catch(() => {
-    /* best-effort — a dropped rating report never blocks or retries match settlement */
+    json: body,
+    internalKey: internalKeyFor(INTERNAL_CALLER_GAMESERVER),
+    caller: INTERNAL_CALLER_GAMESERVER,
+    retry: SETTLEMENT_RETRY,
+    ...opts,
+  }).then((result) => {
+    if (result.ok) return;
+    // Best-effort still, but no longer invisible: D2's whole cost was that a total outage
+    // and a healthy server looked identical from here.
+    console.warn(
+      `[daydayup] ladder report for room ${match.roomId} failed after ${result.attempts} ` +
+        `attempt(s): ${result.failure}${result.status === undefined ? '' : ` ${result.status}`}` +
+        `${result.error === undefined ? '' : ` (${result.error})`}`,
+    );
   });
 }
 

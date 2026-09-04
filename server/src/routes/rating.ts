@@ -4,22 +4,50 @@
  * a PvP match resolves with a checkpoint/hash-verified placement result (never the client
  * directly; the gameserver is the one that knows `hashOk`), plus the per-account lookup.
  *
- * ROADMAP 8.1 is the pass that puts `server/src/internalAuth`'s timing-safe `x-internal-key`
- * in front of `POST /rating/report`, which today has no authentication at all — this file is
- * the seam it lands in. The split itself changes nothing about that: the route is exactly as
- * open as it was.
+ * ROADMAP 8.1 (2026-09-04) landed here: `POST /rating/report` is now behind
+ * `internalAuth.ts`'s timing-safe `x-internal-key`, closing design/19's D1 — the route had
+ * no key, no origin check and open CORS while being the one endpoint that can move any
+ * account's ladder rating, so anyone could POST an arbitrary placement for an arbitrary
+ * `accountId`. `GET /rating/:accountId` is deliberately NOT gated: it is a public read of a
+ * player's own visible rank, and it writes nothing.
  */
 import type { RatingStore } from '../rating';
+import { internalKeys } from '../config';
+import {
+  createInternalVerifier,
+  describeInternalAuthFailure,
+  type InternalVerifier,
+} from '../internalAuth';
 import { readJson, send, type RouteHandler } from './http';
 
 export interface RatingRouteDeps {
   ratings: RatingStore;
+  /**
+   * Internal-key verifier override. OPTIONAL, and the default is not "no auth" — it is a
+   * verifier built from `config.ts`'s env-derived registry, so a caller that wires nothing
+   * (which is every caller today: `matchsvc.ts` builds one untyped `deps` bundle for all
+   * five route groups) still gets the real check. The seam exists so a test can pin a
+   * registry without touching `process.env`, the same way `MatchsvcServerOptions.secret`
+   * pins the ticket secret.
+   */
+  internalAuth?: InternalVerifier;
 }
 
 /** `GET /rating/:accountId` — checked after `POST /rating/report`, which it would shadow. */
 export const RATING_LOOKUP_PATH = /^\/rating\/([^/]+)$/;
 
 export const postReport: RouteHandler<RatingRouteDeps> = (req, res, _url, deps) => {
+  const verifier = deps.internalAuth ?? createInternalVerifier(internalKeys().registry);
+  const auth = verifier.verify(req.headers);
+  if (!auth.ok) {
+    // The rejection is logged and the response is not: the caller learns only "unauthorized",
+    // while the reason (and the caller's own advisory, untrusted `x-internal-caller` claim)
+    // goes to the operator — design/19 §7's "log every event, not just the successful one",
+    // applied to the seam that is worth watching first.
+    console.warn(describeInternalAuthFailure(auth, 'POST /rating/report'));
+    return send(res, 401, { error: 'unauthorized' });
+  }
+
   readJson(req, (body) => {
     const { accountIds, places, teamIds } =
       (body as { accountIds?: unknown; places?: unknown; teamIds?: unknown }) ?? {};

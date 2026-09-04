@@ -17,8 +17,16 @@
  *
  * `reportSettledMatch` reads `DDU_MATCHSVC_URL` at MODULE scope, so its cases re-import the
  * module under a stubbed env rather than pretending a setter exists.
+ *
+ * ROADMAP 8.1 (2026-09-04) rewired that callback through `internalFetch` (design/19's D2 —
+ * the old `fetch(...).catch(() => {})` never consumed its response body, which funny
+ * measured wedging undici's keep-alive pool so that NO report arrived). The four guard arms
+ * below are unchanged; what is new is that the call now carries a credential, drains what
+ * comes back, retries a transient failure, and — the part D2 cost most — says so when it
+ * finally gives up instead of failing silently. `internalFetch`'s own mechanics are tested
+ * in `internalFetch.test.ts`; these cases pin what THIS call site asks it for.
  */
-import { describe, it, expect, vi, afterEach } from 'vitest';
+import { describe, it, expect, vi, afterEach, type MockInstance } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import type { Server } from 'node:http';
 import { WebSocket, type WebSocketServer } from 'ws';
@@ -33,6 +41,10 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.resetModules();
+  // Console spies too: `vi.spyOn` on an ALREADY-spied method hands back the existing mock,
+  // so without this a later case reads the earlier ones' calls and a "warns once" assertion
+  // counts the whole file (ROADMAP 8.1 added several).
+  vi.restoreAllMocks();
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -48,23 +60,49 @@ const settled = (over: Partial<SettledMatch> = {}): SettledMatch => ({
   ...over,
 });
 
-/** Re-imports index.ts with `DDU_MATCHSVC_URL` set (or not) and a recording `fetch`. */
-async function withMatchsvc(url: string | undefined): Promise<{
-  report: (m: SettledMatch) => void;
-  calls: Array<{ url: string; body: unknown }>;
+/** Never sleep for real — otherwise every retry case pays the settlement backoff ladder. */
+const noSleep = () => Promise.resolve();
+
+interface RecordedCall {
+  url: string;
+  body: unknown;
+  headers: Record<string, string>;
+  /** The response handed back, so a case can ask whether its body was released. */
+  res: Response;
+}
+
+/**
+ * Re-imports index.ts with `DDU_MATCHSVC_URL` set (or not) and a recording `fetch` that
+ * hands back REAL `Response` objects — `bodyUsed` on one of those is the only honest
+ * witness that D2's drain actually happens, and a `{ ok: true }` literal (what this helper
+ * used to return) cannot report it. `statuses` scripts one status per attempt, the last
+ * one repeating, so a retry ladder can be driven without a second helper.
+ */
+async function withMatchsvc(
+  url: string | undefined,
+  statuses: number[] = [200],
+): Promise<{
+  report: (m: SettledMatch, opts?: Record<string, unknown>) => void;
+  calls: RecordedCall[];
   fetchMock: ReturnType<typeof vi.fn>;
 }> {
   if (url === undefined) vi.stubEnv('DDU_MATCHSVC_URL', '');
   else vi.stubEnv('DDU_MATCHSVC_URL', url);
-  const calls: Array<{ url: string; body: unknown }> = [];
-  const fetchMock = vi.fn((u: string, init: { body: string }) => {
-    calls.push({ url: u, body: JSON.parse(init.body) });
-    return Promise.resolve({ ok: true } as Response);
+  const calls: RecordedCall[] = [];
+  const fetchMock = vi.fn((u: string, init: { body: string; headers: Record<string, string> }) => {
+    const status = statuses[Math.min(calls.length, statuses.length - 1)]!;
+    const res = new Response('{"changes":[]}', { status });
+    calls.push({ url: u, body: JSON.parse(init.body), headers: init.headers, res });
+    return Promise.resolve(res);
   });
   vi.stubGlobal('fetch', fetchMock);
   vi.resetModules();
   const mod = await import('../src/index');
-  return { report: mod.reportSettledMatch, calls, fetchMock };
+  return {
+    report: (m, opts = {}) => mod.reportSettledMatch(m, { sleep: noSleep, ...opts }),
+    calls,
+    fetchMock,
+  };
 }
 
 describe('reportSettledMatch — the ladder callback', () => {
@@ -104,16 +142,83 @@ describe('reportSettledMatch — the ladder callback', () => {
 
   it('swallows a rejected report — a dropped rating never blocks settlement', async () => {
     vi.stubEnv('DDU_MATCHSVC_URL', 'http://matchsvc.test');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     vi.stubGlobal(
       'fetch',
       vi.fn(() => Promise.reject(new Error('matchsvc is down'))),
     );
     vi.resetModules();
     const mod = await import('../src/index');
-    expect(() => mod.reportSettledMatch(settled())).not.toThrow();
     // An unhandled rejection here would take the gameserver down mid-match, which is a far
-    // worse outcome than a lost rating update.
-    await new Promise((r) => setTimeout(r, 10));
+    // worse outcome than a lost rating update. `internalFetch` resolves rather than
+    // rejecting, so `void`-ing the call is safe — pinned here rather than assumed.
+    expect(() => mod.reportSettledMatch(settled(), { sleep: noSleep })).not.toThrow();
+    await vi.waitFor(() => expect(ladderWarnings(warn)).toHaveLength(1));
+  });
+});
+
+/** Only the warnings this call site owns; anything else on the console is somebody else's. */
+function ladderWarnings(warn: MockInstance<typeof console.warn>): string[] {
+  return warn.mock.calls.map((c) => String(c[0])).filter((m) => m.includes('ladder report'));
+}
+
+describe('reportSettledMatch — what ROADMAP 8.1 changed about the call itself', () => {
+  it('presents the internal key and names itself as the caller', async () => {
+    // Without this the report is refused by matchsvc's own `internalAuth` — the gameserver
+    // is the ONLY legitimate caller of that route and now has to prove it.
+    const { report, calls } = await withMatchsvc('http://matchsvc.test');
+    report(settled());
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    expect(calls[0]!.headers['x-internal-key']).toBe('dev-insecure-internal-key-do-not-use-in-prod');
+    expect(calls[0]!.headers['x-internal-caller']).toBe('gameserver');
+    expect(calls[0]!.headers['content-type']).toBe('application/json');
+  });
+
+  it('drains the response body — D2, the whole reason this stopped being a bare fetch', async () => {
+    const { report, calls } = await withMatchsvc('http://matchsvc.test');
+    report(settled());
+    await vi.waitFor(() => expect(calls[0]?.res.bodyUsed).toBe(true));
+  });
+
+  it('retries a 5xx and stops as soon as one lands', async () => {
+    const { report, calls } = await withMatchsvc('http://matchsvc.test', [503, 200]);
+    report(settled());
+    await vi.waitFor(() => expect(calls).toHaveLength(2));
+    // ...and no third. A settlement that succeeded must not be re-applied:
+    // `RatingStore.applyMatch` has no dedupe key (see SETTLEMENT_RETRY's note in index.ts).
+    await new Promise((r) => setTimeout(r, 5));
+    expect(calls).toHaveLength(2);
+    expect(calls[0]!.res.bodyUsed).toBe(true); // both attempts drained, not just the last
+    expect(calls[1]!.res.bodyUsed).toBe(true);
+  });
+
+  it('never retries a 401 — a refused key cannot be fixed by asking again', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { report, calls } = await withMatchsvc('http://matchsvc.test', [401]);
+    report(settled());
+    await vi.waitFor(() => expect(ladderWarnings(warn)).toHaveLength(1));
+    expect(calls).toHaveLength(1);
+    expect(ladderWarnings(warn)[0]).toContain('401');
+    expect(ladderWarnings(warn)[0]).toContain('room-1'); // WHICH match was lost, not just that one was
+  });
+
+  it('gives up after a bounded number of attempts rather than hammering a down peer', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { report, calls } = await withMatchsvc('http://matchsvc.test', [500]);
+    report(settled());
+    await vi.waitFor(() => expect(ladderWarnings(warn)).toHaveLength(1));
+    expect(calls.length).toBeGreaterThan(1);
+    expect(calls.length).toBeLessThanOrEqual(5);
+    expect(calls.every((c) => c.res.bodyUsed)).toBe(true);
+  });
+
+  it('logs NOTHING when the report lands — the warning is a failure signal, not traffic', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { report, calls } = await withMatchsvc('http://matchsvc.test');
+    report(settled());
+    await vi.waitFor(() => expect(calls).toHaveLength(1));
+    await new Promise((r) => setTimeout(r, 5));
+    expect(ladderWarnings(warn)).toEqual([]);
   });
 });
 

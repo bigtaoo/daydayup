@@ -12,10 +12,23 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import { createMatchsvcServer } from '../src/matchsvc';
+import { INTERNAL_KEY_HEADER } from '../src/internalAuth';
 import { signTicket, verifyTicket, type TicketPayload } from '../src/ticket';
 
 let baseUrl: string;
 let close: () => Promise<void>;
+
+/**
+ * `POST /rating/report` is an INTERNAL route since ROADMAP 8.1 (design/19's D1) — the
+ * gameserver is the only legitimate caller, and it presents `config.ts`'s key. With
+ * `DDU_INTERNAL_KEY` unset (as under test) that is the published dev fallback, spelled out
+ * here rather than imported so this file states the credential it is using. The refusal
+ * cases for this header live in `internalTrustSeam.test.ts`; what these cases still own is
+ * the route's own request/response contract, which the key does not change.
+ */
+const INTERNAL: Record<string, string> = {
+  [INTERNAL_KEY_HEADER]: 'dev-insecure-internal-key-do-not-use-in-prod',
+};
 
 beforeAll(async () => {
   const server = createMatchsvcServer({ dbPath: ':memory:', secret: 'test-secret' });
@@ -242,7 +255,7 @@ describe('matchsvc HTTP — /rating/report and /rating/:accountId', () => {
   it('POST applies a match and returns before/after for every account, without teamIds', async () => {
     const res = await fetch(`${baseUrl}/rating/report`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...INTERNAL },
       body: JSON.stringify({ accountIds: ['http-r-alice', 'http-r-bob'], places: [1, 2] }),
     });
     expect(res.status).toBe(200);
@@ -259,7 +272,7 @@ describe('matchsvc HTTP — /rating/report and /rating/:accountId', () => {
   it('rejects mismatched-length accountIds/places with 400', async () => {
     const res = await fetch(`${baseUrl}/rating/report`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...INTERNAL },
       body: JSON.stringify({ accountIds: ['http-r-x', 'http-r-y'], places: [1] }),
     });
     expect(res.status).toBe(400);
@@ -268,7 +281,7 @@ describe('matchsvc HTTP — /rating/report and /rating/:accountId', () => {
   it('rejects a teamIds array whose length disagrees with accountIds with 400', async () => {
     const res = await fetch(`${baseUrl}/rating/report`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...INTERNAL },
       body: JSON.stringify({ accountIds: ['http-r-x', 'http-r-y'], places: [1, 2], teamIds: [0] }),
     });
     expect(res.status).toBe(400);
@@ -277,7 +290,7 @@ describe('matchsvc HTTP — /rating/report and /rating/:accountId', () => {
   it('a squad-aware POST (teamIds present) applies the identical delta to every teammate over the real wire', async () => {
     const res = await fetch(`${baseUrl}/rating/report`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...INTERNAL },
       body: JSON.stringify({
         accountIds: ['http-sq-a', 'http-sq-b', 'http-sq-c', 'http-sq-d'],
         places: [1, 2, 3, 4],
