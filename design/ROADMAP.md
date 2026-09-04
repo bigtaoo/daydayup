@@ -578,6 +578,13 @@ records which of funny's assumptions does not hold here.
   `duplicate: true`**, not 409, because the sender counts every non-2xx a failure and would
   keep retrying a report that had landed; the settlement budget went 3 → 5 now that a retry
   cannot multiply a rating. Shipped 2026-09-05 — [volume 31](roadmap/31-2026-09-05-exactly-once-settlement.md).
+  The key's *other* half closed the same day. It settled who may call `/rating/report`, never which
+  settlements the gameserver sends — and `reportSettledMatch` decided "was this PvP" from
+  `match.placements`, a field relayed verbatim off the seats' own `result` messages. A co-op/PvE
+  squad agreeing on a state hash and all sending a fabricated `placements` array plus a numeric
+  `winner` therefore moved real accounts' ratings for a match nobody competed in, through the
+  authenticated route. `SettledMatch` now carries the room's ticket-derived `mode` and the guard
+  leads with it — [volume 33](roadmap/33-2026-09-05-ladder-mode-gate.md).
 - **8.2 🟢 Entitlements move server-side.** `/account/meta` was a blind whole-blob upsert — correct
   while `MetaState` was a localStorage mirror, a free-money hole once blueprints and characters are
   sold, and characters are the one meta axis that reaches PvP (`design/14-meta-forging.md`). A new
@@ -958,9 +965,13 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 
 - **09-05** [The delivery loop closes, through an outbox](roadmap/32-2026-09-05-delivery-outbox.md#the-delivery-loop-closes-through-an-outbox-2026-09-05-server-only-no-engine-bump) — volume 30's one open item: `EntitlementService.grant` had shipped in 8.2 with NO caller, so a player could pay, get a `ledger` row and own nothing. The question design/19 §4 left open was not whether to close the loop but **where the internal call sits against the settlement transaction**, and it cannot sit inside — `entitlements` is in another database FILE, and an HTTP call under `BEGIN IMMEDIATE` would hold SQLite's write lock across a round trip and *still* not be atomic with the remote write, buying the cost of the tear without removing it. Making it just after COMMIT is worse: a process that dies in the gap has taken money with nothing owed and nothing recorded, which is exactly what the seam's synchronous `void` signature exists to prevent. So the call sits outside and a durable PROMISE sits inside — a fourth table `deliveries`, one synchronous INSERT in the settlement transaction, keyed on the **ledger row's own id** so a duplicate is impossible without a second idempotency mechanism and `ledger LEFT JOIN deliveries` answers "which money moved without reaching an account". A pump drains it into a new internal-key route on matchsvc, on three triggers: opportunistically after a settlement commits (not awaited — a platform callback must not wait on a peer that may be down), once at STARTUP (the only thing that resumes a process that died between the COMMIT and the delivery, and the entire reason the table exists rather than a variable), and a bounded interval as backstop. Delivery is at-least-once, and that is safe **only** because 8.2's `UNIQUE(account_id, sku)` already made the receiving grant idempotent — which is the whole reason this is an outbox and not a two-phase commit. The failure policy is where the branches are and the two directions are opposite: a **4xx is terminal** and logged as money-taken-nothing-granted, while a 5xx or a refused connection leaves the row owed **forever** (no dead-letter, no attempt budget — abandoning it loses a purchase, while a peer that comes back heals every stuck row). The receiving route's status codes are load-bearing for the same reason: an unknown account is CHECKED with a `SELECT` and answered 404, a failed write answered 500, because telling those apart by parsing a driver's error string is what the rest of this plane refuses to do. An empty grant list and an unknown grant kind are both refused rather than treated as no-ops — a 200 would let the pump retire the row and erase the evidence that a player paid for nothing. +73 cases in four new files and three existing ones, including a two-process end-to-end case on two ephemeral ports over two separate SQLite files (the only layer that can show the outbound key one function derives being accepted by the inbound verifier another derives) and the restart case written twice, since it is the only reason the table exists and `:memory:` cannot show it. 100% lines AND branches on every new file; a 12-mutant battery killed 12 with both controls surviving. `net` `test` `docs`
 
+**[2026-09-05 — the ladder gate stops asking the players](roadmap/33-2026-09-05-ladder-mode-gate.md)**
+
+- **09-05** [The ladder gate stops asking the players](roadmap/33-2026-09-05-ladder-mode-gate.md#the-ladder-gate-stops-asking-the-players-2026-09-05-server-only-no-engine-bump) — 8.1's key settled *who* may write the ladder; this settles *which settlements get written*, which until now the clients decided. The guard was `!hashOk || !placements || typeof winner !== 'number'`, and only `hashOk` is trusted — the room computes it by comparing every seat's state hash. `placements` and `winner` are `reports[0]`'s values, relayed verbatim off the seats' own `result` messages, and `hashOk` says only that every seat sent the SAME hash, never that any of it describes a real match. So `placements`-is-present was doing double duty: a necessary precondition for `buildRatingReportBody`, and — per the comment above it — the test for "was this PvP", which is a question the seats were answering about themselves. A co-op/PvE squad that plays a room out, agrees on a hash (they already do; same deterministic sim) and all send a fabricated `placements` array plus a numeric `winner` therefore moved REAL accounts' ratings for a match nobody competed in — `seatAccounts` comes from the verified ticket, so they never had to lie about who they were, only about what they were playing. It also qualifies volume 31's "anyone who can reach the route can already post whatever placements they like": true of the route, and it understated the population, because the gameserver holding a real key was forwarding placements authored by clients holding none. The room already knew better — `MatchRoomDeps.mode` comes from the verified ticket, `RoomManager.join` rejects a joiner who disagrees, and `index.ts`'s reconnect arm was already cross-checking `modeValue`. It went unconsulted on purpose and the comment said so; that reasoning is right about `match_over`'s `reason` string, which is cosmetic, and the mistake was letting a rule about a display string govern a decision with ratings attached. `SettledMatch` gains a REQUIRED `mode` (optional fails closed only by luck, since `undefined !== 'pvp'`; required makes it a compile error, and it found the one construction site at once), `MatchRoom` still imports nothing from matchsvc, and `placements`/`winner` stay as a shape check rather than as evidence. Mutation-checked three ways — dropping the `mode` arm kills 2, hardcoding `'pvp'` kills 7, hardcoding `'coop'` kills exactly 1, the control written for it. `net` `test` `docs`
+
 ## The work log — by theme
 
-The same 113 entries, grouped. An entry with more than one tag appears more than once.
+The same 114 entries, grouped. An entry with more than one tag appears more than once.
 
 **`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(56)*
 
@@ -1096,7 +1107,7 @@ The same 113 entries, grouped. An entry with more than one tag appears more than
 - 08-25 [The Seven Districts: the launch arena gets authored](roadmap/06-2026-08-25.md#the-seven-districts-the-launch-arena-gets-authored-2026-08-25-content)
 - 08-25 [The three parked rules that had only shipped half](roadmap/06-2026-08-25.md#the-three-parked-rules-that-had-only-shipped-half-2026-08-25-client--one-render-only-engine-field)
 
-**`test`** — coverage sweeps, gates, mutation batteries *(44)*
+**`test`** — coverage sweeps, gates, mutation batteries *(45)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 08-05 [Platform-layer test coverage pass](roadmap/01-2026-07-24--08-05.md#platform-layer-test-coverage-pass--2026-08-05-全部加测试)
@@ -1142,6 +1153,7 @@ The same 113 entries, grouped. An entry with more than one tag appears more than
 - 09-04 [The billing plane](roadmap/30-2026-09-04-billsvc.md#the-billing-plane-2026-09-04-server-only-no-engine-bump)
 - 09-05 [The settlement report becomes exactly-once](roadmap/31-2026-09-05-exactly-once-settlement.md#the-settlement-report-becomes-exactly-once-2026-09-05-server-no-engine-bump)
 - 09-05 [The delivery loop closes, through an outbox](roadmap/32-2026-09-05-delivery-outbox.md#the-delivery-loop-closes-through-an-outbox-2026-09-05-server-only-no-engine-bump)
+- 09-05 [The ladder gate stops asking the players](roadmap/33-2026-09-05-ladder-mode-gate.md#the-ladder-gate-stops-asking-the-players-2026-09-05-server-only-no-engine-bump)
 
 **`audio`** — cues, music, the engine to sound channel *(5)*
 
@@ -1193,7 +1205,7 @@ The same 113 entries, grouped. An entry with more than one tag appears more than
 - 09-04 [The dispatch chain gets five files](roadmap/25-2026-09-04-matchsvc-routes.md#the-dispatch-chain-gets-five-files-2026-09-04-server-only-no-engine-bump)
 - 09-04 [The weapon roster gets tested](roadmap/26-2026-09-04-weapon-tests.md#the-weapon-roster-gets-tested-2026-09-04-tests-and-one-pure-module-no-engine-bump)
 
-**`docs`** — design docs and this log itself *(41)*
+**`docs`** — design docs and this log itself *(42)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-02 [Documentation pass](roadmap/01-2026-07-24--08-05.md#documentation-pass--2026-08-02)
@@ -1236,8 +1248,9 @@ The same 113 entries, grouped. An entry with more than one tag appears more than
 - 09-04 [The billing plane](roadmap/30-2026-09-04-billsvc.md#the-billing-plane-2026-09-04-server-only-no-engine-bump)
 - 09-05 [The settlement report becomes exactly-once](roadmap/31-2026-09-05-exactly-once-settlement.md#the-settlement-report-becomes-exactly-once-2026-09-05-server-no-engine-bump)
 - 09-05 [The delivery loop closes, through an outbox](roadmap/32-2026-09-05-delivery-outbox.md#the-delivery-loop-closes-through-an-outbox-2026-09-05-server-only-no-engine-bump)
+- 09-05 [The ladder gate stops asking the players](roadmap/33-2026-09-05-ladder-mode-gate.md#the-ladder-gate-stops-asking-the-players-2026-09-05-server-only-no-engine-bump)
 
-**`net`** — matchmaking, sockets, reconnect *(8)*
+**`net`** — matchmaking, sockets, reconnect *(9)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 09-03 [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump)
@@ -1247,6 +1260,7 @@ The same 113 entries, grouped. An entry with more than one tag appears more than
 - 09-04 [The billing plane](roadmap/30-2026-09-04-billsvc.md#the-billing-plane-2026-09-04-server-only-no-engine-bump)
 - 09-05 [The settlement report becomes exactly-once](roadmap/31-2026-09-05-exactly-once-settlement.md#the-settlement-report-becomes-exactly-once-2026-09-05-server-no-engine-bump)
 - 09-05 [The delivery loop closes, through an outbox](roadmap/32-2026-09-05-delivery-outbox.md#the-delivery-loop-closes-through-an-outbox-2026-09-05-server-only-no-engine-bump)
+- 09-05 [The ladder gate stops asking the players](roadmap/33-2026-09-05-ladder-mode-gate.md#the-ladder-gate-stops-asking-the-players-2026-09-05-server-only-no-engine-bump)
 
 **`i18n`** — locales and text layout *(2)*
 

@@ -1,12 +1,18 @@
 # Work log — 2026-09-05: the ladder gate stops asking the players
 
-Volume 32. A follow-up to Phase 8.1's internal trust seam, on the half of it that the key does not
+Volume 33. A follow-up to Phase 8.1's internal trust seam, on the half of it that the key does not
 cover: authentication settled *who* may write the ladder, and left *which settlements get written*
 decided by data the client supplies.
 
+Landed the same day as [volume 31](31-2026-09-05-exactly-once-settlement.md) (exactly-once
+settlement) and [volume 32](32-2026-09-05-delivery-outbox.md) (the billing outbox), from a parallel
+worktree, and it is the same seam as 31 seen from the other end: 31 makes a settlement report apply
+**at most once**, this one decides **whether it should have been sent at all**. Neither affects the
+other — a room still settles once, and the dedupe key is unchanged.
+
 Indexed from [`../ROADMAP.md`](../ROADMAP.md). Design account in
-[`../19-server-platform.md`](../19-server-platform.md) §3, whose "What building it changed"
-subsection now carries this as a dated amendment.
+[`../19-server-platform.md`](../19-server-platform.md) §3, which now carries
+"The ladder gate stops asking the players" as its own dated subsection.
 
 ## The ladder gate stops asking the players (2026-09-05, server only, no engine bump)
 
@@ -130,5 +136,12 @@ Server suite 676 → 680 passing, all green; `tsc --noEmit` clean for engine, se
   message going back to the seats that authored the input, with nothing behind it, and changing it
   would alter client-visible co-op behaviour for no gain. The doc comment now distinguishes the two
   cases rather than stating the payload-derived rule as though it covered both.
-- **`/rating/report` is still at-least-once.** Unchanged by this pass and still the next thing to do
-  to this seam — see §3's own bullet on the dedupe key.
+- **The exactly-once work is untouched, and untouched BY this.** Volume 31 closed 8.1's open
+  at-least-once item the same day — `ladderReport.ts`'s `reportKey`, a `rating_reports` claim
+  inside the transaction that moves the ratings. It is orthogonal: it stops a report that *should*
+  have been sent from applying twice, and this stops a report that should never have been sent.
+  A room still settles at most once, so the dedupe key's uniqueness is unaffected.
+- **A report with no `reportKey` is still applied the old way.** §3's bullet calls that "not a hole
+  worth closing — the route is key-gated", which stands. This pass qualifies only the reach of that
+  argument, not the decision: the holder of the key was forwarding placements authored by clients
+  who hold none.

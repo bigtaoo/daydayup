@@ -242,6 +242,54 @@ above did not say.
   retried. The recoverable failure wins. This is not a hole worth closing — the route is
   key-gated, and anyone who can reach it can already post whatever placements they like.
 
+### The ladder gate stops asking the players — SHIPPED 2026-09-05
+
+The other half of "who may move a rating", and the one the key does not cover. Authentication
+settled *who* may call `/rating/report`. It did not settle *which settlements the gameserver
+sends*, and until 2026-09-05 that was decided by data the clients supply.
+
+`reportSettledMatch`'s guard read
+`!match.hashOk || !match.placements || typeof match.winner !== 'number'`, and only the first of
+those is trusted. `hashOk` is the room's own work — `MatchRoom.reportResult` compares every seat's
+end-of-match state hash and sets it itself. `placements` and `winner` are `reports[0]`'s values,
+relayed verbatim out of the seats' own `result` messages, with `hashOk` saying only that every
+seat sent the *same* hash, never that any of it describes a real match. So `placements`-is-present
+was doing double duty: a legitimate precondition for `buildRatingReportBody`, and — per the comment
+above it — the test for "was this PvP", which is a question the seats were answering about
+themselves.
+
+A co-op/PvE squad that plays a room out, agrees on a hash (they already do; same deterministic
+sim) and all send a fabricated `placements` array plus a numeric `winner` therefore produced a
+real ladder report for a match nobody competed in. The accounts moved are real: `seatAccounts`
+comes from the verified ticket, so they never had to lie about who they were, only about what they
+were playing.
+
+**This is the qualification on the bullet above.** "Anyone who can reach the route can already post
+whatever placements they like" is true of the route, and was the right call for a keyless report.
+It understated the population: the gameserver — correctly authenticated, holding a real key — was
+forwarding placements authored by ordinary clients who hold no key at all.
+
+The room already knew better. `MatchRoomDeps.mode` is set from the verified ticket
+(`resolveSeat` → `RoomManager.join` → the constructor), `RoomManager.join` rejects a joiner who
+disagrees about it, and `index.ts`'s reconnect arm was already cross-checking `modeValue` to refuse
+a stale or foreign ticket. Settlement just never consulted it — deliberately, and the comment said
+so: "its presence, not the room's own knowledge of match type, is what selects the `'placement'`
+reason — MatchRoom stays generic infrastructure". That reasoning is right about `match_over`'s
+`reason` string, which is cosmetic. The mistake was letting a rule about a display string govern a
+decision with ratings attached.
+
+`SettledMatch` now carries `mode` and the guard leads with `mode !== 'pvp'`. Three notes:
+
+- **`mode` is required, not optional.** An optional field would leave a future producer that omits
+  it with `undefined`, which is not `'pvp'` and so fails closed *by luck*. Required makes it a
+  compile error, and it found the one construction site at once.
+- **`placements`/`winner` stay in the guard**, as the shape check `buildRatingReportBody` needs —
+  not as evidence of the match type. They are on their own line so the file reads that way.
+- **`MatchRoom` still imports nothing from matchsvc.** `mode` was already in `MatchRoomDeps`, so
+  the room reports a fact about itself and the entrypoint decides what it means.
+
+Recorded in [`roadmap/33-2026-09-05-ladder-mode-gate.md`](roadmap/33-2026-09-05-ladder-mode-gate.md).
+
 ## 4. Billing: the data model — SHIPPED 2026-09-04
 
 **Status: SHIPPED 2026-09-04** (ROADMAP 8.3). `server/src/billingDb.ts` owns the file and
