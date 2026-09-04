@@ -31,6 +31,8 @@ pure core + the shared ticket module:
 | `src/Matchmaker.ts`  | Pure queue: `enqueue`→group-when-full→signed tickets, `poll`. Injected clock/seed/roomId/signer. | no | ✅ `test/Matchmaker.test.ts` |
 | `src/matchsvc.ts`    | HTTP bootstrap and assembly shell — the ONLY control-plane file that imports `node:http`; wires the real clock/seed/signer around `Matchmaker`, then dispatches to `src/routes/`. | yes | ✅ `test/matchsvc.http.test.ts` |
 | `src/routes/*.ts`    | One module per surface (`auth`, `account`, `match`, `party`, `rating`), each a set of free `(req, res, url, deps)` handlers, over a shared `routes/http.ts` (CORS, `send`, `readJson`). | no | ✅ `test/routes.test.ts` + the two `*.http.test.ts` |
+| `src/db.ts` / `src/AuthService.ts` | The SQLite (`node:sqlite`) account store: `accounts`/`sessions`/`ratings`/`meta_state`/`entitlements` (design/16-accounts.md). | file | ✅ `test/db.test.ts`, `test/AuthService.test.ts` |
+| `src/EntitlementService.ts` | Server-owned blueprint/character ownership (design/19 §2, ROADMAP 8.2) — the reason `/account/meta` is no longer a blind whole-blob upsert. Grant is `ON CONFLICT DO NOTHING` + `changes`, so an at-least-once delivery is idempotent. | no | ✅ `test/EntitlementService.test.ts` |
 | `src/config.ts`      | The one place that reads `DDU_TICKET_SECRET` (env), so both planes agree on the secret. | env | — |
 
 `MatchRoom`/`RoomManager` take an injected `Scheduler` (the metronome clock) and

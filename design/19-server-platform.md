@@ -72,16 +72,17 @@ part is correct and is not changed here. Two things around it are not:
 
 Neither defect involves billing. Both should be fixed first.
 
-## 2. Entitlements move server-side
+## 2. Entitlements move server-side — SHIPPED 2026-09-04
 
-Today `/account/meta` (`server/src/routes/account.ts`) is a blind whole-blob upsert:
+Until this landed, `/account/meta` (`server/src/routes/account.ts`) was a blind whole-blob upsert:
 `INSERT ... ON CONFLICT DO UPDATE SET
 data = excluded.data`, with the only validation being that a `data` key is present. That was the
 right call when `MetaState` was a localStorage mirror (`design/16-accounts.md` says so) and
 nothing in it was worth money.
 
 The fix is not to validate the blob — that is whack-a-mole. It is to move the two account-level,
-purchasable things out of it:
+purchasable things out of it. `server/src/EntitlementService.ts` owns them, over one table in the
+existing account database (`server/src/db.ts`):
 
 ```
 entitlements(id, account_id, sku, source, order_id, granted_at)
@@ -100,9 +101,45 @@ entitlements(id, account_id, sku, source, order_id, granted_at)
   their shape.
 - A guest (no account) is byte-identical to today: local-only, no server row.
 
-`source` is not decoration. It is what makes the operational work in §8 possible — a daily audit
+`source` is not decoration. It is what makes the operational work in §7 possible — a daily audit
 of non-`purchase` grants, and a support path that can hand-issue one and have it look different
 from a paid one afterwards.
+
+### What the build settled that the plan left open
+
+- **SKUs are namespaced rather than split across two tables**: `blueprint:<weaponId>` and
+  `character:<skinId>`. One `UNIQUE(account_id, sku)` then covers both, a blueprint id can never
+  collide with a skin id, and `WHERE sku LIKE 'character:%'` is the whole query §7's
+  hand-correctable-with-SQL requirement needs.
+- **`entitlements` DOES take the foreign key `ratings` deliberately refuses**, and the contrast is
+  the point. A rating key is any opaque id `ladderReport.ts` hands over, including a guest/bot
+  `seat:{roomId}:{seatIdx}` scaffold with no `accounts` row at all. An entitlement is only ever
+  minted for a real logged-in account — a guest has no row here — so no legitimate id can fail the
+  constraint, and `node:sqlite` enforcing foreign keys by default is then exactly what makes a
+  typo'd hand-issue fail loudly instead of becoming an orphan that silently never delivers.
+- **Two CHECK constraints**, both because §7 rules out an admin service and the schema therefore
+  has to survive being corrected by a human at a `sqlite3` prompt: `source` is constrained to the
+  enum §7's daily audit groups by, and a `'purchase'` with no `order_id` is rejected as
+  unauditable — §7's reconciliation could never match it to anything.
+- **The client's POST is normalized on WRITE, not merely overwritten on read.** Ownership is
+  stripped before the blob is stored, so `meta_state` never holds a client-authored ownership
+  claim that would mislead whoever reads that table with SQL.
+- **`GET /account/meta` answers `{ data, entitlements }`**, the second being
+  `{ sku, source, grantedAt }` per row — never `order_id`, which addresses a row in billsvc's
+  private database. One round trip, and therefore no new route and no edit to `matchsvc.ts`'s
+  dispatch chain, which §3 was landing in from a parallel worktree at the same time.
+- **Nothing under `client/src/game/` had to change, and the Forge neither flickers nor rolls
+  back.** The server returns EMPTY ownership for every account that exists today, and
+  `client/src/meta/store.ts`'s `migrate()` already unions `STARTER_BLUEPRINTS` + `FREE_CHARACTERS`
+  back in on every load — so ownership before and after a login is identical. What *does*
+  disappear is ownership the client granted itself, which is the hole this section exists to
+  close (see §9). `client/src/net/entitlements.ts` is the client half: the wire read, a defensive
+  parse that drops one malformed entry without discarding the ones around it, and the same
+  skip-unknown-namespace projection the server uses.
+
+**Named so it is not mistaken for shipped:** nothing yet *calls* `EntitlementService.grant`. The
+delivery path is billsvc's (§4) through an internal-key-authed route (§3), and
+`EntitlementService.owns` exists and is tested but no PvP character gate consults it yet.
 
 ## 3. The internal trust seam
 
@@ -163,7 +200,7 @@ entry" both re-grant. Here, `orders` + `entitlements` + `ledger` are three table
 file, so a single `BEGIN IMMEDIATE` makes the tear impossible and the CAS machinery unnecessary.
 
 What survives the translation is the *reasoning*, pointed at the tear that does still exist —
-between the **platform** and the local transaction. That is what §8's reconciliation covers.
+between the **platform** and the local transaction. That is what §7's reconciliation covers.
 
 ## 5. IAP adapters and the dev stub
 
@@ -254,6 +291,11 @@ None of this is optional once money moves; all of it is small if the schema anti
   cannot be verified past the dev stub. Which platform is first is a product decision.
 - Whether `entitlements` should also absorb the **materials** half of `MetaState` (it is farmable,
   not purchasable, so it is only worth it if duplication-by-blob-replay turns out to matter).
+- `ForgeActions.acquireBlueprint`'s `demo: free grant` scaffold (`design/14-meta-forging.md`,
+  ROADMAP 2.4) is now a grant that survives until the next login and then vanishes, because the
+  server answers `/account/meta` with its own table. It has to become a real purchase, or be
+  hidden while a session is live. Left alone by §2's pass on purpose: which of the two is a
+  product decision, not a server one.
 - Refund handling is specified only to the extent of "the ledger is append-only and a reversal is
   a new row". What a revoked character does to a ladder history is unanswered.
 - SQLite stays the answer until there are two control-plane processes. That, not revenue, is the
