@@ -165,10 +165,12 @@ describe('matchsvc HTTP — /auth/change-password', () => {
 });
 
 describe('matchsvc HTTP — /account/meta', () => {
-  it('round-trips MetaState through a real logged-in session', async () => {
+  it('round-trips the client-authored half of MetaState through a real logged-in session', async () => {
     const { body } = await register('httpmeta1', 'hunter22');
     const token = body.token as string;
-    const data = { unlockedBlueprints: ['repeater'], selectedSkin: 'juggernaut' };
+    // Materials/loadout/selection are what the client legitimately authors — they survive
+    // the round trip verbatim. Ownership does NOT: see the next test.
+    const data = { materialBank: { mat_fire: 3 }, loadout: ['repeater'], selectedSkin: 'juggernaut' };
 
     const postRes = await fetch(`${baseUrl}/account/meta`, {
       method: 'POST',
@@ -179,13 +181,40 @@ describe('matchsvc HTTP — /account/meta', () => {
 
     const getRes = await fetch(`${baseUrl}/account/meta`, { headers: { authorization: `Bearer ${token}` } });
     expect(getRes.status).toBe(200);
-    expect(await getRes.json()).toEqual({ data });
+    // Ownership always comes back, from the entitlements table rather than the blob —
+    // empty arrays for an account that has been granted nothing.
+    expect(await getRes.json()).toEqual({
+      data: { ...data, unlockedBlueprints: [], ownedCharacters: [] },
+      entitlements: [],
+    });
   });
 
-  it('a brand-new account with no saved meta gets { data: null }', async () => {
+  it('ROADMAP 8.2: ownership a client POSTs itself is ignored, not rejected — the write still 200s and the read shows none of it', async () => {
+    // The free-money hole design/19 §2 closes, through the real HTTP surface: a `curl` with
+    // nothing but a valid session used to be able to hand itself every paid character, which
+    // is the one meta axis that reaches PvP (design/14).
+    const { body } = await register('httpmeta3', 'hunter22');
+    const token = body.token as string;
+    const postRes = await fetch(`${baseUrl}/account/meta`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        data: { unlockedBlueprints: ['cannon', 'emberblade'], ownedCharacters: ['paid-hero'], materialBank: { mat_ice: 1 } },
+      }),
+    });
+    expect(postRes.status).toBe(200); // IGNORED, not rejected — no pre-existing client path breaks
+
+    const getRes = await fetch(`${baseUrl}/account/meta`, { headers: { authorization: `Bearer ${token}` } });
+    expect(await getRes.json()).toEqual({
+      data: { materialBank: { mat_ice: 1 }, unlockedBlueprints: [], ownedCharacters: [] },
+      entitlements: [],
+    });
+  });
+
+  it('a brand-new account with no saved meta gets { data: null } and no entitlements', async () => {
     const { body } = await register('httpmeta2', 'hunter22');
     const res = await fetch(`${baseUrl}/account/meta`, { headers: { authorization: `Bearer ${body.token as string}` } });
-    expect(await res.json()).toEqual({ data: null });
+    expect(await res.json()).toEqual({ data: null, entitlements: [] });
   });
 
   it('rejects GET without a session with 401', async () => {

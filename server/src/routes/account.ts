@@ -8,27 +8,62 @@
  * Every route here requires a live session; the bearer-token reader lives with the rest of
  * the account trust boundary in `routes/auth.ts` and is imported from there.
  *
- * ROADMAP 8.2 is the pass that stops `POST /account/meta` being a blind whole-blob upsert
- * and moves purchasable ownership into an `entitlements` table — this file is the seam it
- * lands in. Nothing about that is anticipated here; the split is behaviour-preserving.
+ * ROADMAP 8.2 landed here (design/19-server-platform.md §2): `/account/meta` is no longer
+ * a blind whole-blob upsert. `meta_state` still stores a whole blob — materials, loadout,
+ * in-progress forge state, everything the client legitimately authors — but the two
+ * PURCHASABLE fields are owned by the `entitlements` table instead:
+ *
+ * - `POST` strips ownership out of the blob before storing it. Ignored, not rejected, so
+ *   an older client / a guest promoting its local save / an offline replay all keep
+ *   working exactly as before (design/19 §2 is explicit about this).
+ * - `GET` writes the server's own answer back over those fields, and also returns the raw
+ *   entitlement list so the client can tell WHY it owns something (a store UI needs
+ *   `source`, and `client/src/net/entitlements.ts` needs it to merge a purchase into a
+ *   brand-new account's local state before its first blob exists).
+ *
+ * A guest never reaches either route — no session, no row, byte-identical to today.
  */
 import type { DatabaseSync } from 'node:sqlite';
 import type { AuthService } from '../AuthService';
 import { readJson, send, type RouteHandler } from './http';
 import { requireAuth } from './auth';
+import { EntitlementService, applyOwnership, stripOwnership } from '../EntitlementService';
 
 export interface AccountRouteDeps {
   auth: AuthService;
   db: DatabaseSync;
 }
 
+/**
+ * `EntitlementService` is built per request from `deps.db` rather than wired into
+ * matchsvc's shared `deps` bundle. It holds nothing but the connection, and every other
+ * handler in this directory already reaches for `deps.db.prepare(...)` inline, so the
+ * shared bundle would buy a coupling to the assembly shell and no measurable anything.
+ */
+function entitlementsOf(deps: AccountRouteDeps): EntitlementService {
+  return new EntitlementService(deps.db);
+}
+
 export const getMeta: RouteHandler<AccountRouteDeps> = (req, res, _url, deps) => {
   const session = requireAuth(req, deps.auth);
   if (!session) return send(res, 401, { error: 'invalid or expired session' });
+  const entitlements = entitlementsOf(deps);
+  const rows = entitlements.list(session.accountId);
   const row = deps.db.prepare('SELECT data FROM meta_state WHERE account_id = ?').get(session.accountId) as
     | { data: string }
     | undefined;
-  send(res, 200, { data: row ? (JSON.parse(row.data) as unknown) : null });
+  // `data: null` still means "this account has never saved meta state" — unchanged, and
+  // load-bearing: the client answers it by pushing its own (possibly guest-accumulated)
+  // local state up rather than overwriting it with nothing. Entitlements ride alongside
+  // rather than inside so that case can still deliver a purchase made before the first
+  // save (see `pullAccountMeta`).
+  const data = row ? applyOwnership(JSON.parse(row.data) as unknown, entitlements.ownership(session.accountId)) : null;
+  send(res, 200, {
+    data,
+    // `orderId` is deliberately not exposed: it addresses a row in billsvc's private
+    // database and the client has no use for it.
+    entitlements: rows.map((r) => ({ sku: r.sku, source: r.source, grantedAt: r.grantedAt })),
+  });
 };
 
 export const postMeta: RouteHandler<AccountRouteDeps> = (req, res, _url, deps) => {
@@ -41,7 +76,7 @@ export const postMeta: RouteHandler<AccountRouteDeps> = (req, res, _url, deps) =
       .prepare(
         'INSERT INTO meta_state (account_id, data) VALUES (?, ?) ON CONFLICT(account_id) DO UPDATE SET data = excluded.data',
       )
-      .run(session.accountId, JSON.stringify(data));
+      .run(session.accountId, JSON.stringify(stripOwnership(data)));
     send(res, 200, { ok: true });
   });
 };

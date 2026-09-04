@@ -35,7 +35,7 @@
  *   POST /auth/logout       { token }                      -> { ok: true }             routes/auth
  *   GET  /auth/me           (Bearer token)                 -> { accountId, username } | 401
  *   POST /auth/change-password { token, oldPassword, newPassword } -> { ok: true } | 400/401
- *   GET  /account/meta      (Bearer token)                 -> { data: MetaState | null } | 401
+ *   GET  /account/meta      (Bearer token)  -> { data: MetaState | null, entitlements } | 401
  *   POST /account/meta      (Bearer token) { data }        -> { ok: true } | 400/401    routes/account
  *   GET  /health                                                                       (here)
  *

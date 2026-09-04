@@ -530,7 +530,9 @@ describe('/auth/change-password and /account/meta guards', () => {
       const read = await fetch(`${ctx.url}/account/meta`, {
         headers: { authorization: `Bearer ${token}` },
       });
-      expect(await read.json()).toEqual({ data: null }); // nothing was stored
+      // `entitlements` rides alongside `data` since ROADMAP 8.2 (design/19 §2); empty here
+      // because a brand-new account owns nothing the server minted.
+      expect(await read.json()).toEqual({ data: null, entitlements: [] }); // nothing was stored
     } finally {
       await ctx.close();
     }

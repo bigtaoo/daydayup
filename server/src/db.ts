@@ -40,6 +40,40 @@ CREATE TABLE IF NOT EXISTS meta_state (
   account_id TEXT PRIMARY KEY REFERENCES accounts(id),
   data TEXT NOT NULL
 );
+
+-- Server-owned ownership of the purchasable half of MetaState (design/19 §2, ROADMAP 8.2;
+-- logic in EntitlementService.ts). meta_state above keeps what the client legitimately
+-- authors and stays a blob; blueprint/character ownership moves here, because a whole-blob
+-- upsert is a free-money hole once those are sold.
+--
+-- This table DOES take the FK that \`ratings\` above deliberately refuses, and the contrast
+-- is the point: a rating key is any opaque id ladderReport.ts hands us, including a
+-- guest/bot \`seat:{roomId}:{seatIdx}\` scaffold that never has an accounts row. An
+-- entitlement is only ever minted for a real, logged-in account — a guest has no session,
+-- so it has no row here at all (design/19: "byte-identical to today") — so there is no
+-- legitimate id that could fail the constraint, and node:sqlite enforcing FKs by default
+-- is exactly what we want: a hand-issued row for a typo'd account id fails loudly at the
+-- \`sqlite3\` prompt instead of becoming an orphan that silently never delivers.
+--
+-- Shaped to be read and hand-corrected with plain SQL, since design/19 §7 rules out an
+-- admin service: \`WHERE sku LIKE 'character:%'\` covers both namespaces out of one table,
+-- and the source CHECK keeps a typo out of the column §7's daily audit groups by.
+CREATE TABLE IF NOT EXISTS entitlements (
+  id INTEGER PRIMARY KEY,
+  account_id TEXT NOT NULL REFERENCES accounts(id),
+  sku TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('purchase', 'grant', 'event', 'starter', 'drop')),
+  -- billsvc's orders.id (design/19 §4). No FK: that table lives in a different database
+  -- file on purpose, so the join is reconciliation's job, never SQLite's.
+  order_id TEXT,
+  granted_at INTEGER NOT NULL,
+  -- A SKU here is own-or-not, never stacked (design/19 §2) — so this is also the
+  -- idempotency key an at-least-once platform callback is delivered through.
+  UNIQUE(account_id, sku),
+  -- A paid entitlement with no order behind it is unauditable, and §7's reconciliation
+  -- could never match it to anything on the platform side.
+  CHECK (source <> 'purchase' OR order_id IS NOT NULL)
+);
 `;
 
 /** Opens (creating if needed) the account DB and ensures the schema exists. */
