@@ -558,15 +558,21 @@ billing, does not exist — and adding it turns three tolerable things into wron
 adopts a named set of funny's *mechanisms* and explicitly rejects its *topology*; every borrow
 records which of funny's assumptions does not hold here.
 
-- **8.1 🔴 The internal trust seam.** Two defects that stand today, independent of billing.
-  `/rating/report` on `matchsvc.ts` has no authentication at all — no key, no origin check, open
-  CORS — so any client can POST arbitrary ladder placements for any `accountId`, on a route only
-  the gameserver is meant to call. And `reportSettledMatch` in `index.ts` is a bare
-  `fetch(...).catch(() => {})` that never drains its response body: funny shipped that exact shape
+- **8.1 ✅ The internal trust seam.** Two defects that stood on 2026-09-04, independent of billing.
+  `/rating/report` had no authentication at all — no key, no origin check, open CORS — so any
+  client could POST arbitrary ladder placements for any `accountId`, on a route only the
+  gameserver is meant to call. And `reportSettledMatch` in `index.ts` was a bare
+  `fetch(...).catch(() => {})` that never drained its response body: funny shipped that exact shape
   and measured it wedging undici's keep-alive pool under a concurrent burst, so that *no* request
-  arrived. Closes both with `server/src/internalAuth` (timing-safe `x-internal-key`, a third
-  namespace distinct from player sessions and the `ticket.ts` HMAC) and `server/src/internalFetch`
-  (drained body, per-attempt timeout, retry only where idempotent-and-not-self-healing).
+  arrived. Closed by `server/src/internalAuth.ts` (an `x-internal-key` hashed before
+  `timingSafeEqual` — a third namespace distinct from player sessions and the `ticket.ts` HMAC,
+  structurally so: nothing in it reads `authorization`) and `server/src/internalFetch.ts` (body
+  always drained, explicit per-attempt timeout, retry opt-in and only where
+  idempotent-and-not-self-healing). Shipped 2026-09-04 — [volume 29](roadmap/29-2026-09-04-internal-trust-seam.md).
+  One thing stays open and is written at the call site: `/rating/report` is at-least-once, since
+  `RatingStore.applyMatch` has no dedupe key, so a retried-but-delivered report double-applies a
+  rating. The settlement budget is a deliberate 3 until `rating.ts`/`db.ts` gain the `UNIQUE` +
+  `changes()` shape 8.3 already specifies for billing delivery.
 - **8.2 🟢 Entitlements move server-side.** `/account/meta` was a blind whole-blob upsert — correct
   while `MetaState` was a localStorage mirror, a free-money hole once blueprints and characters are
   sold, and characters are the one meta axis that reaches PvP (`design/14-meta-forging.md`). A new
@@ -684,11 +690,11 @@ Client hardening pass   DONE (✅ 2026-08-04) — full client/src code review (1
 Room & door model       DONE (✅ 2026-08-04/05, ENGINE_VERSION 34→35) — PvE floors co-resident + door-connected (placeFloor/carveDoorGaps/buildFloorGeometry, new DoorSystem: activation/lock-unlock/force-regroup), replacing the old one-room swap. HudView.ts fixed to compile against the new schema. Client room rendering shipped same day: door_{locked,open}_raw.png loaded and wired onto RoomBuilder's per-door Sprite (reactive lock/unlock in place via updateDoors(), no full rebuild), EventReactor reacts to force_regroup with a local-player camera snap. Fully-realized branching shipped 2026-08-05 (ENGINE_VERSION 35) — a real fork-and-reconverge diamond of sibling rooms, needing zero client changes (DoorSystem/RoomBuilder/EventReactor already topology-agnostic). PvE minimap adapter shipped same day — FloorProgress deleted, PvE now shares PvP's own Minimap widget via dungeonToArenaMap/dungeonRoomStatus (minimapLayout.ts). Map-editor door placement shipped same day (no engine version bump) — DungeonFloorMap/placeAuthoredFloor/DungeonConfig.floorMaps + a third tools/map-editor mode ("PvE Dungeon Floor") + validateDungeonFloorMap, closing the last item of the original three-item follow-up list. "全部加测试" follow-up added DungeonFloorCanvas.test.ts (28 tests, previously zero coverage on the tool's most complex new file). Real 2D graph layout (`layout: 'graph2d'`, `placeFloorGraph2d`) shipped same day too — a generated floor can place in real 2D instead of a forced west→east spine. "graph2d content" pass shipped 2026-08-05 (same day): `EMBER_DUNGEON` switches to `'graph2d'` (a new `ember_atrium` piece + wider exit authoring on `ember_pillars`/`ember_extraction`/`ember_boss`), and `placeFloorGraph2d` gains a direction-retry fallback for fold-back overlaps — both found necessary by testing the real content, not by inspection. `'branching'` still stays unused by any shipped config. **Bug fix pass shipped 2026-08-12 (ENGINE_VERSION 35→36):** two real bugs found from a live player report (door unlocked but still physically impassable) — `DeathDropsSystem`'s `onDeathSpawn` boss-adds now inherit the dying boss's own `roomId` (was `undefined`, so `DoorSystem` briefly saw the room as cleared and force-regrouped the player back), and `placeFloorGraph2d` now shifts a floor's whole coordinate space so a north/west hop off the origin-pinned spawn room never leaves a room (and its door) at a negative, physically-unreachable offset. See the Room & door model section above. **Stranded-enemy fix shipped 2026-08-15 (ENGINE_VERSION 38→39):** the third consequence of this same model — the checkpoint only requires the *capstone* room to be cleared, so a DESCEND could carry every enemy still alive elsewhere on the floor (plus their in-flight bullets) into the next one, holding a dead `roomId` and a position in geometry that had just been torn down; `resolveDescend` now clears `state.enemies`/`state.projectiles` alongside the room arrays it already wiped. See the Stranded-enemy section above.
 Phase 6 (accounts)      DONE (✅) — real username/password login (SQLite via node:sqlite), never required to play. Bound to PvP ladder rating (accountId in the signed ticket -> MatchRoom.seatAccounts -> ladderReport, guest/bot fallback preserved) and Forge MetaState (best-effort /account/meta sync). Independent of Phases 1-5; third-party OAuth reserved, not built.
 Phase 7 (i18n)          DONE (✅) — client/src/i18n/: en.ts canonical + zh.ts translation, both compile-time key-checked (Translations<typeof en>, TranslationKey). Every screen migrated to t(); Settings gained a language toggle backed by SettingsState.locale. Independent of Phases 1-6; enum/data-driven values (damage type, weapon kind, rarity/ids) deliberately left untranslated.
-Phase 8 (server platform) PLANNED (🔴, design/19-server-platform.md) — the three planes (control 8788 / data 8787 / new billsvc 8789).
-                        8.1 internal-key trust seam closes two defects that stand TODAY and are independent of billing: /rating/report has no
-                        authentication at all, and reportSettledMatch never drains its response body (funny measured that shape wedging undici’s
-                        keep-alive pool so that no request arrived). 8.2 entitlements move out of the client-authored /account/meta blob, which is
-                        a free-money hole the moment blueprints/characters are sold. 8.3-8.4 billsvc + IAP adapters + a fail-closed dev stub, on
+Phase 8 (server platform) IN PROGRESS (design/19-server-platform.md) — the three planes (control 8788 / data 8787 / new billsvc 8789).
+                        8.1 ✅ and 8.2 ✅ both landed 2026-09-04, both independent of billing. 8.1 closed the two defects that stood that day:
+                        /rating/report had no authentication at all, and reportSettledMatch never drained its response body (funny measured that
+                        shape wedging undici’s keep-alive pool so that no request arrived). 8.2 moved entitlements out of the client-authored
+                        /account/meta blob, which was a free-money hole the moment blueprints/characters are sold. 8.3-8.4 billsvc + IAP adapters + a fail-closed dev stub, on
                         its own SQLite file. 8.5 webhook logging/reconciliation/anomaly audit. 8.6 GameRegistry as its static single-instance
                         branch only. Depends on nothing in Phases 0-7; 8.2 depends on 8.1’s internal key, 8.3 on both.
 Documentation           DONE (✅ 2026-08-02) — all 19 design docs + every README audited against the code; stale top-of-file Status blocks rewritten (12/10/client/art READMEs and this file's own header), design/README index completed, engine/README written, art/ UUID filenames + duplicate files cleaned up. Docs-only, no code change.
@@ -894,9 +900,13 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 
 - **09-04** [Entitlements own the purchasable half of MetaState](roadmap/28-2026-09-04-entitlements.md#entitlements-own-the-purchasable-half-of-metastate-2026-09-04-server--client-no-engine-bump) — `POST /account/meta` was a blind whole-blob upsert, which `design/16-accounts.md` says outright was the right call while `MetaState` was a localStorage mirror — and stops being one the moment blueprints and characters are sold, because a logged-in `curl` could then hand itself the whole paid roster, and characters are the one meta axis that reaches PvP. The fix is not to validate the blob (whack-a-mole; every field in it except two is legitimately client-authored) but to move those two out, into an `entitlements` table with a `source` column. Three things the schema decided that the plan had left open: SKUs are namespaced (`blueprint:`/`character:`) rather than split across two tables, so one UNIQUE covers both and `WHERE sku LIKE 'character:%'` is the whole query design/19 §7's no-admin-service requirement needs; this table DOES take the foreign key `ratings` deliberately refuses, because the reasoning does not transfer — a rating key can be a guest/bot `seat:{roomId}:{seatIdx}` scaffold, an entitlement is only ever minted for a real account, so `node:sqlite`'s default FK enforcement turns a typo'd hand-issue into a loud failure instead of an orphan that never delivers; and a `'purchase'` with no `order_id` is refused by a CHECK as unauditable. The client POST is normalized on WRITE, not merely overwritten on read, so `meta_state` never holds a client-authored ownership claim to mislead whoever reads it with SQL. Nothing under `client/src/game/` had to change and the Forge does not flicker: `migrate()` already unions the free baseline back in, so ownership before and after a login is identical — the property was structural and only had to be recognized. 100% lines AND branches on all four changed files, earned on the refusals: both CHECKs and the FK asserted against their real error text, the redelivered grant that must not overwrite the first row's `source`, the non-object blobs a pre-8.2 server accepted and stored, and the pre-8.2 server answering with no `entitlements` field at all. `net` `test` `docs`
 
+**[2026-09-04 — the internal trust seam](roadmap/29-2026-09-04-internal-trust-seam.md)**
+
+- **09-04** [The internal trust seam](roadmap/29-2026-09-04-internal-trust-seam.md#the-internal-trust-seam-2026-09-04-server-no-engine-bump) — Phase 8's first code, and the half of it that has nothing to do with money: `POST /rating/report` had **no authentication of any kind** — no key, no origin check, open CORS — on the one route in the project that can move any account's ladder rating, so one `curl` could hand you first place and demote a real player permanently (`RatingStore` persists; nothing expires the damage). And `reportSettledMatch` was `fetch(...).catch(() => {})`, never consuming its response body — the shape funny measured wedging undici's keep-alive pool under a burst so that *no* report arrived for ~30 s at a time, silently, because the call was fire-and-forget to begin with. `internalAuth.ts` is a THIRD credential namespace and the distinction is structural, not a check: nothing in it reads `authorization`, so a real session token — one `/auth/me` accepts in the same test — is refused like noise. Three things the plan did not say. The comparison hashes both sides before `timingSafeEqual`, because `ticket.ts`'s `a.length !== b.length` guard is right for a fixed-length HMAC and wrong for an operator-chosen secret (it makes the key's length measurable, and without the hash a wrong-length key is a 500 rather than a refusal). `x-internal-caller` is advisory only and never selects which key to compare against — otherwise the attacker picks their own examiner — and is sanitized before it reaches the log line it appears in. And under `NODE_ENV=production` an unset `DDU_INTERNAL_KEY` yields an EMPTY registry that refuses everything, rather than the published dev key, which is not a weaker credential than none but the same one. `internalFetch.ts` drains the body before any status branch and on *every* attempt (draining after the loop looks correct and leaves attempts 1..n-1 checked out), times each attempt out explicitly, and makes retry opt-in so a caller who never thought about idempotency cannot get at-least-once by accident. Left open and written at the call site: `/rating/report` **is** at-least-once — `applyMatch` has no dedupe key — so the budget is a deliberate 3, and exactly-once wants the `UNIQUE` + `changes()` shape §4 already specifies for billing. 88 new cases, 311 → 399 server tests, coverage 99.32/95.44 → 99.44/96.26. Two test-craft finds: `vi.spyOn` on an already-spied method hands back the existing mock, so a whole file's "warns once" assertions were counting the file; and `Date.now()`'s ~15 ms Windows granularity makes any sub-20 ms elapsed assertion a coin flip. `net` `test` `docs`
+
 ## The work log — by theme
 
-The same 109 entries, grouped. An entry with more than one tag appears more than once.
+The same 110 entries, grouped. An entry with more than one tag appears more than once.
 
 **`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(56)*
 
@@ -1032,7 +1042,7 @@ The same 109 entries, grouped. An entry with more than one tag appears more than
 - 08-25 [The Seven Districts: the launch arena gets authored](roadmap/06-2026-08-25.md#the-seven-districts-the-launch-arena-gets-authored-2026-08-25-content)
 - 08-25 [The three parked rules that had only shipped half](roadmap/06-2026-08-25.md#the-three-parked-rules-that-had-only-shipped-half-2026-08-25-client--one-render-only-engine-field)
 
-**`test`** — coverage sweeps, gates, mutation batteries *(40)*
+**`test`** — coverage sweeps, gates, mutation batteries *(41)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 08-05 [Platform-layer test coverage pass](roadmap/01-2026-07-24--08-05.md#platform-layer-test-coverage-pass--2026-08-05-全部加测试)
@@ -1074,6 +1084,7 @@ The same 109 entries, grouped. An entry with more than one tag appears more than
 - 09-04 [The weapon roster gets tested](roadmap/26-2026-09-04-weapon-tests.md#the-weapon-roster-gets-tested-2026-09-04-tests-and-one-pure-module-no-engine-bump)
 - 09-04 [The standing volume becomes the destination](roadmap/27-2026-09-04-approach-slots.md#the-standing-volume-becomes-the-destination-2026-09-04-engine-engine_version-56)
 - 09-04 [Entitlements own the purchasable half of MetaState](roadmap/28-2026-09-04-entitlements.md#entitlements-own-the-purchasable-half-of-metastate-2026-09-04-server--client-no-engine-bump)
+- 09-04 [The internal trust seam](roadmap/29-2026-09-04-internal-trust-seam.md#the-internal-trust-seam-2026-09-04-server-no-engine-bump)
 
 **`audio`** — cues, music, the engine to sound channel *(5)*
 
@@ -1125,7 +1136,7 @@ The same 109 entries, grouped. An entry with more than one tag appears more than
 - 09-04 [The dispatch chain gets five files](roadmap/25-2026-09-04-matchsvc-routes.md#the-dispatch-chain-gets-five-files-2026-09-04-server-only-no-engine-bump)
 - 09-04 [The weapon roster gets tested](roadmap/26-2026-09-04-weapon-tests.md#the-weapon-roster-gets-tested-2026-09-04-tests-and-one-pure-module-no-engine-bump)
 
-**`docs`** — design docs and this log itself *(37)*
+**`docs`** — design docs and this log itself *(38)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-02 [Documentation pass](roadmap/01-2026-07-24--08-05.md#documentation-pass--2026-08-02)
@@ -1164,13 +1175,15 @@ The same 109 entries, grouped. An entry with more than one tag appears more than
 - 09-04 [The weapon roster gets tested](roadmap/26-2026-09-04-weapon-tests.md#the-weapon-roster-gets-tested-2026-09-04-tests-and-one-pure-module-no-engine-bump)
 - 09-04 [The standing volume becomes the destination](roadmap/27-2026-09-04-approach-slots.md#the-standing-volume-becomes-the-destination-2026-09-04-engine-engine_version-56)
 - 09-04 [Entitlements own the purchasable half of MetaState](roadmap/28-2026-09-04-entitlements.md#entitlements-own-the-purchasable-half-of-metastate-2026-09-04-server--client-no-engine-bump)
+- 09-04 [The internal trust seam](roadmap/29-2026-09-04-internal-trust-seam.md#the-internal-trust-seam-2026-09-04-server-no-engine-bump)
 
-**`net`** — matchmaking, sockets, reconnect *(4)*
+**`net`** — matchmaking, sockets, reconnect *(5)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 09-03 [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump)
 - 09-04 [The dispatch chain gets five files](roadmap/25-2026-09-04-matchsvc-routes.md#the-dispatch-chain-gets-five-files-2026-09-04-server-only-no-engine-bump)
 - 09-04 [Entitlements own the purchasable half of MetaState](roadmap/28-2026-09-04-entitlements.md#entitlements-own-the-purchasable-half-of-metastate-2026-09-04-server--client-no-engine-bump)
+- 09-04 [The internal trust seam](roadmap/29-2026-09-04-internal-trust-seam.md#the-internal-trust-seam-2026-09-04-server-no-engine-bump)
 
 **`i18n`** — locales and text layout *(2)*
 
