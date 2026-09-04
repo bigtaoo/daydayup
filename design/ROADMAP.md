@@ -549,7 +549,7 @@ via its own `forge.lockedFind` string), all 8 locales gained `hud.source.purchas
 
 ---
 
-## Phase 8 — Server platform: trust seams, entitlements, billing 🔴 (planned 2026-09-04)
+## Phase 8 — Server platform: trust seams, entitlements, billing 🟡 (planned 2026-09-04, building)
 
 The server side beyond the game (`design/19-server-platform.md`), planned after an audit of the
 sibling project `funny`'s 13-service backend. Four of its five concerns already ship (login and
@@ -567,13 +567,13 @@ records which of funny's assumptions does not hold here.
   arrived. Closes both with `server/src/internalAuth` (timing-safe `x-internal-key`, a third
   namespace distinct from player sessions and the `ticket.ts` HMAC) and `server/src/internalFetch`
   (drained body, per-attempt timeout, retry only where idempotent-and-not-self-healing).
-- **8.2 🔴 Entitlements move server-side.** `/account/meta` is a blind whole-blob upsert — correct
+- **8.2 🟢 Entitlements move server-side.** `/account/meta` was a blind whole-blob upsert — correct
   while `MetaState` was a localStorage mirror, a free-money hole once blueprints and characters are
   sold, and characters are the one meta axis that reaches PvP (`design/14-meta-forging.md`). A new
   `entitlements` table owns blueprint/character ownership with a `source` column
   (`purchase`/`grant`/`event`/`starter`/`drop`); `meta_state` keeps materials and loadout and stays
   a blob. `forge.ts`'s `acquireBlueprint`/`grantCharacter` are already the reserved grant seam —
-  what changes is who may call them. A guest is byte-identical to today.
+  what changes is who may call them. A guest is byte-identical to today. Shipped 2026-09-04 — [volume 28](roadmap/28-2026-09-04-entitlements.md). Nothing *calls* `grant()` yet: delivery is 8.3's, through 8.1's key, and the PvP character gate that would consult `EntitlementService.owns` is still unbuilt.
 - **8.3 🔴 `billsvc` (port 8789) with its own database file.** Third process, deliberately not
   folded into the control plane: the control plane restarts on a matchmaking cadence, and platform
   callbacks need a stable entry point, pinned credentials and an audit boundary. `orders` /
@@ -886,9 +886,13 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 
 - **09-04** [The weapon roster gets tested](roadmap/26-2026-09-04-weapon-tests.md#the-weapon-roster-gets-tested-2026-09-04-tests-and-one-pure-module-no-engine-bump) — *“现在的武器系统，有平衡性测试吗？每个武器的玩法和效果都有测试吗”*. The mechanics did; the WEAPONS did not, and the balance nothing did. `toSimSpec` had no test file at all despite having dropped an authored field three times (`piercing`, `ricochetCount`, and `swingSec`, which left every blade's hit window at one tick for ~45 engine versions) — at 100% lines AND branches throughout, because a dropped field is a line nobody wrote. Only the MELEE half of the roster was swept; `carom`, the only ricochet weapon, appeared in exactly one test file in the whole tree, a render sweep. No test compared two weapons, and 22 of 24 player weapons had never entered any simulation — both sims run the starter loadout, and `RunOptions.loadout` had sat there unswept. Four files close it, and the measurement changed one of them: copying `skins.test.ts`'s equal-worth budget band is impossible here, because all 30 numeric Pareto dominations among ranged weapons are justified by a MECHANIC and mean dps by tier runs fine 8.41 → epic 5.63 → legend 3.75, i.e. downward — rarity buys mechanics, not pace, and nothing in the repo prices a mechanic. So the gate is domination within an identical mechanical signature (20 named pairs), and pricing is left to the new per-weapon sim. That sim invented two weapon findings before it measured one: `careful`'s 7.5-grid standoff is tuned for a pistol reaching 30, so a 3.5-grid beam and all seven blades scored ZERO, and even after capping by reach `mortar` needed a FLIGHT-TIME bound (standoff 9 → 2 grid took it 11 → 35 kills, weapon untouched). Three dead-content findings pinned as drift checks: `piercing` ships with no carrier, `skinRef` is read by nothing, and no gun has lifesteal / no blade has poison. 158 engine tests + 5 sim tests, 24 mutants across three batteries. `test` `tools` `docs`
 
+**[2026-09-04 — entitlements leave the blob](roadmap/28-2026-09-04-entitlements.md)**
+
+- **09-04** [Entitlements own the purchasable half of MetaState](roadmap/28-2026-09-04-entitlements.md#entitlements-own-the-purchasable-half-of-metastate-2026-09-04-server--client-no-engine-bump) — `POST /account/meta` was a blind whole-blob upsert, which `design/16-accounts.md` says outright was the right call while `MetaState` was a localStorage mirror — and stops being one the moment blueprints and characters are sold, because a logged-in `curl` could then hand itself the whole paid roster, and characters are the one meta axis that reaches PvP. The fix is not to validate the blob (whack-a-mole; every field in it except two is legitimately client-authored) but to move those two out, into an `entitlements` table with a `source` column. Three things the schema decided that the plan had left open: SKUs are namespaced (`blueprint:`/`character:`) rather than split across two tables, so one UNIQUE covers both and `WHERE sku LIKE 'character:%'` is the whole query design/19 §7's no-admin-service requirement needs; this table DOES take the foreign key `ratings` deliberately refuses, because the reasoning does not transfer — a rating key can be a guest/bot `seat:{roomId}:{seatIdx}` scaffold, an entitlement is only ever minted for a real account, so `node:sqlite`'s default FK enforcement turns a typo'd hand-issue into a loud failure instead of an orphan that never delivers; and a `'purchase'` with no `order_id` is refused by a CHECK as unauditable. The client POST is normalized on WRITE, not merely overwritten on read, so `meta_state` never holds a client-authored ownership claim to mislead whoever reads it with SQL. Nothing under `client/src/game/` had to change and the Forge does not flicker: `migrate()` already unions the free baseline back in, so ownership before and after a login is identical — the property was structural and only had to be recognized. 100% lines AND branches on all four changed files, earned on the refusals: both CHECKs and the FK asserted against their real error text, the redelivered grant that must not overwrite the first row's `source`, the non-object blobs a pre-8.2 server accepted and stored, and the pre-8.2 server answering with no `entitlements` field at all. `net` `test` `docs`
+
 ## The work log — by theme
 
-The same 107 entries, grouped. An entry with more than one tag appears more than once.
+The same 108 entries, grouped. An entry with more than one tag appears more than once.
 
 **`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(56)*
 
@@ -1023,7 +1027,7 @@ The same 107 entries, grouped. An entry with more than one tag appears more than
 - 08-25 [The Seven Districts: the launch arena gets authored](roadmap/06-2026-08-25.md#the-seven-districts-the-launch-arena-gets-authored-2026-08-25-content)
 - 08-25 [The three parked rules that had only shipped half](roadmap/06-2026-08-25.md#the-three-parked-rules-that-had-only-shipped-half-2026-08-25-client--one-render-only-engine-field)
 
-**`test`** — coverage sweeps, gates, mutation batteries *(38)*
+**`test`** — coverage sweeps, gates, mutation batteries *(39)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 08-05 [Platform-layer test coverage pass](roadmap/01-2026-07-24--08-05.md#platform-layer-test-coverage-pass--2026-08-05-全部加测试)
@@ -1063,6 +1067,7 @@ The same 107 entries, grouped. An entry with more than one tag appears more than
 - 09-04 [A door's ring belongs to the door it lights](roadmap/24-2026-09-04-door-ring-fit.md#a-doors-ring-belongs-to-the-door-it-lights-2026-09-04-client-only-no-engine-bump)
 - 09-04 [The dispatch chain gets five files](roadmap/25-2026-09-04-matchsvc-routes.md#the-dispatch-chain-gets-five-files-2026-09-04-server-only-no-engine-bump)
 - 09-04 [The weapon roster gets tested](roadmap/26-2026-09-04-weapon-tests.md#the-weapon-roster-gets-tested-2026-09-04-tests-and-one-pure-module-no-engine-bump)
+- 09-04 [Entitlements own the purchasable half of MetaState](roadmap/28-2026-09-04-entitlements.md#entitlements-own-the-purchasable-half-of-metastate-2026-09-04-server--client-no-engine-bump)
 
 **`audio`** — cues, music, the engine to sound channel *(5)*
 
@@ -1114,7 +1119,7 @@ The same 107 entries, grouped. An entry with more than one tag appears more than
 - 09-04 [The dispatch chain gets five files](roadmap/25-2026-09-04-matchsvc-routes.md#the-dispatch-chain-gets-five-files-2026-09-04-server-only-no-engine-bump)
 - 09-04 [The weapon roster gets tested](roadmap/26-2026-09-04-weapon-tests.md#the-weapon-roster-gets-tested-2026-09-04-tests-and-one-pure-module-no-engine-bump)
 
-**`docs`** — design docs and this log itself *(35)*
+**`docs`** — design docs and this log itself *(36)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-02 [Documentation pass](roadmap/01-2026-07-24--08-05.md#documentation-pass--2026-08-02)
@@ -1151,12 +1156,14 @@ The same 107 entries, grouped. An entry with more than one tag appears more than
 - 09-04 [A door's ring belongs to the door it lights](roadmap/24-2026-09-04-door-ring-fit.md#a-doors-ring-belongs-to-the-door-it-lights-2026-09-04-client-only-no-engine-bump)
 - 09-04 [The dispatch chain gets five files](roadmap/25-2026-09-04-matchsvc-routes.md#the-dispatch-chain-gets-five-files-2026-09-04-server-only-no-engine-bump)
 - 09-04 [The weapon roster gets tested](roadmap/26-2026-09-04-weapon-tests.md#the-weapon-roster-gets-tested-2026-09-04-tests-and-one-pure-module-no-engine-bump)
+- 09-04 [Entitlements own the purchasable half of MetaState](roadmap/28-2026-09-04-entitlements.md#entitlements-own-the-purchasable-half-of-metastate-2026-09-04-server--client-no-engine-bump)
 
-**`net`** — matchmaking, sockets, reconnect *(3)*
+**`net`** — matchmaking, sockets, reconnect *(4)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 09-03 [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump)
 - 09-04 [The dispatch chain gets five files](roadmap/25-2026-09-04-matchsvc-routes.md#the-dispatch-chain-gets-five-files-2026-09-04-server-only-no-engine-bump)
+- 09-04 [Entitlements own the purchasable half of MetaState](roadmap/28-2026-09-04-entitlements.md#entitlements-own-the-purchasable-half-of-metastate-2026-09-04-server--client-no-engine-bump)
 
 **`i18n`** — locales and text layout *(2)*
 
