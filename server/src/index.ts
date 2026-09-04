@@ -62,10 +62,21 @@ export const SETTLEMENT_RETRY = { attempts: 5, baseDelayMs: 250, maxDelayMs: 2_0
 
 /**
  * Report a settled match's placements to matchsvc's ladder (design/15, ROADMAP 4.6) —
- * ONLY when the result was checkpoint/hash-verified (`hashOk`) and it was actually a
- * PvP match (`placements` present, `winner` a real seat index); every PvE/co-op
- * settlement is silently skipped, same as it always was before 4.6 existed. The
- * placement→rank conversion lives in `ladderReport.ts` (pure, unit-tested).
+ * ONLY when the room was a PvP room (`mode`) AND the result was checkpoint/hash-verified
+ * (`hashOk`); every PvE/co-op settlement is silently skipped, same as it always was
+ * before 4.6 existed. The placement→rank conversion lives in `ladderReport.ts` (pure,
+ * unit-tested).
+ *
+ * `mode` is the arm that has to come first, and it is the one that was missing until
+ * 2026-09-05. The other three are all necessary but only one of them is TRUSTED:
+ * `hashOk` is the room's own comparison of the seats' hashes, while `placements` and
+ * `winner` are relayed verbatim off the seats' `result` messages. Gating "was this PvP?"
+ * on `placements` being present therefore asked the players — a co-op squad that agrees
+ * on a hash and all send a fabricated `placements` array plus a numeric `winner` moved
+ * real accounts' ratings off a match nobody competed in. `SettledMatch.mode` comes from
+ * the verified ticket via `MatchRoom.modeValue`, which no seat can author; `placements`
+ * and `winner` stay in the guard because `buildRatingReportBody` needs both to be
+ * well-formed, not as evidence of what kind of match this was.
  *
  * Goes through `internalFetch` rather than a bare `fetch` — design/19's D2, and the one
  * call in this process that had the defect. The old shape was
@@ -88,7 +99,8 @@ export const SETTLEMENT_RETRY = { attempts: 5, baseDelayMs: 250, maxDelayMs: 2_0
  * production passes nothing and gets the real `fetch`, the real timers and the real key.
  */
 export function reportSettledMatch(match: SettledMatch, opts: InternalFetchInit = {}): void {
-  if (!MATCHSVC_URL || !match.hashOk || !match.placements || typeof match.winner !== 'number') return;
+  if (!MATCHSVC_URL || match.mode !== 'pvp' || !match.hashOk) return;
+  if (!match.placements || typeof match.winner !== 'number') return;
   const body = buildRatingReportBody(match.roomId, match.winner, match.placements, match.playerCount, match.seatAccounts);
   void internalFetch(`${MATCHSVC_URL}/rating/report`, {
     method: 'POST',

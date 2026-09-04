@@ -53,6 +53,10 @@ afterEach(() => {
 
 const settled = (over: Partial<SettledMatch> = {}): SettledMatch => ({
   roomId: 'room-1',
+  // The base case is the only one that may be reported: a PvP room. Every `skips:` arm
+  // below spoils exactly one field of this, so a guard that stops checking one of them
+  // has to turn the corresponding arm red rather than hide behind the others.
+  mode: 'pvp',
   winner: 0,
   placements: [3, 2, 1],
   playerCount: 4,
@@ -129,14 +133,27 @@ describe('reportSettledMatch — the ladder callback', () => {
 
   it.each([
     ['no matchsvc configured', undefined, settled()],
+    ['a co-op room, whatever its seats reported', 'http://matchsvc.test', settled({ mode: 'coop' })],
     ['the hash did not verify', 'http://matchsvc.test', settled({ hashOk: false })],
-    ['a co-op match (no placements)', 'http://matchsvc.test', settled({ placements: undefined })],
+    ['no placements to convert', 'http://matchsvc.test', settled({ placements: undefined })],
     ['no numeric winner', 'http://matchsvc.test', settled({ winner: null as never })],
   ])('skips: %s', async (_label, url, match) => {
-    // Each of the four guard arms, separately. Three of them protect real players: reporting
+    // Each of the five guard arms, separately. Four of them protect real players: reporting
     // an unverified or PvE result moves ladder ratings off a match nobody competed in.
     const { report, fetchMock } = await withMatchsvc(url);
     report(match);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('skips a co-op room even when its seats send a full, self-consistent PvP result', async () => {
+    // The arm above with the spoofing spelled out, because the `mode: 'coop'` row on its own
+    // reads like bookkeeping. Everything a seat controls is set to exactly what a real PvP
+    // settlement looks like — agreed hash, a numeric winner, a well-formed placements array,
+    // logged-in accounts to move ratings for. The ONLY thing saying this was not a match is
+    // the room's ticket-derived mode. Before 2026-09-05 the guard asked `placements` instead,
+    // so this exact payload was reported and moved real accounts' ratings.
+    const { report, fetchMock } = await withMatchsvc('http://matchsvc.test');
+    report(settled({ mode: 'coop', hashOk: true, winner: 0, placements: [3, 2, 1], seatAccounts: { 0: 'acct-a', 1: 'acct-b' } }));
     expect(fetchMock).not.toHaveBeenCalled();
   });
 

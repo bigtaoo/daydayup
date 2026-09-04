@@ -25,6 +25,7 @@ import {
   type SettledMatch,
 } from '../src/MatchRoom';
 import { RoomManager } from '../src/RoomManager';
+import type { MatchMode } from '../src/ticket';
 
 class FakeScheduler implements Scheduler {
   private fns: Array<() => void> = [];
@@ -60,7 +61,9 @@ class FakeConn implements RoomConnection {
 const cmd = (owner: number, buttons = 0): PlayerCommand =>
   makeCommand({ owner, tick: 0, moveBrad: 0 as Brad, moveMag: 0, buttons });
 
-function room(playerCount = 2, extra: { onSettled?: (m: SettledMatch) => void } = {}) {
+type RoomExtras = { onSettled?: (m: SettledMatch) => void; mode?: MatchMode };
+
+function room(playerCount = 2, extra: RoomExtras = {}) {
   const scheduler = new FakeScheduler();
   const destroyed: string[] = [];
   const r = new MatchRoom('r1', 99, playerCount, {
@@ -73,7 +76,7 @@ function room(playerCount = 2, extra: { onSettled?: (m: SettledMatch) => void } 
 }
 
 /** A launched room with every seat filled. */
-function live(playerCount = 2, extra: { onSettled?: (m: SettledMatch) => void } = {}) {
+function live(playerCount = 2, extra: RoomExtras = {}) {
   const ctx = room(playerCount, extra);
   const conns = Array.from({ length: playerCount }, (_, i) => new FakeConn(i));
   for (const c of conns) expect(ctx.r.join(c)).toBe(true);
@@ -270,6 +273,40 @@ describe('reportResult', () => {
     r.reportResult(0, 111, 0, [2]);
     r.reportResult(1, 222, 0, [2]);
     expect(settledCalls[0]!.hashOk).toBe(false);
+  });
+
+  it('reports the mode the ROOM was built with, not anything the seats said', () => {
+    // `SettledMatch.mode` is what `reportSettledMatch` gates the ladder on, so it has to come
+    // from the ticket-derived `MatchRoomDeps.mode` and nowhere else. The seats here send the
+    // full shape of a PvP result — agreed hash, numeric winner, a placements array — into a
+    // room built as co-op, which is precisely the payload a squad would forge to farm rating.
+    const settledCalls: SettledMatch[] = [];
+    const { r } = live(2, { mode: 'coop', onSettled: (m) => settledCalls.push(m) });
+    r.reportResult(0, 42, 0, [2, 1]);
+    r.reportResult(1, 42, 0, [2, 1]);
+    expect(settledCalls[0]!.mode).toBe('coop');
+    // …and the placements still ride along verbatim: MatchRoom relays what it was told and
+    // labels where it came from, rather than quietly dropping a field the caller may want.
+    expect(settledCalls[0]!.placements).toEqual([2, 1]);
+    expect(settledCalls[0]!.hashOk).toBe(true);
+  });
+
+  it('reports mode pvp for a room the ticket built as pvp', () => {
+    // The control for the case above — without it, a `mode` hardcoded to 'coop' would pass.
+    const settledCalls: SettledMatch[] = [];
+    const { r } = live(1, { mode: 'pvp', onSettled: (m) => settledCalls.push(m) });
+    r.reportResult(0, 1, 0, [1]);
+    expect(settledCalls[0]!.mode).toBe('pvp');
+  });
+
+  it('defaults an unstated mode to coop — the closed side of the ladder gate', () => {
+    // Every pre-PvP caller and test omits `MatchRoomDeps.mode`. That default has to land on
+    // the side that does NOT report to the ladder, so a room built by a caller who never
+    // heard of modes cannot move ratings.
+    const settledCalls: SettledMatch[] = [];
+    const { r } = live(1, { onSettled: (m) => settledCalls.push(m) });
+    r.reportResult(0, 1, 0, [1]);
+    expect(settledCalls[0]!.mode).toBe('coop');
   });
 
   it('omits seatAccounts entirely for a guest-only match', () => {

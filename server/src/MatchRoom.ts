@@ -42,11 +42,23 @@ export type IntervalHandle = unknown;
 
 /** A settled match's outcome, handed to `MatchRoomDeps.onSettled` (design/15,
  * ROADMAP 4.6) — everything the ladder-rating caller needs, and nothing MatchRoom
- * doesn't already legitimately know. `hashOk`/`placements` together are the
+ * doesn't already legitimately know. `mode` and `hashOk` together are the
  * "checkpoint/hash-verified PvP result" gate design/15 requires before a placement
  * can affect the ladder; a caller should ignore this callback unless BOTH hold. */
 export interface SettledMatch {
   roomId: string;
+  /**
+   * What kind of match this ROOM was, taken from the verified ticket
+   * (`MatchRoomDeps.mode`, cross-checked across joiners by `RoomManager.join`) — never
+   * from anything a seat said at settlement. This is the field a ladder caller has to
+   * gate on, because `winner` and `placements` below are relayed straight off the
+   * seats' own `result` messages: a co-op room whose clients agree on a hash and all
+   * send a fabricated `placements` array plus a numeric `winner` would otherwise
+   * produce a ladder report for a match nobody competed in. Required rather than
+   * optional on purpose — a later producer has to state the mode instead of inheriting
+   * a default that happens to open the gate.
+   */
+  mode: MatchMode;
   winner: Winner;
   placements?: readonly number[];
   /** Total seat count — needed by `ladderReport.ts` to recover the winning squad's
@@ -337,7 +349,11 @@ export class MatchRoom {
    * `placements` (design/15, ROADMAP 4.2e) is present only for a PvP match (a config
    * with `arena` set — GameState.placements); its presence, not the room's own
    * knowledge of match type, is what selects the `'placement'` reason — MatchRoom
-   * stays generic infrastructure, same as it already is for co-op vs. solo.
+   * stays generic infrastructure, same as it already is for co-op vs. solo. That is
+   * still true of the client-facing `reason` string, which is cosmetic. It is NOT true
+   * of `SettledMatch`, which now carries the room's own `mode` precisely so a consumer
+   * with real consequences attached (the ladder) gates on something no seat can
+   * fabricate — see `SettledMatch.mode`.
    */
   reportResult(owner: number, stateHash: number, winner: Winner, placements?: readonly number[]): void {
     if (this.phase !== Phase.IN_MATCH || this.settled) return;
@@ -362,6 +378,7 @@ export class MatchRoom {
     for (const seat of this.seats) if (seat.accountId) seatAccounts[seat.owner] = seat.accountId;
     this.deps.onSettled?.({
       roomId: this.roomId,
+      mode: this.mode,
       winner: agreedWinner,
       placements: agreedPlacements,
       playerCount: this.playerCount,
