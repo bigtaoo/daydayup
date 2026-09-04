@@ -106,9 +106,18 @@ playerCount}` from it, so a client can no longer claim another seat or a differe
 deployment — then a valid ticket is mandatory (invalid/absent → close `4401`). Unset, both
 default to a shared insecure DEV secret (with a warning) and the gameserver *also* still
 accepts the legacy raw-param handshake (`/ws?roomId=..&owner=..&seed=..&count=..`) for local
-manual testing. Set `DDU_GAMESERVER_URL` on matchsvc so its issued tickets carry the right
-`wsUrl` (default `ws://localhost:8787/ws`). Where the two services physically deploy is an
-ops call; the architecture split (design/06) is settled.
+manual testing. Where the two services physically deploy is an ops call; the architecture split
+(design/06) is settled.
+
+**Gameserver address (ROADMAP 8.6, design/19 §6):** set `DDU_GAMESERVER_URL` on matchsvc so the
+`wsUrl` it returns points at the data plane (default `ws://localhost:8787/ws`). It is read by
+`GameRegistry`, not baked into the ticket — the ticket is a seat authorization and carries no
+topology, so a seat granted while one instance was serving is redeemable against whichever instance
+is current when it is presented. Today the registry holds only that configured address:
+`register`/`heartbeat` exist as methods with **no HTTP route**, because a single-instance deployment
+does not register at all. With no configured address and nothing registered, `/find`, `GET
+/find/:queueId` and `/resume` answer **503 `{"error":"no gameserver available"}`** rather than
+issuing a ticket with nowhere to redeem it.
 
 **Billing (ROADMAP 8.3/8.4, design/19 §4/§5):** `DDU_BILLING_DB_PATH` is billsvc's own SQLite
 file and is deliberately a DIFFERENT variable from `DDU_DB_PATH` — one operator setting one

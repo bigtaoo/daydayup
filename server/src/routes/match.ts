@@ -5,8 +5,13 @@
  *
  * Pure wiring around the pure `Matchmaker`: the clock, the seed/roomId source and the
  * bot-fill hook all stay in `matchsvc.ts`'s `createMatchsvcServer`, which hands this group
- * only the built matchmaker, the ticket secret, and the `withUrl` decorator that stamps the
- * gameserver's WS URL onto an issued ticket.
+ * only the built matchmaker, the ticket secret, and `pickGameserver` — the `GameRegistry`
+ * lookup (ROADMAP 8.6, design/19 §6) that answers which gameserver this ticket should be
+ * redeemed against.
+ *
+ * The WS URL is stamped onto the RESPONSE here, never into the ticket payload: a ticket is
+ * a seat authorization and must not carry topology (design/19 §6, superseding the earlier
+ * "put a gameserver id inside the ticket" sketch). `ticket.ts` is untouched by 8.6.
  */
 import type { Matchmaker, MatchTicket } from '../Matchmaker';
 import { signTicket, verifyTicket, type MatchMode, type TicketPayload } from '../ticket';
@@ -14,11 +19,31 @@ import { readJson, send, type RouteHandler } from './http';
 
 export interface MatchRouteDeps {
   matchmaker: Matchmaker;
-  /** Stamps the gameserver WS URL a ticket is redeemed against onto an issued ticket. */
-  withUrl: (t: MatchTicket) => MatchTicket & { wsUrl: string };
+  /**
+   * The gameserver a ticket issued right now should be redeemed against, or `null` when
+   * there is none — every registered instance full or stale, and no static address
+   * configured. Narrowed to the one field this group reads rather than typed as
+   * `GameServerEntry`, so the route group does not depend on the registry's shape.
+   */
+  pickGameserver: () => { wsUrl: string } | null;
   /** The ticket-signing secret — `/resume` both verifies and re-signs with it. */
   secret: string;
 }
+
+/**
+ * What every route here answers when `pickGameserver` comes back empty. 503 and not 500:
+ * the request was well formed and the service is fine — there is simply no data plane to
+ * hand the player to, which is a transient, retryable condition.
+ *
+ * The alternative — answering 200 with `wsUrl` absent — is the bug this shape exists to
+ * make impossible. `MatchInfo.wsUrl` is non-optional on the client
+ * (`client/src/net/matchmaking.ts`), so an `undefined` slipping into the match object
+ * would surface not here but much later, as a socket opened on `undefined?ticket=…`.
+ */
+const NO_GAMESERVER = { error: 'no gameserver available' };
+
+/** Stamps the chosen instance onto an issued ticket — the whole of the match response. */
+const withUrl = (t: MatchTicket, wsUrl: string): MatchTicket & { wsUrl: string } => ({ ...t, wsUrl });
 
 // A reconnect ticket only needs to outlive the client opening the socket with it, not
 // the whole match (unlike the original match ticket, which the client redeems once
@@ -49,8 +74,13 @@ export const postFind: RouteHandler<MatchRouteDeps> = (req, res, _url, deps) => 
     const rawAccountId = (body as { accountId?: unknown })?.accountId;
     const accountId = typeof rawAccountId === 'string' && rawAccountId ? rawAccountId : undefined;
     try {
+      // Asked BEFORE enqueueing, so a control plane with no data plane behind it does not
+      // burn a queue slot — and, for the arrival that completes a group, a whole formed
+      // room — on a request it is about to refuse anyway.
+      const gs = deps.pickGameserver();
+      if (!gs) return send(res, 503, NO_GAMESERVER);
       const { queueId, ticket } = deps.matchmaker.enqueue(playerCount, mode, groupId, accountId);
-      send(res, 200, { queueId, match: ticket ? deps.withUrl(ticket) : undefined });
+      send(res, 200, { queueId, match: ticket ? withUrl(ticket, gs.wsUrl) : undefined });
     } catch (e) {
       send(res, 400, { error: (e as Error).message });
     }
@@ -59,8 +89,14 @@ export const postFind: RouteHandler<MatchRouteDeps> = (req, res, _url, deps) => 
 
 export const getFindPoll: RouteHandler<MatchRouteDeps> = (_req, res, url, deps) => {
   const queueId = decodeURIComponent(url.pathname.match(FIND_POLL_PATH)![1]!);
+  // Again before `poll()`, and here the ordering is load-bearing rather than merely tidy:
+  // `poll()` DELETES the waiter on its way to returning `matched`, so discovering the
+  // absence afterwards would destroy the seat the caller has been waiting for. Refusing
+  // first leaves the waiter queued, and the next poll — once an instance exists — matches.
+  const gs = deps.pickGameserver();
+  if (!gs) return send(res, 503, NO_GAMESERVER);
   const result = deps.matchmaker.poll(queueId);
-  send(res, 200, result.status === 'matched' ? { status: 'matched', match: deps.withUrl(result.ticket) } : result);
+  send(res, 200, result.status === 'matched' ? { status: 'matched', match: withUrl(result.ticket, gs.wsUrl) } : result);
 };
 
 /**
@@ -79,6 +115,11 @@ export const postResume: RouteHandler<MatchRouteDeps> = (req, res, _url, deps) =
     if (typeof token !== 'string' || !token) return send(res, 400, { error: 'token required' });
     const payload = verifyTicket(token, deps.secret, Date.now(), { ignoreExpiry: true });
     if (!payload) return send(res, 401, { error: 'invalid ticket' });
+    // A reconnecting client is rejoining a room that already lives on ONE instance, so
+    // this pick is really "is the data plane there at all". It becomes a lookup by roomId
+    // the day rooms are spread across instances — see design/19 §6.
+    const gs = deps.pickGameserver();
+    if (!gs) return send(res, 503, NO_GAMESERVER);
     const fresh: TicketPayload = { ...payload, exp: Date.now() + RESUME_TICKET_TTL_MS };
     const ticket: MatchTicket = {
       roomId: fresh.roomId,
@@ -89,6 +130,6 @@ export const postResume: RouteHandler<MatchRouteDeps> = (req, res, _url, deps) =
       mode: fresh.mode ?? 'coop',
       token: signTicket(fresh, deps.secret),
     };
-    send(res, 200, { match: deps.withUrl(ticket) });
+    send(res, 200, { match: withUrl(ticket, gs.wsUrl) });
   });
 };

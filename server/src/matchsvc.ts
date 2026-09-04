@@ -47,16 +47,19 @@
  * <token>`, checked by `requireAuth` in `routes/auth.ts`.
  *
  * `match` = { wsUrl, roomId, owner, seed, playerCount, token } — everything the client
- * needs to open `${wsUrl}?ticket=${token}` (see client/src/net/matchmaking.ts).
+ * needs to open `${wsUrl}?ticket=${token}` (see client/src/net/matchmaking.ts). `wsUrl`
+ * is chosen per response by `GameRegistry` (ROADMAP 8.6, design/19 §6) and never enters
+ * the ticket payload — the ticket is a seat authorization and knows no topology.
  */
 import { createServer, type Server } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
-import { Matchmaker, type MatchTicket } from './Matchmaker';
+import { Matchmaker } from './Matchmaker';
 import { RatingStore } from './rating';
 import { PartyService } from './PartyService';
 import { signTicket, type TicketPayload } from './ticket';
 import { ticketSecret, teamIdForOwner } from './config';
+import { GameRegistry } from './GameRegistry';
 import { spawnBotClient } from './BotClient';
 import { openDb } from './db';
 import { AuthService } from './AuthService';
@@ -70,8 +73,6 @@ import * as internalEntitlementRoutes from './routes/internalEntitlements';
 
 const PORT = Number(process.env.MATCH_PORT ?? 8788);
 const HOST = process.env.HOST ?? '0.0.0.0';
-// The WS data-plane URL the issued ticket is redeemed against (the client appends ?ticket=).
-const GAMESERVER_URL = process.env.DDU_GAMESERVER_URL ?? 'ws://localhost:8787/ws';
 
 export interface MatchsvcServerOptions {
   /** DB path override (design/16-accounts.md) — tests pass `':memory:'` for isolation;
@@ -87,8 +88,16 @@ export interface MatchsvcServerOptions {
    */
   matchmaker?: { pvpBotFillMs?: number; queueTtlMs?: number; ticketTtlMs?: number };
   /**
+   * Topology override (ROADMAP 8.6, design/19 §6). Defaults to a registry holding only
+   * the configured static single instance — the one branch that is reachable today,
+   * since the register/heartbeat routes are deliberately unbuilt. Injected so a test can
+   * drive the paths a single-instance deployment cannot produce: several healthy
+   * instances, a full one, a stale one, and no instance at all.
+   */
+  registry?: GameRegistry;
+  /**
    * Bot spawner seam, defaulting to the real `spawnBotClient` (which opens a socket to
-   * GAMESERVER_URL). Injected so a test can assert WHAT was minted for each empty seat —
+   * the gameserver the registry picked). Injected so a test can assert WHAT was minted for each empty seat —
    * the seat's owner index, its team, the signature — without standing up a gameserver.
    * The interesting logic here is `teamIdForOwner`, which decides whether a bot tops up a
    * real party's understaffed squad or starts a new one, and it is invisible from outside.
@@ -110,6 +119,7 @@ export function createMatchsvcServer(opts: MatchsvcServerOptions = {}): Server {
   // inputs); a counter off the start time avoids Math.random and cross-restart collision.
   let seedCounter = Date.now() & 0x7fffffff;
   const spawnBot = opts.spawnBot ?? spawnBotClient;
+  const registry = opts.registry ?? new GameRegistry();
   const matchmaker = new Matchmaker({
     ...opts.matchmaker,
     nowMs: () => Date.now(),
@@ -122,6 +132,12 @@ export function createMatchsvcServer(opts: MatchsvcServerOptions = {}): Server {
     // would (BotClient.ts) — matchsvc is the trusted issuer, so it can mint one directly
     // without a round trip through its own /find queue.
     onBotFill: ({ roomId, seed, playerCount, mode, botOwners }) => {
+      // Picked once for the room, not once per seat: the bots of one match belong on one
+      // instance, exactly as its real players do. No gameserver → no socket for a bot to
+      // open, so mint nothing; the real waiters in the same room get 503 from /find and
+      // requeue, and a bot ticket with nowhere to go would just expire unredeemed.
+      const gs = registry.pick();
+      if (!gs) return;
       for (const owner of botOwners) {
         const exp = Date.now() + 30_000; // ample time for the bot to open the socket
         // teamIdForOwner is the SAME pure function Matchmaker.grantGroup used for the
@@ -130,7 +146,7 @@ export function createMatchsvcServer(opts: MatchsvcServerOptions = {}): Server {
         const teamId = teamIdForOwner(owner, playerCount);
         const grant: TicketPayload = { roomId, owner, seed, playerCount, teamId, exp, mode };
         spawnBot({
-          wsUrl: GAMESERVER_URL,
+          wsUrl: gs.wsUrl,
           token: signTicket(grant, secret),
           roomId,
           owner,
@@ -141,7 +157,11 @@ export function createMatchsvcServer(opts: MatchsvcServerOptions = {}): Server {
     },
   });
 
-  const withUrl = (t: MatchTicket) => ({ ...t, wsUrl: GAMESERVER_URL });
+  // The one thing 8.6 actually changes: where the WS URL stamped onto an issued ticket
+  // comes from. It used to be a module constant; it is now whatever the registry picks,
+  // which may legitimately be nothing (see `GameRegistry.pick`). The route group asks for
+  // the instance and does the stamping, so it can refuse BEFORE consuming a queue entry.
+  const pickGameserver = () => registry.pick();
   const db = openDb(opts.dbPath);
   const ratings = new RatingStore(db);
   const parties = new PartyService({
@@ -154,7 +174,7 @@ export function createMatchsvcServer(opts: MatchsvcServerOptions = {}): Server {
   // One bundle satisfying each route group's own narrow `*RouteDeps` interface. The groups
   // share no state, so this is a wiring convenience, not a shared context object — a
   // handler still declares (and can only reach) the few dependencies it names.
-  const deps = { matchmaker, withUrl, secret, ratings, parties, auth, db };
+  const deps = { matchmaker, pickGameserver, secret, ratings, parties, auth, db };
 
   const server = createServer((req, res) => {
     if (req.method === 'OPTIONS') return send(res, 204, {});
@@ -207,10 +227,21 @@ export function createMatchsvcServer(opts: MatchsvcServerOptions = {}): Server {
   return server;
 }
 
+/**
+ * The data-plane half of the startup banner. Extracted from `main` because it is the one
+ * branch there — a matchsvc with no gameserver behind it starts fine and refuses every
+ * `/find`, and the log line is the only place an operator learns that before a player
+ * does. `main` itself stays a straight-line listen/log, which is why it needs no test.
+ */
+export function startupTarget(registry: GameRegistry): string {
+  return registry.pick()?.wsUrl ?? '(no gameserver — /find will answer 503)';
+}
+
 function main(): void {
-  const server = createMatchsvcServer();
+  const registry = new GameRegistry();
+  const server = createMatchsvcServer({ registry });
   server.listen(PORT, HOST, () => {
-    console.log(`daydayup matchsvc (control plane) on http://${HOST}:${PORT}  → ${GAMESERVER_URL}`);
+    console.log(`daydayup matchsvc (control plane) on http://${HOST}:${PORT}  → ${startupTarget(registry)}`);
   });
 }
 

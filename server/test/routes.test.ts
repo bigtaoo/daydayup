@@ -247,7 +247,10 @@ describe('routes/auth handlers', () => {
 describe('routes/match getFindPoll', () => {
   const deps = (poll: Matchmaker['poll']) => ({
     matchmaker: { poll } as unknown as Matchmaker,
-    withUrl: (t: MatchTicket) => ({ ...t, wsUrl: 'ws://gs.test/ws' }),
+    // ROADMAP 8.6: the URL is no longer a constant the shell closes over but a
+    // `GameRegistry` lookup this group makes per request — see `matchsvc.registry.test.ts`
+    // for the empty answer, which this happy-path fake never produces.
+    pickGameserver: () => ({ wsUrl: 'ws://gs.test/ws' }),
     secret: 'unused-here',
   });
 

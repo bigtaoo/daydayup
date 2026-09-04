@@ -477,6 +477,38 @@ from funny that are the actual content:
 
 This supersedes the "put a gameserver id inside the ticket" sketch that preceded this doc.
 
+### Shipped 2026-09-05 — the static branch, and what building it settled (ROADMAP 8.6)
+
+`server/src/GameRegistry.ts`, consulted by `matchsvc.ts`; `register`/`heartbeat` are methods with no
+HTTP route, so the configured static address is the only branch a deployment reaches today.
+`ticket.ts` is unchanged, and so is the client. Volume 34 has the full account; three points belong
+here because they qualify the bullets above.
+
+- **"A configured static address seeds one entry" must not be read literally.** Nothing heartbeats a
+  configured address and nothing reports its load, so as a map entry it sits at load 0 and never goes
+  stale — and therefore wins every `pick()` against real instances reporting real numbers. It is held
+  in its own field and reached only when no registered instance qualifies. This is also why
+  `GameServerEntry.lastSeenMs` is nullable and `capacity` is `Infinity` for that entry: an unknown
+  capacity must read as unbounded rather than as full, and "never heard from" is a different state
+  from "just checked in".
+- **`pick()` returning `null` is a real answer, and the callers had to grow a refusal.** With no
+  registered instance and no configured address it is the only answer. `routes/match.ts` answers 503
+  `{ error: 'no gameserver available' }` on all three routes, which is what lets `MatchInfo.wsUrl`
+  stay non-optional on the client — an `undefined` in the match object would surface not at the
+  control plane but as a socket opened on `undefined?ticket=…`. Both `/find` routes ask BEFORE
+  touching the queue: `Matchmaker.poll` deletes the waiter on its way to returning `matched`, so a
+  503 decided afterwards would destroy the seat the player has been waiting for.
+- **The registration rules are enforced or written down, not deferred with the routes.** The 4xx/
+  backoff/never-re-register bullet above is in the class header, `REGISTER_BACKOFF_CAP_MS` is
+  exported beside `STALE_MS` (equal today, deliberately two constants — one is how long the registry
+  waits before disbelieving an instance, the other how long an instance waits before retrying), and
+  `heartbeat()` returns `false` for an unknown id and writes nothing, so the half that can be
+  enforced today is.
+
+Also settled here rather than in `config.ts`: `DDU_GAMESERVER_URL`'s default lives in
+`GameRegistry.staticGameserverUrl()`, read per call for the reason `ticketSecret` is. The registry
+owns the topology question, so `config.ts` has no reason to.
+
 ## 7. Operations
 
 None of this is optional once money moves; all of it is small if the schema anticipates it.
