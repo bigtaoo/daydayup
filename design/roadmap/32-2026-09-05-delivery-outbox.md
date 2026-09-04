@@ -132,8 +132,12 @@ present it*. When the registry grows a key per caller, that function becomes
 
 ### Tests
 
-**+73 cases — 63 in four new files, 10 added to three existing ones** (the shared tree reads 792
-server tests with volume 31's parallel pass in it), and the split is deliberate:
+**+73 cases — 63 in four new files, 10 added to three existing ones.** The server suite reads
+**793** at this commit: 675 before Phase 8's 2026-09-05 passes, +45 from volume 31 (which landed
+first, so it is already in the parent) and +73 here. Stated against the commit rather than against
+`D:/daydayup`, which had two other sessions' uncommitted engine and client work in it all day and
+so was never a tree that existed as a commit — the same correction volume 31 had to make. The split
+across files is deliberate:
 `billsvc.outbox.test.ts` drives the durable half through the **real `BillingService`** rather
 than inserting rows, because the seam's entire claim is about what happens inside the
 transaction; `billsvc.deliveryPump.test.ts` is almost all failure policy;
@@ -168,7 +172,7 @@ process default to ledger-only, and remove the opportunistic sweep. The two cont
 size tuning constant and a log wording nothing matches) both survived, which is what says the
 battery was real.
 
-100% lines **and** branches on every new file; server coverage 99.53% / 97.24%.
+100% lines **and** branches on every new file; server-wide 99.53% lines / 97.24% branches — measured with `server/` on disk byte-identical to this commit, which `git status` confirmed before the run.
 
 ### Still open
 
