@@ -4,3 +4,4 @@ export * from './build';
 export * from './encounter';
 export * from './rarity';
 export * from './runbuffs';
+export * from './weaponProfile';

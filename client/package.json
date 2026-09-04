@@ -11,6 +11,7 @@
     "test:watch": "vitest",
     "test:pvp-sim": "vitest run --config vitest.pvp-sim.config.ts --reporter=verbose",
     "test:pve-sim": "vitest run --config vitest.pve-sim.config.ts --reporter=verbose",
+    "test:weapon-sim": "vitest run --config vitest.weapon-sim.config.ts --reporter=verbose",
     "audit:arena": "vitest run --config vitest.arena-audit.config.ts --reporter=verbose",
     "replay:inspect": "vitest run --config vitest.replay-inspect.config.ts --reporter=verbose",
     "test:drop-sim": "vitest run --config vitest.drop-reachability.config.ts --reporter=verbose",

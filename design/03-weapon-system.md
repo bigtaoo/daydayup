@@ -101,6 +101,54 @@ behaved identically to a non-piercing one this whole time. All three now share o
 decision in `HitResolveSystem`: ricochet first, else pierce (remembering hit ids so a
 still-overlapping body isn't hit twice), else expire (the original default).
 
+## Roster balance, and what is measurable about it (2026-09-04)
+
+The roster got its first balance gates and its first per-weapon simulation on 2026-09-04.
+Until then nothing in the tree compared two weapons — characters had had a full side-grade
+suite since ROADMAP 2.3 (`content/skins.test.ts`), weapons had no analogue — and 22 of the
+24 player-facing weapons had never appeared in any simulation, because both balance sims run
+the starter loadout only. `design/18` "Layer 5" has the full account of the gap and the four
+files that closed it.
+
+**The measured shape of the roster, which is worth writing down because it reads like a bug
+in a table.** Across the 17 ranged weapons there are 30 pairs where one Pareto-dominates
+another on the numeric axes (dps, per-trigger burst, per-hit damage, reach, blast) — and
+every single one of those 30 is justified by a MECHANICAL difference: a different ballistic,
+pattern, element, or proc. Mean dps by rarity tier runs `fine` 8.41 → `epic` 5.63 → `legend`
+3.75, i.e. **downward**. Melee dps spans a factor of 1.5 while arc spans 3.7× and knockback
+4×.
+
+None of that is drift. It is what "variety is combinatorial" (above) and `05`'s "better
+weapons are the power axis" look like once measured: **rarity buys a mechanic, not pace**, and
+a melee weapon's identity is its swing shape, not its damage. The consequence for testing is
+that `skins.test.ts`'s equal-worth budget band has **no weapon analogue** — a mechanic has no
+price anywhere in this repo, so any composite "worth" score would be scoring an invented
+exchange rate. What is gated instead is domination *within an identical mechanical
+signature*, where there is no mechanic left to appeal to (`balance/weaponBalance.test.ts`),
+and the empirical pricing is left to `client/sim/weaponSweep.sim.ts`, which plays each weapon
+through the shipped level and counts what it clears.
+
+### Three fields this doc's schema implies are live, and are not
+
+Found by the sweeps, recorded here rather than quietly fixed — closing them is content design:
+
+- **`piercing` ships dead.** The Landing-order note above says the field "had been authored
+  since Stage C but never converted or read anywhere" and that `ENGINE_VERSION` 28 fixed it.
+  It fixed the *wiring*: `toSimSpec` converts it, `HitResolveSystem` honours it, and
+  `systems/procs.test.ts` proves the mechanic on a synthetic bullet. But **no weapon in
+  `WEAPON_SPECS` sets it** — `carom` deliberately took ricochet instead, and nothing else
+  claimed it. So a piercing weapon still does not exist in the game.
+- **`skinRef` is read by nothing.** `weaponTypes.ts` documents it as "SkinDef id — the view
+  swaps by this, not by weapon logic". The view does not: `client/src/render/weaponSkins.ts`
+  is keyed by weapon **id**, and `muzzleParity.test.ts` asserts every `WEAPON_SPECS` id
+  resolves to its own entry there. All 25 weapons carry the field and share exactly two
+  values between them, one per `kind` — a dead field with a stale comment.
+- **The Frame × Element grid is sparser than it reads.** No ranged weapon carries
+  `k_lifesteal` (only `leech`, which is melee), and no melee weapon carries `poison` — so
+  `03`'s "N frames × 5 elements" bet is still only partly cashed. Both are pinned as named
+  test cases so the assertions covering them cannot sit quietly vacuous.
+
+
 ## Deflect / parry (core mechanic)
 
 Deflect is **part of the melee attack — not a separate state or button.** Pressing attack with a melee weapon produces one swing sector (a fan centered on facing, `arc` half-angle + `range` radius; different weapons have different arc and range). During that swing, within the SAME sector:

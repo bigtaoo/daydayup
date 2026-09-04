@@ -52,6 +52,7 @@ npm run dev        # client dev server, http://localhost:5173
 | `npm run dev:desktop-shell` | The Electron shell hosting both authoring tools (run the two `dev:` commands above first, in separate terminals) |
 | `npm run test:pvp-sim` | The offline PvP balance harness (`client/sim/`, kept out of the default test glob — ~6s) |
 | `npm run test:pve-sim` | The PvE level simulator — bot-driven real runs of level 1, per-room reaction window / peak shooters / clear rate, plus the difficulty gates (`client/sim/`, also out of the default glob) |
+| `npm run test:weapon-sim` | The per-weapon sweep — every player-facing weapon plays the shipped level over 8 seeds, reporting kills / ticks-per-kill / damage taken / depth, and gating that no weapon is inert (`client/sim/`, also out of the default glob — ~10s) |
 | `DD_REPLAY=<path> npm run replay:inspect` | Read one recorded run (a `ddreplay-*.json` a player saved with the HUD's ● button or F9) and report every drop's closest approach, swept path, gate and `pickup` event (`client/sim/replay/`) |
 
 ## Deployment

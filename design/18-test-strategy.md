@@ -32,6 +32,7 @@
 | **3** smoke + CI | `engine/smoke.test.ts`, root `npm run check:full`, `.github/workflows/check.yml` | ✅ 5 real runs, 7 invariants, every tick (v50 added the two loot/monster placement rules) |
 | **4** coverage as a gate | `build/coverageLib.mjs` + `checkCoverageThreshold.mjs` + `coverageReport.mjs`, `build/coverageScope.test.mjs`, `client/src/game/pureLayerBoundary.test.ts` | ✅ 2026-09-03 — 90% lines **and** 90% branches over each package's whole tree, plus the two guards that keep the scope honest |
 | **4** the gates, by name | `build/logicConsistency.mjs` + its manifest test | ✅ 2026-09-03 — the 12 gates above as a named CI job, failing closed when one is renamed away |
+| **5** the content axis | `engine/content/weapons.test.ts`, `engine/systems/rangedCatalog.test.ts`, `engine/balance/weaponProfile.ts` + `weaponBalance.test.ts`, `client/sim/weaponSweep.sim.ts` | ✅ 2026-09-04 — every weapon, not every system; see "Layer 5" below for the four gaps it closed and the three dead-content findings it turned up |
 
 `check:full` = `check` + the `.sim.ts` suites. `.github/workflows/check.yml` runs both in CI —
 until it existed, `.github/workflows/` held only deploy workflows, so nothing ran the tests on
@@ -98,6 +99,105 @@ in silence — not merely an important test), `--run` executes exactly those as 
 and a named entry that no longer resolves fails closed. Its own test guards the other
 direction: it discovers gates from the tree by this document's naming conventions and fails if
 one is not on the list, so a new `*Parity.test.ts` cannot quietly skip the step.
+
+## Layer 5: the content axis — every weapon, not every system (2026-09-04)
+
+Layers 0-4 all ask about SYSTEMS. Asked from the other direction — "is every piece of
+CONTENT exercised?" — the weapon roster, which `03` calls "the heart of the game", answered
+badly. 24 player-facing weapons, and the tests were all either mechanical (does a beam tick,
+does a swing window open) or presentational (i18n keys, rarity pips, muzzle parity).
+
+Counted across the whole tree before this pass:
+
+- **`toSimSpec` had no test file.** `content/weapons.ts` was exercised only sideways, by four
+  tests that each read the one field they cared about. Its own history is the argument: it
+  has silently dropped an authored field **three times** — `piercing` and `ricochetCount`
+  (fixed in `ENGINE_VERSION` 28) and `swingSec`, which every melee weapon authored from
+  Stage C and nothing converted until v53, so for ~45 versions every blade's hit window was
+  one tick and design/03's third melee axis did not exist. All three shipped.
+- **Only the MELEE half of the roster was swept.** `meleeWindow.test.ts` drives off
+  `WEAPON_SPECS` itself ("so a new blade is covered the day it is authored"). Ranged had no
+  counterpart: `ballistics.test.ts` covers each shape once through one showcase weapon and
+  names its seven integration weapons by hand. `carom` — the game's only ricochet weapon —
+  appeared in exactly ONE test file in the entire tree, `muzzleParity.test.ts`, a render
+  sweep. `venomspit` was in the same position.
+- **No test compared two weapons.** Characters have had a real balance suite since ROADMAP
+  2.3 (`skins.test.ts`: Pareto non-domination, per-axis spread, equal-worth budget band).
+  Weapons had no analogue of any of it.
+- **The sims never touched the roster.** `pvpBalanceSim` measures character win-rate;
+  `pveLevelSim` plays level 1 with the starter loadout only. The `RunOptions.loadout` hook
+  that makes a per-weapon sweep possible had been there the whole time, unswept. 22 of the
+  24 player weapons had never appeared in any simulation.
+
+Note the shape of that list: **coverage was 100% lines and 100% branches on
+`content/weapons.ts` throughout.** A dropped field is a line that was never written, and a
+weapon nothing fires still has every branch of its data literal "covered". This is the third
+entry in this doc's running theme that a percentage cannot see a whole bug class.
+
+### What closed it
+
+**`engine/content/weapons.test.ts`** — a LANDING TABLE naming, for every authored field, the
+sim key it lands on and the formula that produces it, closed on three sides: every key a
+shipped weapon sets must be in the table; every key `toSimSpec` emits must be claimed by one;
+and every field the *schema* declares must have a line, enforced by typing the tables
+`Record<keyof RangedSpec, …>` so a new field with no landing is a `tsc` error. That last
+direction is deliberately a type and not a source scan — `engine/tsconfig.json` withholds
+node and DOM types from the sim core on purpose, and `readFileSync` here would have meant
+widening that boundary to write a weaker check than the compiler already gives for free.
+
+**`engine/systems/rangedCatalog.test.ts`** — the ranged counterpart of the melee sweep, in
+four passes: the frozen payload on every pellet matches its spec (and carries no OTHER
+shape's params); every weapon of each ballistic moves per its own numbers (so `frostseeker`
+is exercised beside `seeker`, not represented by it); `carom`'s real bounces and `leech`'s
+real lifesteal fire; and every weapon damages a body placed inside its own reach envelope
+through the real `engine.step()`.
+
+**`engine/balance/weaponProfile.ts` + `weaponBalance.test.ts`** — the roster reduced to
+comparable axes, then gated. The gates are narrower than `skins.test.ts`'s on purpose, and
+the reason is the interesting part: **a mechanic has no price in this repo.** Measured while
+building it — across 17 ranged weapons there are 30 numeric Pareto dominations, and every
+one is justified by a mechanical difference; mean dps by tier runs fine 8.41 → epic 5.63 →
+legend 3.75, i.e. DOWN. Rarity buys mechanics, not pace. So an equal-worth budget band has no
+weapon analogue, and any composite "worth" score would be testing an exchange rate someone
+invented. What is gated instead: no weapon may dominate another with an identical MECHANICAL
+SIGNATURE (the claim with no mechanic left to appeal to), no strictly-worse mechanical
+duplicate anywhere, no clones, real spread per axis, and no orphaned ballistic/pattern/element.
+
+**`client/sim/weaponSweep.sim.ts`** (`npm run test:weapon-sim`, folded into `test:sims`) —
+the empirical half: every weapon plays the shipped level, 8 seeds each, ~10 s total. Two
+false readings had to be designed out of the harness first, and both are worth recording
+because both looked like weapon findings:
+
+1. The first cut reported ZERO kills for `lasercutter`, `gyre` and all seven blades.
+   `BOT_PROFILES.careful` holds a 7.5-grid standoff, tuned for a pistol that reaches 30 — so
+   the bot stood outside a 3.5-grid beam's range and fired into empty floor all run.
+2. Capping standoff by reach alone still left `mortar` at zero kills on four of eight seeds.
+   Sweeping its standoff 9 → 2 grid took it from 11 kills to 35, with 4-5 on every seed, and
+   nothing about the weapon changed: the bot does not lead its shots, so an 8 grid/s shell
+   with a 1 s flight lands where the target used to be.
+
+So the standoff is capped by reach AND by half a second of flight time, and each weapon is
+measured at a range it can actually connect from. The gate is "no weapon is inert — every one
+kills something on every seed", which is the failure a static test cannot see.
+
+### Three dead-content findings, each now pinned
+
+Falling out of the sweeps, and each recorded as a live drift check rather than fixed silently
+(fixing them is content design, not test work):
+
+- **`piercing` ships dead.** Authored on `RangedSpec`, converted, honoured by
+  `HitResolveSystem`, proven by `procs.test.ts` on a synthetic bullet — and set by NO weapon.
+  `carom` deliberately took ricochet instead. Pinned as `UNUSED_BY_CONTENT` in
+  `weapons.test.ts`; the day a weapon sets it, the test says so.
+- **`skinRef` is read by nothing.** Authored on all 25 weapons, and its own comment claims
+  "the view swaps by this" — but the render layer resolves by weapon id (`weaponSkins.ts`,
+  asserted by `muzzleParity.test.ts`), and 25 weapons share exactly 2 values, one per `kind`.
+  A dead field with a stale comment.
+- **No ranged weapon carries lifesteal, and no blade carries poison.** The first was found by
+  a surviving mutant: blanking `lifestealPermille` out of `WeaponFireSystem`'s spawn payload
+  kills nothing, because the freeze sweep compares `undefined` to `undefined` for all 17
+  ranged weapons. Both are pinned as named cases so neither assertion stays quietly vacuous.
+
 
 ## What v49 fixed
 

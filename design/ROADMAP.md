@@ -882,9 +882,13 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 
 - **09-04** [The dispatch chain gets five files](roadmap/25-2026-09-04-matchsvc-routes.md#the-dispatch-chain-gets-five-files-2026-09-04-server-only-no-engine-bump) — `matchsvc.ts` was 431 lines against a deliberately EMPTY file-length baseline, and Phase 8's 8.1 and 8.2 both add routes to it, from parallel worktrees. Split into five `routes/*` modules of free `(req, res, url, deps)` handlers — CLAUDE.md's form 1, and not a close call for a linear if/else over handlers sharing no state: 431 → 213 lines, no new file over 100, all 285 pre-existing tests passing with not one character changed. `send`/`readJson`/CORS could not stay in the shell (a handler importing them back is the sibling→shell cycle), so a shared primitive now sits *underneath* the siblings. The one mechanic that really changed is `/:param` extraction, which moved from a shell capture to a handler re-match on an exported pattern; +26 tests, four mutants, one kill each. `net` `test` `docs` `tools`
 
+**[2026-09-04 — the weapon roster gets tested](roadmap/26-2026-09-04-weapon-tests.md)**
+
+- **09-04** [The weapon roster gets tested](roadmap/26-2026-09-04-weapon-tests.md#the-weapon-roster-gets-tested-2026-09-04-tests-and-one-pure-module-no-engine-bump) — *“现在的武器系统，有平衡性测试吗？每个武器的玩法和效果都有测试吗”*. The mechanics did; the WEAPONS did not, and the balance nothing did. `toSimSpec` had no test file at all despite having dropped an authored field three times (`piercing`, `ricochetCount`, and `swingSec`, which left every blade's hit window at one tick for ~45 engine versions) — at 100% lines AND branches throughout, because a dropped field is a line nobody wrote. Only the MELEE half of the roster was swept; `carom`, the only ricochet weapon, appeared in exactly one test file in the whole tree, a render sweep. No test compared two weapons, and 22 of 24 player weapons had never entered any simulation — both sims run the starter loadout, and `RunOptions.loadout` had sat there unswept. Four files close it, and the measurement changed one of them: copying `skins.test.ts`'s equal-worth budget band is impossible here, because all 30 numeric Pareto dominations among ranged weapons are justified by a MECHANIC and mean dps by tier runs fine 8.41 → epic 5.63 → legend 3.75, i.e. downward — rarity buys mechanics, not pace, and nothing in the repo prices a mechanic. So the gate is domination within an identical mechanical signature (20 named pairs), and pricing is left to the new per-weapon sim. That sim invented two weapon findings before it measured one: `careful`'s 7.5-grid standoff is tuned for a pistol reaching 30, so a 3.5-grid beam and all seven blades scored ZERO, and even after capping by reach `mortar` needed a FLIGHT-TIME bound (standoff 9 → 2 grid took it 11 → 35 kills, weapon untouched). Three dead-content findings pinned as drift checks: `piercing` ships with no carrier, `skinRef` is read by nothing, and no gun has lifesteal / no blade has poison. 158 engine tests + 5 sim tests, 24 mutants across three batteries. `test` `tools` `docs`
+
 ## The work log — by theme
 
-The same 106 entries, grouped. An entry with more than one tag appears more than once.
+The same 107 entries, grouped. An entry with more than one tag appears more than once.
 
 **`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(56)*
 
@@ -1019,7 +1023,7 @@ The same 106 entries, grouped. An entry with more than one tag appears more than
 - 08-25 [The Seven Districts: the launch arena gets authored](roadmap/06-2026-08-25.md#the-seven-districts-the-launch-arena-gets-authored-2026-08-25-content)
 - 08-25 [The three parked rules that had only shipped half](roadmap/06-2026-08-25.md#the-three-parked-rules-that-had-only-shipped-half-2026-08-25-client--one-render-only-engine-field)
 
-**`test`** — coverage sweeps, gates, mutation batteries *(37)*
+**`test`** — coverage sweeps, gates, mutation batteries *(38)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 08-05 [Platform-layer test coverage pass](roadmap/01-2026-07-24--08-05.md#platform-layer-test-coverage-pass--2026-08-05-全部加测试)
@@ -1058,6 +1062,7 @@ The same 106 entries, grouped. An entry with more than one tag appears more than
 - 09-03 [The floor a door lights is not always south of it](roadmap/23-2026-09-03-door-floor-plane.md#the-floor-a-door-lights-is-not-always-south-of-it-2026-09-03d-client-only-no-engine-bump)
 - 09-04 [A door's ring belongs to the door it lights](roadmap/24-2026-09-04-door-ring-fit.md#a-doors-ring-belongs-to-the-door-it-lights-2026-09-04-client-only-no-engine-bump)
 - 09-04 [The dispatch chain gets five files](roadmap/25-2026-09-04-matchsvc-routes.md#the-dispatch-chain-gets-five-files-2026-09-04-server-only-no-engine-bump)
+- 09-04 [The weapon roster gets tested](roadmap/26-2026-09-04-weapon-tests.md#the-weapon-roster-gets-tested-2026-09-04-tests-and-one-pure-module-no-engine-bump)
 
 **`audio`** — cues, music, the engine to sound channel *(5)*
 
@@ -1091,7 +1096,7 @@ The same 106 entries, grouped. An entry with more than one tag appears more than
 - 08-31 [The save verb gets a button, and the tests that were still missing](roadmap/11-2026-08-28--08-31.md#the-save-verb-gets-a-button-and-the-tests-that-were-still-missing-2026-08-31-client)
 - 09-02 [Standing next to loot stops disarming the player](roadmap/14-2026-09-02-muzzle.md#standing-next-to-loot-stops-disarming-the-player-2026-09-02-client-only-no-engine-bump)
 
-**`tools`** — sims, profilers, editors, build scripts *(14)*
+**`tools`** — sims, profilers, editors, build scripts *(15)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-12 [File-length convention pass](roadmap/02-2026-08-12--08-15.md#file-length-convention-pass--2026-08-12)
@@ -1107,8 +1112,9 @@ The same 106 entries, grouped. An entry with more than one tag appears more than
 - 09-03 [The path references get a gate, by giving up on two thirds of them](roadmap/16-2026-09-03-doc-audit.md#the-path-references-get-a-gate-by-giving-up-on-two-thirds-of-them-2026-09-03-tooling--docs-no-engine-bump)
 - 09-03 [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump)
 - 09-04 [The dispatch chain gets five files](roadmap/25-2026-09-04-matchsvc-routes.md#the-dispatch-chain-gets-five-files-2026-09-04-server-only-no-engine-bump)
+- 09-04 [The weapon roster gets tested](roadmap/26-2026-09-04-weapon-tests.md#the-weapon-roster-gets-tested-2026-09-04-tests-and-one-pure-module-no-engine-bump)
 
-**`docs`** — design docs and this log itself *(34)*
+**`docs`** — design docs and this log itself *(35)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-02 [Documentation pass](roadmap/01-2026-07-24--08-05.md#documentation-pass--2026-08-02)
@@ -1144,6 +1150,7 @@ The same 106 entries, grouped. An entry with more than one tag appears more than
 - 09-03 [The floor a door lights is not always south of it](roadmap/23-2026-09-03-door-floor-plane.md#the-floor-a-door-lights-is-not-always-south-of-it-2026-09-03d-client-only-no-engine-bump)
 - 09-04 [A door's ring belongs to the door it lights](roadmap/24-2026-09-04-door-ring-fit.md#a-doors-ring-belongs-to-the-door-it-lights-2026-09-04-client-only-no-engine-bump)
 - 09-04 [The dispatch chain gets five files](roadmap/25-2026-09-04-matchsvc-routes.md#the-dispatch-chain-gets-five-files-2026-09-04-server-only-no-engine-bump)
+- 09-04 [The weapon roster gets tested](roadmap/26-2026-09-04-weapon-tests.md#the-weapon-roster-gets-tested-2026-09-04-tests-and-one-pure-module-no-engine-bump)
 
 **`net`** — matchmaking, sockets, reconnect *(3)*
 
