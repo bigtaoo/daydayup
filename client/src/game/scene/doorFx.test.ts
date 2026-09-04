@@ -185,7 +185,7 @@ describe('direction — the channel the whole cue rests on', () => {
     // both rings onto the floor either side of the passage, where the player actually walks.
     // `doorFloorPlaneCoverage.test.ts` measures the shipped floors; this pins that the fixture's
     // own rings read the plane at all, which no assertion on `strokeFloorArc` can show.
-    const plane = doorFloorPlane({ x: 0, y: 0, w: OPENING_W, h: 128 });
+    const plane = doorFloorPlane({ x: 0, y: 0, w: OPENING_W, h: 128 }, OPENING_H);
     const { fx } = build(true, 0, plane);
     fx.setLocked(false, true); // both rings live at once, mid-transition
     fx.tick(80, 1);
@@ -194,10 +194,47 @@ describe('direction — the channel the whole cue rests on', () => {
     // Every point clear of the wall's own column — that column is the stone standing in front.
     for (const [x] of pts) expect(Math.abs(x! - plane.cx)).toBeGreaterThanOrEqual(plane.cx - 1e-9);
     // Both lobes present (a ring on ONE side would read as a door facing the wrong way), and all of
-    // it around the passage's mid-depth rather than hanging off the threshold.
+    // it around the DRAWN opening's own middle rather than hanging off the threshold — every lobe
+    // is symmetric about `cy`, so the mean of the samples is exactly it. Half the PASSAGE's depth
+    // (-64 here) is where the first version centred them, which reads as a ring floating above the
+    // arch: `expect(cy)` is what fails against that code.
     expect(pts.some(([x]) => x! > plane.cx)).toBe(true);
     expect(pts.some(([x]) => x! < plane.cx)).toBe(true);
-    for (const [, y] of pts) expect(y!).toBeLessThan(0);
+    expect(plane.cy).toBe(-OPENING_H / 2);
+    expect(pts.reduce((sum, [, y]) => sum + y!, 0) / pts.length).toBeCloseTo(plane.cy, 6);
+  });
+
+  it('sizes both travelling rings off the plane span, not off the raw opening width', () => {
+    // The 2026-09-04 reach, at the fixture rather than in the plane's own arithmetic. `drawPulse`
+    // and `drawBurst` used to multiply `this.openingW` directly — proportional to the door and
+    // still 2.6 and 3.3 door widths across, which is the report this pass exists for. The ceilings
+    // below are what that arithmetic fails: on this fixture the pre-plane pulse reaches 83.2 px
+    // against the plane's 45.8, and the burst 105.6 against 58.1. Measured off the drawn geometry
+    // (max |x - cx| over the stroked points IS the ring's own rx), never off the argument.
+    const plane = doorFloorPlane({ x: 0, y: 0, w: OPENING_W, h: 128 }, OPENING_H);
+    const reach = (fx: DoorFx): number =>
+      Math.max(0, ...graphicsOf(fx.over).flatMap(pathPoints).map(([x]) => Math.abs(x! - plane.cx)));
+
+    const { fx } = build(false, 0, plane);
+    let widest = 0;
+    for (let i = 0; i < 24; i++) {
+      fx.tick(PERIODS_MS.pulse / 24, 1); // one whole period, so the widest ring in the cycle is seen
+      widest = Math.max(widest, reach(fx));
+    }
+    expect(widest).toBeGreaterThan(plane.cx); // it does come out of the wall at all
+    expect(widest).toBeLessThanOrEqual(plane.span * 1.3 + 1e-6);
+    expect(plane.span * 1.3).toBeLessThan(OPENING_W * 1.3); // ...and the old radius is outside that
+
+    // The burst reaches further on purpose — an event, not a heartbeat — but off the same span.
+    const burst = build(true, 0, plane).fx;
+    burst.setLocked(false, true);
+    let widestBurst = 0;
+    for (let i = 0; i < 12; i++) {
+      burst.tick(TRANSITION_MS / 12, 1);
+      widestBurst = Math.max(widestBurst, reach(burst));
+    }
+    expect(widestBurst).toBeGreaterThan(plane.cx);
+    expect(widestBurst).toBeLessThanOrEqual(plane.span * 1.65 + 1e-6);
   });
 
   it('carries motes out of the doorway toward the player, growing as they come', () => {

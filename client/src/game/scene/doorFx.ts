@@ -39,7 +39,14 @@
 // MATERIAL, which is what an image model is actually good at.
 import { Container, Graphics, Sprite, TilingSprite } from 'pixi.js';
 import { activeQuality } from '../../render/quality';
-import { GLOW_COLOR, strokeFloorArc, THROUGH_COLOR, thresholdPlane, type DoorFloorPlane } from './doorLights';
+import {
+  GLOW_COLOR,
+  ringTravel,
+  strokeFloorArc,
+  THROUGH_COLOR,
+  thresholdPlane,
+  type DoorFloorPlane,
+} from './doorLights';
 import {
   bakeField,
   bakeScanBar,
@@ -198,7 +205,7 @@ export class DoorFx {
     /** Where this door's two floor rings lie — see `doorLights.DoorFloorPlane`. Defaults to the
      *  threshold, i.e. a door in an east-west wall, which is what a fixture built with no passage
      *  rect to hand (the unit tests) means. */
-    private readonly plane: DoorFloorPlane = thresholdPlane(openingW),
+    private readonly plane: DoorFloorPlane = thresholdPlane(openingW, openingH),
   ) {
     this.locked = locked;
     this.leafGhost = parts.leafGhost;
@@ -410,7 +417,9 @@ export class DoorFx {
   /** The floor pulse: one ring per `PULSE_PERIOD_MS`, travelling OUTWARD from the doorway when the
    *  door is open and INWARD toward it when locked. Same ellipse squash as `GLOW_POOL`, so it lies
    *  on the floor with everything else in this view, and cut back to the floor the fixture is not
-   *  standing on (`doorLights.strokeFloorArc` over this door's own `plane`). */
+   *  standing on (`doorLights.strokeFloorArc` over this door's own `plane`). How far it travels is
+   *  `doorLights.ringTravel` over that plane's `span`, not a multiple of the raw opening width —
+   *  0.35 to 1.3 of the door's own size, from the wall's face where the plane has one. */
   private drawPulse(lockedW: number, openW: number, nearMul: number): void {
     const g = this.pulse;
     g.clear();
@@ -419,7 +428,7 @@ export class DoorFx {
     const ring = (weight: number, color: number, grow: number): void => {
       const a = weight * nearMul * PULSE_ALPHA * fade;
       if (a <= 0.002) return;
-      const rx = this.openingW * (0.35 + 0.95 * grow);
+      const rx = ringTravel(this.plane, 0.35, 1.3, grow);
       strokeFloorArc(g, this.plane, rx, color, 2, Math.min(1, a));
     };
     ring(openW, THROUGH_COLOR, s);
@@ -434,7 +443,7 @@ export class DoorFx {
     if (this.burstMs <= 0) return;
     const k = 1 - this.burstMs / TRANSITION_MS;
     const grow = this.locked ? 1 - k : k;
-    const rx = this.openingW * (0.3 + 1.35 * grow);
+    const rx = ringTravel(this.plane, 0.3, 1.65, grow);
     strokeFloorArc(g, this.plane, rx, this.locked ? GLOW_COLOR : 0xffffff, 3, (1 - k) * 0.75 * fade);
   }
 }

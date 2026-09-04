@@ -894,7 +894,9 @@ about the door's own decals reaching 40 px past its footprint into that block's 
 
 **`doorLights.DoorFloorPlane`** answers it with one rule rather than a branch per layer: *a floor
 decal lies on the floor the fixture's own stone is not standing on.* `south` (`w > h`) is the
-shipped geometry byte for byte. `sides` (`w <= h`) centres on the passage's own mid-depth and draws
+shipped geometry byte for byte. `sides` (`w <= h`) centres beside the arch — on the passage's own
+mid-depth until [the ring-fit pass below](#a-doors-ring-belongs-to-the-door-it-lights-2026-09-04)
+moved it onto the drawn opening's mid-height — and draws
 the ring as two side lobes with the wall's thickness skipped — an interrupted ring, which is what a
 ring around a doorway in a wall you see the sides of looks like. The discriminator is the one
 `floorRender.drawDoorWear` already uses for the worn patch (travel is along the short axis), so the
@@ -922,3 +924,59 @@ runs' footprints and <=29% reaches past the room's floor edge at the burst's wid
 decal that legitimately spans two rooms needs the room rects threaded into the fixture, and the
 bound exists so the residual cannot grow unnoticed. Full account:
 [`../roadmap/23-2026-09-03-door-floor-plane.md`](../roadmap/23-2026-09-03-door-floor-plane.md).
+
+
+## A door's ring belongs to the door it lights (2026-09-04)
+
+The pass above made those rings visible on all 24 doors. Seeing them, the report on the same
+fixture: *"现状圆圈都显示出来了，只是位置有点偏上了，你能将其放在门的中心吗？而且有的门大，有的小，
+最好那个圈能跟随门的大小进行缩放"* — the circles all show now, they just sit a bit high; can they go at
+the centre of the door, and scale with it? Two separate defects, both of them the same mistake:
+**the decals were derived from the PASSAGE AABB, and the passage is not what the player sees.**
+
+- **Centre.** A `sides` plane centred at `-r.h / 2`, half the passage's 128 px depth up-screen. The
+  arch standing on that threshold is `leafHeight` = **94.5 px** tall (`RoomBuilder` builds every
+  door at `DOOR_H`; 217 rows of leaf art fitted to a 64 px opening want 94.5 of height), so its own
+  middle is 47.24 px up. The ring floated **16.8 px** above it, on all 13 of these doors —
+  a sixth of the fixture, and at the reporter's zoom some 60 screen px. `cy` is now
+  `-min(drawH, r.h) / 2`: the drawn opening's mid-height, clamped so an arch taller than the hole
+  it stands in cannot push its decals out the far side. `south` is untouched — there the drawn
+  opening meets its floor AT the threshold, which is where its ring already was.
+- **Size.** Every radius was a multiple of `openingW`: `GLOW_POOL[0] = 1.35` put the widest pool
+  ring **2.7 door widths across**, the pulse 2.6, the burst 3.3. That is already proportional (a
+  64 px arch and a 128 px one get the same multiple), which is the interesting part of the report —
+  a ring that far out reads as unrelated to its door, so the eye's explanation is "it must be a
+  fixed size". The fix is reach, not proportion: `doorSpan` = `RING_REACH` (0.55) x the drawn
+  opening's own size, so the widest pool ring lands at ~1.4-1.5 door widths, the value the reporter
+  picked from three offered. The size it scales is the geometric mean of the drawn box clamped to
+  the width — a door cropped SHORTER than it is wide (the 11 `128x64` doorways, whose leaf wants
+  189 px of height and gets the wall's 104) comes in ~10% under a square one, while a taller-than-
+  wide door is sized by the opening the light comes out of rather than by the wall above it.
+
+One consequence had to be handled rather than accepted. A `sides` ring draws nothing while it is
+narrower than the wall's half-thickness (32 px), and at the tightened reach a 64 px arch's whole
+`0.35..1.3` pulse sweep finishes inside those 32 px — the pulse this document's previous section
+made visible would have gone straight back out. `doorLights.ringTravel` starts a TRAVELLING ring at
+the wall's face where the plane has one: 20 of 21 sampled steps now draw, against 8 for the raw
+multiple, with the reach unchanged. It moves the start of the journey, not its end, and keeps what
+the clamp was for — a ring that emerges from the doorway instead of appearing over it.
+
+Read off the live scene graph of the reported door (floor 0, `64x128` at `(1504, 288)`, its leaf
+drawn 64x94): the pool's ellipses are centred `(32, -47.2)` with `rx = 47.5`, i.e. **95 px across
+against a 64 px door** (was 172.8), and the pulse's two lobes have a mean y of `-47.22` — the
+drawn leaf's own middle, which is what "put it at the centre of the door" asked for.
+`doorFloorPlaneCoverage.test.ts` re-runs its whole sweep at the new radii (no `sides` point in stone
+or over void, the `south` residual inside its old bounds) and adds three cases the pass is for: the
+centre, with the superseded `-r.h / 2` asserted as WRONG; the reach in door widths, with the old
+2.7 as the inverse; and the travel clamp.
+
+A 25-mutant battery over the three files then found seven survivors, and three of them were one
+blind spot: `doorRender.test.ts` matches each light layer by a digest of a Graphics it builds by
+calling the same production function, which pins WHICH layer is where and cancels every geometric
+property out of the comparison — so the pool's centre, its nine radii and its foreshortening had no
+assertion anywhere, in the layer the report was actually looking at. Those numbers are now read
+back off the `ellipse` calls. The pulse and the burst restored to their pre-plane `openingW`
+radius also survived (the reach was pinned in the plane's arithmetic and nowhere in the fixture
+that ships it), as did `ringTravel`'s end guard and `thresholdPlane`'s defaulted height. 25/25
+after, with two inert controls still surviving. Full account:
+[`../roadmap/24-2026-09-04-door-ring-fit.md`](../roadmap/24-2026-09-04-door-ring-fit.md).

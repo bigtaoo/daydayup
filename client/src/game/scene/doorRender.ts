@@ -129,7 +129,7 @@ export function buildDoorBlock(
   // Which floor this door's floor-level layers may lie on. NOT always "south of the threshold":
   // for the 13 shipped doors cut through a north-south wall that ground is the same wall
   // continuing, and its own block Y-sorts in front of this fixture — see `DoorFloorPlane`.
-  const plane = doorFloorPlane(r);
+  const plane = doorFloorPlane(r, leafDrawH);
   // The art the leaf is CURRENTLY showing — `setLocked` needs the OUTGOING texture to hand to the
   // crossfade ghost, and the caller only ever passes it the incoming one.
   let currentLeaf = skin.leaf;

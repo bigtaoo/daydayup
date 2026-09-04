@@ -55,6 +55,7 @@ Keeping the character visible through stone, and the one fixture a player has to
 - **[A door has a clock (2026-09-03b)](rendering/03-occlusion-and-doors.md#a-door-has-a-clock-2026-09-03b)** — "太死板": a door measured 0.01 luma of motion because nothing in this project could animate a scene fixture at all. Direction is what now says passable.
 - **[...and then only the door, with no wall hanging over it (2026-09-03c)](rendering/03-occlusion-and-doors.md#and-then-only-the-door-with-no-wall-hanging-over-it-2026-09-03c)** — one height for every door left the 11 kerb doorways with a slab of their own cap stone hanging 82 px above the crown line; a door draws a cap only where its flank reaches it.
 - **[The floor a door lights is not always south of it (2026-09-03d)](rendering/03-occlusion-and-doors.md#the-floor-a-door-lights-is-not-always-south-of-it-2026-09-03d-client-only-no-engine-bump)** — the light a door lays on the floor was always drawn south of its threshold; on the 13 doors cut through a north-south wall that ground is the same wall continuing, and it drew over it.
+- **[A door's ring belongs to the door it lights (2026-09-04)](rendering/03-occlusion-and-doors.md#a-doors-ring-belongs-to-the-door-it-lights-2026-09-04)** — with the rings finally visible, they were centred on the passage rather than the arch and reached 2.7 door widths out; both numbers now come from the drawn opening.
 
 ### [The floor, the arena, the void](rendering/04-floor-arena-void.md)
 

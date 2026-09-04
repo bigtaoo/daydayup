@@ -116,7 +116,8 @@ function lightOf(
   art: [number, number] = [ART_W, ART_H],
 ): Graphics {
   const expected = new Graphics();
-  draw(expected, passage.w, doorLeafFrame(passage.w, height, art[0], art[1]).drawH, doorFloorPlane(passage));
+  const drawH = doorLeafFrame(passage.w, height, art[0], art[1]).drawH;
+  draw(expected, passage.w, drawH, doorFloorPlane(passage, drawH));
   const want = digest(expected);
   expect(want).not.toBe('');
   const found = graphicsOf(fixture).filter((g) => digest(g) === want);
@@ -483,9 +484,21 @@ describe('an open door is lit from beyond, rather than being a locked door minus
     const fixture = buildDoorBlock(kerb, WALL_H_KERB, skin(tex(ART_W, ART_H)), false);
     const spill = lightOf(fixture, drawSpill, kerb, WALL_H_KERB);
     expect(spill.visible).toBe(true);
-    // The pool's reach is set by the opening's WIDTH, so a kerb door — the wide one — gets the
-    // biggest pool of all, which is what has to carry it.
-    expect(spill.getLocalBounds().width).toBeGreaterThan(kerb.w);
+    // The pool is what has to carry a kerb door — there is no room above a 22 px opening for the
+    // through-light ramp — so it must still be a POOL and not a hairline. Measured as how far the
+    // layer reaches south of the threshold, which only the pool does: the rim bands are drawn up
+    // the jambs, at y <= 0, and the layer's WIDTH is the opening's own once the pool is narrower
+    // than the doorway.
+    const reach = (g: Graphics): number => g.getLocalBounds().maxY;
+    expect(reach(spill)).toBeGreaterThan(WALL_H_KERB / 2);
+    // Since 2026-09-04 that pool is sized by the DRAWN opening rather than by the passage's width,
+    // so a kerb door no longer wears the biggest pool on the floor — 128 px of doorway cropped to
+    // a fifth of its height gets a bit under half the ring the full-height door of the same width
+    // does. Shrinking WITH the door is the point (`doorLights.doorSpan`); vanishing with it is not.
+    const tall = buildDoorBlock(kerb, WALL_H_PERIMETER, skin(tex(ART_W, ART_H)), false);
+    const full = reach(lightOf(tall, drawSpill, kerb, WALL_H_PERIMETER));
+    expect(reach(spill)).toBeLessThan(full);
+    expect(reach(spill) / full).toBeGreaterThan(0.35);
   });
 });
 
@@ -895,7 +908,7 @@ describe('what the layers come out as together', () => {
     // `leafHeight` falls back to the full fixture height. `lightOf` cannot express that case,
     // which is why the expectation is built by hand here.
     const expected = new Graphics();
-    drawSpill(expected, PASSAGE.w, WALL_H_PERIMETER, doorFloorPlane(PASSAGE));
+    drawSpill(expected, PASSAGE.w, WALL_H_PERIMETER, doorFloorPlane(PASSAGE, WALL_H_PERIMETER));
     expect(inFront.map(digest)).toContain(digest(expected));
   });
 });

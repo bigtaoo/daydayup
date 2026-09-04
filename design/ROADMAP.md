@@ -874,11 +874,19 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 
 - **09-03** [The floor a door lights is not always south of it](roadmap/23-2026-09-03-door-floor-plane.md#the-floor-a-door-lights-is-not-always-south-of-it-2026-09-03d-client-only-no-engine-bump) — every floor-level layer a door draws — both pools, the travelling pulse, the lock-change burst — was drawn from the threshold southward, on the assumption that the ground in front of a doorway is room floor. It is, for 11 of the 24 shipped doors; for the other 13 that ground is the same wall continuing, whose block Y-sorts in front of the door and painted over 29-90% of every ring. One `DoorFloorPlane` now puts a decal on the floor the fixture's own stone is not standing on. `render` `test` `docs`
 
+**[2026-09-04 — the ring belongs to the door](roadmap/24-2026-09-04-door-ring-fit.md)**
+
+- **09-04** [A door's ring belongs to the door it lights](roadmap/24-2026-09-04-door-ring-fit.md#a-doors-ring-belongs-to-the-door-it-lights-2026-09-04-client-only-no-engine-bump) — *"圆圈都显示出来了，只是位置有点偏上了…有的门大，有的小，最好那个圈能跟随门的大小进行缩放"*. With the rings finally visible, both numbers that placed and sized them came from the PASSAGE rather than from the arch on screen: a `sides` ring sat 16.8 px above the drawn leaf's own middle, and every radius reached 2.7 door widths — proportional, and far enough out that the eye stops attaching ring to door. Centre is now the drawn opening's mid-height, reach 0.55 of its size (the reporter picked 1.4 widths from three offered), and `ringTravel` starts a travelling ring at the wall's face so the tightened pulse does not spend its sweep buried in stone (20 of 21 steps draw, against 9). Read off the live scene graph: pool 95 px across a 64 px door, was 172.8. A 25-mutant battery then found 7 survivors — three of them one blind spot, a digest oracle built by calling the production function, which left the pool's centre/radii/squash unasserted anywhere; 25/25 after, two inert controls still surviving. `render` `test` `docs`
+
+**[2026-09-04 — matchsvc's dispatch chain](roadmap/25-2026-09-04-matchsvc-routes.md)**
+
+- **09-04** [The dispatch chain gets five files](roadmap/25-2026-09-04-matchsvc-routes.md#the-dispatch-chain-gets-five-files-2026-09-04-server-only-no-engine-bump) — `matchsvc.ts` was 431 lines against a deliberately EMPTY file-length baseline, and Phase 8's 8.1 and 8.2 both add routes to it, from parallel worktrees. Split into five `routes/*` modules of free `(req, res, url, deps)` handlers — CLAUDE.md's form 1, and not a close call for a linear if/else over handlers sharing no state: 431 → 213 lines, no new file over 100, all 285 pre-existing tests passing with not one character changed. `send`/`readJson`/CORS could not stay in the shell (a handler importing them back is the sibling→shell cycle), so a shared primitive now sits *underneath* the siblings. The one mechanic that really changed is `/:param` extraction, which moved from a shell capture to a handler re-match on an exported pattern; +26 tests, four mutants, one kill each. `net` `test` `docs` `tools`
+
 ## The work log — by theme
 
-The same 104 entries, grouped. An entry with more than one tag appears more than once.
+The same 106 entries, grouped. An entry with more than one tag appears more than once.
 
-**`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(55)*
+**`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(56)*
 
 - 08-12 [Live-play bug-fix pass](roadmap/02-2026-08-12--08-15.md#live-play-bug-fix-pass--2026-08-12-user-report-from-a-dungeon-mode-screenshot)
 - 08-12 [Viewport-fill bug-fix pass](roadmap/02-2026-08-12--08-15.md#viewport-fill-bug-fix-pass--2026-08-12)
@@ -935,6 +943,7 @@ The same 104 entries, grouped. An entry with more than one tag appears more than
 - 09-03 [A death burst is the size of what died](roadmap/21-2026-09-03-death-burst.md#a-death-burst-is-the-size-of-what-died-2026-09-03-client--engine-event-field-no-engine_version-bump)
 - 09-03 [Only the door at the door, and no wall hanging over it](roadmap/22-2026-09-03-door-cap.md#only-the-door-at-the-door-and-no-wall-hanging-over-it-2026-09-03-client-only-no-engine-bump)
 - 09-03 [The floor a door lights is not always south of it](roadmap/23-2026-09-03-door-floor-plane.md#the-floor-a-door-lights-is-not-always-south-of-it-2026-09-03d-client-only-no-engine-bump)
+- 09-04 [A door's ring belongs to the door it lights](roadmap/24-2026-09-04-door-ring-fit.md#a-doors-ring-belongs-to-the-door-it-lights-2026-09-04-client-only-no-engine-bump)
 
 **`art`** — authored assets and the art pipeline *(16)*
 
@@ -1010,7 +1019,7 @@ The same 104 entries, grouped. An entry with more than one tag appears more than
 - 08-25 [The Seven Districts: the launch arena gets authored](roadmap/06-2026-08-25.md#the-seven-districts-the-launch-arena-gets-authored-2026-08-25-content)
 - 08-25 [The three parked rules that had only shipped half](roadmap/06-2026-08-25.md#the-three-parked-rules-that-had-only-shipped-half-2026-08-25-client--one-render-only-engine-field)
 
-**`test`** — coverage sweeps, gates, mutation batteries *(35)*
+**`test`** — coverage sweeps, gates, mutation batteries *(37)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 08-05 [Platform-layer test coverage pass](roadmap/01-2026-07-24--08-05.md#platform-layer-test-coverage-pass--2026-08-05-全部加测试)
@@ -1047,6 +1056,8 @@ The same 104 entries, grouped. An entry with more than one tag appears more than
 - 09-03 [A death burst is the size of what died](roadmap/21-2026-09-03-death-burst.md#a-death-burst-is-the-size-of-what-died-2026-09-03-client--engine-event-field-no-engine_version-bump)
 - 09-03 [Only the door at the door, and no wall hanging over it](roadmap/22-2026-09-03-door-cap.md#only-the-door-at-the-door-and-no-wall-hanging-over-it-2026-09-03-client-only-no-engine-bump)
 - 09-03 [The floor a door lights is not always south of it](roadmap/23-2026-09-03-door-floor-plane.md#the-floor-a-door-lights-is-not-always-south-of-it-2026-09-03d-client-only-no-engine-bump)
+- 09-04 [A door's ring belongs to the door it lights](roadmap/24-2026-09-04-door-ring-fit.md#a-doors-ring-belongs-to-the-door-it-lights-2026-09-04-client-only-no-engine-bump)
+- 09-04 [The dispatch chain gets five files](roadmap/25-2026-09-04-matchsvc-routes.md#the-dispatch-chain-gets-five-files-2026-09-04-server-only-no-engine-bump)
 
 **`audio`** — cues, music, the engine to sound channel *(5)*
 
@@ -1080,7 +1091,7 @@ The same 104 entries, grouped. An entry with more than one tag appears more than
 - 08-31 [The save verb gets a button, and the tests that were still missing](roadmap/11-2026-08-28--08-31.md#the-save-verb-gets-a-button-and-the-tests-that-were-still-missing-2026-08-31-client)
 - 09-02 [Standing next to loot stops disarming the player](roadmap/14-2026-09-02-muzzle.md#standing-next-to-loot-stops-disarming-the-player-2026-09-02-client-only-no-engine-bump)
 
-**`tools`** — sims, profilers, editors, build scripts *(13)*
+**`tools`** — sims, profilers, editors, build scripts *(14)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-12 [File-length convention pass](roadmap/02-2026-08-12--08-15.md#file-length-convention-pass--2026-08-12)
@@ -1095,8 +1106,9 @@ The same 104 entries, grouped. An entry with more than one tag appears more than
 - 09-02 [The four clips finally get a sound](roadmap/14-2026-09-02-muzzle.md#the-four-clips-finally-get-a-sound-2026-09-02-client--assets--tooling-no-engine-bump)
 - 09-03 [The path references get a gate, by giving up on two thirds of them](roadmap/16-2026-09-03-doc-audit.md#the-path-references-get-a-gate-by-giving-up-on-two-thirds-of-them-2026-09-03-tooling--docs-no-engine-bump)
 - 09-03 [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump)
+- 09-04 [The dispatch chain gets five files](roadmap/25-2026-09-04-matchsvc-routes.md#the-dispatch-chain-gets-five-files-2026-09-04-server-only-no-engine-bump)
 
-**`docs`** — design docs and this log itself *(32)*
+**`docs`** — design docs and this log itself *(34)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-02 [Documentation pass](roadmap/01-2026-07-24--08-05.md#documentation-pass--2026-08-02)
@@ -1130,11 +1142,14 @@ The same 104 entries, grouped. An entry with more than one tag appears more than
 - 09-03 [A death burst is the size of what died](roadmap/21-2026-09-03-death-burst.md#a-death-burst-is-the-size-of-what-died-2026-09-03-client--engine-event-field-no-engine_version-bump)
 - 09-03 [Only the door at the door, and no wall hanging over it](roadmap/22-2026-09-03-door-cap.md#only-the-door-at-the-door-and-no-wall-hanging-over-it-2026-09-03-client-only-no-engine-bump)
 - 09-03 [The floor a door lights is not always south of it](roadmap/23-2026-09-03-door-floor-plane.md#the-floor-a-door-lights-is-not-always-south-of-it-2026-09-03d-client-only-no-engine-bump)
+- 09-04 [A door's ring belongs to the door it lights](roadmap/24-2026-09-04-door-ring-fit.md#a-doors-ring-belongs-to-the-door-it-lights-2026-09-04-client-only-no-engine-bump)
+- 09-04 [The dispatch chain gets five files](roadmap/25-2026-09-04-matchsvc-routes.md#the-dispatch-chain-gets-five-files-2026-09-04-server-only-no-engine-bump)
 
-**`net`** — matchmaking, sockets, reconnect *(2)*
+**`net`** — matchmaking, sockets, reconnect *(3)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 09-03 [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump)
+- 09-04 [The dispatch chain gets five files](roadmap/25-2026-09-04-matchsvc-routes.md#the-dispatch-chain-gets-five-files-2026-09-04-server-only-no-engine-bump)
 
 **`i18n`** — locales and text layout *(2)*
 
