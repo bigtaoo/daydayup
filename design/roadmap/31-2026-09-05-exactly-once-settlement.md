@@ -100,13 +100,15 @@ number.
 
 ### Tests
 
-**+45 cases** across four files — three grown, one new; the server suite reads 793 on this
-tree, but the absolute number is not a clean baseline (two co-resident sessions were landing
-billing and sim work in the same working tree through this pass). Four of the five changed
-source files read **100% lines and 100% branches** — `db.ts`, `rating.ts`, `ladderReport.ts`
-and `routes/rating.ts`. `index.ts` is unchanged at 97.72/90.14, its one uncovered line the
-pre-existing `import.meta.url === process.argv[1]` auto-start guard. Server-wide, 99.53%
-lines / 97.24% branches.
+**+45 cases** across four files — three grown, one new. The server suite reads **720** at
+this commit (675 + 45); the shared working tree read 793, because two co-resident sessions
+were landing billing and sim work in it throughout this pass — which is also why every number
+here was re-measured in an isolated worktree checked out at the commit itself rather than
+taken from that tree. Four of the five changed source files read **100% lines and 100%
+branches** — `db.ts`, `rating.ts`, `ladderReport.ts` and `routes/rating.ts`. `index.ts` is
+unchanged at 97.72/90.14, its one uncovered line the pre-existing
+`import.meta.url === process.argv[1]` auto-start guard. Server-wide, 99.48% lines / 97.00%
+branches.
 
 - `test/rating.test.ts` — the claim on all three backends (in-memory, `:memory:`, and a
   real file, because `:memory:` gives each connection a *private* database and a
