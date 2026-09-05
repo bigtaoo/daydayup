@@ -72,6 +72,7 @@ const SEED_DROP = 0x9c0d1e2f;
 const SEED_ROOMGEN = 0x3f4a5b6c;
 const SEED_RING = 0x7d8e9f0a;
 const SEED_INTEGRITY = 0x2c3d4e5f;
+const SEED_CARD = 0x5a6b7c8d;
 
 export class GameState {
   readonly seed: number;
@@ -104,6 +105,12 @@ export class GameState {
   // gameplay system — mixing it into aiPrng/combatPrng/dropPrng would shift real
   // draw sequences whenever this tuning changes, for no anti-cheat benefit.
   readonly integrityPrng: Prng;
+
+  /** Floor-card offers (design/05, ENGINE_VERSION 58). Its OWN stream, not `dropPrng`:
+   *  a checkpoint's three cards and a kill's loot are independent decisions, and sharing
+   *  a stream would make "how many enemies did you kill on this floor" silently decide
+   *  which cards you are offered at the end of it. */
+  readonly cardPrng: Prng;
 
   // Entities — ordered arrays; index/id stable within a match.
   readonly players: PlayerActor[] = [];
@@ -147,6 +154,41 @@ export class GameState {
   // (PickupSystem), merged into `bankedMaterials` on EXTRACT/DESCEND, and silently
   // discarded on a run-ending death (forfeit is just "never merged" — no extra code).
   floorMaterials: Partial<Record<string, number>> = {};
+
+  // ── Per-floor weapon allowance (design/05, 2026-09-05) ──────────────────────
+  // The design target is a floor that hands out 2-3 weapons, and a weight on the
+  // drop table cannot express that: at ~60-77 enemies a floor, 5/84 per kill lands
+  // anywhere from 0 to 6, and lowering the weight only widens that spread relative
+  // to the target. So the WEIGHT sets the pacing (when a weapon shows up) and this
+  // quota sets the COUNT, with `DeathDropsSystem` making up any shortfall on the
+  // capstone kill so the floor can never come in under it.
+  //
+  // Dungeon runs only. A config with no rooms (a flat `waves`/`floors` list — every
+  // golden scenario and most tests) has no floor to allocate against and is left on
+  // the plain table, which is also why `-1` rather than `0` is the unrolled marker:
+  // it distinguishes "this floor has no allowance concept" from "this floor's
+  // allowance is spent".
+  /** This floor's weapon allowance, rolled once when the floor is placed. -1 = never
+   *  rolled (non-dungeon config, or a floor not yet placed). */
+  floorWeaponQuota = -1;
+
+  // ── Floor cards (design/05, ENGINE_VERSION 58) ──────────────────────────────
+  // The checkpoint's "pick one of three". `floorCardOffer` holds THIS checkpoint's
+  // three card ids (empty whenever no offer is open — before the capstone falls, on
+  // the last floor, and immediately after a descend consumes one); `floorCards` is
+  // the run's history of picks, in pick order, and is what `resolveFloorCards` reads
+  // to derive the run's heal-drop multiplier and weapon-quota bonus.
+  //
+  // Buff cards are NOT in that derivation: they are pushed into every seat's
+  // `PlayerActor.buffs` at pick time, exactly like a buff picked up off the floor, so
+  // they flow through the existing `sumBuffs`/`BUFF_CAPS` machinery instead of a
+  // second damage-scaling path.
+  /** This checkpoint's three offered card ids; empty when no offer is open. */
+  floorCardOffer: string[] = [];
+  /** Every card this run has picked, in pick order. Run-scoped, never carries out. */
+  floorCards: string[] = [];
+  /** Weapons this floor has actually produced, against `floorWeaponQuota`. */
+  floorWeaponsDropped = 0;
   // The run's carry-out bag — the ONLY thing that leaves a run (design/05). Never
   // wiped by death; only ever grows, at an extraction checkpoint.
   bankedMaterials: Partial<Record<string, number>> = {};
@@ -243,6 +285,7 @@ export class GameState {
     this.roomgenPrng = new Prng(config.seed ^ SEED_ROOMGEN);
     this.ringPrng = new Prng(config.seed ^ SEED_RING);
     this.integrityPrng = new Prng(config.seed ^ SEED_INTEGRITY);
+    this.cardPrng = new Prng(config.seed ^ SEED_CARD);
     this.worldW = pxToFp(config.worldW);
     this.worldH = pxToFp(config.worldH);
     this.waves = config.waves;
@@ -359,6 +402,7 @@ export class GameState {
       confirmExtract: false,
       confirmDescend: false,
       pickupTargetId: 0,
+      cardVote: 0,
       downed: false, // co-op downed/revive (design/05/07, ROADMAP 3.2)
       bleedoutTicks: 0,
       reviveProgressTicks: 0,

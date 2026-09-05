@@ -4,7 +4,6 @@ import { CoopSession } from '../net/CoopSession';
 import { MatchRecorder } from './match/MatchRecorder';
 import { bankMaterials, unlockBlueprint, createAccountSyncMetaStore, type MetaStore } from '../meta';
 import type { SettingsState } from '../settings';
-import { t } from '../i18n';
 import { Layers } from './scene/layers';
 import { Scene } from './scene/Scene';
 import { Screens } from './screens/Screens';
@@ -33,6 +32,8 @@ import { Backdrop } from './scene/Backdrop';
 import { PickupDebugOverlay } from './scene/PickupDebugOverlay';
 import { ArtGate } from './controllers/ArtGate';
 import { PortalPrompt } from './ui/PortalPrompt';
+import { FloorCardPrompt } from './ui/FloorCardPrompt';
+import { buildHudLayer } from './controllers/hudLayer';
 import { RunOutcome } from './controllers/RunOutcome';
 import { ForgeActions } from './controllers/ForgeActions';
 import { GameLoop } from './controllers/GameLoop';
@@ -120,6 +121,7 @@ export class Game {
   private settingsScreen = new Settings();
   private pauseMenu = new PauseMenu();
   private readonly portalPrompt = new PortalPrompt();
+  private readonly floorCardPrompt = new FloorCardPrompt();
   // Settings can be opened from the main menu, the forge, OR the in-run pause menu
   // (design/10); this is which phase the settings screen's BACK button returns to. Set
   // right before each openSettings()/openSettingsFromPause() call, never read otherwise.
@@ -297,6 +299,7 @@ export class Game {
       runOutcome: this.runOutcome, tutorialHints: this.tutorialHints, artGate: this.artGate,
       forgeActions: this.forgeActions, hud: this.hud, hudView: this.hudView,
       touchControlsView: this.touchControlsView, portalPrompt: this.portalPrompt,
+      floorCardPrompt: this.floorCardPrompt,
       pickupDebugOverlay: this.pickupDebugOverlay, settingsBtn: this.settingsBtn,
       mainMenu: this.mainMenu, modeSelect: this.modeSelect, pvpPreview: this.pvpPreview,
       matchmaking: this.matchmaking, forge: this.forge, screens: this.screens,
@@ -312,7 +315,7 @@ export class Game {
     const wiring = {
       run: this.run, nav: this.nav, runs: this.runs, net: this.net,
       forgeInput: this.forgeInput, builder: this.builder, input: this.input,
-      hud: this.hud, portalPrompt: this.portalPrompt,
+      hud: this.hud, portalPrompt: this.portalPrompt, floorCardPrompt: this.floorCardPrompt,
       mainMenu: this.mainMenu, modeSelect: this.modeSelect, pvpPreview: this.pvpPreview,
       matchmaking: this.matchmaking, partyScreen: this.partyScreen, loginScreen: this.loginScreen,
       forge: this.forge, screens: this.screens, pauseMenu: this.pauseMenu,
@@ -336,17 +339,12 @@ export class Game {
   // — see roomBuilder.build() calls in beginArenaDemoRun / EventReactorHost.onRoomEnter.
 
   private buildHud() {
-    this.backdrop.resize(this.screenSize().w, this.screenSize().h);
-    this.hud.build(this.layers, this.screenSize());
-    this.portalPrompt.reposition(this.screenSize());
-    this.hudView.addChild(this.hud.view, this.touchControlsView.view, this.portalPrompt.view);
-    this.layers.hudOverlay.addChild(this.hudView);
-
-    // Settings entry (design/10) — forge phase only (showForge/beginRun). Built here, MOUNTED in the
-    // constructor ABOVE every screen: mounted here it sat under the forge's own full-viewport hub Panel.
-    this.settingsBtn = new Button(t('settings.title'), { w: 110, h: 30, fontSize: 12 });
-    this.settingsBtn.onTap = () => this.nav.openSettings();
-    this.settingsBtn.view.visible = false;
+    // Assembly + the settings button live in `controllers/hudLayer.ts`; the button is
+    // MOUNTED by the constructor above every screen, not on this layer (design/10).
+    this.settingsBtn = buildHudLayer(this.screenSize(), this.layers, this.hudView, {
+      backdrop: this.backdrop, hud: this.hud, touch: this.touchControlsView,
+      portal: this.portalPrompt, cards: this.floorCardPrompt,
+    }, () => this.nav.openSettings());
   }
 
   /** GameLoopHost — the tutorial's completion mark (design/10). Delegates; the rule

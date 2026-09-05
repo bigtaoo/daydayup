@@ -56,9 +56,16 @@ function inputFor(tick: number, owner: number, salt: number, opts: ScenarioInput
   if (tick % 37 === 0) buttons |= Button.SWAP_WEAPON;
   if (opts.interact && tick % 53 === 0) buttons |= Button.INTERACT;
   if (opts.descend && tick % 61 === 0) buttons |= Button.CONFIRM_DESCEND;
+  // A descend needs a floor-card vote to be honoured (design/05, ENGINE_VERSION 58) —
+  // without one the portal simply holds, and a scenario that used to change floors
+  // would silently stop doing so while still passing its own hash. Varied by beat
+  // rather than pinned to slot 1, so the tally and the offer indexing are both really
+  // exercised rather than always taking the leftmost card.
+  const cardVote = opts.descend && tick % 61 === 0 ? (mix(tick, salt) % 3) + 1 : 0;
   return makeCommand({
     owner,
     tick,
+    cardVote,
     moveBrad: opts.press
       ? // Eight compass directions, each HELD for 100 ticks, starting due SOUTH (index 2 of 8
         // — brad 0 is +x/east, so BRAD_FULL/4 is +y/south).

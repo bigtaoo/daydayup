@@ -5,7 +5,6 @@ import type { Phase } from '../phase';
 import { updateMusicForFrame } from '../musicDirector';
 import { fpToPx, bradToRad } from '../coords';
 import { ELEMENT_COLORS } from '../theme';
-import { totalFloorCount, checkpointReached } from '../match/floorCount';
 import { LocalPredictor, DEFAULT_PREDICTOR } from './LocalPredictor';
 import type { CommandBuilder } from './CommandBuilder';
 import type { AllyController } from './AllyController';
@@ -21,16 +20,13 @@ import type { FxController } from '../fx/FxController';
 import type { HudView } from '../ui/HudView';
 import type { TouchControlsView } from '../ui/TouchControlsView';
 import type { PortalPrompt } from '../ui/PortalPrompt';
+import type { FloorCardPrompt } from '../ui/FloorCardPrompt';
+import { updateCheckpointOverlays } from './checkpointOverlays';
 import type { PartyScreen } from '../screens/PartyScreen';
 import type { PickupDebugOverlay } from '../scene/PickupDebugOverlay';
 
 const SIM_DT_MS = 1000 / 30; // fixed sim step: the engine runs at 30 Hz (design/06)
 const MAX_STEPS = 5; // catch-up cap per render frame → no spiral of death
-// How close (world px) the player must stand to the portal for PortalPrompt's popup to
-// appear (design/10 legibility fix, 2026-08-02) — wide enough to reach comfortably
-// before the portal's own footprint, narrow enough that it doesn't show while still
-// crossing the room.
-const PORTAL_PROMPT_RADIUS_PX = 90;
 
 /** Every already-independent collaborator the main loop drives — none of these need a
  * host callback themselves (they're either stateless adapters or, for `runOutcome`/
@@ -43,6 +39,7 @@ export interface GameLoopDeps {
   hud: HudView;
   touchControlsView: TouchControlsView;
   portalPrompt: PortalPrompt;
+  floorCardPrompt: FloorCardPrompt;
   partyScreen: PartyScreen;
   builder: CommandBuilder;
   ally: AllyController;
@@ -467,33 +464,14 @@ export class GameLoop {
     });
     this.deps.pickupDebugOverlay?.update(s);
 
-    // Portal popup (design/10 legibility fix, 2026-08-02) — replaces the old E-key
-    // text prompt. "Checkpoint eligible" is shared between the portal's own open/
-    // closed visual (RoomBuilder) and the popup's proximity gate, computed once here
-    // so neither has to duplicate the other's half of the condition. The last floor
-    // used to be excluded here entirely (ExtractionSystem auto-resolved EXTRACT the
-    // instant its capstone cleared, with no portal/popup at all) — dropped 2026-08-12
-    // (live bug report: the boss's own death drops never had a chance to be picked up,
-    // since the run ended before the player could walk over to them). The last floor
-    // now opens the SAME portal + popup as any other checkpoint; PortalPrompt just
-    // hides its Descend button when there's no next floor to descend to.
-    const floor = s.floorIndex + 1;
-    const isLastFloor = floor >= totalFloorCount(s);
-    const checkpointEligible = !s.zoneEnabled && s.phase !== 'gameover' && checkpointReached(s);
-    this.deps.roomBuilder.setPortalOpen(checkpointEligible);
-
-    const p = s.players[this.host.localOwner];
-    const portalPx = this.deps.roomBuilder.portalPx;
-    const nearPortal =
-      !!p && !!portalPx && Math.hypot(fpToPx(p.gx) - portalPx.x, fpToPx(p.gy) - portalPx.y) <= PORTAL_PROMPT_RADIUS_PX;
-    this.deps.portalPrompt.update(s, checkpointEligible && nearPortal, isLastFloor);
-    // Fire is suppressed while the PORTAL popup is open — its buttons are a run-level
-    // choice made in a cleared room, so gating the whole button on it costs nothing.
-    // The weapon-pickup panel used to be OR'd in here and no longer is (2026-09-02 live
-    // report, *"附近有可以拾取的武器时，不要阻断了玩家攻击"*): it opens mid-fight, from
-    // `SIM.lootRevealRadius` away, every time anything drops a weapon, so gating fire on
-    // it disarmed the player next to loot. It swallows its own presses instead —
-    // WeaponPickupPrompt.onPressStart → CommandBuilder.suppressFireUntilRelease().
-    this.deps.builder.suppressFire(this.deps.portalPrompt.isOpen);
+    // Everything that appears once a floor is finished — the portal, its popup, the
+    // floor-card offer, and the fire suppression they share — is one pass off one
+    // condition (`controllers/checkpointOverlays.ts`).
+    updateCheckpointOverlays(s, this.host.localOwner, {
+      roomBuilder: this.deps.roomBuilder,
+      portalPrompt: this.deps.portalPrompt,
+      floorCardPrompt: this.deps.floorCardPrompt,
+      suppressFire: (active) => this.deps.builder.suppressFire(active),
+    });
   }
 }

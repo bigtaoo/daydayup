@@ -56,6 +56,7 @@ function make(over: Partial<ScreenNavDeps> = {}) {
     backdrop: { resize: vi.fn() } as never,
     hud: { reposition: vi.fn() } as never,
     portalPrompt: { reposition: vi.fn() } as never,
+    floorCardPrompt: { reposition: vi.fn() } as never,
     mainMenu: screen() as never,
     modeSelect: screen() as never,
     pvpPreview: screen() as never,

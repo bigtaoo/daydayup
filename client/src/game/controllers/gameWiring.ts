@@ -29,6 +29,7 @@ import type { RunLifecycle } from './RunLifecycle';
 import type { ScreenNav } from './ScreenNav';
 import type { HudView } from '../ui/HudView';
 import type { PortalPrompt } from '../ui/PortalPrompt';
+import type { FloorCardPrompt } from '../ui/FloorCardPrompt';
 import type { MainMenu } from '../screens/MainMenu';
 import type { ModeSelect } from '../screens/ModeSelect';
 import type { PvpPreview } from '../screens/PvpPreview';
@@ -51,6 +52,7 @@ export interface WiringDeps {
   input: InputSource;
   hud: HudView;
   portalPrompt: PortalPrompt;
+  floorCardPrompt: FloorCardPrompt;
   mainMenu: MainMenu;
   modeSelect: ModeSelect;
   pvpPreview: PvpPreview;
@@ -110,6 +112,13 @@ export function wireHud(d: WiringDeps): void {
   // onSwitchWeapon → builder.requestSwap() below.
   d.portalPrompt.onExtract = () => d.builder.requestConfirmExtract();
   d.portalPrompt.onDescend = () => d.builder.requestConfirmDescend();
+  // Floor cards (design/05, ENGINE_VERSION 58) — a tap is a VOTE, not a descend; the
+  // portal's own Descend button is still what leaves the floor. `onPressStart` swallows
+  // the press so choosing a card never also fires a shot, exactly as
+  // WeaponPickupPrompt does (WebInput reads `firing` off a raw mousedown that a Pixi
+  // button consuming the event knows nothing about).
+  d.floorCardPrompt.onVote = (slot) => d.builder.requestCardVote(slot);
+  d.floorCardPrompt.onPressStart = () => d.builder.suppressFireUntilRelease();
   // Ground-weapon click-to-collect (design/03, ENGINE_VERSION 32) — same shape as the portal
   // popup above: a row click latches the target id onto the builder.
   d.hud.weaponPickupPrompt.onPick = (id) => d.builder.requestPickup(id);

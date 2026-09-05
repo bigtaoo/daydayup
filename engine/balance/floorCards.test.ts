@@ -1,0 +1,196 @@
+/**
+ * Floor cards (design/05, ENGINE_VERSION 58) — the pure half: the catalogue, the offer
+ * draw, and the vote tally. The end-to-end half (the offer opening with the portal, a
+ * descend holding for a pick, the reward reaching every seat) lives in
+ * `systems/floorCardCheckpoint.test.ts`, driven through a real engine.
+ *
+ * The tally is where most of these assertions sit, because it is the piece with a
+ * genuine correctness surface: it runs INDEPENDENTLY on every client in a lockstep
+ * match (design/06), so a rule that resolves differently on two machines — a re-roll, a
+ * coin flip, an iteration over an unordered map — desyncs the run rather than merely
+ * picking a different card.
+ */
+import { describe, it, expect } from 'vitest';
+import { Prng } from '@dd/engine/math/prng';
+import { RUN_BUFFS } from '@dd/engine/balance/runbuffs';
+import { HEAL_DROP_MULT_CAP } from '@dd/engine/content/drops';
+import {
+  FLOOR_CARDS,
+  FLOOR_CARD_IDS,
+  FLOOR_CARD_OFFER_SIZE,
+  cardBuffId,
+  resolveFloorCards,
+  rollFloorCardOffer,
+  tallyCardVote,
+} from '@dd/engine/balance/floorCards';
+
+describe('the catalogue', () => {
+  it('offers at least as many cards as a checkpoint shows, or an offer cannot fill', () => {
+    expect(FLOOR_CARD_IDS.length).toBeGreaterThanOrEqual(FLOOR_CARD_OFFER_SIZE);
+  });
+
+  it('names every buff card against a REAL entry in the run-buff catalogue', () => {
+    // The anti-drift check: a buff card is a wrapper over RUN_BUFFS precisely so a card
+    // and a floor drop of the same buff cannot diverge. A typo'd id would be silently
+    // ignored by `sumBuffs`' forward-compat rule and the card would just do nothing.
+    for (const id of FLOOR_CARD_IDS) {
+      const buffId = cardBuffId(id);
+      if (buffId !== undefined) expect(RUN_BUFFS[buffId], `card ${id}`).toBeDefined();
+    }
+  });
+
+  it('carries i18n KEYS, never display text (design/09)', () => {
+    for (const id of FLOOR_CARD_IDS) {
+      expect(FLOOR_CARDS[id]!.nameKey).toMatch(/^card\.[a-z_]+\.name$/);
+      expect(FLOOR_CARDS[id]!.descKey).toMatch(/^card\.[a-z_]+\.desc$/);
+    }
+  });
+
+  it('includes the card the request actually named — doubling the potion drop rate', () => {
+    expect(FLOOR_CARDS.potion_flow!.effect).toEqual({ kind: 'heal_drop_mult', factor: 2 });
+  });
+});
+
+describe('rollFloorCardOffer', () => {
+  it('draws exactly three DISTINCT cards', () => {
+    for (let seed = 1; seed <= 40; seed++) {
+      const offer = rollFloorCardOffer(new Prng(seed));
+      expect(offer).toHaveLength(FLOOR_CARD_OFFER_SIZE);
+      expect(new Set(offer).size).toBe(FLOOR_CARD_OFFER_SIZE);
+      for (const id of offer) expect(FLOOR_CARD_IDS).toContain(id);
+    }
+  });
+
+  it('is reproducible from the same stream and diverges on a different one (design/06)', () => {
+    expect(rollFloorCardOffer(new Prng(77))).toEqual(rollFloorCardOffer(new Prng(77)));
+    const a = [rollFloorCardOffer(new Prng(1)), rollFloorCardOffer(new Prng(2))];
+    expect(a[0]).not.toEqual(a[1]);
+  });
+
+  it('costs exactly one draw per card, whatever comes up', () => {
+    // Load-bearing for design/06: a rejection loop would spend a seed-dependent number
+    // of draws, so which cards happened to collide would shift every later cardPrng
+    // draw in the run. Counted against a stub rather than inferred.
+    let draws = 0;
+    const counting = {
+      nextInt(max: number) {
+        draws++;
+        return max - 1; // always the last remaining entry — a worst case for collisions
+      },
+    };
+    const offer = rollFloorCardOffer(counting);
+    expect(draws).toBe(FLOOR_CARD_OFFER_SIZE);
+    expect(new Set(offer).size).toBe(FLOOR_CARD_OFFER_SIZE);
+  });
+
+  it('reaches every card in the catalogue across enough seeds', () => {
+    // A draw that structurally could never offer some card would make that card dead
+    // content while every test above still passed.
+    const seen = new Set<string>();
+    for (let seed = 1; seed <= 300; seed++) for (const id of rollFloorCardOffer(new Prng(seed))) seen.add(id);
+    expect([...seen].sort()).toEqual([...FLOOR_CARD_IDS].sort());
+  });
+
+  it('cannot ask for more cards than the catalogue holds', () => {
+    const offer = rollFloorCardOffer(new Prng(3), FLOOR_CARD_IDS.length + 5);
+    expect(offer).toHaveLength(FLOOR_CARD_IDS.length);
+    expect(new Set(offer).size).toBe(FLOOR_CARD_IDS.length);
+  });
+});
+
+describe('tallyCardVote — "whichever card the most people chose"', () => {
+  it('takes the slot with the most votes', () => {
+    expect(tallyCardVote([2, 2, 3, 1], 3)).toBe(2);
+    expect(tallyCardVote([3, 3, 3], 3)).toBe(3);
+  });
+
+  it('breaks a tie toward the LOWEST slot, every time', () => {
+    // Deterministic by construction, which is the requirement: four clients tally this
+    // independently and a rule that "picks one" non-deterministically desyncs the match.
+    expect(tallyCardVote([1, 2], 3)).toBe(1);
+    expect(tallyCardVote([2, 1], 3)).toBe(1); // vote ORDER must not matter either
+    expect(tallyCardVote([3, 2], 3)).toBe(2);
+    expect(tallyCardVote([1, 1, 2, 2, 3, 3], 3)).toBe(1);
+  });
+
+  it('skips abstentions rather than counting them as slot 1', () => {
+    // A downed or AFK teammate must not drag the squad's pick.
+    expect(tallyCardVote([0, 0, 3], 3)).toBe(3);
+    expect(tallyCardVote([0, 0, 2, 2, 3], 3)).toBe(2);
+  });
+
+  it('returns 0 when nobody has voted — the signal that holds the portal', () => {
+    expect(tallyCardVote([], 3)).toBe(0);
+    expect(tallyCardVote([0, 0, 0, 0], 3)).toBe(0);
+  });
+
+  it('ignores a vote outside the offer, low or high', () => {
+    // Forward/backward compatibility with a client that sends a slot this offer does
+    // not have (a stale UI, a smaller offer than it rendered) — the same
+    // silently-skip rule `sumBuffs` uses for an unknown buff id.
+    expect(tallyCardVote([9, 9, 9], 3)).toBe(0);
+    expect(tallyCardVote([-1, 4, 2], 3)).toBe(2);
+    expect(tallyCardVote([1, 1, 1], 0)).toBe(0); // no offer open at all
+  });
+
+  it('is order-independent — the same multiset always resolves the same way', () => {
+    const votes = [3, 1, 2, 2, 0, 3, 2];
+    const rotated = [...votes.slice(3), ...votes.slice(0, 3)];
+    const reversed = [...votes].reverse();
+    expect(tallyCardVote(rotated, 3)).toBe(tallyCardVote(votes, 3));
+    expect(tallyCardVote(reversed, 3)).toBe(tallyCardVote(votes, 3));
+  });
+});
+
+describe('resolveFloorCards — the run-scoped effects', () => {
+  it('is the identity for a run that has picked nothing', () => {
+    expect(resolveFloorCards([])).toEqual({ healDropMult: 1, weaponQuotaBonus: 0 });
+  });
+
+  it('doubles the heal multiplier per potion card, multiplicatively', () => {
+    expect(resolveFloorCards(['potion_flow']).healDropMult).toBe(2);
+    expect(resolveFloorCards(['potion_flow', 'potion_flow']).healDropMult).toBe(4);
+    expect(resolveFloorCards(['potion_flow', 'potion_flow', 'potion_flow']).healDropMult).toBe(8);
+  });
+
+  it('lets a run reach the table cap in three picks, and no sooner', () => {
+    // The cap lives with the table it bounds (`content/drops.ts`), not here — this only
+    // pins that the two agree about how many picks it takes to reach it, which is the
+    // number the card's own description promises.
+    expect(resolveFloorCards(['potion_flow', 'potion_flow']).healDropMult).toBeLessThan(HEAL_DROP_MULT_CAP);
+    expect(resolveFloorCards(Array(3).fill('potion_flow')).healDropMult).toBe(HEAL_DROP_MULT_CAP);
+  });
+
+  it('adds up weapon-quota cards', () => {
+    expect(resolveFloorCards(['arsenal']).weaponQuotaBonus).toBe(1);
+    expect(resolveFloorCards(['arsenal', 'arsenal']).weaponQuotaBonus).toBe(2);
+  });
+
+  it('leaves buff cards entirely out of the run-scoped derivation', () => {
+    // Buff cards are pushed onto each seat's own `buffs` at pick time, so counting them
+    // here as well would apply them twice through two different paths.
+    const mods = resolveFloorCards(['edge', 'cadence', 'bulwark', 'precision']);
+    expect(mods).toEqual({ healDropMult: 1, weaponQuotaBonus: 0 });
+  });
+
+  it('skips an unknown id instead of throwing (design/09 forward-compat)', () => {
+    expect(resolveFloorCards(['not_a_card', 'potion_flow'])).toEqual({ healDropMult: 2, weaponQuotaBonus: 0 });
+  });
+
+  it('mixes kinds without either interfering with the other', () => {
+    expect(resolveFloorCards(['potion_flow', 'arsenal', 'edge'])).toEqual({ healDropMult: 2, weaponQuotaBonus: 1 });
+  });
+});
+
+describe('cardBuffId', () => {
+  it('reports the buff a stat card grants', () => {
+    expect(cardBuffId('edge')).toBe('dmg_up');
+    expect(cardBuffId('precision')).toBe('crit_up');
+  });
+
+  it('reports nothing for a run-scoped card or an unknown id', () => {
+    expect(cardBuffId('potion_flow')).toBeUndefined();
+    expect(cardBuffId('arsenal')).toBeUndefined();
+    expect(cardBuffId('not_a_card')).toBeUndefined();
+  });
+});

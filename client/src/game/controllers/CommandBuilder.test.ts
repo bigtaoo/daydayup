@@ -97,6 +97,27 @@ describe('CommandBuilder — move/buttons', () => {
     expect(afterDescend.buttons & Button.CONFIRM_DESCEND).toBeFalsy();
   });
 
+  it('requestCardVote(slot) latches cardVote for exactly one build() call', () => {
+    // A one-shot latch on the CLIENT even though the vote is persistent state in the
+    // SIM: the engine keeps the slot once it has seen it (ApplyInputSystem), so
+    // re-sending it every frame would be pure wire traffic. Zero means "not changing
+    // my vote", never "withdraw it".
+    const builder = new CommandBuilder(fakeInput(IDLE_STATE));
+    expect(builder.build(1, 0).cardVote).toBe(0); // default: not voting
+    builder.requestCardVote(2);
+    const first = builder.build(1, 1);
+    const second = builder.build(1, 2);
+    expect(first.cardVote).toBe(2);
+    expect(second.cardVote).toBe(0);
+  });
+
+  it('a second requestCardVote before the next build wins — a changed mind is not queued', () => {
+    const builder = new CommandBuilder(fakeInput(IDLE_STATE));
+    builder.requestCardVote(1);
+    builder.requestCardVote(3);
+    expect(builder.build(1, 1).cardVote).toBe(3);
+  });
+
   it('requestPickup(id) latches pickupTargetId for exactly one build() call', () => {
     const input = fakeInput(IDLE_STATE);
     const builder = new CommandBuilder(input);

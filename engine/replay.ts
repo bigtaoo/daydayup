@@ -113,6 +113,9 @@ export function serializeState(s: GameState): unknown {
       // unconditionally (GameEngine.step), so it's the fastest-moving signal in the
       // whole hash — exactly its purpose (design/15's "make divergence show up fast").
       s.ringPrng.peek(), s.integrityPrng.peek(),
+      // cardPrng (design/05, ENGINE_VERSION 58) — one draw per offered card at each
+      // checkpoint; a divergence in what a floor OFFERED shows up here immediately.
+      s.cardPrng.peek(),
     ],
     players: s.players.map((p) => [
       p.id, p.teamId, p.gx, p.gy, p.z, p.vx, p.vy, p.knockVx, p.knockVy, p.facing, p.hp, p.maxHp, p.alive,
@@ -132,6 +135,9 @@ export function serializeState(s: GameState): unknown {
       // Run-buff stack (design/14): buffs scale damage/firerate at use time, so a buff
       // divergence would otherwise only surface indirectly — hash the ids directly.
       p.buffs,
+      // Floor-card vote (ENGINE_VERSION 58): persistent per-seat state that decides
+      // which card a descend applies, so a desync in the tally has to surface here.
+      p.cardVote,
       // Resolved spec fields: a weapon drop swaps the active slot's spec, so include
       // the numbers (not just name) to catch a loadout divergence.
       p.weapons.map((w) => [
@@ -180,6 +186,19 @@ export function serializeState(s: GameState): unknown {
     floorIndex: s.floorIndex,
     floorMaterials: sortedEntries(s.floorMaterials),
     bankedMaterials: sortedEntries(s.bankedMaterials),
+    // Per-floor weapon allowance (design/05, ENGINE_VERSION 57). Both are read by
+    // DeathDropsSystem to decide whether a rolled weapon is granted, so a divergence
+    // here changes what the floor hands out — and the quota especially is a dropPrng
+    // draw that would otherwise only surface indirectly, several kills later.
+    floorWeaponQuota: s.floorWeaponQuota,
+    floorWeaponsDropped: s.floorWeaponsDropped,
+    // Floor cards (design/05, ENGINE_VERSION 58). The picked list drives the run's
+    // heal-drop multiplier and weapon-quota bonus (`resolveFloorCards`), and the open
+    // offer decides what a descend can even apply — both are read back into sim
+    // decisions, so both belong in the hash. Buff cards additionally show up through
+    // each player's own `buffs`, already hashed below.
+    floorCardOffer: s.floorCardOffer,
+    floorCards: s.floorCards,
     // Dungeon-mode co-resident room/door state (design/05 "Room & door model",
     // 2026-08-04). Empty/stable for a non-dungeon config, so this is safe to add
     // without a bump (the golden-replay test compares two independent runs, so a new
@@ -193,7 +212,12 @@ export function serializeState(s: GameState): unknown {
     // hashed position + already-hashed room placement, so it carries no independent
     // information a divergence there wouldn't already show up as a position mismatch.
     dungeonRoomIds: s.dungeonRooms.map((r) => r.id),
-    dungeonRoomRuntime: s.dungeonRoomRuntime.map((rt) => [rt.activated, rt.roomTick, rt.cursor, rt.hasLiveEnemy]),
+    dungeonRoomRuntime: s.dungeonRoomRuntime.map((rt) => [
+      rt.activated, rt.roomTick, rt.cursor, rt.hasLiveEnemy,
+      // One-weapon-per-room flag (ENGINE_VERSION 57) — a per-room latch that gates a
+      // real drop, so it belongs in the hash for the same reason `hasLiveEnemy` does.
+      rt.weaponDropped,
+    ]),
     dungeonDoorsLocked: s.dungeonDoors.map((d) => d.locked),
     // PvP zone + placement (design/15, ROADMAP 4.2d/4.2e/4.4). undefined/empty for
     // every non-arena config (stable, safe to add without touching other modes).

@@ -1,11 +1,11 @@
 {
-  "engineVersion": 56,
+  "engineVersion": 58,
   "scenarios": [
     {
       "name": "arena-waves",
       "pins": "the flat wave path: fire cadence, crit/drop rolls, actor pairs, win condition",
       "ticks": 500,
-      "hash": 3584987628,
+      "hash": 2629543299,
       "witness": {
         "tick": 185,
         "phase": "gameover",
@@ -32,7 +32,7 @@
       "name": "walls-and-pillars",
       "pins": "MovementSystem's rect/circle push-out and its tie-breaks — the geometry half of design/18",
       "ticks": 600,
-      "hash": 1792336504,
+      "hash": 2504775021,
       "witness": {
         "tick": 600,
         "phase": "playing",
@@ -56,7 +56,7 @@
       "name": "ember-dungeon-floor1",
       "pins": "authored floor-1 roomgen + room entry + door lock/unlock + freeStanding north brim + pickup clamping",
       "ticks": 1500,
-      "hash": 2759524990,
+      "hash": 189895500,
       "witness": {
         "tick": 1500,
         "phase": "playing",
@@ -66,8 +66,8 @@
         "projectiles": 0,
         "pickups": 11,
         "floorIndex": 0,
-        "hpTotal": 5.2,
-        "prngCursors": 13664624102,
+        "hpTotal": 4.2,
+        "prngCursors": 12184864154,
         "events": {
           "bullet_fired": 167,
           "room_enter": 2,
@@ -88,7 +88,7 @@
       "name": "brim-grinder",
       "pins": "WALL_NORTH_BRIM itself: a free-standing block's brimmed north face vs its three bare ones",
       "ticks": 800,
-      "hash": 4222537262,
+      "hash": 3215617758,
       "witness": {
         "tick": 800,
         "phase": "playing",
@@ -96,10 +96,10 @@
         "seats": 1,
         "enemiesAlive": 0,
         "projectiles": 0,
-        "pickups": 2,
+        "pickups": 5,
         "floorIndex": 0,
         "hpTotal": 6,
-        "prngCursors": 12671871648,
+        "prngCursors": 12976166577,
         "events": {
           "bullet_fired": 68,
           "room_enter": 1,
@@ -115,7 +115,7 @@
       "name": "launch-arena-pvp",
       "pins": "arena geometry + zone shrink + two hostile seats + per-skin arena stat scaling",
       "ticks": 900,
-      "hash": 1163589857,
+      "hash": 1719918661,
       "witness": {
         "tick": 900,
         "phase": "playing",

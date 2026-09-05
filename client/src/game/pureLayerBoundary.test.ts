@@ -81,6 +81,11 @@ const PURE_FILES = [
   // own survey named them (see the last case in this file), which is the survey working.
   'controllers/attackShapes.ts',
   'controllers/localOutcome.ts',
+  // Carved out of GameLoop.updateHud on 2026-09-05 (the floor-card pass). It decides
+  // WHEN the checkpoint overlays are shown and touches the views only through injected
+  // interfaces, so it qualifies — and being here is what makes "does the card offer show
+  // on exactly the same condition as the portal" testable with no browser at all.
+  'controllers/checkpointOverlays.ts',
 ] as const;
 
 /**

@@ -21,7 +21,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { runLevel, type RunMetrics } from './pve/levelSim';
-import { formatRoomTable, formatSummary, roomStats, summarize } from './pve/report';
+import { floorDropStats, formatDropTable, formatRoomTable, formatSummary, roomStats, summarize } from './pve/report';
 
 const SEEDS = [101, 202, 303, 404, 505, 606, 707, 808];
 const PROFILES = ['careful', 'aggressive'] as const;
@@ -49,6 +49,24 @@ describe('PvE level 1 balance sim (bot-driven real runs — first-signal data, n
       console.log(formatRoomTable(roomStats(rows)));
     }
     expect(runs('careful').length).toBe(SEEDS.length);
+  }, 600_000);
+
+  it("reports each floor's loot economy — weapons and health potions per floor", () => {
+    // The measurement half of the 2026-09-05 loot pass: a floor should hand out
+    // 2-3 weapons, and a monster's chance of dropping a health potion should be low.
+    // Deliberately a REPORT and not yet a gate: the
+    // gate belongs with the per-floor weapon quota that enforces the target, and a
+    // threshold asserted before the mechanism exists would only pin today's numbers.
+    for (const p of PROFILES) {
+      // eslint-disable-next-line no-console
+      console.log(`\n--- profile=${p}: loot per floor ---`);
+      // eslint-disable-next-line no-console
+      console.log(formatDropTable(floorDropStats(runs(p))));
+    }
+    // Anti-vacuity: a table computed off a run that dropped nothing would print
+    // clean zeroes and look like a finding (design/18 — the sweep-with-no-cases trap).
+    const anyDrops = runs('careful').reduce((a, r) => a + r.drops.length, 0);
+    expect(anyDrops, 'the sweep produced no drops at all — the table below measures nothing').toBeGreaterThan(50);
   }, 600_000);
 
   // ── Balance gates (design/05 "Room encounter budget") ────────────────────────

@@ -618,6 +618,108 @@ Three pickup classes, split by **whether the player must make a choice**. Materi
 - **Consumables — auto-apply, but only when useful.** An instant item (healing pickup = flat **+1 HP**, `07`/`09`) is consumed on contact, no inventory. To avoid overheal waste with **no item bag**, the pickup radius only triggers **when the effect would actually do something** — at full HP the health pickup is left on the floor for you to grab later. Same rule generalizes to any future instant item (shield/temp buff): auto-grab only if it changes state. ✅ **Shipped 2026-09-03 (`ENGINE_VERSION` 54):** `PickupSystem`'s `pickupWouldApply` gate, per-player (so a full-HP teammate standing on a heal cannot deny it to a hurt one). It had been unimplemented since this rule was written — `apply` clamped with `Math.min` and consumed the item regardless, binning the only thing in the game that restores the only pool nothing else restores. A run buff is deliberately NOT gated by it: its cap is applied Σ-then-clamp at *use* time, so "already wasted" is not a question the pickup site can answer, and a buff is a stack entry rather than an instant item.
 - **Weapons — click-driven, drop-on-replace.** Not auto (swapping is a choice). A non-blocking **weapon-pickup panel** (`10`, ENGINE_VERSION 32) lists every floor weapon within reach (real icon + name); tapping a row IS the pickup — no modal, no pause, lockstep can't stop for one player. `PickupSystem` swaps it into the active slot and **the replaced weapon drops back onto the floor** (`02`/`03`). The switch button picks which of the two slots to overwrite. (Superseded the original single-nearest "ground compare card" + tap-`INTERACT` gesture — see `03`'s "Pickup & switch" section for the full history.)
 
+## Loot economy: what a floor hands you ✅ (2026-09-05, `ENGINE_VERSION` 57/58)
+
+Two design calls from the game's owner, made together because they are one question — how
+much does a floor give you, and how much of that do you choose?
+
+> The drop rate in the levels is too high. I want each floor to produce only 2 to 3 weapons.
+> And monsters should have a very low chance of dropping a health potion — the core of this
+> kind of game is trying to clear it without taking damage. When you clear each floor, give
+> three option cards for a power-up, like Soul Knight. One of them doubles the monster
+> health-potion drop rate. In a multiplayer level, whichever card the most people chose takes
+> effect.
+
+**The state before the change was measured, not guessed.** `client/sim/pveLevelSim.sim.ts`
+grew a per-floor loot table (`sim/pve/report.ts#floorDropStats`) *first*, and over 16 real bot
+runs of the shipped level it read **0.215 health potions per kill — 7-10 a floor** — plus
+weapon counts scattered from **0 to 5** on a single floor. Both numbers matched what
+`DROP_TABLE` said they would be; nothing was broken, the table was simply tuned for a
+different game than the one this is. That report is still printed on every sweep, so the same
+question never has to be re-argued from memory.
+
+### Potions are scarce; the shield is the sustain
+
+`heal` went **18 -> 2** of the table's 84 points: 21.4% of kills to 2.4%. The 16 points moved
+to `material`, not off the total, so `weapon` and `buff` keep the exact odds they had — the
+weapon COUNT is a separate mechanism (below) and folding a weight change into the same pass
+would have made the two impossible to read apart afterwards.
+
+What replaces drinking is the shield's idle regen (`07`'s two-pool health), which was already
+there and was simply being drowned out. "Clear it without getting hit" cannot be the goal in a
+game that refills you every fifth kill.
+
+### A floor's weapon ALLOWANCE, not a weapon weight
+
+"2 to 3 per floor" is not something a drop weight can express: at ~60-77 enemies a floor, any
+per-kill probability produces a distribution, and lowering it only widens the spread relative
+to a two-wide target. So the weight keeps setting the PACING and a quota sets the COUNT:
+
+- **Rolled once per floor**, 2 or 3, when the floor is placed (`SpawnSystem`'s fresh-floor
+  path — the one place both floor 0's first placement and every descend pass through). A range
+  rather than a constant on purpose: a fixed 2 turns the third weapon's absence into
+  information ("no point clearing that side room"), and the goal is scarce loot, not
+  predictable loot.
+- **One weapon per room** (`DungeonRoomRuntime.weaponDropped`). The quota bounds the count;
+  this bounds the concentration. Without it a floor satisfies "2-3 weapons" by dropping all of
+  them off the first garrison and leaving five rooms bare — the measured baseline already
+  showed a room handing out 3 of a floor's 5.
+- **A rolled-but-disallowed weapon degrades to a material at the same PRNG draw count**, so
+  turning the allowance on or retuning it never shifts where later drops land in the stream
+  (`06`).
+- **The shortfall is paid when the floor finishes**, so 2-3 is a guarantee in both directions
+  rather than a ceiling with a bad tail. On a BOSS floor it drops on the boss's body the tick
+  its garrison falls (the owner's call: the player is already there and already looking, and
+  loot that appears where the fight ended reads as loot rather than as a vending machine). On
+  a floor whose capstone is an empty extraction room — **four of this level's five** — there is
+  no body, so the checkpoint pays it at the room's centre instead. That second path is not an
+  edge case and its absence was visible in the first measured sweep: completed floors read 1
+  weapon against a quota of 2 or 3.
+
+Dungeon configs only. A flat `waves`/`floors` config has no floor to allocate against and no
+rooms to spread over, so it stays on the plain table.
+
+### Floor cards: the reward becomes a choice
+
+The checkpoint offers **three cards** (`balance/floorCards.ts`), drawn distinct from a
+catalogue of six by a dedicated `cardPrng`. Four wrap existing `RUN_BUFFS` ids so a card is
+exactly as strong as the same buff picked off the floor and `BUFF_CAPS` bounds both together;
+the other two are properties of the RUN rather than of a player — `potion_flow` (doubles the
+heal weight, stacking to `HEAL_DROP_MULT_CAP` in three picks) and `arsenal` (+1 to every later
+floor's weapon allowance).
+
+**No pause.** The offer is a non-blocking overlay over a still-running sim, the same shape the
+portal popup has had since `ENGINE_VERSION` 31 — lockstep cannot stop for one player (`06`),
+and a cleared floor is the one moment where that costs nothing. It opens with the portal, and
+only where there is a next floor: the last floor never rolls one, because a card it handed out
+could never be spent.
+
+**A vote is state, not a pulse.** `PlayerCommand.cardVote` (1..3, 0 = "not changing my vote")
+is copied onto `PlayerActor.cardVote` and stays there — unlike `confirmExtract`/`confirmDescend`,
+which are one-tick latches. A vote is changeable right up to the descend, and every client
+renders the live tally off shared state, which it can only do if the vote persists.
+
+**Resolution — the majority, with two rules the request did not settle**, both decided toward
+determinism because every client tallies this independently and must agree: a **tie goes to the
+lowest slot** (arbitrary, but it has to be something, and "the leftmost card" is at least on
+screen — a re-roll or a coin flip would not survive being computed on four machines at once),
+and an **abstention is not a vote** (a `0` seat is skipped, never counted for slot 1).
+
+**A tally of 0 holds the portal** rather than descending without a card. Holding on >=1 vote
+rather than on "everyone has voted" is the co-op call: a downed or disconnected teammate must
+not be able to strand the squad on a cleared floor. It also leaves the descend authority
+exactly where it already was — player 0's press — so this pass does not settle the shared-descend
+question still open below.
+
+**The reward is team-wide** (the owner's call): the vote is collective, so a buff card pushes
+onto every seat's stack, downed seats included. They are still on the team and still revivable,
+and a permanent asymmetry earned by being on the floor at the wrong moment would make reviving
+someone worth less than it should be. EXTRACT applies nothing — the run is over.
+
+**Not built, deliberately:** a card that changes shield regen, pickup radius or revive speed.
+Each needs its own engine plumbing, and this pass wanted the mechanism shipped and measurable
+before the catalogue grows.
+
 ## PvP (PvPvE arena) — battle royale
 
 **(DECIDED, ROADMAP Phase 4.1 — full schema in `15-pvp-arena.md`.)** PvP is a **last-player-standing (or last-SQUAD-standing) battle royale with a shrinking safe zone**, not a symmetric team arena. This revises the "3v3/4v4" framing below to an 8-player mode first.

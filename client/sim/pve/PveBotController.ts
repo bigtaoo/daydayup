@@ -125,6 +125,15 @@ export class PveBotController {
           moveBrad: 0 as Brad,
           moveMag: 0,
           buttons: last ? Button.CONFIRM_EXTRACT : Button.CONFIRM_DESCEND,
+          // A descend is held until the squad picks a floor card (ENGINE_VERSION 58),
+          // so without this the bot presses DESCEND forever and every run in the sweep
+          // times out on a cleared floor. The bot always takes the FIRST slot rather
+          // than evaluating the offer: this harness measures how much damage a room
+          // deals and how much loot a floor hands out, and a bot that drafted cards
+          // well would quietly turn every one of those numbers into a statement about
+          // its own drafting instead. A card-evaluating bot is its own tool, if the
+          // question ever becomes "which cards are too strong".
+          cardVote: 1,
         });
       }
       return this.travel(s, self, owner, tick, capstone);

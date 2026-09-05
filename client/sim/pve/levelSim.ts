@@ -26,7 +26,7 @@
  * perfect and its nerve never breaks. Read it as a floor on difficulty ("even a
  * tireless kiter dies here"), not as a verdict on how a person will do.
  */
-import { createGameEngine, type GameState } from '@dd/engine';
+import { createGameEngine, type GameState, type PickupItem } from '@dd/engine';
 import { buildDungeonRunConfig } from '../../src/game/match/offlineConfig';
 import { BOT_PROFILES, PveBotController, type BotProfile } from './PveBotController';
 import { roomIdAt } from './pveNav';
@@ -45,6 +45,20 @@ export interface RoomEncounter {
   /** Most enemies of this room firing simultaneously (any single tick). */
   peakShooters: number;
   damageTaken: number;
+}
+
+/**
+ * One pickup the run PRODUCED, recorded the tick it appeared on the floor. Distinct
+ * from the `pickup` event, which fires when one is COLLECTED — "how much loot does a
+ * floor hand out" is a question about the drop table (design/09 `DROP_TABLE`), not
+ * about what the bot managed to walk over.
+ */
+export interface DropRecord {
+  floorIndex: number;
+  /** The room it landed in — null inside a door passage or off the room graph. */
+  roomId: string | null;
+  kind: PickupItem['kind'];
+  tick: number;
 }
 
 export interface RunMetrics {
@@ -66,6 +80,17 @@ export interface RunMetrics {
   effectiveHp: number;
   /** Lowest `(hp + shield) / (maxHp + maxShield)` seen while alive. */
   lowestHpFrac: number;
+  /** Every drop the run produced, in spawn order — the loot-economy measurement
+   *  (2026-09-05: "每层只出产 2 到 3 个武器" / "血瓶概率非常低"). */
+  drops: DropRecord[];
+  /** Enemy kills per floor index. The DENOMINATOR a per-floor drop count has to be
+   *  read against: a bot that beelines the capstone leaves most of a floor's roster
+   *  alive, and that shows up as few drops through no fault of the drop table. */
+  killsByFloor: Record<number, number>;
+  /** Floor indices whose CHECKPOINT the run reached (capstone cleared → the portal
+   *  opened, whether the run then descended or extracted). A "per full floor" total
+   *  is only comparable over these. */
+  checkpointFloors: number[];
 }
 
 export interface RunOptions {
@@ -131,6 +156,9 @@ export function runLevel(opts: RunOptions): RunMetrics {
     peakBurstDamage: tracker.peakBurstDamage,
     effectiveHp: tracker.effectiveHp,
     lowestHpFrac: tracker.lowestHpFrac,
+    drops: tracker.drops,
+    killsByFloor: tracker.killsByFloor,
+    checkpointFloors: tracker.checkpointFloors,
   };
 }
 
@@ -142,6 +170,9 @@ export function runLevel(opts: RunOptions): RunMetrics {
  */
 class EncounterTracker {
   readonly encounters: RoomEncounter[] = [];
+  readonly drops: DropRecord[] = [];
+  readonly killsByFloor: Record<number, number> = {};
+  readonly checkpointFloors: number[] = [];
   enemiesKilled = 0;
   damageTaken = 0;
   peakBurstDamage = 0;
@@ -151,6 +182,7 @@ class EncounterTracker {
 
   private readonly open = new Map<string, RoomEncounter>(); // key: `${floor}:${roomId}`
   private readonly window: number[] = [];
+  private readonly seenPickups = new Set<number>();
 
   observe(s: GameState): void {
     const p = s.players[0];
@@ -165,6 +197,7 @@ class EncounterTracker {
     this.trackRooms(s);
     this.trackShooters(s);
     this.trackDamage(s, p.id);
+    this.trackDrops(s);
   }
 
   /** Open an encounter the tick a room activates; close it when it goes quiet. */
@@ -211,7 +244,10 @@ class EncounterTracker {
   private trackDamage(s: GameState, playerId: number): void {
     let tickDamage = 0;
     for (const ev of s.events) {
-      if (ev.type === 'death' && ev.faction === 'enemy') this.enemiesKilled++;
+      if (ev.type === 'death' && ev.faction === 'enemy') {
+        this.enemiesKilled++;
+        this.killsByFloor[s.floorIndex] = (this.killsByFloor[s.floorIndex] ?? 0) + 1;
+      }
       if (ev.type !== 'hit' || ev.target !== playerId) continue;
       tickDamage += ev.damage;
     }
@@ -228,6 +264,50 @@ class EncounterTracker {
         enc.damageTaken += tickDamage;
         if (enc.reactionTicks === null) enc.reactionTicks = s.tick - enc.activatedTick;
       }
+    }
+  }
+
+  /**
+   * Record the pickups that APPEARED this tick, plus the per-floor kill count and
+   * checkpoint they have to be read against.
+   *
+   * `state.pickups` is the only channel available: `DeathDropsSystem` pushes a drop
+   * with no event of its own — only COLLECTING one emits `pickup` — so a previously
+   * unseen id in that array *is* the drop. Ids come from `state.nextId()` and never
+   * repeat, so the seen-set stays correct across the descend that clears the array.
+   *
+   * One exclusion, and it matters: swapping weapons drops the outgoing weapon back
+   * onto the floor as a fresh pickup (`PickupSystem.applyWeapon`). That is a player
+   * action, not something the drop table produced, and counting it would inflate
+   * precisely the number this exists to measure. Such a drop can only ever appear on
+   * a tick where a weapon was collected, so a weapon `pickup` event this tick
+   * disqualifies new weapon pickups on it.
+   */
+  private trackDrops(s: GameState): void {
+    const swapThisTick = s.events.some((ev) => ev.type === 'pickup' && ev.kind === 'weapon');
+    for (const item of s.pickups) {
+      if (this.seenPickups.has(item.id)) continue;
+      this.seenPickups.add(item.id);
+      if (item.kind === 'weapon' && swapThisTick) continue;
+      this.drops.push({
+        floorIndex: s.floorIndex,
+        roomId: roomIdAt(s, item.gx, item.gy) ?? null,
+        kind: item.kind,
+        tick: s.tick,
+      });
+    }
+    for (const ev of s.events) {
+      // Both checkpoint resolutions count as "this floor's portal opened": `descend`
+      // carries the floor it moved TO (ExtractionSystem increments before pushing),
+      // and a `win` in a floors-enabled run is an EXTRACT off the floor still current.
+      if (ev.type === 'descend') this.checkpointFloors.push(ev.floorIndex - 1);
+      // A team wipe pushes `win` too, with `winner: 'enemies'` (WinConditionSystem) —
+      // and counting that as a completed floor is exactly the measurement bug this
+      // field exists to avoid. Only a PLAYER win (a numeric seat) is an extraction,
+      // which is the one non-descend way a floor's checkpoint gets reached. Caught on
+      // the first real sweep: floor 0 reported 8 of 8 visits "complete" while the
+      // summary right above it said 5 of those 8 runs died in r4_forge.
+      if (ev.type === 'win' && typeof ev.winner === 'number') this.checkpointFloors.push(s.floorIndex);
     }
   }
 }

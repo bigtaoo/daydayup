@@ -128,6 +128,8 @@ export const pl: Translations<typeof en> = {
     portalTitle: 'PIĘTRO OCZYSZCZONE — otworzył się portal',
     portalExtract: 'Złóż i wydostań się ({pending} surowców)',
     portalDescend: 'Zejdź na piętro {floor}',
+    floorCardTitle: 'Wybierz ulepszenie',
+    floorCardVotes: '{n} głosów',
   },
   auth: {
     title: 'KONTO',
@@ -275,6 +277,14 @@ export const pl: Translations<typeof en> = {
     vanguard: { name: 'Awangarda' },
     skirmisher: { name: 'Harcownik' },
     juggernaut: { name: 'Kolos' },
+  },
+  card: {
+    potion_flow: { name: 'Strumień życia', desc: 'Mikstury wypadają {factor}x częściej' },
+    arsenal: { name: 'Arsenał', desc: '+{bonus} broń na piętro' },
+    edge: { name: 'Ostrze', desc: '+{value}% obrażeń' },
+    cadence: { name: 'Kadencja', desc: '+{value}% szybkości strzału' },
+    bulwark: { name: 'Szańc', desc: '+{value} maks. PZ' },
+    precision: { name: 'Precyzja', desc: '+{value}% szansy na cios krytyczny' },
   },
   buff: {
     dmg_up: { name: 'Zwiększone obrażenia' },

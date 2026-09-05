@@ -39,6 +39,14 @@ export interface PlayerCommand {
   // Button bit because it carries a value, not just an edge; CommandBuilder latches
   // it for exactly one tick, same one-shot convention as SWAP_WEAPON/CONFIRM_EXTRACT.
   pickupTargetId: number;
+  // The floor-card slot this seat is voting for (design/05, ENGINE_VERSION 58): 1..3,
+  // or 0 for "no change". Carries a VALUE, so it is a field and not a Button bit, same
+  // reasoning as `pickupTargetId` above — but unlike that one it is not a one-shot
+  // latch: `ApplyInputSystem` copies a non-zero vote onto the seat and leaves it there,
+  // so a client only has to send the tap, and the sim holds the choice until the
+  // checkpoint consumes it. 0 therefore means "I am not changing my vote this tick",
+  // never "I withdraw it".
+  cardVote: number;
 }
 
 /**

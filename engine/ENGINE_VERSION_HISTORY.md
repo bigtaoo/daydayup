@@ -1647,3 +1647,144 @@ pickup #25 → 90 / pickup #31). The assertion that caught it is the anti-vacuit
 it every claim about the mark readout is satisfied by an EMPTY pickup list — so the comment now
 says the tick is MEASURED and how to re-measure it.
 
+## v57: potions get scarce and a floor gets a WEAPON ALLOWANCE (design/05, ENGINE_VERSION 57)
+
+Two design calls from the game's owner, 2026-09-05, and they are one change because both are
+about the same thing: how much a floor hands you.
+
+> The drop rate in the levels is too high. I want each floor to produce only 2 to 3 weapons. And
+> monsters should have a very low chance of dropping a health potion — the core of this kind of
+> game is trying to clear it without taking damage.
+
+The second half was measurable before it was changed, which is why this pass built the
+measurement first. `client/sim/pveLevelSim.sim.ts` grew a per-floor loot table
+(`report.ts#floorDropStats`), and over 16 real bot runs of the shipped level it read **0.215
+health potions per kill, 7-10 per floor** — the declared 18/84 of `DROP_TABLE`, landing exactly
+where the table said it would. A floor of 55-77 enemies was handing out a dozen potions, and
+"don't get hit" cannot be a goal in a game that refills you that often.
+
+**The table (`content/drops.ts`).** `heal` 18 -> 2 (21.4% of kills -> 2.4%). The 16 points came
+out of `material`, so the total stays 84 and `weapon`/`buff` keep the exact per-kill odds they
+had before. That invariant is load-bearing for reading this entry: the weapon change below is a
+COUNT mechanism, not a probability change, and folding a weight tweak into the same version
+would have made the two impossible to tell apart afterwards. `effectiveWeights` preserves the
+same invariant when a floor card multiplies the heal weight (`HEAL_DROP_MULT_CAP` = 8, three
+doublings, landing just under the 21.4% this table shipped with).
+
+**The allowance (`GameState.floorWeaponQuota`/`floorWeaponsDropped`,
+`DungeonRoomRuntime.weaponDropped`, `config.ts#FLOOR_WEAPON_QUOTA_*`).** "2 to 3 weapons per
+floor" is not something a weight can express. At 5/84 per kill the same 16 runs produced
+anywhere from **0 to 5** weapons on a floor, and lowering the weight only widens that spread
+relative to a two-wide target. So the weight keeps setting the PACING and a per-floor quota sets
+the COUNT:
+
+- **Rolled once per floor**, `2 + dropPrng.nextInt(2)`, in `SpawnSystem`'s fresh-floor path —
+  the one place both entry paths (floor 0's first placement, and every descend) pass through, so
+  floor 0 and floor 4 are allocated by the same line instead of by a constructor and a descend
+  handler that have to be kept in step. A range rather than a constant on purpose: a fixed 2
+  turns the third weapon's absence into information ("no point clearing that side room"), and
+  the goal is scarce loot, not predictable loot.
+- **One weapon per room** (`DungeonRoomRuntime.weaponDropped`). The quota bounds the count; this
+  bounds the concentration. Without it a floor satisfies "2-3 weapons" by dropping all of them
+  off the first garrison and leaving the other five rooms bare — the same problem wearing a
+  different number. The measured baseline already showed a room handing out 3 of a floor's 5.
+- **A rolled-but-disallowed weapon becomes a `material` at the SAME dropPrng draw count** (1
+  weighted draw + 1 `nextInt`, exactly what the weapon branch costs). So whether the allowance
+  was open or spent does not shift the position of any later drop in the run — the quota can be
+  retuned without desynchronising the rest of the stream's structure.
+- **The shortfall is paid on the capstone kill** (`DeathDropsSystem.payFloorShortfall`), so 2-3
+  is a guarantee in both directions and not a ceiling with a bad tail. It fires the tick the
+  capstone (boss / extraction) room's last live enemy dies and drops the remainder **on the
+  body** — the owner's call over stacking them at the portal: the player is already there and
+  already looking, and loot that appears where the fight ended reads as loot rather than as a
+  vending machine.
+
+"Last live enemy" is measured as *no other enemy in that room with `hp > 0`*, deliberately not as
+`!rt.hasLiveEnemy`: that flag is `DoorSystem`'s and is recomputed at step 11.5, two steps after
+`DeathDropsSystem`, so during this step it still describes the room as it was before this tick's
+deaths. The `hp > 0` test is exact regardless of iteration order — an enemy already processed is
+`alive === false`, one not yet reached is at `hp <= 0` and dies on its own iteration — and it
+gets the boss-adds case right for free: `onDeathSpawn` minions are pushed at full HP before the
+shortfall check runs, so a boss that splits does not count as the room's last enemy and the
+make-up drop waits for the adds.
+
+**Dungeon configs only.** A flat `waves`/`floors` config has no floor to allocate against and no
+rooms to spread across, so it stays on the plain table (`floorWeaponQuota` is `-1`, which is why
+the unrolled marker is -1 and not 0 — it separates "no allowance concept here" from "allowance
+spent"). Every non-dungeon golden scenario therefore moves only by the heal weight.
+
+**Why this bumps.** Three separate reasons, any one of which would be enough: the table's
+weights changed (`weightedIndex` returns different branches), the quota adds a `dropPrng` draw
+per floor, and `serializeState` now hashes `floorWeaponQuota`/`floorWeaponsDropped` plus each
+room's `weaponDropped`. The witness moved the way the change predicts — `ember-dungeon-floor1`'s
+`hpTotal` fell 5.2 -> 4.2, a player one potion poorer at the same tick.
+
+## v58: a floor's reward is a CHOICE — three cards at the checkpoint (design/05, ENGINE_VERSION 58)
+
+The other half of v57's request, from the same conversation on 2026-09-05:
+
+> When you clear each floor, give three option cards for a power-up, like Soul Knight. One of
+> them doubles the monster health-potion drop rate. In a multiplayer level, whichever card the
+> most people chose takes effect.
+
+v57 made a run scarcer. This is what makes the scarcity playable: the power a run gains is now
+mostly a sequence of four deliberate picks rather than whatever happened to drop.
+
+**The catalogue (`balance/floorCards.ts`).** Six cards, three effect kinds. Four of them are a
+thin wrapper over the EXISTING `RUN_BUFFS` ids (`dmg_up`/`rof_up`/`vit_up`/`crit_up`) rather than
+a parallel catalogue, so a card is exactly as strong as the same buff picked up off the floor and
+the Sigma-then-clamp `BUFF_CAPS` bound both together — a second damage-scaling path is precisely
+the drift design/18's consistency gates exist to catch. The other two are not player stats and
+have nowhere to live on a `PlayerActor`: `potion_flow` (the card the request named — doubles the
+heal weight, stacking to `HEAL_DROP_MULT_CAP`) and `arsenal` (+1 to every later floor's weapon
+allowance). Both are properties of the RUN, and both are re-derived from the picked-card list at
+the point of use (`resolveFloorCards`) rather than mirrored into counters, so the list stays the
+single source of truth that gets hashed and replayed.
+
+**No pause, because there cannot be one.** The offer is a non-blocking overlay over a still-
+running sim, the same shape the portal popup has had since v31 — lockstep cannot stop for one
+player (design/06), and the checkpoint is the one moment in a floor where that costs nothing
+anyway. The offer opens with the portal (`ExtractionSystem`, three distinct ids from a NEW
+`cardPrng`) and only on a floor with somewhere to descend to; the last floor never rolls one,
+because a card it handed out could never be spent.
+
+**A vote is state, not a pulse.** `PlayerCommand.cardVote` (1..3, 0 = "not changing my vote")
+is copied onto `PlayerActor.cardVote` and STAYS there — deliberately unlike `confirmExtract`/
+`confirmDescend`, which are one-tick latches, and deliberately not cleared by `ApplyInputSystem`'s
+idle path. Two reasons, and both are requirements rather than conveniences: a vote is changeable
+right up to the moment someone descends, and every client renders the live tally off shared state,
+which it can only do if the vote persists. Only a descend consuming the offer clears it.
+
+**Resolution.** `tallyCardVote` settles the two things the request's sentence does not, both
+toward determinism (every client computes this independently and must agree): a TIE goes to the
+lowest slot — arbitrary, but it has to be something, and "the leftmost card" is at least on
+screen, where a re-roll or a coin flip would not survive being computed on four machines at once;
+and an ABSTENTION is not a vote, so a `0` seat is skipped rather than counted for slot 1.
+
+A tally of 0 — nobody has picked yet — HOLDS the portal instead of descending without a card.
+Holding on >=1 vote rather than on "everyone has voted" is the co-op call: a downed or
+disconnected teammate must not be able to strand the squad on a cleared floor. It also leaves the
+descend authority exactly where it already was, player 0's press, so this pass does not have to
+settle design/05's still-open question of whose press a shared descend decision should be.
+
+**The reward is team-wide** (the owner's call, 2026-09-05): the vote is collective, so a buff card
+pushes onto EVERY seat's stack. A downed seat is included on purpose — they are still on the team
+and still revivable, and handing a squad a permanent asymmetry because someone happened to be on
+the floor at that moment would make reviving them worth less than it should be.
+
+**EXTRACT applies nothing.** The run is over; a card banked on the way out would be a stat with
+nowhere to spend it.
+
+**Why this bumps.** A new `cardPrng` stream (three draws per checkpoint), a new field on every
+`PlayerCommand`, a new field on every `PlayerActor`, and `serializeState` now hashes the offer,
+the picked list, the per-seat vote and the new stream's cursor. Behaviour moves too, in both
+directions: a descend without a vote no longer resolves, and a run that takes buff cards is
+straightforwardly stronger than one that could not.
+
+**Fallout worth knowing about.** Every test and fixture that pressed `CONFIRM_DESCEND` now has to
+vote as well, including `fixtures/goldenScenarios.ts` — a scenario that used to change floors
+would otherwise have silently stopped doing so while still passing its own hash, which is exactly
+the class of quiet coverage loss the golden gate exists to prevent. The scenario votes for a
+beat-varied slot rather than always slot 1, so the tally and the offer indexing are both really
+exercised.
+

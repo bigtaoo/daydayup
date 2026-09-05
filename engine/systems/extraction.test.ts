@@ -57,6 +57,10 @@ describe('ExtractionSystem — DESCEND (explicit confirmDescend press)', () => {
     const p = s.players[0]!;
 
     p.confirmDescend = true;
+    // A descend is only honoured once the squad has picked a floor card
+    // (ENGINE_VERSION 58). These tests drive the system directly, with no
+    // ApplyInputSystem to copy a vote off a command, so the seat votes by hand.
+    p.cardVote = 1;
     new ExtractionSystem().tick(s);
 
     expect(s.floorIndex).toBe(1);
@@ -83,6 +87,7 @@ describe('ExtractionSystem — DESCEND (explicit confirmDescend press)', () => {
     s.pickups.push({ id: s.nextId(), kind: 'heal', gx: s.worldW, gy: s.worldH, spawnTick: 0, alive: true });
     const p = s.players[0]!;
     p.confirmDescend = true;
+    p.cardVote = 1; // see above — a descend needs a card pick (ENGINE_VERSION 58)
     new ExtractionSystem().tick(s);
     expect(s.pickups).toHaveLength(0);
   });
@@ -334,7 +339,7 @@ describe('Integration — full engine step() drives the extraction gesture via r
   it('pressing CONFIRM_DESCEND at a checkpoint resolves DESCEND', () => {
     const eng = createGameEngine(FLOORS_CFG);
     atCheckpoint(eng.state);
-    eng.step([makeCommand({ owner: 0, tick: 1, moveBrad: 0 as Brad, moveMag: 0, buttons: Button.CONFIRM_DESCEND })]);
+    eng.step([makeCommand({ owner: 0, tick: 1, moveBrad: 0 as Brad, moveMag: 0, buttons: Button.CONFIRM_DESCEND, cardVote: 1 })]);
     expect(eng.state.floorIndex).toBe(1);
     expect(eng.state.phase).not.toBe('gameover');
   });
@@ -342,7 +347,7 @@ describe('Integration — full engine step() drives the extraction gesture via r
   it('a single-tick press only resolves once — the next idle tick does nothing further', () => {
     const eng = createGameEngine(FLOORS_CFG);
     atCheckpoint(eng.state);
-    eng.step([makeCommand({ owner: 0, tick: 1, moveBrad: 0 as Brad, moveMag: 0, buttons: Button.CONFIRM_DESCEND })]);
+    eng.step([makeCommand({ owner: 0, tick: 1, moveBrad: 0 as Brad, moveMag: 0, buttons: Button.CONFIRM_DESCEND, cardVote: 1 })]);
     expect(eng.state.floorIndex).toBe(1);
     eng.step([]); // idle — no repeated descend
     expect(eng.state.floorIndex).toBe(1);

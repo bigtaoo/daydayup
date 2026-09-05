@@ -11,7 +11,16 @@
  * Superseded sim.config.ts SIM.drop from Stage E; changing any weight/pool changes
  * the dropPrng draw sequence → bumps ENGINE_VERSION.
  */
-import type { Prng } from '../math/prng';
+/**
+ * The slice of `Prng` a drop roll actually needs. Narrowed to these two methods for
+ * the same reason `balance/runbuffs.ts#rollCrit` narrows to `{ nextInt }`: a test can
+ * then hand `rollDrop` a recording stub and assert the exact weight array it draws
+ * from, instead of inferring the table from thousands of samples. A real `Prng`
+ * satisfies it structurally, so no call site changes. */
+export interface DropPrng {
+  weightedIndex(weights: readonly number[]): number;
+  nextInt(max: number): number;
+}
 import { MATERIAL_DROP_POOL } from './materials';
 
 /** What one enemy death yields (design/09 vocabulary). weapon/buff/material carry payload.
@@ -33,18 +42,78 @@ export const HEAL_PICKUP_AMOUNT = 1;
 export const MATERIAL_DROP_QTY = 1;
 
 // ── The table ─────────────────────────────────────────────────────────────────
-// Frequent coins keep the score ticking; weapons are the rare "swap your gun"
-// moment; health keeps a run survivable.
-// Tuned for the demo economy (player 6 HP, enemy 3 HP) — first pass, tune vs play.
+// Frequent materials keep the carry-out economy ticking; weapons are the "swap your
+// gun" moment; health is deliberately SCARCE.
+//
+// Re-weighted 2026-09-05, on a design call from the game's owner: a health potion
+// should be RARE, because the core loop this game wants is "clear the floor without
+// getting hit" — a flood of potions replaces that goal with attrition. `heal` went
+// 18 -> 2, i.e. 21.4% of kills -> 2.4%. Sustain comes from the shield's idle regen
+// (`SHIELD_REGEN_DELAY`/`SHIELD_REGEN_INTERVAL`, design/07's two-pool health) instead
+// of from drinking. The baseline that motivated the number is measurable rather than
+// asserted: `client/sim/pveLevelSim.sim.ts`'s loot table read 0.21 potions per kill,
+// 7-10 per floor, over 16 real bot runs of the shipped level.
+//
+// The 16 points came OUT of `material`, not off the total: the total stays 84, so
+// `weapon` and `buff` keep the exact per-kill odds they had before this pass. That is
+// deliberate — weapon COUNT is governed by the per-floor allowance
+// (`GameState.floorWeaponQuota`, design/05), and mixing a weight change into the same
+// pass would have made the two impossible to read apart. `effectiveWeights` keeps the
+// same invariant when a floor card multiplies the heal weight.
 
 type DropTableEntry = { kind: DropResult['kind']; weight: number };
 
+/** Index into DROP_TABLE. `effectiveWeights` moves weight between exactly these two. */
+const MATERIAL_ENTRY = 0;
+const HEAL_ENTRY = 1;
+
 export const DROP_TABLE: readonly DropTableEntry[] = [
-  { kind: 'material', weight: 55 }, // the run's carry-out currency (design/05/14)
-  { kind: 'heal', weight: 18 },
+  { kind: 'material', weight: 71 }, // the run's carry-out currency (design/05/14)
+  { kind: 'heal', weight: 2 },
   { kind: 'weapon', weight: 5 },
   { kind: 'buff', weight: 6 }, // run-scoped power buffs (design/14) — the affix replacement
 ];
+
+/**
+ * Ceiling on the heal-weight multiplier a stack of `heal_drop_x2` floor cards can
+ * reach (design/05, 2026-09-05). Each card doubles, so this is three picks. The
+ * number is chosen for what it lands ON rather than for its own sake: 2×8 = 16 of 84
+ * is 19%, just under the 21.4% this table shipped with before the same pass made
+ * potions scarce — so a fully-stacked run gets back roughly the old flood, and it
+ * takes spending three of the run's floor picks to do it.
+ */
+export const HEAL_DROP_MULT_CAP = 8;
+
+/** Options a caller layers onto one roll. Both default to "the plain table". */
+export interface DropOpts {
+  /** Multiplier on the heal weight (the `heal_drop_x2` floor card). Clamped to
+   *  [1, HEAL_DROP_MULT_CAP] and rounded — an integer keeps `weightedIndex`'s draw a
+   *  single deterministic integer comparison (design/06). */
+  healMult?: number;
+  /** May this kill yield a weapon at all? `false` once the floor's allowance is spent
+   *  or this room already handed one out (design/05, `DeathDropsSystem.weaponAllowed`).
+   *  A rolled-but-disallowed weapon becomes a `material` — at the SAME dropPrng draw
+   *  count as the weapon would have cost, so every later drop in the run lands
+   *  identically whether the allowance was open or not. */
+  weaponAllowed?: boolean;
+}
+
+/**
+ * The table's weights for one roll, with a heal multiplier applied by TRANSFER from
+ * `material` rather than by addition, so the total — and therefore `weapon`'s and
+ * `buff`'s odds — is invariant in the multiplier. Without that, picking the potion
+ * card would quietly dilute every other kind, and a player who took it three times
+ * would find weapons rarer for a reason nothing on the card mentions.
+ */
+function effectiveWeights(healMult: number): number[] {
+  const w = DROP_TABLE.map((e) => e.weight);
+  const mult = Math.min(Math.max(1, Math.round(healMult)), HEAL_DROP_MULT_CAP);
+  if (mult === 1) return w;
+  const base = w[HEAL_ENTRY]!;
+  w[HEAL_ENTRY] = base * mult;
+  w[MATERIAL_ENTRY] = w[MATERIAL_ENTRY]! - (base * mult - base);
+  return w;
+}
 
 /** Weapon ids a drop can roll (must exist in WEAPON_SPECS). Player-facing only. */
 export const WEAPON_DROP_POOL: readonly string[] = [
@@ -87,13 +156,18 @@ export const BUFF_DROP_POOL: readonly string[] = ['dmg_up', 'rof_up', 'vit_up', 
 /**
  * Roll one drop from the dropPrng (design/05/09). Draw count varies by branch
  * (table → 1, +1 for weapon / buff / material to pick the payload) — deterministic
- * given the stream. `tier` (default 0, ROADMAP 1.5 materialTierByDepth) is the
+ * given the stream, and deliberately IDENTICAL for a weapon and for the material it
+ * degrades to when `opts.weaponAllowed` is false. `tier` (default 0, ROADMAP 1.5 materialTierByDepth) is the
  * depth signal a material drop rolls at — DeathDropsSystem passes `state.floorIndex`
  * (0 for every config without floors, so the default keeps old callers identical).
  */
-export function rollDrop(prng: Prng, tier = 0): DropResult {
-  const entry = DROP_TABLE[prng.weightedIndex(DROP_TABLE.map((e) => e.weight))]!;
-  switch (entry.kind) {
+export function rollDrop(prng: DropPrng, tier = 0, opts: DropOpts = {}): DropResult {
+  const entry = DROP_TABLE[prng.weightedIndex(effectiveWeights(opts.healMult ?? 1))]!;
+  // A weapon the floor's allowance won't cover falls through to the material branch,
+  // which costs the same one extra `nextInt` the weapon branch would have — see
+  // DropOpts.weaponAllowed for why the draw count has to match.
+  const kind = entry.kind === 'weapon' && !(opts.weaponAllowed ?? true) ? 'material' : entry.kind;
+  switch (kind) {
     case 'weapon':
       return { kind: 'weapon', weaponId: WEAPON_DROP_POOL[prng.nextInt(WEAPON_DROP_POOL.length)]! };
     case 'buff':
@@ -136,7 +210,7 @@ export const ARENA_DROP_TABLE: readonly ArenaDropTableEntry[] = [
  * stream as PvE `rollDrop` (mode-exclusive: a match is never both dungeon and
  * arena, so there's no aliasing to guard against, same reasoning as `roomgenPrng`
  * being reused rather than duplicated per mode). */
-export function rollArenaDrop(prng: Prng): DropResult {
+export function rollArenaDrop(prng: DropPrng): DropResult {
   const entry = ARENA_DROP_TABLE[prng.weightedIndex(ARENA_DROP_TABLE.map((e) => e.weight))]!;
   switch (entry.kind) {
     case 'weapon':

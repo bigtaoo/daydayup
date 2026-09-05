@@ -15,6 +15,7 @@ export class CommandBuilder {
   private swapLatch = false;
   private confirmExtractLatch = false;
   private confirmDescendLatch = false;
+  private cardVoteLatch = 0;
   // Ground-weapon click target (design/03, ENGINE_VERSION 32) — 0 = no click this
   // tick. Same one-shot-latch shape as the confirm latches above, set from
   // WeaponPickupPrompt's onPick via Game.ts.
@@ -60,6 +61,15 @@ export class CommandBuilder {
    *  click) — same one-shot-latch shape as requestSwap()/requestConfirmExtract(). */
   requestPickup(itemId: number): void {
     this.pickupLatchId = itemId;
+  }
+
+  /** Vote for a floor-card slot (1..3), set from FloorCardPrompt's card taps
+   *  (design/05, ENGINE_VERSION 58). A one-shot latch like the others, but what it
+   *  carries is not: the ENGINE keeps the vote once it has seen it, so a tap only has
+   *  to reach the sim once and a player who then does nothing still counts as having
+   *  chosen. Re-tapping another card sends a new value and overwrites the old one. */
+  requestCardVote(slot: number): void {
+    this.cardVoteLatch = slot;
   }
 
   suppressFire(active: boolean): void {
@@ -119,9 +129,11 @@ export class CommandBuilder {
     }
     const pickupTargetId = this.pickupLatchId;
     this.pickupLatchId = 0;
+    const cardVote = this.cardVoteLatch;
+    this.cardVoteLatch = 0;
 
     this.lastMove.rad = bradToRad(moveBrad);
     this.lastMove.mag = moveMag;
-    return makeCommand({ owner, tick, moveBrad, moveMag, buttons, pickupTargetId });
+    return makeCommand({ owner, tick, moveBrad, moveMag, buttons, pickupTargetId, cardVote });
   }
 }

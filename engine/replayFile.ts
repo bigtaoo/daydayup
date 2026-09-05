@@ -186,5 +186,6 @@ function asCommand(v: unknown, i: number): PlayerCommand {
     moveMag: asInt(o.moveMag, `replay.commands[${i}].moveMag`),
     buttons: asInt(o.buttons, `replay.commands[${i}].buttons`),
     pickupTargetId: asInt(o.pickupTargetId, `replay.commands[${i}].pickupTargetId`),
+    cardVote: asInt(o.cardVote, `replay.commands[${i}].cardVote`),
   };
 }

@@ -101,9 +101,13 @@ const DUN_CFG: EngineConfig = {
 const idle = (tick: number) =>
   makeCommand({ owner: 0, tick, moveBrad: 0 as Brad, moveMag: 0, buttons: 0 });
 // Portal-popup DESCEND choice (design/10 legibility pass, ENGINE_VERSION 31) — a
-// one-shot press, not a held key; resolves the very tick it's pressed.
+// one-shot press, not a held key; resolves the very tick it's pressed. Carries a
+// floor-card vote too (ENGINE_VERSION 58): a descend is only honoured once the squad
+// has picked one of the checkpoint's three cards, so every press in this file votes
+// for the first slot. Which card it is never matters here — these tests are about
+// floor placement and geometry, and `floorCards.test.ts` owns the vote itself.
 const confirmDescend = (tick: number) =>
-  makeCommand({ owner: 0, tick, moveBrad: 0 as Brad, moveMag: 0, buttons: Button.CONFIRM_DESCEND });
+  makeCommand({ owner: 0, tick, moveBrad: 0 as Brad, moveMag: 0, buttons: Button.CONFIRM_DESCEND, cardVote: 1 });
 // Same shape, EXTRACT half — the last floor needs this explicit press too now (2026-08-12
 // bug fix: it used to auto-resolve the instant the capstone cleared, no gesture at all).
 const confirmExtract = (tick: number) =>

@@ -42,6 +42,8 @@
  * file needs to change for that; the merge simply is not where the guarantee lives.
  */
 import type { GameState } from '../state/GameState';
+import { capstoneCentre, payFloorWeaponShortfall } from './floorLoot';
+import { cardBuffId, rollFloorCardOffer, tallyCardVote } from '../balance/floorCards';
 
 export class ExtractionSystem {
   tick(state: GameState): void {
@@ -59,6 +61,14 @@ export class ExtractionSystem {
     // original floor-wide flag untouched.
     if (state.dungeonEnabled) {
       if (!this.capstoneCleared(state)) return;
+      // The floor is finished. Hand over any weapons its kills did not produce
+      // (design/05 per-floor allowance, ENGINE_VERSION 57) — this is the path for a
+      // capstone with no enemies in it, which is four of the shipped level's five
+      // floors; a BOSS floor has already paid on the body back in DeathDropsSystem,
+      // and this call finds nothing owed. Idempotent, which is what lets it sit in a
+      // block that re-runs every tick the portal stays open.
+      const centre = capstoneCentre(state);
+      if (centre) payFloorWeaponShortfall(state, centre.gx, centre.gy);
     } else {
       if (!(state.wavesExhausted && state.enemies.length === 0)) return;
     }
@@ -70,10 +80,38 @@ export class ExtractionSystem {
       ? state.floorIndex >= state.dungeonConfig!.floorCount - 1
       : state.floorIndex >= state.extraFloors.length;
 
+    // The floor-card offer (design/05, ENGINE_VERSION 58) opens with the portal and
+    // only on a floor there is somewhere to descend TO — a card the last floor hands
+    // out could never be spent, and rolling one would cost `cardPrng` draws for a
+    // choice with no consequence. Rolled once: a non-empty offer is the "already
+    // open" flag, and `resolveDescend` is the only thing that empties it.
+    if (!isLastFloor && state.floorCardOffer.length === 0) {
+      state.floorCardOffer = rollFloorCardOffer(state.cardPrng);
+    }
+
     const p = state.players[0];
     if (!p || !p.alive) return;
-    if (p.confirmExtract) this.resolveExtract(state);
-    else if (!isLastFloor && p.confirmDescend) this.resolveDescend(state);
+    if (p.confirmExtract) {
+      // EXTRACT ends the run, so whatever the squad had voted for is moot — the card
+      // is deliberately NOT applied on the way out.
+      this.resolveExtract(state);
+      return;
+    }
+    if (isLastFloor || !p.confirmDescend) return;
+
+    // Descend needs a card chosen. The vote is the squad's, not the presser's
+    // (2026-09-05: "whichever card the most people chose takes effect"), so this
+    // tallies every seat and takes the winner — and a tally of 0 means nobody has
+    // tapped a card yet, which HOLDS the portal rather than descending without one.
+    //
+    // Holding on >=1 vote rather than on "everyone has voted" is the co-op call: a
+    // downed or disconnected teammate must not be able to strand the squad on a
+    // cleared floor. It also leaves the descend authority exactly where it already
+    // was — player 0's press — so this pass does not have to settle design/05's
+    // still-open question of whose press a shared descend decision should be.
+    const slot = tallyCardVote(state.players.map((seat) => seat.cardVote), state.floorCardOffer.length);
+    if (slot === 0) return;
+    this.resolveDescend(state, state.floorCardOffer[slot - 1]);
   }
 
   /** The floor's capstone (extraction/boss) room — always the LAST entry, since
@@ -100,8 +138,9 @@ export class ExtractionSystem {
     state.events.push({ type: 'win', winner: 0 });
   }
 
-  private resolveDescend(state: GameState): void {
+  private resolveDescend(state: GameState, cardId?: string): void {
     this.bankFloorMaterials(state);
+    this.applyFloorCard(state, cardId);
     state.floorIndex++;
     if (state.dungeonEnabled) {
       // The next floor is generated + placed lazily by SpawnSystem when it sees a fresh
@@ -151,5 +190,36 @@ export class ExtractionSystem {
     state.wavesExhausted = false;
     state.pickups.length = 0; // uncollected drops don't carry to the next floor
     state.events.push({ type: 'descend', floorIndex: state.floorIndex });
+  }
+
+  /**
+   * Bank the squad's chosen floor card (design/05, ENGINE_VERSION 58) and close the
+   * offer. `cardId` is undefined only for the flat-`floors` path and for any caller
+   * that descends without an offer open, which then simply banks nothing.
+   *
+   * Two storage paths, and the split is the point. A BUFF card is pushed onto every
+   * seat's own `buffs` stack — the same list a buff picked up off the floor lands in —
+   * so it resolves through the existing `sumBuffs`/`BUFF_CAPS` arithmetic rather than a
+   * second damage-scaling path that could disagree with it. The other kinds change the
+   * RUN, not a person, and are re-derived from `state.floorCards` at the point of use
+   * (`resolveFloorCards`) so the picked list stays the single source of truth.
+   *
+   * Team-wide on the owner's call (2026-09-05): the vote is collective, so the reward
+   * is. A DOWNED seat is included deliberately — they are still on the team, they can
+   * still be revived, and handing a squad a permanent asymmetry because someone was on
+   * the floor at the wrong moment would make reviving them worth less than it should be.
+   */
+  private applyFloorCard(state: GameState, cardId: string | undefined): void {
+    // The offer closes either way: a descend without a pick (flat-`floors` mode, which
+    // never opens one) must not leave a stale offer for the next floor to inherit.
+    state.floorCardOffer = [];
+    for (const seat of state.players) seat.cardVote = 0;
+    if (cardId === undefined) return;
+
+    state.floorCards.push(cardId);
+    const buffId = cardBuffId(cardId);
+    if (buffId !== undefined) {
+      for (const seat of state.players) seat.buffs.push(buffId);
+    }
   }
 }

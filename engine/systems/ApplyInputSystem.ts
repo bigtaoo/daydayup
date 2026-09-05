@@ -84,6 +84,12 @@ export class ApplyInputSystem {
     // pulse (CommandBuilder latches then clears it), so no edge detection needed here,
     // same as confirmExtract/confirmDescend above.
     p.pickupTargetId = cmd.pickupTargetId;
+    // Floor-card vote (design/05, ENGINE_VERSION 58). Deliberately NOT the one-tick
+    // pulse the two lines above are: a zero means "not changing my vote", so the seat
+    // KEEPS the slot it picked until the checkpoint consumes the offer. That is what
+    // lets a client send one tap instead of re-sending the choice every frame, and what
+    // lets every client render a live tally of who has picked what.
+    if (cmd.cardVote > 0) p.cardVote = cmd.cardVote;
 
     if (pressed & Button.SWAP_WEAPON) this.swap(p);
 
@@ -98,6 +104,9 @@ export class ApplyInputSystem {
     p.confirmExtract = false;
     p.confirmDescend = false;
     p.pickupTargetId = 0;
+    // `cardVote` deliberately NOT cleared: an idle frame (a net stall, or a player who
+    // simply isn't touching anything) is not a withdrawal of a choice already made.
+    // Only a descend consuming the offer clears it, in ExtractionSystem.
     // prevButtons deliberately unchanged (idle-hold semantics above).
   }
 

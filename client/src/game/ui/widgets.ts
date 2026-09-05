@@ -191,7 +191,11 @@ export class Button {
   private readonly minW: number;
   private readonly fontSize: number;
   private readonly color: number;
-  private readonly borderColor: number | undefined;
+  // Not `readonly`: `setBorder` re-colours it at runtime for a SELECTED state
+  // (FloorCardPrompt's picked card). Border rather than fill, matching the
+  // browse-cursor convention BlueprintCard already uses — a filled highlight on a
+  // button that is also pressable reads as "already pressed" rather than "chosen".
+  private borderColor: number | undefined;
   private readonly borderAlpha: number;
   // `autoWidth` (opt-in): grows the box to fit the current text instead of clipping it
   // at a fixed pixel width sized for one locale's string. Off by default — every other
@@ -278,6 +282,15 @@ export class Button {
   setText(text: string) {
     this.label.text = text;
     if (this.autoWidth) this.redraw();
+  }
+
+  /** Re-colour the box's border, for a selected/unselected state. A no-op on a button
+   *  that was constructed without one — a border cannot be added later, only changed,
+   *  so a caller that wants this has to opt in with `borderColor` at construction. */
+  setBorder(color: number): void {
+    if (this.borderColor === undefined || this.borderColor === color) return;
+    this.borderColor = color;
+    this.redraw();
   }
 
   /** Optional leading icon (Forge row real weapon art — reuses the same textures the

@@ -30,6 +30,7 @@ Mirror funny's `@nw/engine` structure:
     skins.ts           // SKIN_DEFS: Record<SkinId, SkinDef>           (02)
     ballistics.ts      // BALLISTIC_SHAPES: straight/arc/homing/…       (03/07)
     drops.ts           // DROP_TABLES                                    (05)
+    floorCards.ts      // FLOOR_CARDS (in balance/, beside runbuffs.ts)   (05)
   balance/
     rarity.ts          // RARITY_TIERS: base-quality tiers per weapon    (03/14)
     runbuffs.ts        // RUN_BUFFS: in-run buff catalogue (replaces affixes) (14)
@@ -202,7 +203,7 @@ RUN_BUFFS: Record<RunBuffId, { kind: 'mult_damage'|'mult_firerate'|'flat_hp'|'cr
 BUFF_CAPS: Record<kind, cap>                    // Σ-then-clamp, deterministic apply order
 ```
 
-- Buffs are **found in-run** (chests / rooms / shop is the design; the shipped reality is a 6/84 weight on the flat kill `DROP_TABLE` and nothing else — `ROADMAP` B1/B2) and apply to the player / all held weapons, summed-then-clamped in a fixed order so it stays deterministic (`06`). They are **not** attached to a weapon and never carry out.
+- Buffs are **found in-run** (chests / rooms / shop is the design; the shipped reality is a 6/84 weight on the flat kill `DROP_TABLE` **plus the floor-card offer at every checkpoint** — `05`'s loot-economy section, `ENGINE_VERSION` 58; four of the six cards in `balance/floorCards.ts` grant a `RUN_BUFFS` id deliberately rather than defining their own magnitudes, so a card and a floor drop of the same buff are the same strength and `BUFF_CAPS` bounds them together — `ROADMAP` B1/B2) and apply to the player / all held weapons, summed-then-clamped in a fixed order so it stays deterministic (`06`). They are **not** attached to a weapon and never carry out.
 - **Unknown weapon / skin / buff id → ignored** (forward-compat).
 
 ## The build layer — the fairness wall

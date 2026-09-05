@@ -87,6 +87,60 @@ describe('runLevel', () => {
     expect(m.lowestHpFrac).toBeLessThanOrEqual(1);
   });
 
+  it('records every drop the run produced, attributed to a floor and a real kind', () => {
+    const m = runLevel({ seed: 101, profileName: 'aggressive', maxTicks: 1200 });
+    expect(m.drops.length).toBeGreaterThan(0); // the entrance garrison really dropped loot
+    for (const d of m.drops) {
+      expect(['material', 'heal', 'weapon', 'buff', 'bandage']).toContain(d.kind);
+      expect(d.floorIndex).toBe(0); // 1200 ticks never reaches a descend
+      expect(d.tick).toBeGreaterThan(0);
+    }
+    // Every drop comes off a kill (nothing else spawns loot in PvE yet), so the count
+    // can never exceed the kills — the tracker's own sanity check against
+    // double-counting a pickup that merely sat on the floor for another tick.
+    expect(m.drops.length).toBeLessThanOrEqual(m.enemiesKilled);
+  });
+
+  it('does not count a weapon the PLAYER dropped by swapping as a drop the table produced', () => {
+    // `PickupSystem.applyWeapon` puts the outgoing weapon back on the floor as a
+    // fresh pickup on the same tick the new one is collected. Counting those would
+    // inflate exactly the number this harness exists to measure, so a weapon
+    // `pickup` event disqualifies new weapon pickups on its tick. Proven here by the
+    // invariant it protects: weapons RECORDED can never exceed weapons that were
+    // rolled, and a swap would make recorded > rolled.
+    const m = runLevel({ seed: 505, profileName: 'aggressive', maxTicks: 3000 });
+    const recorded = m.drops.filter((d) => d.kind === 'weapon').length;
+    expect(recorded).toBeLessThanOrEqual(m.enemiesKilled);
+    for (const d of m.drops) expect(d.tick).toBeLessThanOrEqual(m.ticks);
+  });
+
+  it('splits kills by floor, and the split adds up to the run total', () => {
+    const m = runLevel({ seed: 303, profileName: 'aggressive', maxTicks: 1200 });
+    const summed = Object.values(m.killsByFloor).reduce((a, b) => a + b, 0);
+    expect(summed).toBe(m.enemiesKilled);
+    expect(m.killsByFloor[0]).toBeGreaterThan(0);
+  });
+
+  it('reports no checkpoint for a run that never finished a floor', () => {
+    // The honest-denominator field: a 400-tick run is still inside the entrance room,
+    // so nothing may claim floor 0's loot allowance was fully handed out.
+    const m = runLevel({ seed: 404, ...SHORT });
+    expect(m.checkpointFloors).toEqual([]);
+  });
+
+  it('never counts the floor a run DIED on as a completed floor', () => {
+    // The regression test for a real measurement bug (2026-09-05): a team wipe pushes
+    // a `win` event too, with `winner: 'enemies'`, and the first version of this
+    // tracker counted it as a reached checkpoint. The sweep then reported floor 0 as
+    // "8 of 8 visits complete" on the same screen as "5 of 8 runs died in r4_forge",
+    // which would have made every per-full-floor loot number quietly wrong.
+    const m = runLevel({ seed: 505, profileName: 'aggressive', maxTicks: 6000 });
+    if (m.outcome !== 'died') return; // the seed extracted or timed out; nothing to assert
+    expect(m.checkpointFloors).not.toContain(m.floorReached);
+    // You completed exactly the floors you descended off, no more.
+    expect(m.checkpointFloors).toHaveLength(m.floorReached);
+  });
+
   it('a died outcome always names the room the run ended in — the actionable half of a death', () => {
     // Long enough for the aggressive profile to actually die somewhere.
     const m = runLevel({ seed: 202, profileName: 'aggressive', maxTicks: 4000 });

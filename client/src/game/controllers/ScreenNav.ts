@@ -20,6 +20,7 @@ import type { Layers } from '../scene/layers';
 import type { Backdrop } from '../scene/Backdrop';
 import type { HudView } from '../ui/HudView';
 import type { PortalPrompt } from '../ui/PortalPrompt';
+import type { FloorCardPrompt } from '../ui/FloorCardPrompt';
 import type { Screens } from '../screens/Screens';
 import type { Forge } from '../screens/Forge';
 import type { MainMenu } from '../screens/MainMenu';
@@ -43,6 +44,7 @@ export interface ScreenNavDeps {
   backdrop: Backdrop;
   hud: HudView;
   portalPrompt: PortalPrompt;
+  floorCardPrompt: FloorCardPrompt;
   mainMenu: MainMenu;
   modeSelect: ModeSelect;
   pvpPreview: PvpPreview;
@@ -231,6 +233,7 @@ export class ScreenNav {
     d.backdrop.resize(size.w, size.h);
     d.hud.reposition(size);
     d.portalPrompt.reposition(size);
+    d.floorCardPrompt.reposition(size);
     d.screenFlow.repositionSettingsButtonIfForge(d.run.phase === 'forge', w, h);
     switch (d.run.phase) {
       case 'menu': d.mainMenu.show(w, h); break;

@@ -41,6 +41,8 @@ export function makeCommand(fields: {
   buttons: number;
   pickupTargetId?: number; // omitted = 0 (no pickup click this tick) — every caller
   // that doesn't care about ground-weapon pickup (most golden/net tests) is unaffected.
+  cardVote?: number; // omitted = 0 (not voting this tick) — same "every existing caller
+  // is unaffected" reasoning as pickupTargetId's.
 }): PlayerCommand {
   return {
     type: 'input',
@@ -50,5 +52,6 @@ export function makeCommand(fields: {
     moveMag: fields.moveMag,
     buttons: fields.buttons,
     pickupTargetId: fields.pickupTargetId ?? 0,
+    cardVote: fields.cardVote ?? 0,
   };
 }

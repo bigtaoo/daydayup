@@ -128,6 +128,8 @@ export const es: Translations<typeof en> = {
     portalTitle: 'PISO DESPEJADO — se ha abierto un portal',
     portalExtract: 'Guardar y extraer ({pending} materiales)',
     portalDescend: 'Descender al piso {floor}',
+    floorCardTitle: 'Elige una mejora',
+    floorCardVotes: '{n} votos',
   },
   auth: {
     title: 'CUENTA',
@@ -275,6 +277,14 @@ export const es: Translations<typeof en> = {
     vanguard: { name: 'Vanguardia' },
     skirmisher: { name: 'Escaramuzador' },
     juggernaut: { name: 'Coloso' },
+  },
+  card: {
+    potion_flow: { name: 'Flujo vital', desc: 'Las pociones caen {factor}x más a menudo' },
+    arsenal: { name: 'Arsenal', desc: '+{bonus} arma por piso' },
+    edge: { name: 'Filo', desc: '+{value}% de daño' },
+    cadence: { name: 'Cadencia', desc: '+{value}% de cadencia de fuego' },
+    bulwark: { name: 'Baluarte', desc: '+{value} PV máximos' },
+    precision: { name: 'Precisión', desc: '+{value}% de prob. crítica' },
   },
   buff: {
     dmg_up: { name: 'Daño aumentado' },

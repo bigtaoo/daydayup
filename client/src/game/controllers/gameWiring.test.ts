@@ -111,6 +111,7 @@ function make() {
     requestPickup: track('builder.requestPickup'),
     suppressFireUntilRelease: track('builder.suppressFireUntilRelease'),
     requestSwap: track('builder.requestSwap'),
+    requestCardVote: track('builder.requestCardVote'),
   };
   const d: WiringDeps = {
     run,
@@ -122,6 +123,7 @@ function make() {
       onPause: null, onSwapWeapon: null, onSaveReplay: null,
     } as never,
     portalPrompt: screenStub('onExtract', 'onDescend') as never,
+    floorCardPrompt: screenStub('onVote', 'onPressStart') as never,
     mainMenu: screenStub('onPlay', 'onSquad', 'onAccount', 'onSettings') as never,
     modeSelect: screenStub('onSolo', 'onCoop', 'onPvpSolo', 'onTutorial', 'onBack') as never,
     pvpPreview: screenStub('onQueue', 'onBack') as never,
@@ -218,6 +220,21 @@ describe('wireHud', () => {
     const portal = t.d.portalPrompt as unknown as Record<string, unknown>;
     expect(portal.onExtract).toBeTypeOf('function');
     expect(portal.onDescend).toBeTypeOf('function');
+    const cards = t.d.floorCardPrompt as unknown as Record<string, unknown>;
+    expect(cards.onVote).toBeTypeOf('function');
+    expect(cards.onPressStart).toBeTypeOf('function');
+  });
+
+  it('a card tap is a VOTE, and never a descend', () => {
+    // The two panels sit on top of each other at the same moment, and routing a card
+    // tap to `requestConfirmDescend` would leave the floor the instant a player touched
+    // a card — before they could even read the other two.
+    const t = make();
+    wireHud(t.d);
+    const cards = t.d.floorCardPrompt as unknown as { onVote: (slot: number) => void };
+    cards.onVote(3);
+    expect(t.d.builder.requestCardVote).toHaveBeenCalledWith(3);
+    expect(t.d.builder.requestConfirmDescend).not.toHaveBeenCalled();
   });
 
   it('the HUD pause button obeys the SAME offline+playing guard the key does', () => {

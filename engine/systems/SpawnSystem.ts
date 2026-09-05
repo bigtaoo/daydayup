@@ -11,6 +11,8 @@
  */
 import type { Fp } from '../math/fixed';
 import { SIM } from '../sim.config';
+import { FLOOR_WEAPON_QUOTA_MIN, FLOOR_WEAPON_QUOTA_SPAN } from '../config';
+import { resolveFloorCards } from '../balance/floorCards';
 import { pxToFp, toFpGrid } from '../content/convert';
 import { buildEnemyActor } from '../content/enemies';
 import type { WaveScript, RoomPiece } from '../content/rooms';
@@ -216,8 +218,26 @@ export class SpawnSystem {
 
     state.dungeonRoomRuntime.length = 0;
     for (let i = 0; i < placed.length; i++) {
-      state.dungeonRoomRuntime.push({ activated: false, roomTick: 0, schedule: [], cursor: 0, hasLiveEnemy: false });
+      state.dungeonRoomRuntime.push({
+        activated: false, roomTick: 0, schedule: [], cursor: 0, hasLiveEnemy: false,
+        weaponDropped: false,
+      });
     }
+
+    // This floor's weapon allowance (design/05, 2026-09-05). Rolled HERE because this
+    // is the one place a fresh floor begins for both entry paths — floor 0's first
+    // placement and every descend land on it — so floor 0 and floor 4 are allocated by
+    // the same line rather than by a constructor and a descend handler that have to be
+    // kept in step. One `dropPrng` draw per floor: it is a drop-economy decision, and
+    // `roomgenPrng` stays about geometry.
+    // The `arsenal` floor card adds to every LATER floor's allowance (design/05,
+    // ENGINE_VERSION 58) — added after the draw, never folded into `nextInt`'s bound,
+    // so picking the card cannot change the shape of the roll itself.
+    state.floorWeaponQuota =
+      FLOOR_WEAPON_QUOTA_MIN +
+      state.dropPrng.nextInt(FLOOR_WEAPON_QUOTA_SPAN) +
+      resolveFloorCards(state.floorCards).weaponQuotaBonus;
+    state.floorWeaponsDropped = 0;
 
     state.dungeonRoomRects.length = 0;
     for (const r of placed) {

@@ -133,6 +133,8 @@ export const ru: Translations<typeof en> = {
     portalTitle: 'ЭТАЖ ЗАЧИЩЕН — портал открылся',
     portalExtract: 'Сохранить и эвакуироваться ({pending} материалов)',
     portalDescend: 'Спуститься на этаж {floor}',
+    floorCardTitle: 'Выберите улучшение',
+    floorCardVotes: '{n} голосов',
   },
   auth: {
     title: 'АККАУНТ',
@@ -280,6 +282,14 @@ export const ru: Translations<typeof en> = {
     vanguard: { name: 'Авангард' },
     skirmisher: { name: 'Застрельщик' },
     juggernaut: { name: 'Джаггернаут' },
+  },
+  card: {
+    potion_flow: { name: 'Живительный поток', desc: 'Зелья выпадают в {factor} раза чаще' },
+    arsenal: { name: 'Арсенал', desc: '+{bonus} оружие на этаж' },
+    edge: { name: 'Острота', desc: '+{value}% урона' },
+    cadence: { name: 'Темп', desc: '+{value}% скорости стрельбы' },
+    bulwark: { name: 'Бастион', desc: '+{value} к макс. ЗД' },
+    precision: { name: 'Точность', desc: '+{value}% шанса крита' },
   },
   buff: {
     dmg_up: { name: 'Урон увеличен' },

@@ -128,6 +128,8 @@ export const de: Translations<typeof en> = {
     portalTitle: 'ETAGE GESÄUBERT — ein Portal hat sich geöffnet',
     portalExtract: 'Sichern & Extrahieren ({pending} Materialien)',
     portalDescend: 'Zu Etage {floor} absteigen',
+    floorCardTitle: 'Verbesserung wählen',
+    floorCardVotes: '{n} Stimmen',
   },
   auth: {
     title: 'KONTO',
@@ -275,6 +277,14 @@ export const de: Translations<typeof en> = {
     vanguard: { name: 'Vorhut' },
     skirmisher: { name: 'Plänkler' },
     juggernaut: { name: 'Juggernaut' },
+  },
+  card: {
+    potion_flow: { name: 'Lebensquell', desc: 'Tränke fallen {factor}x so oft' },
+    arsenal: { name: 'Arsenal', desc: '+{bonus} Waffe pro Etage' },
+    edge: { name: 'Schärfe', desc: '+{value}% Schaden' },
+    cadence: { name: 'Kadenz', desc: '+{value}% Feuerrate' },
+    bulwark: { name: 'Bollwerk', desc: '+{value} max. LP' },
+    precision: { name: 'Präzision', desc: '+{value}% Kritische Chance' },
   },
   buff: {
     dmg_up: { name: 'Schaden erhöht' },

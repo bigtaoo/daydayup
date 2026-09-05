@@ -128,6 +128,8 @@ export const fr: Translations<typeof en> = {
     portalTitle: 'ÉTAGE NETTOYÉ — un portail s\'est ouvert',
     portalExtract: 'Stocker et extraire ({pending} matériaux)',
     portalDescend: "Descendre à l'étage {floor}",
+    floorCardTitle: 'Choisissez une amélioration',
+    floorCardVotes: '{n} votes',
   },
   auth: {
     title: 'COMPTE',
@@ -275,6 +277,14 @@ export const fr: Translations<typeof en> = {
     vanguard: { name: 'Avant-garde' },
     skirmisher: { name: 'Tirailleur' },
     juggernaut: { name: 'Colosse' },
+  },
+  card: {
+    potion_flow: { name: 'Flux vital', desc: 'Potions {factor}x plus fréquentes' },
+    arsenal: { name: 'Arsenal', desc: '+{bonus} arme par étage' },
+    edge: { name: 'Tranchant', desc: '+{value}% de dégâts' },
+    cadence: { name: 'Cadence', desc: '+{value}% de cadence de tir' },
+    bulwark: { name: 'Rempart', desc: '+{value} PV max' },
+    precision: { name: 'Précision', desc: '+{value}% de chance critique' },
   },
   buff: {
     dmg_up: { name: 'Dégâts augmentés' },

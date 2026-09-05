@@ -39,6 +39,7 @@ import type { Container } from 'pixi.js';
 import type { Button } from '../ui/widgets';
 import type { HudView } from '../ui/HudView';
 import type { PortalPrompt } from '../ui/PortalPrompt';
+import type { FloorCardPrompt } from '../ui/FloorCardPrompt';
 import type { TouchControlsView } from '../ui/TouchControlsView';
 import type { Backdrop } from '../scene/Backdrop';
 import type { Layers } from '../scene/layers';
@@ -91,6 +92,7 @@ export interface AssemblyParts {
   hudView: Container;
   touchControlsView: TouchControlsView;
   portalPrompt: PortalPrompt;
+  floorCardPrompt: FloorCardPrompt;
   pickupDebugOverlay: PickupDebugOverlay | null;
   settingsBtn: Button;
   mainMenu: MainMenu;
@@ -138,7 +140,7 @@ export function assembleGame(p: AssemblyParts, host: GameShellHost): AssembledGa
 
   const nav = new ScreenNav({
     run: p.run, layers: p.layers, screenFlow, artGate: p.artGate,
-    backdrop: p.backdrop, hud: p.hud, portalPrompt: p.portalPrompt,
+    backdrop: p.backdrop, hud: p.hud, portalPrompt: p.portalPrompt, floorCardPrompt: p.floorCardPrompt,
     mainMenu: p.mainMenu, modeSelect: p.modeSelect, pvpPreview: p.pvpPreview,
     matchmaking: p.matchmaking, partyScreen, loginScreen,
     forge: p.forge, screens: p.screens, settingsScreen: p.settingsScreen,
@@ -151,6 +153,7 @@ export function assembleGame(p: AssemblyParts, host: GameShellHost): AssembledGa
   const gameLoop = new GameLoop({
     scene: p.scene, roomBuilder: p.roomBuilder, fx: p.fx, hud: p.hud,
     touchControlsView: p.touchControlsView, portalPrompt: p.portalPrompt,
+    floorCardPrompt: p.floorCardPrompt,
     partyScreen, builder: p.builder, ally: p.ally,
     input: p.input, events: p.events, runOutcome: p.runOutcome,
     tutorialHints: p.tutorialHints, pickupDebugOverlay: p.pickupDebugOverlay,

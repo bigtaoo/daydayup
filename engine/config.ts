@@ -49,6 +49,17 @@ export const KNOCKBACK_SNAP_FP = 5; // below this magnitude (either axis), snap 
 // — convert.ts itself imports WORLD from this file.
 export const RICOCHET_RANGE_FP = Math.round(6 * FP_SCALE) as Fp;
 
+// ── Per-floor weapon allowance (design/05, 2026-09-05) ────────────────────────
+// How many weapon drops one dungeon floor may produce: `MIN` to `MIN + SPAN - 1`,
+// i.e. 2 or 3, rolled once per floor from `dropPrng` (SpawnSystem's fresh-floor path)
+// and enforced by `DeathDropsSystem` — including a make-up drop on the capstone kill,
+// so the range is a guarantee in both directions rather than a cap with a bad tail.
+// A range and not a constant on purpose: a fixed 2 makes the third weapon's absence
+// information ("no point clearing that side room"), and the point of the allowance is
+// to make loot scarce, not to make it predictable.
+export const FLOOR_WEAPON_QUOTA_MIN = 2;
+export const FLOOR_WEAPON_QUOTA_SPAN = 2; // nextInt(2) -> +0 or +1
+
 // ── Co-op downed / revive (design/05/07, ROADMAP 3.2). Whole ticks @30Hz. A lethal
 // hit sends a player `downed`; a teammate revives via a sustained INTERACT channel.
 export const DOWNED_BLEEDOUT_TICKS = 900; // ~30 s downed before permanent death (paused while being revived)

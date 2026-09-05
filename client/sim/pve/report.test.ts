@@ -6,8 +6,8 @@
  * computed correctly, independently of whether a run happens to produce them.
  */
 import { describe, expect, it } from 'vitest';
-import { formatRoomTable, formatSummary, median, roomStats, summarize } from './report';
-import type { RoomEncounter, RunMetrics } from './levelSim';
+import { floorDropStats, formatDropTable, formatRoomTable, formatSummary, median, roomStats, summarize } from './report';
+import type { DropRecord, RoomEncounter, RunMetrics } from './levelSim';
 
 function enc(over: Partial<RoomEncounter> = {}): RoomEncounter {
   return {
@@ -38,8 +38,16 @@ function run(over: Partial<RunMetrics> = {}): RunMetrics {
     peakBurstDamage: 5,
     effectiveHp: 9.2,
     lowestHpFrac: 0.1,
+    drops: [],
+    killsByFloor: { 0: 8 },
+    checkpointFloors: [],
     ...over,
   };
+}
+
+/** A drop record; `kind` and `floorIndex` are what every assertion below turns on. */
+function drop(over: Partial<DropRecord> = {}): DropRecord {
+  return { floorIndex: 0, roomId: 'r1', kind: 'material', tick: 200, ...over };
 }
 
 describe('median', () => {
@@ -189,5 +197,86 @@ describe('formatSummary / formatRoomTable', () => {
     expect(lines[0]).toContain('garrison');
     expect(lines[1]).toContain('r1');
     expect(lines[1]).toContain('-');
+  });
+});
+
+describe('floorDropStats — the loot economy per floor (design/09 DROP_TABLE)', () => {
+  it('groups a run\u2019s drops by floor and counts each kind separately', () => {
+    const rows = floorDropStats([
+      run({
+        killsByFloor: { 0: 20, 1: 10 },
+        checkpointFloors: [0],
+        drops: [
+          drop({ kind: 'weapon' }),
+          drop({ kind: 'weapon', roomId: 'r2' }),
+          drop({ kind: 'heal' }),
+          drop({ kind: 'material' }),
+          drop({ kind: 'buff' }),
+          drop({ floorIndex: 1, kind: 'weapon' }),
+        ],
+      }),
+    ]);
+    expect(rows.map((r) => r.floorIndex)).toEqual([0, 1]); // sorted by floor
+    const f0 = rows[0]!;
+    expect([f0.avgWeapons, f0.avgHeals, f0.avgMaterials, f0.avgBuffs]).toEqual([2, 1, 1, 1]);
+    expect(rows[1]!.avgWeapons).toBe(1);
+  });
+
+  it('reads min/max weapons over COMPLETE visits only — a died-on floor under-counts', () => {
+    // Two runs on floor 0: one reached the checkpoint with 3 weapons, one died early
+    // with 0. The average sees both; the spread must only see the complete one, or
+    // "0 weapons this floor" gets blamed on the drop table instead of on the death.
+    const rows = floorDropStats([
+      run({ killsByFloor: { 0: 60 }, checkpointFloors: [0], drops: [drop({ kind: 'weapon' }), drop({ kind: 'weapon' }), drop({ kind: 'weapon' })] }),
+      run({ killsByFloor: { 0: 4 }, checkpointFloors: [], drops: [] }),
+    ]);
+    const f0 = rows[0]!;
+    expect([f0.samples, f0.complete]).toEqual([2, 1]);
+    expect([f0.minWeapons, f0.maxWeapons]).toEqual([3, 3]);
+    expect(f0.avgWeapons).toBe(1.5); // 3 over two visits — deliberately still diluted
+  });
+
+  it('has no weapon spread at all when no visit was complete', () => {
+    const rows = floorDropStats([run({ killsByFloor: { 0: 4 }, checkpointFloors: [], drops: [drop({ kind: 'weapon' })] })]);
+    expect([rows[0]!.minWeapons, rows[0]!.maxWeapons]).toEqual([null, null]);
+  });
+
+  it('reports the worst single-room weapon concentration, passage drops included', () => {
+    // Three weapons on one floor, two of them in the same room, one in a passage
+    // (roomId null). The per-room max is 2 — and the passage drop must not be
+    // silently discarded, or a floor could dump loot into corridors unnoticed.
+    const rows = floorDropStats([
+      run({
+        killsByFloor: { 0: 50 },
+        checkpointFloors: [0],
+        drops: [drop({ kind: 'weapon', roomId: 'r1' }), drop({ kind: 'weapon', roomId: 'r1' }), drop({ kind: 'weapon', roomId: null })],
+      }),
+    ]);
+    expect(rows[0]!.maxWeaponsInOneRoom).toBe(2);
+    expect(rows[0]!.avgWeapons).toBe(3); // the passage drop still counts toward the floor
+  });
+
+  it('turns counts into per-kill rates, which is what the drop table is tuned in', () => {
+    const rows = floorDropStats([
+      run({ killsByFloor: { 0: 50 }, checkpointFloors: [0], drops: [...Array(10)].map(() => drop({ kind: 'heal' })) }),
+    ]);
+    expect(rows[0]!.healsPerKill).toBe(0.2); // 10 heals / 50 kills
+    expect(rows[0]!.weaponsPerKill).toBe(0);
+  });
+
+  it('never divides by zero on a floor that recorded drops but no kills', () => {
+    // Reachable in principle: the pity/quota drops planned for the capstone are
+    // spawned by the engine, not by a kill this tracker attributed to the floor.
+    const rows = floorDropStats([run({ killsByFloor: {}, checkpointFloors: [0], drops: [drop({ kind: 'weapon' })] })]);
+    expect([rows[0]!.healsPerKill, rows[0]!.weaponsPerKill]).toEqual([0, 0]);
+    expect(rows[0]!.avgKills).toBe(0);
+  });
+
+  it('renders one table row per floor, headed', () => {
+    const rows = floorDropStats([run({ killsByFloor: { 0: 20, 1: 20 }, checkpointFloors: [0, 1], drops: [drop({ kind: 'weapon' })] })]);
+    const lines = formatDropTable(rows).split('\n');
+    expect(lines).toHaveLength(3); // header + 2 floors
+    expect(lines[0]).toContain('weapons(avg/min/max)');
+    expect(lines[1]).toMatch(/^0 /);
   });
 });

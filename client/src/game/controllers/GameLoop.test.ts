@@ -105,6 +105,7 @@ function buildDeps(extra: Partial<GameLoopDeps> = {}) {
   const hud = fakeHud();
   const roomBuilder = fakeRoomBuilder();
   const portalPrompt = fakePortalPrompt();
+  const floorCardPrompt = fakePortalPrompt(); // same shape: an `update` spy plus `isOpen`
   const touchControlsView = { update: vi.fn() };
   const partyScreen = { update: vi.fn() };
   const input = fakeInput();
@@ -115,13 +116,13 @@ function buildDeps(extra: Partial<GameLoopDeps> = {}) {
   const tutorialHints = { consume: vi.fn(), reset: vi.fn() };
 
   const deps: GameLoopDeps = {
-    scene, fx, hud, touchControlsView, portalPrompt, roomBuilder, partyScreen,
+    scene, fx, hud, touchControlsView, portalPrompt, floorCardPrompt, roomBuilder, partyScreen,
     builder, ally, input, events, runOutcome, tutorialHints,
     pickupDebugOverlay: null,
     ...extra,
   } as unknown as GameLoopDeps;
 
-  return { deps, scene, fx, hud, roomBuilder, portalPrompt, touchControlsView, partyScreen, input, builder, ally, events, runOutcome, tutorialHints };
+  return { deps, scene, fx, hud, roomBuilder, portalPrompt, floorCardPrompt, touchControlsView, partyScreen, input, builder, ally, events, runOutcome, tutorialHints };
 }
 
 function buildHost(overrides: Partial<GameLoopHost> = {}): GameLoopHost & { localOwner: number } {
@@ -678,7 +679,7 @@ describe('GameLoop — portal/checkpoint eligibility (dungeon mode, 2026-08-12 s
       dungeon: { config: TINY_DUNGEON, library: EMBER_ROOMS },
     });
     for (let i = 0; i < roomCount; i++) {
-      s.dungeonRoomRuntime.push({ activated: false, roomTick: 0, schedule: [], cursor: 0, hasLiveEnemy: false });
+      s.dungeonRoomRuntime.push({ activated: false, roomTick: 0, schedule: [], cursor: 0, hasLiveEnemy: false, weaponDropped: false });
     }
     return s;
   }
@@ -743,6 +744,32 @@ describe('GameLoop — portal/checkpoint eligibility (dungeon mode, 2026-08-12 s
     loop.update(16);
 
     expect(deps.portalPrompt.update).toHaveBeenCalledWith(s, expect.any(Boolean), true);
+  });
+
+  it('drives the floor-card offer off the SAME show condition as the portal popup', () => {
+    // Two panels, one condition. If they could disagree, a player would get a card offer
+    // over a floor that is not finished, or a portal with no card to pick at it.
+    const { deps } = buildDeps();
+    const s = dungeonStateWithRooms(2);
+    const host = buildHost({ getPhase: () => 'playing', activeState: () => s });
+    new GameLoop(deps, host).update(16);
+
+    const portalShow = (deps.portalPrompt.update as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]![1];
+    const cardCall = (deps.floorCardPrompt.update as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!;
+    expect(cardCall[0]).toBe(s);
+    expect(cardCall[1]).toBe(portalShow);
+  });
+
+  it('tells the card panel which seat is LOCAL, so it highlights the right vote', () => {
+    // In co-op the panel draws "your pick" — reading seat 0 instead of the local one
+    // would highlight a teammate's choice on every client but the host's.
+    const { deps } = buildDeps();
+    const s = dungeonStateWithRooms(2);
+    const host = buildHost({ getPhase: () => 'playing', activeState: () => s, localOwner: 1 });
+    new GameLoop(deps, host).update(16);
+
+    const cardCall = (deps.floorCardPrompt.update as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]!;
+    expect(cardCall[2]).toBe(1);
   });
 
   // 2026-09-02 live report — *"附近有可以拾取的武器时，不要阻断了玩家攻击"*. The weapon-pickup

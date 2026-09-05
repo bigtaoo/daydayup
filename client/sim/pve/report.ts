@@ -8,7 +8,7 @@
  * actionable, "the 15-enemy spawn room lands its first hit 8 ticks after waking up
  * and peaks at 6 simultaneous shooters" is.
  */
-import type { RoomEncounter, RunMetrics } from './levelSim';
+import type { DropRecord, RoomEncounter, RunMetrics } from './levelSim';
 
 export interface RoomStats {
   key: string; // `${floorIndex}:${roomId}`
@@ -111,6 +111,125 @@ export function roomStats(runs: readonly RunMetrics[]): RoomStats[] {
   return out.sort((a, b) => a.floorIndex - b.floorIndex || a.roomId.localeCompare(b.roomId));
 }
 
+/**
+ * One floor's loot economy, aggregated across every run that played it (design/09
+ * `DROP_TABLE`). Two targets live here, both stated as user requests on 2026-09-05:
+ * a floor should hand out **2-3 weapons**, and a monster's chance of a health potion
+ * should be **low** — the core loop is meant to be "take no damage", not "drink".
+ *
+ * Every count is per-floor-visit, and `complete` is the sample size that a "per full
+ * floor" reading is allowed to use: on a floor the run died partway through, most of
+ * the roster never died and so never rolled.
+ */
+export interface FloorDropStats {
+  floorIndex: number;
+  /** Floor-visits sampled (any run that killed anything here). */
+  samples: number;
+  /** Of those, visits that reached the floor's checkpoint — the honest denominator. */
+  complete: number;
+  avgKills: number;
+  avgWeapons: number;
+  avgHeals: number;
+  avgMaterials: number;
+  avgBuffs: number;
+  /** Weapon drops on a COMPLETE visit, min/max. The spread is the whole point: an
+   *  average of 3 is equally consistent with "always 3" and with "0 here, 6 there",
+   *  and only one of those meets the request. null when no visit was complete. */
+  minWeapons: number | null;
+  maxWeapons: number | null;
+  /** Most weapon drops any single ROOM produced. A floor that hands out its whole
+   *  allowance in one room technically hits the count and misses the point. */
+  maxWeaponsInOneRoom: number;
+  /** Observed heal drops per kill — comparable directly against the heal weight's
+   *  share of `DROP_TABLE`, so a mis-tuned table shows up as a number, not a vibe. */
+  healsPerKill: number;
+  weaponsPerKill: number;
+}
+
+/** Per-(run, floor) tallies — the intermediate every field of FloorDropStats reads. */
+interface FloorVisit {
+  floorIndex: number;
+  complete: boolean;
+  kills: number;
+  byKind: Record<string, number>;
+  weaponsByRoom: Map<string, number>;
+}
+
+function visitsOf(runs: readonly RunMetrics[]): FloorVisit[] {
+  const out: FloorVisit[] = [];
+  for (const r of runs) {
+    const byFloor = new Map<number, FloorVisit>();
+    const visit = (floorIndex: number): FloorVisit => {
+      let v = byFloor.get(floorIndex);
+      if (!v) {
+        v = { floorIndex, complete: r.checkpointFloors.includes(floorIndex), kills: 0, byKind: {}, weaponsByRoom: new Map() };
+        byFloor.set(floorIndex, v);
+      }
+      return v;
+    };
+    for (const [floor, kills] of Object.entries(r.killsByFloor)) visit(Number(floor)).kills = kills;
+    for (const d of r.drops) countDrop(visit(d.floorIndex), d);
+    out.push(...byFloor.values());
+  }
+  return out;
+}
+
+function countDrop(v: FloorVisit, d: DropRecord): void {
+  v.byKind[d.kind] = (v.byKind[d.kind] ?? 0) + 1;
+  if (d.kind !== 'weapon') return;
+  // A drop that landed in a door passage has no room to attribute it to; group those
+  // under one bucket rather than dropping them, so the per-room max can never
+  // silently under-report.
+  const key = d.roomId ?? '(passage)';
+  v.weaponsByRoom.set(key, (v.weaponsByRoom.get(key) ?? 0) + 1);
+}
+
+export function floorDropStats(runs: readonly RunMetrics[]): FloorDropStats[] {
+  const grouped = new Map<number, FloorVisit[]>();
+  for (const v of visitsOf(runs)) {
+    const list = grouped.get(v.floorIndex);
+    if (list) list.push(v);
+    else grouped.set(v.floorIndex, [v]);
+  }
+
+  const out: FloorDropStats[] = [];
+  for (const [floorIndex, visits] of grouped) {
+    const n = visits.length;
+    const complete = visits.filter((v) => v.complete);
+    const completeWeapons = complete.map((v) => v.byKind.weapon ?? 0);
+    const kills = visits.reduce((a, v) => a + v.kills, 0);
+    const kindTotal = (k: string) => visits.reduce((a, v) => a + (v.byKind[k] ?? 0), 0);
+    out.push({
+      floorIndex,
+      samples: n,
+      complete: complete.length,
+      avgKills: round1(kills / n),
+      avgWeapons: round1(kindTotal('weapon') / n),
+      avgHeals: round1(kindTotal('heal') / n),
+      avgMaterials: round1(kindTotal('material') / n),
+      avgBuffs: round1(kindTotal('buff') / n),
+      minWeapons: completeWeapons.length === 0 ? null : Math.min(...completeWeapons),
+      maxWeapons: completeWeapons.length === 0 ? null : Math.max(...completeWeapons),
+      maxWeaponsInOneRoom: Math.max(0, ...visits.flatMap((v) => [...v.weaponsByRoom.values()])),
+      healsPerKill: kills === 0 ? 0 : round3(kindTotal('heal') / kills),
+      weaponsPerKill: kills === 0 ? 0 : round3(kindTotal('weapon') / kills),
+    });
+  }
+  return out.sort((a, b) => a.floorIndex - b.floorIndex);
+}
+
+export function formatDropTable(rows: readonly FloorDropStats[]): string {
+  const head = 'floor  visits(complete)  kills  weapons(avg/min/max)  perRoomMax  heals  materials  buffs  heal/kill  wpn/kill';
+  const body = rows.map(
+    (r) =>
+      `${String(r.floorIndex).padEnd(7)}${`${r.samples}(${r.complete})`.padEnd(18)}${String(r.avgKills).padEnd(7)}` +
+      `${`${r.avgWeapons}/${r.minWeapons ?? '-'}/${r.maxWeapons ?? '-'}`.padEnd(22)}` +
+      `${String(r.maxWeaponsInOneRoom).padEnd(12)}${String(r.avgHeals).padEnd(7)}${String(r.avgMaterials).padEnd(11)}` +
+      `${String(r.avgBuffs).padEnd(7)}${String(r.healsPerKill).padEnd(11)}${r.weaponsPerKill}`,
+  );
+  return [head, ...body].join('\n');
+}
+
 export function formatSummary(label: string, s: RunSummary): string {
   const pct = (n: number) => `${Math.round((n / Math.max(1, s.runs)) * 100)}%`;
   return [
@@ -136,6 +255,9 @@ export function formatRoomTable(rows: readonly RoomStats[]): string {
 
 function round1(n: number): number {
   return Math.round(n * 10) / 10;
+}
+function round3(n: number): number {
+  return Math.round(n * 1000) / 1000;
 }
 function round2(n: number): number {
   return Math.round(n * 100) / 100;

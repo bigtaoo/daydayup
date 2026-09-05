@@ -128,6 +128,8 @@ export const it: Translations<typeof en> = {
     portalTitle: 'PIANO RIPULITO — un portale si è aperto',
     portalExtract: 'Deposita ed estrai ({pending} materiali)',
     portalDescend: 'Scendi al piano {floor}',
+    floorCardTitle: 'Scegli un potenziamento',
+    floorCardVotes: '{n} voti',
   },
   auth: {
     title: 'ACCOUNT',
@@ -275,6 +277,14 @@ export const it: Translations<typeof en> = {
     vanguard: { name: 'Avanguardia' },
     skirmisher: { name: 'Schermagliatore' },
     juggernaut: { name: 'Colosso' },
+  },
+  card: {
+    potion_flow: { name: 'Flusso vitale', desc: 'Pozioni {factor}x più frequenti' },
+    arsenal: { name: 'Arsenale', desc: '+{bonus} arma per piano' },
+    edge: { name: 'Affilatura', desc: '+{value}% danni' },
+    cadence: { name: 'Cadenza', desc: '+{value}% cadenza di fuoco' },
+    bulwark: { name: 'Baluardo', desc: '+{value} PS massimi' },
+    precision: { name: 'Precisione', desc: '+{value}% probabilità critica' },
   },
   buff: {
     dmg_up: { name: 'Danno aumentato' },

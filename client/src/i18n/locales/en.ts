@@ -137,6 +137,8 @@ export const en = {
     portalTitle: 'FLOOR CLEARED — a portal has opened',
     portalExtract: 'Bank & Extract ({pending} materials)',
     portalDescend: 'Descend to Floor {floor}',
+    floorCardTitle: 'Choose an Upgrade',
+    floorCardVotes: '{n} votes',
   },
   auth: {
     title: 'ACCOUNT',
@@ -290,6 +292,14 @@ export const en = {
     vanguard: { name: 'Vanguard' },
     skirmisher: { name: 'Skirmisher' },
     juggernaut: { name: 'Juggernaut' },
+  },
+  card: {
+    potion_flow: { name: 'Vital Flow', desc: 'Potions drop {factor}x as often' },
+    arsenal: { name: 'Arsenal', desc: '+{bonus} weapon per floor' },
+    edge: { name: 'Edge', desc: '+{value}% damage' },
+    cadence: { name: 'Cadence', desc: '+{value}% fire rate' },
+    bulwark: { name: 'Bulwark', desc: '+{value} max HP' },
+    precision: { name: 'Precision', desc: '+{value}% crit chance' },
   },
   buff: {
     dmg_up: { name: 'Damage Up' },

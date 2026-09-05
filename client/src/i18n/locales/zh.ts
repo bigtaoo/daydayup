@@ -128,6 +128,8 @@ export const zh: Translations<typeof en> = {
     portalTitle: '楼层已清空 — 传送门已开启',
     portalExtract: '存入并撤离（{pending} 份材料）',
     portalDescend: '下降至第 {floor} 层',
+    floorCardTitle: '选择一张升级卡',
+    floorCardVotes: '{n} 票',
   },
   auth: {
     title: '账户',
@@ -275,6 +277,14 @@ export const zh: Translations<typeof en> = {
     vanguard: { name: '先锋' },
     skirmisher: { name: '游击手' },
     juggernaut: { name: '重装兵' },
+  },
+  card: {
+    potion_flow: { name: '流泉', desc: '血瓶掉落率 {factor} 倍' },
+    arsenal: { name: '军火库', desc: '每层 +{bonus} 把武器' },
+    edge: { name: '锋锐', desc: '伤害 +{value}%' },
+    cadence: { name: '连射', desc: '攻击速度 +{value}%' },
+    bulwark: { name: '壁垒', desc: '生命上限 +{value}' },
+    precision: { name: '精准', desc: '暴击率 +{value}%' },
   },
   buff: {
     dmg_up: { name: '伤害提升' },
