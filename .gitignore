@@ -26,6 +26,13 @@ npm-debug.log*
 # Local SQLite account DB (design/16-accounts.md) — dev/runtime state, not source
 server/data/
 
+# Real credentials. `server/.env.example` (names, empty values) is the committed template;
+# anything holding an ACTUAL secret is not source and must never be committed — Paddle's
+# API key and webhook secret land here first (design/19-server-platform.md §9, ROADMAP 9.4).
+.env
+.env.*
+!.env.example
+
 # Editor / OS
 .DS_Store
 Thumbs.db
