@@ -37,9 +37,18 @@
  *   POST /auth/change-password { token, oldPassword, newPassword } -> { ok: true } | 400/401
  *   GET  /account/meta      (Bearer token)  -> { data: MetaState | null, entitlements } | 401
  *   POST /account/meta      (Bearer token) { data }        -> { ok: true } | 400/401    routes/account
+ *   GET  /store/skus        (Bearer token)  -> { skus } | 401/502                       routes/store
+ *   POST /store/order       (Bearer token) { sku, platform } -> { order, payment } | 400/401/502
+ *   GET  /store/order/:id   (Bearer token)  -> { order } | 401/404/502
  *   POST /internal/entitlements/grant  (x-internal-key)  -> { granted, alreadyOwned } | 401/400/404
  *                                                                                     routes/internalEntitlements
  *   GET  /health                                                                       (here)
+ *
+ * `/store/*` (ROADMAP 8.8, design/19 §4) is the one route group here that answers nothing of
+ * its own: it is a PROXY in front of billsvc, and it exists because the two ends of the
+ * purchase flow authenticate in different namespaces. A player's bearer session is verified
+ * here, in this process, and what leaves for the billing plane is an internal-key call
+ * carrying the accountId that session named — never one the client did. See `routes/store.ts`.
  *
  * `/auth/*` and `/account/*` (design/16-accounts.md) are this project's first real
  * account system — `AuthService` owns a SQLite-backed (`node:sqlite`) accounts/sessions
@@ -70,6 +79,8 @@ import * as partyRoutes from './routes/party';
 import * as authRoutes from './routes/auth';
 import * as accountRoutes from './routes/account';
 import * as internalEntitlementRoutes from './routes/internalEntitlements';
+import * as storeRoutes from './routes/store';
+import type { BillingPlaneConfig } from './routes/store';
 
 const PORT = Number(process.env.MATCH_PORT ?? 8788);
 const HOST = process.env.HOST ?? '0.0.0.0';
@@ -103,6 +114,14 @@ export interface MatchsvcServerOptions {
    * real party's understaffed squad or starts a new one, and it is invisible from outside.
    */
   spawnBot?: typeof spawnBotClient;
+  /**
+   * Billing-plane overrides for the `/store/*` proxy (ROADMAP 8.8), merged over the
+   * `config.ts`-derived defaults. Injected so a test can point the proxy at a stub billsvc —
+   * an ephemeral-port server, or a bare `fetchImpl` — without touching `process.env` and
+   * without standing up a third process. The mirror of `BillsvcServerOptions.pump`, which
+   * exists for the same reason in the other direction.
+   */
+  billing?: Partial<BillingPlaneConfig>;
 }
 
 /**
@@ -174,7 +193,7 @@ export function createMatchsvcServer(opts: MatchsvcServerOptions = {}): Server {
   // One bundle satisfying each route group's own narrow `*RouteDeps` interface. The groups
   // share no state, so this is a wiring convenience, not a shared context object — a
   // handler still declares (and can only reach) the few dependencies it names.
-  const deps = { matchmaker, pickGameserver, secret, ratings, parties, auth, db };
+  const deps = { matchmaker, pickGameserver, secret, ratings, parties, auth, db, billing: opts.billing };
 
   const server = createServer((req, res) => {
     if (req.method === 'OPTIONS') return send(res, 204, {});
@@ -214,6 +233,16 @@ export function createMatchsvcServer(opts: MatchsvcServerOptions = {}): Server {
 
     if (req.method === 'GET' && path === '/account/meta') return accountRoutes.getMeta(req, res, url, deps);
     if (req.method === 'POST' && path === '/account/meta') return accountRoutes.postMeta(req, res, url, deps);
+
+    // The store proxy (ROADMAP 8.8). Three player-facing routes that answer nothing here —
+    // every one of them verifies the bearer session and then forwards to billsvc over 8.1's
+    // internal seam. The `:id` GET is last because its pattern would also match a literal
+    // `/store/order/` segment the POST above owns under a different method.
+    if (req.method === 'GET' && path === '/store/skus') return storeRoutes.getSkus(req, res, url, deps);
+    if (req.method === 'POST' && path === '/store/order') return storeRoutes.postOrder(req, res, url, deps);
+    if (req.method === 'GET' && storeRoutes.STORE_ORDER_PATH.test(path)) {
+      return storeRoutes.getOrder(req, res, url, deps);
+    }
 
     // The one route no player ever calls (design/19 §4's closed delivery loop): billsvc's
     // outbox pump POSTs a settled purchase here over ROADMAP 8.1's internal key.

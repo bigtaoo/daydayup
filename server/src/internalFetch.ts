@@ -33,6 +33,21 @@
  * `fetchImpl`/`sleep` are injection seams: `globalThis.fetch` is read at CALL time (never
  * captured at module scope) so `vi.stubGlobal('fetch', ...)` keeps working, and a test can
  * drive the whole retry ladder without real timers.
+ *
+ * READING THE PEER'S ANSWER (`collectBody`, added 2026-09-05 for ROADMAP 8.8's store proxy).
+ * The first two callers here — the ladder report and the delivery pump — get their real
+ * answer from a status code, so obligation 1 was satisfied by CANCELLING the body and this
+ * helper never returned one. A PROXY needs the bytes: matchsvc relays billsvc's `{ skus }`,
+ * `{ order, payment }` and its `{ error }` refusals to a player's client. `collectBody: true`
+ * therefore READS the body instead of cancelling it — which is the same obligation discharged
+ * a different way, not an exception to it: `res.text()` consumes the stream and releases the
+ * socket exactly as `cancel()` does. It is opt-in because buffering a body a caller will not
+ * look at is pure cost, and the default has to be the cheap one.
+ *
+ * `internalFetchJson` is the whole proxy shape in one place: collect, then parse, and NEVER
+ * throw on either. A peer that answers with an HTML error page from something in front of it
+ * must degrade to "no usable body" — the same defensive posture `client/src/net/billing.ts`
+ * takes on the other end of the same hop, for the same reason.
  */
 import { INTERNAL_CALLER_HEADER, INTERNAL_KEY_HEADER } from './internalAuth';
 
@@ -58,6 +73,12 @@ export interface InternalFetchInit {
   /** Per ATTEMPT, not per call: a 3-attempt ladder can take 3x this plus its backoffs. */
   timeoutMs?: number;
   retry?: RetryPolicy;
+  /**
+   * Read the response body into the result (as `body`) instead of cancelling it, on the
+   * SUCCESS and the http-failure arm alike — a 4xx's `{ error }` is exactly the payload a
+   * proxy has to relay. Off by default; see this file's header.
+   */
+  collectBody?: boolean;
   fetchImpl?: typeof fetch;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -71,8 +92,8 @@ export type InternalFetchFailure =
   | 'network';
 
 export type InternalFetchResult =
-  | { ok: true; status: number; attempts: number }
-  | { ok: false; failure: InternalFetchFailure; status?: number; attempts: number; error?: string };
+  | { ok: true; status: number; attempts: number; body?: string }
+  | { ok: false; failure: InternalFetchFailure; status?: number; attempts: number; error?: string; body?: string };
 
 export const DEFAULT_TIMEOUT_MS = 5_000;
 const DEFAULT_BASE_DELAY_MS = 250;
@@ -88,24 +109,30 @@ const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => set
  * Any error draining is swallowed — the socket is released either way, and by this point
  * the status has already been observed.
  */
-async function drainBody(res: Response): Promise<void> {
+async function drainBody(res: Response, collect: boolean): Promise<string | undefined> {
   try {
-    if (res.bodyUsed) return;
+    if (res.bodyUsed) return undefined;
+    // READING is draining. `res.text()` consumes the stream and releases the socket exactly
+    // as `cancel()` does, so the `collect` branch is obligation 1 discharged rather than
+    // skipped — and it deliberately shares this `try`, because a body that errors mid-read
+    // must still leave the caller with a status rather than a rejection.
+    if (collect) return await res.text();
     if (res.body) {
       await res.body.cancel();
-      return;
+      return undefined;
     }
     await res.arrayBuffer();
   } catch {
     /* already released, or a body that errored mid-drain — nothing left to do either way */
   }
+  return undefined;
 }
 
 /** One attempt's outcome. A union rather than a bag of optionals so the retry loop below
  *  reads `failure`/`status` only where they provably exist. */
 type Attempt =
-  | { ok: true; status: number }
-  | { ok: false; failure: InternalFetchFailure; status?: number; error?: string; retryable: boolean };
+  | { ok: true; status: number; body?: string }
+  | { ok: false; failure: InternalFetchFailure; status?: number; error?: string; retryable: boolean; body?: string };
 
 /**
  * One attempt, with obligations 1 and 2. The `finally` clearing the timer matters as much
@@ -131,15 +158,17 @@ async function attemptOnce(url: string, init: InternalFetchInit, body?: string):
     });
     // Before ANY status branch — a 4xx/5xx body is exactly as capable of wedging the pool
     // as a 200's, and it is the error paths that get retried and so drain repeatedly.
-    await drainBody(res);
+    const responseBody = await drainBody(res, init.collectBody === true);
 
-    if (res.status >= 500) return { ok: false, status: res.status, failure: 'http', retryable: true };
+    if (res.status >= 500) {
+      return { ok: false, status: res.status, failure: 'http', retryable: true, body: responseBody };
+    }
     // Every other non-2xx is the peer saying no on purpose — a rejected key, a malformed
     // body, a route that does not exist. Repeating it verbatim cannot change the answer, so
     // 4xx is never retried (429 is not special-cased: these callers are our own processes,
     // and nothing here rate-limits them).
-    if (!res.ok) return { ok: false, status: res.status, failure: 'http', retryable: false };
-    return { ok: true, status: res.status };
+    if (!res.ok) return { ok: false, status: res.status, failure: 'http', retryable: false, body: responseBody };
+    return { ok: true, status: res.status, body: responseBody };
   } catch (err) {
     // `signal.aborted` is what distinguishes our own timeout from the peer refusing the
     // connection; both are retryable, but only one of them means "we gave up", and an
@@ -178,10 +207,44 @@ export async function internalFetch(url: string, init: InternalFetchInit = {}): 
   for (;;) {
     attempts += 1;
     const outcome = await attemptOnce(url, init, body);
-    if (outcome.ok) return { ok: true, status: outcome.status, attempts };
+    if (outcome.ok) return { ok: true, status: outcome.status, attempts, body: outcome.body };
     if (!outcome.retryable || attempts >= budget) {
-      return { ok: false, failure: outcome.failure, status: outcome.status, attempts, error: outcome.error };
+      return {
+        ok: false,
+        failure: outcome.failure,
+        status: outcome.status,
+        attempts,
+        error: outcome.error,
+        body: outcome.body,
+      };
     }
     await sleep(retryDelayMs(attempts, retry));
+  }
+}
+
+/**
+ * The proxy shape: call a peer, and hand back BOTH the transport result and the peer's parsed
+ * JSON body. Never throws and never rejects, for the same reason `internalFetch` does not —
+ * and with one addition of its own: a body that is not JSON (a load balancer's HTML 502, a
+ * truncated response, an empty 204) resolves to `json: null` rather than a `SyntaxError`.
+ *
+ * `result` is carried verbatim rather than flattened, so a caller still reads `status`,
+ * `failure` and `attempts` off exactly the union `internalFetch` documents; `json` is the
+ * only thing this wrapper adds. `json` is `unknown` on purpose: the peer's answer is data
+ * arriving over a network, and a generic parameter here would only let a caller assert a
+ * shape nobody checked.
+ */
+export interface InternalJsonResult {
+  result: InternalFetchResult;
+  json: unknown;
+}
+
+export async function internalFetchJson(url: string, init: InternalFetchInit = {}): Promise<InternalJsonResult> {
+  const result = await internalFetch(url, { ...init, collectBody: true });
+  if (result.body === undefined || result.body.length === 0) return { result, json: null };
+  try {
+    return { result, json: JSON.parse(result.body) as unknown };
+  } catch {
+    return { result, json: null };
   }
 }

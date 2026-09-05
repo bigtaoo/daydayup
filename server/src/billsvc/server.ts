@@ -58,7 +58,13 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { DatabaseSync } from 'node:sqlite';
 import { openBillingDb } from '../billingDb';
 import { BillingService, type BillingServiceDeps } from './BillingService';
-import { controlPlaneUrl, INTERNAL_CALLER_BILLSVC, internalKeys, sharedInternalKey } from '../config';
+import {
+  controlPlaneUrl,
+  INTERNAL_CALLER_BILLSVC,
+  INTERNAL_CALLER_MATCHSVC,
+  internalKeys,
+  sharedInternalKey,
+} from '../config';
 import { createInternalVerifier, describeInternalAuthFailure, type InternalVerifier } from '../internalAuth';
 import { createBillingAdapters, devStubEnabled, type BillingEnv } from './iap/factory';
 import { asIapPlatform, type PlatformOrderLister, type ReceiptVerifier } from './iap/types';
@@ -81,8 +87,13 @@ const CORS = {
  * What billsvc calls the process on the other end of an internal call, for audit lines.
  * The control plane is the only one: a player's client never reaches this port, it asks
  * matchsvc, which forwards with its internal key.
+ *
+ * An ALIAS of `config.ts`'s `INTERNAL_CALLER_MATCHSVC` rather than a second literal, since
+ * ROADMAP 8.8 gave matchsvc an outbound caller name of its own: the two constants label the
+ * same hop from its two ends, and two hand-kept copies of one caller name is exactly the
+ * drift that makes an audit line say something false.
  */
-export const INTERNAL_CALLER_CONTROL_PLANE = 'matchsvc';
+export const INTERNAL_CALLER_CONTROL_PLANE = INTERNAL_CALLER_MATCHSVC;
 
 export interface BillsvcServerOptions {
   /** Billing DB path. Tests pass `':memory:'`; defaults to `defaultBillingDbPath()`. */

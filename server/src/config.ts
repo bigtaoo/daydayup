@@ -111,6 +111,19 @@ export function internalKeyFor(caller: string): string | undefined {
 export const INTERNAL_CALLER_BILLSVC = 'billsvc';
 
 /**
+ * matchsvc, the THIRD process to make an outbound internal call (ROADMAP 8.8's store proxy,
+ * `routes/store.ts`). The control plane is a caller as well as a callee now: a player's
+ * bearer session reaches `/store/*` here, and what leaves for billsvc is an internal-key
+ * call carrying the accountId this process resolved.
+ *
+ * `billsvc/server.ts`'s `INTERNAL_CALLER_CONTROL_PLANE` is an alias of this string rather
+ * than a second literal — it is what billsvc's verifier labels the same hop from the other
+ * end, and two hand-kept copies of one caller name is exactly the drift an audit line cannot
+ * survive.
+ */
+export const INTERNAL_CALLER_MATCHSVC = 'matchsvc';
+
+/**
  * The secret an outbound caller presents when it is NOT the entry the registry happens to
  * be labelled after. Today that registry holds exactly one key and all three processes
  * share it (§3), so "billsvc's key" and "the one key" are the same string — and this
@@ -139,4 +152,19 @@ export function sharedInternalKey(): string | undefined {
 export function controlPlaneUrl(): string {
   const env = process.env.DDU_MATCHSVC_URL;
   return env && env.length > 0 ? env : 'http://localhost:8788';
+}
+
+/**
+ * Where the BILLING plane answers, for a process that needs to call it — the mirror of
+ * `controlPlaneUrl()` above, and read per call for the same reason. Its only caller today is
+ * matchsvc's store proxy (`routes/store.ts`, ROADMAP 8.8).
+ *
+ * Defaults to localhost:8789 (`billsvc/main.ts`'s `DEFAULT_BILL_PORT`) rather than to
+ * "disabled", so the local three-process setup needs no configuration; a real deployment that
+ * forgets the variable fails VISIBLY — a refused connection the proxy answers 502 to and logs
+ * — rather than by quietly serving an empty store, which would look like a catalogue decision.
+ */
+export function billingPlaneUrl(): string {
+  const env = process.env.DDU_BILLSVC_URL;
+  return env && env.length > 0 ? env : 'http://localhost:8789';
 }

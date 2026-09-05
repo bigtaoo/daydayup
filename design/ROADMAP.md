@@ -700,10 +700,25 @@ records which of funny's assumptions does not hold here.
   STORE entry, not a disabled one), `controllers/StorePurchase.ts` (all eight outcomes injected
   and testable with no network/clock/page) and `screens/StoreScreen.ts` replace it behind the
   Forge's STORE button and `[B]`, in a new full `'store'` phase so the craft/clear table stays
-  silenced while a purchase is in flight. **Still open**: the three routes it calls
-  (`/store/skus`/`/store/order`/`/store/order/:id`) exist only on billsvc — matchsvc's proxy for
-  them, over 8.1's internal seam, is the next package. Shipped 2026-09-05 — [volume
+  silenced while a purchase is in flight. Shipped 2026-09-05 — [volume
   37](roadmap/37-2026-09-05-store-client.md).
+  **The other half landed the same day, and closes 8.8 and Phase 8 with it.** The three routes the
+  client calls existed only on billsvc, under a different protocol (`/skus`, `/order/create`,
+  `/order/:id`), a different credential namespace (the internal key, not a player session) and a
+  different identity rule (`createOrder` read `accountId` from the request body). `routes/store.ts`
+  is matchsvc's proxy across all three gaps: it verifies the player's bearer session in-process and
+  forwards over 8.1's `internalFetch`, and the accountId it sends is the SESSION's — a client that
+  puts one in the body has it not overridden but never read, which is the same shape as billsvc not
+  reading `amount`. `GET /store/order/:id` is narrowed to the session's own account and fails closed
+  when it cannot find an owner, because billsvc does not check ownership (correct for an internal
+  route, an "read anyone's purchase" hole the moment a player can reach it) and a mismatch answers
+  the same 404 an unknown id does. Two mappings are decisions rather than relays: billsvc's **401 is
+  never forwarded** — a rejected internal key is our misconfiguration, and a relayed 401 would
+  present a bad deploy to every player as a login problem — and nothing retries, since
+  `/order/create` is not idempotent and a player is waiting on the other two. `internalFetch` gained
+  the one thing a proxy needs that its first two callers did not (`collectBody`/`internalFetchJson`:
+  READ the body rather than cancel it, which discharges the same drain obligation), and `config.ts`
+  gained `billingPlaneUrl()`. Shipped 2026-09-05 — [volume 37](roadmap/37-2026-09-05-store-client.md#the-proxy-that-answers-those-three-routes-2026-09-05-server-only-no-engine-bump).
 
 Deliberately not adopted from funny, with reasons, in `design/19-server-platform.md`'s own table:
 gateway/gameserver separation, Mongo + Redis + protobuf + generated OpenAPI routes, wallet/currency/
@@ -1028,13 +1043,14 @@ Every dated pass, newest volume last. Tags are the same vocabulary as the theme 
 
 - **09-05** [The billing plane learns to leave evidence](roadmap/35-2026-09-05-billing-operations.md#1-every-webhook-event-not-just-the-successful-one) — ROADMAP 8.5, the operational half of Phase 8 (8.8, the client's own purchase screen, landed later the same day): three concerns sharing one posture — record what happened, tell a human, never act. Until this pass only a callback that SETTLED left a trace, so "why did my payment not go through" had no evidence source anywhere in the project; every branch of the webhook route now writes a `webhook_events` row keyed `${txnId}:${eventType}` and upserted, because platform redelivery is at-least-once. The named key needed two fallbacks that matter more than it does — a body carrying no txn id is exactly the malformed one whose bytes are worth the most, and a naive key collapses every one of them into a single row each later bad payload overwrites, so the merchant order id and then a sha256 of the raw bytes stand in (a hash is a real key here: a retry of an unparsable body repeats the same bytes). `raw` keeps the FIRST body and `outcome` the LATEST — different rules on purpose, since the body is evidence and the outcome is what the account state reflects — and `divergences` counts redeliveries whose body CHANGED, which is 8.3's forgery shape seen from the other side, done in the UPSERT as `divergences + (raw <> excluded.raw)` rather than as a look-before-write. One behaviour CHANGE rode along: an unrecognised `event` string used to fall through into `settle`, so a `refunded` callback with a valid receipt would have DELIVERED. Reconciliation is the honest half — no merchant account exists, so "list the platform's recent orders" is an injected PORT, the four real adapters carry the call they would make and return not-implemented, and writing them down was worth more than expected (three of the four are not a single fetch: an ES256 JWT over three credentials, a Pub/Sub subscription, a gzipped CSV behind a signed URL). A platform that could not be asked lands in `unreconciled` instead of contributing zero differences, `complete` is false whenever that list is non-empty, and the first formatted line says COMPLETE/INCOMPLETE *before* the count — a test asserts the trap directly: 0 differences AND not reconciled. The dev platform's book is authored and never derived from local `orders`, because a reconciliation that passes by construction looks like evidence. The grant audit is `design/15`'s checkpoint-quorum principle applied to money — exactly AT the threshold is not an anomaly (`>`, never `>=`), a source it was not told to count is SKIPPED so a later migration's new source arrives uncounted, and its script opens the account database READ-ONLY, which is "never convict" made structural rather than commented. And 8.7's orphan finally has somewhere to go: a control-plane 4xx is the only "money taken, nothing granted" class in Phase 8 and a `console.error` was its whole disposition — now filed into a review queue in the SAME transaction that makes the delivery terminal, while a *retryable* failure files nothing because that row is still owed. 836 → 973 server tests across 38 → 44 files, 99.00% lines / 97.73% branches, every new module 100/100. `net` `test` `docs`
 
-**[2026-09-05 — the client buys through the billing plane](roadmap/37-2026-09-05-store-client.md)**
+**[2026-09-05 — the store, both halves](roadmap/37-2026-09-05-store-client.md)**
 
 - **09-05** [The client buys through the billing plane](roadmap/37-2026-09-05-store-client.md#the-client-buys-through-the-billing-plane-2026-09-05-client-only-no-engine-bump) — ROADMAP 8.8, design/19 §9's own open item: `ForgeActions.acquireBlueprint` (2.4's `demo: free grant` scaffold) handed the player the first purchasable blueprint for nothing, a grant the client made to itself and 8.2 made invisible to the server the moment `/account/meta` started answering from its own `entitlements` table. Deleted, not deprecated — a guard test drives every remaining forge verb and asserts none of them can widen what the account owns, so a regression that reintroduced a free grant through some other path would still be caught. Four new files replace it: `net/billing.ts` (list/order/poll over the player's own bearer session, shaped like `net/auth.ts` — a SKU with no price is DROPPED, never defaulted, and `payment.configured` fails closed, matching `paymentParams.ts`'s own posture), `platform/storePlatform.ts` (the App-Store-3.1.1 gate — a web checkout inside an iOS build breaks Apple's anti-steering rule, so a build that may not sell renders NO store entry, not a disabled one; `wx` is checked first and unconditionally, because the mini-game runtime injects DOM-shaped compat shims the same way `gameQueryParams.ts`'s `location.search` trap does), `controllers/StorePurchase.ts` (list → order → poll → re-read ownership, every dependency injected including `sleep`, so all eight outcomes run with no network/clock/page) and `screens/StoreScreen.ts` (an exhaustive outcome→copy `Record`, so a new failure code is a compile error rather than a silent fallthrough to generic copy). Two outcomes worth naming: `payment.configured === false` is its own reported outcome and polls nothing, because the order is booked but nobody can pay for it and a plausible-looking unsigned payment block would fail worse inside a real SDK; and a delivered purchase whose ownership re-read failed still reports SUCCESS (`refreshed: false`) rather than reusing `OnlineMatch.syncMetaWithSession`'s swallow-the-error shape, because the money moved and the entitlement exists, and swallowing the error here would make that arm unreachable and tell a paying player their purchase failed. The Forge's ACQUIRE button and `[B]` became STORE, opening a new full `'store'` `Phase` rather than an overlay — every forge key is guarded on `phase === 'forge'` (`ForgeInput`), so a separate phase silences `[X] CLEAR LOADOUT` and the rest of the table for free while a purchase is in flight, which an overlay would not — and `gameAssembly.ts` resolves the platform gate exactly once, at construction, pushing it onto the Forge as a `storeEnabled` flag so no screen decides for itself whether it may sell. **Still open**: the three routes it calls exist only on billsvc, with no proxy on matchsvc yet — the next package, over §3's internal trust seam. 107 new tests across four files plus targeted updates to eleven existing ones whose fixtures named the deleted `acquireBtn`/`onAcquire`; client suite 4933 → 5040 (241 files), `tsc --noEmit`/`check:filelength`/`check:docpaths`/the 90/90 coverage gate all clean, `StorePurchase.ts` added to `pureLayerBoundary.ts`'s `PURE_FILES` (every dependency injected, so the whole create→poll→deliver chain — including its timed-out and delivered-but-unrefreshed arms — runs with no browser behind it). Browser-verified against the real dev server: the button renders only where `storeEnabled` is true, `[B]` and the tap both open it, a guest sees "Log in first. Purchases belong to your account, not to this device." — and the one thing only the browser caught, `store.back`'s copy carrying a `←` on top of the button's own icon arrow (rendering as "← ← FORGE"), fixed by dropping the glyph from the string. `ui` `net` `test` `docs`
+- **09-05** [The proxy that answers those three routes](roadmap/37-2026-09-05-store-client.md#the-proxy-that-answers-those-three-routes-2026-09-05-server-only-no-engine-bump) — ROADMAP 8.8's other half, and the last thing standing between the screen above and a purchase that works: the three routes that client calls were served by no process. billsvc answers a different protocol (`/skus`, `/order/create`, `/order/:id`), in a different credential namespace (the internal key, never a player token), with a different identity rule — `createOrder` reads `accountId` from the request body, which is correct for an internal route whose only caller was trusted and is a "charge somebody else" parameter the moment a player's client can reach it. That third mismatch is why this is a proxy rather than a URL rewrite. `routes/store.ts` verifies the bearer session in-process (the `routes/account.ts` shape) and forwards over 8.1's `internalFetch`, building its outbound body from three fields so a client-supplied `accountId` is not overridden but never READ — the same reasoning as billsvc not reading `amount`. `GET /store/order/:id` is narrowed to the session and fails CLOSED on a response with no owner in it, answering the same 404 an unknown id gets, because telling the two apart would confirm that a guessed id names a real order. `/store/skus` requires a session even though billsvc's `/skus` is public — a decision with its three reasons written down (the client never calls it without one, one rule beats an exception nobody remembers, and unauthenticated it is a free amplifier onto the billing plane) and its cost named (a pre-login price display would have to relax it). Two mappings are decisions: billsvc's **401 is never relayed**, because a rejected internal key is OUR misconfiguration and a forwarded 401 reads to `net/billing.ts` as an expired session — a deploy that missed `DDU_INTERNAL_KEY` would present to every player as a login problem and to no operator as anything at all — and nothing retries, since `/order/create` is not idempotent and `StorePurchase.poll` already budgets ~90 s for the rest. `internalFetch` gained `collectBody`/`internalFetchJson`: its first two callers read their answer off a status code, so obligation 1 was discharged by CANCELLING the body, and a proxy needs the bytes — reading them is the same obligation, not an exception to it. 32 new tests in two files, split by what only each layer can produce: the unit layer for a refused connection, a timeout, a 401, an HTML 200 and Bob polling Ada's order, and a real matchsvc + real billsvc pair driven by `client/src/net/billing.ts` ITSELF (through the `@dd/net/*` alias, so the contract under test is the shipped one) for the path rewrite, the `authorization` CORS preflight design/16 records as browser-only, and a whole purchase with no merchant account. Server suite 973 → 1004 across 46 files, 99.56% lines / 97.93% branches. `net` `test` `docs`
 
 ## The work log — by theme
 
-The same 116 entries, grouped. An entry with more than one tag appears more than once.
+The same 117 entries, grouped. An entry with more than one tag appears more than once.
 
 **`render`** — how the frame is drawn — walls, doors, floor, occlusion, shaders *(56)*
 
@@ -1173,7 +1189,7 @@ The same 116 entries, grouped. An entry with more than one tag appears more than
 - 08-25 [The three parked rules that had only shipped half](roadmap/06-2026-08-25.md#the-three-parked-rules-that-had-only-shipped-half-2026-08-25-client--one-render-only-engine-field)
 - 09-05 [A floor's loot gets an allowance](roadmap/36-2026-09-05-floor-loot-cards.md#a-floors-loot-gets-an-allowance-2026-09-05-engine-engine_version-57)
 
-**`test`** — coverage sweeps, gates, mutation batteries *(49)*
+**`test`** — coverage sweeps, gates, mutation batteries *(50)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 08-05 [Platform-layer test coverage pass](roadmap/01-2026-07-24--08-05.md#platform-layer-test-coverage-pass--2026-08-05-全部加测试)
@@ -1224,6 +1240,7 @@ The same 116 entries, grouped. An entry with more than one tag appears more than
 - 09-05 [The billing plane learns to leave evidence](roadmap/35-2026-09-05-billing-operations.md#1-every-webhook-event-not-just-the-successful-one)
 - 09-05 [A floor's loot gets an allowance](roadmap/36-2026-09-05-floor-loot-cards.md#a-floors-loot-gets-an-allowance-2026-09-05-engine-engine_version-57)
 - 09-05 [The client buys through the billing plane](roadmap/37-2026-09-05-store-client.md#the-client-buys-through-the-billing-plane-2026-09-05-client-only-no-engine-bump)
+- 09-05 [The proxy that answers those three routes](roadmap/37-2026-09-05-store-client.md#the-proxy-that-answers-those-three-routes-2026-09-05-server-only-no-engine-bump)
 
 **`audio`** — cues, music, the engine to sound channel *(5)*
 
@@ -1277,7 +1294,7 @@ The same 116 entries, grouped. An entry with more than one tag appears more than
 - 09-04 [The dispatch chain gets five files](roadmap/25-2026-09-04-matchsvc-routes.md#the-dispatch-chain-gets-five-files-2026-09-04-server-only-no-engine-bump)
 - 09-04 [The weapon roster gets tested](roadmap/26-2026-09-04-weapon-tests.md#the-weapon-roster-gets-tested-2026-09-04-tests-and-one-pure-module-no-engine-bump)
 
-**`docs`** — design docs and this log itself *(45)*
+**`docs`** — design docs and this log itself *(46)*
 
 - 08-02 [Repo structure pass](roadmap/01-2026-07-24--08-05.md#repo-structure-pass--2026-08-02)
 - 08-02 [Documentation pass](roadmap/01-2026-07-24--08-05.md#documentation-pass--2026-08-02)
@@ -1324,8 +1341,9 @@ The same 116 entries, grouped. An entry with more than one tag appears more than
 - 09-05 [The gameserver's address becomes a lookup](roadmap/34-2026-09-05-game-registry.md#the-gameservers-address-becomes-a-lookup-2026-09-05-server-only-no-engine-bump)
 - 09-05 [The billing plane learns to leave evidence](roadmap/35-2026-09-05-billing-operations.md#1-every-webhook-event-not-just-the-successful-one)
 - 09-05 [The client buys through the billing plane](roadmap/37-2026-09-05-store-client.md#the-client-buys-through-the-billing-plane-2026-09-05-client-only-no-engine-bump)
+- 09-05 [The proxy that answers those three routes](roadmap/37-2026-09-05-store-client.md#the-proxy-that-answers-those-three-routes-2026-09-05-server-only-no-engine-bump)
 
-**`net`** — matchmaking, sockets, reconnect *(12)*
+**`net`** — matchmaking, sockets, reconnect *(13)*
 
 - 08-04 [Client hardening pass](roadmap/01-2026-07-24--08-05.md#client-hardening-pass--2026-08-04)
 - 09-03 [The client was already over 90%, and nothing had ever measured it](roadmap/19-2026-09-03-coverage-gate.md#the-client-was-already-over-90-and-nothing-had-ever-measured-it-2026-09-03-build--client--server--engine-no-engine-bump)
@@ -1339,6 +1357,7 @@ The same 116 entries, grouped. An entry with more than one tag appears more than
 - 09-05 [The gameserver's address becomes a lookup](roadmap/34-2026-09-05-game-registry.md#the-gameservers-address-becomes-a-lookup-2026-09-05-server-only-no-engine-bump)
 - 09-05 [The billing plane learns to leave evidence](roadmap/35-2026-09-05-billing-operations.md#1-every-webhook-event-not-just-the-successful-one)
 - 09-05 [The client buys through the billing plane](roadmap/37-2026-09-05-store-client.md#the-client-buys-through-the-billing-plane-2026-09-05-client-only-no-engine-bump)
+- 09-05 [The proxy that answers those three routes](roadmap/37-2026-09-05-store-client.md#the-proxy-that-answers-those-three-routes-2026-09-05-server-only-no-engine-bump)
 
 **`i18n`** — locales and text layout *(3)*
 

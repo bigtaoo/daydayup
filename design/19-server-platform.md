@@ -167,6 +167,21 @@ Applies to `/rating/report` (D1, `server/src/routes/rating.ts`) immediately, and
 `billsvc` route except the platform
 webhook, which is authenticated by the platform's own signature instead.
 
+**A THIRD CALLER, AND THE ONE RULE IT ADDED (2026-09-05, ROADMAP 8.8).** matchsvc's `/store/*`
+proxy made the control plane an internal CALLER as well as a callee, and put the two namespaces
+one function apart for the first time: a player's bearer session is verified in-process and an
+internal-key call goes out carrying the accountId that session named. The boundary reads the same
+in both directions — an internal route never accepts a player token, and a player route never
+trusts an accountId the client asserted — but proxying adds a rule neither end had needed. **A
+peer's 401 must not be relayed to the player.** billsvc refusing our internal key is a
+misconfiguration on our side; forwarded verbatim it reaches the client as "your session is bad",
+so a deploy that missed `DDU_INTERNAL_KEY` would present to every player as a login problem and to
+no operator as anything at all. It becomes a 502 and an error line naming the variable. The
+outbound helper also grew the one thing a proxy needs that a fire-and-forget caller does not —
+`collectBody`/`internalFetchJson`, which READ the response body rather than cancelling it. That is
+obligation 1 discharged differently, not waived: `res.text()` releases the socket exactly as
+`cancel()` does.
+
 **Outbound** (`server/src/internalFetch.ts`): one helper that every cross-service call goes through,
 which cannot forget the three things a bare `fetch` forgets:
 
@@ -408,6 +423,28 @@ deliveries(id, account_id, sku, grants_json, order_id, receipt_id,
 What is still not closed is the tear between the **platform** and the local transaction, which was
 never this section's to close — that is §7's reconciliation, and it is unchanged.
 
+**THE PLAYER-FACING SURFACE IN FRONT OF THESE ROUTES (2026-09-05, ROADMAP 8.8).** Nothing in this
+section is reachable from a client, by design: `POST /order/create` and `GET /order/:id` are
+internal, and `/skus` is public only on a port no player can see. `server/src/routes/store.ts` is
+what a client actually calls — `GET /store/skus`, `POST /store/order`, `GET /store/order/:id` on
+matchsvc, under the player's own bearer session. Three things about it belong here rather than in
+§3, because they are properties of this data model rather than of the seam:
+
+- **The accountId is the session's.** `createOrder` takes one because its caller was trusted; the
+  proxy builds the outbound body from the verified session plus `sku`/`platform`, and never reads
+  an `accountId` the client sent. Rule 3's reasoning about `amount`, applied to the other field a
+  client would like to choose.
+- **`GET /order/:id` does not check ownership, and now something does.** That was fine while its
+  only caller was the delivery path; in front of a player it turns an order id into a read of
+  another account's purchase. The proxy compares the returned order against the session and
+  answers the same 404 an unknown id gets — a 403 would confirm that a guessed id names a real
+  order. It fails closed on a response that carries no `accountId` at all, so this route breaks
+  loudly rather than quietly widening if that field ever stops being returned.
+- **Nothing retries.** `POST /order/create` is the one call in this whole section that is *not*
+  idempotent — the order id is minted per call, so a retry books a second order against the same
+  intent. The proxy therefore takes `internalFetch`'s default of exactly one attempt, and the
+  polling budget lives on the client where a timeout is a UI state rather than a duplicate row.
+
 ## 5. IAP adapters and the dev stub — SHIPPED 2026-09-04
 
 **Status: SHIPPED 2026-09-04** (ROADMAP 8.4), under `server/src/billsvc/iap/` with the second
@@ -634,10 +671,13 @@ human has to know which of two places to look.
   `POST /store/order` / `GET /store/order/:id` protocol this section already specifies, under the
   player's own bearer session. `platform/storePlatform.ts` is the App-Store-3.1.1 gate: a build
   that may not sell (the WeChat mini-game today, an iOS build once one exists) renders no STORE
-  entry at all, not a disabled one. **What is still open is the OTHER half**: those three routes
-  do not exist on matchsvc yet — the client is calling a protocol billsvc answers on its own
-  process and port, with no proxy in front of it. Wiring that proxy through §3's internal trust
-  seam is what closes this bullet for good.
+  entry at all, not a disabled one. **BOTH HALVES CLOSED 2026-09-05.** The proxy landed the same
+  day: `server/src/routes/store.ts` serves those three routes on matchsvc, verifying the player's
+  bearer session in-process and forwarding to billsvc over §3's outbound helper. It bridges three
+  mismatches, not one — the paths (`/skus`, `/order/create`, `/order/:id` on the other side), the
+  credential namespace, and the identity rule: billsvc's `createOrder` reads `accountId` from the
+  request body, which is correct for an internal route and is a "charge somebody else's account"
+  parameter the moment a player's client can reach it. See §4's own note on what the proxy settled.
 - Refund handling is specified only to the extent of "the ledger is append-only and a reversal is
   a new row". What a revoked character does to a ladder history is unanswered.
 - SQLite stays the answer until there are two control-plane processes. That, not revenue, is the
