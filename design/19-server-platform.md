@@ -709,6 +709,53 @@ human has to know which of two places to look.
   refunds stop being hypothetical: a Merchant of Record handles chargebacks, so Paddle will send
   refund events, which makes the refund bullet below a dependency of this work rather than a
   parallel question.
+
+  **THE PRECONDITION, found 2026-09-05 and ahead of every credential: billsvc has no public
+  address.** A Paddle webhook is a server-to-server POST to a public HTTPS URL, and this project
+  has no server deployment of any kind — no container or process-manager config anywhere, and the
+  only deploys that exist publish the client, the animator and the map editor. `b.gamestao.com` is
+  Cloudflare Workers static assets, which cannot host a Node process at all, let alone one opening
+  `node:sqlite` files. Phase 9 is therefore blocked on standing the three planes up somewhere
+  reachable, not on Paddle. funny solved exactly this shape — a VPS running its stack behind Caddy
+  with automatic Let's Encrypt, published as one domain — and the same box under a new subdomain is
+  the cheapest route, the Cloudflare zone already being shared.
+
+  **What is reusable from funny's Paddle setup, and what is not.** The seller account is the same
+  one; nothing else transfers cleanly. **Price ids cannot be reused at all** — funny sells coin
+  tiers and this project sells ten named blueprint SKUs, so ten Products and ten Prices are new
+  work, each with quantity adjustment turned OFF because an entitlement is own-or-not and has no
+  quantity semantics. **The webhook secret cannot be reused either**: it is per notification
+  destination, and billsvc's endpoint is a different URL, so it needs its own destination — which
+  should subscribe to every event type rather than only the settling one, since §7's log exists
+  precisely because a silently-dropped failure leaves "why did my payment not go through" with no
+  evidence. The API key and the client-side token are account-level and *could* be shared, but a
+  separately issued pair is independently revocable, which is worth more than the minute it costs.
+
+  **The merchant-domain review is a real gate with a real failure history.** Paddle is a Merchant
+  of Record, so it crawls the seller's domain and its legal pages before approving it. funny was
+  rejected **twice**, and both reasons apply here unchanged: once because the game's root path is a
+  bare canvas with nothing a crawler can read ("website inaccessible"), and once because its refund
+  policy said purchases were final, which contradicts the 14-day minimum refund window in Paddle's
+  own Buyer Terms. Its fix was five crawlable static pages — a landing page, pricing, refunds,
+  terms, privacy — with the reviewed URL pointing at the landing page rather than the game, the
+  refund page leading with the 14-day window, and the terms naming the operating entity. **This
+  project's root path is a bare canvas too**, so whether `b.gamestao.com` inherits the approval
+  already granted to the zone or needs its own submission is the first thing to check in the
+  dashboard, and if it needs its own, those pages are a work package rather than a checkbox.
+
+  **Five implementation traps carried over from funny, each one it actually hit.** The Paddle
+  Billing API is **snake_case** (`price_id`, `custom_data`) and rejects camelCase silently, with a
+  400 whose text names the field it claims is missing. `custom_data` is how identity survives the
+  round trip — funny carries its account id there, and this project should carry billsvc's own
+  order id, which is the join back to the order the webhook is settling. The signature is
+  `ts=<epoch>;h1=<hex>` over `${ts}:${rawBody}`, compared with `timingSafeEqual` **inside a
+  try/catch**, because a non-hex `h1` produces a short buffer and that function throws on a length
+  mismatch. An env var set to the EMPTY STRING is worse than an unset one wherever the code reads
+  `process.env.X ?? fallback`, since it overrides the fallback with nothing. And **a value written
+  into an env file is not a value the process can see**: funny's Apple credential sat in its `.env`
+  for months while production stayed fail-closed, because its compose file interpolates rather than
+  loads and the service block never listed the variable. This project has no deploy mechanism yet,
+  which makes that the cheapest possible moment to design one that cannot reproduce it.
 - Whether `entitlements` should also absorb the **materials** half of `MetaState` (it is farmable,
   not purchasable, so it is only worth it if duplication-by-blob-replay turns out to matter).
 - **CLIENT HALF CLOSED 2026-09-05 (ROADMAP 8.8).** `ForgeActions.acquireBlueprint`'s `demo: free
