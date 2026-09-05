@@ -627,11 +627,17 @@ human has to know which of two places to look.
   a Pub/Sub subscription, and WeChat's is a gzipped CSV behind a signed download URL.
 - Whether `entitlements` should also absorb the **materials** half of `MetaState` (it is farmable,
   not purchasable, so it is only worth it if duplication-by-blob-replay turns out to matter).
-- `ForgeActions.acquireBlueprint`'s `demo: free grant` scaffold (`design/14-meta-forging.md`,
-  ROADMAP 2.4) is now a grant that survives until the next login and then vanishes, because the
-  server answers `/account/meta` with its own table. It has to become a real purchase, or be
-  hidden while a session is live. Left alone by §2's pass on purpose: which of the two is a
-  product decision, not a server one.
+- **CLIENT HALF CLOSED 2026-09-05 (ROADMAP 8.8).** `ForgeActions.acquireBlueprint`'s `demo: free
+  grant` scaffold (`design/14-meta-forging.md`, ROADMAP 2.4) is gone — the Forge's ACQUIRE became
+  STORE, a real screen (`client/src/game/screens/StoreScreen.ts`) driving a real purchase
+  (`controllers/StorePurchase.ts`) through `net/billing.ts`, hardwired to the `GET /store/skus` /
+  `POST /store/order` / `GET /store/order/:id` protocol this section already specifies, under the
+  player's own bearer session. `platform/storePlatform.ts` is the App-Store-3.1.1 gate: a build
+  that may not sell (the WeChat mini-game today, an iOS build once one exists) renders no STORE
+  entry at all, not a disabled one. **What is still open is the OTHER half**: those three routes
+  do not exist on matchsvc yet — the client is calling a protocol billsvc answers on its own
+  process and port, with no proxy in front of it. Wiring that proxy through §3's internal trust
+  seam is what closes this bullet for good.
 - Refund handling is specified only to the extent of "the ledger is append-only and a reversal is
   a new row". What a revoked character does to a ladder history is unanswered.
 - SQLite stays the answer until there are two control-plane processes. That, not revenue, is the
