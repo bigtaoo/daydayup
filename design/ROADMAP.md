@@ -12,7 +12,7 @@ no particular order — and now live in `design/roadmap/`, one volume per stretc
 
 | Part | Where | What it is |
 | --- | --- | --- |
-| Phase spine | **this file**, below | Phases 0–8 in dependency order, with per-item status. What code comments mean when they say `ROADMAP 3.1` or `ROADMAP 4.2c`. |
+| Phase spine | **this file**, below | Phases 0–9 in dependency order, with per-item status. What code comments mean when they say `ROADMAP 3.1` or `ROADMAP 4.2c`. |
 | Dependency summary | **this file**, below | The one-screen version of the spine. |
 | Work log | [`design/roadmap/NN-*.md`](roadmap/) | Every dated pass, verbatim. Indexed below [by date](#the-work-log--by-date) and [by theme](#the-work-log--by-theme). |
 | Current built state | [`design/roadmap/current-state.md`](roadmap/current-state.md) | The running "what is built right now" note. **Not** the authority on `ENGINE_VERSION` — `engine/versionHistory.ts` is. |
@@ -728,6 +728,58 @@ Loki/Alloy/Grafana stack, and the social/auction/world services.
 
 ---
 
+## Phase 9 — Payments go live: Paddle 🔴 (planned 2026-09-05)
+
+Phase 8 built a billing plane that works end to end **against a dev stub**: a `product:<sku>`
+receipt walks create → webhook → settle → outbox → `entitlements` → the Forge, and every real
+adapter deliberately stops at unverified because no merchant credential exists anywhere in this
+project. Phase 9 is the one platform that turns that into money. **Paddle, decided 2026-09-05** —
+a Merchant of Record, so it owns VAT, sales tax and chargebacks, which a solo-operated project
+cannot own for itself. The recorded loser is Stripe, which is the cheapest platform to prove §7's
+*reconciliation* logic against (a single paged `GET /v1/checkout/sessions`); that is a
+reconciliation cost, and it lost to a tax-and-compliance argument.
+
+- **9.1 🔴 The Paddle adapter, which does not fit the shape 8.4 shipped.** Four structural
+  differences, in `design/19-server-platform.md` §9 in full. It is **push, not pull**: every 8.4
+  adapter answers `verifyReceipt(platform, receipt)` against a client-held receipt, and Paddle
+  has none — it sends a signed `transaction.completed` webhook, landing on the one path 8.1's
+  seam carved out and nothing has used since ("every billsvc route except the platform webhook,
+  which is authenticated by the platform's own signature instead"). Verification needs the **raw
+  body** — `Paddle-Signature: ts=<ts>;h1=<hmac>` is an HMAC-SHA256 over `${ts}:${rawBody}`, while
+  `server/src/billsvc/server.ts`'s webhook route reaches its handler through `readJson`, already
+  parsed; re-serialising to verify fails as "bad signature" rather than "you verified the wrong
+  bytes", so this touches the route itself and not only a new adapter file. A bounded timestamp
+  tolerance bounds replay. And 8.3's AMENDMENT 1 **relaxes here and only here**: it prefers the
+  verifier's transaction id over the callback body's *because the body is unauthenticated*, and a
+  Paddle body is signed.
+- **9.2 🔴 Merchant of Record partly inverts 8.3's price rule.** "Price comes from a server-side
+  SKU table" holds for what we OFFER, but Paddle owns localised pricing, currency and tax and
+  alone knows what was CHARGED. A SKU gains a Paddle price id, `server/src/billsvc/skus.ts`'s
+  `amountCents` becomes a record rather than an authority, and a mismatch is an 8.5 reconciliation
+  finding — **never a rejection**, because refusing money already taken converts a bookkeeping
+  discrepancy into an undelivered purchase. Its order lister replaces one of the four INCOMPLETE
+  rows an 8.5 reconciliation run currently reports.
+- **9.3 🔴 Refunds stop being hypothetical.** A Merchant of Record handles chargebacks, so Paddle
+  sends refund events, which makes `design/19-server-platform.md` §9's refund bullet a dependency
+  of this phase rather than a parallel question. The floor is that every refund event reaches
+  8.5's review queue with its money joined to it. **Whether an entitlement is actually revoked,
+  and what a revoked character does to a ladder history, is undecided and is a product call** —
+  9.1/9.2 must not settle it by accident.
+- **9.4 🟡 Credentials, and what "done" means without them.** A Paddle account, a notification
+  destination secret and a price id per SKU are inputs this repository cannot produce. Until they
+  exist, 9.1–9.3 land the same way 8.4's four adapters did: the real call each would make, written
+  and tested against fixtures, failing closed rather than throwing, and honestly reported as
+  unverified. **The signature verifier is the exception and must be tested for real** — a fixture
+  captured from Paddle's own documentation exercises it fully, and it is the one component whose
+  bug is silent and total.
+- **9.5 🟢 One consequence outside billsvc.** Paddle is web-only, so with it as the only real
+  platform the store sells on the web build and nowhere else. `platform/storePlatform.ts` (8.8)
+  already produces exactly that, and offering Paddle checkout inside an iOS build is the App Store
+  3.1.1 violation that gate exists to prevent — so this needs no new work, only that nothing
+  loosens the gate.
+
+---
+
 ## Backlog — designed in prose, never built (filed 2026-09-03)
 
 Five mechanics the design docs describe in the present tense, as if they were part of the
@@ -815,6 +867,17 @@ Phase 8 (server platform) DONE (✅ 2026-09-05, design/19-server-platform.md) �
                         rather than clean when a platform cannot be asked, and a non-purchase grant audit that FILES and never revokes — plus a review queue that
                         finally gives 8.7's "money taken, nothing granted" record somewhere to go. 8.6 shipped 2026-09-05 as GameRegistry's static
                         single-instance branch only — /find's wsUrl is a lookup that travels in the response, never in the ticket. Depends on nothing in Phases 0-7; 8.2 depends on 8.1’s internal key, 8.3 on both, 8.7 on all three.
+Phase 9 (payments live)  PLANNED (🔴, design/19-server-platform.md §5/§9) — Paddle, decided 2026-09-05. Phase 8 works end to end against a DEV STUB;
+                        this is the one platform that turns it into money. Paddle is a Merchant of Record (it owns VAT/tax/chargebacks, which a solo-operated
+                        project cannot) — the recorded loser is Stripe, cheapest to prove 8.5's RECONCILIATION against, which lost to a tax argument.
+                        It does NOT fit 8.4's adapter shape: PUSH not pull (a signed webhook, no client-held receipt), verification needs the RAW body
+                        (readJson has already parsed it — re-serialising fails as “bad signature”), and Merchant-of-Record pricing makes skus.ts a RECORD
+                        rather than the authority on what was charged, so a mismatch is a reconciliation finding and never a rejection. 8.3's AMENDMENT 1
+                        relaxes here and only here: it distrusted the callback body because nothing signed it, and a Paddle body is signed. Refunds stop
+                        being hypothetical (a MoR handles chargebacks) — the floor is that every refund event reaches 8.5's review queue; whether an
+                        entitlement is REVOKED is a product call this phase must not settle by accident. Depends on all of Phase 8; blocked on credentials
+                        this repo cannot produce, so without them it lands the way 8.4's four adapters did — written, fixture-tested, failing closed,
+                        honestly reported as unverified. The signature verifier is the exception and must be tested for real.
 Documentation           DONE (✅ 2026-08-02) — all 19 design docs + every README audited against the code; stale top-of-file Status blocks rewritten (12/10/client/art READMEs and this file's own header), design/README index completed, engine/README written, art/ UUID filenames + duplicate files cleaned up. Docs-only, no code change.
 Repo structure          DONE (✅ 2026-08-02) — engine/ hoisted to its own top-level package (DOM-free, self-only paths: the determinism rule is now compile-enforced); client/src/game/ split into screens|scene|controllers|match; root npm workspace with a single `npm run check` across all 5 packages; game/config.ts deleted (dead pre-engine duplicates) and split into theme.ts + score.ts. 931 tests before and after, zero behaviour change.
 Test coverage audit     DONE (✅ 2026-08-05) — full test-coverage sweep across all 7 workspaces; zero dead/obsolete tests found (nothing to delete); ~50 previously-untested files closed, 1736 → 2627 tests. See the Test coverage audit pass section above.

@@ -492,6 +492,13 @@ credential, and a round trip that is not implemented) — a platform that cannot
 report `ok`, and one unconfigured platform must not be able to 500 the shared webhook route for the
 others.
 
+**The first real platform is Paddle (decided 2026-09-05) and it does NOT fit the shape above.**
+`verifyReceipt(platform, receipt)` is a pull, and Paddle is a push: a signed webhook, no
+client-held receipt, HMAC over the raw request body, and a Merchant of Record that — unlike the
+four here — is the authority on what was actually charged. It lands on §3's platform-signature
+path rather than as a fifth row in this section's dispatch. The full account, including the one
+place it relaxes §4's AMENDMENT 1, is in §9.
+
 ## 6. Topology: `GameRegistry`, deferred but shaped now
 
 The gameserver's rooms are in-process `Map`s driven by in-process intervals (`RoomManager.ts`), so
@@ -655,13 +662,53 @@ human has to know which of two places to look.
 
 ## 9. Open questions
 
-- No WeChat or Apple merchant credentials exist anywhere in this project, so §5's real adapters
-  cannot be verified past the dev stub — and, since 2026-09-05, neither can §7's order listers,
-  which is why a reconciliation run reports INCOMPLETE for four of five platforms rather than
-  clean. Which platform is first is a product decision. Stripe is the cheapest one to prove the
-  reconciliation logic against for real: its list call is a single paged `GET
-  /v1/checkout/sessions`, where Apple's needs an ES256 JWT over three credentials, Google's needs
-  a Pub/Sub subscription, and WeChat's is a gzipped CSV behind a signed download URL.
+- **DECIDED 2026-09-05: Paddle is the first real platform.** No merchant credential of any kind
+  exists in this project, so §5's four adapters cannot be verified past the dev stub — and,
+  since 2026-09-05, neither can §7's order listers, which is why a reconciliation run reports
+  INCOMPLETE for four of five platforms rather than clean. The recorded comparison, kept because
+  it is still true and still an argument: Stripe is the cheapest platform to prove the
+  *reconciliation* logic against, its list call being a single paged `GET /v1/checkout/sessions`
+  where Apple's needs an ES256 JWT over three credentials, Google's needs a Pub/Sub subscription
+  and WeChat's is a gzipped CSV behind a signed download URL. That is a reconciliation cost, and
+  it lost to a tax-and-compliance argument: Paddle is a **Merchant of Record**, so it owns VAT,
+  sales tax and chargebacks, which a solo-operated project cannot own for itself.
+
+  Paddle is **not built**, and four things about it do not fit the shape §5 shipped — which is
+  why it is filed here rather than as a fifth row in an existing table:
+
+  1. **It is push, not pull.** Every adapter in §5 answers
+     `verifyReceipt(platform, receipt)`: the client holds a receipt and the server verifies it
+     upstream. Paddle has no client-held receipt — it sends a signed `transaction.completed`
+     webhook. Paddle therefore lands on the one path §3 already carved out and nothing has used
+     since: *"every `billsvc` route except the platform webhook, which is authenticated by the
+     platform's own signature instead."*
+  2. **Signature verification needs the RAW body.** `Paddle-Signature: ts=<ts>;h1=<hmac>` is an
+     HMAC-SHA256 over `${ts}:${rawBody}`, and `server/src/billsvc/server.ts`'s webhook route
+     reaches its handler through `readJson` — already parsed. Re-serialising to verify is the
+     classic failure here: key order and whitespace differ, the HMAC does not match, and it
+     presents as "bad signature" rather than "you verified the wrong bytes". A bounded timestamp
+     tolerance bounds replay. So this touches the webhook route itself, not only a new adapter file.
+  3. **Merchant of Record partly inverts §4's price rule.** *"Price comes from a server-side SKU
+     table"* holds for what we OFFER, but Paddle owns localised pricing, currency and tax, so it
+     alone knows what was actually CHARGED. A SKU therefore gains a Paddle price id, the local
+     `amountCents` in `server/src/billsvc/skus.ts` becomes a record rather than an authority, and
+     a mismatch is a §7 reconciliation finding — never a rejection, because refusing money already
+     taken converts a bookkeeping discrepancy into an undelivered purchase. funny reached the same
+     place: it stores the resolved `usdCents` on the recharge row so a later refund decrements
+     exactly what was added.
+  4. **§4's AMENDMENT 1 relaxes here, and only here.** That amendment prefers the verifier's
+     transaction id over the callback body's *because the body is unauthenticated*. A Paddle body
+     is signed, so its transaction id is trustworthy and is the natural `platform_txn_id`. The
+     amendment stays correct for every other platform; Paddle is the exception that proves what
+     it was actually guarding.
+
+  Two consequences outside billsvc. Paddle is **web-only**, so with it as the only real platform
+  the store sells on the web build and nowhere else — `client/src/game/screens/StoreScreen.ts`'s
+  gate (`platform/storePlatform.ts`) already produces exactly that, and offering Paddle checkout
+  inside an iOS build would be the App Store 3.1.1 violation that gate exists to prevent. And
+  refunds stop being hypothetical: a Merchant of Record handles chargebacks, so Paddle will send
+  refund events, which makes the refund bullet below a dependency of this work rather than a
+  parallel question.
 - Whether `entitlements` should also absorb the **materials** half of `MetaState` (it is farmable,
   not purchasable, so it is only worth it if duplication-by-blob-replay turns out to matter).
 - **CLIENT HALF CLOSED 2026-09-05 (ROADMAP 8.8).** `ForgeActions.acquireBlueprint`'s `demo: free
