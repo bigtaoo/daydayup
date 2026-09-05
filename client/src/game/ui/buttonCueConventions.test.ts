@@ -32,7 +32,7 @@ const DISMISSES = /^(back|cancel|leave|quit|resume|close|menu)/i;
  * it decides between `ui.tap` and `ui.denied` (`ForgeActions`) — the widget cannot know whether
  * the press did anything. Anything else that goes silent is a bug, not a decision.
  */
-const SILENT_BY_DESIGN = new Set(['screens/Forge.ts:acquireBtn']);
+const SILENT_BY_DESIGN = new Set(['screens/StoreScreen.ts:skuRowBtn']);
 
 const ALLOWED = new Set(['ui.tap', 'ui.back', 'ui.toggle', 'ui.denied', 'silent']);
 

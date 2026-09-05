@@ -57,8 +57,8 @@ export const en = {
     moreAvailable: '{count} more available',
     materialsLine: 'Materials   {bank}   |   owned chars: {ownedChars}',
     loadoutLine: 'Loadout     {loadout}   ({count}/{max})',
-    storeLine: 'Store (demo: free): {items}  — [B] acquire next',
-    acquireButton: 'ACQUIRE',
+    storeLine: 'Store: {items}  — [B] open the store',
+    storeButton: 'STORE',
     lockedFind: 'locked (find it)',
     lockedSource: 'locked ({source})',
     craftable: 'craftable',
@@ -68,6 +68,35 @@ export const en = {
     pageLabel: 'Page {current}/{total}',
     equippedHeader: 'Equipped: {id}',
     candidateHeader: 'Candidate: {id}',
+  },
+  // The store (design/19-server-platform.md §4, design/14's bounded direct purchase).
+  // Two rules shape this copy, and both are about not lying to someone about money:
+  // every refusal states plainly that nothing was charged, and `purchasedNoRefresh` —
+  // delivered, but this client could not re-read it — must NOT read as a failure, because
+  // the purchase stands.
+  store: {
+    title: 'STORE',
+    back: 'FORGE',
+    loading: 'Loading store…',
+    pickOne: 'Tap an item to buy it. Prices come from the server.',
+    empty: 'Nothing is for sale right now.',
+    row: '{item}   {price}',
+    rowOwned: '{item}   OWNED',
+    pagePrev: '‹ PAGE',
+    pageNext: 'PAGE ›',
+    pageLabel: 'Page {current}/{total}',
+    purchasing: 'Buying {item} — waiting for the payment…',
+    purchased: '{item} is yours. It is in the forge now.',
+    purchasedNoRefresh: '{item} is yours. It will show up in the forge next time you log in.',
+    alreadyOwned: 'You already own {item}.',
+    busy: 'One at a time — the last request is still running.',
+    loginRequired: 'Log in first. Purchases belong to your account, not to this device.',
+    unavailableHere: 'Purchases are not available in this version of the game.',
+    notConfigured: 'Purchases are not available right now: this build has no payment provider set up. Nothing was charged.',
+    orderFailed: 'Could not start the purchase. Nothing was charged.',
+    paymentFailed: 'The payment did not go through. Nothing was charged.',
+    pending: 'Still waiting on the payment. If it goes through, the item appears next time you log in.',
+    listFailed: 'Could not load the store. Check your connection and try again.',
   },
   hud: {
     pickupPrompt: { title: 'Nearby weapons' },

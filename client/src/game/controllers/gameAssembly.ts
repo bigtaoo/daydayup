@@ -9,8 +9,12 @@
 //
 // The order, and why:
 //
-//   1. partyScreen / loginScreen  need `run.matchBaseUrl` AFTER the constructor's `?mm=`
-//                                 override, so they cannot be field initializers.
+//   1. partyScreen / loginScreen / need `run.matchBaseUrl` AFTER the constructor's `?mm=`
+//      storeScreen                override, so they cannot be field initializers. The store
+//                                 reads it through a thunk (`StorePurchase.baseUrl`) rather
+//                                 than a captured string, so a later override still lands.
+//                                 Its platform gate is read ONCE, here, and pushed onto the
+//                                 Forge as a flag; presentation never asks.
 //   2. screenFlow                 needs both of those plus `settingsBtn` (built by buildHud).
 //   3. nav                        needs screenFlow. Depends on nothing else built here.
 //   4. gameLoop                   needs partyScreen.
@@ -27,6 +31,7 @@ import type { SettingsState } from '../../settings';
 import type { GameState } from '@dd/engine';
 import { LoginScreen } from '../screens/LoginScreen';
 import { PartyScreen } from '../screens/PartyScreen';
+import { StoreScreen } from '../screens/StoreScreen';
 import type { Forge } from '../screens/Forge';
 import type { MainMenu } from '../screens/MainMenu';
 import type { Matchmaking } from '../screens/Matchmaking';
@@ -61,6 +66,10 @@ import { OnlineMatch } from './OnlineMatch';
 import { RunLifecycle } from './RunLifecycle';
 import { ScreenFlow } from './ScreenFlow';
 import { ScreenNav } from './ScreenNav';
+import { StorePurchase } from './StorePurchase';
+import { detectStorePlatform } from '../../platform/storePlatform';
+import { pullAccountMeta } from '../../meta/accountSync';
+import { getSession } from '../../net/session';
 import type { RunState } from '../runState';
 
 /** What the assembly needs back from the shell — every one of these is a verb that reaches
@@ -108,6 +117,7 @@ export interface AssemblyParts {
 export interface AssembledGame {
   partyScreen: PartyScreen;
   loginScreen: LoginScreen;
+  storeScreen: StoreScreen;
   screenFlow: ScreenFlow;
   gameLoop: GameLoop;
   nav: ScreenNav;
@@ -120,17 +130,40 @@ export interface AssembledGame {
 export function assembleGame(p: AssemblyParts, host: GameShellHost): AssembledGame {
   const partyScreen = new PartyScreen({ matchBaseUrl: p.run.matchBaseUrl });
   const loginScreen = new LoginScreen({ matchBaseUrl: p.run.matchBaseUrl });
+
+  // Read ONCE, at assembly, and pushed onto the Forge as a flag. `platform/storePlatform.ts`
+  // carries the reason a build that may not sell must not render the entry at all (App Store
+  // rule 3.1.1 for an iOS build, no WeChat merchant credentials for the mini-game) — the
+  // point of resolving it here is that no screen ever gets to have an opinion about it.
+  const storePlatform = detectStorePlatform();
+  const storePurchase = new StorePurchase({
+    baseUrl: () => p.run.matchBaseUrl,
+    platform: () => storePlatform,
+    // Unlike `OnlineMatch.syncMetaWithSession`, this deliberately does NOT swallow its
+    // failure: a delivered purchase whose ownership could not be re-read has its own
+    // player-facing line, and swallowing the error here would make that line unreachable.
+    refreshOwnership: async () => {
+      const session = getSession();
+      if (!session) throw new Error('not logged in');
+      const remote = await pullAccountMeta(p.run.matchBaseUrl, session.token, p.run.meta);
+      p.run.setMeta(remote ?? p.run.meta);
+    },
+    sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  });
+  const storeScreen = new StoreScreen(storePurchase);
+  p.forge.storeEnabled = storePlatform !== null;
+
   p.layers.menu.mount(
     [p.mainMenu.view, p.modeSelect.view, p.forge.view, p.pvpPreview.view, p.matchmaking.view,
       p.screens.view, p.settingsScreen.view, p.pauseMenu.view,
-      partyScreen.view, loginScreen.view],
+      partyScreen.view, loginScreen.view, storeScreen.view],
     [p.settingsBtn.view], // floats OVER a screen — see MenuLayer.mount for why that matters
   );
 
   const screenFlow = new ScreenFlow({
     mainMenu: p.mainMenu, modeSelect: p.modeSelect, pvpPreview: p.pvpPreview,
     matchmaking: p.matchmaking, partyScreen, loginScreen,
-    forge: p.forge, screens: p.screens, settingsScreen: p.settingsScreen,
+    forge: p.forge, storeScreen, screens: p.screens, settingsScreen: p.settingsScreen,
     pauseMenu: p.pauseMenu, settingsBtn: p.settingsBtn, hudView: p.hudView,
   });
 
@@ -143,7 +176,7 @@ export function assembleGame(p: AssemblyParts, host: GameShellHost): AssembledGa
     backdrop: p.backdrop, hud: p.hud, portalPrompt: p.portalPrompt, floorCardPrompt: p.floorCardPrompt,
     mainMenu: p.mainMenu, modeSelect: p.modeSelect, pvpPreview: p.pvpPreview,
     matchmaking: p.matchmaking, partyScreen, loginScreen,
-    forge: p.forge, screens: p.screens, settingsScreen: p.settingsScreen,
+    forge: p.forge, storeScreen, screens: p.screens, settingsScreen: p.settingsScreen,
     pauseMenu: p.pauseMenu,
     screenSize: () => host.screenSize(),
     settings: () => host.settingsState(),
@@ -178,10 +211,11 @@ export function assembleGame(p: AssemblyParts, host: GameShellHost): AssembledGa
     run: p.run, layers: p.layers, forge: p.forge, forgeActions: p.forgeActions,
     screenSize: () => host.screenSize(),
     openSettings: () => nav.openSettings(),
+    openStore: () => nav.showStore(),
     confirm: () => host.confirm(),
   });
 
-  return { partyScreen, loginScreen, screenFlow, gameLoop, nav, runs, net, forgeInput };
+  return { partyScreen, loginScreen, storeScreen, screenFlow, gameLoop, nav, runs, net, forgeInput };
 }
 
 /** Re-exported so `Game.ts` does not need a second import line for it. */

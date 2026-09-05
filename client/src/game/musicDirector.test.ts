@@ -31,6 +31,7 @@ const MENU_PHASES: Phase[] = [
   'matchmaking',
   'squad',
   'account',
+  'store',
   'victory',
   'defeat',
 ];

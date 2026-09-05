@@ -2,7 +2,7 @@
  * ForgeActions (extracted from Game.ts 2026-08-12, CLAUDE.md "500-line file
  * convention") — drives a real `Forge` screen + `MemoryMetaStore` (both directly
  * unit-testable without a live Pixi renderer, per this repo's own testing
- * conventions) through the exact craft/cycle/acquire/clear/browse transactions
+ * conventions) through the exact craft/cycle/clear/browse transactions
  * Game.ts used to inline.
  */
 import { describe, it, expect, afterEach } from 'vitest';
@@ -87,29 +87,27 @@ describe('ForgeActions', () => {
     expect(actions.cycleCharacter(single, 800, 600)).toBe(single); // no-op, unchanged reference
   });
 
-  it('acquireBlueprint: unlocks the first purchasable blueprint and persists', () => {
+  // Two cases for `acquireBlueprint` — the `demo: free grant` scaffold (ROADMAP 2.4) — used
+  // to sit here. It is gone rather than moved (see this class's header); a purchase is now
+  // `StorePurchase`/`StoreScreen`'s job. What replaces them is the guard below, which fails
+  // if ANY forge action starts handing out ownership again.
+  it('grants nothing for free: no forge action can widen what the account owns', () => {
     const forge = new Forge();
     const store = new MemoryMetaStore();
     const actions = new ForgeActions(forge, store);
-    const meta = defaultMetaState();
-    const candidate = purchasableBlueprints(meta)[0];
-    expect(candidate).toBeDefined();
+    const meta = craftableMeta();
+    const shelf = purchasableBlueprints(meta);
+    expect(shelf.length).toBeGreaterThan(0); // there IS something a grant could hand over
 
-    const next = actions.acquireBlueprint(meta, 800, 600);
+    // Every public verb, driven the way the forge drives it.
+    let next = actions.craftAt(meta, forge.order.indexOf('repeater'), 800, 600);
+    next = actions.cycleCharacter(next, 800, 600);
+    next = actions.clear(next, 800, 600);
+    actions.moveSelection(next, 1, 800, 600);
 
-    expect(next.unlockedBlueprints).toContain(candidate);
-    expect(store.load().unlockedBlueprints).toContain(candidate);
-  });
-
-  it('acquireBlueprint: no-ops when nothing is purchasable', () => {
-    const forge = new Forge();
-    const store = new MemoryMetaStore();
-    const actions = new ForgeActions(forge, store);
-    let meta = defaultMetaState();
-    for (const id of purchasableBlueprints(meta)) meta = { ...meta, unlockedBlueprints: [...meta.unlockedBlueprints, id] };
-    expect(purchasableBlueprints(meta)).toEqual([]);
-
-    expect(actions.acquireBlueprint(meta, 800, 600)).toBe(meta);
+    expect(next.unlockedBlueprints.sort()).toEqual([...meta.unlockedBlueprints].sort());
+    expect(next.ownedCharacters.sort()).toEqual([...meta.ownedCharacters].sort());
+    expect(purchasableBlueprints(next)).toEqual(shelf); // the shelf is exactly as full as before
   });
 
   it('clear: empties the staged loadout and persists', () => {
@@ -181,21 +179,6 @@ describe('ForgeActions — the UI cue follows the outcome', () => {
     const actions = new ForgeActions(forge, new MemoryMetaStore());
     actions.craftAt(craftableMeta(), forge.order.length + 5, 800, 600);
     expect(log).toEqual(['ui.denied']);
-  });
-
-  it('acquireBlueprint: ui.tap when something was acquired, ui.denied when the shelf is empty', () => {
-    const log = recorder();
-    const forge = new Forge();
-    const actions = new ForgeActions(forge, new MemoryMetaStore());
-    let meta = defaultMetaState();
-    expect(purchasableBlueprints(meta).length).toBeGreaterThan(0);
-    // Buy everything on offer, then press once more against an empty shelf.
-    while (purchasableBlueprints(meta).length > 0) meta = actions.acquireBlueprint(meta, 800, 600);
-    const bought = log.length;
-    expect(log.every((c) => c === 'ui.tap')).toBe(true);
-    const after = actions.acquireBlueprint(meta, 800, 600);
-    expect(after).toBe(meta); // nothing changed...
-    expect(log.slice(bought)).toEqual(['ui.denied']); // ...and it says so
   });
 
   it('says nothing at all with no audio attached — the forge still works headless', () => {

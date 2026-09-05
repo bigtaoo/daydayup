@@ -7,6 +7,7 @@ import type { Matchmaking, MatchmakingConnect } from '../screens/Matchmaking';
 import type { PartyScreen } from '../screens/PartyScreen';
 import type { LoginScreen } from '../screens/LoginScreen';
 import type { Forge } from '../screens/Forge';
+import type { StoreScreen } from '../screens/StoreScreen';
 import type { Screens } from '../screens/Screens';
 import type { Settings } from '../screens/Settings';
 import type { PauseMenu } from '../screens/PauseMenu';
@@ -26,6 +27,7 @@ export interface ScreenFlowWidgets {
   partyScreen: PartyScreen;
   loginScreen: LoginScreen;
   forge: Forge;
+  storeScreen: StoreScreen;
   screens: Screens;
   settingsScreen: Settings;
   pauseMenu: PauseMenu;
@@ -61,6 +63,7 @@ export class ScreenFlow {
     this.w.settingsScreen.hide();
     this.w.partyScreen.hide();
     this.w.loginScreen.hide();
+    this.w.storeScreen.hide();
     this.w.settingsBtn.view.visible = false;
     this.w.mainMenu.show(width, height);
   }
@@ -75,6 +78,7 @@ export class ScreenFlow {
     this.w.settingsScreen.hide();
     this.w.partyScreen.hide();
     this.w.loginScreen.hide();
+    this.w.storeScreen.hide();
     this.w.settingsBtn.view.visible = false;
     this.w.modeSelect.setRecommendTutorial(recommendTutorial);
     this.w.modeSelect.show(width, height);
@@ -90,6 +94,7 @@ export class ScreenFlow {
     this.w.settingsScreen.hide();
     this.w.partyScreen.hide();
     this.w.loginScreen.hide();
+    this.w.storeScreen.hide();
     this.w.settingsBtn.view.visible = false;
     this.w.pvpPreview.show(width, height, selectedSkinId);
   }
@@ -104,6 +109,7 @@ export class ScreenFlow {
     this.w.screens.hide();
     this.w.settingsScreen.hide();
     this.w.loginScreen.hide();
+    this.w.storeScreen.hide();
     this.w.partyScreen.show(width, height);
   }
 
@@ -117,6 +123,7 @@ export class ScreenFlow {
     this.w.screens.hide();
     this.w.settingsScreen.hide();
     this.w.partyScreen.hide();
+    this.w.storeScreen.hide();
     this.w.loginScreen.show(width, height);
   }
 
@@ -130,7 +137,26 @@ export class ScreenFlow {
     this.w.settingsScreen.hide();
     this.w.partyScreen.hide();
     this.w.loginScreen.hide();
+    this.w.storeScreen.hide();
     this.w.matchmaking.show(width, height, connect);
+  }
+
+  /** The store (design/19 §4). Reached only from the forge, and it hides the forge like any
+   * other full screen — the SETTINGS button goes dark with it, since that button is
+   * forge-only and would otherwise float over a purchase screen it cannot return from. */
+  showStore(width: number, height: number, meta: MetaState): void {
+    this.w.hudView.visible = false;
+    this.w.mainMenu.hide();
+    this.w.modeSelect.hide();
+    this.w.pvpPreview.hide();
+    this.w.matchmaking.hide();
+    this.w.forge.hide();
+    this.w.screens.hide();
+    this.w.settingsScreen.hide();
+    this.w.partyScreen.hide();
+    this.w.loginScreen.hide();
+    this.w.settingsBtn.view.visible = false;
+    this.w.storeScreen.show(width, height, meta);
   }
 
   showForge(width: number, height: number, meta: MetaState): void {
@@ -143,6 +169,7 @@ export class ScreenFlow {
     this.w.settingsScreen.hide();
     this.w.partyScreen.hide();
     this.w.loginScreen.hide();
+    this.w.storeScreen.hide();
     this.w.forge.render(meta, width, height);
     this.w.settingsBtn.view.position.set(width - 130, height - 50);
     this.w.settingsBtn.view.visible = true;

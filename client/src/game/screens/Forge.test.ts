@@ -47,7 +47,7 @@ function privateOf(f: Forge) {
     rowCards: TestCard[];
     clearBtn: TestButton;
     startBtn: TestButton;
-    acquireBtn: TestButton;
+    storeBtn: TestButton;
     hint: { position: { x: number; y: number }; text: string };
     charText: { text: string };
     compareCard: {
@@ -111,36 +111,59 @@ describe('Forge — infoText buyable-list bound', () => {
   });
 });
 
-describe('Forge — acquire button (a real gap this pass closed: the buyable shelf line was display-only)', () => {
-  it('is visible when there is something purchasable', () => {
+describe('Forge — store button (design/19 §4; was ACQUIRE, the `demo: free grant` scaffold)', () => {
+  /** `storeEnabled` is what the assembly sets from `platform/storePlatform.ts`. */
+  function sellingForge(): Forge {
     const f = new Forge();
+    f.storeEnabled = true;
+    return f;
+  }
+
+  it('is visible when this build may sell AND there is something purchasable', () => {
+    const f = sellingForge();
     const m = withFewBuyable(2);
     expect(purchasableBlueprints(m).length).toBeGreaterThan(0);
     f.render(m, 1280, 720);
-    expect(privateOf(f).acquireBtn.view.visible).toBe(true);
+    expect(privateOf(f).storeBtn.view.visible).toBe(true);
+  });
+
+  it('DOES NOT EXIST on a platform that may not sell — even with a full shelf', () => {
+    // The hard one (`platform/storePlatform.ts`): a web checkout inside an iOS store build
+    // breaks App Store rule 3.1.1, and a reviewer finding the button is the whole failure
+    // mode. Default-false is deliberate — a caller that forgets to set the flag shows no
+    // store, which is the fail-closed direction.
+    const f = new Forge(); // storeEnabled left at its default
+    const m = withFewBuyable(2);
+    expect(purchasableBlueprints(m).length).toBeGreaterThan(0); // there IS something to sell
+    f.render(m, 1280, 720);
+    expect(privateOf(f).storeBtn.view.visible).toBe(false);
   });
 
   it('is hidden once nothing is left to buy — same condition the Store info line uses', () => {
-    const f = new Forge();
+    const f = sellingForge();
     const m = withFewBuyable(0);
     f.render(m, 1280, 720);
-    expect(privateOf(f).acquireBtn.view.visible).toBe(false);
+    expect(privateOf(f).storeBtn.view.visible).toBe(false);
   });
 
-  it('tapping it fires onAcquire — Game wires this to the exact same forgeAcquireBlueprint() the KeyB shortcut calls', () => {
-    const f = new Forge();
+  it('tapping it fires onStore — the same verb the KeyB shortcut runs, and it grants nothing', () => {
+    const f = sellingForge();
     let fired = 0;
-    f.onAcquire = () => { fired++; };
-    f.render(withFewBuyable(2), 1280, 720);
-    (f as unknown as { acquireBtn: { onTap: (() => void) | null } }).acquireBtn.onTap?.();
+    f.onStore = () => { fired++; };
+    const m = withFewBuyable(2);
+    f.render(m, 1280, 720);
+    (f as unknown as { storeBtn: { onTap: (() => void) | null } }).storeBtn.onTap?.();
     expect(fired).toBe(1);
+    // The press opened a screen; it did not hand anything over. Before this pass the same
+    // button unlocked a blueprint on the spot.
+    expect(purchasableBlueprints(m)).toEqual(purchasableBlueprints(withFewBuyable(2)));
   });
 
   it("doesn't overlap the first blueprint row when shown", () => {
-    const f = new Forge();
+    const f = sellingForge();
     f.render(withFewBuyable(2), 1280, 720);
     const p = privateOf(f);
-    expect(p.acquireBtn.view.position.y).toBeLessThan(p.rowCards[0]!.view.position.y);
+    expect(p.storeBtn.view.position.y).toBeLessThan(p.rowCards[0]!.view.position.y);
   });
 
   it('reflows the row list up once the button disappears — same instance, not a fresh one', () => {
@@ -150,18 +173,18 @@ describe('Forge — acquire button (a real gap this pass closed: the buyable she
     // page-nav element below it for the SAME screen across a real state transition
     // (buyable>0 → buyable==0), the same "boundary transition on one instance" pattern
     // the fixed-bottom-action-bar tests below already use via moveSelection/re-render.
-    const f = new Forge();
+    const f = sellingForge();
     let m = withFewBuyable(2);
     f.render(m, 1280, 720);
     const p = privateOf(f);
-    expect(p.acquireBtn.view.visible).toBe(true);
+    expect(p.storeBtn.view.visible).toBe(true);
     const rowYWithButton = p.rowCards[0]!.view.position.y;
 
     while (purchasableBlueprints(m).length > 0) {
       m = acquireBlueprint(m, purchasableBlueprints(m)[0]!);
     }
     f.render(m, 1280, 720);
-    expect(p.acquireBtn.view.visible).toBe(false);
+    expect(p.storeBtn.view.visible).toBe(false);
     const rowYWithoutButton = p.rowCards[0]!.view.position.y;
     // The shift is AT LEAST the button's own reserved 36px — dropping the Store info
     // line at the same time also shrinks infoText by one line's height, so the real
@@ -285,7 +308,7 @@ describe('Forge — i18n (design/17-i18n.md)', () => {
     expect(p.title.text).toBe('锻造场');
     expect(p.startBtn.label.text).toBe('开始行动 ▸');
     expect(p.clearBtn.label.text).toBe('清空装备');
-    expect(p.acquireBtn.label.text).toBe('获取');
+    expect(p.storeBtn.label.text).toBe('商店');
     expect(p.hint.text).toBe('[↑↓]/[1-9]/[C]/[X]/[Enter] 键盘快捷键仍然可用');
     expect(p.infoText.text).toContain('材料');
     expect(p.infoText.text).toContain('已拥有角色：3');

@@ -53,7 +53,7 @@ interface GameScreens {
   mainMenu: { playBtn: Tappable; settingsBtn: Tappable };
   modeSelect: { backBtn: Tappable };
   settingsScreen: { muteBtn: Tappable; backBtn: Tappable };
-  forge: { backBtn: Tappable; startBtn: Tappable; acquireBtn: Tappable };
+  forge: { backBtn: Tappable; startBtn: Tappable; storeBtn: Tappable; rowCards: Tappable[] };
   pauseMenu: { resumeBtn: Tappable };
   hud: { pauseBtn: Tappable; weaponPickupPrompt: {
     closeBtn: Tappable;
@@ -126,10 +126,22 @@ describe('Game — every screen it builds carries the right UI cue', () => {
   });
 
   it('lets the forge’s own transactions decide, instead of the widget', () => {
-    // ACQUIRE is built `sound: 'silent'`; a fresh account has blueprints to buy, so the first
-    // press is a real acquisition and must read as one.
+    // A blueprint card is built with no sound of its own, because only the craft transaction
+    // knows whether the press did anything. A fresh account has an empty material bank, so
+    // every card on the first page is unaffordable and the press must say so — `ui.denied` is
+    // what separates "that did nothing" from "the game never saw your finger".
     const { cues, screens } = newGame();
-    tap(screens.forge.acquireBtn);
+    tap(screens.forge.rowCards[0]!);
+    expect(cues).toEqual(['ui.denied']);
+  });
+
+  it('the forge’s STORE button is an ordinary forward press — it grants nothing', () => {
+    // This button used to BE the transaction (`acquireBtn`, the `demo: free grant` scaffold),
+    // which is why it was `silent`. It now opens a screen, and opening a screen always does
+    // something, so there is no outcome left for a silent widget to wait on. The cues that
+    // depend on a transaction moved one screen in, onto the store's own rows.
+    const { cues, screens } = newGame();
+    tap(screens.forge.storeBtn);
     expect(cues).toEqual(['ui.tap']);
   });
 

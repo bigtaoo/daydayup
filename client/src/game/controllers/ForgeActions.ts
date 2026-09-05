@@ -1,11 +1,11 @@
 import type { MetaState, MetaStore } from '../../meta';
 import { playUiCue } from '../../audio/uiSound';
-import { acquireBlueprint, clearLoadout, craft, purchasableBlueprints, selectCharacter } from '../../meta';
+import { clearLoadout, craft, selectCharacter } from '../../meta';
 import { SKIN_DEFS } from '@dd/engine';
 import type { Forge } from '../screens/Forge';
 
 /**
- * The forge outpost's craft/cycle-character/acquire/clear/browse actions (design/14),
+ * The forge outpost's craft/cycle-character/clear/browse actions (design/14),
  * split out of Game.ts (CLAUDE.md "500-line file convention", form ② — independent
  * class + composition: this is a single, cleanly self-contained concern with no
  * cross-boundary calls back into Game — every method here takes the current `MetaState`
@@ -14,6 +14,13 @@ import type { Forge } from '../screens/Forge';
  * screen itself). `Game.onForgeKey`/the Forge screen's own button callbacks call
  * straight through to these methods — one source of truth for both input paths,
  * unchanged from before the split.
+ *
+ * `acquireBlueprint` used to live here — the `demo: free grant` scaffold (ROADMAP 2.4) that
+ * handed the player the first purchasable blueprint for nothing. It is gone rather than
+ * moved: a grant the client makes to itself does not survive the next login now that the
+ * server answers `/account/meta` from its own entitlements table (design/19 §2), so the
+ * replacement is a real purchase, and it lives in `StorePurchase`/`StoreScreen` because
+ * money is not a forge transaction.
  */
 export class ForgeActions {
   constructor(
@@ -52,25 +59,6 @@ export class ForgeActions {
       this.store.save(next);
       this.forge.render(next, w, h);
     }
-    return next;
-  }
-
-  /** Acquires the first purchasable blueprint (a real gap this pass closed — the row
-   *  of buyable names in the info text was always display-only; only the `KeyB`
-   *  keyboard shortcut could actually trigger it, unlike every other Forge action).
-   *  `demo: free grant` scaffold (2.4) — real billing is a platform adapter's job. */
-  acquireBlueprint(meta: MetaState, w: number, h: number): MetaState {
-    const buyable = purchasableBlueprints(meta);
-    if (!buyable[0]) {
-      // Nothing left to buy. Same reasoning as `craftAt`: the ACQUIRE button is built
-      // `sound: 'silent'` so this branch can say so.
-      playUiCue('ui.denied');
-      return meta;
-    }
-    playUiCue('ui.tap');
-    const next = acquireBlueprint(meta, buyable[0]);
-    this.store.save(next);
-    this.forge.render(next, w, h);
     return next;
   }
 

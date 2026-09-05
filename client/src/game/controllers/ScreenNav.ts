@@ -23,6 +23,7 @@ import type { PortalPrompt } from '../ui/PortalPrompt';
 import type { FloorCardPrompt } from '../ui/FloorCardPrompt';
 import type { Screens } from '../screens/Screens';
 import type { Forge } from '../screens/Forge';
+import type { StoreScreen } from '../screens/StoreScreen';
 import type { MainMenu } from '../screens/MainMenu';
 import type { ModeSelect } from '../screens/ModeSelect';
 import type { PvpPreview } from '../screens/PvpPreview';
@@ -52,6 +53,7 @@ export interface ScreenNavDeps {
   partyScreen: PartyScreen;
   loginScreen: LoginScreen;
   forge: Forge;
+  storeScreen: StoreScreen;
   screens: Screens;
   settingsScreen: Settings;
   pauseMenu: PauseMenu;
@@ -132,6 +134,18 @@ export class ScreenNav {
     this.deps.run.phase = 'forge';
     const { w, h } = this.fit();
     this.deps.screenFlow.showForge(w, h, this.deps.run.meta);
+  }
+
+  /**
+   * The store (design/19 §4) — reached only from the forge's STORE button or its [B] key,
+   * and BACK returns there. Not art-gated like `showForge`: this screen draws no weapon art,
+   * only names and prices, so gating it would make a purchase wait on a download it does not
+   * use. `showForge` on the way back is gated as it always was.
+   */
+  showStore(): void {
+    this.deps.run.phase = 'store';
+    const { w, h } = this.fit();
+    this.deps.screenFlow.showStore(w, h, this.deps.run.meta);
   }
 
   /**
@@ -243,6 +257,7 @@ export class ScreenNav {
       case 'matchmaking': d.matchmaking.resize(w, h); break; // NOT show() — must not restart connect()
       case 'squad': d.partyScreen.show(w, h); break;
       case 'account': d.loginScreen.show(w, h); break;
+      case 'store': d.storeScreen.resize(w, h); break; // NOT show() — must not re-list mid-purchase
       case 'paused': d.pauseMenu.show(w, h, this.skipLabel()); break;
       case 'settings': d.settingsScreen.show(w, h, d.settings()); break;
       case 'victory':

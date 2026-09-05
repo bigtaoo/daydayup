@@ -2,7 +2,7 @@
  * `ForgeInput` — the forge's keyboard table.
  *
  * Measured right after the 2026-09-03 split, this file was at 17.85% lines / 4.16% branches:
- * the four verb wrappers were driven by the Loadout screen's button tests, and the key table
+ * the verb wrappers were driven by the Loadout screen's button tests, and the key table
  * above them was reachable only through a real `window` on a real `Game`. It is a dispatch
  * table, so the interesting content is entirely in the branches — which key does what, and
  * which keys do nothing.
@@ -25,7 +25,6 @@ function make(over: Partial<ForgeInputDeps> = {}) {
   const forgeActions = {
     craftAt: vi.fn((m: MetaState) => ({ ...m, selectedSkin: 'crafted' })),
     cycleCharacter: tagged('cycled'),
-    acquireBlueprint: tagged('acquired'),
     clear: tagged('cleared'),
     moveSelection: vi.fn(),
   };
@@ -36,6 +35,7 @@ function make(over: Partial<ForgeInputDeps> = {}) {
     forgeActions: forgeActions as never,
     screenSize: () => ({ w: 1600, h: 1200 }),
     openSettings: vi.fn(),
+    openStore: vi.fn(),
     confirm: vi.fn(),
     ...over,
   };
@@ -46,7 +46,6 @@ describe('the verbs', () => {
   it.each([
     ['craftAt', 'crafted'],
     ['cycleCharacter', 'cycled'],
-    ['acquireBlueprint', 'acquired'],
     ['clear', 'cleared'],
   ] as const)('%s writes the result back onto run.meta', (verb, tag) => {
     // The wrapper looks like ceremony, and the assertion is why it is not: `ForgeActions`
@@ -74,7 +73,6 @@ describe('onKey — the table', () => {
     ['Digit3', 'craftAt'],
     ['KeyC', 'cycleCharacter'],
     ['KeyX', 'clear'],
-    ['KeyB', 'acquireBlueprint'],
   ] as const)('%s runs %s', (code, action) => {
     const t = make();
     t.fi.onKey(code);
@@ -96,6 +94,16 @@ describe('onKey — the table', () => {
     t.fi.onKey('Digit4');
     t.fi.onKey('Digit9');
     expect(t.forgeActions.craftAt).not.toHaveBeenCalled();
+  });
+
+  it('B opens the STORE — it no longer grants a blueprint', () => {
+    // This key used to run `ForgeActions.acquireBlueprint`, the `demo: free grant` scaffold
+    // (ROADMAP 2.4). Asserting on the forge actions too is the point of the second half: a
+    // regression that put the grant back would still leave `openStore` called.
+    const t = make();
+    t.fi.onKey('KeyB');
+    expect(t.deps.openStore).toHaveBeenCalledTimes(1);
+    for (const fn of Object.values(t.forgeActions)) expect(fn).not.toHaveBeenCalled();
   });
 
   it('O opens settings and Enter confirms — neither touches the meta', () => {
@@ -123,12 +131,13 @@ describe('onKey — the table', () => {
     for (const code of ['KeyQ', 'Space', 'F9', 'Escape', 'Digit0', 'ShiftLeft']) t.fi.onKey(code);
     for (const fn of Object.values(t.forgeActions)) expect(fn).not.toHaveBeenCalled();
     expect(t.deps.openSettings).not.toHaveBeenCalled();
+    expect(t.deps.openStore).not.toHaveBeenCalled();
     expect(t.deps.confirm).not.toHaveBeenCalled();
   });
 });
 
 describe('the phase guard', () => {
-  it.each(['menu', 'playing', 'paused', 'settings', 'account', 'squad', 'victory'] as const)(
+  it.each(['menu', 'playing', 'paused', 'settings', 'account', 'squad', 'victory', 'store'] as const)(
     'does nothing at all in the %s phase',
     (phase) => {
       const t = make();
@@ -138,6 +147,9 @@ describe('the phase guard', () => {
       }
       for (const fn of Object.values(t.forgeActions)) expect(fn, phase).not.toHaveBeenCalled();
       expect(t.deps.openSettings, phase).not.toHaveBeenCalled();
+      // 'store' is the one that matters most here: the purchase screen is a full phase
+      // precisely so [X] CLEAR LOADOUT is not live under a modal asking for money.
+      expect(t.deps.openStore, phase).not.toHaveBeenCalled();
       expect(t.deps.confirm, phase).not.toHaveBeenCalled();
     },
   );

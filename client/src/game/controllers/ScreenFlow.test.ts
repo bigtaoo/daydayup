@@ -16,6 +16,8 @@ import { Matchmaking } from '../screens/Matchmaking';
 import { PartyScreen } from '../screens/PartyScreen';
 import { LoginScreen } from '../screens/LoginScreen';
 import { Forge } from '../screens/Forge';
+import { StoreScreen } from '../screens/StoreScreen';
+import { StorePurchase } from './StorePurchase';
 import { Screens } from '../screens/Screens';
 import { Settings } from '../screens/Settings';
 import { PauseMenu } from '../screens/PauseMenu';
@@ -42,6 +44,19 @@ DOMAdapter.set({
   getCanvasRenderingContext2D: () => class {} as unknown as typeof CanvasRenderingContext2D,
 });
 
+/** A `StorePurchase` that can reach nothing: the store screen kicks a catalogue load on
+ * `show()`, and this file is asserting visibility, not networking. `platform: () => null`
+ * makes that load return `no-platform` synchronously — no fetch, no timers. */
+function storePurchaseStub(): StorePurchase {
+  return new StorePurchase({
+    baseUrl: () => 'http://mm',
+    session: () => null,
+    platform: () => null,
+    refreshOwnership: () => Promise.resolve(),
+    sleep: () => Promise.resolve(),
+  });
+}
+
 function buildWidgets(): ScreenFlowWidgets {
   return {
     mainMenu: new MainMenu(),
@@ -51,6 +66,7 @@ function buildWidgets(): ScreenFlowWidgets {
     partyScreen: new PartyScreen({ matchBaseUrl: 'http://mm' }),
     loginScreen: new LoginScreen({ matchBaseUrl: 'http://mm' }),
     forge: new Forge(),
+    storeScreen: new StoreScreen(storePurchaseStub()),
     screens: new Screens(),
     settingsScreen: new Settings(),
     pauseMenu: new PauseMenu(),

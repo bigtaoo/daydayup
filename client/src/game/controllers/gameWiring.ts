@@ -37,6 +37,7 @@ import type { Matchmaking } from '../screens/Matchmaking';
 import type { PartyScreen } from '../screens/PartyScreen';
 import type { LoginScreen } from '../screens/LoginScreen';
 import type { Forge } from '../screens/Forge';
+import type { StoreScreen } from '../screens/StoreScreen';
 import type { Screens } from '../screens/Screens';
 import type { PauseMenu } from '../screens/PauseMenu';
 import { shouldSwapToSlot } from './weaponSlotSelect';
@@ -60,6 +61,7 @@ export interface WiringDeps {
   partyScreen: PartyScreen;
   loginScreen: LoginScreen;
   forge: Forge;
+  storeScreen: StoreScreen;
   screens: Screens;
   pauseMenu: PauseMenu;
   /** Confirm — the verb Fire, Enter and the START RUN / result-screen buttons share. */
@@ -97,7 +99,15 @@ export function wireScreens(d: WiringDeps): void {
   d.forge.onClear = () => d.forgeInput.clear();
   d.forge.onCraftAt = (i) => d.forgeInput.craftAt(i);
   d.forge.onStart = () => d.confirm();
-  d.forge.onAcquire = () => d.forgeInput.acquireBlueprint();
+  // STORE — a real purchase screen where the `demo: free grant` ACQUIRE used to be
+  // (design/19 §4). The button is only rendered where this build may sell at all; the
+  // assembly sets `forge.storeEnabled` from `platform/storePlatform.ts`.
+  d.forge.onStore = () => d.nav.showStore();
+  // BACK re-renders the forge against the CURRENT meta, which is how a delivered purchase
+  // reaches it: `StorePurchase`'s `refreshOwnership` has already written the server's answer
+  // through `run.setMeta` by then. No separate "ownership changed" hook — the store is a
+  // full phase, so the forge is not on screen to refresh while it is open.
+  d.storeScreen.onBack = () => d.nav.showForge();
   d.screens.onConfirm = () => d.confirm();
   d.screens.onMenu = () => d.nav.showMenu();
   d.pauseMenu.onResume = () => d.nav.resume();

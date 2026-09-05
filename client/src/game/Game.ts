@@ -14,6 +14,7 @@ import { PvpPreview } from './screens/PvpPreview';
 import { Matchmaking } from './screens/Matchmaking';
 import { PartyScreen } from './screens/PartyScreen';
 import { LoginScreen } from './screens/LoginScreen';
+import type { StoreScreen } from './screens/StoreScreen';
 import { Settings } from './screens/Settings';
 import { PauseMenu } from './screens/PauseMenu';
 import { Button } from './ui/widgets';
@@ -118,6 +119,9 @@ export class Game {
   // Same constructed-in-start() reason as partyScreen — needs the post-override
   // `this.run.matchBaseUrl` (design/16-accounts.md).
   private loginScreen!: LoginScreen;
+  // Same constructed-in-start() reason again — it needs the post-override
+  // `this.run.matchBaseUrl` AND the platform gate the assembly resolves (design/19 §4).
+  private storeScreen!: StoreScreen;
   private settingsScreen = new Settings();
   private pauseMenu = new PauseMenu();
   private readonly portalPrompt = new PortalPrompt();
@@ -306,6 +310,7 @@ export class Game {
       settingsScreen: this.settingsScreen, pauseMenu: this.pauseMenu,
     }, this);
     this.partyScreen = parts.partyScreen; this.loginScreen = parts.loginScreen;
+    this.storeScreen = parts.storeScreen;
     this.gameLoop = parts.gameLoop; this.nav = parts.nav; this.runs = parts.runs;
     this.net = parts.net; this.forgeInput = parts.forgeInput;
 
@@ -318,7 +323,7 @@ export class Game {
       hud: this.hud, portalPrompt: this.portalPrompt, floorCardPrompt: this.floorCardPrompt,
       mainMenu: this.mainMenu, modeSelect: this.modeSelect, pvpPreview: this.pvpPreview,
       matchmaking: this.matchmaking, partyScreen: this.partyScreen, loginScreen: this.loginScreen,
-      forge: this.forge, screens: this.screens, pauseMenu: this.pauseMenu,
+      forge: this.forge, storeScreen: this.storeScreen, screens: this.screens, pauseMenu: this.pauseMenu,
       confirm: () => this.confirm(),
       activeSlot: () => this.activeState()?.players[this.run.localOwner]?.activeSlot,
     };

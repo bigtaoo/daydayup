@@ -57,7 +57,9 @@ const VIEWPORTS = [
 
 /** Every screen, built and laid out at whatever size it is handed. */
 const SCREENS: Array<[string, (w: number, h: number) => Container]> = [
-  ['Forge', (w, h) => { const s = new Forge(); s.render(defaultMetaState(), w, h); return s.view; }],
+  // `storeEnabled` on: the STORE button reserves its own 36px row, so a selling build is
+  // the TALLER of the two forge layouts and therefore the one the fit has to clear.
+  ['Forge', (w, h) => { const s = new Forge(); s.storeEnabled = true; s.render(defaultMetaState(), w, h); return s.view; }],
   ['MainMenu', (w, h) => { const s = new MainMenu(); s.show(w, h); return s.view; }],
   ['ModeSelect', (w, h) => { const s = new ModeSelect(); s.show(w, h); return s.view; }],
   ['PvpPreview', (w, h) => { const s = new PvpPreview(); s.show(w, h, defaultMetaState().selectedSkin); return s.view; }],
@@ -114,6 +116,7 @@ describe('Forge — START RUN is reachable, not buried under the blueprint grid'
    *  card is drawn over the same pixels, so there is nothing tappable-looking there. */
   function startButtonOverlapsACard(w: number, h: number) {
     const f = new Forge();
+    f.storeEnabled = true; // the taller layout — see the sweep's note above
     f.render(defaultMetaState(), w, h);
     const p = f as unknown as {
       rowCards: Array<{ view: { visible: boolean; x: number; y: number } }>;
@@ -142,6 +145,7 @@ describe('Forge — START RUN is reachable, not buried under the blueprint grid'
   // ...and the same for the fits-the-viewport sweep: unfitted, the Forge must overflow.
   it('the unfitted 844x390 viewport also overflows on its own', () => {
     const f = new Forge();
+    f.storeEnabled = true;
     f.render(defaultMetaState(), 844, 390);
     expect(contentBounds(f.view).maxY).toBeGreaterThan(390);
   });

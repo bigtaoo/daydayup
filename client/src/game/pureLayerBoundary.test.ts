@@ -86,6 +86,13 @@ const PURE_FILES = [
   // interfaces, so it qualifies — and being here is what makes "does the card offer show
   // on exactly the same condition as the portal" testable with no browser at all.
   'controllers/checkpointOverlays.ts',
+  // The purchase flow (design/19 §4, 2026-09-05). Every dependency it has is injected — the
+  // three wire calls, the session read, the platform gate, the ownership refresh and `sleep`
+  // — so the whole create → poll → deliver chain, including its timed-out and
+  // delivered-but-unrefreshed arms, runs with no network, no clock and no page. Being listed
+  // here is what keeps it that way: money logic that can only be exercised through a live
+  // fetch is money logic nobody exercises.
+  'controllers/StorePurchase.ts',
 ] as const;
 
 /**

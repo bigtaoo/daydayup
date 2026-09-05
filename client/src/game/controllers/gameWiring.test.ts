@@ -102,7 +102,7 @@ function make() {
   };
   const forgeInput = {
     cycleCharacter: track('forgeInput.cycleCharacter'), clear: track('forgeInput.clear'),
-    craftAt: track('forgeInput.craftAt'), acquireBlueprint: track('forgeInput.acquireBlueprint'),
+    craftAt: track('forgeInput.craftAt'),
     onKey: vi.fn(),
   };
   const builder = {
@@ -130,7 +130,8 @@ function make() {
     matchmaking: screenStub('onConnected', 'onCancelled') as never,
     partyScreen: screenStub('onBack', 'onStartMatch') as never,
     loginScreen: screenStub('onBack', 'onSessionChange') as never,
-    forge: screenStub('onBack', 'onCycleCharacter', 'onClear', 'onCraftAt', 'onStart', 'onAcquire') as never,
+    forge: screenStub('onBack', 'onCycleCharacter', 'onClear', 'onCraftAt', 'onStart', 'onStore') as never,
+    storeScreen: screenStub('onBack') as never,
     screens: screenStub('onConfirm', 'onMenu') as never,
     pauseMenu: screenStub('onResume', 'onSettings', 'onQuit') as never,
     confirm: vi.fn(() => void called.push('confirm')),

@@ -53,7 +53,7 @@ export class Forge {
   private charText: Text;
   private clearBtn: Button;
   private startBtn: Button;
-  private acquireBtn: Button;
+  private storeBtn: Button;
   private prevPageBtn: Button;
   private nextPageBtn: Button;
   /** Fixed pool of PAGE_SIZE icon cards, reused across pages (relabeled + shown/hidden
@@ -95,11 +95,18 @@ export class Forge {
    * separate select-then-confirm step (design/10's "favor fewer, clearer actions"
    * clutter decision). */
   onCraftAt: ((i: number) => void) | null = null;
-  /** Acquires the first purchasable blueprint (`purchasableBlueprints`'s own order — a
-   * real gap this pass closed: the `buyableText` line below was always display-only,
-   * with no tap equivalent to the keyboard's `KeyB`, unlike every other Forge action).
-   * `demo: free grant` scaffold, same as the keyboard path (2.4). */
-  onAcquire: (() => void) | null = null;
+  /** Opens the STORE (design/19 §4). This button used to hand the player the first
+   * purchasable blueprint for FREE (`demo: free grant`, ROADMAP 2.4) — a grant the client
+   * made to itself, which stopped surviving the next login the moment the server began
+   * answering `/account/meta` from its own entitlements table. It now opens a real
+   * purchase screen instead; `KeyB` runs the same verb. */
+  onStore: (() => void) | null = null;
+
+  /** Whether this build may show a store entry at all (`platform/storePlatform.ts` — a
+   * web checkout inside an iOS store build is an App Store rule break, not a rough edge).
+   * Set by the assembly; presentation never decides it. Default `false` so a caller that
+   * forgets to set it shows NO store, which is the fail-closed direction. */
+  storeEnabled = false;
 
   constructor() {
     // `padding` guards against a real observed font-metrics clipping bug (see
@@ -151,11 +158,11 @@ export class Forge {
     this.startBtn = new Button(t('forge.startRun'), { w: 220, h: 44, fontSize: 17 });
     this.startBtn.onTap = () => this.onStart?.();
     this.startBtn.setIcon(getUiTexture('icon_play'));
-    // `silent` at the widget: whether this press did anything is decided by the
-    // transaction (there may be nothing left to buy), so ForgeActions plays `ui.tap` or
-    // `ui.denied` instead — see its `acquireBlueprint`.
-    this.acquireBtn = new Button(t('forge.acquireButton'), { w: 160, h: 30, fontSize: 12, sound: 'silent' });
-    this.acquireBtn.onTap = () => this.onAcquire?.();
+    // Plain `ui.tap`, unlike the craft rows: opening a screen always does something, so
+    // there is no outcome for a `silent` widget to wait on. The cues that DEPEND on a
+    // transaction now live one screen further in, on the store's own rows.
+    this.storeBtn = new Button(t('forge.storeButton'), { w: 160, h: 30, fontSize: 12 });
+    this.storeBtn.onTap = () => this.onStore?.();
 
     this.npcSprite.anchor.set(0.5, 1);
     this.npcSprite.visible = false;
@@ -163,7 +170,7 @@ export class Forge {
     this.view.addChild(
       this.panel.view, this.npcSprite, this.title, this.backBtn.view,
       this.prevCharBtn.view, this.charText, this.nextCharBtn.view,
-      this.infoText, this.acquireBtn.view,
+      this.infoText, this.storeBtn.view,
       ...this.rowCards.map((c) => c.view),
       this.prevPageBtn.view, this.pageLabel, this.nextPageBtn.view,
       this.clearBtn.view, this.compareCard.view, this.startBtn.view, this.hint,
@@ -204,7 +211,7 @@ export class Forge {
     this.nextPageBtn.setText(t('forge.pageNextButton'));
     this.clearBtn.setText(t('forge.clearLoadout'));
     this.startBtn.setText(t('forge.startRun'));
-    this.acquireBtn.setText(t('forge.acquireButton'));
+    this.storeBtn.setText(t('forge.storeButton'));
 
     // Material bank — the five elemental kinds (design/14), summed across every rolled tier.
     const bank = DAMAGE_TYPES.map((e) => `${t(ELEMENT_SHORT_KEY[e])} ${bankTotal(m, e)}`).join('   ');
@@ -296,12 +303,12 @@ export class Forge {
     this.infoText.style.wordWrapWidth = Math.min(760, w - 80);
     this.infoText.position.set(cx, y);
     y += this.infoText.height + 14;
-    // Acquire button (a real gap this pass closed): only shown when there's actually
-    // something to acquire, right-aligned with the grid below it — reserves its own
-    // row so it never overlaps the first blueprint card.
-    this.acquireBtn.view.visible = buyable.length > 0;
-    if (this.acquireBtn.view.visible) {
-      this.acquireBtn.view.position.set(cx + halfGrid - 160, y);
+    // Store button: shown only where this build may sell AND there is something left to
+    // buy. Right-aligned with the grid below it — reserves its own row so it never
+    // overlaps the first blueprint card.
+    this.storeBtn.view.visible = this.storeEnabled && buyable.length > 0;
+    if (this.storeBtn.view.visible) {
+      this.storeBtn.view.position.set(cx + halfGrid - 160, y);
       y += 36;
     }
     // Blueprint grid — `GRID_COLS` cards per row, wrapping into `GRID_ROWS` (design/14

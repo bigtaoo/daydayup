@@ -1,10 +1,10 @@
-// Split out of Game.ts, 2026-09-03 — the forge outpost's KEYBOARD routing, and the four
+// Split out of Game.ts, 2026-09-03 — the forge outpost's KEYBOARD routing, and the three
 // verbs both it and the Loadout screen's buttons run through.
 //
-// The four `craft/cycle/clear/acquire` wrappers looked like pure ceremony in the shell (each
-// was three lines: measure, delegate, store the result), and that is exactly why they are
-// worth having in one place: they are the SINGLE source of truth for both input paths, so a
-// digit key and a row tap can never diverge. `ForgeActions` (2026-08-12) owns what each verb
+// The three `craft/cycle/clear` wrappers looked like pure ceremony in the shell (each was
+// three lines: measure, delegate, store the result), and that is exactly why they are worth
+// having in one place: they are the SINGLE source of truth for both input paths, so a digit
+// key and a row tap can never diverge. `ForgeActions` (2026-08-12) owns what each verb
 // does to the meta; this owns which key means which verb, and the phase guard around all of
 // them.
 //
@@ -23,6 +23,9 @@ export interface ForgeInputDeps {
   screenSize: () => { w: number; h: number };
   /** O opens the settings overlay (a touch entry point is the SETTINGS button). */
   openSettings: () => void;
+  /** B opens the store (a touch entry point is the STORE button). Was `acquire`, which
+   * granted a blueprint for free — see `ForgeActions`'s header for why that is gone. */
+  openStore: () => void;
   /** Enter descends into a run — the same verb the START RUN button and Fire run. */
   confirm: () => void;
 }
@@ -36,7 +39,8 @@ export class ForgeInput {
 
   /**
    * Apply a forge control (web keyboard, design/14). Mutates meta through the pure forge
-   * transactions, persists, and re-renders. No-op outside the forge phase. Digits/C/X/B
+   * transactions, persists, and re-renders. No-op outside the forge phase — which is also
+   * what silences the whole table while the STORE screen (its own phase) is up. Digits/C/X/B
    * route through the SAME methods the Loadout screen's buttons call — one source of truth
    * for both input paths, not duplicated logic.
    *
@@ -54,7 +58,7 @@ export class ForgeInput {
     } else if (code === 'KeyX') {
       this.clear();
     } else if (code === 'KeyB') {
-      this.acquireBlueprint();
+      this.deps.openStore();
     } else if (code === 'KeyO') {
       this.deps.openSettings();
     } else if (code === 'Enter' || code === 'NumpadEnter') {
@@ -75,11 +79,6 @@ export class ForgeInput {
   cycleCharacter(): void {
     const { w, h } = this.fit();
     this.deps.run.meta = this.deps.forgeActions.cycleCharacter(this.deps.run.meta, w, h);
-  }
-
-  acquireBlueprint(): void {
-    const { w, h } = this.fit();
-    this.deps.run.meta = this.deps.forgeActions.acquireBlueprint(this.deps.run.meta, w, h);
   }
 
   clear(): void {

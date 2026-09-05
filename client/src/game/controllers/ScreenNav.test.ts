@@ -64,6 +64,7 @@ function make(over: Partial<ScreenNavDeps> = {}) {
     partyScreen: screen() as never,
     loginScreen: screen() as never,
     forge: screen() as never,
+    storeScreen: screen() as never,
     screens: screen() as never,
     settingsScreen: screen() as never,
     pauseMenu: screen() as never,
@@ -95,6 +96,7 @@ describe('the plain transitions', () => {
     ['showSquad', 'squad', 'showSquad'],
     ['showAccount', 'account', 'showAccount'],
     ['showForge', 'forge', 'showForge'],
+    ['showStore', 'store', 'showStore'],
     ['showPvpPreview', 'pvpPreview', 'showPvpPreview'],
     ['showMatchmaking', 'matchmaking', 'showMatchmaking'],
   ])('%s sets phase %s and drives ScreenFlow.%s', (method, phase, flowCall) => {
@@ -248,6 +250,17 @@ describe('relayout', () => {
       .toHaveBeenCalled();
   });
 
+  it('RESIZES the store screen rather than showing it', () => {
+    // Same reason matchmaking is resized: `show()` re-lists the catalogue and clears the
+    // status line, so a rotation mid-purchase would wipe "waiting for the payment…" off
+    // the screen and start a second listing under a booked order.
+    const t = make();
+    t.run.phase = 'store';
+    t.nav.relayout();
+    expect(t.deps.storeScreen.resize).toHaveBeenCalled();
+    expect(t.deps.storeScreen.show).not.toHaveBeenCalled();
+  });
+
   it('RESIZES the matchmaking screen rather than showing it', () => {
     // `show()` restarts connect(). A resize during matchmaking would drop the queue entry
     // and start a second one — and the player would just see it take longer.
@@ -278,7 +291,7 @@ describe('relayout', () => {
     const t = make();
     t.run.phase = 'playing';
     t.nav.relayout();
-    for (const dep of ['mainMenu', 'modeSelect', 'forge', 'screens', 'pauseMenu'] as const) {
+    for (const dep of ['mainMenu', 'modeSelect', 'forge', 'storeScreen', 'screens', 'pauseMenu'] as const) {
       const s = (t.deps as unknown as Record<string, { show: ReturnType<typeof vi.fn>; render: ReturnType<typeof vi.fn>; resize: ReturnType<typeof vi.fn> }>)[dep]!;
       expect(s.show, dep).not.toHaveBeenCalled();
       expect(s.render, dep).not.toHaveBeenCalled();

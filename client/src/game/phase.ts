@@ -11,9 +11,14 @@
 // (every party member's poll auto-advances to beginSquadMatch, so a manual confirm gate
 // there would desync followers who never see it; PartyScreen's own lobby/roster already
 // serves as squad's pre-match review step).
+// 'store' is the real-money purchase screen (design/19 §4), opened from the forge's STORE
+// button or its [B] key. A full phase rather than an overlay for one concrete reason: every
+// forge key is guarded on `phase === 'forge'` (ForgeInput), so a separate phase silences the
+// whole craft/clear/cycle table for free while a purchase is in flight — an overlay would
+// leave [X] CLEAR LOADOUT live under a modal asking someone for money.
 //
 // Lives at the game root rather than under screens/ because it is the shared vocabulary
 // Game.ts and the screen layer both speak, not a screen implementation detail.
 export type Phase =
   | 'menu' | 'modeSelect' | 'forge' | 'pvpPreview' | 'matchmaking' | 'playing' | 'paused'
-  | 'victory' | 'defeat' | 'settings' | 'squad' | 'account';
+  | 'victory' | 'defeat' | 'settings' | 'squad' | 'account' | 'store';
