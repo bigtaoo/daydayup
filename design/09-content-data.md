@@ -152,7 +152,7 @@ EnemyBlueprint = {
 
 ### `SkinDef` (`02`)
 
-Skins are content too, and `02`'s "animation data separate from texture" is a data-format decision. A skin **is** the character, so it also carries the character's entire gameplay contribution: its `(maxHp, maxShield)` defensive pair and its shield-break passive (`02`/`05`/`07`):
+Skins are content too, and `02`'s "animation data separate from texture" is a data-format decision. A skin **is** the character, so it also carries the character's entire gameplay contribution: its `(maxHp, maxShield, maxEnergy)` stat triple and its shield-break passive (`02`/`05`/`07`):
 
 ```
 SkinDef = {
@@ -166,6 +166,16 @@ SkinDef = {
                           //   to be an integer — the shipped vanguard is 3.2 on purpose (07's
                           //   two-pool decision explains why that is safe and what it costs)
                           //   NOT balanced to equal EHP: 11/0 juggernaut vs 3/6 skirmisher (05)
+  maxEnergy               // weapon-energy capacity (03, ENGINE_VERSION 60). The roster's third
+                          //   axis and the only one that is not defensive, so it is NOT part of
+                          //   the equal-worth budget band (14) — energy is not denominated in
+                          //   hit points and summing them would be an invented exchange rate.
+                          //   It IS part of the Pareto side-grade rule, which makes that rule
+                          //   stricter. Spreads OPPOSITE the body: skirmisher 130 / vanguard
+                          //   BASE_MAX_ENERGY 100 / juggernaut 70. Legal on an axis that crosses
+                          //   the PvP wall only because regen is a flat shared constant, so
+                          //   capacity buys burst length and provably not sustained dps (03).
+                          //   Carried into the arena UNSCALED, unlike maxHp/maxShield (15).
   shieldBreak?: ShieldBreakPassive  // fires the instant shield hits 0 (07); the concrete
                           //   form of 02's "minor passive". Omitted for 0-shield characters.
 }
@@ -201,13 +211,15 @@ WeaponSpec = { …frame + element fields…; rarity: RarityTier }    // rarity i
 
 ```
 RunBuff = { id: RunBuffId; value: number }     // run-scoped, player-level; wiped at run end (05)
-RUN_BUFFS: Record<RunBuffId, { kind: 'mult_damage'|'mult_firerate'|'flat_hp'|'crit_chance'; target }>
+RUN_BUFFS: Record<RunBuffId, { kind: 'mult_damage'|'mult_firerate'|'flat_hp'|'crit_chance'|'flat_energy'; target }>
 BUFF_CAPS: Record<kind, cap>                    // Σ-then-clamp, deterministic apply order
 ```
 
+> **`flat_energy` — the fifth family, and the first card-only one (2026-09-06, `ENGINE_VERSION` 60, `03`/`05`).** `cell_up` (+30 max energy, cap 120 = four picks exactly, so no pick is ever a fractional dud). It is the second **absolute** family after `flat_hp`, and `PickupSystem.applyBuff` applies both off ONE `sumBuffs` pair — raising the ceiling and the current value together, because a card that moved the cap without filling it would give a player who took it while empty nothing at all until regen caught up. It is deliberately **absent from `BUFF_DROP_POOL`** (`content/drops.ts`'s `CARD_ONLY_BUFF_IDS`, pinned by `drops.test.ts`): capacity is worth nothing to a player on the sustainable starter gun, so as a 1-in-5 floor drop it would dilute four unconditional families to pay for a conditional reward — a pick-one-of-three card is the right home for that. The test requires every catalogue id to be in exactly one of the two lists, so a new family stranded in neither fails rather than shipping unobtainable.
+
 > **The `energy` drop kind shipped (2026-09-05, `ENGINE_VERSION` 59, `03`/`05`).** A sixth `PickupKind`/`DropResult` and the ammo economy's refill: payload-free (the amount is the constant `ENERGY_PICKUP_AMOUNT`, not a per-drop roll), so its branch costs the same single table draw `heal` does and adds no new PRNG consumption to the stream. Weight 16 of 84, taken OUT of `material` and not off the total — the same discipline the 2026-09-05 heal re-weight used, so `weapon` and `buff` keep the exact per-kill odds they had and the two passes stay readable apart afterwards. `ARENA_DROP_TABLE` carries it too (weight 25), because the arena's loot pool is its entire power curve (`15`) and a looted heavy frame would otherwise have no supply line at all.
 
-- Buffs are **found in-run** (chests / rooms / shop is the design; the shipped reality is a 6/84 weight on the flat kill `DROP_TABLE` **plus the floor-card offer at every checkpoint** — `05`'s loot-economy section, `ENGINE_VERSION` 58; four of the six cards in `balance/floorCards.ts` grant a `RUN_BUFFS` id deliberately rather than defining their own magnitudes, so a card and a floor drop of the same buff are the same strength and `BUFF_CAPS` bounds them together — `ROADMAP` B1/B2) and apply to the player / all held weapons, summed-then-clamped in a fixed order so it stays deterministic (`06`). They are **not** attached to a weapon and never carry out.
+- Buffs are **found in-run** (chests / rooms / shop is the design; the shipped reality is a 6/84 weight on the flat kill `DROP_TABLE` **plus the floor-card offer at every checkpoint** — `05`'s loot-economy section, `ENGINE_VERSION` 58; five of the seven cards in `balance/floorCards.ts` grant a `RUN_BUFFS` id deliberately rather than defining their own magnitudes, so a card and a floor drop of the same buff are the same strength and `BUFF_CAPS` bounds them together — `ROADMAP` B1/B2) and apply to the player / all held weapons, summed-then-clamped in a fixed order so it stays deterministic (`06`). They are **not** attached to a weapon and never carry out.
 - **Unknown weapon / skin / buff id → ignored** (forward-compat).
 
 ## The build layer — the fairness wall

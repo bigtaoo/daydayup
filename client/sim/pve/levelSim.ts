@@ -122,6 +122,19 @@ export interface RunMetrics {
    *  opened, whether the run then descended or extracted). A "per full floor" total
    *  is only comparable over these. */
   checkpointFloors: number[];
+  /** Ticks per floor on which the player held a ranged weapon it could NOT afford to
+   *  pull — the ammo economy actually biting, as opposed to merely existing
+   *  (ENGINE_VERSION 60). Added because the v60 character-capacity A/B came back
+   *  byte-identical and there was no way to tell "capacity does not matter" apart
+   *  from "the bot never empties the bar in the first place". Counted on the same
+   *  `observe()` pass as everything else, so it shares the run's tick denominator. */
+  dryTicksByFloor: Record<number, number>;
+  /** Live ticks per floor, the denominator `dryTicksByFloor` is a fraction of. */
+  aliveTicksByFloor: Record<number, number>;
+  /** The pool this run was played with (`SkinDef.maxEnergy` + any `flat_energy` picked
+   *  up), sampled at the end — so a dry-tick count can be read against the capacity it
+   *  was produced under rather than against an assumed 100. */
+  finalMaxEnergy: number;
 }
 
 export interface RunOptions {
@@ -191,6 +204,9 @@ export function runLevel(opts: RunOptions): RunMetrics {
     fires: tracker.fires,
     killsByFloor: tracker.killsByFloor,
     checkpointFloors: tracker.checkpointFloors,
+    dryTicksByFloor: tracker.dryTicksByFloor,
+    aliveTicksByFloor: tracker.aliveTicksByFloor,
+    finalMaxEnergy: tracker.finalMaxEnergy,
   };
 }
 
@@ -206,6 +222,9 @@ class EncounterTracker {
   readonly fires: FireRecord[] = [];
   readonly killsByFloor: Record<number, number> = {};
   readonly checkpointFloors: number[] = [];
+  readonly dryTicksByFloor: Record<number, number> = {};
+  readonly aliveTicksByFloor: Record<number, number> = {};
+  finalMaxEnergy = 0;
   enemiesKilled = 0;
   damageTaken = 0;
   peakBurstDamage = 0;
@@ -232,6 +251,7 @@ class EncounterTracker {
     this.trackDamage(s, p.id);
     this.trackDrops(s);
     this.trackFire(s, p);
+    this.trackEnergy(s, p);
   }
 
   /** Open an encounter the tick a room activates; close it when it goes quiet. */
@@ -359,6 +379,34 @@ class EncounterTracker {
    * step 10, five steps after the fire — and those pulls are recorded with a null
    * weapon rather than charged to the gun that replaced the one that shot.
    */
+  /**
+   * The ammo economy's bite, measured rather than assumed (ENGINE_VERSION 60).
+   *
+   * A "dry" tick is one where the player is alive, holds a ranged weapon, and cannot
+   * pay for a pull of it. That is deliberately NOT "energy === 0": a 26-cost frame is
+   * already disarmed at 25, and a 3-cost blaster is not disarmed until 2, so a raw
+   * zero-check would report the cheap gun as constrained far more often than the
+   * expensive one — the exact inversion of what the economy is supposed to do.
+   *
+   * It is also not a count of REFUSED pulls, which the engine does not surface (a
+   * refusal leaves the cooldown untouched and emits nothing, by design). Dry ticks
+   * over-count relative to refusals — the bot is not trying to fire on every one of
+   * them — so read the number as an upper bound on pressure, and read ZERO as what it
+   * really is: proof the pool never once bound, and therefore that any A/B run over a
+   * capacity change measured nothing at all.
+   */
+  private trackEnergy(s: GameState, p: PlayerActor): void {
+    this.finalMaxEnergy = p.maxEnergy;
+    if (!p.alive) return;
+    const floor = s.floorIndex;
+    this.aliveTicksByFloor[floor] = (this.aliveTicksByFloor[floor] ?? 0) + 1;
+    const ranged = p.weapons.find((w) => w.spec.kind === 'ranged');
+    if (!ranged || ranged.spec.kind !== 'ranged') return;
+    if (p.energy < ranged.spec.energyCost) {
+      this.dryTicksByFloor[floor] = (this.dryTicksByFloor[floor] ?? 0) + 1;
+    }
+  }
+
   private trackFire(s: GameState, p: PlayerActor): void {
     let bullets = 0;
     let swings = 0;

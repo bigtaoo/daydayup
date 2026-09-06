@@ -73,13 +73,22 @@ export const FLOOR_CARDS: Record<string, FloorCardDef> = {
     nameKey: 'card.arsenal.name',
     descKey: 'card.arsenal.desc',
   },
-  // The four stat cards, one per RUN_BUFFS family, so the offer can always fill three
-  // slots with something meaningful and the Sigma-clamps in BUFF_CAPS bound cards and
-  // floor drops together.
+  // The stat cards, one per RUN_BUFFS family, so the offer can always fill three slots
+  // with something meaningful and the Sigma-clamps in BUFF_CAPS bound cards and floor
+  // drops together.
   edge: { effect: { kind: 'buff', buffId: 'dmg_up' }, nameKey: 'card.edge.name', descKey: 'card.edge.desc' },
   cadence: { effect: { kind: 'buff', buffId: 'rof_up' }, nameKey: 'card.cadence.name', descKey: 'card.cadence.desc' },
   bulwark: { effect: { kind: 'buff', buffId: 'vit_up' }, nameKey: 'card.bulwark.name', descKey: 'card.bulwark.desc' },
   precision: { effect: { kind: 'buff', buffId: 'crit_up' }, nameKey: 'card.precision.name', descKey: 'card.precision.desc' },
+  // ENGINE_VERSION 60 — the ammo economy's card, and the reason `cell_up` exists as a
+  // buff family at all. It is deliberately card-only rather than a fifth entry in
+  // `BUFF_DROP_POOL`: +max energy is worth NOTHING to a player still on the starter
+  // blaster (sustainable on regen alone, so its pool never empties), and a floor drop
+  // that is null for a fresh save would dilute the four unconditional buffs to pay for
+  // a reward most players cannot use yet. A pick-one-of-three offer is exactly the
+  // place a CONDITIONAL reward belongs — the player holding a 26-cost frame takes it,
+  // the player holding a blaster takes `edge` instead, and neither pick is wasted.
+  capacitor: { effect: { kind: 'buff', buffId: 'cell_up' }, nameKey: 'card.capacitor.name', descKey: 'card.capacitor.desc' },
 };
 
 /** Catalogue ids in a FIXED order — the pool `rollFloorCardOffer` draws from. */
@@ -192,7 +201,12 @@ export function floorCardDescVars(cardId: string): Record<string, number> {
     default: {
       const buff = RUN_BUFFS[def.effect.buffId];
       if (!buff) return {};
-      return { value: buff.kind === 'flat_hp' ? buff.value : buff.value / 10 };
+      // `flat_*` is already an absolute amount; every other family is stored per-mille
+      // and shown as a percentage. Keyed on the PREFIX rather than on `'flat_hp'` by
+      // name (ENGINE_VERSION 60, when `flat_energy` joined it) — a per-id list here is
+      // one more place a sixth family has to be remembered, and forgetting it would show
+      // "+3 max energy" for a 30-point buff without failing anything.
+      return { value: buff.kind.startsWith('flat_') ? buff.value : buff.value / 10 };
     }
   }
 }

@@ -1894,11 +1894,84 @@ along with `energyCost` in the ranged weapon tuple), a new entry in `DROP_TABLE`
 melee arc that resolves for enemies. Behaviour moves in both directions and the shipped level's
 own content changed.
 
-### Known gap, named rather than left implicit
+### Known gaps, named rather than left implicit
 
-There is no energy FLOOR CARD and no `flat_energy` run buff. Both are the obvious next step — the
-`potion_flow`/`arsenal` pair is exactly the shape an energy sibling would take — but a fifth buff
-family touches `RUN_BUFFS`/`BUFF_CAPS`/`applyBuff` and deserves its own measured pass rather than
-riding along on this one. The two mob blades also borrow player weapon art
+There is no energy FLOOR CARD and no `flat_energy` run buff, and `MAX_ENERGY` is a flat constant
+rather than a `SkinDef` stat. Both are the obvious next step — the `potion_flow`/`arsenal` pair is
+exactly the shape an energy sibling would take — but a fifth buff family touches
+`RUN_BUFFS`/`BUFF_CAPS`/`applyBuff` and deserves its own measured pass rather than riding along on
+this one. **Both were closed in v60 below.** The two mob blades also borrow player weapon art
 (`render/weaponSkins.ts` records which and why); they carry their own calibration entries, so real
-art is a one-line `path` change per mob.
+art is a one-line `path` change per mob — still open as of v60, with the generation prompts now
+written down in `art/weapon/prompts.md`.
+
+## v60: the ammo economy gets a card, and capacity becomes a character trait (2026-09-06)
+
+Both halves close gaps v59 named for itself. Neither is new mechanics — they are the two places
+the energy pool was still a constant where everything around it was content.
+
+### `flat_energy`, the fifth run-buff family — and the first one that is card-only
+
+`RunBuffKind` grew `flat_energy`; `RUN_BUFFS` grew `cell_up` (+30); `BUFF_CAPS` grew a 120 ceiling
+(four picks exactly, so no pick is ever a fractional dud); `FLOOR_CARDS` grew `capacitor`, which
+grants it. `PickupSystem.applyBuff` now reads ONE `sumBuffs` pair and applies both absolute
+families from it, so the two deltas cannot disagree about which stack they were computed from, and
+it grows the current value alongside the ceiling for energy exactly as it already did for HP — a
+card that raised the cap without filling it would give a player who took it while empty nothing at
+all until regen caught up, which is the moment they picked it for.
+
+**`cell_up` is deliberately absent from `BUFF_DROP_POOL`** (`content/drops.ts`'s new
+`CARD_ONLY_BUFF_IDS`, pinned by `drops.test.ts`). Capacity is worth exactly nothing to a player
+still on the starter blaster — sustainable on regen alone, so a fresh save's bar never empties —
+and as a 1-in-5 floor drop that would spend a fifth of a run's buff drops on a reward most players
+cannot yet use, taken out of four families that always do something. A pick-one-of-three offer is
+the right home for a CONDITIONAL reward. The test requires every catalogue id to appear in exactly
+one of the two lists, so "deliberately undroppable" and "somebody forgot" stop looking alike.
+
+`floorCardDescVars`' absolute arm now keys on the `flat_` PREFIX instead of the literal
+`'flat_hp'`. Under the old code `capacitor` fell through to the per-mille branch and a 30-point
+buff read as "+3 max energy" — nothing in the tree would have failed, the card would simply have
+lied on screen in eight locales.
+
+### `MAX_ENERGY` → `BASE_MAX_ENERGY` + `SkinDef.maxEnergy`
+
+v59 deferred this with a reason: making capacity a character stat "would put a raw ammo ladder on
+the one meta axis that reaches PvP". What resolves that is a property of the pool rather than a
+compromise on it — **capacity buys burst, and provably cannot buy sustain.** Regen is a flat shared
+constant, so on an empty bar every character fires at exactly `ENERGY_REGEN_PER_SEC / energyCost`
+regardless of pool size. A deep bar is a longer opening, never a higher dps ceiling, which is what
+lets the stat cross design/15's fairness wall.
+
+The roster spreads OPPOSITE to the body, and `skins.test.ts` pins that direction by name rather
+than merely asserting the three differ: `skirmisher` 130 (3 HP — cannot win a long trade, so it
+gets a longer short one), `vanguard` `BASE_MAX_ENERGY` = 100 (the reference pool every `energyCost`
+in `content/weaponSpecs/` was priced against, now pinned as such), `juggernaut` 70 (11 HP, the
+character whose fights are long by construction, paying on the axis that fades in its own preferred
+regime). The Pareto side-grade rule widened to the (hp, shield, energy) triple — STRICTER, since a
+would-be all-rounder now has one more column it must lose on — while the equal-worth budget band
+still sums only the two defensive axes, because energy is not denominated in hit points and adding
+them would be an invented exchange rate.
+
+`balance/energy.ts`'s "every gun gets at least two shots off a full bar" gate now measures against
+the roster's SMALLEST pool rather than the reference one; at the old bound a 40-cost weapon could
+have shipped that `juggernaut` fires once and `vanguard` fires twice.
+
+**The arena carries `maxEnergy` through UNSCALED**, unlike `maxHp`/`maxShield`. `PVP_SCALE_FACTOR`
+multiplies those because it multiplies weapon DAMAGE alongside them, which is what preserves
+relative TTK; `energyCost` is not scaled at all, so a x5 pool would not preserve a ratio — it would
+delete the ammo economy from PvP outright. `GameState.test.ts` asserts it against the raw `SkinDef`
+number so the claim survives a retune of the factor.
+
+### Why this bumps
+
+`SkinDef.maxEnergy` moves the spawned `energy`/`maxEnergy` pair for two of three characters, and
+both are hashed by `serializeState`. `FLOOR_CARDS` gained an entry, so `FLOOR_CARD_IDS` is longer
+and `rollFloorCardOffer` indexes into a different pool for the same draw. `BUFF_DROP_POOL` is
+deliberately unchanged, so every `dropPrng` stream is byte-identical to v59 — which is what made
+the golden witness readable. Run BEFORE the bump (`serializeState` hashes `ENGINE_VERSION` itself,
+so after one every fixture hash moves and the witness is gone): **exactly one scenario diverged,
+`launch-arena-pvp`, the only one that seats a non-default character (`skirmisher`, 100 -> 130).**
+Every PvE fixture still matched, which is the empirical form of the claim that `vanguard` still
+carries the reference pool. No PvE scenario reaches a floor-card checkpoint inside its tick budget,
+so `capacitor`''s effect on `rollFloorCardOffer` is covered by `floorCardCheckpoint.test.ts` rather
+than by the golden fixture.

@@ -54,6 +54,9 @@ function run(over: Partial<RunMetrics> = {}): RunMetrics {
     fires: [],
     killsByFloor: { 0: 8 },
     checkpointFloors: [],
+    dryTicksByFloor: {},
+    aliveTicksByFloor: { 0: 1000 },
+    finalMaxEnergy: 100,
     ...over,
   };
 }
@@ -382,6 +385,41 @@ describe('floorFireStats — what a floor COSTS to clear (the ammo-economy denom
     expect([rows[0]!.triggersPerKill, rows[0]!.bulletsPerKill]).toEqual([0, 0]);
   });
 
+  it('reports the share of live ticks the pool could not cover a pull — the economy biting', () => {
+    // The column that tells "capacity does not matter" apart from "the bar never
+    // emptied" (ENGINE_VERSION 60). Denominated in LIVE ticks, not in pulls: a player
+    // who cannot afford to fire is not firing, so a pull-denominated version would go to
+    // zero exactly when the pressure is highest.
+    const rows = floorFireStats([
+      run({
+        killsByFloor: { 0: 10 },
+        checkpointFloors: [0],
+        fires: [fire()],
+        dryTicksByFloor: { 0: 250 },
+        aliveTicksByFloor: { 0: 1000 },
+      }),
+    ]);
+    expect(rows[0]!.dryShare).toBe(0.25);
+  });
+
+  it('pools dry ticks across runs against the matching live-tick denominator, per floor', () => {
+    // Two runs that spent very different amounts of time on the floor: the share has to
+    // be the pooled ratio, not the mean of two ratios (which would weight a 10-tick
+    // visit the same as a 1000-tick one).
+    const rows = floorFireStats([
+      run({ killsByFloor: { 0: 1 }, checkpointFloors: [0], fires: [fire()], dryTicksByFloor: { 0: 100 }, aliveTicksByFloor: { 0: 100 } }),
+      run({ killsByFloor: { 0: 1 }, checkpointFloors: [0], fires: [fire()], dryTicksByFloor: { 0: 0 }, aliveTicksByFloor: { 0: 900 } }),
+    ]);
+    expect(rows[0]!.dryShare).toBe(0.1); // 100/1000, not (1 + 0)/2
+  });
+
+  it('reports 0 rather than NaN for a floor with no live ticks recorded', () => {
+    const rows = floorFireStats([
+      run({ killsByFloor: { 0: 1 }, checkpointFloors: [0], fires: [fire()], dryTicksByFloor: {}, aliveTicksByFloor: {} }),
+    ]);
+    expect(rows[0]!.dryShare).toBe(0);
+  });
+
   it('reports a zero melee share rather than NaN for a floor that never fired at all', () => {
     // Reachable: a floor whose visit was recorded off `killsByFloor` (a kill the
     // player did not fire for — a DoT tick, a deflected bullet) with no pulls on it.
@@ -394,6 +432,7 @@ describe('floorFireStats — what a floor COSTS to clear (the ammo-economy denom
     const lines = formatFireTable(rows).split('\n');
     expect(lines).toHaveLength(3); // header + 2 floors
     expect(lines[0]).toContain('triggers(avg/min/max)');
+    expect(lines[0]).toContain('dry%'); // the energy column is actually rendered, not just computed
     expect(lines[1]).toMatch(/^0 /);
   });
 });

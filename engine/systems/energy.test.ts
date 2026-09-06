@@ -16,7 +16,7 @@ import {
   ENERGY_PICKUP_AMOUNT,
   ENERGY_REGEN_AMOUNT,
   ENERGY_REGEN_INTERVAL,
-  MAX_ENERGY,
+  BASE_MAX_ENERGY,
 } from '@dd/engine/balance/energy';
 import { buildEnemyActor } from '@dd/engine/content/enemies';
 import { makeWeapon, WEAPON_SIM_BY_ID } from '@dd/engine/content/weapons';
@@ -69,7 +69,7 @@ describe('WeaponFireSystem — a ranged pull is charged against the pool', () =>
     expect(spec.bullets).toBeGreaterThan(1); // the case this is about
     fire(sys, s, 1);
     expect(s.events.filter((e) => e.type === 'bullet_fired')).toHaveLength(spec.bullets);
-    expect(p.energy).toBe(MAX_ENERGY - spec.energyCost); // ONE price, five bullets
+    expect(p.energy).toBe(BASE_MAX_ENERGY - spec.energyCost); // ONE price, five bullets
   });
 
   it('refuses the pull outright when the pool cannot cover it', () => {
@@ -143,7 +143,7 @@ describe('WeaponFireSystem — a ranged pull is charged against the pool', () =>
       status.tick(s);
     }
     expect(p.energy).toBeGreaterThan(0); // never ran dry
-    expect(p.energy).toBe(MAX_ENERGY); // and in fact sat pinned at full
+    expect(p.energy).toBe(BASE_MAX_ENERGY); // and in fact sat pinned at full
   });
 
   it('an expensive frame drains to empty and then fires at the regen-limited pace', () => {
@@ -161,7 +161,7 @@ describe('WeaponFireSystem — a ranged pull is charged against the pool', () =>
       if (s.events.some((e) => e.type === 'bullet_fired')) shots++;
     }
     expect(p.energy).toBeLessThan(cost); // it really is living hand to mouth
-    // Over 30 s the pool supplies MAX_ENERGY once plus 30 s of regen; the weapon's own
+    // Over 30 s the pool supplies BASE_MAX_ENERGY once plus 30 s of regen; the weapon's own
     // cooldown would have allowed far more pulls than that, which is the whole point.
     const cooldownLimit = Math.floor(900 / (p.weapon!.spec as RangedSimSpec).fireRateTicks);
     expect(shots).toBeLessThan(cooldownLimit);

@@ -270,6 +270,12 @@ export interface FloorFireStats {
    *  refill drop can be priced in ("one drop = N kills of shooting"). */
   triggersPerKill: number;
   bulletsPerKill: number;
+  /** Share of this floor's LIVE ticks on which the player held a ranged weapon it could
+   *  not afford to pull (ENGINE_VERSION 60 — `levelSim.ts`'s `trackEnergy`). The column
+   *  that says whether the ammo economy is biting at all. A flat 0 here means an A/B
+   *  over any capacity change measured nothing, in exactly the way `meleeShare`'s 0
+   *  means the "melee is the free fallback" claim is unmeasured rather than verified. */
+  dryShare: number;
 }
 
 interface FloorFireVisit {
@@ -327,6 +333,10 @@ export function floorFireStats(runs: readonly RunMetrics[]): FloorFireStats[] {
     const bullets = visits.reduce((a, v) => a + v.bullets, 0);
     const swings = visits.reduce((a, v) => a + v.swings, 0);
     const pulls = triggers + swings;
+    // Dry/alive ticks come off the RUNS rather than off `visits`, since they are counted
+    // per tick and not per pull — a floor with zero pulls still has a denominator.
+    const dryTicks = runs.reduce((a, r) => a + (r.dryTicksByFloor[floorIndex] ?? 0), 0);
+    const aliveTicks = runs.reduce((a, r) => a + (r.aliveTicksByFloor[floorIndex] ?? 0), 0);
     out.push({
       floorIndex,
       samples: n,
@@ -340,6 +350,7 @@ export function floorFireStats(runs: readonly RunMetrics[]): FloorFireStats[] {
       meleeShare: pulls === 0 ? 0 : round3(swings / pulls),
       triggersPerKill: kills === 0 ? 0 : round1(triggers / kills),
       bulletsPerKill: kills === 0 ? 0 : round1(bullets / kills),
+      dryShare: aliveTicks === 0 ? 0 : round3(dryTicks / aliveTicks),
     });
   }
   return out.sort((a, b) => a.floorIndex - b.floorIndex);
@@ -397,13 +408,15 @@ export function weaponFireStats(runs: readonly RunMetrics[]): { rows: WeaponFire
 }
 
 export function formatFireTable(rows: readonly FloorFireStats[]): string {
-  const head = 'floor  visits(complete)  kills  triggers(avg/min/max)  bullets  swings  melee%  trig/kill  bul/kill';
+  const head =
+    'floor  visits(complete)  kills  triggers(avg/min/max)  bullets  swings  melee%  trig/kill  bul/kill  dry%';
   const body = rows.map(
     (r) =>
       `${String(r.floorIndex).padEnd(7)}${`${r.samples}(${r.complete})`.padEnd(18)}${String(r.avgKills).padEnd(7)}` +
       `${`${r.avgTriggers}/${r.minTriggers ?? '-'}/${r.maxTriggers ?? '-'}`.padEnd(23)}` +
       `${String(r.avgBullets).padEnd(9)}${String(r.avgSwings).padEnd(8)}` +
-      `${String(Math.round(r.meleeShare * 100)).padEnd(8)}${String(r.triggersPerKill).padEnd(11)}${r.bulletsPerKill}`,
+      `${String(Math.round(r.meleeShare * 100)).padEnd(8)}${String(r.triggersPerKill).padEnd(11)}` +
+      `${String(r.bulletsPerKill).padEnd(10)}${Math.round(r.dryShare * 100)}`,
   );
   return [head, ...body].join('\n');
 }

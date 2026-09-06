@@ -311,12 +311,14 @@ export const pl: Translations<typeof en> = {
     cadence: { name: 'Kadencja', desc: '+{value}% szybkości strzału' },
     bulwark: { name: 'Szańc', desc: '+{value} maks. PZ' },
     precision: { name: 'Precyzja', desc: '+{value}% szansy na cios krytyczny' },
+    capacitor: { name: 'Kondensator', desc: '+{value} maks. energii' },
   },
   buff: {
     dmg_up: { name: 'Zwiększone obrażenia' },
     rof_up: { name: 'Zwiększona szybkostrzelność' },
     vit_up: { name: 'Zwiększona witalność' },
     crit_up: { name: 'Zwiększona szansa na trafienie krytyczne' },
+    cell_up: { name: 'Zwiększona maksymalna energia' },
   },
   material: {
     physical: { name: 'Fizyczny' },

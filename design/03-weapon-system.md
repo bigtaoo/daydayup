@@ -164,9 +164,9 @@ layer has ever had.
 
 ### A shared regenerating pool, not magazines
 
-`balance/energy.ts` holds the numbers and the full rationale. `MAX_ENERGY` 100, +2 every
-3 ticks (20/s, unconditional), spent per **trigger pull** by every ranged weapon and by
-no melee weapon. A magazine-per-weapon model was considered and rejected on three counts,
+`balance/energy.ts` holds the numbers and the full rationale. `BASE_MAX_ENERGY` 100, +2
+every 3 ticks (20/s, unconditional), spent per **trigger pull** by every ranged weapon and
+by no melee weapon. A magazine-per-weapon model was considered and rejected on three counts,
 all of them properties of this repo rather than general taste: it needs a RELOAD verb that
 `10`'s button cluster has no room for and that lockstep cannot pause for (`06`); it puts
 state on a weapon, so a weapon lying on the floor has to carry its rounds through
@@ -204,6 +204,38 @@ their first *interesting* weapon, not something that changes the fight they alre
 The starter also keeps deliberate headroom against a `rof_up` stack, so a buff that is
 meant to be pure upside cannot push it below break-even.
 
+### Capacity is a character stat; the regen rate is not (`ENGINE_VERSION` 60)
+
+`BASE_MAX_ENERGY` is the **reference** pool the table above is priced against, and the
+default character's own (`skins.test.ts` pins that identity, so the price table cannot be
+silently re-based). Actual capacity is `SkinDef.maxEnergy` — `skirmisher` 130, `vanguard`
+100, `juggernaut` 70 — plus whatever `flat_energy` the run has picked up.
+
+The reason this is a legal axis at all, when `14`'s side-grade rule forbids a power ladder
+and `15`'s fairness wall carries a player's character into PvP, is a property of the pool
+rather than a compromise about it:
+
+> **Capacity buys burst. It provably cannot buy sustain.** Regen is a flat shared constant,
+> so on an empty bar every character in the game fires at exactly
+> `ENERGY_REGEN_PER_SEC / energyCost` shots per second regardless of pool size. A deeper
+> bar is a longer opening, never a higher ceiling.
+
+The roster spreads **opposite to the body** — the 3 HP character that cannot win a long
+trade gets the longest short one, the 11 HP character that stands and trades pays here,
+because length is exactly the regime where capacity stops mattering. `ENERGY_PICKUP_AMOUNT`
+stays a flat 30 rather than a fraction of the pool, so a refill is worth proportionally
+more to the shallow bar — the shallow character's compensation, and pinned as such.
+
+Two consequences worth stating because nothing else would catch them:
+
+- The "every gun gets at least two shots off a full bar" gate measures against the roster's
+  **smallest** pool, not the reference one. At the old bound a 40-cost weapon could ship
+  that `juggernaut` fires once and `vanguard` fires twice.
+- **The arena does NOT scale it.** `PVP_SCALE_FACTOR` multiplies `maxHp`/`maxShield`
+  because it multiplies weapon damage alongside them, which is what preserves relative TTK
+  (`15`). `energyCost` is not scaled at all, so a ×5 pool would not preserve a ratio — it
+  would delete the ammo economy from PvP outright.
+
 ### Running dry is a pace, not a disarm
 
 A refused pull leaves the weapon's **cooldown untouched**, so the trigger retries every
@@ -223,14 +255,44 @@ findings are why the pool regenerates on a clock rather than being funded by dro
 time-based refill is depth-invariant, where a kill-funded one goes negative exactly on the
 floors that are already hardest. The full table is in `ENGINE_VERSION_HISTORY` v59.
 
+### What the sim can and cannot see (`ENGINE_VERSION` 60)
+
+`report.ts`'s fire table grew a **`dry%`** column — the share of a floor's live ticks on
+which the player held a ranged weapon it could not afford to pull. It exists because the
+v60 capacity A/B came back byte-identical and there was no way to tell *"capacity does not
+matter"* apart from *"the bar never emptied in the first place"*. What it reads today, on
+8 careful bot runs of the shipped level, holding the character fixed and varying only the
+pool:
+
+| pool | floor 0 | floor 1 | floor 2 | avg floor reached |
+|---|---|---|---|---|
+| 30 | 0% | 21% | 16% | 0.75 |
+| 70 | 0% | 2% | 2% | 0.75 |
+| 100 (shipped default) | 0% | 0% | 4% | 0.75 |
+| 130 | 0% | 0% | 0% | 0.75 |
+
+Three things follow, and only the first was intended:
+
+- **Capacity is measurable, and it is a texture stat, not a power stat.** `dry%` moves with
+  the pool; average floor reached does not move at all.
+- **It only ever bites deep.** Floor 0 is 0% at every pool including 30, because the
+  starter blaster is below break-even and capacity is by construction irrelevant to any
+  weapon that is. The bite on floors 1-2 is a `rof_up` stack pushing that same blaster
+  *over* the line — not an expensive frame, which the bot never fires.
+- **In PvP it is currently inert.** An arena seat's bar never drops more than one blaster
+  shot below full across 8 sampled matches: the landing kit is sustainable and the bot does
+  not swap to looted frames. So the identical PvP win rates either side of this change are
+  an unmeasured result, not a verified one — the same shape as the melee-share 0% gap v59
+  named. What bounds the risk meanwhile is the burst-vs-sustain rule above, which is a
+  property of the arithmetic rather than of the bot.
+
 ### Still open
 
-No energy **floor card** and no `flat_energy` **run buff** — the `potion_flow`/`arsenal`
-pair (`05`) is exactly the shape an energy sibling would take, but a fifth buff family
-touches `RUN_BUFFS`/`BUFF_CAPS`/`applyBuff` and wants its own measured pass. And
-`MAX_ENERGY` is a flat constant rather than a `SkinDef` stat: making capacity a character
-trait would put a raw ammo ladder on the one meta axis that reaches PvP (`14`/`15`), which
-needs deciding before it is a number.
+The two mob melee weapons (`enemyclaw`, `enemymaul`) still borrow player weapon art;
+generation prompts are written down in `art/weapon/prompts.md` and each entry already
+carries its own calibration, so wiring real art is a one-line `path` change per mob plus a
+re-measured rotation offset. And the PvE bot still never swaps off the starter gun, which
+is what leaves the row above unable to measure an expensive frame running dry.
 
 
 ## Deflect / parry (core mechanic)

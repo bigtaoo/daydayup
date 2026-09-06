@@ -70,9 +70,27 @@
  * assertions that pin the classification.
  */
 
-/** Full pool. A weapon costing a third of it gets three shots off a full bar before
- *  regen is what paces it — the intended "burst freely, then it paces you" feel. */
-export const MAX_ENERGY = 100;
+/**
+ * The roster's REFERENCE pool — the denominator every `energyCost` in
+ * `content/weaponSpecs/` was priced against, and the default character's own capacity
+ * (`SKIN_DEFS.vanguard.maxEnergy`, pinned by `content/skins.test.ts`). A weapon costing a
+ * third of it gets three shots off a full bar before regen is what paces it — the
+ * intended "burst freely, then it paces you" feel.
+ *
+ * NOT the maximum any player can have, which is why it stopped being called
+ * `MAX_ENERGY` in ENGINE_VERSION 60. Capacity is now a character stat plus whatever
+ * `flat_energy` buffs the run has picked up, so a live pool runs from `juggernaut`'s 70
+ * to `skirmisher`'s 130 + `BUFF_CAPS.flat_energy`. What varying it can and cannot do is
+ * the load-bearing part:
+ *
+ *   - It buys BURST — how many expensive pulls come out back-to-back off a full bar.
+ *   - It cannot buy SUSTAIN. Once the bar is empty every character fires at exactly
+ *     `ENERGY_REGEN_PER_SEC / energyCost` shots per second, because regen is a flat
+ *     shared constant and deliberately not a per-character stat. That is what keeps
+ *     capacity a side-grade axis rather than the raw dps ladder design/14 forbids, and
+ *     it is why `design/15`'s fairness wall lets the stat cross into PvP at all.
+ */
+export const BASE_MAX_ENERGY = 100;
 
 /** Regen cadence: `+ENERGY_REGEN_AMOUNT` every `ENERGY_REGEN_INTERVAL` ticks, on the
  *  GLOBAL `tick % interval` boundary — the same lockstep pattern DoT and the beam

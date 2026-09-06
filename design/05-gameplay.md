@@ -683,11 +683,25 @@ rooms to spread over, so it stays on the plain table.
 ### Floor cards: the reward becomes a choice
 
 The checkpoint offers **three cards** (`balance/floorCards.ts`), drawn distinct from a
-catalogue of six by a dedicated `cardPrng`. Four wrap existing `RUN_BUFFS` ids so a card is
+catalogue of seven by a dedicated `cardPrng`. Five wrap existing `RUN_BUFFS` ids so a card is
 exactly as strong as the same buff picked off the floor and `BUFF_CAPS` bounds both together;
 the other two are properties of the RUN rather than of a player — `potion_flow` (doubles the
 heal weight, stacking to `HEAL_DROP_MULT_CAP` in three picks) and `arsenal` (+1 to every later
 floor's weapon allowance).
+
+**One of the five is card-ONLY, and that is the interesting part** (`ENGINE_VERSION` 60).
+`capacitor` grants `cell_up`, the `flat_energy` family that raises the weapon-energy pool
+(`03`), and `cell_up` is deliberately absent from `BUFF_DROP_POOL` — the one buff in the
+catalogue a floor drop can never hand you. The reason is that it is the first **conditional**
+reward in the set: capacity is worth exactly nothing to a player still on the starter blaster,
+which is sustainable on regen alone and whose bar therefore never empties. As a 1-in-5 floor
+drop that would spend a fifth of a run's buff drops on something most players cannot yet use,
+taken out of four families that always do something. A pick-one-of-three offer is the right
+home for a reward whose value depends on what you are currently holding — the player carrying
+a 26-cost frame takes it, the player carrying a blaster takes `edge`, and neither pick is
+wasted. `content/drops.ts`'s `CARD_ONLY_BUFF_IDS` names the exclusion so that "deliberately
+undroppable" and "somebody forgot to add it to the pool" stop looking identical; a new family
+in neither list fails `drops.test.ts`.
 
 **No pause.** The offer is a non-blocking overlay over a still-running sim, the same shape the
 portal popup has had since `ENGINE_VERSION` 31 — lockstep cannot stop for one player (`06`),

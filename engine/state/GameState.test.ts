@@ -90,6 +90,26 @@ describe('GameState.buildSeat — buildArenaSpecs wiring (design/15, ROADMAP 4.2
     expect(melee!.spec.damage).not.toBe(SABER_SIM.damage);
   });
 
+  // The one place the character-capacity axis (ENGINE_VERSION 60) meets the PvP scale
+  // factor. (maxHp, maxShield) are multiplied by PVP_SCALE_FACTOR because weapon DAMAGE
+  // is multiplied alongside them, which is what preserves relative TTK. `energyCost` is
+  // NOT scaled — so scaling the pool too would not preserve a ratio, it would hand every
+  // arena seat five times as many shots at the same price and remove the ammo economy
+  // from PvP entirely. Asserted against the raw SkinDef number (not "!== 5x") so it still
+  // means something if the factor is ever retuned.
+  it('an arena seat carries the character energy pool through UNSCALED, unlike hp/shield', () => {
+    const s = createGameState({
+      seed: 1, worldW: 0, worldH: 0, waves: [], arena: MINI_MAP,
+      players: [{ teamId: 0, skinId: 'juggernaut' }],
+    });
+    const p = s.players[0]!;
+    const skin = SKIN_DEFS.juggernaut!;
+    expect(p.maxEnergy).toBe(skin.maxEnergy);
+    expect(p.energy).toBe(skin.maxEnergy); // spawns full, like hp/shield
+    expect(p.maxHp).toBe(Math.round(skin.maxHp * PVP_SCALE_FACTOR)); // scaled, for contrast
+    expect(p.maxHp).not.toBe(skin.maxHp);
+  });
+
   it('an arena seat scales the RIGHT character\'s stats by skinId', () => {
     const s = createGameState({
       seed: 1, worldW: 0, worldH: 0, waves: [], arena: MINI_MAP,

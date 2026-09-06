@@ -331,12 +331,14 @@ export const en = {
     cadence: { name: 'Cadence', desc: '+{value}% fire rate' },
     bulwark: { name: 'Bulwark', desc: '+{value} max HP' },
     precision: { name: 'Precision', desc: '+{value}% crit chance' },
+    capacitor: { name: 'Capacitor', desc: '+{value} max energy' },
   },
   buff: {
     dmg_up: { name: 'Damage Up' },
     rof_up: { name: 'Fire Rate Up' },
     vit_up: { name: 'Vitality Up' },
     crit_up: { name: 'Crit Chance Up' },
+    cell_up: { name: 'Max Energy Up' },
   },
   material: {
     physical: { name: 'Physical' },

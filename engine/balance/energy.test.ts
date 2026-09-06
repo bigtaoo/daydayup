@@ -15,13 +15,14 @@ import {
   ENERGY_REGEN_AMOUNT,
   ENERGY_REGEN_INTERVAL,
   ENERGY_REGEN_PER_SEC,
-  MAX_ENERGY,
+  BASE_MAX_ENERGY,
   isSustainable,
   regenEnergy,
   spendEnergy,
   sustainedDrainPerSec,
 } from './energy';
 import { WEAPON_SPECS } from '../content/weapons';
+import { SKIN_DEFS } from '../content/skins';
 import { NON_PLAYER_WEAPON_IDS } from './weaponProfile';
 import type { RangedSpec } from '../content/weaponTypes';
 
@@ -62,12 +63,12 @@ describe('spendEnergy', () => {
 
 describe('regenEnergy', () => {
   it('adds one cadence tick worth of refill', () => {
-    expect(regenEnergy(10, MAX_ENERGY)).toBe(10 + ENERGY_REGEN_AMOUNT);
+    expect(regenEnergy(10, BASE_MAX_ENERGY)).toBe(10 + ENERGY_REGEN_AMOUNT);
   });
 
   it('clamps to the pool instead of overfilling', () => {
-    expect(regenEnergy(MAX_ENERGY - 1, MAX_ENERGY)).toBe(MAX_ENERGY);
-    expect(regenEnergy(MAX_ENERGY, MAX_ENERGY)).toBe(MAX_ENERGY);
+    expect(regenEnergy(BASE_MAX_ENERGY - 1, BASE_MAX_ENERGY)).toBe(BASE_MAX_ENERGY);
+    expect(regenEnergy(BASE_MAX_ENERGY, BASE_MAX_ENERGY)).toBe(BASE_MAX_ENERGY);
   });
 
   it('respects a pool smaller than the global default', () => {
@@ -147,14 +148,35 @@ describe('GATE — the roster is priced the way the design says it is', () => {
     // all — the pool refuses it forever, since regen clamps at max. The ceiling is half
     // the pool rather than all of it, so every gun in the game gets at least two shots
     // off a full bar, which is what "burst freely, then it paces you" needs to mean.
+    //
+    // Measured against the SMALLEST pool in the roster, not `BASE_MAX_ENERGY` (which is
+    // only the default character's). Since ENGINE_VERSION 60 capacity is a `SkinDef`
+    // stat, so "every gun gets two shots" is a claim about the character who has the
+    // least room to make it — pinning it to the reference pool instead would let a
+    // 40-cost weapon ship that `juggernaut` (70) can fire exactly once and `vanguard`
+    // (100) can fire twice, which is precisely the asymmetry a shared price table must
+    // not have.
+    const smallestPool = Math.min(...Object.values(SKIN_DEFS).map((s) => s.maxEnergy));
+    expect(smallestPool).toBeLessThanOrEqual(BASE_MAX_ENERGY); // or the bound below is vacuous
     for (const [id, spec] of PLAYER_RANGED) {
-      expect(spec.energyCost, `${id} costs more than half a full pool`).toBeLessThanOrEqual(MAX_ENERGY / 2);
+      expect(spec.energyCost, `${id} costs more than half the roster's smallest pool`).toBeLessThanOrEqual(
+        smallestPool / 2,
+      );
     }
   });
 
   it('a refill drop is worth a meaningful fraction of the pool, and never overfills it', () => {
-    expect(ENERGY_PICKUP_AMOUNT).toBeLessThanOrEqual(MAX_ENERGY);
-    expect(ENERGY_PICKUP_AMOUNT).toBeGreaterThanOrEqual(MAX_ENERGY / 5);
+    expect(ENERGY_PICKUP_AMOUNT).toBeLessThanOrEqual(BASE_MAX_ENERGY);
+    expect(ENERGY_PICKUP_AMOUNT).toBeGreaterThanOrEqual(BASE_MAX_ENERGY / 5);
+    // A flat amount, deliberately, so it is worth proportionally MORE to the shallow pool
+    // than to the deep one (ENGINE_VERSION 60) — the juggernaut's compensation for paying
+    // for its body on this axis. Pinned so a later pass cannot quietly turn it into a
+    // fraction of `maxEnergy`, which would erase that and hand the deepest bar the
+    // biggest refill as well.
+    const deepest = Math.max(...Object.values(SKIN_DEFS).map((s) => s.maxEnergy));
+    const shallowest = Math.min(...Object.values(SKIN_DEFS).map((s) => s.maxEnergy));
+    expect(deepest).toBeGreaterThan(shallowest); // the roster actually spreads on this axis
+    expect(ENERGY_PICKUP_AMOUNT / shallowest).toBeGreaterThan(ENERGY_PICKUP_AMOUNT / deepest);
   });
 
   it('price tracks the MECHANIC, not the damage — the axis design/03 forbids', () => {

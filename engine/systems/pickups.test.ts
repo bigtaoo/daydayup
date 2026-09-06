@@ -7,6 +7,7 @@ import { PickupSystem } from '@dd/engine/systems';
 import { toFpGrid } from '@dd/engine/content/convert';
 import { createGameEngine } from '@dd/engine/GameEngine';
 import { makeCommand } from '@dd/engine/state/input';
+import { RUN_BUFFS, BUFF_CAPS } from '@dd/engine/balance/runbuffs';
 import type { Brad } from '@dd/engine/math/trig';
 
 const CFG = { seed: 7, worldW: 1600, worldH: 1200, waves: [] as const };
@@ -302,6 +303,52 @@ describe('PickupSystem — the in-run power ramp (design/05)', () => {
       sys.tick(s);
     }
     expect(p.maxHp).toBe(baseMax + 10);
+  });
+
+  it('a flat_energy buff raises maxEnergy AND refills by the same amount, clamped by the cap', () => {
+    // The `flat_hp` case above, for the second absolute family (ENGINE_VERSION 60). The
+    // refill half is the load-bearing one: a card that raised the ceiling and left the bar
+    // where it was would hand a player who took it while empty nothing at all until regen
+    // caught up — which is the exact moment they would have picked it.
+    const s = createGameState(CFG);
+    const p = s.players[0]!;
+    const baseMax = p.maxEnergy;
+    const step = RUN_BUFFS.cell_up!.value;
+    p.energy = 5;
+    dropOnPlayer(s, { kind: 'buff', buffId: 'cell_up' });
+    sys.tick(s);
+    expect(p.maxEnergy).toBe(baseMax + step);
+    expect(p.energy).toBe(5 + step); // the ceiling moved and so did the bar
+
+    // Past the cap, extra picks add nothing (Σ-then-clamp delta = 0) — and crucially do
+    // not keep refilling either, which a "always +step to current" shortcut would.
+    for (let i = 0; i < 20; i++) {
+      dropOnPlayer(s, { kind: 'buff', buffId: 'cell_up' });
+      sys.tick(s);
+    }
+    expect(p.maxEnergy).toBe(baseMax + BUFF_CAPS.flat_energy);
+    expect(p.energy).toBe(5 + BUFF_CAPS.flat_energy);
+  });
+
+  it('an HP buff moves only the HP pair, and an energy buff only the energy pair', () => {
+    // The two `flat_*` families now run through one `applyBuff` reading one `sumBuffs`
+    // pair. A crossed delta there — energy's growth applied to maxHp, say — would still
+    // pass every single-family test above, because each one only looks at its own stat.
+    const s = createGameState(CFG);
+    const p = s.players[0]!;
+    const before = { maxHp: p.maxHp, hp: p.hp, maxEnergy: p.maxEnergy, energy: p.energy };
+    dropOnPlayer(s, { kind: 'buff', buffId: 'cell_up' });
+    sys.tick(s);
+    expect(p.maxHp).toBe(before.maxHp);
+    expect(p.hp).toBe(before.hp);
+    expect(p.maxEnergy).toBeGreaterThan(before.maxEnergy);
+
+    const mid = { maxEnergy: p.maxEnergy, energy: p.energy };
+    dropOnPlayer(s, { kind: 'buff', buffId: 'vit_up' });
+    sys.tick(s);
+    expect(p.maxEnergy).toBe(mid.maxEnergy);
+    expect(p.energy).toBe(mid.energy);
+    expect(p.maxHp).toBeGreaterThan(before.maxHp);
   });
 
   it('a bandage pickup adds to the squad-revive currency, uncapped (design/05/15)', () => {

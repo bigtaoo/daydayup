@@ -316,12 +316,14 @@ export const ru: Translations<typeof en> = {
     cadence: { name: 'Темп', desc: '+{value}% скорости стрельбы' },
     bulwark: { name: 'Бастион', desc: '+{value} к макс. ЗД' },
     precision: { name: 'Точность', desc: '+{value}% шанса крита' },
+    capacitor: { name: 'Конденсатор', desc: '+{value} к макс. энергии' },
   },
   buff: {
     dmg_up: { name: 'Урон увеличен' },
     rof_up: { name: 'Скорострельность увеличена' },
     vit_up: { name: 'Живучесть увеличена' },
     crit_up: { name: 'Шанс крита увеличен' },
+    cell_up: { name: 'Макс. энергия увеличена' },
   },
   material: {
     physical: { name: 'Физический' },

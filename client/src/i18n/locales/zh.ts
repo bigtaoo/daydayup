@@ -311,12 +311,14 @@ export const zh: Translations<typeof en> = {
     cadence: { name: '连射', desc: '攻击速度 +{value}%' },
     bulwark: { name: '壁垒', desc: '生命上限 +{value}' },
     precision: { name: '精准', desc: '暴击率 +{value}%' },
+    capacitor: { name: '电容', desc: '能量上限 +{value}' },
   },
   buff: {
     dmg_up: { name: '伤害提升' },
     rof_up: { name: '射速提升' },
     vit_up: { name: '体力提升' },
     crit_up: { name: '暴击率提升' },
+    cell_up: { name: '能量上限提升' },
   },
   material: {
     physical: { name: '物理' },

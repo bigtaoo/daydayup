@@ -53,6 +53,30 @@ describe('sumBuffs — Σ-then-clamp, deterministic', () => {
     expect(sumBuffs(stack).flat_hp).toBe(BUFF_CAPS.flat_hp);
   });
 
+  it('flat_energy clamps independently of flat_hp — the two absolute kinds do not share a cap', () => {
+    // Both families are `flat_*` and both are applied as an actor-state delta by
+    // `PickupSystem.applyBuff`, which is exactly why they need pinning apart: a shared
+    // accumulator would let five `vit_up` picks silently exhaust the energy cap too.
+    const many = Array<string>(20).fill('cell_up');
+    expect(sumBuffs(many).flat_energy).toBe(BUFF_CAPS.flat_energy);
+    expect(sumBuffs(many).flat_hp).toBe(0); // an energy stack buys no HP
+    const hpOnly = Array<string>(20).fill('vit_up');
+    expect(hpOnly.length * RUN_BUFFS.vit_up!.value).toBeGreaterThan(BUFF_CAPS.flat_hp); // cap actually reached
+    expect(sumBuffs(hpOnly).flat_hp).toBe(BUFF_CAPS.flat_hp);
+    expect(sumBuffs(hpOnly).flat_energy).toBe(0); // and an HP stack buys no energy
+  });
+
+  it('the energy cap is a whole number of cell_up picks, so the last pick is never a dud', () => {
+    // A cap that fell between two multiples of the buff's own value would make one pick
+    // silently worth a fraction of the others — the shape `PickupSystem` reports as a
+    // delta of 0 while still consuming the drop.
+    const step = RUN_BUFFS.cell_up!.value;
+    expect(BUFF_CAPS.flat_energy % step).toBe(0);
+    const picks = BUFF_CAPS.flat_energy / step;
+    expect(sumBuffs(Array<string>(picks).fill('cell_up')).flat_energy).toBe(BUFF_CAPS.flat_energy);
+    expect(sumBuffs(Array<string>(picks - 1).fill('cell_up')).flat_energy).toBe(BUFF_CAPS.flat_energy - step);
+  });
+
   it('crit_chance sums like the other Σ-clamp kinds and clamps at its own cap', () => {
     // 2× crit_up = 300, under the 500 cap → exact sum.
     expect(sumBuffs(['crit_up', 'crit_up']).crit_chance).toBe(300);

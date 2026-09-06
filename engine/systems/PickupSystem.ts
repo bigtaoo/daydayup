@@ -187,19 +187,32 @@ export class PickupSystem {
 
   /**
    * Add a run buff to the player's stack (design/14). mult_* buffs take effect at use
-   * time (WeaponFire / HitResolve read the summed stack); flat_hp is cumulative actor
-   * state, so it is applied HERE — but Σ-then-clamp still holds: we add only the
-   * *delta* the new buff contributes to the clamped total (0 once the cap is reached),
-   * and grow both maxHp and current hp by it. Unknown id → no-op (forward-compat).
+   * time (WeaponFire / HitResolve read the summed stack); the two `flat_*` families are
+   * cumulative actor state, so they are applied HERE — but Σ-then-clamp still holds: we
+   * add only the *delta* each new buff contributes to its clamped total (0 once that
+   * cap is reached), and grow both the ceiling and the current value by it. Unknown id →
+   * no-op (forward-compat).
+   *
+   * `flat_energy` (ENGINE_VERSION 60) follows `flat_hp` exactly, INCLUDING the "+2 max HP
+   * also heals +2" half: a capacity buff that raised the ceiling without filling it would
+   * hand a player who took it mid-fight nothing at all until regen caught up, which is
+   * the one moment they picked it for. Both are read back off the same `sumBuffs` call so
+   * the two deltas cannot disagree about which stack they were computed from.
    */
   private applyBuff(p: PlayerActor, buffId: string): void {
     if (!RUN_BUFFS[buffId]) return;
-    const before = sumBuffs(p.buffs).flat_hp;
+    const before = sumBuffs(p.buffs);
     p.buffs.push(buffId);
-    const delta = sumBuffs(p.buffs).flat_hp - before;
-    if (delta > 0) {
-      p.maxHp += delta;
-      p.hp += delta;
+    const after = sumBuffs(p.buffs);
+    const hpDelta = after.flat_hp - before.flat_hp;
+    if (hpDelta > 0) {
+      p.maxHp += hpDelta;
+      p.hp += hpDelta;
+    }
+    const energyDelta = after.flat_energy - before.flat_energy;
+    if (energyDelta > 0) {
+      p.maxEnergy += energyDelta;
+      p.energy += energyDelta;
     }
   }
 

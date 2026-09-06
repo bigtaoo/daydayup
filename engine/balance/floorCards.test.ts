@@ -19,6 +19,7 @@ import {
   FLOOR_CARD_IDS,
   FLOOR_CARD_OFFER_SIZE,
   cardBuffId,
+  floorCardDescVars,
   resolveFloorCards,
   rollFloorCardOffer,
   tallyCardVote,
@@ -192,5 +193,46 @@ describe('cardBuffId', () => {
     expect(cardBuffId('potion_flow')).toBeUndefined();
     expect(cardBuffId('arsenal')).toBeUndefined();
     expect(cardBuffId('not_a_card')).toBeUndefined();
+  });
+});
+
+describe('floorCardDescVars — the numbers a card description interpolates', () => {
+  it('reads a percentage family out of per-mille, and an absolute family as-is', () => {
+    // The unit split is the whole point of this function: `mult_*`/`crit_chance` are
+    // stored per-mille and shown as a percentage, `flat_*` is already absolute. Both
+    // arms asserted against the CATALOGUE value rather than a literal, so a retune moves
+    // the expectation with the buff instead of failing here.
+    expect(floorCardDescVars('edge')).toEqual({ value: RUN_BUFFS.dmg_up!.value / 10 });
+    expect(floorCardDescVars('bulwark')).toEqual({ value: RUN_BUFFS.vit_up!.value });
+  });
+
+  it('shows the SECOND flat_* family at full size too, not a tenth of it', () => {
+    // The regression this exists for (ENGINE_VERSION 60): the absolute arm used to be
+    // keyed on the literal `'flat_hp'`, so `cell_up` — the second family in that unit —
+    // fell through to the per-mille branch and a 30-point buff read as "+3 max energy".
+    // Nothing else in the tree would have failed; the card simply lied on screen.
+    expect(floorCardDescVars('capacitor')).toEqual({ value: RUN_BUFFS.cell_up!.value });
+    expect(floorCardDescVars('capacitor').value).toBeGreaterThan(10); // not the /10 arm
+  });
+
+  it('reports the run-scoped kinds by their own field name', () => {
+    expect(floorCardDescVars('potion_flow')).toEqual({ factor: 2 });
+    expect(floorCardDescVars('arsenal')).toEqual({ bonus: 1 });
+  });
+
+  it('returns nothing for an unknown card, or a card naming an unknown buff', () => {
+    expect(floorCardDescVars('not_a_card')).toEqual({});
+  });
+
+  it('every stat card in the catalogue interpolates a real number, none of them NaN', () => {
+    // The sweep that makes a NEW card fail here rather than ship a description with an
+    // empty `{value}` hole in eight locales.
+    for (const id of FLOOR_CARD_IDS) {
+      const vars = floorCardDescVars(id);
+      expect(Object.keys(vars).length, `${id} interpolates nothing`).toBeGreaterThan(0);
+      for (const [k, v] of Object.entries(vars)) {
+        expect(Number.isFinite(v), `${id}.${k} is not a finite number`).toBe(true);
+      }
+    }
   });
 });

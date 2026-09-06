@@ -1,10 +1,17 @@
 /**
  * Characters (design/02/09/13/14). A **skin IS a character** — there is no cosmetic-
- * only layer (design/14). Every skin carries its own defensive identity: a
- * `(maxHp, maxShield)` pair + an optional shield-break passive. Characters are
- * balanced as **side-grades** (design/14 "no all-rounder"): none is strictly better
- * than another on both defensive axes — a big regenerating shield buys fragility, a
- * high flat-HP body buys no shield buffer. `skins.test.ts` guards that rule.
+ * only layer (design/14). Every skin carries its own identity as a
+ * `(maxHp, maxShield, maxEnergy)` triple + an optional shield-break passive. Characters
+ * are balanced as **side-grades** (design/14 "no all-rounder"): none is better than
+ * another on every axis — a big regenerating shield buys fragility, a high flat-HP body
+ * buys no shield buffer and the shallowest energy pool. `skins.test.ts` guards that rule.
+ *
+ * `maxEnergy` joined the triple in ENGINE_VERSION 60, closing the gap volume 38 left open
+ * ("`MAX_ENERGY` is a flat constant, not a `SkinDef` stat"). What made it safe to open is
+ * that capacity is a BURST stat and provably not a dps one: energy regen is a flat shared
+ * constant, so every character's sustained rate of fire on an empty bar is identical no
+ * matter how big their pool is. The stat therefore crosses design/15's fairness wall (a
+ * player's chosen character carries into PvP) without putting a raw power ladder on it.
  *
  * `atlasKey`/`animRef` are RENDER-only refs (the sim ignores them, like `tint`); the
  * defensive numbers are the sim's. Human-unit passive fields (grid radius, grid/s
@@ -13,6 +20,7 @@
  * `PLAYER_BASE` (content/players.ts); the two merge into a PlayerActor at match start.
  */
 import type { ShieldBreakSim } from '../state/entities';
+import { BASE_MAX_ENERGY } from '../balance/energy';
 import { toFpGrid, toFpPerTick } from './convert';
 
 export type SkinId = string;
@@ -37,6 +45,20 @@ export interface SkinDef {
   animRef: string; // render-only animation set
   maxHp: number;
   maxShield: number;
+  /**
+   * Weapon-energy capacity (`balance/energy.ts`, ENGINE_VERSION 60). The roster's THIRD
+   * axis, and the one that is not defensive: it buys burst length, never sustained dps
+   * (regen is a flat shared constant), so it trades against the body rather than adding
+   * to it — the fragile character gets the deepest bar, the one with the biggest body
+   * gets the shallowest. `skins.test.ts` extends the side-grade rule to cover it.
+   *
+   * Deliberately NOT scaled by `PVP_SCALE_FACTOR` the way `maxHp`/`maxShield` are
+   * (`GameState.buildSeat`): that factor exists to keep relative TTK unchanged at a
+   * bigger absolute HP range, and it scales weapon DAMAGE alongside the pools it
+   * inflates. `energyCost` is not scaled, so multiplying the pool by 5 would not
+   * preserve a ratio — it would delete the ammo economy from PvP outright.
+   */
+  maxEnergy: number;
   shieldBreak?: ShieldBreakPassive;
 }
 
@@ -68,6 +90,10 @@ export const SKIN_DEFS: Record<string, SkinDef> = {
     animRef: 'humanoid',
     maxHp: 6,
     maxShield: 3.2,
+    // The reference pool itself — every `energyCost` in `content/weaponSpecs/` was priced
+    // against this number on the default character, so it is the one value in this column
+    // that is a definition rather than a tuning choice (`skins.test.ts` pins it).
+    maxEnergy: BASE_MAX_ENERGY,
     shieldBreak: { kind: 'aoe', radiusGrid: 2.5, damage: 2 },
   },
   // Skirmisher — the fragile-but-shielded side-grade (design/05/14 example): low HP,
@@ -88,6 +114,11 @@ export const SKIN_DEFS: Record<string, SkinDef> = {
     animRef: 'humanoid',
     maxHp: 3,
     maxShield: 6,
+    // +30% pool (ENGINE_VERSION 60). The 3 HP body cannot win a long trade, so what it
+    // gets is a longer OPENING one: roughly one extra pull of the heaviest frame in the
+    // game off a full bar. It buys nothing at all once the bar is empty, which is the
+    // property that stops this from simply being "the best character" on a third axis.
+    maxEnergy: 130,
     shieldBreak: { kind: 'aoe', radiusGrid: 3.0, damage: 2 },
   },
   // Juggernaut — the flat-HP tank (design/14's "0 shield" archetype): the biggest
@@ -109,6 +140,14 @@ export const SKIN_DEFS: Record<string, SkinDef> = {
     animRef: 'humanoid',
     maxHp: 11,
     maxShield: 0,
+    // -30% pool (ENGINE_VERSION 60) — the counterweight to the biggest body in the
+    // roster. This is the character whose fights are long by construction (no shield, no
+    // regen, it stands and trades), and length is exactly the regime where capacity stops
+    // mattering and the flat regen rate takes over. Paying for 11 HP on the axis that
+    // fades in its own preferred fight is the cheapest tax the roster can charge it.
+    // Note it collects a proportionally BIGGER share of each `energy` pickup for the same
+    // reason (`ENERGY_PICKUP_AMOUNT` is a flat 30, not a fraction of the pool).
+    maxEnergy: 70,
     // no shieldBreak: a character with no shield can never trigger one (design/14).
   },
 };

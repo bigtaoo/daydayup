@@ -19,7 +19,7 @@ import { freshStatus } from '../content/damage';
 import { PLAYER_BASE, resolveLoadout } from '../content/players';
 import { resolveSkin, toShieldBreakSim } from '../content/skins';
 import { buildRunSpecs, buildArenaSpecs } from '../balance/build';
-import { MAX_ENERGY } from '../balance/energy';
+
 import { UniformGrid } from '../systems/spatialGrid';
 import {
   buildArenaGeometry,
@@ -398,13 +398,15 @@ export class GameState {
       weapons,
       activeSlot: 0,
       buffs: [], // run-scoped buff stack (design/14); filled by 'buff' pickups
-      // Weapon energy (design/03/05, ENGINE_VERSION 59) — spawn with a full pool, the
-      // same rule the shield spawns on. A flat constant rather than a SkinDef field for
-      // now: making it a character stat would put a raw ammo-capacity ladder on the one
-      // meta axis that reaches PvP (design/14's side-grade roster), which needs its own
-      // design pass before it is a number.
-      energy: MAX_ENERGY,
-      maxEnergy: MAX_ENERGY,
+      // Weapon energy (design/03/05) — spawn with a full pool, the same rule the shield
+      // spawns on. A CHARACTER stat since ENGINE_VERSION 60 (`SkinDef.maxEnergy`), and
+      // read from `skin` in BOTH modes rather than from the arena builder: unlike
+      // (maxHp, maxShield) it is deliberately not multiplied by `PVP_SCALE_FACTOR`, since
+      // that factor scales weapon DAMAGE alongside the pools it inflates and `energyCost`
+      // is not scaled at all — a x5 pool in the arena would delete the ammo economy from
+      // PvP rather than preserve its ratio. See `SkinDef.maxEnergy`.
+      energy: skin.maxEnergy,
+      maxEnergy: skin.maxEnergy,
       firing: false,
       interacting: false,
       confirmExtract: false,

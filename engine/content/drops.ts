@@ -172,6 +172,22 @@ export const WEAPON_DROP_POOL: readonly string[] = [
 export const BUFF_DROP_POOL: readonly string[] = ['dmg_up', 'rof_up', 'vit_up', 'crit_up'];
 
 /**
+ * `RUN_BUFFS` ids that are reachable ONLY from a floor card, never from this table
+ * (ENGINE_VERSION 60). Not an oversight list — a named decision, so that adding a buff
+ * family and forgetting to place it fails `drops.test.ts` instead of silently becoming
+ * undroppable.
+ *
+ * `cell_up` is here because +max energy is CONDITIONAL in a way the other four families
+ * are not: the starter blaster is sustainable on regen alone (`balance/energy.ts`), so a
+ * fresh save's pool never empties and a capacity buff does literally nothing for it. As a
+ * 1-in-5 floor drop that would be a fifth of every buff drop in the run spent on a reward
+ * the player often cannot use, taken out of four families that always do something. As a
+ * card it is a CHOICE against two alternatives, which is the correct home for a reward
+ * whose value depends on what you are currently holding.
+ */
+export const CARD_ONLY_BUFF_IDS: readonly string[] = ['cell_up'];
+
+/**
  * Roll one drop from the dropPrng (design/05/09). Draw count varies by branch
  * (table → 1, +1 for weapon / buff / material to pick the payload) — deterministic
  * given the stream, and deliberately IDENTICAL for a weapon and for the material it

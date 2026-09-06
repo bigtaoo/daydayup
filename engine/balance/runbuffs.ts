@@ -26,8 +26,8 @@
  * critPct`).
  */
 
-/** What a buff modifies. All four stack Σ-then-clamp; no per-instance roll. */
-export type RunBuffKind = 'mult_damage' | 'mult_firerate' | 'flat_hp' | 'crit_chance';
+/** What a buff modifies. All five stack Σ-then-clamp; no per-instance roll. */
+export type RunBuffKind = 'mult_damage' | 'mult_firerate' | 'flat_hp' | 'crit_chance' | 'flat_energy';
 
 /** A catalogue id (string keeps it forward-compatible — unknown ids are ignored). */
 export type RunBuffId = string;
@@ -48,6 +48,13 @@ export const RUN_BUFFS: Record<string, RunBuffDef> = {
   rof_up: { kind: 'mult_firerate', value: 400, nameKey: 'buff.rof_up.name' }, // +40% attack speed
   vit_up: { kind: 'flat_hp', value: 2, nameKey: 'buff.vit_up.name' }, // +2 max HP (also heals +2)
   crit_up: { kind: 'crit_chance', value: 150, nameKey: 'buff.crit_up.name' }, // +15% crit chance
+  // ENGINE_VERSION 60. The fifth family, and the first one that is CARD-ONLY — see
+  // `content/drops.ts`'s `CARD_ONLY_BUFF_IDS` for why it is deliberately absent from
+  // `BUFF_DROP_POOL`: a capacity buff is worth exactly nothing to a player still on the
+  // starter blaster (which never drains the pool at all), and a 1-in-5 floor drop that
+  // is null for a fresh save would dilute the four unconditional buffs to pay for it.
+  // A pick-one-of-three CARD is the shape a conditional reward belongs in.
+  cell_up: { kind: 'flat_energy', value: 30, nameKey: 'buff.cell_up.name' }, // +30 max energy
 };
 
 /** Σ-then-clamp ceiling per kind (design/09 §caps). Value matches the kind's unit. */
@@ -56,6 +63,11 @@ export const BUFF_CAPS: Record<RunBuffKind, number> = {
   mult_firerate: 700, // +70% (cooldown floors at 1 tick regardless)
   flat_hp: 10, // +10 max HP
   crit_chance: 500, // 50% max chance — never a coinflip-or-better guarantee
+  // +120 max energy — four stacks, and roughly +120% of the roster's reference pool
+  // (`BASE_MAX_ENERGY`), the same order of headroom `flat_hp`'s +10 buys on a 6 HP body.
+  // It is a ceiling on BURST only: capacity never raises sustained dps, which stays
+  // pinned to `ENERGY_REGEN_PER_SEC` no matter how big the pool gets.
+  flat_energy: 120,
 };
 
 /** Fixed crit damage multiplier (‰, design/07 "critMult") — NOT a stacked buff; only
@@ -69,17 +81,18 @@ export interface BuffSums {
   mult_firerate: number; // ‰
   flat_hp: number; // absolute
   crit_chance: number; // ‰ chance to trigger CRIT_DAMAGE_MULT_PERMILLE at fire/swing time
+  flat_energy: number; // absolute — added to maxEnergy (design/03, ENGINE_VERSION 60)
 }
 
 /** The identity — no buffs (enemies, or a player before any pickup). */
-export const NO_BUFFS: BuffSums = { mult_damage: 0, mult_firerate: 0, flat_hp: 0, crit_chance: 0 };
+export const NO_BUFFS: BuffSums = { mult_damage: 0, mult_firerate: 0, flat_hp: 0, crit_chance: 0, flat_energy: 0 };
 
 /**
  * Sum a buff-id stack per kind, clamped by BUFF_CAPS. Σ-then-clamp → order-
  * independent (deterministic, design/06). Unknown ids ignored (forward-compat).
  */
 export function sumBuffs(ids: readonly RunBuffId[]): BuffSums {
-  const s: BuffSums = { mult_damage: 0, mult_firerate: 0, flat_hp: 0, crit_chance: 0 };
+  const s: BuffSums = { mult_damage: 0, mult_firerate: 0, flat_hp: 0, crit_chance: 0, flat_energy: 0 };
   for (const id of ids) {
     const def = RUN_BUFFS[id];
     if (!def) continue; // forward-compat: unknown buff id → skipped
@@ -89,6 +102,7 @@ export function sumBuffs(ids: readonly RunBuffId[]): BuffSums {
   s.mult_firerate = Math.min(s.mult_firerate, BUFF_CAPS.mult_firerate);
   s.flat_hp = Math.min(s.flat_hp, BUFF_CAPS.flat_hp);
   s.crit_chance = Math.min(s.crit_chance, BUFF_CAPS.crit_chance);
+  s.flat_energy = Math.min(s.flat_energy, BUFF_CAPS.flat_energy);
   return s;
 }
 

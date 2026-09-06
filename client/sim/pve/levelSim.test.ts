@@ -36,6 +36,27 @@ describe('runLevel', () => {
     expect(m.effectiveHp).toBeGreaterThan(0); // maxHp + maxShield of the real SkinDef
   });
 
+  it('counts a live tick for every tick the player is alive, and no dry tick on the starter gun', () => {
+    // The starter blaster is below break-even (`balance/energy.ts`), so a fresh save can
+    // NEVER be dry on it however long it fires — the property that keeps the ammo economy
+    // invisible to a new player. A non-zero dry count on this run would mean the pool is
+    // biting where the design says it must not.
+    const m = runLevel({ seed: 707, ...SHORT });
+    const alive = Object.values(m.aliveTicksByFloor).reduce((a, b) => a + b, 0);
+    expect(alive).toBeGreaterThan(0);
+    expect(alive).toBeLessThanOrEqual(m.ticks); // never more live ticks than ticks
+    expect(Object.values(m.dryTicksByFloor).reduce((a, b) => a + b, 0)).toBe(0);
+  });
+
+  it('records the pool the run was actually played with, so dry ticks have a denominator', () => {
+    // Read off the character rather than assumed to be 100 — capacity is a `SkinDef` stat
+    // since ENGINE_VERSION 60, and a run buff can raise it further mid-run.
+    const a = runLevel({ seed: 808, skinId: 'juggernaut', ...SHORT });
+    const b = runLevel({ seed: 808, skinId: 'skirmisher', ...SHORT });
+    expect(a.finalMaxEnergy).toBeGreaterThan(0);
+    expect(b.finalMaxEnergy).toBeGreaterThan(a.finalMaxEnergy);
+  });
+
   it('defaults to a fresh save’s loadout — the starter blaster, i.e. what a new player has', () => {
     // An empty `loadout` is what `defaultMetaState()` carries, and it is the case the
     // "I get killed the moment I walk in" report came from.

@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { Prng } from '@dd/engine/math/prng';
-import { rollDrop, DROP_TABLE, WEAPON_DROP_POOL, BUFF_DROP_POOL, HEAL_DROP_MULT_CAP } from '@dd/engine/content/drops';
+import {
+  rollDrop,
+  DROP_TABLE,
+  WEAPON_DROP_POOL,
+  BUFF_DROP_POOL,
+  CARD_ONLY_BUFF_IDS,
+  HEAL_DROP_MULT_CAP,
+} from '@dd/engine/content/drops';
 import { WEAPON_SIM_BY_ID } from '@dd/engine/content/weapons';
 import { RUN_BUFFS } from '@dd/engine/balance/runbuffs';
 import { MATERIAL_DEFS, MATERIAL_DROP_POOL } from '@dd/engine/content/materials';
@@ -52,6 +59,40 @@ describe('rollDrop — deterministic drop table', () => {
 
   it('every buff in the drop pool exists in the catalogue', () => {
     for (const id of BUFF_DROP_POOL) expect(RUN_BUFFS[id]).toBeDefined();
+  });
+
+  // The partition that keeps a NEW buff family from being stranded (ENGINE_VERSION 60).
+  // `cell_up` is deliberately undroppable — see `CARD_ONLY_BUFF_IDS` for why — but
+  // "deliberately undroppable" and "somebody forgot to add it to the pool" look identical
+  // from outside, and the second one ships a buff no player can ever obtain. Requiring
+  // every catalogue id to be in exactly ONE of the two lists makes the difference a
+  // decision somebody has to write down.
+  it('every buff in the catalogue is either droppable or explicitly card-only, never neither', () => {
+    for (const id of Object.keys(RUN_BUFFS)) {
+      const droppable = BUFF_DROP_POOL.includes(id);
+      const cardOnly = CARD_ONLY_BUFF_IDS.includes(id);
+      expect(droppable || cardOnly, `${id} is reachable from nothing`).toBe(true);
+      expect(droppable && cardOnly, `${id} is listed as both droppable and card-only`).toBe(false);
+    }
+  });
+
+  it('a card-only buff never comes off the drop table, however long the stream runs', () => {
+    // Asserted over a real sweep rather than by re-reading `BUFF_DROP_POOL` (which would
+    // only restate the line above): this is the claim that the ROLL, not just the list,
+    // excludes it.
+    const p = new Prng(4242);
+    let buffDrops = 0;
+    for (let i = 0; i < 20000; i++) {
+      const d = rollDrop(p);
+      if (d.kind !== 'buff') continue;
+      buffDrops++;
+      expect(CARD_ONLY_BUFF_IDS).not.toContain(d.buffId);
+    }
+    expect(buffDrops, 'the sweep never rolled a buff at all').toBeGreaterThan(100);
+  });
+
+  it('names the card-only list by CONTENT, so emptying it is a decision and not a silent pass', () => {
+    expect([...CARD_ONLY_BUFF_IDS]).toEqual(['cell_up']);
   });
 
   it('material drops resolve to a real material id + positive quantity', () => {

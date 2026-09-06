@@ -311,12 +311,14 @@ export const de: Translations<typeof en> = {
     cadence: { name: 'Kadenz', desc: '+{value}% Feuerrate' },
     bulwark: { name: 'Bollwerk', desc: '+{value} max. LP' },
     precision: { name: 'Präzision', desc: '+{value}% Kritische Chance' },
+    capacitor: { name: 'Kondensator', desc: '+{value} max. Energie' },
   },
   buff: {
     dmg_up: { name: 'Schaden erhöht' },
     rof_up: { name: 'Feuerrate erhöht' },
     vit_up: { name: 'Vitalität erhöht' },
     crit_up: { name: 'Krit.-Chance erhöht' },
+    cell_up: { name: 'Max. Energie erhöht' },
   },
   material: {
     physical: { name: 'Physisch' },
