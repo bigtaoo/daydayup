@@ -67,7 +67,7 @@
 import { describe, it, expect } from 'vitest';
 import { BALLISTIC_IDS } from '../content/ballistics';
 import { DAMAGE_TYPES } from '../content/damage';
-import { WEAPON_SPECS } from '../content/weapons';
+import { MOB_WEAPON_IDS, WEAPON_SPECS } from '../content/weapons';
 import type { MeleeSpec, RangedSpec } from '../content/weaponTypes';
 import { RARITY_ORDER } from './rarity';
 import { bySignature, dominates, hitsPerTrigger, reachGrid, weaponProfile, weaponProfiles, NON_PLAYER_WEAPON_IDS } from './weaponProfile';
@@ -281,15 +281,40 @@ describe('GATE — every mechanic the engine implements is on at least one playe
     }
   });
 
-  it('every melee weapon keeps deflect — the ranged-vs-melee trade-off is not optional', () => {
+  it('every PLAYER melee weapon keeps deflect — the ranged-vs-melee trade-off is not optional', () => {
     // design/03: "Every melee frame keeps `deflect: true`, so the ranged-vs-melee trade-off
     // is untouched." A blade that silently shipped without it would quietly delete the
     // parry half of the game's core trade.
     const noDeflect = Object.entries(WEAPON_SPECS)
       .filter((e): e is [string, MeleeSpec] => e[1].kind === 'melee')
+      .filter(([id]) => !NON_PLAYER_WEAPON_IDS.includes(id))
       .filter(([, s]) => !s.deflect)
       .map(([id]) => id);
     expect(noDeflect).toEqual([]);
+  });
+
+  it('and every MOB melee weapon deliberately does NOT — parry is the player’s alone', () => {
+    // The other half of the rule above, added with the melee mobs (ENGINE_VERSION 59).
+    // Stated as its own assertion rather than left as the absence of one, because
+    // "mob blades do not deflect" is a DESIGN DECISION (weaponSpecs/dropOnly.ts records
+    // why: a mob that parries your bullets inverts design/03's core mechanic and makes
+    // the ranged half strictly worse against exactly the mobs it exists to counter) —
+    // and a decision recorded only by a filter in the test above it is one nobody will
+    // find the day someone adds a third mob blade.
+    const mobBlades = Object.entries(WEAPON_SPECS)
+      .filter((e): e is [string, MeleeSpec] => e[1].kind === 'melee')
+      .filter(([id]) => NON_PLAYER_WEAPON_IDS.includes(id));
+    expect(mobBlades.map(([id]) => id)).toEqual(['enemyclaw', 'enemymaul']);
+    expect(mobBlades.filter(([, s]) => s.deflect).map(([id]) => id)).toEqual([]);
+  });
+
+  it('the two “not a player weapon” lists agree on today’s roster', () => {
+    // `NON_PLAYER_WEAPON_IDS` (is it a CHOICE?) and `MOB_WEAPON_IDS` (may it DROP?) are
+    // deliberately separate lists answering different questions — see the former's doc
+    // comment. They happen to hold the same three ids today, and that coincidence is
+    // worth pinning: if they ever diverge it must be because someone meant them to, not
+    // because one of them was updated and the other forgotten.
+    expect([...NON_PLAYER_WEAPON_IDS].sort()).toEqual([...MOB_WEAPON_IDS].sort());
   });
 
   it('every rarity tier above common carries a mechanic the starter kit does not', () => {

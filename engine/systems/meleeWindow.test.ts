@@ -150,7 +150,11 @@ describe('swingSec → swingTicks conversion (design/09 conversion table)', () =
     // not read back off the sim spec. And the roster has to contain more than one distinct
     // value — the pre-v53 bug's signature is every blade behaving identically, so a conversion
     // that collapsed them all to the same number would satisfy a per-weapon check alone.
-    expect(MELEE.length).toBe(7); // saber, emberblade, frostbrand, stormglaive, hammer, spear, leech
+    // 7 player blades + the 2 mob blades added in ENGINE_VERSION 59 (enemyclaw, enemymaul).
+    // The mob blades are deliberately IN scope here: the swing window is what makes a
+    // telegraph readable, and a mob whose window collapsed to one tick would hit without a
+    // tell — the exact pre-v53 bug, on the side of the fight where it is least fair.
+    expect(MELEE.length).toBe(9); // saber, emberblade, frostbrand, stormglaive, hammer, spear, leech, enemyclaw, enemymaul
     for (const { id, spec, sim } of MELEE) {
       expect(sim.swingTicks, id).toBe(toTicks(spec.swingSec));
       expect(sim.swingTicks, `${id}: a 1-tick window is the bug this replaced`).toBeGreaterThan(1);

@@ -149,6 +149,90 @@ Found by the sweeps, recorded here rather than quietly fixed — closing them is
   test cases so the assertions covering them cannot sit quietly vacuous.
 
 
+## Weapon energy: the price a mechanic finally has ✅ (2026-09-05, `ENGINE_VERSION` 59)
+
+A design call from the game's owner, and the direct answer to the paragraph above it:
+
+> 我打算给武器加一个子弹的概念。这样1，能解决武器平衡性问题，有些大威力的武器一次就要消耗
+> 大量子弹。2，能解决怪物掉落的问题。毕竟降低了掉率之后打完地图空空如也也不好。
+
+The section above ends on a stated dead end: *"a mechanic has no price anywhere in this
+repo, so any composite 'worth' score would be scoring an invented exchange rate"*, which
+is why `balance/weaponBalance.test.ts` can only gate domination WITHIN an identical
+mechanical signature. **`energyCost` is that exchange rate** — the first one the balance
+layer has ever had.
+
+### A shared regenerating pool, not magazines
+
+`balance/energy.ts` holds the numbers and the full rationale. `MAX_ENERGY` 100, +2 every
+3 ticks (20/s, unconditional), spent per **trigger pull** by every ranged weapon and by
+no melee weapon. A magazine-per-weapon model was considered and rejected on three counts,
+all of them properties of this repo rather than general taste: it needs a RELOAD verb that
+`10`'s button cluster has no room for and that lockstep cannot pause for (`06`); it puts
+state on a weapon, so a weapon lying on the floor has to carry its rounds through
+`PickupItem` and back out again on every drop-on-replace swap (above); and per-weapon ammo
+TYPES would waste a third of a floor's entire weapon output on a gun you cannot feed, since
+a floor hands out only 2-3 (`05`).
+
+**Melee costs nothing**, which is what turns the always-owned melee half of the loadout
+(the ranged-vs-melee trade-off above) into the fallback at empty. That is a second, deeper
+reading of "both halves are always OWNED": the gun is now the half you can run out of.
+
+### Priced on the MECHANIC, never on damage
+
+This section's own measurement forbids the obvious rule. Mean dps by rarity already runs
+**downward** (`fine` 8.41 → `epic` 5.63 → `legend` 3.75) because *rarity buys a mechanic,
+not pace* — so a damage-indexed price would tax the slowest guns in the game hardest and
+make the starter strictly best. The price is set against what the pull BUYS instead:
+
+| what the pull buys | pays | examples |
+|---|---|---|
+| nothing but a bullet | at or under the regen line — free forever | `blaster` 3, `repeater` 2 |
+| an element / a status layer | just above it | `flamer` 3, `venomspit` 5, `teslagun` 9 |
+| raw per-hit weight | ~1.2× the line | `cannon` 14, `cryobolt` 12 |
+| several bodies from one press | ~1.3-1.6× | `scattergun` 14, `carom` 14, `tomahawk` 16 |
+| not missing, or an area | ~1.3-1.4× | `seeker` 18, `mortar` 22, `lasercutter` 22 |
+| persistent or bullet-hell output | ~1.6-2× | `gyre` 20, `novaburst` 26 |
+
+A spread frame pays **once for the pull, never per pellet** — charging `scattergun`'s five
+pellets individually would tax one decision five times over.
+
+**Exactly two guns are sustainable on regen alone**, and `balance/energy.test.ts` pins that
+list by name rather than by count. That is what keeps the shipped level's difficulty
+unmoved for a fresh save: the ammo economy is something a player meets when they pick up
+their first *interesting* weapon, not something that changes the fight they already know.
+The starter also keeps deliberate headroom against a `rof_up` stack, so a buff that is
+meant to be pure upside cannot push it below break-even.
+
+### Running dry is a pace, not a disarm
+
+A refused pull leaves the weapon's **cooldown untouched**, so the trigger retries every
+tick and fires the instant regen covers the next shot. An expensive frame at an empty pool
+degrades into a slow one; it never stops being a weapon. Enemies have no pool and are
+structurally never charged (`WeaponFireSystem.asEnergyUser` keys on `faction`), so
+`enemygun`'s price of 0 is inert data and a garrison can never go quiet for a reason
+nothing on screen explains.
+
+### Sized against a measurement, not a guess
+
+`client/sim/pve/report.ts`'s `floorFireStats` was built and read FIRST — over 8 careful bot
+runs of the shipped level, a complete floor costs **237-760 trigger pulls** and hands back
+only ~35-52 drops, and **pulls per kill RISES with depth** (6.3 on floor 0 → 14.2 on floor
+1) because `difficultyCurve` scales enemy HP while a drop table pays per kill. Both
+findings are why the pool regenerates on a clock rather than being funded by drops: a
+time-based refill is depth-invariant, where a kill-funded one goes negative exactly on the
+floors that are already hardest. The full table is in `ENGINE_VERSION_HISTORY` v59.
+
+### Still open
+
+No energy **floor card** and no `flat_energy` **run buff** — the `potion_flow`/`arsenal`
+pair (`05`) is exactly the shape an energy sibling would take, but a fifth buff family
+touches `RUN_BUFFS`/`BUFF_CAPS`/`applyBuff` and wants its own measured pass. And
+`MAX_ENERGY` is a flat constant rather than a `SkinDef` stat: making capacity a character
+trait would put a raw ammo ladder on the one meta axis that reaches PvP (`14`/`15`), which
+needs deciding before it is a number.
+
+
 ## Deflect / parry (core mechanic)
 
 Deflect is **part of the melee attack — not a separate state or button.** Pressing attack with a melee weapon produces one swing sector (a fan centered on facing, `arc` half-angle + `range` radius; different weapons have different arc and range). During that swing, within the SAME sector:

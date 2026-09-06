@@ -511,15 +511,31 @@ describe('melee_swing announces the swing itself (design/08 fx channel, ENGINE_V
     expect(e.faction).not.toBe(s.players[0]!.faction);
   });
 
-  it('no SHIPPED enemy blueprint carries a melee weapon — the swing is a player/PvP read today', () => {
-    // A tripwire, not a rule. Every blueprint's `weapon` is typed `RangedSimSpec`, so this cannot
-    // drift silently in TypeScript -- but the reason it MATTERS is a render fact the type says
-    // nothing about: an enemy body mounts its module on the 'held' path (off the body's own drawn
-    // edge, not a socket tip) and boss-core mounts none at all, so the swing arc has never been
-    // seen on either. If this ever goes red, `rigWeaponMount`'s held path needs the same pass the
-    // socket path got, and boss-core needs an answer for a weapon it deliberately does not draw.
-    const melee = Object.entries(ENEMY_BLUEPRINTS).filter(([, bp]) => (bp.weapon as { kind: string }).kind !== 'ranged');
-    expect(melee.map(([id]) => id)).toEqual([]);
+  it('the two melee blueprints swing through the SAME event channel a player does', () => {
+    // Through ENGINE_VERSION 58 this was a tripwire reading "no SHIPPED enemy blueprint carries a
+    // melee weapon", and it went red exactly as designed when v59 authored two. What it was
+    // guarding is a render fact the type system says nothing about: an enemy body mounts its
+    // module on the 'held' path (off the body's own drawn edge, not a socket tip), so a mob swing
+    // had never actually been seen. Both new mobs use `floater-core`/`brute-core`, which DO mount
+    // — `boss-core` still mounts nothing, so a melee BOSS would reopen the question the old
+    // comment raised; `meleeEnemies.test.ts` records that as the remaining gap.
+    //
+    // What is asserted here is the engine half: the swing announces itself on the one render
+    // channel (design/08), carrying the mob's own id and faction, so `EventReactor` can resolve
+    // the blade off GameState the same way it does for a player.
+    const melee = Object.entries(ENEMY_BLUEPRINTS).filter(([, bp]) => bp.weapon.kind === 'melee');
+    expect(melee.map(([id]) => id).sort()).toEqual(['ravager', 'stalker']);
+    for (const [type] of melee) {
+      const s = state();
+      const e = buildEnemyActor(s, pxToFp(400), pxToFp(400), type);
+      e.weapon!.cooldownTicks = 0;
+      e.firing = true;
+      s.enemies.push(e);
+      new WeaponFireSystem().tick(s);
+      const mine = swings(s).filter((ev) => ev.ownerId === e.id);
+      expect(mine, type).toHaveLength(1);
+      expect(mine[0]).toMatchObject({ ownerId: e.id, faction: 'enemy' });
+    }
   });
 });
 

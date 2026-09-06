@@ -188,7 +188,12 @@ export class HudView {
     const p = s.players[ctx.localOwner];
     this.replayBtn.view.visible = ctx.canSaveReplay;
 
-    this.playerCard.set(ctx.selectedSkin, p?.hp ?? 0, p?.maxHp ?? 0, p?.shield ?? 0, p?.maxShield ?? 0);
+    this.playerCard.set(
+      ctx.selectedSkin, p?.hp ?? 0, p?.maxHp ?? 0, p?.shield ?? 0, p?.maxShield ?? 0,
+      // Weapon energy (design/03/05, ENGINE_VERSION 59) — `?? 0` hides the bar for a
+      // state with no pool at all, the same way a 0 shield pool hides its own.
+      p?.energy ?? 0, p?.maxEnergy ?? 0,
+    );
     this.playerCard.update(dt);
 
     // Cooldown sweep (design/10): weapon.cooldownTicks counts DOWN from the spec's fixed

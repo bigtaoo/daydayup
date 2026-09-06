@@ -78,7 +78,7 @@
       {
         "x": 12.5,
         "y": 8.5,
-        "type": "brute"
+        "type": "ravager"
       },
       {
         "x": 8.5,
@@ -93,7 +93,7 @@
       {
         "x": 10.5,
         "y": 12.5,
-        "type": "floater"
+        "type": "stalker"
       },
       {
         "x": 16.5,
@@ -103,7 +103,7 @@
       {
         "x": 12.5,
         "y": 14.5,
-        "type": "brute"
+        "type": "ravager"
       },
       {
         "x": 6.5,

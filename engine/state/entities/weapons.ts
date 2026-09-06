@@ -32,6 +32,11 @@ export interface RangedSimSpec {
   bulletZ: Fp; // muzzle height band (design/07 z-gating; cosmetic until then)
   damage: number; // integer
   damageType: DamageType; // physical or an element (on-hit status, design/03/07)
+  // Energy one trigger pull costs the FIRING PLAYER (design/03/05, balance/energy.ts).
+  // Copied straight through by toSimSpec — already an integer in pool units, so unlike
+  // every other field here it needs no conversion. Read by WeaponFireSystem only, and
+  // only for a player: an enemy is never charged, so `enemygun`'s 0 is inert.
+  energyCost: number;
   // Ballistic (design/03/09 Frame axis, ROADMAP 1.1) — the per-tick motion rule;
   // 'straight' reads none of the params below. Frozen onto the Projectile at fire
   // time (WeaponFireSystem), read by ProjectileStepSystem (motion) / HitResolveSystem

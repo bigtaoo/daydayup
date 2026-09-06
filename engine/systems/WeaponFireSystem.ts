@@ -17,6 +17,14 @@
  * each spawned Projectile, exactly like damageType (design/07 payload) — motion
  * (ProjectileStepSystem) and the beam's damage-over-window (HitResolveSystem) read
  * them from there, never re-reading the spec.
+ *
+ * Weapon energy (design/03/05, ENGINE_VERSION 59): a PLAYER's ranged pull is charged
+ * `spec.energyCost` from its shared pool before anything is spawned, and refused
+ * outright when the pool cannot cover it — with the cooldown left untouched, so the
+ * trigger retries rather than burning a recovery on a shot that never happened. Melee
+ * is free, which is what makes the always-owned melee half of the loadout the fallback
+ * at empty. Enemies have no pool and are never charged. See `balance/energy.ts` for
+ * why the price is indexed on the weapon's MECHANIC and how the numbers were measured.
  */
 import { addFp, mulFp } from '../math/fixed';
 import { cosFp, sinFp, normBrad, type Brad } from '../math/trig';
@@ -25,14 +33,16 @@ import {
   buffedCooldown,
   buffedDamage,
   critDamage,
+  enrageBuffs,
   rollCrit,
   sumBuffs,
   NO_BUFFS,
   type BuffSums,
 } from '../balance/runbuffs';
 import { closeSwing, openSwing } from '../content/weapons';
+import { spendEnergy } from '../balance/energy';
 import type { GameState } from '../state/GameState';
-import type { Actor, EnemyActor, RangedSimSpec } from '../state/entities';
+import type { Actor, EnemyActor, PlayerActor, RangedSimSpec } from '../state/entities';
 
 export class WeaponFireSystem {
   tick(state: GameState): void {
@@ -40,7 +50,7 @@ export class WeaponFireSystem {
     // its damage + attack speed; enemies carry none (NO_BUFFS = identity) UNLESS
     // enraged (design/09 `traits`, ENGINE_VERSION 27) — see enrageBuffs below.
     for (const p of state.players) this.actor(state, p, sumBuffs(p.buffs));
-    for (const e of state.enemies) this.actor(state, e, this.enrageBuffs(state, e));
+    for (const e of state.enemies) this.actor(state, e, this.latchEnrage(state, e));
   }
 
   /**
@@ -50,14 +60,16 @@ export class WeaponFireSystem {
    * event. Reuses the EXACT SAME BuffSums/buffedDamage/buffedCooldown composition a
    * player's run buffs go through — no separate damage-scaling code path for enemies.
    */
-  private enrageBuffs(state: GameState, e: EnemyActor): BuffSums {
+  private latchEnrage(state: GameState, e: EnemyActor): BuffSums {
     if (!e.enrage) return NO_BUFFS;
     if (!e.enraged && e.hp * 1000 <= e.maxHp * e.enrage.hpThresholdPermille) {
       e.enraged = true;
       state.events.push({ type: 'enrage', id: e.id, gx: e.gx, gy: e.gy });
     }
-    if (!e.enraged) return NO_BUFFS;
-    return { ...NO_BUFFS, mult_damage: e.enrage.bonusDamagePermille, mult_firerate: e.enrage.bonusFireratePermille };
+    // The COMPOSITION moved to balance/runbuffs.ts in ENGINE_VERSION 59 so
+    // HitResolveSystem's melee arc can read the identical numbers off the latch this
+    // method sets; what stays here is the latch and its event, which are step 3's alone.
+    return enrageBuffs(e);
   }
 
   private actor(state: GameState, a: Actor, buffs: BuffSums): void {
@@ -80,6 +92,27 @@ export class WeaponFireSystem {
     if (!a.alive || !a.firing || w.cooldownTicks > 0) return;
 
     if (w.spec.kind === 'ranged') {
+      // Energy (design/03/05, ENGINE_VERSION 59) — charged per TRIGGER PULL, before a
+      // single pellet exists, so a spread frame pays once for the decision it is.
+      //
+      // A refused pull leaves the cooldown UNTOUCHED, which is the whole behaviour of
+      // running dry: the trigger keeps retrying every tick and fires the instant regen
+      // covers the next shot, instead of eating a full recovery for a shot that never
+      // happened. That also means an empty player is regen-PACED rather than disarmed —
+      // an expensive frame degrades into a slow one, and the always-owned melee half
+      // (design/03) is what you switch to if you don't want to wait.
+      //
+      // Enemies are structurally never charged: `asEnergyUser` returns null for anything
+      // that is not a player, so `enemygun`'s price is inert and a mob can never be silenced by an
+      // economy it has no pool for. That is a trust boundary, not an optimisation —
+      // charging enemies would make a garrison stop shooting mid-fight for a reason
+      // nothing on screen explains.
+      const player = asEnergyUser(a);
+      if (player !== null) {
+        const left = spendEnergy(player.energy, w.spec.energyCost);
+        if (left === null) return;
+        player.energy = left;
+      }
       this.fireRanged(state, a, w.spec, buffs);
       w.cooldownTicks = buffedCooldown(w.spec.fireRateTicks, buffs);
     } else {
@@ -167,4 +200,16 @@ export class WeaponFireSystem {
     });
     state.events.push({ type: 'bullet_fired', ownerId: a.id, faction: a.faction, gx, gy, facing: dir });
   }
+}
+
+/**
+ * The actor as an energy spender, or null if it does not have a pool (design/03/05).
+ *
+ * Keyed on `faction`, not on the presence of the field: `faction === 'player'` is the
+ * same predicate every other player-only rule in the engine uses, it covers BOTH sides
+ * of a PvP match (two hostile teams are both `player`), and it cannot be accidentally
+ * satisfied by a hand-built enemy fixture that happens to carry an `energy` number.
+ */
+function asEnergyUser(a: Actor): PlayerActor | null {
+  return a.faction === 'player' ? (a as PlayerActor) : null;
 }

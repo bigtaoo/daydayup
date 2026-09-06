@@ -26,6 +26,8 @@ export const FRAME_ELEMENTAL_WEAPON_SPECS: Record<string, WeaponSpec> = {
     damage: 1,
     damageType: 'fire',
     ballistic: 'straight',
+    // Energy per trigger pull (design/03/05, balance/energy.ts): spread x5 plus a burn on every pellet — 27/s, the priciest of the two scatter frames
+    energyCost: 16,
     lifespanSec: 0.5, // short reach — fire's own convention (flamer/emberblade)
     bulletRadius: 0.14,
     muzzleGrid: 0.9375,
@@ -48,6 +50,8 @@ export const FRAME_ELEMENTAL_WEAPON_SPECS: Record<string, WeaponSpec> = {
     damage: 2,
     damageType: 'ice',
     ballistic: 'homing',
+    // Energy per trigger pull (design/03/05, balance/energy.ts): homing that also chills: the seeker price plus the cryobolt reason — 27/s
+    energyCost: 20,
     turnRateDegPerSec: 220, // slightly less brisk than seeker — the chill is the payoff
     lifespanSec: 2.8,
     bulletRadius: 0.16,

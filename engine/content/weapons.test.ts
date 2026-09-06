@@ -84,7 +84,7 @@
  * weapon and watches its own numbers move).
  */
 import { describe, it, expect } from 'vitest';
-import { WEAPON_SPECS, WEAPON_SIM_BY_ID, toSimSpec } from './weapons';
+import { MOB_WEAPON_IDS, WEAPON_SPECS, WEAPON_SIM_BY_ID, toSimSpec } from './weapons';
 import type { MeleeSpec, RangedSpec, WeaponSpec } from './weaponTypes';
 import type { MeleeSimSpec, RangedSimSpec } from '../state/entities';
 import { toTicks, toFpGrid, toFpPerTick } from './convert';
@@ -157,6 +157,10 @@ const RANGED_LANDINGS: Record<keyof RangedSpec, Landing<RangedSpec>> = {
     convert: (s) => Math.round(65536 / (s.orbitPeriodSec! * TICK_RATE)),
     whenUnset: undefined,
   },
+  // — the ammo economy (design/03/05, ENGINE_VERSION 59) —
+  // The one authored field that crosses unchanged: already an integer in pool units,
+  // and deliberately NOT run through `applyQuality` — see toSimSpec's own comment.
+  energyCost: { sim: 'energyCost', convert: (s) => s.energyCost },
   // — on-hit procs —
   piercing: { sim: 'piercing', convert: (s) => s.piercing, whenUnset: false },
   ricochetCount: { sim: 'ricochetCount', convert: (s) => s.ricochetCount, whenUnset: undefined },
@@ -437,11 +441,19 @@ describe('design/09 conversion arithmetic, pinned on real weapons', () => {
 // ── The map, and the convert-once rule it enforces ────────────────────────────
 
 describe('WEAPON_SIM_BY_ID — one conversion per weapon, at load (design/09 load-once)', () => {
-  it('covers every authored weapon except the mob loadout', () => {
+  it('covers every authored weapon except the mob loadouts', () => {
     expect(Object.keys(WEAPON_SIM_BY_ID).sort()).toEqual(
-      Object.keys(WEAPON_SPECS).filter((id) => id !== 'enemygun').sort(),
+      Object.keys(WEAPON_SPECS).filter((id) => !MOB_WEAPON_IDS.includes(id)).sort(),
     );
-    expect(WEAPON_SPECS.enemygun, 'enemygun is still authored, just not player-facing').toBeDefined();
+    // The exclusion has teeth only if the excluded ids are really authored — an id that
+    // never existed would be filtered out of both sides and prove nothing.
+    for (const id of MOB_WEAPON_IDS) {
+      expect(WEAPON_SPECS[id], `${id} is still authored, just not player-facing`).toBeDefined();
+      expect(WEAPON_SIM_BY_ID[id], `${id} must not be reachable as a drop`).toBeUndefined();
+    }
+    // Named explicitly so ADDING a mob loadout is a decision that shows up in this diff,
+    // rather than one the filter absorbs silently (ENGINE_VERSION 59 added two).
+    expect([...MOB_WEAPON_IDS].sort()).toEqual(['enemyclaw', 'enemygun', 'enemymaul']);
   });
 
   it('hands out the SAME object every time — conversion is not re-run per lookup', () => {

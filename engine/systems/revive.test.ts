@@ -12,6 +12,7 @@ import { pxToFp, toFpGrid } from '@dd/engine/content/convert';
 import { freshStatus } from '@dd/engine/content/damage';
 import { BASIC_ENEMY } from '@dd/engine/content/enemies';
 import { PLAYER_BASE } from '@dd/engine/content/players';
+import { MAX_ENERGY } from '@dd/engine/balance/energy';
 import { makeWeapon, BLASTER_SIM } from '@dd/engine/content/weapons';
 import { createGameState } from '@dd/engine/state/GameState';
 import type { EngineConfig, GameState } from '@dd/engine/state/GameState';
@@ -39,7 +40,7 @@ function addPlayer(s: GameState, xpx: number, ypx: number): PlayerActor {
     knockVx: toFp(0), knockVy: toFp(0),
     facing: 0 as Brad, hp: 6, maxHp: 6, shield: 0, maxShield: 0, ticksSinceHit: 0,
     radius: PLAYER_BASE.radius, footprintRadius: PLAYER_BASE.footprintRadius, solidRadius: PLAYER_BASE.solidRadius,
-    alive: true, weapon: w, weapons: [w], activeSlot: 0, buffs: [],
+    alive: true, weapon: w, weapons: [w], activeSlot: 0, buffs: [], energy: MAX_ENERGY, maxEnergy: MAX_ENERGY,
     firing: false, interacting: false, pickupTargetId: 0, cardVote: 0, confirmExtract: false, confirmDescend: false,
     downed: false, bleedoutTicks: 0, reviveProgressTicks: 0,
     bandages: 0, prevButtons: 0, status: freshStatus(),

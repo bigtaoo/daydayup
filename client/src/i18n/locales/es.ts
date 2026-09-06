@@ -276,6 +276,8 @@ export const es: Translations<typeof en> = {
     repeater: { name: 'Repetidora' },
     cannon: { name: 'Cañón' },
     enemygun: { name: 'Rifle saqueador' },
+    enemyclaw: { name: 'Garra saqueadora' },
+    enemymaul: { name: 'Mazo saqueador' },
     flamer: { name: 'Lanzallamas' },
     cryobolt: { name: 'Criobolt' },
     teslagun: { name: 'Pistola Tesla' },

@@ -14,13 +14,18 @@ const PORTRAIT_SLOT = 'shell';
 
 /**
  * "Who you are playing" as a card (design/10 HUD): the character's own art, its name,
- * and the two defensive pools (design/07). Replaces the bare HP bar plus a skin name
+ * the two defensive pools (design/07), and — since ENGINE_VERSION 59 — the weapon-energy
+ * pool the ammo economy spends (design/03/05). Replaces the bare HP bar plus a skin name
  * buried at the head of a monospace info line — the portrait is what makes the card
  * identify the blue orb you're driving, which reading a name never did.
+ *
+ * Energy sits HERE rather than beside the weapon, even though it is a weapon cost: it is a
+ * POOL, it belongs to the player and not to whatever is currently in their hands, and
+ * putting it on the weapon card would make it look like it emptied when you swapped.
  */
 export class PlayerCard {
   readonly view = new Container();
-  static readonly HEIGHT = 46;
+  static readonly HEIGHT = 56;
   private static readonly PORTRAIT = 44;
   private static readonly TEXT_X = 52;
   private static readonly BAR_W = 150;
@@ -32,6 +37,11 @@ export class PlayerCard {
   private readonly name: Text;
   private readonly hpBar = new Bar({ w: PlayerCard.BAR_W, h: 14, fillColor: 0xf56565, trackColor: 0x2a1620, label: true });
   private readonly shieldBar = new Bar({ w: PlayerCard.BAR_W, h: 8, fillColor: THEME.colors.shield, label: false });
+  // Same slim profile as the shield bar and the same hue as the energy DROP
+  // (`THEME.colors.pickupEnergy`), so "the teal thing on the floor refills the teal bar"
+  // needs no explaining. Unlabelled, like shield: the number is never the decision — the
+  // decision is "can I keep firing this", which a fraction answers and a count does not.
+  private readonly energyBar = new Bar({ w: PlayerCard.BAR_W, h: 8, fillColor: THEME.colors.pickupEnergy, label: false });
   private lastSkinId = '';
 
   constructor() {
@@ -48,12 +58,15 @@ export class PlayerCard {
     this.name.position.set(PlayerCard.TEXT_X, 0);
     this.hpBar.view.position.set(PlayerCard.TEXT_X, 18);
     this.shieldBar.view.position.set(PlayerCard.TEXT_X, 36);
-    this.view.addChild(this.frame, this.fallback, this.name, this.hpBar.view, this.shieldBar.view);
+    this.energyBar.view.position.set(PlayerCard.TEXT_X, 46);
+    this.view.addChild(this.frame, this.fallback, this.name, this.hpBar.view, this.shieldBar.view, this.energyBar.view);
   }
 
-  /** `skinId` is a `SKIN_DEFS` key (meta.selectedSkin); shield pools of 0 hide that bar
-   *  entirely rather than drawing an always-empty track. */
-  set(skinId: string, hp: number, maxHp: number, shield: number, maxShield: number): void {
+  /** `skinId` is a `SKIN_DEFS` key (meta.selectedSkin); a pool of 0 hides its bar
+   *  entirely rather than drawing an always-empty track — true of shield (a character
+   *  trait, design/07) and of energy (0 only for a seat built without the pool, e.g. an
+   *  old replay's state; every shipped player spawns full). */
+  set(skinId: string, hp: number, maxHp: number, shield: number, maxShield: number, energy = 0, maxEnergy = 0): void {
     if (skinId !== this.lastSkinId) {
       this.lastSkinId = skinId;
       // Deliberately NOT `resolveSkin()` (which forward-compat-falls back to the
@@ -67,12 +80,15 @@ export class PlayerCard {
     this.hpBar.set(Math.max(0, hp), maxHp);
     this.shieldBar.view.visible = maxShield > 0;
     if (maxShield > 0) this.shieldBar.set(Math.max(0, shield), maxShield);
+    this.energyBar.view.visible = maxEnergy > 0;
+    if (maxEnergy > 0) this.energyBar.set(Math.max(0, energy), maxEnergy);
   }
 
   /** Advance the bars' decrease-flash. Call once per render frame (dt in ms). */
   update(dt: number): void {
     this.hpBar.update(dt);
     if (this.shieldBar.view.visible) this.shieldBar.update(dt);
+    if (this.energyBar.view.visible) this.energyBar.update(dt);
   }
 
   estimatedWidth(): number {

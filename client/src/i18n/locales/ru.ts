@@ -281,6 +281,8 @@ export const ru: Translations<typeof en> = {
     repeater: { name: 'Репитер' },
     cannon: { name: 'Пушка' },
     enemygun: { name: 'Винтовка мародёра' },
+    enemyclaw: { name: 'Коготь мародёра' },
+    enemymaul: { name: 'Молот мародёра' },
     flamer: { name: 'Огнемёт' },
     cryobolt: { name: 'Криоболт' },
     teslagun: { name: 'Пушка Теслы' },

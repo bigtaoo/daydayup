@@ -122,3 +122,30 @@ export function buffedDamage(base: number, sums: BuffSums): number {
 export function buffedCooldown(baseTicks: number, sums: BuffSums): number {
   return Math.max(1, Math.round((baseTicks * 1000) / (1000 + sums.mult_firerate)));
 }
+
+/**
+ * Enemy enrage, expressed as the SAME `BuffSums` shape a player's run-buff stack
+ * produces (design/09 `traits`, ENGINE_VERSION 27's own reasoning: no separate
+ * damage-scaling code path for enemies). Pure — it neither latches `enraged` nor emits
+ * the `enrage` event; `WeaponFireSystem` owns that transition at step 3.
+ *
+ * Split out of `WeaponFireSystem` in ENGINE_VERSION 59 so `HitResolveSystem` can scale a
+ * melee mob's swing by the identical numbers step 3 already scaled its cooldown by. Two
+ * copies of "what does enraged mean" is exactly the drift that would let an enraged
+ * melee boss swing faster without swinging harder — a bug nobody would ever see, because
+ * no melee boss exists yet and the copy would sit correct-looking until one did.
+ *
+ * The parameter is a NARROW structural shape rather than `EnemyActor`/`EnrageSim`
+ * (CLAUDE.md's "narrow that dependency to a small interface declaring just those
+ * methods"): this module has no imports at all, and it is the one place every buff
+ * number in the game is composed. `hpThresholdPermille` is deliberately absent — the
+ * threshold decides WHEN enrage latches, which is step 3's business, not this
+ * function's. A real `EnemyActor` satisfies it structurally, so no call site casts.
+ */
+export function enrageBuffs(e: {
+  enrage?: { bonusDamagePermille: number; bonusFireratePermille: number };
+  enraged?: boolean;
+}): BuffSums {
+  if (!e.enrage || !e.enraged) return NO_BUFFS;
+  return { ...NO_BUFFS, mult_damage: e.enrage.bonusDamagePermille, mult_firerate: e.enrage.bonusFireratePermille };
+}

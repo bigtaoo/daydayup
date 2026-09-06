@@ -276,6 +276,8 @@ export const zh: Translations<typeof en> = {
     repeater: { name: '连发枪' },
     cannon: { name: '加农炮' },
     enemygun: { name: '掠夺者步枪' },
+    enemyclaw: { name: '掠夺者利爪' },
+    enemymaul: { name: '掠夺者重锤' },
     flamer: { name: '火焰喷射器' },
     cryobolt: { name: '寒冰箭' },
     teslagun: { name: '特斯拉枪' },

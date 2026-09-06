@@ -38,6 +38,19 @@ export interface RangedSpec extends WeaponBase {
   damage: number; // integer; flat-armor subtract at hit (07)
   damageType?: DamageType; // element → on-hit status (07); omitted = 'physical'
   ballistic: BallisticId;
+  /**
+   * Energy one TRIGGER PULL costs from the player's shared pool (design/03/05,
+   * `balance/energy.ts`) — the price of the MECHANIC, not of the damage. Charged per
+   * pull and never per pellet, so a spread frame pays once for the decision it is.
+   *
+   * Required rather than optional on purpose: an omitted price silently means "free",
+   * and design/03 already records three fields this schema implies are live and are
+   * not (`piercing`, `skinRef`, the sparse Frame x Element grid). A required field
+   * makes a new weapon's price a compile error instead of a balance hole nobody sees.
+   * `enemygun` carries 0 because enemies are structurally never charged — see
+   * `WeaponFireSystem`.
+   */
+  energyCost: number;
   lifespanSec: number; // bullet self-expires after this
   bulletRadius: number; // grid (07 swept-circle collision)
   muzzleGrid: number; // spawn distance from actor centre along facing, grid (Stage C)

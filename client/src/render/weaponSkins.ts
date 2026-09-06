@@ -6,6 +6,7 @@
 // ROADMAP 5.3 follow-up: per-FRAME business-end art. `scattergun`/`seeker`/`mortar`/
 // `lasercutter`/`tomahawk`/`novaburst`/`gyre`/`hammer`/`spear`/`blaster`/`repeater`/
 // `cannon`/`carom`/`enemygun`/`saber`/`emberblade`/`frostbrand`/`stormglaive`/`leech`
+// (`enemyclaw`/`enemymaul` have entries but borrow player art — see their own note below)
 // each get a distinct silhouette (a shotgun muzzle reads differently from a beam
 // emitter). Looked up by `WeaponSimSpec.name` (the weapon id), falling back to the
 // KIND default for anything else.
@@ -109,6 +110,23 @@ export const WEAPON_DEFS: Partial<Record<string, WeaponVisualDef>> = {
   frostbrand: { path: '/weapons/sword_frostbrand.png', anchor: { x: 0.22, y: 0.32 }, scale: 100 / 160, rotationOffsetRad: deg(-15.1) },
   stormglaive: { path: '/weapons/sword_stormglaive.png', anchor: { x: 0.14, y: 0.32 }, scale: 100 / 160, rotationOffsetRad: deg(-5.8) },
   leech: { path: '/weapons/sword_leech.png', anchor: { x: 0.28, y: 0.35 }, scale: 90 / 160, rotationOffsetRad: deg(-12.9) },
+
+  // Mob melee loadouts (ENGINE_VERSION 59, engine/content/weaponSpecs/dropOnly.ts). These
+  // are the ONLY two entries in this table that do not have art of their own: both point
+  // at an existing player blade whose silhouette matches the swing the mob actually makes
+  // — `enemyclaw` at the spear's narrow point (a 90° lunge with 1.1 grid of reach),
+  // `enemymaul` at the hammer's head (a 150° sweep with the heaviest knockback in the
+  // game). That is a deliberate PLACEHOLDER, not a fallback: pointing them at
+  // `sword_default` would trip `muzzleParity`'s "never the kind default" rule, and pointing
+  // them at a path with no PNG behind it would ship a missing texture. Each still carries
+  // its own anchor/scale/rotation entry, so replacing the `path` with real art later is a
+  // one-line change per mob with nothing else to re-measure. Tracked in design/12.
+  //
+  // Scaled slightly down from the player originals: a mob's module hangs off the 'held'
+  // path (`rigWeaponMount`), which has no socket tether to give a big blade somewhere to
+  // sit, so a full-size hammer reads as bigger than the body carrying it.
+  enemyclaw: { path: '/weapons/sword_spear.png', anchor: { x: 0.906, y: 0.346 }, scale: 70 / 160, rotationOffsetRad: deg(-161.1) },
+  enemymaul: { path: '/weapons/sword_hammer.png', anchor: { x: 0.906, y: 0.508 }, scale: 85 / 160, rotationOffsetRad: deg(173.7) },
 
   // 2026-08-03 batch: the 6 starter-frame elemental variants that never got their own
   // silhouette (flamer/cryobolt/teslagun/venomspit all fell back to gun_default) plus

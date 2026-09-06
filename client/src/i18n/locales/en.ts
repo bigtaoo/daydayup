@@ -296,6 +296,8 @@ export const en = {
     repeater: { name: 'Repeater' },
     cannon: { name: 'Cannon' },
     enemygun: { name: 'Raider Rifle' },
+    enemyclaw: { name: 'Raider Claw' },
+    enemymaul: { name: 'Raider Maul' },
     flamer: { name: 'Flamethrower' },
     cryobolt: { name: 'Cryobolt' },
     teslagun: { name: 'Tesla Gun' },

@@ -20,6 +20,7 @@ const PICKUP_GLOW: Record<PickupKind, number> = {
   crate: THEME.colors.pickupCrate,
   material: THEME.colors.pickupMaterial,
   bandage: THEME.colors.pickupHeal, // shares heal's hue on purpose: same "restore" family, own sprite
+  energy: THEME.colors.pickupEnergy, // its own hue — see the theme entry for why it is the cool one
 };
 
 // Ambient hover, deliberately in the same band as the scene's other idle loops —
@@ -166,6 +167,15 @@ export class Pickup extends Entity {
       const color = THEME.colors.pickupBuff;
       gfx.poly([0, -9, 9, 0, 0, 9, -9, 0]).fill({ color, alpha: 0.35 });
       gfx.poly([-6, 3, 0, -6, 6, 3, 0, 0]).fill({ color });
+    } else if (kind === 'energy') {
+      // A bolt in a ring — "weapon energy" (design/03/05, ENGINE_VERSION 59). No sprite
+      // ships for this kind yet, so this Graphics silhouette is the drawn form, not a
+      // fallback; `getPickupTexture('energy')` picking one up later needs no change here.
+      // Shaped rather than tinted on purpose: design/13's dual-channel rule (colour AND
+      // form) is what keeps it apart from the material crystal for a colourblind player.
+      const color = THEME.colors.pickupEnergy;
+      gfx.circle(0, 0, 8).stroke({ color, width: 2, alpha: 0.8 });
+      gfx.poly([1, -8, -5, 1, -0.5, 1, -1, 8, 5, -1, 0.5, -1]).fill({ color });
     } else if (kind === 'crate') {
       // A plain square outline — "unknown," contents unresolved (design/15 anti-cheat
       // loot reveal). Flips to one of the shapes above the instant it resolves.

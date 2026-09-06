@@ -616,6 +616,7 @@ Three pickup classes, split by **whether the player must make a choice**. Materi
 
 - **Materials — auto, into the floor buffer.** Walking within a material's pickup radius auto-collects it into **this floor's un-banked buffer** (a temporary bag). There is no save action to bank it — banking is the **extraction-room checkpoint**: when you **DESCEND or EXTRACT**, the floor buffer merges into the run's carry-out bag (the only thing that leaves a run, above). The carry-out only becomes *account* materials on a successful **EXTRACT**; a run-ending death or team wipe forfeits the **whole un-extracted carry-out** (this floor's buffer plus everything descended-but-not-extracted this run) — that at-risk pile is exactly the "bank now or dive deeper" stake (see the co-op wipe decision in Open questions). The persistent account stash is never at risk. ✅ **Shipped 2026-07-24 (ROADMAP 1.4/1.5, `ENGINE_VERSION` 15, additive):** `PickupSystem` sums a collected material's qty into `state.floorMaterials`; `ExtractionSystem` (new step 12) merges it into `state.bankedMaterials` on either resolution and resets the buffer — a run-ending death simply never reaches that merge, which **is** the forfeit rule, no extra code needed. The EXTRACT/DESCEND choice itself: reaching the per-floor checkpoint (this floor's waves exhausted, no enemies left) opens a window where a **sustained INTERACT hold** (~1 s, mirrors the revive-channel's held-vs-tapped precedent) resolves EXTRACT, and a **tap** (hold released early) resolves DESCEND — first-pass input mapping, `10`'s UI/HUD work may refine the actual button feel. The last floor has no descend option, but still needs the same explicit EXTRACT press as every other floor before the run ends — it does NOT auto-resolve the instant the boss dies (dropped 2026-08-12: an instant, no-gesture resolution ended the run the same tick the boss died, before the player could ever walk over to its own death drops). *Runs today on the demo's single arena/wave-list, not yet a distinct `RoomPiece` per floor — see `09`'s dungeon-assembly note.*
 - **Consumables — auto-apply, but only when useful.** An instant item (healing pickup = flat **+1 HP**, `07`/`09`) is consumed on contact, no inventory. To avoid overheal waste with **no item bag**, the pickup radius only triggers **when the effect would actually do something** — at full HP the health pickup is left on the floor for you to grab later. Same rule generalizes to any future instant item (shield/temp buff): auto-grab only if it changes state. ✅ **Shipped 2026-09-03 (`ENGINE_VERSION` 54):** `PickupSystem`'s `pickupWouldApply` gate, per-player (so a full-HP teammate standing on a heal cannot deny it to a hurt one). It had been unimplemented since this rule was written — `apply` clamped with `Math.min` and consumed the item regardless, binning the only thing in the game that restores the only pool nothing else restores. A run buff is deliberately NOT gated by it: its cap is applied Σ-then-clamp at *use* time, so "already wasted" is not a question the pickup site can answer, and a buff is a stack entry rather than an instant item.
+- **Weapon energy — auto, under the same usefulness gate as a consumable** (`ENGINE_VERSION` 59, `03`). Restores `ENERGY_PICKUP_AMOUNT` to the player's shared ammo pool; at a full pool it is left on the floor, exactly like the health pickup, and for the same reason (no item bag, so collecting one at full destroys it for nothing). It is the second instant item, and the first added since `pickupWouldApply` was implemented — the rule's own note said *"if a shield/temp-buff instant item is ever added, this is the one place it needs a clause"*, and this is that clause.
 - **Weapons — click-driven, drop-on-replace.** Not auto (swapping is a choice). A non-blocking **weapon-pickup panel** (`10`, ENGINE_VERSION 32) lists every floor weapon within reach (real icon + name); tapping a row IS the pickup — no modal, no pause, lockstep can't stop for one player. `PickupSystem` swaps it into the active slot and **the replaced weapon drops back onto the floor** (`02`/`03`). The switch button picks which of the two slots to overwrite. (Superseded the original single-nearest "ground compare card" + tap-`INTERACT` gesture — see `03`'s "Pickup & switch" section for the full history.)
 
 ## Loot economy: what a floor hands you ✅ (2026-09-05, `ENGINE_VERSION` 57/58)
@@ -720,6 +721,91 @@ someone worth less than it should be. EXTRACT applies nothing — the run is ove
 Each needs its own engine plumbing, and this pass wanted the mechanism shipped and measurable
 before the catalogue grows.
 
+## Weapon energy, and the melee mobs that make it fair ✅ (2026-09-05, `ENGINE_VERSION` 59)
+
+The follow-up to the loot pass above, from the same source, and the reason it belongs in
+this doc rather than only in `03`: half of it is a **loot-economy** change.
+
+> 我打算给武器加一个子弹的概念。这样1，能解决武器平衡性问题，有些大威力的武器一次就要消耗
+> 大量子弹。2，能解决怪物掉落的问题。毕竟降低了掉率之后打完地图空空如也也不好。
+
+> 近战的怪也加上一些。
+
+### What "打完地图空空如也" actually was
+
+Not an absence of drops. After the re-weight above, **84.5% of kills still dropped
+something** — a material. What was missing is that a material changes nothing about the
+next ten seconds: it is auto-vacuumed into a counter, spendable only in the forge after
+the run, and forfeited whole by a death. The floor was producing loot that could not be
+*used*, which reads as an empty floor even while the drop rate is high.
+
+An energy refill is the opposite shape: frequent, immediately spendable, and worth walking
+three steps for. `energy` takes **16 of the table's 84 points** (19% of kills) — out of
+`material`, not off the total, the identical discipline the heal re-weight used, so
+`weapon` and `buff` keep the exact odds they had and the two passes stay readable apart.
+Measured over the same 8-run sweep: **6.6 refills on floor 0, 6.7 on floor 1**. Materials
+fall from 30.1 to 22.1 a floor — the carry-out is rarer per kill, not smaller in kind.
+
+The mechanic itself, its pricing rule, and why it is a shared regenerating pool rather
+than magazines all live in `03`. Two consequences belong here:
+
+- **It is collected under this doc's own locked "auto-apply, but only when useful" rule**
+  (`PickupSystem.pickupWouldApply`) — the second instant item that rule was written in
+  anticipation of, and the first one added since it was implemented in `ENGINE_VERSION` 54.
+  A full player leaves it on the floor.
+- **The arena carries it too** (`ARENA_DROP_TABLE`, weight 25). The arena's loot pool IS
+  its entire power curve (`15`), so a missing kind there is not a smaller version of the
+  PvE gap — it is the only supply line a looted heavy frame has.
+
+### Melee mobs: the roster had none, and it was a TYPE that said so
+
+`EnemyBlueprint.weapon` was typed `RangedSimSpec` and all eight blueprints carried
+`ENEMY_GUN_SIM`. "The roster is all ranged" was therefore not a content choice anybody had
+made — it was a constraint nobody had noticed, of exactly the kind `03` records elsewhere
+("three fields this doc's schema implies are live, and are not").
+
+It became load-bearing the moment energy landed. A player who runs an expensive frame dry
+falls back on melee, and against an all-ranged garrison that fallback means walking into
+every gun on the floor while the shield's idle regen — the sustain THIS doc chose over
+potions, one section up — cannot tick, with heal drops at 2.4%. The chain is: run dry →
+forced to close → certain to be hit → shield never recovers → no potions. **A melee mob is
+the mob you keep the gun for**, and it is what makes both halves of `03`'s ranged-vs-melee
+trade-off have something they are the right answer to.
+
+| mob | shape | the threat is |
+|---|---|---|
+| `stalker` | 2 HP, 67% of player speed, wider perception, narrow 90° claw | **arriving** — punishes standing still |
+| `ravager` | 8 HP, armoured, roster-default speed, 150° maul, heaviest knockback in the game | **being near it** — punishes standing close |
+
+Neither **deflects**. A mob that parries your bullets back inverts `03`'s core mechanic
+(parry is the player's) and would make the ranged half strictly worse against exactly the
+mobs it exists to counter — a deliberate no, with its own assertion rather than left as the
+absence of one.
+
+**Content: 18 spawns CONVERTED, never added.** `floater` → `stalker` and `brute` →
+`ravager`, both same-silhouette swaps, across 10 of the 14 room pieces — so every room's
+garrison SIZE is untouched and the room-encounter gates measure a change in *composition*
+and nothing else. Density is graded by depth: the entrance `cell` gets none at all, floor
+1's other rooms get one each, the deep-only pieces take the heavier share. Never `basic`
+(the mob a player learns the game on) and never an elemental variant (each is half of a
+resist/weakness pair the elemental weapons are balanced against).
+
+### What the re-run measured
+
+Every balance gate in `client/sim/pveLevelSim.sim.ts` still passes, with the starter
+loadout's numbers barely moved — which is the claim `balance/energy.test.ts` makes by
+construction (the two baseline guns are sustainable forever), now confirmed empirically
+rather than only asserted. Floor 0: 217 → 189 trigger pulls, 3 of 8 complete visits either
+side, `r4_forge` clearing 38% either side. Average floor reached slips 0.8 → 0.6, which is
+the melee mobs, and stays well inside the "at least 2 of 8 careful runs descend" floor.
+
+**The bot's melee share is still 0%**, so the "melee is the free fallback" half of the
+design is *unmeasured*, not verified — the careful bot never swaps to its blade (the
+existing gate comment already says so) and, running the sustainable starter gun, it never
+runs dry either. A bot that swaps under pressure is the instrument this pass would need
+next, and changing it mid-pass would have made this A/B unreadable.
+
+
 ## PvP (PvPvE arena) — battle royale
 
 **(DECIDED, ROADMAP Phase 4.1 — full schema in `15-pvp-arena.md`.)** PvP is a **last-player-standing (or last-SQUAD-standing) battle royale with a shrinking safe zone**, not a symmetric team arena. This revises the "3v3/4v4" framing below to an 8-player mode first.
@@ -743,6 +829,7 @@ before the catalogue grows.
 | **Materials** | banked during a PvE run (deeper floors → better) | **Yes** — the only carry-out; the meta-forge currency | **No** — normalized out |
 | **In-run weapons / buffs** | found this run (chests, drops) | **No** — every weapon is wiped at run end | N/A (PvE only) |
 | **Brought-in weapon(s)** | crafted per-run from an unlocked blueprint + materials, equipped into the loadout (0–2); a free slot is filled with the starter weapon of the kind the loadout does not already cover, so a run always spawns carrying one gun and one melee weapon and the SWAP verb always has a second slot (`resolveLoadout`, ENGINE_VERSION 45); the crafted instance = one run (`14`) | **No** *within a run* (wiped like any weapon); the blueprint unlock is permanent/account-level (`14`) | N/A (PvE only) |
+| **Weapon energy** | a shared regenerating pool every ranged trigger pull spends (`03`, `balance/energy.ts`); topped up by the `energy` drop in BOTH modes | **No** — in-run engine state, wiped at run end like any weapon | Yes — the arena carries the drop too, since its loot pool is its whole power curve (`15`) |
 | **Character (skin)** | free roster + purchased; carries `(maxHp,maxShield)` + break-passive (`14`) | **Yes** — account-level | **Yes** — the *one* meta thing in PvP, but side-grades only (no all-rounder), fairness by balance discipline (`14`) |
 | **Arena landing kit / in-match pickups** | kit ASSIGNED at match start (a gun + a melee weapon, `landing_basic`; not chosen — there is only one, and no picker) / looted from AI kills and room markers on the map | No | Yes — the only PvP power source |
 

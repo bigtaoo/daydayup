@@ -21,7 +21,18 @@
  */
 import { describe, expect, it } from 'vitest';
 import { runLevel, type RunMetrics } from './pve/levelSim';
-import { floorDropStats, formatDropTable, formatRoomTable, formatSummary, roomStats, summarize } from './pve/report';
+import {
+  floorDropStats,
+  floorFireStats,
+  formatDropTable,
+  formatFireTable,
+  formatRoomTable,
+  formatSummary,
+  formatWeaponFireTable,
+  roomStats,
+  summarize,
+  weaponFireStats,
+} from './pve/report';
 
 const SEEDS = [101, 202, 303, 404, 505, 606, 707, 808];
 const PROFILES = ['careful', 'aggressive'] as const;
@@ -67,6 +78,28 @@ describe('PvE level 1 balance sim (bot-driven real runs — first-signal data, n
     // clean zeroes and look like a finding (design/18 — the sweep-with-no-cases trap).
     const anyDrops = runs('careful').reduce((a, r) => a + r.drops.length, 0);
     expect(anyDrops, 'the sweep produced no drops at all — the table below measures nothing').toBeGreaterThan(50);
+  }, 600_000);
+
+  it('reports what a floor COSTS to clear — trigger pulls, projectiles and melee share', () => {
+    // The consumption half of the loot economy, added 2026-09-05 alongside the ammo
+    // /energy design question ("给武器加一个子弹的概念"). Nothing in the tree measured
+    // how many shots a floor takes, so an ammo pool had no denominator to be sized
+    // against and a per-shot cost had no numerator. Deliberately a REPORT, not a
+    // gate, for the same reason the loot table above is one: the mechanism it would
+    // gate does not exist yet, and a threshold asserted first only pins today.
+    for (const p of PROFILES) {
+      // eslint-disable-next-line no-console
+      console.log(`
+--- profile=${p}: what a floor costs to clear ---`);
+      // eslint-disable-next-line no-console
+      console.log(formatFireTable(floorFireStats(runs(p))));
+      // eslint-disable-next-line no-console
+      console.log(formatWeaponFireTable(weaponFireStats(runs(p))));
+    }
+    // Anti-vacuity, same shape as the loot table's: a bot that never pulled a
+    // trigger would print clean zeroes that read like a finding (design/18).
+    const anyFires = runs('careful').reduce((a, r) => a + r.fires.length, 0);
+    expect(anyFires, 'the sweep fired nothing at all — the table below measures nothing').toBeGreaterThan(100);
   }, 600_000);
 
   // ── Balance gates (design/05 "Room encounter budget") ────────────────────────

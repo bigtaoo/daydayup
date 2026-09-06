@@ -62,7 +62,11 @@ export interface AABB {
 // SIM.lootRevealRadius. Keeps the roll (and its weaponId) out of shared GameState
 // until a player could plausibly see it, so a map-wide state-reading/free-camera
 // cheat can't read every floor's loot identity from across the whole arena.
-export type PickupKind = 'heal' | 'material' | 'weapon' | 'buff' | 'crate' | 'bandage';
+// 'energy' (ENGINE_VERSION 59, design/03/05) is the ammo economy's refill — an
+// instant item like `heal`, collected under the same "only when it would actually do
+// something" rule, and carrying no payload fields (the amount is a constant,
+// `ENERGY_PICKUP_AMOUNT`, not a per-drop roll).
+export type PickupKind = 'heal' | 'material' | 'weapon' | 'buff' | 'crate' | 'bandage' | 'energy';
 
 export interface PickupItem {
   id: number;

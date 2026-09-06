@@ -13,15 +13,37 @@
  */
 import { DOT_INTERVAL } from '../content/damage';
 import { SHIELD_REGEN_DELAY, SHIELD_REGEN_INTERVAL } from '../config';
+import { ENERGY_REGEN_INTERVAL, regenEnergy } from '../balance/energy';
 import { takeDamage } from './combat';
 import type { GameState } from '../state/GameState';
-import type { Actor } from '../state/entities';
+import type { Actor, PlayerActor } from '../state/entities';
 
 export class StatusEffectSystem {
   tick(state: GameState): void {
     const dotTick = state.tick % DOT_INTERVAL === 0;
-    for (const p of state.players) if (p.alive && !p.downed) this.actor(state, p, dotTick); // downed = invulnerable (3.2)
+    // Weapon energy regen (design/03/05, ENGINE_VERSION 59) on the same GLOBAL-cadence
+    // pattern as the DoT above and the beam's damage window (design/07/08): every
+    // player refills on the same tick boundary, so there is no per-actor clock field to
+    // keep in step across clients (design/06).
+    const energyTick = state.tick % ENERGY_REGEN_INTERVAL === 0;
+    for (const p of state.players) {
+      if (!p.alive || p.downed) continue; // downed = invulnerable (3.2), and cannot shoot
+      this.actor(state, p, dotTick);
+      if (energyTick) this.regen(p);
+    }
     for (const e of state.enemies) if (e.alive) this.actor(state, e, dotTick);
+  }
+
+  /**
+   * Refill a player's weapon-energy pool. UNCONDITIONAL, unlike the shield's idle
+   * timer below: the starter gun is priced just under the regen line
+   * (`balance/energy.ts`), so a regen that stopped while you were being shot at would
+   * take the one weapon you always have below break-even in exactly the moments it is
+   * the only thing you have. The shield stays the pool that rewards disengaging; this
+   * one is the pool that keeps the baseline gun honest.
+   */
+  private regen(p: PlayerActor): void {
+    if (p.energy < p.maxEnergy) p.energy = regenEnergy(p.energy, p.maxEnergy);
   }
 
   private actor(state: GameState, a: Actor, dotTick: boolean): void {

@@ -132,6 +132,13 @@ export function serializeState(s: GameState): unknown {
       // bandage) surfaces immediately instead of only showing up later as a revive
       // that should have failed but didn't. Always 0 in PvE.
       p.bandages,
+      // Weapon energy (design/03/05, ENGINE_VERSION 59). Hashed for the same reason
+      // `ticksSinceHit` is: it moves on a global regen cadence EVERY tick a player is
+      // under the cap, and it moves again on every ranged pull — so a divergence in the
+      // pool would otherwise surface only much later, as a shot one client fired and
+      // another refused. `maxEnergy` too: a card or character that ever raises the cap
+      // must not be able to differ silently while the current value happens to agree.
+      p.energy, p.maxEnergy,
       // Run-buff stack (design/14): buffs scale damage/firerate at use time, so a buff
       // divergence would otherwise only surface indirectly — hash the ids directly.
       p.buffs,
@@ -151,7 +158,12 @@ export function serializeState(s: GameState): unknown {
         // showing up later as a hit that should have happened but didn't. Stable
         // 0/''/0 for every ranged weapon and for a blade at rest.
         w.swingTicksLeft, w.swingHitIds.join(','), w.swingDamage,
-        w.spec.kind === 'ranged' ? [w.spec.fireRateTicks, w.spec.bulletSpeed] : [w.spec.range, w.spec.swingTicks],
+        // `energyCost` rides in the ranged tuple (ENGINE_VERSION 59) beside the other
+        // resolved spec numbers, so a client holding a differently-priced build of the
+        // same weapon id diverges here rather than silently paying a different price.
+        w.spec.kind === 'ranged'
+          ? [w.spec.fireRateTicks, w.spec.bulletSpeed, w.spec.energyCost]
+          : [w.spec.range, w.spec.swingTicks],
       ]),
     ]),
     enemies: s.enemies.map((e) => [

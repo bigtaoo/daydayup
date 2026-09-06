@@ -31,8 +31,17 @@ import type { RarityTier } from './rarity';
 import { WEAPON_SPECS } from '../content/weapons';
 import type { MeleeSpec, RangedSpec, WeaponSpec } from '../content/weaponTypes';
 
-/** Not player-facing (basic mob loadout) — never a choice, so never in a balance comparison. */
-export const NON_PLAYER_WEAPON_IDS: readonly string[] = ['enemygun'];
+/**
+ * Not player-facing (mob loadouts) — never a choice, so never in a balance comparison.
+ *
+ * Kept as its own list rather than importing `MOB_WEAPON_IDS` from `content/weapons`,
+ * because the two answer different questions and are allowed to diverge: that one asks
+ * "may this roll as a drop", this one asks "is this a choice a player makes". A mob
+ * weapon is both today; a hypothetical unlockable-but-undroppable weapon would be
+ * neither, and collapsing them would hide that. `weaponBalance.test.ts` asserts the two
+ * agree on the current roster, so the divergence has to be deliberate to survive.
+ */
+export const NON_PLAYER_WEAPON_IDS: readonly string[] = ['enemygun', 'enemyclaw', 'enemymaul'];
 
 export interface WeaponProfile {
   readonly id: string;

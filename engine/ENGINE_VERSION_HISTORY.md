@@ -1788,3 +1788,117 @@ the class of quiet coverage loss the golden gate exists to prevent. The scenario
 beat-varied slot rather than always slot 1, so the tally and the offer indexing are both really
 exercised.
 
+## v59: weapon energy (the ammo economy) + the roster's first melee mobs
+
+Two design calls from the game's owner, 2026-09-05, made together because the second is what
+makes the first fair:
+
+> 我打算给武器加一个子弹的概念。这样1，能解决武器平衡性问题，有些大威力的武器一次就要消耗大量
+> 子弹。2，能解决怪物掉落的问题。毕竟降低了掉率之后打完地图空空如也也不好。
+
+> 近战的怪也加上一些。
+
+### The measurement came first
+
+The same discipline the previous day's loot pass used, and for the same reason: nothing in the
+tree had ever measured how many shots a floor takes, so an ammo pool had no denominator and a
+per-shot price had no numerator. `client/sim/pve/report.ts` grew `floorFireStats` /
+`weaponFireStats` and `levelSim.ts` grew a `FireRecord` per trigger pull BEFORE any engine change
+landed. Over 8 careful bot runs of the shipped level:
+
+| floor | complete visits | kills | trigger pulls (avg/min/max) | pulls/kill | melee share |
+|-------|-----------------|-------|-----------------------------|------------|-------------|
+| 0     | 3               | 34.6  | 217 / 237 / 252             | 6.3        | 0%          |
+| 1     | 2               | 37.7  | 536 / 730 / 760             | 14.2       | 0%          |
+| 2     | 1               | 52    | 598 / 742 / 742             | 11.5       | 0%          |
+
+Two findings decided the whole shape of the design, and neither was what the request assumed.
+
+**Pulls per kill RISES with depth** (6.3 -> 14.2), because `difficultyCurve` scales enemy HP per
+floor while a drop table pays per KILL. An ammo economy funded only by kill-drops therefore goes
+negative with depth — tightest on exactly the floors that already kill 100% of careful bot runs.
+That is why the pool REGENERATES on a clock: a time-based refill is depth-invariant.
+
+**A floor costs 237-760 pulls and hands back only ~35-52 drops.** No per-kill drop can fund a
+250-pull floor at a meaningful price per pull. So the baseline gun has to be effectively free and
+the economy has to bite only on the expensive frames — which is the request's own goal, not a
+concession to it.
+
+### What shipped
+
+A shared, regenerating ENERGY POOL on the player (`balance/energy.ts`, `MAX_ENERGY` 100, +2 every
+3 ticks = 20/s, unconditional). Every RANGED trigger pull costs `energyCost`; melee costs nothing.
+A magazine model was rejected on three counts specific to this repo — it needs a reload verb the
+button cluster has no room for and lockstep cannot pause for; it puts state on a weapon, so a
+weapon lying on the floor would have to carry its rounds through `PickupItem` and back out on
+every drop-on-replace swap; and per-weapon ammo TYPES would waste a third of a floor's entire
+weapon output on a gun you cannot feed (a floor hands out 2-3).
+
+**The price is indexed on the MECHANIC, not on damage.** design/03's measured roster already runs
+mean dps DOWNWARD by rarity, so a damage-indexed price would tax the slowest guns hardest and
+make the starter strictly best. What design/03 says the roster was missing is stated there in as
+many words — *"a mechanic has no price anywhere in this repo"* — and this is that price. Exactly
+two guns (`blaster`, `repeater`) sit at or under the regen line and are sustainable forever;
+`balance/energy.test.ts` pins that list BY NAME, plus the blaster's headroom against a `rof_up`
+stack, so the shipped level's difficulty for a fresh-save loadout is unmoved by construction.
+
+A refused pull leaves the weapon's COOLDOWN untouched, which is the whole feel of running dry: an
+empty player is regen-paced, not disarmed, and the always-owned melee half is what you switch to
+if you do not want to wait. Enemies are structurally never charged (`asEnergyUser` keys on
+`faction`, so a hand-built mob carrying an `energy` field cannot be silenced by it).
+
+**The drop.** A new `energy` `PickupKind`/`DropResult`, weight 16 of 84 (19% of kills), taken out
+of `material` and NOT off the total — the same discipline the 2026-09-05 heal re-weight used, so
+`weapon` and `buff` keep the exact per-kill odds they had and the three passes stay readable
+apart. It is collected under design/05's locked "only when useful" rule (`pickupWouldApply`), the
+second instant item that rule was written in anticipation of. The arena table gets one too, at
+weight 25: the arena's loot pool is its whole power curve, so a missing kind there is not a
+smaller version of the PvE gap, it is the only supply line there is.
+
+### The melee mobs, and why they belong in the same version
+
+Every one of the eight blueprints carried `ENEMY_GUN_SIM`, and `EnemyBlueprint.weapon` was TYPED
+`RangedSimSpec` — so "the roster is all ranged" was a type constraint, not a content choice. That
+mattered the moment the ammo economy landed: a player who runs an expensive frame dry falls back
+on melee, and against an all-ranged garrison that fallback means walking into every gun on the
+floor while the shield's idle regen (design/05's chosen sustain) cannot tick. A melee mob is the
+mob you keep the GUN for.
+
+`STALKER` (fast, 2 HP, 67% of player speed, wider perception, a narrow 90-degree claw) and
+`RAVAGER` (8 HP, armoured, roster-default speed, a 150-degree maul with the heaviest knockback in
+the game). Neither DEFLECTS: a mob that parries your bullets inverts design/03's core mechanic and
+would make the ranged half strictly worse against the mobs it exists to counter — recorded as a
+deliberate no, with its own assertion rather than as the absence of one.
+
+Two constraints had to open together, and each was silently holding the other up: the blueprint
+type widened to `WeaponSimSpec`, and `HitResolveSystem`'s melee pass — which looped
+`state.players` only — grew an enemy pass. A melee mob authored without the second would have
+walked up, played its swing animation, and dealt nothing. `meleeArc` also stopped hardcoding
+`'player'` as the damage source, which would have coloured a mob's own hit fx as the player's.
+`enrageBuffs` moved out of `WeaponFireSystem` into `balance/runbuffs.ts` so both systems scale an
+enraged mob by the identical numbers — no melee boss exists today, so it is identity for every
+shipped mob, and that is exactly why a second copy would have sat correct-looking until one did.
+
+**Content.** 18 spawns across 10 room pieces were CONVERTED, never added — `floater` to `stalker`,
+`brute` to `ravager`, both same-silhouette swaps — so every room's garrison SIZE is unchanged and
+the room-encounter gates measure a change in composition and nothing else. Density is graded by
+depth: floor 1's rooms get at most one each (the entrance `cell` gets none), the deep-only pieces
+take the heavier share.
+
+### Why this bumps
+
+Two new fields on every `PlayerActor` (`energy`/`maxEnergy`, both hashed by `serializeState`,
+along with `energyCost` in the ranged weapon tuple), a new entry in `DROP_TABLE` and
+`ARENA_DROP_TABLE` (so every `dropPrng` draw after the first lands differently), a new
+`PickupKind`, a fire path that can now REFUSE a pull, an unconditional per-tick regen pass, and a
+melee arc that resolves for enemies. Behaviour moves in both directions and the shipped level's
+own content changed.
+
+### Known gap, named rather than left implicit
+
+There is no energy FLOOR CARD and no `flat_energy` run buff. Both are the obvious next step — the
+`potion_flow`/`arsenal` pair is exactly the shape an energy sibling would take — but a fifth buff
+family touches `RUN_BUFFS`/`BUFF_CAPS`/`applyBuff` and deserves its own measured pass rather than
+riding along on this one. The two mob blades also borrow player weapon art
+(`render/weaponSkins.ts` records which and why); they carry their own calibration entries, so real
+art is a one-line `path` change per mob.

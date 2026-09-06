@@ -29,12 +29,17 @@
  *   buff     — added to the run-scoped stack. Auto, on overlap.
  *   bandage  — PvP-arena-only (design/05/15's squad follow-up): +1 to the player's
  *              squad-revive currency, spent by ReviveSystem. Auto, on overlap.
+ *   energy   — weapon-energy refill (design/03/05, ENGINE_VERSION 59): restore up to
+ *              maxEnergy. Auto, on overlap, and under the SAME `wouldApply` gate `heal`
+ *              is under, for the same reason — it is an instant item with no bag to
+ *              hold it in, so a full player must leave it on the floor for later.
  *
  * Ports Game.ts updatePickups(): float px → fp, squared-distance overlap. The
  * render-only hover bob is dropped (visual, not sim).
  */
 import { SIM } from '../sim.config';
 import { HEAL_PICKUP_AMOUNT, rollArenaDrop } from '../content/drops';
+import { ENERGY_PICKUP_AMOUNT } from '../balance/energy';
 import { bankKey } from '../content/materials';
 import { WEAPON_SIM_BY_ID, makeWeapon } from '../content/weapons';
 import { PLAYER_BASE } from '../content/players';
@@ -51,14 +56,14 @@ import { circlesOverlap, clampToWalkable, retainAlive } from './geom';
  * auto-apply, but only when useful"*: with no item bag, an instant item collected at
  * full effect is destroyed for nothing, so the pickup radius must not trigger for it.
  *
- * **Only `heal` has a condition, deliberately.** `material`/`bandage` accumulate with no
- * cap, so they always do something. `buff` looks like a candidate and is not one: the
+ * **Only the two INSTANT items — `heal` and `energy` — have a condition, deliberately.**
+ * `material`/`bandage` accumulate with no cap, so they always do something. `buff` looks like a candidate and is not one: the
  * `mult_*` families are Σ-then-clamped at USE time (`sumBuffs`, read by WeaponFire /
  * HitResolve), so "is this buff already at its cap" is not a question this call site can
  * answer without duplicating that arithmetic — and a run buff is a permanent stack entry,
  * not the "instant item" design/05's rule is about. `weapon` is click-driven and never
- * auto-collected in the first place. If a shield/temp-buff instant item is ever added,
- * this is the one place it needs a clause.
+ * auto-collected in the first place. Any future instant item belongs here too — this is
+ * the one place it needs a clause.
  *
  * Per-PLAYER, not per-item: it is called inside the player loop, so a full-HP teammate
  * standing on a heal does not block a hurt one from taking it on the same tick.
@@ -70,7 +75,13 @@ import { circlesOverlap, clampToWalkable, retainAlive } from './geom';
  * failing the moment the gate landed.
  */
 export function pickupWouldApply(p: PlayerActor, item: PickupItem): boolean {
-  return item.kind === 'heal' ? p.hp < p.maxHp : true;
+  if (item.kind === 'heal') return p.hp < p.maxHp;
+  // Weapon energy (ENGINE_VERSION 59) is the second instant item, and the first one
+  // this rule was written in anticipation of ("if a shield/temp-buff instant item is
+  // ever added, this is the one place it needs a clause"). Same shape as heal: it
+  // restores a capped pool, so at the cap it would be destroyed for nothing.
+  if (item.kind === 'energy') return p.energy < p.maxEnergy;
+  return true;
 }
 
 export class PickupSystem {
@@ -164,6 +175,12 @@ export class PickupSystem {
         // PvP squad revive currency (design/05/15) — no cap; ReviveSystem is the only
         // spender, one per completed revive.
         p.bandages = (p.bandages ?? 0) + 1;
+        break;
+      case 'energy':
+        // Weapon-energy refill (design/03/05). Clamped to the pool, like heal's clamp to
+        // maxHp — the `wouldApply` gate above already refused a full player, so the
+        // clamp here only ever trims a partial top-up.
+        p.energy = Math.min(p.maxEnergy, p.energy + ENERGY_PICKUP_AMOUNT);
         break;
     }
   }

@@ -46,7 +46,7 @@ import {
   applyResist,
   burnDamageFor,
 } from '../content/damage';
-import { buffedDamage, critDamage, rollCrit, sumBuffs } from '../balance/runbuffs';
+import { buffedDamage, critDamage, enrageBuffs, rollCrit, sumBuffs, type BuffSums } from '../balance/runbuffs';
 import { takeDamage } from './combat';
 import { circlesOverlap, retainAlive } from './geom';
 
@@ -101,13 +101,34 @@ export class HitResolveSystem {
       }
     }
 
-    // Melee: every player whose swing window is OPEN this tick, not just the tick it started
+    // Melee: every actor whose swing window is OPEN this tick, not just the tick it started
     // (design/07 step 7, ENGINE_VERSION 53). The alive/downed gate is re-checked per tick on
-    // purpose — a player killed or downed part-way through their own swing stops swinging.
+    // purpose — an attacker killed or downed part-way through its own swing stops swinging.
+    //
+    // Enemies were added to this loop in ENGINE_VERSION 59, with the melee mobs
+    // (content/enemies.ts STALKER/RAVAGER). Until then only players could swing, which is
+    // why `EnemyBlueprint.weapon` was typed ranged-only: the two constraints held each
+    // other up, and a melee mob authored without this loop would have walked up to the
+    // player, played its swing animation, and dealt nothing.
+    //
+    // Players first, then enemies — the same players-then-enemies order every other
+    // multi-array pass in the engine uses (design/06: array order IS the tie-break), so
+    // two simultaneous killing blows resolve identically on every client.
     for (const p of state.players) {
       const w = p.weapon;
       if (!p.alive || p.downed || !w || w.spec.kind !== 'melee' || w.swingTicksLeft <= 0) continue;
-      this.meleeArc(state, p, w);
+      // Player run buffs scale outgoing arc damage (design/14).
+      this.meleeArc(state, p, w, sumBuffs(p.buffs));
+    }
+    for (const e of state.enemies) {
+      const w = e.weapon;
+      if (!e.alive || !w || w.spec.kind !== 'melee' || w.swingTicksLeft <= 0) continue;
+      // A mob carries no run buffs; the one thing that scales its output is enrage, read
+      // off the latch WeaponFireSystem set at step 3 (balance/runbuffs.ts `enrageBuffs`).
+      // No melee boss exists today, so this is identity for every shipped mob — wired
+      // anyway, because the alternative is a melee boss that enrages its swing SPEED and
+      // not its damage, which is a bug that only appears the day someone authors one.
+      this.meleeArc(state, e, w, enrageBuffs(e));
     }
 
     retainAlive(state.projectiles);
@@ -308,12 +329,14 @@ export class HitResolveSystem {
    * without them a 6-tick hammer would deal its damage six times over and draw `combatPrng`
    * six times for one attack.
    */
-  private meleeArc(state: GameState, p: GameState['players'][number], w: WeaponState): void {
+  private meleeArc(state: GameState, p: Actor, w: WeaponState, buffs: BuffSums): void {
     const spec = w.spec as MeleeSimSpec;
     if (w.justSwung) {
-      // Player run buffs scale outgoing arc damage (design/14). Reaches any hostile
-      // actor (design/15) — a rival player included, not just state.enemies.
-      const buffs = sumBuffs(p.buffs);
+      // `buffs` comes from the caller (ENGINE_VERSION 59) rather than being read off the
+      // attacker here: a player's is its run-buff stack, a mob's is its enrage state, and
+      // the two live on different types. Reaches any hostile actor (design/15) — a rival
+      // player included, not just state.enemies, and for an enemy attacker that means the
+      // players, by the same predicate.
       // Crit (design/07 "one frozen payload"): rolled ONCE per swing, at swing time —
       // not re-rolled per target OR per active tick — so every enemy caught in one arc
       // either all crit or none do, matching "one swing, one attack" rather than a
@@ -335,7 +358,10 @@ export class HitResolveSystem {
       const ang = atan2Brad(dy, dx);
       if (Math.abs(bradDiff(ang, p.facing)) > spec.arcHalf) continue;
       w.swingHitIds.push(t.id);
-      this.applyHit(state, t, damage, spec.damageType, 'player', targets, p.id, spec.lifestealPermille);
+      // The damage SOURCE faction is the attacker's own (ENGINE_VERSION 59) — it was
+      // hardcoded 'player' while players were the only thing that could swing, which
+      // would have coloured a mob's own hit fx as if the player had dealt it.
+      this.applyHit(state, t, damage, spec.damageType, p.faction, targets, p.id, spec.lifestealPermille);
       // Melee knockback (design/07 v25): shove the target outward along the same
       // attacker→target direction already computed for the arc test, into its
       // knockVx/knockVy (MovementSystem integrates + decays it; never vx/vy directly —

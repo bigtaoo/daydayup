@@ -30,6 +30,8 @@ export const STARTER_WEAPON_SPECS: Record<string, WeaponSpec> = {
     bulletSpeed: 10, // grid/s  (demo 5.5px/f·60/32 = 10.3, rounded)
     damage: 1, // chip damage — the gun's identity vs the saber's burst (03/05)
     ballistic: 'straight',
+    // Energy per trigger pull (design/03/05, balance/energy.ts): baseline: 15/s vs 20/s regen — the starter gun is never the thing that runs you dry
+    energyCost: 3,
     lifespanSec: 3.0,
     bulletRadius: 0.15, // grid (demo 5px/32 = 0.156)
     muzzleGrid: 0.9375, // grid (demo 30px/32)

@@ -62,6 +62,13 @@ export function toSimSpec(spec: WeaponSpec): WeaponSimSpec {
       bulletZ: toFpGrid(spec.bulletZ),
       damage: applyQuality(spec.damage, spec.rarity),
       damageType: spec.damageType ?? 'physical',
+      // Already in pool units and already an integer — the one authored field that
+      // crosses this boundary unchanged (design/09's conversion table has no row for
+      // it because there is nothing to convert). Deliberately NOT scaled by rarity:
+      // `applyQuality` exists to give a rarer weapon a small damage edge, and running
+      // the price through it too would make a legendary frame cost more for the same
+      // mechanic, which is the damage-indexed pricing balance/energy.ts rejects.
+      energyCost: spec.energyCost,
       ballistic: spec.ballistic,
       turnRateBrad: spec.turnRateDegPerSec !== undefined ? degToBrad(spec.turnRateDegPerSec / TICK_RATE) : undefined,
       blastRadius: spec.blastRadiusGrid !== undefined ? toFpGrid(spec.blastRadiusGrid) : undefined,
@@ -118,9 +125,14 @@ export function toSimSpec(spec: WeaponSpec): WeaponSimSpec {
  * cryobolt/teslagun/venomspit/emberblade/frostbrand/stormglaive/hammer/spear) had no
  * other reference anywhere in the codebase). enemygun is excluded — not player-facing.
  */
+/** Mob loadouts — authored in WEAPON_SPECS like everything else, but never
+ *  player-facing: excluded from `WEAPON_SIM_BY_ID` so they can neither roll as a
+ *  weapon drop (`WEAPON_DROP_POOL` resolves through that map) nor be crafted. */
+export const MOB_WEAPON_IDS: readonly string[] = ['enemygun', 'enemyclaw', 'enemymaul'];
+
 export const WEAPON_SIM_BY_ID: Record<string, WeaponSimSpec> = Object.fromEntries(
   Object.entries(WEAPON_SPECS)
-    .filter(([id]) => id !== 'enemygun')
+    .filter(([id]) => !MOB_WEAPON_IDS.includes(id))
     .map(([id, spec]) => [id, toSimSpec(spec)]),
 );
 
@@ -130,6 +142,9 @@ export const WEAPON_SIM_BY_ID: Record<string, WeaponSimSpec> = Object.fromEntrie
 export const BLASTER_SIM = WEAPON_SIM_BY_ID.blaster as RangedSimSpec;
 export const SABER_SIM = WEAPON_SIM_BY_ID.saber as MeleeSimSpec;
 export const ENEMY_GUN_SIM = toSimSpec(WEAPON_SPECS.enemygun!) as RangedSimSpec;
+// Enemy melee loadouts (ENGINE_VERSION 59) — the first melee weapons any mob has had.
+export const ENEMY_CLAW_SIM = toSimSpec(WEAPON_SPECS.enemyclaw!) as MeleeSimSpec;
+export const ENEMY_MAUL_SIM = toSimSpec(WEAPON_SPECS.enemymaul!) as MeleeSimSpec;
 export const SCATTERGUN_SIM = WEAPON_SIM_BY_ID.scattergun as RangedSimSpec;
 export const SEEKER_SIM = WEAPON_SIM_BY_ID.seeker as RangedSimSpec;
 export const MORTAR_SIM = WEAPON_SIM_BY_ID.mortar as RangedSimSpec;

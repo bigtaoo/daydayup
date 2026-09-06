@@ -31,6 +31,11 @@ export type DropResult =
   | { kind: 'heal' }
   | { kind: 'weapon'; weaponId: string }
   | { kind: 'buff'; buffId: string }
+  // Weapon-energy refill (design/03/05, ENGINE_VERSION 59) — the ammo economy's drop.
+  // Payload-free: the amount is the constant ENERGY_PICKUP_AMOUNT, not a per-drop roll,
+  // so this branch costs the SAME single table draw `heal` does and adds no new PRNG
+  // consumption to the stream.
+  | { kind: 'energy' }
   // PvP-only (design/05/15's squad follow-up) — spent by ReviveSystem to revive a
   // downed squadmate. Never rolled by PvE's `rollDrop`/`DROP_TABLE`.
   | { kind: 'bandage' };
@@ -68,10 +73,23 @@ const MATERIAL_ENTRY = 0;
 const HEAL_ENTRY = 1;
 
 export const DROP_TABLE: readonly DropTableEntry[] = [
-  { kind: 'material', weight: 71 }, // the run's carry-out currency (design/05/14)
+  { kind: 'material', weight: 55 }, // the run's carry-out currency (design/05/14)
   { kind: 'heal', weight: 2 },
   { kind: 'weapon', weight: 5 },
   { kind: 'buff', weight: 6 }, // run-scoped power buffs (design/14) — the affix replacement
+  // Weapon-energy refill (ENGINE_VERSION 59) — the second design call of the ammo pass:
+  // *"能解决怪物掉落的问题。毕竟降低了掉率之后打完地图空空如也也不好"*. The 16 points come
+  // out of `material` and NOT off the total, exactly as the 2026-09-05 heal re-weight
+  // did and for the same reason: `weapon` and `buff` keep the per-kill odds they have,
+  // so the weapon allowance and the buff ramp stay readable independently of this pass.
+  //
+  // 16/84 = 19% of kills. Sized off the measured floor: the sweep reads 34.6 kills on
+  // floor 0 and 52 on floor 2, so a floor produces roughly 6-10 of these — enough to
+  // read as loot rather than as a rounding error, and (at ENERGY_PICKUP_AMOUNT 30) worth
+  // ~200-300 energy a floor on top of regen, i.e. real fuel for an expensive frame
+  // without funding one outright. It replaces material COUNT, not material value: the
+  // carry-out that actually leaves a run is unchanged in kind, only rarer per kill.
+  { kind: 'energy', weight: 16 },
 ];
 
 /**
@@ -179,6 +197,10 @@ export function rollDrop(prng: DropPrng, tier = 0, opts: DropOpts = {}): DropRes
         qty: MATERIAL_DROP_QTY,
         tier,
       };
+    // Payload-free, like `heal` — but named explicitly rather than left to the default
+    // arm, so that adding a sixth kind cannot silently start returning heals.
+    case 'energy':
+      return { kind: 'energy' };
     default:
       return { kind: 'heal' };
   }
@@ -200,6 +222,11 @@ export const ARENA_DROP_TABLE: readonly ArenaDropTableEntry[] = [
   { kind: 'heal', weight: 35 },
   { kind: 'weapon', weight: 40 },
   { kind: 'buff', weight: 20 },
+  // The arena has to carry the energy refill too (ENGINE_VERSION 59), or a looted
+  // heavy frame runs dry with nothing on the map that can feed it — the arena's loot
+  // pool IS its whole power curve (design/05/15), so a missing kind here is not a
+  // smaller version of the PvE gap, it is the only supply line there is.
+  { kind: 'energy', weight: 25 },
   // Squad revive currency (design/05/15) — a first-pass weight, same "needs real
   // playtesting" caveat as every other number on this table; not so common a downed
   // teammate is trivially free, not so rare a squad realistically never revives.
@@ -219,6 +246,8 @@ export function rollArenaDrop(prng: DropPrng): DropResult {
       return { kind: 'buff', buffId: BUFF_DROP_POOL[prng.nextInt(BUFF_DROP_POOL.length)]! };
     case 'bandage':
       return { kind: 'bandage' };
+    case 'energy':
+      return { kind: 'energy' };
     default:
       return { kind: 'heal' };
   }

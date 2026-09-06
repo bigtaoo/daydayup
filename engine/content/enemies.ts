@@ -6,20 +6,22 @@
  * optional third field of a wave spawn entry; missing = 'basic').
  *
  * HP / footprint / radius / loadout are in human/px units re-anchored to grid via
- * pxToFp (÷32); the weapon is the shared enemy-gun sim spec (content/weapons.ts).
+ * pxToFp (÷32); the weapon is one of the shared mob sim specs (content/weapons.ts) —
+ * `ENEMY_GUN_SIM` for the eight ranged variants, `ENEMY_CLAW_SIM`/`ENEMY_MAUL_SIM` for
+ * the two melee ones added in ENGINE_VERSION 59.
  * `resist` and `tint` are the variant knobs — `resist` is read by the sim (per-type
  * multiplier), `tint` is render-only (Scene colours the body by it; the sim never
  * reads it, like Actor.z). Adding a new variant here + a new `type` id in a wave is
  * a forward-compatible content add (design/09) — no ENGINE_VERSION bump.
  */
 import { toFp, type Fp } from '../math/fixed';
-import { ENEMY_TEAM_ID, type EnemyActor, type EnrageSim, type RangedSimSpec } from '../state/entities';
+import { ENEMY_TEAM_ID, type EnemyActor, type EnrageSim, type WeaponSimSpec } from '../state/entities';
 import type { GameState } from '../state/GameState';
 import type { DamageType, ResistMap } from './damage';
 import { freshStatus } from './damage';
 import { pxToFp } from './convert';
 import { PLAYER_BASE } from './players';
-import { ENEMY_GUN_SIM, makeWeapon } from './weapons';
+import { ENEMY_CLAW_SIM, ENEMY_GUN_SIM, ENEMY_MAUL_SIM, makeWeapon } from './weapons';
 import { curveAt } from '../world/dungeon';
 
 export interface EnemyBlueprint {
@@ -27,7 +29,15 @@ export interface EnemyBlueprint {
   maxHp: number;
   radius: Fp;
   footprintRadius: Fp; // feet circle for solid push-out (< radius); see Actor.footprintRadius
-  weapon: RangedSimSpec;
+  /**
+   * The mob's loadout. Widened from `RangedSimSpec` to the full union in
+   * ENGINE_VERSION 59: every blueprint carried `ENEMY_GUN_SIM` until then, so "the
+   * roster is all ranged" was enforced by this type rather than chosen as content —
+   * which is exactly the shape of gap design/03 records elsewhere ("three fields this
+   * doc's schema implies are live, and are not"). See STALKER / RAVAGER below, and
+   * `weaponSpecs/dropOnly.ts` for why neither melee mob deflects.
+   */
+  weapon: WeaponSimSpec;
   // Per-type damage multiplier (per-mille; 1000 = normal, 2000 = weak/×2, 500 = resist/×½).
   // Missing type = neutral. The knob that makes damage types matter per mob (design/07).
   resist?: ResistMap;
@@ -196,6 +206,64 @@ export const FLOATER: EnemyBlueprint = {
   bodyRig: 'floater-core',
 };
 
+// ── Melee mobs (ENGINE_VERSION 59, design/05 — "近战的怪也加上一些") ──────────────
+// The roster's first two melee variants. They exist because of the ammo economy
+// (`balance/energy.ts`): the melee half of a loadout is the free fallback when the
+// pool runs dry, and against an all-ranged garrison that fallback means walking into
+// every gun on the floor. A melee mob is the mob you keep the GUN for — it closes the
+// loop the other direction, so both halves of design/03's ranged-vs-melee trade-off
+// have something they are the right answer to.
+//
+// The two are deliberately opposite failure modes: the stalker punishes standing
+// still, the ravager punishes standing close. Both reuse the shared chase-and-engage
+// AI unchanged — `AIDecideSystem` never reads the weapon's kind, it walks a mob to
+// its `engageRangeFp` ring and lets `WeaponFireSystem` branch — so the only knobs
+// that make them melee are the loadout and that range.
+
+/** Fast, fragile rusher. Its threat is ARRIVING, not the swing: it moves at ~67% of
+ *  the player's speed (against the roster default's 41%), notices from further out,
+ *  and closes to claw range. Fragile enough that noticing it early is the whole
+ *  counterplay — 2 HP is one saber swing or two blaster shots. */
+export const STALKER: EnemyBlueprint = {
+  type: 'stalker',
+  maxHp: 2,
+  radius: pxToFp(14),
+  footprintRadius: pxToFp(6),
+  weapon: ENEMY_CLAW_SIM,
+  tint: 0xef5350, // hot red — reads as "coming at you" against the neutral palette
+  bodyRig: 'floater-core', // the light silhouette; no dedicated rusher rig exists yet (design/12)
+  // 4.2 px/tick ≈ 126 px/s, ~67% of PLAYER_BASE.speedPerTick. Deliberately still UNDER
+  // the player's: running away has to remain a real option (the v42 retune's stated
+  // rule), it just stops being a free one.
+  moveSpeedPerTick: pxToFp(4.2),
+  // Parks it inside `enemyclaw`'s 1.1-grid reach with room to spare: approachSlots
+  // places the ring RING_MARGIN_STEPS inside this, so it stops at ~24 px against a
+  // ~51 px reach (claw range + player radius).
+  engageRangeFp: pxToFp(32),
+  // Wider perception than the roster default (320): a rusher that only wakes at the
+  // same distance as a shooter gets its whole approach eaten by the notice delay and
+  // arrives as just another body in the crowd.
+  aggroRangeFp: pxToFp(400),
+};
+
+/** Slow, armoured heavy. Its threat is being NEAR it: a wide 150° sweep for 2 damage
+ *  with enough knockback to shove you out of its own reach — which is what opens the
+ *  gap you use to shoot it. Armoured against bullets like `brute`, so the answer is
+ *  positioning rather than raw dps. */
+export const RAVAGER: EnemyBlueprint = {
+  type: 'ravager',
+  maxHp: 8,
+  radius: pxToFp(20),
+  footprintRadius: pxToFp(9),
+  weapon: ENEMY_MAUL_SIM,
+  resist: { physical: 700, ice: 1600 }, // ×0.7 bullets, ×1.6 ice — slow it and it never lands one
+  tint: 0xa1887f, // scorched iron
+  bodyRig: 'brute-core',
+  // Left at the roster default speed on purpose: a fast heavy with a 150° sweep has no
+  // counterplay at all. You are meant to be able to walk away from this one.
+  engageRangeFp: pxToFp(40), // inside `enemymaul`'s 1.5-grid (48 px) reach
+};
+
 // ── Boss ────────────────────────────────────────────────────────────────────────
 // The durable finale — a big, tanky mob that survives long enough to *show* the
 // combat systems working (design/03/07): its huge HP pool lets poison stacks ramp
@@ -235,6 +303,8 @@ export const ENEMY_BLUEPRINTS: Record<string, EnemyBlueprint> = {
   ironclad: IRONCLAD,
   brute: BRUTE,
   floater: FLOATER,
+  stalker: STALKER,
+  ravager: RAVAGER,
   blightlord: BLIGHTLORD,
 };
 
@@ -252,7 +322,12 @@ export const ENEMY_BLUEPRINTS: Record<string, EnemyBlueprint> = {
 export function buildEnemyActor(state: GameState, gx: Fp, gy: Fp, type?: string): EnemyActor {
   const bp = ENEMY_BLUEPRINTS[type ?? 'basic'] ?? BASIC_ENEMY;
   const weapon = makeWeapon(bp.weapon);
-  weapon.cooldownTicks = state.aiPrng.nextInt(bp.weapon.fireRateTicks); // fire-phase jitter
+  // Fire-phase jitter, so a garrison spawned on one tick doesn't attack in unison.
+  // Reads whichever field the loadout's kind calls its recovery (ENGINE_VERSION 59's
+  // melee mobs) — ONE aiPrng draw either way, unconditionally, so adding melee mobs
+  // to a wave cannot shift the aiPrng stream for the mobs spawned after them.
+  const recovery = bp.weapon.kind === 'ranged' ? bp.weapon.fireRateTicks : bp.weapon.swingCooldownTicks;
+  weapon.cooldownTicks = state.aiPrng.nextInt(recovery);
   // Floor-to-floor difficulty escalation (design/05's own "to design" item — how enemy
   // tier scales with depth). `DungeonConfig.difficultyCurve` was authored on EMBER_DUNGEON
   // back at ROADMAP 1.3 but nothing ever read it — this is that wiring. Only maxHp scales

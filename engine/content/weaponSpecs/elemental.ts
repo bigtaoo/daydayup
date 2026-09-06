@@ -24,6 +24,8 @@ export const ELEMENTAL_WEAPON_SPECS: Record<string, WeaponSpec> = {
     damage: 1,
     damageType: 'fire',
     ballistic: 'straight',
+    // Energy per trigger pull (design/03/05, balance/energy.ts): a 30/s fire hose — sustainable in bursts, not held down; the element is the mechanic
+    energyCost: 3,
     lifespanSec: 0.55, // short reach — the flamethrower band
     bulletRadius: 0.22,
     muzzleGrid: 0.9375,
@@ -47,6 +49,9 @@ export const ELEMENTAL_WEAPON_SPECS: Record<string, WeaponSpec> = {
     damage: 2,
     damageType: 'ice',
     ballistic: 'straight',
+    // Energy per trigger pull (design/03/05, balance/energy.ts): chill is a movement debuff
+    // stacked on top of the damage — 24/s
+    energyCost: 12,
     lifespanSec: 3.0,
     bulletRadius: 0.18,
     muzzleGrid: 0.9375,
@@ -69,6 +74,8 @@ export const ELEMENTAL_WEAPON_SPECS: Record<string, WeaponSpec> = {
     damage: 2,
     damageType: 'lightning',
     ballistic: 'straight',
+    // Energy per trigger pull (design/03/05, balance/energy.ts): chain: one pull reaches a second body — 26/s
+    energyCost: 9,
     lifespanSec: 2.0,
     bulletRadius: 0.15,
     muzzleGrid: 0.9375,
@@ -92,6 +99,8 @@ export const ELEMENTAL_WEAPON_SPECS: Record<string, WeaponSpec> = {
     damage: 1,
     damageType: 'poison',
     ballistic: 'straight',
+    // Energy per trigger pull (design/03/05, balance/energy.ts): poison stacks ramp with UPTIME, so uptime is what it pays for: 23/s
+    energyCost: 5,
     lifespanSec: 2.5,
     bulletRadius: 0.16,
     muzzleGrid: 0.9375,

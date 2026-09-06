@@ -26,7 +26,7 @@
  * perfect and its nerve never breaks. Read it as a floor on difficulty ("even a
  * tireless kiter dies here"), not as a verdict on how a person will do.
  */
-import { createGameEngine, type GameState, type PickupItem } from '@dd/engine';
+import { createGameEngine, type GameState, type PickupItem, type PlayerActor } from '@dd/engine';
 import { buildDungeonRunConfig } from '../../src/game/match/offlineConfig';
 import { BOT_PROFILES, PveBotController, type BotProfile } from './PveBotController';
 import { roomIdAt } from './pveNav';
@@ -61,6 +61,34 @@ export interface DropRecord {
   tick: number;
 }
 
+/**
+ * One TRIGGER PULL the player spent — the unit an ammo/energy economy is priced in
+ * (design/03 "a mechanic has no price anywhere in this repo"). Deliberately a
+ * trigger and not a bullet: a spread frame emits `bullets` projectiles from one
+ * pull, and charging per pellet would tax `scattergun` eight times for one decision.
+ * Both numbers are recorded so either pricing can be costed off the same sweep.
+ *
+ * Read off `bullet_fired` / `melee_swing` events rather than off any weapon field:
+ * a weapon fires at most once per tick (its cooldown is >= 1 tick), so every
+ * `bullet_fired` the player owns on one tick belongs to exactly one pull.
+ */
+export interface FireRecord {
+  floorIndex: number;
+  /** Which half of the loadout spent the pull. Melee is the FREE half under every
+   *  energy model considered (design/05) — it is counted so the free/paid split is
+   *  measured rather than assumed. */
+  kind: 'ranged' | 'melee';
+  /** `WeaponSimSpec.name` of the slot that fired, or null on the one ambiguous tick
+   *  shape: a weapon pickup resolves at step 10, AFTER the fire at step 3, so on a
+   *  tick that did both, the slot's current occupant is not the one that shot. Those
+   *  pulls are counted but left unattributed rather than charged to the wrong gun. */
+  weapon: string | null;
+  /** Projectiles this pull emitted (1 for a pinpoint gun, `bullets` for a spread or
+   *  radial frame). Always 1 for a melee swing. */
+  bullets: number;
+  tick: number;
+}
+
 export interface RunMetrics {
   seed: number;
   profileName: string;
@@ -87,6 +115,9 @@ export interface RunMetrics {
    *  read against: a bot that beelines the capstone leaves most of a floor's roster
    *  alive, and that shows up as few drops through no fault of the drop table. */
   killsByFloor: Record<number, number>;
+  /** Every trigger pull the player spent, in fire order — the consumption half of
+   *  the loot economy (`drops` is the production half). */
+  fires: FireRecord[];
   /** Floor indices whose CHECKPOINT the run reached (capstone cleared → the portal
    *  opened, whether the run then descended or extracted). A "per full floor" total
    *  is only comparable over these. */
@@ -157,6 +188,7 @@ export function runLevel(opts: RunOptions): RunMetrics {
     effectiveHp: tracker.effectiveHp,
     lowestHpFrac: tracker.lowestHpFrac,
     drops: tracker.drops,
+    fires: tracker.fires,
     killsByFloor: tracker.killsByFloor,
     checkpointFloors: tracker.checkpointFloors,
   };
@@ -171,6 +203,7 @@ export function runLevel(opts: RunOptions): RunMetrics {
 class EncounterTracker {
   readonly encounters: RoomEncounter[] = [];
   readonly drops: DropRecord[] = [];
+  readonly fires: FireRecord[] = [];
   readonly killsByFloor: Record<number, number> = {};
   readonly checkpointFloors: number[] = [];
   enemiesKilled = 0;
@@ -198,6 +231,7 @@ class EncounterTracker {
     this.trackShooters(s);
     this.trackDamage(s, p.id);
     this.trackDrops(s);
+    this.trackFire(s, p);
   }
 
   /** Open an encounter the tick a room activates; close it when it goes quiet. */
@@ -308,6 +342,41 @@ class EncounterTracker {
       // the first real sweep: floor 0 reported 8 of 8 visits "complete" while the
       // summary right above it said 5 of those 8 runs died in r4_forge.
       if (ev.type === 'win' && typeof ev.winner === 'number') this.checkpointFloors.push(s.floorIndex);
+    }
+  }
+
+  /**
+   * Record the player's trigger pulls this tick — the consumption side of the loot
+   * economy (design/05), and the denominator any ammo/energy pool has to be sized
+   * against. Nothing in the tree measured it before 2026-09-05, so "how much does a
+   * shot cost" had no numerator and no denominator.
+   *
+   * Attribution is by SLOT, not by the active pointer, and that is what makes it
+   * exact rather than approximate: `bullet_fired` can only come from the ranged slot
+   * and `melee_swing` only from the melee one (WeaponFireSystem branches on
+   * `spec.kind`), so which weapon fired is never a guess about `activeSlot`. The one
+   * real ambiguity is a tick that also collected a weapon — `PickupSystem` runs at
+   * step 10, five steps after the fire — and those pulls are recorded with a null
+   * weapon rather than charged to the gun that replaced the one that shot.
+   */
+  private trackFire(s: GameState, p: PlayerActor): void {
+    let bullets = 0;
+    let swings = 0;
+    for (const ev of s.events) {
+      if (ev.type === 'bullet_fired' && ev.ownerId === p.id) bullets++;
+      else if (ev.type === 'melee_swing' && ev.ownerId === p.id) swings++;
+    }
+    if (bullets === 0 && swings === 0) return;
+    const swapped = s.events.some((ev) => ev.type === 'pickup' && ev.kind === 'weapon');
+    const nameOf = (kind: 'ranged' | 'melee'): string | null =>
+      swapped ? null : (p.weapons.find((w) => w.spec.kind === kind)?.spec.name ?? null);
+    if (bullets > 0) {
+      this.fires.push({ floorIndex: s.floorIndex, kind: 'ranged', weapon: nameOf('ranged'), bullets, tick: s.tick });
+    }
+    // A swing is one pull that emits one event; `bullets: 1` keeps the two kinds
+    // summable in the same column without pretending a swing throws a projectile.
+    if (swings > 0) {
+      this.fires.push({ floorIndex: s.floorIndex, kind: 'melee', weapon: nameOf('melee'), bullets: 1, tick: s.tick });
     }
   }
 }

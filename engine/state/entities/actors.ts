@@ -101,6 +101,17 @@ export interface PlayerActor extends Actor {
   // Stores buff ids; magnitude/kind live in the RUN_BUFFS catalogue.
   buffs: RunBuffId[];
 
+  /** Weapon energy — the shared ammo pool every RANGED trigger pull is charged
+   *  against (design/03/05, `balance/energy.ts`, ENGINE_VERSION 59). Player-level and
+   *  weapon-agnostic on purpose: a magazine would have to ride a weapon onto the
+   *  floor and back on every drop-on-replace swap, while a pool means a swap moves
+   *  nothing. Melee costs nothing at all, which is what makes the always-owned melee
+   *  half (`03`'s ranged-vs-melee trade-off) the fallback when the pool is empty.
+   *  Regenerated unconditionally on a global cadence by StatusEffectSystem, topped up
+   *  by the `energy` drop. Enemies carry neither field and are never charged. */
+  energy: number;
+  maxEnergy: number;
+
   /** Which slot of the open floor-card offer this seat has voted for: 1..3, or 0 for
    *  "has not chosen" (design/05, ENGINE_VERSION 58). Sim state rather than a one-tick
    *  latch, unlike `confirmExtract`/`confirmDescend`, for two reasons: a vote is

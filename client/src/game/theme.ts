@@ -36,6 +36,11 @@ export const THEME = {
     pickupWeapon: 0xf6ad55, // amber — a new gun to swap in
     pickupBuff: 0xd6bcfa, // violet — a run buff (design/14 in-run power)
     pickupCrate: 0xa0aec0, // slate — an unresolved arena crate (design/15), contents unknown until revealed
+    // Teal — a weapon-energy refill (design/03/05, ENGINE_VERSION 59). Deliberately the
+    // one cool hue in the set: every other drop here is warm (amber/yellow) or the two
+    // established "restore"/"power" hues (green heal, violet buff), and a fifth warm
+    // colour on a floor full of loot would read as another material at a glance.
+    pickupEnergy: 0x4fd1c5,
     // Elemental status fx (design/03/07) — flashed on the 'status' event, and now
     // also the bullet-trail + lingering-aura colours (per-element render polish).
     statusBurn: 0xff7043, // fire — orange flame

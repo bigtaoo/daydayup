@@ -25,6 +25,8 @@ export const FRAME_LIBRARY_WEAPON_SPECS: Record<string, WeaponSpec> = {
     bulletSpeed: 11,
     damage: 1, // ×5 pellets at point-blank
     ballistic: 'straight',
+    // Energy per trigger pull (design/03/05, balance/energy.ts): spread x5, charged ONCE for the pull and not per pellet (balance/energy.ts) — 25/s
+    energyCost: 14,
     lifespanSec: 0.6, // short reach — a shotgun, not a sniper
     bulletRadius: 0.14,
     muzzleGrid: 0.9375,
@@ -46,6 +48,8 @@ export const FRAME_LIBRARY_WEAPON_SPECS: Record<string, WeaponSpec> = {
     bulletSpeed: 7, // slow — gives the turn time to matter
     damage: 2,
     ballistic: 'homing',
+    // Energy per trigger pull (design/03/05, balance/energy.ts): homing does not miss, which is the single most valuable property on this axis — 26/s
+    energyCost: 18,
     turnRateDegPerSec: 260, // brisk but not instant-lock
     lifespanSec: 2.5,
     bulletRadius: 0.16,
@@ -69,6 +73,8 @@ export const FRAME_LIBRARY_WEAPON_SPECS: Record<string, WeaponSpec> = {
     bulletSpeed: 8,
     damage: 2, // AoE blast damage (no separate direct-hit case)
     ballistic: 'lob',
+    // Energy per trigger pull (design/03/05, balance/energy.ts): lob detonates an AoE blast through the full resist/status path — 24/s
+    energyCost: 22,
     blastRadiusGrid: 1.3,
     lifespanSec: 1.0, // flight time to landing
     bulletRadius: 0.2,
@@ -91,6 +97,8 @@ export const FRAME_LIBRARY_WEAPON_SPECS: Record<string, WeaponSpec> = {
     bulletSpeed: 0, // beam does not travel (hitscan; frozen origin/direction)
     damage: 1, // per tick, for beamSec / beamTickIntervalSec ticks
     ballistic: 'beam',
+    // Energy per trigger pull (design/03/05, balance/energy.ts): beam damages on a cadence for a whole 0.4s window per pull — 28/s
+    energyCost: 22,
     beamSec: 0.4,
     beamTickIntervalSec: 0.1, // 4 damage ticks per channel
     beamRangeGrid: 3.5, // max reach along the frozen facing
@@ -115,6 +123,8 @@ export const FRAME_LIBRARY_WEAPON_SPECS: Record<string, WeaponSpec> = {
     bulletSpeed: 10,
     damage: 2,
     ballistic: 'boomerang',
+    // Energy per trigger pull (design/03/05, balance/energy.ts): boomerang hits going out AND coming back — 27/s
+    energyCost: 16,
     returnAfterSec: 0.35, // outbound leg length before it reverses
     lifespanSec: 1.2, // enough for the full out-and-back
     bulletRadius: 0.18,
@@ -177,6 +187,8 @@ export const FRAME_LIBRARY_WEAPON_SPECS: Record<string, WeaponSpec> = {
     bulletSpeed: 9,
     damage: 1,
     ballistic: 'straight', // each pellet then flies straight outward
+    // Energy per trigger pull (design/03/05, balance/energy.ts): radial x10: a bullet-hell ring from one pull, the most output any single press buys — 33/s
+    energyCost: 26,
     lifespanSec: 1.2,
     bulletRadius: 0.14,
     muzzleGrid: 0.5,
@@ -200,6 +212,8 @@ export const FRAME_LIBRARY_WEAPON_SPECS: Record<string, WeaponSpec> = {
     bulletSpeed: 0, // orbit doesn't travel; position is driven from the owner
     damage: 2,
     ballistic: 'orbit',
+    // Energy per trigger pull (design/03/05, balance/energy.ts): orbit leaves persistent orbs doing work after the pull — 40/s
+    energyCost: 20,
     orbitRadiusGrid: 1.6, // circling distance — just outside the body
     orbitPeriodSec: 1.0, // one revolution per second
     lifespanSec: 2.0, // each blade circles for ~2 revolutions before dissipating
@@ -225,6 +239,8 @@ export const FRAME_LIBRARY_WEAPON_SPECS: Record<string, WeaponSpec> = {
     bulletSpeed: 11,
     damage: 2,
     ballistic: 'straight',
+    // Energy per trigger pull (design/03/05, balance/energy.ts): ricochet x2: one pull, up to three bodies — 31/s
+    energyCost: 14,
     ricochetCount: 2, // up to 2 bounces after the first hit (3 targets total, at most)
     lifespanSec: 2.5,
     bulletRadius: 0.15,
